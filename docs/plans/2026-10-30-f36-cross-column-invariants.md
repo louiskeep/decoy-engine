@@ -1,10 +1,10 @@
-Status: plan only, revision 7 (scope re-frame, owner decision `OWNER-DECISIONS-2026-10-30.md` line 110: the engine slices 0a to 9 and CLI slice 10 stay; the Platform half moves to a separate plan, F36-P, of which this plan keeps only the "F36-P scope note"; Dennis's revision 6 HIGH-1 and HIGH-2 are closed there as binding requirements; the fallback run token is deleted). Status: handoff. Next gate: Dennis, then Codex. This document grants no implementation, release, merge, or publication approval.
+Status: plan only, revision 8 (amends revision 7: unproven key types are refused as `unsupported`; F35 eligibility is count-free; owner decision `OWNER-DECISIONS-2026-10-30.md` "2026-11-02 (late)", line 114). Status: handoff. Next gate: Dennis, then Codex. This document grants no implementation, release, merge, or publication approval.
 
-Baseline: `decoy-engine` `plan/f36-cross-column-invariants` at `a3d62a67` (contains `origin/main` `0173c054`); `decoy-platform` `origin/main` `0fb5e3f6`; scheduler plan `plan/scheduler-state-and-direction` `eb8a5d6f` (revision 4; revision 5 is pending and adds the consumer helpers the F36-P scope note cites). Engine lines are the revision 4 reads at `fdd08a89` unless marked "(at 6bf3fc9)" or "(at a3d62a67)"; revision 7 re-read `execution/_fk_keys.py:77-243`, `execution/out_of_core/_relation.py:400-413` and `execution/_pandas_adapter.py:591-630` at `a3d62a67`, and the Platform and scheduler lines in the F36-P scope note. Every slice re-reads its cited lines before RED and stops on a mismatch it cannot place.
+Baseline: `decoy-engine` `plan/f36-cross-column-invariants` with engine `origin/main` `f5b46a2c` (v0.18.0) merged; `0173c054..f5b46a2c` changes six `src/` files, none cited for keys or validators. `decoy-platform` `origin/main` `67e8cbba`; scheduler plan `plan/scheduler-state-and-direction` `6ee0f6b6` (revision 5). Engine lines are the revision 4 reads at `fdd08a89` unless marked "(at 6bf3fc9)", "(at a3d62a67)" or "(at f5b46a2c)"; revision 8 re-read `execution/_fk_keys.py:174-243`, `validators/_fk_validators.py:140-300`, `out_of_core/_relation.py:396-416`, `_chunked_fk_dtype.py:45-65`, `_pipeline_routing_fk_dtype.py:1-25` at `f5b46a2c`, and the Platform and scheduler lines in the F36-P scope note. Every slice re-reads its cited lines before RED and stops on a mismatch it cannot place.
 
-Plan contract check: `plan-lint plan docs/plans/2026-10-30-f36-cross-column-invariants.md`, run from `decoy-platform` `handoffs/queue` `docs/handoffs/tools/plan-lint`, prints `OK` for this revision.
+Plan contract check: `plan-lint plan docs/plans/2026-10-30-f36-cross-column-invariants.md` (`~/bin/plan-lint`) prints `OK` for this revision.
 
-Rules consulted: 00-universal, development-loop, risk-and-exceptions, scope-discipline, reuse-first, and the testing rulebook the README selects (RED-first, mutation evidence); data-and-migrations now applies to F36-P, not here. Their text at `/home/cam/dev-rules/` was not re-read in this session ("What revision 7 did not verify"). Read in this session: the handoff's worker rules and V1 bar, `docs/handoffs/DEFECT-CATALOG.md`, `V1-BAR.md`, `OWNER-DECISIONS-2026-10-30.md` (lines 98, 106, 110) and `tools/plan-lint` on Platform `handoffs/queue` `3564e842`, and the scheduler plan at `eb8a5d6f`.
+Rules consulted: 00-universal, risk-and-exceptions, scope-discipline and the dev-rules README routing table (read this session); development-loop, reuse-first and testing, also selected for an R2 plan revision, were not re-read. Also read: the revision 8 handoff, `OWNER-DECISIONS-2026-10-30.md` line 114, scheduler revision 5 section 4a.
 
 Risk: **R2** (plan only). Public configuration, result fields, a versioned artifact, bounded relational scratch, and concurrency. Owner approval, RED-first evidence, and adversarial review per slice. The Platform migration and persistence are F36-P's risk.
 
@@ -24,9 +24,9 @@ The guarantee is a ratchet plus named limits. The ratchet: every named test in "
 
 **V1 rule 2, data.** F36 adds no output-data writer and runs before the existing commit. The isolated sidecar is written temp-then-rename-then-envelope, so a kill never leaves a partial report (A16d). Platform persistence of the report, and its run identity, are F36-P's guarantee ("F36-P scope note").
 
-**V1 rule 3, values.** Check cell values never appear in reports: a report holds counts, closed enums, and positions only, and the grammar has no value literals (no constants, literal sets, expressions, SQL, or regex; `absolute_tolerance` and `sample_rows` are configuration bounds that are never compared against as cell values and never enter a report), so there is no value for a report to echo. Every integer in a report is a row or parent count bounded by `MAX_SELECTED_ROWS_PER_SIDE`, and V1 has no measurement field (no deviation, residual, or min/max). The non-admin surfaces covered are the typed report and its `repr`, canonical bytes and the isolated sidecar, CLI stdout, stderr, JSON and the requested file. The Platform surfaces (DB row, artifact HTTP body, B-9 section, user-visible `Job.log`, job events, notifications) are F36-P's, which inherits the marker corpus for them. None of them carries a cell, key, row index, configured name, path, DSN, query, `str(exc)` text, or value-derived number (marker corpus and field walk). Named limits: server-admin logs, crash output, traceback locals and `__cause__` chains are V2 ("V2-LOG").
+**V1 rule 3, values.** Check cell values never appear in reports: a report holds counts, closed enums, and positions only, and the grammar has no value literals (no constants, literal sets, expressions, SQL, or regex; `absolute_tolerance` and `sample_rows` are configuration bounds that are never compared against as cell values and never enter a report), so there is no value for a report to echo. Every integer in a report is a row or parent count bounded by `MAX_SELECTED_ROWS_PER_SIDE`, and V1 has no measurement field (no deviation, residual, or min/max). The non-admin surfaces covered are the typed report and its `repr`, canonical bytes and the isolated sidecar, CLI stdout, stderr, JSON and the requested file. The Platform surfaces ("Output surfaces", last row) are F36-P's, which inherits the marker corpus for them. None of them carries a cell, key, row index, configured name, path, DSN, query, `str(exc)` text, or value-derived number (marker corpus and field walk). Named limits: server-admin logs, crash output, traceback locals and `__cause__` chains are V2 ("V2-LOG").
 
-Design properties (unchanged): a closed tagged-union language; identity `ObservationRef(CheckRef(code, authored_position), scope)`, stable under reordering, duplicates refused before any read; F35 eligibility only `scope=output`, `measured_exact`, `pass`, `rows_evaluated>0`; null is unknown except to null checks; non-finite, overflowing or non-comparable values are unevaluable; every route measures, delegates, or refuses before its first read with a registered reason; no `skip`.
+Design properties: a closed tagged-union language; identity `ObservationRef(CheckRef(code, authored_position), scope)`, stable under reordering, duplicates refused before any read; F35 eligibility is the count-free rule `is_f35_eligible` ("Counts, status, verdict"); null is unknown except to null checks; non-finite, overflowing or non-comparable values are unevaluable; every route measures, delegates, or refuses before its first read with a registered reason (the K-KEY type rule reads only the schema of a read the route already makes); no `skip`.
 
 ### Non-goals
 
@@ -36,8 +36,7 @@ Design properties (unchanged): a closed tagged-union language; identity `Observa
 - Containment against malicious code already in the caller's process (use `run_pipeline_isolated`).
 - A generic aggregate registry, serializer, unseal API, or engine-owned file, database, or HTTP transport.
 - Platform persistence, the artifact endpoint, the B-9 section and the F35 fixture (F36-P).
-- Value-free server-admin logs, and census machinery that proves completeness over every entry point (V2-LOG).
-- Lease lifetime across in-flight feeds at close (V2-LOG, with probe evidence below).
+- Value-free server-admin logs, census machinery that proves completeness over every entry point, and lease lifetime across in-flight feeds at close (V2-LOG).
 
 ### Definition of done
 
@@ -45,35 +44,28 @@ Design properties (unchanged): a closed tagged-union language; identity `Observa
 - Route and FK manifests are executable test data. Supported cells are byte-equal to the resident oracle; refused cells perform zero reads; output bytes with invariants on equal bytes with invariants off on every route.
 - Every F31 extension point in the table below exists in the built F31 and is used as listed.
 - Engine and CLI surfaces pass the marker corpus over the V1 rule 3 surfaces, the field walk, the named exit tests, the barrier tests, the compatibility corpus, and schema snapshots.
-- The F36-P scope note lists every moved acceptance ID, slice and requirement, so F36-P can be authored from it alone.
+- The F36-P scope note lists every moved acceptance ID, slice and requirement, so F36-P can be authored from it plus a re-read of Platform `main` and scheduler revision 5.
 
-## Revision 7 finding map
+## Revision 8 finding map
 
 | Finding | Defect class | Change | Test | Lives in |
 |---|---|---|---|---|
-| R0 (owner line 110): split the Platform half out | none (scope decision) | "Platform persistence contract" replaced by "F36-P scope note"; Platform slices, tests, facts and rows moved by ID | every moved ID listed in the scope note | F36 (cut) and F36-P scope note |
-| V1-A (Dennis HIGH-1, F35 review H1): S9a-1 dependency; flag-on worker has no `Fence` in V1 | 3 state machine and concurrency | F36-P waits for S9a-2; flag-off carrier from the run's `Fence`; flag-on carrier `None` until S18 (named limit); no generation read from the row; identity premise narrowed to same-`job_id` rerunnable paths | A12d `[flag_on_no_fence]` (new), A12l `[flag_on]` expects carrier `None` | F36-P scope note |
-| V1-B (Dennis HIGH-2, scheduler rev 4 review V1-H3): writer `FOR UPDATE` waits on its own run's row lock | 3 state machine and concurrency | write only through scheduler `fenced_side_write` from a hook outside any fenced block; F36's writer SQL deleted; reader via `current_generation` | A12o (new) | F36-P scope note |
-| R-C (Dennis M2): the fallback run token is weak | 4 silent fallback | fallback deleted everywhere; A12m case `fallback_readback_fails` deleted with it | R-C grep prints nothing | F36 (deleted) |
-| Dennis M1: K-KEY overstates timestamp tagging | 4 route parity | K-KEY states the zone-aware and NaT `\x00OBJ:` path | A6g `[tz_aware_same_zone]`, `[tz_aware_two_zones_same_instant]` | F36 |
-| Codex V2-LOG 1: header claimed rev 6 shrank (725 to 730) | 8 overclaimed evidence | honest counts in the return report | none (report) | F36 |
-| Codex V2-LOG 2: slice 10 size unverified | 8 overclaimed evidence | slice 10 keeps "stop and split if over"; no claim that every slice is under 800 | slice table | F36 |
-| Codex V2-LOG 3: workflow steps do not bump | 3 state machine and concurrency | folded into V1-A's narrowed identity premise | A12l | F36-P scope note |
-| Codex V2-LOG 4: A6h fail-before was "no hook" | 8 weak tests | names the out-of-core staging line | A6h | F36 |
+| V1-A (Dennis): zone-aware and duration keys get two tokens where the pandas routes see one key, so F36 would report orphans in a correct output | 4 route parity | K-KEY rule 5 refuses key types outside the K-KEY set (`invariant.key_type_unsupported`); FK-shape row; A6g zone cases and A6h carve-out deleted | A6i | F36 |
+| V1-B (Dennis): eligibility reads `rows_evaluated`, absent from `RelationshipCounts`; no engine test | 8 weak tests | evaluated units per relationship code; count-free `is_f35_eligible` | A3d, A3e | F36 |
+| Codex V2-LOG 1: hook bundle said to run outside `fenced_txn` | 3 state machine | requirement 2 states only F36-P's write path | A12o | F36-P note |
+| Codex V2-LOG 2: K-KEY lacked the `OBJ` statement | 8 overclaimed evidence | K-KEY prose and rule 5 | A6i | F36 |
+| Codex V2-LOG 3: "from this note alone" | 8 overclaimed evidence | "plus a re-read" | none | F36 |
+| F35 rev 3 carry-over: carrier `Fence` source; `runner.py:576` stale | 3 state machine | `JobRunContext.fence`; `:584` | A12d | F36-P note |
 
-Repeat-class note (classes 3 and 5, Platform persistence, revisions 2 to 6): V1-A and V1-B are the listed class 3 findings of this revision and are closed by citing scheduler helpers, not by new F36 SQL. If F36-P finds its identity premise (A12l) false for any path, F36-P stops and reports. It does not patch a fifth time.
-
-### Revision 5 baseline drift
-
-Merging `origin/main` `0173c054` moved lines in about twenty cited engine modules (the largest: `out_of_core/_stream_driver.py`, `out_of_core/_runner.py`, `native/_chunked_entry.py`, `_chunked.py`, `_isolated_run.py`, `_sequential.py`). Their lines are stale until the owning slice re-reads them.
+Repeat-class note: V1-A repeats class 4 on keys (revision 7 M1 fixed text only); it is closed by refusing types, not by new token machinery. V1-B is closed by defining evaluated units, not by adding a count field.
 
 ### Revision 4 corrections (found while re-reading the cited code)
 
 - **C1 (class 9).** Multi-parent first-hit is `RelationshipGraph.edges` order, sorted at `relationships/_graph.py:252-262` and consumed at `execution/_pandas_adapter.py:380` and `out_of_core/_multi_parent.py:58-59`; the "declared order" prose at `_graph.py:166-167` is wrong. F36 uses graph edge order. A6d.
-- **C2 (class 3).** `timeout_s` is enforced only by `proc.communicate` and `proc.kill()` (`_isolated_run.py:450-454`); the child payload has no timeout and `_run_in_process` ignores it. See "Finalize deadline".
+- **C2 (class 3).** `timeout_s` is enforced only by the parent; see "Finalize deadline", Facts.
 - **C3.** `extra="forbid"` at `config/_pipeline.py:58` rejects an `invariants` key today. A1a.
 - **C4 (class 10).** `memory_evidence` must stay the last field of `IsolatedRunResult` (`execution/_isolated_common.py:386-388`). A19.
-- **C5 (class 8).** `test_validate_no_mutation.py:55` does not match `measure_invariants`, and the capability matrix renders no F36 registry. See "Standalone entry".
+- **C5 (class 8).** Two sentries miss `measure_invariants` and F36; see "Standalone entry", Sentry hardening.
 - **C7.** OOC has no quarantine channel (`out_of_core/_compat.py:70-83`; `_pipeline_route_dispatch.py:55-77` passes none). A17e.
 - **C8 (class 4).** Legacy `validate_reconciliation_holds` resolves by table pair and first matching child (`validators/_relationship_checks.py:31-56`, `:258-262`). F36 copies neither. A1d.
 
@@ -86,7 +78,7 @@ F31 is being revised. F36 assumes only what `origin/plan/f31-safe-output` at `a9
 | X1 | Domain family modules under `safe_output/families/` with named typed factories; "no generic public factory" (f31 :243-266, :270) and the documented review path for "a new event family" (f31 :768) | New engine module `safe_output/families/invariants.py` with factories `invariant_summary`, `invariant_not_run`, `invariant_artifact_written`, `invariant_route_refused`. Built in the engine (Slice 4), never in a consumer. CLI and Platform call these public factories; they mint nothing. |
 | X2 | `SafeCount(name_enum, value)` with closed names (f31 :293) | Closed names `observations_pass`, `observations_fail`, `observations_indeterminate`, `observations_not_run`. No `SafeMeasurement` use. |
 | X3 | F29 `ordinary_output: bool = False` and exact opt-in manifest (f31 :276) | Only the reasons marked "ordinary" in the reason table are opted in, in Slice 4. |
-| X4 | Exact data-plane writer manifest with one threat-model entry per writer, no wildcards (f31 :66, :470), per-repository sink manifests (f31 :58, :448) | Two entries here, each added in the slice that builds the writer: engine `InvariantSidecarLease.write_bytes` (Slice 8c); CLI `publish_invariant_artifact` (Slice 10). The two Platform entries and X5 are F36-P's. Each accepts only an exact `SerializedInvariantReportV1`. RED: the shared analyzer flags each writer before its manifest entry exists. |
+| X4 | Exact data-plane writer manifest with one threat-model entry per writer, no wildcards (f31 :66, :470), per-repository sink manifests (f31 :58, :448) | Two entries here, each added in the slice that builds the writer: engine `InvariantSidecarLease.write_bytes` (Slice 8c); CLI `publish_invariant_artifact` (Slice 10). The two Platform entries and X5 are F36-P's. Each accepts only an exact `SerializedInvariantReportV1`. RED: B2. |
 | X6 | `SafeEventSink`, `SafeOutputScope`, process-entry install (f31 :270, :356) | Used unchanged for all ordinary F36 events. |
 | X7 | F31 changes ordinary serialization of `ExecutionResult` and `IsolatedRunResult` (f31 :228) | F36 field snapshots are taken on top of landed F31 engine Slice 5 (F31's numbering), never before. |
 
@@ -146,7 +138,7 @@ Pydantic models use `extra="forbid"`. `position` is `1..65535`. `sample_rows` is
 | `MAX_EVAL_BATCH_ROWS` | 65,536; larger Arrow batches are sliced before a kernel feed |
 | `MAX_OBSERVATIONS` | 1,792: 256 relationship checks times 7 observations |
 | `MAX_ARTIFACT_BYTES` | 16,777,216 canonical bytes for file, sidecar, DB, and HTTP alike |
-| `MAX_DRAIN_SECONDS` | 300; the upper bound on one finalize wait in any process. The applied deadline depends on the execution context, defined in "Finalize deadline" (C2) |
+| `MAX_DRAIN_SECONDS` | 300; upper bound on one finalize wait in any process; the per-context deadline is in "Finalize deadline" (C2) |
 | `FINALIZE_RESERVE_FRACTION`, `FINALIZE_RESERVE_MIN_S`, `FINALIZE_RESERVE_MAX_S` | 0.10, 1, 60; isolated runs only: `reserve_s = min(60, max(1, 0.10 * timeout_s))` of `timeout_s` is withheld from F36 for sidecar write, envelope write, exit, and child start skew |
 
 A relationship declaration emits source and output observations for `rel.pk.unique`, `rel.fk.coverage`, `rel.fk.orphan`, plus one transition observation `rel.join.cardinality_change`. A row-local or reconciliation declaration emits source, output, and transition. The maximum legal report must encode below `MAX_ARTIFACT_BYTES`, or Slice 0d stops and narrows the schema.
@@ -165,6 +157,18 @@ No sampled type has a population-failure field. Transition types use comparable,
 
 Source or output scope: any known failure is `fail`; zero evaluated rows is `indeterminate` with `invariant.no_rows_evaluated`; no failure plus any unevaluable row is `indeterminate`; exact clean is `pass`; sampled clean is `indeterminate` even when `unobserved_rows=0`. Transition scope: introduced failure or changed parent multiplicity is `fail`; zero comparable rows or any unknown alignment is `indeterminate`; exact clean is `pass`; sampled clean is `indeterminate`. `not_run` and `unsupported` always pair with `indeterminate`, `counts=None`, and a registered reason.
 
+Evaluated units. `ExactRowCounts`: `rows_evaluated`; `SampledRowCounts`: `observed_passed + observed_failed`. `RelationshipCounts`, per code (checked against `validators/_fk_validators.py` at f5b46a2c):
+
+| Code | Evaluated units | Known failure | Source of truth |
+|---|---|---|---|
+| `rel.pk.unique` | `parent_rows - null_parent_key_rows` | `duplicate_parent_key_groups > 0` | F36's own definition: no PK-uniqueness validator exists in `validators/` |
+| `rel.fk.coverage` | `matched_child_rows + unmatched_child_rows` (a partial-null tuple is unmatched) | `unmatched_child_rows > 0` | `validate_fk_intact` (`:151`): null FK skipped `:212-213`, fail when not in the PK set `:214` |
+| `rel.fk.orphan` | `child_rows` | `null_child_key_rows > 0` | `validate_no_orphan_children` (`:236`) fails only all-null child tuples (`:282`); unmatched non-null children belong to coverage. The revision 8 handoff's "`unmatched + null > 0`" differs; the validator is followed |
+
+Zero evaluated units on any code is `indeterminate` with `invariant.no_rows_evaluated`; one pure function `verdict_from_counts(code, scope, coverage, counts)` implements every rule above and is shared by the evaluators and the decoder.
+
+F35 eligibility. `is_f35_eligible(observation) -> bool`, public in `decoy_engine.invariants`, returns `scope == output and status == measured_exact and verdict == pass`. It reads no count field, so it holds for every counts type: zero evaluated units are already `indeterminate`. F35 calls it and never re-derives it.
+
 ### Frozen `/v1` enums and unions (MEDIUM 2)
 
 | Name | Members, in wire order |
@@ -181,13 +185,14 @@ Source or output scope: any known failure is `fail`; zero evaluated rows is `ind
 
 ### Reasons (MEDIUM 3)
 
-New F29 namespace profile `invariant(owner)` in `src/decoy_engine/reasons/_catalog.py` (the file is 170 lines and has no `invariant` profile), declared like `verification` at `_catalog.py:134-146` (kind finding, outcome findings). The registry takes the next minor version after landed F31 (`REGISTRY_VERSION` at `reasons/_registry.py:24`; the added-identity rule at `tests/unit/test_reason_registry.py:70-72` and `:150-157`). All codes are engine-declared, including the one Platform-detected code (owner `platform`).
+New F29 namespace profile `invariant(owner)` in `src/decoy_engine/reasons/_catalog.py`, declared like `verification` at `_catalog.py:134-146` (kind finding, outcome findings). The registry takes the next minor version after landed F31 (`REGISTRY_VERSION` at `reasons/_registry.py:24`; the added-identity rule at `tests/unit/test_reason_registry.py:70-72` and `:150-157`). All codes are engine-declared, including the one Platform-detected code (owner `platform`).
 
 | Code | Raised by | Ordinary (X3) |
 |---|---|---|
 | `invariant.probe_unsupported`, `invariant.chunked_api_unsupported`, `invariant.platform_unsupported` | config time | yes |
 | `invariant.member_unknown`, `invariant.member_duplicate`, `invariant.column_unknown` | config time, reconciliation and relationship member binding (finding 2) | yes |
 | `invariant.input_shape` | call time, `measure_invariants` input validation before any read (finding 4) | yes |
+| `invariant.key_type_unsupported` | K-KEY rule 5, from the Arrow schema before any token of that side is staged | yes |
 | `invariant.internal_failure`, `invariant.row_limit`, `invariant.scratch_budget`, `invariant.deadline`, `invariant.feed_rejected` | R-FAIL | yes |
 | `invariant.no_rows_evaluated`, `invariant.no_source_side`, `invariant.alignment_lost` | verdict rules; `alignment_lost` also from the OOC verdict join (finding 6) | no (report only) |
 | `invariant.report_not_persisted` | F36-P reader (owner `platform`): no persisted report for the job's current run | yes |
@@ -204,9 +209,7 @@ New F29 namespace profile `invariant(owner)` in `src/decoy_engine/reasons/_catal
 | `FINALIZED` | reject | reject | release, `CLOSED` | n/a | n/a |
 | `CLOSED` | reject | reject | no-op | n/a | n/a |
 
-A rejected feed increments `rejected_feeds`; when rejection happens before snapshot, affected observations are `not_run` `invariant.feed_rejected`. The route matrix asserts `rejected_feeds == 0` on every supported cell. `close` is called only from route exit paths, so a close without a report means the run is not publishing.
-
-Lease lifetime across feeds (V2-LOG, classes 2 and 3): `close` releases the scratch leases at the deadline even when `inflight_feeds > 0`, so a feed still running in DuckDB or Arrow outside the lock can lose its scratch under it. This is logged, not built: no V1 function or data-loss path was found, and the probe in "V2-LOG" shows the in-flight query fails with a Python exception (caught by the guard, so `not_run`), never a native fault. No barrier test is added for it.
+A rejected feed increments `rejected_feeds`; when rejection happens before snapshot, affected observations are `not_run` `invariant.feed_rejected`. The route matrix asserts `rejected_feeds == 0` on every supported cell. `close` is called only from route exit paths, so a close without a report means the run is not publishing. Lease lifetime across in-flight feeds at close is V2-LOG (first entry), with no barrier test.
 
 ### Finalize deadline (finding 3)
 
@@ -224,28 +227,27 @@ D-ISO partition. The parent computes `reserve_s = min(FINALIZE_RESERVE_MAX_S, ma
 
 Child write order (class 2). The sidecar lease writes `invariant.sidecar.tmp` relative to the work-root dirfd, fsyncs, renames to `invariant.sidecar`, fsyncs the directory, and only then the worker writes the envelope (`_isolated_worker.py:266`) carrying `invariant_sidecar: {present, size}`. The parent opens the sidecar only on the completed-envelope path (`_isolated_run.py:484-497`) and checks the size before decode. A kill at any instant yields one of: no envelope, so the existing timeout or abnormal classification (`:453-470`, `:499-531`) with no report; or a complete envelope, with the sidecar present at the stated size or the report replaced by the all-`not_run` `invariant.internal_failure` report. The two fixed names are unlinked by the parent in a `finally` when the caller owns `staging_dir`, and removed with the work root otherwise (`:363-365`).
 
-LOC. `_isolated_run.py` is 651 lines at the merged head and on the census (`tests/sentry/test_module_size.py:71`); it may only shrink. Slice 8a first extracts `_write_payload` (`:368-406` at `fdd08a89`, re-read at 8a) into a new `_isolated_payload.py` and ratchets the census entry down to the new exact LOC; Slice 8b then adds the two keys there and one call at the spawn site.
-
-Residual RF-T. Feeds run during execution and are not deadline-bounded, and the reserve limits only F36's finalize, not the run. An isolated run whose invariants-off wall time lies within the F36 feed overhead of `timeout_s` can be killed with invariants on and not with them off. This is the second named R-FAIL residual beside RF-OOM; A14d records the feed overhead ratio as evidence, from `uv.lock` in the branch's environment, and the docs state the residual.
+LOC. `_isolated_run.py` is 651 lines at the merged head and on the census (`tests/sentry/test_module_size.py:71`); it may only shrink. Slice 8a first extracts `_write_payload` (`:368-406` at `fdd08a89`, re-read at 8a) into a new `_isolated_payload.py` and ratchets the census entry down to the new exact LOC; Slice 8b then adds the two keys there and one call at the spawn site. Feeds are not deadline-bounded: residual RF-T (R-FAIL section), evidence A14d.
 
 ### Row and relationship semantics
 
 Comparison and sum kernels use lossless Arrow common types only. Checksums call `decoy_engine.checksums.validate` (`checksums.py:351-369`, one Python call per value). Deterministic sampling selects `m=min(sample_rows,population_rows)` midpoint positions `floor(((2k+1)*population_rows)/(2m))` and aligns source and output on those positions.
 
-Relationship semantics reuse `relationships/_graph.py:134-311` (first-hit in graph edge order, C1; the "declared order" prose at `:166-167`, `:177` does not describe the sort at `:252-262`) and these validator truth definitions, never their Python-set implementations, which grow with rows (LOW 1):
+Relationship semantics reuse `relationships/_graph.py:134-311` (first-hit in graph edge order, C1) and these validator truth definitions, never their Python-set implementations, which grow with rows (LOW 1):
 
 - Parent tuples with a null component are excluded from the parent key set: `_parent_pk_set` (`validators/_fk_validators.py:73`, rule at `:111`, at 6bf3fc9).
 - An all-null child tuple is a null FK, a partial-null tuple is an ordinary unmatched tuple: `_child_fk_values` (`_fk_validators.py:117`, rule at `:142`, at 6bf3fc9).
-- `rel.fk.coverage` follows `validate_fk_intact` (`_fk_validators.py:151`, null FK ignored); `rel.fk.orphan` follows `validate_no_orphan_children` (`_fk_validators.py:236`, null FK is an orphan).
+- `rel.fk.coverage` and `rel.fk.orphan` follow their validators as tabled under "Evaluated units".
 - "Null" in the three rules above means K-KEY null, not the validators' `v is None`.
 - `rel.reconciliation` follows `validate_reconciliation_holds` (`validators/_relationship_checks.py:199-215`) grouping, but uses absolute `Decimal` tolerance, not that validator's `isclose`-style default `1e-6`. The divergence is documented in the module docstring.
 
-**Canonical key rule K-KEY (V1-2).** Key equality is the engine's FK join equality, never Arrow's or DuckDB's. In `execution/_fk_keys.py` (at 6bf3fc9): `fk_key_value` (`:77-127`) folds `bool` to `0`/`1`, integral floats and int-equal `Decimal` to `int`, and float or `Decimal` NaN to `NULL_FK_KEY`; `fk_join_key` (`:174-218`) encodes a fractional float through its exact `Decimal` expansion and `_decimal_join_token` (`:150-171`, 200-digit context, scale and signed-zero folded), so a float and a `Decimal` match exactly when Python's `==` holds, and tags strings, timestamps and dates apart from numbers; `fk_join_key_tuple` (`:233-243`) length-prefixes each component. The routes join on this: out-of-core stages the token per row (`out_of_core/_relation.py:404-413`, `_join.py:235-242`) and the pandas routes' `_parent_map` uses `fk_key_value` through `_fk_key_compat.py:13`. Therefore:
+**Canonical key rule K-KEY (V1-2).** Key equality is the engine's FK join equality, never Arrow's or DuckDB's. In `execution/_fk_keys.py` (at 6bf3fc9): `fk_key_value` (`:77-127`) folds `bool` to `0`/`1`, integral floats and int-equal `Decimal` to `int`, and float or `Decimal` NaN to `NULL_FK_KEY`; `fk_join_key` (`:174-218`) encodes a fractional float through its exact `Decimal` expansion and `_decimal_join_token` (`:150-171`, 200-digit context, scale and signed-zero folded), so a float and a `Decimal` match exactly when Python's `==` holds, and tags strings, naive timestamps and dates apart from numbers; only a naive, non-NaT `datetime` gets `\x00TS:` (epoch nanoseconds, `:209-215` at f5b46a2c); a zone-aware timestamp, NaT, `timedelta` and every other type fall to the repr token `\x00OBJ:{type}:{repr}` (`:218` at f5b46a2c); `fk_join_key_tuple` (`:233-243`) length-prefixes each component. The routes join on this: out-of-core stages the token per row (`out_of_core/_relation.py:404-413`, `_join.py:235-242`) and the pandas routes' `_parent_map` uses `fk_key_value` through `_fk_key_compat.py:13`. Therefore:
 
 1. A key component is null when `fk_key_value(v) is NULL_FK_KEY` (None, float NaN, NaN-valued `Decimal`). This replaces the validators' `v is None`; the NaN divergence from the legacy validators is documented in the evaluator docstring.
 2. Every non-null parent and child key tuple is staged into DuckDB scratch only as the `VARCHAR` token `fk_join_key_tuple(tuple(component.as_py()))`, built per `MAX_EVAL_BATCH_ROWS` slice with the out-of-core loop's shape. Partial-null child tuples are counted unmatched without a token. DuckDB compares tokens by byte equality only; no raw key column, `CAST`, or DuckDB type coercion ever takes part in a join, group, or uniqueness count.
 3. F36 imports these functions, never re-implements or re-tags them; a change to `_fk_keys.py` moves F36 and the routes together (A6g, A6h).
 4. Cost: one Python call per key component, as on out-of-core; inside the A14a budget and A14d evidence.
+5. Type rule (V1-A). The `\x00OBJ:` token disagrees with Python equality: probed with pyarrow 24.0.0, pandas 2.3.3, CPython 3.10.20, one instant as `timestamp[us, UTC]` and `timestamp[us, America/New_York]`, or as `timestamp[ns, UTC]` and `timestamp[us, UTC]`, and `duration[ns]` versus `duration[us]`, are `==` with equal hash (the pandas routes' dict join matches them) but get different tokens. A key column is measured only when its Arrow type is in the K-KEY set: integer, bool, floating, decimal, string, large string, date32, date64, timestamp without a zone. A dictionary column is judged by its value type: routes tokenize it by value (`out_of_core/_relation.py:404` `to_pylist()`; `_chunked_fk_dtype.py:53-61` unwraps it; probe: `dictionary<string>`/`string` and `dictionary<int64>`/`int64` tokens equal). Any other type is refused by type, not value: every observation of each `relationship` or `reconciliation` check with such a parent or child key column, on either side, is `unsupported`, `indeterminate`, `counts=None`, `invariant.key_type_unsupported`; the run is untouched. Decided at compile time when schemas are known (`measure_invariants`), else from the first staged slice's schema of each side before that side stages a token; tokens the other side already staged for that check are dropped at finalize. No F36 read is added. A canonical zone-aware or duration token in `_fk_keys.py` is rejected: it changes the out-of-core join outcome ("Found, out of scope").
 
 Duplicate non-null parents stay visible and make only join change indeterminate. Parent ordinals are `(member_position, row_position)` and never leave the evaluator. Quarantine alignment happens before side and transition collection.
 
@@ -294,7 +296,7 @@ Each route feeds the source side at the read it already performs; F36 adds no so
 | OOC reorder | phase 1 raw batch, the only raw read (`out_of_core/_stream_driver.py:11-23`) | 2-bit verdict per row per row-local check, spilled as Arrow IPC under `InvariantScratchLease`, keyed by the same `row_nr` that phase 3 asserts (`_stream_driver.py:32-37`) |
 | OOC resident and batch-join | the batch where the raw child is read | same spilled carrier |
 
-Relationship keys for both sides are staged into DuckDB scratch at the same reads, as K-KEY tokens only. Spill size counts against the scratch budget; exceeding it is R-FAIL `invariant.scratch_budget`. A8b counts source reads per table and requires the count with invariants on to equal the count with invariants off.
+Relationship keys for both sides are staged into DuckDB scratch at the same reads, as K-KEY tokens only. Spill size counts against the scratch budget; exceeding it is R-FAIL `invariant.scratch_budget`. Read-count parity: A8b.
 
 ### OOC verdict join check (finding 6)
 
@@ -305,18 +307,15 @@ Join, inside the F36 frame only (it never wraps the route's own cursors, whose `
 1. Quarantine exclusion first. Rows in the route's accounted quarantine set are removed from the source verdict stream before any alignment check, so an accounted row is never reported as missing. On OOC the set is empty by construction today (C7); the step is still executed and asserted (A17e), so a future OOC quarantine channel must feed it rather than bypass it.
 2. Alignment. The next output `row_nr` must equal the next remaining source `row_nr`. A source `row_nr` with no output partner that is not accounted (missing), a repeated `row_nr` on either side (duplicate), a decreasing `row_nr` (out of order), or one stream ending first is alignment loss: that check's `transition` observation is `not_run`, `indeterminate`, `counts=None`, reason `invariant.alignment_lost`. Its `source` and `output` observations, which need no alignment, stay measured. This is a verdict rule, not an R-FAIL, and the run is untouched.
 3. Read failure. An Arrow IPC read error, truncated or schema-mismatched spill, or lease identity drift on the spill file is an F36 internal failure: the guard marks every observation that depends on that spill `not_run` with `invariant.internal_failure` (R-FAIL) and output bytes, commit (`out_of_core/_runner.py:313-315`), and job result are unchanged.
-
-Joining by position instead of `row_nr`, checking alignment before quarantine exclusion, or classifying a read failure as `alignment_lost` are the three mutations A17 must kill.
-
 ### Scratch capability
 
-`InvariantScratchLease` retains root and child descriptors, creates fixed names relative to a dirfd with exclusive non-following opens, checks type, owner, device, inode, and link count, and gives Arrow duplicated file objects. DuckDB receives only a proven live `/proc/self/fd/<fd>` bridge plus configured `memory_limit`, `temp_directory`, and `max_temp_directory_size`. Today `out_of_core/_duckdb.py:42` sets only `temp_directory` and `memory_limit`, so the temp-size cap is new configuration, not reuse. It streams aggregates, never keys. The Slice 3a-2 spike must also prove that `DuckDBPyConnection.interrupt()` stops a running query (deadline column above); if not, Slice 3a-2 stops for the owner.
+`InvariantScratchLease` retains root and child descriptors, creates fixed names relative to a dirfd with exclusive non-following opens, checks type, owner, device, inode, and link count, and gives Arrow duplicated file objects. DuckDB receives only a proven live `/proc/self/fd/<fd>` bridge plus configured `memory_limit`, `temp_directory`, and `max_temp_directory_size`. The temp-size cap is new configuration (A7b). It streams aggregates, never keys. The Slice 3a-2 spike must also prove that `DuckDBPyConnection.interrupt()` stops a running query (deadline column above); if not, Slice 3a-2 stops for the owner.
 
 **Platform matrix (MEDIUM 7).** Row-local checks run on every OS. Relationship and reconciliation checks are Linux-only in V1; elsewhere they are `unsupported` with `invariant.platform_unsupported` decided at config time, before staging. Relationship cells of the parity matrix are Linux-only and labelled so; non-Linux CI, where present, asserts the `unsupported` cells.
 
 ### Artifact and isolation ownership
 
-`encode_invariant_report_v1` and `decode_invariant_report_v1` are schema-specific engine functions: exact types, closed fields, canonical order, duplicate-key rejection, bounded integers, F29 membership, UTF-8, byte cap, byte-for-byte re-encode equality. `SerializedInvariantReportV1` is an opaque exact type with no mapping protocol or generic unseal. `measure_invariants` is a normal in-process API over typed Arrow inputs (next section); callers with a hostile-code threat model use `run_pipeline_isolated`. F36 builds only the engine sidecar lease; the CLI owns its file publish, F36-P the DB write and HTTP response, F31 every ordinary event.
+`encode_invariant_report_v1` and `decode_invariant_report_v1` are schema-specific engine functions: exact types, closed fields, canonical order, duplicate-key rejection, bounded integers, F29 membership, UTF-8, byte cap, byte-for-byte re-encode equality. `SerializedInvariantReportV1` is an opaque exact type with no mapping protocol or generic unseal. F36 builds only the engine sidecar lease; the CLI owns its file publish, F36-P the DB write and HTTP response, F31 every ordinary event.
 
 Decoder count and balance rules (finding 7, class 6). `decode_invariant_report_v1` rejects, with a fixed `InvariantDecodeError(code)` and no partial report, any payload that breaks one of these; the encoder asserts the same rules, so a producer bug cannot write what the decoder would refuse.
 
@@ -327,7 +326,7 @@ Decoder count and balance rules (finding 7, class 6). `decode_invariant_report_v
 - `SampledTransitionCounts`: `population_rows == observed_rows + unobserved_rows`; `observed_rows == introduced_failures + resolved_failures + persistent_failures + persistent_passes + unknown_transitions + unevaluable_transitions`; `observed_rows <= MAX_SAMPLE_ROWS`.
 - `RelationshipCounts`: `child_rows == null_child_key_rows + matched_child_rows + unmatched_child_rows`; `parent_zero_match_rows + parent_one_match_rows + parent_many_match_rows == parent_rows - null_parent_key_rows`; `null_parent_key_rows + duplicate_parent_key_rows <= parent_rows`; `2 * duplicate_parent_key_groups <= duplicate_parent_key_rows`, and the two are zero together.
 - `JoinChangeCounts`: `comparable_parents == changed_parents + unchanged_parents`; `changed_parents == increased_parents + decreased_parents`; `lost_all_children <= decreased_parents`; `gained_from_zero <= increased_parents`.
-- Pairing: `measured_*` carries exactly the counts member the observation shape table allows for its code and scope; `not_run` and `unsupported` carry `counts=None`, `verdict=indeterminate`, and a registered reason. The decoder recomputes the verdict from the counts by the verdict rules and rejects a mismatch, so a balanced payload with a forged `pass` is refused.
+- Pairing: `measured_*` carries exactly the counts member the observation shape table allows for its code and scope; `not_run` and `unsupported` carry `counts=None`, `verdict=indeterminate`, and a registered reason. The decoder recomputes the verdict with `verdict_from_counts` (including the per-code evaluated units of `RelationshipCounts`) and rejects a mismatch, so a balanced payload with a forged `pass`, or a `pass` over zero evaluated units, is refused.
 - Report: at most `MAX_OBSERVATIONS` observations, unique and in canonical `ObservationRef` order; report `status` and `coverage` equal the values recomputed from the observations.
 
 ### Standalone entry `measure_invariants` (finding 4)
@@ -348,7 +347,7 @@ def measure_invariants(
 - Relationship graph: resolved by the same chain `run_pipeline` uses at `execution/_pipeline_context.py:318-326` (`build_namespace_registry`, `check_orphan_fk_policy_completeness`, `build_relationship_graph`, or the empty graph when there are no relationships). Slice 3c-1 extracts that block into one shared function both call, so the two cannot diverge; A18c asserts equal `graph.edges` for every FK-shape fixture.
 - Return: the typed `InvariantReportV1`, never bytes; callers encode with `encode_invariant_report_v1`. After input validation it never raises for an F36 failure: the same `InvariantRunGuard` turns it into `not_run` observations (R-FAIL). It builds its own collector and scratch lease and closes both in `finally`, including on `BaseException`.
 - It does not mutate any input mapping, table, array, or the config, and it records no telemetry into the caller's objects.
-- Module `invariants/_measure.py`, within the 450-line new-module ceiling. Implementation slice: Slice 3c-1, after the row (Slices 2a-2c) and relationship (Slices 3b-1, 3b-2) evaluators it composes.
+- Module `invariants/_measure.py` (Slice 3c-1).
 
 Sentry hardening (C5), in Slice 3c-2, tightening only:
 
@@ -358,16 +357,16 @@ Sentry hardening (C5), in Slice 3c-2, tightening only:
 
 ### F36-P scope note (the Platform half, a separate plan in `decoy-platform`)
 
-F36-P is authored later from this note (owner line 110) and builds Platform persistence, the carrier, the artifact endpoint, the B-9 section and the F35 fixture. This plan builds none of them. F36-P re-reads Platform `main` (at least `0fb5e3f6`) and scheduler revision 5; the revision 6 contract text and facts F-P1 to F-P10 are not carried.
+F36-P is authored later from this note plus a re-read of Platform `main` and scheduler revision 5 (owner line 110), and builds Platform persistence, the carrier, the artifact endpoint, the B-9 section and the F35 fixture. This plan builds none of them. The revision 6 contract text and facts F-P1 to F-P10 are not carried.
 
-- **Engine hand-over.** `SerializedInvariantReportV1` and its codec (Slices 0d, 0e); the F35 eligibility rule ("Design properties"); reason `invariant.report_not_persisted`, declared by the engine with owner `platform` (Slice 4); the X1 factories.
-- **K-JOB.** One append-only table `job_invariant_reports` with a non-unique `job_id` FK `ON DELETE CASCADE`, the run's `claim_generation` and the exact codec bytes, read as the latest row of the job's current generation (Q2, closed).
-- **Dependency.** Scheduler S9a-2 on Platform `main`, not S9a-1: S9a-2 threads `JobRunContext.fence` (scheduler `eb8a5d6f`, S9a-2 file list, `v2_orchestrator.py`). F36-P cites, never redefines, the interface Dennis's rev 4 review (V1-H3) requires of scheduler revision 5, which F35 also consumes (`p1-plan-f35-rev3-v1-fixes-handoff.md`): `fenced_job_writer.fenced_side_write(fence, require_status=success, lock_timeout_ms)` (own session, `SELECT 1 FROM jobs WHERE id=:id AND status=:s AND claim_generation=:g FOR UPDATE` under `lock_timeout`); `fenced_job_writer.current_generation(db, job_id)`; `_run_post_success_report_hooks` receives the run's `Fence` and runs guarded by `fence.landed == success`, outside any `fenced_txn` block. None of the three is in revision 4's text. If revision 5 does not ship `fenced_side_write`, F36-P stops and reports; it writes no SQL of its own.
+- **Engine hand-over.** `SerializedInvariantReportV1` and its codec (Slices 0d, 0e); `is_f35_eligible` ("Counts, status, verdict"), which F35 E3 calls by name; reason `invariant.report_not_persisted`, declared by the engine with owner `platform` (Slice 4); the X1 factories.
+- **K-JOB.** One append-only table `job_invariant_reports` with a non-unique `job_id` FK `ON DELETE CASCADE`, the run's `claim_generation` and the exact codec bytes, read as the latest row of the job's current generation (closed by the orchestrator under owner delegation).
+- **Dependency.** Scheduler S9a-2 on Platform `main`, not S9a-1. F36-P cites, never redefines, the interface scheduler revision 5 pins in section 4a (`6ee0f6b6`, "The pinned interface", items 1 to 7): `Fence`, `record_landing`, `fenced_txn`, `fenced_side_write(fence, *, require_status, lock_timeout_ms)`, `current_generation(db, job_id)`, the hook signature with keyword `fence` (item 6), and `run_job(..., *, fence)` with `JobRunContext.fence` (item 7). If S9a-2 does not ship these names, F36-P stops and reports; it writes no SQL of its own.
 
 Binding requirements:
 
-1. **V1-A (class 3): no generation without a `Fence`.** At `0fb5e3f6` the flag-on worker runs the hooks whenever `db.refresh(job)` (`api/jobs/dispatch_worker_main.py:491`) shows `success` (`:492-505`), without checking that this run landed it. Failure: flag-on run N stalls and is taken over; run N+1 lands `success` at g+1 and its persist fails; run N wakes, sees `success`, a builder reads `claim_generation` from the row, and run N's report is read as run N+1's. Requirement: the flag-off site (`api/jobs/runner.py:576`) gets the carrier with the generation of the run's own `Fence`. The flag-on site (`dispatch_worker_main.py:505`) gets carrier `None` until scheduler S18 gives that worker a `Fence`: no row, and the reader returns `invariant.report_not_persisted`. Named F36-P limit: flag-on jobs (cgroup supervisor, reachable as a non-default backend in V1, owner line 98) have no persisted invariant report in V1. No code builds a generation by reading the job row (scheduler §4a). The identity premise covers same-`job_id` rerunnable paths only (both claims, iteration child start, takeovers, re-admission); workflow steps run once and do not bump.
-2. **V1-B (class 3): never wait on the run's own row lock.** Within a fenced block the `after_begin` listener re-takes the `jobs` row lock at every new transaction on `db` (scheduler `eb8a5d6f` §4a), and the hooks re-open transactions (quality commit `api/quality/runner_hook.py:321`). Failure: revision 6's own-session `FOR UPDATE` writer, called from hooks inside `fenced_txn`, waits on that lock, times out, persists nothing, so every F35 invariant clause is `inconclusive` and every gate-mode job with one is refused (without the timeout the worker wedges). Requirement: write only through `with fenced_side_write(fence, require_status=success, lock_timeout_ms=INVARIANT_PERSIST_LOCK_TIMEOUT_MS)`, from a hook guarded by `fence.landed` outside any fenced block (recommended over a write inside the run's `fenced_txn` savepoint). The reader uses `current_generation(db, job_id)` plus `status = 'success'`. `FOR KEY SHARE` is not a fix: it conflicts with `FOR UPDATE`.
+1. **V1-A (class 3): no generation without a `Fence`.** At `67e8cbba` the flag-on worker runs the hooks whenever `db.refresh(job)` (`api/jobs/dispatch_worker_main.py:491`) shows `success` (`:492-505`), so a generation read from the row could label a taken-over run's report as the next run's. Requirement: the flag-off site (`api/jobs/runner.py:584` at `67e8cbba`) gets the carrier with the generation of the run's own `Fence`: the one S9a-2 threads into `run_job` (`JobRunContext.fence`, scheduler revision 5 section 4a item 7), which also covers workflow steps (`api/workflows/runner.py:282` calls `run_job(job.id, config_yaml, "mask")` with no `DispatchRun`; revision 5 takes the step's `Fence` from `start_job_if_startable`'s `RETURNING`) and iteration children. Never a `_dispatch_supervisor.get_run` lookup. The flag-on site (`dispatch_worker_main.py:505`) gets carrier `None` until scheduler S18 gives that worker a `Fence`: no row, and the reader returns `invariant.report_not_persisted`. Named F36-P limit: flag-on jobs (cgroup supervisor, reachable as a non-default backend in V1, owner line 98) have no persisted invariant report in V1. No code builds a generation by reading the job row (revision 5 section 4a item 1). The identity premise covers same-`job_id` rerunnable paths (both claims, iteration child start, takeovers, re-admission) and workflow steps per item 7.
+2. **V1-B (class 3): never wait on the run's own row lock.** An own-session `FOR UPDATE` writer called inside `fenced_txn` times out on the lock the fence holds (scheduler revision 5 section 4a, "Session rule"), persists nothing, and every gate-mode F35 job with an invariant clause is refused. Requirement: the invariant report write runs only through `with fenced_side_write(fence, require_status=success, lock_timeout_ms=INVARIANT_PERSIST_LOCK_TIMEOUT_MS)`, from a point outside any `fenced_txn` block. Where the hook call sits is scheduler revision 5's choice (section 4a item 6). The reader uses `current_generation(db, job_id)`. `FOR KEY SHARE` is not a fix: it conflicts with `FOR UPDATE`.
 3. **No fallback token** and no F36 column on `jobs` (owner lines 106, 110).
 
 New acceptance tests F36-P must build RED-first (Platform `tests/test_invariant_persistence.py`):
@@ -375,7 +374,7 @@ New acceptance tests F36-P must build RED-first (Platform `tests/test_invariant_
 - A12d `test_carrier_reaches_hook_only_on_won_landing[flag_on_no_fence]`. Seeded: a flag-on job to `success`, plus a cell where run N's flag-on process calls the hook after run N+1 landed at g+1. Asserts zero `job_invariant_reports` rows and the fixed `invariant.report_not_persisted` body. Fail-before: the F36-P carrier slice's first commit, whose stub builds the generation from the refreshed row at `dispatch_worker_main.py:505`. Mutation: the same.
 - A12o `test_persist_from_real_hook_path_does_not_wait_on_own_run_lock` (Postgres). Seeded: the real flag-off path through the landing and the hooks, the quality hook committing first so the run session has re-begun, lock timeout 2000 ms. Asserts one row at the run's generation and elapsed time under the timeout. Fail-before: the revision 6 writer called inside `with fenced_txn(db, fence)`: lock timeout, zero rows. Mutation: move the hook call inside the fenced block.
 
-Moved to F36-P by ID (deleted here): slices 11a-0a, 11a-0b, 11a-1, 11b; tests A12a, A12b, A12c, A12d (`landed`, `landing_missed`, `carrier_raises`), A12e, A12g, A12h, A12i, A12j, A12k, A12l (with `[flag_on]` expecting carrier `None`), A12m (`writer_db_error`, `carrier_none`; `fallback_readback_fails` is deleted, not moved), A12n, A13; the Platform cells of B2 (DB, HTTP), B7 (`[db-numeric]`, `[http-numeric]`), B9 (A13 `[zero_evaluated_refused]`) and B11; the marker-corpus Platform surfaces; facts F-P1 to F-P10; C6; the Platform entries of X4 and X5; the Platform rows of the class table, owner exits, output surfaces, frozen contracts and reuse inventory; pre-mortem items 3 and 4; Q5 and Q6; the Platform V2-LOG line and the Platform lines of revision 6's not-verified list. A13 now carries the only evidence for the engine's F35 eligibility rule and B9's eligibility half; B9's engine cell stays in Slice 2a.
+Moved to F36-P by ID (deleted here): slices 11a-0a, 11a-0b, 11a-1, 11b; tests A12a, A12b, A12c, A12d (`landed`, `landing_missed`, `carrier_raises`), A12e, A12g, A12h, A12i, A12j, A12k, A12l (with `[flag_on]` expecting carrier `None`), A12m (`writer_db_error`, `carrier_none`; `fallback_readback_fails` is deleted, not moved), A12n, A13; the Platform cells of B2 (DB, HTTP), B7 (`[db-numeric]`, `[http-numeric]`), B9 (A13 `[zero_evaluated_refused]`) and B11; the marker-corpus Platform surfaces; facts F-P1 to F-P10; C6; the Platform entries of X4 and X5; the Platform rows of the class table, owner exits, output surfaces, frozen contracts and reuse inventory; pre-mortem items 3 and 4; Q5 and Q6; the Platform V2-LOG line and the Platform lines of revision 6's not-verified list. A13's Platform cells stay in F36-P; the engine half of the eligibility evidence is A3e here, and B9's engine cell stays in Slice 2a.
 
 ## Defect-class closure table
 
@@ -384,11 +383,11 @@ Moved to F36-P by ID (deleted here): slices 11a-0a, 11a-0b, 11a-1, 11b; tests A1
 | 1 | Value-bearing output | F36 codec plus F31 extension points X1-X4; no value-derived numbers (no measurement field) | Marker corpus incl. numeric markers through every engine and CLI surface; F31 analyzer over the two X4 writers | Re-add a deviation measurement; drop one X4 manifest entry |
 | 2 | Cleanup on every exit | Scratch lease, sidecar lease, CLI file owner; R-FAIL guard | Owner by exit matrix plus R-FAIL fault matrix per route | Remove one `finally`, or make the guard re-raise |
 | 3 | State and concurrency | Lock, condition, inflight leases, `close_pending`, claimant; per-context finalize deadline with the D-ISO partition | A5a-A5d, A16a-A16e | Let `OPEN` admit while `close_pending`; drop claimant cancel transition; drop the reserve |
-| 4 | Route parity and silent fallback | Executable capability manifest; R-FAIL reasons; Linux matrix | Route matrix asserts telemetry, nonempty observations, bytes, zero-read refusal, `rejected_feeds==0` | Delete one route hook or one R-FAIL reason |
+| 4 | Route parity and silent fallback | Executable capability manifest; R-FAIL reasons; Linux matrix; K-KEY type rule | Route matrix asserts telemetry, nonempty observations, bytes, zero-read refusal, `rejected_feeds==0`; A6i | Delete one route hook or one R-FAIL reason; drop the key type check |
 | 5 | Referential integrity | FK-shape by route disposition table; member binding by exact edge key; graph-order first-hit; `row_nr` verdict join with quarantine exclusion first; K-KEY canonical key tokens on every route | A6a-A6h, A1d, A17a-A17f | Drop one key component; resolve by table pair; join by position; stage raw keys instead of K-KEY tokens |
 | 6 | Untrusted producer | Exact frozen types, bounded codec with count bounds, balance equations, shape table and verdict recomputation, fixed errors, closed enums | Field walk, A10a-A10d | Replace an exact type check with `isinstance`; remove one balance equation |
 | 7 | TOCTOU (check then use) | Descriptor-anchored scratch capability and identity checks | Symlink, rename, hard link, fd reuse, absent procfs, bridge drift | Use one bare path; remove post-query check |
-| 8 | Weak evidence | Named test matrix with seeded violation and fail-before line; non-vacuity counters; sentry target set for `measure_invariants`; zero-evaluated is indeterminate; residuals RF-OOM and RF-T stated | A1-A19, B1-B10, A18g, A18h, B9 | Remove the zero-evaluated rule; remove a name from `_EXTRA_TARGETS` |
+| 8 | Weak evidence | Named test matrix with seeded violation and fail-before line; non-vacuity counters; sentry target set for `measure_invariants`; zero evaluated units are indeterminate for every counts type; count-free `is_f35_eligible`; residuals RF-OOM and RF-T stated | A1-A19, B1-B10, A18g, A18h, B9, A3d, A3e | Remove the zero-evaluated rule; remove a name from `_EXTRA_TARGETS` |
 | 9 | Refactor drift | Characterization first; census ratchet-down only | Placement mutations for full-frame, unified, OOC; read counter | Move full-frame hook above `_pipeline_full_frame.py:194` |
 | 10 | Frozen drift | Enum table, field ledger, dump-shape rule, schema snapshots, `memory_evidence` stays last | Snapshot and old-reader fixtures; A1e; A19 | Emit `"invariants": None` in the default dump; append after `memory_evidence` |
 
@@ -424,7 +423,7 @@ Dispatch: `execution/_pipeline.py:313-320` sends to `_pipeline_route_dispatch.py
 | Isolated false/true | `_isolated_run.py:141-243` (entry), `:258-319` (in-process, D-IN), `:409-531` (spawn, kill, envelope, D-ISO); in-process parity or sidecar |
 | Governor | `_governor.py:243-436`; only the final completed `IsolatedRunResult` carries a report |
 | Probe | `_probe.py:222-352`; config-time refusal `invariant.probe_unsupported` before spawn |
-| Direct public chunk iterators | `native/_chunked_entry.py:601` (`run_mask_chunked`, file is 681 lines), `_chunked.py:369-449`; refuse before first pull |
+| Direct public chunk iterators | `native/_chunked_entry.py:601` (`run_mask_chunked`), `_chunked.py:369-449`; refuse before first pull |
 | Direct `PandasExecutionAdapter.run` | `_pandas_adapter.py:105`, `run` at `:163`; config-unaware; callers use `measure_invariants` |
 
 ### Owned state and exit paths
@@ -447,6 +446,7 @@ R = resident routes (full-frame, unified, mixed, multi-table), S = sequential an
 |---|---|---|---|
 | Single-column cross-table; composite all-present, partial-null, all-null | measured | measured | measured |
 | Cross-type keys under K-KEY: bool/int, int/integral float, Decimal/float, Decimal scale, NaN, composite mixed | measured; a run the route itself fails (`out_of_core_fk_key_dtype_unsupported`) stays failed | same | same |
+| Key column outside the K-KEY type set (zone-aware timestamp, duration, time, binary; K-KEY rule 5) | `unsupported` `invariant.key_type_unsupported` | same | same; a run the route itself refuses stays refused |
 | One parent many children, child in a later batch | measured | measured | measured |
 | Same parent table, different child tuples; multi-parent first-hit group | measured | measured | measured |
 | Self-reference, parent in a later batch | measured | measured | OOC rejects (`out_of_core/_compat.py:478-492`); run falls back to full-frame; report measured, telemetry `full_frame` |
@@ -476,7 +476,7 @@ Frozen, slotted, exact dataclasses, no inheritance, fields in order:
 | `InvariantObservation` | `observation_ref`, `structures`, `status`, `verdict`, `reason`, `counts` |
 | `InvariantReportV1` | `schema_version`, `status`, `coverage`, `observations` |
 
-V1 has no measurement field: every candidate (maximum deviation, residual sum) is value-derived and is dropped. Every integer is a row or parent count bounded by `MAX_SELECTED_ROWS_PER_SIDE`. Enum and union members are the frozen table above.
+No measurement field (V1 rule 3: maximum deviation and residual sum are value-derived). Enum and union members are the frozen table above.
 
 `ExecutionResult` (`_adapter.py:61-71`) gains trailing `invariant_report=None`. `IsolatedRunResult` (`_isolated_common.py:362-388`) gains `invariant_report=None` immediately before `memory_evidence`, which must stay the last field (`:386-388`, C4); construction is keyword-only at every call site, pinned by A19. Unchanged: `GovernorTripRecord` and `GovernorResult` (`_governor.py:170-211`), `ProbePoint` and `ProbeResult` (`_probe.py:133-172`). `SerializedInvariantReportV1` is opaque with no public fields.
 
@@ -501,7 +501,7 @@ V1 has no measurement field: every candidate (maximum deviation, residual sum) i
 |---|---|
 | Pipeline V1 config | Additive optional block; omitted block leaves dump and `config_digest` byte-identical |
 | `run_pipeline`, route choice, output bytes | Unchanged with or without invariants (R-FAIL and on/off byte equality) |
-| `ExecutionResult`, `IsolatedRunResult` | Additive defaulted field (trailing on `ExecutionResult`; before the last field `memory_evidence` on `IsolatedRunResult`, C4); snapshot on top of F31 (X7) |
+| `ExecutionResult`, `IsolatedRunResult` | Additive defaulted field per "Public result fields" (C4); snapshot on top of F31 (X7) |
 | Governor and probe records | Unchanged; snapshots |
 | Direct chunked APIs | Config refusal before first pull; shapes unchanged |
 | `decoy_engine.__all__`, F29 registry | Exact additive names; new profile; next minor |
@@ -512,9 +512,9 @@ V1 has no measurement field: every candidate (maximum deviation, residual sum) i
 
 ## Acceptance tests, all RED first
 
-RED convention. "Fail-before" names the baseline line (engine `fdd08a89`, re-read at each slice head per "Revision 5 baseline drift") where the behavior is absent or wrong. When the test drives an entry that exists at baseline (`PipelineConfig.model_validate`, `run_pipeline`, `run_pipeline_isolated`), its RED is behavioral at that line. When the mechanism has no baseline entry (collector, codec, kernels, lease), the RED is recorded against the slice's first commit, which holds an inert stub with the stated stub behavior; an `ImportError` is never accepted as RED. Rows marked "characterization" are green at baseline by design and must stay green; their RED evidence is the named mutation. Every generated test first asserts its marker is in the input and that its visit or emission count is positive. The killing mutation is applied to the future F36 code once, in the slice that builds it, and the evidence records the RED.
+RED convention. "Fail-before" names the baseline line (engine `fdd08a89`, re-read at each slice head per the V2-LOG baseline-drift entry) where the behavior is absent or wrong. When the test drives an entry that exists at baseline (`PipelineConfig.model_validate`, `run_pipeline`, `run_pipeline_isolated`), its RED is behavioral at that line. When the mechanism has no baseline entry (collector, codec, kernels, lease), the RED is recorded against the slice's first commit, which holds an inert stub with the stated stub behavior; an `ImportError` is never accepted as RED. Rows marked "characterization" are green at baseline by design and must stay green; their RED evidence is the named mutation. Every generated test first asserts its marker is in the input and that its visit or emission count is positive. The killing mutation is applied to the future F36 code once, in the slice that builds it, and the evidence records the RED.
 
-All `tests/unit/invariants/` and `tests/integration/invariants/` files are new. CLI rows name the `decoy` CLI repository, which is not attached to this session and was not read; their fail-before is stated as unverified.
+All `tests/unit/invariants/` and `tests/integration/invariants/` files are new.
 
 | ID | Test (file::function) | Seeded violation | Fail-before at baseline | Mutation that must turn it RED | Slice |
 |---|---|---|---|---|---|
@@ -527,6 +527,8 @@ All `tests/unit/invariants/` and `tests/integration/invariants/` files are new. 
 | A3a | `tests/unit/invariants/test_counts.py::test_every_bucket_nonzero_and_balanced[counts_type]` | fixture family that makes every bucket of every counts type nonzero | stub returns all-zero counts | drop `rows_unevaluable` from the total | 2a |
 | A3b | `tests/unit/invariants/test_counts.py::test_sampled_partial_has_unobserved_rows` | `sample_rows < population_rows` | stub sets `unobserved_rows=0` | compute `m` as `sample_rows` without the `min` | 2a |
 | A3c | `tests/unit/invariants/test_counts.py::test_sampled_clean_full_coverage_is_indeterminate` | `sample_rows >= population_rows`, no failure | stub reports `pass` | return `pass` when `unobserved_rows == 0` | 2a |
+| A3d | `tests/unit/invariants/test_verdict_rules.py::test_zero_evaluated_units_is_indeterminate[code]`, one case per check code (three `rel.*` `RelationshipCounts` codes and every `ExactRowCounts` code) | `rel.fk.orphan` output with `child_rows=0`; `rel.pk.unique` with every parent key null; `rel.fk.coverage` with only null child keys; asserts `indeterminate`, `invariant.no_rows_evaluated`, and the decoder rejects a hand-built `pass` payload for those counts | first-commit stub `verdict_from_counts` returns `pass` for no known failure (revision 7 had no relationship evaluated units) | count `child_rows=0` as clean | 0e |
+| A3e | `tests/unit/invariants/test_f35_eligibility.py::test_eligibility[case]` | eligible only for output-scope `measured_exact` `pass`; ineligible for source scope, transition scope, `measured_sampled` clean, `not_run`, `unsupported` (including A6i's `key_type_unsupported`), zero-unit `indeterminate`, a relationship observation with one failing member | no engine function exists at `f94fb8eb` (the rule's only test, A13, moved to F36-P) | add `measured_sampled` to the accepted statuses | 2a |
 | A4a | `tests/unit/invariants/test_kernels.py::test_compare_truth_table[op-left-right]` | every op times {value, null, NaN, inf, overflow, non-comparable type} | stub treats null as false | compare null as a value | 2b |
 | A4b | `tests/unit/invariants/test_kernels.py::test_null_and_null_pair_truth_tables[op]` | every null op times null patterns | stub | swap `left_implies_right` operands | 2b |
 | A4c | `tests/unit/invariants/test_kernels.py::test_sum_equals_decimal_tolerance[case]` | values at tolerance, tolerance plus one ulp, overflow, non-finite | stub uses float `isclose` | use float arithmetic | 2b |
@@ -541,8 +543,9 @@ All `tests/unit/invariants/` and `tests/integration/invariants/` files are new. 
 | A6d | `tests/unit/invariants/test_relationship_eval.py::test_first_hit_uses_graph_edge_order` | two parents whose config order is the reverse of their sorted order, one key present in both | `_graph.py:166-167` prose says declared order; the sort is `:252-262` and the route consumes it at `_pandas_adapter.py:380` (C1) | evaluate the group in config order | 3b-1 |
 | A6e | `tests/unit/invariants/test_relationship_eval.py::test_reconciliation_counts_parent_rows[case]`, cases `null_parent_value_is_unknown`, `non_numeric_child_is_unevaluable`, `childless_parent_compares_zero`, `duplicate_parent_keys` | parent and child fixtures per case | legacy fails null parents (`_relationship_checks.py:319-321`) | count null `parent_value` as failed | 3b-2 |
 | A6f | `tests/unit/invariants/test_relationship_eval.py::test_reconciliation_multi_parent_first_hit_only` | child key present in an earlier parent of the same group | no baseline counterpart (legacy ignores multi-parent) | attribute every matching child row to this edge | 3b-2 |
-| A6g | `tests/unit/invariants/test_relationship_eval.py::test_key_equality_is_canonical[case]`, equal cases `bool_int`, `int_integral_float`, `decimal_float_exact`, `decimal_scale`, `composite_str_int_vs_str_float`; distinct cases `bool_two`, `int_fractional_float`, `decimal_point_one_vs_float_point_one`, `int_vs_str`, `composite_swapped`; null cases `nan_child_is_null_fk`, `nan_parent_excluded`; zone-aware cases `tz_aware_same_zone` (equal) and `tz_aware_two_zones_same_instant` (asserts the K-KEY outcome, two tokens, which is the out-of-core route's own join outcome; the pandas routes differ, "Found, out of scope") | parent and child columns of different Arrow types (`bool`/`int64`, `int64`/`float64`, `decimal128`/`float64`, (`string`,`int64`)/(`string`,`float64`)); oracle is `fk_join_key_tuple` over `as_py()` values in a Python dict | stub stages raw Arrow keys and joins in DuckDB, which applies its own casts | stage raw keys; tag float and `Decimal` apart; treat NaN as a value | 3b-0 |
-| A6h | A8a cells `[route-cross_type_keys-batch_rows]` for R, S and O, generated from the K-KEY row of the FK-shape table (without the zone-aware two-zone case), plus `measure_invariants` | same fixtures through each route; `RelationshipCounts` equal the A6g oracle and agree with the route's own join outcome | the route's own staging (`out_of_core/_relation.py:404-413`, at a3d62a67) mints `fk_join_key_tuple` tokens while F36 stages none (no hook, A8a) | replace the K-KEY staging call on one route's feed | 5a, 6a, 7b |
+| A6g | `tests/unit/invariants/test_relationship_eval.py::test_key_equality_is_canonical[case]`, equal cases `bool_int`, `int_integral_float`, `decimal_float_exact`, `decimal_scale`, `composite_str_int_vs_str_float`; distinct cases `bool_two`, `int_fractional_float`, `decimal_point_one_vs_float_point_one`, `int_vs_str`, `composite_swapped`; null cases `nan_child_is_null_fk`, `nan_parent_excluded` | parent and child columns of different Arrow types (`bool`/`int64`, `int64`/`float64`, `decimal128`/`float64`, (`string`,`int64`)/(`string`,`float64`)); oracle is `fk_join_key_tuple` over `as_py()` values in a Python dict | stub stages raw Arrow keys and joins in DuckDB, which applies its own casts | stage raw keys; tag float and `Decimal` apart; treat NaN as a value | 3b-0 |
+| A6h | A8a cells `[route-cross_type_keys-batch_rows]` for R, S and O, generated from the K-KEY row of the FK-shape table, plus `measure_invariants` | same fixtures through each route; `RelationshipCounts` equal the A6g oracle and agree with the route's own join outcome | the route's own staging (`out_of_core/_relation.py:404-413`, at a3d62a67) mints `fk_join_key_tuple` tokens while F36 stages none (no hook, A8a) | replace the K-KEY staging call on one route's feed | 5a, 6a, 7b |
+| A6i | `tests/unit/invariants/test_relationship_eval.py::test_key_type_outside_kkey_set_is_unsupported[case]`, cases `tz_two_zones_same_instant`, `tz_same_zone_ns_vs_us`, `duration_ns_vs_us`, `duration_same_unit` (refused by type, though its tokens agree), control `naive_ts_ns_vs_us` (measured, every child matched); plus A8a cells `[route-tz_key-batch_rows]` for R, S and O sharing A6h's fixtures | parent `timestamp[us, UTC]`, child `timestamp[us, America/New_York]`, every child instant equal to a parent instant; asserts every observation of the check is `unsupported` `invariant.key_type_unsupported`, `counts=None`, none `fail`, `is_f35_eligible` false, output bytes equal invariants-off | revision 7 design: 3b-0 mints two tokens; the resident route reports every child unmatched, `fail` | drop the type check | 3b-0; cells 5a, 6a, 7b |
 | A7a | `tests/unit/invariants/test_scratch_lease.py::test_toctou_refused[evasion]`, evasions `symlink`, `rename`, `hard_link`, `fd_reuse`, `absent_procfs`, `bridge_drift` | each evasion staged between check and use | stub opens by path | open one path without the dirfd; remove the post-query identity check | 3a-1 |
 | A7b | `tests/unit/invariants/test_scratch_lease.py::test_temp_size_cap_configured` | low `max_temp_directory_size` | `out_of_core/_duckdb.py:42` sets only `temp_directory` and `memory_limit` | omit `max_temp_directory_size` | 3a-2 |
 | A7c | `tests/unit/invariants/test_scratch_lease.py::test_spill_within_budget_and_no_python_growth` | 1e5 and 1e6 rows under a low limit, `tracemalloc` peak compared | stub collects keys in a Python set | collect keys in a Python set | 3a-2 |
@@ -587,7 +590,7 @@ All `tests/unit/invariants/` and `tests/integration/invariants/` files are new. 
 | A18h | `tests/sentry/test_capability_matrix.py::test_capability_matrix_is_up_to_date` with the regenerated invariant section | add a check code without regenerating | `scripts/gen_capability_matrix.py:160-214` renders no invariant section (C5) | drop the invariant section from `render()` | 3c-2 |
 | A19 | `tests/unit/invariants/test_result_fields.py::test_result_field_order_and_keyword_construction` | field order of `ExecutionResult` and `IsolatedRunResult`; AST scan for positional construction | `_isolated_common.py:386-388` requires `memory_evidence` last (C4) | append `invariant_report` after `memory_evidence` | 8b |
 
-The marker corpus (raw cell, key, name, path, DSN, credential, exception, class-name, Unicode, short, numeric, UUID-shaped, SQL-shaped, and control-character markers) is `tests/unit/invariants/test_marker_corpus.py::test_marker_absent[surface-marker]` over every V1 rule 3 surface in "Output surfaces" (admin-log rows are V2-LOG); the field walk is `tests/unit/invariants/test_field_walk.py::test_every_report_field_is_count_enum_or_ref`; the exit matrix is `tests/unit/invariants/test_exit_matrix.py::test_owner_exit[owner-exit]` generated from "Owned state and exit paths". Each enumerates the rows listed in this plan; making a new surface, field, or exit without a row fail collection is completeness machinery and is V2-LOG.
+The marker corpus (raw cell, key, name, path, DSN, credential, exception, class-name, Unicode, short, numeric, UUID-shaped, SQL-shaped, and control-character markers) is `tests/unit/invariants/test_marker_corpus.py::test_marker_absent[surface-marker]` over every V1 rule 3 surface in "Output surfaces" (admin-log rows are V2-LOG); the field walk is `tests/unit/invariants/test_field_walk.py::test_every_report_field_is_count_enum_or_ref`; the exit matrix is `tests/unit/invariants/test_exit_matrix.py::test_owner_exit[owner-exit]` generated from "Owned state and exit paths". Each enumerates the rows listed in this plan (fail-on-new-entry generation is V2-LOG).
 
 ## Hostile corpus: gate breaks, each with a RED-first test
 
@@ -615,15 +618,15 @@ New modules have a 450-line plan ceiling and need no census entry. Census rule: 
 | 0b | engine | member binding by exact edge key | A1d | 2 | 400 |
 | 0c | engine | report types, frozen enum table, public exports | field walk | 3 | 400 |
 | 0d | engine | codec structure, canonical bytes, byte cap | A10a, A10b | 2 | 500 |
-| 0e | engine | codec count bounds, balance equations, shape table, verdict recomputation | A10c, A10d | 2 | 550 |
+| 0e | engine | codec count bounds, balance equations, shape table, `verdict_from_counts` (evaluated units per counts type) and decoder verdict recomputation | A10c, A10d, A3d | 2 | 550 |
 | 1a | engine | collector state table, lock, condition, claimant | A5a-A5d, B4 | 1 | 750 |
 | 1b | engine | `InvariantRunGuard`, precomputed fallback, `InvariantDeadline` D-IN | A16a, unit-level A15 kinds, B3 unit | 2 | 500 |
-| 2a | engine | verdict rules, count assembly, deterministic sampling, zero-evaluated rule | A2, A3a-A3c, B9 unit | 2 | 550 |
+| 2a | engine | count assembly over 0e's `verdict_from_counts`, deterministic sampling, public `is_f35_eligible` | A2, A3a-A3c, A3e, B9 unit | 2 | 550 |
 | 2b | engine | row compiler and compare, null, null_pair, sum kernels | A4a-A4c | 2 | 750 |
 | 2c | engine | checksum kernel reusing `checksums.validate`; numeric-marker report test | A4d, B7 | 1 | 250 |
 | 3a-1 | engine | descriptor-anchored scratch lease and TOCTOU refusals | A7a | 1 | 550 |
 | 3a-2 | engine | DuckDB bridge, temp-size cap, budget, `interrupt()` spike (stop if it fails) | A7b-A7d | 2 | 450 |
-| 3b-0 | engine | K-KEY staging: per-slice `fk_join_key_tuple` tokens into DuckDB scratch, K-KEY null test, cross-type FK-shape manifest rows (test data reused by A6h) | A6g | 1 | 350 |
+| 3b-0 | engine | K-KEY staging: per-slice `fk_join_key_tuple` tokens into DuckDB scratch, K-KEY null test, K-KEY type rule, cross-type and key-type FK-shape manifest rows (test data reused by A6h, A6i) | A6g, A6i | 1 | 400 |
 | 3b-1 | engine | relationship evaluator (pk, fk coverage, orphan, join change) over 3b-0 tokens, graph-order first-hit | A6a-A6d | 1 | 650 |
 | 3b-2 | engine | reconciliation evaluator | A6e, A6f | 1 | 450 |
 | 3c-1 | engine | shared graph-resolution helper extracted from `_pipeline_context.py` (net LOC not grown), `measure_invariants` | A18a-A18f | 3 | 650 |
@@ -643,22 +646,17 @@ New modules have a 450-line plan ceiling and need no census entry. Census rule: 
 | 9 | engine | compatibility, snapshots after F31 (X7), docs, release identity | snapshots | up to 6 (docs) | 600 |
 | 10 | `decoy` CLI | `report invariants`, X4 file publisher, exact pin | B1 CLI half, B2 CLI cell | unverified (repo not attached) | unverified; stop and split if over |
 
-The tightest estimates (1a, 2b, 5a, 7b at 750) are the first candidates to split again if a RED test family grows. Slice 10's size is unverified; it stops and splits if over the bound.
+The tightest estimates (1a, 2b, 5a, 7b at 750) are the first candidates to split again if a RED test family grows.
 
 ## Verification and worker evidence rules
 
 Per slice record repository and lock identities, the RED assertion, green commands, changed files with before and after line counts, non-vacuity counters, the mutation killed, checks not run, and review findings. Baselines come from `scripts/dev/bootstrap.sh` and `scripts/dev/gates.sh --baseline` (present at 6bf3fc9) in the branch's own `uv.lock` environment.
 
 - Name the defect class of every finding and fix the class structure, not one instance.
-- Write generated tests first and record the behavioral RED, not an import error.
-- Attack your own diff: mutate each new mechanism once and show the agreed test turns RED.
-- Run baselines with `uv.lock` in the same environment as the branch. State omissions.
 - Never widen a threshold, add a census entry, skip a test, reduce a budget, or weaken an assertion.
 - If a defect of an already catalogued class reappears, stop and report it. Do not patch a third time.
 - No worker merges, publishes, enables F35, or exposes a raw diagnostic without owner approval.
 - Never commit while a mutation is applied. Respect the per-slice bound; stop and split rather than widen it.
-- Apply the V1 bar: fix only rules 1 to 3; record admin-log, crash-output, traceback, hostile-in-process and completeness-census items under V2-LOG.
-
 ## Pre-mortem
 
 The class table and the gate breaks above are the pre-mortem. Known risks:
@@ -666,36 +664,32 @@ The class table and the gate breaks above are the pre-mortem. Known risks:
 1. The Slice 3a-2 `interrupt()` spike passes on one host and fails on the gate host: stop, do not patch.
 2. F31 changes an X row during its own revision: the reconcile check stops the slice.
 3. The D-ISO reserve is too small on a slow host: A16c on the gate host is the evidence, and a failure stops Slice 8b for the owner rather than raising a constant.
-4. Merge drift: cited engine lines moved (see "Revision 5 baseline drift"); a slice that cannot place a cited mechanism stops.
-
 ## Open questions for the owner (each with the default the plan proceeds on)
 
-1. Linux-only relationship and reconciliation checks in V1. **Default: accept** (non-Linux gets `unsupported` with `invariant.platform_unsupported` at config time).
-2. Closed: K-JOB, append-only, decided by the orchestrator under owner delegation. Not reopened.
+Q1 (Linux-only relationship checks) is decided by the owner and closed. Remaining:
+
 3. Checksum exact coverage above 10M rows. **Default: keep exact** and record throughput (A14c).
 4. Engine-declared ownership of the Platform-detected code `invariant.report_not_persisted`. **Default: engine-declared, owner `platform`.**
 
 ## V2-LOG (logged per the V1 bar, not built; one line each, with defect class)
 
 - Class 3 and 2: collector `close` can release scratch leases at the deadline while a feed still runs (`inflight_feeds > 0`; "Collector lifecycle" table, `OPEN` and `DRAINING` rows). The probe (`close_race.py`, 140 runs, duckdb 1.5.4, pyarrow 24.0.0, CPython 3.11.18 from `uv sync --locked` at `92f4b83`; script not committed) found only Python `InterruptException` or `OutOfMemoryException`, caught by the guard as `not_run`, and no native fault.
-- Class 8: engine citations outside the files this revision touches were not re-read after the merge of `0173c054` ("Revision 5 baseline drift"); each slice re-reads its own.
-- Class 8: revision 5's header said `plan-lint` was not run; it prints `OK` (header fixed in this revision).
+- Class 8, baseline drift: merging `0173c054` moved lines in about twenty cited engine modules (largest: `out_of_core/_stream_driver.py`, `out_of_core/_runner.py`, `native/_chunked_entry.py`, `_chunked.py`, `_isolated_run.py`, `_sequential.py`); citations outside the files revision 8 re-read are stale until the owning slice re-reads them.
 - Class 1: engine server-admin logs, warnings to stderr in server contexts, crash output, traceback locals and `__cause__` chains from DuckDB or Arrow errors inside F36 frames (future `invariants/_collector.py` guard log path). The guard emits only X1 events; admin-log value-freedom is not proven.
 - Class 8: completeness census machinery: marker corpus, field walk and exit matrix "generated so that a new surface, field, or exit without a row fails collection" (this plan, the paragraph after the acceptance matrix). V1 keeps the tests for the listed surfaces and exits; the fails-on-new-entry generator is V2.
-- Class 9: comment drift, "declared order" prose versus the sorted edge order at `relationships/_graph.py:166-167`, `:177` and `execution/_pandas_adapter.py:490-493` (lines at `fdd08a89`, C1).
+- Class 9: "declared order" comment drift (C1), also at `_graph.py:177` and `execution/_pandas_adapter.py:490-493` (at `fdd08a89`).
 - Class 6: hostile code in the caller's process calling `measure_invariants` (non-goal; use `run_pipeline_isolated`).
 
 Found, out of scope, reported not fixed:
 
-- Class 4: legacy `validate_reconciliation_holds` resolves its edge by table pair and takes the first matching child (`validators/_relationship_checks.py:31-56`, `:258-262` at `fdd08a89`, C8). This may give wrong legacy validator output (V1 rule 1) and belongs to its own plan.
-- Class 4, legacy route parity, predates F36: a zone-aware timestamp FK whose parent and child columns carry one instant in two zones (or `pd.Timestamp` versus `datetime`) matches on the pandas routes, whose `_parent_map` keys a plain dict on `fk_key_value` tuples (`execution/_pandas_adapter.py:591`, at a3d62a67), and is unmatched on out-of-core, whose `fk_join_key` sends it to the `\x00OBJ:` repr token (`execution/_fk_keys.py:209-219`). Checked in the `uv sync --locked` environment (pandas 2.3.3, pyarrow 24.0.0): Python equality and hash agree for both pairs, the tokens differ. Belongs to its own plan.
+- Class 4: legacy `validate_reconciliation_holds` edge resolution by table pair (C8). This may give wrong legacy validator output (V1 rule 1) and belongs to its own plan.
+- Class 4, legacy route parity, predates F36: zone-aware timestamp FKs (two zones, or two units) and two-unit duration FKs match on the pandas routes (dict `_parent_map`, `execution/_pandas_adapter.py:591`) but get different `\x00OBJ:` tokens on out-of-core (`_fk_keys.py:209-218`; both at f5b46a2c). F36 refuses these types (K-KEY rule 5); the route fix belongs to its own plan.
 
-## What revision 7 did not verify
+## What revision 8 did not verify
 
-- Not verified: scheduler revision 5 does not exist yet; `fenced_side_write`, `current_generation` and the hook's `Fence` argument are required of it by Dennis's rev 4 review (V1-H3), which was not read; grep of revision 4 (`eb8a5d6f`) finds none of the three.
-- Not verified: Platform `main` has moved past `0fb5e3f6` to `5338a1a` (an engine repin touching `api/jobs/runner.py` and `v2_orchestrator.py`, not `dispatch_worker_main.py`); the cited Platform lines were read at `0fb5e3f6` only.
-- Not verified: the rulebook text at `/home/cam/dev-rules/` (not present in this session's container).
-- Not verified: the F35 handoff `p1-plan-f35-rev3-v1-fixes-handoff.md` and the F35 review H1 were not read.
-- Not verified: the zone-aware two-zone case was checked at the `fk_key_value` and `fk_join_key_tuple` level and against `_parent_map`'s dict shape by reading, not by running either route end to end.
+- Not verified (UNVERIFIED): that the out-of-core route refuses dictionary, zone-aware, duration and date64 key columns; the only source read is the module docstring at `execution/_pipeline_routing_fk_dtype.py:5-7` (at f5b46a2c), not `_batch_join._resolve_output_types` itself.
+- Not verified: the K-KEY probe ran `fk_key_value` and `fk_join_key_tuple` on `as_py()` values only, not either route end to end; the venv used was the main checkout's `.venv` (its `uv.lock` differs from f5b46a2c only in the engine's own version and `hvac`).
+- Not verified: S9a-2 is not merged on Platform `main` (`67e8cbba` has no `fence` in `api/jobs/job_run_context.py`); the interface is cited from scheduler revision 5's text.
+- Not verified: the rulebooks development-loop, reuse-first and testing were not re-read in this session.
 - The `decoy` CLI repository is not attached; slice 10 is unverified.
 - No test or code was written, and no mutation was run (plan-only revision).
