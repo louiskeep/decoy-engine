@@ -1,7 +1,7 @@
 # Engine release R-b: facts for the platform and CLI repin
 
 Status: prepared, not tagged. Branch `chore/release-rb-prep`, cut off engine main `da1a522f` and brought up
-to date by merging main `0173c05e`. It carries #363 (exact-integer categorical CDF builder), #362
+to date by merging main `0173c054`. It carries #363 (exact-integer categorical CDF builder), #362
 (generated NOTICE, license allowlist gate, SDV citation fixes and import sentry), #361 (A-4 file-access
 policy and secret providers reconciled onto main, F13, E1 owner-only secret files), #360 (typed
 out-of-core temporal FK seam) and #359 (closed-set SBOM errors). The tag is cut by
@@ -66,7 +66,7 @@ CLI's `requirements-certified.txt` (CLI main `a5d36b4`) plus `decoy-engine 0.17.
 hash to the old row `a7b40d54...` exactly, and the same set with `decoy-engine 0.18.0` hashes to
 `b643894d...`. `cert_smoke.py` on a real install is the proof of record.
 
-Merging main `0173c05e` (#362, #363) moved none of the pins: it changes no dependency, `pyproject.toml`,
+Merging main `0173c054` (#362, #363) moved none of the pins: it changes no dependency, `pyproject.toml`,
 `uv.lock` or reason identity. Re-derived on the merged head with the lock environment: the version
 agreement test (8 passed), `reason_release_pin.py --check` (`reason release pin current: registry 1.2.0,
 893`), the engine DP row (`31ecf945...`, and `check_fit_environment()` passes), `python
@@ -129,6 +129,7 @@ No public module and no exported symbol was removed or renamed. `CodeSetConfig` 
 | Changed | What a consumer does | Command that shows it |
 |---|---|---|
 | `quarantine.write_jsonl_staged(final_path, records)` | returns the staged `OutputTxn` (was the final `Path`); publish it | `git grep -n -A2 'def write_jsonl_staged' v0.17.0 HEAD -- src/decoy_engine/quarantine.py` |
+| `quarantine.publish_staged_jsonl(staged_path, final_path)`, `quarantine.discard_staged_jsonl(staged_path)` | `staged_path` is the `OutputTxn` from `write_jsonl_staged` (was a `Path`; `discard` also takes `None`) | `git grep -n -A1 -e 'def publish_staged_jsonl' -e 'def discard_staged_jsonl' v0.17.0 HEAD -- src/decoy_engine/quarantine.py` |
 | `keyprovider.key_provider_from_ref(ref, *, key_version=None, file_access=None)` | `file_access=` is new; `key_version=None` is unchanged since 0.17.0; a `file:` ref must be owner-only | `git grep -n -A3 'def key_provider_from_ref' v0.17.0 HEAD -- src/decoy_engine/keyprovider.py` |
 | 42 entry points (`fileaccess.ENTRY_POINTS`: `run_pipeline`, `load_vault`, `vault_writer_for_config`, `VaultWriter`, `unmask_pipeline`, `apply_quarantine`, `profile_columns`, `generate_rows`, `iter_parquet_chunks` / `iter_csv_chunks` (also `field_key=`), ...) | keyword-only `file_access=None`; nothing to do without an installed policy | `python -c "import decoy_engine.fileaccess as f; print(*sorted(f.ENTRY_POINTS), sep='\n')"` |
 | `ProviderSpec.seed`, `ValuePool.seed`, `SeedEnvelope.job_seed`, `StrategyContext.job_seed` / `.mask_key`, `ShadowContext.job_seed` / `.mask_key` | `repr=False`: no longer in `repr()` | `git grep -n 'repr=False' v0.17.0 HEAD -- src` (1 site at v0.17.0) |
@@ -145,13 +146,13 @@ Additive since v0.17.0 (no repin action): `decoy_engine.fileaccess` (+ `.adapter
 
 ## Suite baseline on 3.10 and 3.12
 
-Full suite, branch head `d9c17afa` against merged main `0173c05e`, compared by test id (junit XML). Lock
+Full suite, branch head `d9c17afa` against merged main `0173c054`, compared by test id (junit XML). Lock
 venvs from `uv sync --frozen --extra dev --extra lint --extra vault --extra cloud --extra xdist --python
 3.10.20` (and `--python 3.12.3`), one per tree, run with `python -m pytest -n 4 tests`. The `xdist` extra
 takes the venv out of the certified DP profile, so 84 certified-DP tests skip there; their seven files were
 re-run serially in the plain lock venv (3.10.20, no xdist): `221 passed`.
 
-| Interpreter | Main `0173c05e` | Branch `d9c17afa` | Differences by test id |
+| Interpreter | Main `0173c054` | Branch `d9c17afa` | Differences by test id |
 |---|---|---|---|
 | CPython 3.10.20 | 2 failed, 32093 passed, 5371 skipped, 6 xfailed, 65 xpassed | 32096 passed, 5371 skipped, 6 xfailed, 65 xpassed | the two census tests below (failed -> passed); one new id, `test_perf_claims_cite_a_measurement[docs/records/release-rb-facts.md]` (passed) |
 | CPython 3.12.3 | 2 failed, 32093 passed, 5371 skipped, 6 xfailed, 65 xpassed | 32096 passed, 5371 skipped, 6 xfailed, 65 xpassed | same as 3.10 |
@@ -162,7 +163,7 @@ re-run serially in the plain lock venv (3.10.20, no xdist): `221 passed`.
 | `tests/fileaccess/test_char_sink_publish.py::test_nul_and_overlong_names_fail_at_write_not_at_validation` | passes | passes; also passes on CPython 3.12.13, where it failed before this branch: 3.12.13 and 3.13 word the error `unlink: embedded null character in path`, 3.10 to 3.12.3 `embedded null byte`. The match accepts both; the `ValueError` and nothing-written assertions are unchanged |
 | `tests/sentry/test_secret_material_census.py` (2 tests) | fail on main, pass on the branch | same |
 
-The census failure is on main `0173c05e` itself: #362 turned one-line SDV citation comments in
+The census failure is on main `0173c054` itself: #362 turned one-line SDV citation comments in
 `context.py` and `transforms/grouped_series.py` into two lines, which moved six census bindings down one
 line. The branch re-derives `tests/sentry/secret_material_census.json` with `python
 scripts/secret_material_census.py --write` (line numbers only; 258 entries, 0 unreviewed).
