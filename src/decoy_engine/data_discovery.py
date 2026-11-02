@@ -220,7 +220,9 @@ def run_discovery_sql(
     _validate_select_only(sql)
     try:
         kinds: list[str] | None = statement_kinds(sql)
-    except duckdb.Error:
+    except duckdb.Error as exc:
+        if fileaccess.keeps_class(exc):
+            raise
         kinds = None
     if kinds is None:
         raise DiscoverySqlError(SQL_NOT_EXECUTABLE)

@@ -138,10 +138,15 @@ def test_discovery_unplannable_statement_has_fixed_text(corpus: Path, mode: str,
 
 
 class _Relation:
-    description = [("a",)]
-
-    def __init__(self, error: Exception | None) -> None:
+    def __init__(self, error: Exception | None, at_description: Exception | None = None) -> None:
         self._error = error
+        self._at_description = at_description
+
+    @property
+    def description(self) -> list[tuple[str]]:
+        if self._at_description is not None:
+            raise self._at_description
+        return [("a",)]
 
     def fetchmany(self, n: int) -> list[tuple[int]]:
         if self._error is not None:
@@ -150,14 +155,20 @@ class _Relation:
 
 
 class _Connection:
-    def __init__(self, at_execute: Exception | None, at_fetch: Exception | None) -> None:
+    def __init__(
+        self,
+        at_execute: Exception | None,
+        at_fetch: Exception | None,
+        at_description: Exception | None = None,
+    ) -> None:
         self._at_execute = at_execute
         self._at_fetch = at_fetch
+        self._at_description = at_description
 
     def execute(self, sql: str) -> _Relation:
         if self._at_execute is not None:
             raise self._at_execute
-        return _Relation(self._at_fetch)
+        return _Relation(self._at_fetch, self._at_description)
 
 
 @pytest.mark.parametrize("mode", ["ambient", "strict"])
@@ -206,6 +217,75 @@ def test_discovery_strict_memory_pressure_keeps_its_class(
     monkeypatch.setattr(duckdb_adapter, "untrusted_session", session)
     with _mode("strict", corpus), pytest.raises(duckdb.OutOfMemoryException):
         run_discovery_sql("select 1", {"t": str(corpus / "t.parquet")})
+
+
+# Failures a strict caller classifies by class: memory by type, memory by the text predicate,
+# and the policy's own decisions. Ambient handlers keep the fixed-message rebuild.
+_KEPT_CLASS = {
+    "oom": lambda: duckdb.OutOfMemoryException(f"oom near {SSN}"),
+    "memory_text": lambda: duckdb.Error("Unknown error: Wrapping 0xdead failed"),
+    "denied": lambda: fileaccess.FileAccessDenied("discovery.tables.t"),
+    "read_error": lambda: fileaccess.FileAccessReadError("discovery.tables.t"),
+    "unavailable": lambda: fileaccess.FileAccessUnavailable("no policy"),
+}
+_STAGE_FIXED_TEXT = {
+    "statement_kinds": MSG_SQL_NOT_EXECUTABLE,
+    "execute": MSG_SQL_FAILED,
+    "description": MSG_SQL_FAILED,
+    "fetch": MSG_SQL_FAILED,
+}
+
+
+def _inject(monkeypatch: pytest.MonkeyPatch, stage: str, exc: Exception) -> None:
+    if stage == "statement_kinds":
+
+        def kinds(sql: str) -> list[str]:
+            raise exc
+
+        monkeypatch.setattr(duckdb_adapter, "statement_kinds", kinds)
+        return
+    at = {
+        "execute": (exc, None, None),
+        "fetch": (None, exc, None),
+        "description": (None, None, exc),
+    }
+
+    @contextmanager
+    def session(handles: Any) -> Iterator[_Connection]:
+        yield _Connection(*at[stage])
+
+    monkeypatch.setattr(duckdb_adapter, "untrusted_session", session)
+
+
+@pytest.mark.parametrize("stage", list(_STAGE_FIXED_TEXT))
+@pytest.mark.parametrize("kind", list(_KEPT_CLASS))
+def test_discovery_strict_keeps_memory_and_policy_class_at_every_stage(
+    corpus: Path, monkeypatch: pytest.MonkeyPatch, stage: str, kind: str
+) -> None:
+    exc = _KEPT_CLASS[kind]()
+    _inject(monkeypatch, stage, exc)
+    with _mode("strict", corpus), pytest.raises(type(exc)) as info:
+        run_discovery_sql("select 1", {"t": str(corpus / "t.parquet")})
+    assert info.value is exc
+
+
+@pytest.mark.parametrize("stage", list(_STAGE_FIXED_TEXT))
+@pytest.mark.parametrize("kind", list(_KEPT_CLASS))
+def test_discovery_ambient_rebuilds_library_failures_at_every_stage(
+    corpus: Path, monkeypatch: pytest.MonkeyPatch, stage: str, kind: str
+) -> None:
+    exc = _KEPT_CLASS[kind]()
+    _inject(monkeypatch, stage, exc)
+    if not isinstance(exc, duckdb.Error):
+        # A policy decision is never a library failure: no handler catches it.
+        with _mode("ambient", corpus), pytest.raises(type(exc)) as kept:
+            run_discovery_sql("select 1", {"t": str(corpus / "t.parquet")})
+        assert kept.value is exc
+        return
+    with _mode("ambient", corpus), pytest.raises(DiscoverySqlError) as info:
+        run_discovery_sql("select 1", {"t": str(corpus / "t.parquet")})
+    assert str(info.value) == _STAGE_FIXED_TEXT[stage]
+    assert_value_free(info.value)
 
 
 # -- subset seed -----------------------------------------------------------------------------

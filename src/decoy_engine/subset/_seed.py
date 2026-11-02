@@ -58,7 +58,7 @@ def _predicate_expr(p: Predicate) -> pl.Expr:
     return _OPS[p.op](c, pl.lit(p.value))
 
 
-# The reason is chosen by code, never by the library text: a GenerationError names the value.
+# The reason is chosen by code, never by the exception text, so the message stays a closed set.
 _UNCANONICALIZABLE_REASON: dict[str, str] = {
     reasons.runtime.FLOAT_CANONICALIZATION_UNSUPPORTED: "float values are not supported",
     reasons.runtime.TIMEZONE_NAIVE_DATETIME: "timezone-naive datetimes are not supported",
