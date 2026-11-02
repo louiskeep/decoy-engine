@@ -1,0 +1,89 @@
+pass 1: 56 sites in 28 files; {'assign': 12, 'call': 22, 'return': 22}
+  call    api/decoy_admin.py:47
+  call    api/decoy_admin.py:79
+  call    api/decoy_admin.py:211
+  call    api/decoy_admin.py:214
+  call    api/decoy_admin.py:252
+  return  api/environments/bindings.py:321
+  return  api/health_check.py:66
+  return  api/jobs/admission.py:993
+  return  api/jobs/admission.py:1231
+  assign  api/jobs/cgroup_supervisor.py:265
+  call    api/jobs/cgroup_supervisor_preflight_handoff.py:198
+  assign  api/jobs/cgroup_supervisor_rpc_handlers.py:289
+  assign  api/jobs/cgroup_supervisor_rpc_handlers.py:299
+  assign  api/jobs/cgroup_supervisor_rpc_handlers.py:316
+  assign  api/jobs/cgroup_supervisor_rpc_handlers.py:471
+  return  api/jobs/cgroup_supervisor_transport.py:428
+  assign  api/jobs/cgroup_supervisor_transport.py:506
+  assign  api/jobs/fixed_width_output.py:225
+  assign  api/jobs/preflight_dispatch.py:362
+  call    api/jobs/preflight_worker.py:381
+  call    api/jobs/preflight_worker.py:387
+  call    api/jobs/preflight_worker.py:400
+  call    api/jobs/queue_worker.py:413
+  return  api/jobs/scheduler_claim.py:384
+  return  api/jobs/scheduler_claim.py:412
+  return  api/jobs/worker_budget.py:397
+  return  api/launcher/ack.py:216
+  assign  api/launcher/service.py:282
+  assign  api/pipelines/preflight.py:168
+  call    api/pipelines/preflight.py:170
+  return  api/pipelines/router.py:479
+  return  api/pipelines/router.py:484
+  return  api/pipelines/router.py:725
+  call    api/pipelines/v2_validation.py:155
+  call    api/pipelines/v2_validation.py:290
+  call    api/preflight.py:107
+  return  api/retrieval/_outcome.py:261
+  return  api/retrieval/_outcome.py:521
+  return  api/retrieval/_outcome.py:593
+  call    api/retrieval/decode_child.py:2576
+  call    api/retrieval/decode_child.py:2587
+  return  api/retrieval/reader.py:328
+  return  api/retrieval/reader.py:361
+  return  api/retrieval/reader.py:364
+  return  api/retrieval/reader.py:457
+  return  api/scheduler/launch_handoff.py:278
+  return  api/scheduler/launch_handoff.py:280
+  call    api/storm/router.py:1236
+  call    api/storm/router.py:1265
+  call    api/storm/router.py:1356
+  return  api/subset/router.py:73
+  call    api/supervision/startup.py:370
+  call    api/supervision/startup.py:390
+  call    api/supervision/startup.py:406
+  assign  api/workflows/runner.py:225
+  assign  api/workflows/runner.py:238
+pass 2: 31 rows; {'attr': 4, 'callee': 20, 'store': 1, 'unres': 6}
+  attr   api/files/pg_pull_router.py:193 [assign] via api/files/pg_pull_router.py:191
+  attr   api/retrieval/decode_child.py:2632 [assign] via api/retrieval/decode_child.py:2631
+  attr   api/retrieval/decode_child.py:2639 [assign] via api/retrieval/decode_child.py:2638
+  attr   api/retrieval/decode_child.py:2646 [assign] via api/retrieval/decode_child.py:2645
+  callee api/jobs/preview_http.py:52 [return] via api/jobs/routes_preview.py:164 -> api/jobs/preview_http.py:47 unavailable_http_status_and_detail(exc)
+  callee api/jobs/preview_http.py:52 [return] via api/pipelines/router.py:1385 -> api/jobs/preview_http.py:47 unavailable_http_status_and_detail(exc)
+  callee api/jobs/preview_slot.py:121 [return] via api/jobs/preview_slot.py:101 -> api/jobs/preview_slot.py:112 _map_disabled_error(exc)
+  callee api/jobs/run_job_start_recovery.py:158 [call] via api/jobs/preflight_backend.py:429 -> api/jobs/run_job_start_recovery.py:127 release_on_worker_tmpdir_refusal(exc)
+  callee api/jobs/run_job_start_recovery.py:158 [call] via api/jobs/run_job_start_recovery.py:268 -> api/jobs/run_job_start_recovery.py:127 release_on_worker_tmpdir_refusal(exc)
+  callee api/jobs/run_job_start_recovery.py:158 [call] via api/jobs/run_job_start_recovery.py:300 -> api/jobs/run_job_start_recovery.py:127 release_on_worker_tmpdir_refusal(exc)
+  callee api/launcher/docker_runtime.py:102 [return] via api/launcher/docker_runtime.py:232 -> api/launcher/docker_runtime.py:98 _translate_docker_error(exc)
+  callee api/launcher/docker_runtime.py:102 [return] via api/launcher/docker_runtime.py:244 -> api/launcher/docker_runtime.py:98 _translate_docker_error(exc)
+  callee api/launcher/docker_runtime.py:102 [return] via api/launcher/docker_runtime.py:254 -> api/launcher/docker_runtime.py:98 _translate_docker_error(exc)
+  callee api/launcher/docker_runtime.py:102 [return] via api/launcher/docker_runtime.py:278 -> api/launcher/docker_runtime.py:98 _translate_docker_error(exc)
+  callee api/launcher/docker_runtime.py:102 [return] via api/launcher/docker_runtime.py:290 -> api/launcher/docker_runtime.py:98 _translate_docker_error(exc)
+  callee api/launcher/docker_runtime.py:102 [return] via api/launcher/docker_runtime.py:322 -> api/launcher/docker_runtime.py:98 _translate_docker_error(exc)
+  callee api/launcher/docker_runtime.py:102 [return] via api/launcher/docker_runtime.py:328 -> api/launcher/docker_runtime.py:98 _translate_docker_error(exc)
+  callee api/launcher/docker_runtime.py:102 [return] via api/launcher/docker_runtime.py:335 -> api/launcher/docker_runtime.py:98 _translate_docker_error(exc)
+  callee api/launcher/protocol.py:469 [return] via api/launcher/service.py:305 -> api/launcher/protocol.py:468 encode_error_response(exc)
+  callee api/retrieval/_outcome.py:116 [return] via api/retrieval/reader.py:175 -> api/retrieval/_outcome.py:115 _unavailable_result(exc)
+  callee api/retrieval/_outcome.py:116 [return] via api/retrieval/reader.py:239 -> api/retrieval/_outcome.py:115 _unavailable_result(exc)
+  callee api/retrieval/retrieval_http.py:102 [assign] via api/retrieval/router.py:267 -> api/retrieval/retrieval_http.py:96 unavailable_status_and_detail(exc)
+  callee api/retrieval/retrieval_http.py:103 [return] via api/retrieval/router.py:267 -> api/retrieval/retrieval_http.py:96 unavailable_status_and_detail(exc)
+  callee api/retrieval/retrieval_slot.py:133 [return] via api/retrieval/retrieval_slot.py:115 -> api/retrieval/retrieval_slot.py:126 _map_disabled_error(exc)
+  store  api/jobs/v2_config.py:282 [call] via api/jobs/v2_config.py:280
+  unres  api/admin/storage_walk.py:117 [note_error] via api/admin/storage_walk.py:115
+  unres  api/admin/storage_walk.py:124 [note_error] via api/admin/storage_walk.py:122
+  unres  api/admin/storage_walk.py:93 [note_error] via api/admin/storage_walk.py:92
+  unres  api/admin/storage_walk.py:98 [note_error] via api/admin/storage_walk.py:97
+  unres  api/jobs/v2_orchestrator.py:302 [report] via api/jobs/v2_orchestrator.py:289
+  unres  api/scheduler/source_worker.py:86 [SourceCallResult] via api/scheduler/source_worker.py:85

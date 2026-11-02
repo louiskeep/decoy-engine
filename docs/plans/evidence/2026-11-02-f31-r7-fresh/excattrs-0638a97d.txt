@@ -1,0 +1,25 @@
+  38 code                     api/cloud/accounts.py:268 api/cloud/accounts.py:681 api/cloud/accounts.py:684
+  26 message                  api/admin/router.py:896 api/admin/router.py:996 api/composites/preview.py:116
+  18 errno                    api/admin/storage_inventory.py:565 api/cloud/conditional.py:372 api/jobs/cgroup_supervisor_launch_authority.py:259
+   7 reason                   api/jobs/routes_preview.py:160 api/pipelines/router.py:1381 api/retrieval/decode_child.py:2642
+   6 detail                   api/files/pg_pull_router.py:193 api/files/pg_pull_router.py:193 api/retrieval/decode_child.py:2636
+   5 __context__              api/cloud/accounts.py:583 api/cloud/io.py:155 api/generation/generation_parent.py:492
+   5 cause                    api/jobs/claim_source_identity.py:70 api/jobs/claim_source_identity.py:145 api/jobs/claim_source_metadata.py:220
+   5 exc_type                 api/jobs/claim_source_identity.py:70 api/jobs/claim_source_identity.py:145 api/jobs/claim_source_metadata.py:220
+   5 transient                api/jobs/claim_source_identity.py:70 api/jobs/claim_source_identity.py:145 api/jobs/claim_source_metadata.py:220
+   4 response                 api/admin/sso_router.py:171 api/jobs/preflight_cloud.py:219 api/jobs/preflight_cloud.py:220
+   4 __class__                api/health_check.py:72 api/jobs/cgroup_supervisor_main.py:589 api/jobs/dispatch_worker_main.py:597
+   3 status_code              api/admin/router.py:896 api/admin/router.py:996 api/files/pg_pull_router.py:194
+   3 __cause__                api/generation/generation_parent.py:491 api/generation/generation_parent.py:563 api/generation/pinned_adapter.py:207
+   2 container_id             api/launcher/launch.py:227 api/launcher/launch.py:230
+   1 first_exhaustion         api/generation/route.py:197
+   1 kind                     api/jobs/iteration_dispatch.py:393
+   1 reaped                   api/jobs/preflight_dispatch.py:542
+   1 path                     api/jobs/v2_config.py:281
+   1 field                    api/jobs/v2_config.py:281
+   1 labels                   api/launcher/launch.py:226
+   1 image_ref                api/launcher/launch.py:226
+   1 errors                   api/pipelines/v2_validation.py:313
+   1 cap                      api/retrieval/decode_child.py:2635
+   1 result                   api/scheduler/txn.py:170
+   1 orig                     api/vaults/store.py:433
