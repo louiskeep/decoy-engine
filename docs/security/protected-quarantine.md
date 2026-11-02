@@ -28,6 +28,8 @@ When the discard itself fails (the adapter reports `failed`, or raises), the run
 
 - Each bounded chunk of rows is a length-prefixed Fernet token under a quarantine-only key derived by HKDF-SHA256 (distinct purpose and version) from a real `KeyProvider.mask_key()`. A `SeedKeyProvider` (no secret) is rejected. The key is never serialized; no plaintext is staged.
 - Directories are `0700`, files `0600`, created exclusively with `O_NOFOLLOW`; a symlinked or group/other-accessible root is refused.
+- Every write lands all of its bytes (a short `write(2)` is retried on the remainder) and the digest covers exactly the bytes written, so a receipt never counts a row the artifact does not hold.
+- The root is a caller path, so the adapter serves only the ambient file-access policy (`docs/security/file-access-policy.md`); under a strict policy it reports itself unqualified (`arena_needs_ambient_policy`) and touches nothing.
 - A SHA-256 digest trailer is written before an atomic rename, so a partial file is never a receipt. Row and byte budgets fail closed; a failed write or seal removes the partial and reports how cleanup ended (`cleanup_state`) apart from the original code.
 - Retention is finite and measured with the injected clock; `open` after expiry raises `protected_quarantine_expired`, and `purge_expired(now, authority)` removes only the authority's own expired artifacts.
 

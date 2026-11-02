@@ -31,7 +31,10 @@ run then fails, retrieval tokens are bound to the run (`QuarantineAccessContext(
 carry full F29 `ReasonRecord`s, and the raw row reopens with its Decimal / date / datetime types intact. See
 A failed discard after the seal is reported as the registered `protected_quarantine_cleanup_failed` with the
 artifact's recovery identity, and a declared job that falls back to a less bounded route lists the refusal under
-`quality_metrics["execution"]["declared_route_refusals"]`. See
+`quality_metrics["execution"]["declared_route_refusals"]`. The out-of-core typed staging copy is named by
+the engine (`s0000.typed.parquet`, never the table name) inside an engine-made per-run root, and is read back
+through a scratch reader, so it runs under a strict file-access policy. The local quarantine store retries short
+writes and is ambient-only (`arena_needs_ambient_policy` under a strict policy). See
 `docs/declared-casting.md` and `docs/security/protected-quarantine.md`.
 
 ### Fixed (categorical CDF: exact integer builder, 2026-11-01)
