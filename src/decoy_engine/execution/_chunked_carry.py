@@ -148,13 +148,14 @@ class CarryPlan:
     def _raise_if_read(self, name: str, exc: Exception, *, table: str, chunk_index: int) -> None:
         if name not in self.read:
             return
+        # The pandas/Arrow error quotes the cell, so the text names the column only.
         raise ExecutionError(
             code=PASSTHROUGH_UNREPRESENTABLE_CODE,
             message=(
                 f"{table!r} chunk {chunk_index}: passthrough column {name!r} holds a value "
-                f"pandas cannot represent ({type(exc).__name__}: {exc}). A when: predicate or "
-                "a sibling-reading strategy reads this column, so it must go through pandas; "
-                "a passthrough column nothing reads is returned as the source holds it."
+                "pandas cannot represent. A when: predicate or a sibling-reading strategy reads "
+                "this column, so it must go through pandas; a passthrough column nothing reads "
+                "is returned as the source holds it."
             ),
         ) from exc
 

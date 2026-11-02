@@ -9,6 +9,23 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (value-free FK key and pandas-ingest attribution errors, 2026-11-02)
+
+Four `ExecutionError` messages quoted a key or a source cell, and a normal `PandasExecutionAdapter`
+or `run_pipeline` job reached each one. Each message now names the table and column only:
+
+- `fk_nullable_int_array` (`out_of_core_fk_key_dtype_unsupported`): a resolved FK key above the
+  UInt64 range or below the Int64 range (e.g. a categorical parent result) used to be printed, and a
+  uint64 orphan beside a negative resolved key used to append pandas' text (`Python integer ... out of
+  bounds for uint64`). The message is now `FK output column <table>.<column>: a resolved key exceeds
+  the UInt64 range` / `is below the Int64 range` / `cannot share one lossless nullable UInt64 array`,
+  raised with no cause or context. The function takes keyword-only `table` and `column`.
+- `to_pandas_fk_safe`: the ingestion backstop no longer appends the Arrow error or the Arrow type.
+- `full_frame_value_unrepresentable` and `chunked_passthrough_value_unrepresentable` no longer append
+  the pandas/Arrow conversion error (`Value 3001 has non-zero nanoseconds`, `year 12921 is out of
+  range`). The full-frame error's chain is suppressed; the chunked error keeps the conversion error as
+  its `__cause__` for diagnosis.
+
 ### Fixed (value-free discovery, subset-seed and derived-expression errors, 2026-11-01)
 
 Several public error texts forwarded library or engine text that can quote a source cell, and that
