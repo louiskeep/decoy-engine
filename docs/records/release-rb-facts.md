@@ -112,7 +112,7 @@ Command: `grep -rn '0\.17\.0\|a7b40d54\|1132d29e' pyproject.toml tests .github r
 | Platform | The pin sites above. The 3a key-provider work (moving off `SecretKeyProvider(..., key_version="v1")` in `api/engine_a8_guard.py` and the vault tests) is separate and not required by R-b: `SecretKeyProvider` is unchanged. | — | — |
 | CLI | Test fixtures that write a `file:` secret must `chmod 0o600` it: `tests/e2e/test_tokenize_cli.py` `_mask_secret_ref` (line 46) and the weak-secret cases (lines 344, 705), plus any other `file:` secret a test writes. The weak-secret cases expect `weak_mask_secret`; a group- or world-readable file is refused for its mode first. | `runtime.secret_file_permissions_unsafe` | `grep -rn 'file:{' tests` |
 | CLI | User guidance that suggests `file:/PATH` (`src/decoy/_mask_secret_guidance.py`, the gdpr/pci/hipaa templates) should say the file must be owner-only (`chmod 600`). | same | `grep -rn 'file:/PATH' src` |
-| Platform, CLI | Any golden, snapshot or expected value of weighted categorical masked output (`strategy: categorical` with `weights`) must be re-captured: at least one CDF threshold moves in about 99% of weight vectors (at most one slot each; a row changes category with probability about 5e-5; `[1, 1, 1]` gives `[333333, 666667, 1000000]`). Output is now the same on 3.10, 3.11 and 3.12. Configs with a `bool`, `Decimal` or `Fraction` weight, a weight under one slot after rounding, or a total above the largest double are refused. A grep of platform main `0ace724` found no pinned weighted categorical output. | CDF thresholds round half up over exact integers (#363) | `git grep -n -i 'categorical' -- tests \| grep -i weight` |
+| Platform, CLI | Any golden, snapshot or expected value of weighted categorical masked output (`strategy: categorical` with `weights`) must be re-captured: at least one CDF threshold moves in about 99% of weight vectors (at most one slot each; a row changes category with probability about 5e-5; `[1, 1, 1]` gives `[333333, 666667, 1000000]`). Output is now the same on 3.10, 3.11 and 3.12. Configs with a `bool`, `str`, `Decimal`, `Fraction` or subclass weight (on every route), a weight under one slot after rounding, or a total above the largest double are refused. A grep of platform main `0ace724` found no pinned weighted categorical output. | CDF thresholds round half up over exact integers (#363) | `git grep -n -i 'categorical' -- tests \| grep -i weight` |
 | CLI | The pin sites above, including the certified fingerprint. Without the new header and an engine-0.18.0 install, `fit_dp_snapshot` refuses with `dp_stack_uncertified`. | DP row `b643894d...` | `grep -n a7b40d54 requirements-certified.txt scripts/cert_smoke.py` |
 
 ## Public surface removed or changed since v0.17.0
@@ -171,6 +171,32 @@ scripts/secret_material_census.py --write` (line numbers only; 258 entries, 0 un
 The 3.12 rows are from the lock resolved with `--python 3.12` in this container (3.12.3). A full suite on
 3.12.13 was not run.
 
+## Release review fixes (Codex review of `39a0fe46`: four V1)
+
+| Finding | Fix | Red-first test, failing line on `39a0fe46` |
+|---|---|---|
+| Production categorical routes coerced weights with `float(w)` before `_build_cdf`, so `bool`, numeric `str`, `Decimal`, `Fraction` and subclasses were accepted | `_admit_weights` is the one admission: the resident handler, out-of-core group B and the native prepared artifact pass raw weights through it; `_build_cdf` calls it too | `tests/unit/execution/test_categorical_weight_admission_routes.py`: :119 (handler), :127 (out-of-core), :134 (out-of-core FK route), :149 (native prepared, subclasses), :157 (`run_mask_chunked`), :173 (numpy and float32 weights declined natively); 27 red |
+| The 0.18.0 re-pin replaced the 0.17.0 DP rows, so a 0.17.0 snapshot failed compilation with `dp_snapshot_provenance_uncertified` | the 0.17.0 rows `5a76ea92...` and `a7b40d54...` stay certified beside the 0.18.0 rows | `tests/unit/generation/test_dp_prior_release_rows.py`: `src/decoy_engine/plan/_checks_dp.py:203` (raised from :303) and `quality/dp_provenance.py:404`; 4 red |
+| Three post-0.17.0 breaks sat under `[0.9.0]`, missing from the 0.18.0 Breaking list | moved into 0.18.0; Breaking lists bare `joint_mask.reference` names, shipped code-set names, discovery SQL file functions | `tests/unit/test_changelog_breaking_ratchet.py::test_released_sections_match_their_pins` :161 (`changed=['0.9.0']`) |
+| `cut-release.sh` validated the fetch URL only; a `pushurl` could send the tag to a fork | every `git remote get-url --all` and `--push --all` URL must match, before and after the checks | `tests/unit/test_cut_release_script.py`: 5 red, the tag landed in the scratch fork in each |
+
+Probed against `v0.17.0` (same lock venv, `v0.17.0` source on `sys.path`): a bare absolute `joint_mask.reference`
+path and an absolute code-set stem loaded in 0.17.0 and are refused now; discovery `read_text`/`glob` read files in
+0.17.0 and fail now; multiple statements, `VALUES`, `TABLE` and CTEs behave the same in both.
+
+Suites at `4efe7b6c` against `39a0fe46` by test id (junit XML), lock venvs `--extra dev --extra lint --extra vault
+--extra cloud --extra xdist`, `python -m pytest -n 4 tests`:
+
+| Interpreter | `39a0fe46` | `4efe7b6c` | Differences by test id |
+|---|---|---|---|
+| CPython 3.10.20 | 32096 passed, 5371 skipped, 6 xfailed, 65 xpassed | 4 failed, 32145 passed, 5371 skipped, 6 xfailed, 65 xpassed | 53 new ids, all passed; 4 `test_isolated_memwatch_run.py::TestRealChild` ids failed under host load and pass on re-run (3 of 3 on each tree) |
+| CPython 3.12.3 | 32096 passed, 5371 skipped, 6 xfailed, 65 xpassed | 32149 passed, 5371 skipped, 6 xfailed, 65 xpassed | 53 new ids, all passed |
+
+Certified-DP files serially in the plain lock venv (3.10.20): `242 passed` on `39a0fe46`, `250 passed` on the
+branch (the 8 new ids). Re-run on the branch: `release_checks.sh 0.18.0` passes (SBOM sha256 `d9e8bb93...`
+unchanged); the dry run in a scratch clone whose `main` is the branch head passes and creates no tag; proof
+manifest, FR0 witness, secret census (three line numbers re-derived) and module size pass on 3.10 and 3.12.
+
 ## Not run here
 
 - The real tag push (`APPLY=1 scripts/release/cut-release.sh <sha>`), a GitHub release, PyPI upload.
@@ -178,3 +204,5 @@ The 3.12 rows are from the lock resolved with `--python 3.12` in this container 
 - The CLI-profile DP row on a real install (`cert_smoke.py`); derived by hash only, as stated above.
 - The platform and CLI repins themselves.
 - The full suite on CPython 3.12.13 (only `tests/fileaccess/test_char_sink_publish.py` ran there).
+- The native companion is not built in this container, so native-only tests skip on both trees alike.
+- The platform main revision cited in the pin-site and weighted-categorical rows was not re-read.
