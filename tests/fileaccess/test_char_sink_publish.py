@@ -194,7 +194,7 @@ def test_rejected_table_names_raise_value_error_before_any_file(tmp_path: Path, 
 
 def test_nul_and_overlong_names_fail_at_write_not_at_validation(tmp_path: Path) -> None:
     sink = ParquetTransactionalSink(tmp_path / "out")
-    with pytest.raises(ValueError, match="embedded null byte"):
+    with pytest.raises(ValueError, match=r"embedded null (byte|character in path)"):
         sink.write("a\0b", TABLE)
     with pytest.raises(OSError) as info:
         sink.write("n" * 251, TABLE)
