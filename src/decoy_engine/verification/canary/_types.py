@@ -18,6 +18,7 @@ from itertools import pairwise
 from typing import TYPE_CHECKING
 
 from decoy_engine import reasons
+from decoy_engine.errors import DecoyError
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -26,7 +27,7 @@ MAX_COUNT = 2**53 - 1
 MAX_FINDINGS = 4096
 
 
-class CanaryReportSchema(enum.Enum):
+class CanarySpanReportSchema(enum.Enum):
     V1 = "canary-span-report/v1"
 
 
@@ -105,14 +106,14 @@ class CanaryCompletionClass(enum.Enum):
     REJECTED = "rejected"
 
 
-class CanaryReportInvalid(Exception):  # noqa: N818 (name frozen by the F34 plan)
+class CanarySpanReportInvalid(DecoyError):  # noqa: N818 (F34 plan name, plus "Span")
     """A report or finding that breaks its invariants. Fixed: no message, no args."""
 
     def __init__(self) -> None:
         super().__init__()
 
 
-class CanaryPolicyInputError(Exception):
+class CanaryPolicyInputError(DecoyError):
     """A policy or input value of the wrong type or kind. Fixed: no message, no args."""
 
     def __init__(self) -> None:
@@ -128,7 +129,7 @@ _READ_FAILURE_OUTCOMES = frozenset(
 )
 
 
-class CanaryArtifactReadFailure(Exception):  # noqa: N818 (name frozen by the F34 plan)
+class CanaryArtifactReadFailure(DecoyError):  # noqa: N818 (name frozen by the F34 plan)
     """A consumer's batch reader could not read one artifact. Its only arg is the outcome."""
 
     def __init__(self, outcome: CanaryArtifactOutcome) -> None:
@@ -144,7 +145,7 @@ def _is_count(value: object) -> bool:
 
 def _check(ok: bool) -> None:
     if not ok:
-        raise CanaryReportInvalid
+        raise CanarySpanReportInvalid
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,7 +171,7 @@ _REASONS = tuple(CanaryReason)
 
 @dataclass(frozen=True, slots=True)
 class CanarySpanReport:
-    schema_version: CanaryReportSchema
+    schema_version: CanarySpanReportSchema
     normalization_policy_version: CanaryNormalizationSchema
     status: CanaryStatus
     complete: bool
@@ -201,7 +202,7 @@ class CanarySpanReport:
     findings: tuple[CanaryColumnFinding, ...]
 
     def __post_init__(self) -> None:
-        _check(type(self.schema_version) is CanaryReportSchema)
+        _check(type(self.schema_version) is CanarySpanReportSchema)
         _check(type(self.normalization_policy_version) is CanaryNormalizationSchema)
         _check(type(self.status) is CanaryStatus and type(self.complete) is bool)
         _check(type(self.binding_source) is CanaryBindingSource)

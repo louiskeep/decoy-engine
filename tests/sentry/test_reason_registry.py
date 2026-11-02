@@ -453,7 +453,7 @@ UNCLASSIFIED: dict[str, str] = {
     # rebuilds it into one closed-set class; it never reaches a caller.
     "KeptFileFailure": "internal carrier; the admission boundary rebuilds it, never raised to callers",
     # F34: fixed canary signals with no message; the consumer sees a REJECTED report or a 500.
-    "CanaryReportInvalid": "F34 report-integrity signal; carries no message",
+    "CanarySpanReportInvalid": "F34 report-integrity signal; carries no message",
     "CanaryPolicyInputError": "F34 policy-input type signal; carries no message",
     "CanaryArtifactReadFailure": "F34 reader-to-scan carrier; its only arg is a closed outcome",
 }

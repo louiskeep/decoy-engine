@@ -18,10 +18,10 @@ from decoy_engine.verification.canary import (
     CanaryNormalizationSchema,
     CanaryPolicyInputError,
     CanaryReason,
-    CanaryReportInvalid,
-    CanaryReportSchema,
     CanarySpanPolicy,
     CanarySpanReport,
+    CanarySpanReportInvalid,
+    CanarySpanReportSchema,
     CanaryStatus,
 )
 
@@ -109,7 +109,7 @@ def _finding(**over: object) -> CanaryColumnFinding:
 def _report(**over: object) -> CanarySpanReport:
     kw: dict[str, object] = {n: 0 for n in INT_FIELDS}
     kw.update(
-        schema_version=CanaryReportSchema.V1,
+        schema_version=CanarySpanReportSchema.V1,
         normalization_policy_version=CanaryNormalizationSchema.V1,
         status=CanaryStatus.INCOMPLETE,
         complete=False,
@@ -155,19 +155,19 @@ def test_repr_str_pickle_asdict_carry_no_marker() -> None:
     # No field accepts the marker, a bool for an int, or a count past 2**53-1; the refusal is fixed.
     for name in REPORT_FIELDS:
         for bad in (MARKER, MARKER.encode(), (MARKER,)):
-            with pytest.raises(CanaryReportInvalid) as info:
+            with pytest.raises(CanarySpanReportInvalid) as info:
                 _report(**{name: bad})
             assert info.value.args == () and str(info.value) == ""
             assert MARKER not in repr(info.value)
     for name in INT_FIELDS:
         for bad in (True, MAX_COUNT + 1, -1, 1.0):
-            with pytest.raises(CanaryReportInvalid):
+            with pytest.raises(CanarySpanReportInvalid):
                 _report(**{name: bad})
     for name in FINDING_FIELDS:
-        with pytest.raises(CanaryReportInvalid):
+        with pytest.raises(CanarySpanReportInvalid):
             _finding(**{name: MARKER})
     for bad in (True, MAX_COUNT + 1, -1):
-        with pytest.raises(CanaryReportInvalid):
+        with pytest.raises(CanarySpanReportInvalid):
             _finding(affected_cell_count=bad)
     assert _finding(affected_cell_count=MAX_COUNT).affected_cell_count == MAX_COUNT
 
@@ -211,7 +211,7 @@ def test_report_rejects_bad_reasons_and_complete_mismatch() -> None:
         {"complete": 0},
     ]
     for case in bad_cases:
-        with pytest.raises(CanaryReportInvalid):
+        with pytest.raises(CanarySpanReportInvalid):
             _report(**case)
     ok = _report(
         status=CanaryStatus.COMPLETE,
