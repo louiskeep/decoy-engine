@@ -2,7 +2,7 @@
 # `ordinal` is the index of the call among identical sinks in the function. An entry may be
 # removed freely; adding one needs a `rule` (how the path is built), an `owner` and a `reason`.
 # `ambient_only` marks a caller-derived path that is reached only after `require_ambient`.
-# Count: 209 (asserted by the sentry).
+# Count: 211 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -1922,6 +1922,25 @@ rule = "an engine-created `tempfile.mkdtemp` root, under the caller's temp_dir o
 owner = "cam"
 reason = "the per-run scratch root that holds the F06 typed staging copy and the route's spill under one temp-disk budget"
 ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_scratch.py"
+function = "engine_scratch_root"
+sink = "os.chmod"
+ordinal = 0
+rule = "the root `tempfile.mkdtemp` just returned, under the caller's temp_dir only after `fileaccess.require_ambient` refused every policy but the ambient one; set to 0700 whatever the umask"
+owner = "cam"
+reason = "the per-run scratch root that holds the F06 typed staging copy and the route's spill under one temp-disk budget"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_scratch.py"
+function = "open_private"
+sink = "os.open"
+ordinal = 0
+rule = "a path under an engine-created scratch root (`scratch_root` / `engine_scratch_root`), named by an opaque per-run id, never by a table, column or edge name; O_NOFOLLOW, mode set to 0600 on the descriptor"
+owner = "cam"
+reason = "engine-owned staging and spill files hold source values, so they are created 0600 on their own descriptor whatever the umask"
 
 [[entry]]
 module = "decoy_engine/execution/out_of_core/_scratch.py"

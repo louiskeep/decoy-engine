@@ -10,6 +10,7 @@ import weakref
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import BinaryIO
 
 from decoy_engine import fileaccess
 from decoy_engine.fileaccess import FileRequest, FileRole, Root, RootedFileAccess
@@ -51,7 +52,8 @@ def engine_scratch_root(parent: Path | None) -> Iterator[Path]:
     if parent is not None:
         fileaccess.require_ambient("run_fk_out_of_core with a caller-named temp_dir")
         Path(parent).mkdir(parents=True, exist_ok=True)
-    root = Path(tempfile.mkdtemp(prefix="decoy-ooc-run-", dir=parent))  # created 0700
+    root = Path(tempfile.mkdtemp(prefix="decoy-ooc-run-", dir=parent))
+    os.chmod(root, 0o700)  # mkdtemp's 0700 is narrowed by the umask, never widened back
     key = os.path.abspath(root)
     with _ENGINE_ROOTS_LOCK:
         _ENGINE_ROOTS.add(key)
@@ -61,6 +63,24 @@ def engine_scratch_root(parent: Path | None) -> Iterator[Path]:
         with _ENGINE_ROOTS_LOCK:
             _ENGINE_ROOTS.discard(key)
         shutil.rmtree(root, ignore_errors=True)
+
+
+def open_private(path: Path) -> BinaryIO:
+    """A writable file object over ``path``, created or truncated with mode 0600 on its own
+    descriptor before any byte is written.
+
+    Scratch files hold source values, and an inherited umask (0000 makes a path-opened writer's
+    file 0666; 0777 makes it 0000) must neither widen nor zero their mode, so the mode is set on
+    the descriptor rather than left to ``open(2)``'s umask-masked creation mode. The caller owns
+    the returned object and closes it; a pyarrow writer handed it never does.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        return os.fdopen(fd, "wb")
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 class ScratchAccess(RootedFileAccess):

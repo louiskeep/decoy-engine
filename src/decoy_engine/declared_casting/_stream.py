@@ -94,12 +94,13 @@ def stage_typed_sources(
     ``root`` is an engine-made directory. Each file is named by a per-run counter, never by the
     table name, so no config value shapes a path (the out-of-core runner's opaque ``t0000``
     scratch names follow the same rule), and it is read back only through a reader issued over
-    ``root`` (``scratch_access_for``), as the out-of-core key stager does.
+    ``root`` (``scratch_access_for``), as the out-of-core key stager does. Each file is created
+    0600 on its own descriptor (``open_private``) before any row lands, whatever the umask.
     """
     import pyarrow.parquet as pq
 
     from decoy_engine.execution.out_of_core._budget import check_temp_disk_budget
-    from decoy_engine.execution.out_of_core._scratch import scratch_access_for
+    from decoy_engine.execution.out_of_core._scratch import open_private, scratch_access_for
     from decoy_engine.profile._readers import LazySource
 
     out = dict(sources)
@@ -114,22 +115,26 @@ def stage_typed_sources(
         path = root / f"s{index:04d}.typed.parquet"
         writer: Any = None
         offset = 0
+        sink = open_private(path)
         try:
             for batch in src.iter_batches(batch_rows):
                 cast = run.cast_batch(table, batch, offset=offset)
                 offset += batch.num_rows
                 if writer is None:
-                    writer = pq.ParquetWriter(path, cast.table.schema)
+                    writer = pq.ParquetWriter(sink, cast.table.schema)
                 writer.write_table(cast.table)
                 if max_bytes is not None:
                     check_temp_disk_budget(root, max_bytes=max_bytes)
             if writer is None:  # a zero-row source still needs a typed, readable file
                 empty = run.cast_batch(table, src.schema.empty_table(), offset=0).table
-                writer = pq.ParquetWriter(path, empty.schema)
+                writer = pq.ParquetWriter(sink, empty.schema)
                 writer.write_table(empty)
         finally:
-            if writer is not None:
-                writer.close()
+            try:
+                if writer is not None:
+                    writer.close()
+            finally:
+                sink.close()
         if max_bytes is not None:
             check_temp_disk_budget(root, max_bytes=max_bytes)
         if reader is None:
