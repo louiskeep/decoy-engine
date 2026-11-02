@@ -31,20 +31,13 @@ from __future__ import annotations
 
 import os
 import shutil
+import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-
-from decoy_engine.scratch import (
-    ArenaLike,
-    PublicationStage,
-    ensure_publication_stage,
-    release_resource,
-    route_write_failure,
-)
 
 
 # NOTE: isinstance(obj, TransactionalSink) matches write/write_batches/commit/
@@ -157,14 +150,9 @@ class ParquetTransactionalSink:
     # never materializes the stream. The callable adapter lacks it, so it cannot take a streamed run.
     bounded_write_batches = True
 
-    def __init__(self, target_dir: Path, *, scratch_arena: ArenaLike | None = None) -> None:
+    def __init__(self, target_dir: Path) -> None:
         self._target = target_dir
         self._staging: Path | None = None
-        # F25 T09: the `_decoy_stage_*` directory is a registered destination-side
-        # publication stage when an attempt arena is injected; without one it is the
-        # same owned sibling directory as before. The single commit rename is unchanged.
-        self._scratch_arena = scratch_arena
-        self._stage_cap: PublicationStage | None = None
 
     def write(self, table: str, data: pa.Table) -> None:
         """Stage one masked table as Parquet in the private staging directory.
@@ -183,10 +171,7 @@ class ParquetTransactionalSink:
         """
         self._validate_table_name(table)
         dest = self._stage_dest(table)
-        try:
-            pq.write_table(data, dest)
-        except OSError as exc:
-            route_write_failure(self._scratch_arena, self._stage_cap, exc)
+        pq.write_table(data, dest)
 
     def write_batches(
         self, table: str, batches: Iterable[pa.RecordBatch], *, schema: pa.Schema
@@ -239,12 +224,7 @@ class ParquetTransactionalSink:
             except Exception:
                 pass
             raise
-        # The footer flush on close is the canonical quota-trip point for a
-        # streamed write; route EDQUOT/ENOSPC there to the shared report (A02).
-        try:
-            writer.close()
-        except OSError as exc:
-            route_write_failure(self._scratch_arena, self._stage_cap, exc)
+        writer.close()
 
     @property
     def spill_parent(self) -> Path:
@@ -283,13 +263,7 @@ class ParquetTransactionalSink:
         if self._staging is None:
             # Staging lives in target.parent to guarantee same-filesystem rename.
             self._target.parent.mkdir(parents=True, exist_ok=True)
-            stage, self._stage_cap = ensure_publication_stage(
-                self._scratch_arena,
-                self._target,
-                retention_owner="transactional_sink",
-                fallback_prefix="_decoy_stage_",
-            )
-            self._staging = Path(stage)
+            self._staging = Path(tempfile.mkdtemp(prefix="_decoy_stage_", dir=self._target.parent))
         return self._staging / f"{table}.parquet"
 
     def commit(self) -> None:
@@ -319,11 +293,8 @@ class ParquetTransactionalSink:
         self._target.parent.mkdir(parents=True, exist_ok=True)
         # Single atomic rename: staging becomes target.
         os.replace(self._staging, self._target)
-        # Rename succeeded: staging is now the target directory; the registered
-        # publication stage has become durable output, so drop the handle without
-        # reclaiming it (the durable-publication ledger transition is Slice 4/5).
+        # Rename succeeded: staging is now the target directory; clear state.
         self._staging = None
-        self._stage_cap = None
 
     def abort(self) -> None:
         """Remove the staging directory so nothing partial reaches the target.
@@ -335,6 +306,4 @@ class ParquetTransactionalSink:
     def _cleanup_staging(self) -> None:
         if self._staging is not None:
             shutil.rmtree(self._staging, ignore_errors=True)
-        release_resource(self._scratch_arena, self._stage_cap)
         self._staging = None
-        self._stage_cap = None

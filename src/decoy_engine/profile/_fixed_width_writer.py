@@ -48,8 +48,8 @@ from __future__ import annotations
 
 import numbers
 import os
+import tempfile
 from math import copysign, isnan
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -61,12 +61,6 @@ from decoy_engine.profile._fixed_width_reader import (
     _render_path,
     _resolve_layout,
     _strip_pad,
-)
-from decoy_engine.scratch import (
-    ArenaLike,
-    ensure_publication_file,
-    release_resource,
-    route_write_failure,
 )
 
 # The reader never reads the bytes between columns (every column is an absolute
@@ -197,8 +191,6 @@ def write_fixed_width(
     frame: pd.DataFrame,
     layout: FixedWidthLayout | dict[str, Any],
     path: str | os.PathLike[str],
-    *,
-    scratch_arena: ArenaLike | None = None,
 ) -> str:
     """Write `frame` to a fixed-width file at `path` per `layout`, inverting
     `read_fixed_width`.
@@ -216,10 +208,6 @@ def write_fixed_width(
             the same directory and `os.replace`d into place on full success, so
             a pre-existing file at `path` is replaced atomically and is left
             untouched if the write fails closed.
-        scratch_arena: optional F25 attempt-arena capability (T16). When given,
-            the temp file is a registered destination-side publication stage;
-            when omitted (the default / pre-activation path), an owned temp file
-            is created in the target directory exactly as before.
 
     Returns:
         The `path` written (as `str`), for caller convenience.
@@ -256,7 +244,7 @@ def write_fixed_width(
     if schema_message is not None:
         raise FixedWidthWriteError(schema_message)
 
-    failure = _write_all(frame, spec, path, scratch_arena)
+    failure = _write_all(frame, spec, path)
     if failure is not None:
         # Raised here, after `_write_all` has returned and removed any temp file:
         # this frame holds only the message and path, never a cell value, and no
@@ -320,20 +308,9 @@ def _fsync_dir(directory: str) -> None:
             pass
 
 
-def _write_all(
-    frame: pd.DataFrame, spec: FixedWidthLayout, path: str, arena: ArenaLike | None
-) -> str | None:
+def _write_all(frame: pd.DataFrame, spec: FixedWidthLayout, path: str) -> str | None:
     """Atomically write every record, or return a PII-safe failure message with
-    nothing published. Raises only for genuine I/O errors (OSError).
-
-    F25 T16: the ``.decoy-fw-*.tmp`` staging file is allocated through the
-    capability seam. With an injected arena it is a registered publication-stage
-    file on the destination filesystem, so the ``os.replace`` below is still a
-    same-filesystem atomic rename and the fsync/rename discipline is unchanged;
-    on the pre-activation path the seam creates the same owned 0600 temp file in
-    the target directory, exactly as before. A write/fsync quota failure is
-    routed to the shared ``scratch_quota_exceeded`` report when the arena is
-    registered, and re-raised unchanged otherwise (its errno is preserved)."""
+    nothing published. Raises only for genuine I/O errors (OSError)."""
     # `.tolist()` normalizes numpy scalars to Python types (int64 -> int, NaN ->
     # float('nan')), so the per-type `isinstance` checks in `_render_value` see
     # plain Python values.
@@ -342,18 +319,10 @@ def _write_all(
     rendered = _render_path(path)
     directory = os.path.dirname(os.path.abspath(path)) or "."
 
-    tmp_path_obj, stage_cap = ensure_publication_file(
-        arena,
-        Path(path),
-        retention_owner="fixed_width",
-        fallback_dir=Path(directory),
-        fallback_prefix=".decoy-fw-",
-        fallback_suffix=".tmp",
-    )
-    tmp_path = str(tmp_path_obj)
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".decoy-fw-", suffix=".tmp")
     try:
         failure: str | None = None
-        with open(tmp_path, "w", encoding="utf-8", newline="") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             for row_index in range(row_count):
                 row = {name: values[row_index] for name, values in columns.items()}
                 line, message = _build_record(row, spec, row_index)
@@ -373,21 +342,12 @@ def _write_all(
         if failure is not None:
             # A data failure: drop the partial temp file and publish nothing.
             _silent_unlink(tmp_path)
-            release_resource(arena, stage_cap)
             return failure
         os.replace(tmp_path, path)
         _fsync_dir(directory)
-        release_resource(arena, stage_cap)
         return None
-    except OSError as exc:
-        _silent_unlink(tmp_path)
-        try:
-            route_write_failure(arena, stage_cap, exc)
-        finally:
-            release_resource(arena, stage_cap)
     except BaseException:
         _silent_unlink(tmp_path)
-        release_resource(arena, stage_cap)
         raise
 
 

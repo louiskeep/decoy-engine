@@ -55,13 +55,6 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
-from decoy_engine.scratch import (
-    ArenaLike,
-    ensure_native_dir,
-    ensure_publication_stage,
-    provider_io_report,
-    release_resource,
-)
 from decoy_engine.sdk import PermanentError
 
 __all__ = [
@@ -431,37 +424,10 @@ def _export_relation(conn: Any, sel: RelationSelection, target: Path, row_group_
     )
 
 
-def _attach_quota_report(err: PostgresSnapshotError, arena: ArenaLike | None) -> None:
-    """Attach the shared scratch classification report to a COPY failure.
-
-    A DuckDB ``COPY`` to a staged Parquet (T13) loses the kernel errno when the
-    spill or stage filesystem hits the project quota, so the failure cannot be
-    classified by errno alone (plan 1.5 item 5). With an injected arena the tiered
-    classifier (errno, kernel probe for provider-quota evidence, else unknown-I/O)
-    produces the report, so the failure surfaces as a typed shared-report outcome
-    rather than a bare ``export_failed`` code. Without a durable-ledger arena there
-    is nothing to classify against and the code is left as-is.
-
-    Fails closed: the classifier runs a bounded kernel probe that can itself
-    raise, so any failure here leaves the report unset rather than surfacing the
-    probe's native detail. Call this OUTSIDE the active ``except`` so a raised
-    probe error could never chain the original export failure via
-    ``__context__``."""
-
-    try:
-        report = provider_io_report(arena)
-    except Exception:
-        report = None
-    if report is not None:
-        err.report = report  # type: ignore[attr-defined]  # shared scratch_quota report
-
-
 def snapshot_tables_to_parquet(
     config: PostgresSnapshotConfig,
     selections: list[RelationSelection],
     dest_dir: Path,
-    *,
-    scratch_arena: ArenaLike | None = None,
 ) -> dict[str, Path]:
     """Stage every selection from ONE snapshot; return ``{schema.table: parquet_path}``.
 
@@ -469,14 +435,6 @@ def snapshot_tables_to_parquet(
     relation. A single-relation snapshot is this same call with one selection.
     On any failure, timeout, or interrupt nothing is published and every
     staged and spill file is removed.
-
-    F25 T13: the DuckDB spill directory and the Parquet staging directory are
-    both allocated through the capability seam. With an injected ``scratch_arena``
-    the spill is a registered native directory and the stage is a registered
-    destination-side publication arena (so the ``os.replace`` into
-    ``snapshot-<run_id>`` is still a same-filesystem rename); without one they are
-    the same owned 0700 directories as before. The snapshot transaction, ordered
-    COPY, and timeout/extension controls are unchanged.
     """
     if not selections:
         raise PostgresSnapshotError("no_selections")
@@ -486,18 +444,10 @@ def snapshot_tables_to_parquet(
 
     run_id = uuid.uuid4().hex
     dest_dir.mkdir(parents=True, exist_ok=True)
+    stage_dir = dest_dir / f".stage-{run_id}"
     final_dir = dest_dir / f"snapshot-{run_id}"
-    stage_path, stage_cap = ensure_publication_stage(
-        scratch_arena, final_dir, retention_owner="postgres_snapshot", fallback_prefix=".stage-"
-    )
-    stage_dir = Path(stage_path)
-    spill_path, spill_cap = ensure_native_dir(
-        scratch_arena,
-        fallback_parent=config.temp_directory,
-        fallback_prefix="spill-",
-        writer_id="postgres_snapshot",
-    )
-    spill_dir = Path(spill_path)
+    spill_dir = config.temp_directory / f"spill-{run_id}"
+    stage_dir.mkdir(mode=0o700)
 
     published = False
     conn: Any = None
@@ -533,7 +483,6 @@ def snapshot_tables_to_parquet(
             ) from None
 
         staged: dict[str, Path] = {}
-        export_cause: str | None = None
         try:
             conn.execute("BEGIN TRANSACTION")
             # Validate every relation first so a late type rejection never
@@ -553,14 +502,7 @@ def snapshot_tables_to_parquet(
         except Exception as exc:
             if timed_out.is_set():
                 raise PostgresSnapshotError("deadline_exceeded") from None
-            # Capture only the cause's TYPE name; classify and raise OUTSIDE this
-            # handler so a probe failure can neither surface native text nor chain
-            # the original native exception via __context__ (exception hygiene).
-            export_cause = type(exc).__name__
-        if export_cause is not None:
-            failure = PostgresSnapshotError("export_failed", cause_type=export_cause)
-            _attach_quota_report(failure, scratch_arena)
-            raise failure from None
+            raise PostgresSnapshotError("export_failed", cause_type=type(exc).__name__) from None
 
         if timed_out.is_set():
             raise PostgresSnapshotError("deadline_exceeded")
@@ -582,9 +524,5 @@ def snapshot_tables_to_parquet(
                 pass
         shutil.rmtree(stage_dir, ignore_errors=True)
         shutil.rmtree(spill_dir, ignore_errors=True)
-        # Release the registered spill/stage ledger charges. On publish the stage
-        # became durable output (its path is gone), so release is a ledger no-op.
-        release_resource(scratch_arena, spill_cap)
         if not published:
-            release_resource(scratch_arena, stage_cap)
             shutil.rmtree(final_dir, ignore_errors=True)

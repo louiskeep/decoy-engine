@@ -64,24 +64,16 @@ MAX = 700
 # One-line rationale per entry; the per-file growth history lives in
 # docs/decisions/module-size-census-history.md.
 ALLOWLIST: dict[str, int] = {
-    # F25 identity-bound capability arena: use-time (st_dev, st_ino) verification,
-    # dir_fd-relative verified child creation, guaranteed-reclaim and the tiered
-    # quota-report builders in one cohesive allocator. The fs-identity primitives
-    # are kept here (not split out) because the scratch tests monkeypatch this
-    # module's `os`; split the quota-report builders into _quota_report.py next.
-    "src/decoy_engine/scratch/_arena.py": 677,
-    # sampler start/finish and evidence threading in _spawn_and_classify; F25 T11 attempt-arena work-root allocation + capability-fd transport. Split the spawn/classify half into _isolated_spawn.py.
-    "src/decoy_engine/execution/_isolated_run.py": 675,
+    # sampler start/finish and evidence threading in _spawn_and_classify; split the spawn/classify half into _isolated_spawn.py.
+    "src/decoy_engine/execution/_isolated_run.py": 608,
     # bounded-eligible fit rule, the fk-dtype retention branch and the D3a validator admission in decide_execution_route; split the route-priority docstring into the plan doc.
     "src/decoy_engine/execution/_pipeline_routing.py": 700,
     # wiring of the fk-dtype hazard and D3a validator signals into the one routing call site, plus
     # the B4 source-type admission threading (_source_arrow_types + the source_types param); split
     # the probe-recovery resolver into its own module.
     "src/decoy_engine/execution/_pipeline_routing_signals.py": 638,
-    # fan-in guard on the budget resolver; F25 reraise_ooc_quota (the OOC EDQUOT -> shared-report
-    # translation, beside out_of_core_temp_disk_exceeded) plus the no-errno DuckDB-COPY
-    # provider-quota tier. Split the disk-preflight helpers into _disk_budget.py.
-    "src/decoy_engine/execution/out_of_core/_budget.py": 647,
+    # fan-in guard on the budget resolver; split the disk-preflight helpers into _disk_budget.py.
+    "src/decoy_engine/execution/out_of_core/_budget.py": 608,
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
     "src/decoy_engine/execution/out_of_core/_spill_estimate.py": 623,
     # pinned-Plan generation threading through the per-generator dispatch; split the statistical/derived/formula branches.
@@ -126,15 +118,12 @@ ALLOWLIST: dict[str, int] = {
     # sequential FK route threading; split the per-table mask/quarantine loop.
     # cross-column V1 folds joint_mask key_by into the source-anchor build (a comment, no new logic).
     "src/decoy_engine/execution/_sequential.py": 691,
-    # transactional publish hardening and row mask; F25 T15 staged-quarantine publication arena. Split the publish cluster.
-    "src/decoy_engine/quarantine.py": 686,
-    # code_set provenance and FF1 notice plumbing through the streaming runner; F25 attempt-arena threading (T01)
-    # + the OOC EDQUOT reraise call at the run choke point. Near the hard max; decompose the per-table loop next.
-    "src/decoy_engine/execution/out_of_core/_runner.py": 699,
-    # D3a validator mask-step hook threaded through the reorder driver; F25 arena threading into the reorder lane (T06).
-    "src/decoy_engine/execution/out_of_core/_stream_driver.py": 631,
-    # F25 relation build rebased onto one registered native work directory (T03); dedup/COPY logic unchanged.
-    "src/decoy_engine/execution/out_of_core/_relation.py": 614,
+    # transactional publish hardening and row mask; split the publish cluster.
+    "src/decoy_engine/quarantine.py": 645,
+    # code_set provenance and FF1 notice plumbing through the streaming runner.
+    "src/decoy_engine/execution/out_of_core/_runner.py": 679,
+    # D3a validator mask-step hook threaded through the reorder driver; all logic lives in _validate_batch.py.
+    "src/decoy_engine/execution/out_of_core/_stream_driver.py": 608,
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.
     "src/decoy_engine/transforms/_codeset_loader.py": 606,
     # DRAW_SITES catalogue; split into _draw_sites_mask.py / _draw_sites_gen.py if it grows.

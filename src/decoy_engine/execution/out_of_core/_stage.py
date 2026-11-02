@@ -25,10 +25,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from decoy_engine.execution.out_of_core._source import LazySource
-from decoy_engine.scratch._capabilities import RegisteredFile, unwrap_path
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from pathlib import Path
 
 
 class MaskedKeyStager:
@@ -53,7 +53,7 @@ class MaskedKeyStager:
 
     def __init__(
         self,
-        staged: RegisteredFile,
+        path: Path,
         *,
         columns: tuple[str, ...],
         fixed_schema: pa.Schema,
@@ -62,11 +62,10 @@ class MaskedKeyStager:
         self._columns = columns
         self._indexes = tuple(fixed_schema.get_field_index(col) for col in columns)
         schema = pa.schema([fixed_schema.field(idx) for idx in self._indexes])
-        # T02 (plan 1.3): the staged masked-key file is a registered capability;
-        # the arena already created it 0600, so no mkdir or bare path is needed.
-        self._path = unwrap_path(staged)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._path = path
         self._schema = schema
-        self._writer = pq.ParquetWriter(self._path, schema)
+        self._writer = pq.ParquetWriter(path, schema)
         if masked_observed_types is None:
             self.observed: dict[str, set[pa.DataType]] = {col: set() for col in columns}
             self._track_observed = True
