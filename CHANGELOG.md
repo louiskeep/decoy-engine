@@ -9,21 +9,95 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-01
+
+Pre-GA release (`RELEASE_PHASE = "pre-ga"`): the minor bump carries breaking changes with no shims. It is
+0.17.0 plus the A-4 file-access policy reconciled with F13 secret admission, the typed out-of-core temporal
+FK seam, the SBOM error-handling fixes, the exact-integer categorical CDF builder, and the generated NOTICE
+with its license gate and the SDV citation fixes.
+
+### Breaking for consumers (since v0.17.0)
+
+- A `file:` mask secret (`global_settings.mask_secret_ref: file:<path>`, or `keyprovider.key_provider_from_ref
+  ("file:...")`) must be owner-only. Any group or other permission bit (0640, 0644, 0444, 0660 ...) refuses it
+  with `runtime.secret_file_permissions_unsafe`, checked with `fstat` on the descriptor that is read; no bypass
+  setting. The mode is checked before the length, so a short secret at 0644 is refused for its mode, not as
+  `weak_mask_secret`. Deployed secret mounts and test fixtures that write a secret file under the default
+  umask must `chmod 0600` (or 0400) it. Windows ACLs are not inspected.
+- `env:` and `file:` secrets are never cached, whatever the `SecretCachePolicy` TTL.
+- Reason registry `1.1.0` -> `1.2.0` (891 -> 893 identities). New: `runtime.secret_file_permissions_unsafe`,
+  `decoy.file_access_denied` (the identity of `FileAccessDenied`). A consumer that pins the registry version or
+  the identity count, or maps reason codes to its own messages, must add both.
+- `keyprovider.key_provider_from_ref(ref, *, key_version=None, file_access=None)`: `file_access=` is new and
+  the function is a file-access entry point (`key_version=None` is unchanged since 0.17.0).
+- `quarantine.write_jsonl_staged` returns the staged `OutputTxn` (was the final `Path`); the caller publishes it.
+  `publish_staged_jsonl` and `discard_staged_jsonl` take that `OutputTxn` as `staged_path` (was a `Path`).
+- A bare `joint_mask.reference` name must be a shipped reference table. Any other bare name (a path, `../x`,
+  an absolute path) now fails with `FileNotFoundError` (config validation: `joint_mask_reference_not_found`)
+  and reads no file; 0.17.0 joined it onto the data directory and read it. Migration: reference a customer
+  table as `customer:<path>`.
+- A shipped code-set corpus name (`provider_config.code_set` with `corpus_source` unset or `shipped`) must be a
+  registered corpus. Any other name (`icd10.parquet`, `../x`, an absolute stem) now fails with
+  `PlanCompileError` `code_set_corpus_not_found`; 0.17.0 joined it onto the corpora directory and loaded that
+  file. Migration: `corpus_source: "customer:<path>"`.
+- `run_discovery_sql` runs on a locked DuckDB connection with external access off: SQL that reads a file
+  through a DuckDB function (`read_text`, `read_blob`, `glob`, ...) now fails with `DiscoverySqlError`
+  ("SQL execution failed: Permission Error ..."); 0.17.0 read the file. Multiple statements were already
+  refused in 0.17.0. Migration: pass each file as an entry of `tables=` and query it by name.
+- 42 file-reading or file-writing entry points (`decoy_engine.fileaccess.ENTRY_POINTS`, `run_pipeline`
+  included) take a keyword-only `file_access=None`. Additive with no policy installed; under an installed
+  policy an explicit `file_access=` must be that policy or narrower, else `FileAccessUnavailable`.
+- Out-of-core temporal FK columns publish the resolved unit of their key (were always `timestamp[us]`); a key
+  outside the resolved type is refused with `out_of_core_fk_key_dtype_unsupported`.
+- Weighted categorical masking (`strategy: categorical` with `weights`) moves masked output: the CDF
+  thresholds are now rounded half up over exact integers instead of floored from a float running sum. On the
+  seeded 20,000-vector corpus (`tests/unit/execution/_cdf_oracle.py`) at least one threshold moves in about 99%
+  of weight vectors, every moved threshold by at most one slot, so a row changes category with probability
+  about 5e-5. `[1, 1, 1]` gives `[333333, 666667, 1000000]` (was `[333333, 666666, 1000000]`). Output is now
+  identical on 3.10, 3.11 and 3.12. Weight vectors that built before and are now refused: a weight under one
+  slot after rounding (`[1.0, 2e-6, 1.0]`), a total above the largest double (`[1e308, 1e308]`), and `bool`,
+  `str`, `Decimal`, `Fraction` or subclass weights, refused with `StrategyError`
+  (`categorical_weights_nonpositive`) on the resident, out-of-core and chunked routes alike (the native
+  operator declines them, so the run takes the refusing route); NaN or infinite weights raise that
+  `StrategyError` instead of a bare `ValueError`. Migration: write weights as plain numbers.
+- `ProviderSpec.seed`, `ValuePool.seed`, `SeedEnvelope.job_seed`, `StrategyContext.job_seed`/`mask_key` and
+  `ShadowContext.job_seed`/`mask_key` are `repr=False`: they no longer appear in `repr()` output.
+- No public module or exported symbol was removed or renamed (`CodeSetConfig` moved to a private module and is
+  still importable from `decoy_engine.transforms.code_set`).
+- DP: certified rows are added for 0.18.0 (`31ecf945...`, engine dev/CI profile; `b643894d...`, the
+  decoy-cli runtime profile). The CLI's `requirements-certified.txt` header fingerprint moves to `b643894d...`;
+  a CLI install of 0.18.0 cannot run a certified fit until it does. The 0.17.0 rows (`5a76ea92...`,
+  `a7b40d54...`) stay certified, so a DP snapshot fit under 0.17.0 still compiles.
+
+The generated `NOTICE`, the license gate and the SDV citation fixes are not breaking: no runtime code,
+dependency or public symbol changes.
+
+### Changed (release R-b, 2026-11-01)
+
+`pyproject.toml`, `decoy_engine.__version__`, the `uv.lock` root entry and the proof-manifest stamp move to
+0.18.0, and a DP certified row is added for each profile (reverting only the engine version to 0.17.0 reproduces
+the 0.17.0 rows exactly; those rows stay in the certified set). The reason release pin (`tests/fixtures/f29/reason-registry-release.json`) is re-captured at
+registry 1.2.0 (893 identities: 884 `since` 1.0.0, 7 `since` 1.1.0, 2 `since` 1.2.0). The Phase F FR0
+manifest is re-frozen for engine minor `0.18` (envelope digests only; every golden table digest is
+unchanged).
+
 ### Fixed (categorical CDF: exact integer builder, 2026-11-01)
 
 The weighted categorical CDF summed weights with the builtin `sum()`, which CPython 3.12 made
 compensated, so about 2.3% of weight vectors got thresholds one slot apart on 3.12 versus 3.10/3.11 and
 masked output depended on the interpreter. `_build_cdf` now converts each weight to its exact dyadic
 rational and computes `(2 * C_i * RES + T) // (2 * T)` (round half up) over exact integers. Plan:
-`docs/plans/2026-10-31-categorical-cdf-exact-arithmetic.md` (branch `plan/cdf-exact-arithmetic`).
+`docs/plans/2026-10-31-categorical-cdf-exact-arithmetic.md` on branch `plan/cdf-exact-arithmetic` (f89f4ab7), not on main.
 
-- Output: thresholds move by at most one slot for about 2.2% of vectors versus 3.10 output; `[1, 1, 1]`
-  becomes `[333333, 666667, 1000000]` (was `[333333, 666666, 1000000]`). `[1.0, 2e-6, 1.0]` is now
-  refused as below resolution (0.999999 of a slot); `[1e308, 1e308]` is refused as an overflowing total.
+- Output: versus 3.10 output, at least one threshold moves in about 99% of weight vectors, each by at most
+  one slot (a row changes category with probability about 5e-5); `[1, 1, 1]` becomes
+  `[333333, 666667, 1000000]` (was `[333333, 666666, 1000000]`). `[1.0, 2e-6, 1.0]` is now refused as below
+  resolution (0.999999 of a slot); `[1e308, 1e308]` is refused as an overflowing total.
 - Weights must be `int`, a numpy integer, `float` or numpy `float16/32/64`, by exact type: `bool`, `str`,
   `None`, `Decimal`, `Fraction` and subclasses are refused. NaN and infinity raise `StrategyError`
   (`categorical_weights_nonpositive`) instead of a bare `ValueError`. Refusals run as whole-vector passes
   (type, non-finite, negative, total, resolution) and their messages carry the index only, no value.
+
 ### Changed (licensing: generated NOTICE, license gate, SDV citations, 2026-11-01)
 
 - `NOTICE` (shipped in the wheel) is generated from `uv.lock` by `scripts/dev/licenses_write.sh`: name,
@@ -36,6 +110,7 @@ rational and computes `(2 * C_i * RES + T) // (2 * T)` (round half up) over exac
 - SDV citations no longer call SDV MIT: SDV is BUSL-1.1. The engine cites the HMA1 and PAR methods (papers
   named) and uses no SDV code; `tests/sentry/test_sdv_import_sentry.py` fails on an SDV or sdmetrics import
   and on a citation labelling SDV permissive.
+
 
 ### Fixed (out-of-core: typed temporal FK seam, release R-b, 2026-11-01)
 
@@ -104,6 +179,78 @@ write goes through a policy-issued `OutputDir` (staged, then published), and the
 their source through the policy. `postgres_snapshot.snapshot_tables_to_parquet` refuses any policy but
 the ambient one. `LazySource.iter_batches` and `to_table` take an optional `columns=` projection, which
 replaces the two direct Parquet opens in the out-of-core null guard and the mixed route.
+
+### Added (the `FileAccess` policy, built 2026-10-07, first released in 0.18.0)
+
+New public package `decoy_engine.fileaccess`. Every file the engine opens, stats, lists, creates,
+renames or deletes on behalf of a config value or a caller now goes through one `FileAccess` policy
+or a capability it issued (an open file handle, a directory capability, an output transaction), so a
+host that serves several users can decide which files an engine call may touch without keeping a list
+of config fields. Entry points (`run_pipeline`, `run_mask_pipeline_chunked`, `run_mask_chunked`,
+`profile_source`, `compile_plan`, `load_table`, `load_corpus`, `run_subset`, `run_discovery_sql`,
+`unmask_pipeline`, `load_vault`, `vault_writer_for_config`, and the rest of
+`decoy_engine.fileaccess.ENTRY_POINTS`) take a keyword-only `file_access=`. Policies ship for the
+ambient CLI behavior (`LocalFileAccess`), deny-by-default rooted access confined with
+`openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` (`RootedFileAccess`), and pre-opened descriptors
+(`PreopenedFileAccess`). A process that must never fall back to ambient access calls
+`fileaccess.forbid_ambient()` once at startup. `ParquetTransactionalSink`, `LazySource`,
+`VaultWriter`, `load_vault` and `unmask_pipeline` also accept the capability objects directly. A
+denial is one `FileAccessDenied` whose message is `file access denied: <config position>`, with no
+path, basename or file content; a library failure on a file the policy allowed (corrupt Parquet, bad
+YAML) is a separate `FileAccessReadError` with the same hygiene, and memory and disk-quota errors keep
+their class. Contract: `docs/security/file-access-policy.md`.
+
+With no policy argument the engine behaves as before: paths, symlinks, error text, output names, the
+default log file, accepted and rejected table names and the table sink's publish and failure
+semantics are unchanged. A new sentry fails CI if any engine code reaches a file-system call outside
+an adapter, a capability module or a reviewed registry entry.
+
+### Changed (BREAKING, pre-GA: bare reference names and discovery SQL, built 2026-10-07, first released in 0.18.0)
+
+Two behavior changes, both closing a read of an arbitrary host file.
+
+- A bare `joint_mask.reference` name must be one of the shipped reference tables. A name that is not
+  shipped, including `../../x` and an absolute path, raises the same `FileNotFoundError` as before
+  (validation reports `joint_mask_reference_not_found`) and never reads a file. Before, the loader
+  joined any bare name onto its data directory. `customer:<path>` is unchanged and is the only path
+  form.
+- `run_discovery_sql` runs on a locked in-memory DuckDB connection with external access off and
+  accepts exactly one `SELECT` over the tables it is given. `read_text`, `read_blob`, `glob`,
+  `FROM '<path>'`, `COPY`, `ATTACH`, `INSTALL`, `LOAD` and `SET` can no longer reach a file, write
+  one or turn this off. Tables are registered as Arrow datasets, so projections and predicates still
+  push down.
+
+Smaller changes under the same program: the three unused helpers `get_file_size`, `is_path_exists`
+and `create_directory_for_file` in `internal/fs.py` are removed; `quarantine.write_jsonl_staged`
+returns an opaque stage (publish it with `publish_staged_jsonl`, discard it with
+`discard_staged_jsonl`) instead of a path; `ParquetTransactionalSink` and the hold-back spill create
+their stages through the policy, with the same directory names, publish semantics and error behavior;
+a vault write to a path keeps writing in place, as before (a strict policy's `OutputDir` gets an exclusive create instead); subset output is staged and
+published with one rename instead of being written in place. Under a policy other than the ambient
+one, `run_pipeline_isolated` (when it would spawn a child or is given a `staging_dir` or `output_dir`)
+and `run_fk_out_of_core` with a caller-named `temp_dir` raise `FileAccessUnavailable` before any I/O.
+
+### Changed (BREAKING, pre-GA: strict error boundary and scratch names, built 2026-10-08, first released in 0.18.0)
+
+- A shipped corpus name resolves only if it is a registry key, through a registry-owned path,
+  before any file-system call. Any other name (`../x`, an absolute stem, `icd10.parquet`) raises
+  `code_set_corpus_not_found` with one fixed message that echoes neither the name nor a path. Before,
+  the name was joined onto the corpora directory, so an absolute stem could load an arbitrary
+  Parquet file as a "shipped" corpus.
+- Under a policy other than the ambient one, no engine error or log line names a file locator or the
+  descriptor path (`/proc/self/fd/<n>`) a library was handed: snapshot, corpus, model-pack,
+  name-hint, discovery, lockfile, custom-provider and quarantine diagnostics name the config position
+  instead. A secret file that fails to decode, validate or parse raises a fresh error built from the
+  config position, with no cause or context, even when the caller is already handling another error.
+  Text from the content of a file the principal may read can still appear.
+- Under such a policy every handler that translates, stores or swallows a file error re-raises the
+  policy errors, `MemoryError` (including Arrow's), DuckDB's out-of-memory error, `ENOMEM`, `ENOSPC`
+  and `EDQUOT` unchanged, so OOM classification and disk-quota handling still see them.
+- Scratch files the engine derives from a table, column or edge name (the out-of-core `joins/`,
+  `relations/` and `staged/` trees and relation files, the native pool-quality spool, the isolated
+  route's input copies) are now named by opaque per-run ids. A name holding `/` or `..`, or an absolute
+  name, can no longer place a scratch file outside the scratch directory. Output table files are
+  unchanged.
 
 ## [0.17.0] - 2026-11-01
 
@@ -1115,78 +1262,6 @@ is what tells it apart from an unrelated crash. Outcomes, return codes and every
 text are unchanged, except that an abnormal-exit error with samples gains a trailing
 `; memory: last X MiB, peak Y MiB of Z MiB (kind)` (sizes only). Uncapped and in-process runs carry
 no evidence.
-
-### Added (the `FileAccess` policy, 0.9.0 pending, 2026-10-07)
-
-New public package `decoy_engine.fileaccess`. Every file the engine opens, stats, lists, creates,
-renames or deletes on behalf of a config value or a caller now goes through one `FileAccess` policy
-or a capability it issued (an open file handle, a directory capability, an output transaction), so a
-host that serves several users can decide which files an engine call may touch without keeping a list
-of config fields. Entry points (`run_pipeline`, `run_mask_pipeline_chunked`, `run_mask_chunked`,
-`profile_source`, `compile_plan`, `load_table`, `load_corpus`, `run_subset`, `run_discovery_sql`,
-`unmask_pipeline`, `load_vault`, `vault_writer_for_config`, and the rest of
-`decoy_engine.fileaccess.ENTRY_POINTS`) take a keyword-only `file_access=`. Policies ship for the
-ambient CLI behavior (`LocalFileAccess`), deny-by-default rooted access confined with
-`openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` (`RootedFileAccess`), and pre-opened descriptors
-(`PreopenedFileAccess`). A process that must never fall back to ambient access calls
-`fileaccess.forbid_ambient()` once at startup. `ParquetTransactionalSink`, `LazySource`,
-`VaultWriter`, `load_vault` and `unmask_pipeline` also accept the capability objects directly. A
-denial is one `FileAccessDenied` whose message is `file access denied: <config position>`, with no
-path, basename or file content; a library failure on a file the policy allowed (corrupt Parquet, bad
-YAML) is a separate `FileAccessReadError` with the same hygiene, and memory and disk-quota errors keep
-their class. Contract: `docs/security/file-access-policy.md`.
-
-With no policy argument the engine behaves as before: paths, symlinks, error text, output names, the
-default log file, accepted and rejected table names and the table sink's publish and failure
-semantics are unchanged. A new sentry fails CI if any engine code reaches a file-system call outside
-an adapter, a capability module or a reviewed registry entry.
-
-### Changed (bare reference names and discovery SQL, 0.9.0 pending, 2026-10-07)
-
-Two behavior changes, both closing a read of an arbitrary host file.
-
-- A bare `joint_mask.reference` name must be one of the shipped reference tables. A name that is not
-  shipped, including `../../x` and an absolute path, raises the same `FileNotFoundError` as before
-  (validation reports `joint_mask_reference_not_found`) and never reads a file. Before, the loader
-  joined any bare name onto its data directory. `customer:<path>` is unchanged and is the only path
-  form.
-- `run_discovery_sql` runs on a locked in-memory DuckDB connection with external access off and
-  accepts exactly one `SELECT` over the tables it is given. `read_text`, `read_blob`, `glob`,
-  `FROM '<path>'`, `COPY`, `ATTACH`, `INSTALL`, `LOAD` and `SET` can no longer reach a file, write
-  one or turn this off. Tables are registered as Arrow datasets, so projections and predicates still
-  push down.
-
-Smaller changes under the same program: the three unused helpers `get_file_size`, `is_path_exists`
-and `create_directory_for_file` in `internal/fs.py` are removed; `quarantine.write_jsonl_staged`
-returns an opaque stage (publish it with `publish_staged_jsonl`, discard it with
-`discard_staged_jsonl`) instead of a path; `ParquetTransactionalSink` and the hold-back spill create
-their stages through the policy, with the same directory names, publish semantics and error behavior;
-a vault write to a path keeps writing in place, as before (a strict policy's `OutputDir` gets an exclusive create instead); subset output is staged and
-published with one rename instead of being written in place. Under a policy other than the ambient
-one, `run_pipeline_isolated` (when it would spawn a child or is given a `staging_dir` or `output_dir`)
-and `run_fk_out_of_core` with a caller-named `temp_dir` raise `FileAccessUnavailable` before any I/O.
-
-### Changed (strict error boundary and scratch names, 0.9.0 pending, 2026-10-08)
-
-- A shipped corpus name resolves only if it is a registry key, through a registry-owned path,
-  before any file-system call. Any other name (`../x`, an absolute stem, `icd10.parquet`) raises
-  `code_set_corpus_not_found` with one fixed message that echoes neither the name nor a path. Before,
-  the name was joined onto the corpora directory, so an absolute stem could load an arbitrary
-  Parquet file as a "shipped" corpus.
-- Under a policy other than the ambient one, no engine error or log line names a file locator or the
-  descriptor path (`/proc/self/fd/<n>`) a library was handed: snapshot, corpus, model-pack,
-  name-hint, discovery, lockfile, custom-provider and quarantine diagnostics name the config position
-  instead. A secret file that fails to decode, validate or parse raises a fresh error built from the
-  config position, with no cause or context, even when the caller is already handling another error.
-  Text from the content of a file the principal may read can still appear.
-- Under such a policy every handler that translates, stores or swallows a file error re-raises the
-  policy errors, `MemoryError` (including Arrow's), DuckDB's out-of-memory error, `ENOMEM`, `ENOSPC`
-  and `EDQUOT` unchanged, so OOM classification and disk-quota handling still see them.
-- Scratch files the engine derives from a table, column or edge name (the out-of-core `joins/`,
-  `relations/` and `staged/` trees and relation files, the native pool-quality spool, the isolated
-  route's input copies) are now named by opaque per-run ids. A name holding `/` or `..`, or an absolute
-  name, can no longer place a scratch file outside the scratch directory. Output table files are
-  unchanged.
 
 ### Fixed (deterministic Faker over integer columns with nulls, 2026-10-07)
 

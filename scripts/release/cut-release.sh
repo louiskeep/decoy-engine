@@ -6,7 +6,8 @@
 #
 # EXPECTED_SHA is the full 40-character main commit the release is reviewed at. The tag name is
 # v<[project].version from pyproject.toml>, the one version source. In order, the script refuses:
-#   - a remote ($RELEASE_REMOTE, default origin) whose URL does not match $EXPECTED_REMOTE_RE
+#   - a remote ($RELEASE_REMOTE, default origin) with any fetch or push URL (every `url` and
+#     `pushurl`, after insteadOf/pushInsteadOf) that does not match $EXPECTED_REMOTE_RE
 #     (default: the GitHub decoy-engine repository);
 #   - any checkout but the branch main (another branch, a detached HEAD, a rebase in progress);
 #   - a working tree with any tracked change, staged change or untracked file, or an index entry
@@ -17,9 +18,10 @@
 #   - a CHANGELOG.md whose first section after [Unreleased] is not "## [<version>] - YYYY-MM-DD";
 #   - a failure of release_checks.sh (lock environment, version agreement, reason release pin,
 #     DP certified profile, SBOM).
-# After the checks it re-verifies the tree, HEAD and both tag lookups (the checks run code from
-# the tree), then tags EXPECTED_SHA itself, not whatever HEAD is by then, and pushes only that
-# tag ref. Nothing else is published: no GitHub release, no PyPI upload, no native build.
+# After the checks it re-verifies the tree, HEAD, both tag lookups and the remote URLs (the
+# checks run code from the tree), then tags EXPECTED_SHA itself, not whatever HEAD is by then, and
+# pushes only that tag ref. Nothing else is published: no GitHub release, no PyPI upload, no
+# native build.
 set -euo pipefail
 unset CDPATH
 
@@ -37,8 +39,21 @@ cd "$root"
 
 remote=${RELEASE_REMOTE:-origin}
 remote_re=${EXPECTED_REMOTE_RE:-'^(https://github\.com/|git@github\.com:|ssh://git@github\.com/)louiskeep/decoy-engine(\.git)?$'}
-url="$(git remote get-url "$remote" 2>/dev/null)" || die "no remote named $remote"
-[[ $url =~ $remote_re ]] || die "remote $remote ($url) does not match $remote_re"
+# Every URL fetch reads and every URL push writes (several `url`/`pushurl` entries, and
+# insteadOf/pushInsteadOf rewrites, as git itself resolves them) must be the engine repository.
+remote_destinations_ok() {
+  local urls url
+  urls="$(git remote get-url --all "$remote" 2>/dev/null)" || die "no remote named $remote"
+  while IFS= read -r url; do
+    [[ $url =~ $remote_re ]] || die "remote $remote ($url) does not match $remote_re"
+  done <<<"$urls"
+  urls="$(git remote get-url --push --all "$remote" 2>/dev/null)" || die "no push URL for $remote"
+  [ -n "$urls" ] || die "no push URL for $remote"
+  while IFS= read -r url; do
+    [[ $url =~ $remote_re ]] || die "remote $remote push URL ($url) does not match $remote_re"
+  done <<<"$urls"
+}
+remote_destinations_ok
 
 version="$(sed -n '/^\[project\]$/,/^\[/{s/^version = "\([^"]*\)"$/\1/p;}' pyproject.toml)"
 [ -n "$version" ] && [ "$(printf '%s\n' "$version" | wc -l)" -eq 1 ] \
@@ -91,6 +106,7 @@ echo "cut-release: $tag at $expected, preflight passed; running release checks"
 
 clean_main_at_expected
 tag_absent
+remote_destinations_ok
 
 if [ "$apply" != 1 ]; then
   echo "DRY RUN: all checks passed; would create annotated tag $tag at $expected and push it to $remote"
