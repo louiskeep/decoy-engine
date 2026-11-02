@@ -91,6 +91,25 @@ def test_integer_bit_width_boundaries(bit_width: int, signed: bool) -> None:
         assert _code(parse(spec, "-1")) == "declared_integer_overflow"
 
 
+@pytest.mark.parametrize("bit_width", [8, 16, 32, 64])
+@pytest.mark.parametrize("signed", [True, False])
+def test_integer_contract_types_the_column_at_its_declared_width(
+    bit_width: int, signed: bool
+) -> None:
+    import pyarrow as pa
+
+    from decoy_engine.contracts.declared_casting import build_contract
+    from decoy_engine.declared_casting._boundary import arrow_type
+
+    spec = {"id": "integer/ascii/v1", "signed": signed, "bit_width": bit_width}
+    model = build_contract(
+        {"logical_type": "integer", "parse_format": spec, "error_policy": "fail"}
+    )
+    signed_types = {8: pa.int8(), 16: pa.int16(), 32: pa.int32(), 64: pa.int64()}
+    unsigned_types = {8: pa.uint8(), 16: pa.uint16(), 32: pa.uint32(), 64: pa.uint64()}
+    assert arrow_type(model) == (signed_types if signed else unsigned_types)[bit_width]
+
+
 @pytest.mark.parametrize(
     "bad", ["", " 1", "1 ", "1_0", "1e3", "\uff10\uff11", "--1", "+", "0x10", "1.0"]
 )
