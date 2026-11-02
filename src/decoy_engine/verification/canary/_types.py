@@ -17,6 +17,8 @@ from dataclasses import dataclass, fields
 from itertools import pairwise
 from typing import TYPE_CHECKING
 
+from decoy_engine import reasons
+
 if TYPE_CHECKING:
     import pyarrow as pa
 
@@ -39,38 +41,38 @@ class CanaryStatus(enum.Enum):
 
 
 class CanaryReason(enum.Enum):
-    """Declaration order is the canonical ``reasons`` order (frozen)."""
+    """Declaration order is the canonical ``reasons`` order (frozen); values are F29 codes."""
 
-    MATCH = "canary_match"
-    SCAN_INCOMPLETE = "canary_scan_incomplete"
-    INPUT_REJECTED = "canary_input_rejected"
-    BINDING_ABSENT = "canary_binding_absent"
-    PUBLICATION_INACTIVE = "canary_publication_inactive"
-    TARGET_UNAVAILABLE = "canary_target_unavailable"
-    PUBLICATION_MISMATCH = "canary_publication_mismatch"
-    ARTIFACT_UNREADABLE = "canary_artifact_unreadable"
-    ARTIFACT_UNSUPPORTED = "canary_artifact_unsupported"
-    RESOURCE_LIMIT = "canary_resource_limit"
-    CELL_UNCOMPARED = "canary_cell_uncompared"
-    SPAN_SHORT_EXCLUDED = "canary_span_short_excluded"
+    MATCH = reasons.verification.CANARY_MATCH
+    SCAN_INCOMPLETE = reasons.verification.CANARY_SCAN_INCOMPLETE
+    INPUT_REJECTED = reasons.verification.CANARY_INPUT_REJECTED
+    BINDING_ABSENT = reasons.verification.CANARY_BINDING_ABSENT
+    PUBLICATION_INACTIVE = reasons.verification.CANARY_PUBLICATION_INACTIVE
+    TARGET_UNAVAILABLE = reasons.verification.CANARY_TARGET_UNAVAILABLE
+    PUBLICATION_MISMATCH = reasons.verification.CANARY_PUBLICATION_MISMATCH
+    ARTIFACT_UNREADABLE = reasons.verification.CANARY_ARTIFACT_UNREADABLE
+    ARTIFACT_UNSUPPORTED = reasons.verification.CANARY_ARTIFACT_UNSUPPORTED
+    RESOURCE_LIMIT = reasons.verification.CANARY_RESOURCE_LIMIT
+    CELL_UNCOMPARED = reasons.verification.CANARY_CELL_UNCOMPARED
+    SPAN_SHORT_EXCLUDED = reasons.verification.CANARY_SPAN_SHORT_EXCLUDED
 
 
 class CanaryObservedReason(enum.Enum):
     """The only reasons a policy input may carry; the five derived ones are never accepted."""
 
-    PUBLICATION_INACTIVE = "canary_publication_inactive"
-    TARGET_UNAVAILABLE = "canary_target_unavailable"
-    PUBLICATION_MISMATCH = "canary_publication_mismatch"
-    ARTIFACT_UNREADABLE = "canary_artifact_unreadable"
-    ARTIFACT_UNSUPPORTED = "canary_artifact_unsupported"
-    RESOURCE_LIMIT = "canary_resource_limit"
-    CELL_UNCOMPARED = "canary_cell_uncompared"
+    PUBLICATION_INACTIVE = reasons.verification.CANARY_PUBLICATION_INACTIVE
+    TARGET_UNAVAILABLE = reasons.verification.CANARY_TARGET_UNAVAILABLE
+    PUBLICATION_MISMATCH = reasons.verification.CANARY_PUBLICATION_MISMATCH
+    ARTIFACT_UNREADABLE = reasons.verification.CANARY_ARTIFACT_UNREADABLE
+    ARTIFACT_UNSUPPORTED = reasons.verification.CANARY_ARTIFACT_UNSUPPORTED
+    RESOURCE_LIMIT = reasons.verification.CANARY_RESOURCE_LIMIT
+    CELL_UNCOMPARED = reasons.verification.CANARY_CELL_UNCOMPARED
 
 
 class CanaryConsumerReason(enum.Enum):
     """The one reason only the consumer knows; the engine derives every other from counts."""
 
-    PUBLICATION_INACTIVE = "canary_publication_inactive"
+    PUBLICATION_INACTIVE = reasons.verification.CANARY_PUBLICATION_INACTIVE
 
 
 class CanaryMatchMode(enum.Enum):
