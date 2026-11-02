@@ -83,6 +83,42 @@ def open_private(path: Path) -> BinaryIO:
         raise
 
 
+def close_private(writer: object | None, sink: BinaryIO | None) -> None:
+    """Close a pyarrow writer and then the ``open_private`` sink under it (pyarrow never closes
+    a file object it was handed), the sink even when the writer's close raises."""
+    try:
+        if writer is not None:
+            writer.close()  # type: ignore[attr-defined]
+    finally:
+        if sink is not None:
+            sink.close()
+
+
+def precreate_private(path: Path) -> str:
+    """``path``, created or truncated 0600 for a writer that only takes a name (DuckDB ``COPY``
+    run with ``USE_TMP_FILE false``, so it writes this inode in place, never a temp file it then
+    renames over it with an umask-derived mode)."""
+    open_private(path).close()
+    return str(path)
+
+
+def private_dir(path: Path) -> Path:
+    """``mkdir -p`` in which every level it creates is 0700, whatever the umask."""
+    missing: list[Path] = []
+    probe = path
+    while not os.path.isdir(probe):
+        missing.append(probe)
+        probe = probe.parent
+    for level in reversed(missing):
+        try:
+            os.mkdir(level, 0o700)
+        except FileExistsError:
+            if not os.path.isdir(level):
+                raise
+        os.chmod(level, 0o700)
+    return path
+
+
 class ScratchAccess(RootedFileAccess):
     """Read-only access to files beneath ONE engine-created scratch directory.
 
