@@ -48,15 +48,26 @@ _OPS = {
 }
 
 
-def _predicate_expr(p: Predicate) -> pl.Expr:
+def _predicate_expr(p: Predicate, kf: pl.DataFrame, table: str) -> pl.Expr:
     c = pl.col(p.column)
-    if p.op == "in":
-        return c.is_in(list(p.value))
     if p.op == "is_null":
         return c.is_null()
     if p.op == "is_not_null":
         return c.is_not_null()
-    return _OPS[p.op](c, pl.lit(p.value))
+    target = kf.schema[p.column]
+    values = list(p.value) if p.op == "in" else [p.value]
+    try:
+        literal = _literals_exact(values, target)
+    except _LITERAL_ERRORS as exc:
+        # Same boundary as explicit keys: polars' error text echoes the literal.
+        raise SubsetConfigError(
+            code=reasons.config.SUBSET_SEED_KEY_TYPE,
+            message=f"table {table!r}: filter literal(s) for column {p.column!r} do not "
+            f"convert exactly to the column's {_dtype_label(target)} type",
+        ) from exc
+    if p.op == "in":
+        return c.is_in(literal.implode())
+    return _OPS[p.op](c, pl.lit(literal).first())
 
 
 def _select_sample(spec: SeedSpec, kf: pl.DataFrame, job_seed: bytes) -> tuple[frozenset[int], int]:
@@ -96,57 +107,103 @@ def _select_sample(spec: SeedSpec, kf: pl.DataFrame, job_seed: bytes) -> tuple[f
 
 
 def _select_filter(spec: SeedSpec, kf: pl.DataFrame) -> frozenset[int]:
-    expr = reduce(operator.and_, (_predicate_expr(p) for p in spec.predicates))
+    expr = reduce(operator.and_, (_predicate_expr(p, kf, spec.table) for p in spec.predicates))
     return frozenset(kf.filter(expr)[RI].to_list())
 
 
-def _key_family(dtype: pl.DataType) -> object:
+def _dtype_label(dtype: pl.DataType) -> str:
+    """A closed, value-free name for `dtype`; an Enum's repr lists its categories."""
+    if isinstance(dtype, pl.Enum):
+        return "enum"
     if dtype == pl.Boolean:
-        return "bool"
-    if dtype == pl.String or isinstance(dtype, (pl.Categorical, pl.Enum)):
-        return "str"
-    if dtype.is_numeric():
-        return "num"
-    return dtype.base_type()
+        return "boolean"
+    if dtype.is_integer():
+        return "integer"
+    if dtype.is_float():
+        return "float"
+    if dtype == pl.String or isinstance(dtype, pl.Categorical):
+        return "string"
+    if dtype == pl.Date:
+        return "date"
+    if isinstance(dtype, pl.Datetime):
+        return "datetime"
+    return "other"
 
 
-def _cast_key_column_exact(values: list[Any], target: pl.DataType) -> pl.Series:
-    """Cast one explicit key column to `target`, or raise if it is lossy.
+def _value_family(dtype: pl.DataType) -> tuple[object, str | None]:
+    if dtype == pl.Boolean:
+        return "bool", None
+    if dtype.is_integer():
+        return "int", None
+    if dtype.is_float():
+        return "float", None
+    if dtype == pl.String:
+        return "str", None
+    if isinstance(dtype, pl.Datetime):
+        return pl.Datetime, dtype.time_zone
+    return dtype.base_type(), None
+
+
+def _column_accepts(target: pl.DataType, family: tuple[object, str | None]) -> bool:
+    kind, tz = family
+    if target == pl.Boolean:
+        return kind == "bool"
+    if target.is_numeric():
+        return kind in ("int", "float") or kind is pl.Decimal
+    if target == pl.String or isinstance(target, (pl.Categorical, pl.Enum)):
+        return kind == "str"
+    if isinstance(target, pl.Datetime):
+        return kind is pl.Datetime and tz == target.time_zone
+    return kind == target.base_type()
+
+
+_LITERAL_ERRORS = (pl.exceptions.PolarsError, TypeError, ValueError, OverflowError)
+
+
+def _literals_exact(values: list[Any], target: pl.DataType) -> pl.Series:
+    """Convert operator literals (explicit keys, filter values) to `target`, or raise.
 
     Pattern: pyarrow's `cast(safe=True)` / numpy `can_cast(casting="safe")`,
-    applied per value as a round-trip check: the key column is built with its
-    own inferred dtype (strict, so mixed Python types are refused), cast
-    strictly to `target`, cast back, and must equal the original. That refuses
-    truncation (31337.4242 -> 31337), overflow, and float precision loss
-    (2**53 + 1, 0.1 -> Float32). A family check refuses bool/str <-> number
-    (both cast "successfully" but are not the same key: "007" and "7" both
-    parse to 7) and a timezone mismatch, which polars casts by relabelling.
+    applied as a round-trip check. Each ORIGINAL value's dtype is inferred on
+    its own (a multi-value Series infers from its first value and coerces the
+    rest: True -> 1, a second timezone -> the first), so the family and
+    timezone checks are order-independent. All non-null values must share one
+    family (bool, int, float, str, datetime+tz, ...) that the column accepts:
+    bool/str vs number are refused ("007" and "7" both parse to 7) and so is
+    a timezone mismatch, which polars casts by relabelling. Each value is then
+    cast strictly to `target`, cast back, and must equal the original, which
+    refuses truncation (31337.4242 -> 31337), overflow and float precision
+    loss (2**53 + 1, 0.1 -> Float32).
     """
-    src = pl.Series(values, strict=True)
-    if src.dtype != pl.Null:
-        if _key_family(src.dtype) != _key_family(target):
-            raise TypeError("key family mismatch")
-        if isinstance(target, pl.Datetime) and getattr(src.dtype, "time_zone", None) != (
-            target.time_zone
-        ):
-            raise TypeError("key timezone mismatch")
-    cast = src.cast(target, strict=True)
-    if not cast.cast(src.dtype, strict=True).eq_missing(src).all():
-        raise ValueError("lossy key cast")
-    return cast
+    family: tuple[object, str | None] | None = None
+    parts = [pl.Series([None] * sum(v is None for v in values), dtype=target)]
+    for value in values:
+        if value is None:
+            continue
+        src = pl.Series([value], strict=True)
+        value_family = _value_family(src.dtype)
+        if family is None:
+            family = value_family
+        if value_family != family or not _column_accepts(target, value_family):
+            raise TypeError("literal family mismatch")
+        cast = src.cast(target, strict=True)
+        if not cast.cast(src.dtype, strict=True).eq_missing(src).all():
+            raise ValueError("lossy literal cast")
+        parts.append(cast)
+    return pl.concat(parts)
 
 
 def _select_keys(spec: SeedSpec, kf: pl.DataFrame) -> frozenset[int]:
     columns: list[pl.Series] = []
     for i, c in enumerate(spec.key_columns):
         try:
-            col = _cast_key_column_exact([tup[i] for tup in spec.keys], kf.schema[c])
-        except (pl.exceptions.PolarsError, TypeError, ValueError, OverflowError) as exc:
+            col = _literals_exact([tup[i] for tup in spec.keys], kf.schema[c])
+        except _LITERAL_ERRORS as exc:
             # The cast error text echoes key values; name only table and column.
             raise SubsetConfigError(
                 code=reasons.config.SUBSET_SEED_KEY_TYPE,
                 message=f"table {spec.table!r}: explicit seed key(s) for key column {c!r} "
-                f"do not convert exactly to the column dtype {kf.schema[c]}",
+                f"do not convert exactly to the column's {_dtype_label(kf.schema[c])} type",
             ) from exc
         columns.append(col.alias(c))
     key_df = pl.DataFrame(columns)
