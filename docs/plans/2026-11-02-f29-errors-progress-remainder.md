@@ -117,7 +117,7 @@ Mutations to show red before push (one per new mechanism): C: compute the reason
 
 | Slice | Repo | Production files | Est. changed lines (incl. tests) | Depends on | Gate |
 |---|---|---|---|---|---|
-| **C0** grounding record | engine (docs) | 0 (one record `docs/records/2026-11-0x-f29-c0-consumer-grounding.md`) | ~120 | — | the Platform failure-tail census below is written with file:line on the slice's merge base; review accepts it |
+| **C0** grounding record | engine (docs) | 0 (one record `docs/records/2026-11-0x-f29-c0-consumer-grounding.md`) | ~120 | none | the Platform failure-tail census below is written with file:line on the slice's merge base; review accepts it |
 | **C1** CLI `run` reason member | `decoy` | 2: `src/decoy/cli/run.py`, `docs/cli-reference.md` (plus `CHANGELOG.md`) | ~300 | C0 | C-T1..C-T6 red then green on `requirements-dev.lock`; existing `tests/e2e/test_run_capacity.py`, `test_run_native.py` green; two mutations red |
 | **P1** node error reason and fixed message | `decoy-platform` | 5: `api/jobs/_partial_publication.py`, `api/jobs/v2_orchestrator.py`, `api/jobs/v2_node_runs.py`, `api/evidence/schema.py`, `api/evidence/assembly.py` | ~550 | C0; Platform repin to 0.17.0 merged | P-T1..P-T6 red then green on the Platform lock; `tests/test_obs3_*`, evidence-manifest tests green; manifest golden fixtures regenerated only where `nodes[].error` appears, with a diff listed in the PR |
 | **P2** `Job.log` registry summary | `decoy-platform` | 2: `api/persistence/error_projection.py`, `api/jobs/v2_orchestrator.py` (passes the record) | ~250 | P1 | P-T7, P-T8 red then green; existing `test_obs3_leak.py` unchanged and green |
@@ -170,7 +170,88 @@ No new structure. One fact, one home: the reason identity and its outcome and re
 ## 9. What this plan did not verify
 
 - The dev-rules files and routing table (absent from this container); the rules line is carried, not re-read.
-- `plan-lint`: the house tool is not installed here. A PyPI package with that name exists, but it is an unrelated linter for LLM-agent JSON plans (`cirbuk/plan-lint` 0.0.3), so it was not run.
+- `plan-lint` was run only from the Platform `handoffs/queue` branch copy (`docs/handoffs/tools/plan-lint`), not from any PyPI package; it checks section shape, not the truth of the anchors.
 - No CLI or Platform test was run. The CLI checkout is a shallow read-only clone and the Platform lock venv is not installed. Platform and CLI anchors are read from source at the baselines above.
 - The Platform failure tails outside `v2_orchestrator.py:274-381` (C0 records them).
 - Whether `decoy-web` reads `JobNodeRunOut.error` as JSON or as text. P1 changes only the `message` value and adds a key; C0 should open the frontend reader.
+
+## 10. Frozen contracts touched
+
+Every change below is additive. Pre-GA (`RELEASE_PHASE`, compatibility contract §1), so no shim is planned for anything that is not additive, and nothing in this plan is non-additive.
+
+| Frozen surface | Touched? | Answer |
+|---|---|---|
+| Engine reason registry identities (`(namespace, code)`, outcome, retry class, summary; `docs/reasons.md:21`, pins `tests/fixtures/f29/reason-registry-release.json`, `tests/unit/test_reason_release_pin.py`) | Read only | No identity is added, removed or re-meant; `REGISTRY_VERSION` stays `1.2.0` (`src/decoy_engine/reasons/_registry.py:24`). Consumers carry `ReasonRecord.to_payload()` and re-read stored copies through `from_payload()`, so no second table exists. A needed missing code is an engine registry addition outside this plan (O3). |
+| CLI exit-code contract (compatibility contract §3.4, "the exit-code contract"; CLI `exit_codes.py` docstring "the integers may not" move) | No | Exit integers 0 to 5 and the exit mapping (`run.py:931-1000`) are unchanged; C1 adds no exit and `reason.outcome` carries the category (O2). Existing pins `tests/e2e/test_run_capacity.py`, `test_run_native.py` stay green. |
+| CLI `decoy run --json` failure envelope (`run.py:1040-1047`: `command`, `status`, `config`, `mode`, `error`, plus `error_kind`/`code` on the three CLI-owned arms) | Additive | One optional member, `reason`, present only for engine-entered failures. No key is renamed, removed or retyped; `error` stays (F31 owns it). C-T1 pins the existing keys; C-T5 pins that CLI-owned refusals keep `error_kind` and get no `reason`. |
+| Platform node-run error shape (`JobNodeRun.error` JSON `{code, message, where}`, `api/jobs/v2_node_runs.py:434`; served as `JobNodeRunOut.error: str | None`, `api/jobs/schemas.py:431`) | Additive key; `message` source changes | Gains optional `reason`. `code` keeps its values except that a non-engine class's `.code` no longer selects it (P-T2, falls to `v2_runner_unexpected_error`). `message` stays a string, now from a fixed source; its value was never a contract (it was exception text). Legacy rows without `reason` still read (P-T6). |
+| Evidence manifest `nodes[].error` (`NodeError`, `api/evidence/schema.py:328-335`; `SCHEMA_VERSION = "r3.1"`, `schema.py:20`) | Additive optional field | `NodeError` gains `reason: dict[str, Any] | None = None`, re-validated through `ReasonRecord.from_payload` on hydrate (P-T5). |
+| Engine progress-event schema (`event_schema_version` 1, `docs/reasons.md:70`) | No | Consumer wiring is cut (section 5.3, O1). |
+
+**Schema version for the optional `reason` field (O4): no bump on either surface.** Compatibility contract §5, row "Add an optional field to an existing artifact": "No (additive). Add it; ensure old readers ignore it; no version bump", and §4.2: "Prefer an additive optional field over a version bump when old readers can safely ignore it." The CLI `run --json` envelope carries no version tag today, so there is nothing to bump; the additive-only CLI rule is §4.1. The Platform manifest keeps `r3.1`, matching its own convention (`api/evidence/schema.py:626`, "Additive ... no SCHEMA_VERSION bump"). One caveat for the owner: manifest models are `_Strict` (`schema.py:57`, unknown fields are forbidden), so a reader built from the pre-change `NodeError` would reject a manifest that carries `reason`. Pre-GA, the reader and writer ship together in one Platform release and no external reader exists, so the §4.2 condition holds today. At the GA flip (compatibility contract §1) this becomes binding: a later field added to a `_Strict` model that external readers parse would need either a tolerant reader or a version bump.
+
+## 11. Pre-mortem
+
+Six months from now this plan has failed. The likely ways, each with the early signal and the guard already in the plan:
+
+| How it failed | Early signal | Guard |
+|---|---|---|
+| Only some Platform failures carry `reason`: the streaming, sequential and host-safety failure tails never reach `v2_orchestrator.py:274-381`, so owners see a reason on one failed job and none on the next. | The C0 census lists uncovered tails; stored node errors with `reason` null on engine-entered failures. | C0 is a gate for P1 and records each tail as covered or a named limit (section 3); E7's `docs/reasons.md` "Consumers" section states the covered surfaces, so the gap is documented, not silent. |
+| The CLI and Platform report different reasons for the same engine failure because their engine pins differ (Platform `0.16.0`, CLI `0.17.0`; `feat/b6-vault-core` carries registry 1.3.0). | `registry_version` differs between a CLI envelope and a manifest for the same config. | P1 depends on the Platform repin to `0.17.0`; `from_payload` degrades an unknown same-major identity to `decoy.unknown_reason_from_future` instead of guessing (P-T5). |
+| Someone restores `message = getattr(selected, "message")` to make failures easier to debug, and exception text is back on the owner-visible node-runs route. | Support asks for "the real error"; a PR touches `_failure_details`. | P-T1 canary test plus its listed mutation; the fallback message points to the server log by `job_id`, which is where the detail belongs. |
+| CI scripts keep parsing the CLI `error` prose instead of `reason`, then break when F31 removes or rewrites `error`. | New integrations or issues quoting `error` text. | `docs/cli-reference.md` documents `reason` as the machine field (C1); F31 owns the `error` field change and its notice. |
+| Owners find the `Job.log` summaries unhelpful ("Out of core insufficient memory.") and the Platform adds its own text table again. | Feedback on terse messages; a PR growing `APPROVED_ERROR_MESSAGES` with engine codes. | One fact, one home (section 6); the editorial pass is a registry patch-version change (V2-LOG, section 8), not a Platform table. |
+| The no-bump decision for `nodes[].error.reason` breaks a manifest reader after GA, because `_Strict` rejects the new key. | A reader built from an older Platform model raises on a newer manifest. | Section 10 caveat; P-T6 keeps legacy rows readable; the GA flip (compatibility contract §1) re-asks the question for the next field. |
+
+## 12. Defect class table
+
+| # | Class | Applies | Structure that closes it | Test that proves it | Mutation that must turn it red |
+|---|---|---|---|---|---|
+| 1 | Value-bearing output | Yes: P-PLAT-1 copies exception `.message` to the owner | `message` only from a fixed source (registry summary, `APPROVED_ERROR_MESSAGES`, type-name fallback); `reason` is a closed record with no free text | C-T1, C-T4, P-T1, P-T2, P-T7 seeded `CANARY` absent from every changed surface | restore `message = getattr(selected, "message")` (P-T1 red) |
+| 2 | Cleanup missing on an exit path | N/A: the plan opens no file, lease, staging dir or scratch; the reason is stored in the existing node-error write | none new | existing job failure tests stay green | none |
+| 3 | State machine and concurrency | N/A: no job status transition, lock or cache changes; the reason is computed after the failure is decided (section 3 item 2) | none new | existing status tests stay green | none |
+| 4 | Route parity and silent fallback | Yes: failure tails outside the orchestrator, and CLI refusals | C0 census of every Platform failure tail (covered or named limit); the fallback is the registered `decoy.unexpected_error`, CLI-owned refusals get no reason (O2) | C-T4, C-T5, P-T2 | attach a reason to CLI refusals (C-T5 red) |
+| 5 | Referential integrity | N/A: no rows, FKs or publication order change; errors only | none new | none | none |
+| 6 | Untrusted producer | Yes: exception `.code`/`.message` attributes and stored JSON rows | engine exact-class trust in `reason_from_exception`; `from_payload` re-validates stored rows on read; `type(failure.reason) is ReasonRecord` in `project_failure` | P-T2, P-T5, P-T8, C-T4 forged `.code` sub-case | accept `.code` from a non-engine class (P-T2 red); skip `from_payload` (P-T5 red) |
+| 7 | Check then use on a path | N/A: no filesystem path is checked or used by this plan | none new | none | none |
+| 8 | Weak tests and overclaimed evidence | Yes: canary and red-first claims | every test names fail-before evidence (section 4); mutations listed per mechanism; baselines on each repo's lock; section 9 lists what was not run | C-T1 to C-T6, P-T1 to P-T8 recorded red on the lock before the fix | each section 4 mutation applied once before push |
+| 9 | Behavior-preserving refactor drift | Yes: `_failure_details` chain walk and the CLI exit mapping must not move | characterization pins kept: `tests/e2e/test_run_capacity.py`, `test_run_native.py`, P-T3 chain walk and `where` | P-T3, C-T1 existing-key assertions | compute the reason from the rewritten `exc` (C-T6 red) |
+| 10 | Frozen contract drift | Yes: CLI envelope, node error, manifest `NodeError` | additive optional `reason` only; exits and existing keys unchanged (section 10) | P-T6 legacy row, C-T1 existing keys, engine `test_reason_release_pin.py` unchanged | drop the existing `code` key from the capacity envelope (C-T1 red) |
+
+## 13. Enumerations (from the code at the baselines)
+
+### 13.1 Exit paths (failure arms this plan touches)
+
+- CLI `run` generic failure arm: `except Exception as exc` at `run.py:861`, emit at `run.py:1040`; gains `reason`.
+- CLI-owned refusal arms: capacity `run.py:1048-1050`, native gate `run.py:1051-1053`, missing extra `run.py:1054-1058`; keep `error_kind`, capacity also gains `reason` (C-T1), the others none (C-T5).
+- CLI enforced post-validation findings: `status: ok`, exit 4 (`run.py:1134-1172`); unchanged.
+- Platform unified-pipeline failure tail: `api/jobs/v2_orchestrator.py:286-287` then the node-error write at `api/jobs/v2_node_runs.py:434`; gains `reason` in the same write.
+
+### 13.2 Routes
+
+- Platform unified V2 route through `api/jobs/v2_orchestrator.py:274-381`: covered.
+- Platform streaming route `api/jobs/v2_runner.py:273`, sequential `api/jobs/v2_sequential.py`, host-safety helpers `api/jobs/queue_worker.py:419`, `api/jobs/queue_worker.py:434`, `scheduler_claim_loop.py:173`: traced in C0, named limit until covered.
+- CLI `decoy run` only; other verbs are out of scope (section 5.3).
+
+### 13.3 FK shapes
+
+- N/A: this plan changes failure reporting only; no table, row, key or publication order is read or written differently.
+
+### 13.4 Fields
+
+- `ReasonRecord.to_payload()` fields (`docs/reasons.md:66`): schema version, registry version, namespace, code, kind, phase, severity, retry class, outcome, closed context.
+- `FailureDetails` (`api/jobs/_partial_publication.py:142-166`): `selected`, `code`, `message`, `where`, plus new `reason`.
+- `NodeError` (`api/evidence/schema.py:328-335`): `code`, `message`, `where`, plus new `reason`.
+- `TrustedFailure` (`api/persistence/error_projection.py:83`): existing fields plus new `reason` (P2).
+- CLI failure envelope (`run.py:1040-1047`): `command`, `status`, `config`, `mode`, `error`, `error_kind`, `code`, plus new `reason`.
+
+### 13.5 Output surfaces
+
+- CLI stdout `--json` failure envelope (`run.py:1040`): changed, additive.
+- CLI exit code (`run.py:931-1000`): unchanged.
+- CLI human-mode stderr and `print_exception` (`run.py:1085`): unchanged (F31, V2-LOG).
+- Platform `GET /api/jobs/{id}/node-runs` (`api/jobs/routes_runtime_facts.py:70`): `error.message` source fixed, `error.reason` added.
+- Evidence manifest `nodes[].error` (`api/evidence/assembly.py:1974-1990`): `reason` added, re-validated on read.
+- `Job.log` terminal line and tail (`api/persistence/error_projection.py:136-146`): registry summary and `error_class=<code>` (P2); no new tail key, so `decoy-web` is untouched.
+- Server diagnostic log (`v2_orchestrator.py:285` `_log.exception`): unchanged, admin-only.
+- Progress events: N/A, consumer wiring is cut (section 5.3, O1).
