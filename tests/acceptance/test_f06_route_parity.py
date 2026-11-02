@@ -159,7 +159,7 @@ def _fk_cfg(tmp_path: Path, *, endpoints: bool, policy: str = "null") -> dict[st
     plain = column("id", "hash", namespace="ns", deterministic=True)
     plain_fk = column("pid", "hash", namespace="ns", deterministic=True)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
             "parent": {"type": "file", "format": "csv", "path": par},
@@ -575,7 +575,7 @@ def test_binary_comp3_cells_keep_their_bytes_on_the_chunked_route(tmp_path: Path
         pa.table({"id": ["1", "2", "3", "4", "5"], "amt": pa.array(cells, pa.binary())}), path
     )
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
         "tables": [

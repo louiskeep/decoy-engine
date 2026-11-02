@@ -184,7 +184,7 @@ def _single(tmp_path: Path, corpus: Corpus, policy: str) -> tuple[dict[str, Any]
     table = pa.table({"id": ids, "c": source_cells(corpus)})
     src, dst = _parquet("people", tmp_path, table)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {"people": src},
         "tables": [{"name": "people", "columns": [column("id"), declared_column(corpus, policy)]}],
@@ -253,7 +253,7 @@ def _relational(
     key = column("id", "hash", namespace="ns", deterministic=True)
     fk = column("pid", "hash", namespace="ns", deterministic=True)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {"parent": psrc, "child": csrc},
         "tables": [

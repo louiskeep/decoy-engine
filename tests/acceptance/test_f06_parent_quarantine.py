@@ -68,7 +68,7 @@ def _config(tmp_path: Path, stage: str) -> tuple[dict[str, Any], dict[str, pa.Ta
         **({"output_format": zero_pad(2)} if stage == "format" else {}),
     )
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {"parent": psrc, "child": csrc},
         "tables": [

@@ -110,7 +110,7 @@ def _two_tables(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         output_format=zero_pad(3),
     )
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
             "a": {"type": "file", "format": "csv", "path": a},

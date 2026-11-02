@@ -92,7 +92,7 @@ def _cloud_cfg(kind: str) -> dict[str, Any]:
         else {"type": "gcs", "bucket": "b", "object": "t.csv"}
     )
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {"t": {**location, "format": "csv"}},
         "tables": [

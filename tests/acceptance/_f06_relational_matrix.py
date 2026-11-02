@@ -141,7 +141,7 @@ def _assemble(
     for name, (data, _) in tables.items():
         sources[name], targets[name] = _write(root, name, data)
     cfg: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": sources,
         "tables": [{"name": n, "columns": cols} for n, (_, cols) in tables.items()],

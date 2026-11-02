@@ -89,7 +89,7 @@ def test_a1_fixed_width_age_reaches_bucketize_as_int_and_is_rendered_back(
     assert raw["age"].tolist() == ["042", "007", "123"]  # no legacy int cast: lexemes survive
 
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
             "people": {"type": "file", "format": "fixed_width", "path": str(path), "layout": layout}
@@ -248,7 +248,7 @@ def test_fixed_width_source_with_declared_columns_requires_exact_record_width(
     path = tmp_path / "t.txt"
     path.write_text("042\n", encoding="utf-8")
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
             "t": {"type": "file", "format": "fixed_width", "path": str(path), "layout": layout}
@@ -293,7 +293,7 @@ def test_a9_binary_cobol_on_a_text_source_is_rejected_at_compile(
             "columns": [{"name": "amt", "start": 0, "width": 3, "type": "str"}],
         }
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {"t": source},
         "tables": [
@@ -446,7 +446,7 @@ def test_b3_fk_parent_042_joins_child_42_after_both_become_integer(tmp_path: Pat
         **k,
     )
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
             "parent": {"type": "file", "format": "csv", "path": par},
@@ -806,7 +806,7 @@ def test_b7_unknown_format_in_a_serialized_plan_never_executes(tmp_path: Path) -
 
 
 def test_b7_legacy_config_and_plan_match_the_baseline_fixture(tmp_path: Path) -> None:
-    """The fixture was produced by the pre-F06 engine (fdd08a89). Config dump and hash are
+    """The fixture was produced by the pre-F06 engine (main 0173c05). Config dump and hash are
     byte-identical; the plan YAML differs only by the documented version line."""
     import hashlib
 

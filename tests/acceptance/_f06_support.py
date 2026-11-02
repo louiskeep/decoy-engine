@@ -76,7 +76,7 @@ def config(
     top: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {table: {"type": "file", "format": "csv", "path": source_path}},
         "tables": [{"name": table, "columns": columns}],
