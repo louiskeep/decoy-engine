@@ -104,6 +104,20 @@ def _decode(value: Any) -> Any:
     raise ValueError("unknown value tag")
 
 
+def _write_all(fd: int, data: bytes) -> None:
+    """Every byte of ``data`` or an ``OSError``.
+
+    ``write(2)`` may land fewer bytes than asked, so it is retried on the remainder, as
+    CPython's buffered writer (``_io._BufferedWriter``) does; a zero-byte return is treated as
+    a failure, not a retry, so a writer that cannot progress cannot spin."""
+    view = memoryview(data)
+    while view:
+        written = os.write(fd, view)
+        if written <= 0:
+            raise OSError("quarantine write made no progress")
+        view = view[written:]
+
+
 def _discard_partial(fd: int, partial: Path) -> str:
     # A failed close may leave the descriptor open, so it is never a confirmed cleanup; the
     # unlink still runs so no `.partial` outlives the failure.
@@ -297,8 +311,7 @@ class LocalProtectedQuarantineSink:
         }
         blob = json.dumps(header, sort_keys=True).encode("utf-8")
         head = _MAGIC + struct.pack(">I", len(blob)) + blob
-        if os.write(fd, head) != len(head):
-            raise OSError("short write of the quarantine header")
+        _write_all(fd, head)
         return _State(
             partial,
             final,
@@ -364,7 +377,8 @@ class LocalProtectedQuarantineSink:
             self._fail_write(state, "io")
 
     def _append_chunk(self, state: _State, frame: bytes) -> None:
-        os.write(state.fd, frame)
+        # Hashed only once every byte landed: the digest covers what the artifact holds.
+        _write_all(state.fd, frame)
         state.sha.update(frame)
 
     def seal(self, session: P.QuarantineSession) -> P.QuarantineReceipt:
@@ -376,7 +390,7 @@ class LocalProtectedQuarantineSink:
         ).encode("utf-8")
         sealed = True
         try:
-            os.write(state.fd, struct.pack(">I", 0) + struct.pack(">I", len(trailer)) + trailer)
+            _write_all(state.fd, struct.pack(">I", 0) + struct.pack(">I", len(trailer)) + trailer)
             os.fsync(state.fd)
             os.close(state.fd)
             state.fd = -1
