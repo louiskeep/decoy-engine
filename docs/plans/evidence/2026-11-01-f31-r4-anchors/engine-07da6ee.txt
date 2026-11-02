@@ -1,0 +1,34 @@
+# engine 07da6ee (origin/main 0173c05 merged into the plan branch); container python3, stdlib ast
+## r3 r7b.py src/decoy_engine (except-bound text reads)
+inside raise: 75 | outside raise: 45 in 27 files {'str()': 7, 'fstring': 29, '.message': 9}
+  2 connectors/sftp.py
+  1 execution/_job_estimate.py
+  2 execution/_mixed_static.py
+  1 execution/_pipeline_full_frame.py
+  3 execution/_planner.py
+  1 execution/_sequential_native_group_key.py
+  1 execution/_strategies/_code_set.py
+  3 execution/capacity.py
+  1 execution/native/_requirements.py
+  2 execution/out_of_core/_capacity_eval.py
+  1 expressions/_when_parser.py
+  1 generation/_window_admission.py
+  1 generation/statistical/_spec.py
+  3 generators/derivation.py
+  1 internal/memory.py
+  3 plan/_checks_dp.py
+  3 plan/_generation.py
+  2 plan/validate/_consolidator.py
+  1 profile/_fixed_width_reader.py
+  1 profiling/profiler.py
+  1 subset/_edges.py
+  3 transforms/_codeset_loader.py
+  1 transforms/base.py
+  1 transforms/date_shift.py
+  1 transforms/joint_mask.py
+  1 verification/postmask/policy_validation.py
+  3 verification/postmask/runner.py
+## traceback-serialization grep
+src/decoy_engine/_opaque.py:3:`traceback.TracebackException(capture_locals=True)` (and debuggers, error trackers such as
+src/decoy_engine/fileaccess/_entry.py:50:    `TracebackException(capture_locals=True)` shows no ref, path or value a caller passed."""
+src/decoy_engine/secret_providers/_preflight.py:12:may hold material (``traceback.TracebackException(capture_locals=True)`` renders them). Material between the read
