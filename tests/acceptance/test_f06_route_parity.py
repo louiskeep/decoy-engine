@@ -441,7 +441,42 @@ def test_out_of_core_budget_root_holds_the_staged_copy(
     )
     assert got.quality_metrics["execution"]["execution_mode"] == "out_of_core"
     assert checked, "the runner checked its footprint at least once"
-    assert all(names == ["child.typed.parquet"] for names in checked), checked
+    # one staged copy (the declared child), named by the engine, never by the table
+    assert all(names == ["s0000.typed.parquet"] for names in checked), checked
+
+
+def test_out_of_core_declared_lazy_sources_run_under_a_strict_policy(tmp_path: Path) -> None:
+    """The typed staging copy lives in an engine-made scratch root and is read back through a
+    reader issued over that root, so a declared out-of-core job runs under a rooted policy that
+    grants nothing outside the job's own directory, with the same output as ambient access."""
+    from decoy_engine import fileaccess
+    from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
+    from decoy_engine.profile._readers import LazySource
+    from tests.fileaccess.support import RootRelative
+
+    base = _fk_run(tmp_path, "full_frame", endpoints=False)
+    job = tmp_path / "job"
+    job.mkdir()
+    for name, table in _fk_sources().items():
+        pq.write_table(table, job / f"{name}.parquet")
+    policy = RootRelative(job)
+    try:
+        with fileaccess.scope(policy):
+            lazy = {n: LazySource(path=job / f"{n}.parquet") for n in ("parent", "child")}
+            sink = ParquetTransactionalSink(job / "published")
+        got = run(
+            _fk_cfg(job, endpoints=False),
+            lazy,
+            execution_mode="out_of_core",
+            sink=sink,
+            file_access=policy,
+        )
+    finally:
+        policy.close()
+    assert got.quality_metrics["execution"]["execution_mode"] == "out_of_core"
+    for name in ("parent", "child"):
+        published = pq.read_table(job / "published" / f"{name}.parquet")
+        assert published.to_pydict() == base.outputs[name].to_pydict(), name
 
 
 # -- mixed (generate + mask) ----------------------------------------------------------------------

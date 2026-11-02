@@ -90,21 +90,28 @@ def stage_typed_sources(
     Parquet file under ``root`` (bounded memory), because a route that re-reads its sources in
     several passes must not count or quarantine twice and must see one stable, already-compacted
     row set on every pass. ``max_bytes`` bounds the footprint of ``root``, checked per batch.
+
+    ``root`` is an engine-made directory. Each file is named by a per-run counter, never by the
+    table name, so no config value shapes a path (the out-of-core runner's opaque ``t0000``
+    scratch names follow the same rule), and it is read back only through a reader issued over
+    ``root`` (``scratch_access_for``), as the out-of-core key stager does.
     """
     import pyarrow.parquet as pq
 
     from decoy_engine.execution.out_of_core._budget import check_temp_disk_budget
+    from decoy_engine.execution.out_of_core._scratch import scratch_access_for
     from decoy_engine.profile._readers import LazySource
 
     out = dict(sources)
-    for table in run.tables():
+    reader: Any = None
+    for index, table in enumerate(run.tables()):
         src = sources.get(table)
         if src is None:
             continue
         if not isinstance(src, LazySource):
             out[table] = run.pre_mask({table: src})[table]
             continue
-        path = root / f"{table}.typed.parquet"
+        path = root / f"s{index:04d}.typed.parquet"
         writer: Any = None
         offset = 0
         try:
@@ -125,7 +132,9 @@ def stage_typed_sources(
                 writer.close()
         if max_bytes is not None:
             check_temp_disk_budget(root, max_bytes=max_bytes)
-        out[table] = LazySource(path)
+        if reader is None:
+            reader = scratch_access_for(root)
+        out[table] = LazySource(path, access=reader, field_key="engine.scratch")
     return out
 
 
@@ -171,26 +180,23 @@ def run_staged(fn: Callable[..., Any], call: dict[str, Any], default_batch_rows:
 
     ``call`` is the caller's own keyword snapshot (``dict(locals())`` at its first line); the
     sources are replaced by their staged form and ``_staged=True`` stops the second call from
-    staging again. One private per-run root (under the caller's ``temp_dir`` when given, else
-    the system temp directory) holds the copy and is handed on as the route's ``temp_dir``, so
-    the route spills beside the copy and every footprint check, the copy's per batch and the
-    route's per table, measures both against the one ``temp_disk_budget_bytes``. Two roots would
-    each get the whole budget. The root is removed on every exit.
+    staging again. One private per-run root (``engine_scratch_root``: under the caller's
+    ``temp_dir`` when given, ambient policy only, else the system temp directory) holds the copy
+    and is handed on as the route's ``temp_dir``, so the route spills beside the copy and every
+    footprint check, the copy's per batch and the route's per table, measures both against the
+    one ``temp_disk_budget_bytes``. Two roots would each get the whole budget. The root is the
+    engine's own, so the route takes it under any file-access policy, and it is removed on every
+    exit.
     """
-    import os
-    import tempfile
+    from decoy_engine.execution.out_of_core._scratch import engine_scratch_root
 
     run = call["cast_run"]
     plan, sources = call.pop("plan"), call.pop("sources")
     call.pop("_staged", None)
-    parent = call.get("temp_dir")
-    if parent is not None:
-        Path(parent).mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="decoy-ooc-run-", dir=parent) as root:
-        os.chmod(root, 0o700)
+    with engine_scratch_root(call.get("temp_dir")) as root:
         batch_rows = call.get("batch_rows") or default_batch_rows
         staged = stage_typed_sources(
-            run, sources, Path(root), batch_rows, call.get("temp_disk_budget_bytes")
+            run, sources, root, batch_rows, call.get("temp_disk_budget_bytes")
         )
-        call["temp_dir"] = Path(root)
+        call["temp_dir"] = root
         return fn(plan, staged, _staged=True, **call)

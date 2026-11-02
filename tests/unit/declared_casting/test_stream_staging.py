@@ -167,3 +167,36 @@ def test_staged_copy_and_spill_within_one_budget_run(tmp_path: Path, caller_temp
     assert not seen["root"].exists()
     if caller_temp_dir:
         assert caller in seen["root"].parents and not any(caller.iterdir())
+
+
+class _NamedRun(_Run):
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def tables(self) -> list[str]:
+        return [self.name]
+
+
+@pytest.mark.parametrize("hostile", ["../x", "absolute"])
+def test_a_table_name_never_places_the_staged_copy(tmp_path: Path, hostile: str) -> None:
+    """The staged file is named by the engine, so a table name with `..` or an absolute path
+    cannot put raw source rows outside the private per-run root."""
+    from decoy_engine.declared_casting._stream import run_staged
+
+    caller = tmp_path / "caller-root"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    name = str(elsewhere / "x") if hostile == "absolute" else "../x"
+    seen: dict[str, Any] = {}
+
+    def fn(plan: Any, sources: Any, *, temp_dir: Path, **rest: Any) -> str:
+        seen["root"] = Path(temp_dir).resolve()
+        seen["staged"] = Path(sources[name].path).resolve()
+        seen["outside"] = sorted(str(p) for p in tmp_path.rglob("*.parquet"))
+        return "ok"
+
+    call = {"cast_run": _NamedRun(name), "plan": object(), "sources": {name: _lazy(tmp_path)}}
+    assert run_staged(fn, {**call, "temp_dir": caller}, 1000) == "ok"
+    assert seen["root"] in seen["staged"].parents, seen
+    assert seen["outside"] == sorted([str(tmp_path / "src.parquet"), str(seen["staged"])]), seen
+    assert not list(caller.parent.glob("x.typed.parquet")) and not list(elsewhere.iterdir())
