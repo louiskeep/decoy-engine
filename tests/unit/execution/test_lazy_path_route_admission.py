@@ -120,7 +120,7 @@ def _ooc_eligible_config(
         parent_src = _write_csv(tmp_path, parent.to_pandas(), "parent")
         child_src = _write_csv(tmp_path, child.to_pandas(), "child")
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "sc7b-ooc-fk", "seed": 7},
         "sources": {
             "parent": {"type": "file", "path": parent_src, "format": src_fmt},
@@ -163,7 +163,7 @@ def _ineligible_config(
         parent_src = _write_csv(tmp_path, parent.to_pandas(), "parent")
         child_src = _write_csv(tmp_path, child.to_pandas(), "child")
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "sc7b-reject-genmask", "seed": 7},
         "sources": {
             "parent": {"type": "file", "path": parent_src, "format": src_fmt},

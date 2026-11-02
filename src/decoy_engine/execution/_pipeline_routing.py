@@ -104,7 +104,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from decoy_engine import reasons
-from decoy_engine.execution._errors import ExecutionError, OocIneligibleError, SeqIneligibleError
+from decoy_engine.execution._errors import ExecutionError, ooc_ineligible, seq_ineligible
 
 # The size + out-of-core-admission signal helpers, and the S3 auto-chunk
 # routing layer, live in sibling modules to hold the 600-LOC orchestration
@@ -182,7 +182,7 @@ def _sequential_eligible(
     vault_writer: Any,
     post_validation: bool = False,
     resolved_substrate: str = "pandas",
-    run_storm: bool = False,
+    post_scan_integrity: bool = False,
 ) -> tuple[bool, str]:
     """Decide whether a mask job may take the bounded-memory sequential path.
 
@@ -226,9 +226,9 @@ def _sequential_eligible(
         return False, reasons.route.FIDELITY_REPORT_REQUESTED
     if post_validation:
         return False, reasons.route.POST_VALIDATION_REQUESTED
-    if run_storm:
-        # STORM post-mask checks need the resident output (full-frame), like post_validation.
-        return False, reasons.route.RUN_STORM_REQUESTED
+    if post_scan_integrity:
+        # Post-scan integrity checks need the resident output (full-frame), like post_validation.
+        return False, reasons.route.POST_SCAN_INTEGRITY_REQUESTED
     if vault_writer is not None:
         return False, reasons.route.VAULT_WRITER_REQUESTED
     if resolved_substrate != "pandas":
@@ -241,12 +241,12 @@ def reject_explicit_sequential(
 ) -> None:
     """The fail-closed checks behind an explicit `execution_mode="sequential"`."""
     if not eligible:
-        raise SeqIneligibleError(
+        raise seq_ineligible(
             f"execution_mode='sequential' requested but the job is not "
             f"sequential-eligible ({route_reason})."
         )
     if cyclic:
-        raise SeqIneligibleError(
+        raise seq_ineligible(
             "execution_mode='sequential' requested but the FK graph has a "
             "cross-table cycle, which the sequential path cannot order; "
             "use execution_mode='full_frame' or 'auto'."
@@ -255,7 +255,7 @@ def reject_explicit_sequential(
         # Without a mask-kind table the sequential branch in run_pipeline would
         # silently no-op and fall through to full-frame, ignoring the explicit
         # request. Fail closed instead.
-        raise SeqIneligibleError(
+        raise seq_ineligible(
             "execution_mode='sequential' requested but the job has no "
             "mask-kind table to run through the sequential path."
         )
@@ -291,7 +291,7 @@ def decide_execution_route(
     execution_mode: str,
     graph: RelationshipGraph,
     post_validation: bool = False,
-    run_storm: bool = False,
+    post_scan_integrity: bool = False,
     resolved_substrate: str = "pandas",
     out_of_core_compatible: bool = False,
     out_of_core_reject_code: str | None = None,
@@ -446,7 +446,7 @@ def decide_execution_route(
         vault_writer=vault_writer,
         post_validation=post_validation,
         resolved_substrate=resolved_substrate,
-        run_storm=run_storm,
+        post_scan_integrity=post_scan_integrity,
     )
     cyclic = _has_cross_table_fk_cycle(graph)
     # D3b: the vault is the ONLY disqualifier lifted, and only onto out-of-core.
@@ -465,7 +465,7 @@ def decide_execution_route(
             vault_writer=None,
             post_validation=post_validation,
             resolved_substrate=resolved_substrate,
-            run_storm=run_storm,
+            post_scan_integrity=post_scan_integrity,
         )[0]
     )
     # D3a: validators are the only disqualifier lifted here, and only onto out-of-core.
@@ -484,7 +484,7 @@ def decide_execution_route(
             vault_writer=vault_writer,
             post_validation=post_validation,
             resolved_substrate=resolved_substrate,
-            run_storm=run_storm,
+            post_scan_integrity=post_scan_integrity,
         )[0]
     )
     # `eligible` is a job-SHAPE check and stays true for a cross-table cycle, so
@@ -516,17 +516,17 @@ def decide_execution_route(
         # Fail closed, mirroring the sequential override: never silently ignore
         # an explicit request by falling through to another route.
         if not has_mask_table:
-            raise OocIneligibleError(
+            raise ooc_ineligible(
                 "execution_mode='out_of_core' requested but the job has no "
                 "mask-kind table to run through the out-of-core path."
             )
         if not eligible:
-            raise OocIneligibleError(
+            raise ooc_ineligible(
                 f"execution_mode='out_of_core' requested but the job is not "
                 f"out-of-core-eligible ({route_reason})."
             )
         if not out_of_core_compatible:
-            raise OocIneligibleError(
+            raise ooc_ineligible(
                 f"execution_mode='out_of_core' requested but the job is not "
                 f"out-of-core-compatible "
                 f"({out_of_core_reject_code or 'unsupported_recipe'}); use "
@@ -538,8 +538,8 @@ def decide_execution_route(
         reject_explicit_sequential(eligible, route_reason, cyclic, has_mask_table)
         return "sequential", route_reason
 
-    # `not run_storm`: STORM needs the resident full-frame output, so a storm job declines mixed here.
-    if mixed_admitted and not run_storm:
+    # `not post_scan_integrity`: Post-scan integrity needs the resident full-frame output, so such a job declines mixed here.
+    if mixed_admitted and not post_scan_integrity:
         return "mixed", reasons.route.MIXED_GENERATE_MASK_CHUNKED
 
     if lazy_transform_bearing and has_relationships and has_mask_table:

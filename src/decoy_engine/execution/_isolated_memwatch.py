@@ -19,6 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from decoy_engine import fileaccess
 from decoy_engine.errors import DecoyError
 
 __all__ = [
@@ -270,7 +271,9 @@ class MemorySampler:
         self._stop = threading.Event()
         self._closed = False
         self._snap = MemorySnapshot()
-        self._thread = threading.Thread(target=self._run, name=THREAD_NAME, daemon=True)
+        self._thread = threading.Thread(
+            target=fileaccess.run_in_context(self._run), name=THREAD_NAME, daemon=True
+        )
 
     def now(self) -> float:
         return self._clock()

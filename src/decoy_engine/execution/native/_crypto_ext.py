@@ -45,7 +45,7 @@ References:
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol, TypeAlias
 
 import pyarrow as pa
@@ -225,7 +225,7 @@ _KAT_NS = "people.ssn"
 
 @dataclass(frozen=True)
 class HashKatVector:
-    mask_key: bytes
+    mask_key: bytes = field(repr=False)
     namespace: str
     value: Any
     truncate: int | None
@@ -234,7 +234,7 @@ class HashKatVector:
 
 @dataclass(frozen=True)
 class FpeKatVector:
-    mask_key: bytes
+    mask_key: bytes = field(repr=False)
     namespace: str
     tweak_column: str
     config: FpeConfig
@@ -403,25 +403,29 @@ class _CompiledKeyedDerivationKernel:
         # Fail before the compiled kernel is even called, matching
         # `_ReferenceKeyedDerivation.derive_batch`'s unconditional pre-loop guard
         # exactly (same message, same exception type).
-        key = _require_mask_key(mask_key, "keyed_derivation")
-        # A ChunkedArray is still one Arrow-typed column, just laid out in more than
-        # one buffer; combine to the single pa.Array the compiled entry point
-        # accepts. A raw Python list has no single Arrow type to combine to and is
-        # passed through unchanged: the compiled kernel rejects it the same way it
-        # rejects any object without `__arrow_c_array__`, matching CRYPTO_EXT_ABI's
-        # mixed-object policy (that column is excluded from the native route
-        # upstream, at eligibility).
-        array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
         try:
-            return self._derive_batch_fn(
-                array,
-                mask_key=key,
-                namespace=namespace,
-                truncate=truncate,
-                native_threads=native_threads,
-            )
-        except ValueError as exc:
-            raise _translate_compiled_kernel_error(exc) from exc
+            mask_key = _require_mask_key(mask_key, "keyed_derivation")
+            # A ChunkedArray is still one Arrow-typed column, just laid out in more than
+            # one buffer; combine to the single pa.Array the compiled entry point
+            # accepts. A raw Python list has no single Arrow type to combine to and is
+            # passed through unchanged: the compiled kernel rejects it the same way it
+            # rejects any object without `__arrow_c_array__`, matching CRYPTO_EXT_ABI's
+            # mixed-object policy (that column is excluded from the native route
+            # upstream, at eligibility).
+            array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
+            try:
+                return self._derive_batch_fn(
+                    array,
+                    mask_key=mask_key,
+                    namespace=namespace,
+                    truncate=truncate,
+                    native_threads=native_threads,
+                )
+            except ValueError as exc:
+                raise _translate_compiled_kernel_error(exc) from exc
+        except BaseException:
+            del mask_key
+            raise
 
 
 def load_compiled_crypto_kernel() -> KeyedDerivationKernel:

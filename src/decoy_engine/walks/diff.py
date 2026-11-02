@@ -6,8 +6,8 @@ the same connector) and returns a structural delta. Row-counts are NOT
 compared; that's a Phase-3 toggle. Drift here means "table or column
 shape changed."
 
-The change-kind vocabulary mirrors the storm DiffScreen so the UI can
-render walks-drift and storm-diff with a single component family.
+The change-kind vocabulary mirrors the pre-scan DiffScreen so the UI can
+render walks-drift and pre-scan-diff with a single component family.
 """
 
 from __future__ import annotations

@@ -85,8 +85,10 @@ from decoy_engine.execution._planner import (
     OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
 )
 from decoy_engine.execution._transforms_prepare import prepare_transform_sources
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.progress import ProgressChannel, ProgressSink, use_progress
+from decoy_engine.secret_providers import AdmissionScope
 
 if TYPE_CHECKING:
     from faker import Faker
@@ -94,22 +96,21 @@ if TYPE_CHECKING:
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.providers_v2 import ProviderRegistry
+    from decoy_engine.secret_providers import SecretCachePolicy, SecretProviderRegistry
 
 
 __all__ = ["classify_table_kinds", "run_pipeline"]
 
-# The substrate/auto-chunk knob defaults live on `_pipeline_finalize` now
-# (single source of truth for both this signature and the non-default-ness
-# check `stamp_execution_metrics` computes); referenced here via the
-# already-imported module so this file does not re-declare them.
-# SC2 out-of-core auto-routing thresholds (per largest mask table). Defaults
-# target the 32 GB deployment box; see `_planner` for the memory-model
-# reasoning. Plumbed as run_pipeline kwargs so the platform SC5 estimator can
-# override them with box+schema-calibrated values.
+# The substrate/auto-chunk knob defaults live on `_pipeline_finalize` now (single source of truth
+# for this signature and the non-default-ness check `stamp_execution_metrics` computes).
+# SC2 out-of-core auto-routing thresholds (per largest mask table). Defaults target the 32 GB
+# deployment box; see `_planner` for the memory-model reasoning. Plumbed as run_pipeline kwargs so
+# the platform SC5 estimator can override them with box+schema-calibrated values.
 _OUT_OF_CORE_THRESHOLD_DEFAULT = OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT
 _FULL_FRAME_REJECT_DEFAULT = FULL_FRAME_REJECT_ROWS_DEFAULT
 
 
+@entry_point
 def run_pipeline(
     config: dict[str, Any],
     sources: Mapping[str, pa.Table | LazySource] | None = None,
@@ -149,7 +150,10 @@ def run_pipeline(
     progress: ProgressSink | None = None,
     progress_interval_s: float = 1.0,
     quarantine_runtime: Any = None,
+    secret_registry: SecretProviderRegistry | None = None,
+    secret_cache_policy: SecretCachePolicy | None = None,
     _provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+    file_access: FileAccess | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -233,6 +237,9 @@ def run_pipeline(
       that receives value-free run events (phases, route, per-table rate samples at most
       once per interval, terminal). Observation only: output bytes never depend on it and
       a raising sink is counted, never propagated.
+    - `secret_registry` / `secret_cache_policy`: optional `secret_providers` registry and
+      cross-run cache policy (default: the process registry, cache disabled). The keyed-mask
+      secret is admitted before any source is read.
 
     It forwards to `select_execution_adapter`, which validates it
     up front: a non-positive-int count knob raises `ExecutionError`
@@ -279,6 +286,7 @@ def run_pipeline(
         execution_mode = "full_frame"
         auto_chunk = False
     with (
+        AdmissionScope() as secret_scope,
         use_progress(progress, interval_s=progress_interval_s) as _progress,
         _progress.run_scope(),
     ):
@@ -321,6 +329,9 @@ def run_pipeline(
                 provider_snapshot=_provider_snapshot,
                 prepare_sources=prepare_transform_sources,
                 quarantine_runtime=quarantine_runtime,
+                secret_scope=secret_scope,
+                secret_registry=secret_registry,
+                secret_cache_policy=secret_cache_policy,
             )
         with collect_refusals() as refusals:
             decision = _ctx.decide_route(ctx)

@@ -45,7 +45,7 @@ class TestDownscaleConfigSkipSemantics:
         # a junk entry must be stepped over, leaving every LATER generate
         # table still scaled -- `break` would abandon the trailing table.
         config = {
-            "version": 1,
+            "version": 2,
             "tables": ["not-a-dict", _generate_table("customers", 1_000_000)],
         }
         scaled = downscale_config(config, 0.01, floor_rows=0)
@@ -56,7 +56,7 @@ class TestDownscaleConfigSkipSemantics:
         # guard): a mask table interleaved before a generate table must not
         # stop the loop -- the generate table after it still gets scaled.
         config = {
-            "version": 1,
+            "version": 2,
             "tables": [_mask_table("people"), _generate_table("customers", 1_000_000)],
         }
         scaled = downscale_config(config, 0.01, floor_rows=0)
@@ -66,7 +66,7 @@ class TestDownscaleConfigSkipSemantics:
         # downscale_config 27 (drops `floor_rows=floor_rows`, taking the callee
         # default 2_000): with floor_rows=0 a sub-floor scale must land on its
         # raw scaled value, not be lifted to the default floor.
-        config = {"version": 1, "tables": [_generate_table("customers", 1_000_000)]}
+        config = {"version": 2, "tables": [_generate_table("customers", 1_000_000)]}
         scaled = downscale_config(config, 0.0001, floor_rows=0)
         assert scaled["tables"][0]["row_count"] == 100
 
@@ -75,7 +75,7 @@ class TestDownscaleJobFloorForwarding:
     def test_config_floor_rows_is_forwarded(self) -> None:
         # downscale_job 7 (config call drops `floor_rows`): with floor_rows=0 a
         # sub-floor generate table lands on 100, not the callee default 2_000.
-        config = {"version": 1, "tables": [_generate_table("gen", 1_000_000)]}
+        config = {"version": 2, "tables": [_generate_table("gen", 1_000_000)]}
         job = downscale_job(config, None, 0.0001, floor_rows=0)
         assert job.config["tables"][0]["row_count"] == 100
         assert job.row_counts == {"gen": 100}
@@ -84,7 +84,7 @@ class TestDownscaleJobFloorForwarding:
         # downscale_job 14 (sources call drops `floor_rows`): with floor_rows=0
         # a sub-floor resident table is sliced to 100 rows, not lifted to 2_000.
         sources = {"src": pa.table({"id": list(range(1_000_000))})}
-        job = downscale_job({"version": 1, "tables": []}, sources, 0.0001, floor_rows=0)
+        job = downscale_job({"version": 2, "tables": []}, sources, 0.0001, floor_rows=0)
         assert job.sources["src"].num_rows == 100
         assert job.row_counts == {"src": 100}
 
@@ -102,7 +102,7 @@ class TestDownscaleJobRowCountsGate:
             "columns": [{"name": "email", "strategy": "faker"}],
         }
         job = downscale_job(
-            {"version": 1, "tables": [mask_with_rowcount]}, None, 0.01, floor_rows=0
+            {"version": 2, "tables": [mask_with_rowcount]}, None, 0.01, floor_rows=0
         )
         assert job.row_counts == {}
 
@@ -112,7 +112,7 @@ class TestDownscaleJobRowCountsGate:
         # collection -- the generate table after it still records its scaled
         # count.
         config = {
-            "version": 1,
+            "version": 2,
             "tables": [_mask_table("people"), _generate_table("gen", 1_000_000)],
         }
         job = downscale_job(config, None, 0.01, floor_rows=0)
@@ -126,5 +126,5 @@ class TestDownscaleJobRowCountsGate:
             "name": "gen_norows",
             "generate_columns": [{"name": "id", "type": "sequence", "start": 0}],
         }
-        job = downscale_job({"version": 1, "tables": [gen_no_count]}, None, 0.01, floor_rows=0)
+        job = downscale_job({"version": 2, "tables": [gen_no_count]}, None, 0.01, floor_rows=0)
         assert job.row_counts == {}

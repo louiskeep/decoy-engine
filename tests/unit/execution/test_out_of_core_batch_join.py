@@ -28,8 +28,8 @@ from decoy_engine.execution import ExecutionError
 from decoy_engine.execution._fk_keys import fk_join_key_tuple
 from decoy_engine.execution.out_of_core import _batch_join as _batch_join_mod
 from decoy_engine.execution.out_of_core import _batch_join as batch_join_mod
-from decoy_engine.execution.out_of_core import _runner as runner_mod
 from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
+from decoy_engine.execution.out_of_core._compat import _column_seed
 from decoy_engine.execution.out_of_core._join import mask_child_fk
 from decoy_engine.execution.out_of_core._mask import mask_table
 from decoy_engine.execution.out_of_core._relation import (
@@ -89,7 +89,7 @@ def _joiner(plan: Any, edge: RelationshipEdge, relation, temp_dir, child: pa.Tab
     remap_seeds = None
     if edge.orphan_policy is OrphanPolicy.REMAP:
         remap_seeds = tuple(
-            runner_mod._column_seed(plan, edge.parent_table, col) for col in edge.parent_columns
+            _column_seed(plan, edge.parent_table, col) for col in edge.parent_columns
         )
     return ChildFkBatchJoiner(
         edge=edge,

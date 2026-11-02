@@ -1,4 +1,9 @@
-# Mutation grading: `execution/_mem_telemetry.py` -- peak-RSS calibration model
+# Mutation grading: `scripts/mem_telemetry*.py` -- peak-RSS calibration model
+
+> The graded module was `execution/_mem_telemetry.py` at grading time. It has since
+> moved to `scripts/` and been split (`mem_telemetry_records.py`,
+> `mem_telemetry_calibration.py`, facade `mem_telemetry.py`); the grade below is the
+> pre-move result.
 
 TQ isolated-substrate grade (branch `tq/isolated-substrate-grade`) by
 `scripts/tq_mutate.py`. Like `_mem_estimate` / `_probe_scale`, this module was on
@@ -116,9 +121,13 @@ basis / FK term.
 
 ## Regenerate
 
-Repoint `[tool.mutmut]` `only_mutate` to `src/decoy_engine/execution/_mem_telemetry.py`
-and the test selection to `tests/unit/execution/test_mem_telemetry_calib_kills.py`,
+`[tool.mutmut]` copies and mutates only `source_paths = ["src/decoy_engine"]`, and the
+module no longer lives there, so repointing `only_mutate` alone cannot reach it. To
+regrade, temporarily copy `scripts/mem_telemetry_records.py` and
+`scripts/mem_telemetry_calibration.py` under `src/decoy_engine/execution/` (with
+`mem_telemetry_calibration`'s sibling import adjusted), repoint `only_mutate` at those
+copies, and select `tests/unit/execution/test_mem_telemetry_calib_kills.py`,
 `tests/unit/execution/test_mem_telemetry_record_kills.py`,
-`tests/unit/execution/test_mem_telemetry.py`, and
+`tests/unit/execution/test_mem_telemetry.py` and
 `tests/unit/execution/test_mem_calibration.py`; then `rm -rf mutants && python
-scripts/tq_mutate.py --run --jobs 6`. `source_paths` stays at the package root.
+scripts/tq_mutate.py --run --jobs 6`. Remove the temporary copies afterwards.

@@ -46,7 +46,7 @@ def _config(
     triggers: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "sp05-quarantine-test", "seed": 42},
         "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
         "targets": {"t": {"type": "file", "path": src_path + ".out", "format": "parquet"}},
@@ -137,7 +137,7 @@ class TestQuarantineDisabled:
         src_path = _write_source(tmp_path, src)
 
         config: dict[str, Any] = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"job_name": "sp05-quarantine-off", "seed": 42},
             "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
             "targets": {
@@ -181,7 +181,7 @@ def _config_two_validators(
     Presence of two validators ensures two findings reference the same row.
     """
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "sp05-m1-dedup-test", "seed": 42},
         "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
         "targets": {"t": {"type": "file", "path": src_path + ".out", "format": "parquet"}},

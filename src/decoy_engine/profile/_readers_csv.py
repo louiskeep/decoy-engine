@@ -8,17 +8,21 @@ from there; this module only holds the CSV cluster.
 from __future__ import annotations
 
 import csv
-import os
+import io
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine import fileaccess
 from decoy_engine._lexeme import pandas_lexeme_kwargs
 from decoy_engine.errors import PipelineValidationError
+from decoy_engine.fileaccess import FileAccess
+from decoy_engine.fileaccess.adapters import pandas as pandas_adapter
+from decoy_engine.profile._policy_bound import _PolicyBound
 from decoy_engine.validation_result import CODES
 
 # The headerless width scan (see CsvFileSource._assert_record_widths) tokenizes
@@ -51,7 +55,7 @@ def _positional_lexemes(columns: tuple[str, ...], names: list[str]) -> dict[str,
 
 
 @dataclass(frozen=True)
-class CsvFileSource:
+class CsvFileSource(_PolicyBound):
     """`ProfileSource` for a local CSV file.
 
     CSV has no footer, so the row count is an O(1) byte-size estimate:
@@ -69,15 +73,22 @@ class CsvFileSource:
     column_names: list[str] | None = None
     delimiter: str = ","
     lexeme_columns: tuple[str, ...] = ()
+    access: FileAccess | None = field(default=None, compare=False, repr=False)
+    field_key: str = field(default="source.path", compare=False)
+
+    def __post_init__(self) -> None:
+        if self.access is None:
+            object.__setattr__(self, "access", fileaccess.capture())
 
     def _read(self, nrows: int | None = None) -> pd.DataFrame:
         if self.has_header:
-            return pd.read_csv(
-                self.path,
-                nrows=nrows,
-                sep=self.delimiter,
-                **pandas_lexeme_kwargs(self.lexeme_columns),
-            )
+            with self._handle() as handle:
+                return pandas_adapter.read_csv(
+                    handle,
+                    nrows=nrows,
+                    sep=self.delimiter,
+                    **pandas_lexeme_kwargs(self.lexeme_columns),
+                )
         # Headerless: pandas cannot fail closed on a mis-sized file. A too-short
         # row is silently padded (and earlier values shift into the wrong column);
         # a too-long row is dropped or shifts. Frame-width alone does not catch a
@@ -90,16 +101,20 @@ class CsvFileSource:
         names = self.column_names or []
         self._assert_record_widths(len(names), nrows)
         try:
-            frame = pd.read_csv(
-                self.path,
-                nrows=nrows,
-                sep=self.delimiter,
-                header=None,
-                **_positional_lexemes(self.lexeme_columns, names),
-            )
+            with self._handle() as handle:
+                frame = pandas_adapter.read_csv(
+                    handle,
+                    nrows=nrows,
+                    sep=self.delimiter,
+                    header=None,
+                    **_positional_lexemes(self.lexeme_columns, names),
+                )
         except (pd.errors.EmptyDataError, pd.errors.ParserError):
             # The width scan above already rejects the known mis-size cases with a
             # coded error; this is a fail-closed backstop for any parser disagreement.
+            # (Under a strict policy the adapter resurfaces a read failure as a
+            # FileAccessReadError before this; under the ambient policy the library
+            # error passes through and is caught here, as before the policy port.)
             raise PipelineValidationError(
                 f"headerless file {self.path.name!r} could not be read against its "
                 f"{len(names)} declared column_names",
@@ -126,11 +141,12 @@ class CsvFileSource:
         Scans only the records the read will consume (`nrows`), so a huge file is
         not walked in full for a bounded sample, and raises a coded
         PipelineValidationError naming the physical line and the two counts, never
-        a cell value. The scan is configured to agree with the pandas reader it
-        guards: `utf-8-sig` strips the BOM pandas strips; the field-size cap is
-        lifted (module top); and a line is skipped only when it is empty or a
-        single whitespace-only field with no delimiter, which is exactly what
-        pandas' skip_blank_lines does (a whitespace line that contains the
+        a cell value. The scan reads through the policy-issued file handle (so a
+        strict policy still vouches for the file), configured to agree with the
+        pandas reader it guards: `utf-8-sig` strips the BOM pandas strips; the
+        field-size cap is lifted (module top); and a line is skipped only when it is
+        empty or a single whitespace-only field with no delimiter, which is exactly
+        what pandas' skip_blank_lines does (a whitespace line that contains the
         delimiter, or an empty-field line like ",", is a real row to both).
 
         Two byte classes are rejected outright (coded error) rather than sanitized,
@@ -166,7 +182,8 @@ class CsvFileSource:
         thing that slips is a leading whitespace-only cell in its own correct
         column."""
         consumed = 0
-        with open(self.path, encoding="utf-8-sig", newline="") as handle:
+        with self._handle() as source, source.open_binary() as raw:
+            text = io.TextIOWrapper(raw, encoding="utf-8-sig", newline="")
 
             def _reject_unreconcilable(lines: Iterable[str]) -> Iterator[str]:
                 # NUL and a lone CR are not reconcilable between the csv scan and
@@ -191,7 +208,7 @@ class CsvFileSource:
                         )
                     yield line
 
-            reader = csv.reader(_reject_unreconcilable(handle), delimiter=self.delimiter)
+            reader = csv.reader(_reject_unreconcilable(text), delimiter=self.delimiter)
             for record in reader:
                 if len(record) <= 1 and (not record or not record[0].strip()):
                     continue
@@ -212,19 +229,20 @@ class CsvFileSource:
             )
 
     def row_count(self) -> RowCount:
-        total = os.path.getsize(self.path)
         header_bytes = 0
         line_bytes: list[int] = []
-        with open(self.path, "rb") as fh:
-            if self.has_header:
-                # A header row is not a data row; its bytes are excluded from
-                # the per-row mean. A headerless file has no such line to skip.
-                header_bytes = len(fh.readline())
-            for _ in range(_CSV_ESTIMATE_LINES):
-                line = fh.readline()
-                if not line:
-                    break
-                line_bytes.append(len(line))
+        with self._handle() as handle:
+            total = handle.stat().st_size
+            with handle.open_binary() as fh:
+                if self.has_header:
+                    # A header row is not a data row; its bytes are excluded from
+                    # the per-row mean. A headerless file has no such line to skip.
+                    header_bytes = len(fh.readline())
+                for _ in range(_CSV_ESTIMATE_LINES):
+                    line = fh.readline()
+                    if not line:
+                        break
+                    line_bytes.append(len(line))
         return estimate_csv_rows(total, header_bytes, line_bytes)
 
     def schema(self) -> pa.Schema:

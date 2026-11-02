@@ -40,9 +40,7 @@ pandas-oracle parity suite pins.
 
 from __future__ import annotations
 
-import os
 import shutil
-import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -69,7 +67,6 @@ from decoy_engine.execution.out_of_core._memory_estimate import (
 )
 from decoy_engine.execution.out_of_core._multi_parent import resolve_incoming
 from decoy_engine.execution.out_of_core._preflight import run_preflight
-from decoy_engine.execution.out_of_core._relation import _column_seed  # noqa: F401 -- re-exported
 from decoy_engine.execution.out_of_core._rewrite_pass import (  # noqa: F401 -- patch seams
     _iter_source_batches,
     _stream_table,
@@ -80,8 +77,10 @@ from decoy_engine.execution.out_of_core._route_policy import (
     decide_route,
     validate_outgoing_parent_columns,
 )
+from decoy_engine.execution.out_of_core._scratch import scratch_root
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_driver import stream_table
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.progress import get_active_channel
 
 if TYPE_CHECKING:
@@ -100,6 +99,7 @@ if TYPE_CHECKING:
     TableSource: TypeAlias = pa.Table | LazySource
 
 
+@entry_point
 def run_fk_out_of_core(
     plan: Plan,
     sources: Mapping[str, pa.Table | LazySource],
@@ -118,6 +118,7 @@ def run_fk_out_of_core(
     vault_writer: Any = None,
     config: Mapping[str, Any] | None = None,
     native_threads: int = 1,
+    file_access: FileAccess | None = None,
     cast_run: Any = None,
     _staged: bool = False,
 ) -> ExecutionResult:
@@ -186,15 +187,13 @@ def run_fk_out_of_core(
         batch_rows=batch_rows,
         out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
     )
-    mask_key, reorder_threshold_rows = pre.mask_key, pre.reorder_threshold_rows
+    key_box, reorder_threshold_rows = pre.key_box, pre.reorder_threshold_rows
 
     validators = _validate_batch.build_validator_collector(
         config, plan, relationship_graph, sources
     )
     owned_temp = temp_dir is None
-    root = Path(tempfile.mkdtemp(prefix="decoy-ooc-")) if temp_dir is None else temp_dir
-    root.mkdir(parents=True, exist_ok=True)
-    os.chmod(root, 0o700)
+    root = scratch_root(temp_dir)
     committed = False
     # B4: the run-scoped faker pool lifecycle. Pools are Python/object memory
     # outside DuckDB's accounting, so bound them well inside the run budget and
@@ -222,14 +221,14 @@ def run_fk_out_of_core(
         # job's evidence list matches the pandas oracle's shape byte-for-byte.
         code_set_corpora: dict[tuple[str, str], dict[str, Any]] = {}
         hash_run = OocHashRun(native_threads=native_threads, faker_pool=faker_pool)
-        for table_name in _table_order(plan, relationship_graph, sources):
+        for index, table_name in enumerate(_table_order(plan, relationship_graph, sources)):
             if table_name not in sources:
                 continue
             # The merge runs before any joiner opens, so it takes the undivided build cap.
             table_incoming_edges = resolve_incoming(
                 incoming[table_name],
                 parent_relations,
-                temp_dir=root / "relations" / table_name / "merged",
+                temp_dir=root / "relations" / f"t{index:04d}" / "merged",
                 memory_limit=memory_limit_for(budget_bytes, 1) if budget_bytes else memory_limit,
             )
             table_outgoing_edges = tuple(outgoing[table_name])
@@ -253,9 +252,9 @@ def run_fk_out_of_core(
                 "incoming_edges": table_incoming_edges,
                 "outgoing_edges": table_outgoing_edges,
                 "parent_relations": parent_relations,
-                "temp_dir": root / "joins" / table_name,
-                "relation_dir": root / "relations" / table_name,
-                "staging_path": root / "staged" / table_name / "masked_keys.parquet",
+                "temp_dir": root / "joins" / f"t{index:04d}",
+                "relation_dir": root / "relations" / f"t{index:04d}",
+                "staging_path": root / "staged" / f"t{index:04d}" / "masked_keys.parquet",
                 "memory_limit": memory_limit,
                 "batch_rows": batch_rows,
                 "budget_bytes": budget_bytes,
@@ -263,7 +262,6 @@ def run_fk_out_of_core(
                 "outputs": outputs,
                 "warnings": warnings,
                 "unconfigured_column_policy": unconfigured_column_policy,
-                "mask_key": mask_key,
                 "code_set_corpora": code_set_corpora,
                 "hash_run": hash_run,
                 "vault_writer": vault_writer,
@@ -277,12 +275,13 @@ def run_fk_out_of_core(
             if route.reorder_caps is not None:
                 stream_table(
                     **table_kwargs,
+                    mask_key=key_box.open()[0],
                     run_bytes_cap=route.reorder_caps.run_bytes_cap,
                     merge_fan_in=route.reorder_caps.merge_fan_in,
                     reorder_caps=route.reorder_caps,
                 )
             else:
-                _stream_table(**table_kwargs)
+                _stream_table(**table_kwargs, mask_key=key_box.open()[0])
             _pg.flush(table_name)
             _pg.phase_finish("mask", _pg_started, table=table_name)
             if temp_disk_budget_bytes is not None:

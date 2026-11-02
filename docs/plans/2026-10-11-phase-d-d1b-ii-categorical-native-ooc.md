@@ -1,4 +1,5 @@
-Status: plan (Phase D slice D1b-ii: categorical native on the OOC route; completes the D1 operator group (hash=D1a merged, bucket_perturb=D1b-i); rev 2, folds the rev-1 Codex plan-gate NO-GO: 1 HIGH source-type eligibility + 2 MEDIUM idle-call / invalid-weights)
+Status: built
+Shipped: merge PR #238 (899632ce)
 
 # Phase D / D1b-ii: categorical masking native on the out-of-core route
 

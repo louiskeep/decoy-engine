@@ -107,6 +107,7 @@ from decoy_engine.execution._governor_monitor import _RssMonitor
 from decoy_engine.execution._isolated_common import IsolatedRunResult
 from decoy_engine.execution._isolated_run import run_pipeline_isolated
 from decoy_engine.execution._substrate import require_bool
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.progress import RetryInfo, get_active_channel
 
 if TYPE_CHECKING:
@@ -144,7 +145,8 @@ _DEFAULT_POLL_INTERVAL_S = 1.5
 
 GovernorTripKind = Literal["governor_kill", "self_oom", "route_ineligible", "crashed"]
 
-# `decide_execution_route` raises a typed `SeqIneligibleError` / `OocIneligibleError` when an explicit
+# `decide_execution_route` raises an exact `ConfigError` tagged with the typed `route.sequential_ineligible`
+# / `route.out_of_core_ineligible` identity (`_errors.seq_ineligible` / `ooc_ineligible`) when an explicit
 # `execution_mode` names a route the job is NOT eligible for. Across the process boundary it arrives
 # as `IsolatedRunResult.reason` with a closed registry identity, and that identity (never the
 # `error` text, the child's output, or the text of a general `ConfigError`) is what the governor
@@ -240,6 +242,7 @@ def _exhausted_diagnostic(trips: tuple[GovernorTripRecord, ...], budget_bytes: i
     )
 
 
+@entry_point
 def run_job_with_governor(
     config: dict[str, Any],
     sources: dict[str, pa.Table] | None = None,
@@ -250,6 +253,7 @@ def run_job_with_governor(
     hard_threshold_fraction: float = _DEFAULT_HARD_THRESHOLD_FRACTION,
     poll_interval_s: float = _DEFAULT_POLL_INTERVAL_S,
     on_trip: Callable[[GovernorTripRecord], None] | None = None,
+    file_access: FileAccess | None = None,
     **isolated_kwargs: Any,
 ) -> GovernorResult:
     """Run one job under the runtime governor: monitor its child process's

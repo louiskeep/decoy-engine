@@ -31,8 +31,9 @@ CONST_NAME = re.compile(r"(^|_)(CODE|CODES|REASON)(_|$)|^code$|^reason_code$", r
 CODE_SHAPE = re.compile(r"^[a-z][a-z0-9_.:-]*$")
 # A slot that holds a routing decision's reason: a local, a field or an unpacked result.
 REASON_NAME = re.compile(r"(route|reroute|full_frame)_reason$", re.IGNORECASE)
-# A function that decides a route: its returned literals are route reasons.
-ROUTE_DECIDER = re.compile(r"^decide_.*route", re.IGNORECASE)
+# A function that decides something: the last slot of a tuple it returns is a reason. Any
+# `decide_*` name, not only the route deciders, so a sink or split decision cannot slip past.
+ROUTE_DECIDER = re.compile(r"^decide_", re.IGNORECASE)
 _ENUM_BASES = frozenset({"Enum", "StrEnum", "IntEnum", "enum.Enum", "enum.StrEnum"})
 # Files whose every upper-case string constant is a reason code (frozen decision catalogs).
 CATALOG_FILES = frozenset(

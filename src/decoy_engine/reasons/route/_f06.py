@@ -8,6 +8,7 @@ from decoy_engine.reasons import _catalog
 from decoy_engine.reasons._types import Kind, Outcome, Phase, RetryClass, Severity
 
 __all__ = [
+    "DECLARED_CASTING",
     "DECLARED_CASTING_FULL_FRAME",
     "DECLARED_CAST_INPUT_TYPE_INCOMPATIBLE",
     "DECLARED_CAST_ROUTE_UNSUPPORTED",
@@ -22,13 +23,13 @@ _REFUSAL: dict[str, Any] = {
     "outcome": Outcome.CONFIGURATION,
     "retry": RetryClass.CONFIGURATION_REPAIR,
     "phases": (Phase.RESOLVE, Phase.COMPILE),
-    "since": "1.1.0",
+    "since": "1.4.0",
 }
 
 DECLARED_CASTING_FULL_FRAME = _d(
     "declared_casting_full_frame",
     "A job with declared casting contracts runs on the full-frame route.",
-    since="1.1.0",
+    since="1.4.0",
 )
 DECLARED_CAST_ROUTE_UNSUPPORTED = _d(
     "declared_cast_route_unsupported",
@@ -44,4 +45,10 @@ PROTECTED_QUARANTINE_UNAVAILABLE = _d(
     "protected_quarantine_unavailable",
     "A protected quarantine store with the required protection is not available.",
     **{**_REFUSAL, "retry": RetryClass.ENVIRONMENT_REPAIR},
+)
+# The chunked output sink's resident decision for a job with declared columns.
+DECLARED_CASTING = _catalog.route("decoy_engine.execution._chunked_output_sink")(
+    "declared_casting",
+    "Declared casting publishes after the run passes, so output stays resident.",
+    since="1.4.0",
 )

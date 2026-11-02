@@ -1,3 +1,5 @@
+Status: record
+
 **GO**
 
 All three round-2 remainders are closed at root:

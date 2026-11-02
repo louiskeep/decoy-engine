@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._transforms_gate import (
     PER_TABLE_TRANSFORMS_PRESENT,
     find_table_config,
@@ -97,7 +98,7 @@ def check_rejections_before_preparation(
         vault_writer=vault_writer,
         post_validation=post_validation,
         resolved_substrate=resolved_substrate,
-        run_storm=bool(config.get("run_storm")),
+        post_scan_integrity=post_scan_integrity_requested(config),
     )
     cyclic = _has_cross_table_fk_cycle(graph)
     if execution_mode == "sequential":

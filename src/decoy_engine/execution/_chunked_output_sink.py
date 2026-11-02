@@ -29,17 +29,15 @@ combined copy of the group being written, not a hard cap.
 from __future__ import annotations
 
 import dataclasses
-import os
-import shutil
-import tempfile
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from decoy_engine import reasons
+from decoy_engine import fileaccess, reasons
 from decoy_engine._lexeme import lexeme_columns_by_table
+from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._publication_observer import observed_abort, observed_commit
@@ -51,6 +49,8 @@ from decoy_engine.execution.native._chunked_evidence import (
     copy_strategy_branch_calls,
     merge_executed_backend,
 )
+from decoy_engine.fileaccess import FileRequest, FileRole, OutputTxn
+from decoy_engine.fileaccess.adapters import arrow as arrow_adapter
 
 if TYPE_CHECKING:
     from decoy_engine.execution._pipeline_multi_table import MultiTableSplit
@@ -94,40 +94,40 @@ def decide_output_mode(
 
     The first failing condition names the reason and the run stays resident. The
     consumers declined last (validators, quarantine, fidelity, post-validation,
-    run_storm) read the whole output after the mask step, so a run that has one cannot
+    post_scan_integrity) read the whole output after the mask step, so a run that has one cannot
     stream."""
     if not stream_chunked_output:
-        return "resident", "streaming_disabled"
+        return "resident", reasons.route.STREAMING_DISABLED
     if sink is None:
-        return "resident", "no_sink"
+        return "resident", reasons.route.NO_SINK
     if not isinstance(sink, TransactionalSink):
-        return "resident", "sink_not_streaming"
+        return "resident", reasons.route.SINK_NOT_STREAMING
     if not dispatcher_enabled:
-        return "resident", "legacy_lane"
+        return "resident", reasons.route.LEGACY_LANE
     if split is not None:
         if split.full_frame:
-            return "resident", "split_full_frame_present"
+            return "resident", reasons.route.SPLIT_FULL_FRAME_PRESENT
         if any(name not in split.dispatched for name in resident_names):
-            return "resident", "split_extra_sources_present"
+            return "resident", reasons.route.SPLIT_EXTRA_SOURCES_PRESENT
     if lexeme_columns_by_table(config):
         # F06: the rendered rows of a declared table are published after the whole run is known
         # to have passed, and a quarantine seal must follow every other failure-capable step.
-        return "resident", "declared_casting"
+        return "resident", reasons.route.DECLARED_CASTING
     if config.get("validators"):
-        return "resident", "validators_present"
+        return "resident", reasons.route.VALIDATORS_PRESENT
     if (config.get("quarantine") or {}).get("enabled"):
-        return "resident", "quarantine_enabled"
+        return "resident", reasons.route.QUARANTINE_ENABLED
     if fidelity_report:
-        return "resident", "fidelity_report"
+        return "resident", reasons.route.FIDELITY_REPORT
     if post_validation:
-        return "resident", "post_validation"
-    if config.get("run_storm"):
-        # STORM post-mask (`compute_storm_postmask`) reads `result.outputs`; a streamed
+        return "resident", reasons.route.POST_VALIDATION
+    if post_scan_integrity_requested(config):
+        # Post-scan integrity (`compute_post_scan_integrity`) reads `result.outputs`; a streamed
         # run leaves it empty, so the requested check would silently no-op. Keep the
         # output resident -- masked values are chunk-invariant, so the resident chunked
-        # output is STORM-correct, matching how run_storm declines the sequential, mixed,
+        # output is Post-scan-correct, matching how post_scan_integrity declines the sequential, mixed,
         # out-of-core and unified-slice routes for the same whole-output reason.
-        return "resident", "run_storm"
+        return "resident", reasons.route.POST_SCAN_INTEGRITY
     return "streamed", REASON_ELIGIBLE
 
 
@@ -437,32 +437,34 @@ def _cast(chunk: pa.Table, schema: pa.Schema) -> pa.Table:
 
 
 class _Spill:
-    """Held-back chunks beyond one row group, one Arrow IPC file each in a private
-    directory. Read back with `OSFile`, not a memory map, so pages do not stay resident."""
+    """Held-back chunks beyond one row group, one Arrow IPC file each in a private scratch
+    stage beside the sink's own staging directory. The stage is a policy-issued output
+    transaction, so a strict policy decides where spilled rows may land and `TMPDIR` is never
+    consulted. Read back through the stage, not a memory map, so pages do not stay resident."""
 
     def __init__(self, stats: StreamStats, sink: Any, table: str) -> None:
         self.stats = stats
         self.sink = sink
         self.table = table
-        self.directory: str | None = None
-        self.paths: list[str] = []
+        self.txn: OutputTxn | None = None
+        self.names: list[str] = []
 
     @property
     def active(self) -> bool:
-        return self.directory is not None
+        return self.txn is not None
 
     def add(self, chunk: pa.Table) -> None:
-        if self.directory is None:
-            self.directory = self._make_directory()
-        path = os.path.join(self.directory, f"{len(self.paths):08d}.arrow")
-        with pa.OSFile(path, "wb") as sink, pa.ipc.new_file(sink, chunk.schema) as writer:
+        if self.txn is None:
+            self.txn = self._make_stage()
+        name = f"{len(self.names):08d}.arrow"
+        with arrow_adapter.ipc_new_file(self.txn, name, chunk.schema) as writer:
             writer.write_table(chunk)
-        self.paths.append(path)
+        self.names.append(name)
         self.stats.spilled_chunks += 1
 
-    def _make_directory(self) -> str:
-        """Create the private spill directory beside the sink's own staging directory, on the
-        output's filesystem; `TMPDIR` is never consulted."""
+    def _make_stage(self) -> OutputTxn:
+        """Create the private spill stage beside the sink's own staging directory, on the
+        output's filesystem."""
         parent = getattr(self.sink, "spill_parent", None)
         if parent is None:
             raise ExecutionError(
@@ -472,20 +474,25 @@ class _Spill:
                     "so they must spill to disk, but the sink names no `spill_parent`."
                 ),
             )
-        Path(parent).mkdir(parents=True, exist_ok=True)
-        return tempfile.mkdtemp(prefix="_decoy_hold_", dir=str(parent))
+        out = fileaccess.current().output_dir(
+            FileRequest(
+                FileRole.TARGET_OUTPUT, "write", str(Path(parent) / "_hold"), "targets.spill"
+            )
+        )
+        return out.begin("dir", "exclusive", label="hold")
 
     def replay(self) -> Iterator[pa.Table]:
-        for path in self.paths:
-            with pa.OSFile(path, "rb") as source:
-                table = pa.ipc.open_file(source).read_all()
-            os.remove(path)
+        for name in self.names:
+            if self.txn is None:  # pragma: no cover - names only exist after a spill stage
+                return
+            table = arrow_adapter.ipc_read_file(self.txn, name)
+            self.txn.remove(name)
             yield table
 
     def close(self) -> None:
-        if self.directory is not None:
-            shutil.rmtree(self.directory, ignore_errors=True)
-            self.directory = None
+        if self.txn is not None:
+            self.txn.abort()
+            self.txn = None
 
 
 def _hold_back(

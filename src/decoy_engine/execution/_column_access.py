@@ -70,6 +70,23 @@ def _nfkc(value: str) -> str:
     return unicodedata.normalize("NFKC", value)
 
 
+# Kinds that carry no column reference and no string payload. Anything else (3.12's FSTRING_*
+# tokens expose the braced names, 3.14 adds TSTRING_*) is unclassified, so the reader declines.
+_INERT_TOKEN_KINDS = frozenset(
+    {
+        tokenize.NUMBER,
+        tokenize.OP,
+        tokenize.NEWLINE,
+        tokenize.NL,
+        tokenize.ENDMARKER,
+        tokenize.INDENT,
+        tokenize.DEDENT,
+        tokenize.COMMENT,
+        tokenize.ERRORTOKEN,
+    }
+)
+
+
 def predicate_names(expr: str) -> set[str] | None:
     """Every name `DataFrame.eval` could resolve in `expr`, NFKC-normalized, or None when
     the predicate cannot be read (the caller then treats every passthrough column as read).
@@ -77,9 +94,10 @@ def predicate_names(expr: str) -> set[str] | None:
     Uses pandas' own tokenizer. Python's `ast` NFKC-normalizes identifiers, so a fullwidth
     `x` and a `file` spelled with the U+FB01 ligature read the columns `x` and `file`.
     Only names and backtick-quoted spans are references; a string literal is a value. A
-    string token that is not a plain `str` literal (an f-string prefix, a bytes literal)
-    returns None, because under-collecting would hand the predicate a null placeholder
-    and leave the masked column silently unmasked.
+    string token that is not a plain `str` literal (an f-string prefix, a bytes literal), and
+    any token kind not classified above (3.12's FSTRING_START), returns None, because
+    under-collecting would hand the predicate a null placeholder and leave the masked column
+    silently unmasked.
     """
     try:
         from pandas.core.computation.parsing import BACKTICK_QUOTED_STRING, tokenize_string
@@ -90,7 +108,10 @@ def predicate_names(expr: str) -> set[str] | None:
         for kind, value in tokenize_string(expr):
             if kind == tokenize.NAME or kind == BACKTICK_QUOTED_STRING:
                 names.add(_nfkc(value))
-            elif kind == tokenize.STRING and not isinstance(ast.literal_eval(value), str):
+            elif kind == tokenize.STRING:
+                if not isinstance(ast.literal_eval(value), str):
+                    return None
+            elif kind not in _INERT_TOKEN_KINDS:
                 return None
     except Exception:
         return None

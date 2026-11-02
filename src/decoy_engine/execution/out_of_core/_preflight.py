@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._runner import build_work_list, order_work
 from decoy_engine.execution.out_of_core import _mask_group_c
@@ -34,7 +35,9 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class OocPreflight:
-    mask_key: bytes | None
+    # Boxed (`_opaque`): the runner's frame keeps this object for the whole run, and the drivers
+    # unbox the key only in their call expressions.
+    key_box: OpaqueBox
     reorder_threshold_rows: int
 
 
@@ -59,8 +62,8 @@ def run_preflight(
     reorder_threshold_rows = resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
     # DE-02 (Codex BLOCKER 4): fail-closed gate FIRST, before any admissibility or source
     # check, so a keyed out-of-core job can never run off job_seed at GA from any entry point.
-    mask_key = require_mask_key(plan, key_provider)
-    assert_vault_inputs(vault_writer, config, mask_key)
+    mask_key = OpaqueBox(require_mask_key(plan, key_provider))
+    assert_vault_inputs(vault_writer, config, mask_key.open()[0])
     work = order_work(build_work_list(plan, registry), relationship_graph)
     # Schema-only read (a LazySource's schema is cached), so a forced out-of-core
     # job with a non-string faker source refuses here, before any scratch dir or

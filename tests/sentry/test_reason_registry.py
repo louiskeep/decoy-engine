@@ -72,7 +72,7 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("execution/_errors.py", "StrategyError.__init__"): _CTOR,
     ("execution/_mixed_admission.py", "MixedDeclineError.__init__"): _CTOR,
     ("execution/_transforms.py", "TransformError.__init__"): _CTOR,
-    ("execution/native/_draw_site_providers.py", "DrawSiteProtocolError.__init__"): _CTOR,
+    ("execution/native/protocol/providers_base.py", "DrawSiteProtocolError.__init__"): _CTOR,
     ("execution/physical/_shadow_diff_codes.py", "ShadowDifference.__init__"): _CTOR,
     ("generation/_budget_ledger.py", "GenerationBudgetError.__init__"): _CTOR,
     ("generation/_window_admission.py", "GenerationAdmissionError.__init__"): _CTOR,
@@ -133,6 +133,10 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ),
     ("quality/report.py", "_collect_warnings"): (
         "diagnostic check names are registry symbols in `verification`"
+    ),
+    ("phase.py", "_reason_wire"): (
+        "exports the identity of a `ReasonRef` that `require_known` has just resolved against "
+        "the registry (an unknown identity fails closed before this dict is built)"
     ),
 }
 # Functions whose return value is a registry symbol chosen from a table of registry symbols.
@@ -295,6 +299,13 @@ _MUTANTS: dict[str, str] = {
         def decide_the_route():
             return "adhoc_bare"
     """,
+    # A decider that is not named `*route` (the chunked sink's resident / streamed decision).
+    "decider_not_named_route": """
+        def decide_output_mode(sink):
+            if sink is None:
+                return "resident", "adhoc_no_sink"
+            return "streamed", "adhoc_streamed"
+    """,
     "unpacked_reason_producer": """
         def pick(x):
             return "out_of_core", "adhoc_unpacked"
@@ -426,6 +437,8 @@ def test_ci_collects_the_registry_guards() -> None:
 # is a reviewed registry addition; this list may only shrink.
 UNCLASSIFIED: dict[str, str] = {
     "DecoyError": "the root class; a subclass without an identity is unclassified, not this",
+    "VaultClientConfigError": "a Vault client-construction error raised by the CLI helper before any run; fixed value-free text",
+    "SecretClosedError": "an internal invariant breach (a closed secret buffer was used); not a user-facing failure",
     "ConnectorError": "the connector base; Transient/Permanent subclasses carry the meaning",
     "ConnectorAuthError": "an authentication failure has no code yet; its text may echo a target",
     "FKPreservationError": "base of EmptyParentPool/UnknownFKColumn, which are classified",
@@ -444,6 +457,19 @@ UNCLASSIFIED: dict[str, str] = {
     "PoolBuildFailed": "an internal shadow-plan signal, never surfaced",
     "_RejectError": "an internal parser signal, never surfaced",
     "_InfeasibleAtEpsQError": "an internal DP control-flow signal, never surfaced",
+    "PhaseContractError": (
+        "a phase-envelope contract violation inside the producer boundary; never a run outcome"
+    ),
+    "UnknownReasonError": (
+        "an unregistered reason identity; the phase boundary converts it to PhaseContractError"
+    ),
+    # E1 file-access errors carry an encoded field key and no code. The denial has its fixed
+    # identity (decoy.file_access_denied, reason_adapter._FIXED); these two have none yet.
+    "FileAccessReadError": "a library failure on an authorized file; text is the encoded position",
+    "FileAccessUnavailable": "no policy where one is required, or an unservable strict route",
+    # A-4 x F13: an internal carrier between the file provider and the admission boundary, which
+    # rebuilds it into one closed-set class; it never reaches a caller.
+    "KeptFileFailure": "internal carrier; the admission boundary rebuilds it, never raised to callers",
 }
 
 

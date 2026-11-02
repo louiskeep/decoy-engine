@@ -1,4 +1,5 @@
-Status: plan (Phase D first build-slice: D0 survey+contract; sub-slice of the approved 2026-10-10 Phase D program plan; rev 5 -- folds Codex plan-gate r4 NO-GO: float fixtures now PROBE-GROUNDED (I ran both routes at 49b88677). nan-preserve corrected to child_refs=[None,1,2] w/ pinned literals; int64-vs-float64 does NOT manifest at output on admitted single-edge chains (probe-verified) so D0 freezes dtype AGREEMENT not a nonexistent delta. r1 honesty, R2, r2 provenance, r3 policies/schemas already resolved.)
+Status: built
+Shipped: merge PR #236 (cc2f1c71)
 
 # Phase D / D0: strict-parity baseline + native-execution witness (OOC chain, no kernel)
 

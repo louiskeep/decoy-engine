@@ -34,7 +34,7 @@ Save this as `pipeline.yaml`. It names the source file, lists the columns to
 mask and the strategy for each, and names the output file.
 
 ```yaml
-version: 1
+version: 2
 
 global_settings:
   seed: 42

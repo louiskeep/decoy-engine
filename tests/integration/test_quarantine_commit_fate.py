@@ -121,7 +121,7 @@ def _config(tmp_path: Path, qpath: str) -> dict[str, Any]:
     child_src = _write_source(tmp_path, child, "child")
 
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "de08-quarantine-commit-fate", "seed": 42},
         "sources": {
             "parent": {"type": "file", "path": parent_src, "format": "parquet"},

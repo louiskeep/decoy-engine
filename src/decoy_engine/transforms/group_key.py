@@ -159,19 +159,23 @@ def apply_group_key(
         List of key strings aligned to df rows. Each string is ``config.prefix``
         followed by ``config.length`` lowercase hex characters.
     """
-    group_col = config.group_by
-    n_bytes = config.length // 2  # hex chars -> bytes
+    try:
+        group_col = config.group_by
+        n_bytes = config.length // 2  # hex chars -> bytes
 
-    # Cache: avoid re-deriving for the same group value in the same call.
-    key_cache: dict[Any, str] = {}
+        # Cache: avoid re-deriving for the same group value in the same call.
+        key_cache: dict[Any, str] = {}
 
-    result: list[str] = []
-    for raw_val in df[group_col]:
-        if raw_val not in key_cache:
-            source = str(raw_val).encode("utf-8")
-            raw_bytes = derive(seed, namespace, source)
-            hex_key = raw_bytes[:n_bytes].hex()
-            key_cache[raw_val] = config.prefix + hex_key
-        result.append(key_cache[raw_val])
+        result: list[str] = []
+        for raw_val in df[group_col]:
+            if raw_val not in key_cache:
+                source = str(raw_val).encode("utf-8")
+                raw_bytes = derive(seed, namespace, source)
+                hex_key = raw_bytes[:n_bytes].hex()
+                key_cache[raw_val] = config.prefix + hex_key
+            result.append(key_cache[raw_val])
 
-    return result
+        return result
+    except BaseException:
+        del seed
+        raise

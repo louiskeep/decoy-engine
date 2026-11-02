@@ -53,7 +53,7 @@ def main() -> None:
     n = 5_000
     path = _write_fixture(n, "stage2d_platform_per_node_rust")
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "sources": {"t": {"type": "file", "format": "parquet", "path": path}},
         "targets": {

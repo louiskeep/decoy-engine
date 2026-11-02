@@ -1,4 +1,5 @@
-Status: plan (revision 3, BUILD-READY, author = Opus). Codex plan gate: rounds 1-2 REVISE folded; round 3 GO (2 LOW folded below).
+Status: built
+Shipped: docs/records/2026-10-06-c6c-i-text-redact-arrow-build.md
 Rules consulted: 00-universal, development-loop, testing, architecture, code-review, scope-discipline
 
 # C6c-i: text_redact as an Arrow operator on both native routes

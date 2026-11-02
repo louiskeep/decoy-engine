@@ -292,7 +292,9 @@ def _run_full_frame(
             post_validation_sample_size=ctx.post_validation_sample_size,
             post_validation_enforce=ctx.post_validation_enforce,
         )
-        _pipeline_finalize.compute_storm_postmask(result, config=ctx.config, sources=step.sources)
+        _pipeline_finalize.compute_post_scan_integrity(
+            result, config=ctx.config, sources=step.sources
+        )
         if cast_run is not None:
             # Seal only once nothing failure-capable remains but the publish itself; a failure
             # from here on still discards the sealed artifact through cast_run.abort().

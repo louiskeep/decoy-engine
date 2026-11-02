@@ -1,6 +1,7 @@
 # P4 slice 4: `code_set` (mask mode) on the chunked route
 
-Status: plan
+Status: built
+Shipped: src/decoy_engine/execution/_chunked.py:72 (code_set mask mode admitted); _chunked_code_set.py
 
 > Part 2 Phase 4, chunked-route strategy port, slice 4. Follows slices 1-3
 > (windowed_date, group_key, text_mask), all double-gated and held on

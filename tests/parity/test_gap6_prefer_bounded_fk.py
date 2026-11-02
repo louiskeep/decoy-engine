@@ -64,7 +64,7 @@ def _config(
         return spec
 
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "gap6", "seed": 11},
         "sources": {
             "parent": {"type": "file", "path": _write(tmp, parent, "parent"), "format": "parquet"},
@@ -513,7 +513,7 @@ def _chain_job(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Table]]:
         "grand": pa.table({"ref": pa.array([1, 2, 3, 4], pa.int64()), "lbl": pa.array(["l"] * 4)}),
     }
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "gap6_chain", "seed": 11},
         "sources": {
             name: {"type": "file", "path": _write(tmp_path, tbl, name), "format": "parquet"}

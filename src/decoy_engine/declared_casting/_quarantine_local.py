@@ -192,13 +192,17 @@ class LocalProtectedQuarantineSink:
         from cryptography.fernet import Fernet
 
         version = str(self._key_provider.key_version)
-        key = hkdf_sha256(
-            ikm=self._key_provider.mask_key(),
-            salt=_SALT,
-            info=b"quarantine-fernet/" + version.encode("utf-8"),
-            length=32,
+        # Derived and consumed in one expression so no frame binds the key.
+        return Fernet(
+            base64.urlsafe_b64encode(
+                hkdf_sha256(
+                    ikm=self._key_provider.mask_key(),
+                    salt=_SALT,
+                    info=b"quarantine-fernet/" + version.encode("utf-8"),
+                    length=32,
+                )
+            )
         )
-        return Fernet(base64.urlsafe_b64encode(key))
 
     def _token_key(self) -> bytes:
         return hkdf_sha256(

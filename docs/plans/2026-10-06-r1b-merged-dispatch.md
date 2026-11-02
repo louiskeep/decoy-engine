@@ -1,4 +1,5 @@
-Status: plan (revision 3, BUILD-READY, author = Opus). Codex plan gate: rounds 1-2 REVISE folded; round 3 GO (0 findings).
+Status: built
+Shipped: docs/records/2026-10-06-r1b-merged-dispatch-build.md
 Rules consulted: 00-universal, development-loop, refactoring, architecture, testing, code-review, scope-discipline
 
 # R1b: one kernel step per operator, shared by both routes

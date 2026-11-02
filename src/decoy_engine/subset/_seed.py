@@ -59,35 +59,39 @@ def _predicate_expr(p: Predicate) -> pl.Expr:
 
 
 def _select_sample(spec: SeedSpec, kf: pl.DataFrame, job_seed: bytes) -> tuple[frozenset[int], int]:
-    ns = f"subset/sample/{spec.table}"
-    ctx = DeriveContext.for_column(job_seed, ns)
-    kf = kf.select([RI, *spec.key_columns])
-    non_null = kf.drop_nulls(subset=list(spec.key_columns))
-    seed_null_excluded = kf.height - non_null.height
-    n = non_null.height
-    if n == 0:
-        return frozenset(), seed_null_excluded
-    k = spec.count if spec.count is not None else max(1, floor((spec.fraction or 0) * n))
-    k = min(k, n)
+    try:
+        ns = f"subset/sample/{spec.table}"
+        ctx = DeriveContext.for_column(job_seed, ns)
+        kf = kf.select([RI, *spec.key_columns])
+        non_null = kf.drop_nulls(subset=list(spec.key_columns))
+        seed_null_excluded = kf.height - non_null.height
+        n = non_null.height
+        if n == 0:
+            return frozenset(), seed_null_excluded
+        k = spec.count if spec.count is not None else max(1, floor((spec.fraction or 0) * n))
+        k = min(k, n)
 
-    digests: list[tuple[bytes, int]] = []
-    for row in non_null.iter_rows():
-        ri, key = row[0], row[1:]
-        try:
-            source = b"".join(
-                len(part := _canonicalize_source(component)).to_bytes(4, "big") + part
-                for component in key
-            )
-        except GenerationError as exc:
-            raise SubsetConfigError(
-                code=reasons.config.SUBSET_SEED_KEY_UNCANONICALIZABLE,
-                message=f"table {spec.table!r}: seed key column value could not be "
-                f"canonicalized for sampling: {exc}",
-            ) from exc
-        digests.append((ctx.derive_source(ns, source), ri))
-    digests.sort()
-    selected = frozenset(ri for _, ri in digests[:k])
-    return selected, seed_null_excluded
+        digests: list[tuple[bytes, int]] = []
+        for row in non_null.iter_rows():
+            ri, key = row[0], row[1:]
+            try:
+                source = b"".join(
+                    len(part := _canonicalize_source(component)).to_bytes(4, "big") + part
+                    for component in key
+                )
+            except GenerationError as exc:
+                raise SubsetConfigError(
+                    code=reasons.config.SUBSET_SEED_KEY_UNCANONICALIZABLE,
+                    message=f"table {spec.table!r}: seed key column value could not be "
+                    f"canonicalized for sampling: {exc}",
+                ) from exc
+            digests.append((ctx.derive_source(ns, source), ri))
+        digests.sort()
+        selected = frozenset(ri for _, ri in digests[:k])
+        return selected, seed_null_excluded
+    except BaseException:
+        del job_seed
+        raise
 
 
 def _select_filter(spec: SeedSpec, kf: pl.DataFrame) -> frozenset[int]:
@@ -124,27 +128,31 @@ def select_seed_rows(
     semantics across multiple specs on one table are a follow-on, not built
     here).
     """
-    seen_tables: set[str] = set()
-    seed_rows: dict[str, frozenset[int]] = {}
-    seed_null_excluded: dict[str, int] = {}
-    for spec in seeds:
-        if spec.table in seen_tables:
-            raise SubsetConfigError(
-                code=reasons.config.SUBSET_DUPLICATE_SEED_TABLE,
-                message=f"table {spec.table!r} has more than one SeedSpec; only one seed "
-                "spec per table is supported",
-            )
-        seen_tables.add(spec.table)
-        kf = key_frames[spec.table]
-        null_excluded = 0
-        if spec.mode == "sample":
-            selected, null_excluded = _select_sample(spec, kf, job_seed)
-        elif spec.mode == "filter":
-            selected = _select_filter(spec, kf)
-        else:
-            selected = _select_keys(spec, kf)
-        seed_rows[spec.table] = selected
-        seed_null_excluded[spec.table] = null_excluded
+    try:
+        seen_tables: set[str] = set()
+        seed_rows: dict[str, frozenset[int]] = {}
+        seed_null_excluded: dict[str, int] = {}
+        for spec in seeds:
+            if spec.table in seen_tables:
+                raise SubsetConfigError(
+                    code=reasons.config.SUBSET_DUPLICATE_SEED_TABLE,
+                    message=f"table {spec.table!r} has more than one SeedSpec; only one seed "
+                    "spec per table is supported",
+                )
+            seen_tables.add(spec.table)
+            kf = key_frames[spec.table]
+            null_excluded = 0
+            if spec.mode == "sample":
+                selected, null_excluded = _select_sample(spec, kf, job_seed)
+            elif spec.mode == "filter":
+                selected = _select_filter(spec, kf)
+            else:
+                selected = _select_keys(spec, kf)
+            seed_rows[spec.table] = selected
+            seed_null_excluded[spec.table] = null_excluded
 
-    seed_counts = {table: len(rows) for table, rows in seed_rows.items()}
-    return seed_rows, seed_counts, seed_null_excluded
+        seed_counts = {table: len(rows) for table, rows in seed_rows.items()}
+        return seed_rows, seed_counts, seed_null_excluded
+    except BaseException:
+        del job_seed
+        raise

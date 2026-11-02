@@ -4,7 +4,7 @@
 `scripts/gen_capability_matrix.py`. This guard re-renders the matrix from the
 current code and asserts it equals the committed file. If a registry changes
 (a new mask strategy, generation strategy, synthetic provider, connector,
-STORM detector, or disguise) without the matrix being regenerated, this fails.
+detector, or disguise) without the matrix being regenerated, this fails.
 
 That is the point: a new capability cannot ship without its doc entry being
 refreshed. To fix a failure, run:

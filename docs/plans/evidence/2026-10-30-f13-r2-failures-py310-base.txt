@@ -1,0 +1,9 @@
+# F13 r2 failure list. Tree: pre-change worktree fdd08a89 (PR base)
+# Environment: CPython 3.10.20, Linux x86_64, 4 CPUs, venv from uv sync --frozen (extras dev, hashicorp-vault, xdist, lint), duckdb 1.5.4, no decoy-engine-native companion, run as root
+# Command (from the worktree root): PYTHONPATH=<wt>/src:<wt> python -m pytest -q -p no:cacheprovider -n 4 -rfE
+# Result: 4 failed, 27909 passed, 5360 skipped, 4 xfailed, 60 xpassed, 69 warnings in 1086.90s (0:18:06)
+
+FAILED tests/physical/test_shadow_snapshot.py::test_fixture_is_written_then_made_read_only
+FAILED tests/unit/execution/test_r3_failure_publication_trace.py::test_failure_and_publication_trace_is_unchanged[f_forced_ooc_incompatible]
+FAILED tests/unit/execution/test_r3_failure_publication_trace.py::test_forced_out_of_core_on_an_ineligible_job_is_a_config_error_before_any_write
+FAILED tests/unit/test_v2_cloud_sources.py::TestCloudSourceEndToEnd::test_profile_gcs_source_via_mocked_client

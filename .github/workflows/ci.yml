@@ -113,6 +113,8 @@ jobs:
         # lean-install profile; see packaging-gate below for the corresponding
         # "base wheel does not require boto3/google-cloud-storage" assertion.
         run: pip install -e ".[dev,cloud]"
+      - name: Install strace (the file-access runtime detector; it fails, never skips, without it)
+        run: sudo apt-get update && sudo apt-get install -y strace
       - name: Routing guard (every named suite directory must exist)
         run: |
           for d in \
@@ -122,6 +124,7 @@ jobs:
             tests/parity \
             tests/integration/golden \
             tests/sentry \
+            tests/fileaccess \
             tests/security \
             tests/privacy ; do
             test -d "$d" || { echo "MISSING SUITE DIR: $d"; exit 1; }
@@ -238,9 +241,9 @@ jobs:
         # cloud extra required: boto3 partially survives via moto[s3], but
         # google-cloud-storage does not survive at all once cloud is optional,
         # which fails check_fit_environment() below. The dist set matches the
-        # pre-split 895b9a20... profile except decoy-engine's own version
-        # (now 0.7.0), so the certified row is 72c03428... (see
-        # dp_provenance._CERTIFIED_STACKS).
+        # pre-split 895b9a20... profile except decoy-engine's own version,
+        # which is part of the hashed set: every engine version bump re-pins
+        # the certified row (see dp_provenance._CERTIFIED_STACKS).
         run: uv sync --frozen --extra dev --extra lint --extra vault --extra cloud --python 3.10.20
       - name: Assert this profile is certified (fail loud on drift)
         run: >
@@ -279,3 +282,11 @@ jobs:
                   f"failures={failures} (need passed>0, all others 0)"
               )
           PY
+      - name: License sentries against the certified profile's installed metadata
+        # The one lock-exact CI venv: NOTICE is compared with installed metadata here.
+        # DECOY_LICENSE_STRICT=1 turns the drifted-venv skip into a failure.
+        env:
+          DECOY_LICENSE_STRICT: "1"
+        run: >
+          uv run pytest tests/sentry/test_license_policy.py tests/sentry/test_sdv_import_sentry.py
+          --tb=short -rs

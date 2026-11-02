@@ -84,7 +84,7 @@ def _ooc_config(
         else _write_csv(tmp_path, child, "child")
     )
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "capacity-kill-test", "seed": 7},
         "sources": {
             "parent": {"type": "file", "path": parent_src, "format": parent_fmt},
@@ -145,7 +145,7 @@ def _three_level_config(tmp_path: Path, *, parent_rows: int) -> dict[str, Any]:
         }
     )
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "capacity-3lvl", "seed": 7},
         "sources": {
             "grandparent": {
@@ -243,7 +243,7 @@ def _star_config(tmp_path: Path, *, fan_in: int, parent_rows: int = 40) -> dict[
     }
     tables.append({"name": "child", "columns": child_tbl_cols})
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "capacity-star", "seed": 7},
         "sources": sources,
         "targets": {
@@ -312,7 +312,7 @@ class TestResolvedConfigCopy:
         # `not isinstance(sources, dict) or not sources` early-returns the
         # config verbatim when `sources` is not a dict. A `or`->`and` flip
         # (mut_5) makes it fall through and call `.items()` on the string.
-        cfg = {"version": 1, "sources": "not-a-dict-at-all"}
+        cfg = {"version": 2, "sources": "not-a-dict-at-all"}
         out = _resolved_config_copy(cfg, tmp_path)
         assert out is cfg
         assert out["sources"] == "not-a-dict-at-all"
@@ -321,7 +321,7 @@ class TestResolvedConfigCopy:
         # A non-dict source descriptor must be copied through verbatim. The
         # `isinstance(descriptor, dict) and ...` guard short-circuits; an
         # `and`->`or` flip (mut_10) calls `.get()` on the bare string.
-        cfg = {"version": 1, "sources": {"t": "descriptor-is-a-string"}}
+        cfg = {"version": 2, "sources": {"t": "descriptor-is-a-string"}}
         out = _resolved_config_copy(cfg, tmp_path)
         assert out["sources"]["t"] == "descriptor-is-a-string"
 
@@ -330,7 +330,7 @@ class TestResolvedConfigCopy:
         # (mut_9, `and ... == "file" or isinstance(path, str)`) would resolve
         # a NON-file source's relative path to an absolute one.
         cfg = {
-            "version": 1,
+            "version": 2,
             "sources": {"db": {"type": "database", "path": "relative/only.db"}},
         }
         out = _resolved_config_copy(cfg, tmp_path)
@@ -340,7 +340,7 @@ class TestResolvedConfigCopy:
         # The positive path: a file source with a relative path is rewritten
         # to an absolute string under base_dir.
         cfg = {
-            "version": 1,
+            "version": 2,
             "sources": {"f": {"type": "file", "path": "sub/data.parquet", "format": "parquet"}},
         }
         out = _resolved_config_copy(cfg, tmp_path)
@@ -357,7 +357,7 @@ class TestResolvedConfigCopy:
 class TestNotApplicableMachineFields:
     def test_no_relationships_fields(self, tmp_path: Path) -> None:
         config = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"job_name": "no-fk", "seed": 1},
             "sources": {},
             "targets": {},
@@ -824,7 +824,7 @@ def _two_csv_build_parents_config(tmp_path: Path, *, mid_rows: int = 2000) -> di
         }
     )
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "two-csv-parents", "seed": 7},
         "sources": {
             "aaa": {"type": "file", "path": _write_csv(tmp_path, aaa, "aaa"), "format": "csv"},
@@ -944,7 +944,7 @@ def _star_plus_grandchild_config(tmp_path: Path, *, fan_in: int) -> dict[str, An
         }
     )
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "star-grandchild", "seed": 7},
         "sources": sources,
         "targets": {

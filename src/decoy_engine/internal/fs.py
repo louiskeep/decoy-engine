@@ -1,14 +1,12 @@
 """Filesystem + path + formatting helpers used internally (V2.0-C).
 
 Split out of the bundled internal/helpers.py. All functions are thin
-wrappers around stdlib; they exist so callers don't repeat the same
-3-line pattern across the engine.
+wrappers around stdlib; none touches the file system.
 """
 
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 
 def convert_quoting_mode(quoting_mode: str) -> int:
@@ -20,18 +18,6 @@ def convert_quoting_mode(quoting_mode: str) -> int:
         "none": 3,  # csv.QUOTE_NONE
     }
     return quoting_map.get(quoting_mode.lower(), 0)
-
-
-def create_directory_for_file(file_path: str) -> None:
-    """Create the directory for a file path if it doesn't exist."""
-    directory = os.path.dirname(file_path)
-    if directory:
-        Path(directory).mkdir(parents=True, exist_ok=True)
-
-
-def is_path_exists(path: str) -> bool:
-    """True iff `path` exists (file or directory)."""
-    return os.path.exists(path)
 
 
 def get_filename_without_extension(file_path: str) -> str:
@@ -53,13 +39,6 @@ def convert_file_size(size_bytes: int) -> str:
     if i == 0:
         return f"{size:.0f} {units[i]}"
     return f"{size:.2f} {units[i]}"
-
-
-def get_file_size(file_path: str) -> int | None:
-    """Size of `file_path` in bytes, or None if the path is missing / not a file."""
-    if os.path.exists(file_path) and os.path.isfile(file_path):
-        return os.path.getsize(file_path)
-    return None
 
 
 def format_elapsed_time(seconds: float) -> str:

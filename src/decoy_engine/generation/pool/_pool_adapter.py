@@ -146,7 +146,7 @@ class PoolAdapter:
                     ),
                 )
             pool = self._build_or_get_pool(provider, spec)
-            # spec.seed + spec.namespace validated by ProviderSpec.__post_init__
+            # spec.seed + spec.namespace validated by ProviderSpec._validate
             # when deterministic=True (raises ProviderError otherwise); both
             # are non-None here. Cast for mypy:
             if spec.seed is None or spec.namespace is None:

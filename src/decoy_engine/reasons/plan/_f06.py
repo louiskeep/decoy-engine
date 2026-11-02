@@ -25,53 +25,53 @@ DECLARED_CAST_CONTRACT_INVALID = _d(
     "declared_cast_contract_invalid",
     "A declared parsing and casting contract is inconsistent.",
     phases=_BOTH,
-    since="1.1.0",
+    since="1.4.0",
 )
 DECLARED_CAST_PRECISION_INVALID = _d(
     "declared_cast_precision_invalid",
     "A declared decimal precision is outside the supported range.",
     phases=_BOTH,
-    since="1.1.0",
+    since="1.4.0",
 )
 DECLARED_CAST_SCALE_INVALID = _d(
     "declared_cast_scale_invalid",
     "A declared decimal scale is outside the supported range.",
     phases=_BOTH,
-    since="1.1.0",
+    since="1.4.0",
 )
 DECLARED_CAST_SENTINEL_CONFIG_INVALID = _d(
     "declared_cast_sentinel_config_invalid",
     "A declared sentinel set is empty, duplicated, oversized or of the wrong kind.",
     phases=_BOTH,
-    since="1.1.0",
+    since="1.4.0",
 )
 DECLARED_CAST_CURRENCY_CODE_INVALID = _d(
     "declared_cast_currency_code_invalid",
     "A declared currency code is missing or malformed.",
     phases=_BOTH,
-    since="1.1.0",
+    since="1.4.0",
 )
 DECLARED_CAST_FORMAT_UNKNOWN = _d(
     "declared_cast_format_unknown",
     "A declared format identifier is unknown or retired.",
     phases=_BOTH,
-    since="1.1.0",
+    since="1.4.0",
 )
 DECLARED_CAST_DIRECTIVE_UNSUPPORTED = _d(
     "declared_cast_directive_unsupported",
     "A declared format directive is outside the supported catalog.",
     phases=_BOTH,
-    since="1.1.0",
+    since="1.4.0",
 )
 DECLARED_OUTPUT_WIDTH_UNKNOWN = _d(
     "declared_output_width_unknown",
     "A declared output width cannot be proved before execution.",
     phases=_BOTH,
-    since="1.1.0",
+    since="1.4.0",
 )
 DECLARED_TYPE_STRATEGY_INCOMPATIBLE = _d(
     "declared_type_strategy_incompatible",
     "A declared column type is incompatible with its strategy or output format.",
     phases=_BOTH,
-    since="1.1.0",
+    since="1.4.0",
 )

@@ -415,11 +415,6 @@ def test_io_failure_on_replace_propagates_and_cleans_temp(
     assert list(tmp_path.iterdir()) == []
 
 
-def test_silent_unlink_ignores_missing_file(tmp_path: Path) -> None:
-    # Best-effort cleanup never raises on an already-gone temp file.
-    _fixed_width_writer._silent_unlink(str(tmp_path / "does-not-exist.tmp"))
-
-
 # --------------------------------------------------------------------------- #
 # Codex final-gate regressions: record-breaking pad, duplicate columns,       #
 # directory-fsync close guard.                                                #
@@ -457,21 +452,59 @@ def test_duplicate_frame_columns_rejected_as_coded_error(tmp_path: Path) -> None
     assert not path.exists()
 
 
-def test_fsync_dir_survives_close_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The best-effort directory fsync must not raise out of a successful write:
-    an os.close fault after os.replace would otherwise surface as a spurious
-    failure on an already-published file."""
+def _directory_syncs(monkeypatch: pytest.MonkeyPatch, *, fail: bool) -> list[int]:
+    """Record the inode of every directory fsynced; optionally make each fsync and close fail
+    after doing its work, as a flaky filesystem would."""
     import os
+    import stat
 
-    real_close = os.close
+    synced: list[int] = []
+    real_fsync, real_close = os.fsync, os.close
 
-    def raising_close(fd: int) -> None:
+    def fsync(fd: int) -> None:
+        info = os.fstat(fd)
+        if stat.S_ISDIR(info.st_mode):
+            synced.append(info.st_ino)
+            if fail:
+                raise OSError("EIO on directory fsync")
+        real_fsync(fd)
+
+    def close(fd: int) -> None:
         real_close(fd)
-        raise OSError("EIO on close")
+        if fail:
+            raise OSError("EIO on close")
 
-    monkeypatch.setattr(os, "close", raising_close)
-    # Must return cleanly despite the close fault.
-    _fixed_width_writer._fsync_dir(str(tmp_path))
+    monkeypatch.setattr(os, "fsync", fsync)
+    monkeypatch.setattr(os, "close", close)
+    return synced
+
+
+@pytest.mark.parametrize("policy", ["ambient", "strict"])
+@pytest.mark.parametrize("fail", [False, True], ids=["ok", "fsync_and_close_fail"])
+def test_fsync_dir_survives_close_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, policy: str, fail: bool
+) -> None:
+    """The replace is followed by a best-effort fsync of the target's directory, so the rename
+    survives a crash; a fault in that fsync or in closing the directory never turns an
+    already-published write into a failure."""
+    from tests.fileaccess.support import RootRelative
+
+    layout = FixedWidthLayout(columns=[{"name": "a", "start": 0, "width": 3, "type": "str"}])
+    (tmp_path / "out").mkdir()
+    target = tmp_path / "out" / "o.txt"
+    rooted = RootRelative(tmp_path) if policy == "strict" else None
+    try:
+        synced = _directory_syncs(monkeypatch, fail=fail)
+        result = write_fixed_width(
+            pd.DataFrame({"a": ["xyz"]}), layout, str(target), file_access=rooted
+        )
+        monkeypatch.undo()
+    finally:
+        if rooted is not None:
+            rooted.close()
+    assert result == str(target)
+    assert target.read_text() == "xyz\n"
+    assert (tmp_path / "out").stat().st_ino in synced
 
 
 def test_negative_zero_sign_preserved_on_round_trip(tmp_path: Path) -> None:

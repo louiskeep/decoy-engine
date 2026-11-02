@@ -1,7 +1,7 @@
 """Confidence-band definitions and per-column latency benchmark (ML0.3).
 
 Defines the three operational confidence bands (high / review / low) for
-STORM field-recognition suggestions, and provides a micro-benchmark for
+Pre-scan field-recognition suggestions, and provides a micro-benchmark for
 measuring per-column detection latency against the <50ms dev-tier budget.
 
 Band thresholds (source: ml-benchmarking-and-privacy.md §A.4):

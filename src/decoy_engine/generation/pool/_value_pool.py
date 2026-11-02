@@ -13,7 +13,7 @@ the version separately for audit).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -36,7 +36,7 @@ class ValuePool:
     provider: str
     locale: str
     config_hash: str
-    seed: bytes
+    seed: bytes = field(repr=False)
     size: int
     build_time_ms: float
     backend_type: str

@@ -30,17 +30,17 @@ _d = _catalog.runtime("decoy_engine.declared_casting")
 _VALUE: dict[str, Any] = {
     "retry": RetryClass.NEVER,
     "phases": (Phase.MASK, Phase.FINALIZE, Phase.UNKNOWN),
-    "since": "1.1.0",
+    "since": "1.4.0",
 }
 _STORE: dict[str, Any] = {
     "retry": RetryClass.ENVIRONMENT_REPAIR,
     "phases": (Phase.FINALIZE, Phase.PUBLISH, Phase.UNKNOWN),
-    "since": "1.1.0",
+    "since": "1.4.0",
 }
 _ACCESS: dict[str, Any] = {
     "retry": RetryClass.NEVER,
     "phases": (Phase.FINALIZE, Phase.UNKNOWN),
-    "since": "1.1.0",
+    "since": "1.4.0",
 }
 
 DECLARED_INTEGER_INVALID = _d(
@@ -79,7 +79,7 @@ FIXED_WIDTH_RECORD_OVERLONG = _d(
     "A fixed-width record is longer than the layout's declared record width.",
     retry=RetryClass.NEVER,
     phases=(Phase.RESOLVE, Phase.UNKNOWN),
-    since="1.1.0",
+    since="1.4.0",
 )
 PROTECTED_QUARANTINE_WRITE_FAILED = _d(
     "protected_quarantine_write_failed",

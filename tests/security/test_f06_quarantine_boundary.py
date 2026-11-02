@@ -778,6 +778,7 @@ F06_CODES = {
         "declared_cast_route_unsupported",
         "declared_cast_input_type_incompatible",
         "declared_casting_full_frame",
+        "declared_casting",
         "protected_quarantine_unavailable",
     ],
     "runtime": [
@@ -829,7 +830,7 @@ def test_c6_registry_version_bumped_and_append_only_vs_the_v1_fixture() -> None:
     from decoy_engine import reasons
 
     manifest = json.loads(json.dumps(reasons.manifest()))
-    assert manifest["registry_version"].split(".")[:2] == ["1", "1"]
+    assert manifest["registry_version"].split(".")[:2] == ["1", "4"]
     pinned = json.loads(
         (
             Path(__file__).resolve().parents[1] / "fixtures" / "f29" / "reason-manifest-v1.json"
@@ -838,7 +839,7 @@ def test_c6_registry_version_bumped_and_append_only_vs_the_v1_fixture() -> None:
     live_ids = {(e["namespace"], e["code"]) for e in manifest["entries"]}
     assert {(e["namespace"], e["code"]) for e in pinned["entries"]} <= live_ids
     fixture = (
-        Path(__file__).resolve().parents[1] / "fixtures" / "f29" / "reason-manifest-v1.1-f06.json"
+        Path(__file__).resolve().parents[1] / "fixtures" / "f29" / "reason-manifest-v1.4-f06.json"
     )
     assert fixture.is_file(), "the F06 additions are pinned in their own fixture"
     f06 = json.loads(fixture.read_text())

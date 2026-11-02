@@ -36,7 +36,6 @@ See `_batch_join.py`'s docstring for the typing divergences this class inherits;
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -45,8 +44,11 @@ import pyarrow.parquet as pq
 
 from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_key_value
-from decoy_engine.execution.out_of_core._batch_join import _cast_chunks, _resolve_output_types
+from decoy_engine.execution.out_of_core._batch_join import (
+    _cast_chunks,
+    _resolve_output_types,
+    mint_remap_values,
+)
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.execution.out_of_core._external_sort import BoundedExternalSorter
 from decoy_engine.execution.out_of_core._join import (
@@ -55,7 +57,6 @@ from decoy_engine.execution.out_of_core._join import (
     _q,
     _sql_string,
 )
-from decoy_engine.execution.out_of_core._mask import mask_column
 from decoy_engine.execution.out_of_core._payload_store import SpillChildKeys
 from decoy_engine.execution.out_of_core._stream_join_cursors import (
     ChildKeyLockstepCursor,
@@ -67,6 +68,9 @@ from decoy_engine.execution.out_of_core._stream_join_cursors import (
 )
 from decoy_engine.execution.out_of_core._stream_join_plan import (
     _disable_join_optimizers,
+    _explain_physical_plan,
+    _read_disabled_optimizers,
+    _unordered_join_query,
     _verify_unordered_plan_or_raise,
 )
 from decoy_engine.relationships._graph import OrphanPolicy
@@ -141,68 +145,68 @@ class StreamFkJoiner:
         remap_seeds: tuple[ColumnSeed, ...] | None = None,
         job_seed: bytes | None = None,
     ) -> None:
-        if len(child_key_types) != len(edge.child_columns):
-            raise ExecutionError(
-                code=reasons.runtime.OUT_OF_CORE_CHILD_KEY_TYPES_MISMATCH,
-                message="one child key type is required per FK child column.",
-            )
-        if edge.orphan_policy is OrphanPolicy.REMAP:
-            if remap_seeds is None or job_seed is None:
+        try:
+            if len(child_key_types) != len(edge.child_columns):
                 raise ExecutionError(
-                    code=reasons.runtime.OUT_OF_CORE_REMAP_SEEDS_MISSING,
-                    message="orphan_policy='remap' requires the parent key seeds and job seed.",
+                    code=reasons.runtime.OUT_OF_CORE_CHILD_KEY_TYPES_MISMATCH,
+                    message="one child key type is required per FK child column.",
                 )
-            for parent_col, seed in zip(edge.parent_columns, remap_seeds, strict=True):
-                if seed is None:
+            if edge.orphan_policy is OrphanPolicy.REMAP:
+                if remap_seeds is None or job_seed is None:
                     raise ExecutionError(
-                        code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
-                        message=f"parent key {edge.parent_table}.{parent_col} is not in the plan.",
+                        code=reasons.runtime.OUT_OF_CORE_REMAP_SEEDS_MISSING,
+                        message="orphan_policy='remap' requires the parent key seeds and job seed.",
                     )
-        self._edge = edge
-        self._relation = parent_relation
-        self._remap_seeds = remap_seeds
-        self._job_seed = job_seed
-        self._child_columns = edge.child_columns
-        # The key schema mirrors `_join.py::_child_key_schema` exactly (row_nr,
-        # join_key, then one raw src column per child key column), built from the
-        # source key types the runner passes so the empty child_keys table can be
-        # created before any batch is staged.
-        self._key_schema = pa.schema(
-            [
-                pa.field("__decoy_row_nr", pa.int64()),
-                pa.field("__decoy_fk_join_key", pa.string()),
-            ]
-            + [
-                pa.field(f"__decoy_src_{idx}", child_key_types[idx])
-                for idx in range(len(edge.child_columns))
-            ]
-        )
-        # The relation's Parquet footer is the authoritative masked-key type
-        # (already through the DuckDB COPY round trip the join result takes).
-        relation_schema = pq.read_metadata(parent_relation.path).schema.to_arrow_schema()
-        masked_types = tuple(
-            relation_schema.field(name).type for name in parent_relation.masked_key_columns
-        )
-        self._output_types = _resolve_output_types(
-            edge=edge,
-            masked_types=masked_types,
-            child_key_types=child_key_types,
-            remap_seeds=remap_seeds,
-        )
-        self._observed_types: tuple[set[pa.DataType], ...] = tuple(
-            set() for _ in edge.child_columns
-        )
-        self._orphan_total = 0
-        self._staged_rows = 0
-        self._staged = False
-        self._temp_dir = temp_dir
-        self._memory_limit = memory_limit
-        self._child_keys: SpillChildKeys | None = None
-        # No connection is opened here (Codex plan-gate LOW 7 / P4-A.3 Task 2):
-        # a joiner that only ever stages keys (or fails before any join runs)
-        # never needs one, so `_ensure_conn()` opens and configures it lazily,
-        # on first use, rather than unconditionally at construction.
-        self._conn: Any = None
+                for parent_col, seed in zip(edge.parent_columns, remap_seeds, strict=True):
+                    if seed is None:
+                        raise ExecutionError(
+                            code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
+                            message=f"parent key {edge.parent_table}.{parent_col} is not in the plan.",
+                        )
+            self._edge = edge
+            self._relation = parent_relation
+            self._remap_seeds = remap_seeds
+            self._job_seed = job_seed
+            self._child_columns = edge.child_columns
+            # Mirrors `_join.py::_child_key_schema` (row_nr, join_key, one raw src column per child
+            # key), from the runner's key types, so child_keys exists before any batch is staged.
+            self._key_schema = pa.schema(
+                [
+                    pa.field("__decoy_row_nr", pa.int64()),
+                    pa.field("__decoy_fk_join_key", pa.string()),
+                ]
+                + [
+                    pa.field(f"__decoy_src_{idx}", child_key_types[idx])
+                    for idx in range(len(edge.child_columns))
+                ]
+            )
+            # The relation footer is the authoritative masked-key type (after the COPY round trip).
+            relation_schema = pq.read_metadata(parent_relation.path).schema.to_arrow_schema()
+            masked_types = tuple(
+                relation_schema.field(name).type for name in parent_relation.masked_key_columns
+            )
+            self._output_types = _resolve_output_types(
+                edge=edge,
+                masked_types=masked_types,
+                child_key_types=child_key_types,
+                remap_seeds=remap_seeds,
+            )
+            self._observed_types: tuple[set[pa.DataType], ...] = tuple(
+                set() for _ in edge.child_columns
+            )
+            self._orphan_total = 0
+            self._staged_rows = 0
+            self._staged = False
+            self._temp_dir = temp_dir
+            self._memory_limit = memory_limit
+            self._child_keys: SpillChildKeys | None = None
+            # No connection is opened here (Codex plan-gate LOW 7 / P4-A.3 Task 2): a joiner that
+            # only stages keys (or fails before any join) never needs one, so `_ensure_conn()`
+            # opens and configures it lazily, on first use.
+            self._conn: Any = None
+        except BaseException:
+            del job_seed
+            raise
 
     @property
     def output_types(self) -> tuple[pa.DataType, ...]:
@@ -376,78 +380,19 @@ class StreamFkJoiner:
                     self._conn.unregister("child_keys")
 
     def _unordered_join_query(self) -> str:
-        """The SLIM unordered join query -- shared by `_iter_unordered_join_rows`
-        and `explain_join()` so the plan a test inspects is exactly the plan the
-        drain actually runs.
-
-        Projects ONLY what the bounded sorter must reorder: `__decoy_row_nr` (the
-        sort key), a COMPACT nullable-boolean match token (`TRUE` matched, NULL
-        orphan -- never the raw parent value), and the masked parent components.
-        The raw child columns (`__decoy_fk_join_key`, `__decoy_src_*`) stay OUT of
-        the SELECT -- they are re-fetched out-of-line from `SpillChildKeys` in
-        phase 3 -- so no wide raw key, orphan, or dictionary encoding can overflow
-        the sorter. `__decoy_fk_join_key` remains the JOIN predicate, not output.
-        """
-        join_key = self._relation.join_key_column
-        select_list = [
-            f"c.{_q('__decoy_row_nr')}",
-            f"CASE WHEN p.{_q(join_key)} IS NULL THEN NULL ELSE TRUE END "
-            f"AS {_q('__decoy_parent_match')}",
-        ]
-        for idx, masked_column in enumerate(self._relation.masked_key_columns):
-            select_list.append(f"p.{_q(masked_column)} AS {_q(f'__decoy_parent_masked_{idx}')}")
-        return f"""
-            SELECT {", ".join(select_list)}
-            FROM child_keys c
-            LEFT JOIN parent_keys p
-              ON c.__decoy_fk_join_key = p.{_q(join_key)}
-        """
+        """The SLIM unordered join query (`_stream_join_plan._unordered_join_query`),
+        shared by `_iter_unordered_join_rows` and `explain_join()`."""
+        return _unordered_join_query(
+            self._relation.join_key_column, self._relation.masked_key_columns
+        )
 
     def _run_explain_json(self, query: str) -> dict[str, Any]:
-        """Parsed `EXPLAIN (FORMAT JSON)` physical plan for `query`.
-
-        Assumes `child_keys` is already registered on this joiner's connection
-        (the caller's job, since a fresh reader must back it and EXPLAIN never
-        consumes that reader -- it plans without executing). Fails closed
-        (`out_of_core_fk_join_plan_unverified`) on any malformed, missing, or
-        unparseable EXPLAIN output rather than proceeding on an unverified plan.
-        """
-        conn = self._ensure_conn()
-        rows = conn.execute(f"EXPLAIN (FORMAT JSON) {query}").fetchall()
-        # Iterate WITHOUT a 2-tuple unpack in the comprehension: a DuckDB version
-        # that changes EXPLAIN's result arity would otherwise raise a bare
-        # ValueError with no `code`, escaping this method's coded fail-closed
-        # contract (the parity harness would see an unexpected crash, not an
-        # admitted rejection). A non-2-column row simply does not match.
-        raw = next(
-            (row[1] for row in rows if len(row) == 2 and row[0] == "physical_plan"),
-            None,
-        )
-        if raw is None:
-            raise ExecutionError(
-                code=reasons.runtime.OUT_OF_CORE_FK_JOIN_PLAN_UNVERIFIED,
-                message="EXPLAIN (FORMAT JSON) returned no 'physical_plan' row.",
-            )
-        try:
-            parsed = json.loads(raw)
-        except (TypeError, ValueError) as exc:
-            raise ExecutionError(
-                code=reasons.runtime.OUT_OF_CORE_FK_JOIN_PLAN_UNVERIFIED,
-                message="EXPLAIN (FORMAT JSON) output was not valid JSON.",
-            ) from exc
-        if not isinstance(parsed, list) or len(parsed) != 1 or not isinstance(parsed[0], dict):
-            raise ExecutionError(
-                code=reasons.runtime.OUT_OF_CORE_FK_JOIN_PLAN_UNVERIFIED,
-                message=(
-                    f"EXPLAIN (FORMAT JSON) plan had an unexpected top-level shape: {parsed!r}."
-                ),
-            )
-        return parsed[0]
+        """Parsed `EXPLAIN (FORMAT JSON)` physical plan for `query` on this
+        joiner's connection (`_stream_join_plan._explain_physical_plan`)."""
+        return _explain_physical_plan(self._ensure_conn(), query)
 
     def _disabled_optimizers(self) -> frozenset[str]:
-        conn = self._ensure_conn()
-        value = conn.execute("SELECT current_setting('disabled_optimizers')").fetchone()[0]
-        return frozenset(name for name in value.split(",") if name)
+        return _read_disabled_optimizers(self._ensure_conn())
 
     def explain_join(self) -> dict[str, Any]:
         """Structural proof of the unordered join's physical plan.
@@ -650,6 +595,7 @@ class StreamFkJoiner:
             edge=edge,
             remap_values=remap_values,
             output_chunks=output_chunks,
+            output_types=self._output_types,
         )
         for idx in range(n_components):
             for chunk in output_chunks[idx]:
@@ -686,16 +632,8 @@ class StreamFkJoiner:
         # deterministic, so orphan positions carry the same values either way),
         # from the raw src columns that rode through the join unchanged. Bounded
         # by the result batch size, never child cardinality.
-        remapped = []
-        for idx, seed in enumerate(self._remap_seeds):
-            normalized = [
-                None if fk_key_value(value) is NULL_FK_KEY else fk_key_value(value)
-                for value in result.column(f"__decoy_src_{idx}").to_pylist()
-            ]
-            remapped.append(
-                mask_column(pa.array(normalized, from_pandas=True), seed, self._job_seed)
-            )
-        return tuple(remapped)
+        keys = [result.column(f"__decoy_src_{idx}") for idx in range(len(self._remap_seeds))]
+        return mint_remap_values(keys, self._remap_seeds, self._job_seed)
 
     def _with_positional_row_nr(self, result: pa.RecordBatch) -> pa.RecordBatch:
         columns = list(result.columns)

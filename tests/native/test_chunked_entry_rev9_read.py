@@ -807,3 +807,35 @@ def test_identical_profile_failures_are_attributed_in_source_order() -> None:
             key_provider=key_provider(),
         )
     _expect_coded(coded, "t", 0)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "s == f'{secret_col}'",
+        's == f"{secret_col!r}"',
+        "s == rf'{secret_col:>{width_col}}'",
+        "s == f'a{secret_col}b' and k > 1",
+        "s == b'raw'",
+    ],
+)
+def test_predicate_names_declines_every_non_plain_string_shape(expr: str) -> None:
+    # PEP 701 (3.12) splits an f-string into FSTRING_* tokens that expose the braced names, so
+    # a STRING-only check would collect `secret_col` instead of declining.
+    from decoy_engine.execution._column_access import predicate_names
+
+    assert predicate_names(expr) is None
+
+
+def test_predicate_names_fails_closed_on_a_token_kind_it_does_not_know(monkeypatch) -> None:
+    # Class guard: the reader may only collect from kinds it has classified. A kind added by a
+    # future tokenizer (as FSTRING_START was) must decline, not be silently skipped.
+    import pandas.core.computation.parsing as parsing
+
+    from decoy_engine.execution._column_access import predicate_names
+
+    unknown_kind = 9999
+    monkeypatch.setattr(
+        parsing, "tokenize_string", lambda expr: iter([(unknown_kind, "?"), (1, "secret_col")])
+    )
+    assert predicate_names("secret_col > 1") is None

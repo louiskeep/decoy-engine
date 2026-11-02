@@ -1,10 +1,10 @@
-"""Cross-file PK/FK inference from STORM profiles.
+"""Cross-file PK/FK inference from column profiles.
 
 Walks today operates over a single ``SchemaSnapshot`` produced by the
-platform's DB snapshotter. File-based STORM scans never produce a
+platform's DB snapshotter. File-based Pre-scans never produce a
 snapshot - there's no live schema with declared constraints to read.
-But once you have a group of STORM profiles (members of one
-``storm_run_group_id``), you can synthesize a multi-table snapshot
+But once you have a group of column profiles (members of one
+``pre_scan_run_group_id``), you can synthesize a multi-table snapshot
 from the per-column ``FieldStats`` they already carry and run PK/FK
 inference on it.
 
@@ -50,7 +50,7 @@ class CrossFileWalkResult:
 
 
 def run_cross_file_walk(profiles: list[ColumnProfile]) -> CrossFileWalkResult:
-    """Infer cross-file foreign-key edges from a group of STORM profiles.
+    """Infer cross-file foreign-key edges from a group of column profiles.
 
     Returns deterministic, sorted edges. Empty result is valid (no
     inferable relationships) - callers should not treat it as an error.
@@ -83,7 +83,7 @@ def run_cross_file_walk(profiles: list[ColumnProfile]) -> CrossFileWalkResult:
 
 
 def profiles_to_snapshot(profiles: list[ColumnProfile]) -> SchemaSnapshot:
-    """Build a multi-table ``SchemaSnapshot`` from STORM profiles.
+    """Build a multi-table ``SchemaSnapshot`` from column profiles.
 
     Each profile becomes one ``Table`` named after the profile's
     ``source_label`` (file extension stripped). Per-column attributes
@@ -94,7 +94,7 @@ def profiles_to_snapshot(profiles: list[ColumnProfile]) -> SchemaSnapshot:
       - ``nullable`` :math:`\\leftarrow` ``null_rate > 0`` (best guess from
         the sampled rows)
       - ``is_primary_key`` :math:`\\leftarrow` ``is_likely_unique``
-        (heuristic - STORM flags columns where ``unique_rate > 0.9``
+        (heuristic - Pre-scan flags columns where ``unique_rate > 0.9``
         which captures both surrogate keys and natural keys)
 
     ``declared_edges`` is always empty for file-based snapshots - there
@@ -135,7 +135,7 @@ def infer_cross_file_edges(snapshot: SchemaSnapshot) -> tuple[Edge, ...]:
     PK in the target table - that rule is for the SQL convention where
     the PK is always named ``id``.
 
-    **PK ambiguity tie-break.** STORM flags any column with
+    **PK ambiguity tie-break.** Pre-scan flags any column with
     ``is_likely_unique=True`` as a PK candidate, but with 1:1:1
     referential integrity (every customer has exactly one order, every
     order exactly one orderline) the FK column lands at 100% unique
@@ -237,7 +237,7 @@ def _pk_table_for_id_column(column_name: str, table_names: set[str]) -> str | No
 
 
 def _table_name_from_source_label(label: str) -> str:
-    """Derive a table name from a STORM ``source_label``.
+    """Derive a table name from a Pre-scan ``source_label``.
 
     For file sources the label is the filename (e.g.
     ``acme_csv_customers.csv``); strip any directory prefix and the
