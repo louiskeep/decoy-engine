@@ -6,6 +6,7 @@ CLI own the SDK, the exporter, the endpoint and the flush.
 
 from __future__ import annotations
 
+from decoy_engine.telemetry._recorder import SpanRecorder
 from decoy_engine.telemetry._vocab import (
     ATTRIBUTE_KEYS,
     RESOURCE_KEYS,
@@ -20,4 +21,5 @@ __all__ = [
     "SPAN_NAMES",
     "TELEMETRY_SCHEMA",
     "SpanRecord",
+    "SpanRecorder",
 ]
