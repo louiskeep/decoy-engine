@@ -173,12 +173,15 @@ def _literals_exact(values: list[Any], target: pl.DataType) -> pl.Series:
     a timezone mismatch, which polars casts by relabelling. Each value is then
     cast strictly to `target`, cast back, and must equal the original, which
     refuses truncation (31337.4242 -> 31337), overflow and float precision
-    loss (2**53 + 1, 0.1 -> Float32).
+    loss (2**53 + 1, 0.1 -> Float32). The result keeps the input's positions
+    (a null stays where it was), so explicit key columns built one at a time
+    still line up row by row.
     """
     family: tuple[object, str | None] | None = None
-    parts = [pl.Series([None] * sum(v is None for v in values), dtype=target)]
+    parts: list[pl.Series] = []
     for value in values:
         if value is None:
+            parts.append(pl.Series([None], dtype=target))
             continue
         src = pl.Series([value], strict=True)
         value_family = _value_family(src.dtype)
@@ -190,7 +193,7 @@ def _literals_exact(values: list[Any], target: pl.DataType) -> pl.Series:
         if not cast.cast(src.dtype, strict=True).eq_missing(src).all():
             raise ValueError("lossy literal cast")
         parts.append(cast)
-    return pl.concat(parts)
+    return pl.concat(parts) if parts else pl.Series([], dtype=target)
 
 
 def _select_keys(spec: SeedSpec, kf: pl.DataFrame) -> frozenset[int]:
@@ -206,7 +209,9 @@ def _select_keys(spec: SeedSpec, kf: pl.DataFrame) -> frozenset[int]:
                 f"do not convert exactly to the column's {_dtype_label(kf.schema[c])} type",
             ) from exc
         columns.append(col.alias(c))
-    key_df = pl.DataFrame(columns)
+    # Engine null-key rule (`fk_join_key_tuple` callers skip any tuple with a
+    # NULL_FK_KEY part): a requested tuple with a null part matches no row.
+    key_df = pl.DataFrame(columns).drop_nulls()
     matched = kf.join(
         key_df, left_on=list(spec.key_columns), right_on=list(spec.key_columns), how="semi"
     )
