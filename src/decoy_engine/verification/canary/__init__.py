@@ -4,6 +4,14 @@ The report carries closed enums, booleans, ordinals and counts only. Status come
 precedence table and reasons from one union rule (``CanaryVerdictPolicy``).
 """
 
+from decoy_engine.verification.canary._policy import (
+    POLICY_TABLE,
+    CanaryPolicyRow,
+    CanaryVerdictPolicy,
+    completion_class,
+    compose_reasons,
+    derive_status,
+)
 from decoy_engine.verification.canary._types import (
     MAX_COUNT,
     MAX_FINDINGS,
@@ -29,6 +37,7 @@ from decoy_engine.verification.canary._types import (
 __all__ = [
     "MAX_COUNT",
     "MAX_FINDINGS",
+    "POLICY_TABLE",
     "CanaryArtifactInput",
     "CanaryArtifactOutcome",
     "CanaryArtifactReadFailure",
@@ -40,10 +49,15 @@ __all__ = [
     "CanaryNormalizationSchema",
     "CanaryObservedReason",
     "CanaryPolicyInputError",
+    "CanaryPolicyRow",
     "CanaryReason",
     "CanaryReportInvalid",
     "CanaryReportSchema",
     "CanarySpanPolicy",
     "CanarySpanReport",
     "CanaryStatus",
+    "CanaryVerdictPolicy",
+    "completion_class",
+    "compose_reasons",
+    "derive_status",
 ]
