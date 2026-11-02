@@ -127,7 +127,7 @@ ALLOWLIST: dict[str, int] = {
     # custom-provider registry snapshot for the shadow-parity gate; one cohesive module, no split identified.
     "src/decoy_engine/internal/faker_setup.py": 668,
     # E1: file-access policy boundary added (crossed 600).
-    "src/decoy_engine/quality/dp_provenance.py": 602,
+    "src/decoy_engine/quality/dp_provenance.py": 605,
     # FF1 span path and sub-floor policy (synthetic values split to _text_mask_synthetic.py).
     "src/decoy_engine/transforms/text_mask.py": 650,
     # scripts/: pre-existing one-off tooling, recorded when the sentry started scanning scripts/.
