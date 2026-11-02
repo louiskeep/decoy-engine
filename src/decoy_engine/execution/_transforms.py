@@ -54,6 +54,7 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.config._transforms import (
     DedupeOp,
     DeriveOp,
@@ -165,7 +166,7 @@ def check_transform_source_schema(
     if len(set(names)) != len(names):
         dupes = sorted({n for n in names if names.count(n) > 1})
         raise TransformError(
-            code="duplicate_source_field_names",
+            code=reasons.runtime.DUPLICATE_SOURCE_FIELD_NAMES,
             message=f"table {table_name!r} has duplicate physical field names {dupes}",
         )
     stored = stored_index_fields(schema)
@@ -177,7 +178,7 @@ def check_transform_source_schema(
     hit = sorted(stored & _structured_references(table_config, config))
     if hit:
         raise TransformError(
-            code="config_references_stored_index",
+            code=reasons.runtime.CONFIG_REFERENCES_STORED_INDEX,
             message=(
                 f"table {table_name!r}: config references {hit}, which the source stores as "
                 "a pandas index field. Transforms discard the stored index, so the "
@@ -222,7 +223,7 @@ def reject_config_references_stored_index(
     )
     if hit:
         raise TransformError(
-            code="config_references_stored_index",
+            code=reasons.runtime.CONFIG_REFERENCES_STORED_INDEX,
             message=(
                 f"table {table!r}: config references {hit}, which the source stores as a "
                 "pandas index field. The chunked masker consumes the stored index, so the "
@@ -240,12 +241,12 @@ def _apply_filter(df: pd.DataFrame, op: FilterOp) -> pd.DataFrame:
         mask = _eval_clamped(df, op.expression, label="filter")
     except ImportError as exc:
         raise TransformError(
-            code="numexpr_required",
+            code=reasons.runtime.NUMEXPR_REQUIRED,
             message=("transforms require numexpr; install it with: pip install numexpr"),
         ) from exc
     except Exception as exc:
         raise TransformError(
-            code="filter_expression_error",
+            code=reasons.runtime.FILTER_EXPRESSION_ERROR,
             message=f"filter expression {op.expression!r} failed: {type(exc).__name__}",
         ) from exc
     # QA-10 F8 (2026-06-01): accept pandas nullable BooleanDtype too.
@@ -257,7 +258,7 @@ def _apply_filter(df: pd.DataFrame, op: FilterOp) -> pd.DataFrame:
     # QA-3 F4 closure on the masking-side `when_gate`.
     if not isinstance(mask, pd.Series) or not pd.api.types.is_bool_dtype(mask.dtype):
         raise TransformError(
-            code="filter_expression_not_boolean",
+            code=reasons.runtime.FILTER_EXPRESSION_NOT_BOOLEAN,
             message=(
                 f"filter expression {op.expression!r} did not yield a boolean Series "
                 f"(got {type(mask).__name__})"
@@ -289,23 +290,23 @@ def _apply_sort(df: pd.DataFrame, op: SortOp) -> pd.DataFrame:
     missing = [c for c in op.by if c not in df.columns]
     if missing:
         raise TransformError(
-            code="sort_column_missing",
+            code=reasons.runtime.SORT_COLUMN_MISSING,
             message=f"sort.by columns not in table: {missing}",
         )
     ascending = op.ascending
     if isinstance(ascending, list) and len(ascending) != len(op.by):
         raise TransformError(
-            code="sort_ascending_length_mismatch",
+            code=reasons.runtime.SORT_ASCENDING_LENGTH_MISMATCH,
             message=(
                 f"sort.ascending length {len(ascending)} does not match by length {len(op.by)}"
             ),
         )
-    _reject_nested_keys(df, op.by, code="sort_unsupported_type", op="sort")
+    _reject_nested_keys(df, op.by, code=reasons.plan.SORT_UNSUPPORTED_TYPE, op="sort")
     try:
         return df.sort_values(by=op.by, ascending=ascending, kind="stable")
     except (TypeError, ValueError) as exc:
         raise TransformError(
-            code="sort_unsupported_type",
+            code=reasons.runtime.SORT_UNSUPPORTED_TYPE,
             message=f"sort.by columns {op.by} cannot be ordered: {type(exc).__name__}",
         ) from exc
 
@@ -319,16 +320,16 @@ def _apply_dedupe(df: pd.DataFrame, op: DedupeOp) -> pd.DataFrame:
         missing = [c for c in op.columns if c not in df.columns]
         if missing:
             raise TransformError(
-                code="dedupe_column_missing",
+                code=reasons.runtime.DEDUPE_COLUMN_MISSING,
                 message=f"dedupe.columns not in table: {missing}",
             )
     keys = op.columns if op.columns is not None else list(df.columns)
-    _reject_nested_keys(df, keys, code="dedupe_unsupported_type", op="dedupe")
+    _reject_nested_keys(df, keys, code=reasons.plan.DEDUPE_UNSUPPORTED_TYPE, op="dedupe")
     try:
         return df.drop_duplicates(subset=op.columns)
     except (TypeError, ValueError) as exc:
         raise TransformError(
-            code="dedupe_unsupported_type",
+            code=reasons.runtime.DEDUPE_UNSUPPORTED_TYPE,
             message=f"dedupe columns cannot be compared: {type(exc).__name__}",
         ) from exc
 
@@ -336,7 +337,7 @@ def _apply_dedupe(df: pd.DataFrame, op: DedupeOp) -> pd.DataFrame:
 def _apply_derive(df: pd.DataFrame, op: DeriveOp) -> pd.DataFrame:
     if op.column in df.columns:
         raise TransformError(
-            code="derive_column_already_exists",
+            code=reasons.runtime.DERIVE_COLUMN_ALREADY_EXISTS,
             message=(
                 f"derive.column {op.column!r} already exists on the table; "
                 "rename it or drop the existing column first."
@@ -347,12 +348,12 @@ def _apply_derive(df: pd.DataFrame, op: DeriveOp) -> pd.DataFrame:
         result = _eval_clamped(df, op.expression, label=f"derive {op.column!r}")
     except ImportError as exc:
         raise TransformError(
-            code="numexpr_required",
+            code=reasons.runtime.NUMEXPR_REQUIRED,
             message=("transforms require numexpr; install it with: pip install numexpr"),
         ) from exc
     except Exception as exc:
         raise TransformError(
-            code="derive_expression_error",
+            code=reasons.runtime.DERIVE_EXPRESSION_ERROR,
             message=(
                 f"derive expression {op.expression!r} for column {op.column!r} failed: "
                 f"{type(exc).__name__}"
@@ -368,7 +369,7 @@ def _apply_drop_column(df: pd.DataFrame, op: DropColumnOp) -> pd.DataFrame:
     missing = [c for c in op.columns if c not in df.columns]
     if missing:
         raise TransformError(
-            code="drop_column_missing",
+            code=reasons.runtime.DROP_COLUMN_MISSING,
             message=f"drop_column.columns not in table: {missing}",
         )
     return df.drop(columns=op.columns)
@@ -389,7 +390,7 @@ def apply_transform(df: pd.DataFrame, op: TransformOp) -> pd.DataFrame:
     if isinstance(op, DropColumnOp):
         return _apply_drop_column(df, op)
     raise TransformError(
-        code="unknown_transform_op",
+        code=reasons.runtime.UNKNOWN_TRANSFORM_OP,
         message=f"unknown transform op type: {type(op).__name__}",
     )
 

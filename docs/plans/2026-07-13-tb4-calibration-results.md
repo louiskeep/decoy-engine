@@ -100,7 +100,7 @@ BYTES for every row above; this table is the human-readable MB rounding.)
 
 ## Recalibration trigger (documented in `_mem_estimate.py`)
 
-1. **Drift** -- B5 telemetry (`_mem_telemetry.recalibrate_k`) sees an isolated
+1. **Drift** -- B5 telemetry (`scripts/mem_telemetry.py` `recalibrate_k`) sees an isolated
    job whose `observed_k` exceeds `current_k` -> RAISE immediately (safety), or
    the max `observed_k` over >= `min_samples_for_lower` isolated jobs falls
    below `current_k / (1 + error_band)` -> LOWER (gated).

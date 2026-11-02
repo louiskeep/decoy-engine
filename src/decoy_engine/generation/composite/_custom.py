@@ -61,6 +61,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.determinism import derive
 from decoy_engine.generation.composite._bundle_pool import BundlePool
 from decoy_engine.generation.composite._errors import CompositeError
@@ -96,7 +97,7 @@ class CompositeCustom:
     ) -> None:
         if not _MIN_BUNDLE_SIZE <= len(bundle) <= _MAX_BUNDLE_SIZE:
             raise CompositeError(
-                code="composite_custom_bundle_size",
+                code=reasons.plan.COMPOSITE_CUSTOM_BUNDLE_SIZE,
                 message=(
                     f"composite_custom bundle must hold {_MIN_BUNDLE_SIZE}-"
                     f"{_MAX_BUNDLE_SIZE} outputs; got {len(bundle)}. "
@@ -106,19 +107,19 @@ class CompositeCustom:
         for item in bundle:
             if not isinstance(item, dict):
                 raise CompositeError(
-                    code="composite_custom_bundle_item_shape",
+                    code=reasons.plan.COMPOSITE_CUSTOM_BUNDLE_ITEM_SHAPE,
                     message=f"bundle item is not a dict: {item!r}",
                 )
             if "column" not in item or "provider" not in item:
                 raise CompositeError(
-                    code="composite_custom_bundle_item_missing_keys",
+                    code=reasons.plan.COMPOSITE_CUSTOM_BUNDLE_ITEM_MISSING_KEYS,
                     message=(
                         f"each bundle item requires column + provider; got {sorted(item.keys())!r}"
                     ),
                 )
             if isinstance(item["provider"], str) and item["provider"].startswith("composite_"):
                 raise CompositeError(
-                    code="composite_custom_no_nesting",
+                    code=reasons.plan.COMPOSITE_CUSTOM_NO_NESTING,
                     message=(
                         f"bundle item references composite provider "
                         f"{item['provider']!r}; nested composites are not "
@@ -131,7 +132,7 @@ class CompositeCustom:
         self._slot_columns: tuple[str, ...] = tuple(item["column"] for item in bundle)
         if len(set(self._slot_columns)) != len(self._slot_columns):
             raise CompositeError(
-                code="composite_custom_duplicate_columns",
+                code=reasons.plan.COMPOSITE_CUSTOM_DUPLICATE_COLUMNS,
                 message=(
                     f"bundle declares duplicate column names {self._slot_columns!r}; "
                     "the slot-to-column mapping requires unique columns."
@@ -155,7 +156,7 @@ class CompositeCustom:
     def _check_pool_size(self, size: int) -> None:
         if size > _POOL_SIZE_MAX:
             raise CompositeError(
-                code="pool_size_overflow",
+                code=reasons.plan.POOL_SIZE_OVERFLOW,
                 message=(
                     f"bundle pool size {size} exceeds {_POOL_SIZE_MAX}; the "
                     "sub-byte modulo-bias bound (matching derive_index) "
@@ -262,12 +263,12 @@ class CompositeCustom:
         if deterministic:
             if source is None or spec.seed is None:
                 raise CompositeError(
-                    code="deterministic_requires_source_and_seed",
+                    code=reasons.plan.DETERMINISTIC_REQUIRES_SOURCE_AND_SEED,
                     message=("Deterministic composite_custom requires source + seed."),
                 )
             if len(source) != count:
                 raise CompositeError(
-                    code="source_length_mismatch",
+                    code=reasons.plan.SOURCE_LENGTH_MISMATCH,
                     message=f"source length {len(source)} != count {count}.",
                 )
             return self._generate_deterministic(spec, source)

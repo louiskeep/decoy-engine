@@ -10,6 +10,9 @@ come from the pure-Python `hash_array` (D1a's `EXPECTED_TOKENS`, with the SEQ-sp
 integer null fill documented in `_d2a_seq_data`). The edge-case and REMAP literals were
 captured from the engine at de1cb852, before any D2a source change. None is computed from the
 output under test.
+
+Re-pinned under F13 because job_seed keying was removed: the digests come from the full-frame pandas
+oracle and the token literals from `hash_array`, all keyed on `THROWAWAY_KEY_PROVIDER`.
 """
 
 from __future__ import annotations
@@ -44,24 +47,24 @@ _SIGNATURE_T = (
 )
 _DIGESTS = {
     "up": "367d4298cfd04154d0fb035828c5cb5dec560e361a575c8e31eaeef112040b73",
-    "t": "35fd98f3d318aad1952f874cf0c042c1afc9e4cc9909a0d78eddc2aa82c181dc",
-    "child": "d7179a5cbc2c8d86dde231a3e1cf3550378f773f88ba6ec150177ff9dc1893c3",
+    "t": "aa930a2f0de7d243e62e3026d3108d9ec18b1ed6f69f8127d22955f0aa0b214b",
+    "child": "8f3f86de6504353cc1fe7ceb1049a0386a2d4e736a1b54180b0626a065bf279b",
 }
 _ALL_TRUE = dict.fromkeys(sc.DIMENSIONS, True)
 # Orphan child keys "orph1", "orph2" minted by REMAP through the parent hash (ns_hk).
 _REMAP_ORPHANS = (
-    "eec76cc0854f45170489845b902c4b25c8a159db8e3703ffe0672d377a6c6cdf",
-    "112054fc4071e2e01bace616c8f68ef3c7595d55b0f11633046610a06e1c3aef",
+    "5d9cd6fdcf3c2ba555c7b3adaf62b52eaa9f8be0ca5c9f26157cd72251769871",
+    "be1d93bbc6cfb23bd57442dc7e1a59a9f8be4feac5bc2ec6b19d1d3aedd3c48c",
 )
 # Int parent keys 0..3 (ns_hk); 7 and 300 are orphans under REMAP.
 _INT_KEY_TOKENS = (
-    "fff6d07feba156f6826ff1d01f734e0c546250ad326e8928f64e6616ba752ccd",
-    "2281ce17d19092cdd3131a04ca5674fb4a18e93d6b00b11753d43108a6134f1f",
-    "27b0f2ce7c10728f371130bacdafc5cf362ca3eb8966093ca21972b07289e4b2",
-    "fb2f5df29035d1a294711f9e858996e775abf22ce35f564c666b5655da592885",
+    "9b93a019d45609396afb0d9ab6264d04f69533480a5fbe8faf9d91e581573e9e",
+    "df9df74e34b59ef619077d6e75abbf88bb53d07da1359d729541b21894c10ac0",
+    "01c587d046c8fb2fce3a9862864a32c7864ca3a7d4a2ee4f3dc2616570227195",
+    "7b0bc128750c49c8e23722c4a149e29dd2acb35a867a4f6536cf4b2d57b8f640",
 )
-_INT_REMAP_7 = "9b6d51b87187710ef3eca19de8bc15979febd256571c13b776fbc88300211ffa"
-_INT_REMAP_300 = "fa05044540ef148d161877d3a9510e6dd2aa48a5c3562ee79e5f43f06b5c9ea0"
+_INT_REMAP_7 = "d704217d0e02b26d381cf82df7f3cd684f05a024f1ef299e5de097a0cd6a08aa"
+_INT_REMAP_300 = "9d4d5ceef7e9a962dbcda218bd3a557d9cb42682b41f1cb224368da775add1d5"
 
 
 def _int_key_sources(
@@ -223,9 +226,9 @@ def test_noncontiguous_when_selection_hashes_in_place() -> None:
     out = run_seq(payload, seeds).outputs["t"]
     assert out.column("a").to_pylist() == [
         "w",
-        "396638be5d87d395d352c03a410a27cfe6531419520e706e69b01fa9f04b1eff",
+        "d299af0182676631ef59b1cd52de0fa402946c1cd7ea96e34ea231675a0323a6",
         "y",
-        "7931cf8b1bb2ea09557876229a27206c8449485be75ba2d2dfae80e42fe8269f",
+        "b8eb27966956d259b9aa89927b3efa0902a931928b267a540b470f4313102156",
     ]
     assert out.column("a").type == pa.string()
     full = run_full(payload, seeds).outputs["t"]
@@ -238,9 +241,9 @@ def test_contiguous_when_selection_on_large_string_with_nulls() -> None:
     assert out.column("a").type == pa.string()
     assert out.column("a").to_pylist() == [
         "w",
-        "396638be5d87d395d352c03a410a27cfe6531419520e706e69b01fa9f04b1eff",
+        "d299af0182676631ef59b1cd52de0fa402946c1cd7ea96e34ea231675a0323a6",
         None,
-        "7931cf8b1bb2ea09557876229a27206c8449485be75ba2d2dfae80e42fe8269f",
+        "b8eb27966956d259b9aa89927b3efa0902a931928b267a540b470f4313102156",
         "v",
     ]
 

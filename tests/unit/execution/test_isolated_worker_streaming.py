@@ -59,7 +59,7 @@ def _fk_config(tmp_path: Path) -> tuple[dict[str, Any], dict[str, str]]:
     parent_path = _write_source(tmp_path, parent, "parent")
     child_path = _write_source(tmp_path, child, "child")
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "tb1-worker-test", "seed": 7},
         "sources": {
             "parent": {"type": "file", "path": parent_path, "format": "parquet"},
@@ -192,7 +192,7 @@ class TestIsolatedWorkerStreamsOutOfCore:
         path = tmp_path / "t.parquet"
         pq.write_table(pa.table({"a": ["x", "y", "z"]}), path)
         config = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"job_name": "tb1-full-frame", "seed": 1},
             "sources": {"t": {"type": "file", "path": str(path), "format": "parquet"}},
             "targets": {

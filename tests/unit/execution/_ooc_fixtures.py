@@ -19,12 +19,12 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.execution.out_of_core._compat import _column_seed
 from decoy_engine.execution.out_of_core._mask import mask_table
 from decoy_engine.execution.out_of_core._relation import (
     ParentKeyRelation,
     build_parent_key_relation_from_tables,
 )
-from decoy_engine.execution.out_of_core._runner import _column_seed
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge
 

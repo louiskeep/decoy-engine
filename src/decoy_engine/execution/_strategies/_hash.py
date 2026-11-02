@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.determinism import derive
 from decoy_engine.execution._adapter import (
     StrategyContext,
@@ -42,7 +43,7 @@ class HashStrategyHandler:
     ) -> tuple[pd.DataFrame, list[QualityWarning]]:
         if plan.namespace is None:
             raise StrategyError(
-                code="hash_requires_namespace",
+                code=reasons.runtime.HASH_REQUIRES_NAMESPACE,
                 strategy="hash",
                 message=f"column {column!r} uses the hash strategy but has no namespace.",
             )

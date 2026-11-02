@@ -70,12 +70,15 @@ different directory than `decoy run` still evaluates the identical files.
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import fileaccess, reasons
+from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pipeline import classify_table_kinds
 from decoy_engine.execution._pipeline_route_exec import (
@@ -94,6 +97,7 @@ from decoy_engine.execution.out_of_core._capacity_eval import (
     CapacityVerdict,
     evaluate_capacity,
 )
+from decoy_engine.fileaccess import FileAccess, entry_point
 
 __all__ = ["estimate_job_capacity"]
 
@@ -104,7 +108,7 @@ _OUT_OF_CORE_ROUTE = "out_of_core"
 # resolvable source at all -- a real config/graph inconsistency, not a
 # priceability question. Reused verbatim here (same code, same fail-closed
 # posture) rather than inventing a second code for the identical defect.
-_PARENT_ROWS_UNRESOLVED_CODE = "out_of_core_parent_rows_unresolved"
+_PARENT_ROWS_UNRESOLVED_CODE = reasons.runtime.OUT_OF_CORE_PARENT_ROWS_UNRESOLVED
 
 # The one code `detect_host_memory_bytes` raises (propagated through
 # `detect_effective_memory_bytes` -> `resolve_ooc_memory_limit`) when NEITHER
@@ -114,7 +118,7 @@ _PARENT_ROWS_UNRESOLVED_CODE = "out_of_core_parent_rows_unresolved"
 # `max_concurrent_instances`, an invalid explicit `budget_bytes`, an
 # un-sizeable fan-in split, ...) is a genuine defect, not a detection
 # failure, and must propagate rather than being swallowed into a verdict.
-_RAM_UNDETECTABLE_CODE = "out_of_core_memory_detection_failed"
+_RAM_UNDETECTABLE_CODE = reasons.runtime.OUT_OF_CORE_MEMORY_DETECTION_FAILED
 
 # Raised when a declared source cannot be read or parsed while profiling it for
 # the capacity estimate -- a file that is present but truncated, corrupt, or not
@@ -129,7 +133,7 @@ _RAM_UNDETECTABLE_CODE = "out_of_core_memory_detection_failed"
 # narrow catch wraps ONLY the `profile_source` call, and config-shape defects
 # are already filtered out upstream (schema validation + profile-free plan
 # checks), so a caught error here is a genuine source-read failure.
-_SOURCE_UNPROFILABLE_CODE = "capacity_source_unprofilable"
+_SOURCE_UNPROFILABLE_CODE = reasons.runtime.CAPACITY_SOURCE_UNPROFILABLE
 
 # The ONLY `ExecutionError` codes `decide_execution_route` raises for a job it
 # would refuse BEFORE reading any data (its full-frame OOM-risk guard,
@@ -140,7 +144,10 @@ _SOURCE_UNPROFILABLE_CODE = "capacity_source_unprofilable"
 # routing defect, NOT a reject-before-read, and must propagate rather than be
 # swallowed into a false NOT_APPLICABLE (R3, Codex re-gate HIGH).
 _ROUTING_REJECT_CODES = frozenset(
-    {"fk_full_frame_oom_risk_rejected", "fk_full_frame_oom_risk_rejected_estimated"}
+    {
+        reasons.runtime.FK_FULL_FRAME_OOM_RISK_REJECTED,
+        reasons.runtime.FK_FULL_FRAME_OOM_RISK_REJECTED_ESTIMATED,
+    }
 )
 
 
@@ -150,7 +157,9 @@ def _resolve_source_path(raw_path: str, base_dir: Path) -> Path:
     passes through unchanged. Kept as a private mirror rather than an
     import across repos -- the CLI and engine are separate packages."""
     p = Path(raw_path)
-    return p if p.is_absolute() else (base_dir / p).resolve()
+    # Lexical, not `Path.resolve()`: making the path absolute needs no file-system access, and
+    # which file is read is decided later, at the open, by the file-access policy.
+    return p if p.is_absolute() else Path(os.path.abspath(base_dir / p))
 
 
 def _resolved_config_copy(config_dump: dict[str, Any], base_dir: Path) -> dict[str, Any]:
@@ -195,11 +204,13 @@ def _not_applicable(route: str, message: str) -> CapacityEstimate:
     )
 
 
+@entry_point
 def estimate_job_capacity(
     config_dump: dict[str, Any],
     base_dir: Path | str,
     *,
     budget_bytes: int | None = None,
+    file_access: FileAccess | None = None,
 ) -> CapacityEstimate:
     """Estimate the out-of-core-FK route's memory feasibility for `config_dump`,
     WITHOUT running the pipeline.
@@ -269,6 +280,8 @@ def estimate_job_capacity(
     try:
         profile = profile_source(config, seed=job_seed)
     except (pa.lib.ArrowException, OSError, ValueError) as exc:
+        if fileaccess.keeps_class(exc):
+            raise
         # A present-but-corrupt/wrong-format source (or one that became
         # unreadable between the CLI's own file check and now) fails HERE, in
         # the profile read. Re-raise as a typed, expected condition so the
@@ -314,7 +327,7 @@ def estimate_job_capacity(
             validators=(config.get("validators") or []),
             fidelity_report=False,
             vault_writer=None,
-            run_storm=bool(config.get("run_storm")),
+            post_scan_integrity=post_scan_integrity_requested(config),
             execution_mode="auto",
             graph=graph,
             resolved_substrate="pandas",
@@ -376,7 +389,7 @@ def estimate_job_capacity(
                 validators=(config.get("validators") or []),
                 fidelity_report=False,
                 vault_writer=None,
-                run_storm=bool(config.get("run_storm")),
+                post_scan_integrity=post_scan_integrity_requested(config),
                 execution_mode="auto",
                 graph=graph,
                 resolved_substrate="pandas",

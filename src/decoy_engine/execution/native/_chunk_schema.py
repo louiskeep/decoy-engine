@@ -13,6 +13,7 @@ from collections.abc import Iterator
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
 from decoy_engine.execution._errors import ExecutionError
 
@@ -29,10 +30,10 @@ class NativeChunkSchemaDriftError(ExecutionError, DecoyError):
     caller are unaffected, but there is no reversal of them.
     """
 
-    code: str = "native_chunk_schema_drift"
+    code: str = reasons.runtime.NATIVE_CHUNK_SCHEMA_DRIFT
 
     def __init__(self, message: str, *, table: str, chunk_index: int, detail: str) -> None:
-        super().__init__(code="native_chunk_schema_drift", message=message)
+        super().__init__(code=reasons.runtime.NATIVE_CHUNK_SCHEMA_DRIFT, message=message)
         self.table = table
         self.chunk_index = chunk_index
         self.detail = detail
@@ -119,7 +120,7 @@ def validate_chunk_schema(
             continue
         if pa.types.is_null(expected_type):
             raise ExecutionError(
-                code="chunked_leading_null_type",
+                code=reasons.runtime.CHUNKED_LEADING_NULL_TYPE,
                 message=(
                     f"{table!r} chunk {chunk_index}: column {name!r} was null-typed in the "
                     f"first chunk and is {actual_type} here. The stream's type is fixed by "

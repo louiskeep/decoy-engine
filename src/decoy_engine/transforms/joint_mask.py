@@ -48,14 +48,18 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NoReturn
 
 import numpy as np
 import pandas as pd
 
+from decoy_engine import fileaccess, reasons
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.determinism import derive
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.reference_tables import ReferenceTable, load_table
+from decoy_engine.reference_tables._registry import JOINT_MASK_TABLES
 
 # DE-02: source label for the secret-derived HMAC key of the mask-mode keyed
 # row selection. `derive(mask_key, namespace, _KEYED_ROW_SOURCE)` yields a
@@ -66,16 +70,8 @@ _DEFAULT_NAMESPACE = "joint_mask"
 
 _LOG = logging.getLogger(__name__)
 
-# Shipped table names that joint_mask can use out of the box.
-# SP-08b: ndc_labeler_drug_strength + mcc_category_description added.
-_KNOWN_TABLES = frozenset(
-    {
-        "us_zip5_city_state",
-        "vehicle_make_model_year",
-        "ndc_labeler_drug_strength",
-        "mcc_category_description",
-    }
-)
+# Shipped table names that joint_mask can use out of the box (the shipped-table registry owns them).
+_KNOWN_TABLES = JOINT_MASK_TABLES
 
 # Prefix that identifies a customer-provided reference table path (SP-08b).
 _CUSTOMER_PREFIX = "customer:"
@@ -134,7 +130,24 @@ class JointMaskConfig:
         return self._table
 
 
-def validate_joint_mask_config(cfg: dict[str, Any]) -> None:
+def _raise_without_chain(err: PlanCompileError) -> NoReturn:
+    """Raise `err` with no cause or context. The rejected `load_table` error is still being
+    handled here, so a plain raise would attach it as `__context__` and its traceback would
+    carry the raw reference (X2). Caught, cleared and re-raised bare, mirroring the keyprovider's
+    `raise_clean`."""
+    try:
+        raise err
+    except PlanCompileError as fresh:
+        fresh.__cause__ = None
+        fresh.__context__ = None
+        fresh.__suppress_context__ = True
+        raise
+
+
+@entry_point
+def validate_joint_mask_config(
+    cfg: dict[str, Any], *, file_access: FileAccess | None = None
+) -> None:
     """Validate a joint_mask config dict; raise PlanCompileError on any failure.
 
     Checks:
@@ -154,7 +167,7 @@ def validate_joint_mask_config(cfg: dict[str, Any]) -> None:
     """
     if "columns" not in cfg or not cfg["columns"]:
         raise PlanCompileError(
-            code="joint_mask_columns_missing",
+            code=reasons.plan.JOINT_MASK_COLUMNS_MISSING,
             path="joint_masks.columns",
             message=(
                 "'columns' is required for joint_mask and must be a non-empty list. "
@@ -164,7 +177,7 @@ def validate_joint_mask_config(cfg: dict[str, Any]) -> None:
 
     if "key_by" not in cfg:
         raise PlanCompileError(
-            code="joint_mask_key_by_missing",
+            code=reasons.plan.JOINT_MASK_KEY_BY_MISSING,
             path="joint_masks.key_by",
             message=(
                 "'key_by' is required for joint_mask (the source column used for "
@@ -176,7 +189,7 @@ def validate_joint_mask_config(cfg: dict[str, Any]) -> None:
     ref_name = cfg.get("reference")
     if not ref_name:
         raise PlanCompileError(
-            code="joint_mask_reference_missing",
+            code=reasons.plan.JOINT_MASK_REFERENCE_MISSING,
             path="joint_masks.reference",
             message=(
                 "'reference' is required for joint_mask and must name a shipped or "
@@ -185,30 +198,40 @@ def validate_joint_mask_config(cfg: dict[str, Any]) -> None:
             ),
         )
 
+    shown_ref = fileaccess.shown(ref_name, fileaccess.position_key("joint_mask.reference"))
     try:
         tbl = load_table(ref_name)
     except FileNotFoundError:
-        raise PlanCompileError(
-            code="joint_mask_reference_not_found",
-            path="joint_masks.reference",
-            message=(
-                f"reference table {ref_name!r} not found. "
-                f"Known shipped tables: {sorted(_KNOWN_TABLES)}. "
-                f"To use a customer-provided table, set reference: customer:/path/to/file.parquet."
-            ),
+        # Clear the chain: the rejected `FileNotFoundError` names the config position under a
+        # strict policy, but its traceback would otherwise surface the raw reference as the
+        # PlanCompileError's `__context__` (X2). `from None` only suppresses display, so the
+        # context is nulled outright.
+        _raise_without_chain(
+            PlanCompileError(
+                code=reasons.plan.JOINT_MASK_REFERENCE_NOT_FOUND,
+                path="joint_masks.reference",
+                message=(
+                    f"reference table {shown_ref!r} not found. "
+                    f"Known shipped tables: {sorted(_KNOWN_TABLES)}. "
+                    "To use a customer-provided table, set reference: "
+                    "customer:/path/to/file.parquet."
+                ),
+            )
         )
     except ValueError as exc:
-        raise PlanCompileError(
-            code="joint_mask_reference_invalid",
-            path="joint_masks.reference",
-            message=f"reference table {ref_name!r} failed to load: {exc}",
+        _raise_without_chain(
+            PlanCompileError(
+                code=reasons.plan.JOINT_MASK_REFERENCE_INVALID,
+                path="joint_masks.reference",
+                message=f"reference table {shown_ref!r} failed to load: {exc}",
+            )
         )
 
     ref_cols = set(tbl.column_names) - {"id"}
     for col in cfg["columns"]:
         if col not in ref_cols:
             raise PlanCompileError(
-                code="joint_mask_column_not_in_reference",
+                code=reasons.plan.JOINT_MASK_COLUMN_NOT_IN_REFERENCE,
                 path=f"joint_masks.columns.{col}",
                 message=(
                     f"column {col!r} is not in reference table {ref_name!r}. "
@@ -252,19 +275,23 @@ def apply_joint_mask(
     Returns:
         A copy of ``df`` with ``config.columns`` replaced by reference-table rows.
     """
-    result = df.copy()
+    try:
+        result = df.copy()
 
-    if mode == "mask":
-        rows = _pick_rows_mask(df, config, job_seed, namespace=namespace, key_series=key_series)
-    elif mode == "gen":
-        rows = _pick_rows_gen(len(df), config, job_seed)
-    else:
-        raise ValueError(f"joint_mask: unsupported mode {mode!r}. Use 'mask' or 'gen'.")
+        if mode == "mask":
+            rows = _pick_rows_mask(df, config, job_seed, namespace=namespace, key_series=key_series)
+        elif mode == "gen":
+            rows = _pick_rows_gen(len(df), config, job_seed)
+        else:
+            raise ValueError(f"joint_mask: unsupported mode {mode!r}. Use 'mask' or 'gen'.")
 
-    for col in config.columns:
-        result[col] = [r.get(col) for r in rows]
+        for col in config.columns:
+            result[col] = [r.get(col) for r in rows]
 
-    return result
+        return result
+    except BaseException:
+        del job_seed
+        raise
 
 
 def _pick_rows_mask(
@@ -291,29 +318,37 @@ def _pick_rows_mask(
     Pattern: HMAC-SHA256 via ReferenceTable.keyed_row (RFC 2104).
     SP-06 cross-version caveat: modular index shifts if row_count changes.
     """
-    tbl = config.table
-    # Cross-column V1: a provided pre-mask snapshot of key_by is the SOURCE key
-    # (same source entity -> same reference row); otherwise fall back to the live
-    # frame for direct (non-adapter) callers.
-    if key_series is not None:
-        key_col = key_series
-    else:
-        key_col = df[config.key_by] if config.key_by in df.columns else pd.Series([None] * len(df))
-    hmac_key = derive(job_seed, namespace or _DEFAULT_NAMESPACE, _KEYED_ROW_SOURCE)
-
-    rows: list[dict[str, Any]] = []
-    # Seeded RNG for null-key fallback rows only.
-    rng = np.random.default_rng(int.from_bytes(job_seed[:8], "big"))
-    for val in key_col:
-        if val is None or (isinstance(val, float) and np.isnan(val)):
-            # Null key: fall back to a seeded random row (no usable key).
-            idx = int(rng.integers(0, tbl.row_count))
-            rows.append(tbl.row(idx))
+    try:
+        tbl = config.table
+        # Cross-column V1: a provided pre-mask snapshot of key_by is the SOURCE key
+        # (same source entity -> same reference row); otherwise fall back to the live
+        # frame for direct (non-adapter) callers.
+        if key_series is not None:
+            key_col = key_series
         else:
-            # Non-null: keyed_row selects under the secret-derived HMAC key.
-            rows.append(tbl.keyed_row(str(val), hmac_key=hmac_key))
+            key_col = (
+                df[config.key_by] if config.key_by in df.columns else pd.Series([None] * len(df))
+            )
+        hmac_key_box = OpaqueBox(
+            derive(job_seed, namespace or _DEFAULT_NAMESPACE, _KEYED_ROW_SOURCE)
+        )
 
-    return rows
+        rows: list[dict[str, Any]] = []
+        # Seeded RNG for null-key fallback rows only.
+        rng = np.random.default_rng(int.from_bytes(job_seed[:8], "big"))
+        for val in key_col:
+            if val is None or (isinstance(val, float) and np.isnan(val)):
+                # Null key: fall back to a seeded random row (no usable key).
+                idx = int(rng.integers(0, tbl.row_count))
+                rows.append(tbl.row(idx))
+            else:
+                # Non-null: keyed_row selects under the secret-derived HMAC key.
+                rows.append(tbl.keyed_row(str(val), hmac_key=hmac_key_box.open()[0]))
+
+        return rows
+    except BaseException:
+        del job_seed
+        raise
 
 
 def _pick_rows_gen(
@@ -326,8 +361,12 @@ def _pick_rows_gen(
     Deterministic: same job_seed + same n -> same sequence of rows.
     Independent of source column values (gen mode has no source to key from).
     """
-    tbl = config.table
-    seed_int = int.from_bytes(job_seed[:8], "big")
-    rng = np.random.default_rng(seed_int)
-    indices = rng.integers(0, tbl.row_count, size=n)
-    return [tbl.row(int(idx)) for idx in indices]
+    try:
+        tbl = config.table
+        seed_int = int.from_bytes(job_seed[:8], "big")
+        rng = np.random.default_rng(seed_int)
+        indices = rng.integers(0, tbl.row_count, size=n)
+        return [tbl.row(int(idx)) for idx in indices]
+    except BaseException:
+        del job_seed
+        raise

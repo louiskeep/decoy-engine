@@ -50,7 +50,7 @@ def make_config(
     columns = [{k: v for k, v in c.items() if k != "when"} for c in columns]
     tables = [{"name": TABLE, "columns": columns}, *(extra_tables or [])]
     raw: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20261001, "post_validation": False, **(global_settings or {})},
         "sources": {
             t["name"]: {"type": "file", "format": "csv", "path": "/dev/null"} for t in tables

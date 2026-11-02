@@ -39,6 +39,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core._memory_estimate import actual_duckdb_cap_bytes
 
@@ -135,7 +136,7 @@ def phase3_head_fit(budgets: ReorderBudgets, co_resident_readers: int) -> HeadFi
     """
     if co_resident_readers <= 0:
         raise ExecutionError(
-            code="out_of_core_reorder_head_fit_invalid",
+            code=reasons.runtime.OUT_OF_CORE_REORDER_HEAD_FIT_INVALID,
             message=f"co_resident_readers must be >= 1, got {co_resident_readers}.",
         )
     max_co_resident_readers = 2 * budgets.merge_fan_in
@@ -170,7 +171,7 @@ def resolve_reorder_budgets(
     """
     if process_ceiling_bytes is None or remaining_disk_bytes is None:
         raise ExecutionError(
-            code="out_of_core_reorder_unbudgeted",
+            code=reasons.runtime.OUT_OF_CORE_REORDER_UNBUDGETED,
             message=(
                 "the bounded-stream FK route requires both a process memory "
                 "budget and a disk budget; got "
@@ -182,19 +183,19 @@ def resolve_reorder_budgets(
         )
     if merge_fan_in < 2:
         raise ExecutionError(
-            code="out_of_core_reorder_fan_in_invalid",
+            code=reasons.runtime.OUT_OF_CORE_REORDER_FAN_IN_INVALID,
             message=f"merge_fan_in must be >= 2 (a merge needs >= 2 participants), got {merge_fan_in}.",
         )
     if remaining_disk_bytes < 0:
         raise ExecutionError(
-            code="out_of_core_reorder_disk_budget_invalid",
+            code=reasons.runtime.OUT_OF_CORE_REORDER_DISK_BUDGET_INVALID,
             message=f"remaining_disk_bytes must be >= 0, got {remaining_disk_bytes}.",
         )
     duckdb_memory_limit_bytes = round(F_DUCKDB * process_ceiling_bytes)
     run_bytes_cap = round(F_SORT * process_ceiling_bytes)
     if run_bytes_cap < MIN_RUN_BYTES:
         raise ExecutionError(
-            code="out_of_core_reorder_budget_too_small",
+            code=reasons.runtime.OUT_OF_CORE_REORDER_BUDGET_TOO_SMALL,
             message=(
                 f"process_ceiling_bytes={process_ceiling_bytes} yields a "
                 f"{run_bytes_cap}-byte sorter run cap (F_SORT={F_SORT}), "
@@ -290,7 +291,7 @@ def require_disk(
     required_bytes = mandatory_staging_bytes + 3 * estimated_output_bytes
     if required_bytes > budgets.remaining_disk_bytes:
         raise ExecutionError(
-            code="out_of_core_reorder_budget_too_small",
+            code=reasons.runtime.OUT_OF_CORE_REORDER_BUDGET_TOO_SMALL,
             message=(
                 f"this edge needs {required_bytes} bytes of disk "
                 f"(staging={mandatory_staging_bytes} + 3x estimated output "

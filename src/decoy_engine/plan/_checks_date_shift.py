@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.transforms.date_preserve import has_preserve_values, preserve_config_problem
 
@@ -120,7 +121,7 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
                 nested_cfg = pc.get("strategy_config") or {}
                 if isinstance(nested_cfg, dict) and nested_cfg.get("group_by"):
                     raise PlanCompileError(
-                        code="date_shift_group_by_unsupported_in_nested",
+                        code=reasons.plan.DATE_SHIFT_GROUP_BY_UNSUPPORTED_IN_NESTED,
                         path=(
                             f"tables.{table_name}.columns.{col_name}"
                             ".provider_config.strategy_config.group_by"
@@ -150,7 +151,7 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
             # KeyError. Reject before the membership test.
             if not isinstance(group_by, str):
                 raise PlanCompileError(
-                    code="date_shift_missing_group_by_ref",
+                    code=reasons.plan.DATE_SHIFT_MISSING_GROUP_BY_REF,
                     path=(f"tables.{table_name}.columns.{col_name}.provider_config.group_by"),
                     message=(
                         f"date_shift column {col_name!r} in table "
@@ -161,7 +162,7 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
                 )
             if group_by not in all_col_names:
                 raise PlanCompileError(
-                    code="date_shift_missing_group_by_ref",
+                    code=reasons.plan.DATE_SHIFT_MISSING_GROUP_BY_REF,
                     path=(f"tables.{table_name}.columns.{col_name}.provider_config.group_by"),
                     message=(
                         f"date_shift column {col_name!r} in table "
@@ -177,7 +178,7 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
             # parent). Reject until per-route FK-anchor threading exists.
             if (table_name, col_name) in fk_cols:
                 raise PlanCompileError(
-                    code="date_shift_group_by_on_fk_column_unsupported",
+                    code=reasons.plan.DATE_SHIFT_GROUP_BY_ON_FK_COLUMN_UNSUPPORTED,
                     path=(f"tables.{table_name}.columns.{col_name}.provider_config.group_by"),
                     message=(
                         f"date_shift column {col_name!r} in table {table_name!r} "
@@ -203,7 +204,7 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
             when_val = col_entry.get("when")
             if isinstance(when_val, str) and when_val.strip():
                 raise PlanCompileError(
-                    code="date_shift_group_by_with_when_unsupported",
+                    code=reasons.plan.DATE_SHIFT_GROUP_BY_WITH_WHEN_UNSUPPORTED,
                     path=(f"tables.{table_name}.columns.{col_name}.when"),
                     message=(
                         f"date_shift column {col_name!r} in table "
@@ -221,7 +222,7 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 _PRESERVE_STRATEGIES = ("date_shift", "bucket_perturb")
-_FK_SHAPE_CODE = "date_preserve_values_unsupported_fk_shape"
+_FK_SHAPE_CODE = reasons.plan.DATE_PRESERVE_VALUES_UNSUPPORTED_FK_SHAPE
 
 
 def _preserve_columns(table_entry: dict[str, Any]) -> list[tuple[str, str, dict[str, Any], str]]:
@@ -342,13 +343,13 @@ def check_date_preserve_values(config: dict[str, Any]) -> None:
                 problem = preserve_config_problem(pc)
                 if problem is not None:
                     raise PlanCompileError(
-                        code="date_shift_preserve_values_invalid",
+                        code=reasons.plan.DATE_SHIFT_PRESERVE_VALUES_INVALID,
                         path=f"{prefix}.preserve_values",
                         message=f"date_shift column {name!r} in table {table_name!r}: {problem}",
                     )
                 if pc.get("group_by"):
                     raise PlanCompileError(
-                        code="date_preserve_values_with_group_by_unsupported",
+                        code=reasons.plan.DATE_PRESERVE_VALUES_WITH_GROUP_BY_UNSUPPORTED,
                         path=f"{prefix}.group_by",
                         message=(
                             f"date_shift column {name!r} in table {table_name!r} sets both "

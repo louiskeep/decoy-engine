@@ -1108,10 +1108,15 @@ def test_invariant_codes_cover_every_index_kernel_consumer() -> None:
     the loud translation recognises, so a new check cannot silently reroute."""
     import re
 
+    from decoy_engine import reasons
+
     src = Path(__file__).resolve().parents[2] / "src" / "decoy_engine"
-    raised: set[str] = set()
+    symbols: set[str] = set()
     for path in src.rglob("*.py"):
-        raised.update(re.findall(r'code="(index_batch_[a-z_]+)"', path.read_text()))
+        symbols.update(
+            re.findall(r"code=reasons\.runtime\.(INDEX_BATCH_[A-Z_]+)", path.read_text())
+        )
+    raised = {str(getattr(reasons.runtime, name)) for name in symbols}
     assert raised == set(INDEX_KERNEL_INVARIANT_CODES)
 
 

@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons as reason_codes
 from decoy_engine.execution import _chunked_input, _pipeline_auto_chunk
 from decoy_engine.execution import _chunked_output_sink as _output_sink
 from decoy_engine.execution._adapter import provider_config_to_dict
@@ -298,7 +299,7 @@ def run_multi_table_split(
         # B6a: never run the full-frame adapter, or mask a table, while a publish session
         # may be open; `decide_output_mode` declines these splits, this refuses them too.
         raise ExecutionError(
-            code="split_sink_needs_all_dispatched",
+            code=reason_codes.runtime.SPLIT_SINK_NEEDS_ALL_DISPATCHED,
             message="a streamed multi-table split needs every output table dispatched.",
         )
     _LOG.info(

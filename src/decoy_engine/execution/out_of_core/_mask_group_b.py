@@ -15,7 +15,7 @@ out-of-core output is byte-identical rather than merely similar.
   single-key/varying-tweak model) with the exact key derivation the
   `_strategies/_fpe.FpeStrategyHandler` uses (`derive(job_seed, namespace,
   FF1_KEY_LABEL)`, column-or-join_group tweak per `build_ff1_tweak`).
-- text_redact: reuses `storm.detectors.iter_spans` + `_text_redact._splice`
+- text_redact: reuses `detection.detectors.iter_spans` + `_text_redact._splice`
   (span-level PII redaction; deterministic pure function of input + config).
 - categorical: reuses `determinism.derive_index` over the plan's category pool
   (source-conditioned deterministic remap), including the `_categorical`
@@ -50,7 +50,9 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from decoy_engine.detection.detectors import Span, iter_spans
+from decoy_engine import reasons
+from decoy_engine._opaque import OpaqueBox
+from decoy_engine.detection.detectors import iter_spans
 from decoy_engine.determinism import derive, derive_index
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
 from decoy_engine.execution._adapter import provider_config_to_dict
@@ -60,6 +62,10 @@ from decoy_engine.execution._strategies._fpe import (
     FF1_KEY_LABEL,
     strategy_code_for_checksum,
     strategy_code_for_unencryptable,
+)
+from decoy_engine.execution._strategies._ner_config import (
+    enforce_ner_model_version,
+    resolve_ner_config,
 )
 from decoy_engine.execution._strategies._text_redact import _DEFAULT_TOKEN, _splice
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
@@ -100,11 +106,11 @@ def _fpe_charset(cfg: dict[str, Any]) -> str:
         check_charset_unique(charset_spec, charset)
     except FpeUnencryptableError as exc:
         raise StrategyError(
-            code="fpe_charset_duplicate_symbols", strategy="fpe", message=str(exc)
+            code=reasons.runtime.FPE_CHARSET_DUPLICATE_SYMBOLS, strategy="fpe", message=str(exc)
         ) from exc
     if len(charset) < 2:
         raise StrategyError(
-            code="fpe_charset_degenerate",
+            code=reasons.runtime.FPE_CHARSET_DEGENERATE,
             strategy="fpe",
             message=(
                 f"fpe resolved charset {charset_spec!r} -> {charset!r} has fewer than "
@@ -123,77 +129,87 @@ def fpe_array(
     cfg: dict[str, Any],
 ) -> pa.Array:
     """Format-preserving-encrypt each non-null value, byte-identical to the oracle."""
-    if namespace is None:
-        raise StrategyError(
-            code="fpe_requires_namespace",
-            strategy="fpe",
-            message="fpe strategy requires a namespace.",
-        )
-    charset = _fpe_charset(cfg)
-    preserve_sep = bool(cfg.get("preserve_separators", True))
-    checksum: str | None = cfg.get("checksum") or None
-    validate_luhn = (
-        checksum is None
-        and bool(cfg.get("validate_luhn", False))
-        and all(c in "0123456789" for c in charset)
-    )
-    join_group: str | None = cfg.get("fpe_join_group") or None
-    tweak_source = join_group or column
-    if tweak_source is None:
-        # Only reachable if fpe were masked without a column context (e.g. an
-        # FK-key/remap caller). The compat gate keeps fpe off the parent-key
-        # surface, so this fails closed rather than silently mis-tweaking.
-        raise ExecutionError(
-            code="out_of_core_fpe_column_required",
-            message="fpe out-of-core masking needs a column name (or fpe_join_group) for the tweak.",
-        )
-    tweak = build_ff1_tweak(
-        FF1_TWEAK_SCOPE_JOIN_GROUP if join_group else FF1_TWEAK_SCOPE_COLUMN, tweak_source
-    )
-    key = derive(job_seed, namespace, FF1_KEY_LABEL)
-
-    out: list[str | None] = []
-    # DE-01 cluster-C (2026-07-14): translate the value-level fail-closed raises
-    # into the SAME StrategyError type + codes the full-frame handler
-    # (`_strategies/_fpe.FpeStrategyHandler.run`) uses, so a consumer keying on
-    # `StrategyError.code` sees an identical fail-closed event on both routes.
     try:
-        for value in _array_to_pylist(values):
-            if _is_missing(value):
-                out.append(None)
-                continue
-            str_value = str(value)
-            if str_value == "":
-                # Empty string is not null (`_is_missing` misses it), but
-                # `fpe_encrypt_value` now fails closed on it (plan P2: its
-                # in-charset domain, radix**0 == 1, is below the FF1 floor).
-                # Treat it like null at this per-cell missing-data boundary --
-                # preserved as "", never sent to the cipher -- matching the
-                # full-frame handler (`_strategies/_fpe.FpeStrategyHandler.run`)
-                # so both routes stay byte-identical for a legitimately empty cell.
-                out.append("")
-                continue
-            out.append(
-                fpe_encrypt_value(
-                    str_value, key, charset, tweak, preserve_sep, validate_luhn, checksum
-                )
+        if namespace is None:
+            raise StrategyError(
+                code=reasons.runtime.FPE_REQUIRES_NAMESPACE,
+                strategy="fpe",
+                message="fpe strategy requires a namespace.",
             )
-    except FpeUnencryptableError as exc:
-        raise StrategyError(
-            code=strategy_code_for_unencryptable(exc),
-            strategy="fpe",
-            message=(
-                f"column {column!r}: {exc}. The engine fails closed rather than "
-                "emit unmaskable or non-round-trip output."
-            ),
-        ) from exc
-    except FpeChecksumError as exc:
-        raise StrategyError(
-            code=strategy_code_for_checksum(exc),
-            strategy="fpe",
-            message=f"column {column!r}: {exc}",
-        ) from exc
-    return pa.array(out, type=pa.string())
+        charset = _fpe_charset(cfg)
+        preserve_sep = bool(cfg.get("preserve_separators", True))
+        checksum: str | None = cfg.get("checksum") or None
+        validate_luhn = (
+            checksum is None
+            and bool(cfg.get("validate_luhn", False))
+            and all(c in "0123456789" for c in charset)
+        )
+        join_group: str | None = cfg.get("fpe_join_group") or None
+        tweak_source = join_group or column
+        if tweak_source is None:
+            # Only reachable if fpe were masked without a column context (e.g. an
+            # FK-key/remap caller). The compat gate keeps fpe off the parent-key
+            # surface, so this fails closed rather than silently mis-tweaking.
+            raise ExecutionError(
+                code=reasons.runtime.OUT_OF_CORE_FPE_COLUMN_REQUIRED,
+                message="fpe out-of-core masking needs a column name (or fpe_join_group) for the tweak.",
+            )
+        tweak = build_ff1_tweak(
+            FF1_TWEAK_SCOPE_JOIN_GROUP if join_group else FF1_TWEAK_SCOPE_COLUMN, tweak_source
+        )
+        key_box = OpaqueBox(derive(job_seed, namespace, FF1_KEY_LABEL))
+
+        out: list[str | None] = []
+        # DE-01 cluster-C (2026-07-14): translate the value-level fail-closed raises
+        # into the SAME StrategyError type + codes the full-frame handler
+        # (`_strategies/_fpe.FpeStrategyHandler.run`) uses, so a consumer keying on
+        # `StrategyError.code` sees an identical fail-closed event on both routes.
+        try:
+            for value in _array_to_pylist(values):
+                if _is_missing(value):
+                    out.append(None)
+                    continue
+                str_value = str(value)
+                if str_value == "":
+                    # Empty string is not null (`_is_missing` misses it), but
+                    # `fpe_encrypt_value` now fails closed on it (plan P2: its
+                    # in-charset domain, radix**0 == 1, is below the FF1 floor).
+                    # Treat it like null at this per-cell missing-data boundary --
+                    # preserved as "", never sent to the cipher -- matching the
+                    # full-frame handler (`_strategies/_fpe.FpeStrategyHandler.run`)
+                    # so both routes stay byte-identical for a legitimately empty cell.
+                    out.append("")
+                    continue
+                out.append(
+                    fpe_encrypt_value(
+                        str_value,
+                        key_box.open()[0],
+                        charset,
+                        tweak,
+                        preserve_sep,
+                        validate_luhn,
+                        checksum,
+                    )
+                )
+        except FpeUnencryptableError as exc:
+            raise StrategyError(
+                code=strategy_code_for_unencryptable(exc),
+                strategy="fpe",
+                message=(
+                    f"column {column!r}: {exc}. The engine fails closed rather than "
+                    "emit unmaskable or non-round-trip output."
+                ),
+            ) from exc
+        except FpeChecksumError as exc:
+            raise StrategyError(
+                code=strategy_code_for_checksum(exc),
+                strategy="fpe",
+                message=f"column {column!r}: {exc}",
+            ) from exc
+        return pa.array(out, type=pa.string())
+    except BaseException:
+        del job_seed
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -215,8 +231,15 @@ def _text_redact_detector_ids(detectors_cfg: Any) -> tuple[list[str] | None, boo
     return None, False
 
 
-def text_redact_array(values: pa.Array | pa.ChunkedArray, *, plan: ColumnSeed) -> pa.Array:
-    """Redact PII spans per cell, byte-identical to the oracle handler."""
+def text_redact_array(
+    values: pa.Array | pa.ChunkedArray, *, plan: ColumnSeed, column: str | None = None
+) -> pa.Array:
+    """Redact PII spans per cell, byte-identical to the oracle handler.
+
+    `column` names the masked column for the `ner_model_version_mismatch`
+    message; `mask_column` threads the real name (text_redact is never an FK
+    key, so it is never masked without one).
+    """
     cfg = provider_config_to_dict(plan.provider_config)
     token = cfg.get("token", _DEFAULT_TOKEN)
     label_token = bool(cfg.get("label_token", False))
@@ -228,13 +251,16 @@ def text_redact_array(values: pa.Array | pa.ChunkedArray, *, plan: ColumnSeed) -
     if not ok:
         return _passthrough_values(values)
 
-    ner_model, ner_entities = _text_redact_ner(cfg, plan)
+    # Shared with the full-frame handler via `_ner_config` so config resolution
+    # and the version guard cannot drift between routes (2026-10-25 de-dup).
+    ner_model, ner_entities = resolve_ner_config(cfg)
+    enforce_ner_model_version(
+        ner_model=ner_model,
+        plan_ner_model_version=plan.ner_model_version,
+        column=column,
+        strategy="text_redact",
+    )
 
-    # Phase 5 (docs/plans/2026-09-08-p5-ner-batch-helper.md): collect the
-    # batch's non-null cells and run ONE `iter_ner_spans_batch` call over them
-    # instead of one `nlp(text)` call per cell. This kernel already runs on a
-    # single (bounded) record batch, so no extra windowing is needed here --
-    # the batch itself is the bound.
     pylist = _array_to_pylist(values)
     out: list[str | None] = [None] * len(pylist)
     non_null_positions: list[int] = []
@@ -245,53 +271,34 @@ def text_redact_array(values: pa.Array | pa.ChunkedArray, *, plan: ColumnSeed) -
         texts.append(value if isinstance(value, str) else str(value))
         non_null_positions.append(pos)
 
-    ner_spans_by_pos: list[list[Span]] | None = None
-    if ner_model is not None:
-        from decoy_engine.detection.ner import iter_ner_spans_batch
+    if ner_model is None:
+        for i, pos in enumerate(non_null_positions):
+            text = texts[i]
+            spans = iter_spans(text, detector_ids, extra_spans=None)
+            out[pos] = text if not spans else _splice(text, spans, token, label_token)
+        return pa.array(out, type=pa.string())
 
-        ner_spans_by_pos = iter_ner_spans_batch(texts, model=ner_model, entities=ner_entities)
+    # Phase 5 (docs/plans/2026-09-08-p5-ner-batch-helper.md) batched the NER
+    # inference through `iter_ner_spans_batch`. 2026-10-25 NER apply-window:
+    # run inference and apply the splice `_NER_APPLY_WINDOW` rows at a time,
+    # mirroring the full-frame handler (`_strategies/_text_redact.py`). This
+    # batch is sized by `batch_rows`, which the out-of-core budget sizes well
+    # above the 2048-row window, so collecting every cell's span list for the
+    # whole batch at once (the pre-window shape) let spaCy Doc + span-list
+    # working memory scale with `batch_rows x cell length` rather than staying
+    # window-bounded. `iter_ner_spans_batch` returns one span list per input
+    # independent of how the texts are chunked, so windowing is byte-identical
+    # to the single-call shape; only peak memory changes.
+    from decoy_engine.detection.ner import _NER_APPLY_WINDOW, iter_ner_spans_batch
 
-    for i, pos in enumerate(non_null_positions):
-        text = texts[i]
-        extra = ner_spans_by_pos[i] if ner_spans_by_pos is not None else None
-        spans = iter_spans(text, detector_ids, extra_spans=extra)
-        out[pos] = text if not spans else _splice(text, spans, token, label_token)
+    for start in range(0, len(non_null_positions), _NER_APPLY_WINDOW):
+        window = non_null_positions[start : start + _NER_APPLY_WINDOW]
+        window_texts = texts[start : start + _NER_APPLY_WINDOW]
+        window_spans = iter_ner_spans_batch(window_texts, model=ner_model, entities=ner_entities)
+        for pos, text, extra in zip(window, window_texts, window_spans, strict=True):
+            spans = iter_spans(text, detector_ids, extra_spans=extra)
+            out[pos] = text if not spans else _splice(text, spans, token, label_token)
     return pa.array(out, type=pa.string())
-
-
-def _text_redact_ner(cfg: dict[str, Any], plan: ColumnSeed) -> tuple[str | None, list[str] | None]:
-    """Resolve NER config + enforce the compile-vs-runtime model-version pin,
-    mirroring `_text_redact.TextRedactHandler.run` (same `ner_model_version_mismatch`)."""
-    ner_cfg = cfg.get("ner")
-    if not ner_cfg:
-        return None, None
-    from decoy_engine.detection.ner import DEFAULT_NER_MODEL
-
-    ner_model: str
-    ner_entities: list[str] | None = None
-    if isinstance(ner_cfg, dict):
-        ner_model = str(ner_cfg.get("model") or DEFAULT_NER_MODEL)
-        raw_entities = ner_cfg.get("entities")
-        if isinstance(raw_entities, (list, tuple)) and raw_entities:
-            ner_entities = [str(e) for e in raw_entities]
-    else:
-        ner_model = DEFAULT_NER_MODEL
-
-    if plan.ner_model_version is not None:
-        from decoy_engine.detection.ner import installed_model_version
-
-        current_version = installed_model_version(ner_model)
-        if current_version is not None and current_version != plan.ner_model_version:
-            raise StrategyError(
-                code="ner_model_version_mismatch",
-                strategy="text_redact",
-                message=(
-                    f"NER model {ner_model!r} installed at {current_version!r} but the plan "
-                    f"was compiled against {plan.ner_model_version!r}; recompile to keep "
-                    "redactions reproducible."
-                ),
-            )
-    return ner_model, ner_entities
 
 
 def _passthrough_values(values: pa.Array | pa.ChunkedArray) -> pa.Array:
@@ -314,7 +321,7 @@ def _categorical_config(cfg: dict[str, Any]) -> tuple[list[Any], list[float] | N
         and not isinstance(raw_categories, (list, tuple))
     ):
         raise StrategyError(
-            code="categorical_categories_not_list",
+            code=reasons.runtime.CATEGORICAL_CATEGORIES_NOT_LIST,
             strategy="categorical",
             message=(
                 f"categorical categories={raw_categories!r} "
@@ -324,7 +331,7 @@ def _categorical_config(cfg: dict[str, Any]) -> tuple[list[Any], list[float] | N
     categories = list(cfg.get("categories", []))
     if not categories:
         raise StrategyError(
-            code="categorical_requires_categories",
+            code=reasons.runtime.CATEGORICAL_REQUIRES_CATEGORIES,
             strategy="categorical",
             message="categorical strategy provided no categories.",
         )
@@ -333,7 +340,7 @@ def _categorical_config(cfg: dict[str, Any]) -> tuple[list[Any], list[float] | N
     if weights_raw is not None:
         if not isinstance(weights_raw, (list, tuple)) or len(weights_raw) != len(categories):
             raise StrategyError(
-                code="categorical_weights_shape",
+                code=reasons.runtime.CATEGORICAL_WEIGHTS_SHAPE,
                 strategy="categorical",
                 message=(
                     f"categorical weights must be a list the same length as categories "
@@ -358,44 +365,48 @@ def categorical_array(
     the compat gate rejects non-deterministic categorical (its position-keyed
     implementation is deferred), so reaching it here is a wiring bug.
     """
-    categories, weights = _categorical_config(cfg)
-    if not deterministic:
-        raise ExecutionError(
-            code="out_of_core_categorical_nondeterministic_unsupported",
-            message="out-of-core categorical requires deterministic mode (gate should reject).",
-        )
-    if namespace is None:
-        raise StrategyError(
-            code="categorical_requires_namespace",
-            strategy="categorical",
-            message="deterministic categorical requires a namespace.",
-        )
+    try:
+        categories, weights = _categorical_config(cfg)
+        if not deterministic:
+            raise ExecutionError(
+                code=reasons.runtime.OUT_OF_CORE_CATEGORICAL_NONDETERMINISTIC_UNSUPPORTED,
+                message="out-of-core categorical requires deterministic mode (gate should reject).",
+            )
+        if namespace is None:
+            raise StrategyError(
+                code=reasons.runtime.CATEGORICAL_REQUIRES_NAMESPACE,
+                strategy="categorical",
+                message="deterministic categorical requires a namespace.",
+            )
 
-    out: list[Any] = []
-    if weights is None:
-        pool_size = len(categories)
-        for value in _array_to_pylist(values):
-            if _is_missing(value):
-                out.append(None)
-                continue
-            idx = derive_index(
-                job_seed, namespace, _canonicalize_source(value), pool_size=pool_size
-            )
-            out.append(categories[idx])
-    else:
-        cdf = _build_cdf(weights)
-        for value in _array_to_pylist(values):
-            if _is_missing(value):
-                out.append(None)
-                continue
-            bucket = derive_index(
-                job_seed, namespace, _canonicalize_source(value), pool_size=_WEIGHTED_CDF_RES
-            )
-            cat_idx = bisect.bisect_right(cdf, bucket)
-            if cat_idx >= len(categories):
-                cat_idx = len(categories) - 1
-            out.append(categories[cat_idx])
-    return pa.array(out, from_pandas=True)
+        out: list[Any] = []
+        if weights is None:
+            pool_size = len(categories)
+            for value in _array_to_pylist(values):
+                if _is_missing(value):
+                    out.append(None)
+                    continue
+                idx = derive_index(
+                    job_seed, namespace, _canonicalize_source(value), pool_size=pool_size
+                )
+                out.append(categories[idx])
+        else:
+            cdf = _build_cdf(weights)
+            for value in _array_to_pylist(values):
+                if _is_missing(value):
+                    out.append(None)
+                    continue
+                bucket = derive_index(
+                    job_seed, namespace, _canonicalize_source(value), pool_size=_WEIGHTED_CDF_RES
+                )
+                cat_idx = bisect.bisect_right(cdf, bucket)
+                if cat_idx >= len(categories):
+                    cat_idx = len(categories) - 1
+                out.append(categories[cat_idx])
+        return pa.array(out, from_pandas=True)
+    except BaseException:
+        del job_seed
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -422,7 +433,7 @@ def group_b_output_type(
         if not isinstance(token, str):
             if source_type is None:
                 raise ExecutionError(
-                    code="out_of_core_source_schema_required",
+                    code=reasons.runtime.OUT_OF_CORE_SOURCE_SCHEMA_REQUIRED,
                     message="text_redact with a non-string token passes the source type through.",
                 )
             return source_type

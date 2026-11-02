@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 
+from decoy_engine import reasons
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.validation.post._scan import ScanContext, ScanOutcome, column_values
 
@@ -54,7 +55,7 @@ def run_format_rules(ctx: ScanContext) -> ScanOutcome:
                 failed = True
             warnings.append(
                 QualityWarning(
-                    code="format_rule_violation",
+                    code=reasons.warning.FORMAT_RULE_VIOLATION,
                     provider=provider,
                     column=col_name,
                     detail={

@@ -277,6 +277,15 @@ def test_the_reserved_list_contains_numexpr_pandas_and_python_names() -> None:
     assert len(set(functions)) == 48
 
 
+def test_type_is_reserved_on_every_interpreter() -> None:
+    # `type` became a soft keyword in 3.12. The list is frozen rather than derived from the
+    # running interpreter, so a config validates identically on 3.10, 3.11 and 3.12.
+    assert "type" in RESERVED_NAMES
+    with pytest.raises(ValidationError) as info:
+        parse_when("type == 'a'")
+    assert info.value.code == WHEN_OUTSIDE_GRAMMAR_CODE
+
+
 @pytest.mark.parametrize("name", sorted(RESERVED_NAMES))
 def test_every_reserved_name_is_refused_as_a_column_reference(name: str) -> None:
     with pytest.raises(ValidationError) as info:

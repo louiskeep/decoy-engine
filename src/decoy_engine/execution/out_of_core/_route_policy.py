@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Final
 
 import pyarrow.parquet as pq
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core._memory_estimate import memory_limit_for
 from decoy_engine.execution.out_of_core._reorder_budget import (
@@ -81,12 +82,12 @@ def resolve_reorder_threshold_rows(value: int | None) -> int:
         return REORDER_PARENT_KEY_THRESHOLD
     if isinstance(value, bool) or not isinstance(value, int):
         raise ExecutionError(
-            code="out_of_core_reorder_threshold_invalid",
+            code=reasons.runtime.OUT_OF_CORE_REORDER_THRESHOLD_INVALID,
             message=(f"out_of_core_reorder_threshold_rows must be an int or None, got {value!r}."),
         )
     if value < 0:
         raise ExecutionError(
-            code="out_of_core_reorder_threshold_invalid",
+            code=reasons.runtime.OUT_OF_CORE_REORDER_THRESHOLD_INVALID,
             message=f"out_of_core_reorder_threshold_rows must be >= 0, got {value}.",
         )
     return value
@@ -187,7 +188,7 @@ def validate_outgoing_parent_columns(
         for parent_col in edge.parent_columns:
             if parent_col not in names:
                 raise ExecutionError(
-                    code="out_of_core_parent_column_missing",
+                    code=reasons.runtime.OUT_OF_CORE_PARENT_COLUMN_MISSING,
                     message=f"parent source table has no column {parent_col!r}.",
                 )
 
@@ -238,7 +239,7 @@ def _table_order(
                 heapq.heappush(ready, child)
     if len(ordered) != len(tables):
         raise ExecutionError(
-            code="out_of_core_relationship_cycle",
+            code=reasons.runtime.OUT_OF_CORE_RELATIONSHIP_CYCLE,
             message="out-of-core route requires an acyclic table graph.",
         )
     return ordered

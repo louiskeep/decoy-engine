@@ -14,6 +14,8 @@ from collections.abc import Mapping
 
 import polars as pl
 
+from decoy_engine.fileaccess.adapters import polars as polars_adapter
+from decoy_engine.subset._io import open_input
 from decoy_engine.subset._types import SeedSpec, SubsetEdge, SubsetSource
 
 # Reserved row-index column name. Preflight fails (code subset_reserved_column)
@@ -52,6 +54,7 @@ def load_key_frames(
     frames: dict[str, pl.DataFrame] = {}
     for table in sorted(sources):
         cols = key_columns_needed(table, edges, seeds)
-        lazy = pl.scan_parquet(sources[table].path).with_row_index(RI)
-        frames[table] = lazy.select([RI, *cols]).collect()
+        with open_input(sources[table], table) as handle:
+            lazy = polars_adapter.scan_parquet(handle).with_row_index(RI)
+            frames[table] = polars_adapter.collect(handle, lazy.select([RI, *cols]))
     return frames

@@ -89,7 +89,7 @@ def _faker_column(
 
 def _config(*columns: dict, seed: int = 20260830) -> dict:
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed, "post_validation": False},
         "sources": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
         "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
@@ -702,7 +702,7 @@ def _config_on_disk(source: pa.Table, *columns: dict, seed: int = 20260830) -> d
     path = f"{_ON_DISK_SOURCE_DIR}/src_{_on_disk_source_counter}.parquet"
     pq.write_table(source, path)
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed, "post_validation": False},
         "sources": {"t": {"type": "file", "format": "parquet", "path": path}},
         "targets": {"t": {"type": "file", "format": "parquet", "path": path + ".out"}},

@@ -1,6 +1,6 @@
 """text_mask strategy (SP-07, 2026-06-28): span-level PII masking with per-detector dispatch.
 
-Walks each cell with ``storm.detectors.iter_spans`` and masks each matched span
+Walks each cell with ``detection.detectors.iter_spans`` and masks each matched span
 using a per-detector strategy. Non-matched text portions are controlled by
 ``unmatched_span_policy`` (default: ``redact``).
 
@@ -8,8 +8,7 @@ Cross-cell keyed determinism: for the ``faker`` and ``date_shift`` span
 strategies, each span is masked by deriving a per-value key as
 HMAC-SHA256(mask_key, matched_text) (``_span_key``). The same real value in
 any two cells always produces the same masked value regardless of surrounding
-context; the context is intentionally excluded from the key so cross-cell
-consistency holds.
+context; the context is intentionally excluded from the key so cross-cell consistency holds.
 
 FF1 keying (Task 5.2 plan P3-final; BEHAVIOR CHANGE from the pre-FF1 model):
 the ``fpe`` span strategy does NOT use ``_span_key``. It is keyed like the
@@ -28,7 +27,7 @@ reproducibility and in-core/out-of-core parity always hold for every span
 source, and the cross-cell guarantee above holds in full for the regex
 detectors (whose detector_id is a function of the value's shape alone). It
 does NOT hold for the one context-SENSITIVE span source: opt-in spaCy NER
-(``extra_spans=`` from ``storm.ner.iter_ner_spans``). NER assigns the
+(``extra_spans=`` from ``detection.ner.iter_ner_spans``). NER assigns the
 ``detector_id`` (person_name vs location) from surrounding context, and the
 synthesis STRATEGY + faker method are selected by detector_id, so an
 ambiguous surface string (e.g. "Jordan" classified as a person in one cell
@@ -38,8 +37,8 @@ therefore the chosen faker method, differs. Cross-cell synthetic consistency
 is thus guaranteed only for unambiguous entities under NER; it is not a
 regression in key/mask determinism.
 
-STORM single source of truth: ``iter_spans`` is called directly from
-``storm.detectors``; any detector added to ``_SPAN_DETECTORS`` is automatically
+Pre-scan single source of truth: ``iter_spans`` is called directly from
+``detection.detectors``; any detector added to ``_SPAN_DETECTORS`` is automatically
 available to ``text_mask`` in the same release. No separate detector registry.
 
 Raw-value isolation: ``matched_text`` is never emitted to logs or evidence.
@@ -86,7 +85,7 @@ NIST SP 800-38G FF1 (AES-256) for the fpe span strategy, matching the column
 ``fpe`` strategy (``transforms/fpe.py``, ``transforms/_ff1.py``).
 See: https://datatracker.ietf.org/doc/html/rfc2104
 
-Methodology: reuses STORM ``iter_spans`` (single detector source),
+Methodology: reuses Pre-scan ``iter_spans`` (single detector source),
 ``fpe_encrypt_value`` (NIST SP 800-38G FF1; see ``transforms/fpe.py``), and
 stdlib HMAC for the faker/date_shift per-span key derivation. Per-detector
 defaults documented in ``DETECTOR_DEFAULTS``.
@@ -94,7 +93,7 @@ defaults documented in ``DETECTOR_DEFAULTS``.
 TX-2 (2026-07-20): the ``text_mask`` strategy handler (``execution/_strategies/
 _text_mask.py``) and its out-of-core twin (``execution/out_of_core/
 _mask_group_c.py``) opt-in NER the same way ``text_redact`` does (WS2): resolve
-``storm.ner.iter_ner_spans`` and pass the result as this module's ``extra_spans``.
+``detection.ner.iter_ner_spans`` and pass the result as this module's ``extra_spans``.
 No new methodology here -- it reuses the spaCy NER pattern already registered for
 ``detection/ner.py`` and this module's own already-registered HMAC-SHA256 keyed span
 determinism. The one addition specific to this module is a ``location`` entry in
@@ -112,11 +111,14 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
+from decoy_engine import reasons
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.detection.detectors import Span, iter_spans
 from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
 from decoy_engine.transforms._faker_span import shared_faker
 from decoy_engine.transforms._text_mask_splice import splice_spans, warn_passthrough_unmatched
+from decoy_engine.transforms._text_mask_synthetic import _synthetic_span_value
 from decoy_engine.transforms.date_shift import _COMMON_FORMATS
 from decoy_engine.transforms.fpe import (
     _CHARSETS,
@@ -143,7 +145,7 @@ _DEFAULT_TOKEN: str = "[REDACTED]"  # noqa: S105 - redaction placeholder, not a 
 # TIER 2 - NER/custom-only detectors (defaults apply ONLY when spans are
 #   supplied via extra_spans= or custom=):
 #   These entries define sensible defaults for operators who inject spans
-#   from NER (storm.ner.iter_ner_spans -> extra_spans=) or custom= patterns.
+#   from NER (detection.ner.iter_ner_spans -> extra_spans=) or custom= patterns.
 #   Under the BUILT-IN path they are UNREACHABLE - iter_spans never emits
 #   a span with these detector_ids because name-hint-only regexes are
 #   intentionally excluded from _SPAN_DETECTORS.
@@ -253,101 +255,12 @@ def _span_key(mask_key: bytes, matched_text: str) -> bytes:
     Raw-value isolation: this function consumes ``matched_text`` internally
     to produce keying material only; it never appears in logs or evidence.
     """
-    msg = matched_text.encode("utf-8", errors="replace")
-    return _hmac_mod.new(mask_key, msg, hashlib.sha256).digest()
-
-
-def _synthetic_digits(seed_key: bytes, charset: str, length: int) -> str:
-    """``length`` deterministic keyed characters over ``charset`` (RFC 2104
-    HMAC-SHA256 counter-mode selection, the same style of keyed-deterministic
-    construction as ``_span_key`` / ``derive_index`` elsewhere in the engine).
-    Pure character generation, no format/checksum awareness -- callers place
-    the result and, where a scheme applies, overwrite its check-digit
-    position. Not FF1; carries no reversibility claim of any kind."""
-    radix = len(charset)
-    out: list[str] = []
-    counter = 0
-    while len(out) < length:
-        block = _hmac_mod.new(
-            seed_key, f"fpe-sub-floor-synthetic/v1:{counter}".encode(), hashlib.sha256
-        ).digest()
-        for byte in block:
-            if len(out) >= length:
-                break
-            out.append(charset[byte % radix])
-        counter += 1
-    return "".join(out)
-
-
-# Structural body rule per checksum scheme reachable through `_FPE_CONFIG`
-# (pan -> luhn, npi -> npi): how many leading characters of the in-charset
-# body are PINNED from the source (carrying no more information than the
-# real FF1 checksum-mode encrypt path already pins the same way -- see
-# `_fpe_checksum_permute`'s "npi" branch) versus synthesized, before the
-# scheme's own check digit is computed and appended. Luhn has no structural
-# pin (any digit string is a valid Luhn body); NPI pins its single leading
-# digit (NPPES requires 1 or 2, so copying the source's actual leading digit
-# keeps the synthetic value NPI-format-valid without leaking the other 9).
-_SYNTHETIC_CHECKSUM_PINNED_PREFIX: dict[str, int] = {"luhn": 0, "npi": 1}
-
-
-def _synthetic_span_value(
-    seed_key: bytes, matched_text: str, charset: str, checksum: str | None
-) -> str:
-    """A deterministic, non-reversible, valid-format replacement for
-    ``matched_text``, keyed on ``seed_key``.
-
-    Used ONLY for the ``sub_floor_span`` ``"synthetic"`` policy: a span whose
-    domain is below the FF1 floor, or whose checksum failed validation,
-    cannot be format-preserving-ENCRYPTED (no bijection to invert, or no
-    honest source to permute), but the operator may still want a
-    plausible-looking, deterministic stand-in rather than a bare redaction
-    token.
-
-    Round-2 LOW-3 remediation: out-of-charset characters (format separators,
-    e.g. the dashes in a PAN written ``4111-1111-1111-1111``) are preserved
-    verbatim at their original positions -- mirroring the real FF1 path's
-    ``preserve_separators=True`` -- rather than overwritten with synthetic
-    digits. And for a checksum-configured detector (pan/npi), the LAST
-    in-charset character is the scheme's own recomputed check digit (via
-    ``checksums.calc_check_digit``), not another synthetic digit: a
-    'valid-format' synthetic PAN/NPI must actually pass the scheme's check,
-    the same claim the real encrypt path makes for its output.
-    """
-    charset_set = set(charset)
-    positions = [i for i, ch in enumerate(matched_text) if ch in charset_set]
-    body_len = len(positions)
-    out = list(matched_text)
-    if not positions:
-        return matched_text
-
-    pinned_prefix = _SYNTHETIC_CHECKSUM_PINNED_PREFIX.get(checksum) if checksum else None
-    if checksum is not None and pinned_prefix is not None and body_len > pinned_prefix:
-        # Checksum-backed: pin the scheme's structural prefix (if any) from
-        # the source, synthesize the rest of the body, then overwrite the
-        # last in-charset position with the recomputed check digit -- exactly
-        # the pin/permute/check-digit shape `_fpe_checksum_permute` uses for
-        # the same two schemes, substituting keyed synthesis for FF1
-        # permutation on the body.
-        from decoy_engine.checksums import calc_check_digit
-
-        pinned = "".join(matched_text[positions[i]] for i in range(pinned_prefix))
-        synth_body_len = body_len - pinned_prefix - 1  # minus pin, minus check digit
-        synth_body = _synthetic_digits(seed_key, charset, synth_body_len)
-        body = pinned + synth_body  # everything but the check digit
-        check_digit = calc_check_digit(checksum, body)
-        for offset, ch in enumerate(body):
-            out[positions[offset]] = ch
-        out[positions[-1]] = check_digit
-    else:
-        # No checksum scheme (ssn/us_phone/us_zip/fax_number), or the matched
-        # span is too short for the scheme's own structural minimum (should
-        # not happen given the detector's own regex already enforces length;
-        # defensive fallback to plain synthetic digits rather than crash).
-        synth = _synthetic_digits(seed_key, charset, body_len)
-        for offset, ch in enumerate(synth):
-            out[positions[offset]] = ch
-    return "".join(out)
+    try:
+        msg = matched_text.encode("utf-8", errors="replace")
+        return _hmac_mod.new(mask_key, msg, hashlib.sha256).digest()
+    except BaseException:
+        del mask_key
+        raise
 
 
 def _apply_sub_floor_span_policy(
@@ -364,36 +277,40 @@ def _apply_sub_floor_span_policy(
     invalid-checksum false-positive match), per the operator's
     ``sub_floor_span`` choice. No default: an unset policy fails closed.
     """
-    if sub_floor_span_policy is None:
-        raise FpeUnencryptableError(
-            f"span detector {detector_id!r} matched a value FF1 cannot encrypt "
-            f"({reason_code}) and no `sub_floor_span` policy ('redact' or "
-            "'synthetic') is configured. The engine fails closed rather than "
-            "silently choose a fallback; set sub_floor_span on this column.",
-            code="fpe.unencryptable_domain",
+    try:
+        if sub_floor_span_policy is None:
+            raise FpeUnencryptableError(
+                f"span detector {detector_id!r} matched a value FF1 cannot encrypt "
+                f"({reason_code}) and no `sub_floor_span` policy ('redact' or "
+                "'synthetic') is configured. The engine fails closed rather than "
+                "silently choose a fallback; set sub_floor_span on this column.",
+                code=reasons.runtime.FPE__UNENCRYPTABLE_DOMAIN,
+            )
+        if sub_floor_span_policy not in ("redact", "synthetic"):
+            raise FpeUnencryptableError(
+                f"unknown sub_floor_span policy {sub_floor_span_policy!r} for detector "
+                f"{detector_id!r}; expected 'redact' or 'synthetic'.",
+                code=reasons.runtime.FPE__UNENCRYPTABLE_DOMAIN,
+            )
+        if sub_floor_notices is not None:
+            sub_floor_notices[detector_id] = sub_floor_notices.get(detector_id, 0) + 1
+        # Visible, not silent (plan P3-final): a structured notice at WARNING, never
+        # the matched_text itself (raw-value isolation).
+        _log.warning(
+            "text_mask: detector %s matched a value FF1 cannot encrypt (%s); applying "
+            "the configured sub_floor_span policy %r. This value is NOT reversible.",
+            detector_id,
+            reason_code,
+            sub_floor_span_policy,
         )
-    if sub_floor_span_policy not in ("redact", "synthetic"):
-        raise FpeUnencryptableError(
-            f"unknown sub_floor_span policy {sub_floor_span_policy!r} for detector "
-            f"{detector_id!r}; expected 'redact' or 'synthetic'.",
-            code="fpe.unencryptable_domain",
-        )
-    if sub_floor_notices is not None:
-        sub_floor_notices[detector_id] = sub_floor_notices.get(detector_id, 0) + 1
-    # Visible, not silent (plan P3-final): a structured notice at WARNING, never
-    # the matched_text itself (raw-value isolation).
-    _log.warning(
-        "text_mask: detector %s matched a value FF1 cannot encrypt (%s); applying "
-        "the configured sub_floor_span policy %r. This value is NOT reversible.",
-        detector_id,
-        reason_code,
-        sub_floor_span_policy,
-    )
-    if sub_floor_span_policy == "redact":
-        return token
-    charset_name, checksum = _FPE_CONFIG.get(detector_id, ("digits", None))
-    charset = _CHARSETS.get(charset_name, charset_name)
-    return _synthetic_span_value(seed_key, matched_text, charset, checksum)
+        if sub_floor_span_policy == "redact":
+            return token
+        charset_name, checksum = _FPE_CONFIG.get(detector_id, ("digits", None))
+        charset = _CHARSETS.get(charset_name, charset_name)
+        return _synthetic_span_value(seed_key, matched_text, charset, checksum)
+    except BaseException:
+        del seed_key
+        raise
 
 
 def _mask_fpe(
@@ -428,46 +345,50 @@ def _mask_fpe(
     propagates and fails the job, per the plan's removal of the old
     catch-all `except -> static token` fallback.
     """
-    cfg = _FPE_CONFIG.get(detector_id, ("digits", None))
-    charset_name, checksum = cfg
-    charset = _CHARSETS.get(charset_name, charset_name)
-    span_namespace = f"text.{detector_id}"
-    key = derive(mask_key, span_namespace, FF1_KEY_LABEL)
-    tweak = build_ff1_tweak(FF1_TWEAK_SCOPE_TEXT_SPAN, detector_id)
     try:
-        return fpe_encrypt_value(
-            matched_text,
-            key,
-            charset,
-            tweak,
-            preserve_separators=True,
-            validate_luhn=False,
-            checksum=checksum,
-        )
-    except FpeUnencryptableError as exc:
-        if exc.code != "fpe.unencryptable_domain":
-            raise
-        return _apply_sub_floor_span_policy(
-            matched_text,
-            key,
-            detector_id,
-            token,
-            reason_code="sub_minimum_domain",
-            sub_floor_span_policy=sub_floor_span_policy,
-            sub_floor_notices=sub_floor_notices,
-        )
-    except FpeChecksumError as exc:
-        if exc.code not in ("fpe.checksum_invalid_source", "fpe.checksum_unsupported"):
-            raise
-        return _apply_sub_floor_span_policy(
-            matched_text,
-            key,
-            detector_id,
-            token,
-            reason_code="checksum_invalid",
-            sub_floor_span_policy=sub_floor_span_policy,
-            sub_floor_notices=sub_floor_notices,
-        )
+        cfg = _FPE_CONFIG.get(detector_id, ("digits", None))
+        charset_name, checksum = cfg
+        charset = _CHARSETS.get(charset_name, charset_name)
+        span_namespace = f"text.{detector_id}"
+        key_box = OpaqueBox(derive(mask_key, span_namespace, FF1_KEY_LABEL))
+        tweak = build_ff1_tweak(FF1_TWEAK_SCOPE_TEXT_SPAN, detector_id)
+        try:
+            return fpe_encrypt_value(
+                matched_text,
+                key_box.open()[0],
+                charset,
+                tweak,
+                preserve_separators=True,
+                validate_luhn=False,
+                checksum=checksum,
+            )
+        except FpeUnencryptableError as exc:
+            if exc.code != "fpe.unencryptable_domain":
+                raise
+            return _apply_sub_floor_span_policy(
+                matched_text,
+                key_box.open()[0],
+                detector_id,
+                token,
+                reason_code=reasons.runtime.SUB_MINIMUM_DOMAIN,
+                sub_floor_span_policy=sub_floor_span_policy,
+                sub_floor_notices=sub_floor_notices,
+            )
+        except FpeChecksumError as exc:
+            if exc.code not in ("fpe.checksum_invalid_source", "fpe.checksum_unsupported"):
+                raise
+            return _apply_sub_floor_span_policy(
+                matched_text,
+                key_box.open()[0],
+                detector_id,
+                token,
+                reason_code=reasons.runtime.CHECKSUM_INVALID,
+                sub_floor_span_policy=sub_floor_span_policy,
+                sub_floor_notices=sub_floor_notices,
+            )
+    except BaseException:
+        del mask_key
+        raise
 
 
 def _mask_faker(matched_text: str, span_key: bytes, detector_id: str) -> str:
@@ -481,18 +402,22 @@ def _mask_faker(matched_text: str, span_key: bytes, detector_id: str) -> str:
     the Faker call uses only the derived integer seed. The reused thread-local
     ``shared_faker`` is reseeded per span (byte-identical; seed_instance resets).
     """
-    method_name = _FAKER_METHOD.get(detector_id, "name")
-    seed = int.from_bytes(span_key[:4], "big")
-    fake = shared_faker()
-    fake.seed_instance(seed)
-    method = getattr(fake, method_name, None)
-    if callable(method):
-        try:
-            return str(method())
-        except Exception:
-            pass
-    # Fallback: generic name if the specific method is unavailable
-    return str(fake.name())
+    try:
+        method_name = _FAKER_METHOD.get(detector_id, "name")
+        seed = int.from_bytes(span_key[:4], "big")
+        fake = shared_faker()
+        fake.seed_instance(seed)
+        method = getattr(fake, method_name, None)
+        if callable(method):
+            try:
+                return str(method())
+            except Exception:
+                pass
+        # Fallback: generic name if the specific method is unavailable
+        return str(fake.name())
+    except BaseException:
+        del span_key
+        raise
 
 
 def _detect_date_format(text: str) -> str | None:
@@ -522,18 +447,22 @@ def _mask_date_shift(
     If the date cannot be parsed (unrecognised format), the original text is
     returned unchanged rather than failing.
     """
-    fmt = _detect_date_format(matched_text)
-    if fmt is None:
-        return matched_text
     try:
-        dt = datetime.strptime(matched_text, fmt)
-    except ValueError:
-        return matched_text
-    range_size = max_days - min_days + 1
-    offset_seed = int.from_bytes(span_key[:8], "big")
-    shift = min_days + (offset_seed % range_size)
-    shifted = dt + timedelta(days=shift)
-    return shifted.strftime(fmt)
+        fmt = _detect_date_format(matched_text)
+        if fmt is None:
+            return matched_text
+        try:
+            dt = datetime.strptime(matched_text, fmt)
+        except ValueError:
+            return matched_text
+        range_size = max_days - min_days + 1
+        offset_seed = int.from_bytes(span_key[:8], "big")
+        shift = min_days + (offset_seed % range_size)
+        shifted = dt + timedelta(days=shift)
+        return shifted.strftime(fmt)
+    except BaseException:
+        del span_key
+        raise
 
 
 def _mask_span(
@@ -556,26 +485,30 @@ def _mask_span(
     ``_span_key`` (see ``_mask_fpe``), so it is handled BEFORE ``_span_key``
     is computed; ``faker``/``date_shift`` still use it, unchanged.
     """
-    if strategy == "fpe":
-        return _mask_fpe(
-            span.matched_text,
-            mask_key,
-            span.detector_id,
-            str(cfg.get("token", _DEFAULT_TOKEN)),
-            sub_floor_span_policy=sub_floor_span_policy,
-            sub_floor_notices=sub_floor_notices,
-        )
-    span_key = _span_key(mask_key, span.matched_text)
-    if strategy == "faker":
-        return _mask_faker(span.matched_text, span_key, span.detector_id)
-    if strategy == "date_shift":
-        min_days = int(cfg.get("min_days", -365))
-        max_days = int(cfg.get("max_days", 365))
-        return _mask_date_shift(span.matched_text, span_key, min_days, max_days)
-    if strategy == "passthrough":
-        return span.matched_text
-    # "redact" and any unknown strategy: replace with token (fail-safe).
-    return str(cfg.get("token", _DEFAULT_TOKEN))
+    try:
+        if strategy == "fpe":
+            return _mask_fpe(
+                span.matched_text,
+                mask_key,
+                span.detector_id,
+                str(cfg.get("token", _DEFAULT_TOKEN)),
+                sub_floor_span_policy=sub_floor_span_policy,
+                sub_floor_notices=sub_floor_notices,
+            )
+        span_key_box = OpaqueBox(_span_key(mask_key, span.matched_text))
+        if strategy == "faker":
+            return _mask_faker(span.matched_text, span_key_box.open()[0], span.detector_id)
+        if strategy == "date_shift":
+            min_days = int(cfg.get("min_days", -365))
+            max_days = int(cfg.get("max_days", 365))
+            return _mask_date_shift(span.matched_text, span_key_box.open()[0], min_days, max_days)
+        if strategy == "passthrough":
+            return span.matched_text
+        # "redact" and any unknown strategy: replace with token (fail-safe).
+        return str(cfg.get("token", _DEFAULT_TOKEN))
+    except BaseException:
+        del mask_key
+        raise
 
 
 def mask_cell_with_spans(
@@ -596,33 +529,38 @@ def mask_cell_with_spans(
     the output is byte-identical to `mask_cell`. The native route builds them from the compiled
     detection kernel; every other argument has `mask_cell`'s meaning.
     """
-    if not isinstance(text, str) or not text:
-        return text
+    try:
+        if not isinstance(text, str) or not text:
+            return text
 
-    if unmatched_span_policy == "passthrough":
-        warn_passthrough_unmatched(_log)
+        if unmatched_span_policy == "passthrough":
+            warn_passthrough_unmatched(_log)
 
-    effective_map: dict[str, str] = dict(DETECTOR_DEFAULTS)
-    if strategy_map:
-        effective_map.update(strategy_map)
+        effective_map: dict[str, str] = dict(DETECTOR_DEFAULTS)
+        if strategy_map:
+            effective_map.update(strategy_map)
 
-    extra_cfg: dict[str, Any] = dict(cfg or {})
-    extra_cfg.setdefault("token", token)
+        extra_cfg: dict[str, Any] = dict(cfg or {})
+        extra_cfg.setdefault("token", token)
 
-    return splice_spans(
-        text,
-        spans,
-        mask_span=lambda span: _mask_span(
-            span,
-            mask_key,
-            effective_map.get(span.detector_id, "redact"),
-            extra_cfg,
-            sub_floor_span_policy=sub_floor_span_policy,
-            sub_floor_notices=sub_floor_notices,
-        ),
-        unmatched_span_policy=unmatched_span_policy,
-        token=token,
-    )
+        key_box = OpaqueBox(mask_key)  # the lambda's cell holds only the box (`_opaque`)
+        return splice_spans(
+            text,
+            spans,
+            mask_span=lambda span: _mask_span(
+                span,
+                key_box.open()[0],
+                effective_map.get(span.detector_id, "redact"),
+                extra_cfg,
+                sub_floor_span_policy=sub_floor_span_policy,
+                sub_floor_notices=sub_floor_notices,
+            ),
+            unmatched_span_policy=unmatched_span_policy,
+            token=token,
+        )
+    except BaseException:
+        del mask_key
+        raise
 
 
 def mask_cell(
@@ -640,7 +578,7 @@ def mask_cell(
 ) -> Any:
     """Mask PII spans in a single free-text cell and return the masked string.
 
-    Detects PII spans via ``storm.detectors.iter_spans`` (STORM single source
+    Detects PII spans via ``detection.detectors.iter_spans`` (Pre-scan single source
     of truth), dispatches each span to its configured strategy, and applies
     ``unmatched_span_policy`` to the non-PII portions. Returns the reassembled
     string.
@@ -659,7 +597,7 @@ def mask_cell(
                               Unknown IDs are silently skipped (``iter_spans``
                               contract).
         extra_spans:          Pre-computed spans to merge with built-in detection
-                              results (e.g. NER hits from ``storm.ner.iter_ner_spans``).
+                              results (e.g. NER hits from ``detection.ner.iter_ner_spans``).
                               Resolved via the same leftmost-then-longest overlap
                               sweep as built-in spans. Use this to mask Tier-2
                               detectors (person_name, iso_date, etc.) that are
@@ -692,17 +630,21 @@ def mask_cell(
                               caller-level rollup, e.g. one QualityWarning per
                               column instead of one log line per cell).
     """
-    if not isinstance(text, str) or not text:
-        return text
+    try:
+        if not isinstance(text, str) or not text:
+            return text
 
-    return mask_cell_with_spans(
-        text,
-        iter_spans(text, detector_ids, extra_spans=extra_spans),
-        mask_key,
-        strategy_map=strategy_map,
-        unmatched_span_policy=unmatched_span_policy,
-        token=token,
-        cfg=cfg,
-        sub_floor_span_policy=sub_floor_span_policy,
-        sub_floor_notices=sub_floor_notices,
-    )
+        return mask_cell_with_spans(
+            text,
+            iter_spans(text, detector_ids, extra_spans=extra_spans),
+            mask_key,
+            strategy_map=strategy_map,
+            unmatched_span_policy=unmatched_span_policy,
+            token=token,
+            cfg=cfg,
+            sub_floor_span_policy=sub_floor_span_policy,
+            sub_floor_notices=sub_floor_notices,
+        )
+    except BaseException:
+        del mask_key
+        raise

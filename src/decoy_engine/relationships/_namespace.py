@@ -31,6 +31,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.profile._types import Profile, Relationship
 
@@ -139,7 +140,7 @@ class NamespaceRegistry:
         if child_ns is not None:
             return child_ns
         raise NamespaceConfigError(
-            code="namespace_missing",
+            code=reasons.config.NAMESPACE_MISSING,
             path=(
                 f"relationships[{relationship.parent_table}.{relationship.parent_columns}->"
                 f"{relationship.child_table}.{relationship.child_columns}]"
@@ -330,7 +331,7 @@ def build_namespace_registry(
                         namespace_to_columns[explicit_ns].append(key)
             elif key not in column_owner:
                 raise NamespaceConfigError(
-                    code="namespace_missing",
+                    code=reasons.config.NAMESPACE_MISSING,
                     path=f"tables.{table_name}.columns.{col_name}",
                     message=(
                         f"Column {table_name}.{col_name} declares "
@@ -351,7 +352,7 @@ def build_namespace_registry(
 
 def _raise_ambiguity(table: str, columns: tuple[str, ...], conflicting: list[str]) -> None:
     raise NamespaceConfigError(
-        code="namespace_ambiguity",
+        code=reasons.config.NAMESPACE_AMBIGUITY,
         path=f"namespaces.{{{','.join(conflicting)}}}.declared_by",
         message=(
             f"Column {table}.{columns} is declared in multiple namespaces: "

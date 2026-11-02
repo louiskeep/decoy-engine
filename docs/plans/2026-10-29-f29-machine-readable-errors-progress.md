@@ -1,4 +1,4 @@
-Status: plan
+Status: plan (engine slices E0-E6 built; see [the build record](../records/2026-10-29-f29-engine-build.md). Consumer slices C0-C2 are not started.)
 
 Summary: Give engine errors and progress one versioned reason registry, safe structured records, and enforceable producer boundaries.
 

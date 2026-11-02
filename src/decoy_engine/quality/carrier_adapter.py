@@ -54,6 +54,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from decoy_engine import reasons
+
 # `_validate_bound` is the DP-canonical bound validator: reusing it (rather than
 # re-deriving the finite/order rules here) guarantees the adapter's up-front,
 # data-independent bound check agrees byte-for-byte with what `sanitize_carrier_
@@ -101,14 +103,14 @@ def _validate_column_schema(column_schema: Any) -> dict[str, tuple[float, float]
     on a valid cell but not on an empty frame)."""
     if not isinstance(column_schema, dict):
         raise CarrierError(
-            code="dp_schema_type",
+            code=reasons.quality.DP_SCHEMA_TYPE,
             message=f"column_schema must be a dict, got {type(column_schema).__name__}",
         )
     number_bounds: dict[str, tuple[float, float]] = {}
     for name, spec in column_schema.items():
         if not isinstance(spec, dict):
             raise CarrierError(
-                code="dp_schema_column_type",
+                code=reasons.quality.DP_SCHEMA_COLUMN_TYPE,
                 message=f"column {name!r}: schema entry must be a dict, got {type(spec).__name__}",
             )
         carrier = spec.get("carrier")
@@ -117,20 +119,20 @@ def _validate_column_schema(column_schema: Any) -> dict[str, tuple[float, float]
         # slipping through `in` or raising a raw TypeError.
         if not isinstance(carrier, str) or carrier not in _VALID_CARRIERS:
             raise CarrierError(
-                code="dp_carrier_unknown",
+                code=reasons.quality.DP_CARRIER_UNKNOWN,
                 message=f"column {name!r}: unknown carrier {carrier!r}, expected one of {_VALID_CARRIERS}",
             )
         kind = spec.get("kind")
         if kind is not None:
             if not isinstance(kind, str) or kind not in _KIND_TO_CARRIERS:
                 raise CarrierError(
-                    code="dp_kind_unknown",
+                    code=reasons.quality.DP_KIND_UNKNOWN,
                     message=f"column {name!r}: unknown kind {kind!r}, expected one of {tuple(_KIND_TO_CARRIERS)}",
                 )
             allowed = _KIND_TO_CARRIERS[kind]
             if carrier not in allowed:
                 raise CarrierError(
-                    code="dp_kind_carrier_mismatch",
+                    code=reasons.quality.DP_KIND_CARRIER_MISMATCH,
                     message=(
                         f"column {name!r}: kind {kind!r} does not allow carrier {carrier!r} "
                         f"(allowed: {allowed})"
@@ -140,14 +142,14 @@ def _validate_column_schema(column_schema: Any) -> dict[str, tuple[float, float]
             bounds = spec.get("bounds")
             if not isinstance(bounds, (tuple, list)) or len(bounds) != 2:
                 raise CarrierError(
-                    code="dp_carrier_bounds_missing",
+                    code=reasons.quality.DP_CARRIER_BOUNDS_MISSING,
                     message=f"column {name!r}: a 'number' carrier requires (lower, upper) bounds",
                 )
             lower = _validate_bound(name, "lower", bounds[0])
             upper = _validate_bound(name, "upper", bounds[1])
             if not lower < upper:
                 raise CarrierError(
-                    code="dp_carrier_bounds_order",
+                    code=reasons.quality.DP_CARRIER_BOUNDS_ORDER,
                     message=f"column {name!r}: bounds must satisfy lower < upper, got ({lower}, {upper})",
                 )
             number_bounds[name] = (lower, upper)
@@ -271,14 +273,14 @@ def dataframe_to_carrier_table(df: pd.DataFrame, column_schema: dict[str, dict])
     BEFORE any private cell is read, so they are data-independent."""
     if not isinstance(df, pd.DataFrame):
         raise CarrierError(
-            code="dp_adapter_source_type",
+            code=reasons.quality.DP_ADAPTER_SOURCE_TYPE,
             message=f"source must be a pandas DataFrame, got {type(df).__name__}",
         )
     number_bounds = _validate_column_schema(column_schema)
     missing = [name for name in column_schema if name not in df.columns]
     if missing:
         raise CarrierError(
-            code="dp_adapter_missing_column",
+            code=reasons.quality.DP_ADAPTER_MISSING_COLUMN,
             message=f"DataFrame is missing schema columns: {sorted(missing)}",
         )
     # A schema key that maps to two DataFrame columns makes `df[name]` a
@@ -288,7 +290,7 @@ def dataframe_to_carrier_table(df: pd.DataFrame, column_schema: dict[str, dict])
     duplicated = [name for name in column_schema if list(df.columns).count(name) > 1]
     if duplicated:
         raise CarrierError(
-            code="dp_adapter_duplicate_column",
+            code=reasons.quality.DP_ADAPTER_DUPLICATE_COLUMN,
             message=f"DataFrame has duplicate labels for schema columns: {sorted(duplicated)}",
         )
     row_count = len(df)
@@ -301,7 +303,7 @@ def dataframe_to_carrier_table(df: pd.DataFrame, column_schema: dict[str, dict])
         # Reject any non-Series selection with a coded error before any cell read.
         if not isinstance(series, pd.Series):
             raise CarrierError(
-                code="dp_adapter_ambiguous_column",
+                code=reasons.quality.DP_ADAPTER_AMBIGUOUS_COLUMN,
                 message=(
                     f"column {name!r}: selects a {type(series).__name__}, not a single Series "
                     "(duplicate or partial MultiIndex label)"

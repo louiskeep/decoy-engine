@@ -15,6 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.determinism import derive
 from decoy_engine.execution._adapter import StrategyContext
 from decoy_engine.execution._errors import StrategyError
@@ -42,7 +43,7 @@ class ShuffleStrategyHandler:
         if plan.deterministic:
             if plan.namespace is None:
                 raise StrategyError(
-                    code="shuffle_requires_namespace",
+                    code=reasons.runtime.SHUFFLE_REQUIRES_NAMESPACE,
                     strategy="shuffle",
                     message=f"column {column!r} uses deterministic shuffle but has no namespace.",
                 )

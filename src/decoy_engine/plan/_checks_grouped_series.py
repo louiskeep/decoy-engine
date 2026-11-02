@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.transforms.grouped_series import GROUPED_SERIES_GENERATORS
 
@@ -81,7 +82,7 @@ def check_grouped_series_refs(config: dict[str, Any]) -> None:
             generator = pc.get("generator")
             if generator and str(generator) not in GROUPED_SERIES_GENERATORS:
                 raise PlanCompileError(
-                    code="grouped_series_generator_invalid",
+                    code=reasons.plan.GROUPED_SERIES_GENERATOR_INVALID,
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.generator",
                     message=(
                         f"grouped_series column {col_name!r} in table "
@@ -116,7 +117,7 @@ def check_grouped_series_refs(config: dict[str, Any]) -> None:
             generator = col_entry.get("generator")
             if generator and str(generator) not in GROUPED_SERIES_GENERATORS:
                 raise PlanCompileError(
-                    code="grouped_series_generator_invalid",
+                    code=reasons.plan.GROUPED_SERIES_GENERATOR_INVALID,
                     path=f"tables.{table_name}.generate_columns.{col_name}.generator",
                     message=(
                         f"grouped_series column {col_name!r} in table "
@@ -153,7 +154,7 @@ def _check_ref(
     """Raise PlanCompileError when col_ref is set but not in all_col_names."""
     if col_ref and str(col_ref) not in all_col_names:
         raise PlanCompileError(
-            code=f"grouped_series_missing_{ref_key}_ref",
+            code=reasons.plan.GROUPED_SERIES_MISSING_REF_BY_KEY[ref_key],
             path=f"{path_prefix}.{ref_key}",
             message=(
                 f"grouped_series column {col_name!r} in table {table_name!r} "

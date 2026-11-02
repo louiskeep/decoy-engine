@@ -26,6 +26,7 @@ from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 
 _REG = get_default_registry()
 _GRAPH = RelationshipGraph(edges=(), ordering=())
@@ -112,7 +113,8 @@ class TestOracle:
 
     def test_a_valid_format_is_unchanged(self) -> None:
         out = _oracle(_bp("%Y-%m-%d"), ["2024-06-15"])
-        assert out.output.column("d").to_pylist() == ["2024-06-12"]
+        # Re-pinned under F13 because job_seed keying was removed (was 2024-06-12).
+        assert out.output.column("d").to_pylist() == ["2024-06-02"]
 
 
 # ── nested child, run time ───────────────────────────────────────────────────
@@ -122,7 +124,7 @@ class _Ctx:
     def __init__(self) -> None:
         self.row_errors: list = []
         self.job_seed = _SEED
-        self.mask_key = _SEED
+        self.mask_key = THROWAWAY_KEY_PROVIDER.mask_key()
         self.row_offset = 0
 
 
@@ -172,7 +174,7 @@ class TestNestedChildAtRunTime:
     def test_a_valid_child_still_masks(self) -> None:
         df = pd.DataFrame({"data": [json.dumps({"seen": "2024-06-15"})]})
         out, _ = NestedStrategyHandler().run(df, "data", _nested_seed("%Y-%m-%d"), _Ctx())
-        assert json.loads(out["data"].iloc[0])["seen"] == "2024-06-12"
+        assert json.loads(out["data"].iloc[0])["seen"] == "2024-06-02"  # F13 re-pin
 
 
 # ── out-of-core kernel and schema resolution ─────────────────────────────────

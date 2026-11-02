@@ -49,6 +49,7 @@ from typing import Any
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 
 # Type alias for the already-generated column snapshot passed through the
@@ -91,7 +92,7 @@ class DerivedAggregateConfig:
         op = cfg.get("op")
         if not op:
             raise PlanCompileError(
-                code="derived_aggregate_op_missing",
+                code=reasons.plan.DERIVED_AGGREGATE_OP_MISSING,
                 path="provider_config.op",
                 message=(
                     "'op' is required for the derived_aggregate strategy. "
@@ -101,7 +102,7 @@ class DerivedAggregateConfig:
         op = str(op)
         if op not in AGGREGATE_OPS:
             raise PlanCompileError(
-                code="derived_aggregate_op_invalid",
+                code=reasons.plan.DERIVED_AGGREGATE_OP_INVALID,
                 path="provider_config.op",
                 message=(f"'op' must be one of {sorted(AGGREGATE_OPS)!r}; got {op!r}."),
             )
@@ -109,7 +110,7 @@ class DerivedAggregateConfig:
         column = cfg.get("column")
         if not column:
             raise PlanCompileError(
-                code="derived_aggregate_column_missing",
+                code=reasons.plan.DERIVED_AGGREGATE_COLUMN_MISSING,
                 path="provider_config.column",
                 message=(
                     "'column' is required for the derived_aggregate strategy. "

@@ -1,5 +1,8 @@
 # Decoy DPS Scope B implementation guide
 
+Status: built
+Shipped: scope-B steps 1-9 (commits 3888ab7b through 3e88ac9a) and merge c9914b93 (DPS marginal per-column differential privacy)
+
 ## 1. Context and non-goals
 
 This rebuild replaces the parked Option A Differential Privacy Synthesis implementation at `feat/dps-option-a` commit `fafbb7500fa97dd8b5fa5a5b1fee01324a1dc713`.

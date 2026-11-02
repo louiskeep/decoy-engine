@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.generation.pool._errors import GenerationError
 from decoy_engine.plan._types import ColumnSeed
 
@@ -165,7 +166,7 @@ def sampling_source(
         taken.is_null().to_numpy(), frame_column.isna().to_numpy()
     ):
         raise GenerationError(
-            code="exact_int_null_mask_mismatch",
+            code=reasons.runtime.EXACT_INT_NULL_MASK_MISMATCH,
             message=(
                 f"exact integer source for column {column!r} does not line up with the frame "
                 "(row count or null positions differ); refusing to key from it."

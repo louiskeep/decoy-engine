@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
@@ -45,7 +46,7 @@ def _validated_config(plan: ColumnSeed) -> tuple[str, str | None, PreserveSet | 
         validate_bucket_perturb_config({**cfg, "bucket": bucket})
     except ValueError as exc:
         raise StrategyError(
-            code="bucket_perturb_invalid_config",
+            code=reasons.runtime.BUCKET_PERTURB_INVALID_CONFIG,
             strategy="bucket_perturb",
             message=str(exc),
         ) from exc
@@ -81,7 +82,7 @@ class BucketPerturbStrategyHandler:
     ) -> tuple[pd.DataFrame, list[QualityWarning]]:
         if plan.namespace is None:
             raise StrategyError(
-                code="bucket_perturb_requires_namespace",
+                code=reasons.runtime.BUCKET_PERTURB_REQUIRES_NAMESPACE,
                 strategy="bucket_perturb",
                 message=f"column {column!r} uses bucket_perturb but has no namespace.",
             )

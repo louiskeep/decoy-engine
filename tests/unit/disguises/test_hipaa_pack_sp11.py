@@ -14,7 +14,7 @@ healthcare-payer fixture is SP-13.
 Honest scope notes baked into assertion messages:
 - M11 differential-privacy-grade is NOT provided by any strategy here.
 - LOINC code_set corpus is NOT shipped (carry-forward, SP-09 docs).
-- HCPCS/NDC columns have no registered STORM detectors; the pack cannot
+- HCPCS/NDC columns have no registered detectors; the pack cannot
   route them automatically. Users must configure code_set manually.
 - Free-text: text_mask masks only TIER-1 detector spans (ssn, npi, icd10,
   etc.) in the built-in path. Names and undetected text in clinical_notes
@@ -453,10 +453,10 @@ class TestHonestCoverageClaims:
         )
 
     def test_H5_hcpcs_not_in_field_rules(self):
-        """HCPCS columns have no registered STORM detector; pack cannot route them.
+        """HCPCS columns have no registered detector; pack cannot route them.
 
         The hcpcs corpus exists for manual code_set use, but no 'hcpcs' detector
-        is registered in STORM. Users must configure code_set: hcpcs manually.
+        is registered in Pre-scan. Users must configure code_set: hcpcs manually.
         """
         pack = _hipaa_pack()
         hcpcs_rules = [r for r in pack.field_rules if "hcpcs" in r.detectors]
@@ -466,7 +466,7 @@ class TestHonestCoverageClaims:
         )
 
     def test_H5_clinical_notes_not_in_field_rules(self):
-        """clinical_notes is not a registered STORM detector.
+        """clinical_notes is not a registered detector.
 
         Free-text columns must be configured with text_mask manually in the
         recipe YAML. The pack cannot auto-route them without a registered detector.

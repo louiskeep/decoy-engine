@@ -44,6 +44,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.generation.pool import GenerationError
 
 if TYPE_CHECKING:
@@ -101,7 +102,7 @@ def native_range_exceeded(values: pa.Array, bucket: str, date_format: str) -> bo
     earliest, latest = parsed.min(), parsed.max()
     if pd.isna(earliest):
         return False
-    reach = pd.Timedelta(days=_BUCKET_REACH_DAYS[bucket])
+    reach = pd.Timedelta(_BUCKET_REACH_DAYS[bucket], unit="D")
     return bool(earliest < pd.Timestamp.min + reach or latest > pd.Timestamp.max - reach)
 
 
@@ -139,7 +140,7 @@ def _bucket_start_and_size(
         return start, size
     # Admission guarantees membership; this is the fail-closed second line.
     raise GenerationError(
-        code="bucket_perturb_unrecognized_bucket",
+        code=reasons.runtime.BUCKET_PERTURB_UNRECOGNIZED_BUCKET,
         message=f"bucket_perturb reached the native kernel with unrecognized bucket {bucket!r}",
     )
 
@@ -160,47 +161,51 @@ def _grouped_offsets(
     offsets back to their original positions. Byte-identical to the oracle's
     per-row `int.from_bytes(derive(...)[:8], "big") % bucket_size`.
     """
-    n = len(size)
-    offsets = np.empty(n, dtype=np.uint64)
-    for s in np.unique(size):
-        group_mask = size == s
-        subset = valid_values.filter(pa.array(group_mask))
-        idx = index_kernel.derive_index_batch(
-            subset,
-            mask_key=mask_key,
-            namespace=namespace,
-            pool_size=int(s),
-            native_threads=native_threads,
-        )
-        # Runtime invariants on the kernel's own result (mirroring
-        # `native_categorical`): the type check is FIRST so a non-`pa.Array`
-        # result cannot leak an uncoded AttributeError.
-        if not isinstance(idx, pa.Array) or idx.type != pa.uint64():
-            got = idx.type if isinstance(idx, pa.Array) else type(idx).__name__
-            raise GenerationError(
-                code="index_batch_type_mismatch",
-                message=f"derive_index_batch returned {got}, expected a uint64 Arrow array",
+    try:
+        n = len(size)
+        offsets = np.empty(n, dtype=np.uint64)
+        for s in np.unique(size):
+            group_mask = size == s
+            subset = valid_values.filter(pa.array(group_mask))
+            idx = index_kernel.derive_index_batch(
+                subset,
+                mask_key=mask_key,
+                namespace=namespace,
+                pool_size=int(s),
+                native_threads=native_threads,
             )
-        if len(idx) != len(subset):
-            raise GenerationError(
-                code="index_batch_length_mismatch",
-                message=f"derive_index_batch returned {len(idx)} indices for {len(subset)} rows",
-            )
-        if idx.null_count != 0:
-            # The subset is the non-null valid rows, so the kernel must return a
-            # fully-valid offset column; a null here means a null-mask drift.
-            raise GenerationError(
-                code="index_batch_null_mask_mismatch",
-                message="derive_index_batch returned a null offset for a non-null source row",
-            )
-        idx_np = idx.to_numpy(zero_copy_only=False)
-        if idx_np.size and int(idx_np.max()) >= int(s):
-            raise GenerationError(
-                code="index_batch_out_of_bounds",
-                message=f"derive_index_batch returned an offset >= bucket_size {int(s)}",
-            )
-        offsets[group_mask] = idx_np
-    return offsets
+            # Runtime invariants on the kernel's own result (mirroring
+            # `native_categorical`): the type check is FIRST so a non-`pa.Array`
+            # result cannot leak an uncoded AttributeError.
+            if not isinstance(idx, pa.Array) or idx.type != pa.uint64():
+                got = idx.type if isinstance(idx, pa.Array) else type(idx).__name__
+                raise GenerationError(
+                    code=reasons.runtime.INDEX_BATCH_TYPE_MISMATCH,
+                    message=f"derive_index_batch returned {got}, expected a uint64 Arrow array",
+                )
+            if len(idx) != len(subset):
+                raise GenerationError(
+                    code=reasons.runtime.INDEX_BATCH_LENGTH_MISMATCH,
+                    message=f"derive_index_batch returned {len(idx)} indices for {len(subset)} rows",
+                )
+            if idx.null_count != 0:
+                # The subset is the non-null valid rows, so the kernel must return a
+                # fully-valid offset column; a null here means a null-mask drift.
+                raise GenerationError(
+                    code=reasons.runtime.INDEX_BATCH_NULL_MASK_MISMATCH,
+                    message="derive_index_batch returned a null offset for a non-null source row",
+                )
+            idx_np = idx.to_numpy(zero_copy_only=False)
+            if idx_np.size and int(idx_np.max()) >= int(s):
+                raise GenerationError(
+                    code=reasons.runtime.INDEX_BATCH_OUT_OF_BOUNDS,
+                    message=f"derive_index_batch returned an offset >= bucket_size {int(s)}",
+                )
+            offsets[group_mask] = idx_np
+        return offsets
+    except BaseException:
+        del mask_key
+        raise
 
 
 def native_bucket_perturb(
@@ -236,68 +241,72 @@ def native_bucket_perturb(
     bucket arithmetic, and their source text is put back untouched. An all-preserved input makes
     no kernel call.
     """
-    if mask_key is None:  # pragma: no cover - require_mask_key never returns None
-        raise AssertionError(
-            "bucket_perturb reached with mask_key=None; require_mask_key always "
-            "resolves a concrete key before the native route dispatches."
-        )
-    col = array.combine_chunks() if isinstance(array, pa.ChunkedArray) else array
-    if preserved is not None and preserved.any():
-        rest = pa.array(~preserved)
-        computed = native_bucket_perturb(
-            col.filter(rest),
-            bucket=bucket,
-            date_format=date_format,
-            mask_key=mask_key,
-            namespace=namespace,
-            index_kernel=index_kernel,
-            native_threads=native_threads,
-            derive_calls=derive_calls,
-        )
-        return pc.replace_with_mask(col.cast(pa.string()), rest, computed)
+    try:
+        if mask_key is None:  # pragma: no cover - require_mask_key never returns None
+            raise AssertionError(
+                "bucket_perturb reached with mask_key=None; require_mask_key always "
+                "resolves a concrete key before the native route dispatches."
+            )
+        col = array.combine_chunks() if isinstance(array, pa.ChunkedArray) else array
+        if preserved is not None and preserved.any():
+            rest = pa.array(~preserved)
+            computed = native_bucket_perturb(
+                col.filter(rest),
+                bucket=bucket,
+                date_format=date_format,
+                mask_key=mask_key,
+                namespace=namespace,
+                index_kernel=index_kernel,
+                native_threads=native_threads,
+                derive_calls=derive_calls,
+            )
+            return pc.replace_with_mask(col.cast(pa.string()), rest, computed)  # type: ignore[attr-defined, unused-ignore]
 
-    # Reproduce the oracle's own series preparation (`apply_bucket_perturb`): an
-    # extension-dtype column is coerced to object first, then parsed with the
-    # SAME pd.to_datetime call. `to_pandas()` for a pa.string() column yields
-    # object dtype with None for nulls, matching the pandas adapter the oracle
-    # reads through.
-    series = col.to_pandas()
-    if pd.api.types.is_extension_array_dtype(series.dtype):
-        series = series.astype(object)
-    parsed = pd.to_datetime(series, format=date_format, errors="coerce")
+        # Reproduce the oracle's own series preparation (`apply_bucket_perturb`): an
+        # extension-dtype column is coerced to object first, then parsed with the
+        # SAME pd.to_datetime call. `to_pandas()` for a pa.string() column yields
+        # object dtype with None for nulls, matching the pandas adapter the oracle
+        # reads through.
+        series = col.to_pandas()
+        if pd.api.types.is_extension_array_dtype(series.dtype):
+            series = series.astype(object)
+        parsed = pd.to_datetime(series, format=date_format, errors="coerce")
 
-    null_mask = series.isna().to_numpy()
-    # A parse-fail is a coerced NaT that was NOT already source-null; both pass
-    # through unchanged, so the two are unioned into `valid`'s complement.
-    parse_failed = parsed.isna().to_numpy() & ~null_mask
-    valid = ~(null_mask | parse_failed)
+        null_mask = series.isna().to_numpy()
+        # A parse-fail is a coerced NaT that was NOT already source-null; both pass
+        # through unchanged, so the two are unioned into `valid`'s complement.
+        parse_failed = parsed.isna().to_numpy() & ~null_mask
+        valid = ~(null_mask | parse_failed)
 
-    # Start from the ORIGINAL values so null + parse-fail rows are preserved
-    # byte-for-byte; only the parseable rows are overwritten below.
-    out = np.array(series.astype(object).to_numpy(copy=True), dtype=object)
+        # Start from the ORIGINAL values so null + parse-fail rows are preserved
+        # byte-for-byte; only the parseable rows are overwritten below.
+        out = np.array(series.astype(object).to_numpy(copy=True), dtype=object)
 
-    if valid.any():
-        parsed_valid = pd.DatetimeIndex(parsed[valid].to_numpy())
-        start, size = _bucket_start_and_size(parsed_valid, bucket)
-        offsets = _grouped_offsets(
-            col.filter(pa.array(valid)),
-            size,
-            mask_key=mask_key,
-            namespace=namespace,
-            index_kernel=index_kernel,
-            native_threads=native_threads,
-        )
-        perturbed = start + pd.to_timedelta(offsets.astype(np.int64), unit="D")
-        # pandas strftime (the format authority) over the perturbed dates, same
-        # directive semantics as the oracle's per-row `perturbed.strftime(fmt)`.
-        formatted = pd.DatetimeIndex(perturbed).strftime(date_format)
-        out[valid] = np.asarray(formatted, dtype=object)
-        if derive_calls is not None:
-            derive_calls.append(int(np.unique(size).size))
-    elif derive_calls is not None:
-        derive_calls.append(0)
+        if valid.any():
+            parsed_valid = pd.DatetimeIndex(parsed[valid].to_numpy())
+            start, size = _bucket_start_and_size(parsed_valid, bucket)
+            offsets = _grouped_offsets(
+                col.filter(pa.array(valid)),
+                size,
+                mask_key=mask_key,
+                namespace=namespace,
+                index_kernel=index_kernel,
+                native_threads=native_threads,
+            )
+            perturbed = start + pd.to_timedelta(offsets.astype(np.int64), unit="D")
+            # pandas strftime (the format authority) over the perturbed dates, same
+            # directive semantics as the oracle's per-row `perturbed.strftime(fmt)`.
+            formatted = pd.DatetimeIndex(perturbed).strftime(date_format)
+            out[valid] = np.asarray(formatted, dtype=object)
+            if derive_calls is not None:
+                derive_calls.append(int(np.unique(size).size))
+        elif derive_calls is not None:
+            derive_calls.append(0)
 
-    return pa.array(out, type=pa.string())
+        return pa.array(out, type=pa.string())
+    except BaseException:
+        del mask_key
+        raise
 
 
 __all__ = ["has_timezone_directive", "native_bucket_perturb", "native_range_exceeded"]

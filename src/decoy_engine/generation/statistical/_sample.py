@@ -41,6 +41,7 @@ from bisect import bisect_right
 from datetime import datetime, timedelta
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.generation.statistical._spec import (
     OTHER_TOKEN,
     StatisticalSpec,
@@ -182,7 +183,7 @@ def _decode_flag_token(token: object, column: str) -> bool:
     if token == "false":  # noqa: S105 -- an artifact token literal, not a credential
         return False
     raise StatisticalSpecError(
-        code="statistical_flag_token_invalid",
+        code=reasons.plan.STATISTICAL_FLAG_TOKEN_INVALID,
         message=(
             f"statistical column {column!r}: flag top_values entry {token!r} is "
             "not the canonical 'true'/'false'."
@@ -251,7 +252,7 @@ def sample_column(
     """
     if spec.condition_on is not None and parent_values is None:
         raise StatisticalSpecError(
-            code="statistical_condition_column_unavailable",
+            code=reasons.plan.STATISTICAL_CONDITION_COLUMN_UNAVAILABLE,
             message=(
                 f"statistical column {spec.column!r} conditions on "
                 f"{spec.condition_on!r}, which has not been generated yet. "
@@ -266,7 +267,7 @@ def sample_column(
         counts = [float(c) for c in spec.stats.get("bin_counts") or []]
         if len(edges) < 2 or len(counts) != len(edges) - 1 or sum(counts) <= 0:
             raise StatisticalSpecError(
-                code="statistical_stats_degenerate",
+                code=reasons.plan.STATISTICAL_STATS_DEGENERATE,
                 message=(
                     f"statistical column {spec.column!r}: snapshot histogram is "
                     f"degenerate (edges={len(edges)}, counts={len(counts)})."
@@ -289,7 +290,7 @@ def sample_column(
         values, weights = _categorical_tables(spec)
         if not values:
             raise StatisticalSpecError(
-                code="statistical_stats_degenerate",
+                code=reasons.plan.STATISTICAL_STATS_DEGENERATE,
                 message=f"statistical column {spec.column!r}: snapshot has no top_values.",
             )
         if sum(weights) <= 0:
@@ -297,7 +298,7 @@ def sample_column(
             # zero; surface the typed code instead of random.choices's bare
             # ValueError.
             raise StatisticalSpecError(
-                code="statistical_stats_degenerate",
+                code=reasons.plan.STATISTICAL_STATS_DEGENERATE,
                 message=(
                     f"statistical column {spec.column!r}: every top_values count "
                     "is zero (nothing to weight a draw by). Refit, or use a "
@@ -329,12 +330,12 @@ def sample_column(
         weights = [float(b["count"]) for b in year_bins]
         if not years:
             raise StatisticalSpecError(
-                code="statistical_stats_degenerate",
+                code=reasons.plan.STATISTICAL_STATS_DEGENERATE,
                 message=f"statistical column {spec.column!r}: snapshot has no year_bins.",
             )
         if sum(weights) <= 0:
             raise StatisticalSpecError(
-                code="statistical_stats_degenerate",
+                code=reasons.plan.STATISTICAL_STATS_DEGENERATE,
                 message=(
                     f"statistical column {spec.column!r}: every year_bins count "
                     "is zero (nothing to weight a draw by). Refit, or use a "
@@ -364,7 +365,7 @@ def sample_column(
         counts = [float(c) for c in spec.stats.get("length_bin_counts") or []]
         if len(edges) < 2 or len(counts) != len(edges) - 1 or sum(counts) <= 0:
             raise StatisticalSpecError(
-                code="statistical_stats_degenerate",
+                code=reasons.plan.STATISTICAL_STATS_DEGENERATE,
                 message=(
                     f"statistical column {spec.column!r}: snapshot length histogram "
                     f"is degenerate (edges={len(edges)}, counts={len(counts)}). "
@@ -381,6 +382,6 @@ def sample_column(
         return out
 
     raise StatisticalSpecError(  # load_spec already rejects; defensive only
-        code="statistical_kind_unsupported",
+        code=reasons.plan.STATISTICAL_KIND_UNSUPPORTED,
         message=f"statistical column {spec.column!r}: kind {spec.kind!r} has no sampler.",
     )

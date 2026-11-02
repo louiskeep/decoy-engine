@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._positional_keys import row_positions
 from decoy_engine.generation.pool._events import QualityWarning
@@ -68,7 +69,7 @@ class WindowedDateStrategyHandler:
                 ctx.row_offset,
                 len(df),
                 ctx.gate_positions,
-                code="windowed_date_position_out_of_domain",
+                code=reasons.runtime.WINDOWED_DATE_POSITION_OUT_OF_DOMAIN,
             )
         ]
         date_list = apply_windowed_date(

@@ -11,7 +11,7 @@ regrowing either already-capped file.
 
 from __future__ import annotations
 
-from decoy_engine.execution.native._determinism_protocol import _V6, DrawSite
+from decoy_engine.execution.native._draw_site_types import _V6, DrawSite
 
 TOKENIZE_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(

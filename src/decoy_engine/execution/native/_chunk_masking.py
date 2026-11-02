@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._runner import work_order_key
@@ -48,8 +49,8 @@ if TYPE_CHECKING:
     from decoy_engine.execution.native._index_ext import IndexDerivationKernel
 
 
-NONSTRING_POOL_CODE = "chunked_faker_nondeterministic_pool_not_string"
-DETERMINISTIC_NONSTRING_POOL_CODE = "chunked_faker_deterministic_pool_not_string"
+NONSTRING_POOL_CODE = reasons.runtime.CHUNKED_FAKER_NONDETERMINISTIC_POOL_NOT_STRING
+DETERMINISTIC_NONSTRING_POOL_CODE = reasons.runtime.CHUNKED_FAKER_DETERMINISTIC_POOL_NOT_STRING
 
 
 def _mask_chunk_native(
@@ -150,137 +151,149 @@ def _mask_chunk_native(
     `job_seed`). A zero-row chunk of either makes no compiled call (idle, uncounted, typed empty
     `string`); an all-null non-empty one does run it.
     """
-    arrays: dict[str, pa.Array] = {}
-    # Columns with no plan node carry unchanged (unconfigured) or drop (stored_index); neither
-    # raises nor warns, so their visit order is immaterial and they stay out of the work loop.
-    for name in chunk.schema.names:
-        if name not in stored_index and name in unconfigured:
-            arrays[name] = chunk.column(name)
-    # The plan-node columns are visited in canonical WORK ORDER (`_runner.work_order_key`), not
-    # source-schema order, so a fail-closed strategy raises for the SAME column the oracle would
-    # (the oracle processes nodes in `order_work` order) and the per-column operator warnings are
-    # produced in that order. A native-admitted table has no FK edges and only scalar nodes, so the
-    # key reduces to the sorted column name (mirrors `_chunked_row_errors`). The returned table is
-    # rebuilt in source-schema order below, so this never changes the output's column order.
-    configured = [
-        name for name in chunk.schema.names if name not in stored_index and name not in unconfigured
-    ]
-    for name in sorted(configured, key=lambda n: work_order_key(table, (n,))):
-        strategy = col_seed_by_name[name].strategy
-        params = (params_by_column or {}).get(name)
-        if params is None:  # pragma: no cover - admission implies parameters for every column
-            raise AssertionError(
-                f"native route admitted column {name!r} with strategy {strategy!r} but no "
-                "resolved operator parameters; the preflight admission check should have "
-                "excluded this table, or `_prepared_categoricals` should have prepared it."
-            )
-        source = chunk.column(name)
-        t0 = time.perf_counter()
-        sibling: pa.Table | None = None
-        if isinstance(params, GroupKeyParams):
-            sibling = (chunk if raw_chunk is None else raw_chunk).select([params.group_by])
-            if raw_hex_kernel is None:  # pragma: no cover - admission implies a loaded kernel
+    try:
+        arrays: dict[str, pa.Array] = {}
+        # Columns with no plan node carry unchanged (unconfigured) or drop (stored_index); neither
+        # raises nor warns, so their visit order is immaterial and they stay out of the work loop.
+        for name in chunk.schema.names:
+            if name not in stored_index and name in unconfigured:
+                arrays[name] = chunk.column(name)
+        # The plan-node columns are visited in canonical WORK ORDER (`_runner.work_order_key`), not
+        # source-schema order, so a fail-closed strategy raises for the SAME column the oracle would
+        # (the oracle processes nodes in `order_work` order) and the per-column operator warnings are
+        # produced in that order. A native-admitted table has no FK edges and only scalar nodes, so the
+        # key reduces to the sorted column name (mirrors `_chunked_row_errors`). The returned table is
+        # rebuilt in source-schema order below, so this never changes the output's column order.
+        configured = [
+            name
+            for name in chunk.schema.names
+            if name not in stored_index and name not in unconfigured
+        ]
+        for name in sorted(configured, key=lambda n: work_order_key(table, (n,))):
+            strategy = col_seed_by_name[name].strategy
+            params = (params_by_column or {}).get(name)
+            if params is None:  # pragma: no cover - admission implies parameters for every column
                 raise AssertionError(
-                    "native route admitted a group_key column with no raw_hex_kernel; "
-                    "preflight's raw-hex probe should have loaded one for any admitted node."
+                    f"native route admitted column {name!r} with strategy {strategy!r} but no "
+                    "resolved operator parameters; the preflight admission check should have "
+                    "excluded this table, or `prepared_categoricals` should have prepared it."
                 )
-        when_mask = (when_masks or {}).get(name)
-        if when_mask is not None:
-            result = run_kernel_step_masked(
-                params,
-                source,
-                when_mask,
-                mask_key=mask_key,
-                native_threads=native_threads,
-                index_kernel=index_kernel,
-                pool=pool_by_column[name] if isinstance(params, FakerParams) else None,
-                row_offset=row_offset,
-                job_seed=job_seed,
-                missing_mask=(faker_missing or {}).get(name),
-            )
-        else:
-            result = run_kernel_step(
-                params,
-                source,
-                mask_key=mask_key,
-                native_threads=native_threads,
-                index_kernel=index_kernel,
-                raw_hex_kernel=raw_hex_kernel,
-                pool=pool_by_column[name] if isinstance(params, FakerParams) else None,
-                sibling=sibling,
-                row_offset=row_offset,
-                job_seed=job_seed,
-                missing_mask=(faker_missing or {}).get(name),
-            )
-        out = result.out
-        if preserved_rows is not None and getattr(params, "preserve", None) is not None:
-            preserved_rows[name] = result.preserved_rows
-        if isinstance(params, TextMaskParams):
-            # native_text_mask always returns pa.string() (the schema rule pins the column), so no
-            # degenerate type reconciliation is needed (unlike fpe/bucket_perturb). Only the one
-            # per-chunk sub-floor warning rides out, at the oracle's per-chunk scope.
-            if operator_warnings is not None and result.text_mask_notices:
-                operator_warnings.append(
-                    text_mask_sub_floor_warning(
-                        result.text_mask_notices,
-                        policy=params.sub_floor_span_policy,
-                        column=name,
+            source = chunk.column(name)
+            t0 = time.perf_counter()
+            sibling: pa.Table | None = None
+            if isinstance(params, GroupKeyParams):
+                sibling = (chunk if raw_chunk is None else raw_chunk).select([params.group_by])
+                if raw_hex_kernel is None:  # pragma: no cover - admission implies a loaded kernel
+                    raise AssertionError(
+                        "native route admitted a group_key column with no raw_hex_kernel; "
+                        "preflight's raw-hex probe should have loaded one for any admitted node."
                     )
+            when_mask = (when_masks or {}).get(name)
+            if when_mask is not None:
+                result = run_kernel_step_masked(
+                    params,
+                    source,
+                    when_mask,
+                    mask_key=mask_key,
+                    native_threads=native_threads,
+                    index_kernel=index_kernel,
+                    pool=pool_by_column[name] if isinstance(params, FakerParams) else None,
+                    row_offset=row_offset,
+                    job_seed=job_seed,
+                    missing_mask=(faker_missing or {}).get(name),
                 )
-        if isinstance(params, FpeParams):
-            if result.fpe_errors:
-                # fpe fail-closed KILLS on the first bad value (unlike date_shift's survive), the
-                # same as the oracle's StrategyError during this chunk; raise before the warning,
-                # the offset advance, the sink append or the yield (C6a plan §3d).
-                raise fpe_fail_closed_error(result.fpe_errors, name)
-            if operator_warnings is not None:
-                operator_warnings.extend(
-                    fpe_residual_warnings(
-                        source, config=fpe_config_from_params(params), column=name
+            else:
+                result = run_kernel_step(
+                    params,
+                    source,
+                    mask_key=mask_key,
+                    native_threads=native_threads,
+                    index_kernel=index_kernel,
+                    raw_hex_kernel=raw_hex_kernel,
+                    pool=pool_by_column[name] if isinstance(params, FakerParams) else None,
+                    sibling=sibling,
+                    row_offset=row_offset,
+                    job_seed=job_seed,
+                    missing_mask=(faker_missing or {}).get(name),
+                )
+            out = result.out
+            if preserved_rows is not None and getattr(params, "preserve", None) is not None:
+                preserved_rows[name] = result.preserved_rows
+            if isinstance(params, TextMaskParams):
+                # native_text_mask always returns pa.string() (the schema rule pins the column), so no
+                # degenerate type reconciliation is needed (unlike fpe/bucket_perturb). Only the one
+                # per-chunk sub-floor warning rides out, at the oracle's per-chunk scope.
+                if operator_warnings is not None and result.text_mask_notices:
+                    operator_warnings.append(
+                        text_mask_sub_floor_warning(
+                            result.text_mask_notices,
+                            policy=params.sub_floor_span_policy,
+                            column=name,
+                        )
                     )
-                )
-            # The handler assigns a fresh list, so the oracle's per-chunk type is zero-row ->
-            # double, all-null -> null, all-empty/normal -> string (C6a plan §3i); fpe stays out
-            # of the string-pin set and reconciles here, like bucket_perturb (which, unlike fpe,
-            # maps a zero-row chunk to null, not double).
-            if len(out) == 0:
-                out = pa.array([], type=pa.float64())
-            elif out.null_count == len(out):
+            if isinstance(params, FpeParams):
+                if result.fpe_errors:
+                    # fpe fail-closed KILLS on the first bad value (unlike date_shift's survive), the
+                    # same as the oracle's StrategyError during this chunk; raise before the warning,
+                    # the offset advance, the sink append or the yield (C6a plan §3d).
+                    raise fpe_fail_closed_error(result.fpe_errors, name)
+                if operator_warnings is not None:
+                    operator_warnings.extend(
+                        fpe_residual_warnings(
+                            source, config=fpe_config_from_params(params), column=name
+                        )
+                    )
+                # The handler assigns a fresh list, so the oracle's per-chunk type is zero-row ->
+                # double, all-null -> null, all-empty/normal -> string (C6a plan §3i); fpe stays out
+                # of the string-pin set and reconciles here, like bucket_perturb (which, unlike fpe,
+                # maps a zero-row chunk to null, not double).
+                if len(out) == 0:
+                    out = pa.array([], type=pa.float64())
+                elif out.null_count == len(out):
+                    out = pa.nulls(len(out))
+            # The kernel always returns `pa.string()`, but the oracle chunked route gives Arrow `null`
+            # for a zero-row or all-null bucket_perturb chunk (promotable when the chunks are joined)
+            # and `string` for any chunk holding a value, an all-unparseable one included.
+            if isinstance(params, BucketPerturbParams) and (
+                len(out) == 0 or out.null_count == len(out)
+            ):
                 out = pa.nulls(len(out))
-        # The kernel always returns `pa.string()`, but the oracle chunked route gives Arrow `null`
-        # for a zero-row or all-null bucket_perturb chunk (promotable when the chunks are joined)
-        # and `string` for any chunk holding a value, an all-unparseable one included.
-        if isinstance(params, BucketPerturbParams) and (
-            len(out) == 0 or out.null_count == len(out)
-        ):
-            out = pa.nulls(len(out))
-        arrays[name] = out
-        counted = True
-        if isinstance(params, FakerParams) and result.ran:
-            evidence.pool_select_executed = True
-            evidence.pool_select_calls += 1
-        elif result.ran:
-            evidence.compiled_kernel_executed = True
-        elif result.ran is False:
-            counted = when_mask is None and not isinstance(params, (CategoricalParams, FakerParams))
-            if kernel_idle is not None:
-                kernel_idle.add(name)
-        if result.format_error_positions:
-            if format_errors is None:
-                raise AssertionError(
-                    f"date_shift column {name!r} has unparseable values but the caller "
-                    "gave no format_errors channel to carry them."
+            arrays[name] = out
+            counted = True
+            if isinstance(params, FakerParams) and result.ran:
+                evidence.pool_select_executed = True
+                evidence.pool_select_calls += 1
+            elif result.ran:
+                evidence.compiled_kernel_executed = True
+            elif result.ran is False:
+                counted = when_mask is None and not isinstance(
+                    params, (CategoricalParams, FakerParams)
                 )
-            format_errors[name] = result.format_error_positions
-        elapsed = time.perf_counter() - t0
-        if counted:
-            evidence.kernel_calls[strategy] = evidence.kernel_calls.get(strategy, 0) + 1
-        evidence.kernel_elapsed_s[strategy] = evidence.kernel_elapsed_s.get(strategy, 0.0) + elapsed
-        if column_elapsed_s is not None:
-            column_elapsed_s[name] = elapsed
-    # Output column order is source-schema order (stored_index dropped), independent of the
-    # work-order visit above: only the raise/warning order moves to work order, never the shape.
-    return pa.table({name: arrays[name] for name in chunk.schema.names if name not in stored_index})
+                if kernel_idle is not None:
+                    kernel_idle.add(name)
+            if result.format_error_positions:
+                if format_errors is None:
+                    raise AssertionError(
+                        f"date_shift column {name!r} has unparseable values but the caller "
+                        "gave no format_errors channel to carry them."
+                    )
+                format_errors[name] = result.format_error_positions
+            elapsed = time.perf_counter() - t0
+            if counted:
+                evidence.kernel_calls[strategy] = evidence.kernel_calls.get(strategy, 0) + 1
+            evidence.kernel_elapsed_s[strategy] = (
+                evidence.kernel_elapsed_s.get(strategy, 0.0) + elapsed
+            )
+            if column_elapsed_s is not None:
+                column_elapsed_s[name] = elapsed
+        # Output column order is source-schema order (stored_index dropped), independent of the
+        # work-order visit above: only the raise/warning order moves to work order, never the shape.
+        return pa.table(
+            {name: arrays[name] for name in chunk.schema.names if name not in stored_index}
+        )
+    except BaseException:
+        del job_seed, mask_key
+        raise
 
 
 def pool_values_are_strings(pool: ValuePool) -> bool:
@@ -394,37 +407,41 @@ def _resolve_faker_pools(
     identity. `registry` is the caller's provider registry; omitted, the default
     registry is used.
     """
-    builder = PoolBuilder(registry if registry is not None else get_default_registry())
-    pools_by_column: dict[str, ValuePool] = {}
-    for name, col_seed in col_seed_by_name.items():
-        if col_seed.strategy != "faker":
-            continue
-        provider = col_seed.provider
-        if provider is None:  # pragma: no cover - admission requires a provider
-            raise AssertionError(
-                f"native route admitted faker column {name!r} with no provider; "
-                "admission should have excluded this."
-            )
-        cfg = provider_config_to_dict(col_seed.provider_config)
-        pool_size, locale, build_config, identity = resolve_faker_pool_identity(
-            builder=builder,
-            provider=provider,
-            plan_pool_size=col_seed.pool_size,
-            namespace=col_seed.namespace,
-            job_seed=job_seed,
-            cfg=cfg,
-        )
-        cached = pool_cache.get(identity)
-        pool = cached if isinstance(cached, ValuePool) else None
-        if pool is None:
-            pool = builder.build(
+    try:
+        builder = PoolBuilder(registry if registry is not None else get_default_registry())
+        pools_by_column: dict[str, ValuePool] = {}
+        for name, col_seed in col_seed_by_name.items():
+            if col_seed.strategy != "faker":
+                continue
+            provider = col_seed.provider
+            if provider is None:  # pragma: no cover - admission requires a provider
+                raise AssertionError(
+                    f"native route admitted faker column {name!r} with no provider; "
+                    "admission should have excluded this."
+                )
+            cfg = provider_config_to_dict(col_seed.provider_config)
+            pool_size, locale, build_config, identity = resolve_faker_pool_identity(
+                builder=builder,
                 provider=provider,
-                size=pool_size,
-                job_seed=job_seed,
-                locale=locale,
-                config=build_config,
+                plan_pool_size=col_seed.pool_size,
                 namespace=col_seed.namespace,
+                job_seed=job_seed,
+                cfg=cfg,
             )
-            pool_cache.put(pool)
-        pools_by_column[name] = pool
-    return pools_by_column
+            cached = pool_cache.get(identity)
+            pool = cached if isinstance(cached, ValuePool) else None
+            if pool is None:
+                pool = builder.build(
+                    provider=provider,
+                    size=pool_size,
+                    job_seed=job_seed,
+                    locale=locale,
+                    config=build_config,
+                    namespace=col_seed.namespace,
+                )
+                pool_cache.put(pool)
+            pools_by_column[name] = pool
+        return pools_by_column
+    except BaseException:
+        del job_seed
+        raise

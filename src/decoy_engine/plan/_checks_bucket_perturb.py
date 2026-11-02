@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.transforms.bucket_perturb import bucket_perturb_date_format_problem
 from decoy_engine.transforms.date_preserve import preserve_config_problem
@@ -30,7 +31,7 @@ def _reject_if_unwritable(
         problem = bucket_perturb_date_format_problem(provider_config["date_format"])
         if problem is not None:
             raise PlanCompileError(
-                code="bucket_perturb_date_format_unsupported",
+                code=reasons.plan.BUCKET_PERTURB_DATE_FORMAT_UNSUPPORTED,
                 path=f"{path_prefix}.date_format",
                 message=f"bucket_perturb column {column!r} in table {table!r}{where}: {problem}",
             )
@@ -39,7 +40,7 @@ def _reject_if_unwritable(
     problem = preserve_config_problem(provider_config)
     if problem is not None:
         raise PlanCompileError(
-            code="bucket_perturb_preserve_values_invalid",
+            code=reasons.plan.BUCKET_PERTURB_PRESERVE_VALUES_INVALID,
             path=f"{path_prefix}.preserve_values",
             message=f"bucket_perturb column {column!r} in table {table!r}{where}: {problem}",
         )

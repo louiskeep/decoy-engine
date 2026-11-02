@@ -21,7 +21,7 @@ narrow so it does not ossify free-text prose:
 
 Mirrors `tests/unit/execution/test_governor.py` (reaches the underscore
 helpers through the `_governor` module, as that file already does for
-`_governor._RssMonitor`, `_governor._INELIGIBLE_ROUTE_MARKERS`, etc.).
+`_governor._RssMonitor`, `_governor._INELIGIBLE_BY_ROUTE`, etc.).
 """
 
 from __future__ import annotations

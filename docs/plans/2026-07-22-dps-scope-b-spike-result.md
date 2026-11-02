@@ -1,5 +1,7 @@
 # DPS Scope B: dependency spike result (STOP)
 
+Status: record
+
 **Date:** 2026-07-22
 **Spike scope:** guide section 3.2, run against `docs/plans/2026-07-22-dps-scope-b-implementation-guide.md` before any adapter code.
 **Result:** STOP per guide section 3.3 / 9.3. No adapter, budget, or fit code was written. `pyproject.toml` is unchanged.

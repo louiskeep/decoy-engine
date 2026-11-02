@@ -67,6 +67,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_resolve import (
     cascade_row_errors,
@@ -120,7 +121,7 @@ def make_remap_fn(
             pnode = node_by_key.get((ptable, (pcol,)))
             if pnode is None or not isinstance(pnode.plan_slice, ColumnSeed):
                 raise ExecutionError(
-                    code="orphan_remap_parent_missing",
+                    code=reasons.runtime.ORPHAN_REMAP_PARENT_MISSING,
                     message=(
                         f"REMAP needs the parent column {ptable}.{pcol} to be a "
                         "masked scalar node, but it is absent from the work list."
@@ -129,7 +130,7 @@ def make_remap_fn(
             handler = handlers.get(pnode.strategy)
             if handler is None:
                 raise ExecutionError(
-                    code="unsupported_strategy",
+                    code=reasons.runtime.UNSUPPORTED_STRATEGY,
                     message=f"REMAP found no handler for parent strategy {pnode.strategy!r}.",
                 )
             tmp = pd.DataFrame({pcol: [k[j] for k in orphan_keys]})

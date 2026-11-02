@@ -11,9 +11,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 
-PER_TABLE_TRANSFORMS_PRESENT = "per_table_transforms_present"
+PER_TABLE_TRANSFORMS_PRESENT = reasons.plan.PER_TABLE_TRANSFORMS_PRESENT
 
 __all__ = [
     "PER_TABLE_TRANSFORMS_PRESENT",

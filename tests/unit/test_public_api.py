@@ -95,6 +95,18 @@ def test_all_lists_every_public_name():
         "StructuredEventsSink",
         "TerminalEvent",
         "WarningEvent",
+        # F29: versioned reasons and progress groups.
+        "CheckpointEvent",
+        "CheckpointInfo",
+        "PublicationInfo",
+        "ReasonContext",
+        "ReasonRecord",
+        "RetryEvent",
+        "RetryInfo",
+        "event_to_dict",
+        "event_to_legacy_dict",
+        "reason_from_exception",
+        "reasons_from_report",
         # S22-CL-V1GRAPHRUNNER (2026-05-30): removed validate_graph,
         # validate_graph_full, normalize_config, run_graph, preview_graph,
         # RunResult, PreviewResult. V1 graph public surface retired.
@@ -212,6 +224,14 @@ def test_all_lists_every_public_name():
         # DE-02 (2026-07-14): the KeyProvider keyed-mask secret boundary +
         # its fail-closed error taxonomy.
         "KeyProvider",
+        # F13 (2026-10-30): the secret-provider/v1 contract (additive).
+        "SecretCachePolicy",
+        "SecretDescriptor",
+        "SecretProvider",
+        "SecretProviderError",
+        "SecretProviderRegistry",
+        "SecretRef",
+        "register_secret_provider",
         "SecretKeyProvider",
         "SeedKeyProvider",
         "MaskSecretError",

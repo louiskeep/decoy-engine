@@ -76,6 +76,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from decoy_engine import fileaccess
 from decoy_engine.execution._isolated_commit import (
     CommitError,
     atomic_commit,
@@ -101,8 +102,13 @@ from decoy_engine.execution._isolated_common import (
     peak_rss_mb,
 )
 from decoy_engine.execution._isolated_memwatch import error_suffix, evidence_of, start_sampler
+from decoy_engine.execution._isolated_reason import commit_reason, reason_from_envelope
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._row_errors import RowErrorRecord
+from decoy_engine.fileaccess import FileAccess, entry_point
+from decoy_engine.reason_adapter import reason_from_exception
+from decoy_engine.reasons import ReasonRecord
+from decoy_engine.reasons import decoy as _decoy_reasons
 
 __all__ = ["run_pipeline_isolated"]
 
@@ -134,6 +140,7 @@ _NOT_SERIALIZABLE_KWARGS: tuple[str, ...] = (
 )
 
 
+@entry_point
 def run_pipeline_isolated(
     config: dict[str, Any],
     sources: dict[str, pa.Table] | None = None,
@@ -145,6 +152,7 @@ def run_pipeline_isolated(
     isolate: bool = True,
     on_spawn: Callable[[int], None] | None = None,
     timeout_s: float | None = _DEFAULT_TIMEOUT_S,
+    file_access: FileAccess | None = None,
     **run_pipeline_kwargs: Any,
 ) -> IsolatedRunResult:
     """Run one pipeline job in a fresh child process; return a clean result.
@@ -183,11 +191,18 @@ def run_pipeline_isolated(
             `engine_version`, `execution_mode`, `native_threads`). See
             `_NOT_SERIALIZABLE_KWARGS` for the excluded subset.
 
+        file_access: the file-access policy. A child process cannot inherit a policy and
+            the child's config-named reads cannot be listed in advance, so under any policy
+            but the ambient CLI one the route runs in-process only and takes no
+            `staging_dir` or `output_dir` path (see "Raises").
+
     Returns:
         An `IsolatedRunResult`. See its docstring for the field contract
         Sprint 1a-part-2 will consume.
 
     Raises:
+        FileAccessUnavailable: a strict policy is installed and the call would spawn a
+            child, or names a `staging_dir` or `output_dir` path. Raised before any I/O.
         ValueError: a non-None `sink`/`source_loader`/`vault_writer`/
             `registry`/`derive_key` was passed, `rlimit_kind` is not a
             known kind, or `config`/`run_pipeline_kwargs` is not
@@ -197,6 +212,10 @@ def run_pipeline_isolated(
     _reject_unserializable_kwargs(run_pipeline_kwargs)
     if mem_cap_bytes is not None and rlimit_kind not in RLIMIT_KINDS:
         raise ValueError(f"rlimit_kind={rlimit_kind!r} is not one of {sorted(RLIMIT_KINDS)}")
+    _require_ambient_for_paths(
+        spawns=isolate and os.environ.get(ISOLATED_WORKER_ENV) != "1",
+        names_paths=staging_dir is not None or output_dir is not None,
+    )
 
     # Re-entry guard: a child this primitive spawns carries ISOLATED_WORKER_ENV
     # (see `_spawn_and_classify`). If `run_pipeline`'s routing layer inside that
@@ -239,6 +258,20 @@ def run_pipeline_isolated(
     )
 
 
+def _require_ambient_for_paths(*, spawns: bool, names_paths: bool) -> None:
+    """Under a strict policy this route can carry neither a child process nor a caller path.
+
+    The child starts a fresh interpreter that inherits no policy, and which files its
+    config-named reads open is not known to the parent in advance, so a capability cannot be
+    handed across. `staging_dir` and `output_dir` are caller paths this module's own
+    staging and commit operate on. Refusing here, before any I/O, is the fail-closed answer."""
+    if spawns or names_paths:
+        fileaccess.require_ambient(
+            "run_pipeline_isolated, which would spawn a child process or name a staging or "
+            "output path,"
+        )
+
+
 def _reject_unserializable_kwargs(kwargs: dict[str, Any]) -> None:
     offenders = [name for name in _NOT_SERIALIZABLE_KWARGS if kwargs.get(name) is not None]
     if offenders:
@@ -271,6 +304,7 @@ def _run_in_process(
             signal_number=None,
             error=exception_error_text(exc),
             isolated=False,
+            reason=reason_from_exception(exc),
         )
 
     committed_dir: str | None = None
@@ -295,6 +329,7 @@ def _run_in_process(
                 signal_number=None,
                 error=commit_error_text(exc),
                 isolated=False,
+                reason=commit_reason(exc, staging_dir),
             )
         committed_dir = str(output_dir)
 
@@ -371,8 +406,8 @@ def _write_payload(
     sources_dir = work_root / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
     sources_manifest: dict[str, str] = {}
-    for name, table in (sources or {}).items():
-        dest = sources_dir / f"{name}.parquet"
+    for index, (name, table) in enumerate((sources or {}).items()):
+        dest = sources_dir / f"s{index:04d}.parquet"  # opaque: a name can hold "/" or ".."
         pq.write_table(table, dest)  # type: ignore[no-untyped-call, unused-ignore]
         sources_manifest[name] = str(dest)
 
@@ -461,6 +496,7 @@ def _spawn_and_classify(
             isolated=True,
             pid=proc.pid,
             memory_evidence=evidence_of(finished, abnormal=False),
+            reason=ReasonRecord.for_reason(_decoy_reasons.ISOLATED_RUN_TIMED_OUT),
         )
     except BaseException:
         # MED-3: on_spawn raised (a governor bug, not the child's fault).
@@ -515,6 +551,11 @@ def _spawn_and_classify(
         isolated=True,
         pid=proc.pid,
         memory_evidence=evidence,
+        reason=ReasonRecord.for_reason(
+            _decoy_reasons.ISOLATED_WORKER_OUT_OF_MEMORY
+            if outcome == "oom_killed"
+            else _decoy_reasons.ISOLATED_WORKER_DIED
+        ),
     )
 
 
@@ -537,6 +578,7 @@ def _result_from_envelope(
             error=envelope.get("error"),
             isolated=True,
             pid=pid,
+            reason=reason_from_envelope(envelope),
         )
 
     try:
@@ -556,6 +598,7 @@ def _result_from_envelope(
             error=commit_error_text(exc),
             isolated=True,
             pid=pid,
+            reason=commit_reason(exc, staging_output_dir),
         )
     return IsolatedRunResult(
         outcome="completed",

@@ -6,6 +6,9 @@ on. They are never derived from the output under test. The native route must rep
 byte for byte (the index kernel is KAT-pinned), so the same literals pin the Python baseline and
 the native result. The Unicode `date_format` suffix whose NFC form differs between Python
 versions is deliberately NOT here: it is the one accepted divergence and has its own test.
+
+The literals were re-pinned under F13 (job_seed keying was removed): captured from the pandas
+oracle keyed on `THROWAWAY_KEY_PROVIDER`, the key `run_chain` passes.
 """
 
 from __future__ import annotations

@@ -48,10 +48,14 @@ def hmac_hex(key: bytes, value: Any) -> str | None:
     SHA256(value + seed) where the seed is recoverable by brute force on
     a single known mapping).
     """
-    if value is None:
-        return None
-    msg = str(value).encode("utf-8", errors="replace")
-    return hmac.new(key, msg, hashlib.sha256).hexdigest()
+    try:
+        if value is None:
+            return None
+        msg = str(value).encode("utf-8", errors="replace")
+        return hmac.new(key, msg, hashlib.sha256).hexdigest()
+    except BaseException:
+        del key
+        raise
 
 
 def hmac_seed(key: bytes, value: Any) -> int:
@@ -59,8 +63,12 @@ def hmac_seed(key: bytes, value: Any) -> int:
     HMAC-SHA256(key, value). Same input + same key -> same seed -> same
     Faker output, with zero state stored anywhere.
     """
-    if value is None:
-        return 0
-    msg = str(value).encode("utf-8", errors="replace")
-    digest = hmac.new(key, msg, hashlib.sha256).digest()
-    return int.from_bytes(digest[:4], "big")
+    try:
+        if value is None:
+            return 0
+        msg = str(value).encode("utf-8", errors="replace")
+        digest = hmac.new(key, msg, hashlib.sha256).digest()
+        return int.from_bytes(digest[:4], "big")
+    except BaseException:
+        del key
+        raise

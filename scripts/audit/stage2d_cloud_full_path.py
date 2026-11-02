@@ -61,7 +61,7 @@ def _dirty_s3_source_config(target_path: str) -> dict:
     # (`binding_resolve.py:128-151`), which the engine's `S3Source` model
     # rejects (`extra="forbid"`).
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "sources": {
             "t": {

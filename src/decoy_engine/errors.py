@@ -18,12 +18,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine import reasons
+from decoy_engine._error_base import DecoyError
+
 if TYPE_CHECKING:
     from decoy_engine.execution._row_error_summary import RowErrorSummary
-
-
-class DecoyError(Exception):
-    """Base class for all decoy_engine exceptions."""
 
 
 class ConfigError(DecoyError):
@@ -135,7 +134,8 @@ class FlagPauseSignal(DecoyError):  # noqa: N818 -- control-flow Signal, not a r
 
 # ── FK preservation (Sprint 4, item 4) ────────────────────────────────
 #
-# Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG;
+# Pattern: SDV HMA1 method (Patki et al., IEEE DSAA 2016; method only, no SDV
+# code: SDV is BUSL-1.1). Parent-first DAG;
 # materialize parent pool; child samples with replacement.
 #
 # Raised when a declared FK in `column_relationships` cannot be resolved
@@ -193,7 +193,7 @@ class PKDuplicatesError(DecoyError):
     Maps to code ``pk.duplicates``. Carries the column name + counts
     on the exception for the manifest assembler."""
 
-    code: str = "pk.duplicates"
+    code: str = reasons.runtime.PK_DUPLICATES
 
     def __init__(
         self,
@@ -233,7 +233,7 @@ class MaskKeyDerivationError(DecoyError):
     Maps to code ``mask.key_derivation_failed``. Carries the originating
     strategy name on ``.strategy`` for the manifest / operator message."""
 
-    code: str = "mask.key_derivation_failed"
+    code: str = reasons.runtime.MASK_KEY_DERIVATION_FAILED
 
     def __init__(self, message: str, *, strategy: str | None = None) -> None:
         self.strategy = strategy
@@ -251,7 +251,7 @@ class MaskKeyRequiredError(DecoyError):
     the data. Maps to code ``mask.key_required``; carries the originating
     kernel name on ``.kernel`` for the operator message."""
 
-    code: str = "mask.key_required"
+    code: str = reasons.runtime.MASK_KEY_REQUIRED
 
     def __init__(self, message: str, *, kernel: str | None = None) -> None:
         self.kernel = kernel
@@ -284,7 +284,7 @@ class FpeChecksumError(DecoyError):
     ciphertext, key, derived key material, or tweak must never appear in
     this exception's ``str()``, ``repr()``, ``.args``, or any attribute."""
 
-    code: str = "fpe.checksum_unsupported"
+    code: str = reasons.runtime.FPE_CHECKSUM_UNSUPPORTED
 
     def __init__(self, message: str, *, scheme: str | None = None, code: str | None = None) -> None:
         self.scheme = scheme
@@ -344,7 +344,7 @@ class FpeUnencryptableError(DecoyError):
     key, derived key material, or tweak must never appear in this
     exception's ``str()``, ``repr()``, ``.args``, or any attribute."""
 
-    code: str = "fpe.unencryptable"
+    code: str = reasons.runtime.FPE_UNENCRYPTABLE
 
     def __init__(self, message: str, *, value: str | None = None, code: str | None = None) -> None:
         self.value_length: int | None = len(value) if value is not None else None

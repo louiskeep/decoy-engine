@@ -20,11 +20,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution.native._categorical_positional import positional_config_for_column
 from decoy_engine.plan._errors import PlanCompileError
 
-WHEN_CODE = "chunked_faker_nondeterministic_when_not_supported"
+WHEN_CODE = reasons.plan.CHUNKED_FAKER_NONDETERMINISTIC_WHEN_NOT_SUPPORTED
 
 _PROVIDER_ALLOWLIST = OPERATORS["faker"].provider_allowlist or frozenset()
 

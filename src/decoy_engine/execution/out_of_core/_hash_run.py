@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._operator_registry import PYTHON_SCALAR, RUST_COMPANION
 from decoy_engine.execution.native._crypto_ext import (
@@ -99,7 +100,7 @@ TEXT_MASK_DISPOSITION_KEY = "out_of_core_text_mask"
 FAKER_DISPOSITION_KEY = "out_of_core_faker"
 REMAP_DEFERRED = "fk_key_hash_remap_native_deferred"
 _NO_KERNEL_RAN = "none"
-_REASON_NO_ROWS = "no_rows_hashed"
+_REASON_NO_ROWS = reasons.route.NO_ROWS_HASHED
 
 
 @dataclass
@@ -197,7 +198,7 @@ class TableHashPlan:
         if decision.native:
             if idx < 0:
                 raise ExecutionError(
-                    code="out_of_core_hash_column_missing",
+                    code=reasons.runtime.OUT_OF_CORE_HASH_COLUMN_MISSING,
                     message=(
                         f"hash column {column!r} of table {decision.table!r} is missing from a "
                         "streamed batch; the run is aborted rather than skipping it."
@@ -205,7 +206,7 @@ class TableHashPlan:
                 )
             if batch.schema.field(idx).type != decision.pinned_type:
                 raise ExecutionError(
-                    code="out_of_core_hash_input_type_drift",
+                    code=reasons.runtime.OUT_OF_CORE_HASH_INPUT_TYPE_DRIFT,
                     message=(
                         f"hash column {column!r} of table {decision.table!r} was pinned as "
                         f"{decision.pinned_type} but a batch carries "

@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._chunked_input import _FixedSchemaChunks
 from decoy_engine.execution._errors import ExecutionError
 
@@ -49,7 +50,7 @@ __all__ = ["PreResolvedColumn"]
 
 def _misaligned(table: str, detail: str) -> ExecutionError:
     return ExecutionError(
-        code="mixed_key_payload_misaligned",
+        code=reasons.runtime.MIXED_KEY_PAYLOAD_MISALIGNED,
         message=f"table {table!r}: the resolved FK key does not line up with the payload rows: "
         f"{detail}.",
     )

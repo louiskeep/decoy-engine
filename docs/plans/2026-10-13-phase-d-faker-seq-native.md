@@ -1,4 +1,5 @@
-Status: plan (Phase D / faker SEQ-native slice. DRAFT rev 3, after Codex plan-gate NO-GO on rev 1 (2 HIGH) and rev 2 (1 HIGH + 3 MED). faker as the 6th SEQ-native payload tenant.)
+Status: built
+Shipped: commit 5e1838e5 (PR #252, faker native on the sequential route)
 
 # Phase D / faker native on the sequential route
 

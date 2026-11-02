@@ -1,7 +1,8 @@
 """FK-integrity validators: fk_intact and no_orphan_children (SP-05 / P5.INFRA.4).
 
-Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG; materialise parent
-PK set; resolve child FK values against it.
+Pattern: SDV HMA1 method (Patki, Wedge and Veeramachaneni, "The Synthetic Data Vault", IEEE DSAA 2016). Method only: no SDV code is used
+or imported (SDV is BUSL-1.1). Parent-first DAG; materialise parent PK set;
+resolve child FK values against it.
 
 The two validators implement the parent-first DAG pattern from SDV's
 HierarchicalMetaData (HMA1) model, adapted for integrity checking rather
@@ -156,8 +157,8 @@ def validate_fk_intact(
 ) -> tuple[ValidatorFinding, ...]:
     """fk_intact: every non-null child FK value resolves to a parent PK.
 
-    Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG; materialise
-    parent PK set; resolve child FK values against it.
+    Pattern: SDV HMA1 method (Patki et al., IEEE DSAA 2016; method only, no
+    SDV code: SDV is BUSL-1.1). Parent-first DAG; materialise parent PK set; resolve child FK values against it.
 
     Reads every relationship declared in ``config["relationships"]``. For each
     child table + FK columns, checks that every non-null FK tuple appears in
@@ -241,7 +242,8 @@ def validate_no_orphan_children(
 ) -> tuple[ValidatorFinding, ...]:
     """no_orphan_children: every child row must have a non-null FK value.
 
-    Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG; child rows with
+    Pattern: SDV HMA1 method (Patki et al., IEEE DSAA 2016; method only, no
+    SDV code: SDV is BUSL-1.1). Parent-first DAG; child rows with
     null FK values are orphaned children that cannot be joined to any parent.
 
     Stricter than fk_intact: this validator flags child rows whose FK columns

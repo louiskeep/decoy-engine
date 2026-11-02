@@ -165,7 +165,7 @@ def _medium_tier() -> pd.DataFrame:
 def _scalar_config(source_path: str) -> dict[str, Any]:
     return _validated_dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 "accounts": {"type": "file", "format": "parquet", "path": source_path},
@@ -270,7 +270,7 @@ _FAKER_COLUMNS: tuple[tuple[str, str, str, int], ...] = (
 def _faker_wide_config(source_path: str) -> dict[str, Any]:
     return _validated_dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 "accounts": {"type": "file", "format": "parquet", "path": source_path},
@@ -358,7 +358,7 @@ _FPE_COLUMNS: tuple[str, ...] = ("ssn", "zip", "phone", "claim_id", "invoice_id"
 def _fpe_heavy_config(source_path: str) -> dict[str, Any]:
     return _validated_dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 "accounts": {"type": "file", "format": "parquet", "path": source_path},
@@ -453,7 +453,7 @@ _TEXT_SAMPLES: tuple[str, ...] = (
 def _text_redact_config(source_path: str) -> dict[str, Any]:
     return _validated_dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 "accounts": {"type": "file", "format": "parquet", "path": source_path},
@@ -558,7 +558,7 @@ def test_chunked_large_single_table_gate(tmp_path: Any) -> None:
     source_path = _write_parquet_source(tmp_path, df, "chunk_src.parquet")
     cfg = _validated_dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 "accounts": {"type": "file", "format": "parquet", "path": source_path},

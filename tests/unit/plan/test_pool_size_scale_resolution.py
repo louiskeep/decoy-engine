@@ -38,7 +38,7 @@ _ENGINE_VERSION = "de11-test"
 def _config(tmp_path, columns: list[dict], table: str = "people") -> dict:
     """A real, pydantic-validated PipelineConfig dump (not a toy dict)."""
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
         "tables": [{"name": table, "columns": columns}],
@@ -478,7 +478,7 @@ class TestDeterministicSoftModeCapacityBypass:
     @staticmethod
     def _config_fail_mode(tmp_path, columns: list[dict], table: str = "people") -> dict:
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42, "on_pool_exhaustion": "fail"},
             "sources": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
             "tables": [{"name": table, "columns": columns}],

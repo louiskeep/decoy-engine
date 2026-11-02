@@ -617,7 +617,7 @@ def _fk_pure_mask_config(tmp_path: Path, n: int = 20) -> dict[str, Any]:
     parent_src = _write_source(tmp_path, parent, "parent")
     child_src = _write_source(tmp_path, child, "child")
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "b1b-byte-estimate-routing", "seed": 7},
         "sources": {
             "parent": {"type": "file", "path": parent_src, "format": "parquet"},
@@ -813,7 +813,7 @@ class TestEndToEndWiring:
             child_src = _write_source(tmp_path, child, f"child_{tag}")
             pad_cols = [{"name": f"pad{c}", "strategy": "redact"} for c in range(n_extra_cols)]
             config = {
-                "version": 1,
+                "version": 2,
                 "global_settings": {"job_name": "width-change", "seed": 7},
                 "sources": {
                     "parent": {"type": "file", "path": parent_src, "format": "parquet"},

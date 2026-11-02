@@ -43,6 +43,7 @@ from collections.abc import Callable, Mapping
 
 import polars as pl
 
+from decoy_engine import reasons
 from decoy_engine.subset._errors import SubsetInternalError
 from decoy_engine.subset._keys import RI
 from decoy_engine.subset._types import (
@@ -146,7 +147,7 @@ def compute_closure(
         rounds += 1
         if rounds > max_rounds:
             raise SubsetInternalError(
-                code="subset_closure_nontermination",
+                code=reasons.runtime.SUBSET_CLOSURE_NONTERMINATION,
                 message="closure exceeded its monotone growth bound; this is an engine bug, "
                 "report it",
             )
@@ -239,7 +240,7 @@ def verify_closure(
         )
         if still_present.height > 0:
             raise SubsetInternalError(
-                code="subset_closure_invariant_violated",
+                code=reasons.runtime.SUBSET_CLOSURE_INVARIANT_VIOLATED,
                 message=f"edge {e.edge_id}: {still_present.height} surviving child key(s) "
                 "reference a parent key that exists in the source parent table but was not "
                 "pulled into the surviving parent set. This is a closure engine bug.",

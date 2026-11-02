@@ -16,7 +16,7 @@ has no per-row error channel and no `fail_closed` hook.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -45,7 +45,7 @@ class TextMaskCall:
     """
 
     column: str
-    mask_key: bytes
+    mask_key: bytes = field(repr=False)
     detectors: tuple[str, ...] | None
     per_detector_strategy: Mapping[str, str] | None
     unmatched_span_policy: str

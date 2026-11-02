@@ -1,6 +1,7 @@
 # P4 slice 5: `bucket_perturb` (explicit date_format) on the chunked route
 
-Status: plan
+Status: built
+Shipped: src/decoy_engine/execution/_chunked.py:81 (bucket_perturb admitted); _chunked_bucket_perturb.py:2
 
 > Part 2 Phase 4, chunked-route strategy port, slice 5. Follows slices 1-4
 > (windowed_date, group_key, text_mask, code_set), all built, double-gated,

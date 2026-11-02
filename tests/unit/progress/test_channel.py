@@ -157,14 +157,14 @@ def test_structured_events_adapter_maps_onto_logger_methods() -> None:
     sink.on_event(progress.PhaseEvent("mask", "finish", table="t", rows_out=5))
     sink.on_event(progress.RateSample("t", 10, 100.0, 0.1))
     sink.on_event(progress.RouteEvent("sequential"))
-    sink.on_event(progress.WarningEvent("x_code", table="t", column="c"))
+    sink.on_event(progress.WarningEvent("top_code_generalized", table="t", column="c"))
     sink.on_event(progress.TerminalEvent("error", error_class="ValueError"))
     assert calls == [
         ("step", "mask:t", "running", 5, None, None),
         ("step", "mask:t", "finished", None, 5, None),
         ("tp", 100),
         ("step", "route:sequential", "finished", None, None, None),
-        ("warn", "engine warning x_code (table=t column=c)"),
+        ("warn", "engine warning top_code_generalized (table=t column=c)"),
         ("step", "run", "error", None, None, "ValueError"),
     ]
 

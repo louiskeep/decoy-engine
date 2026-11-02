@@ -1,6 +1,7 @@
 # C5c-ii: deterministic Faker over non-string sources on the native routes
 
-Status: plan (rev 4, Codex-authored chunked-route remediation in §10; escalate-to-plan). Rev-3 §4.1 superseded by §10. Phase C, Rust-engine program.
+Status: built
+Shipped: docs/records/2026-10-09-c5c-ii-deterministic-nonstring-faker-build.md
 Branch `feat/c5c-ii-deterministic-nonstring-faker` off engine main `69a7741f`.
 Follows C5c-i (#220, positional Faker over non-string) and C5c-a (#221, oracle
 sampling-boundary fix for deterministic Faker over nullable ints).

@@ -191,7 +191,7 @@ def _composite_config(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Tabl
         return {"name": column, "strategy": "hash", "namespace": f"ns_{column}"}
 
     config: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "dcomp-route", "seed": 7},
         "sources": {
             t: {"type": "file", "path": str(tmp_path / f"{t}.parquet"), "format": "parquet"}

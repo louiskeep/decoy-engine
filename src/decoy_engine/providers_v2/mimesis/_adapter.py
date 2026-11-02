@@ -35,6 +35,7 @@ import mimesis as mimesis_module
 from mimesis import Generic
 from mimesis.locales import Locale
 
+from decoy_engine import reasons
 from decoy_engine.providers_v2._adapter import (
     BackendAdapter,
     CapabilityMatrix,
@@ -95,7 +96,7 @@ def mimesis_capability(provider: str) -> CapabilityMatrix:
     """
     if provider not in _MIMESIS_PROVIDER_MAP:
         raise ProviderError(
-            code="unknown_provider",
+            code=reasons.provider.UNKNOWN_PROVIDER,
             message=(
                 f"MimesisAdapter has no mapping for {provider!r}. Candidates: "
                 f"{sorted(_MIMESIS_PROVIDER_MAP)!r}."
@@ -175,14 +176,14 @@ class MimesisAdapter:
             return getattr(getattr(gen, attr), method)()
         except Exception as exc:
             raise AdapterError(
-                code="capability_violation",
+                code=reasons.provider.CAPABILITY_VIOLATION,
                 message=f"MimesisAdapter.generate({provider!r}) failed: {type(exc).__name__}: {exc}",
             ) from exc
 
     def _require_known(self, provider: str) -> None:
         if provider not in _MIMESIS_PROVIDER_MAP:
             raise AdapterError(
-                code="unknown_provider",
+                code=reasons.provider.UNKNOWN_PROVIDER,
                 message=(
                     f"MimesisAdapter has no mapping for {provider!r}. Candidates: "
                     f"{sorted(_MIMESIS_PROVIDER_MAP)!r}."
@@ -198,7 +199,7 @@ class MimesisAdapter:
 
         self._warnings.append(
             QualityWarning(
-                code="mimesis_locale_fallback",
+                code=reasons.warning.MIMESIS_LOCALE_FALLBACK,
                 provider=provider,
                 detail={
                     "requested_locale": requested_locale,
@@ -210,7 +211,7 @@ class MimesisAdapter:
     def _fallback_for(self, provider: str, requested_locale: str) -> BackendAdapter:
         if self._fallback is None:
             raise AdapterError(
-                code="unsupported_locale",
+                code=reasons.provider.UNSUPPORTED_LOCALE,
                 message=(
                     f"MimesisAdapter has no Faker fallback configured and locale "
                     f"{requested_locale!r} is outside Mimesis coverage for "
@@ -234,7 +235,7 @@ class MimesisAdapter:
         """
         if spec.deterministic:
             raise ProviderError(
-                code="capability_violation",
+                code=reasons.provider.CAPABILITY_VIOLATION,
                 message=(
                     f"MimesisAdapter does not support deterministic mode for "
                     f"{provider!r} at the direct-generate layer (catalog declares "
@@ -265,7 +266,7 @@ class MimesisAdapter:
         """
         if spec.deterministic:
             raise ProviderError(
-                code="capability_violation",
+                code=reasons.provider.CAPABILITY_VIOLATION,
                 message=(
                     "generate_batch does not support deterministic mode; "
                     "deterministic callers wrap this adapter in PoolAdapter (S5)."

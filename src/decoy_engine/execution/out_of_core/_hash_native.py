@@ -25,15 +25,16 @@ from typing import TYPE_CHECKING
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.native._requirements import is_admitted_native_hash_type
 
 if TYPE_CHECKING:
     from decoy_engine.execution.native._crypto_ext import KeyedDerivationKernel
 
-REASON_UNAVAILABLE = "crypto_extension_unavailable"
-REASON_TZ_TIMESTAMP = "hash_input_type_tz_timestamp_deferred"
-REASON_NOT_ADMITTED = "hash_input_type_not_native_admitted"
+REASON_UNAVAILABLE = reasons.route.CRYPTO_EXTENSION_UNAVAILABLE
+REASON_TZ_TIMESTAMP = reasons.route.HASH_INPUT_TYPE_TZ_TIMESTAMP_DEFERRED
+REASON_NOT_ADMITTED = reasons.route.HASH_INPUT_TYPE_NOT_NATIVE_ADMITTED
 
 
 @dataclass(frozen=True)
@@ -70,19 +71,23 @@ def native_hash_array(
     the Python path emits (a string array, one token per row) before the caller
     inserts it.
     """
-    out = bound.kernel.derive_batch(
-        values,
-        mask_key=mask_key,
-        namespace=namespace,
-        truncate=truncate,
-        native_threads=bound.native_threads,
-    )
-    if not isinstance(out, pa.Array) or out.type != pa.string() or len(out) != len(values):
-        raise ExecutionError(
-            code="out_of_core_hash_native_result_invalid",
-            message="the native hash kernel returned an array that is not one string per input row.",
+    try:
+        out = bound.kernel.derive_batch(
+            values,
+            mask_key=mask_key,
+            namespace=namespace,
+            truncate=truncate,
+            native_threads=bound.native_threads,
         )
-    return out
+        if not isinstance(out, pa.Array) or out.type != pa.string() or len(out) != len(values):
+            raise ExecutionError(
+                code=reasons.runtime.OUT_OF_CORE_HASH_NATIVE_RESULT_INVALID,
+                message="the native hash kernel returned an array that is not one string per input row.",
+            )
+        return out
+    except BaseException:
+        del mask_key
+        raise
 
 
 __all__ = [

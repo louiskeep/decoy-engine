@@ -34,7 +34,7 @@ ROW_COUNTS: list[int] = [10_000, 100_000, 1_000_000, 5_000_000]
 
 def _hipaa_shaped_table(rows: int) -> pa.Table:
     """A pyarrow.Table shaped like a typical HIPAA-ish table -- same shape
-    as the STORM benchmark fixture so numbers compare across the bench
+    as the Pre-scan benchmark fixture so numbers compare across the bench
     suite.
 
     Uses pa.array(...) directly to avoid the from_pydict path's overhead

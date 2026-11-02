@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._row_errors import RowError, RowErrorRecord
 from decoy_engine.generation.pool._events import QualityWarning
@@ -74,7 +75,7 @@ class ExecutionResult:
         """The single masked table. Raises if the result holds 0 or >1 tables."""
         if len(self.outputs) != 1:
             raise ExecutionError(
-                code="multi_table_result_has_no_single_output",
+                code=reasons.runtime.MULTI_TABLE_RESULT_HAS_NO_SINGLE_OUTPUT,
                 message=(
                     f"ExecutionResult holds {len(self.outputs)} tables "
                     f"({sorted(self.outputs)}); use .outputs[table] for a multi-table job."
@@ -136,11 +137,12 @@ class StrategyContext:
     pool_cache: PoolCache
     relationship_graph: RelationshipGraph
     namespace_registry: NamespaceRegistry
-    job_seed: bytes
+    job_seed: bytes = field(repr=False)
     # DE-02 (2026-07-14): the keyed-mask IKM. Empty sentinel means "not supplied"
     # -> falls back to job_seed in __post_init__, keeping every pre-DE-02
     # construction (including the test fixtures that never pass it) byte-identical.
-    mask_key: bytes = b""
+    # Never rendered: a traceback that captures a handler's locals shows `ctx` by repr.
+    mask_key: bytes = field(default=b"", repr=False)
     # Sprint 2 honesty pack (D7): the shared per-row-error sink. The
     # dataclass is frozen, but a mutable field's CONTENTS may still be
     # mutated: handlers append RowError instances here; nothing reassigns

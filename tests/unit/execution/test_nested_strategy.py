@@ -152,7 +152,7 @@ class TestPassthroughCases:
         # A malformed-JSON cell fails closed: the original stays in the frame
         # (T4, the pipeline layer removes it), a format_error RowError is recorded
         # so it never reaches the main output unmasked, and the advisory
-        # QualityWarning still surfaces in the Storm report. Pre-fix this emitted
+        # QualityWarning still surfaces in the Post-scan integrity report. Pre-fix this emitted
         # only the warning and let the cleartext through (TEST-3 finding 1).
         df = pd.DataFrame({"data": ["not json at all"]})
         handler = NestedStrategyHandler()
@@ -236,7 +236,7 @@ class TestRejections:
     StrategyError so the runner fails the job. Pre-fix they returned the
     column unchanged with a QualityWarning; a typoed target or unknown
     child strategy silently passed PII through (the warning surfaced
-    only in the Storm report, which not all operators audit).
+    only in the Post-scan integrity report, which not all operators audit).
     """
 
     def test_nested_recursive_nested_rejected(self):
@@ -372,7 +372,7 @@ class TestJsonPathOverlapSecurity:
     `jsonpath_ng.update` in original order silently lost the inner
     write or wrote to the wrong location. Post-fix the matches are
     sorted deepest-first and a typed QualityWarning is emitted when
-    prefix-overlap is detected so operators auditing the Storm report
+    prefix-overlap is detected so operators auditing the Post-scan integrity report
     can see the path was ambiguous."""
 
     def test_nested_recursive_overlap_emits_warning(self):

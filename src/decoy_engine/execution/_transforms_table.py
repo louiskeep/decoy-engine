@@ -32,11 +32,13 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.config import TableConfig
 from decoy_engine.config._transforms import DeriveOp, DropColumnOp, TransformOp
 from decoy_engine.execution import _transforms
 from decoy_engine.execution._fk_keys import to_pandas_fk_safe
 from decoy_engine.execution._transforms_gate import find_table_config
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.profile._readers import LazySource
 
 __all__ = [
@@ -90,7 +92,7 @@ def _apply_ops(table: pa.Table, ops: Sequence[TransformOp]) -> pa.Table:
     bindings = _final_bindings(start_columns, ops)
     if [name for name, _ in bindings] != [str(c) for c in frame.columns]:
         raise _transforms.TransformError(
-            code="transform_lineage_mismatch",
+            code=reasons.runtime.TRANSFORM_LINEAGE_MISMATCH,
             message="transform output columns did not match the tracked bindings",
         )
     ordinals = pa.array(frame.index.to_numpy(dtype="int64"), type=pa.int64())
@@ -106,7 +108,7 @@ def _apply_ops(table: pa.Table, ops: Sequence[TransformOp]) -> pa.Table:
                 derived = pa.array(frame[name], from_pandas=True)
             except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
                 raise _transforms.TransformError(
-                    code="derive_result_not_convertible",
+                    code=reasons.runtime.DERIVE_RESULT_NOT_CONVERTIBLE,
                     message=f"derived column {name!r} could not be converted to Arrow",
                 ) from exc
             arrays.append(derived)
@@ -133,7 +135,14 @@ def apply_resident_table(config: Mapping[str, Any], table_name: str, table: pa.T
     return _apply_ops(table, _transform_ops(config, table_name))
 
 
-def apply_table_transforms(config: Mapping[str, Any], table_name: str, table: pa.Table) -> pa.Table:
+@entry_point
+def apply_table_transforms(
+    config: Mapping[str, Any],
+    table_name: str,
+    table: pa.Table,
+    *,
+    file_access: FileAccess | None = None,
+) -> pa.Table:
     """Apply `table_name`'s configured transforms to `table` and return the result.
 
     `config` is the validated pipeline config dump. The table is returned as the

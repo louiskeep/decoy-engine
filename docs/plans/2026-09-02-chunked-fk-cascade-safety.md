@@ -1,6 +1,7 @@
 # Chunked-FK admission soundness: restrict self-mask to the robust key strategies
 
-Status: plan GATE-APPROVED (2026-09-02, Opus). Codex plan-gate = GO with
+Status: built
+Shipped: CHANGELOG.md:2119 (Phase 4 slice 4); Phase 4 bundle merged in cd6e993d (PR #126)
 implementation guidance now folded in: predicate 12 is a two-stage
 declared(gate)+real(per-chunk runtime) check; safe set refined (scale>=0,
 zoneinfo-resolvable tz, reject dict-wrappers before unwrap, preserve pa.null

@@ -34,6 +34,8 @@ import textwrap
 
 import pytest
 
+from tests._keyed_secret import THROWAWAY_SECRET
+
 pytestmark = pytest.mark.perf
 
 _CAPPED_ENV = {
@@ -77,9 +79,15 @@ _WORKER_SCRIPT = textwrap.dedent(
     from decoy_engine.execution.out_of_core._source import LazySource
     from decoy_engine.execution.out_of_core._stream_join import StreamFkJoiner
     from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
+    from decoy_engine.keyprovider import SecretKeyProvider
     from decoy_engine.providers_v2 import get_default_registry
     from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 
+    import os
+
+    # The throwaway secret arrives by env (the worker is a separate process): F13 removed the
+    # job_seed key, so a keyed (hash) run needs a real >=32-byte secret.
+    _KEY_PROVIDER = SecretKeyProvider(bytes.fromhex(os.environ["DECOY_PERF_WORKER_SECRET"]))
     _JOB_SEED = b"\\x77" * 8
 
 
@@ -238,6 +246,7 @@ _WORKER_SCRIPT = textwrap.dedent(
             budget_bytes=ceiling_bytes,
             temp_disk_budget_bytes=big_disk_bytes,
             out_of_core_reorder_threshold_rows=0,
+            key_provider=_KEY_PROVIDER,
         )
 
         child_out = pq.read_table(sink_target / "child.parquet")
@@ -272,7 +281,7 @@ def _run_worker(tmp_path, n_edges):
     worker_path.write_text(_WORKER_SCRIPT)
     work_dir = tmp_path / "work"
     work_dir.mkdir()
-    env = {**os.environ, **_CAPPED_ENV}
+    env = {**os.environ, **_CAPPED_ENV, "DECOY_PERF_WORKER_SECRET": THROWAWAY_SECRET.hex()}
     cmd = [
         sys.executable,
         str(worker_path),

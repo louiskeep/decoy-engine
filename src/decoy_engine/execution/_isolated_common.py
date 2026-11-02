@@ -33,8 +33,10 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import duckdb
 
+from decoy_engine import reasons
 from decoy_engine.execution._isolated_memwatch import MemoryEvidence
 from decoy_engine.execution._row_errors import RowErrorRecord
+from decoy_engine.reasons import ReasonRecord
 from decoy_engine.validation_result import CODES
 
 if TYPE_CHECKING:
@@ -44,7 +46,6 @@ __all__ = [
     "ISOLATED_WORKER_ENV",
     "RESULT_FILENAME",
     "RLIMIT_KINDS",
-    "ROUTE_INELIGIBLE_MARKERS",
     "IsolatedRunOutcome",
     "IsolatedRunResult",
     "abnormal_exit_text",
@@ -54,7 +55,6 @@ __all__ = [
     "exception_error_text",
     "is_memory_failure",
     "peak_rss_mb",
-    "preserved_route_markers",
     "scrub_error_text",
 ]
 
@@ -211,29 +211,6 @@ def scrub_error_text(message: str) -> str:
     return f"{message[:value_start]}<value>{message[value_end:]}"
 
 
-# `IsolatedRunResult.error` is a CONTROL-FLOW input, not only a log line: the route governor
-# (`_governor._is_route_ineligible_error`) reroutes a `crashed` run when one of these stable
-# fragments appears in it. `decide_execution_route` raises a `ConfigError` carrying the
-# fragment for an explicit `execution_mode` the job is not eligible for. The fragments are
-# engine-authored constants, so the safe summary below re-emits them verbatim after dropping
-# the rest of the message (which also holds config text such as the eligibility reason).
-ROUTE_INELIGIBLE_MARKERS: dict[str, tuple[str, ...]] = {
-    "out_of_core": (
-        "is not out-of-core-eligible",
-        "is not out-of-core-compatible",
-        "no mask-kind table to run through the out-of-core path",
-    ),
-    "sequential": (
-        "is not sequential-eligible",
-        "FK graph has a cross-table cycle",
-        "no mask-kind table to run through the sequential path",
-    ),
-    # full_frame is the universal override and has no eligibility gate to trip.
-    "full_frame": (),
-}
-_ALL_ROUTE_MARKERS: tuple[str, ...] = tuple(
-    dict.fromkeys(marker for markers in ROUTE_INELIGIBLE_MARKERS.values() for marker in markers)
-)
 # Registered, data-free ExecutionError codes raised by the knob, substrate and memory-detection
 # checks (the physical catalog's PRECOMPILATION_EXCLUDED_CODES). They are fixed engine literals
 # with no message or user text, so echoing them restores the diagnostic parity the direct path
@@ -242,10 +219,10 @@ _ALL_ROUTE_MARKERS: tuple[str, ...] = tuple(
 # must not import the physical seam; `test_isolated_safe_error` pins this set against that catalog.
 _EXECUTION_CODES: frozenset[str] = frozenset(
     {
-        "invalid_substrate",
-        "invalid_execution_knob",
-        "out_of_core_reorder_threshold_invalid",
-        "out_of_core_memory_detection_failed",
+        reasons.runtime.INVALID_SUBSTRATE,
+        reasons.runtime.INVALID_EXECUTION_KNOB,
+        reasons.runtime.OUT_OF_CORE_REORDER_THRESHOLD_INVALID,
+        reasons.runtime.OUT_OF_CORE_MEMORY_DETECTION_FAILED,
     }
 )
 # A code is echoed only if the engine registered it. Character shape is not trust: an exception
@@ -258,25 +235,19 @@ _TRUSTED_CODES: frozenset[str] = (
 )
 
 
-def preserved_route_markers(*texts: str) -> tuple[str, ...]:
-    """The route-ineligibility fragments present in the ORIGINAL text, in a fixed order."""
-    return tuple(m for m in _ALL_ROUTE_MARKERS if any(m in t for t in texts))
-
-
 def exception_error_text(exc: BaseException) -> str:
     """The stored text for a failed run: a safe summary, never the exception message.
 
     Messages from parsers, validators and Arrow echo the cell, expression or file text they
     choked on, and this string reaches the job's user-visible error. Keep the class name, the
-    `code` when it is a registered `validation_result.CODES` value or a registered execution code, and the governor's route markers (matched
-    against the original message, emitted as engine constants).
+    `code` when it is a registered `validation_result.CODES` value or a registered execution code.
+    Nothing here is a control-flow input: the governor reroutes on the typed `reason` identity.
     """
     head = type(exc).__name__
     code = getattr(exc, "code", None)
     if isinstance(code, str) and code in _TRUSTED_CODES:
         head = f"{head} [{code}]"
-    markers = preserved_route_markers(str(exc))
-    return f"{head}: {'; '.join(markers)}" if markers else head
+    return head
 
 
 def commit_error_text(exc: BaseException) -> str:
@@ -307,14 +278,12 @@ def abnormal_exit_text(returncode: int, signal_name: str | None, stderr: str, st
     """Safe `error` text for a child that died without a result envelope.
 
     The child's stderr/stdout stay out: they can carry data values from a crashing strategy.
-    Return code, signal, the stable reason and any route markers are what a reader and the
-    governor need.
+    Return code, signal and the stable reason are what a reader needs.
     """
     signal_part = f", signal={signal_name}" if signal_name else ""
     reason = abnormal_exit_reason(returncode, stderr)
     summary = f"child terminated abnormally (returncode={returncode}{signal_part}, reason={reason})"
-    markers = preserved_route_markers(stderr, stdout)
-    return f"{summary}: {'; '.join(markers)}" if markers else summary
+    return summary
 
 
 def classify_abnormal_exit(returncode: int, stderr: str) -> IsolatedRunOutcome:
@@ -411,6 +380,9 @@ class IsolatedRunResult:
     # outcome -- there is nothing to attribute a row error to.
     row_errors: tuple[RowErrorRecord, ...] = ()
     extra: dict[str, Any] = field(default_factory=dict)
+    # The structured reason of a failed run (F29): validated registry identity, phase, retry class,
+    # outcome and closed context. `None` for a completed run. Carries no message or class name.
+    reason: ReasonRecord | None = None
     # Driver-side memory sampling of a capped isolated run; a suspicion beside an unchanged
-    # outcome, never a verdict. None for uncapped and in-process runs.
+    # outcome, never a verdict. None for uncapped and in-process runs. Stays the last field.
     memory_evidence: MemoryEvidence | None = None

@@ -40,9 +40,7 @@ pandas-oracle parity suite pins.
 
 from __future__ import annotations
 
-import os
 import shutil
-import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -51,12 +49,12 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from decoy_engine.execution._adapter import ExecutionResult, provider_config_to_dict
-from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_resolve import orphan_fk_violation_error
 from decoy_engine.execution._output_projection import (
     UnconfiguredColumnPolicy,
     enforce_output_projection,
 )
+from decoy_engine.execution._publication_observer import observed_abort, observed_commit
 from decoy_engine.execution._transactional_sink import TransactionalSink
 from decoy_engine.execution.out_of_core import _join as _join_ooc
 from decoy_engine.execution.out_of_core import _mask_group_c, _validate_batch
@@ -82,7 +80,6 @@ from decoy_engine.execution.out_of_core._memory_estimate import (
 from decoy_engine.execution.out_of_core._multi_parent import resolve_incoming
 from decoy_engine.execution.out_of_core._preflight import run_preflight
 from decoy_engine.execution.out_of_core._relation import (
-    _column_seed,
     build_parent_key_relation_aligned,
 )
 from decoy_engine.execution.out_of_core._route_policy import (
@@ -91,15 +88,17 @@ from decoy_engine.execution.out_of_core._route_policy import (
     decide_route,
     validate_outgoing_parent_columns,
 )
+from decoy_engine.execution.out_of_core._scratch import scratch_root
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_driver import stream_table
 from decoy_engine.execution.out_of_core._stream_driver_support import (
     _code_set_records_and_evidence_for_table,
+    open_joiner,
 )
 from decoy_engine.execution.out_of_core._vault_collect import (
     collect_batch_vault,
 )
-from decoy_engine.plan._types import ColumnSeed
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.progress import get_active_channel
 from decoy_engine.relationships._graph import OrphanPolicy
 
@@ -120,6 +119,7 @@ if TYPE_CHECKING:
     TableSource: TypeAlias = pa.Table | LazySource
 
 
+@entry_point
 def run_fk_out_of_core(
     plan: Plan,
     sources: Mapping[str, pa.Table | LazySource],
@@ -138,6 +138,7 @@ def run_fk_out_of_core(
     vault_writer: Any = None,
     config: Mapping[str, Any] | None = None,
     native_threads: int = 1,
+    file_access: FileAccess | None = None,
 ) -> ExecutionResult:
     """Run the out-of-core FK relationship route as a batch stream.
 
@@ -199,15 +200,13 @@ def run_fk_out_of_core(
         batch_rows=batch_rows,
         out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
     )
-    mask_key, reorder_threshold_rows = pre.mask_key, pre.reorder_threshold_rows
+    key_box, reorder_threshold_rows = pre.key_box, pre.reorder_threshold_rows
 
     validators = _validate_batch.build_validator_collector(
         config, plan, relationship_graph, sources
     )
     owned_temp = temp_dir is None
-    root = Path(tempfile.mkdtemp(prefix="decoy-ooc-")) if temp_dir is None else temp_dir
-    root.mkdir(parents=True, exist_ok=True)
-    os.chmod(root, 0o700)
+    root = scratch_root(temp_dir)
     committed = False
     # B4: the run-scoped faker pool lifecycle. Pools are Python/object memory
     # outside DuckDB's accounting, so bound them well inside the run budget and
@@ -235,14 +234,14 @@ def run_fk_out_of_core(
         # job's evidence list matches the pandas oracle's shape byte-for-byte.
         code_set_corpora: dict[tuple[str, str], dict[str, Any]] = {}
         hash_run = OocHashRun(native_threads=native_threads, faker_pool=faker_pool)
-        for table_name in _table_order(plan, relationship_graph, sources):
+        for index, table_name in enumerate(_table_order(plan, relationship_graph, sources)):
             if table_name not in sources:
                 continue
             # The merge runs before any joiner opens, so it takes the undivided build cap.
             table_incoming_edges = resolve_incoming(
                 incoming[table_name],
                 parent_relations,
-                temp_dir=root / "relations" / table_name / "merged",
+                temp_dir=root / "relations" / f"t{index:04d}" / "merged",
                 memory_limit=memory_limit_for(budget_bytes, 1) if budget_bytes else memory_limit,
             )
             table_outgoing_edges = tuple(outgoing[table_name])
@@ -266,9 +265,9 @@ def run_fk_out_of_core(
                 "incoming_edges": table_incoming_edges,
                 "outgoing_edges": table_outgoing_edges,
                 "parent_relations": parent_relations,
-                "temp_dir": root / "joins" / table_name,
-                "relation_dir": root / "relations" / table_name,
-                "staging_path": root / "staged" / table_name / "masked_keys.parquet",
+                "temp_dir": root / "joins" / f"t{index:04d}",
+                "relation_dir": root / "relations" / f"t{index:04d}",
+                "staging_path": root / "staged" / f"t{index:04d}" / "masked_keys.parquet",
                 "memory_limit": memory_limit,
                 "batch_rows": batch_rows,
                 "budget_bytes": budget_bytes,
@@ -276,7 +275,6 @@ def run_fk_out_of_core(
                 "outputs": outputs,
                 "warnings": warnings,
                 "unconfigured_column_policy": unconfigured_column_policy,
-                "mask_key": mask_key,
                 "code_set_corpora": code_set_corpora,
                 "hash_run": hash_run,
                 "vault_writer": vault_writer,
@@ -289,12 +287,13 @@ def run_fk_out_of_core(
             if route.reorder_caps is not None:
                 stream_table(
                     **table_kwargs,
+                    mask_key=key_box.open()[0],
                     run_bytes_cap=route.reorder_caps.run_bytes_cap,
                     merge_fan_in=route.reorder_caps.merge_fan_in,
                     reorder_caps=route.reorder_caps,
                 )
             else:
-                _stream_table(**table_kwargs)
+                _stream_table(**table_kwargs, mask_key=key_box.open()[0])
             _pg.flush(table_name)
             _pg.phase_finish("mask", _pg_started, table=table_name)
             if temp_disk_budget_bytes is not None:
@@ -309,7 +308,7 @@ def run_fk_out_of_core(
         # Before the publish: a failed validation commits nothing.
         _validate_batch.finish_validation(validators, quality_metrics)
         if sink is not None:
-            sink.commit()
+            observed_commit(sink)
             committed = True
             return ExecutionResult(
                 outputs={}, warnings=tuple(warnings), quality_metrics=quality_metrics
@@ -317,9 +316,9 @@ def run_fk_out_of_core(
         return ExecutionResult(
             outputs=outputs, warnings=tuple(warnings), quality_metrics=quality_metrics
         )
-    except Exception:
+    except Exception as failure:
         if sink is not None and not committed:
-            sink.abort()
+            observed_abort(sink, failure)
         raise
     finally:
         # The relation/join staging subtrees hold (source_key, masked_key) pairs
@@ -387,227 +386,193 @@ def _stream_table(
     the evidence stamp, so a corpus swapped mid-stream cannot make batches or
     the stamp disagree on version.
     """
-    if batch_rows is None:
-        batch_rows = _join_ooc._JOIN_BATCH_ROWS
-    source_schema = raw.schema
-    skip_columns = frozenset(col for edge in incoming_edges for col in edge.child_columns)
-    # Hash columns are decided once here, before any row is read (a column never changes backend).
-    hash_plan = (hash_run or OocHashRun()).prepare_table(
-        plan, table_name, source_schema, skip_columns, incoming_edges, site="batch_join"
-    )
-    code_set_corpus_records, table_code_set_evidence = _code_set_records_and_evidence_for_table(
-        plan, table_name, source_schema.names, skip_columns=skip_columns
-    )
-    # Evidence is resolved from plan+schema before any row is read; the commit
-    # is deferred until the stream has seen a non-missing value per column.
-    code_set_null_seen: dict[str, bool] = dict.fromkeys(code_set_corpus_records, False)
-    # Round-2 MEDIUM-1: one accumulator per table, reused across every
-    # `mask_batch` call below so a multi-batch stream aggregates into ONE
-    # `{detector_id: count}` dict per text_mask column; the aggregate
-    # `text_mask_sub_floor_span_handled` QualityWarning is emitted once the
-    # whole stream is consumed, matching the full-frame handler's per-column
-    # aggregate (never per-batch, which would fragment one column's notice
-    # across however many batches the stream happened to use).
-    text_mask_sub_floor_totals: dict[str, dict[str, int]] = {}
-    # Phase-local caps (Part A + HIGH): a resident-path joiner stays live
-    # through this table's own build, so it opens at the build's cap; sink-ness
-    # selects the joiner cap here since memory_limit is fixed at open.
-    sink_joiner, resident_joiner, sink_build_memory_limit, resident_build_memory_limit = (
-        resolve_phase_memory_limits(
-            budget_bytes=budget_bytes,
-            memory_limit=memory_limit,
-            incoming_edges=len(incoming_edges),
-            sink=sink is not None,
-        )
-    )
-    joiner_memory_limit = sink_joiner if sink is not None else resident_joiner
-    joiners: list[ChildFkBatchJoiner] = []
     try:
-        for idx, edge in enumerate(incoming_edges):
-            joiners.append(
-                _open_joiner(
+        if batch_rows is None:
+            batch_rows = _join_ooc._JOIN_BATCH_ROWS
+        source_schema = raw.schema
+        skip_columns = frozenset(col for edge in incoming_edges for col in edge.child_columns)
+        # Hash columns are decided once here, before any row is read (a column never changes backend).
+        hash_plan = (hash_run or OocHashRun()).prepare_table(
+            plan, table_name, source_schema, skip_columns, incoming_edges, site="batch_join"
+        )
+        code_set_corpus_records, table_code_set_evidence = _code_set_records_and_evidence_for_table(
+            plan, table_name, source_schema.names, skip_columns=skip_columns
+        )
+        # Evidence is resolved from plan+schema before any row is read; the commit
+        # is deferred until the stream has seen a non-missing value per column.
+        code_set_null_seen: dict[str, bool] = dict.fromkeys(code_set_corpus_records, False)
+        # Round-2 MEDIUM-1: one accumulator per table, reused across every
+        # `mask_batch` call below so a multi-batch stream aggregates into ONE
+        # `{detector_id: count}` dict per text_mask column; the aggregate
+        # `text_mask_sub_floor_span_handled` QualityWarning is emitted once the
+        # whole stream is consumed, matching the full-frame handler's per-column
+        # aggregate (never per-batch, which would fragment one column's notice
+        # across however many batches the stream happened to use).
+        text_mask_sub_floor_totals: dict[str, dict[str, int]] = {}
+        # Phase-local caps (Part A + HIGH): a resident-path joiner stays live
+        # through this table's own build, so it opens at the build's cap; sink-ness
+        # selects the joiner cap here since memory_limit is fixed at open.
+        sink_joiner, resident_joiner, sink_build_memory_limit, resident_build_memory_limit = (
+            resolve_phase_memory_limits(
+                budget_bytes=budget_bytes,
+                memory_limit=memory_limit,
+                incoming_edges=len(incoming_edges),
+                sink=sink is not None,
+            )
+        )
+        joiner_memory_limit = sink_joiner if sink is not None else resident_joiner
+        joiners: list[ChildFkBatchJoiner] = []
+        try:
+            for idx, edge in enumerate(incoming_edges):
+                joiners.append(
+                    open_joiner(
+                        ChildFkBatchJoiner,
+                        plan,
+                        edge,
+                        parent_relations[edge],
+                        source_schema,
+                        temp_dir / f"edge_{idx}",
+                        joiner_memory_limit,
+                        mask_key=mask_key,
+                    )
+                )
+            for edge, joiner in zip(incoming_edges, joiners, strict=True):
+                if edge.orphan_policy is OrphanPolicy.FAIL:
+                    _raise_on_total_orphans(edge, joiner, raw, batch_rows)
+            fk_components = _fk_component_map(incoming_edges, joiners)
+            fixed_schema = _fixed_output_schema(plan, table_name, source_schema, fk_components)
+            # DE-03: fail-closed output projection at the earliest point -- the fixed
+            # output schema is known before any batch streams. FK-resolved child
+            # columns are legitimate output but are not in the mask plan's seed
+            # envelope, so they are passed as extra_known to avoid a false positive.
+            warnings.extend(
+                enforce_output_projection(
+                    table_name,
+                    fixed_schema.names,
                     plan,
-                    edge,
-                    parent_relations[edge],
-                    source_schema,
-                    temp_dir / f"edge_{idx}",
-                    joiner_memory_limit,
-                    mask_key=mask_key,
+                    unconfigured_column_policy,
+                    extra_known=frozenset(fk_components),
                 )
             )
-        for edge, joiner in zip(incoming_edges, joiners, strict=True):
-            if edge.orphan_policy is OrphanPolicy.FAIL:
-                _raise_on_total_orphans(edge, joiner, raw, batch_rows)
-        fk_components = _fk_component_map(incoming_edges, joiners)
-        fixed_schema = _fixed_output_schema(plan, table_name, source_schema, fk_components)
-        # DE-03: fail-closed output projection at the earliest point -- the fixed
-        # output schema is known before any batch streams. FK-resolved child
-        # columns are legitimate output but are not in the mask plan's seed
-        # envelope, so they are passed as extra_known to avoid a false positive.
-        warnings.extend(
-            enforce_output_projection(
-                table_name,
-                fixed_schema.names,
-                plan,
-                unconfigured_column_policy,
-                extra_known=frozenset(fk_components),
-            )
-        )
-        orphan_totals = [0] * len(joiners)
+            orphan_totals = [0] * len(joiners)
 
-        def rewritten() -> Iterator[pa.RecordBatch]:
-            for raw_batch in _iter_source_batches(raw, batch_rows):
-                get_active_channel().rows(table_name, raw_batch.num_rows)
-                for column, seen in code_set_null_seen.items():
-                    if seen:
-                        continue
-                    idx = raw_batch.schema.get_field_index(column)
-                    if idx < 0:
-                        continue
-                    col = raw_batch.column(idx)
-                    # "Missing" == null OR float NaN, matching the mask kernel's
-                    # `_is_missing`: an all-NaN float column masks nothing, so a
-                    # plain null_count would over-stamp evidence it never emits.
-                    n_missing = col.null_count
-                    if pa.types.is_floating(col.type):
-                        # pc.* funcs are dynamically generated; stubs miss them.
-                        n_missing += pc.sum(pc.is_nan(col)).as_py() or 0  # type: ignore[attr-defined, unused-ignore]
-                    if n_missing < raw_batch.num_rows:
-                        code_set_null_seen[column] = True
-                out = mask_batch(
+            def rewritten() -> Iterator[pa.RecordBatch]:
+                for raw_batch in _iter_source_batches(raw, batch_rows):
+                    get_active_channel().rows(table_name, raw_batch.num_rows)
+                    for column, seen in code_set_null_seen.items():
+                        if seen:
+                            continue
+                        idx = raw_batch.schema.get_field_index(column)
+                        if idx < 0:
+                            continue
+                        col = raw_batch.column(idx)
+                        # "Missing" == null OR float NaN, matching the mask kernel's
+                        # `_is_missing`: an all-NaN float column masks nothing, so a
+                        # plain null_count would over-stamp evidence it never emits.
+                        n_missing = col.null_count
+                        if pa.types.is_floating(col.type):
+                            # pc.* funcs are dynamically generated; stubs miss them.
+                            n_missing += pc.sum(pc.is_nan(col)).as_py() or 0  # type: ignore[attr-defined, unused-ignore]
+                        if n_missing < raw_batch.num_rows:
+                            code_set_null_seen[column] = True
+                    out = mask_batch(
+                        plan,
+                        table_name,
+                        raw_batch,
+                        skip_columns=skip_columns,
+                        mask_key=mask_key,
+                        code_set_corpus_records=code_set_corpus_records,
+                        sub_floor_totals=text_mask_sub_floor_totals,
+                        hash_plan=hash_plan,
+                    )
+                    # Before the join: FK child keys are not yet remapped here (they decline admission).
+                    collect_batch_vault(vault_config, table_name, raw_batch, out, vault_writer)
+                    _validate_batch.collect_batch_validation(validators, table_name, out)
+                    for join_idx, joiner in enumerate(joiners):
+                        # key_source pins every join to the immutable raw batch:
+                        # edges overlapping on a child column must each key off
+                        # the source values, not an earlier edge's rewrite.
+                        out, orphans = joiner.join_batch(out, key_source=raw_batch)
+                        orphan_totals[join_idx] += orphans
+                    yield out
+
+            def _release_joiners() -> None:
+                # Free joiner DuckDB instances before the relation build (emit_to_sink).
+                for joiner in joiners:
+                    joiner.close()
+
+            if sink is not None:
+                emit_to_sink(
                     plan,
                     table_name,
-                    raw_batch,
-                    skip_columns=skip_columns,
-                    mask_key=mask_key,
-                    code_set_corpus_records=code_set_corpus_records,
-                    sub_floor_totals=text_mask_sub_floor_totals,
-                    hash_plan=hash_plan,
+                    raw,
+                    rewritten(),
+                    fixed_schema=fixed_schema,
+                    fk_components=fk_components,
+                    outgoing_edges=outgoing_edges,
+                    parent_relations=parent_relations,
+                    relation_dir=relation_dir,
+                    staging_path=staging_path,
+                    memory_limit=sink_build_memory_limit,
+                    batch_rows=batch_rows,
+                    sink=sink,
+                    source_schema=source_schema,
+                    on_stream_consumed=_release_joiners,
                 )
-                # Before the join: FK child keys are not yet remapped here (they decline admission).
-                collect_batch_vault(vault_config, table_name, raw_batch, out, vault_writer)
-                _validate_batch.collect_batch_validation(validators, table_name, out)
-                for join_idx, joiner in enumerate(joiners):
-                    # key_source pins every join to the immutable raw batch:
-                    # edges overlapping on a child column must each key off
-                    # the source values, not an earlier edge's rewrite.
-                    out, orphans = joiner.join_batch(out, key_source=raw_batch)
-                    orphan_totals[join_idx] += orphans
-                yield out
-
-        def _release_joiners() -> None:
-            # Free joiner DuckDB instances before the relation build (emit_to_sink).
+            else:
+                batches = list(rewritten())
+                table_out = (
+                    assemble_resident(batches, fk_components)
+                    if batches
+                    else empty_output_table(plan, table_name, source_schema, fk_components)
+                )
+                outputs[table_name] = table_out
+                for edge in outgoing_edges:
+                    parent_relations[edge] = build_parent_key_relation_aligned(
+                        source_parent=raw,
+                        masked_parent=table_out,
+                        edge=edge,
+                        temp_dir=relation_dir,
+                        memory_limit=resident_build_memory_limit,
+                        batch_rows=batch_rows,
+                    )
+            # Deferred commit: `rewritten()` is fully consumed by now, so
+            # `code_set_null_seen` reflects the whole stream. Only a column that
+            # saw a non-missing value earns its stamp (masked_any parity).
+            if code_set_corpora is not None:
+                for key, evidence in table_code_set_evidence.items():
+                    if code_set_null_seen.get(key[1], False):
+                        code_set_corpora[key] = evidence
+            for edge, total in zip(incoming_edges, orphan_totals, strict=True):
+                if total and edge.orphan_policy is OrphanPolicy.WARN:
+                    warnings.append(orphan_fk_warning(edge, total))
+            # Round-2 MEDIUM-1: same deferred-commit reasoning as the code_set
+            # block above -- the whole stream has been consumed by now, so
+            # `text_mask_sub_floor_totals` holds the table's true aggregate.
+            # `table_seed` re-resolves the per-column config to read each
+            # column's `sub_floor_span` policy for the warning (mask_batch itself
+            # already re-resolved the same seed on every batch; this is one more
+            # cheap lookup, not a second masking pass).
+            if text_mask_sub_floor_totals:
+                table_column_seed = table_seed(plan, table_name)
+                if table_column_seed is not None:
+                    for column, column_seed in table_column_seed.per_column:
+                        by_detector = text_mask_sub_floor_totals.get(column)
+                        if not by_detector:
+                            continue
+                        cfg = provider_config_to_dict(column_seed.provider_config)
+                        policy = cfg.get("sub_floor_span")
+                        warnings.append(
+                            _mask_group_c.text_mask_sub_floor_warning(
+                                column, str(policy) if policy is not None else None, by_detector
+                            )
+                        )
+        finally:
             for joiner in joiners:
                 joiner.close()
-
-        if sink is not None:
-            emit_to_sink(
-                plan,
-                table_name,
-                raw,
-                rewritten(),
-                fixed_schema=fixed_schema,
-                fk_components=fk_components,
-                outgoing_edges=outgoing_edges,
-                parent_relations=parent_relations,
-                relation_dir=relation_dir,
-                staging_path=staging_path,
-                memory_limit=sink_build_memory_limit,
-                batch_rows=batch_rows,
-                sink=sink,
-                source_schema=source_schema,
-                on_stream_consumed=_release_joiners,
-            )
-        else:
-            batches = list(rewritten())
-            table_out = (
-                assemble_resident(batches, fk_components)
-                if batches
-                else empty_output_table(plan, table_name, source_schema, fk_components)
-            )
-            outputs[table_name] = table_out
-            for edge in outgoing_edges:
-                parent_relations[edge] = build_parent_key_relation_aligned(
-                    source_parent=raw,
-                    masked_parent=table_out,
-                    edge=edge,
-                    temp_dir=relation_dir,
-                    memory_limit=resident_build_memory_limit,
-                    batch_rows=batch_rows,
-                )
-        # Deferred commit: `rewritten()` is fully consumed by now, so
-        # `code_set_null_seen` reflects the whole stream. Only a column that
-        # saw a non-missing value earns its stamp (masked_any parity).
-        if code_set_corpora is not None:
-            for key, evidence in table_code_set_evidence.items():
-                if code_set_null_seen.get(key[1], False):
-                    code_set_corpora[key] = evidence
-        for edge, total in zip(incoming_edges, orphan_totals, strict=True):
-            if total and edge.orphan_policy is OrphanPolicy.WARN:
-                warnings.append(orphan_fk_warning(edge, total))
-        # Round-2 MEDIUM-1: same deferred-commit reasoning as the code_set
-        # block above -- the whole stream has been consumed by now, so
-        # `text_mask_sub_floor_totals` holds the table's true aggregate.
-        # `table_seed` re-resolves the per-column config to read each
-        # column's `sub_floor_span` policy for the warning (mask_batch itself
-        # already re-resolved the same seed on every batch; this is one more
-        # cheap lookup, not a second masking pass).
-        if text_mask_sub_floor_totals:
-            table_column_seed = table_seed(plan, table_name)
-            if table_column_seed is not None:
-                for column, column_seed in table_column_seed.per_column:
-                    by_detector = text_mask_sub_floor_totals.get(column)
-                    if not by_detector:
-                        continue
-                    cfg = provider_config_to_dict(column_seed.provider_config)
-                    policy = cfg.get("sub_floor_span")
-                    warnings.append(
-                        _mask_group_c.text_mask_sub_floor_warning(
-                            column, str(policy) if policy is not None else None, by_detector
-                        )
-                    )
-    finally:
-        for joiner in joiners:
-            joiner.close()
-
-
-def _open_joiner(
-    plan: Plan,
-    edge: RelationshipEdge,
-    relation: ParentKeyRelation,
-    source_schema: pa.Schema,
-    temp_dir: Path,
-    memory_limit: str | None,
-    *,
-    mask_key: bytes | None = None,
-) -> ChildFkBatchJoiner:
-    for child_col in edge.child_columns:
-        if child_col not in source_schema.names:
-            raise ExecutionError(
-                code="out_of_core_child_column_missing",
-                message=f"child source table has no column {child_col!r}.",
-            )
-    remap_seeds: tuple[ColumnSeed, ...] | None = None
-    if edge.orphan_policy is OrphanPolicy.REMAP:
-        seeds: list[ColumnSeed] = []
-        for parent_col in edge.parent_columns:
-            seed = _column_seed(plan, edge.parent_table, parent_col)
-            if seed is None:
-                raise ExecutionError(
-                    code="out_of_core_parent_seed_missing",
-                    message=f"parent key {edge.parent_table}.{parent_col} is not in the plan.",
-                )
-            seeds.append(seed)
-        remap_seeds = tuple(seeds)
-    return ChildFkBatchJoiner(
-        edge=edge,
-        parent_relation=relation,
-        child_key_types=tuple(source_schema.field(col).type for col in edge.child_columns),
-        temp_dir=temp_dir,
-        memory_limit=memory_limit,
-        remap_seeds=remap_seeds,
-        job_seed=mask_key if mask_key is not None else plan.seed_envelope.job_seed,
-    )
+    except BaseException:
+        del mask_key
+        raise
 
 
 def _raise_on_total_orphans(

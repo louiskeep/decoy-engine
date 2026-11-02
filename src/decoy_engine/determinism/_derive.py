@@ -44,9 +44,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from decoy_engine import reasons
 from decoy_engine.determinism._hkdf import hkdf_sha256
 from decoy_engine.errors import DecoyError
 
@@ -190,7 +191,7 @@ class DeriveContext:
     the same inputs.
     """
 
-    _hmac_key: bytes
+    _hmac_key: bytes = field(repr=False)
 
     @classmethod
     def for_column(cls, seed: bytes, namespace: str) -> DeriveContext:
@@ -200,15 +201,24 @@ class DeriveContext:
         scalar `derive(...)` does. Construction cost is the same as
         one HKDF-SHA256 call (2x HMAC-SHA256 invocations).
         """
-        if len(seed) not in _SEED_LENGTHS:
-            raise DeterminismError(
-                code="seed_wrong_length",
-                message=f"seed must be 8 (job_seed) or 32 (mask_key) bytes; got {len(seed)}",
+        try:
+            if len(seed) not in _SEED_LENGTHS:
+                raise DeterminismError(
+                    code=reasons.runtime.SEED_WRONG_LENGTH,
+                    message=f"seed must be 8 (job_seed) or 32 (mask_key) bytes; got {len(seed)}",
+                )
+            if not namespace:
+                raise DeterminismError(
+                    code=reasons.runtime.NAMESPACE_EMPTY, message="namespace must be non-empty"
+                )
+            return cls(
+                _hmac_key=hkdf_sha256(
+                    ikm=seed, salt=_SALT, info=namespace.encode("utf-8"), length=32
+                )
             )
-        if not namespace:
-            raise DeterminismError(code="namespace_empty", message="namespace must be non-empty")
-        key = hkdf_sha256(ikm=seed, salt=_SALT, info=namespace.encode("utf-8"), length=32)
-        return cls(_hmac_key=key)
+        except BaseException:
+            del seed
+            raise
 
     def derive_source(self, namespace: str, source: bytes) -> bytes:
         """Per-row HMAC. Same output as `derive(seed, namespace, source)`
@@ -276,23 +286,34 @@ def derive(seed: bytes, namespace: str, source: bytes) -> bytes:
     Raises:
         DeterminismError on invalid inputs (seed wrong length, empty namespace).
     """
-    if len(seed) not in _SEED_LENGTHS:
-        raise DeterminismError(
-            code="seed_wrong_length",
-            message=f"seed must be 8 (job_seed) or 32 (mask_key) bytes; got {len(seed)}",
+    # `seed` is the mask key when called on a keyed surface; a traceback keeps this frame, so
+    # every failure drops it first, and the derived HMAC key is never a local (`_opaque`).
+    try:
+        if len(seed) not in _SEED_LENGTHS:
+            raise DeterminismError(
+                code=reasons.runtime.SEED_WRONG_LENGTH,
+                message=f"seed must be 8 (job_seed) or 32 (mask_key) bytes; got {len(seed)}",
+            )
+        if not namespace:
+            raise DeterminismError(
+                code=reasons.runtime.NAMESPACE_EMPTY, message="namespace must be non-empty"
+            )
+        namespace_bytes = namespace.encode("utf-8")
+        hmac_input = (
+            bytes([SEED_PROTOCOL_VERSION])
+            + len(namespace_bytes).to_bytes(4, "big")
+            + namespace_bytes
+            + len(source).to_bytes(4, "big")
+            + source
         )
-    if not namespace:
-        raise DeterminismError(code="namespace_empty", message="namespace must be non-empty")
-    namespace_bytes = namespace.encode("utf-8")
-    hmac_key = hkdf_sha256(ikm=seed, salt=_SALT, info=namespace_bytes, length=32)
-    hmac_input = (
-        bytes([SEED_PROTOCOL_VERSION])
-        + len(namespace_bytes).to_bytes(4, "big")
-        + namespace_bytes
-        + len(source).to_bytes(4, "big")
-        + source
-    )
-    return hmac.new(hmac_key, hmac_input, hashlib.sha256).digest()
+        return hmac.new(
+            hkdf_sha256(ikm=seed, salt=_SALT, info=namespace_bytes, length=32),
+            hmac_input,
+            hashlib.sha256,
+        ).digest()
+    except BaseException:
+        del seed
+        raise
 
 
 def derive_index(seed: bytes, namespace: str, source: bytes, *, pool_size: int) -> int:
@@ -312,9 +333,18 @@ def derive_index(seed: bytes, namespace: str, source: bytes, *, pool_size: int) 
         DeterminismError(code='pool_size_overflow') if pool_size > 2**56.
         Plus whatever `derive` raises on bad inputs.
     """
+    try:
+        _check_pool_size(pool_size)  # first, as before: an invalid size wins over a bad seed
+        return int.from_bytes(derive(seed, namespace, source)[:8], "big") % pool_size
+    except BaseException:
+        del seed  # a traceback keeps this frame: the key must not be among its locals
+        raise
+
+
+def _check_pool_size(pool_size: int) -> None:
     if pool_size > _POOL_SIZE_MAX:
         raise DeterminismError(
-            code="pool_size_overflow",
+            code=reasons.runtime.POOL_SIZE_OVERFLOW,
             message=f"pool_size {pool_size} exceeds maximum {_POOL_SIZE_MAX}",
         )
     # QA-7 F11 (2026-06-01): distinct code for the underflow case. A
@@ -323,11 +353,9 @@ def derive_index(seed: bytes, namespace: str, source: bytes, *, pool_size: int) 
     # misclassify. The message stays similar; only the code shifts.
     if pool_size < 1:
         raise DeterminismError(
-            code="pool_size_invalid",
+            code=reasons.runtime.POOL_SIZE_INVALID,
             message=f"pool_size must be >= 1; got {pool_size}",
         )
-    raw = derive(seed, namespace, source)
-    return int.from_bytes(raw[:8], "big") % pool_size
 
 
 class Domain(Protocol):
@@ -391,5 +419,8 @@ def derive_value(seed: bytes, namespace: str, source: bytes, *, domain: Domain) 
         Whatever `domain.from_bytes(b)` returns. Type is `Any` because every
         Domain returns its own domain-specific type.
     """
-    raw = derive(seed, namespace, source)
-    return domain.from_bytes(raw)
+    try:
+        return domain.from_bytes(derive(seed, namespace, source))
+    except BaseException:
+        del seed  # a traceback keeps this frame: the key must not be among its locals
+        raise

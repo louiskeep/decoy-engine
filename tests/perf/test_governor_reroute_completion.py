@@ -188,7 +188,7 @@ def _fk_mask_config(tmp_path: Path, n_rows: int) -> dict[str, Any]:
     for name, tbl in tables.items():
         pq.write_table(tbl, tmp_path / f"{name}.parquet")
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "tb2-reroute-completion", "seed": 11},
         "sources": {
             name: {"type": "file", "path": str(tmp_path / f"{name}.parquet"), "format": "parquet"}
