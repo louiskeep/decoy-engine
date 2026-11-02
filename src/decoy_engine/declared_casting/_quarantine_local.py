@@ -24,16 +24,14 @@ import stat
 import struct
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
-from datetime import time as dt_time
-from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from decoy_engine import reasons
+from decoy_engine import fileaccess, reasons
 from decoy_engine.declared_casting import (
     _quarantine_protocol as P,  # noqa: N812 -- short alias for the contract namespace
 )
+from decoy_engine.declared_casting._quarantine_codec import _decode, _encode
 from decoy_engine.determinism._hkdf import hkdf_sha256
 from decoy_engine.reasons import ReasonRecord
 
@@ -49,59 +47,6 @@ def _qerror(code: Any, message: str = "", cleanup_state: str = "not_needed") -> 
     from decoy_engine.execution._errors import QuarantineError
 
     return QuarantineError(code=str(code), message=message, cleanup_state=cleanup_state)
-
-
-def _encode(value: Any) -> Any:
-    """A raw cell as tagged JSON that reopens as the same Python type.
-
-    Only the types a framed Arrow row can hold are accepted; anything else is refused rather than
-    stringified, so a reopened row is never a lossy approximation of what was captured.
-    """
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    if isinstance(value, (bytes, bytearray)):
-        return {"$hex": bytes(value).hex()}
-    if isinstance(value, Decimal):
-        return {"$dec": str(value)}
-    if isinstance(value, datetime):  # before date: datetime is a date subclass
-        return {"$datetime": value.isoformat()}
-    if isinstance(value, date):
-        return {"$date": value.isoformat()}
-    if isinstance(value, dt_time):
-        return {"$time": value.isoformat()}
-    if isinstance(value, timedelta):
-        return {"$td": [value.days, value.seconds, value.microseconds]}
-    if isinstance(value, (list, tuple)):
-        tag = "$tuple" if isinstance(value, tuple) else "$list"
-        return {tag: [_encode(v) for v in value]}
-    if isinstance(value, dict):
-        return {"$map": [[_encode(k), _encode(v)] for k, v in value.items()]}
-    raise TypeError("unsupported quarantined value type")
-
-
-def _decode(value: Any) -> Any:
-    if not isinstance(value, dict) or len(value) != 1:
-        return value
-    ((tag, body),) = value.items()
-    if tag == "$hex":
-        return bytes.fromhex(body)
-    if tag == "$dec":
-        return Decimal(body)
-    if tag == "$datetime":
-        return datetime.fromisoformat(body)
-    if tag == "$date":
-        return date.fromisoformat(body)
-    if tag == "$time":
-        return dt_time.fromisoformat(body)
-    if tag == "$td":
-        return timedelta(days=body[0], seconds=body[1], microseconds=body[2])
-    if tag == "$list":
-        return [_decode(v) for v in body]
-    if tag == "$tuple":
-        return tuple(_decode(v) for v in body)
-    if tag == "$map":
-        return {_decode(k): _decode(v) for k, v in body}
-    raise ValueError("unknown value tag")
 
 
 def _write_all(fd: int, data: bytes) -> None:
@@ -190,6 +135,12 @@ class LocalProtectedQuarantineSink:
             strong = False
         if not strong:
             return P.QuarantineCapability(P.PROTECTION_ENCRYPTED, version, False, "weak_key")
+        if not fileaccess.is_ambient():
+            # The root is a caller path the store opens directly, which only the ambient policy
+            # follows; a strict policy has no capability for it, so the run refuses up front.
+            return P.QuarantineCapability(
+                P.PROTECTION_ENCRYPTED, version, False, "arena_needs_ambient_policy"
+            )
         try:
             self._prepare_root()
         except OSError:
@@ -243,6 +194,9 @@ class LocalProtectedQuarantineSink:
             raise ValueError("quarantine arena is not private to this user")
 
     def _prepare_root(self) -> None:
+        # Every file operation of the store runs after this guard (A-4: a caller-named path is
+        # followed only under the ambient policy).
+        fileaccess.require_ambient("the local protected quarantine store")
         if not self._ready:
             self._private_dir(self._root, create=True)
             self._ready = True
@@ -466,6 +420,7 @@ class LocalProtectedQuarantineSink:
         return hmac.new(self._token_key(), msg, hashlib.sha256).hexdigest()
 
     def _locate(self, ref: str) -> tuple[Path, str]:
+        fileaccess.require_ambient("the local protected quarantine store")
         owner_hash, _, run_id = ref.partition("-")
         if (
             len(owner_hash) != 32

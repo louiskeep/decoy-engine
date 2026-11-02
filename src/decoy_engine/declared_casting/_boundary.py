@@ -45,13 +45,24 @@ from decoy_engine.declared_casting._eligibility import contract_model
 _R = reasons.runtime
 
 
+_INTEGER_TYPES = {
+    (True, 8): pa.int8,
+    (True, 16): pa.int16,
+    (True, 32): pa.int32,
+    (True, 64): pa.int64,
+    (False, 8): pa.uint8,
+    (False, 16): pa.uint16,
+    (False, 32): pa.uint32,
+    (False, 64): pa.uint64,
+}
+
+
 def arrow_type(model: C.DeclaredColumnContractV1) -> pa.DataType:
     p = model.parse_format
     if model.logical_type == "string":
         return pa.string()
     if model.logical_type == "integer":
-        prefix = "int" if p.signed else "uint"
-        return getattr(pa, f"{prefix}{p.bit_width}")()
+        return _INTEGER_TYPES[(bool(p.signed), p.bit_width)]()
     if model.logical_type in ("decimal", "currency"):
         return pa.decimal128(p.precision, p.scale)
     return pa.date32()

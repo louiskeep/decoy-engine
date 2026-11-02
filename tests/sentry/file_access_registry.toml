@@ -2,7 +2,7 @@
 # `ordinal` is the index of the call among identical sinks in the function. An entry may be
 # removed freely; adding one needs a `rule` (how the path is built), an `owner` and a `reason`.
 # `ambient_only` marks a caller-derived path that is reached only after `require_ambient`.
-# Count: 192 (asserted by the sentry).
+# Count: 209 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -1764,3 +1764,171 @@ ordinal = 0
 rule = "in-memory bytes buffer (`io.BytesIO` of records the framer already read through a policy handle); the option constructors name no file"
 owner = "cam"
 reason = "the CSV chunk parse never opens a path; the source file is opened through `open_read` above it"
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "_discard_partial"
+sink = "os.unlink"
+ordinal = 0
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "LocalProtectedQuarantineSink._private_dir"
+sink = "os.lstat"
+ordinal = 0
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "LocalProtectedQuarantineSink._private_dir"
+sink = "os.mkdir"
+ordinal = 0
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "LocalProtectedQuarantineSink._private_dir"
+sink = "os.chmod"
+ordinal = 0
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "LocalProtectedQuarantineSink._private_dir"
+sink = "os.lstat"
+ordinal = 1
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "LocalProtectedQuarantineSink._open_artifact"
+sink = "os.open"
+ordinal = 0
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "LocalProtectedQuarantineSink._publish_atomic"
+sink = "os.replace"
+ordinal = 0
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "LocalProtectedQuarantineSink._publish_atomic"
+sink = "os.open"
+ordinal = 0
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "LocalProtectedQuarantineSink.discard"
+sink = "os.unlink"
+ordinal = 0
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "LocalProtectedQuarantineSink._remove_partial"
+sink = "os.unlink"
+ordinal = 0
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "LocalProtectedQuarantineSink._read_header"
+sink = "os.open"
+ordinal = 0
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "LocalProtectedQuarantineSink.purge_expired"
+sink = "os.unlink"
+ordinal = 0
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_stream.py"
+function = "stage_typed_sources"
+sink = "pyarrow.parquet.ParquetWriter"
+ordinal = 0
+rule = "path under the per-run root `engine_scratch_root` created with `tempfile.mkdtemp`, named by an opaque per-run counter (s0000), never by a table, column or edge name"
+owner = "cam"
+reason = "F06 typed staging copy of a declared out-of-core source; engine-owned scratch, read back only through `scratch_access_for`"
+
+[[entry]]
+module = "decoy_engine/declared_casting/_stream.py"
+function = "stage_typed_sources"
+sink = "pyarrow.parquet.ParquetWriter"
+ordinal = 1
+rule = "path under the per-run root `engine_scratch_root` created with `tempfile.mkdtemp`, named by an opaque per-run counter (s0000), never by a table, column or edge name"
+owner = "cam"
+reason = "F06 typed staging copy of a declared out-of-core source; engine-owned scratch, read back only through `scratch_access_for`"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_scratch.py"
+function = "engine_scratch_root"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "an engine-created `tempfile.mkdtemp` root, under the caller's temp_dir only after `fileaccess.require_ambient` refused every policy but the ambient one; removed on exit"
+owner = "cam"
+reason = "the per-run scratch root that holds the F06 typed staging copy and the route's spill under one temp-disk budget"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_scratch.py"
+function = "engine_scratch_root"
+sink = "tempfile.mkdtemp"
+ordinal = 0
+rule = "an engine-created `tempfile.mkdtemp` root, under the caller's temp_dir only after `fileaccess.require_ambient` refused every policy but the ambient one; removed on exit"
+owner = "cam"
+reason = "the per-run scratch root that holds the F06 typed staging copy and the route's spill under one temp-disk budget"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_scratch.py"
+function = "engine_scratch_root"
+sink = "shutil.rmtree"
+ordinal = 0
+rule = "an engine-created `tempfile.mkdtemp` root, under the caller's temp_dir only after `fileaccess.require_ambient` refused every policy but the ambient one; removed on exit"
+owner = "cam"
+reason = "the per-run scratch root that holds the F06 typed staging copy and the route's spill under one temp-disk budget"
+ambient_only = true
