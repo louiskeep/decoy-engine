@@ -25,6 +25,7 @@ from __future__ import annotations
 import math
 import operator
 from collections.abc import Mapping
+from datetime import date, datetime, time
 from decimal import Decimal
 from fractions import Fraction
 from functools import reduce
@@ -61,10 +62,18 @@ def _predicate_expr(p: Predicate, kf: pl.DataFrame, table: str) -> pl.Expr:
     target = kf.schema[p.column]
     values = list(p.value) if p.op == "in" else [p.value]
     try:
+        if p.op in _ORDERING and _is_decimal_on_float(p.value, target):
+            # Decimal("0.1") round-trips through Float64 0.1 but is below it.
+            return _range_expr(c, p.op, p.value, target)
         try:
             literal = _literals_exact(values, target)
         except _LITERAL_ERRORS:
-            if p.op not in _ORDERING or not _is_real_bound(p.value, target):
+            if p.op not in _ORDERING:
+                raise
+            bridged = _naive_temporal_range(c, p.op, p.value, target)
+            if bridged is not None:
+                return bridged
+            if not _is_real_bound(p.value, target):
                 raise
             return _range_expr(c, p.op, p.value, target)
     except _LITERAL_ERRORS as exc:
@@ -100,8 +109,31 @@ def _is_real_bound(value: object, target: pl.DataType) -> bool:
     """An int, float or Decimal literal (never bool) against an int, float or Decimal column."""
     if type(value) not in (int, float, Decimal):
         return False
+    if isinstance(value, Decimal) and not value.is_finite():
+        return False
     base = target.base_type()
     return base in _INT_BITS or base in _FLOAT_NP or base is pl.Decimal
+
+
+def _is_decimal_on_float(value: object, target: pl.DataType) -> bool:
+    return type(value) is Decimal and value.is_finite() and target.base_type() in _FLOAT_NP
+
+
+def _naive_temporal_range(
+    c: pl.Expr, op: str, value: object, target: pl.DataType
+) -> pl.Expr | None:
+    """A naive datetime bound on a Date column, or a date bound on a naive Datetime column.
+
+    The date is compared as its midnight, as polars' own supertype cast does
+    (Date -> Datetime). Aware values keep the timezone refusal.
+    """
+    if target == pl.Date and type(value) is datetime and value.tzinfo is None:
+        us = pl.Datetime("us")  # Python datetimes are microsecond values: exact
+        return _OPS[op](c.cast(us), pl.lit(value, dtype=us))
+    if isinstance(target, pl.Datetime) and target.time_zone is None and type(value) is date:
+        bound = _literals_exact([datetime.combine(value, time())], target)
+        return _OPS[op](c, pl.lit(bound).first())
+    return None
 
 
 # |exponent| past every dtype's reach: Float64 tops out near 1e308 and its
@@ -161,19 +193,15 @@ def _range_expr(c: pl.Expr, op: str, value: float | Decimal, target: pl.DataType
     ):
         raise ValueError("NaN range bound")
     base = target.base_type()
-    if isinstance(value, Decimal) and value.is_infinite() and base in _FLOAT_NP:
-        # Float columns hold infinities; compare against the float infinity itself.
-        return _OPS[op](c, pl.lit(float(value), dtype=target))
-    # math.isinf(Decimal("1E+400")) is True: it converts to float first.
-    if (isinstance(value, Decimal) and value.is_infinite()) or (
-        isinstance(value, float) and math.isinf(value)
-    ):
+    if isinstance(value, float) and math.isinf(value):
         below_all = value < 0
         return c.is_not_null() if upper != below_all else pl.lit(False)
     bound = _exact_bound(value)
     if base in _FLOAT_NP:
-        # The bound is not a dtype value, so lt == le and gt == ge.
         edge_f = _float_edge(bound, _FLOAT_NP[base], down=upper)
+        if math.isfinite(edge_f) and Fraction(edge_f) == bound:
+            return _OPS[op](c, pl.lit(edge_f, dtype=target))
+        # The bound is not a dtype value, so lt == le and gt == ge.
         return c <= pl.lit(edge_f, dtype=target) if upper else c >= pl.lit(edge_f, dtype=target)
     scale, lo, hi = _grid(target)
     scaled = bound * 10**scale

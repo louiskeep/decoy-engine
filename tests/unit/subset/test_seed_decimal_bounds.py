@@ -139,23 +139,21 @@ def test_float_column_decimal_bound_beyond_float_range() -> None:
     assert _sel(kf, "gt", Decimal("-1E+400")) == {0.5, inf}
 
 
+@pytest.mark.parametrize("op", ["lt", "le", "gt", "ge"])
 @pytest.mark.parametrize("dtype", [pl.Int32, pl.Float64, _DEC])
-def test_infinite_decimal_bounds(dtype: pl.DataType) -> None:
+def test_infinite_decimal_bounds(dtype: pl.DataType, op: str) -> None:
     kf = _kf([0, 5, None], dtype)
-    every = set(kf["v"].drop_nulls().to_list())
-    assert _sel(kf, "lt", Decimal("Infinity")) == every
-    assert _sel(kf, "gt", Decimal("-Infinity")) == every
-    assert _sel(kf, "gt", Decimal("Infinity")) == set()
-    assert _sel(kf, "le", Decimal("-Infinity")) == set()
+    _refused(kf, op, Decimal("Infinity"), "Infinity")
+    _refused(kf, op, Decimal("-Infinity"), "Infinity")
 
 
-def test_infinite_decimal_bound_keeps_float_infinities_exact() -> None:
+@pytest.mark.parametrize("op", ["lt", "le", "gt", "ge"])
+def test_infinite_decimal_bound_keeps_float_infinities_exact(op: str) -> None:
+    # A Decimal infinity is refused even where the column holds float infinities.
     inf = float("inf")
     kf = _kf([-inf, 0.5, inf], pl.Float64)
-    assert _sel(kf, "lt", Decimal("Infinity")) == {-inf, 0.5}
-    assert _sel(kf, "le", Decimal("Infinity")) == {-inf, 0.5, inf}
-    assert _sel(kf, "ge", Decimal("-Infinity")) == {-inf, 0.5, inf}
-    assert _sel(kf, "gt", Decimal("-Infinity")) == {0.5, inf}
+    _refused(kf, op, Decimal("Infinity"), "Infinity")
+    _refused(kf, op, Decimal("-Infinity"), "Infinity")
 
 
 @pytest.mark.parametrize("dtype", [pl.Int64, pl.Float64, _DEC])
