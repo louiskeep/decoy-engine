@@ -8,6 +8,7 @@ import pickle
 import typing
 
 import pytest
+
 from decoy_engine.verification.canary import (
     CanaryArtifactOutcome,
     CanaryArtifactReadFailure,
@@ -130,9 +131,9 @@ def test_types_have_exact_fields_5_29() -> None:
     assert tuple(f.name for f in dataclasses.fields(CanaryColumnFinding)) == FINDING_FIELDS
     assert tuple(f.name for f in dataclasses.fields(CanarySpanReport)) == REPORT_FIELDS
     assert len(FINDING_FIELDS) == 5 and len(REPORT_FIELDS) == 29
-    for cls in (CanaryColumnFinding, CanarySpanReport):
+    for cls, instance in ((CanaryColumnFinding, _finding()), (CanarySpanReport, _report())):
         params = cls.__dataclass_params__  # type: ignore[attr-defined]
-        assert params.frozen and not hasattr(cls, "__dict__") and "__slots__" in vars(cls)
+        assert params.frozen and "__slots__" in vars(cls) and not hasattr(instance, "__dict__")
         assert _field_type_violations(cls) == []
 
     # Seeded violation: the field walk catches a value-bearing field.

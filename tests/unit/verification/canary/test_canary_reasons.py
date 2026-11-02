@@ -6,11 +6,11 @@ import dataclasses
 import json
 from pathlib import Path
 
-from decoy_engine.verification.canary import CanaryReason
 from packaging.version import Version
 
 from decoy_engine import reasons
 from decoy_engine.reasons.verification import _canary
+from decoy_engine.verification.canary import CanaryReason
 
 PIN = Path(__file__).resolve().parents[3] / "fixtures" / "f29" / "reason-registry-release.json"
 PLAN_ORDER = (

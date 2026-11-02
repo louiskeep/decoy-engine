@@ -5,6 +5,7 @@ from __future__ import annotations
 import itertools
 
 import pytest
+
 from decoy_engine.verification.canary import (
     POLICY_TABLE,
     CanaryBindingSource,
@@ -16,7 +17,6 @@ from decoy_engine.verification.canary import (
     CanaryVerdictPolicy,
     compose_reasons,
 )
-
 from tests.unit.verification.canary.test_report_fields import _report
 
 R = CanaryReason
