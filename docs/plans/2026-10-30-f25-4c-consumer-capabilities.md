@@ -97,15 +97,65 @@ Classified as not scratch, unchanged from revision 1 and re-checked on main: vau
 
 ### 3.1 Enumerations
 
-**Exit paths of an arena** (each gets a case in `T-ARENA-EXITS`, S1): success then `reclaim()`; exception inside the `with` block then `reclaim()` and re-raise with the primary error kept; `reclaim()` failure gives `CleanupReport(RETAINED)` without masking the primary error; double `reclaim()` is a no-op; garbage collection without `reclaim()` triggers a `weakref.finalize` reclaim (the A-4 `_output.py:229` precedent); process kill leaves the arena with the lock released, for S5's sweep; isolated child exit hands the work-root arena back to the parent's `reclaim()`.
+Anchors below are on main `0173c054`.
 
-**Routes** (T-PLAIN and T-MODES cells): OOC batch lane; OOC reorder lane; native companion present and absent; sink whole-table and streamed; isolated subprocess; isolated in-process fallback; Postgres snapshot (ambient only; the cell runs with a stub connection, see section 13); discovery; subset then mask; quarantine; fixed width. Each runs under the ambient policy and a strict `RootedFileAccess`. Routes that A-4 refuses under strict (`require_ambient`) assert the refusal, unchanged.
+#### 3.1.1 Exit paths of an arena
 
-**FK shapes**: single, composite, self-referencing, multi-parent, cross-batch, through both OOC lanes. The existing parity suites (`tests/parity/test_out_of_core_fk_parity.py`) run unchanged before and after S2a and S2b. Class 5 is N/A because no row selection changes. The suites are the characterization (class 9).
+Each gets a case in `T-ARENA-EXITS`, S1.
 
-**Fields of public result types touched**: new frozen `QuotaReport(route, dimension, effective_bytes_cap, observed_bytes, disposition)`, `CleanupReport(disposition, retained_bytes, retained_inodes)`, `SweepReport(scanned, reaped, retained_live, retained_unknown, failed)`. No path, name or identifier fields, so G6 holds by field set. Existing error types gain one optional `report` attribute. `IsolatedRunResult`, sink results and the public entry-point signatures are unchanged.
+- Success then `reclaim()`.
+- Exception inside the `with` block then `reclaim()` and re-raise with the primary error kept.
+- `reclaim()` failure gives `CleanupReport(RETAINED)` without masking the primary error.
+- Double `reclaim()` is a no-op.
+- Garbage collection without `reclaim()` triggers a `weakref.finalize` reclaim (the A-4 precedent, `src/decoy_engine/fileaccess/_output.py:229`).
+- Process kill leaves the arena with the lock released, for S5's sweep.
+- Isolated child exit hands the work-root arena back to the parent's `reclaim()` (today the work root is created at `src/decoy_engine/execution/_isolated_run.py:364`).
 
-**Output surfaces**: user-visible `Job.log` and API errors (via `str(exc)`), CLI stderr, output files (unchanged), scratch files (G1), and quarantine files (unchanged). T-REPORT-TEXT seeds sentinels (a path, a table name, a cell value, a DSN) and scans `str` and `repr` of each report and carrying error.
+#### 3.1.2 Routes
+
+T-PLAIN and T-MODES cells. Each runs under the ambient policy and a strict `RootedFileAccess`. Routes that A-4 refuses under strict (`require_ambient`) assert the refusal, unchanged.
+
+- OOC batch lane.
+- OOC reorder lane.
+- Native companion present and absent.
+- Sink whole-table and streamed.
+- Isolated subprocess.
+- Isolated in-process fallback.
+- Postgres snapshot (ambient only, `src/decoy_engine/connectors/postgres_snapshot.py:447`; the cell runs with a stub connection, see section 13).
+- Discovery.
+- Subset then mask.
+- Quarantine (`src/decoy_engine/quarantine.py:313`).
+- Fixed width.
+
+#### 3.1.3 FK shapes
+
+Through both OOC lanes. The existing parity suites (`tests/parity/test_out_of_core_fk_parity.py`, for example `tests/parity/test_out_of_core_fk_parity.py:448` and `tests/parity/test_out_of_core_fk_parity.py:763`) run unchanged before and after S2a and S2b. Class 5 is N/A because no row selection changes. The suites are the characterization (class 9).
+
+- Single.
+- Composite.
+- Self-referencing.
+- Multi-parent.
+- Cross-batch.
+
+#### 3.1.4 Fields of public result types touched
+
+No path, name or identifier fields, so G6 holds by field set.
+
+- New frozen `QuotaReport(route, dimension, effective_bytes_cap, observed_bytes, disposition)`.
+- New frozen `CleanupReport(disposition, retained_bytes, retained_inodes)`.
+- New frozen `SweepReport(scanned, reaped, retained_live, retained_unknown, failed)`.
+- Existing error types gain one optional `report` attribute.
+- `IsolatedRunResult` (`src/decoy_engine/execution/_isolated_common.py:321`), sink results and the public entry-point signatures are unchanged.
+
+#### 3.1.5 Output surfaces
+
+T-REPORT-TEXT seeds sentinels (a path, a table name, a cell value, a DSN) and scans `str` and `repr` of each report and carrying error.
+
+- User-visible `Job.log` and API errors (via `str(exc)`).
+- CLI stderr.
+- Output files (unchanged).
+- Scratch files (G1).
+- Quarantine files (unchanged).
 
 ## 4. Design: the arena is an A-4 capability
 
@@ -211,7 +261,7 @@ Rule for each test: record it red before the change. For a new module, an `Impor
 
 ## 9. Owner questions (recommended defaults first)
 
-- Q1. At-rest encryption: **not in V1 (recommended, owner's answer).** 0700 and 0600 stop non-admin local users. fscrypt protects against offline disk access and root, and root is the admin. Cut to V2.
+- Q1. At-rest encryption: **not in V1 (owner's answer, given as Q3 in the earlier review: encryption (fscrypt) is cut to V2).** 0700 and 0600 stop non-admin local users. fscrypt protects against offline disk access and root, and root is the admin. Cut to V2.
 - Q2. Kernel project quotas: **an optional profile deferred to V2 (recommended).** The V1 byte bound is the existing OOC temp-disk budget, plus `ENOSPC`/`EDQUOT` from whatever filesystem the host has, both surfaced as a `QuotaReport`. Alternative: port `feat:scratch/_local_provider.py` as an opt-in S6 if the platform's managed volume needs a hard cap at launch.
 - Q3. SQLite `ResourceLedger` and `OwnershipAuthority`: **not carried (recommended).** For ephemeral-only V1, the sweep's authority is the `flock` liveness lock plus owner, mode and prefix checks. Revisit with checkpoint and resume (V2).
 - Q4. Reason codes: **no new code (recommended).** OOC keeps `out_of_core_temp_disk_exceeded`, other routes keep their current errors, and each gains an optional `report`. This avoids a registry bump that collides with A-4's 1.2.0 and the B-6 sequence. Alternative: add `scratch_quota_exceeded` in its own slice with the registry partners.
