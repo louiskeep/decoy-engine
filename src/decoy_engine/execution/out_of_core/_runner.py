@@ -80,6 +80,9 @@ from decoy_engine.execution.out_of_core._route_policy import (
 from decoy_engine.execution.out_of_core._scratch import scratch_root
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_driver import stream_table
+from decoy_engine.execution.out_of_core._stream_driver_support import (  # noqa: F401 -- one resolver
+    _code_set_records_and_evidence_for_table,
+)
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.progress import get_active_channel
 
