@@ -23,7 +23,9 @@ UMASKS = (0o000, 0o077, 0o777)
 @pytest.fixture(params=UMASKS, ids=lambda m: f"umask{m:04o}")
 def mask(request: pytest.FixtureRequest) -> int:
     if os.geteuid() == 0:
-        pytest.fail("run as a non-root user: root ignores directory modes, so this would be vacuous")
+        pytest.fail(
+            "run as a non-root user: root ignores directory modes, so this would be vacuous"
+        )
     return request.param
 
 
