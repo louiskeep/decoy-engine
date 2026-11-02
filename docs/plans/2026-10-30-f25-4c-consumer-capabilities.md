@@ -1,24 +1,22 @@
 # F25 V1 scratch on A-4: one arena capability, permissions by default, report and sweep
 
-Status: plan, revision 6, a targeted amendment answering Dennis on `a3a4c1b3` (1 V1, 2 fix-now, 5 V2-LOG); section 0 maps them. No code is on this branch; no build is authorized.
+Status: plan, revision 7, a targeted amendment answering Codex on `784cb151` (1 V1, 0 V2-LOG); section 0 maps it. No code is on this branch; no build is authorized.
 
-Summary: engine scratch is created 0700 (directories) and 0600 (engine files) under any umask, 0777 included, through one arena capability, an A-4 `StageDir`. A job out of scratch space stops with a value-free report and commits nothing. A sweep removes abandoned arenas it can prove it created, never live ones. Quotas and encryption are optional profiles.
+Summary: engine scratch is created 0700 (directories) and 0600 (engine files) under any umask, 0777 included, through one arena capability, an A-4 `StageDir`. A job out of scratch space stops with a value-free report and commits nothing. A sweep removes abandoned arenas it can prove it created, never live ones.
 
-Rules consulted: `/home/cam/dev-rules/README.md` and `00-universal.md` re-read for this revision; revision 5's list stands (`a3a4c1b3` line 7: `destructive-operations.md` sets the sweep's exact-target rule); the V1 bar and defect classes from the handoff; the engine `CLAUDE.md`; the code at each anchor.
+Rules consulted: `/home/cam/dev-rules/README.md` and `00-universal.md` re-read for this revision; rev 5's list (`a3a4c1b3` line 7; `destructive-operations.md` for the sweep); the V1 bar and defect classes from the handoff; the engine `CLAUDE.md`; the code at each anchor.
 
 Risk: R2 (plan only): scratch confidentiality, cleanup, and the OOC, declared-staging, subset, snapshot and spill failure paths. Not R3: the sweep deletes only marker-proven arenas under the one temp root (4.4), is caller-invoked, and rollback is a revert on a pre-GA engine (`release.py`).
 
-Dependencies. F25 is planned against F06 (`origin/feat/f06-declared-parsing` `19e73714`) as the stand-in for main and builds only after F06 merges (after the R-b tag `v0.18.0` and B-6). Anchors are re-read there, cited `f06:<path under src/decoy_engine>:<line>` (bare relative anchors are F06 too); `fileaccess/`, `_isolated_*.py`, `postgres_snapshot.py`, `data_discovery.py`, the join modules and `_pool_quality.py` are byte-identical to main. F06's umask 0777 handling is carried: its explicit modes (`out_of_core/_scratch.py:56`, `:79`, `:112-118`) become the arena's own (4.2).
+Dependencies. F25 is planned against F06 (`origin/feat/f06-declared-parsing` `19e73714`) as the stand-in for main and builds only after F06 merges (after the R-b tag `v0.18.0` and B-6). Anchors are re-read there, cited `f06:<path under src/decoy_engine>:<line>` (bare relative anchors are F06 too); `fileaccess/`, `_isolated_*.py`, `postgres_snapshot.py`, `data_discovery.py`, the join modules and `_pool_quality.py` are byte-identical to main. F06's umask 0777 handling is carried: its explicit modes (`out_of_core/_scratch.py:56`, `:79`, `:112-118`) become the arena's own (4.2). At F06 `1a3090b4` `open_private` already `fchmod`s (`:77-79`) and `private_dir` chmods each level (`:105-118`); neither `fstat`-checks, which the arena adds.
 
-## 0. Revision 6: finding map
+## 0. Revision 7: finding map
 
 | Finding | Class | Change | Test |
 |---|---|---|---|
-| V1-1 (rule 1). Modes came from the umask, then were checked: under umask 0777 every scratch job fails. | 4 | Created dirs chmodded 0700 before open, `create_file` `fchmod` (4.2); strict for roots not created; 077/777 cells; S2a-1 split. | `test_modes_under_umask`; T-MODES; F06 `test_staging_file_mode.py` |
-| M1. Marker could go first; a kill left it retained forever. | 2 | Marker removed last (4.4 step 4). | T-A08-SWEEP cells |
-| M2. F06 test claim unproved; `_arena` duplicate keyword. | 9, 4 | Route `temp_dir`, T18 path fixed; `_arena` popped (4.1). | one-arena-one-budget mutations |
+| V1 (rule 1). Raw marker `os.open`: umask 0777 gives 0000, `EACCES`, killed arenas retained forever. | 4 | Every file, marker included, via `_create_private`: `fchmod` 0600, then `fstat` type, owner, exact mode, before any byte (4.2). | `test_marker_mode_under_umask`; T-A08-SWEEP `[umask_777_owner_killed]` |
 
-Cuts (rev 5: 309 lines, 49,354 bytes): rev 5's section 0 and pre-mortem; 4.5 folded into 7. Stop-on-repeat: V1-1 is class 4 as the handoff lists.
+Same-class sweep: every other creation here is chmodded then checked (4.2) or is `create_file` (A-4 writers: `adapters/arrow.py:73`, `serial.py:41`, `:46`); the sweep only opens. Cuts: rev 6's rows, duplicates.
 
 ## 1. Guarantee (V1 rules 1 to 3 only: a ratchet plus named limits)
 
@@ -37,8 +35,8 @@ Named limits: L1 DuckDB spill files and the isolated child's path writes take th
 ## 2. Invariants
 
 - I1. No producer in section 3 creates a scratch directory or a Python-written scratch file except through a `ScratchArena` (`StageDir` protocol, `fileaccess/_types.py:179`).
-- I2. Internal producers take `arena: ScratchArena` as a required argument: no default, no `None`, no `getattr` fallback. Public entry points create the arena themselves; an internal caller that already holds one hands it on (`_arena=`, 4.1). No unmanaged fallback route exists.
-- I3. An arena root is engine-created (`mkdtemp` in the temp root, or a fresh child of a caller directory, ambient only) under a pending name, chmodded 0700 by name (4.2), opened `O_DIRECTORY | O_NOFOLLOW`, `fstat`-checked (directory, `geteuid()`, 0700), given its marker, locked, then renamed to its `decoy-arena-v1-` name, and held by descriptor.
+- I2. Internal producers take `arena: ScratchArena` as a required argument: no default, no `None`, no `getattr` fallback. Public entry points create the arena themselves; an internal caller that already holds one hands it on (`_arena=`, 4.1).
+- I3. An arena root is engine-created (in the temp root, or a fresh child of a caller directory, ambient only) under a pending name, set and checked as 4.2, marked, locked, renamed to its `decoy-arena-v1-` name (4.1), and held by descriptor.
 - I4. `flock(LOCK_SH)` on the root descriptor from before the rename to reclaim; an isolated child inherits it (`pass_fds`).
 - I5. Reclaim is descriptor-relative (A-4 `_rmtree_fd`, `_output.py:80`). A failure is reported as `Disposition.RETAINED`, never as success.
 - I6. Validation never mutates: descriptor checks raise and change nothing. Reports are frozen dataclasses.
@@ -72,7 +70,7 @@ Not scratch: vault (`vault.py:341-348`), model pack (`profiling/model_pack/_pack
 
 Each gets a case in `T-ARENA-EXITS` (S1a; adopted and child cases in `test_adopted_arena_is_non_owning`, S2a-1b).
 
-- Success then `reclaim()` by the opener (`run_staged` for a handed arena, never the route), marker removed last as in 4.4 step 4; a double `reclaim()` is a no-op.
+- Success then `reclaim()` by the opener (`run_staged` for a handed arena, never the route), marker last (4.4); a double `reclaim()` is a no-op.
 - Exception in the `with` block: `reclaim()`, primary error re-raised; a failed `reclaim()` is `CleanupReport(RETAINED)`, not masking it.
 - Garbage collection runs a `weakref.finalize` reclaim (`fileaccess/_output.py:229`) on the owning root only; `create_dir` children close only their descriptor; the root outlives every path released under it.
 - An adopted arena (`_adopt`, until S4b) owns nothing: scope exit closes its descriptor; `reclaim()` raises.
@@ -85,11 +83,11 @@ T-PLAIN and T-MODES cells, each under ambient and a strict `RootedFileAccess`; r
 
 - OOC batch and reorder lanes, plain and declared (`f06:execution/out_of_core/_runner.py:181-183`); companion present and absent; sink whole-table and streamed.
 - Isolated subprocess (also `output_dir` elsewhere and on another device) and in-process fallback.
-- Postgres snapshot (ambient only, `f06:connectors/postgres_snapshot.py:447`; stub connection), discovery, subset then mask, quarantine, fixed width.
+- Postgres snapshot (ambient only, stub connection), discovery, subset then mask, quarantine, fixed width.
 
 #### 3.1.3 FK shapes
 
-Through both OOC lanes. The parity suites (`tests/parity/test_out_of_core_fk_parity.py`, F06's `tests/acceptance/test_f06_route_parity.py`) run unchanged before and after S2a-1 to S2b-3 as the class 9 characterization. Class 5 is N/A because no row selection changes.
+Through both OOC lanes. The parity suites (`tests/parity/test_out_of_core_fk_parity.py`, F06's `tests/acceptance/test_f06_route_parity.py`) run unchanged before and after S2a-1 to S2b-3 as the class 9 characterization.
 
 - Single, composite, self-referencing.
 - Multi-parent, cross-batch.
@@ -117,7 +115,8 @@ ScratchArena(StageDir)                # A-4 protocol, _types.py:179
   display = "engine.scratch"; strict = True   # constants, as ScratchAccess handles (_rooted.py:86-90)
   open(*, under: Path | None = None) -> ScratchArena    # under != None: require_ambient first;
                                        # records here whether the arena may release a path
-  create_file(component) -> int        # O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC, 0o600, dir_fd; fchmod 0o600
+  create_file(component) -> int        # reserved-name check, then _create_private(dir_fd, component)
+  _create_private(dir_fd, name) -> int # O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC, 0o600; fchmod 0o600; fstat
   open_file(component) -> int
   create_dir(component) -> ScratchArena (child: no finalizer, shares root lock and finished state)
   remove(component), rename(src, dst)  # one dir_fd-relative call each
@@ -131,28 +130,28 @@ scratch_native(fn, *args, **kwargs)    # the value-free native boundary (below)
 
 A scrubbed failure reads `FileAccessReadError("engine.scratch")` (`guarded`, `fileaccess/_errors.py:142-163`), under ambient too (section 8). `ScratchAccess` moves in S1a; `arena.reader()` is its only issuer once `scratch_access_for` loses its last caller (`_stage.py:80`) in S2a-1b. The A-4 writers (`adapters/arrow.py:72-126`, `serial.write_text`) need only `create_file`, `open_file`, `display`, `strict`; S1a widens their annotation to `StageDir`.
 
-Handing over. `run_staged` opens `ScratchArena.open(under=temp_dir)` if the caller named `temp_dir` (the one ambient check), else `open()`, stages T18 into it, pops `_arena` from `call` as F06 pops `_staged` (`f06:declared_casting/_stream.py:200`; `call` is the route's `dict(locals())`, `_runner.py:181`, so a kept `_arena=None` is a duplicate keyword), sets `call["temp_dir"] = Path(arena.local_path())` as F06 sets its root (`:206`; allowed: an `under=` arena exists only under ambient), and calls the route with `_arena=arena`, `_staged=True`. T18's `LazySource` holds the absolute `arena.local_path(component)`, as F06 holds an absolute path (`:142`; `ScratchAccess.select` strips the prefix, `out_of_core/_scratch.py:140-148`), not T02's bare component. A route given `_arena` uses it as its root: no fresh child, no second `require_ambient`, no reclaim, one budget walk (`_runner.py:294` measures that `temp_dir`). So F06's `test_stream_staging.py` (`:41`, `:56`, `:71`, `:100-102`, `:124`, `:148-149`, `:166-169`, `:192-201`) and `test_staging_file_mode.py:73-84` run with no diff: stubs take `_arena` through `**rest`, and every path they read is the released root or a file under it. `_ENGINE_ROOTS`, `_is_engine_root` and `engine_scratch_root` are deleted in S2a-1. Direct callers of `run_fk_out_of_core(temp_dir=...)` keep revision 4's meaning.
+Handing over. `run_staged` opens `ScratchArena.open(under=temp_dir)` if the caller named `temp_dir` (the one ambient check), else `open()`, stages T18 into it, pops `_arena` from `call` as F06 pops `_staged` (`f06:declared_casting/_stream.py:200`; `call` is the route's `dict(locals())`, `_runner.py:181`, so a kept `_arena=None` is a duplicate keyword), sets `call["temp_dir"] = Path(arena.local_path())` as F06 sets its root (`:206`; allowed: an `under=` arena exists only under ambient), and calls the route with `_arena=arena`, `_staged=True`. T18's `LazySource` holds the absolute `arena.local_path(component)`, as F06 holds an absolute path (`:142`; `ScratchAccess.select` strips the prefix, `out_of_core/_scratch.py:140-148`), not T02's bare component. A route given `_arena` uses it as its root: no fresh child, no second `require_ambient`, no reclaim, one budget walk (`_runner.py:294` measures that `temp_dir`). So F06's `test_stream_staging.py` (`:41`, `:56`, `:71`, `:100-102`, `:124`, `:148-149`, `:166-169`, `:192-201`) and `test_staging_file_mode.py:73-84` run with no diff: stubs take `_arena` through `**rest`, and every path they read is the released root or a file under it. `_ENGINE_ROOTS` and `_is_engine_root` go with `engine_scratch_root` (S2a-1).
 
 F06 helpers (reuse-first): `open_private` becomes `create_file`, `private_dir` becomes `create_dir`; the `precreate_private` plus `PRIVATE_COPY` pattern is `create_file(c)` (closed) then `local_path(c)` as the `COPY` target. Each is deleted with its last caller: `engine_scratch_root` S2a-1, `scratch_access_for` S2a-1b, `precreate_private` S2a-1c, `open_private`, `close_private`, `private_dir` S2b-2.
 
-Naming and marker. `ARENA_PREFIX = "decoy-arena-v1-"` is defined once, in `fileaccess/_scratch.py`. `open` makes the root with `mkdtemp(prefix="decoy-arena-pending-")`, opens and checks it (4.2), draws `token = secrets.token_hex(8)`, creates `.decoy-arena` inside by `dir_fd` with `O_CREAT|O_EXCL|O_NOFOLLOW`, 0600, holding a fixed magic plus `token`, takes `LOCK_SH`, then renames the root by `dir_fd` to `ARENA_PREFIX + token`. A failed rename draws a new token and rewrites the fixed-length marker in place by its descriptor. `.decoy-arena` is a reserved component: `create_file`, `create_dir`, `remove` and `rename` refuse it. Sentry: `test_arena_prefix_used_only_by_open`.
+Naming and marker. `ARENA_PREFIX = "decoy-arena-v1-"` is defined once, in `fileaccess/_scratch.py`. `open` makes the root with `mkdtemp(prefix="decoy-arena-pending-")`, opens and checks it (4.2), draws `token = secrets.token_hex(8)`, creates `.decoy-arena` inside with `_create_private` (4.2 checks before the token), holding a fixed magic plus `token`, takes `LOCK_SH`, then renames the root by `dir_fd` to `ARENA_PREFIX + token`. A failed rename draws a new token and rewrites the fixed-length marker in place by its descriptor. `.decoy-arena` is a reserved component: `create_file`, `create_dir`, `remove` and `rename` refuse it. Sentry: `test_arena_prefix_used_only_by_open`.
 
-Path release. `local_path` is the only path-returning method. Rule fixed at `open`: an `under=` arena releases only under the ambient policy, else `FileAccessUnavailable` (as `_local.py:174`); an engine-rooted arena under any policy. Callers, exactly (key `scratch_path_release` in `tests/sentry/file_access_modules.toml`, both ways): `_isolated_run.py` (child arguments, `:420`, `:453`), `_isolated_commit.py` (only if S3a moves the payload writer there), `_relation.py`, `_multi_parent.py` (`COPY` targets, `read_parquet`), `_duckdb.py` (`temp_directory`), `_runner.py` (budget walk), `declared_casting/_stream.py` (budget walk, handed `temp_dir`, T18 source path), `_pool_quality.py` (S4b), `postgres_snapshot.py` (S3b), `adapters/duckdb.py` (only if T17 picks the arena fix), `_payload_store.py` and `_external_sort.py` (only under Q5's fallback); `_rewrite_pass.py` transitionally (arm (a)). Released paths are L1.
+Path release. `local_path` is the only path-returning method. Rule fixed at `open`: an `under=` arena releases only under the ambient policy, else `FileAccessUnavailable` (as `_local.py:174`); an engine-rooted arena under any policy. Callers, exactly (key `scratch_path_release` in `tests/sentry/file_access_modules.toml`, both ways): `_isolated_run.py` (child arguments, `:420`, `:453`), `_isolated_commit.py` (payload writer, S3a), `_relation.py`, `_multi_parent.py` (`COPY` targets, `read_parquet`), `_duckdb.py` (`temp_directory`), `_runner.py` (budget walk), `declared_casting/_stream.py` (budget walk, handed `temp_dir`, T18 source path), `_pool_quality.py` (S4b), `postgres_snapshot.py` (S3b), `adapters/duckdb.py` (only if T17 picks the arena fix), `_payload_store.py` and `_external_sort.py` (only under Q5's fallback); `_rewrite_pass.py` transitionally (arm (a)). Released paths are L1.
 
-Native boundary. `scratch_native(fn, *args, **kwargs)` runs one native call under every policy and maps a failure through one closed classifier: by type only, never message text (companion plan: no EDQUOT string parsing), returning an enum, copying no text:
+Native boundary. `scratch_native(fn, *args, **kwargs)` runs one native call under every policy and maps a failure through one closed classifier: by type only, never message text, returning an enum, copying no text:
 
 - resource-errno `OSError` (`_RESOURCE_ERRNOS`, `fileaccess/_errors.py:27`): rebuilt errno-only (`_resurface`, `:128`) carrying `report=QuotaReport(dimension="bytes")`, no errno field on the report;
 - `duckdb.IOException`, and a pyarrow `OSError` whose `errno` is `None`: `FileAccessReadError("engine.scratch")` raised `from None`, carrying `report=QuotaReport(dimension="unknown", effective_bytes_cap=None, observed_bytes=None)`;
 - memory failures: unchanged from `guarded` (`passes_by_type` for `MemoryError` and `duckdb.OutOfMemoryException`, `:100-110`; `resurface_scrubbed` for text-recognised ones, `:113-125`), so `is_memory_failure` (`:178`) still matches;
 - anything else: `FileAccessReadError("engine.scratch")` `from None`, no report.
 
-S1a ships the memory and "else" arms; the report arms land in S4a. Batch pulls use the same mapping over `guarded_iter` (`:172`). No new reason code; the sink aborts on any of them.
+S1a ships the memory and "else" arms; the report arms land in S4a. Batch pulls use the same mapping over `guarded_iter` (`:172`). The sink aborts on any of them.
 
 `scratch_native` key: every module that calls a method on, or builds, a connection made by `connect_duckdb` or holding a released path. From `git grep -n "conn\.\(execute\|sql\|register\|fetch\)" -- src/decoy_engine/execution` on F06 (`_stream_join_plan.py` at `:63`, `:64`, `:73`, `:77`, `:120`; `_payload_store.py:233` is a docstring) plus `_duckdb.py`'s `connect_internal` call (`:64`): `_relation.py`, `_multi_parent.py`, `_duckdb.py` (S2a-1c), `_batch_join.py`, `_join.py` (S2a-2), `_stream_join.py`, `_stream_join_plan.py` (S2b-2), `native/_pool_quality.py` (S4b). The sentry fails on a listed module calling a connection method outside `scratch_native`. `postgres_snapshot.py` already raises code-only errors `from None` (`:38-39`, `:239-242`).
 
 ### 4.2 Descriptor checks (the whole fail-closed default)
 
-Modes are set, never inherited (F06's rule). The umask narrows `mkdtemp`/`mkdir` modes (0777 gives 0000, which a non-root owner cannot open), so every directory the engine creates (the `open` root, each missing level of an `under=` parent, each `create_dir` child, each level `_adopt` creates) gets `os.chmod(name, 0o700, dir_fd=parent_fd)` before it is opened, and `create_file` calls `fchmod(fd, 0o600)`. A swap between `mkdir` and `chmod` needs the same UID (L6); the `O_NOFOLLOW` open refuses a symlink. Then the checks. At open: `fstat` on the root descriptor must show `S_ISDIR`, `st_uid == geteuid()` and `S_IMODE == 0o700`, else `ScratchPathUnsafe` (code-only), nothing changed. At `create_dir` and `create_file`: `O_NOFOLLOW` plus `O_EXCL` or `mkdirat`, the chmod, then `fstat` for type, owner and mode. A directory the engine did not create (an existing `_adopt` leaf, a swept entry) is checked strictly, never chmodded; a caller's `temp_dir` keeps its mode (Q8). No quota or fscrypt is required (T-PLAIN).
+Modes are set, never inherited. The umask narrows `mkdtemp`/`mkdir` modes (0777 gives 0000, which a non-root owner cannot open), so every directory the engine creates (the `open` root, each missing level of an `under=` parent, each `create_dir` child, each level `_adopt` creates) gets `os.chmod(name, 0o700, dir_fd=parent_fd)` before it is opened, and every file the engine creates (each `create_file` and the marker) goes through `_create_private`, which calls `fchmod(fd, 0o600)` (sentry `[create_choke_point]`). A swap between `mkdir` and `chmod` needs the same UID (L6); the `O_NOFOLLOW` open refuses a symlink. Then the checks. At open: `fstat` on the root descriptor must show `S_ISDIR`, `st_uid == geteuid()` and `S_IMODE == 0o700`, else `ScratchPathUnsafe` (code-only), nothing changed. At `create_dir` and `_create_private`: `O_NOFOLLOW` plus `O_EXCL` or `mkdirat`, the chmod, then `fstat` for type, owner and exact mode, before any byte is written. A directory the engine did not create (an existing `_adopt` leaf, a swept entry) is checked strictly, never chmodded; a caller's `temp_dir` keeps its mode (Q8).
 
 ### 4.3 Producers
 
@@ -160,7 +159,7 @@ Per section 3. T17: if `T-DISCOVERY-SPILL` shows DuckDB writes outside the arena
 
 ### 4.4 Sweep (S5)
 
-`fileaccess.sweep_scratch() -> SweepReport`, no parameters. It scans only `tempfile.gettempdir()` at call time, the directory `ScratchArena.open()` uses with no `under=`. Called by the CLI or worker only (Q7). For each entry, opened by descriptor:
+`fileaccess.sweep_scratch() -> SweepReport`, no parameters. It scans only `tempfile.gettempdir()` at call time, the directory `ScratchArena.open()` uses with no `under=`. For each entry, opened by descriptor:
 
 1. Only names matching `^decoy-arena-v1-[0-9a-f]{16}$` (never `decoy-arena-pending-*`, platform `decoy-job-*`, `decoy-preflight-*`, `decoy-src-fd-*`, engine `decoy-ooc-*`, `decoy-isolated-run-*`); a directory (`O_NOFOLLOW`), owned by `geteuid()`, mode 0700.
 2. Ownership proof: `.decoy-arena`, opened by `dir_fd` `O_RDONLY|O_NOFOLLOW`, is a regular file owned by `geteuid()`, mode 0600, with the magic and a token equal to the entry's name token. Any failure in steps 1-2 is `retained_unknown`, never deleted.
@@ -171,11 +170,12 @@ Pattern: `flock(2)` on the open file description, inherited across `fork`/`exec`
 
 ## 5. Acceptance tests, red first
 
-Each test is recorded red first, against its neutered control or F06 at the fail-before location (an `ImportError` is not a red); where F06 already makes a site 0600/0700, the red is the control and the mutation shows non-vacuity. Baselines from `uv.lock`.
+Each test is recorded red first, against its neutered control or F06 at the fail-before location (an `ImportError` is not a red); where F06 already makes a site 0600/0700, the red is the control and the mutation shows non-vacuity.
 
 | Test (file::name) | Scenario and observable result | Fail-before location (red reason) | Mutation that must turn it red | Slice |
 |---|---|---|---|---|
 | `tests/fileaccess/test_scratch_arena.py::test_modes_under_umask[000,002,022,077,777]` (T-ARENA-DESC) | Per umask: `open()`, `open(under=)` a missing `a/b`, `create_dir`, `create_file`, `_adopt` of a missing `a/b`: created dirs 0700, files 0600, owner euid; `.decoy-arena` 0600 with the name's token. Asserts `geteuid() != 0` first | Under 777 a no-chmod control fails at `open` (`EACCES`) or the `fstat` mode check; under 000 A-4's `0o666` (`_output.py:222`) shows 0666 | Drop one chmod (root, level, child, `_adopt`) or the `fchmod`; `0o600` to `0o644` | S1a |
+| `...::test_marker_mode_under_umask[000,022,077,777]` | Non-root: after `open()`, a fresh `O_RDONLY` open of `.decoy-arena` by `dir_fd` succeeds; regular, euid, 0600, the name's token. `[777_wrong_mode]`: `fchmod` patched to 0o644 raises `ScratchPathUnsafe`, no final-name arena | Rev 6 4.1's raw marker `os.open`: under 777 mode 0000, reopen `PermissionError(13)` (Codex, `784cb151`) | Drop the marker `fchmod`; drop the `fstat` mode check | S1a |
 | `...::test_refuses_unsafe_root[symlink,wrong_mode,not_dir]` | Symlink, 0755 or file root: `ScratchPathUnsafe`, disk unchanged | Control without the `fstat` checks opens it | Delete the mode comparison | S1a |
 | `...::test_exit_paths` (T-ARENA-EXITS) | The 3.1.1 exits; primary error kept; failed reclaim is `RETAINED` | Control swallowing errors reports `REMOVED` | Return `REMOVED` on `OSError` | S1a |
 | `...::test_arena_is_stagedir` | `isinstance(arena, StageDir)`; unmodified `parquet_writer(arena, ...)` and `write_text` write 0600 files; `.decoy-arena` refused as a component | Red (mypy) before the annotations widen | Drop the `strict` attribute; drop the reserved-name check | S1a |
@@ -184,9 +184,9 @@ Each test is recorded red first, against its neutered control or F06 at the fail
 | `...::test_report_text_is_value_free[reports,errors,budget_message]` (T-REPORT-TEXT) | Sentinels (path, table, cell, DSN) absent from `str`/`repr` of reports and errors; the budget error over a sentinel `temp_dir` | `budget_message`: `_budget.py:539` prints `under {temp_dir}` | Add `detail=str(exc)`; restore the path | S1a, S4a, S5 |
 | `tests/fileaccess/test_scratch_native.py::test_native_failure_text_is_value_free[connect,relation_copy,merged_copy,batch_join_read,join_read,stream_join_read,stream_join_plan_explain,spill,pool_quality]` | Seeded DuckDB failures with sentinels: `COPY` into a removed child, a truncated relation, spill into a read-only `temp_directory`, `EXPLAIN` over a dropped view, `connect_internal` raising `duckdb.IOException` with the path. Raw message holds the sentinel; outward `str`/`repr` hold neither, ambient and strict | F06 re-raises unchanged (`f06:execution/out_of_core/_relation.py:521`, `_stream_join_plan.py:120`, `_duckdb.py:64`) | Call `conn.execute` bare at one site; drop `_stream_join_plan.py` from the key | S1a helper; `connect`, copies S2a-1c; joins S2a-2; stream S2b-2; pool S4b |
 | `tests/sentry/test_file_access_boundary.py::test_local_path_callers_are_allowlisted` | Unlisted `local_path` caller, listed module with no call, bare connection call in a `scratch_native` module: each fails; `fa_fixtures` evasions (alias, `getattr`, bound method) caught | Fixture caller passes without the rule | Add a `local_path` call to `_stage.py` | S1b |
-| `tests/sentry/test_scratch_arena_prefix.py::test_arena_prefix_used_only_by_open` | No `decoy-arena-` literal, `prefix=` or `.decoy-arena` outside `fileaccess/_scratch.py`; `open`'s name matches the sweep pattern | Seeded fixture passes without it | Add `prefix="decoy-arena-v1-x"` to `_isolated_run.py:367` | S1b |
+| `tests/sentry/test_scratch_arena_prefix.py::test_arena_prefix_used_only_by_open` | No `decoy-arena-` literal, `prefix=` or `.decoy-arena` outside `fileaccess/_scratch.py`; `open`'s name matches the sweep pattern; `[create_choke_point]`: no `O_CREAT` in fa `_scratch.py` outside `_create_private` | Seeded fixture passes without it | Add `prefix="decoy-arena-v1-x"` to `_isolated_run.py:367`; a raw marker `os.open` in `open` | S1b |
 | `tests/unit/declared_casting/test_staging_arena_budget.py::test_declared_ooc_one_arena_one_budget[ambient_temp_dir,no_temp_dir,strict_policy]` | Real `run_fk_out_of_core`, declared LazySource: typed copy C, forced spill about C, budget `1.5 * C`: `out_of_core_temp_disk_exceeded` with a `QuotaReport`, nothing committed, copy and spill under one arena root, arena reclaimed. `strict_policy` (budget `4 * C`): completes with F06's bytes. F06's `test_stream_staging.py` and `test_staging_file_mode.py` (umask 000/077/777) stay green with zero diff (4.1) | Rev 4's T01 control (fresh child via `open(under=)`): `_runner.py:294` measures only the child, so the job completes over budget; strict refused by `require_ambient` | Fresh child arena for the route; drop the `_arena` pop (`TypeError`); bare component in T18's source (F06 `test_stream_staging.py:124` fails) | S2a-1 |
-| `tests/execution/out_of_core/test_scratch_modes.py::test_ooc_scratch_modes[batch,reorder]` (T-MODES, T01-T05) | Umask 000, 077, 777 (non-root), `os.mkdir`/`os.open` wrappers, pre-reclaim `fwalk`: dirs 0700, Python files 0600, both lanes with an outgoing FK edge, from the S2a-1a head (F06 makes reorder directories with `private_dir`, `_payload_store.py:147`, `_external_sort.py:215`) | Green on F06; red against a control with `private_dir` replaced by `Path.mkdir(parents=True)` (under 777: `EACCES`) | Same replacement in `_stage.py` | S2a-1a to S2b-2 |
+| `tests/execution/out_of_core/test_scratch_modes.py::test_ooc_scratch_modes[batch,reorder]` (T-MODES, T01-T05) | Umask 000, 077, 777 (non-root), `os.mkdir`/`os.open` wrappers, pre-reclaim `fwalk`: dirs 0700, Python files 0600, both lanes with an outgoing FK edge, from the S2a-1a head | Green on F06 (`private_dir`, `_payload_store.py:147`, `_external_sort.py:215`); red against a control with `private_dir` replaced by `Path.mkdir(parents=True)` (under 777: `EACCES`) | Same replacement in `_stage.py` | S2a-1a to S2b-2 |
 | `...::test_caller_temp_dir[mode_untouched,missing_created]` | Caller `temp_dir` 0755 stays 0755 with a 0700 arena child; a missing one is created (ambient) | `f06:execution/out_of_core/_scratch.py:36` chmods it; `missing_created` green by design | Restore the chmod | S2a-1 |
 | `...::test_adopted_arena_is_non_owning[reorder_spill,relation_survives_gc,relation_survives_gc_arena,reclaim_refused]` | Reorder spill into the missing leaf `_stream_join.py:530` names (made 0700); a relation built via the `Path` arm, and one in a `create_dir` child of an owning root, survives `del` plus `gc.collect()` of its arena object while the root is open, and the join reads it; adopted `reclaim()` raises | A finalizer on `_adopt` or a child deletes `*_key_relation.parquet` | Register a finalizer on `_adopt` or on children | S2a-1b |
 | `...::test_ooc_internals_take_only_an_arena[emit,stager,relation,joiners,stream_table,connect_duckdb]` | Each rejects a `Path`; `_adopt` and arm (a)'s entry gone | Red by design while arms live | Restore a `Path` arm | S2b-3, S4b |
@@ -203,7 +203,7 @@ Each test is recorded red first, against its neutered control or F06 at the fail
 | `tests/fileaccess/test_scratch_sweep.py::test_live_arena_survives` (T-A07) | Held arena: `retained_live`; two sweepers after the holder dies: one reaps, one reports; `foreign_exact_name_no_marker` (same UID, 0700, unlocked) and `marker_token_mismatch`: `retained_unknown`, bytes unchanged; `decoy-arena-v1-nothex`, a 0755 match, a foreign-UID entry (root only) untouched. Temp root via `TMPDIR`, `tempfile.tempdir` | Rev 4's 4.4 steps 1-3 delete `foreign_exact_name_no_marker` | Skip the marker check; drop the `flock` probe | S5 |
 | `...::test_sweep_takes_no_root` | Signature snapshot: `sweep_scratch()` has no parameters | Rev 4's `root=` parameter | Add `root=None` back | S5 |
 | `...::test_sweep_in_open_window` | Sweeps at barriers after `mkdtemp`, after the marker write and after `LOCK_SH` in `open` leave the arena, which then works | Final-name-first control is reaped | Create the root directly under the final name | S5 |
-| `...::test_reap_after_kill_and_resume_after_sweeper_crash[owner_killed,kill_after_n_unlinks,marker_first_control]` (T-A08-SWEEP) | Owner killed: sweep reaps. Arena of three files plus the marker; sweeper SIGKILLed at a barrier after two unlinks: a second sweep reaps it (`reaped == 1`, entry gone) | No-retry control leaves a partial; the marker-first control, killed at that barrier, is `retained_unknown` | Count a failed delete as reaped; let the removal loop take `.decoy-arena` in `scandir` order | S5 |
+| `...::test_reap_after_kill_and_resume_after_sweeper_crash[owner_killed,umask_777_owner_killed,kill_after_n_unlinks,marker_first_control]` (T-A08-SWEEP) | Owner killed (also under umask 0777): sweep reaps. Arena of three files plus the marker; sweeper SIGKILLed at a barrier after two unlinks: a second sweep reaps it (`reaped == 1`, entry gone) | No-retry control leaves a partial; the marker-first control, killed at that barrier, is `retained_unknown`; a no-`fchmod` marker under 777 is `retained_unknown` | Count a failed delete as reaped; drop the marker's `fchmod`; let the removal loop take `.decoy-arena` in `scandir` order | S5 |
 | Ratchet M-RATCHET | A `tempfile.mkdtemp` added in `_relation.py` fails A-4's boundary sentry | Existing; count drops per migrated site | Raise the registry count | each producer slice |
 
 ## 6. Class table (classes 1 to 10)
@@ -213,7 +213,7 @@ Each test is recorded red first, against its neutered control or F06 at the fail
 | 1 | Value-bearing output | Yes: reports, errors, native and budget text reach `Job.log` | Field-free reports; code-only errors; `scratch_native` with a grep-defined key and sentry | T-REPORT-TEXT, T-PAYLOAD, native-text test | add `detail`; bare `conn.execute`; drop a key module |
 | 2 | Cleanup on an exit path | Yes | Opener reclaims on each exit; finalizer on owning roots only; `RETAINED`; sweep only on marker-proven arenas | T-ARENA-EXITS, T-A07, T-A08, T-A08-SWEEP, `_adopt` cells | swallow a reclaim error; skip the marker check |
 | 3 | State and concurrency | Yes: sweep vs owner | `flock` on the open file description, inherited, taken before the rename | T-A07, child-holds, open-window test | drop `LOCK_SH` or `pass_fds` |
-| 4 | Route parity and silent fallback | Yes | One arena handed across the declared boundary; one ambient check; modes set, not inherited; disk failures reported | T-PLAIN, T-MODES, T-ARENA-DESC, one-arena-one-budget, T-A02b | fresh child under a handed arena; drop a chmod; drop the `IOException` arm |
+| 4 | Route parity and silent fallback | Yes | One arena handed across the declared boundary; one ambient check; modes set, not inherited; disk failures reported | T-PLAIN, T-MODES, T-ARENA-DESC, marker-mode test, one-arena-one-budget, T-A02b | fresh child under a handed arena; drop a chmod or the marker `fchmod`; drop the `IOException` arm |
 | 5 | Referential integrity | N/A: no row selection changes | Parity suites as characterization | FK parity suites | n/a |
 | 6 | Untrusted producer | Partly: discovery SQL | Session locked after `temp_directory` | T-DISCOVERY-SPILL | remove `temp_directory` |
 | 7 | Check then use on a path | Yes, bounded | Descriptor checks; `dir_fd` ops; `local_path` allowlist; marker read by `dir_fd`; fixed sweep root | T-ARENA-DESC, allowlist sentry, `test_sweep_takes_no_root` | delete a `fstat` check; restore `root=` |
@@ -224,11 +224,11 @@ Each test is recorded red first, against its neutered control or F06 at the fail
 ## 7. Reuse inventory
 
 - A-4 `StageDir`, `OutputTxn` (`_types.py:179-229`), `_output.py` helpers (`_call`, `_close`, `_rmtree_fd`), `validate_component`, adapters (`arrow.*`, `connect_internal`, `untrusted_session`), `guarded`/`guarded_iter`/`passes_by_type`/`resurface_scrubbed` (`_errors.py:100-172`), `require_ambient` (`_entry.py:115`), boundary sentry and registry.
-- F06 `ScratchAccess` (moved) and the `PRIVATE_COPY` in-place `COPY` pattern (`f06:execution/out_of_core/_duckdb.py:21`) on arena methods; reason `out_of_core_temp_disk_exceeded` and `check_temp_disk_budget` (signature unchanged); from `feat/f25-protected-scratch` only `scratch/_reports.py` (trimmed, as `fileaccess/_scratch_reports.py`) and `ScratchPathUnsafe` (`98a72bb6` 4.5).
+- F06 `ScratchAccess` (moved) and the `PRIVATE_COPY` in-place `COPY` pattern (`f06:execution/out_of_core/_duckdb.py:21`) on arena methods; reason `out_of_core_temp_disk_exceeded` and `check_temp_disk_budget`; from `feat/f25-protected-scratch` only `scratch/_reports.py` (trimmed, as `fileaccess/_scratch_reports.py`) and `ScratchPathUnsafe` (`98a72bb6` 4.5).
 
 ## 8. Frozen contracts touched
 
-- `fileaccess` public surface: additive exports `ScratchArena`, `sweep_scratch` (no parameters), `QuotaReport`, `CleanupReport`, `SweepReport`, `ScratchPathUnsafe`. `CONTRACT_VERSION` 1, `ENTRY_POINTS` unchanged.
+- `fileaccess` public surface: additive exports `ScratchArena`, `sweep_scratch`, `QuotaReport`, `CleanupReport`, `SweepReport`, `ScratchPathUnsafe`. `CONTRACT_VERSION` 1, `ENTRY_POINTS` unchanged.
 - Public entry-point signatures unchanged. `run_fk_out_of_core(temp_dir=...)`, `run_pipeline_isolated(staging_dir=...)` and the snapshot `temp_directory` keep their meaning, except that the engine makes a private child inside a caller directory; `output_dir` jobs still stage beside it (T12). `_arena` is a private keyword like F06's `_staged`. CHANGELOG entries in S2a-1 and S3a.
 - Error class (pre-GA): a non-resource library failure on scratch raises `FileAccessReadError("engine.scratch")` under ambient too, where F06 raises the raw error with its text; resource-errno and memory failures keep their class. CHANGELOG in S1a; T-PLAIN `[error_path]`.
 - Reason registry (Q4) and output bytes (T-PLAIN) unchanged.
@@ -262,7 +262,7 @@ Bound: at most 10 files per slice (production, tests, sentry data, docs, CHANGEL
 | S4b | `_duckdb.py`, fa `_scratch.py`, `_pool_quality.py`; tests `scratch_quota`, `scratch_modes`, `scratch_native`, `pool_quality`; modules toml (8) | 320 | Arm (c) and `_adopt` ended; T08 | Codex |
 | S5 | `_scratch_sweep.py` (new), fa `_scratch.py`, `_scratch_reports.py`, fa `__init__.py`; test `scratch_sweep`; `docs/security/file-access-policy.md`; CHANGELOG (7) | 780 | Sweep, real subprocesses | Dennis, then Codex |
 
-Transition (I2 suspended only here; four arms, each with its end). (a) `_rewrite_pass.py` passes `child.local_path()` to unconverted callees (until S2b-3), `_runner.py` to `stream_table` (until S2b-1), under a transitional `scratch_path_release` entry. (b) Relation builders and joiners keep a `Path` arm until S2b-3. (c) `connect_duckdb` keeps one until S4b (last caller `_pool_quality.py:246`). (d) `emit_to_sink` and `MaskedKeyStager` until S2b-3 (`_stream_driver.py:458-468` passes paths until S2b-1). Each arm goes through `_adopt(path)`: missing levels made and chmodded 0700 (4.2), leaf opened `O_DIRECTORY | O_NOFOLLOW`, then the 4.2 checks (strict on an existing leaf); non-owning (3.1.1), cleanup stays where it is (`_runner.py:323-327`, `_stream_driver.py:561`).
+Transition (I2 suspended only here; four arms, each with its end). (a) `_rewrite_pass.py` passes `child.local_path()` to unconverted callees (until S2b-3), `_runner.py` to `stream_table` (until S2b-1), under a transitional `scratch_path_release` entry. (b) Relation builders and joiners keep a `Path` arm until S2b-3. (c) `connect_duckdb` keeps one until S4b (last caller `_pool_quality.py:246`). (d) `emit_to_sink` and `MaskedKeyStager` until S2b-3 (`_stream_driver.py:458-468` passes paths until S2b-1). Each arm goes through `_adopt(path)`: levels made and checked as 4.2; non-owning (3.1.1), cleanup stays where it is (`_runner.py:323-327`, `_stream_driver.py:561`).
 
 Existing-test migration. `git grep -n "temp_dir=" -- tests` on F06: 217 lines in 37 files, public `run_fk_out_of_core` calls included (they stay). Arms keep old tests green, so M1, M2 (before S2b-3) and M3 (before S4b) migrate at most 10 files each: a fixture builds the arena, assertions unchanged and shown, except `tests/native/test_pool_quality.py:314`, which compares with the child's `local_path()`.
 
@@ -284,22 +284,22 @@ Revision 2's items stand (`937e88fe` 11). Live:
 - [1] Lazy reader pulls (`to_arrow_reader`, `_join.py:160`) run outside the wrapped call; the sentry checks connection-method calls only.
 - [8] T18's forced spill is mostly DuckDB temp files gone after `conn.close()`, before `_runner.py:294`; use a footprint that persists at the boundary.
 - [9] `_adopt` refuses an existing non-0700 leaf F06's `private_dir` accepted; old tests pre-creating 0755 dirs may break.
-- [8] `test_local_path_policy`'s fail-before (`test_policy_routes.py:69`) cannot go red in S1a; `[budget_message]` lands in S4a or is a strict xfail in S1a. The budget text (`_budget.py:539`) is not a V1 gap; S4a's fixed text is a ratchet.
+- [8] `test_local_path_policy`'s fail-before (`test_policy_routes.py:69`) cannot go red in S1a; `[budget_message]` lands in S4a or is a strict xfail in S1a.
 - [9] `_stream_join.py` (645 lines, may only shrink) gets 10 wrapped call sites in S2b-2; plan an extraction offset.
 
 Deferred features: fscrypt (Q1), kernel quotas (Q2), the ledger (Q3), checkpoint and resume (umbrella slice 6), platform lock authority (umbrella section 4).
 
 ## 12. Pre-mortem
 
-Likely next findings: a producer still making a directory outside the arena under umask 0777 (G5 and T-MODES catch it); F06 moving again before F25 builds (the first item below).
+Likely next: a creation outside `_create_private` or the 4.2 chmod (sentry, T-MODES); F06 moving (13).
 
-## 13. What revision 6 did not verify
+## 13. What revision 7 did not verify
 
-- Re-verify every `f06:` anchor against `main` when F06 merges (after R-b and B-6): if `scratch_root` moves to `private_dir`, `test_caller_temp_dir[mode_untouched]`'s fail-before (`_scratch.py:36` chmod) may vanish and the cell becomes green by design with the chmod as its mutation.
-- `plan-lint plan` printed OK; nothing else was run. No red or green claimed; sizes are estimates. T-DISCOVERY-SPILL's probe was not run. That `chmod`/`fchmod` restore 0700/0600 under umask 0777 is POSIX (chmod ignores the umask), not a run; a non-root CI runner is not checked.
-- The internal-callee share of the 217 `temp_dir=` test lines was not re-counted. Platform anchors in 4.4 are from revision 3.
+- Re-verify every `f06:` anchor against `main` when F06 merges. At `1a3090b4` `scratch_root` calls `private_dir` (`:35`) and still chmods at `:36`, so `test_caller_temp_dir[mode_untouched]`'s fail-before stands; only `out_of_core/_scratch.py` was re-read at `1a3090b4`.
+- `plan-lint plan` printed OK; nothing else was run. No red or green claimed; sizes are estimates. T-DISCOVERY-SPILL's probe was not run. That `chmod`/`fchmod` restore 0700/0600 under umask 0777 is POSIX (chmod ignores the umask), not a run; a non-root CI runner is not checked. The marker's 0000/`EACCES` is Codex's probe, not re-run.
+- The internal-callee share of the 217 `temp_dir=` test lines was not re-counted; 4.4's platform prefixes are from revision 3.
 - `/dev/shm` versus `/tmp` `st_dev` on `ubuntu-latest`; `flock` on overlayfs and across a rename (from `flock(2)`); the snapshot stub; T-A02b's injected failures.
 
 ## 14. Provenance
 
-Revisions 1 `affde556`, 2 `937e88fe`, 3 `98a72bb6`, 4 `0aa5c873`, 5 `a3a4c1b3`. Next gates: Dennis, then Codex. No build before owner approval.
+Revisions 1 `affde556`, 2 `937e88fe`, 3 `98a72bb6`, 4 `0aa5c873`, 5 `a3a4c1b3`, 6 `784cb151`. Next gates: Dennis, then Codex.
