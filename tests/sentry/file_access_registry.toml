@@ -2,7 +2,7 @@
 # `ordinal` is the index of the call among identical sinks in the function. An entry may be
 # removed freely; adding one needs a `rule` (how the path is built), an `owner` and a `reason`.
 # `ambient_only` marks a caller-derived path that is reached only after `require_ambient`.
-# Count: 205 (asserted by the sentry).
+# Count: 203 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -759,16 +759,6 @@ reason = "engine-owned spill and relation files; never a caller or config path"
 module = "decoy_engine/execution/out_of_core/_scratch.py"
 function = "scratch_root"
 sink = "tempfile.mkdtemp"
-ordinal = 0
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/out_of_core/_scratch.py"
-function = "scratch_root"
-sink = "Path.mkdir"
 ordinal = 0
 rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
@@ -1816,16 +1806,6 @@ reason = "F06 typed staging copy of a declared out-of-core source; engine-owned 
 [[entry]]
 module = "decoy_engine/execution/out_of_core/_scratch.py"
 function = "engine_scratch_root"
-sink = "Path.mkdir"
-ordinal = 0
-rule = "an engine-created `tempfile.mkdtemp` root, under the caller's temp_dir only after `fileaccess.require_ambient` refused every policy but the ambient one; removed on exit"
-owner = "cam"
-reason = "the per-run scratch root that holds the F06 typed staging copy and the route's spill under one temp-disk budget"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/out_of_core/_scratch.py"
-function = "engine_scratch_root"
 sink = "tempfile.mkdtemp"
 ordinal = 0
 rule = "an engine-created `tempfile.mkdtemp` root, under the caller's temp_dir only after `fileaccess.require_ambient` refused every policy but the ambient one; removed on exit"
@@ -1857,36 +1837,36 @@ module = "decoy_engine/execution/out_of_core/_scratch.py"
 function = "private_dir"
 sink = "os.path.isdir"
 ordinal = 0
-rule = "a directory under an engine-created scratch root (`scratch_root` / `engine_scratch_root`), named by an opaque per-run id, never by a table, column or edge name"
+rule = "a directory under an engine-created scratch root (`scratch_root` / `engine_scratch_root`), named by an opaque per-run id, never by a table, column or edge name; or the missing levels of a caller-named temp_dir, reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
-reason = "engine-owned spill directories are created 0700 level by level whatever the umask"
+reason = "engine-owned spill directories, and the levels it creates on the way to a caller temp_dir, are created 0700 level by level whatever the umask"
 
 [[entry]]
 module = "decoy_engine/execution/out_of_core/_scratch.py"
 function = "private_dir"
 sink = "os.path.isdir"
 ordinal = 1
-rule = "a directory under an engine-created scratch root (`scratch_root` / `engine_scratch_root`), named by an opaque per-run id, never by a table, column or edge name"
+rule = "a directory under an engine-created scratch root (`scratch_root` / `engine_scratch_root`), named by an opaque per-run id, never by a table, column or edge name; or the missing levels of a caller-named temp_dir, reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
-reason = "engine-owned spill directories are created 0700 level by level whatever the umask"
+reason = "engine-owned spill directories, and the levels it creates on the way to a caller temp_dir, are created 0700 level by level whatever the umask"
 
 [[entry]]
 module = "decoy_engine/execution/out_of_core/_scratch.py"
 function = "private_dir"
 sink = "os.mkdir"
 ordinal = 0
-rule = "a directory under an engine-created scratch root (`scratch_root` / `engine_scratch_root`), named by an opaque per-run id, never by a table, column or edge name"
+rule = "a directory under an engine-created scratch root (`scratch_root` / `engine_scratch_root`), named by an opaque per-run id, never by a table, column or edge name; or the missing levels of a caller-named temp_dir, reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
-reason = "engine-owned spill directories are created 0700 level by level whatever the umask"
+reason = "engine-owned spill directories, and the levels it creates on the way to a caller temp_dir, are created 0700 level by level whatever the umask"
 
 [[entry]]
 module = "decoy_engine/execution/out_of_core/_scratch.py"
 function = "private_dir"
 sink = "os.chmod"
 ordinal = 0
-rule = "a directory under an engine-created scratch root (`scratch_root` / `engine_scratch_root`), named by an opaque per-run id, never by a table, column or edge name"
+rule = "a directory under an engine-created scratch root (`scratch_root` / `engine_scratch_root`), named by an opaque per-run id, never by a table, column or edge name; or the missing levels of a caller-named temp_dir, reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
-reason = "engine-owned spill directories are created 0700 level by level whatever the umask"
+reason = "engine-owned spill directories, and the levels it creates on the way to a caller temp_dir, are created 0700 level by level whatever the umask"
 
 [[entry]]
 module = "decoy_engine/execution/out_of_core/_scratch.py"

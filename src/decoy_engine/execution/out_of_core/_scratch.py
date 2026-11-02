@@ -32,7 +32,7 @@ def scratch_root(temp_dir: Path | None) -> Path:
     if temp_dir is not None and not _is_engine_root(temp_dir):
         fileaccess.require_ambient("run_fk_out_of_core with a caller-named temp_dir")
     root = Path(tempfile.mkdtemp(prefix="decoy-ooc-")) if temp_dir is None else temp_dir
-    root.mkdir(parents=True, exist_ok=True)
+    private_dir(root)
     os.chmod(root, 0o700)
     return root
 
@@ -51,7 +51,7 @@ def engine_scratch_root(parent: Path | None) -> Iterator[Path]:
     a staged copy and the route's spill share one root and one temp-disk budget."""
     if parent is not None:
         fileaccess.require_ambient("run_fk_out_of_core with a caller-named temp_dir")
-        Path(parent).mkdir(parents=True, exist_ok=True)
+        private_dir(Path(parent))
     root = Path(tempfile.mkdtemp(prefix="decoy-ooc-run-", dir=parent))
     os.chmod(root, 0o700)  # mkdtemp's 0700 is narrowed by the umask, never widened back
     key = os.path.abspath(root)
