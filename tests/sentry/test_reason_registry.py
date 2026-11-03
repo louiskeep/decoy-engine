@@ -120,6 +120,11 @@ ADAPTERS: dict[tuple[str, str], str] = {
         "exports the identity of a `ReasonRef` that `require_known` has just resolved against "
         "the registry (an unknown identity fails closed before this dict is built)"
     ),
+    ("safe_output/_event.py", "SafeEvent.to_dict"): (
+        "exports the identity of a `ReasonRef` that `require_known` resolved against the "
+        "registry when the event was validated (an unknown identity fails closed before this "
+        "dict is built)"
+    ),
 }
 # Functions whose return value is a registry symbol chosen from a table of registry symbols.
 REGISTRY_HELPERS = frozenset({"strategy_code_for_unencryptable", "strategy_code_for_checksum"})
