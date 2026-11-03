@@ -316,3 +316,32 @@ def _error_type(exc: BaseException) -> object:
 )
 def test_phase_error_type_domain_superset(cls: type[BaseException], label: str) -> None:
     assert _error_type(cls.__new__(cls)) == label
+
+
+def _families() -> list[type[BaseException]]:
+    from decoy_engine.execution._errors import ExecutionError
+    from decoy_engine.plan._errors import PlanCompileError
+    from decoy_engine.subset._errors import SubsetError
+
+    return [SubsetError, PlanCompileError, ExecutionError]
+
+
+@pytest.mark.parametrize("cls", _families(), ids=lambda c: c.__name__)
+def test_phase_error_type_names_engine_family(cls: type[BaseException]) -> None:
+    assert _error_type(cls.__new__(cls)) == cls.__name__
+
+
+def test_oserror_maps_to_oserror_not_ioerror() -> None:
+    from decoy_engine.safe_output import SafeErrorType, safe_error_type
+
+    assert safe_error_type(OSError()).value == "OSError"
+    assert {"IOError", "EnvironmentError"} <= {m.value for m in SafeErrorType}
+    assert _error_type(OSError()) == "OSError"
+
+
+def test_label_set_equals_safe_error_class_set() -> None:
+    from decoy_engine.safe_output import SafeErrorType
+
+    from decoy_engine._progress_events import _safe_error_names
+
+    assert {m.value for m in SafeErrorType} == _safe_error_names() | {"Exception"}
