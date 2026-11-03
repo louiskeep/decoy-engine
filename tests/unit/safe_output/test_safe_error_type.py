@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from decoy_engine.safe_output import SafeErrorType, safe_error_type
 
+from decoy_engine.safe_output import SafeErrorType, safe_error_type
 from decoy_engine.subset._errors import SubsetError
 
 _MARKER = "F31CANARY9d2c"

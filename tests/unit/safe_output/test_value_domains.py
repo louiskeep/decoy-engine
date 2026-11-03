@@ -340,8 +340,7 @@ def test_oserror_maps_to_oserror_not_ioerror() -> None:
 
 
 def test_label_set_equals_safe_error_class_set() -> None:
-    from decoy_engine.safe_output import SafeErrorType
-
     from decoy_engine._progress_events import _safe_error_names
+    from decoy_engine.safe_output import SafeErrorType
 
     assert {m.value for m in SafeErrorType} == _safe_error_names() | {"Exception"}

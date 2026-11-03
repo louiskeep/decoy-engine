@@ -8,10 +8,10 @@ from collections.abc import Mapping
 from typing import Any
 
 import pytest
-from decoy_engine.safe_output import EventKind, Flag, SafeErrorType, SafeEvent, StepRef
 
 from decoy_engine import reasons
 from decoy_engine.reasons import ReasonRef, Severity
+from decoy_engine.safe_output import EventKind, Flag, SafeErrorType, SafeEvent, StepRef
 
 _REF = reasons.get_reason("post_scan", "check_error").ref
 _MAX_SEQ = 2**53 - 1

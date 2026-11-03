@@ -1,7 +1,7 @@
 """The closed exception label: an exception's class as a fixed, low-cardinality identifier.
 
 Pattern source: the OpenTelemetry ``error.type`` attribute (a low-cardinality class identifier,
-never the message), lifted from the STORM exact-type table that ``phase.error_result`` held.
+never the message), lifted from the exact-type table that ``phase.error_result`` held.
 A class name is chosen by whoever defined the class, so a caller's exception could carry data in
 its name; the label is therefore picked by exact type from a closed set the engine trusts
 (Python's builtin exceptions, the engine families the reason adapter registers, and the classes
