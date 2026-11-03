@@ -13,6 +13,7 @@ from __future__ import annotations
 from decoy_engine.execution.native._route_decline_codes import RouteDeclineCode
 from decoy_engine.profile._types import PIIClass
 from decoy_engine.reasons._types import Outcome, RetryClass, Severity
+from decoy_engine.support._labels import LabelAllocator
 from decoy_engine.support._shape import (
     BundleSchema,
     ColumnShape,
@@ -51,6 +52,7 @@ __all__ = [
     "ErrorFact",
     "EventFact",
     "Label",
+    "LabelAllocator",
     "Limits",
     "NativeStatus",
     "NodeTiming",
