@@ -1,0 +1,5 @@
+FAILED tests/unit/declared_casting/test_stream_staging.py::test_staged_copy_and_spill_share_one_budget[True]
+FAILED tests/unit/declared_casting/test_stream_staging.py::test_staged_copy_and_spill_share_one_budget[False]
+FAILED tests/unit/declared_casting/test_stream_staging.py::test_staged_copy_and_spill_within_one_budget_run[True]
+FAILED tests/unit/declared_casting/test_stream_staging.py::test_staged_copy_and_spill_within_one_budget_run[False]
+4 failed, 3 passed in 1.43s

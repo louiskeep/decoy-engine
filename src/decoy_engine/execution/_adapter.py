@@ -69,6 +69,10 @@ class ExecutionResult:
     # table-attributed by the adapter's drain point. Additive; default empty
     # tuple leaves every existing ExecutionResult construction unchanged.
     row_errors: tuple[RowErrorRecord, ...] = ()
+    # F06: the serializable, value-free token that opens this run's protected quarantine
+    # artifact. None when no row was quarantined. Hidden from repr and never serialized into
+    # evidence, because possessing it is the read right.
+    quarantine_access: Any = field(default=None, repr=False)
 
     @property
     def output(self) -> pa.Table:

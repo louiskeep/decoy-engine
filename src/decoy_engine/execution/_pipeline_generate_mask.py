@@ -109,6 +109,7 @@ def run_generate_and_mask_steps(
     now_iso: str | None,
     publish: _output_sink.OutputPublish,
     pregenerated: dict[str, pa.Table] | None = None,
+    cast_run: Any = None,
 ) -> GenerateMaskStepResult:
     """Run generate-kind tables then mask-kind tables (`_pipeline.py`
     Steps 1-2), returning everything the stitch + finalize stages need.
@@ -172,10 +173,23 @@ def run_generate_and_mask_steps(
                 source_facts=keep_lazy,
                 auto_chunk_threshold_rows=auto_chunk_threshold_rows,
                 dispatcher_enabled=chunked_dispatcher_enabled,
-                split_enabled=multi_table_dispatch_enabled,
+                # F06: a declared job keeps one route for the whole job, so every table's
+                # companion rows stay aligned with its rendered output.
+                split_enabled=multi_table_dispatch_enabled and cast_run is None,
                 vault_writer_present=vault_writer is not None,
             )
         )
+        if cast_run is not None and multi_table_dispatch_enabled and not route_chunked:
+            _multi_table.note_declared_split_exclusion(
+                config,
+                plan=plan,
+                graph=graph,
+                substrate=resolved_substrate,
+                table_kinds=table_kinds,
+                auto_chunk=auto_chunk,
+                dispatcher_enabled=chunked_dispatcher_enabled,
+                vault_writer_present=vault_writer is not None,
+            )
         # B6a: decided once, before the first chunk; a streaming run opens the publish session.
         out_mode, out_reason = ("resident", "")
         if split is not None or route_chunked:
@@ -260,6 +274,7 @@ def run_generate_and_mask_steps(
                     key_provider=key_provider,
                     native_threads=native_threads,
                     dispatcher_enabled=chunked_dispatcher_enabled,
+                    cast_run=cast_run,
                     **(
                         {"sink": publish.active_sink, "expected": keep_lazy.get(mask_table_name)}
                         if out_mode == "streamed"

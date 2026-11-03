@@ -30,11 +30,15 @@ PLAN_ORDER = (
 
 
 def _since_violations(specs, pinned: str, live: str) -> list[str]:
-    """Specs that claim a released `since` or a version other than the live registry's."""
+    """Specs that claim a released `since` or a version above the live registry's.
+
+    Several unreleased versions can be live in the chain (each slice takes its own minor), so any
+    `since` in (pinned, live] is valid.
+    """
     return [
         f"{s.namespace}.{s.code}: since {s.since}"
         for s in specs
-        if Version(s.since) <= Version(pinned) or s.since != live
+        if Version(s.since) <= Version(pinned) or Version(s.since) > Version(live)
     ]
 
 
@@ -63,3 +67,7 @@ def test_since_is_unreleased_registry_version() -> None:
     # Seeded violation: one reason claiming the version the last release already shipped.
     seeded = [dataclasses.replace(specs[0], since=pinned), *specs[1:]]
     assert _since_violations(seeded, pinned, live) == [f"verification.canary_match: since {pinned}"]
+    # Seeded violation: one reason claiming a version above the live registry's.
+    future = f"{Version(live).major}.{Version(live).minor + 1}.0"
+    seeded = [dataclasses.replace(specs[0], since=future), *specs[1:]]
+    assert _since_violations(seeded, pinned, live) == [f"verification.canary_match: since {future}"]

@@ -24,7 +24,12 @@ from typing import TYPE_CHECKING
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from decoy_engine.execution.out_of_core._scratch import scratch_access_for
+from decoy_engine.execution.out_of_core._scratch import (
+    close_private,
+    open_private,
+    private_dir,
+    scratch_access_for,
+)
 from decoy_engine.execution.out_of_core._source import LazySource
 
 if TYPE_CHECKING:
@@ -63,10 +68,15 @@ class MaskedKeyStager:
         self._columns = columns
         self._indexes = tuple(fixed_schema.get_field_index(col) for col in columns)
         schema = pa.schema([fixed_schema.field(idx) for idx in self._indexes])
-        path.parent.mkdir(parents=True, exist_ok=True)
+        private_dir(path.parent)
         self._path = path
         self._schema = schema
-        self._writer = pq.ParquetWriter(path, schema)
+        self._sink = open_private(path)
+        try:
+            self._writer = pq.ParquetWriter(self._sink, schema)
+        except BaseException:
+            self._sink.close()
+            raise
         self._reader = scratch_access_for(path.parent)
         if masked_observed_types is None:
             self.observed: dict[str, set[pa.DataType]] = {col: set() for col in columns}
@@ -89,7 +99,7 @@ class MaskedKeyStager:
         self.rows += reconciled.num_rows
 
     def close(self) -> None:
-        self._writer.close()
+        close_private(self._writer, self._sink)
 
     def source(self) -> LazySource:
         return LazySource(self._path, access=self._reader, field_key="engine.scratch")

@@ -39,6 +39,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from decoy_engine import fileaccess
+from decoy_engine._lexeme import LEXEME_KEY
 from decoy_engine.fileaccess import FileAccess, FileHandle, FileRequest, FileRole
 from decoy_engine.fileaccess.adapters import arrow as arrow_adapter
 from decoy_engine.profile._fixed_width_reader import read_fixed_width_handle
@@ -506,6 +507,7 @@ def _build_file_source(descriptor: dict[str, Any], field_key: str) -> ProfileSou
             has_header=descriptor.get("has_header", True),
             column_names=descriptor.get("column_names"),
             delimiter=descriptor.get("delimiter", ","),
+            lexeme_columns=tuple(descriptor.get(LEXEME_KEY) or ()),
             field_key=field_key,
         )
     if fmt == "parquet":

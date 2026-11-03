@@ -54,9 +54,16 @@ Known gaps -- documented, not fixed here (S4 scope; flagged for S7):
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 
 class FixedWidthColumn(BaseModel):
@@ -96,6 +103,24 @@ class FixedWidthLayout(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     columns: list[FixedWidthColumn] = Field(..., min_length=1)
+    # F06: when true a record must be EXACTLY `record_width` long. The default keeps the
+    # documented "trailing bytes are tolerated" behaviour for every existing layout; a layout
+    # feeding a declared-casting column opts in so an over-length record is a framing error, not a
+    # value that bleeds into the next field.
+    exact_record_width: bool = False
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> Any:
+        from decoy_engine.config._declared_casting import recover_serialization_schema
+
+        return recover_serialization_schema(core_schema, handler)
+
+    @model_serializer(mode="wrap")
+    def _omit_default_exact_width(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if data.get("exact_record_width") is False:
+            data.pop("exact_record_width", None)
+        return data
 
     @property
     def record_width(self) -> int:
