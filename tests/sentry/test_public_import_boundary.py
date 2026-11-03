@@ -43,6 +43,7 @@ PUBLIC_BOUNDARY_FILES: tuple[str, ...] = (
     "providers.py",
     "sdk.py",
     "verification/canary/__init__.py",
+    "support/__init__.py",
 )
 
 # Narrow exceptions: a public-boundary file is allowed to import from
