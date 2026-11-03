@@ -226,6 +226,12 @@ def _build_seed_envelope(
                 else:
                     provider_config_raw = {}
                     provider_config = tuple()
+                if strategy == "bucketize" and col_entry.get("logical_type") == "integer":
+                    # F06: a declared integer column keeps bucketize's integral result typed
+                    # (the legacy string rendering would force a second parse after masking).
+                    provider_config = tuple(
+                        sorted((*provider_config, ("declared_integer_output", True)))
+                    )
                 # pool_size is resolved once here so runtime consumers read a
                 # single typed source of truth; top-level wins, provider_config
                 # is the fallback, contradictions fail closed. The compile-time

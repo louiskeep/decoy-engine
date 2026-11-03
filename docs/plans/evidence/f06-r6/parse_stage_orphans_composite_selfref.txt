@@ -1,0 +1,24 @@
+composite fail {'execution_mode': 'full_frame'} ERR orphan_fk_violation
+composite fail {'execution_mode': 'sequential'} ERR orphan_fk_violation
+composite fail {} ERR orphan_fk_violation
+composite remap {'execution_mode': 'full_frame'} PUBLISHED full_frame orphans 1
+composite remap {'execution_mode': 'sequential'} PUBLISHED sequential orphans 1
+composite remap {} PUBLISHED sequential orphans 1
+composite preserve {'execution_mode': 'full_frame'} PUBLISHED full_frame orphans 1
+composite preserve {'execution_mode': 'sequential'} PUBLISHED sequential orphans 1
+composite preserve {} PUBLISHED sequential orphans 1
+composite warn {'execution_mode': 'full_frame'} PUBLISHED full_frame orphans 1
+composite warn {'execution_mode': 'sequential'} PUBLISHED sequential orphans 1
+composite warn {} PUBLISHED sequential orphans 1
+selfref fail {'execution_mode': 'full_frame'} ERR orphan_fk_violation
+selfref fail {'execution_mode': 'sequential'} ERR orphan_fk_violation
+selfref fail {} ERR orphan_fk_violation
+selfref remap {'execution_mode': 'full_frame'} PUBLISHED full_frame orphans 1
+selfref remap {'execution_mode': 'sequential'} PUBLISHED sequential orphans 1
+selfref remap {} PUBLISHED sequential orphans 1
+selfref preserve {'execution_mode': 'full_frame'} PUBLISHED full_frame orphans 1
+selfref preserve {'execution_mode': 'sequential'} PUBLISHED sequential orphans 1
+selfref preserve {} PUBLISHED sequential orphans 1
+selfref warn {'execution_mode': 'full_frame'} PUBLISHED full_frame orphans 1
+selfref warn {'execution_mode': 'sequential'} PUBLISHED sequential orphans 1
+selfref warn {} PUBLISHED sequential orphans 1

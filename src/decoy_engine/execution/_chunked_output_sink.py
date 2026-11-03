@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine import fileaccess, reasons
+from decoy_engine._lexeme import lexeme_columns_by_table
 from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
@@ -108,6 +109,10 @@ def decide_output_mode(
             return "resident", reasons.route.SPLIT_FULL_FRAME_PRESENT
         if any(name not in split.dispatched for name in resident_names):
             return "resident", reasons.route.SPLIT_EXTRA_SOURCES_PRESENT
+    if lexeme_columns_by_table(config):
+        # F06: the rendered rows of a declared table are published after the whole run is known
+        # to have passed, and a quarantine seal must follow every other failure-capable step.
+        return "resident", reasons.route.DECLARED_CASTING
     if config.get("validators"):
         return "resident", reasons.route.VALIDATORS_PRESENT
     if (config.get("quarantine") or {}).get("enabled"):

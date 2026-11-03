@@ -18,6 +18,7 @@ import pandas as pd
 import pyarrow as pa
 
 from decoy_engine import fileaccess
+from decoy_engine._lexeme import pandas_lexeme_kwargs
 from decoy_engine.errors import PipelineValidationError
 from decoy_engine.fileaccess import FileAccess
 from decoy_engine.fileaccess.adapters import pandas as pandas_adapter
@@ -48,6 +49,11 @@ if TYPE_CHECKING:
 _CSV_ESTIMATE_LINES = 1_000
 
 
+def _positional_lexemes(columns: tuple[str, ...], names: list[str]) -> dict[str, dict[int, type]]:
+    """Headerless files key converters by position, so map the declared names onto it."""
+    return pandas_lexeme_kwargs([names.index(c) for c in columns if c in names])
+
+
 @dataclass(frozen=True)
 class CsvFileSource(_PolicyBound):
     """`ProfileSource` for a local CSV file.
@@ -66,6 +72,7 @@ class CsvFileSource(_PolicyBound):
     has_header: bool = True
     column_names: list[str] | None = None
     delimiter: str = ","
+    lexeme_columns: tuple[str, ...] = ()
     access: FileAccess | None = field(default=None, compare=False, repr=False)
     field_key: str = field(default="source.path", compare=False)
 
@@ -76,7 +83,12 @@ class CsvFileSource(_PolicyBound):
     def _read(self, nrows: int | None = None) -> pd.DataFrame:
         if self.has_header:
             with self._handle() as handle:
-                return pandas_adapter.read_csv(handle, nrows=nrows, sep=self.delimiter)
+                return pandas_adapter.read_csv(
+                    handle,
+                    nrows=nrows,
+                    sep=self.delimiter,
+                    **pandas_lexeme_kwargs(self.lexeme_columns),
+                )
         # Headerless: pandas cannot fail closed on a mis-sized file. A too-short
         # row is silently padded (and earlier values shift into the wrong column);
         # a too-long row is dropped or shifts. Frame-width alone does not catch a
@@ -91,7 +103,11 @@ class CsvFileSource(_PolicyBound):
         try:
             with self._handle() as handle:
                 frame = pandas_adapter.read_csv(
-                    handle, nrows=nrows, sep=self.delimiter, header=None
+                    handle,
+                    nrows=nrows,
+                    sep=self.delimiter,
+                    header=None,
+                    **_positional_lexemes(self.lexeme_columns, names),
                 )
         except (pd.errors.EmptyDataError, pd.errors.ParserError):
             # The width scan above already rejects the known mis-size cases with a

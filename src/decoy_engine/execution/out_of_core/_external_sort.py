@@ -129,6 +129,7 @@ from decoy_engine.execution.out_of_core._external_sort_bounding import (
     _min_row_bytes,
 )
 from decoy_engine.execution.out_of_core._external_sort_run import _RunHead
+from decoy_engine.execution.out_of_core._scratch import open_private, private_dir
 
 # Transient overhead multiplier for the flush-time sort: `Table.sort_by`
 # computes a sort-indices array and gathers a freshly copied result table
@@ -211,7 +212,7 @@ class BoundedExternalSorter:
         self._schema: pa.Schema | None = None
         self._key_type: pa.DataType | None = None
 
-        self._spill_dir.mkdir(parents=True, exist_ok=True)
+        private_dir(self._spill_dir)
 
     @property
     def peak_buffered_bytes(self) -> int:
@@ -378,7 +379,7 @@ class BoundedExternalSorter:
 
     def _write_run(self, table: pa.Table, path: Path) -> None:
         assert self._schema is not None  # noqa: S101 -- write() always sets this before any flush
-        with pa.OSFile(str(path), "wb") as sink:
+        with open_private(path) as sink:
             writer = pa.ipc.new_file(sink, table.schema)
             try:
                 for out_batch in _bounded_batches(table, self._per_head_cap_bytes):
@@ -418,7 +419,7 @@ class BoundedExternalSorter:
         assert self._schema is not None  # noqa: S101 -- at least one run implies write() ran
         heads = [_RunHead(path, self._sort_key_column) for path in run_paths]
         try:
-            with pa.OSFile(str(output_path), "wb") as sink:
+            with open_private(output_path) as sink:
                 writer = pa.ipc.new_file(sink, self._schema)
                 try:
                     self._merge_heads_into(heads, writer)

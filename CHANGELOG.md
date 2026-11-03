@@ -9,6 +9,34 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (F06: declared parsing, casting and quarantine, 2026-10-29)
+
+A column can now declare `logical_type`, `parse_format`, `sentinel_to_null`, `error_policy` (`fail`, `null`,
+`quarantine`) and `output_format`. The engine owns one versioned contract (`decoy_engine.contracts.declared_casting`,
+catalog version 1) and one casting boundary (`decoy_engine.declared_casting`): exact strings, strict integers,
+exact `Decimal` (precision 1..38, no float, no rounding, a pinned `decimal` context), restricted dates
+(`%Y %m %d`, no locale), explicit currency, ASCII overpunch, EBCDIC zoned decimal and COMP-3. Sentinels become
+null before parsing and are counted apart from source nulls; counts and every failure are value-free and use
+registered F29 reasons (`registry_version` 1.4.0, 29 new identities, after F34's 1.3.0). Fixed-width layouts gain
+`exact_record_width` (default off) so an over-length record is a framing error.
+`run_pipeline(quarantine_runtime=...)` takes a protected-quarantine runtime; the local reference sink writes
+Fernet-encrypted, `0700`/`0600`, finite-retention artifacts and the run returns a portable
+`ExecutionResult.quarantine_access` token. `PLAN_VERSION` is now 3 (the only YAML change for configs that do not
+use the feature is the version line; a version-2 plan still loads). Declared columns run on the full-frame,
+chunked, sequential, out-of-core, mixed and unified-slice routes through one batch-shaped casting kernel; a route
+that lacks a needed capability refuses before reading the source (`declared_cast_route_unsupported`) and `auto`
+routing never selects it. CSV readers keep declared columns as exact lexemes (no inference, no default NA
+conversion). The quarantine seal is the last failure-capable step of a run, a sealed artifact is discarded if the
+run then fails, retrieval tokens are bound to the run (`QuarantineAccessContext(owner, run_id)`), protected records
+carry full F29 `ReasonRecord`s, and the raw row reopens with its Decimal / date / datetime types intact. See
+A failed discard after the seal is reported as the registered `protected_quarantine_cleanup_failed` with the
+artifact's recovery identity, and a declared job that falls back to a less bounded route lists the refusal under
+`quality_metrics["execution"]["declared_route_refusals"]`. The out-of-core typed staging copy is named by
+the engine (`s0000.typed.parquet`, never the table name) inside an engine-made per-run root, and is read back
+through a scratch reader, so it runs under a strict file-access policy. The local quarantine store retries short
+writes and is ambient-only (`arena_needs_ambient_policy` under a strict policy). See
+`docs/declared-casting.md` and `docs/security/protected-quarantine.md`.
+
 ## [0.18.0] - 2026-11-01
 
 Pre-GA release (`RELEASE_PHASE = "pre-ga"`): the minor bump carries breaking changes with no shims. It is
