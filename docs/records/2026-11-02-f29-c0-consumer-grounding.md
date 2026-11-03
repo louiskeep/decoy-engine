@@ -202,7 +202,7 @@ R = {k: (os.environ[k + "_DIR"], os.environ[k + "_SHA"]) for k in "PCE"}
 text = open(sys.argv[1], encoding="utf-8").read()
 body = re.sub(r"<!-- (script|raw) -->.*?<!-- /\1 -->", "", text, flags=re.S)
 bad, seen = 0, set()
-for repo, rev, path, cites in re.findall(r"^CITE\|(\w)@?(\w*)\|([^|]+)\|(.+)$", text, re.M):
+for repo, rev, path, cites in re.findall(r"^CITE\|(\w)@?([\w.]*)\|([^|]+)\|(.+)$", text, re.M):
     src = subprocess.run(["git", "-C", R[repo][0], "show", f"{rev or R[repo][1]}:{path}"],
                          capture_output=True, text=True).stdout.splitlines()
     for n, want in (c.split("=", 1) for c in cites.split(" ;; ")):
@@ -228,7 +228,7 @@ print("RESULT:", bad, "mismatches"); sys.exit(bad > 0)
 <!-- /script -->
 
 ```
-CITE|P|api/jobs/v2_orchestrator.py|173=_key_setup_error = _key_exc ;; 245=try: ;; 254=raise _key_setup_error ;; 278=execute_streaming(ctx ;; 280=dispatch_relationship_route(ctx ;; 282=execute_full_frame(ctx ;; 289=except Exception as exc: ;; 301=details = _failure_details(exc) ;; 329=_error_node_run(
+CITE|P|api/jobs/v2_orchestrator.py|173=_key_setup_error = _key_exc ;; 245=try: ;; 251=if _budget_error is not None ;; 252=raise _budget_error ;; 254=raise _key_setup_error ;; 255=if _token_vault_error ;; 256=raise _token_vault_error ;; 278=execute_streaming(ctx ;; 280=dispatch_relationship_route(ctx ;; 282=execute_full_frame(ctx ;; 289=except Exception as exc: ;; 301=details = _failure_details(exc) ;; 329=_error_node_run(
 CITE|P|api/jobs/v2_node_runs.py|426=return JobNodeRun( ;; 434=error=json.dumps({"code": code, "message": message
 CITE|P|api/jobs/v2_runner.py|269=def _run_v2_pipeline_streaming( ;; 426=raise
 CITE|P|api/jobs/v2_stream_coordinator.py|237=raise PartialPublicationError(
@@ -237,18 +237,24 @@ CITE|P|api/jobs/v2_sequential.py|460=_persist_job_vault(vault_writer ;; 486=def 
 CITE|P|api/jobs/v2_full_frame.py|63=raise TokenVaultDurabilityError( ;; 70=def run_full_frame_branch( ;; 175=_persist_job_vault(vault_writer
 CITE|P|api/jobs/v2_vault.py|91=super().__init__(self.message) ;; 279=raise VaultPersistError() from exc ;; 280=return JobNodeRun(
 CITE|P@67e8cbba|api/jobs/v2_vault.py|98="message": str(exc)
-CITE|P|api/jobs/queue_worker.py|378=def _fail_host_safety( ;; 385=[host-safety] rejected before read ;; 413=_fail_host_safety(db, job, str(exc)) ;; 419=could not price fail-closed ;; 430=claim_route.disk_reason ;; 434=_fail_host_safety(db, job, decision.reason) ;; 604=JobStatus.failed
+CITE|P|api/jobs/queue_worker.py|378=def _fail_host_safety( ;; 384=full = f"host-safety: {reason} ;; 385=[host-safety] rejected before read ;; 413=_fail_host_safety(db, job, str(exc)) ;; 417=reservation = price_job_at_claim(job) ;; 419=could not price fail-closed ;; 430=claim_route.disk_reason ;; 434=_fail_host_safety(db, job, decision.reason) ;; 604=JobStatus.failed ;; 607=job.log = (job.log or "") + (
 CITE|P|api/jobs/scheduler_claim_loop.py|89=def _fail_admission( ;; 173=_fail_host_safety(db, job, outcome.reason)
 CITE|P|api/jobs/reaper.py|219="status": JobStatus.failed
 CITE|P|api/jobs/job_terminal_cas.py|247="status": JobStatus.failed
-CITE|P|api/jobs/iteration.py|499=JobStatus.failed
+CITE|P|api/jobs/iteration.py|499=JobStatus.failed ;; 532=JobStatus.failed ;; 625=JobStatus.failed if any_failed ;; 651=JobStatus.failed
 CITE|P|api/jobs/routes_runtime_facts.py|70=@router.get("/{job_id}/node-runs" ;; 99=JobNodeRunOut.model_validate(r) ;; 115=return out
-CITE|P|api/jobs/worker_budget.py|402=could not be parsed fail-closed: {exc}
+CITE|P|api/jobs/worker_budget.py|393=except Exception as exc ;; 402=could not be parsed fail-closed: {exc} ;; 590=if reservation.rejected ;; 595=could not price job fail-closed: {reservation.reason}
+CITE|P|api/jobs/_shared.py|203=if include_log and job.log is not None ;; 211=log_payload = job.log ;; 241=admission_reason=getattr(job, "admission_reason"
+CITE|P|api/jobs/admission.py|992=except (UnsizeablePhaseError, ParquetFooterUnreadableError) ;; 998=admission phase pricing rejected (fail-closed): {exc}
+CITE|P|api/jobs/_create_phases.py|554=admission_reason=admission.reason
+CITE|P|api/jobs/iteration_dispatch.py|145=def _mark_child_failed( ;; 156=JobStatus.failed
+CITE|P|api/jobs/job_principal.py|76=def land_owner_refused( ;; 89=JobStatus.failed
 CITE|P|api/jobs/schemas.py|430=error: str | None
 CITE|P|api/evidence/assembly.py|1888=def _hydrate_nodes( ;; 1984="message": row.error ;; 2334=def update_finished_manifest( ;; 2408=_hydrate_nodes(job, db)
 CITE|P|api/jobs/routes_evidence.py|164=manifest = job.evidence_manifest ;; 166=return manifest ;; 190=_hydrate_nodes(job, db)
 CITE|P|api/evidence/schema.py|328=class NodeError(
 CITE|P|web/src/pages/JobDetail.tsx|698=nodeRuns.map(n ;; 750={n.error ?? ''}
+CITE|P|web/src/pages/reporting/JobDetailPanel.tsx|792=function NodeRunsCard( ;; 831={n.error}</div>
 CITE|P|web/src/pipelines/api.ts|906=error: string | null
 CITE|P|pyproject.toml|43="decoy-engine==0.18.0"
 CITE|P@5e610156|pyproject.toml|40="decoy-engine==0.17.0"
@@ -260,7 +266,7 @@ CITE|E@v0.18.0|src/decoy_engine/reasons/_registry.py|24=REGISTRY_VERSION = "1.2.
 CITE|E|src/decoy_engine/reasons/_registry.py|24=REGISTRY_VERSION = "1.3.0"
 ```
 
-Output on the merge bases: 69 `OK` lines, each printing the line it read (elided here for the 300-line cap; rerun to see them), then `A1 OK`, `A2 OK`, `A3 16 listed, count line 16`, `RESULT: 0 mismatches`, exit 0. Red on the empty record first (A1, A2, A3 missing, exit 1). Mutations, each on a copy, each exit 1: delete row F, `A1 MISSING v2_full_frame.py:` (C0-A1); strip row H4's `file:line`, `A1 MISSING queue_worker.py:434`; delete the legacy-synthesis row, `A2 MISSING routes_evidence.py:190` (C0-A2); drop `_ChunkedVaultError`, `A3 15 listed, count line 16` (C0-A3); CITE `289` to `290`, `MISMATCH` on the shifted line plus `UNCHECKED` for the old one; body `:289` to `:290`, `UNCHECKED` on it (C0-A4). A reviewer holding the plan's C0 list finds a deleted row F missing by name.
+Output on the merge bases: one `OK` line per `CITE` anchor (96 at this head; the original 71 were checked as 69 until the tag regex learned dotted tags such as `v0.17.0`), each printing the line it read (elided here for the 300-line cap; rerun to see them), then `A1 OK`, `A2 OK`, `A3 16 listed, count line 16`, `RESULT: 0 mismatches`, exit 0. Red on the empty record first (A1, A2, A3 missing, exit 1). Mutations, each on a copy, each exit 1: delete row F, `A1 MISSING v2_full_frame.py:` (C0-A1); strip row H4's `file:line`, `A1 MISSING queue_worker.py:434`; delete the legacy-synthesis row, `A2 MISSING routes_evidence.py:190` (C0-A2); drop `_ChunkedVaultError`, `A3 15 listed, count line 16` (C0-A3); CITE `289` to `290`, `MISMATCH` on the shifted line plus `UNCHECKED` for the old one; body `:289` to `:290`, `UNCHECKED` on it (C0-A4). A reviewer holding the plan's C0 list finds a deleted row F missing by name.
 
 ## 8. Same-class greps
 
@@ -289,8 +295,10 @@ The one node-error write is census row K's; the two `pipelines/router.py` hits a
 
 ## 9. V2-LOG
 
-- `_fail_host_safety` H2 appends `reservation.reason` to owner-visible `Job.log` (`api/jobs/queue_worker.py:385`); a YAML parse failure puts `{exc}` text in that reason (`api/jobs/worker_budget.py:402`). Class 1. Seen, not F29 scope (F31's except-bound copies); flagged for the orchestrator to judge against V1 rule 3.
-- Failed-status writers in row X write no node and no reason; outside the plan's C0 list. Class 4.
+- V1, not fixed here, owned by F31 slice P2a. `worker_budget.py:393` to `worker_budget.py:402` interpolates `str(exc)` (YAML parse text) into `reservation.reason`; `queue_worker.py:417` to `queue_worker.py:419` forwards it to `_fail_host_safety`, which appends it to `Job.log` (`queue_worker.py:384`, `queue_worker.py:385`); `_shared.py:203` to `_shared.py:211` returns `Job.log` to the job owner. Second route: `worker_budget.py:590` to `worker_budget.py:595` wraps it into `LedgerDecision.reason`, passed at `queue_worker.py:434`. Class 1; V1 rule 3 counts `str(exc)`. `queue_worker.py:385` and `queue_worker.py:607` are P2a terminal writers; the fix point is `_fail_host_safety` taking a closed reason (F31-FILE-MAP.md, errata E-X1).
+- V1, not fixed here, owned by the F31 platform slice. `admission.py:992` to `admission.py:998` puts `{exc}` of `UnsizeablePhaseError` or `ParquetFooterUnreadableError` into `PhaseReservation.reason`; `_create_phases.py:554` stores it as `Job.admission_reason`; `_shared.py:241` returns it in the job response (F31-FILE-MAP.md, orchestrator addition 2026-11-03, L-X2).
+- Census limits (V2-LOG, class 4). The guarded tail at `v2_orchestrator.py:251` to `v2_orchestrator.py:256` raises `_budget_error`, `_key_setup_error` and `_token_vault_error`; row K names only the second. Failed-status writers missing from row X, none writing a node or reason: `iteration_dispatch.py:145` to `iteration_dispatch.py:156`, `job_principal.py:76` to `job_principal.py:89`, `iteration.py:532`, `iteration.py:625`, `iteration.py:651`.
+- Second raw node-error renderer: `web/src/pages/reporting/JobDetailPanel.tsx:831` (`NodeRunsCard`, `JobDetailPanel.tsx:792`) prints `{n.error}` like `JobDetail.tsx:750`; both consume `/node-runs`. The other `.error` renderers in `web/src` are non-node (mirror runs, uploads, previews).
 - `JobDetail.tsx` will show P1's `reason` JSON inline in the Nodes tab (section 5). Class 10 (wording, no value).
 
 ## 10. Not verified
