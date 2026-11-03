@@ -293,15 +293,17 @@ src/decoy/cli/run.py:1167:        emit_json(state, payload)
 
 The one node-error write is census row K's; the two `pipelines/router.py` hits are `IterationPreviewOut`, not `JobNodeRun`. Every host-safety tail is rows H1 to H5. The emit hits are the failure and success sites of section 4.
 
-## 9. V2-LOG
+## 9. V1 leaks found, not fixed here
 
-- V1, not fixed here, owned by F31 slice P2a. `worker_budget.py:393` to `worker_budget.py:402` interpolates `str(exc)` (YAML parse text) into `reservation.reason`; `queue_worker.py:417` to `queue_worker.py:419` forwards it to `_fail_host_safety`, which appends it to `Job.log` (`queue_worker.py:384`, `queue_worker.py:385`); `_shared.py:203` to `_shared.py:211` returns `Job.log` to the job owner. Second route: `worker_budget.py:590` to `worker_budget.py:595` wraps it into `LedgerDecision.reason`, passed at `queue_worker.py:434`. Class 1; V1 rule 3 counts `str(exc)`. `queue_worker.py:385` and `queue_worker.py:607` are P2a terminal writers; the fix point is `_fail_host_safety` taking a closed reason (F31-FILE-MAP.md, errata E-X1).
-- V1, not fixed here, owned by the F31 platform slice. `admission.py:992` to `admission.py:998` puts `{exc}` of `UnsizeablePhaseError` or `ParquetFooterUnreadableError` into `PhaseReservation.reason`; `_create_phases.py:554` stores it as `Job.admission_reason`; `_shared.py:241` returns it in the job response (F31-FILE-MAP.md, orchestrator addition 2026-11-03, L-X2).
+- Owned by F31 slice P2a. `worker_budget.py:393` to `worker_budget.py:402` interpolates `str(exc)` (YAML parse text) into `reservation.reason`; `queue_worker.py:417` to `queue_worker.py:419` forwards it to `_fail_host_safety`, which appends it to `Job.log` (`queue_worker.py:384`, `queue_worker.py:385`); `_shared.py:203` to `_shared.py:211` returns `Job.log` to the job owner. Second route: `worker_budget.py:590` to `worker_budget.py:595` wraps it into `LedgerDecision.reason`, passed at `queue_worker.py:434`. Class 1; V1 rule 3 counts `str(exc)`. `queue_worker.py:385` and `queue_worker.py:607` are P2a terminal writers; the fix point is `_fail_host_safety` taking a closed reason (F31-FILE-MAP.md, errata E-X1).
+- Owned by the F31 platform slice. `admission.py:992` to `admission.py:998` puts `{exc}` of `UnsizeablePhaseError` or `ParquetFooterUnreadableError` into `PhaseReservation.reason`; `_create_phases.py:554` stores it as `Job.admission_reason`; `_shared.py:241` returns it in the job response (F31-FILE-MAP.md, orchestrator addition 2026-11-03, L-X2).
+## 10. V2-LOG
+
 - Census limits (V2-LOG, class 4). The guarded tail at `v2_orchestrator.py:251` to `v2_orchestrator.py:256` raises `_budget_error`, `_key_setup_error` and `_token_vault_error`; row K names only the second. Failed-status writers missing from row X, none writing a node or reason: `iteration_dispatch.py:145` to `iteration_dispatch.py:156`, `job_principal.py:76` to `job_principal.py:89`, `iteration.py:532`, `iteration.py:625`, `iteration.py:651`.
 - Second raw node-error renderer: `web/src/pages/reporting/JobDetailPanel.tsx:831` (`NodeRunsCard`, `JobDetailPanel.tsx:792`) prints `{n.error}` like `JobDetail.tsx:750`; both consume `/node-runs`. The other `.error` renderers in `web/src` are non-node (mirror runs, uploads, previews).
 - `JobDetail.tsx` will show P1's `reason` JSON inline in the Nodes tab (section 5). Class 10 (wording, no value).
 
-## 10. Not verified
+## 11. Not verified
 
 - No Platform, CLI or engine test run against these anchors; all read from source at the merge bases. Failures raised before the orchestrator's `try` (outside rows K to F) are not enumerated ("every entry point" is V2).
 - Whether the plan's P-T and C-T tests still hold at engine `0.18.0` (`reason_adapter.py` and three registry modules changed since `v0.17.0`), and whether each `reservation.reason`, `disk_reason` and `decision.reason` string is value-free.
