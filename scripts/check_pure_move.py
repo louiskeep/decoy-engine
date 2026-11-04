@@ -126,7 +126,7 @@ def _order(old: _Mod, known: dict[str, _Mod], trace: list) -> list[str]:
         early = {n for n in early if f"{src}.{n}" not in known}
         late = reads(stmt, mod.lazy) - bound[mod.name] - (BUILTINS - mod.binds) | early
         out += [mod.p("1c", stmt, f"{n} read or imported before it is bound") for n in sorted(late)]
-        bound[mod.name] |= binds(stmt)
+        bound[mod.name] |= scope.sure(stmt)
     first = {k: i for i, s in reversed(list(enumerate(old.body))) for k in _keys(s)}
     for mod in known.values():
         lead = mod.body.index(mod.ordered[0]) if mod.ordered else len(mod.body)
@@ -191,8 +191,7 @@ def _importers(manifest: dict, read_base: Reader, read_head: Reader, files: File
         before, after = read_base(path), read_head(path)
         ns = list(ast.walk(ast.parse(after or "")))
         got = [(_source(path, n), a) for n in ns if isinstance(n, IMPORTS) for a in n.names]
-        via = {old, *(a.asname or a.name for s, a in got if f"{s}.{a.name}".strip(".") == old)}
-        use = {n.attr for n in ns if isinstance(n, ast.Attribute) and ast.unparse(n.value) in via}
+        use = scope.reached(old, ns, got)
         for name in sorted(({a.name for s, a in got if s == old} | use) & set(own)):
             out.append(f"5: {path}: reaches {name} through the old path, not its owner")
         if before == after or None in (before, after):
