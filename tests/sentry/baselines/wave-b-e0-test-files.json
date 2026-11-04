@@ -1,0 +1,24 @@
+{
+ "sentry_id": "wave-b-e0-test-files",
+ "created_in": "X0a",
+ "entries": {
+  "tests/sentry/test_engine_string_targets.py": {
+   "reason": "initial X0a inventory of test_wave_b_no_registry_version_literal.py; existing entry, reviewed by its own sentry"
+  },
+  "tests/sentry/test_reason_baseline_frozen.py": {
+   "reason": "initial X0a inventory of test_wave_b_no_registry_version_literal.py; existing entry, reviewed by its own sentry"
+  },
+  "tests/sentry/test_wave_b_no_registry_version_literal.py": {
+   "reason": "initial X0a inventory of test_wave_b_no_registry_version_literal.py; existing entry, reviewed by its own sentry"
+  },
+  "tests/unit/test_check_pure_move.py": {
+   "reason": "initial X0a inventory of test_wave_b_no_registry_version_literal.py; existing entry, reviewed by its own sentry"
+  },
+  "tests/unit/test_check_pure_move_scope.py": {
+   "reason": "initial X0a inventory of test_wave_b_no_registry_version_literal.py; existing entry, reviewed by its own sentry"
+  },
+  "tests/unit/test_wave_b_definition_owners.py": {
+   "reason": "initial X0a inventory of test_wave_b_no_registry_version_literal.py; existing entry, reviewed by its own sentry"
+  }
+ }
+}

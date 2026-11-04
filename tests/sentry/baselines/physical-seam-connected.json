@@ -1,0 +1,18 @@
+{
+ "sentry_id": "physical-seam-connected",
+ "created_in": "X0a",
+ "entries": {
+  "execution/_unified_slice.py": {
+   "reason": "initial X0a inventory of test_physical_seam_disconnection.py; existing entry, reviewed by its own sentry"
+  },
+  "execution/_unified_slice_admission.py": {
+   "reason": "initial X0a inventory of test_physical_seam_disconnection.py; existing entry, reviewed by its own sentry"
+  },
+  "execution/_unified_slice_evidence.py": {
+   "reason": "initial X0a inventory of test_physical_seam_disconnection.py; existing entry, reviewed by its own sentry"
+  },
+  "execution/_unified_slice_resident_types.py": {
+   "reason": "initial X0a inventory of test_physical_seam_disconnection.py; existing entry, reviewed by its own sentry"
+  }
+ }
+}
