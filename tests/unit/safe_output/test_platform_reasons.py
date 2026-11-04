@@ -50,9 +50,9 @@ JOB_LOG = (
     "iteration_child_cancelled",
     "startup_requeued",
     "startup_failed",
-    "storm_upload_failed",
-    "storm_upload_cancelled",
-    "storm_disabled",
+    "scan_upload_failed",
+    "scan_upload_cancelled",
+    "scan_disabled",
     "workflow_restart_interrupted",
     "workflow_step_not_run",
     "quality_hook_failed",
@@ -61,9 +61,9 @@ JOB_LOG = (
     "synth_hook_failed",
     "synth_hook_skipped",
     "synth_hook_note",
-    "storm_hook_failed",
-    "storm_hook_skipped",
-    "storm_hook_note",
+    "post_scan_hook_failed",
+    "post_scan_hook_skipped",
+    "post_scan_hook_note",
     "iteration_child_target_locked",
 )
 RESPONSE = (
@@ -106,18 +106,18 @@ INFO = {
     "job_cancelled": Outcome.CANCELLED,
     "iteration_child_cancelled": Outcome.CANCELLED,
     "startup_requeued": Outcome.EXECUTION,
-    "storm_upload_cancelled": Outcome.CANCELLED,
+    "scan_upload_cancelled": Outcome.CANCELLED,
     "workflow_step_not_run": Outcome.CANCELLED,
     "quality_hook_note": Outcome.EXECUTION,
     "synth_hook_note": Outcome.EXECUTION,
-    "storm_hook_note": Outcome.EXECUTION,
+    "post_scan_hook_note": Outcome.EXECUTION,
     "notify_test_fire": Outcome.SUCCESS,
     "notify_flag_gate": Outcome.EXECUTION,
 }
 WARNINGS = (
     "quality_hook_skipped",
     "synth_hook_skipped",
-    "storm_hook_skipped",
+    "post_scan_hook_skipped",
     "notify_node_flagged",
 )
 

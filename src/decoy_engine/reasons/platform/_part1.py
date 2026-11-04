@@ -44,20 +44,20 @@ __all__ = [
     "OWNER_MISSING",
     "OWNER_REFUSED",
     "PIPELINE_ERROR",
+    "POST_SCAN_HOOK_FAILED",
+    "POST_SCAN_HOOK_NOTE",
+    "POST_SCAN_HOOK_SKIPPED",
     "PREVIEW_UNAVAILABLE",
     "QUALITY_HOOK_FAILED",
     "QUALITY_HOOK_NOTE",
     "QUALITY_HOOK_SKIPPED",
     "RETRIEVAL_FAILED",
     "RETRIEVAL_UNAVAILABLE",
+    "SCAN_DISABLED",
+    "SCAN_UPLOAD_CANCELLED",
+    "SCAN_UPLOAD_FAILED",
     "STARTUP_FAILED",
     "STARTUP_REQUEUED",
-    "STORM_DISABLED",
-    "STORM_HOOK_FAILED",
-    "STORM_HOOK_NOTE",
-    "STORM_HOOK_SKIPPED",
-    "STORM_UPLOAD_CANCELLED",
-    "STORM_UPLOAD_FAILED",
     "SYNTH_HOOK_FAILED",
     "SYNTH_HOOK_NOTE",
     "SYNTH_HOOK_SKIPPED",
@@ -226,16 +226,16 @@ STARTUP_FAILED = _d(
     "The platform restarted while the job ran, so the job was failed.",
     since="1.5.0",
 )
-STORM_UPLOAD_FAILED = _d("storm_upload_failed", "The scan upload failed.", since="1.5.0")
-STORM_UPLOAD_CANCELLED = _d(
-    "storm_upload_cancelled",
+SCAN_UPLOAD_FAILED = _d("scan_upload_failed", "The scan upload failed.", since="1.5.0")
+SCAN_UPLOAD_CANCELLED = _d(
+    "scan_upload_cancelled",
     "The scan upload was cancelled. Upload again to retry.",
     kind=Kind.CONTROL,
     severity=Severity.INFO,
     outcome=Outcome.CANCELLED,
     since="1.5.0",
 )
-STORM_DISABLED = _d("storm_disabled", "Scanning is disabled in this release.", since="1.5.0")
+SCAN_DISABLED = _d("scan_disabled", "Scanning is disabled in this release.", since="1.5.0")
 WORKFLOW_RESTART_INTERRUPTED = _d(
     "workflow_restart_interrupted",
     "The platform restarted while this workflow step ran. Progress was not kept; run it again when ready.",
@@ -289,20 +289,20 @@ SYNTH_HOOK_NOTE = _d(
     outcome=Outcome.EXECUTION,
     since="1.5.0",
 )
-STORM_HOOK_FAILED = _d(
-    "storm_hook_failed",
+POST_SCAN_HOOK_FAILED = _d(
+    "post_scan_hook_failed",
     "The scan after masking failed. The server log has the details.",
     since="1.5.0",
 )
-STORM_HOOK_SKIPPED = _d(
-    "storm_hook_skipped",
+POST_SCAN_HOOK_SKIPPED = _d(
+    "post_scan_hook_skipped",
     "The scan after masking was skipped.",
     kind=Kind.WARNING,
     severity=Severity.WARNING,
     since="1.5.0",
 )
-STORM_HOOK_NOTE = _d(
-    "storm_hook_note",
+POST_SCAN_HOOK_NOTE = _d(
+    "post_scan_hook_note",
     "The scan after masking logged a note.",
     kind=Kind.CONTROL,
     severity=Severity.INFO,
@@ -383,7 +383,7 @@ YAML_NOT_A_MAPPING = _d(
 )
 LEGACY_GRAPH_MODE_RETIRED = _d(
     "legacy_graph_mode_retired",
-    "This pipeline's YAML is graph-mode, which was retired. The V2 engine accepts only `version: 2` PipelineConfig YAML. Re-open the pipeline in the graph builder -- the save seam emits the V2 config now. If the pipeline uses any of the 9 retired ops (join, sql_run, sub_pipeline, iterate_*, if_router, flag_gate, run_storm, select_column, convert_file_type), recreate it with the V2 narrow surface.",
+    "This pipeline's YAML is graph-mode, which was retired. The V2 engine accepts only `version: 2` PipelineConfig YAML. Re-open the pipeline in the graph builder -- the save seam emits the V2 config now. If the pipeline uses any of the retired ops, recreate it with the V2 narrow surface.",
     since="1.5.0",
 )
 NOT_A_V2_CONFIG = _d(
