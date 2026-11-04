@@ -152,16 +152,23 @@ def test_baseline_id_must_match_registry_id(repo: Path) -> None:
     _assert_red(repo, "sentry_id")
 
 
-def test_first_inventory_in_introducing_slice_passes(repo: Path) -> None:
+def test_new_sentry_with_its_first_inventory_in_one_diff_passes(repo: Path) -> None:
     _write(repo, "tests/sentry/baselines/n.json", _baseline("n", ["m::one"], created_in="X9"))
     _write(repo, REG, _registry({"a": A, "n": "tests/sentry/baselines/n.json"}))
-    res = _run(repo, "--slice", "X9")
+    res = _run(repo)
     assert res.returncode == 0, res.stdout + res.stderr
     assert "first inventory" in res.stdout
 
 
-def test_first_inventory_naming_another_slice_fails(repo: Path) -> None:
-    _write(repo, "tests/sentry/baselines/n.json", _baseline("n", ["m::one"], created_in="X1"))
+def test_env_var_does_not_allow_growth(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("RATCHET_SLICE", "RATCHET_ALLOW", "CI"):
+        monkeypatch.setenv(name, "X0a")
+    _write(repo, A, _baseline("a", ["m::f", "m::g", "m::new"]))
+    _assert_red(repo, "m::new")
+
+
+def test_growth_fails_even_when_the_registry_is_also_edited(repo: Path) -> None:
+    _write(repo, A, _baseline("a", ["m::f", "m::g", "m::new"]))
+    _write(repo, "tests/sentry/baselines/n.json", _baseline("n", ["m::one"]))
     _write(repo, REG, _registry({"a": A, "n": "tests/sentry/baselines/n.json"}))
-    _assert_red(repo, "created_in")
-    assert _run(repo, "--slice", "X9").returncode == 1
+    _assert_red(repo, "m::new")

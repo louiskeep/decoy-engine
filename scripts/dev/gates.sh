@@ -4,7 +4,6 @@
 #   --keep-going  run every step even after a failure (default: stop at the first)
 #   --baseline    rerun the same steps on origin/main in a temporary detached
 #                 worktree, with the SAME venv, and diff the failing test ids
-#   env RATCHET_SLICE names the slice allowed to add a first sentry inventory
 #   --steps LIST  comma list from: env,ruff,format,mypy,sentry,licenses,tests (default: all)
 #   test paths    default: tests touching files changed against origin/main
 set -uo pipefail
@@ -30,7 +29,7 @@ while [ $# -gt 0 ]; do
     --keep-going) KEEP=1 ;;
     --baseline) BASELINE=1 ;;
     --steps) STEPS=$2; shift ;;
-    -h|--help) sed -n 2,10p "$0"; exit 0 ;;
+    -h|--help) sed -n 2,8p "$0"; exit 0 ;;
     -*) echo "gates: unknown flag $1" >&2; exit 2 ;;
     *) PATHS+=("$1") ;;
   esac

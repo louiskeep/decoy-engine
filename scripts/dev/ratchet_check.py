@@ -1,8 +1,7 @@
 """Fail when a registered sentry baseline grows, is re-homed, or carries a weak reason.
 
-Usage: ratchet_check.py [--root DIR] [--base REF] [--slice NAME]
+Usage: ratchet_check.py [--root DIR] [--base REF]
   --base   default: merge-base of origin/main and HEAD
-  --slice  slice that may introduce a new sentry inventory (env RATCHET_SLICE)
 The logic lives in tests/sentry/_ratchet.py so the unit tests and this gate step share it.
 """
 
@@ -10,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -32,7 +30,6 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])
     ap.add_argument("--base")
-    ap.add_argument("--slice", default=os.environ.get("RATCHET_SLICE", ""))
     args = ap.parse_args(argv)
     base = args.base
     if not base:
@@ -45,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
             print("ratchet: no merge base; run: git fetch origin main", file=sys.stderr)
             return 2
         base = res.stdout.strip()
-    findings, report = _load().check(args.root, base, args.slice)
+    findings, report = _load().check(args.root, base)
     for line in report:
         print(f"ratchet: {line}")
     for line in findings:

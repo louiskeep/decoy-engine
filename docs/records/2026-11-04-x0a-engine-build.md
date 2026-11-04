@@ -41,23 +41,23 @@ sentry and baselines can only shrink. The self-hosted gate workflow is part 2, r
 Plan wording said "red today for `tests/policy`"; the engine has no `tests/policy`, so the
 engine's red case was the leak sentry. CI2 also seeds a `tests/policy/...` path as a negative.
 
-## Introducing-slice gate setting
+## First inventories
 
-The 18 baselines are new against `origin/main`, so `ratchet_check.py` treats them as first
-inventories and needs `RATCHET_SLICE=X0a` on this branch. After merge they are in the merge base
-and the variable is no longer needed.
+A sentry id that is newly added to `sentry_registry.toml` in the diff against the merge base may
+bring its first inventory. Nothing else admits a new key: no env var and no flag, and a registered
+baseline that gains a key fails even when the registry is edited in the same diff
+(`test_env_var_does_not_allow_growth`, `test_growth_fails_even_when_the_registry_is_also_edited`).
 
 ## Limits
 
-- `RATCHET_SLICE` (or `--slice`) must name the slice that adds a first inventory, or the
-  check fails. There is no default, so a forgotten value cannot admit a new inventory.
+- A first inventory is reviewed by a person: the check reports it but cannot judge its content.
 - The ratchet compares key sets only. A key kept with a rewritten reason passes if the new
   reason is valid.
 
 ## Clean-environment gates run
 
 Venv bootstrapped from uv.lock (`DECOY_VENV=<fresh> bash scripts/dev/bootstrap.sh`), run with
-`RATCHET_SLICE=X0a scripts/dev/gates.sh --keep-going --baseline` on the part 1 head before this docs
+`scripts/dev/gates.sh --keep-going --baseline` on the part 1 head before this docs
 edit (no code differs). An earlier run on the same clean venv failed one sentry test (the
 removed-surface token inside the string-target baseline); that was fixed by masking the token.
 

@@ -94,7 +94,7 @@ def _fmt(keys: frozenset[str]) -> str:
     return ", ".join(sorted(keys))
 
 
-def check(root: Path, base_ref: str, slice_name: str = "") -> tuple[list[str], list[str]]:
+def check(root: Path, base_ref: str) -> tuple[list[str], list[str]]:
     """Return ``(findings, report_lines)`` for the tree at ``root`` against ``base_ref``."""
     reg_file = root / REGISTRY
     head, findings = parse_registry(
@@ -141,11 +141,7 @@ def check(root: Path, base_ref: str, slice_name: str = "") -> tuple[list[str], l
         elif removed:
             new_union |= base.keys
         else:
-            if not slice_name or base.created_in != slice_name:
-                findings.append(
-                    f"{sid}: created_in {base.created_in!r} must name the current slice "
-                    f"({slice_name or 'none given: pass --slice or RATCHET_SLICE'})"
-                )
+            # Newly registered in this diff: the one way a first inventory is admitted.
             report.append(f"{sid}: first inventory, {len(base.keys)} key(s), review required")
     grown = new_union - old_union
     if removed and grown:
