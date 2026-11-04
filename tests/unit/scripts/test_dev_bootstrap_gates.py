@@ -220,3 +220,108 @@ def test_branch_only_steps_flags_a_failure_main_does_not_have(tmp_path: Path) ->
     _write_run(tmp_path, "baseline", 0, "")
     _write_run(tmp_path, "branch", 2, "crashed without parseable lines\n")
     assert mod.branch_only_steps(tmp_path) == ["mypy"]
+
+
+@pytest.mark.parametrize(
+    "probe",
+    [
+        "scripts/codeset_etl/_x0a_" + "orphan.py",
+        "scripts/codeset_etl/_x0a_" + "orphan.sh",
+        "Makefile",
+    ],
+)
+def test_gates_fails_a_change_outside_the_old_code_globs_with_no_matching_test(
+    tmp_path: Path, probe: str
+) -> None:
+    # Code is everything not listed as documentation, so a new package cannot slip past the gate.
+    clone = _diff_clone(tmp_path, {probe: "X = 1\n"})
+    proc = _run([str(BASH), "scripts/dev/gates.sh", "--steps", "format,tests"], clone)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode != 0, out
+    assert "touches code" in proc.stderr and "selects no tests" in proc.stderr, out
+
+
+def test_gates_fails_a_mixed_docs_and_code_change_with_no_tests(tmp_path: Path) -> None:
+    files = {
+        "docs/records/x0a-mixed.md": "# x\n",
+        "scripts/codeset_etl/_x0a_" + "mixed.py": "X = 1\n",
+    }
+    clone = _diff_clone(tmp_path, files)
+    proc = _run([str(BASH), "scripts/dev/gates.sh", "--steps", "format,tests"], clone)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode != 0, out
+    assert "selects no tests" in proc.stderr, out
+
+
+def test_gates_passes_a_change_made_only_of_documentation_paths(tmp_path: Path) -> None:
+    files = {"README.md": "# r\n", "docs/a/b.rst": "x\n", ".github/note.yml": "a: 1\n"}
+    clone = _diff_clone(tmp_path, files)
+    proc = _run([str(BASH), "scripts/dev/gates.sh", "--steps", "format,tests"], clone)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    assert "not applicable: the diff touches no code paths" in proc.stdout, out
+
+
+_SHARED = 'src/a.py:62: error: Unused "type: ignore" comment  [unused-ignore]\n'
+
+
+def _verdict(tmp_path: Path, branch: tuple[int, str], base: tuple[int, str]) -> list[str]:
+    _write_run(tmp_path, "baseline", *base)
+    _write_run(tmp_path, "branch", *branch)
+    return _report_module().branch_only_steps(tmp_path)
+
+
+def test_a_branch_crash_is_branch_only_even_when_main_also_failed(tmp_path: Path) -> None:
+    assert _verdict(tmp_path, (139, "Segmentation fault\n"), (1, _SHARED)) == ["mypy"]
+
+
+@pytest.mark.parametrize("rc", [124, 137, 2])
+def test_a_branch_timeout_is_branch_only_even_when_main_timed_out_too(
+    tmp_path: Path, rc: int
+) -> None:
+    assert _verdict(tmp_path, (rc, ""), (rc, "")) == ["mypy"]
+
+
+def test_a_failure_with_no_identifiable_diagnostic_is_branch_only(tmp_path: Path) -> None:
+    assert _verdict(tmp_path, (1, "boom\n"), (1, _SHARED)) == ["mypy"]
+
+
+def test_a_duplicated_identical_diagnostic_is_branch_only(tmp_path: Path) -> None:
+    twice = _SHARED + _SHARED.replace(":62:", ":90:")
+    assert _verdict(tmp_path, (1, twice), (1, _SHARED)) == ["mypy"]
+
+
+def test_identical_failures_on_both_sides_are_shared(tmp_path: Path) -> None:
+    assert _verdict(tmp_path, (1, _SHARED.replace(":62:", ":70:")), (1, _SHARED)) == []
+
+
+def test_a_total_that_disagrees_with_the_parsed_lines_is_branch_only(tmp_path: Path) -> None:
+    log = _SHARED + "Found 2 errors in 1 file (checked 3 source files)\n"
+    assert _verdict(tmp_path, (1, log), (1, _SHARED)) == ["mypy"]
+
+
+def test_ruff_concise_diagnostics_are_compared_as_a_multiset(tmp_path: Path) -> None:
+    one = "a.py:1:8: F401 [*] `os` imported but unused\nFound 1 error.\n"
+    two = one.replace("Found 1", "Found 2") + one.replace("a.py:1:8", "a.py:5:8").splitlines()[0]
+    assert _verdict(tmp_path, (1, one.replace(":1:8", ":3:8")), (1, one)) == []
+    other = tmp_path / "o"
+    other.mkdir()
+    assert _verdict(other, (1, two + "\n"), (1, one)) == ["mypy"]
+
+
+def _write_pytest(out: Path, label: str, ids: list[str]) -> None:
+    with (out / f"{label}.steps").open("a") as fh:
+        fh.write("tests\t1\tpytest\n")
+    (out / f"{label}-tests.xml").write_text("<testsuites/>")
+    (out / f"{label}-tests.log").write_text("".join(f"FAILED {i} - boom\n" for i in ids))
+
+
+def test_a_pytest_failure_main_lacks_is_branch_only_when_main_also_fails(tmp_path: Path) -> None:
+    _write_pytest(tmp_path, "baseline", ["tests/test_a.py::test_old"])
+    _write_pytest(tmp_path, "branch", ["tests/test_a.py::test_old", "tests/test_b.py::test_new"])
+    assert _report_module().branch_only_steps(tmp_path) == ["tests"]
+    shared = tmp_path / "s"
+    shared.mkdir()
+    _write_pytest(shared, "baseline", ["tests/test_a.py::test_old"])
+    _write_pytest(shared, "branch", ["tests/test_a.py::test_old"])
+    assert _report_module().branch_only_steps(shared) == []

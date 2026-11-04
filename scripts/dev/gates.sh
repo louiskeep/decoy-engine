@@ -16,8 +16,11 @@ MYPY_ARGS=(src/decoy_engine testflight)
 SENTRY_PATHS=(tests/sentry tests/secret_providers/test_leak_sentry.py)
 LICENSE_TESTS=(tests/sentry/test_license_policy.py tests/sentry/test_sdv_import_sentry.py)
 PYTEST_ARGS=(-m 'not benchmark and not packaging and not codspeed')
-# Importable code. A diff touching any of these must select at least one test (see changed_tests).
-CODE_GLOBS=('src/*' 'testflight/*')
+# Everything is code unless it matches NON_CODE_GLOBS: a diff with any code path must select at
+# least one test (see code_changed). List only pure-documentation or repo-metadata paths here;
+# `*` crosses `/`, so 'docs/*' also covers docs/records.
+NON_CODE_GLOBS=('docs/*' 'docs/records/*' '*.md' '.github/*' 'LICENSE*' 'NOTICE*' 'CHANGELOG*'
+  '.gitignore' '.gitattributes' '.aiignore' '.claude/*' '.tours/*')
 SRC_MATCH='src/*.py'   # changed files that map to a dotted module
 SRC_STRIP='src/'       # prefix removed before turning a path into a module
 PYPATH_DIRS=(src scripts)
@@ -57,19 +60,32 @@ changed_tests() {
         $SRC_MATCH)
           mod=${f#"$SRC_STRIP"}; mod=${mod%.py}; mod=${mod%/__init__}; mod=${mod//\//.}
           (cd "$ROOT" && grep -rlE --include='test_*.py' "${mod//./\\.}([^A-Za-z0-9_]|\$)" tests || true) ;;  # no match is normal, not a failed selection
+        *)
+          # Other code (scripts, native, fixtures): select tests that name the file. No match is
+          # normal here; code_changed then makes the gate fail rather than skip.
+          non_code "$f" || (cd "$ROOT" && grep -rlF --include='test_*.py' "${f##*/}" tests || true) ;;
       esac
     done | sort -u
 }
 
-# 0 when the diff against the merge base touches a CODE_GLOBS path (deleted files count).
+# 0 when f matches NON_CODE_GLOBS (pure documentation or repo metadata).
+non_code() {
+  local g
+  for g in "${NON_CODE_GLOBS[@]}"; do
+    # shellcheck disable=SC2254  # NON_CODE_GLOBS entries are globs on purpose
+    case $1 in $g) return 0 ;; esac
+  done
+  return 1
+}
+
+# 0 when the diff against the merge base touches any path outside NON_CODE_GLOBS (deleted files
+# count). Inverted on purpose: a new importable package is code by default, never "not applicable".
 code_changed() {
-  local base f g
+  local base f
   base=$(git -C "$ROOT" merge-base origin/main HEAD) || return 2
   while read -r f; do
-    for g in "${CODE_GLOBS[@]}"; do
-      # shellcheck disable=SC2254  # CODE_GLOBS entries are globs on purpose
-      case $f in $g) return 0 ;; esac
-    done
+    [ -n "$f" ] || continue
+    non_code "$f" || return 0
   done <<EOT
 $({ git -C "$ROOT" diff --name-only "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } | sort -u)
 EOT
@@ -115,7 +131,7 @@ run_steps() {  # $1 label, $2 tree
     local junit=(-p no:cacheprovider -q -rfE "--junitxml=$OUT/$label-$name.xml" "${PYTEST_ARGS[@]}")
     case $name in
       env) cmd=(bash "$ROOT/scripts/dev/bootstrap.sh" --check) ;;
-      ruff) cmd=("$BIN/ruff" check "${RUFF_PATHS[@]}") ;;
+      ruff) cmd=("$BIN/ruff" check --output-format concise "${RUFF_PATHS[@]}") ;;
       format) cmd=("$BIN/ruff" format --check "${RUFF_PATHS[@]}") ;;
       mypy) cmd=("$BIN/mypy" "${MYPY_ARGS[@]}") ;;
       # ratchet_check first (baselines never grow); skipped in trees that predate it (the baseline worktree)
@@ -133,7 +149,7 @@ run_steps() {  # $1 label, $2 tree
     if [ $stop = 1 ]; then rc=-2
     elif [ "$name" = tests ] && [ ${#tests[@]} -eq 0 ] && [ "$label" = branch ] && [ $TESTS_REQUIRED = 1 ]; then
       plain=1; rc=1; cmd=("(FAIL: code changed but no tests were selected; pass test paths or add a test that imports the changed module)")
-      echo "gates: [$label] tests FAIL: the diff touches code (${CODE_GLOBS[*]}) but selects no tests" >&2
+      echo "gates: [$label] tests FAIL: the diff touches code (any path outside NON_CODE_GLOBS) but selects no tests" >&2
       [ $KEEP = 1 ] || stop=1
     elif [ "$name" = tests ] && [ ${#tests[@]} -eq 0 ] && [ "$label" = branch ] && [ ${#PATHS[@]} -eq 0 ]; then
       rc=-1; cmd=("(not applicable: the diff touches no code paths)")

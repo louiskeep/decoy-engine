@@ -82,3 +82,19 @@ Failing ids: branch 0, baseline 0, branch-only 0.
 - macOS: `bootstrap.sh` used `sha256sum`, absent on macOS. It now falls back to `shasum -a 256`.
 - AT-CI4 passed live: engine run 41807648013 waited 46 minutes behind a T3 on the shared pytest-one lock, then ran.
 - Limit: when a sentry pytest id fails on both branch and main, a ratchet-check failure in the same step is not separated from it (the step has no ids of its own). Ratchet failures with no shared failing ids are still caught.
+
+## Codex V1 fixes (third round, by construction)
+
+Decision: stop listing the paths that count as code, and list the paths that do not. The
+allow-list missed `scripts/codeset_etl` and `decoy-engine-native`, so a source-only change there
+selected no tests and was called "not applicable". The baseline verdict had the same shape of
+bug: it asked "is this failure shared?" with a rule that could answer yes for a failure it had not
+identified. Both now fail closed.
+
+- `NON_CODE_GLOBS` (one place, repo config block of `gates.sh`) lists documentation and repo metadata: `docs/*`, `docs/records/*`, `*.md`, `.github/*`, `LICENSE*`, `NOTICE*`, `CHANGELOG*`, dotfile metadata. Every other changed path is code. A diff with any code path and no selected test fails. Only a diff made entirely of non-code paths reports "not applicable". `CODE_GLOBS` is gone.
+- Test selection also maps a changed non-module code file (scripts, native, build files) to tests that name its file name, so editing `gates.sh` selects its own test file.
+- `ruff check` now runs with `--output-format concise` so its failures are one parseable line each (the default full format has no `file:line:col: CODE msg` line).
+- `_gates_report.branch_only_steps`: a branch step that fails is branch-only when its exit code is not 1 (crash, kill, timeout, pytest 2 to 5), whatever main did. It is also branch-only when its failures cannot all be identified (no JUnit ids, no parseable diagnostic, or a `Found N errors` total that disagrees with the parsed lines), whatever main did. Otherwise failures are compared as `Counter` multisets of (file, code, message) without line numbers, or of pytest ids, so a count increase is branch-only. Identical failures on both sides stay shared.
+- Closes the old limit on ratchet failures: the ratchet check exits before pytest, so the sentry step has no JUnit and counts as unidentified.
+- Regression tests: change under `scripts/`, a `.sh` file and `Makefile` with no matching test fail; mixed docs and code fails; docs-only passes; branch crash with baseline failure, timeout on both sides (124, 137, 2), unidentified failure, duplicated identical diagnostic, disagreeing total, ruff multiset growth are branch-only; identical failures are shared.
+- Known cost: a change to a non-test helper under `tests/` (for example a `conftest.py`) now needs a named test or explicit paths.

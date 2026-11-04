@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import sys
 import xml.etree.ElementTree as ET
+from collections import Counter
 from pathlib import Path
 
 _SUMMARY = re.compile(r"^(?:FAILED|ERROR) (.+?)(?: - .*)?$")
@@ -63,46 +64,74 @@ def failing_ids(out: Path, label: str) -> list[str]:
     return ids
 
 
-_DIAG = re.compile(r"^(\S+?):\d+(?::\d+)?: (.+)$")
 _PASSING = (0, -1, -2)
+# Every step here exits 1 when it ran to completion and found problems (pytest, ruff, mypy, the
+# ratchet check). Any other non-zero code is a crash, a kill or a timeout (124, 137, 139, pytest 2-5).
+_NORMAL_FAILURE_RC = 1
+_RUFF = re.compile(r"^(\S+?):\d+:\d+: ([A-Z]+\d+) (?:\[\*\] )?(.+)$")
+_MYPY = re.compile(r"^(\S+?):\d+(?::\d+)?: error: (.+?)(?:  \[([\w-]+)\])?$")
+_REFORMAT = re.compile(r"^Would reformat: (\S+)$")
+_TOTAL = re.compile(r"^Found (\d+) errors?", re.MULTILINE)
 
 
-def diagnostics(out: Path, label: str, name: str) -> set[str]:
-    """Error lines of a non-pytest step with line numbers stripped, so a moved line still matches."""
+def diagnostics(out: Path, label: str, name: str) -> tuple[Counter[tuple[str, str, str]], bool]:
+    """Error lines of a non-pytest step as a multiset of (file, code, message), line numbers dropped.
+
+    Line numbers are dropped so a moved line still matches, but nothing is deduplicated: a second
+    identical error on another line counts twice. The flag is False when the "Found N errors"
+    total disagrees with what was parsed, or nothing parsed: some failure is then invisible here."""
     log = out / f"{label}-{name}.log"
+    keys: Counter[tuple[str, str, str]] = Counter()
     if not log.exists():
-        return set()
-    keys = set()
-    for line in log.read_text(errors="replace").splitlines():
-        m = _DIAG.match(line)
-        if m:
-            keys.add(f"{m.group(1)}: {m.group(2)}")
-    return keys
+        return keys, False
+    text = log.read_text(errors="replace")
+    for line in text.splitlines():
+        if m := _RUFF.match(line):
+            keys[(m.group(1), m.group(2), m.group(3))] += 1
+        elif m := _MYPY.match(line):
+            keys[(m.group(1), m.group(3) or "", m.group(2))] += 1
+        elif m := _REFORMAT.match(line):
+            keys[(m.group(1), "format", "would reformat")] += 1
+    totals = _TOTAL.findall(text)
+    complete = bool(keys) and (not totals or int(totals[-1]) == sum(keys.values()))
+    return keys, complete
+
+
+def _pytest_failures(
+    out: Path, label: str, name: str
+) -> tuple[Counter[tuple[str, str, str]], bool]:
+    ids = failing_ids_for(out, label, name)
+    return Counter((i, "", "") for i in ids), bool(ids)
 
 
 def branch_only_steps(out: Path) -> list[str]:
     """Steps that fail on the branch for a reason origin/main does not share.
 
-    A pytest step fails branch-only when it has a failing id main lacks. A mypy or ruff step fails
-    branch-only when it has a diagnostic main lacks. A step with no parseable failures (crash,
-    collection error, ratchet check) is branch-only unless main's same step also failed."""
+    A branch step that fails is branch-only unless every one of its failures is identified and
+    main has at least as many of each. So it is branch-only when: its exit code is not the normal
+    failure code (crash, kill, timeout), whatever main did; it fails with nothing identifiable
+    (no JUnit ids, no parseable diagnostics, or a total that disagrees with the parsed lines); or
+    any identity occurs more often than on main. Failures are compared as multisets, so a
+    duplicated identical error is a new failure. Only identical-or-fewer identified failures,
+    with a normal failure code on the branch, are shared."""
     base = {name: rc for name, rc, _ in _steps(out, "baseline")}
     bad = []
     for name, rc, _cmd in _steps(out, "branch"):
         if rc in _PASSING:
             continue
-        base_rc = base.get(name, -1)
-        main_failed = base_rc not in _PASSING
+        if rc != _NORMAL_FAILURE_RC:
+            bad.append(name)
+            continue
+        if base.get(name, -1) in _PASSING:
+            bad.append(name)  # main is green here, so every failure is the branch's
+            continue
         if (out / f"branch-{name}.xml").exists():
-            mine = set(failing_ids_for(out, "branch", name))
-            theirs = set(failing_ids_for(out, "baseline", name))
+            mine, complete = _pytest_failures(out, "branch", name)
+            theirs, _ = _pytest_failures(out, "baseline", name)
         else:
-            mine = diagnostics(out, "branch", name)
-            theirs = diagnostics(out, "baseline", name)
-        if mine:
-            if mine - theirs:
-                bad.append(name)
-        elif not main_failed:
+            mine, complete = diagnostics(out, "branch", name)
+            theirs, _ = diagnostics(out, "baseline", name)
+        if not complete or mine - theirs:  # Counter subtraction keeps only positive excess
             bad.append(name)
     return bad
 
