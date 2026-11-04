@@ -1,0 +1,15 @@
+{
+ "sentry_id": "exception-hierarchy",
+ "created_in": "X0a",
+ "entries": {
+  "decoy_engine.execution.physical._shadow_diff_codes::PoolBuildFailed": {
+   "reason": "initial X0a inventory of test_exception_hierarchy.py; existing entry, reviewed by its own sentry"
+  },
+  "decoy_engine.execution.physical._shadow_diff_codes::ShadowDifference": {
+   "reason": "initial X0a inventory of test_exception_hierarchy.py; existing entry, reviewed by its own sentry"
+  },
+  "decoy_engine.quality.dp_budget::_InfeasibleAtEpsQError": {
+   "reason": "initial X0a inventory of test_exception_hierarchy.py; existing entry, reviewed by its own sentry"
+  }
+ }
+}
