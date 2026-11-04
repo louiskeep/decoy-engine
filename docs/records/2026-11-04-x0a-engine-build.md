@@ -44,6 +44,16 @@ engine's red case was the leak sentry. CI2 also seeds a `tests/policy/...` path 
 - The Mac needs `flock` (not shipped with macOS; `brew install flock`) and a venv at
   `~/.cache/decoy-gate-venv` built by `DECOY_VENV=... scripts/dev/bootstrap.sh`.
 
+## Runner ops requirement (security)
+
+The repo is public and the runner executes branch code. The workflow triggers on `push` and
+`workflow_dispatch` only, runs only for the owner (`github.actor`, not a fork), has
+`contents: read`, `persist-credentials: false` and no secrets; `test_ci_config.py` fails on any
+self-hosted job with a `pull_request` or `pull_request_target` trigger or without that guard.
+The runner itself must run as a dedicated low-privilege macOS user with no access to the
+owner's home directory, keys or git credentials, and with an ephemeral work directory
+(wiped between runs).
+
 ## Limits
 
 - `RATCHET_SLICE` (or `--slice`) must name the slice that adds a first inventory, or the

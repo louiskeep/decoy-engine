@@ -7,10 +7,12 @@
 # gates.sh because it always runs `python -m pytest`.
 name: gate-selfhosted
 
+# push and workflow_dispatch only. Never pull_request or pull_request_target: this repo is
+# public and a self-hosted runner executes the branch's code, so a PR from a fork would run
+# arbitrary code on the Mac. A sentry (test_ci_config.py) enforces this for every workflow.
 on:
   push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: gate-selfhosted-${{ github.ref }}
@@ -23,12 +25,15 @@ jobs:
   gate:
     runs-on: [self-hosted, macos, decoy-gate]
     timeout-minutes: 90
+    # Owner-only: a push by anyone else, or from a fork, never reaches the runner.
+    if: github.repository_owner == 'louiskeep' && github.actor == 'louiskeep' && !github.event.repository.fork
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Fetch origin/main for the merge base
-        run: git fetch origin main
+        run: git fetch --no-tags https://github.com/${{ github.repository }}.git main:refs/remotes/origin/main
       - name: Gate
         # EVIDENCE block names the head it tested; keep-going lists every red step.
         run: |
