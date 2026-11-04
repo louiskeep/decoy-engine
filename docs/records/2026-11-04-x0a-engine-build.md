@@ -11,9 +11,21 @@ baselines can only shrink, and the merge gate has a home that does not depend on
   check, reason schema, first-inventory rule, split and replacement rule).
 - `scripts/dev/ratchet_check.py`: CLI over that helper. `gates.sh` runs it first in the sentry
   step, and skips it in a tree that predates it (the `--baseline` worktree).
-- `scripts/dev/sentry_registry.toml`: sentry id to baseline path. Empty today: the engine has
-  no baseline in the plan format. `tests/fixtures/f29/reason-baseline.json` is frozen by
-  `test_reason_baseline_frozen.py` and is not wrapped.
+- `scripts/dev/sentry_registry.toml`: sentry id to baseline path. 18 sentries registered, their
+  current contents being the initial inventory (`created_in` X0a): the F29 reason baseline,
+  producer and consumer inventories, secret-material census, both file-access TOML lists, and
+  the in-code allowlists of module-size, public-import-boundary, exception-hierarchy,
+  file-access entry seams, locator waivers, log interpolation, eval sites, phase containment,
+  validate-no-mutation (empty), the physical-seam connected modules, the Wave B string-target
+  exemptions and the Wave B E0 test-file list. The F29 baseline is registered, but
+  `test_reason_baseline_frozen.py` (sha256 digest) stays the authoritative, stricter freeze.
+  Baselines for in-code lists are mirrors: `test_baseline_registry.py` fails when the live list
+  and its baseline differ, so adding an allowlist entry needs a baseline key the ratchet refuses.
+  Sources and the generator are in `tests/sentry/_baseline_sources.py`.
+- `tests/sentry/test_baseline_registry.py`: also fails when a sentry test reads an unregistered
+  allowlist-shaped constant or committed json/toml list (seeded cases for both are red-checked).
+  Pinned contract files (F06 matrices, released F29 manifests, proof manifest) are listed with a
+  reason in `NOT_A_LIST`.
 - `tests/sentry/test_sentry_manifest.py`: the `SENTRIES` manifest (every file in
   `tests/sentry/`, including the H-1 E0 sentries, plus `tests/secret_providers/test_leak_sentry.py`).
 - `gates.sh` `SENTRY_PATHS` now also names the leak sentry, which no gate collected before.
@@ -44,6 +56,17 @@ engine's red case was the leak sentry. CI2 also seeds a `tests/policy/...` path 
 - The Mac needs `flock` (not shipped with macOS; `brew install flock`) and a venv at
   `~/.cache/decoy-gate-venv` built by `DECOY_VENV=... scripts/dev/bootstrap.sh`.
 
+## Guard sentry shown red (seeded workflows)
+
+`selfhosted_violations` run on two scratch workflows:
+
+- `on: pull_request` plus a self-hosted job: `gate: self-hosted job triggered by ['pull_request']`
+- self-hosted job with no actor and fork guard: `gate: self-hosted job lacks the actor and fork guard`
+- the real `gate-selfhosted.yml`: no findings.
+
+`native-companion-release.yml` has no self-hosted job and no `pull_request` trigger (tag push and
+manual dispatch only, hosted runners), so it needed no guard change.
+
 ## Runner ops requirement (security)
 
 The repo is public and the runner executes branch code. The workflow triggers on `push` and
@@ -53,6 +76,12 @@ self-hosted job with a `pull_request` or `pull_request_target` trigger or withou
 The runner itself must run as a dedicated low-privilege macOS user with no access to the
 owner's home directory, keys or git credentials, and with an ephemeral work directory
 (wiped between runs).
+
+## Introducing-slice gate setting
+
+The 18 baselines are new against `origin/main`, so `ratchet_check.py` treats them as first
+inventories and needs `RATCHET_SLICE=X0a` on this branch. After merge they are in the merge base
+and the variable is no longer needed.
 
 ## Limits
 

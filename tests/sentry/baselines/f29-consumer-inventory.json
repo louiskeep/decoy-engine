@@ -1,0 +1,114 @@
+{
+ "sentry_id": "f29-consumer-inventory",
+ "created_in": "X0a",
+ "entries": {
+  "connectors/postgres_snapshot.py::snapshot_tables_to_parquet::failure.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/_chunked_when_guard.py::PositionalWhenGuard.check_schema::col.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/_isolated_common.py::exception_error_text::getattr(exc, 'code', None)": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/_mixed_static.py::admit_mixed_static::decline.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/_pipeline_mixed_route.py::_runtime_decline::decline.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/_pipeline_route_exec.py::run_out_of_core_route::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/_planner.py::_chunked_rejection::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/_sequential_composite_chain.py::decline_composite_chain::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/_sequential_native_group_key.py::group_key_native_reason::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/_strategies/_code_set.py::CodeSetHandler.run::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/_strategies/_fpe.py::strategy_code_for_checksum::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/_strategies/_fpe.py::strategy_code_for_unencryptable::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/_unified_slice.py::_execute_admitted::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/capacity.py::estimate_job_capacity::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/native/_fpe_route.py::fpe_fail_closed_error::first.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/native/_pool_quality.py::_breach_message::w.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/native/_requirements.py::truncate_config_rejection::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/native/_route_decline_codes.py::RouteDeclineRecord.to_payload::self.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/out_of_core/_capacity_eval.py::enforce_ooc_memory_preflight::estimate.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/out_of_core/_capacity_eval.py::evaluate_capacity::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/out_of_core/_compat.py::OutOfCoreCompatibility.primary_code::self.rejections[0].code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/out_of_core/_mask_group_c.py::_code_set_array::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/physical/_shadow_mixed.py::_as_shadow_difference::decline.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "execution/physical/_shadow_operators.py::operator_invariant_violation::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "generation/pool/_sampler.py::_derive_pool_indices::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "io/bounded_reader.py::BoundedReadError.__init__::self.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "plan/_checks.py::_check_ner_available_for_strategy::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "plan/_checks.py::check_statistical_columns::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "plan/_checks_dp.py::verify_dp_snapshots::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "plan/validate/_consolidator.py::validate_plan::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "progress.py::StructuredEventsSink.on_event::event.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "subset/_api.py::_compute::first.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "subset/_preflight.py::run_subset_preflight::f.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "transforms/_codeset_loader.py::verify_corpus::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "transforms/text_mask.py::_mask_fpe::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  },
+  "unmask.py::unmask_pipeline::exc.code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/producer-inventory.json; existing entry, reviewed by its own sentry"
+  }
+ }
+}

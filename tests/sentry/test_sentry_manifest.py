@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 GATES = ROOT / "scripts" / "dev" / "gates.sh"
 
 SENTRIES = (
+    "tests/sentry/test_baseline_registry.py",
     "tests/sentry/test_capability_matrix.py",
     "tests/sentry/test_cdf_threshold_ratchet.py",
     "tests/sentry/test_ci_config.py",
