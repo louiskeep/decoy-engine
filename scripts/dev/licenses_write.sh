@@ -24,7 +24,7 @@ for e in json.load(open(sys.argv[1]))["extras"]["runtime"]:
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/licenses.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
-uv export --no-config --frozen --no-dev --no-emit-project --no-header "${EXTRAS[@]}" >"$TMP/req.txt"
+uv export --no-config --frozen --no-dev --no-emit-project --no-header ${EXTRAS[@]+"${EXTRAS[@]}"} >"$TMP/req.txt"
 SITES=()
 for py in 3.10 3.11 3.12; do
   for plat in x86_64-unknown-linux-gnu x86_64-pc-windows-msvc; do
@@ -34,5 +34,5 @@ for py in 3.10 3.11 3.12; do
     SITES+=(--site "$dir")
   done
 done
-"$PY" scripts/dev/licenses.py --write "${SITES[@]}"
+"$PY" scripts/dev/licenses.py --write ${SITES[@]+"${SITES[@]}"}
 "$PY" scripts/dev/licenses.py --check

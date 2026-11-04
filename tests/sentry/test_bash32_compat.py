@@ -20,6 +20,8 @@ BASH4_ONLY = {
     "case-modifying expansion": re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(,,|\^\^|,|\^)[^}]*\}"),
     "&>>": re.compile(r"&>>"),
     "negative array index": re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\[-[0-9]+\]\}"),
+    # bash < 4.4 under set -u dies on an empty "${a[@]}"; write ${a[@]+"${a[@]}"} instead.
+    "bare array expansion": re.compile(r'(?<!\[@\]\+)"\$\{[A-Za-z_][A-Za-z0-9_]*\[@\]\}"'),
 }
 
 
@@ -48,6 +50,7 @@ def test_dev_scripts_avoid_bash4_features(path: Path) -> None:
         ("x=${v^^}", "case-modifying expansion"),
         ("cmd &>> log", "&>>"),
         ('echo "${A[-1]}"', "negative array index"),
+        ('for p in "${A[@]}"; do :; done', "bare array expansion"),
     ],
 )
 def test_seeded_bash4_features_are_caught(snippet: str, feature: str) -> None:
@@ -56,3 +59,4 @@ def test_seeded_bash4_features_are_caught(snippet: str, feature: str) -> None:
 
 def test_bash3_safe_loop_is_clean() -> None:
     assert findings('while IFS= read -r p; do A+=("$p"); done < <(ls)') == []
+    assert findings('for p in ${A[@]+"${A[@]}"}; do :; done') == []

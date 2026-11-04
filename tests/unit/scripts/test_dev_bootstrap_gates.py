@@ -364,3 +364,17 @@ def test_gates_treats_a_workflow_change_as_code(tmp_path: Path) -> None:
     proc = _run([str(BASH), "scripts/dev/gates.sh", "--steps", "format,tests"], clone)
     assert proc.returncode != 0, proc.stdout + proc.stderr
     assert "selects no tests" in proc.stderr
+
+
+def test_a_branch_step_that_never_ran_is_branch_only(tmp_path: Path) -> None:
+    _write_run(tmp_path, "baseline", 1, _SHARED + "Found 1 error in 1 file\n")
+    _write_run(tmp_path, "branch", 1, _SHARED + "Found 1 error in 1 file\n")
+    for label, row in (("baseline", "tests\t0\tpytest\n"), ("branch", "tests\t-2\t(not run)\n")):
+        with (tmp_path / f"{label}.steps").open("a") as fh:
+            fh.write(row)
+    assert _report_module().branch_only_steps(tmp_path) == ["tests"]
+
+
+def test_baseline_mode_keeps_going_after_a_failing_step() -> None:
+    text = (REPO / "scripts" / "dev" / "gates.sh").read_text()
+    assert "if [ $BASELINE = 1 ]; then KEEP=1; fi" in text

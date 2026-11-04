@@ -41,6 +41,9 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+# A baseline verdict compares every step, so a step skipped after an early failure can never
+# read as shared with main.
+if [ $BASELINE = 1 ]; then KEEP=1; fi
 [ -x "$BIN/python" ] || { echo "gates: no venv at $VENV; run scripts/dev/bootstrap.sh" >&2; exit 2; }
 OUT=$(mktemp -d "${TMPDIR:-/tmp}/gates.XXXXXX")
 WT=$OUT/baseline-tree
@@ -71,7 +74,7 @@ changed_tests() {
 # 0 when f matches NON_CODE_GLOBS (pure documentation or repo metadata).
 non_code() {
   local g
-  for g in "${NON_CODE_GLOBS[@]}"; do
+  for g in ${NON_CODE_GLOBS[@]+"${NON_CODE_GLOBS[@]}"}; do
     # shellcheck disable=SC2254  # NON_CODE_GLOBS entries are globs on purpose
     case $1 in $g) return 0 ;; esac
   done
@@ -115,35 +118,35 @@ else
   SELECTION="explicit: ${PATHS[*]}"
   # An explicit path that is missing from the branch is a typo or a deleted test, never a skip.
   if [[ ",$STEPS," == *,tests,* ]]; then
-    for p in "${PATHS[@]}"; do
+    for p in ${PATHS[@]+"${PATHS[@]}"}; do
       [ -e "$ROOT/${p%%::*}" ] || { echo "gates: FAIL: explicit test path not found: $p" >&2; exit 2; }
     done
   fi
 fi
 
-pypath() { local d out=""; for d in "${PYPATH_DIRS[@]}"; do out="$out${out:+:}$1/$d"; done; echo "$out"; }
+pypath() { local d out=""; for d in ${PYPATH_DIRS[@]+"${PYPATH_DIRS[@]}"}; do out="$out${out:+:}$1/$d"; done; echo "$out"; }
 
 run_steps() {  # $1 label, $2 tree
   local label=$1 tree=$2 name rc stop=0 p cmd shown tests=() lic=()
   : >"$OUT/$label.steps"
   for name in ${STEPS//,/ }; do
     plain=0
-    local junit=(-p no:cacheprovider -q -rfE "--junitxml=$OUT/$label-$name.xml" "${PYTEST_ARGS[@]}")
+    local junit=(-p no:cacheprovider -q -rfE "--junitxml=$OUT/$label-$name.xml" ${PYTEST_ARGS[@]+"${PYTEST_ARGS[@]}"})
     case $name in
       env) cmd=(bash "$ROOT/scripts/dev/bootstrap.sh" --check) ;;
-      ruff) cmd=("$BIN/ruff" check --output-format concise "${RUFF_PATHS[@]}") ;;
-      format) cmd=("$BIN/ruff" format --check "${RUFF_PATHS[@]}") ;;
-      mypy) cmd=("$BIN/mypy" "${MYPY_ARGS[@]}") ;;
+      ruff) cmd=("$BIN/ruff" check --output-format concise ${RUFF_PATHS[@]+"${RUFF_PATHS[@]}"}) ;;
+      format) cmd=("$BIN/ruff" format --check ${RUFF_PATHS[@]+"${RUFF_PATHS[@]}"}) ;;
+      mypy) cmd=("$BIN/mypy" ${MYPY_ARGS[@]+"${MYPY_ARGS[@]}"}) ;;
       # ratchet_check first (baselines never grow); skipped in trees that predate it (the baseline worktree)
       sentry)
-        cmd=(bash -c 'if [ -f scripts/dev/ratchet_check.py ]; then "$0" scripts/dev/ratchet_check.py || exit 1; fi; exec "$0" -m pytest "$@"' "$BIN/python" "${junit[@]}" "${SENTRY_PATHS[@]}") ;;
+        cmd=(bash -c 'if [ -f scripts/dev/ratchet_check.py ]; then "$0" scripts/dev/ratchet_check.py || exit 1; fi; exec "$0" -m pytest "$@"' "$BIN/python" ${junit[@]+"${junit[@]}"} ${SENTRY_PATHS[@]+"${SENTRY_PATHS[@]}"}) ;;
       # strict: a venv that drifted from uv.lock fails instead of skipping the metadata check
       licenses)
-        lic=(); for p in "${LICENSE_TESTS[@]}"; do [ -e "$tree/$p" ] && lic+=("$p"); done
-        cmd=(env DECOY_LICENSE_STRICT=1 "$BIN/python" -m pytest "${junit[@]}" "${lic[@]}") ;;
+        lic=(); for p in ${LICENSE_TESTS[@]+"${LICENSE_TESTS[@]}"}; do [ -e "$tree/$p" ] && lic+=("$p"); done
+        cmd=(env DECOY_LICENSE_STRICT=1 "$BIN/python" -m pytest ${junit[@]+"${junit[@]}"} ${lic[@]+"${lic[@]}"}) ;;
       tests)
-        tests=(); for p in "${PATHS[@]}"; do [ -e "$tree/${p%%::*}" ] && tests+=("$p"); done
-        cmd=("$BIN/python" -m pytest "${junit[@]}" "${tests[@]}") ;;
+        tests=(); for p in ${PATHS[@]+"${PATHS[@]}"}; do [ -e "$tree/${p%%::*}" ] && tests+=("$p"); done
+        cmd=("$BIN/python" -m pytest ${junit[@]+"${junit[@]}"} ${tests[@]+"${tests[@]}"}) ;;
       *) echo "gates: unknown step $name" >&2; exit 2 ;;
     esac
     if [ $stop = 1 ]; then rc=-2
@@ -158,14 +161,14 @@ run_steps() {  # $1 label, $2 tree
     elif [ "$name" = env ] && [ "$label" = baseline ]; then rc=-1; cmd=("(same venv as branch)")
     else
       echo "gates: [$label] $name ..." >&2
-      (cd "$tree" && PYTHONPATH=$(pypath "$tree") "${cmd[@]}") >"$OUT/$label-$name.log" 2>&1
+      (cd "$tree" && PYTHONPATH=$(pypath "$tree") ${cmd[@]+"${cmd[@]}"}) >"$OUT/$label-$name.log" 2>&1
       rc=$?
       if [ $rc != 0 ]; then
         tail -n 15 "$OUT/$label-$name.log" | sed "s/^/  $label $name| /" >&2
         [ $KEEP = 1 ] || stop=1
       fi
     fi
-    [ $rc = -1 ] || [ $plain = 1 ] && shown=${cmd[*]} || shown=$(printf '%q ' "${cmd[@]}")
+    [ $rc = -1 ] || [ $plain = 1 ] && shown=${cmd[*]} || shown=$(printf '%q ' ${cmd[@]+"${cmd[@]}"})
     printf '%s\t%s\t%s\n' "$name" "$rc" "$shown" >>"$OUT/$label.steps"
   done
 }

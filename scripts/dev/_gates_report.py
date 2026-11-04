@@ -65,6 +65,8 @@ def failing_ids(out: Path, label: str) -> list[str]:
 
 
 _PASSING = (0, -1, -2)
+# On the branch side a step that did not run (-2) proved nothing, so it is never a pass.
+_BRANCH_PASSING = (0, -1)
 # Every step here exits 1 when it ran to completion and found problems (pytest, ruff, mypy, the
 # ratchet check). Any other non-zero code is a crash, a kill or a timeout (124, 137, 139, pytest 2-5).
 _NORMAL_FAILURE_RC = 1
@@ -131,7 +133,7 @@ def branch_only_steps(out: Path) -> list[str]:
     base = {name: rc for name, rc, _ in _steps(out, "baseline")}
     bad = []
     for name, rc, _cmd in _steps(out, "branch"):
-        if rc in _PASSING:
+        if rc in _BRANCH_PASSING:
             continue
         if rc != _NORMAL_FAILURE_RC:
             bad.append(name)
