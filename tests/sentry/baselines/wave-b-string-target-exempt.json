@@ -11,7 +11,7 @@
   "tests/sentry/test_ga_stub_exports.py::decoy_engine.schema": {
    "reason": "initial X0a inventory of test_engine_string_targets.py; existing entry, reviewed by its own sentry"
   },
-  "tests/sentry/test_no_residual_removed_surface.py::decoy_engine.storm": {
+  "tests/sentry/test_no_residual_removed_surface.py::<removed-surface>": {
    "reason": "initial X0a inventory of test_engine_string_targets.py; existing entry, reviewed by its own sentry"
   },
   "tests/unit/test_public_api.py::decoy_engine.test": {

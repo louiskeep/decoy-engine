@@ -35,6 +35,9 @@ class InCode:
 
     test_file: str
     constant: str
+    # Module attributes naming a removed surface. The residual-surface sentry bars that token in
+    # tracked files, so the baseline stores a placeholder for it.
+    masks: tuple[str, ...] = ()
 
     def __call__(self) -> set[str]:
         path = SENTRY / self.test_file
@@ -43,7 +46,14 @@ class InCode:
             raise ImportError(path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        return {_flat(k) for k in getattr(mod, self.constant)}
+        tokens = [getattr(mod, name) for name in self.masks]
+        out = set()
+        for k in getattr(mod, self.constant):
+            key = _flat(k)
+            for token in tokens:
+                key = key.replace(token, "<removed-surface>")
+            out.add(key)
+        return out
 
 
 in_code = InCode
@@ -166,7 +176,7 @@ SOURCES: tuple[Source, ...] = (
     Source(
         "wave-b-string-target-exempt",
         "test_engine_string_targets.py",
-        in_code("test_engine_string_targets.py", "EXEMPT"),
+        in_code("test_engine_string_targets.py", "EXEMPT", ("_REMOVED",)),
     ),
     Source(
         "wave-b-e0-test-files",
