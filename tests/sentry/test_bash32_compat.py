@@ -31,15 +31,19 @@ BASH4_ONLY = {
 def _strip_comment(line: str) -> str:
     """The line up to its comment: the first # outside quotes at line start or after whitespace.
 
-    A # inside quotes or inside ${#...} is not a comment."""
+    A # inside quotes or inside ${#...} is not a comment. A quote is escaped only by an odd run
+    of backslashes, outside single quotes, as in bash."""
     quote = ""
+    backslashes = 0
     for i, ch in enumerate(line):
+        escaped = backslashes % 2 == 1
+        backslashes = backslashes + 1 if ch == "\\" and quote != "'" else 0
         if quote:
-            if ch == quote and (quote == "'" or line[i - 1] != "\\"):
+            if ch == quote and (quote == "'" or not escaped):
                 quote = ""
-        elif ch in "'\"" and (i == 0 or line[i - 1] != "\\"):
+        elif ch in "'\"" and not escaped:
             quote = ch
-        elif ch == "#" and (i == 0 or line[i - 1].isspace()):
+        elif ch == "#" and not escaped and (i == 0 or line[i - 1].isspace()):
             return line[:i]
     return line
 
@@ -85,4 +89,7 @@ def test_bash3_safe_loop_is_clean() -> None:
     assert findings('for p in ${A[@]+"${A[@]}"}; do :; done') == []
     assert findings('echo "${A[*]+${A[*]}}" ${#A[@]}  # count is fine') == []
     assert findings('echo "# literal"  # f "${A[@]}"') == []
+    assert findings('echo "\\\\"  # f "${A[@]}"') == []
+    assert findings('echo "\\\\" "quoted # text" f "${A[@]}"') != []
+    assert findings('echo \\\\" # literal" "${A[@]}"') != []
     assert findings("echo 'a # b' \"${A[@]}\"") != []
