@@ -44,9 +44,6 @@
   "src/decoy_engine/execution/_pipeline_route_exec.py": {
    "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
   },
-  "src/decoy_engine/execution/_pipeline_routing.py": {
-   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
-  },
   "src/decoy_engine/execution/_pipeline_routing_signals.py": {
    "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
   },
