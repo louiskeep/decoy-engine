@@ -9,8 +9,11 @@
 name: Security
 
 on:
-  # Manual dispatch only. gate-selfhosted.yml is the merge gate; the paid runners
-  # fire on demand so they stop failing every push (X0a). Old triggers: git history.
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 7 * * 1"  # Monday 07:00 UTC
   workflow_dispatch:
 
 permissions:

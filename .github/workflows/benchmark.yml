@@ -13,8 +13,13 @@
 name: Benchmark
 
 on:
-  # Manual dispatch only. gate-selfhosted.yml is the merge gate; the paid runners
-  # fire on demand so they stop failing every push (X0a). Old triggers: git history.
+  # Fires when someone adds a label to a PR. We gate inside the job to only
+  # run when the label is `run-bench`. Other labels are no-ops.
+  pull_request:
+    types: [labeled]
+  # Manual fire button in the Actions tab. Useful for "run on main"
+  # baseline captures or ad-hoc reruns. The branch picker lets you pick
+  # any branch (default: the workflow file's branch).
   workflow_dispatch:
 
 # `actions/github-script` posts a comment on the PR; that needs write

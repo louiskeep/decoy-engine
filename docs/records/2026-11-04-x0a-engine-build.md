@@ -2,8 +2,9 @@
 
 Status: record
 
-Slice X0a (engine half) of the cross-cutting V1 foundations plan: the gate runs every sentry,
-baselines can only shrink, and the merge gate has a home that does not depend on paid runners.
+Slice X0a (engine half, part 1 of 2) of the cross-cutting V1 foundations plan: the gate runs every
+sentry and baselines can only shrink. The self-hosted gate workflow is part 2, record
+`2026-11-04-x0a-engine-ci.md`.
 
 ## What changed
 
@@ -29,11 +30,6 @@ baselines can only shrink, and the merge gate has a home that does not depend on
 - `tests/sentry/test_sentry_manifest.py`: the `SENTRIES` manifest (every file in
   `tests/sentry/`, including the H-1 E0 sentries, plus `tests/secret_providers/test_leak_sentry.py`).
 - `gates.sh` `SENTRY_PATHS` now also names the leak sentry, which no gate collected before.
-- `.github/workflows/gate-selfhosted.yml`: `runs-on: [self-hosted, macos, decoy-gate]`, body
-  `flock ~/.cache/pytest-one.lock scripts/dev/gates.sh --keep-going`.
-- Every other workflow except `native-companion-release.yml` (tag publish) is now
-  `workflow_dispatch` only. The old triggers are in git history.
-
 ## Acceptance tests
 
 | AT | Result | Where |
@@ -41,41 +37,9 @@ baselines can only shrink, and the merge gate has a home that does not depend on
 | AT-CI0 | green, red first (script absent) | `tests/sentry/test_ratchet_check.py` |
 | AT-CI1 | green, red first (leak sentry uncollected) | `test_sentry_manifest.py` |
 | AT-CI2 | green | `test_removing_a_sentry_path_is_detected` |
-| AT-CI3 | manual, not run | needs the registered runner |
-| AT-CI4 | manual, not run | needs the registered runner |
 
 Plan wording said "red today for `tests/policy`"; the engine has no `tests/policy`, so the
 engine's red case was the leak sentry. CI2 also seeds a `tests/policy/...` path as a negative.
-
-## Manual checks (owner ops, after the runner is registered)
-
-- AT-CI3: push a scratch branch with a seeded failing sentry. The `gate-selfhosted` run must
-  fail, and its EVIDENCE block must print the head it tested (`repo: ... @ <sha>`).
-- AT-CI4: hold `~/.cache/pytest-one.lock` with a T3 on the Mac, start the job. The log must show
-  it waiting and the gate starting only after the T3 releases the lock (compare timestamps).
-- The Mac needs `flock` (not shipped with macOS; `brew install flock`) and a venv at
-  `~/.cache/decoy-gate-venv` built by `DECOY_VENV=... scripts/dev/bootstrap.sh`.
-
-## Guard sentry shown red (seeded workflows)
-
-`selfhosted_violations` run on two scratch workflows:
-
-- `on: pull_request` plus a self-hosted job: `gate: self-hosted job triggered by ['pull_request']`
-- self-hosted job with no actor and fork guard: `gate: self-hosted job lacks the actor and fork guard`
-- the real `gate-selfhosted.yml`: no findings.
-
-`native-companion-release.yml` has no self-hosted job and no `pull_request` trigger (tag push and
-manual dispatch only, hosted runners), so it needed no guard change.
-
-## Runner ops requirement (security)
-
-The repo is public and the runner executes branch code. The workflow triggers on `push` and
-`workflow_dispatch` only, runs only for the owner (`github.actor`, not a fork), has
-`contents: read`, `persist-credentials: false` and no secrets; `test_ci_config.py` fails on any
-self-hosted job with a `pull_request` or `pull_request_target` trigger or without that guard.
-The runner itself must run as a dedicated low-privilege macOS user with no access to the
-owner's home directory, keys or git credentials, and with an ephemeral work directory
-(wiped between runs).
 
 ## Introducing-slice gate setting
 
@@ -93,16 +57,16 @@ and the variable is no longer needed.
 ## Clean-environment gates run
 
 Venv bootstrapped from uv.lock (`DECOY_VENV=<fresh> bash scripts/dev/bootstrap.sh`), run with
-`RATCHET_SLICE=X0a scripts/dev/gates.sh --keep-going --baseline` on the head before this docs
-commit (no code differs). An earlier run on the same clean venv failed one sentry test (the
+`RATCHET_SLICE=X0a scripts/dev/gates.sh --keep-going --baseline` on the part 1 head before this docs
+edit (no code differs). An earlier run on the same clean venv failed one sentry test (the
 removed-surface token inside the string-target baseline); that was fixed by masking the token.
 
 | step | branch | baseline |
 | --- | --- | --- |
 | env | PASS | SKIP |
 | ruff, format, mypy | PASS | PASS |
-| sentry | PASS (4005) | PASS (3956) |
+| sentry | PASS (4001) | PASS (3956) |
 | licenses | PASS (63) | PASS (63) |
-| tests | PASS (50) | PASS (3) |
+| tests | PASS (43) | SKIP (none present) |
 
 Failing ids: branch 0, baseline 0, branch-only 0.
