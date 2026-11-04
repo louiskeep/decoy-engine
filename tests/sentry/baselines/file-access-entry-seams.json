@@ -1,0 +1,24 @@
+{
+ "sentry_id": "file-access-entry-seams",
+ "created_in": "X0a",
+ "entries": {
+  "decoy_engine.execution.native._dispatch.plan_native_route": {
+   "reason": "initial X0a inventory of test_file_access_entry_points.py; existing entry, reviewed by its own sentry"
+  },
+  "decoy_engine.execution.native._dispatch.run_native_or_oracle_chunked": {
+   "reason": "initial X0a inventory of test_file_access_entry_points.py; existing entry, reviewed by its own sentry"
+  },
+  "decoy_engine.execution.out_of_core._mask.mask_batch": {
+   "reason": "initial X0a inventory of test_file_access_entry_points.py; existing entry, reviewed by its own sentry"
+  },
+  "decoy_engine.execution.out_of_core._mask.mask_column": {
+   "reason": "initial X0a inventory of test_file_access_entry_points.py; existing entry, reviewed by its own sentry"
+  },
+  "decoy_engine.execution.out_of_core._relation.build_parent_key_relation": {
+   "reason": "initial X0a inventory of test_file_access_entry_points.py; existing entry, reviewed by its own sentry"
+  },
+  "decoy_engine.execution.physical._snapshot.capture_physical_plan_inputs": {
+   "reason": "initial X0a inventory of test_file_access_entry_points.py; existing entry, reviewed by its own sentry"
+  }
+ }
+}
