@@ -19,6 +19,7 @@ from scripts.check_pure_move import check_move
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "pure_move"
 EXCERPT = (FIXTURES / "detectors_excerpt.py.txt").read_text()
 MANIFEST = json.loads((FIXTURES / "split_manifest.json").read_text())
+IMPORTERS = json.loads((FIXTURES / "importers.json").read_text())
 OLD = MANIFEST["old"]
 PART_A_RULES = frozenset({"1a", "1b", "1c", "import-position", "2", "3", "4"})
 
@@ -186,7 +187,7 @@ def test_accepts_a_pure_split():
 
 
 def test_full_verdict_reports_only_the_pending_rules():
-    assert tags(run(split(), only=None)) == {"not-implemented"}
+    assert run(split(), only=None) == []
 
 
 def test_detects_reordered_statement():
@@ -245,3 +246,74 @@ def test_problems_carry_no_source_text():
         assert problems, case
         for problem in problems:
             assert not [line for line in source_lines if line in problem], (case, problem)
+
+
+def with_importers(listed: list[str], files: dict[str, tuple[str, str]]) -> list[str]:
+    man = manifest()
+    man["importers"] = listed
+    base = {OLD: EXCERPT, **{p: texts[0] for p, texts in files.items()}}
+    head = {**split(), **{p: texts[1] for p, texts in files.items()}}
+    return check_move(man, base.get, head.get, sorted(head), only=None)
+
+
+def test_accepts_import_only_hunks():
+    consumer = IMPORTERS["consumer"]
+    files = {consumer["path"]: (consumer["base"], consumer["head"])}
+    assert with_importers([consumer["path"]], files) == []
+
+
+def test_detects_extra_importer_hunk():
+    consumer = IMPORTERS["consumer"]
+    files = {consumer["path"]: (consumer["base"], consumer["head_extra_hunk"])}
+    assert tags(with_importers([consumer["path"]], files)) == {"5"}
+
+
+def test_detects_unlisted_importer():
+    other = IMPORTERS["unlisted"]
+    assert tags(with_importers([], {other["path"]: (other["base"], other["head"])})) == {"5"}
+    stale = {other["path"]: (other["base"], other["base"])}
+    assert tags(with_importers([], stale)) == {"5"}
+
+
+def test_rejects_manifest_over_file_bound():
+    paths = [f"src/decoy_engine/detection/consumer_{i}.py" for i in range(7)]
+    assert len({*MANIFEST["new"], *paths}) == 11
+    assert tags(with_importers(paths, {p: ("X = 1\n", "X = 1\n") for p in paths})) == {"6"}
+
+
+RED_TAGS = {
+    "reorder_isolated": {"1a"},
+    "reorder_span": {"1a"},
+    "wrong_source": {"2"},
+    "dropped": {"1a"},
+    "dropped_call": {"1a"},
+    "hoisted": {"import-position"},
+    "duplicated": {"3"},
+    "missing": {"1b"},
+    "changed": {"1a"},
+    "cycle_isolated": {"4"},
+    "cycle_back": {"4"},
+    "use_before_bind_isolated": {"1c"},
+    "use_before_bind_address": {"1c"},
+    "unforced": {"4"},
+}
+
+
+def test_part_a_cases_unchanged():
+    from tests.unit import test_check_pure_move_scope as scope
+
+    assert run(split(), only=None) == []
+    assert run(split(builtin=swap(BUILTIN, "detect_email", "detect_ssn")), only=None) == []
+    for case, expected in RED_TAGS.items():
+        assert expected <= tags(run(*RED_CASES[case], only=None)), case
+    shadow = ("def moved(item):", "    value = item", "    return value")
+    free = ("def moved():", "    x = 1", "    def inner():", "        return x", "    return inner")
+    builtin = ("def moved(x):", "    if not len(x):", "        raise ValueError(x)", "    return x")
+    assert scope.moved_only(("value = 1", "item = 2"), shadow, None) == set()
+    assert scope.moved_only((), free, None) == set()
+    assert scope.moved_only((), builtin, None) == set()
+    for moved in (scope.TOP, scope.NESTED, scope.CLASS_BODY):
+        dest = scope.src(scope.FUTURE, *moved)
+        base, kept = scope.src(scope.FUTURE, *moved), scope.src(scope.FUTURE, scope.LINK)
+        assert scope.run(base, kept, dest, None) == set()
+    assert scope.moved_only(("import re",), ("def moved():", "    return re.x"), None) == {"7"}

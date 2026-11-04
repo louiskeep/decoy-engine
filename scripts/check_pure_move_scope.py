@@ -103,8 +103,8 @@ def _annotated(node: ast.AST) -> bool:
     )
 
 
-def _moved(node: ast.stmt, path: str, top, bound: set[str], old_binds: set[str], lazy: bool):
-    """Rule 7 for one moved def or class, from its own and its sibling symbol tables."""
+def _moved(node, path: str, top, bound: set[str], old_binds: set[str], lazy: bool, stays: bool):
+    """Rule 7 for one def or class, from its own and its sibling symbol tables."""
     where = f"7: {path}:{node.lineno}: {type(node).__name__} {node.name}"
     start = min([node.lineno, *(d.lineno for d in node.decorator_list)])
     near = [c for c in top.get_children() if start <= c.get_lineno() <= node.end_lineno]
@@ -116,22 +116,30 @@ def _moved(node: ast.stmt, path: str, top, bound: set[str], old_binds: set[str],
     missing = need - bound - undefined - (BUILTINS - old_binds)
     out = [f"{where}: writes global {n}" for n in sorted(writes)]
     out += [f"{where}: calls {n}" for n in sorted(need & _DYNAMIC)]
-    return out + [f"{where}: {n} is not bound unconditionally here" for n in sorted(missing)]
+    return ([] if stays else out) + [
+        f"{where}: {n} is not bound unconditionally here" for n in sorted(missing)
+    ]
 
 
-def scope_problems(base: str, heads: dict[str, str | None], owners: dict[str, str]) -> list[str]:
-    """Rule 7: a moved def keeps every global it reads; rule 8: it keeps lazy annotations."""
+def scope_problems(base: str, heads: dict, owners: dict[str, str], kept: str) -> list[str]:
+    """Rule 7: a moved or retained def keeps every global it reads; rule 8: lazy annotations.
+
+    A retained def may rely on a conditional binding in the kept module: rule 1a holds that
+    block identical and in place. Only the bound-name check applies to it, since it stays.
+    """
     old_top = symtable.symtable(base, "old", "exec")
     old_binds = {s.get_name() for s in old_top.get_symbols() if s.is_assigned() or s.is_imported()}
     lazy, star = _future(ast.parse(base))
     out = ["7: base holds a star import; globals cannot be resolved"] if star else []
-    for path in sorted({p for p in owners.values() if heads.get(p)}):
+    for path in sorted({p for p in [*owners.values(), kept] if heads.get(p)}):
         tree, top = ast.parse(heads[path]), symtable.symtable(heads[path], path, "exec")
         dest_lazy, dest_star = _future(tree)
         out += [f"7: {path}: holds a star import; globals cannot be resolved"] if dest_star else []
-        bound = {n for s in tree.body if isinstance(s, _BINDING) for n in binds(s)}
-        for node in (s for s in tree.body if owners.get(getattr(s, "name", None)) == path):
-            out += _moved(node, path, top, bound, old_binds, lazy)
+        ok = [s for s in tree.body if path == kept or isinstance(s, _BINDING)]
+        bound = set().union(*map(binds, ok))
+        defs = [s for s in tree.body if isinstance(s, (*DEFS, ast.ClassDef))]
+        for node in (s for s in defs if owners.get(s.name, kept) == path):
+            out += _moved(node, path, top, bound, old_binds, lazy, path == kept)
             lost = lazy and not dest_lazy and _annotated(node)
             out += (
                 [f"8: {path}:{node.lineno}: {node.name}: annotations lose lazy evaluation"]

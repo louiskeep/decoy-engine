@@ -28,7 +28,6 @@ except ImportError:  # run as a file: scripts/ is on sys.path, the repo root is 
 BUILTINS, DEFS, IMPORTS = scope.BUILTINS, scope.DEFS, scope.IMPORTS
 binds, def_time, reads, shallow = scope.binds, scope.def_time, scope.reads, scope.shallow
 Reader, Files, Only = Callable[[str], "str | None"], Iterable[str], "frozenset[str] | None"
-_PENDING = ("5", "6")
 _REQUIRED = ("old", "new", "map", "importers", "docstring_prose", "tests")
 _IMPLICIT = {"__name__", "__file__", "__doc__", "__spec__", "__loader__", "__package__"}
 _EFFECTS = (ast.Call, ast.Lambda, ast.Await, ast.NamedExpr, ast.Yield, ast.YieldFrom)
@@ -42,6 +41,13 @@ def module_name(path: str) -> str:
 def _keys(stmt: ast.stmt) -> list[tuple]:
     level, src = (stmt.level, stmt.module or "") if isinstance(stmt, ast.ImportFrom) else (0, "")
     return [(level, src, a.name, a.asname) for a in stmt.names] if isinstance(stmt, IMPORTS) else []
+
+
+def _source(path: str, stmt: ast.stmt) -> str:
+    """Absolute module ``stmt`` imports from; empty for a plain ``import``."""
+    level, mod = getattr(stmt, "level", 0), getattr(stmt, "module", None)
+    parts = module_name(path).split(".")[: None if path.endswith("__init__.py") else -1]
+    return ".".join([*(parts[: len(parts) - level + 1] if level else []), *filter(None, [mod])])
 
 
 class _Mod:
@@ -68,14 +74,9 @@ class _Mod:
         """Manifest modules ``stmt`` imports, in the order Python loads them."""
         if not isinstance(stmt, IMPORTS):
             return []
-        src = self.source(stmt) if isinstance(stmt, ast.ImportFrom) else None
+        src = _source(self.path, stmt) if isinstance(stmt, ast.ImportFrom) else None
         names = [src, *(a.name if src is None else f"{src}.{a.name}" for a in stmt.names)]
         return [n for n in dict.fromkeys(names) if n in known]
-
-    def source(self, stmt: ast.ImportFrom) -> str:
-        parts = self.name.split(".")[: None if self.path.endswith("__init__.py") else -1]
-        parts = parts[: len(parts) - stmt.level + 1] if stmt.level else []
-        return ".".join([*parts, *filter(None, [stmt.module])])
 
     def p(self, tag: str, stmt: ast.stmt, msg: str) -> str:
         names = ",".join(sorted(binds(stmt))) or "-"
@@ -120,7 +121,7 @@ def _order(old: _Mod, known: dict[str, _Mod], trace: list) -> list[str]:
     out += [m.p("1b", s, "inert def unmatched") for m, s in inert if extra[m is old][dump(s)]]
     bound = {name: set(_IMPLICIT) for name in known}
     for mod, stmt in trace:
-        src = mod.source(stmt) if isinstance(stmt, ast.ImportFrom) else ""
+        src = _source(mod.path, stmt)
         early = {a.name for a in getattr(stmt, "names", []) if src in known} - bound.get(src, set())
         early = {n for n in early if f"{src}.{n}" not in known}
         late = reads(stmt, mod.lazy) - bound[mod.name] - (BUILTINS - mod.binds) | early
@@ -156,6 +157,57 @@ def _names(old: _Mod, known: dict[str, _Mod], own: dict[str, str]) -> list[str]:
     return out + [f"3: {p}: map assigns {n} here and it is not defined" for n, p in lost]
 
 
+def _canon(text: str, rename: Callable[[tuple], tuple]) -> str:
+    """Dump of ``text`` with each run of imports folded into one sorted list of renamed keys."""
+    tree = ast.parse(text)
+    for node in ast.walk(tree):
+        for field, value in ast.iter_fields(node):
+            if not (isinstance(value, list) and value and isinstance(value[0], ast.stmt)):
+                continue
+            folded, keys = [], []
+            for stmt in [*value, None]:
+                keys += [rename(k) for k in _keys(stmt)] if stmt else []
+                if not isinstance(stmt, IMPORTS):
+                    folded += [ast.Expr(ast.Constant(repr(sorted(keys))))] if keys else []
+                    folded, keys = folded + ([stmt] if stmt else []), []
+            setattr(node, field, folded)
+    return ast.dump(tree)
+
+
+def _importers(manifest: dict, read_base: Reader, read_head: Reader, files: Files) -> list[str]:
+    """Rule 5: importers change only by map rewrites, reach no moved name via the old path."""
+    old, own, listed = module_name(manifest["old"]), manifest["map"], set(manifest["importers"])
+    mods = {old, *map(module_name, own.values())}
+
+    def rename(key: tuple) -> tuple:
+        moved = not key[0] and key[2] in own and key[1] == module_name(own[key[2]])
+        return (key[0], old if moved else key[1], *key[2:])
+
+    def keys(text: str | None) -> Counter:
+        return Counter(k for n in ast.walk(ast.parse(text or "")) for k in _keys(n))
+
+    out, skip = [], {manifest["old"], *manifest["new"]}
+    for path in sorted(p for p in {*files, *listed} - skip if p.endswith(".py")):
+        before, after = read_base(path), read_head(path)
+        ns = list(ast.walk(ast.parse(after or "")))
+        got = [(_source(path, n), a) for n in ns if isinstance(n, IMPORTS) for a in n.names]
+        via = {old, *(a.asname or a.name for s, a in got if f"{s}.{a.name}".strip(".") == old)}
+        use = {n.attr for n in ns if isinstance(n, ast.Attribute) and ast.unparse(n.value) in via}
+        for name in sorted(({a.name for s, a in got if s == old} | use) & set(own)):
+            out.append(f"5: {path}: reaches {name} through the old path, not its owner")
+        if before == after or None in (before, after):
+            if before != after and path in listed:
+                out.append(f"5: {path}: listed importer absent at base or head")
+        elif path in listed and _canon(before, rename) != _canon(after, rename):
+            out.append(f"5: {path}: changes beyond the map rewrite of its imports")
+        elif path not in listed:
+            changed = (keys(before) - keys(after)) + (keys(after) - keys(before))
+            if any({k[1], k[2], f"{k[1]}.{k[2]}"} & mods for k in changed):
+                out.append(f"5: {path}: changes imports of a moved module and is not in importers")
+    touched = {manifest["old"], *manifest["new"], *listed, *manifest.get("frozen_partners", [])}
+    return out + [f"6: {len(touched)} production files; the bound is 10"] * (len(touched) > 10)
+
+
 def check_move(
     manifest: dict, read_base: Reader, read_head: Reader, production_files: Files, only: Only = None
 ) -> list[str]:
@@ -165,18 +217,16 @@ def check_move(
     if base_text is None or not kept or any(key not in manifest for key in _REQUIRED):
         raise ValueError(f"manifest needs {_REQUIRED}, old present at base and kept in new")
     prose = bool(manifest["docstring_prose"])
-    old, known, out = _Mod(manifest["old"], base_text, prose), {}, []
+    old, known, out, own = _Mod(manifest["old"], base_text, prose), {}, [], manifest["map"]
     texts = {path: read_head(path) for path in manifest["new"]}
     for path, text in texts.items():
         out += [f"3: {path}: listed in new, absent at head"] if text is None else []
         known.update({} if text is None else {module_name(path): _Mod(path, text, prose)})
     problems, trace = _graph(old, known)
     out += problems + _order(old, known, trace)
-    out += _names(old, known, manifest["map"]) + scope.scope_problems(
-        base_text, texts, manifest["map"]
-    )
-    out = [p for p in out if only is None or p.split(":", 1)[0] in only]
-    return out + [f"not-implemented: rule {r}" for r in _PENDING if only is None or r in only]
+    out += _names(old, known, own) + scope.scope_problems(base_text, texts, own, manifest["old"])
+    out += _importers(manifest, read_base, read_head, production_files)
+    return [p for p in out if only is None or p.split(":", 1)[0] in only]
 
 
 def _git(*args: str) -> str | None:

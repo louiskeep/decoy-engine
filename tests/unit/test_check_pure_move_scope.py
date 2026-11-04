@@ -156,3 +156,42 @@ def test_future_dropped_nested():
 def test_future_kept():
     for moved in (TOP, NESTED, CLASS_BODY):
         assert future_case(moved, keep_future=True) == set()
+
+
+def test_scope_retained_def_loses_runtime_import():
+    stay = ("def stay():", '    return re.compile("x")')
+    base = src("import re", *stay, "def moved():", "    return 1")
+    assert run(base, src(LINK, *stay), src("def moved():", "    return 1")) == {"7"}
+    kept = src("import re", LINK, *stay)
+    assert run(base, kept, src("def moved():", "    return 1")) == set()
+
+
+def test_scope_retained_def_keeps_conditional_binding():
+    guarded = ("try:", "    import yaml as dep", "except ImportError:", "    dep = None")
+    stay = ("def stay():", "    return dep")
+    base = src(*guarded, *stay, "def moved():", "    return 1")
+    assert run(base, src(*guarded, LINK, *stay), src("def moved():", "    return 1")) == set()
+
+
+CALLER = "src/pkg/caller.py"
+
+
+def module_attribute_case(caller: str) -> set[str]:
+    manifest = {"old": OLD, "new": [OLD, DEST], "map": {"moved": DEST}, "importers": []}
+    manifest |= {"docstring_prose": False, "tests": []}
+    base = {OLD: src("def stay():", "    return 0", "def moved():", "    return 1"), CALLER: caller}
+    head = {OLD: src("import pkg.dest", "def stay():", "    return 0"), CALLER: caller}
+    head[DEST] = src("def moved():", "    return 1")
+    problems = check_move(manifest, base.get, head.get, [CALLER], only=None)
+    return {problem.split(":", 1)[0] for problem in problems}
+
+
+def test_importer_reads_moved_name_through_old_module_object():
+    for binding, use in (
+        ("import pkg.old as old", "old"),
+        ("import pkg.old", "pkg.old"),
+        ("from pkg import old", "old"),
+        ("from . import old as kept", "kept"),
+    ):
+        assert module_attribute_case(src(binding, f"VALUE = {use}.moved")) == {"5"}, binding
+    assert module_attribute_case(src("import pkg.old as old", "VALUE = old.stay")) == set()
