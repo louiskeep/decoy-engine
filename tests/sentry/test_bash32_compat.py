@@ -28,11 +28,26 @@ BASH4_ONLY = {
 }
 
 
+def _strip_comment(line: str) -> str:
+    """The line up to its comment: the first # outside quotes at line start or after whitespace.
+
+    A # inside quotes or inside ${#...} is not a comment."""
+    quote = ""
+    for i, ch in enumerate(line):
+        if quote:
+            if ch == quote and (quote == "'" or line[i - 1] != "\\"):
+                quote = ""
+        elif ch in "'\"" and (i == 0 or line[i - 1] != "\\"):
+            quote = ch
+        elif ch == "#" and (i == 0 or line[i - 1].isspace()):
+            return line[:i]
+    return line
+
+
 def findings(text: str) -> list[str]:
     out = []
     for lineno, line in enumerate(text.splitlines(), 1):
-        # A comment starts at a # at line start or after whitespace, never inside ${#...}.
-        code = line if re.search(r"""['"].*#.*['"]""", line) else re.sub(r"(^|\s)#.*$", "", line)
+        code = _strip_comment(line)
         for name, rx in BASH4_ONLY.items():
             if rx.search(code):
                 out.append(f"line {lineno}: {name}")
@@ -69,3 +84,5 @@ def test_bash3_safe_loop_is_clean() -> None:
     assert findings('while IFS= read -r p; do A+=("$p"); done < <(ls)') == []
     assert findings('for p in ${A[@]+"${A[@]}"}; do :; done') == []
     assert findings('echo "${A[*]+${A[*]}}" ${#A[@]}  # count is fine') == []
+    assert findings('echo "# literal"  # f "${A[@]}"') == []
+    assert findings("echo 'a # b' \"${A[@]}\"") != []
