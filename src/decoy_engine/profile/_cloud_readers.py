@@ -25,6 +25,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from decoy_engine._lexeme import LEXEME_KEY, pandas_lexeme_kwargs
+from decoy_engine.connectors import _clients
 from decoy_engine.profile._readers import (
     ProfileSource,
     RowCount,
@@ -319,7 +320,7 @@ def _gcs_blob(descriptor: dict[str, Any], client: Any) -> Any:
 def _gcs_size(blob: Any) -> int:
     if blob.size is None:
         # size is populated by a metadata fetch, not an object download.
-        blob.reload()
+        _clients.gcs_reload(blob)
     return int(blob.size)
 
 
@@ -330,16 +331,14 @@ class GcsParquetSource:
         self._descriptor = descriptor
 
     def _with_reads(self, consume: Callable[[int, Callable[[int, int], bytes]], Any]) -> Any:
-        from google.cloud import storage
-
         # Q18: storage.Client owns an HTTP transport; close it via the context
         # manager once all ranged reads for this call have completed.
-        with storage.Client() as client:
+        with _clients.gcs_client() as client:
             blob = _gcs_blob(self._descriptor, client)
             size = _gcs_size(blob)
 
             def fetch(start: int, end_inclusive: int) -> bytes:
-                return bytes(blob.download_as_bytes(start=start, end=end_inclusive))
+                return bytes(_clients.gcs_download(blob, start=start, end=end_inclusive))
 
             return consume(size, fetch)
 
@@ -353,10 +352,8 @@ class GcsParquetSource:
         return self._with_reads(lambda size, fetch: _read_parquet_sample(size, fetch, sample_rows))
 
     def to_frame(self) -> pd.DataFrame:
-        from google.cloud import storage
-
-        with storage.Client() as client:
-            data = _gcs_blob(self._descriptor, client).download_as_bytes()
+        with _clients.gcs_client() as client:
+            data = _clients.gcs_download(_gcs_blob(self._descriptor, client))
         return pd.read_parquet(io.BytesIO(data))
 
 
@@ -367,15 +364,13 @@ class GcsCsvSource:
         self._descriptor = descriptor
 
     def _size_and_window(self) -> tuple[int, bytes]:
-        from google.cloud import storage
-
-        with storage.Client() as client:
+        with _clients.gcs_client() as client:
             blob = _gcs_blob(self._descriptor, client)
             size = _gcs_size(blob)
             if size == 0:
                 return 0, b""
             end = min(_CSV_SAMPLE_WINDOW_BYTES, size) - 1
-            window = bytes(blob.download_as_bytes(start=0, end=end))
+            window = bytes(_clients.gcs_download(blob, start=0, end=end))
         return size, window
 
     def row_count(self) -> RowCount:
@@ -396,10 +391,8 @@ class GcsCsvSource:
         return _csv_sample_from_window(window, size, sample_rows, self._descriptor.get(LEXEME_KEY))
 
     def to_frame(self) -> pd.DataFrame:
-        from google.cloud import storage
-
-        with storage.Client() as client:
-            data = _gcs_blob(self._descriptor, client).download_as_bytes()
+        with _clients.gcs_client() as client:
+            data = _clients.gcs_download(_gcs_blob(self._descriptor, client))
         return pd.read_csv(
             io.BytesIO(data), **pandas_lexeme_kwargs(self._descriptor.get(LEXEME_KEY))
         )
@@ -419,7 +412,7 @@ def build_gcs_profile_source(descriptor: dict[str, Any]) -> ProfileSource:
 def _require_str(descriptor: dict[str, Any], field: str, kind: str) -> str:
     value = descriptor.get(field)
     if not isinstance(value, str) or not value:
-        raise ValueError(f"profile_source: {kind} source missing {field}, got {value!r}")
+        raise ValueError(f"profile_source: {kind} source missing {field}")
     return value
 
 
