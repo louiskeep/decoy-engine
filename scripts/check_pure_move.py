@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import builtins
 import json
 import subprocess
 import sys
@@ -21,78 +20,28 @@ from collections.abc import Callable, Iterable
 from difflib import SequenceMatcher
 from pathlib import Path
 
+try:
+    from scripts import check_pure_move_scope as scope
+except ImportError:  # run as a file: scripts/ is on sys.path, the repo root is not
+    import check_pure_move_scope as scope
+
+BUILTINS, DEFS, IMPORTS = scope.BUILTINS, scope.DEFS, scope.IMPORTS
+binds, def_time, reads, shallow = scope.binds, scope.def_time, scope.reads, scope.shallow
 Reader, Files, Only = Callable[[str], "str | None"], Iterable[str], "frozenset[str] | None"
-_PENDING = ("5", "6", "7", "8")
+_PENDING = ("5", "6")
 _REQUIRED = ("old", "new", "map", "importers", "docstring_prose", "tests")
 _IMPLICIT = {"__name__", "__file__", "__doc__", "__spec__", "__loader__", "__package__"}
-_BUILTINS = frozenset(dir(builtins))
-_DEFS = (ast.FunctionDef, ast.AsyncFunctionDef)
-_IMPORTS = (ast.Import, ast.ImportFrom)
-_COMPS = (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp, ast.Lambda)
 _EFFECTS = (ast.Call, ast.Lambda, ast.Await, ast.NamedExpr, ast.Yield, ast.YieldFrom)
-_DOCS = (ast.Module, ast.ClassDef, *_DEFS)
-_LOCAL = (ast.Store, ast.arg)
-_SIMPLE = (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Expr, *_DEFS)
+_DOCS = (ast.Module, ast.ClassDef, *DEFS)
 
 
 def module_name(path: str) -> str:
     return path.removeprefix("src/").removesuffix(".py").removesuffix("/__init__").replace("/", ".")
 
 
-def _shallow(node: ast.AST):
-    for child in ast.iter_child_nodes(node):
-        yield child
-        yield from () if isinstance(child, (*_DEFS, ast.ClassDef, *_COMPS)) else _shallow(child)
-
-
-def _binds(stmt: ast.stmt, imports: bool = True) -> set[str]:
-    """Module-level names ``stmt`` binds; a bare annotation binds nothing."""
-    if isinstance(stmt, _IMPORTS):
-        return {(a.asname or a.name).split(".")[0] for a in stmt.names if imports and a.name != "*"}
-    if isinstance(stmt, (*_DEFS, ast.ClassDef)):
-        return {stmt.name}
-    out: set[str] = set()
-    for node in () if isinstance(stmt, ast.AnnAssign) and not stmt.value else _shallow(stmt):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
-            out.add(node.id)
-        elif isinstance(node, (*_DEFS, ast.ClassDef, *_IMPORTS)):
-            out |= _binds(node, imports)
-        elif isinstance(node, ast.ExceptHandler) and node.name:
-            out.add(node.name)
-    return out
-
-
-def _def_time(stmt: ast.stmt, lazy: bool) -> list[ast.expr]:
-    a = stmt.args
-    out = [*stmt.decorator_list, *a.defaults, *a.kw_defaults]
-    notes = [x.annotation for x in [*a.posonlyargs, *a.args, *a.kwonlyargs, a.vararg, a.kwarg] if x]
-    return [e for e in (out if lazy else [*out, *notes, stmt.returns]) if e]
-
-
-def _reads(node: ast.AST, lazy: bool) -> set[str]:
-    """Names ``node`` reads when it runs at module level; a nested ``def`` body runs later."""
-    if isinstance(node, _DEFS):
-        parts = _def_time(node, lazy)
-    elif isinstance(node, ast.ClassDef):
-        parts = [*node.decorator_list, *node.bases, *(k.value for k in node.keywords), *node.body]
-    else:
-        lazy_note = lazy and isinstance(node, ast.AnnAssign)
-        parts = [node.target, node.value] if lazy_note else list(ast.iter_child_nodes(node))
-    out = {node.id} if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) else set()
-    out = out.union(*(_reads(part, lazy) for part in parts if part))
-    if isinstance(node, _COMPS):
-        local = [n for n in ast.walk(node) if isinstance(getattr(n, "ctx", n), _LOCAL)]
-        out -= {getattr(n, "id", None) or getattr(n, "arg", "") for n in local}
-    elif isinstance(node, ast.stmt) and not isinstance(node, _SIMPLE):
-        out -= {n for s in _shallow(node) if isinstance(s, ast.stmt) for n in _binds(s)}
-    return out
-
-
 def _keys(stmt: ast.stmt) -> list[tuple]:
     level, src = (stmt.level, stmt.module or "") if isinstance(stmt, ast.ImportFrom) else (0, "")
-    return (
-        [(level, src, a.name, a.asname) for a in stmt.names] if isinstance(stmt, _IMPORTS) else []
-    )
+    return [(level, src, a.name, a.asname) for a in stmt.names] if isinstance(stmt, IMPORTS) else []
 
 
 class _Mod:
@@ -105,19 +54,19 @@ class _Mod:
         self.body = tree.body
         self.keys = [k for s in self.body for k in _keys(s)]
         self.lazy = (0, "__future__", "annotations", None) in self.keys
-        self.binds = set().union(*map(_binds, self.body))
+        self.binds = set().union(*map(binds, self.body))
         self.inert = {id(s) for s in self.body if self._inert(s)}
         self.ordered = [s for s in self.body if not (id(s) in self.inert or _keys(s))]
 
     def _inert(self, s: ast.stmt) -> bool:
-        if not isinstance(s, _DEFS) or s.decorator_list:
+        if not isinstance(s, DEFS) or s.decorator_list:
             return False
-        calls = [n for e in _def_time(s, self.lazy) for n in ast.walk(e) if isinstance(n, _EFFECTS)]
-        return not calls and _reads(s, self.lazy) <= _BUILTINS - self.binds
+        calls = [n for e in def_time(s, self.lazy) for n in ast.walk(e) if isinstance(n, _EFFECTS)]
+        return not calls and reads(s, self.lazy) <= BUILTINS - self.binds
 
     def targets(self, stmt: ast.stmt, known: dict[str, _Mod]) -> list[str]:
         """Manifest modules ``stmt`` imports, in the order Python loads them."""
-        if not isinstance(stmt, _IMPORTS):
+        if not isinstance(stmt, IMPORTS):
             return []
         src = self.source(stmt) if isinstance(stmt, ast.ImportFrom) else None
         names = [src, *(a.name if src is None else f"{src}.{a.name}" for a in stmt.names)]
@@ -129,7 +78,7 @@ class _Mod:
         return ".".join([*parts, *filter(None, [stmt.module])])
 
     def p(self, tag: str, stmt: ast.stmt, msg: str) -> str:
-        names = ",".join(sorted(_binds(stmt))) or "-"
+        names = ",".join(sorted(binds(stmt))) or "-"
         return f"{tag}: {self.path}:{stmt.lineno}: {type(stmt).__name__} {names}: {msg}"
 
 
@@ -137,7 +86,7 @@ def _graph(old: _Mod, known: dict[str, _Mod]) -> tuple[list[str], list]:
     """Rule 4: no cycle, no conditional link, every ordered statement reached from ``old``."""
     out, reach, trace, started = [], {}, [], set()
     for mod in known.values():
-        nodes = [(s, n) for s in mod.body for n in [s, *_shallow(s)] if mod.targets(n, known)]
+        nodes = [(s, n) for s in mod.body for n in [s, *shallow(s)] if mod.targets(n, known)]
         reach[mod.name] = {t for _, n in nodes for t in mod.targets(n, known)}
         out += [mod.p("4", s, "conditional manifest import") for s, n in nodes if s is not n]
     for name in [*known] * len(known):
@@ -174,9 +123,9 @@ def _order(old: _Mod, known: dict[str, _Mod], trace: list) -> list[str]:
         src = mod.source(stmt) if isinstance(stmt, ast.ImportFrom) else ""
         early = {a.name for a in getattr(stmt, "names", []) if src in known} - bound.get(src, set())
         early = {n for n in early if f"{src}.{n}" not in known}
-        late = _reads(stmt, mod.lazy) - bound[mod.name] - (_BUILTINS - mod.binds) | early
+        late = reads(stmt, mod.lazy) - bound[mod.name] - (BUILTINS - mod.binds) | early
         out += [mod.p("1c", stmt, f"{n} read or imported before it is bound") for n in sorted(late)]
-        bound[mod.name] |= _binds(stmt)
+        bound[mod.name] |= binds(stmt)
     first = {k: i for i, s in reversed(list(enumerate(old.body))) for k in _keys(s)}
     for mod in known.values():
         lead = mod.body.index(mod.ordered[0]) if mod.ordered else len(mod.body)
@@ -198,7 +147,7 @@ def _names(old: _Mod, known: dict[str, _Mod], own: dict[str, str]) -> list[str]:
             submodule = (f"{src}.{name}" if src else name) in known and alias is None
             if (level, src, name, alias) not in old.keys and (level or not (linked or submodule)):
                 out.append(mod.p("2", stmt, f"{name} from neither a base import nor its map owner"))
-    sites = [(n, m, s) for m in known.values() for s in m.body for n in sorted(_binds(s, False))]
+    sites = [(n, m, s) for m in known.values() for s in m.body for n in sorted(binds(s, False))]
     files = {n: {m.path for k, m, _ in sites if k == n} for n, _, _ in sites}
     kept = known[old.name].path if old.name in known else old.path
     out += [f"3: {n}: defined in {len(f)} files" for n, f in sorted(files.items()) if len(f) > 1]
@@ -217,13 +166,15 @@ def check_move(
         raise ValueError(f"manifest needs {_REQUIRED}, old present at base and kept in new")
     prose = bool(manifest["docstring_prose"])
     old, known, out = _Mod(manifest["old"], base_text, prose), {}, []
-    for path in manifest["new"]:
-        text = read_head(path)
+    texts = {path: read_head(path) for path in manifest["new"]}
+    for path, text in texts.items():
         out += [f"3: {path}: listed in new, absent at head"] if text is None else []
         known.update({} if text is None else {module_name(path): _Mod(path, text, prose)})
     problems, trace = _graph(old, known)
     out += problems + _order(old, known, trace)
-    out += _names(old, known, manifest["map"])
+    out += _names(old, known, manifest["map"]) + scope.scope_problems(
+        base_text, texts, manifest["map"]
+    )
     out = [p for p in out if only is None or p.split(":", 1)[0] in only]
     return out + [f"not-implemented: rule {r}" for r in _PENDING if only is None or r in only]
 
