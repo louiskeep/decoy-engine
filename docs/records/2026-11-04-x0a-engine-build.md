@@ -89,3 +89,20 @@ and the variable is no longer needed.
   check fails. There is no default, so a forgotten value cannot admit a new inventory.
 - The ratchet compares key sets only. A key kept with a rewritten reason passes if the new
   reason is valid.
+
+## Clean-environment gates run
+
+Venv bootstrapped from uv.lock (`DECOY_VENV=<fresh> bash scripts/dev/bootstrap.sh`), run with
+`RATCHET_SLICE=X0a scripts/dev/gates.sh --keep-going --baseline` on the head before this docs
+commit (no code differs). An earlier run on the same clean venv failed one sentry test (the
+removed-surface token inside the string-target baseline); that was fixed by masking the token.
+
+| step | branch | baseline |
+| --- | --- | --- |
+| env | PASS | SKIP |
+| ruff, format, mypy | PASS | PASS |
+| sentry | PASS (4005) | PASS (3956) |
+| licenses | PASS (63) | PASS (63) |
+| tests | PASS (50) | PASS (3) |
+
+Failing ids: branch 0, baseline 0, branch-only 0.
