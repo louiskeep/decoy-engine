@@ -2,6 +2,9 @@
 
 mapfile once made the changed-test selection silently empty there, so the gate could pass
 without running tests. This greps for the bash 4+ features that bite and seeds a case for each.
+
+Every line is scanned, comments and quoted text included: parsing shell quoting by hand kept
+missing cases, so these tokens are simply banned anywhere in scripts/dev/*.sh.
 """
 
 from __future__ import annotations
@@ -28,32 +31,11 @@ BASH4_ONLY = {
 }
 
 
-def _strip_comment(line: str) -> str:
-    """The line up to its comment: the first # outside quotes at line start or after whitespace.
-
-    A # inside quotes or inside ${#...} is not a comment. A quote is escaped only by an odd run
-    of backslashes, outside single quotes, as in bash."""
-    quote = ""
-    backslashes = 0
-    for i, ch in enumerate(line):
-        escaped = backslashes % 2 == 1
-        backslashes = backslashes + 1 if ch == "\\" and quote != "'" else 0
-        if quote:
-            if ch == quote and (quote == "'" or not escaped):
-                quote = ""
-        elif ch in "'\"" and not escaped:
-            quote = ch
-        elif ch == "#" and not escaped and (i == 0 or line[i - 1].isspace()):
-            return line[:i]
-    return line
-
-
 def findings(text: str) -> list[str]:
     out = []
     for lineno, line in enumerate(text.splitlines(), 1):
-        code = _strip_comment(line)
         for name, rx in BASH4_ONLY.items():
-            if rx.search(code):
+            if rx.search(line):
                 out.append(f"line {lineno}: {name}")
     return out
 
@@ -87,9 +69,19 @@ def test_seeded_bash4_features_are_caught(snippet: str, feature: str) -> None:
 def test_bash3_safe_loop_is_clean() -> None:
     assert findings('while IFS= read -r p; do A+=("$p"); done < <(ls)') == []
     assert findings('for p in ${A[@]+"${A[@]}"}; do :; done') == []
-    assert findings('echo "${A[*]+${A[*]}}" ${#A[@]}  # count is fine') == []
-    assert findings('echo "# literal"  # f "${A[@]}"') == []
-    assert findings('echo "\\\\"  # f "${A[@]}"') == []
-    assert findings('echo "\\\\" "quoted # text" f "${A[@]}"') != []
-    assert findings('echo \\\\" # literal" "${A[@]}"') != []
+    assert findings('echo "${A[*]+${A[*]}}" ${#A[@]}') == []
+    assert findings("n=${#A[@]}  # a count is fine") == []
     assert findings("echo 'a # b' \"${A[@]}\"") != []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "# mapfile in a comment",
+        "printf '%s' '${A[@]}'",
+        "echo ok;# mapfile",
+        "printf '%s' $'a\\' # q'; mapfile -t A < f",
+    ],
+)
+def test_comments_and_quoted_text_are_scanned_too(line: str) -> None:
+    assert findings(line) != []
