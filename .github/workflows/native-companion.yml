@@ -30,37 +30,9 @@
 name: native-companion
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "decoy-engine-native/**"
-      - "src/decoy_engine/execution/native/**"
-      # Whole native test tree, not an enumerated file list: a per-file list
-      # silently failed to trigger (and failed to run) new native tests once
-      # before, which is exactly the gap that let an unrun proof through. The
-      # companion-dependent route/parity tests live under tests/parity/native.
-      - "tests/native/**"
-      - "tests/parity/native/**"
-      # Both the worker smoke test and the D9 harness's own real-worker
-      # integration test are companion-present-only cases run by this
-      # workflow (job below, step "Physical shadow corpus + unified-slice hash equivalence"); a change to anything under the harness
-      # directory, or to either test, must trigger this workflow too.
-      - "scripts/bench-unified-slice/**"
-      - "tests/physical/test_bench_unified_slice_harness_smoke.py"
-      - "tests/physical/test_bench_compare_harness.py"
-      - "pyproject.toml"
-      - ".github/workflows/native-companion.yml"
-  pull_request:
-    paths:
-      - "decoy-engine-native/**"
-      - "src/decoy_engine/execution/native/**"
-      - "tests/native/**"
-      - "tests/parity/native/**"
-      - "scripts/bench-unified-slice/**"
-      - "tests/physical/test_bench_unified_slice_harness_smoke.py"
-      - "tests/physical/test_bench_compare_harness.py"
-      - "pyproject.toml"
-      - ".github/workflows/native-companion.yml"
+  # Manual dispatch only. gate-selfhosted.yml is the merge gate; the paid runners
+  # fire on demand so they stop failing every push (X0a). Old triggers: git history.
+  workflow_dispatch:
 
 jobs:
   # companion-wheel-linux: builds the companion across the self-hosted single-org

@@ -12,15 +12,9 @@
 name: engine-v2-substrate-matrix
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "src/decoy_engine/execution/**"
-      - ".github/workflows/engine-v2-substrate-matrix.yml"
-  pull_request:
-    paths:
-      - "src/decoy_engine/execution/**"
-      - ".github/workflows/engine-v2-substrate-matrix.yml"
+  # Manual dispatch only. gate-selfhosted.yml is the merge gate; the paid runners
+  # fire on demand so they stop failing every push (X0a). Old triggers: git history.
+  workflow_dispatch:
 
 jobs:
   substrate:

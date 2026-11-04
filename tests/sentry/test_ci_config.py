@@ -45,3 +45,33 @@ def test_precommit_ruff_hook_matches_lint_extra() -> None:
     m = re.search(r"ruff-pre-commit\s*\n(?:\s*#.*\n)*\s*rev:\s*v([\d.]+)", text)
     assert m, "ruff pre-commit hook not found"
     assert m.group(1) == _lint_extra_ruff_pin()
+
+
+WORKFLOWS = ROOT / ".github" / "workflows"
+# Release and tag publishing keep their triggers; they are not merge gates.
+TRIGGERED_ON_PURPOSE = {"gate-selfhosted.yml", "native-companion-release.yml"}
+
+
+def _triggers(path: Path) -> set[str]:
+    on = yaml.safe_load(path.read_text())
+    return set((on.get(True) or on.get("on")).keys())  # YAML parses a bare `on:` key as True
+
+
+def test_paid_runner_workflows_are_manual_dispatch_only() -> None:
+    """X0a: the self-hosted gate is the merge gate; paid runners fire only on demand."""
+    bad = {
+        p.name: sorted(_triggers(p) - {"workflow_dispatch"})
+        for p in sorted(WORKFLOWS.glob("*.yml"))
+        if p.name not in TRIGGERED_ON_PURPOSE and _triggers(p) != {"workflow_dispatch"}
+    }
+    assert not bad, f"workflows with automatic triggers: {bad}"
+
+
+def test_selfhosted_gate_runs_gates_under_the_shared_lock() -> None:
+    wf = yaml.safe_load((WORKFLOWS / "gate-selfhosted.yml").read_text())
+    (job,) = wf["jobs"].values()
+    assert job["runs-on"] == ["self-hosted", "macos", "decoy-gate"]
+    assert "timeout-minutes" in job
+    runs = " ".join(step.get("run", "") for step in job["steps"])
+    assert "flock ~/.cache/pytest-one.lock scripts/dev/gates.sh" in runs
+    assert {"push", "pull_request"} <= _triggers(WORKFLOWS / "gate-selfhosted.yml")

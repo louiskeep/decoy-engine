@@ -4,6 +4,7 @@
 #   --keep-going  run every step even after a failure (default: stop at the first)
 #   --baseline    rerun the same steps on origin/main in a temporary detached
 #                 worktree, with the SAME venv, and diff the failing test ids
+#   env RATCHET_SLICE names the slice allowed to add a first sentry inventory
 #   --steps LIST  comma list from: env,ruff,format,mypy,sentry,licenses,tests (default: all)
 #   test paths    default: tests touching files changed against origin/main
 set -uo pipefail
@@ -12,7 +13,7 @@ set -uo pipefail
 REPO_NAME=decoy-engine
 RUFF_PATHS=(src tests testflight scripts)
 MYPY_ARGS=(src/decoy_engine testflight)
-SENTRY_PATHS=(tests/sentry)
+SENTRY_PATHS=(tests/sentry tests/secret_providers/test_leak_sentry.py)
 LICENSE_TESTS=(tests/sentry/test_license_policy.py tests/sentry/test_sdv_import_sentry.py)
 PYTEST_ARGS=(-m 'not benchmark and not packaging and not codspeed')
 SRC_MATCH='src/*.py'   # changed files that map to a dotted module
@@ -29,7 +30,7 @@ while [ $# -gt 0 ]; do
     --keep-going) KEEP=1 ;;
     --baseline) BASELINE=1 ;;
     --steps) STEPS=$2; shift ;;
-    -h|--help) sed -n 2,8p "$0"; exit 0 ;;
+    -h|--help) sed -n 2,10p "$0"; exit 0 ;;
     -*) echo "gates: unknown flag $1" >&2; exit 2 ;;
     *) PATHS+=("$1") ;;
   esac
@@ -80,7 +81,9 @@ run_steps() {  # $1 label, $2 tree
       ruff) cmd=("$BIN/ruff" check "${RUFF_PATHS[@]}") ;;
       format) cmd=("$BIN/ruff" format --check "${RUFF_PATHS[@]}") ;;
       mypy) cmd=("$BIN/mypy" "${MYPY_ARGS[@]}") ;;
-      sentry) cmd=("$BIN/python" -m pytest "${junit[@]}" "${SENTRY_PATHS[@]}") ;;
+      # ratchet_check first (baselines never grow); skipped in trees that predate it (the baseline worktree)
+      sentry)
+        cmd=(bash -c 'if [ -f scripts/dev/ratchet_check.py ]; then "$0" scripts/dev/ratchet_check.py || exit 1; fi; exec "$0" -m pytest "$@"' "$BIN/python" "${junit[@]}" "${SENTRY_PATHS[@]}") ;;
       # strict: a venv that drifted from uv.lock fails instead of skipping the metadata check
       licenses)
         lic=(); for p in "${LICENSE_TESTS[@]}"; do [ -e "$tree/$p" ] && lic+=("$p"); done
