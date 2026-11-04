@@ -193,7 +193,8 @@ def _fault(step: str, recorded: list[int], marker_path: str) -> tuple[str, Calla
         return "close", close, errno.EIO
 
     def replace(src: Any, dst: Any, **_k: Any) -> None:
-        raise OSError(errno.EACCES, os.strerror(errno.EACCES), str(src), str(dst))
+        # os.replace's own shape: filename and filename2 (the 4th slot is winerror)
+        raise OSError(errno.EACCES, os.strerror(errno.EACCES), str(src), None, str(dst))
 
     return "replace", replace, errno.EACCES
 
