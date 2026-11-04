@@ -18,7 +18,7 @@ IMPORTS = (ast.Import, ast.ImportFrom)
 COMPS = (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp, ast.Lambda)
 _LOCAL = (ast.Store, ast.arg)
 _SIMPLE = (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Expr, *DEFS)
-_BINDING = (*IMPORTS, *DEFS, ast.ClassDef, ast.Assign, ast.AnnAssign)
+_ALLOWED = (*IMPORTS, *DEFS, ast.ClassDef, ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Expr)
 _DYNAMIC = {"exec", "eval", "globals"}
 
 
@@ -42,6 +42,52 @@ def binds(stmt: ast.stmt, imports: bool = True) -> set[str]:
             out |= binds(node, imports)
         elif isinstance(node, ast.ExceptHandler) and node.name:
             out.add(node.name)
+    return out
+
+
+def sure(stmt: ast.stmt) -> set[str]:
+    """Names a module-level statement binds at runtime. Only the kinds ``shape`` allows bind;
+    an ``if TYPE_CHECKING:`` block binds nothing, so its names never count as bound."""
+    return binds(stmt) if isinstance(stmt, _ALLOWED) else set()
+
+
+def _type_checking(stmt: ast.stmt) -> bool:
+    test = getattr(stmt, "test", None)
+    named = isinstance(test, ast.Name) and test.id == "TYPE_CHECKING"
+    named |= isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+    return (
+        isinstance(stmt, ast.If)
+        and named
+        and not stmt.orelse
+        and all(isinstance(s, IMPORTS) for s in stmt.body)
+    )
+
+
+def _walrus(node: ast.AST) -> bool:
+    """A walrus that runs at module level; def and class bodies bind their own scope."""
+    if isinstance(node, ast.NamedExpr):
+        return True
+    kids = (
+        def_time(node, False)
+        if isinstance(node, (*DEFS, ast.ClassDef))
+        else ast.iter_child_nodes(node)
+    )
+    return any(_walrus(kid) for kid in kids)
+
+
+def shape(tree: ast.Module, path: str) -> list[str]:
+    """Rule 7 by construction: module-level code is straight-line, so what it binds is certain.
+
+    Compound statements (other than a TYPE_CHECKING import block), loose statements and any
+    module-level walrus are refused, so no binding depends on a runtime condition.
+    """
+    out = []
+    for stmt in tree.body:
+        kind = type(stmt).__name__
+        if not isinstance(stmt, _ALLOWED) and not _type_checking(stmt):
+            out.append(f"7: {path}:{stmt.lineno}: module-level {kind} is refused")
+        elif _walrus(stmt):
+            out.append(f"7: {path}:{stmt.lineno}: module-level walrus is refused")
     return out
 
 
@@ -74,6 +120,20 @@ def reads(node: ast.AST, lazy: bool) -> set[str]:
     return out
 
 
+def reached(old: str, nodes: list, got: list) -> set[str]:
+    """Names a file's code reaches through the old module path: attributes of any alias of it
+    (an alias of an ancestor package included), and every name after ``from old import *``."""
+    full = [(a, f"{s}.{a.name}".strip(".")) for s, a in got]
+    via = {old}
+    for a, f in full:
+        if old == f or old.startswith(f + "."):
+            via.add((a.asname or a.name) + old[len(f) :])
+    out = {n.attr for n in nodes if isinstance(n, ast.Attribute) and ast.unparse(n.value) in via}
+    if any(s == old and a.name == "*" for s, a in got):
+        out |= {n.id for n in nodes if isinstance(n, ast.Name)}
+    return out
+
+
 def _outer_names(node: ast.AST):
     """Names an expression reads in its own scope; lambda and comprehension bodies excluded."""
     if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
@@ -103,47 +163,52 @@ def _annotated(node: ast.AST) -> bool:
     )
 
 
-def _moved(node, path: str, top, bound: set[str], old_binds: set[str], lazy: bool, stays: bool):
+def _rebinds(table: symtable.SymbolTable, sym: symtable.Symbol) -> bool:
+    """A class body that reads and rebinds a name (``helper = helper``) reads it from globals."""
+    return table.get_type() == "class" and sym.is_referenced() and sym.is_assigned()
+
+
+def _moved(node, path, top, bound, old_binds, lazy, stays, shared):
     """Rule 7 for one def or class, from its own and its sibling symbol tables."""
     where = f"7: {path}:{node.lineno}: {type(node).__name__} {node.name}"
     start = min([node.lineno, *(d.lineno for d in node.decorator_list)])
     near = [c for c in top.get_children() if start <= c.get_lineno() <= node.end_lineno]
-    syms = [s for c in near for t in _tables(c) for s in t.get_symbols()]
-    need = {s.get_name() for s in syms if s.is_global()}
+    tabs = [t for c in near for t in _tables(c)]
+    need = {s.get_name() for t in tabs for s in t.get_symbols() if s.is_global() or _rebinds(t, s)}
     need |= {n for e in def_time(node, lazy) for n in _outer_names(e)}
-    writes = {s.get_name() for s in syms if s.is_declared_global() and s.is_assigned()}
     undefined = need - old_binds - BUILTINS  # never bound at base: ruff F821 owns these
     missing = need - bound - undefined - (BUILTINS - old_binds)
-    out = [f"{where}: writes global {n}" for n in sorted(writes)]
-    out += [f"{where}: calls {n}" for n in sorted(need & _DYNAMIC)]
-    return ([] if stays else out) + [
-        f"{where}: {n} is not bound unconditionally here" for n in sorted(missing)
-    ]
+    out = [f"{where}: calls {n}" for n in sorted(need & _DYNAMIC)]
+    out += [f"{where}: shares global {n}" for n in sorted(need & shared) if not stays]
+    return out + [f"{where}: {n} is not bound unconditionally here" for n in sorted(missing)]
 
 
 def scope_problems(base: str, heads: dict, owners: dict[str, str], kept: str) -> list[str]:
     """Rule 7: a moved or retained def keeps every global it reads; rule 8: lazy annotations.
 
-    A retained def may rely on a conditional binding in the kept module: rule 1a holds that
-    block identical and in place. Only the bound-name check applies to it, since it stays.
+    Only a straight-line module-level binding counts as bound (see ``shape``).
     """
     old_top = symtable.symtable(base, "old", "exec")
     old_binds = {s.get_name() for s in old_top.get_symbols() if s.is_assigned() or s.is_imported()}
-    lazy, star = _future(ast.parse(base))
+    shared = {
+        s.get_name() for t in _tables(old_top) for s in t.get_symbols() if s.is_declared_global()
+    }
+    old_binds |= shared  # a global declaration binds at module level, as ruff F821 sees it
+    base_tree = ast.parse(base)
+    lazy, star = _future(base_tree)
     out = ["7: base holds a star import; globals cannot be resolved"] if star else []
+    out += shape(base_tree, "base")
+    moved = {n for n, p in owners.items() if p != kept}
+    out += [f"7: {n} is declared global at base and moves" for n in sorted(shared & moved)]
     for path in sorted({p for p in [*owners.values(), kept] if heads.get(p)}):
         tree, top = ast.parse(heads[path]), symtable.symtable(heads[path], path, "exec")
         dest_lazy, dest_star = _future(tree)
         out += [f"7: {path}: holds a star import; globals cannot be resolved"] if dest_star else []
-        ok = [s for s in tree.body if path == kept or isinstance(s, _BINDING)]
-        bound = set().union(*map(binds, ok))
+        bound = set().union(*(sure(s) for s in tree.body))
+        out += shape(tree, path)
         defs = [s for s in tree.body if isinstance(s, (*DEFS, ast.ClassDef))]
         for node in (s for s in defs if owners.get(s.name, kept) == path):
-            out += _moved(node, path, top, bound, old_binds, lazy, path == kept)
-            lost = lazy and not dest_lazy and _annotated(node)
-            out += (
-                [f"8: {path}:{node.lineno}: {node.name}: annotations lose lazy evaluation"]
-                if lost
-                else []
-            )
+            out += _moved(node, path, top, bound, old_binds, lazy, path == kept, shared)
+            if lazy and not dest_lazy and _annotated(node):
+                out += [f"8: {path}:{node.lineno}: {node.name}: annotations lose lazy eval"]
     return out
