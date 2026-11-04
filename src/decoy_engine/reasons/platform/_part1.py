@@ -383,7 +383,7 @@ YAML_NOT_A_MAPPING = _d(
 )
 LEGACY_GRAPH_MODE_RETIRED = _d(
     "legacy_graph_mode_retired",
-    "This pipeline's YAML is graph-mode, which was retired. The V2 engine accepts only `version: 2` PipelineConfig YAML. Re-open the pipeline in the graph builder -- the save seam emits the V2 config now. If the pipeline uses any of the retired ops, recreate it with the V2 narrow surface.",
+    "This pipeline's YAML is graph-mode, which was retired. The V2 engine accepts only `version: 2` PipelineConfig YAML. Re-open the pipeline in the graph builder. The save seam emits the V2 config now. If the pipeline uses any of the retired ops, recreate it with the V2 narrow surface.",
     since="1.5.0",
 )
 NOT_A_V2_CONFIG = _d(
@@ -410,7 +410,7 @@ FIXED_WIDTH_LAYOUT_CORRUPT = _d(
 )
 GEO_LAT_LNG_REQUIRES_H3 = _d(
     "geo_lat_lng_requires_h3",
-    "geo_generalize with type='lat_lng' requires the h3 library, which is not installed in this environment. Install it with: pip install 'decoy-engine[geo]'  or: uv add 'decoy-engine[geo]'",
+    "geo_generalize with type='lat_lng' requires the h3 library, which is not installed in this environment. Install it with: pip install 'decoy-engine[geo]' or: uv add 'decoy-engine[geo]'",
     since="1.5.0",
 )
 V2_CONFIG_INVALID = _d(

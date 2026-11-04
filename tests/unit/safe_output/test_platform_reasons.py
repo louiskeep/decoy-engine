@@ -126,11 +126,11 @@ def _new_specs() -> list[reasons.ReasonSpec]:
     return [s for s in reasons.specs() if s.namespace in ("platform", "safe_output")]
 
 
-def test_every_platform_code_declared_since_current() -> None:
+def test_every_platform_code_declared_since_floor() -> None:
     new = _new_specs()
     assert {"platform", "safe_output"} <= set(reasons.namespaces())
     assert len(new) == 71
-    assert [s.identity for s in new if s.since != reasons.REGISTRY_VERSION] == []
+    assert [s.identity for s in new if s.since != V] == []
 
 
 def test_identity_set_is_exact() -> None:
@@ -197,7 +197,9 @@ def test_summaries_are_value_free() -> None:
         assert [f for f in forbidden if f in summary] == [], spec.identity
 
 
-def test_registry_version_is_next_minor() -> None:
+def test_registry_version_is_at_least_the_floor() -> None:
+    # A later registry bump must not turn this red: only the floor and the pin ordering are fixed.
     pin = json.loads(PIN.read_text())
-    assert reasons.REGISTRY_VERSION == V
-    assert Version(V) > Version(pin["registry_version"])
+    current = Version(reasons.REGISTRY_VERSION)
+    assert current >= Version(V)
+    assert current > Version(pin["registry_version"])
