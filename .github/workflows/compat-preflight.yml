@@ -8,9 +8,7 @@
 name: Compat pre-flight
 
 on:
-  # Manual dispatch only. gate-selfhosted.yml is the merge gate; the paid runners
-  # fire on demand so they stop failing every push (X0a). Old triggers: git history.
-  workflow_dispatch:
+  pull_request:
 
 permissions:
   contents: read

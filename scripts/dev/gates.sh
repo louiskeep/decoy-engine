@@ -62,7 +62,14 @@ if [ ${#PATHS[@]} -eq 0 ]; then
   if ! git -C "$ROOT" rev-parse -q --verify origin/main >/dev/null; then
     echo "gates: origin/main missing; run: git fetch origin main" >&2; exit 2
   fi
-  mapfile -t PATHS < <(changed_tests)
+  # No mapfile: the Mac runner has bash 3.2. A failing selection must fail the gate, not skip tests.
+  if ! SELECTED=$(changed_tests); then
+    echo "gates: could not select changed tests (merge-base vs origin/main failed)" >&2; exit 2
+  fi
+  PATHS=()
+  while IFS= read -r p; do [ -n "$p" ] && PATHS+=("$p"); done <<EOT
+$SELECTED
+EOT
   SELECTION="changed vs origin/main: ${#PATHS[@]} test file(s)"
 else
   SELECTION="explicit: ${PATHS[*]}"

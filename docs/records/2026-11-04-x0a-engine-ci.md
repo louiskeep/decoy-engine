@@ -65,3 +65,11 @@ head, no env var.
 | tests | PASS (51) | PASS (3) |
 
 Failing ids: branch 0, baseline 0, branch-only 0.
+
+## Codex V1 fixes
+
+- `scripts/dev/gates.sh` used `mapfile`, which the Mac runner's bash 3.2 lacks. Selection came back empty and the gate could skip tests and pass. It now reads the selection with a `while read` loop, and a failing `changed_tests` exits 2.
+- `tests/sentry/test_bash32_compat.py` greps `scripts/dev/*.sh` for mapfile, readarray, `declare -A`, `${v,,}` and `${v^^}`, `&>>` and negative array indexes, with a seeded case for each. No other bash 4 features were found in gates.sh.
+- This Linux box has bash 5.2, so the sentry is a text check only. Real bash 3.2 verification happens on the Mac at AT-CI3.
+- `compat-preflight.yml` and `regression-proof.yml` read pull_request context (base_ref, PR body, labels), so their `pull_request` triggers are restored from origin/main. They run on paid hosted runners; billing failures there are the known status quo. `test_ci_config.py` exempts both from the dispatch-only rule. The self-hosted guard sentry is unaffected.
+- The first live run on the Mac (platform run 41767760740) failed at "gates: no venv at .../.venv". `gate-selfhosted.yml` now has a "Bootstrap the gate venv" step before the gate. It runs `scripts/dev/bootstrap.sh` under the shared pytest-one flock with `DECOY_VENV=$HOME/.cache/decoy-gate-venv-engine`, and the gate step exports the same variable. gates.sh and bootstrap.sh defaults are unchanged. Both steps put `~/bin` (flock shim) and `~/.local/bin` (uv) on PATH. The job guard and permissions are unchanged.

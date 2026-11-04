@@ -15,7 +15,9 @@ command -v uv >/dev/null || { echo "LICENSES FAIL: uv not on PATH" >&2; exit 1; 
 PY=${DECOY_VENV:-${UV_PROJECT_ENVIRONMENT:-$ROOT/.venv}}/bin/python
 [ -x "$PY" ] || { echo "LICENSES FAIL: no venv; run scripts/dev/bootstrap.sh" >&2; exit 1; }
 
-mapfile -t EXTRAS < <("$PY" -c '
+# No mapfile: bash 3.2 compatible.
+EXTRAS=()
+while IFS= read -r e; do EXTRAS+=("$e"); done < <("$PY" -c '
 import json, sys
 for e in json.load(open(sys.argv[1]))["extras"]["runtime"]:
     print("--extra"); print(e)' scripts/dev/license_policy.json)
