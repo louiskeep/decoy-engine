@@ -1,38 +1,27 @@
 """Sentry: private files go through `fileaccess.write_private`; no late or swallowed chmod.
 
-A file that holds credentials, key material, or an engine-internal copy of real data must be
-0600 from the moment it exists. Writing it at the umask and narrowing it afterwards leaves a
-window in which others can read it; a `chmod` whose failure an `except: pass` hides leaves it
-open with no signal. The fix is the create-0600, fsync, replace recipe behind
-`fileaccess.write_private` (plan "Private files").
+A file holding credentials, key material or an engine copy of real data must be 0600 from
+creation: write-then-chmod leaves a readable window, and an `except: pass` around a chmod hides
+a file left open (plan "Private files": create 0600, fsync, replace).
 
-Every registry row (`file_access_registry.toml`) whose sink can create or write a file carries
-a `disposition`:
-- `private`: the file holds credentials, key material, or an engine-internal copy of real data
-  (payloads, staged sources, spill and scratch files, vault and key files);
-- `public`: a declared job output at a caller-chosen target, a log, or a shipped artifact;
-- `read`: the call never creates or writes a file (the `open`, `os.open` and `pyarrow.OSFile`
-  rows mix reads and writes under one sink name, and a writer into an in-memory buffer such as
-  `pa.BufferOutputStream()` or `io.BytesIO()` creates none). A third value is plan drift, kept so a
-  mislabeled writer is still caught: a `read` row whose call passes a write mode, or `os.open`
-  flags that are not plain `os.O_*` read flags, is a finding.
+Each registry row whose sink can create or write a file carries a `disposition`: `private`
+(credentials, key material, engine copies of real data: payloads, staged sources, spill and
+scratch files, vault and key files), `public` (a declared job output at a caller target, a log,
+a shipped artifact) or `read` (the call never creates or writes a file). `read` is plan drift,
+kept because the `open`, `os.open` and `pyarrow.OSFile` rows mix reads and writes; a `read` row
+whose call passes a write mode, non-`os.O_*` or write flags, or writes anywhere but an
+in-memory buffer is a finding.
 
-Rules (findings carry path, line, function qualname and rule id only):
-- P1: a creating-sink row without a valid disposition, or a `read` row whose call writes.
-- P2: a `private` row is a finding unless its registry key is in the shrink-only baseline
-  `baselines/private-file-sinks.json`; a stale baseline key fails.
-- P3: a `chmod`, `fchmod` or `Path.chmod` inside a `try` body whose `OSError`,
-  `PermissionError`, `Exception`, `BaseException` or bare handler is only `pass`, `...` or
-  `continue`. No baseline.
-- P4: a `chmod` (not `fchmod`) whose mode is a file mode (no execute bit) or not a constant,
-  outside `decoy_engine/fileaccess/`. Directory modes such as `0o700` pass.
+Rules (findings carry path, line, qualname and rule id): P1 a creating-sink row without a valid
+disposition, or a false `read`; P2 a `private` row not in the shrink-only baseline
+`baselines/private-file-sinks.json` (stale keys fail); P3 a chmod or fchmod in a `try` body
+whose `OSError`/`PermissionError`/`Exception`/bare handler is only `pass`, `...` or
+`continue`; P4 a chmod (not fchmod) outside `decoy_engine/fileaccess/` whose mode has no
+execute bit or is not a constant.
 
-Named limits: SQL passed to `duckdb.connection.execute` is not read, so those rows'
-dispositions are the hand review's decision. P3 and P4 see the calls the file-access scan
-records (`os.chmod`, `os.fchmod`, and `.chmod()` on a value the scan knows is a `Path`);
-`os.lchmod` is not in the scan's sink set and does not exist on Linux.
-
-The scan, resolver and registry loader are the file-access sentry's (`tests/sentry/fa/`).
+Named limits: `duckdb.connection.execute` SQL is not read, so those dispositions are the hand
+review's; P3 and P4 see what the file-access scan (`tests/sentry/fa/`, reused here) records
+(`os.chmod`, `os.fchmod`, `.chmod()` on a known `Path`); `os.lchmod` is not in its sink set.
 """
 
 from __future__ import annotations
@@ -57,7 +46,7 @@ SEEDED = HERE / "fixtures" / "private_files"
 EXEMPT_PREFIX = "decoy_engine/fileaccess/"
 
 CREATING_SINKS = frozenset(
-    {
+    [
         "open",
         "builtins.open",
         "io.open",
@@ -75,11 +64,11 @@ CREATING_SINKS = frozenset(
         "joblib.dump",
         "logging.handlers.RotatingFileHandler",
         "duckdb.connection.execute",
-    }
+    ]
 )
 DISPOSITIONS = frozenset({"public", "private", "read"})
 READABLE_SINKS = frozenset(
-    {"open", "builtins.open", "io.open", "os.open", "Path.open", "pyarrow.OSFile"}
+    ["open", "builtins.open", "io.open", "os.open", "Path.open", "pyarrow.OSFile"]
 )
 MODE_SINKS = frozenset({"os.chmod", "os.lchmod", "os.fchmod", "Path.chmod", "Path.lchmod"})
 SWALLOWED = frozenset({"OSError", "PermissionError", "Exception", "BaseException"})
@@ -281,14 +270,12 @@ def test_private_baseline_has_no_stale_keys() -> None:
     )
 
 
-def test_no_swallowed_mode_change() -> None:
-    found = [str(f) for f in mode_findings(list(_engine_sites()), EXEMPT_PREFIX) if f.rule == "P3"]
-    assert not found, "a chmod failure must not be swallowed:\n" + "\n".join(found)
-
-
-def test_no_late_file_mode() -> None:
-    found = [str(f) for f in mode_findings(list(_engine_sites()), EXEMPT_PREFIX) if f.rule == "P4"]
-    assert not found, "create the file 0600 with write_private, not chmod:\n" + "\n".join(found)
+@pytest.mark.parametrize("rule", ["P3", "P4"])
+def test_no_swallowed_or_late_mode_change(rule: str) -> None:
+    found = [str(f) for f in mode_findings(list(_engine_sites()), EXEMPT_PREFIX) if f.rule == rule]
+    assert not found, "no swallowed chmod (P3); create 0600 with write_private (P4):\n" + (
+        "\n".join(found)
+    )
 
 
 def test_walk_is_not_vacuous() -> None:

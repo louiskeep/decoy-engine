@@ -137,74 +137,31 @@ class _SpinSentinelError(Exception):
     """Raised by the zero-progress fake once it has spun long enough to prove a loop."""
 
 
-def _zero_progress() -> Callable[..., int]:
-    calls = [0]
+CODES = {"fchmod": errno.EPERM, "write": errno.ENOSPC, "partial": errno.ENOSPC}
+CODES |= {"zero": errno.EIO, "fsync": errno.EIO, "close": errno.EIO, "replace": errno.EACCES}
 
-    def write(fd: int, data: Any) -> int:
+
+def _fault(step: str, fds: list[int], path: str) -> tuple[str, Callable[..., Any], int]:
+    """(os attribute, fake, expected errno) for one failing step; errors carry the path."""
+    real_write, real_close, calls = os.write, os.close, [0]
+    code = CODES[step]
+
+    def fake(fd: Any, *args: Any, **_k: Any) -> Any:
         calls[0] += 1
-        if calls[0] > 1000:
-            raise _SpinSentinelError()
-        return 0
-
-    return write
-
-
-def _partial(real: Callable[..., int]) -> Callable[..., int]:
-    calls = [0]
-
-    def write(fd: int, data: Any) -> int:
-        calls[0] += 1
-        if calls[0] == 1:
-            return real(fd, bytes(data[:1]))
-        raise OSError(errno.ENOSPC, "No space left on device")
-
-    return write
-
-
-def _fault(step: str, recorded: list[int], marker_path: str) -> tuple[str, Callable[..., Any], int]:
-    """(os attribute, fake, expected errno) for one failing step."""
-    real_write = os.write
-
-    def fail_on_fd(code: int) -> Callable[..., Any]:
-        def fake(fd: int, *_a: Any) -> Any:
-            recorded.append(fd)
-            raise OSError(code, os.strerror(code), marker_path)
-
-        return fake
-
-    if step == "fchmod":
-        return "fchmod", fail_on_fd(errno.EPERM), errno.EPERM
-    if step == "write":
-        return "write", fail_on_fd(errno.ENOSPC), errno.ENOSPC
-    if step == "partial":
-        return "write", _recording(_partial(real_write), recorded), errno.ENOSPC
-    if step == "zero":
-        return "write", _recording(_zero_progress(), recorded), errno.EIO
-    if step == "fsync":
-        return "fsync", fail_on_fd(errno.EIO), errno.EIO
-    if step == "close":
-        real_close = os.close
-
-        def close(fd: int) -> None:
-            recorded.append(fd)
+        if step == "replace":  # os.replace's own shape: the 4th slot is winerror
+            raise OSError(code, os.strerror(code), str(fd), None, str(args[0]))
+        fds.append(fd)
+        if step == "partial" and calls[0] == 1:
+            return real_write(fd, bytes(args[0][:1]))
+        if step == "zero":
+            if calls[0] > 1000:
+                raise _SpinSentinelError()
+            return 0
+        if step == "close":
             real_close(fd)
-            raise OSError(errno.EIO, os.strerror(errno.EIO), marker_path)
+        raise OSError(code, os.strerror(code), path)
 
-        return "close", close, errno.EIO
-
-    def replace(src: Any, dst: Any, **_k: Any) -> None:
-        # os.replace's own shape: filename and filename2 (the 4th slot is winerror)
-        raise OSError(errno.EACCES, os.strerror(errno.EACCES), str(src), None, str(dst))
-
-    return "replace", replace, errno.EACCES
-
-
-def _recording(fake: Callable[..., int], recorded: list[int]) -> Callable[..., int]:
-    def wrapper(fd: int, data: Any) -> int:
-        recorded.append(fd)
-        return fake(fd, data)
-
-    return wrapper
+    return {"partial": "write", "zero": "write"}.get(step, step), fake, code
 
 
 STEPS = ["fchmod", "write", "partial", "zero", "fsync", "replace"]
@@ -309,8 +266,8 @@ def test_error_text_is_value_free(
             raise OSError(errno.EBUSY, os.strerror(errno.EBUSY), marked)
 
         monkeypatch.setattr(LocalOutputTxn, "abort", abort)
-        name, fake, code = _fault("write", recorded, marked)
-        monkeypatch.setattr(os, name, fake)
+        _name, fake, code = _fault("write", recorded, marked)
+        monkeypatch.setattr(os, "write", fake)
     else:
         name, fake, code = _fault(step, recorded, marked)
         monkeypatch.setattr(os, name, fake)
@@ -333,35 +290,24 @@ def test_error_text_is_value_free(
         assert MARKER not in record.getMessage()
 
 
-def test_strict_policy_private_label_is_0600(tmp_path: Path) -> None:
-    strict = RootRelative(tmp_path)
-    try:
-        with _umask(0):
-            txn = strict.output_dir(_req(tmp_path / "payload.json")).begin(
-                "file", "replace", label="isolated"
-            )
-            fd = txn.create_file("payload.json")
-            try:
-                mode = stat.S_IMODE(os.fstat(fd).st_mode)
-            finally:
-                os.close(fd)
-                txn.abort()
-    finally:
-        strict.close()
-    assert mode == 0o600
-
-
-def test_ambient_isolated_label_is_private(tmp_path: Path) -> None:
+def _label_mode(policy: FileAccess, target: Path) -> int:
     with _umask(0):
-        txn = (
-            LocalFileAccess()
-            .output_dir(_req(tmp_path / "payload.json"))
-            .begin("file", "replace", label="isolated")
-        )
-        fd = txn.create_file("payload.json")
+        txn = policy.output_dir(_req(target)).begin("file", "replace", label="isolated")
+        fd = txn.create_file(target.name)
         try:
-            mode = stat.S_IMODE(os.fstat(fd).st_mode)
+            return stat.S_IMODE(os.fstat(fd).st_mode)
         finally:
             os.close(fd)
             txn.abort()
-    assert mode == 0o600
+
+
+def test_strict_policy_private_label_is_0600(tmp_path: Path) -> None:
+    strict = RootRelative(tmp_path)
+    try:
+        assert _label_mode(strict, tmp_path / "payload.json") == 0o600
+    finally:
+        strict.close()
+
+
+def test_ambient_isolated_label_is_private(tmp_path: Path) -> None:
+    assert _label_mode(LocalFileAccess(), tmp_path / "payload.json") == 0o600
