@@ -227,7 +227,7 @@ def test_branch_only_steps_flags_a_failure_main_does_not_have(tmp_path: Path) ->
     [
         "scripts/codeset_etl/_x0a_" + "orphan.py",
         "scripts/codeset_etl/_x0a_" + "orphan.sh",
-        "Makefile",
+        "_x0a_" + "orphan.mk",  # a root file no test names
     ],
 )
 def test_gates_fails_a_change_outside_the_old_code_globs_with_no_matching_test(
@@ -254,7 +254,7 @@ def test_gates_fails_a_mixed_docs_and_code_change_with_no_tests(tmp_path: Path) 
 
 
 def test_gates_passes_a_change_made_only_of_documentation_paths(tmp_path: Path) -> None:
-    files = {"README.md": "# r\n", "docs/a/b.rst": "x\n", ".github/note.yml": "a: 1\n"}
+    files = {"README.md": "# r\n", "docs/a/b.rst": "x\n", "CHANGELOG.md": "x\n"}
     clone = _diff_clone(tmp_path, files)
     proc = _run([str(BASH), "scripts/dev/gates.sh", "--steps", "format,tests"], clone)
     out = proc.stdout + proc.stderr
@@ -309,10 +309,17 @@ def test_ruff_concise_diagnostics_are_compared_as_a_multiset(tmp_path: Path) -> 
     assert _verdict(other, (1, two + "\n"), (1, one)) == ["mypy"]
 
 
-def _write_pytest(out: Path, label: str, ids: list[str]) -> None:
+def _write_pytest(out: Path, label: str, ids: list[str], declared: int | None = None) -> None:
     with (out / f"{label}.steps").open("a") as fh:
         fh.write("tests\t1\tpytest\n")
-    (out / f"{label}-tests.xml").write_text("<testsuites/>")
+    cases = "".join(
+        f'<testcase classname="{i.split("::")[0]}" name="{i.split("::")[1]}"><failure/></testcase>'
+        for i in ids
+    )
+    n = len(ids) if declared is None else declared
+    (out / f"{label}-tests.xml").write_text(
+        f'<testsuite failures="{n}" errors="0">{cases}</testsuite>'
+    )
     (out / f"{label}-tests.log").write_text("".join(f"FAILED {i} - boom\n" for i in ids))
 
 
@@ -325,3 +332,35 @@ def test_a_pytest_failure_main_lacks_is_branch_only_when_main_also_fails(tmp_pat
     _write_pytest(shared, "baseline", ["tests/test_a.py::test_old"])
     _write_pytest(shared, "branch", ["tests/test_a.py::test_old"])
     assert _report_module().branch_only_steps(shared) == []
+
+
+def test_a_repeated_pytest_failure_counts_each_time(tmp_path: Path) -> None:
+    _write_pytest(tmp_path, "baseline", ["tests/test_a.py::test_p"])
+    _write_pytest(tmp_path, "branch", ["tests/test_a.py::test_p", "tests/test_a.py::test_p"])
+    assert _report_module().branch_only_steps(tmp_path) == ["tests"]
+
+
+def test_a_junit_report_whose_totals_disagree_is_branch_only(tmp_path: Path) -> None:
+    _write_pytest(tmp_path, "baseline", ["tests/test_a.py::test_old"])
+    _write_pytest(tmp_path, "branch", ["tests/test_a.py::test_old"], declared=2)
+    assert _report_module().branch_only_steps(tmp_path) == ["tests"]
+
+
+def test_gates_fails_a_code_file_renamed_into_docs_with_no_tests(tmp_path: Path) -> None:
+    # A pure rename shows only the new path in a rename-aware diff, which would hide the code side.
+    code = "scripts/codeset_etl/_x0a_" + "moved.py"
+    clone = _diff_clone(tmp_path, {code: "X = 1\n"})
+    _git(clone, "update-ref", "refs/remotes/origin/main", "HEAD")
+    _git(clone, "mv", code, "docs/_x0a_moved.py")
+    _git(clone, "commit", "-qm", "rename")
+    proc = _run([str(BASH), "scripts/dev/gates.sh", "--steps", "format,tests"], clone)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode != 0, out
+    assert "selects no tests" in proc.stderr, out
+
+
+def test_gates_treats_a_workflow_change_as_code(tmp_path: Path) -> None:
+    clone = _diff_clone(tmp_path, {".github/workflows/_x0a_" + "probe.yml": "on: push\n"})
+    proc = _run([str(BASH), "scripts/dev/gates.sh", "--steps", "format,tests"], clone)
+    assert proc.returncode != 0, proc.stdout + proc.stderr
+    assert "selects no tests" in proc.stderr

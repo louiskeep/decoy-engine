@@ -19,7 +19,7 @@ PYTEST_ARGS=(-m 'not benchmark and not packaging and not codspeed')
 # Everything is code unless it matches NON_CODE_GLOBS: a diff with any code path must select at
 # least one test (see code_changed). List only pure-documentation or repo-metadata paths here;
 # `*` crosses `/`, so 'docs/*' also covers docs/records.
-NON_CODE_GLOBS=('docs/*' 'docs/records/*' '*.md' '.github/*' 'LICENSE*' 'NOTICE*' 'CHANGELOG*'
+NON_CODE_GLOBS=('docs/*' 'docs/records/*' '*.md' 'LICENSE*' 'NOTICE*' 'CHANGELOG*'
   '.gitignore' '.gitattributes' '.aiignore' '.claude/*' '.tours/*')
 SRC_MATCH='src/*.py'   # changed files that map to a dotted module
 SRC_STRIP='src/'       # prefix removed before turning a path into a module
@@ -51,7 +51,7 @@ trap cleanup EXIT
 changed_tests() {
   local base f mod
   base=$(git -C "$ROOT" merge-base origin/main HEAD) || return 1
-  { git -C "$ROOT" diff --name-only "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } |
+  { git -C "$ROOT" diff --name-only --no-renames "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } |
     sort -u | while read -r f; do
       [ -f "$ROOT/$f" ] || continue
       # shellcheck disable=SC2254  # SRC_MATCH is a glob on purpose
@@ -87,7 +87,7 @@ code_changed() {
     [ -n "$f" ] || continue
     non_code "$f" || return 0
   done <<EOT
-$({ git -C "$ROOT" diff --name-only "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } | sort -u)
+$({ git -C "$ROOT" diff --name-only --no-renames "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } | sort -u)
 EOT
   return 1
 }

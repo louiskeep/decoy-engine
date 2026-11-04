@@ -100,8 +100,22 @@ def diagnostics(out: Path, label: str, name: str) -> tuple[Counter[tuple[str, st
 def _pytest_failures(
     out: Path, label: str, name: str
 ) -> tuple[Counter[tuple[str, str, str]], bool]:
-    ids = failing_ids_for(out, label, name)
-    return Counter((i, "", "") for i in ids), bool(ids)
+    """Every failing or erroring JUnit testcase, counted without deduplication.
+
+    Complete only when at least one case failed and the count matches the suites' own failures
+    plus errors totals, so a partial or truncated report is never read as shared with main."""
+    xml = out / f"{label}-{name}.xml"
+    keys: Counter[tuple[str, str, str]] = Counter()
+    if not xml.exists():
+        return keys, False
+    root = ET.parse(xml).getroot()  # noqa: S314 -- pytest JUnit output this run wrote
+    for case in root.iter("testcase"):
+        if case.find("failure") is not None or case.find("error") is not None:
+            keys[(f"{case.get('classname', '')}::{case.get('name', '')}", "", "")] += 1
+    declared = sum(
+        int(s.get("failures", 0)) + int(s.get("errors", 0)) for s in root.iter("testsuite")
+    )
+    return keys, bool(keys) and declared == sum(keys.values())
 
 
 def branch_only_steps(out: Path) -> list[str]:
