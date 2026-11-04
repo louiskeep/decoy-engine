@@ -1,0 +1,5 @@
+# Binds each sentry id to exactly one baseline file under tests/sentry/baselines/.
+# scripts/dev/ratchet_check.py compares every baseline with its merge-base copy and fails
+# when keys are added. A new sentry adds its row here in the slice that introduces it.
+# Engine has no plan-format baseline yet; the F29 reason baseline is frozen by
+# tests/sentry/test_reason_baseline_frozen.py and stays outside this registry.

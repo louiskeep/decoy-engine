@@ -12,7 +12,7 @@ set -uo pipefail
 REPO_NAME=decoy-engine
 RUFF_PATHS=(src tests testflight scripts)
 MYPY_ARGS=(src/decoy_engine testflight)
-SENTRY_PATHS=(tests/sentry)
+SENTRY_PATHS=(tests/sentry tests/secret_providers/test_leak_sentry.py)
 LICENSE_TESTS=(tests/sentry/test_license_policy.py tests/sentry/test_sdv_import_sentry.py)
 PYTEST_ARGS=(-m 'not benchmark and not packaging and not codspeed')
 SRC_MATCH='src/*.py'   # changed files that map to a dotted module
@@ -80,7 +80,9 @@ run_steps() {  # $1 label, $2 tree
       ruff) cmd=("$BIN/ruff" check "${RUFF_PATHS[@]}") ;;
       format) cmd=("$BIN/ruff" format --check "${RUFF_PATHS[@]}") ;;
       mypy) cmd=("$BIN/mypy" "${MYPY_ARGS[@]}") ;;
-      sentry) cmd=("$BIN/python" -m pytest "${junit[@]}" "${SENTRY_PATHS[@]}") ;;
+      # ratchet_check first (baselines never grow); skipped in trees that predate it (the baseline worktree)
+      sentry)
+        cmd=(bash -c 'if [ -f scripts/dev/ratchet_check.py ]; then "$0" scripts/dev/ratchet_check.py || exit 1; fi; exec "$0" -m pytest "$@"' "$BIN/python" "${junit[@]}" "${SENTRY_PATHS[@]}") ;;
       # strict: a venv that drifted from uv.lock fails instead of skipping the metadata check
       licenses)
         lic=(); for p in "${LICENSE_TESTS[@]}"; do [ -e "$tree/$p" ] && lic+=("$p"); done
