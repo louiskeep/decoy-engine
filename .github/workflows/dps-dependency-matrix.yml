@@ -28,16 +28,9 @@
 name: dps-dependency-matrix
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    paths:
-      - "src/decoy_engine/quality/dp_provenance.py"
-      - "src/decoy_engine/quality/carriers.py"
-      - "src/decoy_engine/quality/carrier_adapter.py"
-      - "src/decoy_engine/quality/dp_budget.py"
-      - "uv.lock"
-      - ".github/workflows/dps-dependency-matrix.yml"
+  # Manual dispatch only. gate-selfhosted.yml is the merge gate; the paid runners
+  # fire on demand so they stop failing every push (X0a). Old triggers: git history.
+  workflow_dispatch:
 
 jobs:
   fingerprint-matrix:
