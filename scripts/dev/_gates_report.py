@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import sys
 import xml.etree.ElementTree as ET
+from collections import Counter
 from pathlib import Path
 
 _SUMMARY = re.compile(r"^(?:FAILED|ERROR) (.+?)(?: - .*)?$")
@@ -44,17 +45,111 @@ def _counts(out: Path, label: str, name: str) -> str:
     return f"passed={passed} failed={total['failures']} errors={total['errors']} skipped={total['skipped']}"
 
 
+def failing_ids_for(out: Path, label: str, name: str) -> list[str]:
+    log = out / f"{label}-{name}.log"
+    if not (out / f"{label}-{name}.xml").exists() or not log.exists():
+        return []
+    ids: list[str] = []
+    for line in log.read_text(errors="replace").splitlines():
+        m = _SUMMARY.match(line)
+        if m and m.group(1) not in ids:
+            ids.append(m.group(1))
+    return ids
+
+
 def failing_ids(out: Path, label: str) -> list[str]:
     ids: list[str] = []
     for name, _rc, _cmd in _steps(out, label):
-        log = out / f"{label}-{name}.log"
-        if not (out / f"{label}-{name}.xml").exists() or not log.exists():
-            continue
-        for line in log.read_text(errors="replace").splitlines():
-            m = _SUMMARY.match(line)
-            if m and m.group(1) not in ids:
-                ids.append(m.group(1))
+        ids += [i for i in failing_ids_for(out, label, name) if i not in ids]
     return ids
+
+
+_PASSING = (0, -1, -2)
+# On the branch side a step that did not run (-2) proved nothing, so it is never a pass.
+_BRANCH_PASSING = (0, -1)
+# Every step here exits 1 when it ran to completion and found problems (pytest, ruff, mypy, the
+# ratchet check). Any other non-zero code is a crash, a kill or a timeout (124, 137, 139, pytest 2-5).
+_NORMAL_FAILURE_RC = 1
+_RUFF = re.compile(r"^(\S+?):\d+:\d+: ([A-Z]+\d+) (?:\[\*\] )?(.+)$")
+_MYPY = re.compile(r"^(\S+?):\d+(?::\d+)?: error: (.+?)(?:  \[([\w-]+)\])?$")
+_REFORMAT = re.compile(r"^Would reformat: (\S+)$")
+_TOTAL = re.compile(r"^Found (\d+) errors?", re.MULTILINE)
+
+
+def diagnostics(out: Path, label: str, name: str) -> tuple[Counter[tuple[str, str, str]], bool]:
+    """Error lines of a non-pytest step as a multiset of (file, code, message), line numbers dropped.
+
+    Line numbers are dropped so a moved line still matches, but nothing is deduplicated: a second
+    identical error on another line counts twice. The flag is False when the "Found N errors"
+    total disagrees with what was parsed, or nothing parsed: some failure is then invisible here."""
+    log = out / f"{label}-{name}.log"
+    keys: Counter[tuple[str, str, str]] = Counter()
+    if not log.exists():
+        return keys, False
+    text = log.read_text(errors="replace")
+    for line in text.splitlines():
+        if m := _RUFF.match(line):
+            keys[(m.group(1), m.group(2), m.group(3))] += 1
+        elif m := _MYPY.match(line):
+            keys[(m.group(1), m.group(3) or "", m.group(2))] += 1
+        elif m := _REFORMAT.match(line):
+            keys[(m.group(1), "format", "would reformat")] += 1
+    totals = _TOTAL.findall(text)
+    complete = bool(keys) and (not totals or int(totals[-1]) == sum(keys.values()))
+    return keys, complete
+
+
+def _pytest_failures(
+    out: Path, label: str, name: str
+) -> tuple[Counter[tuple[str, str, str]], bool]:
+    """Every failing or erroring JUnit testcase, counted without deduplication.
+
+    Complete only when at least one case failed and the count matches the suites' own failures
+    plus errors totals, so a partial or truncated report is never read as shared with main."""
+    xml = out / f"{label}-{name}.xml"
+    keys: Counter[tuple[str, str, str]] = Counter()
+    if not xml.exists():
+        return keys, False
+    root = ET.parse(xml).getroot()  # noqa: S314 -- pytest JUnit output this run wrote
+    for case in root.iter("testcase"):
+        if case.find("failure") is not None or case.find("error") is not None:
+            keys[(f"{case.get('classname', '')}::{case.get('name', '')}", "", "")] += 1
+    declared = sum(
+        int(s.get("failures", 0)) + int(s.get("errors", 0)) for s in root.iter("testsuite")
+    )
+    return keys, bool(keys) and declared == sum(keys.values())
+
+
+def branch_only_steps(out: Path) -> list[str]:
+    """Steps that fail on the branch for a reason origin/main does not share.
+
+    A branch step that fails is branch-only unless every one of its failures is identified and
+    main has at least as many of each. So it is branch-only when: its exit code is not the normal
+    failure code (crash, kill, timeout), whatever main did; it fails with nothing identifiable
+    (no JUnit ids, no parseable diagnostics, or a total that disagrees with the parsed lines); or
+    any identity occurs more often than on main. Failures are compared as multisets, so a
+    duplicated identical error is a new failure. Only identical-or-fewer identified failures,
+    with a normal failure code on the branch, are shared."""
+    base = {name: rc for name, rc, _ in _steps(out, "baseline")}
+    bad = []
+    for name, rc, _cmd in _steps(out, "branch"):
+        if rc in _BRANCH_PASSING:
+            continue
+        if rc != _NORMAL_FAILURE_RC:
+            bad.append(name)
+            continue
+        if base.get(name, -1) in _PASSING:
+            bad.append(name)  # main is green here, so every failure is the branch's
+            continue
+        if (out / f"branch-{name}.xml").exists():
+            mine, complete = _pytest_failures(out, "branch", name)
+            theirs, _ = _pytest_failures(out, "baseline", name)
+        else:
+            mine, complete = diagnostics(out, "branch", name)
+            theirs, _ = diagnostics(out, "baseline", name)
+        if not complete or mine - theirs:  # Counter subtraction keeps only positive excess
+            bad.append(name)
+    return bad
 
 
 def _status(rc: int) -> str:
@@ -92,9 +187,15 @@ def main(out: Path) -> int:
             print(f"  {tag:<14}{tid}")
         only = [t for t in branch if t not in base]
         print(f"  (branch={len(branch)} baseline={len(base)} branch-only={len(only)})")
+        print("-- BRANCH-ONLY FAILING STEPS --")
+        steps = branch_only_steps(out)
+        print(f"  {', '.join(steps) if steps else '(none)'}")
     print("=" * 70)
     return 0
 
 
 if __name__ == "__main__":
+    if sys.argv[1] == "--verdict":
+        print("\n".join(branch_only_steps(Path(sys.argv[2]))))
+        sys.exit(0)
     sys.exit(main(Path(sys.argv[1])))

@@ -3,7 +3,8 @@
 # Usage: scripts/dev/gates.sh [--keep-going] [--baseline] [--steps LIST] [test paths...]
 #   --keep-going  run every step even after a failure (default: stop at the first)
 #   --baseline    rerun the same steps on origin/main in a temporary detached
-#                 worktree, with the SAME venv, and diff the failing test ids
+#                 worktree, with the SAME venv, and diff the failures of every step
+#                 (test ids; mypy/ruff error lines). Fails only on branch-only failures.
 #   --steps LIST  comma list from: env,ruff,format,mypy,sentry,licenses,tests (default: all)
 #   test paths    default: tests touching files changed against origin/main
 set -uo pipefail
@@ -15,6 +16,11 @@ MYPY_ARGS=(src/decoy_engine testflight)
 SENTRY_PATHS=(tests/sentry tests/secret_providers/test_leak_sentry.py)
 LICENSE_TESTS=(tests/sentry/test_license_policy.py tests/sentry/test_sdv_import_sentry.py)
 PYTEST_ARGS=(-m 'not benchmark and not packaging and not codspeed')
+# Everything is code unless it matches NON_CODE_GLOBS: a diff with any code path must select at
+# least one test (see code_changed). List only pure-documentation or repo-metadata paths here;
+# `*` crosses `/`, so 'docs/*' also covers docs/records.
+NON_CODE_GLOBS=('docs/*' 'docs/records/*' '*.md' 'LICENSE*' 'NOTICE*' 'CHANGELOG*'
+  '.gitignore' '.gitattributes' '.aiignore' '.claude/*' '.tours/*')
 SRC_MATCH='src/*.py'   # changed files that map to a dotted module
 SRC_STRIP='src/'       # prefix removed before turning a path into a module
 PYPATH_DIRS=(src scripts)
@@ -35,6 +41,9 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+# A baseline verdict compares every step, so a step skipped after an early failure can never
+# read as shared with main.
+if [ $BASELINE = 1 ]; then KEEP=1; fi
 [ -x "$BIN/python" ] || { echo "gates: no venv at $VENV; run scripts/dev/bootstrap.sh" >&2; exit 2; }
 OUT=$(mktemp -d "${TMPDIR:-/tmp}/gates.XXXXXX")
 WT=$OUT/baseline-tree
@@ -45,7 +54,7 @@ trap cleanup EXIT
 changed_tests() {
   local base f mod
   base=$(git -C "$ROOT" merge-base origin/main HEAD) || return 1
-  { git -C "$ROOT" diff --name-only "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } |
+  { git -C "$ROOT" diff --name-only --no-renames "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } |
     sort -u | while read -r f; do
       [ -f "$ROOT/$f" ] || continue
       # shellcheck disable=SC2254  # SRC_MATCH is a glob on purpose
@@ -53,59 +62,113 @@ changed_tests() {
         tests/*test_*.py) echo "$f" ;;
         $SRC_MATCH)
           mod=${f#"$SRC_STRIP"}; mod=${mod%.py}; mod=${mod%/__init__}; mod=${mod//\//.}
-          (cd "$ROOT" && grep -rlE --include='test_*.py' "${mod//./\\.}([^A-Za-z0-9_]|\$)" tests) ;;
+          (cd "$ROOT" && grep -rlE --include='test_*.py' "${mod//./\\.}([^A-Za-z0-9_]|\$)" tests || true) ;;  # no match is normal, not a failed selection
+        *)
+          # Other code (scripts, native, fixtures): select tests that name the file. No match is
+          # normal here; code_changed then makes the gate fail rather than skip.
+          non_code "$f" || (cd "$ROOT" && grep -rlF --include='test_*.py' "${f##*/}" tests || true) ;;
       esac
     done | sort -u
 }
 
+# 0 when f matches NON_CODE_GLOBS (pure documentation or repo metadata).
+non_code() {
+  local g
+  for g in ${NON_CODE_GLOBS[@]+"${NON_CODE_GLOBS[@]}"}; do
+    # shellcheck disable=SC2254  # NON_CODE_GLOBS entries are globs on purpose
+    case $1 in $g) return 0 ;; esac
+  done
+  return 1
+}
+
+# 0 when the diff against the merge base touches any path outside NON_CODE_GLOBS (deleted files
+# count). Inverted on purpose: a new importable package is code by default, never "not applicable".
+code_changed() {
+  local base f
+  base=$(git -C "$ROOT" merge-base origin/main HEAD) || return 2
+  while read -r f; do
+    [ -n "$f" ] || continue
+    non_code "$f" || return 0
+  done <<EOT
+$({ git -C "$ROOT" diff --name-only --no-renames "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } | sort -u)
+EOT
+  return 1
+}
+
+TESTS_REQUIRED=0
 if [ ${#PATHS[@]} -eq 0 ]; then
   if ! git -C "$ROOT" rev-parse -q --verify origin/main >/dev/null; then
     echo "gates: origin/main missing; run: git fetch origin main" >&2; exit 2
   fi
-  mapfile -t PATHS < <(changed_tests)
+  # No read-into-array builtin: the Mac runner has bash 3.2. A failing selection must fail the gate, not skip tests.
+  if ! SELECTED=$(changed_tests); then
+    echo "gates: could not select changed tests (merge-base vs origin/main failed)" >&2; exit 2
+  fi
+  PATHS=()
+  while IFS= read -r p; do [ -n "$p" ] && PATHS+=("$p"); done <<EOT
+$SELECTED
+EOT
   SELECTION="changed vs origin/main: ${#PATHS[@]} test file(s)"
+  if [ ${#PATHS[@]} -eq 0 ]; then
+    code_changed; crc=$?
+    [ $crc = 2 ] && { echo "gates: could not diff against the merge base with origin/main" >&2; exit 2; }
+    [ $crc = 0 ] && TESTS_REQUIRED=1
+  fi
 else
-  SELECTION="explicit: ${PATHS[*]}"
+  SELECTION="explicit: ${PATHS[*]+${PATHS[*]}}"
+  # An explicit path that is missing from the branch is a typo or a deleted test, never a skip.
+  if [[ ",$STEPS," == *,tests,* ]]; then
+    for p in ${PATHS[@]+"${PATHS[@]}"}; do
+      [ -e "$ROOT/${p%%::*}" ] || { echo "gates: FAIL: explicit test path not found: $p" >&2; exit 2; }
+    done
+  fi
 fi
 
-pypath() { local d out=""; for d in "${PYPATH_DIRS[@]}"; do out="$out${out:+:}$1/$d"; done; echo "$out"; }
+pypath() { local d out=""; for d in ${PYPATH_DIRS[@]+"${PYPATH_DIRS[@]}"}; do out="$out${out:+:}$1/$d"; done; echo "$out"; }
 
 run_steps() {  # $1 label, $2 tree
   local label=$1 tree=$2 name rc stop=0 p cmd shown tests=() lic=()
   : >"$OUT/$label.steps"
   for name in ${STEPS//,/ }; do
-    local junit=(-p no:cacheprovider -q -rfE "--junitxml=$OUT/$label-$name.xml" "${PYTEST_ARGS[@]}")
+    plain=0
+    local junit=(-p no:cacheprovider -q -rfE "--junitxml=$OUT/$label-$name.xml" ${PYTEST_ARGS[@]+"${PYTEST_ARGS[@]}"})
     case $name in
       env) cmd=(bash "$ROOT/scripts/dev/bootstrap.sh" --check) ;;
-      ruff) cmd=("$BIN/ruff" check "${RUFF_PATHS[@]}") ;;
-      format) cmd=("$BIN/ruff" format --check "${RUFF_PATHS[@]}") ;;
-      mypy) cmd=("$BIN/mypy" "${MYPY_ARGS[@]}") ;;
+      ruff) cmd=("$BIN/ruff" check --output-format concise ${RUFF_PATHS[@]+"${RUFF_PATHS[@]}"}) ;;
+      format) cmd=("$BIN/ruff" format --check ${RUFF_PATHS[@]+"${RUFF_PATHS[@]}"}) ;;
+      mypy) cmd=("$BIN/mypy" ${MYPY_ARGS[@]+"${MYPY_ARGS[@]}"}) ;;
       # ratchet_check first (baselines never grow); skipped in trees that predate it (the baseline worktree)
       sentry)
-        cmd=(bash -c 'if [ -f scripts/dev/ratchet_check.py ]; then "$0" scripts/dev/ratchet_check.py || exit 1; fi; exec "$0" -m pytest "$@"' "$BIN/python" "${junit[@]}" "${SENTRY_PATHS[@]}") ;;
+        cmd=(bash -c 'if [ -f scripts/dev/ratchet_check.py ]; then "$0" scripts/dev/ratchet_check.py || exit 1; fi; exec "$0" -m pytest "$@"' "$BIN/python" ${junit[@]+"${junit[@]}"} ${SENTRY_PATHS[@]+"${SENTRY_PATHS[@]}"}) ;;
       # strict: a venv that drifted from uv.lock fails instead of skipping the metadata check
       licenses)
-        lic=(); for p in "${LICENSE_TESTS[@]}"; do [ -e "$tree/$p" ] && lic+=("$p"); done
-        cmd=(env DECOY_LICENSE_STRICT=1 "$BIN/python" -m pytest "${junit[@]}" "${lic[@]}") ;;
+        lic=(); for p in ${LICENSE_TESTS[@]+"${LICENSE_TESTS[@]}"}; do [ -e "$tree/$p" ] && lic+=("$p"); done
+        cmd=(env DECOY_LICENSE_STRICT=1 "$BIN/python" -m pytest ${junit[@]+"${junit[@]}"} ${lic[@]+"${lic[@]}"}) ;;
       tests)
-        tests=(); for p in "${PATHS[@]}"; do [ -e "$tree/${p%%::*}" ] && tests+=("$p"); done
-        cmd=("$BIN/python" -m pytest "${junit[@]}" "${tests[@]}") ;;
+        tests=(); for p in ${PATHS[@]+"${PATHS[@]}"}; do [ -e "$tree/${p%%::*}" ] && tests+=("$p"); done
+        cmd=("$BIN/python" -m pytest ${junit[@]+"${junit[@]}"} ${tests[@]+"${tests[@]}"}) ;;
       *) echo "gates: unknown step $name" >&2; exit 2 ;;
     esac
     if [ $stop = 1 ]; then rc=-2
+    elif [ "$name" = tests ] && [ ${#tests[@]} -eq 0 ] && [ "$label" = branch ] && [ $TESTS_REQUIRED = 1 ]; then
+      plain=1; rc=1; cmd=("(FAIL: code changed but no tests were selected; pass test paths or add a test that imports the changed module)")
+      echo "gates: [$label] tests FAIL: the diff touches code (any path outside NON_CODE_GLOBS) but selects no tests" >&2
+      [ $KEEP = 1 ] || stop=1
+    elif [ "$name" = tests ] && [ ${#tests[@]} -eq 0 ] && [ "$label" = branch ] && [ ${#PATHS[@]} -eq 0 ]; then
+      rc=-1; cmd=("(not applicable: the diff touches no code paths)")
     elif [ "$name" = tests ] && [ ${#tests[@]} -eq 0 ]; then rc=-1; cmd=("(no test paths present)")
     elif [ "$name" = licenses ] && [ ${#lic[@]} -eq 0 ]; then rc=-1; cmd=("(no license tests in this tree)")
     elif [ "$name" = env ] && [ "$label" = baseline ]; then rc=-1; cmd=("(same venv as branch)")
     else
       echo "gates: [$label] $name ..." >&2
-      (cd "$tree" && PYTHONPATH=$(pypath "$tree") "${cmd[@]}") >"$OUT/$label-$name.log" 2>&1
+      (cd "$tree" && PYTHONPATH=$(pypath "$tree") ${cmd[@]+"${cmd[@]}"}) >"$OUT/$label-$name.log" 2>&1
       rc=$?
       if [ $rc != 0 ]; then
         tail -n 15 "$OUT/$label-$name.log" | sed "s/^/  $label $name| /" >&2
         [ $KEEP = 1 ] || stop=1
       fi
     fi
-    [ $rc = -1 ] && shown=${cmd[*]} || shown=$(printf '%q ' "${cmd[@]}")
+    [ $rc = -1 ] || [ $plain = 1 ] && shown=${cmd[*]+${cmd[*]}} || shown=$(printf '%q ' ${cmd[@]+"${cmd[@]}"})
     printf '%s\t%s\t%s\n' "$name" "$rc" "$shown" >>"$OUT/$label.steps"
   done
 }
@@ -141,6 +204,16 @@ report_rc=${PIPESTATUS[0]}
 if [ "$report_rc" != 0 ] || ! grep -qx '=* EVIDENCE =*' "$OUT/evidence" || ! tail -n 1 "$OUT/evidence" | grep -qx '=\{70\}'; then
   echo "gates: FAIL: no complete EVIDENCE block (reporter exit $report_rc; logs in $OUT)" >&2; exit 3
 fi
-cut -f2 "$OUT/branch.steps" | grep -qvE '^(0|-1)$' && exit 1
-cut -f2 "$OUT/branch.steps" | grep -qx 0 || { echo "gates: FAIL: no step ran (all skipped or none selected)" >&2; exit 3; }
+if [ $BASELINE = 1 ]; then
+  # Same host, same venv: a step that also fails on origin/main is a host or main problem, not this
+  # branch's. Fail only on branch-only failures (see _gates_report.branch_only_steps).
+  if ! BRANCH_ONLY=$("$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --verdict "$OUT"); then
+    echo "gates: FAIL: could not compute the baseline verdict" >&2; exit 3
+  fi
+  [ -n "$BRANCH_ONLY" ] && exit 1
+else
+  # One awk reads the whole file: a cut | grep -q pipe under pipefail can SIGPIPE and drop a failure.
+  awk -F'\t' '$2 != 0 && $2 != -1 {bad = 1} END {exit !bad}' "$OUT/branch.steps" && exit 1
+fi
+awk -F'\t' '$2 == 0 {ran = 1} END {exit !ran}' "$OUT/branch.steps" || { echo "gates: FAIL: no step ran (all skipped or none selected)" >&2; exit 3; }
 exit 0
