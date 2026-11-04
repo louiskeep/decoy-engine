@@ -137,4 +137,86 @@ def test_gates_fails_when_no_step_ran(tmp_path: Path, steps: str) -> None:
     proc = _run(argv, clone)
     out = proc.stdout + proc.stderr
     assert proc.returncode != 0, out
-    assert "gates: FAIL: no step ran" in proc.stderr, out
+    expected = "explicit test path not found" if steps else "gates: FAIL: no step ran"
+    assert expected in proc.stderr, out
+
+
+def _diff_clone(tmp_path: Path, branch_files: dict[str, str]) -> Path:
+    """A clone whose origin/main is HEAD~1 and whose HEAD adds `branch_files`."""
+    clone = tmp_path / "repo"
+    _git(tmp_path, "clone", "-q", "--shared", str(REPO), str(clone))
+    shutil.rmtree(clone / "scripts" / "dev", ignore_errors=True)
+    shutil.copytree(DEV, clone / "scripts" / "dev")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-qm", "base")
+    _git(clone, "update-ref", "refs/remotes/origin/main", "HEAD")
+    for rel, body in branch_files.items():
+        (clone / rel).parent.mkdir(parents=True, exist_ok=True)
+        (clone / rel).write_text(body)
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-qm", "branch")
+    return clone
+
+
+def test_gates_fails_a_code_change_that_selects_no_tests(tmp_path: Path) -> None:
+    clone = _diff_clone(tmp_path, {"src/decoy_engine/_x0a_probe.py": "X = 1\n"})
+    proc = _run([str(BASH), "scripts/dev/gates.sh", "--steps", "format,tests"], clone)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode != 0, out
+    assert "touches code" in proc.stderr and "selects no tests" in proc.stderr, out
+    assert "[tests] FAIL" in proc.stdout, out
+
+
+def test_gates_passes_a_docs_only_change_with_tests_not_applicable(tmp_path: Path) -> None:
+    clone = _diff_clone(tmp_path, {"docs/records/x0a-probe.md": "# probe\n"})
+    proc = _run([str(BASH), "scripts/dev/gates.sh", "--steps", "format,tests"], clone)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    assert "not applicable: the diff touches no code paths" in proc.stdout, out
+
+
+def test_gates_baseline_passes_when_the_only_failure_is_shared_with_main(tmp_path: Path) -> None:
+    clone = _seeded_clone(tmp_path)
+    argv = [str(BASH), "scripts/dev/gates.sh", "--steps", "format,tests", "--baseline"]
+    argv.append("tests/_seeded/test_seed_shared.py")
+    proc = _run(argv, clone)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    assert re.search(r"BOTH\s+tests/_seeded/test_seed_shared\.py::test_shared", out), out
+    assert "(none)" in out.split("BRANCH-ONLY FAILING STEPS", 1)[-1], out
+
+
+def _report_module():  # type: ignore[no-untyped-def]
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_gates_report", DEV / "_gates_report.py")
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _write_run(out: Path, label: str, rc: int, log: str) -> None:
+    with (out / f"{label}.steps").open("a") as fh:
+        fh.write(f"mypy\t{rc}\tmypy src\n")
+    (out / f"{label}-mypy.log").write_text(log)
+
+
+def test_branch_only_steps_matches_mypy_errors_across_line_moves(tmp_path: Path) -> None:
+    mod = _report_module()
+    shared = 'src/a.py:62: error: Unused "type: ignore" comment  [unused-ignore]\n'
+    _write_run(tmp_path, "baseline", 1, shared)
+    _write_run(tmp_path, "branch", 1, shared.replace(":62:", ":70:"))
+    assert mod.branch_only_steps(tmp_path) == []
+    extra = tmp_path / "x"
+    extra.mkdir()
+    _write_run(extra, "baseline", 1, shared)
+    _write_run(extra, "branch", 1, shared + "src/b.py:3: error: new problem  [misc]\n")
+    assert mod.branch_only_steps(extra) == ["mypy"]
+
+
+def test_branch_only_steps_flags_a_failure_main_does_not_have(tmp_path: Path) -> None:
+    mod = _report_module()
+    _write_run(tmp_path, "baseline", 0, "")
+    _write_run(tmp_path, "branch", 2, "crashed without parseable lines\n")
+    assert mod.branch_only_steps(tmp_path) == ["mypy"]

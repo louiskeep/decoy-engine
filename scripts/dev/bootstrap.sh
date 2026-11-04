@@ -46,7 +46,7 @@ py_have=$("$PY" -c 'import platform; print(platform.python_version())')
 echo "python:     $py_have (lock profile expects $PY_VERSION)"
 [ "$py_have" = "$PY_VERSION" ] ||
   err "python is $py_have, expected $PY_VERSION" "rm -rf $VENV && scripts/dev/bootstrap.sh"
-echo "lock:       uv.lock sha256 $(sha256sum uv.lock | cut -c1-16)  extras: ${EXTRAS[*]}"
+echo "lock:       uv.lock sha256 $(if command -v sha256sum >/dev/null; then sha256sum uv.lock; else shasum -a 256 uv.lock; fi | cut -c1-16)  extras: ${EXTRAS[*]}"
 
 installed=$("$PY" - "${KEY_DEPS[@]}" <<'PY'
 import importlib.metadata as m, sys

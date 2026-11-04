@@ -132,4 +132,6 @@ def test_selfhosted_gate_runs_gates_under_the_shared_lock() -> None:
     assert checkout["with"]["persist-credentials"] is False
     runs = " ".join(step.get("run", "") for step in job["steps"])
     assert "flock ~/.cache/pytest-one.lock scripts/dev/gates.sh" in runs
+    # Host-only failures that main shares must not fail every Mac run.
+    assert "scripts/dev/gates.sh --keep-going --baseline" in runs
     assert _triggers(WORKFLOWS / "gate-selfhosted.yml") == {"push", "workflow_dispatch"}

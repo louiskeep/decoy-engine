@@ -42,8 +42,10 @@ jobs:
           export DECOY_VENV="$HOME/.cache/decoy-gate-venv-engine"
           flock ~/.cache/pytest-one.lock bash scripts/dev/bootstrap.sh
       - name: Gate
-        # EVIDENCE block names the head it tested; keep-going lists every red step.
+        # EVIDENCE block names the head it tested; keep-going lists every red step. --baseline reruns
+        # origin/main on this host and fails only on branch-only failures (mypy, sentry, tests), so
+        # Mac-only failures that main has too do not block every push.
         run: |
           export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
           export DECOY_VENV="$HOME/.cache/decoy-gate-venv-engine"
-          flock ~/.cache/pytest-one.lock scripts/dev/gates.sh --keep-going
+          flock ~/.cache/pytest-one.lock scripts/dev/gates.sh --keep-going --baseline
