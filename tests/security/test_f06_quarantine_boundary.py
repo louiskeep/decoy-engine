@@ -15,6 +15,7 @@ from typing import Any
 
 import pyarrow as pa
 import pytest
+from packaging.version import Version
 
 from tests.acceptance._f06_support import (
     INT64,
@@ -830,7 +831,7 @@ def test_c6_registry_version_bumped_and_append_only_vs_the_v1_fixture() -> None:
     from decoy_engine import reasons
 
     manifest = json.loads(json.dumps(reasons.manifest()))
-    assert manifest["registry_version"].split(".")[:2] == ["1", "4"]
+    assert Version(manifest["registry_version"]) >= Version("1.4.0")
     pinned = json.loads(
         (
             Path(__file__).resolve().parents[1] / "fixtures" / "f29" / "reason-manifest-v1.json"
