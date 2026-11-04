@@ -115,7 +115,7 @@ EOT
     [ $crc = 0 ] && TESTS_REQUIRED=1
   fi
 else
-  SELECTION="explicit: ${PATHS[*]}"
+  SELECTION="explicit: ${PATHS[*]+${PATHS[*]}}"
   # An explicit path that is missing from the branch is a typo or a deleted test, never a skip.
   if [[ ",$STEPS," == *,tests,* ]]; then
     for p in ${PATHS[@]+"${PATHS[@]}"}; do
@@ -168,7 +168,7 @@ run_steps() {  # $1 label, $2 tree
         [ $KEEP = 1 ] || stop=1
       fi
     fi
-    [ $rc = -1 ] || [ $plain = 1 ] && shown=${cmd[*]} || shown=$(printf '%q ' ${cmd[@]+"${cmd[@]}"})
+    [ $rc = -1 ] || [ $plain = 1 ] && shown=${cmd[*]+${cmd[*]}} || shown=$(printf '%q ' ${cmd[@]+"${cmd[@]}"})
     printf '%s\t%s\t%s\n' "$name" "$rc" "$shown" >>"$OUT/$label.steps"
   done
 }
@@ -212,7 +212,8 @@ if [ $BASELINE = 1 ]; then
   fi
   [ -n "$BRANCH_ONLY" ] && exit 1
 else
-  cut -f2 "$OUT/branch.steps" | grep -qvE '^(0|-1)$' && exit 1
+  # One awk reads the whole file: a cut | grep -q pipe under pipefail can SIGPIPE and drop a failure.
+  awk -F'\t' '$2 != 0 && $2 != -1 {bad = 1} END {exit !bad}' "$OUT/branch.steps" && exit 1
 fi
-cut -f2 "$OUT/branch.steps" | grep -qx 0 || { echo "gates: FAIL: no step ran (all skipped or none selected)" >&2; exit 3; }
+awk -F'\t' '$2 == 0 {ran = 1} END {exit !ran}' "$OUT/branch.steps" || { echo "gates: FAIL: no step ran (all skipped or none selected)" >&2; exit 3; }
 exit 0

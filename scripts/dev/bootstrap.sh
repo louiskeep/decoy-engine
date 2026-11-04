@@ -30,7 +30,7 @@ err() { ERRORS+=("$1|$2"); }
 
 command -v uv >/dev/null || { echo "BOOTSTRAP FAIL: uv not on PATH (fix: install uv, https://docs.astral.sh/uv/)" >&2; exit 1; }
 if [ $CHECK = 0 ]; then
-  echo "bootstrap: ${SYNC[*]}" >&2
+  echo "bootstrap: ${SYNC[*]+${SYNC[*]}}" >&2
   ${SYNC[@]+"${SYNC[@]}"} >&2 || { echo "BOOTSTRAP FAIL: uv sync --frozen failed (fix: read the uv error above)" >&2; exit 1; }
 fi
 PY=$VENV/bin/python
@@ -46,7 +46,7 @@ py_have=$("$PY" -c 'import platform; print(platform.python_version())')
 echo "python:     $py_have (lock profile expects $PY_VERSION)"
 [ "$py_have" = "$PY_VERSION" ] ||
   err "python is $py_have, expected $PY_VERSION" "rm -rf $VENV && scripts/dev/bootstrap.sh"
-echo "lock:       uv.lock sha256 $(if command -v sha256sum >/dev/null; then sha256sum uv.lock; else shasum -a 256 uv.lock; fi | cut -c1-16)  extras: ${EXTRAS[*]}"
+echo "lock:       uv.lock sha256 $(if command -v sha256sum >/dev/null; then sha256sum uv.lock; else shasum -a 256 uv.lock; fi | cut -c1-16)  extras: ${EXTRAS[*]+${EXTRAS[*]}}"
 
 installed=$("$PY" - ${KEY_DEPS[@]+"${KEY_DEPS[@]}"} <<'PY'
 import importlib.metadata as m, sys
@@ -62,7 +62,7 @@ for dep in ${KEY_DEPS[@]+"${KEY_DEPS[@]}"}; do
   want=$(lock_version "$dep")
   if [ "$have" = "$want" ]; then mark=OK; else
     mark=MISMATCH
-    err "$dep installed $have but uv.lock pins $want" "scripts/dev/bootstrap.sh (runs ${SYNC[*]})"
+    err "$dep installed $have but uv.lock pins $want" "scripts/dev/bootstrap.sh (runs ${SYNC[*]+${SYNC[*]}})"
   fi
   printf '%-11s installed %-10s lock %-10s %s\n' "$dep" "$have" "$want" "$mark"
 done

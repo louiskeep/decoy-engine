@@ -20,15 +20,19 @@ BASH4_ONLY = {
     "case-modifying expansion": re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(,,|\^\^|,|\^)[^}]*\}"),
     "&>>": re.compile(r"&>>"),
     "negative array index": re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\[-[0-9]+\]\}"),
-    # bash < 4.4 under set -u dies on an empty "${a[@]}"; write ${a[@]+"${a[@]}"} instead.
-    "bare array expansion": re.compile(r'(?<!\[@\]\+)"\$\{[A-Za-z_][A-Za-z0-9_]*\[@\]\}"'),
+    # bash < 4.4 under set -u dies on an empty ${a[@]} or ${a[*]}, quoted or not; write the
+    # guarded form ${a[@]+"${a[@]}"} (or ${a[*]+${a[*]}}). Counts like ${#a[@]} are safe.
+    "bare array expansion": re.compile(
+        r"(?<!\[[@*]\]\+\")(?<!\[[@*]\]\+)\$\{[A-Za-z_][A-Za-z0-9_]*\[[@*]\](?!\+)"
+    ),
 }
 
 
 def findings(text: str) -> list[str]:
     out = []
     for lineno, line in enumerate(text.splitlines(), 1):
-        code = line.split("#", 1)[0] if not re.search(r"""['"].*#.*['"]""", line) else line
+        # A comment starts at a # at line start or after whitespace, never inside ${#...}.
+        code = line if re.search(r"""['"].*#.*['"]""", line) else re.sub(r"(^|\s)#.*$", "", line)
         for name, rx in BASH4_ONLY.items():
             if rx.search(code):
                 out.append(f"line {lineno}: {name}")
@@ -51,6 +55,10 @@ def test_dev_scripts_avoid_bash4_features(path: Path) -> None:
         ("cmd &>> log", "&>>"),
         ('echo "${A[-1]}"', "negative array index"),
         ('for p in "${A[@]}"; do :; done', "bare array expansion"),
+        ("echo ${A[*]}", "bare array expansion"),
+        ('echo "x ${A[@]}"', "bare array expansion"),
+        ('f "${A[@]:1}"', "bare array expansion"),
+        ('[ ${#A[@]} -eq 0 ] && f "${A[@]}"', "bare array expansion"),
     ],
 )
 def test_seeded_bash4_features_are_caught(snippet: str, feature: str) -> None:
@@ -60,3 +68,4 @@ def test_seeded_bash4_features_are_caught(snippet: str, feature: str) -> None:
 def test_bash3_safe_loop_is_clean() -> None:
     assert findings('while IFS= read -r p; do A+=("$p"); done < <(ls)') == []
     assert findings('for p in ${A[@]+"${A[@]}"}; do :; done') == []
+    assert findings('echo "${A[*]+${A[*]}}" ${#A[@]}  # count is fine') == []
