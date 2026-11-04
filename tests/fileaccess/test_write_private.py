@@ -322,7 +322,8 @@ def test_error_text_is_value_free(
     exc = info.value
     assert isinstance(exc, OSError), type(exc).__name__
     for text in (str(exc), repr(exc)):
-        assert MARKER not in text and "/" not in text, text
+        # "Input/output error" is EIO's own text; any other slash is a leaked path
+        assert MARKER not in text and "/" not in text.replace(os.strerror(code), ""), text
     assert exc.filename is None
     assert exc.__cause__ is None
     assert exc.__suppress_context__ is True
