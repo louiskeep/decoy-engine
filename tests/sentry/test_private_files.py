@@ -12,7 +12,8 @@ a `disposition`:
   (payloads, staged sources, spill and scratch files, vault and key files);
 - `public`: a declared job output at a caller-chosen target, a log, or a shipped artifact;
 - `read`: the call never creates or writes a file (the `open`, `os.open` and `pyarrow.OSFile`
-  rows mix reads and writes under one sink name). A third value is plan drift, kept so a
+  rows mix reads and writes under one sink name, and a writer into an in-memory buffer such as
+  `pa.BufferOutputStream()` or `io.BytesIO()` creates none). A third value is plan drift, kept so a
   mislabeled writer is still caught: a `read` row whose call passes a write mode, or `os.open`
   flags that are not plain `os.O_*` read flags, is a finding.
 
@@ -82,6 +83,7 @@ READABLE_SINKS = frozenset(
 )
 MODE_SINKS = frozenset({"os.chmod", "os.lchmod", "os.fchmod", "Path.chmod", "Path.lchmod"})
 SWALLOWED = frozenset({"OSError", "PermissionError", "Exception", "BaseException"})
+IN_MEMORY = ("BufferOutputStream", "BytesIO")
 WRITE_FLAGS = frozenset({"O_CREAT", "O_WRONLY", "O_RDWR", "O_TRUNC", "O_APPEND"})
 
 
@@ -137,6 +139,28 @@ def _writes(site: Site) -> bool:
     return any(c in mode.value for c in "wax+")
 
 
+def _in_memory(site: Site) -> bool:
+    """A writer whose destination is a local bound to an in-memory buffer creates no file."""
+    node, info = site.node, site.scope_info
+    index = 1 if site.sink in {"pyarrow.parquet.write_table", "joblib.dump"} else 0
+    dest = node.args[index] if len(node.args) > index else None
+    if not isinstance(dest, ast.Name) or info is None:
+        return False
+    value = info.assigned.get(dest.id)
+    return isinstance(value, ast.Call) and ast.unparse(value.func).endswith(IN_MEMORY)
+
+
+def _read_is_false(site: Site | None, sink: str) -> bool:
+    """A `read` row whose call can create or write a file (fail closed)."""
+    if sink == "duckdb.connection.execute":
+        return False  # the SQL is not read: the hand review decides (named limit)
+    if site is None:
+        return True
+    if sink in READABLE_SINKS:
+        return _writes(site)
+    return not _in_memory(site)
+
+
 def disposition_findings(
     entries: list[dict[str, object]], sites: dict[Key, Site], kept: frozenset[str]
 ) -> list[Finding]:
@@ -150,11 +174,7 @@ def disposition_findings(
         line = site.line if site is not None else 0
         disposition = entry.get("disposition")
         if disposition not in DISPOSITIONS or (
-            disposition == "read"
-            and (
-                (sink not in READABLE_SINKS and sink != "duckdb.connection.execute")
-                or (site is not None and sink in READABLE_SINKS and _writes(site))
-            )
+            disposition == "read" and _read_is_false(site, sink)
         ):
             out.append(Finding(key[0], line, key[1], "P1"))
         elif disposition == "private" and registry_key(key) not in kept:
