@@ -75,3 +75,7 @@ baseline = "tests/sentry/baselines/wave-b-string-target-exempt.json"
 [[sentry]]
 id = "wave-b-e0-test-files"
 baseline = "tests/sentry/baselines/wave-b-e0-test-files.json"
+
+[[sentry]]
+id = "gcs-call-kwargs"
+baseline = "tests/sentry/baselines/gcs-call-kwargs.json"
