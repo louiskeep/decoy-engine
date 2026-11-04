@@ -2,7 +2,7 @@
 # `ordinal` is the index of the call among identical sinks in the function. An entry may be
 # removed freely; adding one needs a `rule` (how the path is built), an `owner` and a `reason`.
 # `ambient_only` marks a caller-derived path that is reached only after `require_ambient`.
-# Count: 203 (asserted by the sentry).
+# Count: 201 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -191,26 +191,6 @@ ambient_only = true
 module = "decoy_engine/execution/_isolated_run.py"
 function = "_write_payload"
 sink = "pyarrow.parquet.write_table"
-ordinal = 0
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_run.py"
-function = "_write_payload"
-sink = "Path.write_text"
-ordinal = 0
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_run.py"
-function = "_write_payload"
-sink = "os.chmod"
 ordinal = 0
 rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
