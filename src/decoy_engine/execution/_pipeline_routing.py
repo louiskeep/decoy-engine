@@ -3,7 +3,7 @@
 
 This module decides which route a job takes; it never executes one --
 `_pipeline_route_exec` owns dispatching to the underlying runner
-(`run_sequential`, `run_fk_out_of_core`, the chunked lane) and
+(`run_sequential`, `run_fk_out_of_core`, the chunked lane via `run_mask_chunked`) and
 packaging the result into an `ExecutionResult`. `run_pipeline` calls both
 modules directly in the fixed order docs/execution-backends.md describes.
 
