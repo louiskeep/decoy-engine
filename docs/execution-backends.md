@@ -260,7 +260,7 @@ Two independent routing layers compose in `_pipeline_routing.py`, in a fixed dec
    `_sequential_eligible`) under `execution_mode="auto"` it picks, in
    priority order (SC2):
 
-     a. **out_of_core** -- the bounded-RAM DuckDB route -- when the job is
+   - a. **out_of_core** -- the bounded-RAM DuckDB route -- when the job is
         out-of-core-compatible (`check_out_of_core_compatibility` admits
         the plan: an accepted strategy set, an acyclic table-level FK
         graph, no `when` predicate, single-parent-per-child) AND the
@@ -272,13 +272,13 @@ Two independent routing layers compose in `_pipeline_routing.py`, in a fixed dec
         (default 2M; `0` forces every eligible table, per-run override) --
         an independent, narrower-scoped threshold from this layer's own
         `out_of_core_threshold_rows` (see `_route_policy.decide_route`).
-     b. **sequential** -- the bounded-memory (but O(cardinality), so still
+   - b. **sequential** -- the bounded-memory (but O(cardinality), so still
         OOM-able at extreme scale) `run_sequential` path -- for a
         pure-mask FK job that is NOT out-of-core-eligible (an unsupported
         strategy, a self-referential / cyclic FK, a multi-parent child)
         or is below the out-of-core size threshold.
         `_pipeline_route_exec.run_sequential_route` executes + packages it.
-     c. **full_frame** -- the adapter-selected `run` path -- for a job with
+   - c. **full_frame** -- the adapter-selected `run` path -- for a job with
         no relationships, and for a relationship job disqualified from
         sequential (generate+mask, validators, fidelity, vault,
         non-pandas substrate) that is small enough to be full-frame-safe.
@@ -317,7 +317,7 @@ Two independent routing layers compose in `_pipeline_routing.py`, in a fixed dec
    validators) cannot be misrouted into the chunked path either -- the
    two layers compose without overlap: (1) owns relationship routing
    (sequential vs. full_frame); (2) owns non-relationship routing, single
-   table here and per table in `_pipeline_multi_table` (B7). When the job classifies `chunked`,
+   table in `_pipeline_routing.py` and per table in `_pipeline_multi_table` (B7). When the job classifies `chunked`,
    `_pipeline_route_exec.run_mask_chunked` runs it in `chunk_size_rows`-row
    slices through the chunked lane (`_pipeline_auto_chunk`: B1's
    `run_mask_chunked`, or the oracle under the kill switch) instead of one
@@ -463,7 +463,7 @@ branch's correctness does not actually depend on the ordering: an
 out-of-core-eligible job can NEVER reach the reject branch regardless of
 threshold order, because out-of-core eligibility is a strict subset of
 sequential eligibility, and a sequential-eligible non-cyclic job takes the
-`sequential` early return above before the reject test is evaluated. The
+`sequential` early return in `decide_execution_route` before the reject test is evaluated. The
 reject branch is reached ONLY by full-frame-bound jobs (not
 sequential-eligible, or a cyclic FK graph), which no bounded route can take
 at any threshold ordering. So the ordering is an explanatory expectation,
