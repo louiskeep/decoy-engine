@@ -1,0 +1,24 @@
+{
+  "old": "src/decoy_engine/detection/detectors.py",
+  "new": ["src/decoy_engine/detection/detectors.py", "src/decoy_engine/detection/_scoring.py", "src/decoy_engine/detection/_hints.py", "src/decoy_engine/detection/builtin.py"],
+  "map": {
+    "DEFAULT_MIN_MATCH_RATE": "src/decoy_engine/detection/_scoring.py",
+    "NAME_HINT_MIN_RATE": "src/decoy_engine/detection/_scoring.py",
+    "LOW_CONFIDENCE_NO_HINT_FLOOR": "src/decoy_engine/detection/_scoring.py",
+    "HIGH_CONFIDENCE_NO_HINT_FLOOR": "src/decoy_engine/detection/_scoring.py",
+    "HIGH_CONFIDENCE_WITH_HINT_FLOOR": "src/decoy_engine/detection/_scoring.py",
+    "SAMPLE_MISS_LIMIT": "src/decoy_engine/detection/_scoring.py",
+    "_series_str": "src/decoy_engine/detection/_scoring.py",
+    "_hint": "src/decoy_engine/detection/_hints.py",
+    "_NAME_HINTS": "src/decoy_engine/detection/_hints.py",
+    "_NAME_HINT_EXTRAS": "src/decoy_engine/detection/_hints.py",
+    "_variant": "src/decoy_engine/detection/builtin.py",
+    "_SSN_VARIANTS": "src/decoy_engine/detection/builtin.py",
+    "_US_PHONE_VARIANTS": "src/decoy_engine/detection/builtin.py",
+    "detect_email": "src/decoy_engine/detection/builtin.py",
+    "detect_ssn": "src/decoy_engine/detection/builtin.py"
+  },
+  "importers": [],
+  "docstring_prose": false,
+  "tests": ["tests/unit/test_check_pure_move.py"]
+}
