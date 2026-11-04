@@ -148,7 +148,7 @@ def _diff_clone(tmp_path: Path, branch_files: dict[str, str]) -> Path:
     shutil.rmtree(clone / "scripts" / "dev", ignore_errors=True)
     shutil.copytree(DEV, clone / "scripts" / "dev")
     _git(clone, "add", "-A")
-    _git(clone, "commit", "-qm", "base")
+    _git(clone, "commit", "--allow-empty", "-qm", "base")
     _git(clone, "update-ref", "refs/remotes/origin/main", "HEAD")
     for rel, body in branch_files.items():
         (clone / rel).parent.mkdir(parents=True, exist_ok=True)
