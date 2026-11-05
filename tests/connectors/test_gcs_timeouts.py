@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
@@ -28,6 +29,7 @@ import pytest
 
 gax_exc = pytest.importorskip("google.api_core.exceptions")
 
+import decoy_engine  # noqa: E402
 from decoy_engine.connectors.gcs import GCSConfig, GCSFileSink, GCSFileSource  # noqa: E402
 from decoy_engine.profile._cloud_readers import GcsCsvSource, GcsParquetSource  # noqa: E402
 from decoy_engine.sdk import TransientError  # noqa: E402
@@ -262,6 +264,7 @@ def test_client_kwargs_preserved(
 CHILD = r"""
 import importlib, json, sys, time
 entry = sys.argv[1]
+sys.path.insert(0, sys.argv[2])  # the tree under test, not whichever checkout is installed
 try:
     c = importlib.import_module("decoy_engine.connectors._clients")
     c.GCS_TIMEOUT = (0.5, 0.5)
@@ -301,6 +304,7 @@ out["elapsed"] = time.monotonic() - t0
 print(json.dumps(out))
 """
 
+SRC_DIR = Path(decoy_engine.__file__).resolve().parent.parent
 BOUND_S = 15.0
 CHILD_KILL_S = 30.0
 
@@ -335,7 +339,7 @@ def black_hole_runs() -> dict[str, dict[str, Any]]:
         e: (
             time.monotonic(),
             subprocess.Popen(  # noqa: S603 - fixed argv
-                [sys.executable, "-I", "-c", CHILD, e],
+                [sys.executable, "-I", "-c", CHILD, e, str(SRC_DIR)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=env,

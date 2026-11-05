@@ -188,17 +188,21 @@ def _clients() -> Any:
 
 @pytest.mark.parametrize("where", ["read", "write", "close"])
 def test_open_file_object_translates_after_open(where: str, install: Callable[..., Recorder]):
-    from test_gcs_timeouts import FakeBlob
+    """The error comes from the returned file object, not from ``open`` itself.
 
-    rec = install(CSV_BODY, fail={where: gax_exc.ServiceUnavailable(MSG)})
-    handle = _clients().gcs_open(FakeBlob(rec, "o"), "rb" if where == "read" else "wb")
-    with pytest.raises(TransientError) as info:
-        with handle as remote:
-            if where == "read":
-                remote.read(4)
-            else:
-                remote.write(b"x")
-    _value_free(str(info.value), repr(info.value))
+    Driven through the public connector entries so it fails on the base by assertion.
+    """
+    install(CSV_BODY, fail={where: gax_exc.ServiceUnavailable(MSG)})
+    raised: BaseException | None = None
+    try:
+        if where == "read":
+            b"".join(GCSFileSource(CFG).open("o"))
+        else:
+            GCSFileSink(CFG).write("o", iter([b"x"]))
+    except Exception as err:
+        raised = err
+    assert type(raised) is TransientError, type(raised).__name__
+    _value_free(str(raised), repr(raised))
 
 
 def test_without_google_libraries_every_error_is_the_fixed_fallback(
