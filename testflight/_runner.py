@@ -154,6 +154,24 @@ def build_key_resolver(manifest: FlightManifest) -> Any:
     return make_key_resolver(_MASTER_KEY, manifest.master_key_label)
 
 
+class InMemoryTokenVault:
+    """In-memory TokenVaultWriter for jobs that use the tokenize strategy.
+
+    tokenize fails closed without a vault. A fresh instance per run keeps the
+    two determinism runs independent: the token is derived from key, namespace
+    and plaintext, not from vault state, so they must still agree.
+    """
+
+    def __init__(self) -> None:
+        self._m: dict[tuple[str, str], str] = {}
+
+    def lookup_existing(self, namespace: str, plaintext: str) -> str | None:
+        return self._m.get((namespace, plaintext))
+
+    def put(self, namespace: str, plaintext: str, token: str) -> str:
+        return self._m.setdefault((namespace, plaintext), token)
+
+
 def run_pipeline_twice(
     config: dict[str, Any],
     sources: dict[str, pa.Table],
@@ -187,8 +205,8 @@ def run_pipeline_twice(
         "fidelity_report": True,
         "now_iso": FIXED_TS,
     }
-    result_a = run_pipeline(config, sources, **run_kwargs)
-    result_b = run_pipeline(config, sources, **run_kwargs)
+    result_a = run_pipeline(config, sources, token_vault_writer=InMemoryTokenVault(), **run_kwargs)
+    result_b = run_pipeline(config, sources, token_vault_writer=InMemoryTokenVault(), **run_kwargs)
     return result_a, result_b
 
 

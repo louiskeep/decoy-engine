@@ -41,9 +41,9 @@
 #   singleton:  5976c8a6c03141c653c7dbbc009b720b4fd937c010631195586f36fe398bc530
 #
 # Strategies exercised (strategy_coverage below): fpe, from_parent,
-# passthrough, text_mask, text_redact. (No NEW strategy families -- this job
-# is about DATA SHAPES, not new strategy coverage; fpe/from_parent/
-# passthrough/text_mask/text_redact are already exercised by Jobs A-D too.)
+# passthrough, text_mask, text_redact, tokenize. This job is mostly about DATA
+# SHAPES; tokenize is the one strategy only it covers (case_ref column, run
+# against an in-memory token vault the runner injects).
 
 job_name: e_hostile_edge_cases
 topology: mixed
@@ -142,6 +142,13 @@ config:
         # unchanged; proves the pipeline does not choke on it.
         - name: middle_name
           strategy: passthrough
+
+        # case_ref: opaque string reference, tokenized through the in-memory
+        # token vault the runner injects (tokenize fails closed without one).
+        # Repeated values exercise the vault-reuse path; one null stays null.
+        - name: case_ref
+          strategy: tokenize
+          namespace: case_ref_ns
 
     # === accounts (mask table, FK child; duplicate-FK spike) ===
     - name: accounts
@@ -291,3 +298,4 @@ invariants:
     - passthrough
     - text_mask
     - text_redact
+    - tokenize
