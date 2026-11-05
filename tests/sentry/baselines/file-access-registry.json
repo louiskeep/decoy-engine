@@ -149,12 +149,6 @@
   "entry::decoy_engine/execution/_isolated_run.py::_write_payload::Path.mkdir::0": {
    "reason": "initial X0a inventory of tests/sentry/file_access_registry.toml; existing entry, reviewed by its own sentry"
   },
-  "entry::decoy_engine/execution/_isolated_run.py::_write_payload::Path.write_text::0": {
-   "reason": "initial X0a inventory of tests/sentry/file_access_registry.toml; existing entry, reviewed by its own sentry"
-  },
-  "entry::decoy_engine/execution/_isolated_run.py::_write_payload::os.chmod::0": {
-   "reason": "initial X0a inventory of tests/sentry/file_access_registry.toml; existing entry, reviewed by its own sentry"
-  },
   "entry::decoy_engine/execution/_isolated_run.py::_write_payload::pyarrow.parquet.write_table::0": {
    "reason": "initial X0a inventory of tests/sentry/file_access_registry.toml; existing entry, reviewed by its own sentry"
   },

@@ -183,6 +183,17 @@ SOURCES: tuple[Source, ...] = (
         "test_wave_b_no_registry_version_literal.py",
         in_code("test_wave_b_no_registry_version_literal.py", "E0_TEST_FILES"),
     ),
+    Source(  # live keys: the registry rows marked private that are not on write_private yet
+        "private-file-sinks",
+        "tests/sentry/baselines/private-file-sinks.json",
+        lambda: {
+            "entry::" + "::".join(str(e[f]) for f in ("module", "function", "sink", "ordinal"))
+            for e in tomllib.loads(
+                (SENTRY / "file_access_registry.toml").read_text(encoding="utf-8")
+            )["entry"]
+            if e.get("disposition") == "private"
+        },
+    ),
 )
 
 # Committed data a sentry reads that is a pinned contract, not an allowlist that could grow.

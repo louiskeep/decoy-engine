@@ -40,6 +40,8 @@ STAGE_PREFIX: dict[str, str] = {
     "pack": "_decoy_pack_stage_",
 }
 STAGE_SUFFIX: dict[str, str] = {"quarantine": ".jsonl", "quarantine_direct": ".jsonl"}
+# Labels whose stage holds secrets or real data, so the stage file is 0600 at creation.
+PRIVATE_LABELS: frozenset[str] = frozenset({"quarantine", "isolated"})
 # Every output but a vault leaf may create missing parent directories; a vault leaf sits
 # directly in a directory the caller already provided.
 CREATES_PARENTS: frozenset[str] = frozenset(STAGE_PREFIX) - {"vault"}
@@ -219,7 +221,8 @@ class RootedOutputTxn(_StageDir):
         name = f"{STAGE_PREFIX[label]}{secrets.token_hex(6)}{STAGE_SUFFIX.get(label, '')}"
         state = _State(os.dup(parent_fd), name, kind)
         self._state = state
-        mode_bits = 0o600 if label == "quarantine" else 0o666
+        self._private = label in PRIVATE_LABELS
+        mode_bits = 0o600 if self._private else 0o666
         stage_fd = -1
         if kind == "dir":
             _call(os.mkdir, name, 0o700, dir_fd=state.parent_fd)
@@ -234,13 +237,20 @@ class RootedOutputTxn(_StageDir):
             if self._state.file_created:
                 raise FileAccessUnavailable("a file stage holds exactly one file")
             self._state.file_created = True
-            return _call(
+            fd = _call(
                 os.open,
                 self._state.stage_name,
                 _FILE_CREATE,
                 self._mode,
                 dir_fd=self._state.parent_fd,
             )
+            if self._private:
+                try:  # the umask narrowed the create mode; under 0777 the stage is born 000
+                    _call(os.fchmod, fd, 0o600)
+                except OSError:
+                    _close(fd)  # the stage file stays for abort() or the finalizer
+                    raise
+            return fd
         return super().create_file(component)
 
     def publish(self) -> None:
@@ -386,4 +396,10 @@ class RootedOutputDir:
             _close(child)
 
 
-__all__ = ["STAGE_PREFIX", "STAGE_SUFFIX", "RootedOutputDir", "RootedOutputTxn"]
+__all__ = [
+    "PRIVATE_LABELS",
+    "STAGE_PREFIX",
+    "STAGE_SUFFIX",
+    "RootedOutputDir",
+    "RootedOutputTxn",
+]
