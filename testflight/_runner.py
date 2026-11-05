@@ -220,18 +220,15 @@ def run_pipeline_twice(
     # one only for jobs that actually tokenize; every other job keeps its production
     # (auto-chunked / FK / mixed) route.
     needs_vault = _declares_tokenize(config)
-    result_a = run_pipeline(
-        config,
-        sources,
-        **run_kwargs,
-        **({"token_vault_writer": InMemoryTokenVault()} if needs_vault else {}),
-    )
-    result_b = run_pipeline(
-        config,
-        sources,
-        **run_kwargs,
-        **({"token_vault_writer": InMemoryTokenVault()} if needs_vault else {}),
-    )
+
+    def _run() -> Any:
+        kwargs: dict[str, Any] = dict(run_kwargs)
+        if needs_vault:
+            kwargs["token_vault_writer"] = InMemoryTokenVault()
+        return run_pipeline(config, sources, **kwargs)
+
+    result_a = _run()
+    result_b = _run()
     return result_a, result_b
 
 
