@@ -86,8 +86,6 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/detection/detectors.py": 1046,
     "src/decoy_engine/generators/columns.py": 658,
     "src/decoy_engine/profiling/profiler.py": 640,
-    # expanded ML training corpus generators split out of fixtures.py; split value-generators from corpus builders next.
-    "src/decoy_engine/profiling/eval/corpus.py": 976,
     # monolithic train_and_evaluate; decompose into split/fit/calibrate/evaluate modules.
     "src/decoy_engine/profiling/model_pack/trainer.py": 712,
     # compile-check ownership table; split into per-strategy check modules once the check set stabilises.
