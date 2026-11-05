@@ -86,9 +86,6 @@
   "src/decoy_engine/plan/_compile.py": {
    "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
   },
-  "src/decoy_engine/profiling/eval/corpus.py": {
-   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
-  },
   "src/decoy_engine/profiling/model_pack/trainer.py": {
    "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
   },

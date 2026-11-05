@@ -79,7 +79,7 @@
   }
  },
  "E3": {
-  "landed": false,
+  "landed": true,
   "from": "src/decoy_engine/profiling/eval/corpus.py",
   "owners": {
    "_EXT_SEED": "src/decoy_engine/profiling/eval/_corpus_base.py",
