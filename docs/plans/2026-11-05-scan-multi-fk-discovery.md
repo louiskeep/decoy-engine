@@ -35,6 +35,67 @@ in section 7. V1 infers no relationships of any kind, and the name-only
 cross-file walk (`decoy_engine.walks.run_cross_file_walk`) is not wired into the
 CLI.
 
+## Revision 4 (2026-11-05): Dennis review of 2a391193, applied on 27c52a49
+
+Dennis returned NO-GO (1 blocker, 4 high, 8 medium, 6 low). Each item below
+names the finding it answers.
+
+1. **B1, new dependency CLI-DIALECT.** `decoy run` reads CSV with
+   `pd.read_csv(path, dtype=str)` and ignores `has_header`, `column_names` and
+   `delimiter` (CLI `_sources.py` `read_source` and `iter_source_chunks`), so
+   a headerless YAML validates and compiles and then fails at run. A
+   standalone CLI slice, CLI-DIALECT (owned by the CONFIG-EXPLICIT row), makes
+   both readers honour all three fields. It lands before S1c and S3-cli. S3-cli
+   and every CLI headerless test depend on it; new test T4-runs-headerless.
+   S1a also passes the three fields through the engine's cloud CSV readers
+   (`profile/_cloud_readers.py`), which ignore them today; new test
+   T1-cloud-dialect.
+2. **H1, CSV typing.** Profiling keeps the engine `CsvFileSource` type
+   inference; `decoy run` reads CSV as text. The plan no longer claims scan
+   sees the run's types. S1a counts sampled text values with a leading zero
+   per column (count only) and S3-engine turns a non-zero count into a
+   value-free REVIEW note. The CLI's integer-to-hash rule is unchanged. The
+   integrity pass (S1b) reads CSV key columns as text, as run does.
+3. **H2, `--config` shape.** `--config` accepts a full pipeline or a
+   sources-only file (`sources:` plus optional `relationships:`), validated as
+   a `SourceDescriptor` mapping and a `RelationshipConfig` list, not as a
+   `PipelineConfig`. New test T2-config-sources-only.
+4. **H3, paths.** `--config` relative paths resolve against the config file's
+   directory before `scan_sources`, as `decoy run` does. The renderer writes
+   paths relative to the emitted YAML's directory (absolute when no relative
+   path exists). New test T4-runs-other-dir.
+5. **H4 (now medium), header guard.** The guard uses neutral column labels for
+   its one-row frame and runs only for CSV with `has_header: true`. Guarantees
+   2 and 7 are reworded: names come from the header row the user declared; the
+   guard catches structured PII and all-numeric or all-date first rows, not
+   names or addresses; no safety claim holds when `--has-header` is given for
+   headerless data. New tests T1-header-titlecase and T1-header-fn.
+6. **M2.** `scan_set_from_dict` is dropped (the CLI reads dicts); the CLI owns
+   the schema-tag check (T2-schema-reject). The nested per-table `detail`
+   (`ColumnProfile.to_dict()`) is declared additive-only and coordinated with
+   STORM E1.
+7. **M3.** T3-deterministic runs two subprocesses with different
+   `PYTHONHASHSEED` values and compares bytes.
+8. **M4.** T1-error-class injects a reader double whose exception message holds
+   a canary.
+9. **M5.** T2-parquet-compat compares shape only (keys and value types).
+10. **M6.** T3-parity runs a checked-in fixture of `FieldStats` cases through
+    both decision functions; the port keeps the CLI's behavior exactly,
+    including its `confidence_bucket` handling, the 0.1 ambiguity window and
+    the integer rule.
+11. **M7.** Every data-derived scalar in the emitted YAML is quoted; a
+    hostile-name fixture joins T4-validate.
+12. **M8.** An emitted YAML with a cloud source carries a REVIEW note that
+    `decoy run` refuses cloud I/O until CLI-CLOUD lands; new test
+    T4-cloud-note.
+13. **Low items.** L1 extension-to-descriptor mapping stated (S1c). L2 the init
+    error paths report the exception class only and join the canary test. L3
+    atomic-write details stated (section 2). L4 `scan_sources` passes
+    `file_access` to `profile_columns`. L5 T2-canary excludes header cells. L6
+    why `profile_source(config)` is not reused (section 2).
+14. **Sizes.** S1a ~470, S1c ~690, S3-engine ~560, S3-cli ~720; S1b and S1d
+    unchanged. All under 800. CLI-DIALECT is sized by its own row.
+
 ## Revision 3 (2026-11-05): changes since head 01ee6fde
 
 1. **Q9 answered: `redact` fallback.** A column with no PII suggestion gets
@@ -109,7 +170,8 @@ snapshot library is CLI-only (the platform stores scans in its database).
    the existing scan honesty and privacy rules (H4: PII candidates are
    suggestions only; H5: privacy-safe field records).
 2. Scan never guesses a header. Every CSV source states `has_header`; every
-   headerless source supplies its column names.
+   headerless source supplies its column names. Column names come from the
+   header row the user declared, or from the names the user supplied.
 3. Profiling memory is bounded per table: tables are scanned one at a time,
    each through the engine's bounded `ProfileSource` sample, and a table's
    frame is released before the next one is read. The integrity pass reads only
@@ -128,8 +190,14 @@ snapshot library is CLI-only (the platform stores scans in its database).
    commented-out `relationships:` template naming the scanned tables. The file
    passes `decoy validate config` and `decoy validate compile`.
 7. No human output, `--json` output, library snapshot or emitted YAML contains a
-   data value. Only an explicit `--output` file carries the engine's richer
-   per-table detail, under today's existing rule.
+   cell value. Column names are printed by design, since they come from the
+   declared header. Only an explicit `--output` file carries the engine's
+   richer per-table detail, under today's existing rule. This guarantee
+   assumes the header declaration is right: when `--has-header` is given for a
+   headerless file, the first data row becomes the column names and is printed.
+   The header guard warns on structured PII (emails, SSNs, phone numbers and
+   the like) and on all-numeric or all-date first rows; it does not catch a
+   first row of names or addresses.
 8. A single-file `decoy scan FILE.parquet` keeps today's `--json` keys and
    `--output` artifact shape. A single CSV now needs a header flag (a
    deliberate pre-GA change, section 5 S1c).
@@ -159,7 +227,8 @@ snapshot library is CLI-only (the platform stores scans in its database).
 | `--config` CSV source without an explicit `has_header` | Usage error naming the source. This CLI check is deleted when CONFIG-EXPLICIT makes the field required in the schema. |
 | `--no-header` with no `--column-names` / `--column-names-file` | Usage error. The engine's `FileSource` already rejects `has_header: false` without names. |
 | Column-name count does not match the file's width | The engine reader's existing record-width error, reported with the table name and error class only. |
-| Header given (`--has-header`) but the first row looks like data | The header guard runs the STORM detectors over the header cells. If a cell matches a PII detector, or every cell parses as a number or a date, a `warning.scan_header_suspect` warning names the table (never the cell). The guard never changes the reading. |
+| Header given (`--has-header`) but the first row looks like data | For CSV sources with `has_header: true` only, the header guard runs the STORM detectors over the header cells, in a one-row frame with neutral column labels (`c0..cn`) so name-based hints cannot fire. If a cell matches a structured PII detector, or every cell parses as a number or a date, a `warning.scan_header_suspect` warning names the table (never the cell). The guard never changes the reading, and it misses a first row of names or addresses (Guarantee 7). |
+| CSV typing (`"007"` against `7`) | Profiling keeps the engine `CsvFileSource` type inference, so a zero-padded code profiles as an integer, while `decoy run` reads CSV as text. Scan counts sampled text values with a leading zero per column (count only, no value) and the starter YAML carries a REVIEW note for such columns. |
 | Two files share a stem, or a stem is not a usable table name | Usage error before any read for a collision (no silent suffixing). Unusable names are normalized to `[a-z0-9_]`, a leading digit gets a `t_` prefix, and the card shows `name <- path`. |
 | Huge file | Bounded profiling sample per table (`--rows`, default 10 000; `--rows 0` reads everything). The integrity pass reads full key columns and the card says so; `--skip-integrity` skips it. |
 | Declared parent and child keys have different types (CSV string against parquet int) | Fact `key_type_mismatch`, a `warning.scan_key_type_mismatch` warning, no orphan count. No guessing or casting. |
@@ -202,7 +271,21 @@ Searches run on 2026-11-05 (web search plus the engine and CLI code at engine
   STORM detectors and only warns.
 - **Snapshot store:** owned by the local record library plan (L1), which
   carries its own established-solutions section. S1d adds no storage code.
-- **Atomic output:** the publish shape the engine's `fileaccess._output` uses.
+- **Atomic output:** the publish shape the engine's `fileaccess._output` uses:
+  a temp file in the target directory, `os.replace` onto the final name, and
+  the temp file removed in a `finally` on any failure. Modes: `--output` files
+  (they can carry cell values in `detail`) are created 0600; the emitted YAML
+  holds no cell values and follows the process umask. Accepted race: the
+  "target exists, refuse without `--yes`" check and the replace are not one
+  atomic step, so a file created between them is overwritten. That needs a
+  second local writer racing the same path and is accepted for a
+  single-operator CLI.
+- **Why not `profile_source(config)`:** the engine's `profile.profile_source`
+  returns the planner's walk `Profile` (`profile._types`), not the STORM
+  `ColumnProfile` with detector matches, PII scores and QI groups that scan
+  reports, and it takes a full validated pipeline config. Scan needs STORM
+  output per table from a sources-only input, so it reuses the lower layer
+  (`build_profile_source` plus `profile_columns`) instead.
 
 No custom algorithm remains in V1. The V2 FK survey is in section 7.
 
@@ -277,17 +360,25 @@ verb, or both, and may move features between standard and opt-in:
 Order: S1a, S1b (engine, can be built in parallel; S1b's tests need S1a's
 types), engine release and CLI repin, S1c, S1d, then S3-engine, engine release
 and repin, S3-cli. CONFIG-EXPLICIT (separate row) must merge before S1c's
-`--column-names-file` flag and before S3. The CLI pins `decoy-engine==0.18.0`;
+`--column-names-file` flag and before S3. CLI-DIALECT, a standalone CLI slice
+owned by the CONFIG-EXPLICIT row, makes `decoy run`'s CSV readers
+(`_sources.read_source` and `iter_source_chunks`) honour `has_header`,
+`column_names` and `delimiter`; it lands before S1c and S3-cli, and every CLI
+headerless test depends on it. The CLI pins `decoy-engine==0.18.0`;
 follow the engine repin checklist. Reason identities take the next free
 registry minor at build time; SUB-STOP and STORM E1 go first.
 
 Sizes are hand-written lines, code plus tests, estimated.
 
-### S1a-engine: `scan_sources` and `scan-set/v1` (engine, ~450 lines)
+### S1a-engine: `scan_sources` and `scan-set/v1` (engine, ~470 lines)
 
 **Files.**
 - new `src/decoy_engine/profiling/scan_set.py`: `scan_sources`, `TableScan`,
-  `ScanSet`, `scan_set_to_dict`, `scan_set_from_dict`.
+  `ScanSet`, `scan_set_to_dict`. No `scan_set_from_dict`: the CLI consumes
+  the dict form, and the schema-tag check lives in the CLI reader (S1c).
+- `src/decoy_engine/profile/_cloud_readers.py`: the S3 and GCS CSV readers pass
+  `has_header`, `column_names` and `delimiter` through to the read; today they
+  ignore them.
 - `src/decoy_engine/profiling/__init__.py`, `src/decoy_engine/__init__.py`:
   additive exports.
 - `src/decoy_engine/fileaccess/__init__.py`: add to `ENTRY_POINTS`; sentry
@@ -296,7 +387,8 @@ Sizes are hand-written lines, code plus tests, estimated.
   manifest fixture and the next free registry minor.
 - `docs/compatibility-contract.md` (§3.1 tag list, §3.4 note),
   `docs/reasons.md`, `CHANGELOG.md`.
-- tests: `tests/unit/profiling/test_scan_set.py`.
+- tests: `tests/unit/profiling/test_scan_set.py`,
+  `tests/unit/profile/test_cloud_csv_dialect.py`.
 
 **Behavior.**
 
@@ -317,22 +409,33 @@ def scan_sources(
   declared (`has_header`, `column_names`, and `column_names_file` once
   CONFIG-EXPLICIT adds it). No header inference.
 - For each selected table, in order: `build_profile_source(...)`, bounded
-  sample, header guard (when `has_header` is true), `profile_columns(...)`,
+  sample, header guard (CSV with `has_header: true` only),
+  `profile_columns(frame, source_label=name, ..., file_access=file_access)`,
   drop the frame.
-- Header guard: detectors over the header cells as a one-row frame; on a match,
-  or when every cell parses as a number or a date, attach a
-  `warning.scan_header_suspect` `ReasonRef`. Reading and names are unchanged.
+- Header guard: detectors over the header cells as a one-row frame whose
+  column labels are neutral (`c0..cn`), so the detectors' name hints cannot
+  fire on the header text. On a structured PII match, or when every cell
+  parses as a number or a date, attach a `warning.scan_header_suspect`
+  `ReasonRef`. Reading and names are unchanged.
+- Leading zeros (CSV only): the bounded sample is re-read as text for the same
+  rows and, per column, the number of non-null values matching `^0\d` is
+  stored as `leading_zero_count`. Count only; the text frame is dropped at
+  once. Profiling itself keeps type inference.
 - `ScanSet` (frozen): `tables`, `relationships` (S1b facts, empty here),
   `scan_schema = "scan-set/v1"`, `engine_version`, `scanned_at`.
   `TableScan`: `name`, `descriptor`, `profile`, `warnings`,
   `row_count_exact`, `key_candidates` (columns unique and non-null within the
-  scanned rows, labeled as sample-based), `null_counts`.
+  scanned rows, labeled as sample-based), `null_counts`,
+  `leading_zero_counts`.
 - `scan_set_to_dict(s, *, detail: bool)`: the value-free core always (per table
   the descriptor, `_safe_field_record`-equivalent field facts, key candidates,
   null counts, warnings, reid score and QI groups as names); with
   `detail=True`, an optional per-table `detail` member carrying
-  `profile.to_dict()`. `scan_set_from_dict` reads both. The safe field-record
-  shape moves into the engine here so CLI and snapshots share it.
+  `profile.to_dict()`. The safe field-record shape moves into the engine here
+  so CLI and snapshots share it. `detail` is the nested `ColumnProfile` dict
+  and is additive-only: a field may be added, never renamed or removed, within
+  `scan-set/v1`. The STORM rename wave (E1) renames there go through the
+  compatibility procedure and are coordinated with that row.
 - Logging: one operational line per table (name, rows scanned, duration).
 
 **Acceptance tests (written first) and named mutations.**
@@ -343,12 +446,17 @@ def scan_sources(
 | T1-bounded | 50 000-row parquet, `sample_rows=1000`: at most one batch past 1000 rows read (reader spy) | M1-full: `to_frame()` instead of `sample_frame` |
 | T1-sequential | at most one table frame alive while three tables scan (weakref probe) | M1-hold: keep frames in a list |
 | T1-explicit-header | a CSV source with `has_header: false` and `column_names` profiles the first row as data under those names | M1-sniff: infer the header |
+| T1-cloud-dialect | an S3 CSV source (reader double over the cloud reader's byte stream) with `has_header: false`, `column_names` and `delimiter: "\t"` profiles the first row as data under those names, split on tabs | M1-cloud-ignore: drop the three fields in the cloud reader |
 | T1-header-guard | `has_header: true` on a headerless CSV whose first row holds an email: warning attached, names unchanged, the warning text has no cell content | M1-rename: rewrite names when suspect |
 | T1-header-clean | header `first_name,email` raises no warning | M1-overeager: warn on any all-string header |
+| T1-header-titlecase | header `Name,City,State,Zip` raises no warning | M1-name-hints: label the guard frame with the header cells, so name hints fire |
+| T1-header-fn | header row `Jane Doe,42,NY` raises no warning; the test documents this known miss (Guarantee 7) and fails if the guard's scope silently changes | none: this pins a documented limit |
+| T1-no-guard-parquet | a parquet table never runs the guard (detector spy) | M1-guard-all: run the guard for every format |
+| T1-leading-zero | a CSV column with values `007`, `012`, `5` gives `leading_zero_count == 2`, profiles as integer, and the count field carries no value | M1-zero-from-typed: count on the inferred frame (always 0) |
 | T1-core-value-free | canary in every cell: `scan_set_to_dict(s, detail=False)` contains no canary | M1-leak: put `top_values` in the core |
-| T1-roundtrip | both forms round-trip; unknown `scan_schema` major raises | M1-schema: drop the check |
+| T1-schema-tag | both dict forms carry `scan_schema: "scan-set/v1"`; `detail=False` has no `detail` key | M1-tagless: omit the tag |
 | T1-fileaccess | deny-all `FileAccess` raises `decoy.file_access_denied` before any read | M-FA |
-| T1-error-class | a corrupt parquet raises with the table name and no cell text | M1-exc: interpolate `str(exc)` |
+| T1-error-class | a reader double raises an exception whose message holds a canary; the raised error names the table and the exception class, and the canary appears nowhere in it | M1-exc: interpolate `str(exc)` |
 | T1-sample-parity | one dataset as CSV, TSV, fixed width and Parquet: a 1 000-row head sample gives the same row count and per-column null and distinct counts (section 4) | M1-skip-header-row: drop the first data row for CSV only |
 
 **Frozen-contract effects.** Additive public API (§4.1). New persisted tag
@@ -383,8 +491,9 @@ identity at the next free registry minor. No determinism effect.
   child rows, child rows with any null key component, orphan rows (anti-join on
   all key columns, null child keys excluded) and orphan distinct keys.
   Composite keys work because the anti-join is on every listed column.
-- Key types are compared from the Arrow schemas as `decoy run` reads them. A
-  mismatch gives `status: key_type_mismatch` and no counts.
+- Key types are compared as `decoy run` reads them: CSV key columns are read as
+  text (run reads CSV with `dtype=str`), other formats keep their declared
+  types. A mismatch gives `status: key_type_mismatch` and no counts.
 - `RelationshipFacts`: `parent`, `children`, `status`, the counts above,
   `exact: bool`. Counts only; no key value is ever returned.
 
@@ -404,10 +513,10 @@ identity at the next free registry minor. No determinism effect.
 **Frozen-contract effects.** Additive fields on `ScanSet` and `scan-set/v1`
 (the `relationships` member), one warning identity.
 
-### S1c-cli: `decoy scan` over many tables (CLI, ~650 lines)
+### S1c-cli: `decoy scan` over many tables (CLI, ~690 lines)
 
-Depends on S1a and S1b released and repinned; `--column-names-file` also
-depends on CONFIG-EXPLICIT.
+Depends on S1a and S1b released and repinned, and on CLI-DIALECT;
+`--column-names-file` also depends on CONFIG-EXPLICIT.
 
 **Files.**
 - new `src/decoy/cli/_scan_multi.py`: argument resolution (positional files to
@@ -428,9 +537,24 @@ depends on CONFIG-EXPLICIT.
   `--config`. `--column-names` and `--column-names-file` require `--no-header`
   and exactly one positional CSV (several headerless files need `--config`).
 - `--format` and `--layout` apply only with exactly one positional file.
-- `--config p.yaml`: validated through `PipelineConfig`; `sources` and
-  `relationships` are read; selection defaults to every source; integrity runs
-  for the declared relationships.
+- Extension to descriptor (unchanged from today's scan, now stated): `.csv`
+  becomes `format: csv`; `.tsv` becomes `format: csv` with `delimiter: "\t"`;
+  `.parquet` and `.pq` become `format: parquet`; `.fwf`, `.dat`, `.fixed` and
+  `.fw` become `format: fixed_width` and need `--layout`; any other extension
+  becomes `format: csv` with a comma. `--format` overrides the mapping.
+  Positional paths are made absolute against the current directory.
+- `--config p.yaml` accepts two shapes: a full pipeline config, or a
+  sources-only file holding `sources:` and an optional `relationships:` (the
+  same keys and value shapes as a pipeline config; `version` optional and, when
+  present, must be 2; any other top-level key is ignored in a full pipeline and
+  rejected in a sources-only file). Only those two keys are validated: the
+  sources mapping through a pydantic `TypeAdapter(dict[str,
+  SourceDescriptor])`, the relationships through `RelationshipConfig`. A full
+  pipeline is not validated as a `PipelineConfig`, so its cross-table rules
+  (tables and targets required) do not block a scan. Relative source paths
+  resolve against the config file's directory before `scan_sources`, the rule
+  `decoy run` uses. Selection defaults to every source; integrity runs for the
+  declared relationships. The CLI reference documents both shapes.
 - Output: a summary card (table, rows scanned, columns, PII candidates, reid
   risk, key candidates), then an integrity block per declared relationship
   (`orders.customer_id -> customers.customer_id: 7 orphan rows (3 keys), 5 null,
@@ -439,7 +563,9 @@ depends on CONFIG-EXPLICIT.
   "pii_note": ..., "tables": [...], "relationships": [...]}`; a single parquet
   file keeps today's flat keys. `--output scan.json` writes
   `scan_set_to_dict(detail=True)`; a single file keeps the bare
-  `profile.to_dict()`.
+  `profile.to_dict()`. `fields`, `show`, `diff` and `--compare` read the dict
+  form and reject an unknown `scan_schema` major (the engine has no dict
+  reader).
 - Pre-GA change: a single CSV without a header flag is now a usage error
   (owner rule). CHANGELOG entry; the scan epilog examples gain the flag.
 - Exit codes unchanged: 0 ok, 2 usage, 3 runtime. Integrity findings never
@@ -451,14 +577,18 @@ depends on CONFIG-EXPLICIT.
 |---|---|---|
 | T2-multi | three files: three tables in argument order in card and `--json` | M2-sort: sort by name |
 | T2-header-required | a CSV with no header flag exits 2 before any read | M2-default: default to `has_header: true` |
-| T2-headerless | `--no-header --column-names a,b` profiles the first row as data | M2-drop-names: ignore `--column-names` |
+| T2-headerless | `--no-header --column-names a,b` profiles the first row as data (needs CLI-DIALECT) | M2-drop-names: ignore `--column-names` |
+| T2-tsv | `x.tsv` is scanned as `format: csv` with a tab delimiter | M2-comma: treat `.tsv` as comma-separated |
 | T2-config-header | a config CSV source without explicit `has_header` exits 2 | M2-trust-default: accept the schema default |
-| T2-parquet-compat | one parquet file: `--json` keys and `--output` match a golden from 8fba6af (timestamps masked) | M2-envelope: always emit the multi envelope |
+| T2-config-sources-only | a file with only `sources:` and `relationships:` scans, runs integrity, and exits 0; a full pipeline with no `targets` also scans | M2-full-validate: validate through `PipelineConfig` |
+| T2-config-relative | a config in `cfg/` naming `data/a.csv` scans `cfg/data/a.csv` when run from another directory | M2-cwd: resolve against the current directory |
+| T2-schema-reject | `scan fields` on a dict with `scan_schema: "scan-set/v2"` exits 2 | M2-no-check: skip the tag check |
+| T2-parquet-compat | one parquet file: the `--json` key set and each value's type, and the `--output` key set, match a shape golden from 8fba6af (values not compared) | M2-envelope: always emit the multi envelope |
 | T2-collision | `a/x.csv b/x.csv` exits 2 before any read | M2-suffix: auto-suffix |
 | T2-config-select | `--config p.yaml --table t2` profiles only t2 | M2-ignore-select |
 | T2-integrity | config with one declared relationship: the card and `--json` show the S1b counts | M2-hide: drop the integrity block |
 | T2-atomic | second table corrupt: exit 3, no `--output` file | M2-partial: write per table |
-| T2-canary | unique canary in every cell: card, `--show-fields`, `--json`, integrity block, stderr and the error path carry no canary | M2-leak: add `top_values` to the field record |
+| T2-canary | unique canary in every data cell (header cells excluded: they are column names, printed by design): card, `--show-fields`, `--json`, integrity block, stderr and the error path carry no canary | M2-leak: add `top_values` to the field record |
 
 **Frozen-contract effects.** CLI contract (§3.4): verb unchanged; flags
 additive; positional becomes variadic. Breaking pre-GA: a CSV now needs a header
@@ -503,7 +633,7 @@ S1d only writes `scan-set/v1` records through it. Depends on S1c and L1.
 **Frozen-contract effects.** New CLI flags. The record payload is the
 engine's `scan-set/v1`; the envelope is L1's contract.
 
-### S3-engine: `starter_config` and `scan_baseline` (engine, ~520 lines)
+### S3-engine: `starter_config` and `scan_baseline` (engine, ~560 lines)
 
 Depends on S1a and CONFIG-EXPLICIT.
 
@@ -513,7 +643,14 @@ Depends on S1a and CONFIG-EXPLICIT.
 - new `src/decoy_engine/profiling/_starter_strategies.py`: the detector to V2
   `ColumnConfig` table ported from the CLI's `_INFERENCE_TABLE`, its REVIEW
   copy and its `_NAMESPACE_REQUIRED_STRATEGIES` rule. The fallback stays
-  `redact` (owner answer Q9).
+  `redact` (owner answer Q9). The port is behavior-exact: the decision
+  function keeps the CLI's `confidence_bucket` handling, its 0.1 ambiguity
+  window and its integer-column rule as they are at CLI 8fba6af. Any later fix
+  to those is its own change with a CHANGELOG line.
+- new `tests/fixtures/scan_multi/cli_inference_8fba6af.json`: `FieldStats`
+  cases and the CLI's decisions for them, captured by running
+  `_infer_strategy_for_column` at CLI 8fba6af (the capture script is checked
+  in beside it).
 - new `src/decoy_engine/config/_scan_baseline.py` and `_pipeline.py`: optional
   `scan_baseline: {path: str, schema: Literal["scan-set/v1"]}`, default `None`.
 - exports, `docs/compatibility-contract.md` (§3.4 config note),
@@ -547,6 +684,12 @@ def starter_config(
   column is redacted until the user picks `passthrough` or another strategy.
   Namespaced strategies get
   `namespace: <column name>`.
+- A column with `leading_zero_count > 0` gets a REVIEW note: "N sampled values
+  in this column start with 0. The scan read it as a number, but `decoy run`
+  reads CSV as text, so check that the strategy keeps leading zeros." Count
+  only.
+- A cloud source gets a REVIEW note on its source and target: `decoy run` does
+  not read or write S3 or GCS until the CLI-CLOUD row lands.
 - `relationships` is the user's declared list from `--config` when present
   (copied, never edited), otherwise `[]`. `StarterConfig.relationship_template`
   lists the scanned table names for the renderer's comment.
@@ -566,16 +709,19 @@ def starter_config(
 | T3-declared-kept | a declared relationship is copied unchanged | M3-edit: rewrite its `orphan_policy` |
 | T3-baseline | `scan_baseline.path` equals the given path; omitted when `None` | M3-always: emit an empty baseline |
 | T3-value-free | canary fixtures: no canary in `config` or `notes` | M3-leak: note quotes a top value |
-| T3-parity | every detector in the CLI table at 8fba6af, and the fallback, ports to the same strategy, provider and `provider_config` | M3-drift: change one provider |
-| T3-deterministic | two calls give equal configs and notes | M3-order: iterate a set of table names |
+| T3-parity | every `FieldStats` case in the checked-in 8fba6af fixture (each detector, the fallback, an ambiguous pair inside and outside the 0.1 window, the integer rule, each `confidence_bucket` value) gets the same strategy, provider and `provider_config` from the engine function as the CLI gave | M3-drift: change one provider; M3-window: widen the ambiguity window to 0.2 |
+| T3-deterministic | two subprocesses with `PYTHONHASHSEED=1` and `PYTHONHASHSEED=2` render the same scan set; configs and notes are byte-equal | M3-order: iterate a set of table names |
+| T3-leading-zero-note | a column with a non-zero `leading_zero_count` gets the note with the count and no value | M3-no-note: drop the note |
+| T3-cloud-note | an S3 source gets the CLI-CLOUD REVIEW note | M3-cloud-silent: omit it |
 | T3-config-field | `scan_baseline` with another schema tag is rejected; a config without it is unchanged | M3-open: make `schema` a plain string |
 
 **Frozen-contract effects.** Additive public API and one additive optional
 config field (§3.4 config contract). No new artifact tag; no reason identity.
 
-### S3-cli: `--emit-config` and `--compare` (CLI, ~650 lines including moved code)
+### S3-cli: `--emit-config` and `--compare` (CLI, ~720 lines including moved code)
 
-Depends on S1d (and so on L1) and on S3-engine released and repinned.
+Depends on S1d (and so on L1), on S3-engine released and repinned, and on
+CLI-DIALECT.
 
 **Files.**
 - new `src/decoy/cli/_scaffold_yaml.py`: the one renderer (takes
@@ -586,7 +732,9 @@ Depends on S1d (and so on L1) and on S3-engine released and repinned.
 - `src/decoy/cli/init.py`: `decoy init FILE` (kept, owner answer Q2) now needs
   the same header flags, builds a one-table scan through `scan_sources` and
   renders with `_scaffold_yaml`. The old builder, `_load_dataframe` and
-  `_init_inference.py` are deleted.
+  `_init_inference.py` are deleted. Init's error paths report the table and the
+  exception class only (today they print `str(exc)`), and init joins the
+  canary test.
 - `src/decoy/cli/validate.py`: `preflight` checks that `scan_baseline.path`
   exists and reads as `scan-set/v1`.
 - docs, `CHANGELOG.md`; tests: `tests/e2e/test_scan_emit_config.py`,
@@ -615,6 +763,14 @@ Depends on S1d (and so on L1) and on S3-engine released and repinned.
   ```
 
   The example names are fixed copy. Only the table list comes from the scan.
+- Quoting: every data-derived scalar (table names, column names, paths,
+  namespace values, `column_names` entries) is written through `_yaml_quote`
+  as a single-quoted scalar, so names such as `yes`, `null`, `123`, `a: b` or
+  `#id` survive a YAML 1.1 load unchanged.
+- Paths: each source path, target path and `scan_baseline.path` is written
+  relative to the emitted YAML's directory, which is how `decoy run` resolves
+  them; when no relative path exists (another drive on Windows) the absolute
+  path is written. Cloud URIs are written unchanged.
 - `decoy scan --config p.yaml --compare` rescans the config's sources and diffs
   the result against `scan_baseline` (the existing scan-diff rules, per table);
   `--strict` exits 1 on drift, as `scan diff --strict` does today.
@@ -623,13 +779,16 @@ Depends on S1d (and so on L1) and on S3-engine released and repinned.
 
 | Test | Asserts | Mutation |
 |---|---|---|
-| T4-validate | the emitted YAML for a three-table scan passes `decoy validate config`, `compile` and `preflight` (subprocess, exit 0) | M4-target: no target for the last table |
+| T4-validate | the emitted YAML for a three-table scan passes `decoy validate config`, `compile` and `preflight` (subprocess, exit 0); a hostile-name fixture (columns `yes`, `null`, `123`, `a: b`, `#id`, `it's`) loads back with every name unchanged | M4-target: no target for the last table; M4-unquoted: write names as plain scalars |
 | T4-runs | `decoy run` on the emitted YAML for a two-table fixture exits 0 and every unflagged column comes out redacted | M4-format: `format: csv` for a parquet source |
-| T4-headerless | a headerless source round-trips: the YAML carries `has_header: false` and its names, and `decoy run` reads it | M4-implicit: drop `has_header` |
+| T4-runs-other-dir | scan files in `data/`, emit the YAML into `out/`, run from a third directory: exit 0 | M4-verbatim: copy the source path verbatim |
+| T4-headerless | a headerless source round-trips: the YAML carries `has_header: false` and its names (needs CLI-DIALECT) | M4-implicit: drop `has_header` |
+| T4-runs-headerless | `decoy run` on the emitted YAML for a headerless CSV exits 0 and its output has the declared column names and every data row, the first included (needs CLI-DIALECT) | M4-ignore-header: make `read_source` ignore `has_header` |
+| T4-cloud-note | an emitted YAML with an S3 source carries the CLI-CLOUD REVIEW note | M4-strip-notes: drop source-level REVIEW comments |
 | T4-template-inert | `relationships` parses empty and the comment names every scanned table | M4-live: emit the template uncommented |
 | T4-baseline | the YAML's `scan_baseline.path` resolves to the snapshot just written | M4-abs: write an absolute path from another directory |
 | T4-compare | after adding a column to one file, `--compare --strict` exits 1 and names the table | M4-noop: compare the baseline with itself |
-| T4-canary | no fixture canary in the YAML | M4-leak: REVIEW quotes a top value |
+| T4-canary | no fixture data-cell canary in the YAML, or in init's output and error paths | M4-leak: REVIEW quotes a top value; M4-init-exc: init prints `str(exc)` |
 | G-ONE-EMITTER | init and scan bodies match after the header | M-EMIT |
 | T4-atomic | a failing second table leaves no YAML file | M4-early: write before the last table |
 | T4-overwrite | existing target without `--yes` exits 2; same path as `--config` always exits 2 | M4-clobber |
@@ -643,12 +802,13 @@ CSV. Unsuggested columns keep today's `redact` default. The emitted YAML is a
 
 | Slice | Repo | Lines (est.) | Depends on |
 |---|---|---|---|
-| S1a-engine | engine | ~450 | none |
+| S1a-engine | engine | ~470 | none |
 | S1b-engine | engine | ~480 | S1a types |
-| S1c-cli | CLI | ~650 | S1a + S1b release and repin; CONFIG-EXPLICIT for `--column-names-file` |
+| S1c-cli | CLI | ~690 | S1a + S1b release and repin, CLI-DIALECT; CONFIG-EXPLICIT for `--column-names-file` |
 | S1d-cli | CLI | ~250 | S1c, local record library L1 |
-| S3-engine | engine | ~520 | S1a, CONFIG-EXPLICIT |
-| S3-cli | CLI | ~650 | S1d, S3-engine release and repin |
+| S3-engine | engine | ~560 | S1a, CONFIG-EXPLICIT |
+| S3-cli | CLI | ~720 | S1d, S3-engine release and repin, CLI-DIALECT |
+| CLI-DIALECT | CLI | sized by the CONFIG-EXPLICIT row | CONFIG-EXPLICIT row |
 
 Each slice stays under 800 hand-written lines. Test depth: T0 per edit, T1
 impact-selected per commit. The engine slices touch the reason registry, the
