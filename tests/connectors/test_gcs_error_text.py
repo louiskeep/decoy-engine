@@ -188,6 +188,37 @@ def _clients() -> Any:
 
 @pytest.mark.parametrize("where", ["read", "write", "close"])
 def test_open_file_object_translates_after_open(where: str, install: Callable[..., Recorder]):
+    """``gcs_open`` itself translates errors raised by the returned file object.
+
+    The factory module is absent on the base, so the missing attribute is an assertion.
+    """
+    try:
+        gcs_open = _clients().gcs_open
+    except ImportError:
+        gcs_open = None
+    assert gcs_open is not None, "connectors._clients.gcs_open does not exist"
+    from test_gcs_timeouts import FakeBlob
+
+    rec = install(CSV_BODY, fail={where: gax_exc.ServiceUnavailable(MSG)})
+    with pytest.raises(TransientError) as info:
+        with gcs_open(FakeBlob(rec, "o"), "rb" if where == "read" else "wb") as remote:
+            if where == "read":
+                remote.read(4)
+            else:
+                remote.write(b"x")
+    _value_free(str(info.value), repr(info.value))
+
+
+def test_wrap_gcs_error_classifies_a_retry_timeout_as_transient() -> None:
+    from decoy_engine.connectors.gcs import _wrap_gcs_error
+
+    err = _wrap_gcs_error(gax_exc.RetryError(MSG, ValueError(MSG)))
+    assert type(err) is TransientError, type(err).__name__
+    _value_free(str(err), repr(err))
+
+
+@pytest.mark.parametrize("where", ["read", "write", "close"])
+def test_open_errors_reach_the_connector_value_free(where: str, install: Callable[..., Recorder]):
     """The error comes from the returned file object, not from ``open`` itself.
 
     Driven through the public connector entries so it fails on the base by assertion.
