@@ -145,7 +145,17 @@ class _FakeS3:
 class _FakeBlob:
     size = len(CLOUD_CSV)
 
-    def download_as_bytes(self, start: int | None = None, end: int | None = None) -> bytes:
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, object]] = []
+
+    def download_as_bytes(
+        self,
+        start: int | None = None,
+        end: int | None = None,
+        timeout: object = None,
+        retry: object = None,
+    ) -> bytes:
+        self.calls.append((timeout, retry))
         return CLOUD_CSV if start is None else CLOUD_CSV[start : (end or 0) + 1]
 
 
