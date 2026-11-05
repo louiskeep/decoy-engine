@@ -16,7 +16,6 @@ uploads internally; the SDK capabilities flag both.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterator
 from typing import ClassVar
 
@@ -78,10 +77,9 @@ def _build_gcs_client(config: GCSConfig):
     """
     try:
         if config.service_account_json is not None:
-            from google.oauth2 import service_account
-
-            sa_info = json.loads(config.service_account_json.get_secret_value())
-            credentials = service_account.Credentials.from_service_account_info(sa_info)
+            credentials = _clients.gcs_service_account(
+                config.service_account_json.get_secret_value()
+            )
             return _clients.gcs_client(project=config.project, credentials=credentials)
         return _clients.gcs_client(project=config.project)
     except ConnectorError:
