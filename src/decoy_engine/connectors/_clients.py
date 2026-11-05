@@ -27,6 +27,7 @@ Google imports are local so ``import decoy_engine`` works without the cloud extr
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -113,6 +114,22 @@ def gcs_client(**kwargs: Any) -> Any:
         return storage.Client(**kwargs)
 
     return _guard(build)
+
+
+def gcs_service_account(info_text: str) -> Any:
+    """Credentials from service-account JSON text, failing with fixed text.
+
+    The error is raised after the ``except`` block, so neither ``__cause__`` nor
+    ``__context__`` holds the original: a ``JSONDecodeError`` keeps the whole input
+    (the secret) in ``doc``.
+    """
+    try:
+        from google.oauth2 import service_account
+
+        return service_account.Credentials.from_service_account_info(json.loads(info_text))
+    except Exception:
+        pass
+    raise PermanentError("GCS service account credentials could not be parsed")
 
 
 def gcs_get_bucket(client: Any, name: str) -> Any:

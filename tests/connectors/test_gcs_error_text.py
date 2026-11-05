@@ -247,3 +247,55 @@ def test_client_construction_errors_are_value_free(
     else:
         assert result.ok is False
         _value_free(result.detail)
+
+
+SA_ENTRIES: dict[str, Callable[[GCSConfig], Any]] = {
+    "GCSFileSource.check": lambda c: GCSFileSource(c).check(),
+    "GCSFileSink.check": lambda c: GCSFileSink(c).check(),
+    "GCSFileSource.list": lambda c: list(GCSFileSource(c).list()),
+    "GCSFileSource.head": lambda c: GCSFileSource(c).head("o"),
+    "GCSFileSource.open": lambda c: b"".join(GCSFileSource(c).open("o")),
+    "GCSFileSink.write": lambda c: GCSFileSink(c).write("o", iter([b"x"])),
+}
+
+
+def _chain_has_secret(err: BaseException) -> bool:
+    """True when anything reachable through cause or context carries the secret."""
+    seen: BaseException | None = err
+    while seen is not None:
+        if "zz_marker_secret" in repr(seen) or "zz_marker_secret" in str(getattr(seen, "doc", "")):
+            return True
+        seen = seen.__cause__ or seen.__context__
+    return False
+
+
+@pytest.mark.parametrize("entry", sorted(SA_ENTRIES))
+@pytest.mark.parametrize("case", ["invalid-json", "rejected-key"])
+def test_service_account_failures_are_value_free(
+    entry: str, case: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AT-E4 cases 4 and 5: the credential text never reaches the error or its chain."""
+    from google.oauth2 import service_account
+
+    if case == "invalid-json":
+        text = '{"zz_marker_secret": '
+    else:
+        text = '{"zz_marker_secret": "key"}'
+
+        def _reject(*args: Any, **kwargs: Any) -> Any:
+            raise ValueError("zz_marker_secret key")
+
+        monkeypatch.setattr(
+            service_account.Credentials, "from_service_account_info", classmethod(_reject)
+        )
+    cfg = GCSConfig(bucket="zz_marker_bkt", project="p", service_account_json=text)
+    try:
+        result = SA_ENTRIES[entry](cfg)
+    except Exception as err:
+        _value_free(str(err), repr(err))
+        assert type(err) is PermanentError, type(err).__name__
+        assert err.__cause__ is None
+        assert not _chain_has_secret(err)
+    else:
+        assert result.ok is False
+        _value_free(result.detail)
