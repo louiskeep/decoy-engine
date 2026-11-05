@@ -41,6 +41,7 @@ SENTRIES = (
     "tests/sentry/test_native_release_workflow.py",
     "tests/sentry/test_no_residual_removed_surface.py",
     "tests/sentry/test_operator_registry_sentry.py",
+    "tests/sentry/test_outbound_clients.py",
     "tests/sentry/test_package_map_paths.py",
     "tests/sentry/test_pandas_eval_sites.py",
     "tests/sentry/test_perf_claim_provenance.py",
