@@ -18,7 +18,8 @@ and the retry total equals the library's own default deadline.
 Named limit: the outbound sentry (``tests/sentry/test_outbound_clients.py``) matches
 calls by method name, so it does not see a bound method stored in a variable and
 called later (``download = blob.download_as_bytes; download()``), nor a client built
-inside a third-party library the engine does not wrap. It scans ``src/decoy_engine``
+inside a third-party library the engine does not wrap, nor calls wrapped in
+``functools.partial`` or made through ``google.cloud.storage.transfer_manager``. It scans ``src/decoy_engine``
 only; ``scripts/`` and ``testflight/`` are out of scope.
 
 This module holds no file APIs and has no file-access registry row; keep it so.
@@ -41,6 +42,7 @@ _NOT_FOUND = "GCS bucket or object not found"
 _DENIED = "GCS permission denied"
 _TRANSIENT = "GCS transient network or service error"
 _REJECTED = "GCS rejected the request"
+_CREDENTIALS = "GCS credentials unavailable or invalid"
 _UNEXPECTED = "Unexpected GCS error"
 
 
@@ -64,9 +66,15 @@ def gcs_error(exc: BaseException) -> ConnectorError:
         return exc
     try:
         from google.api_core import exceptions as gax
+        from google.auth import exceptions as gauth
         from requests import exceptions as req
     except ImportError:
         return PermanentError(_UNEXPECTED)
+    # TransportError and TimeoutError subclass GoogleAuthError: check them first.
+    if isinstance(exc, (gauth.TransportError, gauth.TimeoutError)):
+        return TransientError(_TRANSIENT)
+    if isinstance(exc, gauth.GoogleAuthError):
+        return PermanentError(_CREDENTIALS)
     if isinstance(exc, gax.NotFound):
         return PermanentError(_NOT_FOUND)
     if isinstance(exc, (gax.Forbidden, gax.PermissionDenied, gax.Unauthenticated)):

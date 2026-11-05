@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 gax_exc = pytest.importorskip("google.api_core.exceptions")
+gauth = pytest.importorskip("google.auth.exceptions")
 requests = pytest.importorskip("requests")
 
 from test_gcs_timeouts import (  # noqa: E402
@@ -53,6 +54,12 @@ MATRIX: dict[str, tuple[Callable[[], BaseException], type]] = {
         TransientError,
     ),
     "BadRequest": (lambda: gax_exc.BadRequest(MSG), PermanentError),
+    "auth.TransportError": (lambda: gauth.TransportError(MSG), TransientError),
+    "auth.TimeoutError": (lambda: gauth.TimeoutError(MSG), TransientError),
+    "auth.DefaultCredentialsError": (lambda: gauth.DefaultCredentialsError(MSG), PermanentError),
+    "auth.RefreshError": (lambda: gauth.RefreshError(MSG), PermanentError),
+    "auth.MalformedError": (lambda: gauth.MalformedError(MSG), PermanentError),
+    "auth.GoogleAuthError": (lambda: gauth.GoogleAuthError(MSG), PermanentError),
     "RuntimeError": (lambda: RuntimeError(MSG), PermanentError),
 }
 CASES = sorted(MATRIX)
@@ -249,24 +256,34 @@ def test_without_google_libraries_every_error_is_the_fixed_fallback(
 
 CONSTRUCTION_ENTRIES: dict[str, Callable[[], Any]] = {
     "GCSFileSource.check": lambda: GCSFileSource(CFG).check(),
+    "GCSFileSink.check": lambda: GCSFileSink(CFG).check(),
     "GCSFileSource.list": lambda: list(GCSFileSource(CFG).list()),
     "GCSFileSource.head": lambda: GCSFileSource(CFG).head("zz_marker_obj"),
     "GCSFileSource.open": lambda: b"".join(GCSFileSource(CFG).open("zz_marker_obj")),
     "GCSFileSink.write": lambda: GCSFileSink(CFG).write("zz_marker_obj", iter([b"x"])),
     "GcsCsvSource.row_count": lambda: GcsCsvSource(_CSV).row_count(),
+    "GcsCsvSource.to_frame": lambda: GcsCsvSource(_CSV).to_frame(),
+    "GcsParquetSource.row_count": lambda: GcsParquetSource(_PQ).row_count(),
     "GcsParquetSource.to_frame": lambda: GcsParquetSource(_PQ).to_frame(),
+}
+CONSTRUCTION_FAILURES: dict[str, Callable[[], BaseException]] = {
+    "adc-missing": lambda: gauth.DefaultCredentialsError(
+        f"File /zz_marker_dir/creds.json was not found. {MSG}"
+    ),
+    "refresh-error": lambda: gauth.RefreshError("zz_marker token for zz-marker-host"),
+    "runtime-error": lambda: RuntimeError("zz_marker"),
 }
 
 
 @pytest.mark.parametrize("entry", sorted(CONSTRUCTION_ENTRIES))
+@pytest.mark.parametrize("failure", sorted(CONSTRUCTION_FAILURES))
 def test_client_construction_errors_are_value_free(
-    entry: str, monkeypatch: pytest.MonkeyPatch
+    entry: str, failure: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from google.auth.exceptions import DefaultCredentialsError
     from google.cloud import storage
 
     def _fail(*args: Any, **kwargs: Any) -> Any:
-        raise DefaultCredentialsError(f"File /home/zz_marker/creds.json: {MSG}")
+        raise CONSTRUCTION_FAILURES[failure]()
 
     monkeypatch.setattr(storage, "Client", _fail)
     result = None
@@ -274,10 +291,40 @@ def test_client_construction_errors_are_value_free(
         result = CONSTRUCTION_ENTRIES[entry]()
     except Exception as err:
         _value_free(str(err), repr(err))
+        assert "zz_marker_dir" not in str(err) + repr(err)
         assert type(err) is PermanentError, type(err).__name__
     else:
         assert result.ok is False
         _value_free(result.detail)
+        assert "zz_marker_dir" not in result.detail
+
+
+class _BrokenBucketClient:
+    """A client whose ``bucket()`` raises, as a malformed bucket name does."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def bucket(self, name: str) -> Any:
+        raise ValueError(f"Invalid bucket name {name!r} zz_marker")
+
+
+@pytest.mark.parametrize("entry", ["list", "head", "open", "write"])
+def test_bucket_handle_failures_are_typed_and_value_free(
+    entry: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from google.cloud import storage
+
+    monkeypatch.setattr(storage, "Client", _BrokenBucketClient)
+    run = {
+        "list": lambda: list(GCSFileSource(CFG).list()),
+        "head": lambda: GCSFileSource(CFG).head("o"),
+        "open": lambda: b"".join(GCSFileSource(CFG).open("o")),
+        "write": lambda: GCSFileSink(CFG).write("o", iter([b"x"])),
+    }[entry]
+    with pytest.raises(PermanentError) as info:
+        run()
+    _value_free(str(info.value), repr(info.value))
 
 
 SA_ENTRIES: dict[str, Callable[[GCSConfig], Any]] = {
@@ -330,3 +377,16 @@ def test_service_account_failures_are_value_free(
     else:
         assert result.ok is False
         _value_free(result.detail)
+
+
+@pytest.mark.parametrize("case", sorted(c for c in MATRIX if c.startswith("auth.")))
+def test_google_auth_errors_get_their_own_fixed_text(case: str) -> None:
+    make, expected = MATRIX[case]
+    err = _clients().gcs_error(make())
+    assert type(err) is expected
+    want = (
+        "GCS transient network or service error"
+        if expected is TransientError
+        else "GCS credentials unavailable or invalid"
+    )
+    assert str(err) == want
