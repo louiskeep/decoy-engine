@@ -330,3 +330,69 @@ def test_seeded_corpus_is_not_vacuous(seeded: dict[str, set[tuple[str, str]]]) -
 @pytest.mark.parametrize("case", sorted(SEEDED))
 def test_seeded_case(case: str, seeded: dict[str, set[tuple[str, str]]]) -> None:
     assert seeded.get(case, set()) == SEEDED[case]
+
+
+# ----- trusted Decoy errors: gcs_error passes TransientError/PermanentError through --------
+# That is only safe while these modules build them from fixed text. A literal, or a
+# module-level name bound to one, is the only argument shape allowed.
+
+LITERAL_FILES = (
+    "decoy_engine/connectors/_clients.py",
+    "decoy_engine/connectors/gcs.py",
+    "decoy_engine/profile/_cloud_readers.py",
+)
+ERROR_CLASSES = frozenset({"TransientError", "PermanentError", "ConnectorError"})
+
+
+def non_literal_errors(text: str, rel: str) -> list[str]:
+    tree = ast.parse(text)
+    fixed = {
+        t.id
+        for n in tree.body
+        if isinstance(n, (ast.Assign, ast.AnnAssign))
+        and isinstance(n.value, ast.Constant)
+        and isinstance(n.value.value, str)
+        for t in (n.targets if isinstance(n, ast.Assign) else [n.target])
+        if isinstance(t, ast.Name)
+    }
+    bad = []
+    for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
+        f = call.func
+        name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else ""
+        if name not in ERROR_CLASSES:
+            continue
+        arg = call.args[0] if len(call.args) == 1 and not call.keywords else None
+        ok = (isinstance(arg, ast.Constant) and isinstance(arg.value, str)) or (
+            isinstance(arg, ast.Name) and arg.id in fixed
+        )
+        if not ok:
+            bad.append(f"{rel}:{call.lineno} {name}")
+    return bad
+
+
+def test_gcs_connector_errors_are_built_from_literals() -> None:
+    bad = [
+        b
+        for rel in LITERAL_FILES
+        for b in non_literal_errors((SRC / rel).read_text(encoding="utf-8"), rel)
+    ]
+    assert not bad, bad
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        'PermanentError(f"bad {exc}")',
+        "PermanentError(message)",
+        "TransientError(str(exc))",
+        'ConnectorError("a", "b")',
+    ],
+    ids=["f-string", "variable", "str-exc", "two-args"],
+)
+def test_literal_check_flags_seeded_cases(snippet: str) -> None:
+    assert len(non_literal_errors(snippet, "<seeded>")) == 1
+
+
+def test_literal_check_accepts_literals_and_named_constants() -> None:
+    text = 'FIXED = "x"\nPermanentError("y")\nTransientError(FIXED)\n'
+    assert non_literal_errors(text, "<seeded>") == []
