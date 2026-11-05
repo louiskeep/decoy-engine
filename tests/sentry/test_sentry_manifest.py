@@ -19,6 +19,7 @@ GATES = ROOT / "scripts" / "dev" / "gates.sh"
 
 SENTRIES = (
     "tests/sentry/test_baseline_registry.py",
+    "tests/sentry/test_bash32_compat.py",
     "tests/sentry/test_capability_matrix.py",
     "tests/sentry/test_cdf_threshold_ratchet.py",
     "tests/sentry/test_ci_config.py",
@@ -45,6 +46,7 @@ SENTRIES = (
     "tests/sentry/test_perf_claim_provenance.py",
     "tests/sentry/test_phase_containment.py",
     "tests/sentry/test_physical_seam_disconnection.py",
+    "tests/sentry/test_private_files.py",
     "tests/sentry/test_proof_manifest.py",
     "tests/sentry/test_public_import_boundary.py",
     "tests/sentry/test_ratchet_check.py",

@@ -105,7 +105,7 @@ from decoy_engine.execution._isolated_memwatch import error_suffix, evidence_of,
 from decoy_engine.execution._isolated_reason import commit_reason, reason_from_envelope
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._row_errors import RowErrorRecord
-from decoy_engine.fileaccess import FileAccess, entry_point
+from decoy_engine.fileaccess import FileAccess, FileRequest, FileRole, entry_point
 from decoy_engine.reason_adapter import reason_from_exception
 from decoy_engine.reasons import ReasonRecord
 from decoy_engine.reasons import decoy as _decoy_reasons
@@ -426,12 +426,12 @@ def _write_payload(
         raise ValueError(
             f"config / run_pipeline_kwargs must be JSON-serializable for isolated execution: {exc}"
         ) from exc
-    payload_path.write_text(serialized, encoding="utf-8")
-    # LOW-2: config may carry source/target DSNs (connection strings with
-    # embedded credentials) -- 0600 keeps the payload readable only by the
-    # user that spawned this run, not world/group-readable via the default
-    # umask-derived mode.
-    os.chmod(payload_path, 0o600)
+    # The payload may carry DSNs with credentials: write_private makes it 0600 at
+    # creation (no umask window, no late chmod) and publishes it atomically.
+    fileaccess.write_private(
+        FileRequest(FileRole.CONFIG, "write", str(payload_path), "isolated.payload"),
+        serialized.encode("utf-8"),
+    )
     return payload_path
 
 

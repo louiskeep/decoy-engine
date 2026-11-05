@@ -720,6 +720,25 @@ class TestPayloadFilePermissions:
         mode = stat.S_IMODE(payload_path.stat().st_mode)
         assert mode == 0o600
 
+    def test_payload_is_0600_at_creation_on_a_caller_staging_dir(self, tmp_path, monkeypatch):
+        from decoy_engine.execution._isolated_run import _write_payload
+
+        staging_dir = tmp_path / "work_root"
+        staging_dir.mkdir()
+        staging_dir.chmod(0o777)
+        chmod_calls: list[tuple[object, ...]] = []
+        monkeypatch.setattr(os, "chmod", lambda *a, **k: chmod_calls.append(a))
+        old = os.umask(0)
+        try:
+            payload_path = _write_payload(
+                staging_dir, {"dsn": "secret"}, None, {}, None, "none", staging_dir / "out"
+            )
+        finally:
+            os.umask(old)
+            monkeypatch.undo()
+        assert stat.S_IMODE(payload_path.stat().st_mode) == 0o600
+        assert chmod_calls == []
+
 
 # --------------------------------------------------------------------------
 # LOW-3: signal.Signals(n) raises ValueError for a real-time signal number
