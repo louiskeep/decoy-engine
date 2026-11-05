@@ -236,8 +236,9 @@ jobs:
         run: python -c "import build"
       - name: Build backend is the pinned hatchling
         run: |
+          # -v makes build print pip's resolution; without it the log never names the backend version.
           set -o pipefail
-          python -m build --sdist --outdir "$RUNNER_TEMP/sdist-check" 2>&1 | tee "$RUNNER_TEMP/build.log"
+          python -m build -v --sdist --outdir "$RUNNER_TEMP/sdist-check" 2>&1 | tee "$RUNNER_TEMP/build.log"
           grep -q "hatchling-1.32.4" "$RUNNER_TEMP/build.log"
       - name: Packaging gate (wheel ships the model pack + py.typed)
         run: pytest -m packaging --tb=short
