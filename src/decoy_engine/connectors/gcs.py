@@ -129,9 +129,9 @@ class GCSFileSource(FileSource[GCSConfig]):
         return CheckResult(ok=True)
 
     def list(self, prefix: str | None = None) -> Iterator[FileMeta]:
-        bucket = self._bucket_or_build()
         effective_prefix = _join_key(self.config.prefix, prefix or "")
         try:
+            bucket = self._bucket_or_build()
             for blob in _clients.gcs_list_blobs(bucket, prefix=effective_prefix or None):
                 yield FileMeta(
                     path=blob.name,
@@ -145,9 +145,8 @@ class GCSFileSource(FileSource[GCSConfig]):
             raise _wrap_gcs_error(exc) from exc
 
     def head(self, path: str) -> FileMeta:
-        bucket = self._bucket_or_build()
-        blob = bucket.blob(path)
         try:
+            blob = self._bucket_or_build().blob(path)
             _clients.gcs_reload(blob)
         except ConnectorError:
             raise
@@ -161,9 +160,8 @@ class GCSFileSource(FileSource[GCSConfig]):
         )
 
     def open(self, path: str) -> Iterator[bytes]:
-        bucket = self._bucket_or_build()
-        blob = bucket.blob(path)
         try:
+            blob = self._bucket_or_build().blob(path)
             # Blob.open returns a file-like wrapping an HTTPS stream;
             # iterate in chunks for bounded memory use.
             with _clients.gcs_open(blob, "rb") as remote:
@@ -213,12 +211,10 @@ class GCSFileSink(FileSink[GCSConfig]):
         return CheckResult(ok=True)
 
     def write(self, path: str, chunks: Iterator[bytes]) -> WriteResult:
-        bucket = self._bucket_or_build()
         key = _join_key(self.config.prefix, path)
-        blob = bucket.blob(key)
-
         bytes_written = 0
         try:
+            blob = self._bucket_or_build().blob(key)
             # google-cloud-storage's Blob.open("wb") streams the upload
             # and handles resumable session negotiation internally for
             # large writes. We don't need to manage parts ourselves.
