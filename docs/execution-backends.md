@@ -14,9 +14,8 @@ install and wheel/ABI facts are [`native/supported-matrix.md`](native/supported-
 If this page and those sources ever disagree, the sources win: they are derived from
 the dispatch constants and guarded by parity tests, this page is prose.
 
-The ExecutionAdapter substrate is pandas-only. `DECOY_SUBSTRATE` accepts `pandas`; other
-values raise `invalid_substrate`. Execution routes are separate from this setting. Rust and
-Arrow kernels can run inside those routes.
+The ExecutionAdapter substrate is pandas-only and there is no setting for it. Execution routes
+are separate from the substrate. Rust and Arrow kernels can run inside those routes.
 
 ## Backends, in one line each
 
@@ -52,8 +51,8 @@ The compiled companion is reachable only from masking. Generation never calls it
 ## Masking by route
 
 The router selects an execution route from job shape, eligibility, and memory signals.
-`execution_mode` can force a supported route. A caller does not select a masking backend
-through `DECOY_SUBSTRATE`. Default byte-estimate routing can select OOC below five million
+`execution_mode` can force a supported route. A caller does not select a masking
+backend. Default byte-estimate routing can select OOC below five million
 rows. The row threshold applies when byte-estimate routing is disabled. A confirmed probe can
 select full-frame. The router lives in
 [`_pipeline_routing.py`](../src/decoy_engine/execution/_pipeline_routing.py). Byte-parity with
