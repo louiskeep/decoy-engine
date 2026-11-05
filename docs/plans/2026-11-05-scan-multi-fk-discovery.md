@@ -35,6 +35,24 @@ in section 7. V1 infers no relationships of any kind, and the name-only
 cross-file walk (`decoy_engine.walks.run_cross_file_walk`) is not wired into the
 CLI.
 
+## Revision 3 (2026-11-05): changes since head 01ee6fde
+
+1. **Q9 answered: `redact` fallback.** A column with no PII suggestion gets
+   `redact`, not `passthrough` (owner: "redact is an easier way to see that
+   your data is wrong than passthrough for new users or if you just make a
+   mistake"). Every column is still listed. This reverses Revision 2 item 2's
+   default and keeps today's `decoy init` fallback.
+2. **Q10 answered.** V1 keeps every snapshot; pruning comes later through the
+   local record library's retention.
+3. **S1d rebuilt on the local record library.** S1d is built on the library
+   core (L1, CLI plan `docs/plans/2026-11-05-local-record-library.md` on branch
+   `plan/local-record-library`). The library plan owns the store, envelope,
+   index and retention; S1d only writes `scan-set/v1` records through it and
+   depends on L1. S1d shrinks to about 250 lines.
+4. **Sampling interplay.** Section 4 notes that `decoy run --sample N` stays V1
+   and must behave the same across delimited, CSV, fixed-width and Parquet
+   sources, and that scan's bounded sample uses the same engine sampler.
+
 ## Revision 2 (2026-11-05): changes since head 2a391193
 
 For the reviewer's delta. Everything else is unchanged.
@@ -100,11 +118,12 @@ snapshot library is CLI-only (the platform stores scans in its database).
    the scanned rows; per relationship declared in `--config`, exact parent
    duplicate-key count, child null-key count and orphan row count. It never
    prints a key value.
-5. Every scan saves a value-free `scan-set/v1` snapshot to the local library
-   (default `.decoy/scans/`) unless `--no-save` is given.
+5. Every scan saves a value-free `scan-set/v1` record to the local record
+   library (scan records default to `.decoy/scans/`) unless `--no-save` is
+   given.
 6. `--emit-config p.yaml` writes one starter pipeline YAML: an explicit source
    and a target for every scanned table, one column entry for every column with
-   a suggested strategy (`passthrough` when nothing is suggested), `# REVIEW:`
+   a suggested strategy (`redact` when nothing is suggested), `# REVIEW:`
    comments, a `scan_baseline:` reference to the saved snapshot, and a
    commented-out `relationships:` template naming the scanned tables. The file
    passes `decoy validate config` and `decoy validate compile`.
@@ -128,7 +147,8 @@ snapshot library is CLI-only (the platform stores scans in its database).
   settles that. Section 4 shows how S1 and S3 work with either answer.
 - No change to the engine's legacy `DEFAULT_STRATEGY_BY_DETECTOR` table, which
   the paused platform still reads (owner answer Q5).
-- No snapshot pruning or retention policy in V1 (Q10).
+- No snapshot pruning in V1 (owner answer Q10). Retention belongs to the local
+  record library plan.
 - No new masking behavior.
 
 ### Failure modes
@@ -147,7 +167,7 @@ snapshot library is CLI-only (the platform stores scans in its database).
 | Duplicate keys in a declared parent | Reported as a count; the relationship is still checked. |
 | Self-reference or cycle in declared relationships | Checked like any other edge; scan does not reject a cycle (the compiler does when the user runs the config). |
 | One table fails to read or profile | Exit 3, naming the table and the exception class only (never `str(exc)`, which can carry cell data). No `--output`, snapshot or `--emit-config` file is written (owner answer Q6). |
-| Snapshot directory not writable | Exit 3 with the path; `--no-save` is the hint. |
+| Library directory not writable | The library's own error (L1), exit 3 with the path; `--no-save` is the hint. |
 | `--emit-config` target already exists | Refused without `--yes`; always refused when it is the same path as `--config`. |
 | `--config` names an unknown table, or positional files are mixed with `--config` | Usage error. |
 | Cloud source without the cloud extra | Existing engine error, mapped to the existing extras hint. |
@@ -180,10 +200,8 @@ Searches run on 2026-11-05 (web search plus the engine and CLI code at engine
   even as a warning source: it votes only on columns with a fixed type or
   length, so it calls an all-text header "no header". The guard reuses the
   STORM detectors and only warns.
-- **Snapshot store:** content-addressed, append-only files (the layout git uses
-  for objects, and the shape of dbt's `target/` artifacts): one immutable JSON
-  per scan, named by time and content hash, written atomically (temp file plus
-  `os.replace`).
+- **Snapshot store:** owned by the local record library plan (L1), which
+  carries its own established-solutions section. S1d adds no storage code.
 - **Atomic output:** the publish shape the engine's `fileaccess._output` uses.
 
 No custom algorithm remains in V1. The V2 FK survey is in section 7.
@@ -216,10 +234,12 @@ No custom algorithm remains in V1. The V2 FK survey is in section 7.
     identical bodies after the provenance header. Mutation M-EMIT (on a scratch
     copy, since the old builder is deleted): route init through its old
     `_build_scaffold_yaml`; the guard goes red.
-  - Snapshot writes: one function, `_scan_library.save_snapshot`, writes under
-    the library. Guard G-ONE-SAVER walks the CLI package syntax tree for writes
-    of `scan-set/v1` payloads outside it. Mutation M-SAVE: write the snapshot
-    inline in `scan.py`; the guard goes red.
+  - Snapshot writes: the local record library (L1) is the one writer of
+    records; its plan names the choke point and guard. S1d adds a narrower
+    guard, G-ONE-SAVER: a syntax-tree walk of the CLI package finds no
+    `scan-set/v1` payload written except through the library API. Mutation
+    M-SAVE: write the snapshot with `Path.write_text` in `scan.py`; the guard
+    goes red.
   - Value-free output: `_safe_field_record` stays the only field renderer for
     human, `--json` and snapshot output. `scan_set_to_dict(..., detail=False)`
     is the only snapshot serializer and has no path to `top_values`, min, max
@@ -240,6 +260,17 @@ verb, or both, and may move features between standard and opt-in:
   `decoy validate preflight` in V1. Whether `decoy run` reads it is left open.
 - `StarterConfig` is a plain config dict plus notes, so adding opt-in blocks
   later is an additive builder field.
+- **Sampling.** The owner confirmed that `decoy run --sample N` stays in V1 and
+  must behave the same across delimited, CSV, fixed-width and Parquet sources
+  (it is planned elsewhere and is not on CLI main at 8fba6af). Scan does not
+  change `run --sample`. Scan's bounded sample (`--rows N --strategy head`)
+  goes through the engine's per-format `ProfileSource.sample_frame`, so the rows
+  scan profiles are the rows a head sample of the same size reads. If the
+  `run --sample` work settles on a shared engine sampler, `scan_sources` calls
+  that sampler instead, with no change to scan's flags. S1a adds test
+  T1-sample-parity: the same 1 000-row head sample from one dataset stored as
+  CSV, delimited (TSV), fixed width and Parquet profiles the same row count and
+  the same per-column null and distinct counts.
 
 ## 5. Slices
 
@@ -318,6 +349,7 @@ def scan_sources(
 | T1-roundtrip | both forms round-trip; unknown `scan_schema` major raises | M1-schema: drop the check |
 | T1-fileaccess | deny-all `FileAccess` raises `decoy.file_access_denied` before any read | M-FA |
 | T1-error-class | a corrupt parquet raises with the table name and no cell text | M1-exc: interpolate `str(exc)` |
+| T1-sample-parity | one dataset as CSV, TSV, fixed width and Parquet: a 1 000-row head sample gives the same row count and per-column null and distinct counts (section 4) | M1-skip-header-row: drop the first data row for CSV only |
 
 **Frozen-contract effects.** Additive public API (§4.1). New persisted tag
 `scan-set/v1` (§3.1); the optional `detail` member is additive; a core shape
@@ -432,44 +464,44 @@ depends on CONFIG-EXPLICIT.
 additive; positional becomes variadic. Breaking pre-GA: a CSV now needs a header
 flag. The saved-scan readers accept the bare profile and `scan-set/v1`.
 
-### S1d-cli: the scan library (CLI, ~400 lines)
+### S1d-cli: scan records in the local record library (CLI, ~250 lines)
 
-Depends on S1c.
+Built on the library core (L1). The local record library plan
+(`docs/plans/2026-11-05-local-record-library.md`, CLI branch
+`plan/local-record-library`) owns the store, envelope, index and retention.
+S1d only writes `scan-set/v1` records through it. Depends on S1c and L1.
 
 **Files.**
-- new `src/decoy/cli/_scan_library.py`: `save_snapshot`, `load_snapshot`,
-  `resolve_library_dir`.
-- `src/decoy/cli/scan.py`: `--no-save`, `--library DIR`; `scan diff` accepts
-  two snapshot paths or `--latest` (the two newest snapshots for the same table
-  set).
-- docs, `CHANGELOG.md`; tests: `tests/e2e/test_scan_library.py`, the G-ONE-SAVER
-  guard in `tests/unit/test_scan_library_guard.py`.
+- `src/decoy/cli/scan.py`: after a successful scan, write one record through
+  the L1 API; options `--no-save` and `--library DIR` (passed to L1);
+  `scan diff` accepts two record ids or paths, or `--latest` (the two newest
+  scan records for the same table set, found through the L1 index).
+- docs, `CHANGELOG.md`; tests: `tests/e2e/test_scan_records.py` and the
+  G-ONE-SAVER guard in `tests/unit/test_scan_record_guard.py`.
 
 **Behavior.**
-- After a successful scan, write `scan_set_to_dict(detail=False)` to
-  `<library>/<UTC yyyymmddThhmmssZ>-<first 12 hex of sha256 of the core>.json`.
-  Default library `.decoy/scans/` under the current directory (or the
-  `--config` file's directory). Directory mode 0700, file mode 0600, temp file
-  plus `os.replace`. Snapshots are immutable; a same-content rescan still gets a
-  new time-stamped file.
-- The card and `--json` report the snapshot path.
+- The record payload is `scan_set_to_dict(detail=False)`, the value-free core.
+  Record kind `scan-set/v1`; the location under the library (default
+  `.decoy/scans/` for scan records), file naming, modes, atomic write, envelope
+  and index are L1's.
+- The card and `--json` report the record id and path.
+- V1 keeps every record (owner answer Q10); retention is L1's.
 - This reverses the earlier "persist only on `--output`" rule (H7b) by owner
-  direction. The snapshot is value-free, so no cell data is persisted by
-  default.
+  direction. The record is value-free, so no cell data is persisted by default.
 
 **Acceptance tests and named mutations.**
 
 | Test | Asserts | Mutation |
 |---|---|---|
-| T6-saved | a scan writes exactly one snapshot under `.decoy/scans/` with mode 0600 | M6-mode: default umask |
-| T6-no-save | `--no-save` writes nothing | M6-ignore |
-| T6-value-free | canary fixtures: the snapshot file contains no canary | M6-detail: save with `detail=True` |
-| T6-atomic | a failed scan leaves no snapshot and no temp file | M6-early: save before the last table |
+| T6-saved | a scan writes exactly one `scan-set/v1` record through the L1 API (L1 test double records the call) | M6-bypass: write the file directly |
+| T6-no-save | `--no-save` writes no record | M6-ignore |
+| T6-value-free | canary fixtures: the record payload contains no canary | M6-detail: save with `detail=True` |
+| T6-atomic | a failed scan writes no record | M6-early: save before the last table |
 | T6-diff-latest | two scans with one column added: `scan diff --latest` reports it | M6-order: pick the oldest two |
-| G-ONE-SAVER | no `scan-set/v1` write outside `save_snapshot` | M-SAVE |
+| G-ONE-SAVER | no `scan-set/v1` write outside the L1 API | M-SAVE |
 
-**Frozen-contract effects.** New CLI flags; a new on-disk location. The
-snapshot format is the engine's `scan-set/v1`.
+**Frozen-contract effects.** New CLI flags. The record payload is the
+engine's `scan-set/v1`; the envelope is L1's contract.
 
 ### S3-engine: `starter_config` and `scan_baseline` (engine, ~520 lines)
 
@@ -480,8 +512,8 @@ Depends on S1a and CONFIG-EXPLICIT.
   `StarterConfig`, `ColumnSuggestion`.
 - new `src/decoy_engine/profiling/_starter_strategies.py`: the detector to V2
   `ColumnConfig` table ported from the CLI's `_INFERENCE_TABLE`, its REVIEW
-  copy and its `_NAMESPACE_REQUIRED_STRATEGIES` rule; the fallback becomes
-  `passthrough` (Q9).
+  copy and its `_NAMESPACE_REQUIRED_STRATEGIES` rule. The fallback stays
+  `redact` (owner answer Q9).
 - new `src/decoy_engine/config/_scan_baseline.py` and `_pipeline.py`: optional
   `scan_baseline: {path: str, schema: Literal["scan-set/v1"]}`, default `None`.
 - exports, `docs/compatibility-contract.md` (§3.4 config note),
@@ -511,8 +543,9 @@ def starter_config(
   the emitted YAML (owner answer Q4), with a REVIEW note.
 - Tables: one entry per table and one column entry for every column. Detector
   suggestions come from the strategy table; a column with no suggestion gets
-  `strategy: passthrough` and a REVIEW note saying no PII was detected and the
-  column is copied unchanged. Namespaced strategies get
+  `strategy: redact` and a REVIEW note saying no PII was detected, so the
+  column is redacted until the user picks `passthrough` or another strategy.
+  Namespaced strategies get
   `namespace: <column name>`.
 - `relationships` is the user's declared list from `--config` when present
   (copied, never edited), otherwise `[]`. `StarterConfig.relationship_template`
@@ -527,13 +560,13 @@ def starter_config(
 |---|---|---|
 | T3-valid | a four-table scan set (CSV with header, headerless CSV, parquet, fixed width) validates and compiles | M3-namespace: omit `namespace` for hash |
 | T3-every-column | every column of every table has exactly one entry | M3-skip: drop unsuggested columns |
-| T3-passthrough | an unflagged column gets `passthrough` with its REVIEW note | M3-redact: keep the old `redact` fallback |
+| T3-redact-fallback | an unflagged column gets `redact` with its REVIEW note | M3-passthrough: default unflagged columns to `passthrough` |
 | T3-explicit-source | every CSV source has `has_header`; the headerless one has its names | M3-implicit: omit `has_header` when true |
 | T3-no-inferred-relationships | without `--config`, `relationships == []`, even with matching `*_id` names | M3-infer: add `run_cross_file_walk` edges |
 | T3-declared-kept | a declared relationship is copied unchanged | M3-edit: rewrite its `orphan_policy` |
 | T3-baseline | `scan_baseline.path` equals the given path; omitted when `None` | M3-always: emit an empty baseline |
 | T3-value-free | canary fixtures: no canary in `config` or `notes` | M3-leak: note quotes a top value |
-| T3-parity | every non-fallback detector in the CLI table at 8fba6af ports to the same strategy, provider and `provider_config` | M3-drift: change one provider |
+| T3-parity | every detector in the CLI table at 8fba6af, and the fallback, ports to the same strategy, provider and `provider_config` | M3-drift: change one provider |
 | T3-deterministic | two calls give equal configs and notes | M3-order: iterate a set of table names |
 | T3-config-field | `scan_baseline` with another schema tag is rejected; a config without it is unchanged | M3-open: make `schema` a plain string |
 
@@ -542,7 +575,7 @@ config field (§3.4 config contract). No new artifact tag; no reason identity.
 
 ### S3-cli: `--emit-config` and `--compare` (CLI, ~650 lines including moved code)
 
-Depends on S1d and on S3-engine released and repinned.
+Depends on S1d (and so on L1) and on S3-engine released and repinned.
 
 **Files.**
 - new `src/decoy/cli/_scaffold_yaml.py`: the one renderer (takes
@@ -591,7 +624,7 @@ Depends on S1d and on S3-engine released and repinned.
 | Test | Asserts | Mutation |
 |---|---|---|
 | T4-validate | the emitted YAML for a three-table scan passes `decoy validate config`, `compile` and `preflight` (subprocess, exit 0) | M4-target: no target for the last table |
-| T4-runs | `decoy run` on the emitted YAML for a two-table fixture exits 0 and passthrough columns are byte-equal to the source | M4-format: `format: csv` for a parquet source |
+| T4-runs | `decoy run` on the emitted YAML for a two-table fixture exits 0 and every unflagged column comes out redacted | M4-format: `format: csv` for a parquet source |
 | T4-headerless | a headerless source round-trips: the YAML carries `has_header: false` and its names, and `decoy run` reads it | M4-implicit: drop `has_header` |
 | T4-template-inert | `relationships` parses empty and the comment names every scanned table | M4-live: emit the template uncommented |
 | T4-baseline | the YAML's `scan_baseline.path` resolves to the snapshot just written | M4-abs: write an absolute path from another directory |
@@ -602,9 +635,9 @@ Depends on S1d and on S3-engine released and repinned.
 | T4-overwrite | existing target without `--yes` exits 2; same path as `--config` always exits 2 | M4-clobber |
 
 **Frozen-contract effects.** CLI flags additive. Pre-GA changes: `decoy init
-FILE` names the table after the file (not `data`), needs a header flag for CSV,
-and defaults unsuggested columns to `passthrough` instead of `redact` (Q9). The
-emitted YAML is a `PipelineConfig`.
+FILE` names the table after the file (not `data`) and needs a header flag for
+CSV. Unsuggested columns keep today's `redact` default. The emitted YAML is a
+`PipelineConfig`.
 
 ### Totals
 
@@ -613,7 +646,7 @@ emitted YAML is a `PipelineConfig`.
 | S1a-engine | engine | ~450 | none |
 | S1b-engine | engine | ~480 | S1a types |
 | S1c-cli | CLI | ~650 | S1a + S1b release and repin; CONFIG-EXPLICIT for `--column-names-file` |
-| S1d-cli | CLI | ~400 | S1c |
+| S1d-cli | CLI | ~250 | S1c, local record library L1 |
 | S3-engine | engine | ~520 | S1a, CONFIG-EXPLICIT |
 | S3-cli | CLI | ~650 | S1d, S3-engine release and repin |
 
@@ -628,21 +661,15 @@ baseline.
 
 Answered on 2026-11-05 and applied: Q1 (explicit headers, owner rule), Q2 keep
 `decoy init FILE`, Q3 files only, Q4 local output directory, Q5 keep the legacy
-table, Q6 fail the whole scan (`--keep-going` later).
+table, Q6 fail the whole scan (`--keep-going` later), Q9 `redact` for columns
+with no PII suggestion, every column listed, Q10 keep every snapshot in V1,
+prune later through the library.
 
 Open:
 
 - **Q7. Scan inside the run; standard versus opt-in YAML features; whether
   `decoy run` reads `scan_baseline`.** The UX discussion owns it (section 4).
 - **Q8. V2 FK discovery timing.** Section 7 is ready to plan as a V2 row.
-- **Q9. Fallback strategy.** The owner rule says every column is listed "even
-  if it's just passthrough", and the plan makes `passthrough` the default for
-  columns the detectors do not flag. Today's `decoy init` defaults those to
-  `redact`, which fails safe when a detector misses PII; `passthrough` copies a
-  missed PII column into the output unchanged. Confirm `passthrough`, or keep
-  `redact` with every column still listed.
-- **Q10. Snapshot retention.** V1 keeps every snapshot. Is a `decoy scan prune`
-  or a keep-last-N default wanted for V1?
 
 ## 7. V2: value-based foreign key discovery (parked)
 
