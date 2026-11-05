@@ -194,6 +194,13 @@ SOURCES: tuple[Source, ...] = (
             if e.get("disposition") == "private"
         },
     ),
+    Source(  # keys of the ratchet-schema baseline itself
+        "gcs-call-kwargs",
+        "tests/sentry/baselines/gcs-call-kwargs.json",
+        lambda: set(
+            json.loads((BASELINES / "gcs-call-kwargs.json").read_text(encoding="utf-8"))["entries"]
+        ),
+    ),
 )
 
 # Committed data a sentry reads that is a pinned contract, not an allowlist that could grow.

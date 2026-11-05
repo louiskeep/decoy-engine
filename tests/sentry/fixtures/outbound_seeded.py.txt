@@ -49,3 +49,23 @@ def reload_kwargs_unpack(blob, kw):
 
 def reload_both(blob, T, R):
     blob.reload(timeout=T, retry=R)
+
+
+def client_from_json_file(path):
+    return gcs.Client.from_service_account_json(path)
+
+
+def client_from_info(info):
+    return _s.Client.from_service_account_info(info)
+
+
+def client_anonymous():
+    return C.create_anonymous_client()
+
+
+def reload_timeout_none(blob, R):
+    blob.reload(timeout=None, retry=R)
+
+
+def reload_retry_none(blob, T):
+    blob.reload(timeout=T, retry=None)

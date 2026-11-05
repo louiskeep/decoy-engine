@@ -79,3 +79,7 @@ baseline = "tests/sentry/baselines/wave-b-e0-test-files.json"
 [[sentry]]
 id = "private-file-sinks"
 baseline = "tests/sentry/baselines/private-file-sinks.json"
+
+[[sentry]]
+id = "gcs-call-kwargs"
+baseline = "tests/sentry/baselines/gcs-call-kwargs.json"
