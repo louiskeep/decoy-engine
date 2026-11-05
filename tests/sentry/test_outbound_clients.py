@@ -13,7 +13,8 @@ name collisions live in the shrink-only baseline ``baselines/gcs-call-kwargs.jso
 
 Named limit: matching is by method name, so a bound method stored in a variable and
 called later, or a client built inside an unwrapped third-party library, is not seen.
-Only ``src/decoy_engine`` is scanned. Resolution reuses ``tests/sentry/fa/resolve.py``.
+Calls wrapped in ``functools.partial`` and the ``google.cloud.storage.transfer_manager``
+functions are not seen either. Only ``src/decoy_engine`` is scanned. Resolution reuses ``tests/sentry/fa/resolve.py``.
 """
 
 from __future__ import annotations
@@ -130,6 +131,13 @@ def _imports_storage(node: ast.AST) -> bool:
     return False
 
 
+def _is_client_target(target: object) -> bool:
+    """``Client`` itself or any attribute of it (``Client.from_service_account_json``)."""
+    return isinstance(target, str) and any(
+        target == t or target.startswith(t + ".") for t in CLIENT_TARGETS
+    )
+
+
 class _ModuleScan:
     def __init__(
         self, rel: str, name: str, tree: ast.Module, index: ProjectIndex, names: frozenset[str]
@@ -167,7 +175,7 @@ class _ModuleScan:
         for call in calls:
             target = resolve(call.func, scope, self.index)
             if self.rel != FACTORY and (
-                target in CLIENT_TARGETS or (target == DYNAMIC and self.imports_storage)
+                _is_client_target(target) or (target == DYNAMIC and self.imports_storage)
             ):
                 self._add("AT-C9", call, qual, "Client", 0)
             if not isinstance(call.func, ast.Attribute) or call.func.attr not in self.names:
@@ -178,7 +186,13 @@ class _ModuleScan:
             if self.rel == FACTORY:
                 continue
             self.seen += 1
-            explicit = {k.arg for k in call.keywords if k.arg is not None}
+            # `timeout=None` or `retry=None` switches the bound off, so it does not count.
+            explicit = {
+                k.arg
+                for k in call.keywords
+                if k.arg is not None
+                and not (isinstance(k.value, ast.Constant) and k.value.value is None)
+            }
             if not explicit >= REQUIRED:
                 self._add("AT-C10", call, qual, method, ordinal)
 
@@ -311,6 +325,11 @@ SEEDED: dict[str, set[tuple[str, str]]] = {
     "reload_missing_retry": {("AT-C10", "reload")},
     "reload_kwargs_unpack": {("AT-C10", "reload")},
     "reload_both": set(),
+    "client_from_json_file": {("AT-C9", "Client")},
+    "client_from_info": {("AT-C9", "Client")},
+    "client_anonymous": {("AT-C9", "Client")},
+    "reload_timeout_none": {("AT-C10", "reload")},
+    "reload_retry_none": {("AT-C10", "reload")},
 }
 
 
