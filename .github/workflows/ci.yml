@@ -206,6 +206,10 @@ jobs:
         with:
           python-version: "3.10"
           cache: pip
+      - uses: astral-sh/setup-uv@v5
+        with:
+          # Same uv the lock was generated with; the SBOM tests shell out to it.
+          version: "0.11.19"
       - name: Install engine + dev extras + build frontend
         # build pinned like ruff/mypy: a frontend bump should be deliberate.
         run: pip install -e ".[dev]" build==1.2.2
