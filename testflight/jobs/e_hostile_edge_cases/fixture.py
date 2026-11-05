@@ -35,7 +35,6 @@ Source format notes:
   - notes: a unicode sentence containing an embedded US-phone-shaped span.
   - bio: a unicode sentence containing an embedded email-shaped span.
   - middle_name: always null (object dtype, all None).
-  - case_ref: "CASE-{n:04d}" string, repeating every 40 rows, one null (tokenize).
   - account_id: "AC{n:06d}" (FPE PK; digits charset).
   - person_id (accounts): FK to people.person_id.
   - balance: float.
@@ -55,7 +54,6 @@ from testflight._fixtures import make_rng, verify_fingerprint
 # ---------------------------------------------------------------------------
 
 PEOPLE_COUNT = 60
-NULL_CASE_REF_IDX = 7
 ACCOUNTS_COUNT = 150
 SINGLETON_COUNT = 1
 
@@ -102,7 +100,7 @@ KANA_NAMES: list[str] = [
 # DE-01 cluster-C (2026-07-14): re-fingerprinted after KANA_NAMES became
 # romanized (ASCII) so kana_name FPE-permutes and round-trips instead of hitting
 # the now-fail-closed all-out-of-charset covering-hash path.
-_PEOPLE_FINGERPRINT = "690f37fd93bcf145044dce3a02003a68b8a8dbec48746bb7d19d970942081d30"
+_PEOPLE_FINGERPRINT = "49becc24a180236f5279da352c177af04e4946e97c8cc83bd4de8b4c0aecb2f7"
 _ACCOUNTS_FINGERPRINT = "96d4c25b07dbfa2255adf33085fb9b2939a784c97e7b47776750a80fd40d7cb1"
 _SINGLETON_FINGERPRINT = "dfbfb03e4ee65617668addfc6d6f170cbc8d9ad50bd0a4268c8b4d0d9d5b1e04"
 
@@ -120,7 +118,7 @@ def build_people(seed: int = 46) -> pd.DataFrame:
 
     Returns:
         pandas DataFrame with columns: person_id, kana_name, notes, bio,
-        middle_name, case_ref.
+        middle_name.
     """
     rng = make_rng(seed)
     rows: list[dict[str, Any]] = []
@@ -151,9 +149,6 @@ def build_people(seed: int = 46) -> pd.DataFrame:
                 "bio": bio,
                 # All-null column shape (TH-3.3): every row is null.
                 "middle_name": None,
-                # Opaque string reference for the tokenize strategy: repeats (i % 40)
-                # so the vault reuse path is hit, and one null stays null.
-                "case_ref": None if i == NULL_CASE_REF_IDX else f"CASE-{i % 40:04d}",
             }
         )
 

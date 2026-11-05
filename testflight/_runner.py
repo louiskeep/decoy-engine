@@ -172,6 +172,17 @@ class InMemoryTokenVault:
         return self._m.setdefault((namespace, plaintext), token)
 
 
+def _declares_tokenize(node: Any) -> bool:
+    """True when any column in the (nested) config declares strategy: tokenize."""
+    if isinstance(node, dict):
+        return node.get("strategy") == "tokenize" or any(
+            _declares_tokenize(v) for v in node.values()
+        )
+    if isinstance(node, list):
+        return any(_declares_tokenize(v) for v in node)
+    return False
+
+
 def run_pipeline_twice(
     config: dict[str, Any],
     sources: dict[str, pa.Table],
@@ -205,8 +216,22 @@ def run_pipeline_twice(
         "fidelity_report": True,
         "now_iso": FIXED_TS,
     }
-    result_a = run_pipeline(config, sources, token_vault_writer=InMemoryTokenVault(), **run_kwargs)
-    result_b = run_pipeline(config, sources, token_vault_writer=InMemoryTokenVault(), **run_kwargs)
+    # A vault forces full-frame execution (auto_chunk off, see run_pipeline), so inject
+    # one only for jobs that actually tokenize; every other job keeps its production
+    # (auto-chunked / FK / mixed) route.
+    needs_vault = _declares_tokenize(config)
+    result_a = run_pipeline(
+        config,
+        sources,
+        **run_kwargs,
+        **({"token_vault_writer": InMemoryTokenVault()} if needs_vault else {}),
+    )
+    result_b = run_pipeline(
+        config,
+        sources,
+        **run_kwargs,
+        **({"token_vault_writer": InMemoryTokenVault()} if needs_vault else {}),
+    )
     return result_a, result_b
 
 
