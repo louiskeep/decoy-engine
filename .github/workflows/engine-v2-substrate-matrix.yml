@@ -27,16 +27,19 @@ jobs:
       DECOY_SUBSTRATE: ${{ matrix.substrate }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.10"
-          cache: pip
-      - name: Install engine + dev + cloud extras
-        # CLI install DX (2026-09-25): boto3/google-cloud-storage moved to the
-        # opt-in `cloud` extra; this job runs the same full non-benchmark
-        # suite as ci.yml's regression-gate (including
-        # tests/unit/test_v2_cloud_sources.py), so it needs `cloud` too.
-        run: pip install -e ".[dev,cloud]"
+          version: "0.11.19"
+      - name: Lock venv outside the workspace
+        run: |
+          echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+          echo "DECOY_VENV=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+      - name: Install the locked environment (dev, lint, vault, cloud)
+        # Same profile as ci.yml's regression-gate: uv sync --frozen via bootstrap.sh, which fails
+        # unless duckdb, pyarrow, polars and pandas equal uv.lock. cloud: this job runs the same
+        # full suite, including tests/unit/test_v2_cloud_sources.py.
+        run: bash scripts/dev/bootstrap.sh
       - name: Execution tests under DECOY_SUBSTRATE=${{ matrix.substrate }}
         # Benchmark suite excluded per resolved question #19 (dedicated SKU).
         # codspeed + packaging excluded too (they need optional extras not in

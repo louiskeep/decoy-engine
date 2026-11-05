@@ -25,14 +25,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.10"
-          cache: pip
-
+          version: "0.11.19"
+      - name: Lock venv outside the workspace
+        run: |
+          echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+          echo "DECOY_VENV=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
       - name: Install
-        run: pip install -e ".[dev]"
+        run: uv sync --frozen --extra dev --python 3.10.20
+      - name: Installed versions
+        run: |
+          python -c "import importlib.metadata as m; print({d: m.version(d) for d in ('pyarrow', 'polars', 'duckdb', 'pandas')})"
 
       - name: Fetch base branch
         run: git fetch origin "$BASE_REF"

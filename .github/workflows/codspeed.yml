@@ -41,14 +41,19 @@ jobs:
       - name: Check out
         uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.11"
-          cache: pip
-
-      - name: Install engine + dev + perf extras
-        run: pip install -e ".[dev,perf]"
+          version: "0.11.19"
+      - name: Lock venv outside the workspace
+        run: |
+          echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+          echo "DECOY_VENV=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+      - name: Install engine + dev + perf extras from the lock
+        run: uv sync --frozen --extra dev --extra perf --python 3.11
+      - name: Installed versions
+        run: |
+          python -c "import importlib.metadata as m; print({d: m.version(d) for d in ('pyarrow', 'polars', 'duckdb', 'pandas')})"
 
       # The `codspeed` marker keeps this suite out of every other job's
       # default pytest run (see the addopts comment in pyproject.toml); this

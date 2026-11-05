@@ -1,5 +1,5 @@
-# Security audit. Runs `pip-audit` against the engine's resolved dependency
-# tree. Catches CVEs in any pinned dep (direct or transitive).
+# Security audit. Exports uv.lock (every extra) with `uv export` and runs `pip-audit` against it
+# once per supported Python. Catches CVEs in any pinned dep (direct or transitive).
 #
 # Mirrors decoy-platform's security.yml so the engine gates supply-chain CVEs
 # the same way the platform already does. Triggered on every PR + on a
@@ -25,25 +25,26 @@ jobs:
       - name: Check out
         uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.10"
-          cache: pip
+          version: "0.11.19"
 
-      - name: Install pip-audit
+      - name: Export the locked dependency set (every extra, hashed pins)
+        run: uv export --frozen --all-extras --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/engine-lock.txt"
+
+      - name: Audit the lock on every supported Python
+        # Audits what the engine ships, not this job's tool environment: pip-audit runs in its
+        # own uvx environment, so its own dependencies never enter the report. It evaluates the
+        # export's markers against its own interpreter, so it runs once per supported minor
+        # (requires-python >=3.10,<3.13); one run on 3.12 would skip every 3.10-only pin.
+        # --strict fails the job on any known vulnerability; no ignore list.
         run: |
-          python -m pip install --upgrade pip
-          # setuptools ships in the runner env as a build tool; keep it ahead of
-          # PYSEC-2026-3447 (fixed in 83.0.0) so the audited env has no known CVE.
-          pip install --upgrade 'setuptools>=83.0.0'
-          pip install pip-audit
-
-      # Audit the project's resolved deps. pip-audit reads pyproject.toml by
-      # default and resolves the full transitive tree. `--strict` fails the
-      # job on any known CVE.
-      - name: Audit dependencies
-        run: pip-audit --strict
+          rc=0
+          for py in 3.10 3.11 3.12; do
+            echo "== pip-audit on Python $py"
+            uvx --python "$py" pip-audit==2.10.1 --strict --disable-pip --require-hashes -r "$RUNNER_TEMP/engine-lock.txt" || rc=1
+          done
+          exit $rc
 
   # F13 structural leak sentry: secret-provider modules may not log, chain exceptions, render
   # exception text or serialize, and execution modules may not reach a concrete provider.

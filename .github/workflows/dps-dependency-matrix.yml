@@ -35,6 +35,9 @@ on:
 jobs:
   fingerprint-matrix:
     runs-on: ubuntu-latest
+    env:
+      # Every uv run below must use the lock as is, never re-resolve.
+      UV_FROZEN: "1"
     strategy:
       # fail-fast off: each row's fingerprint/probe result is independent
       # evidence; one uncertified patch should not hide the others' output.
@@ -54,6 +57,8 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.19"
 
       - name: Pin the exact CPython patch
         run: uv python install ${{ matrix.python-version }}

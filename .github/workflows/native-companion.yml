@@ -102,13 +102,15 @@ jobs:
         run: |
           set -euo pipefail
           wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
+          PYARROW=$(awk '$0 == "name = \"pyarrow\"" { getline; gsub(/version = |"/, ""); print; exit }' uv.lock)
+          test -n "$PYARROW" || { echo "no pyarrow in uv.lock"; exit 1; }
           cptag="cp${python_version//./}"
           docker run --rm --platform ${{ matrix.docker-platform }} \
             -v "$PWD/decoy-engine-native:/w" \
             "${{ matrix.smoke-image }}" bash -c "
               set -euo pipefail
               pybin=/opt/python/${cptag}-${cptag}/bin
-              \"\$pybin/pip\" install --quiet \"/w/dist/$(basename "$wheel")\" 'pyarrow>=14'
+              \"\$pybin/pip\" install --quiet \"/w/dist/$(basename "$wheel")\" \"pyarrow==$PYARROW\"
               \"\$pybin/python\" /w/scripts/parity_smoke.py
             "
         env:
@@ -156,7 +158,9 @@ jobs:
         run: |
           set -euo pipefail
           wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
-          python -m pip install "$wheel" "pyarrow>=14"
+          PYARROW=$(awk '$0 == "name = \"pyarrow\"" { getline; gsub(/version = |"/, ""); print; exit }' uv.lock)
+          test -n "$PYARROW" || { echo "no pyarrow in uv.lock"; exit 1; }
+          python -m pip install "$wheel" "pyarrow==$PYARROW"
           python decoy-engine-native/scripts/parity_smoke.py
       - uses: actions/upload-artifact@v7
         with:
@@ -199,7 +203,9 @@ jobs:
         run: |
           set -euo pipefail
           wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
-          python -m pip install "$wheel" "pyarrow>=14"
+          PYARROW=$(awk '$0 == "name = \"pyarrow\"" { getline; gsub(/version = |"/, ""); print; exit }' uv.lock)
+          test -n "$PYARROW" || { echo "no pyarrow in uv.lock"; exit 1; }
+          python -m pip install "$wheel" "pyarrow==$PYARROW"
           python decoy-engine-native/scripts/parity_smoke.py
       - uses: actions/upload-artifact@v7
         with:
@@ -242,16 +248,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.10"
-          cache: pip
+          version: "0.11.19"
+      - name: Lock venv outside the workspace
+        run: |
+          echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+          echo "DECOY_VENV=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
       - name: Install stable Rust (companion build only; the core needs none)
         uses: dtolnay/rust-toolchain@stable
-      - name: Install engine + dev extras
-        run: pip install -e ".[dev]"
+      - name: Install engine + dev extras from the lock
+        run: uv sync --frozen --extra dev --python 3.10.20
       - name: Build and install the companion (maturin, same-platform)
-        run: pip install ./decoy-engine-native
+        # Build backends are not in uv.lock: --build-constraint pins maturin inside uv's isolated
+        # build env (.github/build-constraints.txt), the version the wheel jobs pin.
+        run: uv pip install --python "$RUNNER_TEMP/venv/bin/python" --build-constraint .github/build-constraints.txt ./decoy-engine-native
+      - name: Installed versions
+        run: |
+          python -c "import importlib.metadata as m; print({d: m.version(d) for d in ('pyarrow', 'polars', 'duckdb', 'pandas')})"
       # Every test below skips when the companion is absent, so a companion that
       # builds but fails to load would otherwise leave this job green with nothing run.
       - name: Assert the companion loads
@@ -379,11 +394,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.10"
-          cache: pip
-      - name: Install engine + dev extras (companion NOT installed)
-        run: pip install -e ".[dev]"
+          version: "0.11.19"
+      - name: Lock venv outside the workspace
+        run: |
+          echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+          echo "DECOY_VENV=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+      - name: Install engine + dev extras from the lock (companion NOT installed)
+        run: uv sync --frozen --extra dev --python 3.10.20
+      - name: Installed versions
+        run: |
+          python -c "import importlib.metadata as m; print({d: m.version(d) for d in ('pyarrow', 'polars', 'duckdb', 'pandas')})"
       - name: Native ABI test (companion-absent case)
         run: pytest tests/native/test_native_ext_abi.py -v --tb=short
