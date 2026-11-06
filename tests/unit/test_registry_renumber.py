@@ -624,6 +624,13 @@ def _roots_branch(repo, root_name: str, where: str):
         edit(repo, REG, bump)
         regen_contract(repo)
         commit(repo)
+    if where == "side":  # merged in from a side branch: no first-parent commit owns the change
+        git(repo, "checkout", "-q", "-b", "side")
+        edit(repo, REG, bump)
+        regen_contract(repo)
+        commit(repo)
+        git(repo, "checkout", "-q", "b")
+        git(repo, "merge", "--no-ff", "-q", "-m", "side", "side")
     if where in ("main", "both"):
         git(repo, "checkout", "-q", "main")
         edit(repo, REG, bump)
@@ -636,6 +643,7 @@ def _roots_branch(repo, root_name: str, where: str):
 @pytest.mark.parametrize(
     ("root", "where", "code"),
     [("REASON_SCHEMA_VERSION", "branch", 3), ("EVENT_SCHEMA_VERSION", "branch", 3),
+     ("REASON_SCHEMA_VERSION", "side", 3), ("EVENT_SCHEMA_VERSION", "side", 3),
      ("REASON_SCHEMA_VERSION", "main", 0), ("REASON_SCHEMA_VERSION", "both", 3)],
 )  # fmt: skip
 def test_schema_root_changes_are_attributed(repo, root, where, code):  # AT-R18

@@ -154,7 +154,7 @@ def plan_rewrites(root: Path, hunks, old: str, target: str, fixture: str | None)
                 refuse.append(f"{kind} {h.path}:{no}")
             elif any(pat.search(r) or prefix in r for r in outside):
                 refuse.append(f"mixed-line {h.path}:{h.start}")
-            else:
+            elif rewrite(text) != text:
                 edits.setdefault(h.path, {})[no] = rewrite(text)
                 if h.path.startswith("docs/records/"):
                     records.add(h.path)
