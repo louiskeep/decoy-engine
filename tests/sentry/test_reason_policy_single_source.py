@@ -1,0 +1,232 @@
+"""Every manifest validator lives in scripts/release/reason_manifest_policy.py.
+
+Discovery walks every tracked .py under src/, scripts/ and tests/ and parses it. A non-test
+function is a validator candidate when its body uses a registry key (string constant, attribute
+or name) in a comparison, a comprehension filter, or an `if` that appends or returns. Function
+names play no part. A candidate outside the policy module fails unless it is an adapter (one
+`return` of a call to a name imported from the policy module) or is in EXEMPT with a reason.
+"""
+
+from __future__ import annotations
+
+import ast
+import shutil
+import subprocess
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+POLICY = "scripts/release/reason_manifest_policy.py"
+POLICY_MODULE = "scripts.release.reason_manifest_policy"
+KEYS = frozenset(
+    {
+        "registry_version",
+        "since",
+        "since_counts",
+        "reason_schema_version",
+        "event_schema_version",
+        "manifest_sha256",
+        "deprecated_in",
+        "replaced_by",
+        "REGISTRY_VERSION",
+        "REASON_SCHEMA_VERSION",
+        "EVENT_SCHEMA_VERSION",
+    }
+)
+# (path, function): reason. The table only shrinks; a stale row fails the guard.
+EXEMPT: dict[tuple[str, str], str] = {
+    ("scripts/release/sbom_checks.py", "pin_violations"): "requirements-file pins, unrelated",
+    (
+        "src/decoy_engine/reasons/_registry.py",
+        "check_integrity",
+    ): "the registry's own structural check over specs, not a manifest comparison",
+    # Deviation (orchestrator, 2026-11-06): the plan's candidate rule also selects these three.
+    # They compare one record or event against the live registry, not two manifests.
+    (
+        "src/decoy_engine/_progress_events.py",
+        "_field_value",
+    ): "emits the live registry version into one event field",
+    (
+        "src/decoy_engine/reasons/_record.py",
+        "validate",
+    ): "ReasonRecord.validate: one record's version against the live registry",
+    (
+        "src/decoy_engine/reasons/_record.py",
+        "from_payload",
+    ): "checks one record's version, not a manifest comparison",
+}
+
+
+def _is_key(node: ast.AST) -> bool:
+    if isinstance(node, ast.Constant):
+        return node.value in KEYS
+    if isinstance(node, ast.Attribute):
+        return node.attr in KEYS
+    return isinstance(node, ast.Name) and node.id in KEYS
+
+
+def _has_key(node: ast.AST) -> bool:
+    return any(_is_key(n) for n in ast.walk(node))
+
+
+def _collects(stmts: list[ast.stmt]) -> bool:
+    for s in stmts:
+        for n in ast.walk(s):
+            if isinstance(n, ast.Return):
+                return True
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+                if n.func.attr in {"append", "extend", "add"}:
+                    return True
+            if isinstance(n, ast.AugAssign):
+                return True
+    return False
+
+
+def _uses_key_as_check(func: ast.AST) -> bool:
+    for n in ast.walk(func):
+        if isinstance(n, ast.Compare) and _has_key(n):
+            return True
+        if isinstance(n, ast.comprehension) and any(_has_key(i) for i in n.ifs):
+            return True
+        if isinstance(n, ast.If) and _has_key(n.test) and _collects(n.body + n.orelse):
+            return True
+    return False
+
+
+def _imports_engine(n: ast.AST) -> bool:
+    if isinstance(n, ast.Import):
+        return any(a.name.split(".")[0] == "decoy_engine" for a in n.names)
+    return isinstance(n, ast.ImportFrom) and (n.module or "").split(".")[0] == "decoy_engine"
+
+
+def _policy_names(tree: ast.Module) -> set[str]:
+    names: set[str] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom) and n.module == POLICY_MODULE:
+            names |= {a.asname or a.name for a in n.names}
+    return names
+
+
+def _is_adapter(func: ast.FunctionDef, imported: set[str]) -> bool:
+    body = list(func.body)
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]
+    if len(body) != 1 or not isinstance(body[0], ast.Return):
+        return False
+    call = body[0].value
+    return (
+        isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id in imported
+    )
+
+
+def tracked_py(root: Path) -> list[str]:
+    git = shutil.which("git")
+    if git and (root / ".git").exists():
+        out = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            [git, "ls-files", "--", "src", "scripts", "tests"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if out.returncode == 0:
+            return sorted(p for p in out.stdout.splitlines() if p.endswith(".py"))
+    return sorted(
+        p.relative_to(root).as_posix()
+        for top in ("src", "scripts", "tests")
+        for p in (root / top).rglob("*.py")
+    )
+
+
+def guard_violations(root: Path, files: list[str], exempt: dict[tuple[str, str], str]) -> list[str]:
+    problems: list[str] = []
+    defined: set[tuple[str, str]] = set()
+    for rel in files:
+        tree = ast.parse((root / rel).read_text(encoding="utf-8"))
+        if rel == POLICY:
+            imports = [n for n in ast.walk(tree) if _imports_engine(n)]
+            if imports:
+                problems.append(f"{rel}: imports decoy_engine")
+            continue
+        imported = _policy_names(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            defined.add((rel, node.name))
+            if node.name.startswith("test_") or not _uses_key_as_check(node):
+                continue
+            ident = (rel, node.name)
+            if ident in exempt:
+                continue
+            if isinstance(node, ast.FunctionDef) and _is_adapter(node, imported):
+                continue
+            problems.append(f"{rel}::{node.name}")
+    problems += [f"stale exemption {p}::{f}" for (p, f) in sorted(exempt) if (p, f) not in defined]
+    return problems
+
+
+def test_no_manifest_validator_lives_outside_the_policy_module() -> None:
+    assert guard_violations(ROOT, tracked_py(ROOT), EXEMPT) == []
+
+
+def _tree(tmp_path: Path, files: dict[str, str]) -> list[str]:
+    for rel, text in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+    return sorted(files)
+
+
+_STRAY = (
+    "def stray_violations(a, b):\n"
+    "    return [e for e in b['entries'] if e['since'] > a['registry_version']]\n"
+)
+_RENAMED = (
+    "def ensure_catalog(a, b):\n"
+    "    out = []\n"
+    "    if a['registry_version'] != b['registry_version']:\n"
+    "        out.append('x')\n"
+    "    return out\n"
+)
+_ADAPTER = (
+    f"from {POLICY_MODULE} import since_window_violations\n"
+    "def _since_violations(specs, p, l):\n"
+    '    """doc"""\n'
+    "    return since_window_violations(((s.n, s.since) for s in specs), p, l)\n"
+)
+
+
+def test_guard_flags_seeded_validators_outside_any_list(tmp_path: Path) -> None:
+    files = _tree(tmp_path, {"src/a.py": _STRAY, "scripts/b.py": _RENAMED, POLICY: "x = 1\n"})
+    assert guard_violations(tmp_path, files, {}) == [
+        "scripts/b.py::ensure_catalog",
+        "src/a.py::stray_violations",
+    ]
+
+
+def test_guard_accepts_adapters_and_exemptions(tmp_path: Path) -> None:
+    files = _tree(tmp_path, {"tests/c.py": _ADAPTER, "scripts/b.py": _RENAMED})
+    assert guard_violations(tmp_path, files, {("scripts/b.py", "ensure_catalog"): "r"}) == []
+
+
+def test_guard_ignores_test_functions(tmp_path: Path) -> None:
+    files = _tree(tmp_path, {"tests/t.py": _STRAY.replace("stray_violations", "test_x")})
+    assert guard_violations(tmp_path, files, {}) == []
+
+
+def test_guard_flags_a_policy_module_that_imports_the_engine(tmp_path: Path) -> None:
+    files = _tree(tmp_path, {POLICY: "from decoy_engine import reasons\n"})
+    assert guard_violations(tmp_path, files, {}) == [f"{POLICY}: imports decoy_engine"]
+    files = _tree(tmp_path, {POLICY: "import decoy_engine.reasons\n"})
+    assert guard_violations(tmp_path, files, {}) == [f"{POLICY}: imports decoy_engine"]
+
+
+def test_guard_flags_a_stale_exemption(tmp_path: Path) -> None:
+    files = _tree(tmp_path, {"src/a.py": "x = 1\n"})
+    assert guard_violations(tmp_path, files, {("src/a.py", "gone"): "r"}) == [
+        "stale exemption src/a.py::gone"
+    ]

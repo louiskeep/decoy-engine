@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from packaging.version import Version
+from scripts.release.reason_manifest_policy import since_window_violations
 
 from decoy_engine import reasons
 from decoy_engine.reasons.verification import _canary
@@ -30,16 +31,9 @@ PLAN_ORDER = (
 
 
 def _since_violations(specs, pinned: str, live: str) -> list[str]:
-    """Specs that claim a released `since` or a version above the live registry's.
-
-    Several unreleased versions can be live in the chain (each slice takes its own minor), so any
-    `since` in (pinned, live] is valid.
-    """
-    return [
-        f"{s.namespace}.{s.code}: since {s.since}"
-        for s in specs
-        if Version(s.since) <= Version(pinned) or Version(s.since) > Version(live)
-    ]
+    return since_window_violations(
+        ((f"{s.namespace}.{s.code}", s.since) for s in specs), pinned, live
+    )
 
 
 def _canary_specs():
