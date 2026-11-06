@@ -4,7 +4,7 @@
   "surface": {
     "mask": 24,
     "generate": 12,
-    "providers": 34
+    "providers": 43
   },
   "hero": {
     "name": "HIPAA claims warehouse",
@@ -1168,16 +1168,58 @@
       "unique": true
     },
     {
+      "name": "synthetic_au_tfn",
+      "backend": "decoy_native",
+      "deterministic": true,
+      "unique": false
+    },
+    {
+      "name": "synthetic_ca_sin",
+      "backend": "decoy_native",
+      "deterministic": true,
+      "unique": false
+    },
+    {
       "name": "synthetic_cusip",
       "backend": "decoy_native",
       "deterministic": true,
       "unique": true
     },
     {
+      "name": "synthetic_de_idnr",
+      "backend": "decoy_native",
+      "deterministic": true,
+      "unique": false
+    },
+    {
       "name": "synthetic_ein",
       "backend": "decoy_native",
       "deterministic": true,
       "unique": true
+    },
+    {
+      "name": "synthetic_es_dni",
+      "backend": "decoy_native",
+      "deterministic": true,
+      "unique": false
+    },
+    {
+      "name": "synthetic_es_nie",
+      "backend": "decoy_native",
+      "deterministic": true,
+      "unique": false
+    },
+    {
+      "name": "synthetic_fr_nir",
+      "backend": "decoy_native",
+      "deterministic": true,
+      "unique": false
+    },
+    {
+      "name": "synthetic_gb_nhs",
+      "backend": "decoy_native",
+      "deterministic": true,
+      "unique": false
     },
     {
       "name": "synthetic_iban",
@@ -1187,6 +1229,18 @@
     },
     {
       "name": "synthetic_icd10",
+      "backend": "decoy_native",
+      "deterministic": true,
+      "unique": false
+    },
+    {
+      "name": "synthetic_in_aadhaar",
+      "backend": "decoy_native",
+      "deterministic": true,
+      "unique": false
+    },
+    {
+      "name": "synthetic_it_codice_fiscale",
       "backend": "decoy_native",
       "deterministic": true,
       "unique": false

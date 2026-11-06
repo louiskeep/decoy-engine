@@ -9,6 +9,22 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (V1+ track, V1P-2.3: national identifier providers, 2026-11-06; merge held until after CLI-REL)
+
+- Nine `decoy_native` providers usable from `strategy: faker`: `synthetic_gb_nhs` (NHS 999 test
+  range only), `synthetic_ca_sin`, `synthetic_in_aadhaar`, `synthetic_au_tfn`, `synthetic_de_idnr`,
+  `synthetic_fr_nir`, `synthetic_es_dni`, `synthetic_es_nie` and `synthetic_it_codice_fiscale`.
+  Every value passes the V1P-2.1 `checksums` scheme and its format rules by construction.
+- One table-driven `NationalIdAdapter` serves all nine. Unlike the existing identifier adapters it
+  declares `poolable=True` and seeds `generate_batch` from the pool seed, so pools are reproducible
+  and a config column reaches it through the pool builder.
+- The default registry grows from 34 to 43 providers; `docs/capability-matrix.md` and
+  `docs/proof-manifest.json` are regenerated, and the draw-site catalogue lists the new call sites.
+- Merge hold (owner decision): the new names appear in the CLI cockpit's provider list, so this
+  slice does not merge before CLI V1 ships. Plan:
+  `docs/plans/2026-11-06-v1plus-p2.3-national-id-generators.md`; track overview: the CLI repo's
+  `docs/roadmap/v1plus-sprints.md`.
+
 ### Added (V1+ track, V1P-2.1: international check-digit schemes, 2026-11-06)
 
 - `decoy_engine.checksums.validate` and `calc_check_digit` accept nine national identifier schemes:

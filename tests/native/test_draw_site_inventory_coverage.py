@@ -33,6 +33,7 @@ from decoy_engine.providers_v2.identifiers import (
     IbanAdapter,
     Icd10Adapter,
     MrnAdapter,
+    NationalIdAdapter,
     NdcAdapter,
     NpiAdapter,
     PanAdapter,
@@ -49,6 +50,7 @@ _IDENTIFIER_ADAPTERS = (
     MrnAdapter,
     NdcAdapter,
     CusipAdapter,
+    NationalIdAdapter,
 )
 
 REQUIRED_FAMILIES = {

@@ -16,6 +16,10 @@ MG-1 S4 additions (2026-06-01):
 - IBAN (ISO 13616 mod-97)
 - CUSIP (modified Luhn)
 
+National identifiers: nine non-US identifiers served by one
+table-driven ``NationalIdAdapter``; unlike the adapters above they declare
+``poolable=True`` so a ``strategy: faker`` column can use them.
+
 Per S6 spec §3.1 (PO PQ-call B2): all adapters declare
 `poolable=False`. Deterministic mode routes through
 `derive_value(seed, namespace, canonical_source, domain=...)` direct
@@ -61,6 +65,13 @@ from decoy_engine.providers_v2.identifiers._mrn import (
     MrnDomain,
     MrnValidator,
 )
+from decoy_engine.providers_v2.identifiers._national import (
+    NationalIdAdapter,
+    NationalIdDomain,
+    NationalIdSpec,
+    NationalIdValidator,
+)
+from decoy_engine.providers_v2.identifiers._national_specs import NATIONAL_ID_SPECS
 from decoy_engine.providers_v2.identifiers._ndc import (
     NdcAdapter,
     NdcDomain,
@@ -86,6 +97,7 @@ from decoy_engine.providers_v2.identifiers._validate import (
 )
 
 __all__ = [
+    "NATIONAL_ID_SPECS",
     "CusipAdapter",
     "CusipDomain",
     "CusipValidator",
@@ -103,6 +115,10 @@ __all__ = [
     "MrnAdapter",
     "MrnDomain",
     "MrnValidator",
+    "NationalIdAdapter",
+    "NationalIdDomain",
+    "NationalIdSpec",
+    "NationalIdValidator",
     "NdcAdapter",
     "NdcDomain",
     "NdcValidator",

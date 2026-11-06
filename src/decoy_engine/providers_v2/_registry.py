@@ -162,11 +162,13 @@ def get_default_registry() -> ProviderRegistry:
         # reference the lookup.
         from decoy_engine.providers_v2._faker_adapter import FakerAdapter
         from decoy_engine.providers_v2.identifiers import (
+            NATIONAL_ID_SPECS,
             CusipAdapter,
             EinAdapter,
             IbanAdapter,
             Icd10Adapter,
             MrnAdapter,
+            NationalIdAdapter,
             NdcAdapter,
             NpiAdapter,
             PanAdapter,
@@ -190,6 +192,8 @@ def get_default_registry() -> ProviderRegistry:
             "synthetic_iban": IbanAdapter(),
             "synthetic_cusip": CusipAdapter(),
         }
+        for spec in NATIONAL_ID_SPECS:
+            decoy_native_adapters[spec.provider] = NationalIdAdapter(spec)
         decoy_native_caps = {
             name: adapter.capability_matrix(name) for name, adapter in decoy_native_adapters.items()
         }

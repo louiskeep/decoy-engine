@@ -67,6 +67,16 @@ def test_registry_contains_exactly_documented_names() -> None:
             "composite_address",
             "composite_provider",
             "composite_custom",
+            # National identifiers (9).
+            "synthetic_gb_nhs",
+            "synthetic_ca_sin",
+            "synthetic_in_aadhaar",
+            "synthetic_au_tfn",
+            "synthetic_de_idnr",
+            "synthetic_fr_nir",
+            "synthetic_es_dni",
+            "synthetic_es_nie",
+            "synthetic_it_codice_fiscale",
         }
     )
     assert expected == get_default_registry().known_providers()

@@ -64,11 +64,14 @@ PROVIDER_BACKED_DRAW_SITES: tuple[DrawSite, ...] = (
             "seed_instance is in the Faker adapter (providers_v2/_faker_adapter.py:224: "
             'fake.seed_instance(int.from_bytes(spec.seed, "big"))); the Mimesis adapter '
             "seeds a fresh Generic(locale, seed=int.from_bytes(spec.seed)) per batch "
-            "(providers_v2/mimesis/_adapter.py:167)."
+            "(providers_v2/mimesis/_adapter.py:167); the national identifier adapter seeds "
+            'numpy.random.default_rng(int.from_bytes(spec.seed, "big")) per batch '
+            "(providers_v2/identifiers/_national.py:135)."
         ),
         mirror_call_sites=(
             "providers_v2/_faker_adapter.py:224",
             "providers_v2/mimesis/_adapter.py:167",
+            "providers_v2/identifiers/_national.py:135",
         ),
     ),
     # -- Providers_v2: synthetic-identifier adapters -------------------------
@@ -98,9 +101,11 @@ PROVIDER_BACKED_DRAW_SITES: tuple[DrawSite, ...] = (
             "gen.pool_deterministic: each is a genuinely separate per-row source-keyed "
             "site. spec.seed carries mask_key on the masking side and job_seed on pure "
             "generation; both are valid derive IKM lengths. Mirrors list the other 8 "
-            "adapters' derive_value call."
+            "adapters' derive_value call, plus the national identifier adapter, which "
+            "serves nine poolable providers from one spec table."
         ),
         mirror_call_sites=(
+            "providers_v2/identifiers/_national.py:117",
             "providers_v2/identifiers/_npi.py:131",
             "providers_v2/identifiers/_ein.py:200",
             "providers_v2/identifiers/_iban.py:244",
@@ -140,6 +145,8 @@ PROVIDER_BACKED_DRAW_SITES: tuple[DrawSite, ...] = (
             "providers_v2/identifiers/_mrn.py:137",
             "providers_v2/identifiers/_ndc.py:145",
             "providers_v2/identifiers/_cusip.py:196",
+            "providers_v2/identifiers/_national.py:123",
+            "providers_v2/identifiers/_national.py:137",
         ),
     ),
 )

@@ -39,6 +39,25 @@ modes draw a seeded whole-column stream from the job seed.
 Use it for names, emails, phone numbers, addresses, and other fields where you
 want realistic-looking replacements rather than a redaction.
 
+**National identifier providers.** `synthetic_gb_nhs`, `synthetic_ca_sin`,
+`synthetic_in_aadhaar`, `synthetic_au_tfn`, `synthetic_de_idnr`,
+`synthetic_fr_nir`, `synthetic_es_dni`, `synthetic_es_nie` and
+`synthetic_it_codice_fiscale` produce compact values that pass the matching
+`checksums` scheme, including its format rules. NHS numbers come only from the
+999 test range, which is never issued; the others can coincide with real issued
+numbers. Each provider accepts its own locales (for example `en_GB` for NHS);
+another locale is refused with `provider.unsupported_locale`.
+
+These, like every `faker` provider, sample a pool: the default pool holds 10,000
+values, so in deterministic mode distinct source values share masked values
+(about 100 sources per value at a million distinct sources). Set `pool_size` for
+the distinct count you need; the chunked route needs an explicit `pool_size`.
+The NHS 999 range holds about 910,000 valid numbers, which caps its pool. The
+capability rows say `unique: no` and `participates_in_fk_pk: false`; both are
+labels, not enforced at plan time, so for key columns use `tokenize`, `hash` or
+`fpe`. Native and out-of-core routes do not admit these providers; the column
+runs on the Python path with a coded route-decline reason.
+
 ### hash
 
 Produces a deterministic, joinability-preserving token:

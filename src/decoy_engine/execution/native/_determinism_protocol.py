@@ -125,6 +125,15 @@ PROVIDER_IDENTIFIER_SITES: dict[str, str] = {
     "synthetic_mrn": "gen.identifier_deterministic",
     "synthetic_ndc": "gen.identifier_deterministic",
     "synthetic_cusip": "gen.identifier_deterministic",
+    "synthetic_gb_nhs": "gen.identifier_deterministic",
+    "synthetic_ca_sin": "gen.identifier_deterministic",
+    "synthetic_in_aadhaar": "gen.identifier_deterministic",
+    "synthetic_au_tfn": "gen.identifier_deterministic",
+    "synthetic_de_idnr": "gen.identifier_deterministic",
+    "synthetic_fr_nir": "gen.identifier_deterministic",
+    "synthetic_es_dni": "gen.identifier_deterministic",
+    "synthetic_es_nie": "gen.identifier_deterministic",
+    "synthetic_it_codice_fiscale": "gen.identifier_deterministic",
 }
 
 

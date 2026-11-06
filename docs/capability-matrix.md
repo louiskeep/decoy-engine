@@ -47,7 +47,7 @@ This inventory lists strategies and provider capabilities, not route eligibility
 
 This enumeration combines V2 configuration types and legacy ColumnGenerator keys. `distribution` is a legacy entry, not a streamed-generation promise.
 
-## Synthetic providers (34)
+## Synthetic providers (43)
 
 Provider backend names identify adapters. `decoy_native` identifies the engine's Python identifier providers, not the Rust companion. The Deterministic column describes provider capability, not deterministic pool-backed masking.
 
@@ -75,10 +75,19 @@ Provider backend names identify adapters. `decoy_native` identifies the engine's
 | `random_choice` | faker | no | yes |
 | `random_int_range` | faker | no | yes |
 | `synthetic_account_number` | faker | no | yes |
+| `synthetic_au_tfn` | decoy_native | yes | no |
+| `synthetic_ca_sin` | decoy_native | yes | no |
 | `synthetic_cusip` | decoy_native | yes | yes |
+| `synthetic_de_idnr` | decoy_native | yes | no |
 | `synthetic_ein` | decoy_native | yes | yes |
+| `synthetic_es_dni` | decoy_native | yes | no |
+| `synthetic_es_nie` | decoy_native | yes | no |
+| `synthetic_fr_nir` | decoy_native | yes | no |
+| `synthetic_gb_nhs` | decoy_native | yes | no |
 | `synthetic_iban` | decoy_native | yes | yes |
 | `synthetic_icd10` | decoy_native | yes | no |
+| `synthetic_in_aadhaar` | decoy_native | yes | no |
+| `synthetic_it_codice_fiscale` | decoy_native | yes | no |
 | `synthetic_member_id` | faker | no | yes |
 | `synthetic_mrn` | decoy_native | yes | yes |
 | `synthetic_ndc` | decoy_native | yes | yes |
