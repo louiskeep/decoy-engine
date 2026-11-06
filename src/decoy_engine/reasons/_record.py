@@ -35,9 +35,10 @@ COUNT_KEYS = frozenset(
     {"rows", "bytes", "tables", "columns", "batches", "attempt", "retries", "findings", "errors"}
 )
 
-_SAFE_REF = re.compile(rf"^[A-Za-z0-9][A-Za-z0-9_.\-]{{0,{MAX_REF_LEN - 1}}}$")
-_SAFE_IDENTITY = re.compile(rf"^[a-z][a-z0-9_.:\-]{{0,{MAX_IDENTITY_LEN - 1}}}$")
-_VERSION = re.compile(r"^(\d{1,4})\.(\d{1,5})\.(\d{1,6})$")
+_SAFE_REF = re.compile(rf"^[A-Za-z0-9][A-Za-z0-9_.\-]{{0,{MAX_REF_LEN - 1}}}\Z")
+_SAFE_IDENTITY = re.compile(rf"^[a-z][a-z0-9_.:\-]{{0,{MAX_IDENTITY_LEN - 1}}}\Z")
+# ``\Z``, not ``$``: ``$`` also matches before a trailing newline.
+REGISTRY_VERSION_RE = re.compile(r"^(\d{1,4})\.(\d{1,5})\.(\d{1,6})\Z")
 
 
 class Operation(str, Enum):
@@ -366,8 +367,11 @@ class ReasonRecord:
         }
 
     @classmethod
-    def from_payload(cls, payload: object) -> ReasonRecord:
-        """Validate an untrusted record (a worker envelope, a stored event). Never raises.
+    def parse_payload(cls, payload: object) -> tuple[ReasonRecord, str | None]:
+        """Validate an untrusted record. Never raises. The one wire-compatibility parser.
+
+        Returns the canonical local record and the registry version the writer stamped, which is
+        ``None`` when compatibility validation failed (the record is then a fixed diagnostic).
 
         Only identity, phase and context are read from ``payload``. Severity, outcome and retry
         class are recomputed from the registry, so a forged ``retry_class`` has no effect. An
@@ -378,15 +382,15 @@ class ReasonRecord:
         from decoy_engine.reasons import decoy
 
         if not isinstance(payload, Mapping):
-            return cls.for_reason(decoy.REASON_RECORD_INVALID)
+            return cls.for_reason(decoy.REASON_RECORD_INVALID), None
         schema = payload.get("schema_version")
         registry = payload.get("registry_version")
         if schema != _registry.REASON_SCHEMA_VERSION or not isinstance(registry, str):
-            return cls.for_reason(decoy.UNSUPPORTED_SCHEMA_VERSION)
-        match = _VERSION.match(registry)
-        ours = _VERSION.match(_registry.REGISTRY_VERSION)
+            return cls.for_reason(decoy.UNSUPPORTED_SCHEMA_VERSION), None
+        match = REGISTRY_VERSION_RE.match(registry)
+        ours = REGISTRY_VERSION_RE.match(_registry.REGISTRY_VERSION)
         if match is None or ours is None or match.group(1) != ours.group(1):
-            return cls.for_reason(decoy.UNSUPPORTED_SCHEMA_VERSION)
+            return cls.for_reason(decoy.UNSUPPORTED_SCHEMA_VERSION), None
         namespace, code = payload.get("namespace"), payload.get("code")
         phase = _enum_or_none(Phase, payload.get("phase")) or Phase.UNKNOWN
         context = ReasonContext.from_payload(payload.get("context"))
@@ -401,9 +405,16 @@ class ReasonRecord:
                 else None
             )
             fallback = ReasonContext.build(original_identity=identity) if identity else None
-            return cls.for_reason(
+            record = cls.for_reason(
                 decoy.UNKNOWN_REASON_FROM_FUTURE,
                 phase=phase,
                 context=context.merged(fallback) if fallback else context,
             )
-        return cls.for_reason((spec.namespace, spec.code), phase=phase, context=context)
+            return record, registry
+        record = cls.for_reason((spec.namespace, spec.code), phase=phase, context=context)
+        return record, registry
+
+    @classmethod
+    def from_payload(cls, payload: object) -> ReasonRecord:
+        """The record of :meth:`parse_payload`, without the writer's registry version."""
+        return cls.parse_payload(payload)[0]

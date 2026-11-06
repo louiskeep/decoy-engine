@@ -90,11 +90,22 @@ quality-shape-fidelity/v1  post-scan-integrity/v2    name-hints/v1
 ssn/v1  npi/v1  pan/v1  iban/v1  ein/v1  mrn/v1  ndc/v1  icd10/v1
 cusip/v1  address/v1  locality/v1  person/v1  provider/v1
 composite/v1  custom/v1   ... (every disguise spec)
-subset-manifest/v1
+subset-manifest/v1         decoy-run-result/v1
 ```
 
 A user runs `decoy fit`, keeps the `distribution-snapshot/v1` artifact, and
 feeds it to a later engine version. That artifact is a **contract**.
+
+`decoy-run-result/v1` is the record of one `decoy run` (status, exit code, per-table outcome,
+delivery, checks, timings). The engine owns its shape (`decoy_engine.RunResult` to write,
+`decoy_engine.RunResultRead` to read). Every string in it is an enum or a validated name, reference,
+hash, version or timestamp, never a data value or message. The write model refuses unknown fields and
+enum values; the read model ignores added fields, reads a new enum value as a string and reads a
+reason it cannot validate as `null`. Numbers and flags are strict on both sides (`False` is not a `0`,
+`"1"` is not a `1`). The `schema` key is required on read and accepts only `decoy-run-result/v1`: a
+document of another major (`/v2`), free text or a missing key is refused, never read as v1; a reader
+that wants `/v2` support adds a new model under a new tag. Hand-authored corpus samples (the v1 sample and its cross-minor variants) are in
+`tests/integration/compat_corpus/run_result/`.
 
 **Rules:**
 
@@ -650,6 +661,12 @@ turns into "I can add X alongside the old X" with five more minutes of thought.
   The corpus is synthetic pre-GA: artifacts carry `synthetic: true` and
   `produced_by_engine_version: "0.1.0"`. At GA, replace or supplement with a real
   (`synthetic: false`) artifact of each read-back kind.
+- **`decoy-run-result/v1` fixtures** (`tests/integration/compat_corpus/run_result/run-result-v1*.json`).
+  They live in the corpus directory, in their own subfolder, so the frozen samples sit in one place.
+  They are hand-authored reader samples, not artifacts minted by `regenerate.py`: there is no
+  producing code to regenerate and they have no entry in `manifest.json`. The manifest-driven corpus
+  test does not read them. `tests/unit/run_result/test_model.py` reads the sample and the cross-minor
+  variants through `RunResultRead` and refuses them on the write model.
 - **`CHANGELOG.md`** records every user-visible change.
 - **The regression-gate** runs the above on every PR.
 
