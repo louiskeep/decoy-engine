@@ -1,8 +1,8 @@
 """Deterministic C1 oracle baseline (Task 3.0): staged RSS + pool_quality.
 
 Builds the frozen deterministic C1 recipe's two-table dataset out of band,
-runs it on the PINNED pandas full-frame oracle (`substrate="pandas"`,
-`execution_mode="full_frame"`, `auto_chunk=False`), and attributes peak RSS
+runs it on the PINNED pandas full-frame oracle (`execution_mode="full_frame"`,
+`auto_chunk=False`), and attributes peak RSS
 into four buckets (input load; pool build; selection; publication) via
 FRESH-PROCESS PREFIX runs, per docs/plans/PHASE3-C1-BASELINE.md.
 
@@ -481,7 +481,6 @@ def run_stage(stage: str, data_dir: Path) -> dict[str, Any]:
         config,
         sources,
         engine_version="phase3-c1-baseline",
-        substrate="pandas",
         execution_mode="full_frame",
         auto_chunk=False,
         key_provider=key_provider,
