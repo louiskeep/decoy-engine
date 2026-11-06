@@ -717,6 +717,7 @@ retrofitted after users hold artifacts we no longer have fixtures for.
 - Engineering best practices §8 (pre-GA/post-GA), §3.3 (library stays narrow):
   `decoy-platform/docs/guides/engineering-best-practices.md`
 - Determinism contract: `decoy-engine/docs/determinism.md`
-- Roadmap versioning lock: `decoy-platform/docs/ROADMAP.md` ("Versioning")
+- Roadmap versioning lock: `decoy/docs/ROADMAP.md` section 5.5, the versioning freeze at V1
+  (https://github.com/louiskeep/decoy/blob/main/docs/ROADMAP.md)
 - This document should be linked from each repo's `CONTRIBUTING.md` and named as
   a required pre-read in the PR template.
