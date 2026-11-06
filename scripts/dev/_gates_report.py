@@ -2,19 +2,25 @@
 
 gates.sh writes, per run label (`branch`, `baseline`): `<label>.steps` with one
 tab-separated `name rc cmd` line per step, `<label>-<name>.log`, and for pytest
-steps `<label>-<name>.xml` (JUnit). Counts come from the JUnit file; failing ids
-come from pytest's `-rfE` short summary, which carries real node ids.
+steps `<label>-<name>.xml` (JUnit, family xunit1 so testcases carry `file`). Counts
+and failing ids both come from the JUnit file; log text is never parsed for ids. Only
+pytest's final totals line is read from the log, to cross-check the JUnit.
+It also owns the stored failing-id baseline (`--write-baseline`, the compare against a
+stored file) and its run mode (`run_mode`, `check_stored`).
 Stdlib only, so it runs in any venv."""
 
 from __future__ import annotations
 
+import argparse
+import hashlib
+import json
+import platform
 import re
 import sys
 import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
 
-_SUMMARY = re.compile(r"^(?:FAILED|ERROR) (.+?)(?: - .*)?$")
 _FOUND = re.compile(r"^Found (\d+) errors?", re.MULTILINE)
 
 
@@ -45,22 +51,96 @@ def _counts(out: Path, label: str, name: str) -> str:
     return f"passed={passed} failed={total['failures']} errors={total['errors']} skipped={total['skipped']}"
 
 
-def failing_ids_for(out: Path, label: str, name: str) -> list[str]:
-    log = out / f"{label}-{name}.log"
-    if not (out / f"{label}-{name}.xml").exists() or not log.exists():
+def collected(out: Path, label: str) -> int:
+    """Test cases the `tests` step ran or skipped, from its JUnit file (deselected are not in it)."""
+    return sum(int(s.get("tests", 0)) for s in _suites(out, label))
+
+
+def _suites(out: Path, label: str) -> list[ET.Element]:
+    xml = out / f"{label}-tests.xml"
+    if not xml.exists():
         return []
+    root = ET.parse(xml).getroot()  # noqa: S314 -- pytest JUnit output this run wrote
+    return [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+
+
+def skipped(out: Path, label: str) -> int:
+    return sum(int(s.get("skipped", 0)) for s in _suites(out, label))
+
+
+def file_seconds(out: Path, label: str) -> dict[str, float]:
+    """Seconds per test file, summed from the JUnit `time` of every case that names its file."""
+    total: dict[str, float] = {}
+    for suite in _suites(out, label):
+        for case in suite.iter("testcase"):
+            if path := case.get("file"):
+                total[path] = total.get(path, 0.0) + float(case.get("time", 0) or 0)
+    return {k: round(total[k], 3) for k in sorted(total)}
+
+
+def _case_id(case: ET.Element) -> str:
+    """pytest node id from an xunit1 testcase: file, then classname below the module, then name."""
+    file, cls, name = case.get("file"), case.get("classname", ""), case.get("name", "")
+    if not file:
+        return f"{cls}::{name}"
+    module = file.removesuffix(".py").replace("/", ".")
+    if not cls:  # a collection error is reported against the file itself
+        return file
+    below = cls[len(module) :].strip(".") if cls.startswith(module) else cls
+    return "::".join([file, *([c for c in below.split(".")] if below else []), name])
+
+
+def _xml_failing_ids(xml: Path) -> list[str]:
+    root = ET.parse(xml).getroot()  # noqa: S314 -- pytest JUnit output this run wrote
     ids: list[str] = []
-    for line in log.read_text(errors="replace").splitlines():
-        m = _SUMMARY.match(line)
-        if m and m.group(1) not in ids:
-            ids.append(m.group(1))
+    for case in root.iter("testcase"):
+        if case.find("failure") is None and case.find("error") is None:
+            continue
+        cid = _case_id(case)
+        if cid not in ids:
+            ids.append(cid)
     return ids
 
 
-def failing_ids(out: Path, label: str) -> list[str]:
+def junit_failing_ids(out: Path, label: str) -> list[str]:
+    xml = out / f"{label}-tests.xml"
+    return _xml_failing_ids(xml) if xml.exists() else []
+
+
+def junit_failure_elements(out: Path, label: str) -> int:
+    """Failure and error outcomes in the tests JUnit, one per element (a test can have two)."""
+    return sum(
+        len(case.findall("failure")) + len(case.findall("error"))
+        for suite in _suites(out, label)
+        for case in suite.iter("testcase")
+    )
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_TOTALS = re.compile(r"\b(\d+) (?:failed|errors?)\b")
+_TOTALS_LINE = re.compile(
+    r"^=*\s*(?:\d+ [a-z]+(?: [a-z]+)*(?:, \d+ [a-z]+(?: [a-z]+)*)*|no tests ran) in [\d.]+s(?: \([^)]*\))?\s*=*$"
+)
+
+
+def pytest_totals_failed(out: Path, label: str) -> int | None:
+    """`N failed` plus `M error(s)` from pytest's final totals line, None if there is none."""
+    log = out / f"{label}-tests.log"
+    if not log.exists():
+        return None
+    for line in reversed(_ANSI.sub("", log.read_text(errors="replace")).splitlines()):
+        if _TOTALS_LINE.match(line.strip()):
+            return sum(int(n) for n in _TOTALS.findall(line))
+    return None
+
+
+def failing_ids(out: Path, label: str, only: str | None = None) -> list[str]:
     ids: list[str] = []
     for name, _rc, _cmd in _steps(out, label):
-        ids += [i for i in failing_ids_for(out, label, name) if i not in ids]
+        xml = out / f"{label}-{name}.xml"
+        if (only is not None and name != only) or not xml.exists():
+            continue
+        ids += [t for t in _xml_failing_ids(xml) if t not in ids]
     return ids
 
 
@@ -113,7 +193,7 @@ def _pytest_failures(
     root = ET.parse(xml).getroot()  # noqa: S314 -- pytest JUnit output this run wrote
     for case in root.iter("testcase"):
         if case.find("failure") is not None or case.find("error") is not None:
-            keys[(f"{case.get('classname', '')}::{case.get('name', '')}", "", "")] += 1
+            keys[(_case_id(case), "", "")] += 1
     declared = sum(
         int(s.get("failures", 0)) + int(s.get("errors", 0)) for s in root.iter("testsuite")
     )
@@ -163,9 +243,127 @@ def _section(out: Path, label: str) -> None:
         print(f"    $ {cmd}")
 
 
-def main(out: Path) -> int:
+# How a baseline was produced. A compare is only meaningful against a baseline written the same
+# way, so these fields travel with the file and `check_stored` refuses any difference. `DIST` and
+# the workers value are fixed here until gates.sh can run the suite in parallel.
+MODE_KEYS = ("workers", "dist", "platform", "order")
+DIST = "no"
+
+
+def order_label(order_seconds: dict[str, float]) -> str:
+    """`collection` for an empty map, else a hash of the canonical map the order was built from."""
+    if not order_seconds:
+        return "collection"
+    canon = json.dumps(order_seconds, sort_keys=True, separators=(",", ":"))
+    return "file-seconds:" + hashlib.sha256(canon.encode()).hexdigest()
+
+
+def run_mode(workers: int, order_seconds: dict[str, float]) -> dict[str, object]:
+    return {
+        "workers": workers,
+        "dist": DIST,
+        "platform": f"{sys.platform}-{platform.machine()}",
+        "order": order_label(order_seconds),
+    }
+
+
+def check_stored(path: Path, repo: str, workers: int) -> list[str]:
+    """Reasons this run may not be compared with the stored baseline (empty when it may)."""
+    try:
+        stored = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return ["the stored baseline is not readable JSON; rewrite the baseline"]
+    if not isinstance(stored, dict):
+        return ["the stored baseline is not a JSON object; rewrite the baseline"]
+    if stored.get("repo") != repo:
+        return [f"the stored baseline is for repo {stored.get('repo')!r}, this run is {repo!r}"]
+    missing = [k for k in (*MODE_KEYS, "order_seconds", "file_seconds") if k not in stored]
+    if missing:
+        return [f"the stored baseline has no {', '.join(missing)}; rewrite the baseline"]
+    if not isinstance(stored["order_seconds"], dict):
+        return ["the stored baseline's order_seconds is not a map; rewrite the baseline"]
+    theirs = {k: stored[k] for k in MODE_KEYS}
+    # This gates.sh runs in collection order, whatever order map the baseline was built with, so
+    # a baseline ordered by a map differs until gates.sh can order its run from that map.
+    mine = run_mode(workers, {})
+    if theirs == mine:
+        return []
+    diff = ", ".join(k for k in MODE_KEYS if theirs[k] != mine[k])
+    return [
+        f"run mode differs in {diff}: baseline {json.dumps(theirs)}, this run {json.dumps(mine)}; "
+        "rewrite the baseline in this mode"
+    ]
+
+
+def _stored_diff(out: Path, whole: bool) -> None:
+    """Diff the branch's failing ids against the stored baseline; new ids go to `new-failing`."""
+    stored = json.loads((out / "stored-baseline.json").read_text())
+    base = list(stored.get("failing", []))
+    now = junit_failing_ids(out, "branch")
+    new = [t for t in now if t not in base]
+    print("-- STORED BASELINE DIFF --")
+    print(f"  baseline: {stored.get('repo')} main_sha={stored.get('main_sha')}")
+    for tid in new:
+        print(f"  NEW-FAILING   {tid}")
+    short_file = out / "shortfall"
+    short_file.write_text("")
+    if whole:
+        fixed = [t for t in base if t not in now]
+        for tid in fixed:
+            print(f"  NOW-PASSING   {tid}")
+        delta = collected(out, "branch") - int(stored.get("collected", 0))
+        print(
+            f"  collected: baseline={stored.get('collected')} branch={collected(out, 'branch')} delta={delta:+d}"
+        )
+        print(
+            f"  (new={len(new)} now-passing={len(fixed)} known-still-failing={len(now) - len(new)})"
+        )
+        if delta < 0:  # gates.sh decides whether the branch's own deletions explain it
+            short_file.write_text(f"{-delta}\n")
+    else:
+        print("  selection run: now-passing and collected delta are not meaningful, skipped")
+        print(f"  (new={len(new)})")
+    skip_file = out / "skip-increase"
+    skip_file.write_text("")
+    now_skipped = skipped(out, "branch")
+    if "skipped" not in stored:
+        print(
+            "  WARNING: the stored baseline has no skipped count (old format); skip check not done"
+        )
+    elif now_skipped > int(stored["skipped"]):
+        print(
+            f"  WARNING: branch skipped {now_skipped} tests, the baseline skipped {stored['skipped']}"
+        )
+        skip_file.write_text(f"{now_skipped}\n")
+    (out / "new-failing").write_text("".join(f"{t}\n" for t in new))
+
+
+def write_baseline(
+    out: Path, dest: Path, repo: str, main_sha: str, head_sha: str, workers: int
+) -> None:
+    data = {
+        "repo": repo,
+        "main_sha": main_sha,
+        "head_sha": head_sha,
+        "collected": collected(out, "branch"),
+        "skipped": skipped(out, "branch"),
+        "failing": sorted(junit_failing_ids(out, "branch")),
+        **run_mode(workers, {}),
+        "order_seconds": {},
+        "file_seconds": file_seconds(out, "branch"),
+    }
+    dest.write_text(json.dumps(data, indent=2) + "\n")
+    # stderr: stdout must still end with the EVIDENCE closing rule.
+    print(
+        f"gates: wrote baseline {dest} ({len(data['failing'])} failing, collected {data['collected']})",
+        file=sys.stderr,
+    )
+
+
+def main(out: Path, whole: bool = False) -> int:
     meta = (out / "meta").read_text()
     labels = ["branch"] + (["baseline"] if (out / "baseline.steps").exists() else [])
+    stored = (out / "stored-baseline.json").exists()
     print("=" * 30 + " EVIDENCE " + "=" * 30)
     print(meta.rstrip())
     for label in labels:
@@ -190,12 +388,46 @@ def main(out: Path) -> int:
         print("-- BRANCH-ONLY FAILING STEPS --")
         steps = branch_only_steps(out)
         print(f"  {', '.join(steps) if steps else '(none)'}")
+    if stored:
+        _stored_diff(out, whole)
     print("=" * 70)
     return 0
 
 
 if __name__ == "__main__":
-    if sys.argv[1] == "--verdict":
+    if sys.argv[1:2] == ["--verdict"]:
         print("\n".join(branch_only_steps(Path(sys.argv[2]))))
         sys.exit(0)
-    sys.exit(main(Path(sys.argv[1])))
+    if sys.argv[1:2] == ["--check-stored"]:
+        # --check-stored FILE REPO WORKERS: exit 2 and say why when the file may not be compared.
+        reasons = check_stored(Path(sys.argv[2]), sys.argv[3], int(sys.argv[4]))
+        for reason in reasons:
+            print(f"gates: {reason}", file=sys.stderr)
+        sys.exit(2 if reasons else 0)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("out", type=Path)
+    ap.add_argument("--whole-suite", action="store_true")
+    ap.add_argument("--write-baseline", type=Path)
+    ap.add_argument("--repo", default="")
+    ap.add_argument("--main-sha", default="")
+    ap.add_argument("--head-sha", default="")
+    ap.add_argument("--workers", type=int, default=1)
+    args = ap.parse_args()
+    rc = main(args.out, args.whole_suite)
+    ran_tests = (args.out / "branch-tests.xml").exists()
+    if ran_tests and (args.write_baseline or (args.out / "stored-baseline.json").exists()):
+        action = "store" if args.write_baseline else "compare against"
+        reported = pytest_totals_failed(args.out, "branch")
+        in_junit = junit_failure_elements(args.out, "branch")
+        if reported is None or reported != in_junit:
+            seen = "no totals line" if reported is None else f"{reported} failed/error"
+            print(
+                f"gates: pytest printed {seen} but the JUnit has {in_junit}; refusing to {action} the baseline",
+                file=sys.stderr,
+            )
+            sys.exit(4)
+    if args.write_baseline:
+        write_baseline(
+            args.out, args.write_baseline, args.repo, args.main_sha, args.head_sha, args.workers
+        )
+    sys.exit(rc)
