@@ -17,13 +17,14 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from _reason_sinks import CODE_ARG_NAMES, discover_families, discover_function_sinks
+
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src" / "decoy_engine"
 PACKAGE = "decoy_engine"
 # The registry's own catalog files are where literal code definitions legitimately live.
 REGISTRY_PREFIX = "reasons/"
 
-CODE_ARG_NAMES = frozenset({"code", "reason_code", "route_reason"})
 # Module- and class-level constants that hold a reason code by naming convention.
 CONST_NAME = re.compile(r"(^|_)(CODE|CODES|REASON)(_|$)|^code$|^reason_code$", re.IGNORECASE)
 # A wire code is a lowercase snake/dotted/namespaced identifier (the registry's wire grammar,
@@ -374,61 +375,6 @@ def _expr(node: ast.AST) -> str:
     return text if len(text) <= 100 else text[:97] + "..."
 
 
-def _discover_families(index: _Index) -> dict[str, tuple[int | None, bool]]:
-    """Classes that accept a code: name -> (positional index of the code param, keyword-only).
-
-    A class is code-bearing when its ``__init__`` (or dataclass body) has a ``code`` or
-    ``reason_code`` parameter, or it declares a ``code`` class attribute; subclasses inherit.
-    """
-    own: dict[str, tuple[int | None, bool]] = {}
-    bases: dict[str, list[str]] = {}
-    for tree in index.trees.values():
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ClassDef):
-                continue
-            bases.setdefault(node.name, []).extend(
-                b.id
-                if isinstance(b, ast.Name)
-                else (b.attr if isinstance(b, ast.Attribute) else "")
-                for b in node.bases
-            )
-            pos: int | None = None
-            found = False
-            for item in node.body:
-                if isinstance(item, ast.FunctionDef) and item.name == "__init__":
-                    args = item.args
-                    plain = [a.arg for a in args.posonlyargs + args.args]
-                    kwonly = [a.arg for a in args.kwonlyargs]
-                    for nm in CODE_ARG_NAMES:
-                        if nm in plain:
-                            pos, found = plain.index(nm) - 1, True
-                        elif nm in kwonly:
-                            pos, found = None, True
-                elif isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
-                    if item.target.id in CODE_ARG_NAMES:
-                        found = True
-                elif isinstance(item, ast.Assign):
-                    if any(
-                        isinstance(t, ast.Name) and t.id in CODE_ARG_NAMES for t in item.targets
-                    ):
-                        found = True
-            if found:
-                own[node.name] = (pos, pos is None)
-    # Inheritance closure by simple class name.
-    changed = True
-    while changed:
-        changed = False
-        for name, parents in bases.items():
-            if name in own:
-                continue
-            for parent in parents:
-                if parent in own:
-                    own[name] = own[parent]
-                    changed = True
-                    break
-    return own
-
-
 def _target_names(target: ast.AST) -> Iterator[str]:
     if isinstance(target, ast.Name):
         yield target.id
@@ -484,9 +430,13 @@ def _reason_literals(node: ast.AST) -> Iterator[ast.expr]:
             yield from _reason_literals(value)
 
 
-def scan(src: Path = SRC) -> list[Site]:
+def scan(src: Path = SRC, helpers: frozenset[str] = frozenset()) -> list[Site]:
     index = _Index(src)
-    families = _discover_families(index)
+    trees = list(index.trees.values())
+    families = discover_families(trees)
+    # Only the forwarding helpers the caller names are sinks: a bare `code` parameter on any
+    # other function (`get`, `lookup`) is not a reason sink.
+    func_sinks = {n: i for n, i in discover_function_sinks(trees).items() if n in helpers}
     bearing = _reason_bearing(index)
     sites: list[Site] = []
     used: set[tuple[str, str]] = set()
@@ -495,7 +445,7 @@ def scan(src: Path = SRC) -> list[Site]:
         if rel.startswith(REGISTRY_PREFIX):
             continue
         mod = module_name(path, src)
-        visitor = _Visitor(index, mod, rel, families, sites, bearing)
+        visitor = _Visitor(index, mod, rel, families, sites, bearing, func_sinks)
         visitor.visit(tree)
         used.update(visitor.used_consts)
     # A plain-named constant (``MIXED_DRIVER_UNSUPPORTED = "..."``) is a code once it is passed to a
@@ -533,9 +483,11 @@ class _Visitor(ast.NodeVisitor):
         families: dict[str, tuple[int | None, bool]],
         out: list[Site],
         bearing: frozenset[str] = frozenset(),
+        func_sinks: dict[str, int] | None = None,
     ):
         self.index, self.mod, self.rel, self.families, self.out = index, mod, rel, families, out
         self.bearing = bearing
+        self.func_sinks = func_sinks or {}
         self.used_consts: set[tuple[str, str]] = set()
         self.funcs: list[tuple[str, frozenset[str]]] = []
         self.classes: list[tuple[str, bool]] = []  # (name, is_enum)
@@ -742,6 +694,13 @@ class _Visitor(ast.NodeVisitor):
             pos = fam[0]
             if pos < len(node.args) and not isinstance(node.args[pos], ast.Starred):
                 self._emit(node, "positional", origin[1] if origin else name, node.args[pos])
+        # A plain function that takes a code (a forwarding helper) is a sink too: its callers
+        # are checked, so the helper's registry row cannot hide an unregistered code.
+        sink_name = origin[1] if origin else name
+        sink_pos = self.func_sinks.get(sink_name) if isinstance(callee, ast.Name) else None
+        if sink_pos is not None and sink_pos < len(node.args):
+            if not isinstance(node.args[sink_pos], ast.Starred):
+                self._emit(node, "positional", sink_name, node.args[sink_pos])
         self.generic_visit(node)
 
 

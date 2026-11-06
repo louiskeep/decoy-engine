@@ -145,6 +145,16 @@ ADAPTERS: dict[tuple[str, str], str] = {
         "dict is built)"
     ),
 }
+# Forwarding helpers: the scanner treats them as code sinks and checks every caller's argument,
+# so the `_HELPER` rationale ("every caller passes a registry symbol") is enforced, not assumed.
+_HELPER_NAMES = frozenset(
+    fn.rsplit(".", 1)[-1] for (_f, fn), why in ADAPTERS.items() if why == _HELPER
+)
+# Helpers whose callers still pass a literal, a forwarded parameter or a name shared with another
+# module, found when callers began to be checked (2026-11-06). A ratchet: it may only shrink, and
+# each entry is a DESIGN follow-up (route its callers through registry symbols, then delete it).
+UNCHECKED_HELPERS = frozenset({"_raise", "_qerror", "_row_error", "_fail", "_refuse"})
+HELPER_SINKS = _HELPER_NAMES - UNCHECKED_HELPERS
 # Functions whose return value is a registry symbol chosen from a table of registry symbols.
 REGISTRY_HELPERS = frozenset({"strategy_code_for_unencryptable", "strategy_code_for_checksum"})
 
@@ -177,6 +187,10 @@ def _is_violation(site: scan.Site) -> bool:
     return True
 
 
+def _scan(src: Path = scan.SRC) -> list[scan.Site]:
+    return scan.scan(src, HELPER_SINKS)
+
+
 def violations(sites: list[scan.Site]) -> Counter[Key]:
     return Counter(
         (s.file, s.function, s.kind, s.family, s.value_class) for s in sites if _is_violation(s)
@@ -184,7 +198,7 @@ def violations(sites: list[scan.Site]) -> Counter[Key]:
 
 
 def test_no_ad_hoc_reason_codes() -> None:
-    found = violations(scan.scan())
+    found = violations(_scan())
     assert not found, (
         "ad-hoc reason code sites (use a decoy_engine.reasons symbol, or list a forwarding "
         "adapter with its rationale):\n" + "\n".join(f"  {k}" for k in sorted(found))
@@ -192,7 +206,7 @@ def test_no_ad_hoc_reason_codes() -> None:
 
 
 def test_adapters_exist_and_are_used() -> None:
-    sites = scan.scan()
+    sites = _scan()
     used = {(s.file, s.function) for s in sites if s.value_class in ("forward", "dynamic")}
     unused = sorted(set(ADAPTERS) - used)
     assert not unused, f"adapters that no longer forward a code: {unused}"
@@ -360,7 +374,7 @@ def _tree(tmp_path: Path, name: str, body: str) -> Path:
 @pytest.mark.parametrize("name", sorted(_MUTANTS))
 def test_each_smuggling_route_is_caught(tmp_path: Path, name: str) -> None:
     root = _tree(tmp_path, f"new_module_{name}", _MUTANTS[name])
-    found = violations(scan.scan(root))
+    found = violations(_scan(root))
     assert any(k[0] == f"new_module_{name}.py" for k in found), (name, dict(found))
 
 
@@ -373,14 +387,14 @@ def test_route_decider_registry_returns_are_clean(tmp_path: Path) -> None:
             return make(route_reason=f"{reasons.route.MIXED_RUNTIME_DECLINED}:{why}")
     """
     root = _tree(tmp_path, "route_clean", body)
-    found = violations(scan.scan(root))
+    found = violations(_scan(root))
     # Only the composite's forwarding site remains, and it needs a named adapter.
     assert [k[:3] for k in found if k[0] == "route_clean.py"] == [("route_clean.py", "wrap", "kw")]
 
 
 def test_registry_backed_code_is_clean(tmp_path: Path) -> None:
     root = _tree(tmp_path, "clean_module", _CLEAN)
-    found = violations(scan.scan(root))
+    found = violations(_scan(root))
     assert not [k for k in found if k[0] == "clean_module.py"], dict(found)
 
 
@@ -389,7 +403,7 @@ def test_a_newly_added_module_is_scanned(tmp_path: Path) -> None:
     (root / "pkg").mkdir()
     (root / "pkg" / "__init__.py").write_text("")
     (root / "pkg" / "deep.py").write_text(textwrap.dedent(_MUTANTS["f_string"]))
-    files = {k[0] for k in violations(scan.scan(root))}
+    files = {k[0] for k in violations(_scan(root))}
     assert {"brand_new.py", "pkg/deep.py"} <= files
 
 
@@ -402,7 +416,7 @@ def test_code_namespace_matches_the_raising_family() -> None:
     import _reason_baseline as baseline
 
     mismatched = []
-    for site in scan.scan():
+    for site in _scan():
         if site.kind not in ("kw", "positional") or site.value_class != "registry":
             continue
         expected = baseline.FAMILY_NAMESPACE.get(site.family.split("(")[0])
@@ -656,3 +670,42 @@ def test_unobserved_publication_mutants_are_caught(tmp_path: Path, body: str) ->
     root.mkdir()
     (root / "route.py").write_text(body)
     assert unobserved_publication_calls(root)
+
+
+# -- forwarding helpers are code sinks: their callers' arguments are checked --------------------
+
+_HELPER_BODY = """
+    from decoy_engine import reasons
+    from decoy_engine.errors import ExecutionError
+    def _refusal(code, detail):
+        raise ExecutionError(code=code)
+    def bad_literal():
+        raise _refusal("adhoc_caller", "x")
+    def bad_fstring(k):
+        raise _refusal(f"adhoc_{k}", "x")
+    def bad_keyword():
+        raise _refusal(code="adhoc_kw", detail="x")
+    def good():
+        raise _refusal(reasons.runtime.CYCLIC_WORK_ORDERING, "x")
+"""
+
+
+def test_forwarding_helper_callers_are_checked(tmp_path: Path) -> None:
+    root = _tree(tmp_path, "helper_callers", _HELPER_BODY)
+    found = {k[:2] for k in violations(_scan(root)) if k[0] == "helper_callers.py"}
+    assert ("helper_callers.py", "bad_literal") in found
+    assert ("helper_callers.py", "bad_fstring") in found
+    assert ("helper_callers.py", "bad_keyword") in found
+    assert ("helper_callers.py", "good") not in found
+
+
+def test_the_csv_reader_refusals_are_scanned_and_registry_backed() -> None:
+    sites = [s for s in _scan() if s.file == "profile/_csv_reader.py" and s.family == "_refusal"]
+    assert len(sites) >= 6
+    assert {s.value_class for s in sites} == {"registry"}
+
+
+def test_every_forwarding_helper_is_checked_or_a_listed_follow_up() -> None:
+    assert UNCHECKED_HELPERS <= _HELPER_NAMES, UNCHECKED_HELPERS - _HELPER_NAMES
+    assert "_refusal" in HELPER_SINKS
+    assert len(UNCHECKED_HELPERS) <= 5  # ratchet: may shrink, never grow
