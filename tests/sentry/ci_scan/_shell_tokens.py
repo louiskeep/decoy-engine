@@ -136,7 +136,7 @@ def normalise(cmd: list[str]) -> list[str]:
     for tok in named:
         if tok.startswith("--") and "=" in tok:
             key, _, value = tok.partition("=")
-            out += [key, *([value] if value else [])]
+            out += [key, value]  # an empty value still pairs with its option
         elif _SHORT_VALUE.fullmatch(tok):
             out += [tok[:2], tok[2:]]
         else:
@@ -249,6 +249,7 @@ def is_package_command(cmd: list[str]) -> bool:
 
 # Verbs that fetch packages from an index. For uv the rule fails closed: any `uv tool` verb that is
 # not known to fetch nothing counts as a fetch. `pipx` lists the fetching verbs it knows.
+_UV_TOOL_FETCH = {"install", "run", "upgrade"}
 _UV_TOOL_NO_FETCH = {"list", "dir", "uninstall", "update-shell"}
 _PIPX_FETCH = {"install", "run", "inject", "upgrade", "upgrade-all", "reinstall", "reinstall-all"}
 
@@ -260,6 +261,12 @@ def _uv_tool_verb(cmd: list[str], pos: int) -> tuple[str, int]:
 
 
 def _uv_tool_fetches(cmd: list[str], pos: int) -> tuple[str, int] | None:
+    """(verb, index) when `uv tool` may fetch packages, else None. Fails closed: any fetching verb
+    among the tokens after `tool` counts, wherever option parsing put the verb, and so does a verb
+    that is not known to be harmless."""
+    for k in range(pos + 1, len(cmd)):
+        if cmd[k] in _UV_TOOL_FETCH:
+            return cmd[k], k
     verb, k = _uv_tool_verb(cmd, pos)
     return None if not verb or verb in _UV_TOOL_NO_FETCH else (verb, k)
 
@@ -341,9 +348,9 @@ def uv_run_findings(cmd: list[str], *, frozen_env: bool = False) -> list[str]:
     def runs(pos: int) -> bool:
         if cmd[pos] == "run":
             return True
-        if cmd[pos] != "tool" or not (fetch := _uv_tool_fetches(cmd, pos)):
+        if cmd[pos] != "tool" or _uv_tool_fetches(cmd, pos) is None:
             return False
-        return fetch[0] == "run" or "run" in cmd[fetch[1] :]
+        return "run" in cmd[pos + 1 :]
 
     if not any(runs(pos) for pos in _uv_positions(cmd)):
         return []
