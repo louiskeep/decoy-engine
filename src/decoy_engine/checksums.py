@@ -42,6 +42,37 @@ gtin    GTIN (Global Trade Item Number, GS1; 8/12/13/14-digit variants).
         Uses python-stdnum 2.2 stdnum.ean which handles all four lengths.
         Body = all digits except the trailing check digit.
 
+National identifier schemes (validate via the named python-stdnum module):
+
+gb_nhs             UK NHS number. stdnum.gb.nhs. Body 9 digits; check by
+                   modulus 11 (weights 10..2), hand-rolled because stdnum
+                   only validates. A body whose remainder gives 10 has no
+                   valid check digit and raises ValueError.
+ca_sin             Canadian SIN. stdnum.ca.sin. Body 8 digits; Luhn.
+in_aadhaar         Indian Aadhaar. stdnum.in_.aadhaar. Body 11 digits; Verhoeff.
+au_tfn             Australian TFN, 9-digit form. stdnum.au.tfn. Body 8 digits;
+                   weights 1,4,3,7,5,8,6,9,10 with the sum modulo 11 equal to 0,
+                   hand-rolled; a body with no valid digit raises ValueError.
+de_idnr            German Steuer-IdNr. stdnum.de.idnr. Body 10 digits;
+                   ISO 7064 mod 11,10.
+fr_nir             French NIR. stdnum.fr.nir. Body 13 characters (Corsica 2A or
+                   2B allowed); returns 2 digits.
+es_dni             Spanish DNI. stdnum.es.dni. Body 8 digits; returns a letter.
+es_nie             Spanish NIE. stdnum.es.nie. Body X, Y or Z plus 7 digits;
+                   returns a letter.
+it_codice_fiscale  Italian codice fiscale, 16-character personal form.
+                   stdnum.it.codicefiscale. Body 15 characters; returns a letter.
+
+For the national schemes, ``calc_check_digit`` checks the body shape first
+(stdnum's calculators assume a well-formed body), and a computed check digit
+does not promise ``validate`` passes when the scheme has other format rules
+(Aadhaar's leading digit and palindrome rule, IdNr's repeated-digit rule,
+SIN's leading digit, the codice fiscale birth date), as with ``npi``.
+
+FPE checksum mode admits only ``_FPE_CHECKSUM_SCHEMES``: the national schemes
+include bodies with no valid check digit and letter check characters, which
+the FF1 path does not handle.
+
 Dependencies
 ------------
 python-stdnum >= 2.2  (core dependency, declared in pyproject.toml).
@@ -57,11 +88,23 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from types import ModuleType
 
+import stdnum.au.tfn as _au_tfn
+import stdnum.ca.sin as _ca_sin
+import stdnum.de.idnr as _de_idnr
 import stdnum.ean as _ean
+import stdnum.es.dni as _es_dni
+import stdnum.es.nie as _es_nie
+import stdnum.fr.nir as _fr_nir
+import stdnum.gb.nhs as _gb_nhs
 import stdnum.iban as _iban
+import stdnum.in_.aadhaar as _in_aadhaar
 import stdnum.isbn as _isbn
+import stdnum.it.codicefiscale as _it_cf
 import stdnum.luhn as _luhn
+import stdnum.verhoeff as _verhoeff
+from stdnum.iso7064 import mod_11_10 as _mod_11_10
 
 # ---------------------------------------------------------------------------
 # Luhn
@@ -296,6 +339,70 @@ def _gtin_validate(value: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# National identifiers  (python-stdnum validation; see module docstring)
+# ---------------------------------------------------------------------------
+
+_CF_ODD = "[0-9LMNPQRSTUV]"  # codice fiscale digit positions (omocodia letters allowed)
+
+# Body shape per scheme, checked before any calculator runs: stdnum's
+# calculators raise IndexError or KeyError, or return a digit, on a bad body.
+_NATIONAL_BODY: dict[str, tuple[re.Pattern[str], str]] = {
+    "gb_nhs": (re.compile(r"\d{9}"), "9 digits"),
+    "ca_sin": (re.compile(r"\d{8}"), "8 digits"),
+    "in_aadhaar": (re.compile(r"\d{11}"), "11 digits"),
+    "au_tfn": (re.compile(r"\d{8}"), "8 digits"),
+    "de_idnr": (re.compile(r"\d{10}"), "10 digits"),
+    "fr_nir": (re.compile(r"\d{5}(?:\d{2}|2[AB])\d{6}"), "13 characters"),
+    "es_dni": (re.compile(r"\d{8}"), "8 digits"),
+    "es_nie": (re.compile(r"[XYZ]\d{7}"), "X, Y or Z then 7 digits"),
+    "it_codice_fiscale": (
+        re.compile(rf"[A-Z]{{6}}{_CF_ODD}{{2}}[ABCDEHLMPRST]{_CF_ODD}{{2}}[A-Z]{_CF_ODD}{{3}}"),
+        "15 characters",
+    ),
+}
+
+
+def _nhs_digit(body: str) -> str:
+    """NHS modulus 11: weights 10..2; 11 maps to 0 and 10 has no valid digit."""
+    check = 11 - sum(w * int(d) for w, d in zip(range(10, 1, -1), body, strict=True)) % 11
+    if check == 10:
+        raise ValueError("gb_nhs body has no valid check digit")
+    return "0" if check == 11 else str(check)
+
+
+def _tfn_digit(body: str) -> str:
+    """TFN: the last weight is 10, which is -1 modulo 11, so the digit equals the body sum."""
+    check = sum(w * int(d) for w, d in zip((1, 4, 3, 7, 5, 8, 6, 9), body, strict=True)) % 11
+    if check == 10:
+        raise ValueError("au_tfn body has no valid check digit")
+    return str(check)
+
+
+def _national_calc(scheme: str, calc: Callable[[str], str]) -> Callable[[str], str]:
+    pattern, shape = _NATIONAL_BODY[scheme]
+
+    def _calc(body: str) -> str:
+        # Messages name the scheme and shape only: a body is part of an identifier.
+        if not isinstance(body, str) or not pattern.fullmatch(body):
+            raise ValueError(f"{scheme} check-digit body must be {shape}") from None
+        return calc(body)
+
+    return _calc
+
+
+def _national_validate(module: ModuleType, length: int | None = None) -> Callable[[str], bool]:
+    is_valid: Callable[[str], bool] = module.is_valid
+    compact: Callable[[str], str] = module.compact
+
+    def _validate(value: str) -> bool:
+        if not is_valid(value):
+            return False
+        return length is None or len(compact(value)) == length
+
+    return _validate
+
+
+# ---------------------------------------------------------------------------
 # Dispatch tables
 # ---------------------------------------------------------------------------
 
@@ -307,6 +414,15 @@ _VALIDATORS: dict[str, Callable[[str], bool]] = {
     "isbn13": _isbn13_validate,
     "ean13": _ean13_validate,
     "gtin": _gtin_validate,
+    "gb_nhs": _national_validate(_gb_nhs),
+    "ca_sin": _national_validate(_ca_sin),
+    "in_aadhaar": _national_validate(_in_aadhaar),
+    "au_tfn": _national_validate(_au_tfn, length=9),
+    "de_idnr": _national_validate(_de_idnr),
+    "fr_nir": _national_validate(_fr_nir),
+    "es_dni": _national_validate(_es_dni),
+    "es_nie": _national_validate(_es_nie),
+    "it_codice_fiscale": _national_validate(_it_cf, length=16),
 }
 
 _CHECK_DIGIT_FUNCS: dict[str, Callable[[str], str]] = {
@@ -317,9 +433,24 @@ _CHECK_DIGIT_FUNCS: dict[str, Callable[[str], str]] = {
     "isbn13": _isbn13_calc_check_digit,
     "ean13": _ean13_calc_check_digit,
     "gtin": _gtin_calc_check_digit,
+    "gb_nhs": _national_calc("gb_nhs", _nhs_digit),
+    "ca_sin": _national_calc("ca_sin", _luhn.calc_check_digit),
+    "in_aadhaar": _national_calc("in_aadhaar", _verhoeff.calc_check_digit),
+    "au_tfn": _national_calc("au_tfn", _tfn_digit),
+    "de_idnr": _national_calc("de_idnr", _mod_11_10.calc_check_digit),
+    "fr_nir": _national_calc("fr_nir", _fr_nir.calc_check_digits),
+    "es_dni": _national_calc("es_dni", _es_dni.calc_check_digit),
+    "es_nie": _national_calc("es_nie", _es_nie.calc_check_digit),
+    "it_codice_fiscale": _national_calc("it_codice_fiscale", _it_cf.calc_check_digit),
 }
 
 _KNOWN_SCHEMES: frozenset[str] = frozenset(_VALIDATORS.keys())
+
+# Kept apart from _KNOWN_SCHEMES so registering a scheme never admits it to FPE.
+# iban stays in the set so FPE refuses it with its own code, not "unknown".
+_FPE_CHECKSUM_SCHEMES: frozenset[str] = frozenset(
+    {"luhn", "npi", "iban", "vin", "isbn13", "ean13", "gtin"}
+)
 
 # Per-scheme minimum required charset for FPE mode.  A configured FPE charset
 # that does not contain all characters in this set causes values to pass
@@ -352,8 +483,7 @@ def validate(scheme: str, value: str) -> bool:
     """Return True iff ``value`` has a valid check digit for ``scheme``.
 
     Args:
-        scheme: One of ``'luhn'``, ``'npi'``, ``'iban'``, ``'vin'``,
-                ``'isbn13'``, ``'ean13'``, ``'gtin'``.
+        scheme: A registered scheme (see the module docstring).
         value:  The full value including its check digit(s).
 
     Returns:
@@ -380,17 +510,19 @@ def calc_check_digit(scheme: str, body: str) -> str:
       BBAN (no check digits, no spaces).  Returns a 2-character string.
     * ``vin``: body is the 16 non-check characters (positions 0-7 and 9-16
       of the 17-character VIN).  Returns a single character ('0'-'9' or 'X').
+    * national schemes (``gb_nhs`` and the rest): body shape per the module
+      docstring; a malformed body raises ``ValueError``.
 
     Args:
-        scheme: One of ``'luhn'``, ``'npi'``, ``'iban'``, ``'vin'``,
-                ``'isbn13'``, ``'ean13'``, ``'gtin'``.
+        scheme: A registered scheme (see the module docstring).
         body:   The non-check portion of the value (see above).
 
     Returns:
         The check digit string (1 character for most schemes; 2 for IBAN).
 
     Raises:
-        ValueError: If ``scheme`` is not a recognised checksum scheme.
+        ValueError: If ``scheme`` is not a recognised checksum scheme, or a
+            national scheme's body is malformed or has no valid check digit.
     """
     if scheme not in _KNOWN_SCHEMES:
         raise ValueError(

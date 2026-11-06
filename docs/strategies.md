@@ -104,7 +104,10 @@ handler, as does an `fpe` column used as a foreign key. The job's
 
   Supported schemes (all seven pass through `checksums.validate` and
   `checksums.calc_check_digit`): `luhn`, `npi`, `iban`, `vin`, `isbn13`,
-  `ean13`, `gtin`.
+  `ean13`, `gtin`. The national identifier schemes in `checksums` (`gb_nhs`,
+  `ca_sin`, `in_aadhaar`, `au_tfn`, `de_idnr`, `fr_nir`, `es_dni`, `es_nie`,
+  `it_codice_fiscale`) are validate and calculate only; FPE refuses them at
+  plan compile with `plan.fpe_checksum_unknown_scheme`.
 
   Valid-by-construction in FPE mode: `luhn`, `npi`, `vin`, `isbn13`, `ean13`,
   `gtin`. Scheme-specific constraints: NPI output pins the 1/2 NPPES leading

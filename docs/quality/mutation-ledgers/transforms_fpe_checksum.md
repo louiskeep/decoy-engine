@@ -70,12 +70,12 @@ the mutant passes `None` to `_permute` -> TypeError).
   (min-length message); `permute` 7-12 (unknown-scheme message), 20-33
   (IBAN message).
 - **IBAN reroute (2)** -- `permute_14/15` (`"iban"` -> `"XXibanXX"`/`"IBAN"`):
-  `"iban"` stops matching the dedicated branch but is still in `_KNOWN_SCHEMES`, so
+  `"iban"` stops matching the dedicated branch but is still in `_FPE_CHECKSUM_SCHEMES`, so
   it falls through to the final unhandled-scheme raise, which still produces
   `FpeChecksumError(scheme="iban", <same code>)`. Fail-closed and all machine
   fields preserved; only the message differs.
 - **Unreachable defensive raise (4)** -- `permute_157/158/159/160`: the trailing
-  raise after every scheme branch is dead code (all non-IBAN `_KNOWN_SCHEMES`
+  raise after every scheme branch is dead code (all non-IBAN `_FPE_CHECKSUM_SCHEMES`
   members are handled above and IBAN raises earlier), so no input reaches it.
 
 ## Gate

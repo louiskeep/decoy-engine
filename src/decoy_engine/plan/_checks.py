@@ -477,7 +477,7 @@ def check_fpe_checksum_scheme(config: dict[str, Any]) -> None:
 
     1. Unknown scheme (typo, e.g. ``checksum: ibna``): Decoy forbids silent
        misconfiguration passthrough.  Any value not in
-       ``checksums._KNOWN_SCHEMES`` raises with code
+       ``checksums._FPE_CHECKSUM_SCHEMES`` raises with code
        ``fpe_checksum_unknown_scheme``.
 
     2. IBAN (``checksum: iban``): per-country BBAN structure enforced by
@@ -499,7 +499,7 @@ def check_fpe_checksum_scheme(config: dict[str, Any]) -> None:
     Config-only (no profile, no source data): safe to run in --no-profile
     mode and in ``run_config_only_checks``.
     """
-    from decoy_engine.checksums import _KNOWN_SCHEMES, _SCHEME_REQUIRED_CHARSET
+    from decoy_engine.checksums import _FPE_CHECKSUM_SCHEMES, _SCHEME_REQUIRED_CHARSET
     from decoy_engine.transforms.fpe import _CHARSETS as _FPE_CHARSETS
 
     _FPE_UNSUPPORTED_SCHEMES = frozenset({"iban"})
@@ -521,14 +521,14 @@ def check_fpe_checksum_scheme(config: dict[str, Any]) -> None:
             if not checksum:
                 continue
             col_name = col_entry.get("name", "?")
-            if checksum not in _KNOWN_SCHEMES:
+            if checksum not in _FPE_CHECKSUM_SCHEMES:
                 raise PlanCompileError(
                     code=reasons.plan.FPE_CHECKSUM_UNKNOWN_SCHEME,
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.checksum",
                     message=(
                         f"column {col_name!r} in table {table_name!r} uses "
-                        f"strategy fpe with unknown checksum scheme {checksum!r}. "
-                        f"Known schemes: {sorted(_KNOWN_SCHEMES)}. "
+                        f"strategy fpe with unknown or FPE-unsupported checksum scheme {checksum!r}. "
+                        f"FPE schemes: {sorted(_FPE_CHECKSUM_SCHEMES)}. "
                         "Check for typos; valid fpe checksum schemes are "
                         "luhn, npi, vin, isbn13, ean13, gtin "
                         "(iban is not supported for FPE mode)."

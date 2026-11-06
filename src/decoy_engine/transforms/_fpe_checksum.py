@@ -113,7 +113,7 @@ def _fpe_checksum_permute(
         Use validate-only or a different strategy for IBAN columns.
 
     unknown scheme
-        FAILS CLOSED.  Any scheme name not in ``checksums._KNOWN_SCHEMES``
+        FAILS CLOSED.  Any scheme name not in ``checksums._FPE_CHECKSUM_SCHEMES``
         raises ``FpeChecksumError``.  The pre-SP04 fall-through to plain
         FPE with no check digit was silent misconfiguration; Decoy forbids
         that pattern.
@@ -141,13 +141,13 @@ def _fpe_checksum_permute(
     forward (encrypt) and inverse (decrypt) directions.
     """
     try:
-        from decoy_engine.checksums import _KNOWN_SCHEMES, calc_check_digit, validate
+        from decoy_engine.checksums import _FPE_CHECKSUM_SCHEMES, calc_check_digit, validate
 
         # H2: unknown scheme - fail closed.
-        if scheme not in _KNOWN_SCHEMES:
+        if scheme not in _FPE_CHECKSUM_SCHEMES:
             raise FpeChecksumError(
-                f"FPE checksum mode received unknown scheme {scheme!r}. "
-                f"Known schemes: {sorted(_KNOWN_SCHEMES)}. "
+                f"FPE checksum mode received unknown or unsupported scheme {scheme!r}. "
+                f"FPE schemes: {sorted(_FPE_CHECKSUM_SCHEMES)}. "
                 "Check your config for typos; valid fpe checksum schemes are "
                 "luhn, npi, vin, isbn13, ean13, gtin (iban is not supported for FPE).",
                 scheme=scheme,
