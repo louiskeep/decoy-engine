@@ -77,6 +77,7 @@ def report_module():  # type: ignore[no-untyped-def]
     spec = importlib.util.spec_from_file_location("_gates_report", DEV / "_gates_report.py")
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod  # dataclasses resolve string annotations through sys.modules
     spec.loader.exec_module(mod)
     return mod
 

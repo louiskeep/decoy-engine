@@ -49,12 +49,13 @@ PYPATH_DIRS=(src scripts)
 IMPORT_PKG=decoy_engine
 # Run mode recorded in a stored baseline and checked on a compare (see _gates_report.run_mode).
 WORKERS=1
-# Tests that read documentation by walking it. A stored baseline that is behind main by a change
-# under DOC_WALK_ROOTS is stale even when the change is Markdown. The two sentries below walk all
-# of docs/ (and root *.md) under one id each, so a Markdown fix on main would hide a re-break on
-# the branch: while the stored failing list holds an id from them, any main move is stale.
+# Directories a test reads by walking them: a stored baseline that is behind main by a change
+# under one of these is stale even when the change is Markdown.
 DOC_WALK_ROOTS=(docs/plans/h1-wave-b/manifests)
-DOC_WALK_SENTRIES=(tests/sentry/test_sdv_import_sentry.py tests/sentry/test_perf_claim_provenance.py)
+# Several sentries walk all of docs/ (and root *.md) under one id, so a Markdown fix on main would
+# hide a re-break on the branch. Rather than list each walker, any stored failing id under these
+# prefixes (every sentry) makes any main move stale.
+DOC_WALK_GUARDS=(tests/sentry/ tests/secret_providers/test_leak_sentry.py)
 
 ROOT=$(git rev-parse --show-toplevel) || exit 2
 VENV=${DECOY_VENV:-${UV_PROJECT_ENVIRONMENT:-$ROOT/.venv}}
@@ -189,8 +190,8 @@ baseline_is_stale() {
   local changed f root
   git -C "$ROOT" cat-file -e "$1^{commit}" 2>/dev/null || { echo "stored main_sha $1 is not in this repository"; return 0; }
   changed=$(git -C "$ROOT" diff --name-only --no-renames "$1" "$MAIN_SHA") || { echo "could not diff $1 against origin/main"; return 0; }
-  if [ -n "$changed" ] && "$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --stored-failing-in "$BASEFILE" "${DOC_WALK_SENTRIES[@]}"; then
-    echo "main moved and the stored failing list holds an id from a sentry that walks docs"; return 0
+  if [ -n "$changed" ] && "$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --stored-failing-under "$BASEFILE" "${DOC_WALK_GUARDS[@]}"; then
+    echo "main moved and the stored failing list holds a sentry failure that a Markdown change on main could have hidden"; return 0
   fi
   while IFS= read -r f; do
     [ -n "$f" ] || continue

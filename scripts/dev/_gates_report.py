@@ -14,11 +14,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import platform
 import re
 import sys
 import xml.etree.ElementTree as ET
 from collections import Counter
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 _FOUND = re.compile(r"^Found (\d+) errors?", re.MULTILINE)
@@ -267,8 +269,8 @@ def _section(out: Path, label: str) -> None:
 # the workers value are fixed here until gates.sh can run the suite in parallel.
 MODE_KEYS = ("workers", "dist", "platform", "order")
 DIST = "no"
-# The stored file's layout version; bump it when a field changes meaning.
-FORMAT = 1
+# The stored file's layout version; bump it when a field changes meaning or is added.
+FORMAT_VERSION = 1
 
 
 def order_label(order_seconds: dict[str, float]) -> str:
@@ -288,57 +290,129 @@ def run_mode(workers: int, order_seconds: dict[str, float]) -> dict[str, object]
     }
 
 
-def _bad_types(stored: dict[str, object]) -> list[str]:
-    """Fields whose JSON type is wrong. A bool is not a count, and ids must all be strings."""
-    bad = []
-    for key in ("collected", "skipped"):
-        v = stored[key]
-        if not isinstance(v, int) or isinstance(v, bool) or v < 0:
-            bad.append(key)
-    failing = stored["failing"]
-    if not isinstance(failing, list) or not all(isinstance(t, str) for t in failing):
-        bad.append("failing")
-    if not isinstance(stored["main_sha"], str) or not stored["main_sha"]:
-        bad.append("main_sha")
-    for key in ("order_seconds", "file_seconds"):
-        if not isinstance(stored[key], dict):
-            bad.append(key)
-    return bad
+class BaselineError(ValueError):
+    """A stored baseline that may not be compared; the message says why and what to do."""
 
 
-def stored_failing_in(path: Path, files: list[str]) -> bool:
-    """True when the stored failing list holds an id from any of the given test files."""
-    failing = json.loads(path.read_text()).get("failing", [])
-    return any(t == f or t.startswith(f + "::") for t in failing for f in files)
+@dataclass(frozen=True)
+class Baseline:
+    """The one model of a stored baseline file: every reader loads it, the writer serializes it.
+
+    `load_baseline` is the only place that reads the JSON, so no consumer sees an unvalidated
+    field (a JSON `true` is not a count, a mode field is not a guess)."""
+
+    repo: str
+    main_sha: str
+    head_sha: str
+    collected: int
+    skipped: int
+    failing: tuple[str, ...]
+    workers: int
+    dist: str
+    platform: str
+    order: str
+    order_seconds: dict[str, float]
+    file_seconds: dict[str, float]
+
+    def mode(self) -> dict[str, object]:
+        return {k: getattr(self, k) for k in MODE_KEYS}
+
+    def to_json(self) -> dict[str, object]:
+        data = asdict(self)
+        data["failing"] = sorted(self.failing)
+        return {"format_version": FORMAT_VERSION, **data}
+
+
+_FIELDS = tuple(Baseline.__dataclass_fields__)
+
+
+def _is_count(v: object) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
+def _is_seconds_map(v: object) -> bool:
+    return isinstance(v, dict) and all(
+        isinstance(k, str)
+        and isinstance(x, (int, float))
+        and not isinstance(x, bool)
+        and math.isfinite(x)
+        and x >= 0
+        for k, x in v.items()
+    )
+
+
+def _parse_baseline(raw: object) -> Baseline:
+    if not isinstance(raw, dict):
+        raise BaselineError("the stored baseline is not a JSON object; rewrite the baseline")
+    version = raw.get("format_version")
+    if not _is_count(version) or version != FORMAT_VERSION:
+        raise BaselineError(
+            f"the stored baseline has format_version {version!r}, this gates.sh reads "
+            f"format_version {FORMAT_VERSION}; rewrite the baseline"
+        )
+    missing = [k for k in _FIELDS if k not in raw]
+    if missing:
+        raise BaselineError(
+            f"the stored baseline has no {', '.join(missing)}; rewrite the baseline"
+        )
+    extra = sorted(set(raw) - set(_FIELDS) - {"format_version"})
+    if extra:
+        raise BaselineError(
+            f"the stored baseline has unknown field(s) {', '.join(extra)}; rewrite the baseline"
+        )
+    checks = {
+        "repo": isinstance(raw["repo"], str),
+        "main_sha": isinstance(raw["main_sha"], str) and bool(raw["main_sha"]),
+        "head_sha": isinstance(raw["head_sha"], str),
+        "collected": _is_count(raw["collected"]),
+        "skipped": _is_count(raw["skipped"]),
+        "failing": isinstance(raw["failing"], list)
+        and all(isinstance(t, str) for t in raw["failing"]),
+        "workers": _is_count(raw["workers"]) and raw["workers"] >= 1,
+        "dist": isinstance(raw["dist"], str),
+        "platform": isinstance(raw["platform"], str),
+        "order": isinstance(raw["order"], str),
+        "order_seconds": _is_seconds_map(raw["order_seconds"]),
+        "file_seconds": _is_seconds_map(raw["file_seconds"]),
+    }
+    bad = [k for k, ok in checks.items() if not ok]
+    if bad:
+        raise BaselineError(
+            f"the stored baseline's {', '.join(bad)} has the wrong type; rewrite the baseline"
+        )
+    fields = {k: raw[k] for k in _FIELDS}
+    fields["failing"] = tuple(raw["failing"])
+    return Baseline(**fields)
+
+
+def load_baseline(path: Path) -> Baseline:
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise BaselineError(
+            "the stored baseline is not readable JSON; rewrite the baseline"
+        ) from exc
+    return _parse_baseline(raw)
+
+
+def stored_failing_under(path: Path, prefixes: list[str]) -> bool:
+    """True when a stored failing id starts with any prefix (a test file path or a directory)."""
+    return any(t.startswith(p) for t in load_baseline(path).failing for p in prefixes)
 
 
 def check_stored(path: Path, repo: str, workers: int) -> list[str]:
     """Reasons this run may not be compared with the stored baseline (empty when it may)."""
     try:
-        stored = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return ["the stored baseline is not readable JSON; rewrite the baseline"]
-    if not isinstance(stored, dict):
-        return ["the stored baseline is not a JSON object; rewrite the baseline"]
-    if stored.get("repo") != repo:
-        return [f"the stored baseline is for repo {stored.get('repo')!r}, this run is {repo!r}"]
-    if stored.get("format") != FORMAT or isinstance(stored.get("format"), bool):
-        return [
-            f"the stored baseline has format {stored.get('format')!r}, this gates.sh reads "
-            f"format {FORMAT}; rewrite the baseline"
-        ]
-    required = ("main_sha", "collected", "skipped", "failing", *MODE_KEYS)
-    missing = [k for k in (*required, "order_seconds", "file_seconds") if k not in stored]
-    if missing:
-        return [f"the stored baseline has no {', '.join(missing)}; rewrite the baseline"]
-    bad = _bad_types(stored)
-    if bad:
-        return [f"the stored baseline's {', '.join(bad)} has the wrong type; rewrite the baseline"]
-    if stored["order"] != order_label(stored["order_seconds"]):
+        stored = load_baseline(path)
+    except BaselineError as exc:
+        return [str(exc)]
+    if stored.repo != repo:
+        return [f"the stored baseline is for repo {stored.repo!r}, this run is {repo!r}"]
+    if stored.order != order_label(stored.order_seconds):
         return [
             "the stored baseline's order does not match its order_seconds; rewrite the baseline"
         ]
-    theirs = {k: stored[k] for k in MODE_KEYS}
+    theirs = stored.mode()
     # This gates.sh runs in collection order, whatever order map the baseline was built with, so
     # a baseline ordered by a map differs until gates.sh can order its run from that map.
     mine = run_mode(workers, {})
@@ -353,12 +427,12 @@ def check_stored(path: Path, repo: str, workers: int) -> list[str]:
 
 def _stored_diff(out: Path, whole: bool) -> None:
     """Diff the branch's failing ids against the stored baseline; new ids go to `new-failing`."""
-    stored = json.loads((out / "stored-baseline.json").read_text())
-    base = list(stored.get("failing", []))
+    stored = load_baseline(out / "stored-baseline.json")
+    base = list(stored.failing)
     now = junit_failing_ids(out, "branch")
     new = [t for t in now if t not in base]
     print("-- STORED BASELINE DIFF --")
-    print(f"  baseline: {stored.get('repo')} main_sha={stored.get('main_sha')}")
+    print(f"  baseline: {stored.repo} main_sha={stored.main_sha}")
     for tid in new:
         print(f"  NEW-FAILING   {tid}")
     short_file = out / "shortfall"
@@ -367,9 +441,9 @@ def _stored_diff(out: Path, whole: bool) -> None:
         fixed = [t for t in base if t not in now]
         for tid in fixed:
             print(f"  NOW-PASSING   {tid}")
-        delta = collected(out, "branch") - int(stored.get("collected", 0))
+        delta = collected(out, "branch") - stored.collected
         print(
-            f"  collected: baseline={stored.get('collected')} branch={collected(out, 'branch')} delta={delta:+d}"
+            f"  collected: baseline={stored.collected} branch={collected(out, 'branch')} delta={delta:+d}"
         )
         print(
             f"  (new={len(new)} now-passing={len(fixed)} known-still-failing={len(now) - len(new)})"
@@ -382,9 +456,9 @@ def _stored_diff(out: Path, whole: bool) -> None:
     skip_file = out / "skip-increase"
     skip_file.write_text("")
     now_skipped = skipped(out, "branch")
-    if now_skipped > int(stored["skipped"]):
+    if now_skipped > stored.skipped:
         print(
-            f"  WARNING: branch skipped {now_skipped} tests, the baseline skipped {stored['skipped']}"
+            f"  WARNING: branch skipped {now_skipped} tests, the baseline skipped {stored.skipped}"
         )
         skip_file.write_text(f"{now_skipped}\n")
     (out / "new-failing").write_text("".join(f"{t}\n" for t in new))
@@ -393,22 +467,25 @@ def _stored_diff(out: Path, whole: bool) -> None:
 def write_baseline(
     out: Path, dest: Path, repo: str, main_sha: str, head_sha: str, workers: int
 ) -> None:
-    data = {
-        "format": FORMAT,
-        "repo": repo,
-        "main_sha": main_sha,
-        "head_sha": head_sha,
-        "collected": collected(out, "branch"),
-        "skipped": skipped(out, "branch"),
-        "failing": sorted(junit_failing_ids(out, "branch")),
-        **run_mode(workers, {}),
-        "order_seconds": {},
-        "file_seconds": file_seconds(out, "branch"),
-    }
-    dest.write_text(json.dumps(data, indent=2) + "\n")
+    mode = run_mode(workers, {})
+    data = Baseline(
+        repo=repo,
+        main_sha=main_sha,
+        head_sha=head_sha,
+        collected=collected(out, "branch"),
+        skipped=skipped(out, "branch"),
+        failing=tuple(junit_failing_ids(out, "branch")),
+        workers=workers,
+        dist=str(mode["dist"]),
+        platform=str(mode["platform"]),
+        order=str(mode["order"]),
+        order_seconds={},
+        file_seconds=file_seconds(out, "branch"),
+    )
+    dest.write_text(json.dumps(data.to_json(), indent=2) + "\n")
     # stderr: stdout must still end with the EVIDENCE closing rule.
     print(
-        f"gates: wrote baseline {dest} ({len(data['failing'])} failing, collected {data['collected']})",
+        f"gates: wrote baseline {dest} ({len(data.failing)} failing, collected {data.collected})",
         file=sys.stderr,
     )
 
@@ -458,7 +535,7 @@ if __name__ == "__main__":
         for reason in reasons:
             print(f"gates: {reason}", file=sys.stderr)
         if not reasons:
-            print(json.loads(Path(sys.argv[2]).read_text())["main_sha"])
+            print(load_baseline(Path(sys.argv[2])).main_sha)
         sys.exit(2 if reasons else 0)
     if sys.argv[1:2] == ["--suite-collected"]:
         # --suite-collected OUT: cases in the branch tests JUnit; 0 when missing or unreadable.
@@ -467,9 +544,9 @@ if __name__ == "__main__":
         except (ET.ParseError, ValueError):
             print(0)
         sys.exit(0)
-    if sys.argv[1:2] == ["--stored-failing-in"]:
-        # --stored-failing-in FILE TESTFILE...: exit 0 when the stored failing list has such an id.
-        sys.exit(0 if stored_failing_in(Path(sys.argv[2]), sys.argv[3:]) else 1)
+    if sys.argv[1:2] == ["--stored-failing-under"]:
+        # --stored-failing-under FILE PREFIX...: exit 0 when a stored failing id starts with one.
+        sys.exit(0 if stored_failing_under(Path(sys.argv[2]), sys.argv[3:]) else 1)
     ap = argparse.ArgumentParser()
     ap.add_argument("out", type=Path)
     ap.add_argument("--whole-suite", action="store_true")

@@ -44,9 +44,10 @@ def _stored(tmp_path: Path, main_sha: str, **extra: object) -> Path:
     dest.write_text(
         json.dumps(
             {
-                "format": 1,
+                "format_version": 1,
                 "repo": "decoy-engine",
                 "main_sha": main_sha,
+                "head_sha": main_sha,
                 "collected": 5,
                 "skipped": 0,
                 "failing": ["tests/a.py::test_one", "tests/a.py::test_three"],
@@ -133,7 +134,7 @@ def test_write_baseline_stores_the_failing_ids_and_the_run_mode(tmp_path: Path) 
     )
     assert rc == 1, out  # known failures still fail the plain run
     assert json.loads(dest.read_text()) == {
-        "format": 1,
+        "format_version": 1,
         "repo": "decoy-engine",
         "main_sha": main_sha,
         "head_sha": main_sha,
@@ -458,7 +459,7 @@ def test_a_baseline_ordered_by_a_map_is_refused_until_gates_can_order(tmp_path: 
         ("collected", "no collected"),
         ("failing", "no failing"),
         ("main_sha", "no main_sha"),
-        ("format", "has format None"),
+        ("format_version", "has format_version None"),
     ],
 )
 def test_a_baseline_without_the_run_mode_fields_is_refused(
@@ -642,9 +643,20 @@ def test_the_reporter_names_the_file_it_ordered_seconds_by(tmp_path: Path) -> No
         ("main_sha", ""),
         ("main_sha", 7),
         ("file_seconds", []),
-        ("format", 2),
-        ("format", True),
-        ("format", "1"),
+        ("format_version", 2),
+        ("format_version", True),
+        ("format_version", "1"),
+        ("workers", True),
+        ("workers", 0),
+        ("workers", 1.0),
+        ("dist", 1),
+        ("platform", None),
+        ("order", 3),
+        ("repo", None),
+        ("head_sha", 5),
+        ("order_seconds", {"tests/a.py": True}),
+        ("order_seconds", {"tests/a.py": -1}),
+        ("file_seconds", {"tests/a.py": "1"}),
     ],
 )
 def test_a_baseline_with_a_wrongly_typed_or_unknown_field_is_refused(
@@ -658,6 +670,25 @@ def test_a_baseline_with_a_wrongly_typed_or_unknown_field_is_refused(
     rc, out = _compare(clone, venv, stored, FAKE_FAIL="tests/a.py::test_one")
     assert rc == 2 and "rewrite the baseline" in out, out
     assert pytest_calls(log) == []
+
+
+def test_a_baseline_with_an_unknown_field_is_refused(tmp_path: Path) -> None:
+    clone = seeded_clone(tmp_path)
+    venv, _log = recording_venv(tmp_path)
+    rc, out = _compare(clone, venv, _stored(tmp_path, _origin_main(clone), extra_field=1))
+    assert rc == 2 and "unknown field(s) extra_field" in out, out
+
+
+def test_a_corrupt_baseline_cannot_hide_lost_tests_or_a_skip_flood(tmp_path: Path) -> None:
+    # Codex's mutation: JSON true read as workers=1 and false as collected=0, with a huge
+    # skipped count, let a smaller suite that skips more exit 0.
+    clone = seeded_clone(tmp_path)
+    venv, _log = recording_venv(tmp_path)
+    stored = _stored(tmp_path, _origin_main(clone), workers=True, collected=False, skipped=999999)
+    rc, out = _compare(
+        clone, venv, stored, FAKE_FAIL="tests/a.py::test_one", FAKE_TOTAL="3", FAKE_SKIPPED="2"
+    )
+    assert rc == 2 and "wrong type" in out, out
 
 
 @pytest.mark.parametrize(
@@ -679,6 +710,8 @@ def test_a_baseline_whose_order_label_does_not_match_its_map_is_refused(
     [
         "tests/sentry/test_sdv_import_sentry.py::test_no_citation_labels_sdv_permissive",
         "tests/sentry/test_perf_claim_provenance.py::test_no_unsourced_perf_claims_in_docs",
+        "tests/sentry/test_some_future_docs_walker.py::test_x",
+        "tests/secret_providers/test_leak_sentry.py::test_leak",
     ],
 )
 def test_a_baseline_holding_a_docs_walking_sentry_failure_is_stale_after_any_move(
@@ -692,7 +725,7 @@ def test_a_baseline_holding_a_docs_walking_sentry_failure_is_stale_after_any_mov
     old = _main_moves(clone, {"docs/par-" + "unread-probe.md": "# x\n"})
     stored = _stored(tmp_path, old, failing=["tests/a.py::test_one", walker])
     rc, out = _compare(clone, venv, stored, FAKE_FAIL="tests/a.py::test_one")
-    assert rc == 2 and "sentry that walks docs" in out, out
+    assert rc == 2 and "sentry failure that a Markdown change on main could have hidden" in out, out
     assert pytest_calls(log) == []
 
 
