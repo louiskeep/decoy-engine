@@ -21,7 +21,7 @@ REGISTRY_VERSION is `1.5.0` and is unchanged.
 
 | New file | Directory and CODEMAP line | Neighbour module |
 |---|---|---|
-| `src/decoy_engine/run_result/__init__.py`, `_model.py`, `_outcome.py` | New package `run_result/`. CODEMAP "Directory Map" and `_MAP.md` have no row for it, so it needs a new row (not added: those files are outside the allowed list) | `reasons/` (the reason wire types the model reuses), `plan/` (the hash it exports) |
+| `src/decoy_engine/run_result/__init__.py`, `_model.py`, `_outcome.py` | New package `run_result/`. CODEMAP "Directory Map" and `_MAP.md` have no row for it, so it needs a new row (added in fix round 1) | `reasons/` (the reason wire types the model reuses), `plan/` (the hash it exports) |
 | `tests/unit/run_result/` | tests mirror the package (`tests/unit/<package>/`) | `tests/unit/plan/` |
 | `tests/sentry/test_run_result_constructor.py` | `tests/sentry/` holds sentries; listed in `test_sentry_manifest.py` | `tests/sentry/test_reason_registry.py` |
 | `tests/fixtures/compat/run-result-v1*.json` | the handoff names this directory (new; `tests/integration/compat_corpus/` is the older corpus) | `tests/fixtures/f29/` |
@@ -101,11 +101,47 @@ that makes the read tree.
 
 ## V2-LOG
 
-- A read of a `schema` major other than `/v1` is not refused in E1 (the field reads as a string); the `RecordNeedsNewer`
-  refusal belongs to LIB L1a.
-- `RunResultRead` has no `to_payload`; callers dump with `by_alias=True` (the `pass` count key is an alias).
-- `Version` accepts a bounded release suffix; tighten if the CLI version format is fixed.
+- Round 1: a read of a `schema` other than `decoy-run-result/v1` is now refused by the model. The `RecordNeedsNewer`
+  wording for it still belongs to LIB L1a.
+- Round 1: both models have `to_payload()` (alias dump); the models are alias-only (`pass`, no `passed`).
+- Round 1: `Version` is a PEP 440 public release plus a lowercase local part. A CLI version outside that shape is refused.
 
 ## Not verified
 
 The full suite, the E2/E3 builder, projection and collector, and any CLI consumer.
+
+## Fix round 1
+
+Source: Dennis and Codex findings on `2a4025e3`. Red runs are on the devbox against the old source plus a one-line
+`Token = str` shim so the tests import (66 assertion failures of 146 tests; the rest already held):
+`test_every_field_is_value_free`, `test_every_read_field_is_value_free`, `test_another_major_or_free_text_tag_is_refused`
+(read), `test_the_tag_is_required_on_read_and_defaulted_on_write`, `test_lax_coercion_is_refused` (all 42 cells),
+`test_the_count_key_has_one_spelling`, `test_both_models_dump_the_wire_form`, `test_other_version_shapes_are_refused`,
+`test_read_refuses_free_text_where_an_enum_was` (7), `test_a_trailing_newline_is_not_a_version`,
+`test_read_tree_derived_from_write_tree`, `test_tree_walk_sees_a_hand_written_read_tree`.
+
+| Finding | Fix |
+|---|---|
+| HIGH any `schema` read | `SchemaTag` named type (only `decoy-run-result/v1`), kept out of the str substitution, required on read |
+| Lax coercion | `Strict()` on `Count`, `Seconds`, `ExitCode`; new `Flag`; write and read |
+| Bare marker trusted | the walk needs a kind from the module's named types and that type's validator in the field metadata; it also demands `Strict` on every int, bool and float |
+| Read enums as bare `str` | `Token` (approved identifier) replaces them; the walk now runs over `RunResultRead` |
+| Placement | CODEMAP Directory Map and Where Do I Find rows, `_MAP.md` row |
+| Second corpus location | contract section 6 names `decoy-run-result/v1` and `tests/fixtures/compat/` (smaller than moving nine files and adding a manifest kind; they are hand-made reader samples with nothing to regenerate) |
+| Private import | `safe_error_class` from `decoy_engine.progress` |
+| `Outcome` export | removed from `run_result/__init__` (not in the handoff list); the type is reached as `run_result._outcome.Outcome` |
+| LOW items | diagnostic-code null cell; alias-only models plus read `to_payload` (works on any pydantic 2, no 2.11 setting); PEP 440 `Version`; `in_place` comment; unknown values asserted kept; `\Z` on `_VERSION` |
+
+`reasons/_record.py` also had `$` in `_SAFE_REF` and `_SAFE_IDENTITY`: `approve_ref("abc\n")` passed, so a trailing
+newline rode through the `SafeRef` and `Token` types. Both now end in `\Z`.
+
+Pydantic floor: `pyproject` says `>=2.0`, but the engine already imports `Discriminator` (2.5) in
+`contracts/_declared_formats.py`, so the floor is not enforced. The new code uses only `Strict`, `StrictInt`, `create_model(__base__=...)`
+and `model_dump(by_alias=True)`, all present in 2.0.
+
+Mutations (new ones are 19 to 34; each turned a named test red): schema tag mapped to `str`; tag accepts any major; tag
+defaulted on read; `Count`, `Flag`, `ExitCode`, `Seconds` lax; walk trusts a bare marker (seeded `_BareMarker` and
+`_ForgedValidator` cells); read enum to bare `str`; `Token` accepts anything; `populate_by_name` back; read model without
+`to_payload`; diagnostic nulling removed; old `Version` suffix; `_VERSION` and `_SAFE_REF` back to `$`. The earlier 18
+were re-run on the new tree and are red. Not caught: the private `_progress_events` import (no sentry checks
+imports inside `src/decoy_engine`; `telemetry/_vocab.py` does the same). Listed as a DESIGN item, not guarded here.
