@@ -68,8 +68,9 @@ New: N1a no parser pass-through in `guarded_with_parser_errors`; N1b adapter pas
 | `src/decoy_engine/config/_csv_dialect.py` | `config/` | `config/` row ("source/target descriptors") | `_sources.py`, `_fixed_width.py` |
 | `tests/unit/profile/test_csv_reader.py`, `test_csv_reader_strict.py`, `fixtures/csv_reader_base_frames.json` | `tests/unit/profile/` | tests mirror `src/` layout | `test_csv_delimited_params.py` |
 | `tests/unit/config/test_csv_dialect_rules.py` | `tests/unit/config/` | same | `test_filesource_delimited_params.py` |
-| `tests/sentry/test_csv_scan_single_copy.py` | `tests/sentry/` | sentries live in `tests/sentry/` | `test_reason_registry.py` |
-| `tests/sentry/_reason_sinks.py` | `tests/sentry/` | scanner helpers sit beside `_reason_scan.py` | `_reason_scan.py` |
+| `tests/sentry/test_csv_scan_single_copy.py` | `tests/sentry/` | CODEMAP `tests/` row names `sentry/`; no finer rule exists | `test_log_interpolation.py` (AST-walk sentry) |
+| `tests/sentry/_reason_sinks.py` | `tests/sentry/` | none finer than the `tests/` row (see LAYOUT-T below) | `_reason_scan.py` |
+| `tests/sentry/baselines/reason-unchecked-helpers.json` | `tests/sentry/baselines/` | the registered-baseline mechanism (`scripts/dev/sentry_registry.toml`, `_baseline_sources.py`) | the other registered baselines |
 
 The CODEMAP had no entries for the two source files; this round adds them (the `profile/` and `config/` rows).
 
@@ -83,3 +84,37 @@ The CODEMAP had no entries for the two source files; this round adds them (the `
 - Ratchet the callers of the `pandas_adapter` read functions (`read_csv`, `read_csv_chunks`, the parser-error variants) so a new caller outside the reader is flagged.
 - Cloud CSV readers (`profile/_cloud_readers.py`, `io/bounded_reader.py`) still bypass the dialect.
 - `UNCHECKED_HELPERS` (above): route each helper's callers through registry symbols and remove the entry. Findings behind it: `_check_dp._raise` (12 literal callers), `_window_admission._refuse` (a literal constant), `_quarantine_local._qerror` and `_checks_declared_casting._fail` (forwarded parameters), `_raise` name shared with `config/_declared_casting.py`.
+
+## Fix round 2 (round 2 review: Codex NO-GO, Dennis GO-WITH-FIXES)
+
+- Value-free config errors. The engine's config-error boundary is the `hide_input_in_errors=True` model setting every pipeline model already carries, plus `validate_config`. `FileSource`, `S3Source` and `GCSSource` were the only config models without it, so a direct `FileSource` validation error rendered the whole submitted descriptor. They now set it (no second sanitizer). Pydantic still keeps the input in `ValidationError.errors()` and `.json()`, so `validate_config` now raises its `PipelineValidationError` after the `except` block with only the rendered text: no `__cause__` and no `__context__` carries the value-bearing error. The test goes through the public `validate_config` route and checks `str`, `repr`, `args`, cause and context.
+- `nrows=0`, headerless: `_zero_rows` opens the handle (policy check) and calls `stat` (existence), then returns the empty object-column frame or, chunked, no chunk (pandas yields none either). Nothing is scanned or tokenized, so malformed content (unterminated quote, NUL, lone CR, wrong width, empty file) reads as the empty frame under ambient and strict policies, whole and chunked. A headered file still reads its header with pandas, because the header is the declared column list.
+- Helper identity: `discover_function_sinks` keys sinks by `(path, function)`; `_Index.resolve_function` follows imports to the defining module, so a call resolves to the helper defined in or imported into the calling module. `HELPER_IDENTITIES` come from the `_HELPER` adapter rows; `UNCHECKED_HELPERS` holds exact identities and is registered as the `reason-unchecked-helpers` baseline (shrink-only through `ratchet_check`). With identity resolution all five unchecked helpers still have unregistered callers, so none could be removed. `NOT_POSITIONAL_SINKS` records why five helpers are not positional sinks (keyword-only `code`, or no `code`); a test asserts every checked helper is a discovered sink or has that rationale.
+- Defaults: `CSV_DIALECT_DEFAULTS` in `config/_csv_dialect.py` is the one descriptor. `CsvDialect` field defaults, the `FileSource` `Field(default=...)` values and the dump that omits defaults all read it.
+- Strict pass-through sentry (AT-E12, in `test_csv_scan_single_copy.py`): `guarded_with_parser_errors` may be named only in `fileaccess/_errors.py` and `fileaccess/adapters/pandas.py`; `read_csv_parser_errors` and `read_csv_chunks_parser_errors` only in the adapter and `profile/_csv_reader.py`. It fails on any other module, and on a stale entry.
+- `test_nrows_zero_chunked_yields_no_rows` is replaced by a test that asserts `list(chunks) == []` (zero chunks) for all four modes.
+
+### LAYOUT-T item
+
+`tests/sentry/_reason_sinks.py` is the 51st direct module of `tests/sentry/`. Folding it into `_reason_scan.py` (789 lines) or `test_reason_registry.py` (now over 800) would break the file-size rule, and `_reason_baseline.py` imports the scanner (a cycle). The owner deferred test-folder layout to roadmap row LAYOUT-T, so the module stays and moves with that row. `test_reason_registry.py` is 820 lines (was 658): its helper-identity tests belong in a reason-sentry subpackage once LAYOUT-T creates one.
+
+### Red first (on a4cd737d sources, new tests)
+
+13 failed over `test_csv_dialect_rules.py` and `test_csv_reader_strict.py`: `test_dialect_defaults_have_one_home`, both `test_filesource_validation_error_is_value_free`, `test_public_loader_route_carries_no_submitted_delimiter`, `test_source_models_hide_input_in_errors`, the `bad_quote` zero-row cases (2 plus 4 in the four-mode test), `test_nrows_zero_never_reaches_the_tokenizer`, and the chunked missing-file case. The identity, collision and sentry tests are test-side changes and are red under the mutations below.
+
+
+### Mutations on the round 2 head (all red)
+
+Handoff set (15): AT-E1 drop `sep`; AT-E2 default `has_header` False; AT-E3 (a) skip scan, (b) raise inside except, (c) no except mapping; AT-E4 lazy chunk scan; AT-E5 (a) default delimiter tab, (b) own `.get`; AT-E6 remove `@entry_point`; AT-E7 file name as table; AT-E9 converters by name headerless; AT-E10 unguarded chunk iterator; AT-E11 (a) drop uniqueness, (b) own check in `FileSource`; AT-E8 `csv.reader` in `_readers_csv.py`.
+
+Round 1 set: N1a to N1f, N2a, N2b, N3, N4a, N4b, N5, N5b, N6 (as listed above).
+
+Round 2: N2c zero-row read skips the file check; N2d zero-row chunked read yields a frame; R1a `FileSource` shows input; R1b `validate_config` chains the pydantic error; R3 default literal restated in `FileSource`; R3b the dump compares a literal; R4 new caller of `guarded_with_parser_errors`; R4b new caller of `read_csv_parser_errors`; R4c stale allowlist entry; R5 unchecked-helper swap; R6 regrowth; R7 same-name collision (same function name, other path); R8 scanner follows no imports (bare-name resolution); R9 a checked helper with no sink and no rationale. All turn a test red; the runner is a throwaway script (apply, run the CSV, config, validation and reason-sentry tests, restore).
+
+### T1 (round 2 head)
+
+`tests/unit/profile tests/unit/config tests/fileaccess tests/unit/test_public_api.py tests/unit/test_validation.py tests/sentry`: 5585 passed, 6 skipped; mypy clean on the touched modules and `fileaccess/`; ruff check and format clean. `ratchet_check.py` reports `reason-unchecked-helpers` as a first inventory of 5 keys (review required) and no finding. Not run: the full suite (frozen-contract and sentry-baseline triggers apply at merge).
+
+### Line counts (round 2)
+
+`_csv_reader.py` 340, `_csv_dialect.py` 90, `_sources.py` 238, `validation/_config.py` 97, `_reason_scan.py` 789 (was 806 on main), `_reason_sinks.py` 97, `test_reason_registry.py` 821 (LAYOUT-T item above), `test_csv_scan_single_copy.py` 134, `test_csv_reader_strict.py` 293, `test_csv_dialect_rules.py` 238.

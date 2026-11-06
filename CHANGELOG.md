@@ -50,7 +50,7 @@ duplicate names, delimiter shape) now live in one place, `config/_csv_dialect.py
 `CsvDialect`. Their delimiter texts no longer echo the submitted value, and a `column_names` that is not a list
 or tuple of strings is refused (`CsvDialect` and `resolve_csv_dialect`). `resolve_csv_dialect` takes the defaults
 from `CsvDialect`. Under a strict file-access policy a headerless parser disagreement is the coded refusal, not a
-read error, and `nrows=0` returns the empty frame with the declared columns.
+read error, and `nrows=0` returns the empty frame with the declared columns without reading the file. `FileSource`, `S3Source` and `GCSSource` hide submitted values in their validation errors, and `validate_config` no longer chains the pydantic error (it carried the submitted descriptor).
 
 ### Changed (CLI-DIALECT: headerless CSV refusal messages, 2026-11-06)
 
