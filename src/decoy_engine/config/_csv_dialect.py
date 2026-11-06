@@ -17,8 +17,16 @@ def csv_dialect_problem(
 ) -> str | None:
     """The first problem with this dialect as fixed text, or `None` when it is coherent.
 
-    Text carries no prefix; each caller adds its own (`FileSource: ...`, `CsvDialect: ...`).
+    Text carries no prefix; each caller adds its own (`FileSource: ...`, `CsvDialect: ...`). The
+    text is fixed and never echoes a submitted value, since the dialect is a public surface.
     """
+    if column_names is not None and (
+        isinstance(column_names, (str, bytes))
+        or not isinstance(column_names, Sequence)
+        or not all(isinstance(name, str) for name in column_names)
+    ):
+        # A bare string would split into characters; a generator is consumed once.
+        return "`column_names` must be a list or tuple of strings"
     if has_header and column_names is not None:
         return (
             "`column_names` is forbidden when has_header=true "
@@ -39,14 +47,14 @@ def csv_dialect_problem(
         if len(set(column_names)) != len(column_names):
             return "`column_names` must be unique"
     if len(delimiter) != 1:
-        return f"`delimiter` must be exactly one character (got {delimiter!r})"
+        return "`delimiter` must be exactly one character"
     if delimiter in ("\n", "\r"):
         # A line terminator as the field delimiter has no coherent reader meaning.
         return "`delimiter` must not be a line terminator"
     if not delimiter.isprintable() and delimiter != "\t":
         # A NUL or other control character has no coherent single-char delimiter
         # meaning. Tab is the one control character that is a real delimiter (TSV).
-        return f"`delimiter` must be a printable character or a tab (got {delimiter!r})"
+        return "`delimiter` must be a printable character or a tab"
     return None
 
 
@@ -59,11 +67,12 @@ class CsvDialect:
     delimiter: str = ","
 
     def __post_init__(self) -> None:
-        if self.column_names is not None:
-            object.__setattr__(self, "column_names", tuple(self.column_names))
+        # The rule runs on the raw value first, then the names are frozen to a tuple.
         problem = csv_dialect_problem(self.has_header, self.column_names, self.delimiter)
         if problem is not None:
             raise ConfigError(f"CsvDialect: {problem}")
+        if self.column_names is not None:
+            object.__setattr__(self, "column_names", tuple(self.column_names))
 
 
 __all__ = ["CsvDialect", "csv_dialect_problem"]

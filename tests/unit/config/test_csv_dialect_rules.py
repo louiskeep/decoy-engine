@@ -99,3 +99,57 @@ def test_filesource_has_no_dialect_rule_of_its_own() -> None:
     assert not stray, (
         f"dialect fields read outside csv_dialect_problem at lines {[n.lineno for n in stray]}"
     )
+
+
+# Fix round: value-free public errors, one home for defaults, no str column_names.
+
+SECRET = "SECRETMARK"
+
+
+def _assert_no_secret(err: BaseException) -> None:
+    for text in (str(err), repr(err), repr(err.args)):
+        assert SECRET not in text
+    assert err.__cause__ is None and err.__context__ is None
+
+
+@pytest.mark.parametrize("bad", [SECRET, SECRET[:2], "\x07"], ids=["long", "two", "control"])
+def test_public_delimiter_errors_are_value_free(bad: str) -> None:
+    from decoy_engine.profile._csv_reader import resolve_csv_dialect
+
+    with pytest.raises(ConfigError) as direct:
+        CsvDialect(True, None, bad)
+    with pytest.raises(ConfigError) as resolved:
+        resolve_csv_dialect({"delimiter": bad})
+    for err in (direct.value, resolved.value):
+        _assert_no_secret(err)
+        assert repr(bad) not in str(err) and repr(bad) not in repr(err)
+    assert csv_dialect_problem(True, None, bad) is not None
+    assert repr(bad) not in (csv_dialect_problem(True, None, bad) or "")
+
+
+def test_csvdialect_defaults_equal_the_filesource_defaults() -> None:
+    import dataclasses
+
+    fields = {f.name: f.default for f in dataclasses.fields(CsvDialect)}
+    for name, default in fields.items():
+        assert FileSource.model_fields[name].default == default, name
+
+
+def test_resolve_passes_only_the_keys_present() -> None:
+    from decoy_engine.profile._csv_reader import resolve_csv_dialect
+
+    plain = FileSource.model_validate({"type": "file", "format": "csv", "path": "a.csv"})
+    assert resolve_csv_dialect(plain.model_dump()) == CsvDialect(
+        plain.has_header, plain.column_names, plain.delimiter
+    )
+    assert resolve_csv_dialect({}) == CsvDialect()
+
+
+@pytest.mark.parametrize("bad", ["ab", b"ab", 5, ("a", 1), iter(["a"])], ids=repr)
+def test_non_sequence_or_non_str_column_names_are_refused(bad: Any) -> None:
+    from decoy_engine.profile._csv_reader import resolve_csv_dialect
+
+    with pytest.raises(ConfigError):
+        CsvDialect(False, bad)
+    with pytest.raises(ConfigError):
+        resolve_csv_dialect({"has_header": False, "column_names": bad})
