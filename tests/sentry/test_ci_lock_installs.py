@@ -164,6 +164,11 @@ def test_seeded_findings() -> None:
         'pip install -e ".[dev]"': ["project install"],
         "uv sync --extra dev": ["uv sync without --frozen", "installs outside"],
         "uv sync --frozen --extra dev": ["installs outside"],
+        # An option before the subcommand stops `_uv_positions` at `pip`, so only the
+        # `pip sync` entry in SYNC_SUBCOMMANDS finds these.
+        "uv pip --system sync requirements.txt": ["uv sync without --frozen", "installs outside"],
+        "uv pip -q sync requirements.txt": ["uv sync without --frozen", "installs outside"],
+        "uv --directory run sync --frozen": ["installs outside"],
         "bash scripts/dev/bootstrap.sh": ["installs outside"],
         "pip install .[dev]": ["project install"],
         "python -m pip install -e .[docs]": ["project install"],
