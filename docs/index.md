@@ -69,7 +69,7 @@ link to GitHub rather than into the rendered API reference.
 
 ---
 
-This repo owns the engine-scoped durable docs (reference, `security/` and `decisions/` records, API reference) and its own `plans/` for engine work. The single cross-repo roadmap and the shipped program status live in the platform docs hub (`decoy-platform/docs/ROADMAP.md`), which indexes engine plans too.
+This repo owns the engine-scoped durable docs (reference, `security/` and `decisions/` records, API reference) and its own `plans/` for engine work. The single cross-repo roadmap and the shipped log live in the CLI repo ([`decoy/docs/ROADMAP.md`](https://github.com/louiskeep/decoy/blob/main/docs/ROADMAP.md) and `decoy/docs/RECENTLY-SHIPPED.md`, moved from `decoy-platform` on 2026-11-05); the roadmap indexes engine plans too.
 
 ```{toctree}
 :hidden:
