@@ -111,12 +111,12 @@ def versions_in(root: Path, hunks: list[rg.Hunk], skip: set[str]) -> list[tuple[
     return found
 
 
-def gather_facts(root: Path, repo_facts: dict, hunks: list[rg.Hunk]) -> RenumberFacts:
+def gather_facts(
+    root: Path, repo_facts: dict, hunks: list[rg.Hunk], contract: dict, require_fixture: bool
+) -> RenumberFacts:
     fixture_path = repo_facts["fixture"]
-    anchor = (
-        ANCHORS[REASONS_MD].search(read(root, REASONS_MD)) if (root / REASONS_MD).exists() else None
-    )
-    contract = contract_versions(json.loads(read(root, CONTRACT)))
+    anchors = [a[2] for a in ANCHORS[REASONS_MD].finditer(read(root, REASONS_MD))]
+    on_disk = json.loads(read(root, CONTRACT))
     fixture = None
     if fixture_path:
         fixture = {
@@ -127,8 +127,11 @@ def gather_facts(root: Path, repo_facts: dict, hunks: list[rg.Hunk]) -> Renumber
     return {
         "branch_owned_schema_roots": repo_facts["roots"],
         "main_moved": repo_facts["moved"],
-        "anchor_version": anchor and anchor[2],
-        "contract_versions": contract,
+        "anchor_versions": tuple(anchors),
+        "contract_versions": contract_versions(on_disk),
+        "contract_matches": on_disk == json.loads(json.dumps(contract)),
+        "fixture_count": repo_facts["fixture_count"],
+        "require_fixture": require_fixture,
         "fixture": fixture,
         "added_versions": tuple(versions_in(root, hunks, skip)),
     }
@@ -239,13 +242,15 @@ def run(repo: Path, main: str, check: bool) -> int:
         else:
             (w / "b").mkdir()
             b = main_tree(repo, fork, w / "b")["manifest"]
-        h = rg.extract(repo, contract=True)["manifest"]
+        head = rg.extract(repo, contract=True)
+        h = head["manifest"]
         repo_facts = {
+            "fixture_count": len(fixtures),
             "roots": rg.owned_roots(repo, fork),
             "moved": fork != msha,
             "fixture": fixtures[0] if len(fixtures) == 1 else None,
         }
-        facts = gather_facts(repo, repo_facts, hunks)
+        facts = gather_facts(repo, repo_facts, hunks, head["contract"], check)
         if check:
             problems = renumber_check(b, m, h, facts)
             print("\n".join(problems) or "registry consistent")
@@ -294,7 +299,9 @@ def renumber(repo, w, manifests, old, facts, hunks, repo_facts) -> int:
     stale = _stale_contract(read(repo, CONTRACT), built["contract"], target)
     bytes_ = json.dumps(built["contract"], indent=1, sort_keys=True) + "\n"
     write(cand, CONTRACT, bytes_)
-    facts2 = gather_facts(cand, {**repo_facts, "fixture": new_name or fixture}, hunks)
+    facts2 = gather_facts(
+        cand, {**repo_facts, "fixture": new_name or fixture}, hunks, built["contract"], False
+    )
     problems = ["consumer contract was stale before renumber"] if stale else []
     problems += renumber_check(b, m, built["manifest"], facts2)
     if _ids(built["manifest"]) != _ids(h):

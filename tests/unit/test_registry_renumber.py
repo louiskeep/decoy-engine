@@ -357,6 +357,60 @@ def test_check_rejects_a_version_that_is_not_main_plus_one(repo, setup, code, ne
         assert nxt(m0, 2) in out(res)
 
 
+def _wrong_type(repo, m0):
+    vt = nxt(m0, 2)
+    edit(
+        repo,
+        CONTRACT,
+        lambda t: t.replace(f'"registry_version": "{vt}"', '"registry_version": 7', 1),
+    )
+    commit(repo)
+
+
+def _missing_key(repo, m0):
+    pattern = rf'\n\s*"registry_version": "{re.escape(nxt(m0, 2))}",'
+    edit(repo, CONTRACT, lambda t: re.sub(pattern, "", t, count=1))
+    commit(repo)
+
+
+def _two_fixtures(repo, m0):
+    name = fix_name(nxt(m0, 2), "b")
+    shutil.copy(repo / F29 / name, repo / F29 / fix_name(nxt(m0, 2), "x"))
+    commit(repo)
+
+
+def _duplicate_anchor(repo, m0):
+    edit(repo, "docs/reasons.md", lambda t: t + f"\nAgain `registry_version` (`{nxt(m0, 2)}`).\n")
+    commit(repo)
+
+
+def _stale_duplicate_anchor(repo, m0):
+    edit(repo, "docs/reasons.md", lambda t: t + f"\nOld `registry_version` (`{nxt(m0)}`).\n")
+    commit(repo)
+
+
+def _no_fixture(repo, m0):
+    git(repo, "rm", "-q", f"{F29}/{fix_name(nxt(m0, 2), 'b')}")
+    commit(repo)
+
+
+@pytest.mark.parametrize(
+    ("break_it", "needle"),
+    [(_wrong_type, "consumer-contract"), (_missing_key, "consumer-contract"),
+     (_two_fixtures, "several manifest fixtures"), (_duplicate_anchor, "exactly one anchor"),
+     (_stale_duplicate_anchor, "exactly one anchor"), (_no_fixture, "no manifest fixture")],
+)  # fmt: skip
+def test_check_fails_closed_on_bad_carriers(repo, break_it, needle):  # AT-R23
+    m0 = mver(repo)
+    slices(repo, "a", "b")
+    assert run(repo).returncode == 0
+    commit(repo, "renumber")
+    assert run(repo, "--check").returncode == 0
+    break_it(repo, m0)
+    res = run(repo, "--check")
+    assert res.returncode == 1 and needle in out(res), out(res)
+
+
 def _refusal(repo, code, key, setup=None):
     if setup:
         setup(repo)

@@ -61,7 +61,7 @@ def _is_key(node: ast.AST, names: frozenset[str] = frozenset()) -> bool:
     if isinstance(node, ast.Constant):
         return node.value in KEYS
     if isinstance(node, ast.Attribute):
-        return node.attr in KEYS
+        return node.attr in KEYS or ast.unparse(node) in names
     return isinstance(node, ast.Name) and (node.id in KEYS or node.id in names)
 
 
@@ -84,16 +84,24 @@ ACCESSORS = frozenset({"version_of", "entries_since", "contract_versions"})
 
 
 def _policy_imports(tree: ast.Module, policy_consts: frozenset[str]) -> frozenset[str]:
-    """Local names bound from the policy module that carry registry keys: its key-tuple
-    constants (such as SCHEMA_ROOTS) and its key accessor functions."""
+    """Names that carry registry keys because they come from the policy module: its key-tuple
+    constants (such as SCHEMA_ROOTS) and key accessor functions, bound by ``from`` import, or
+    reached through a module alias (``import m as p``, ``import a.b.m``, ``from a.b import m``)
+    as the dotted form ``p.SCHEMA_ROOTS``."""
     carry = policy_consts | ACCESSORS
-    return frozenset(
-        a.asname or a.name
-        for n in ast.walk(tree)
-        if isinstance(n, ast.ImportFrom) and n.module == POLICY_MODULE
-        for a in n.names
-        if a.name in carry
-    )
+    found: set[str] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom) and n.module == POLICY_MODULE:
+            found |= {a.asname or a.name for a in n.names if a.name in carry}
+        elif isinstance(n, ast.ImportFrom) and n.module:
+            for a in n.names:
+                if f"{n.module}.{a.name}" == POLICY_MODULE:
+                    found |= {f"{a.asname or a.name}.{c}" for c in carry}
+        elif isinstance(n, ast.Import):
+            for a in n.names:
+                if a.name == POLICY_MODULE:
+                    found |= {f"{a.asname or a.name}.{c}" for c in carry}
+    return frozenset(found)
 
 
 def _bound_names(target: ast.AST) -> set[str]:
@@ -390,4 +398,42 @@ def test_guard_flags_policy_constants_and_accessors_used_outside_the_policy(tmp_
     assert guard_violations(tmp_path, files, {}) == [
         "src/a.py::roots_differ",
         "src/b.py::moved",
+    ]
+
+
+_QUALIFIED_TUPLE = (
+    f"import {POLICY_MODULE} as policy\n"
+    "def roots_differ(a, b):\n"
+    "    return [r for r in policy.SCHEMA_ROOTS if a[r] != b[r]]\n"
+)
+_QUALIFIED_ACCESSOR = (
+    f"import {POLICY_MODULE}\n"
+    "def moved(m, h):\n"
+    f"    if {POLICY_MODULE}.version_of(m) != {POLICY_MODULE}.version_of(h):\n"
+    "        return ['moved']\n"
+    "    return []\n"
+)
+_PACKAGE_ALIAS = (
+    "from scripts.release import reason_manifest_policy as pol\n"
+    "def moved(m, h):\n"
+    "    if pol.version_of(m) != pol.version_of(h):\n"
+    "        return ['moved']\n"
+    "    return []\n"
+)
+
+
+def test_guard_flags_qualified_uses_through_module_aliases(tmp_path: Path) -> None:
+    files = _tree(
+        tmp_path,
+        {
+            POLICY: _POLICY_WITH_ROOTS,
+            "src/a.py": _QUALIFIED_TUPLE,
+            "src/b.py": _QUALIFIED_ACCESSOR,
+            "src/c.py": _PACKAGE_ALIAS,
+        },
+    )
+    assert guard_violations(tmp_path, files, {}) == [
+        "src/a.py::roots_differ",
+        "src/b.py::moved",
+        "src/c.py::moved",
     ]

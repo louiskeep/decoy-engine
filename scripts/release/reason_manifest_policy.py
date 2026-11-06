@@ -224,8 +224,11 @@ class RenumberFacts(TypedDict):
 
     branch_owned_schema_roots: frozenset[str]
     main_moved: bool  # the branch forked from an older main than the one it is judged against
-    anchor_version: str | None  # the docs/reasons.md `registry_version` sentence, None if absent
+    anchor_versions: tuple[str, ...]  # every docs/reasons.md `registry_version` sentence
     contract_versions: frozenset[str]  # every registry_version in consumer-contract.json
+    contract_matches: bool  # the committed contract equals the one built from this tree
+    fixture_count: int  # manifest fixtures the branch added
+    require_fixture: bool  # a branch with new identities must carry one (the merge gate)
     fixture: dict | None  # the branch-new manifest fixture: {"name": str, "manifest": dict}
     added_versions: tuple[tuple[str, int, str], ...]  # (path, line, X.Y.Z) on branch-added lines
 
@@ -240,9 +243,14 @@ def entries_since(manifest: dict, version: str) -> list[dict]:
 
 
 def contract_versions(node: object) -> frozenset[str]:
-    """Every ``registry_version`` string anywhere inside a parsed JSON document."""
+    """Every ``registry_version`` value anywhere inside a parsed JSON document; a value that is not
+    a string is reported as ``<non-string>`` so it can never equal a version."""
     if isinstance(node, dict):
-        found = {v for k, v in node.items() if k == "registry_version" and isinstance(v, str)}
+        found = {
+            (v if isinstance(v, str) else "<non-string>")
+            for k, v in node.items()
+            if k == "registry_version"
+        }
         return frozenset(found.union(*(contract_versions(v) for v in node.values())))
     if isinstance(node, list):
         return frozenset().union(*(contract_versions(v) for v in node))
@@ -353,10 +361,16 @@ def renumber_check(b: dict, m: dict, h: dict, facts: RenumberFacts) -> list[str]
         for i, e in new.items()
         if e["since"] != version
     ]
-    if facts["anchor_version"] != version:
-        out.append("docs/reasons.md anchor differs from the registry version")
-    if any(v != version for v in facts["contract_versions"]):
-        out.append("consumer-contract.json names a different registry version")
+    if len(facts["anchor_versions"]) != 1 or any(a != version for a in facts["anchor_versions"]):
+        out.append("docs/reasons.md must hold exactly one anchor, naming the registry version")
+    if not facts["contract_versions"] or any(v != version for v in facts["contract_versions"]):
+        out.append("consumer-contract.json names no registry version or a different one")
+    if not facts["contract_matches"]:
+        out.append("consumer-contract.json differs from the contract built from this tree")
+    if facts["fixture_count"] > 1:
+        out.append("several manifest fixtures were added")
+    elif new and not facts["fixture_count"] and facts["require_fixture"]:
+        out.append("new identities carry no manifest fixture")
     fixture = facts["fixture"]
     if fixture:
         parsed = parse_fixture_name(fixture["name"])
