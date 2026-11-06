@@ -1,0 +1,26 @@
+{
+  "entries": [
+    {
+      "code": "subset_run_unsupported",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "config",
+      "owner": "PipelineValidationError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.6.0",
+      "summary": "Subset run unsupported.",
+      "symbol": "SUBSET_RUN_UNSUPPORTED"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.6.0"
+}
