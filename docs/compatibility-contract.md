@@ -61,7 +61,7 @@ with `when_outside_closed_grammar`). It is listed on every interpreter rather th
 on purpose; after GA any further addition is a breaking change.
 
 **Pre-GA correction (SUB-STOP, 2026-11-05).** A config with `subset:` set is refused by every run entry
-(`run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked`) and by `compile_plan`,
+(`run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked`, `run_native_or_oracle_chunked`) and by `compile_plan`,
 with `config.subset_run_unsupported` (registry 1.6.0). Before, the block validated and the run silently masked
 the full sources. `plan_subset` and `run_subset` are unchanged; run them first and point `sources:` at their output.
 

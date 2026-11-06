@@ -79,6 +79,20 @@ As in `config/_subset_run.py`: the guard reads the validated dump's `subset` key
 `decoy demo` (`C:cli/demo.py`) is covered only by E6. `native/_dispatch.py:595` `run_native_or_oracle_chunked` reads a
 first chunk before E6 refuses. CLI and platform handling beyond the `ConfigError` mapping waits for the repin.
 
+## Review fixes (Dennis, GO-WITH-FIXES)
+
+`run_native_or_oracle_chunked` (`native/_dispatch.py`) is now guarded above `reject_per_table_transforms` (module-size
+666 to 668) with a pulls == 0 test; `test_refusal_text_is_fixed` asserts the literal message; the `_pipeline.py` history
+comment gains "-> 356 (SUB-STOP guard)"; `tests/sentry/test_subset_run_guard_entries.py` fails when a public
+`run_*`/`compile_*` entry that takes a `config` is neither guarded nor named exempt. The V2-LOG item about
+`run_native_or_oracle_chunked` is closed.
+
+## V2-LOG additions
+
+The secret-material census keys on line number, not symbol (the local import in `run_mask_chunked` works around it).
+CLI `validate.py` maps the new `PipelineValidationError` to a generic `compile_error` (for the CLI repin). Platform
+lanes profile before `compile_plan`; the E6 backstop is accepted for them.
+
 ## Not verified
 
 Final `gates.sh --baseline` on the head, sphinx `-W`, macOS arm64 run, the `since` probe in `test_reason_release_pin`

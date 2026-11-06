@@ -11,7 +11,7 @@ minimum engine version it was tested against via its
 
 ### Breaking for consumers
 
-- `run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked` and `compile_plan` now refuse a config with `subset:` set (`config.subset_run_unsupported`, registry 1.6.0) instead of masking the full sources; run `run_subset` first.
+- `run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked`, `run_native_or_oracle_chunked` and `compile_plan` now refuse a config with `subset:` set (`config.subset_run_unsupported`, registry 1.6.0) instead of masking the full sources; run `run_subset` first.
 
 ### Added (F06: declared parsing, casting and quarantine, 2026-10-29)
 

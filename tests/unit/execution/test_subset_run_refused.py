@@ -26,6 +26,10 @@ from decoy_engine.subset import plan_subset, run_subset, subset_inputs_from_conf
 
 _VAR = "SUB_STOP_TEST_SECRET"
 _CODE = "subset_run_unsupported"
+_MESSAGE = (
+    "subset: is not applied by a pipeline run yet; run the subset step first and "
+    "point this run's sources at its output, or remove the subset: block"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -169,7 +173,7 @@ def test_refusal_text_is_fixed(tmp_path: Path) -> None:
         for leak in ("customers", "orders", str(tmp_path)):
             assert leak not in shown
         assert " 5 " not in shown
-    assert texts[0] == texts[1]
+    assert texts[0] == texts[1] == _MESSAGE
 
 
 @pytest.mark.parametrize("isolate", [True, False])
@@ -229,6 +233,17 @@ def test_native_chunked_refuses_at_call_without_pulling(tmp_path: Path) -> None:
     assert chunks.pulls == 0
 
 
+def test_native_or_oracle_chunked_refuses_at_call_without_pulling(tmp_path: Path) -> None:
+    from decoy_engine.execution.native import run_native_or_oracle_chunked
+
+    cfg = _dump(tmp_path, subset=True)
+    chunks = _PulledChunks(_tables(tmp_path)["customers"])
+    with pytest.raises(PipelineValidationError) as ei:
+        run_native_or_oracle_chunked(cfg, chunks, table="customers", engine_version="t")
+    _assert_refusal(ei.value)
+    assert chunks.pulls == 0
+
+
 def test_compile_plan_refuses_subset(tmp_path: Path) -> None:
     cfg = _dump(tmp_path, subset=True)
     with pytest.raises(PipelineValidationError) as ei:
@@ -251,7 +266,9 @@ def test_no_subset_runs_unchanged(tmp_path: Path) -> None:
     assert res.outputs["customers"].num_rows == 100
     assert res.outputs["orders"].num_rows == 300
     cust = _tables(tmp_path)["customers"]
-    for fn in (run_mask_pipeline_chunked, run_mask_chunked):
+    from decoy_engine.execution.native import run_native_or_oracle_chunked
+
+    for fn in (run_mask_pipeline_chunked, run_mask_chunked, run_native_or_oracle_chunked):
         rows = sum(
             t.num_rows for t in fn(cfg, _PulledChunks(cust), table="customers", engine_version="t")
         )
