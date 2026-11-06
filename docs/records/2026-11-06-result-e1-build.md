@@ -113,7 +113,7 @@ The full suite, the E2/E3 builder, projection and collector, and any CLI consume
 ## Fix round 1
 
 Source: Dennis and Codex findings on `2a4025e3`. Red runs are on the devbox against the old source plus a one-line
-`Token = str` shim so the tests import (66 assertion failures of 146 tests; the rest already held):
+`Token = str` shim so the tests import (68 assertion failures of 146 tests; the rest already held):
 `test_every_field_is_value_free`, `test_every_read_field_is_value_free`, `test_another_major_or_free_text_tag_is_refused`
 (read), `test_the_tag_is_required_on_read_and_defaulted_on_write`, `test_lax_coercion_is_refused` (all 42 cells),
 `test_the_count_key_has_one_spelling`, `test_both_models_dump_the_wire_form`, `test_other_version_shapes_are_refused`,
