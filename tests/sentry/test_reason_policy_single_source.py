@@ -32,7 +32,8 @@ KEYS = frozenset(
         "EVENT_SCHEMA_VERSION",
     }
 )
-# (path, function): reason. The table only shrinks; a stale row fails the guard.
+# (path, qualified name): reason. A method is keyed as Class.method, so a same-named method on
+# another class is still checked. The table only shrinks; a stale row fails the guard.
 EXEMPT: dict[tuple[str, str], str] = {
     ("scripts/release/sbom_checks.py", "pin_violations"): "requirements-file pins, unrelated",
     (
@@ -47,25 +48,59 @@ EXEMPT: dict[tuple[str, str], str] = {
     ): "emits the live registry version into one event field",
     (
         "src/decoy_engine/reasons/_record.py",
-        "validate",
+        "ReasonRecord.validate",
     ): "ReasonRecord.validate: one record's version against the live registry",
     (
         "src/decoy_engine/reasons/_record.py",
-        "from_payload",
-    ): "checks one record's version, not a manifest comparison",
+        "ReasonRecord.from_payload",
+    ): "ReasonRecord.from_payload: checks one record's version, not a manifest comparison",
 }
 
 
-def _is_key(node: ast.AST) -> bool:
+def _is_key(node: ast.AST, names: frozenset[str] = frozenset()) -> bool:
     if isinstance(node, ast.Constant):
         return node.value in KEYS
     if isinstance(node, ast.Attribute):
         return node.attr in KEYS
-    return isinstance(node, ast.Name) and node.id in KEYS
+    return isinstance(node, ast.Name) and (node.id in KEYS or node.id in names)
 
 
-def _has_key(node: ast.AST) -> bool:
-    return any(_is_key(n) for n in ast.walk(node))
+def _has_key(node: ast.AST, names: frozenset[str] = frozenset()) -> bool:
+    return any(_is_key(n, names) for n in ast.walk(node))
+
+
+def _key_constants(tree: ast.Module) -> frozenset[str]:
+    """Module-level names bound to a tuple, list or set made only of registry key strings."""
+    found = set()
+    for n in tree.body:
+        if isinstance(n, ast.Assign) and isinstance(n.value, (ast.Tuple, ast.List, ast.Set)):
+            elts = n.value.elts
+            if elts and all(isinstance(e, ast.Constant) and e.value in KEYS for e in elts):
+                found |= {t.id for t in n.targets if isinstance(t, ast.Name)}
+    return frozenset(found)
+
+
+def _bound_names(target: ast.AST) -> set[str]:
+    return {n.id for n in ast.walk(target) if isinstance(n, ast.Name)}
+
+
+def _aliases(func: ast.AST, consts: frozenset[str]) -> frozenset[str]:
+    """Local names assigned or iterated from a registry-key expression, to a fixed point."""
+    names: set[str] = set()
+    while True:
+        before = len(names)
+        seen = frozenset(names | consts)
+        for n in ast.walk(func):
+            if isinstance(n, ast.Assign) and _has_key(n.value, seen):
+                for t in n.targets:
+                    names |= _bound_names(t)
+            elif isinstance(n, (ast.AnnAssign, ast.NamedExpr)) and n.value is not None:
+                if _has_key(n.value, seen):
+                    names |= _bound_names(n.target)
+            elif isinstance(n, (ast.For, ast.comprehension)) and _has_key(n.iter, seen):
+                names |= _bound_names(n.target)
+        if len(names) == before:
+            return frozenset(names | consts)
 
 
 def _collects(stmts: list[ast.stmt]) -> bool:
@@ -81,13 +116,14 @@ def _collects(stmts: list[ast.stmt]) -> bool:
     return False
 
 
-def _uses_key_as_check(func: ast.AST) -> bool:
+def _uses_key_as_check(func: ast.AST, consts: frozenset[str] = frozenset()) -> bool:
+    names = _aliases(func, consts)
     for n in ast.walk(func):
-        if isinstance(n, ast.Compare) and _has_key(n):
+        if isinstance(n, ast.Compare) and _has_key(n, names):
             return True
-        if isinstance(n, ast.comprehension) and any(_has_key(i) for i in n.ifs):
+        if isinstance(n, ast.comprehension) and any(_has_key(i, names) for i in n.ifs):
             return True
-        if isinstance(n, ast.If) and _has_key(n.test) and _collects(n.body + n.orelse):
+        if isinstance(n, ast.If) and _has_key(n.test, names) and _collects(n.body + n.orelse):
             return True
     return False
 
@@ -142,6 +178,22 @@ def tracked_py(root: Path) -> list[str]:
     )
 
 
+def _functions(
+    tree: ast.AST, prefix: str = ""
+) -> list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]]:
+    """Every function with its qualified name: ``Class.method`` inside classes, else the name."""
+    found: list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]] = []
+    for child in ast.iter_child_nodes(tree):
+        if isinstance(child, ast.ClassDef):
+            found += _functions(child, f"{prefix}{child.name}.")
+        elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            found.append((f"{prefix}{child.name}", child))
+            found += _functions(child, prefix)
+        else:
+            found += _functions(child, prefix)
+    return found
+
+
 def guard_violations(root: Path, files: list[str], exempt: dict[tuple[str, str], str]) -> list[str]:
     problems: list[str] = []
     defined: set[tuple[str, str]] = set()
@@ -153,18 +205,17 @@ def guard_violations(root: Path, files: list[str], exempt: dict[tuple[str, str],
                 problems.append(f"{rel}: imports decoy_engine")
             continue
         imported = _policy_names(tree)
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        consts = _key_constants(tree)
+        for qual, node in _functions(tree):
+            defined.add((rel, qual))
+            if node.name.startswith("test_") or not _uses_key_as_check(node, consts):
                 continue
-            defined.add((rel, node.name))
-            if node.name.startswith("test_") or not _uses_key_as_check(node):
-                continue
-            ident = (rel, node.name)
+            ident = (rel, qual)
             if ident in exempt:
                 continue
             if isinstance(node, ast.FunctionDef) and _is_adapter(node, imported):
                 continue
-            problems.append(f"{rel}::{node.name}")
+            problems.append(f"{rel}::{qual}")
     problems += [f"stale exemption {p}::{f}" for (p, f) in sorted(exempt) if (p, f) not in defined]
     return problems
 
@@ -229,4 +280,62 @@ def test_guard_flags_a_stale_exemption(tmp_path: Path) -> None:
     files = _tree(tmp_path, {"src/a.py": "x = 1\n"})
     assert guard_violations(tmp_path, files, {("src/a.py", "gone"): "r"}) == [
         "stale exemption src/a.py::gone"
+    ]
+
+
+_TWO_CLASSES = (
+    "class A:\n"
+    "    def validate(self, x):\n"
+    "        return x['since'] > 1\n"
+    "class B:\n"
+    "    def validate(self, x):\n"
+    "        return x['since'] > 1\n"
+)
+
+
+def test_a_qualified_exemption_does_not_cover_a_same_named_method(tmp_path: Path) -> None:
+    files = _tree(tmp_path, {"src/a.py": _TWO_CLASSES})
+    assert guard_violations(tmp_path, files, {("src/a.py", "A.validate"): "r"}) == [
+        "src/a.py::B.validate"
+    ]
+    assert guard_violations(tmp_path, files, {("src/a.py", "validate"): "r"}) == [
+        "src/a.py::A.validate",
+        "src/a.py::B.validate",
+        "stale exemption src/a.py::validate",
+    ]
+
+
+_ALIAS = (
+    "def drift(a, b):\n"
+    "    x = a['registry_version']\n"
+    "    y = b['registry_version']\n"
+    "    if x != y:\n"
+    "        return ['drift']\n"
+    "    return []\n"
+)
+_ASSIGN_THEN_COMPARE = (
+    "def late(entries, floor):\n"
+    "    out = []\n"
+    "    for e in entries:\n"
+    "        s = e['since']\n"
+    "        if s <= floor:\n"
+    "            out.append(e)\n"
+    "    return out\n"
+)
+_CONST_TUPLE_COPY = (
+    "_ROOTS = ('reason_schema_version', 'event_schema_version')\n"
+    "def roots_differ(a, b):\n"
+    "    return [f'{r}' for r in _ROOTS if a[r] != b[r]]\n"
+)
+
+
+def test_guard_flags_aliases_and_keys_held_in_a_constant_tuple(tmp_path: Path) -> None:
+    files = _tree(
+        tmp_path,
+        {"src/a.py": _ALIAS, "src/b.py": _ASSIGN_THEN_COMPARE, "src/c.py": _CONST_TUPLE_COPY},
+    )
+    assert guard_violations(tmp_path, files, {}) == [
+        "src/a.py::drift",
+        "src/b.py::late",
+        "src/c.py::roots_differ",
     ]

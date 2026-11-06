@@ -8,11 +8,11 @@
   "src/decoy_engine/_progress_events.py::_field_value": {
    "reason": "emits the live registry version into one event field"
   },
-  "src/decoy_engine/reasons/_record.py::from_payload": {
-   "reason": "checks one record's version, not a manifest comparison"
+  "src/decoy_engine/reasons/_record.py::ReasonRecord.from_payload": {
+   "reason": "ReasonRecord.from_payload: checks one record's version, not a manifest comparison"
   },
-  "src/decoy_engine/reasons/_record.py::validate": {
-   "reason": "checks one record's version, not a manifest comparison"
+  "src/decoy_engine/reasons/_record.py::ReasonRecord.validate": {
+   "reason": "ReasonRecord.validate: one record's version against the live registry"
   },
   "src/decoy_engine/reasons/_registry.py::check_integrity": {
    "reason": "the registry's own structural check over specs, not a manifest comparison"

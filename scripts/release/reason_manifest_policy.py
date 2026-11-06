@@ -18,15 +18,16 @@ import json
 import re
 from collections import Counter
 from collections.abc import Iterable, Mapping
+from typing import TypedDict
 
 from packaging.version import Version
 
 _SEMANTIC_FIELDS = ("namespace", "code", "kind", "rules", "owner", "context", "since")
-_SCHEMA_ROOTS = ("reason_schema_version", "event_schema_version")
+SCHEMA_ROOTS = ("reason_schema_version", "event_schema_version")
 # A bare X.Y.Z in a summary goes stale when a slice is renumbered. Not preceded by a word
 # character or dot, not followed by a word character or ".<digit>" (so "9.9.0." ends a sentence
 # while "9.9.0.1" and "9.9.0beta" are not versions).
-_SUMMARY_VERSION = re.compile(r"(?<![\w.])\d+\.\d+\.\d+(?!\w|\.\d)")
+VERSION_LITERAL = re.compile(r"(?<![\w.])\d+\.\d+\.\d+(?!\w|\.\d)")
 _FIXTURE_NAME = re.compile(r"reason-manifest-v(\d+)\.(\d+)-")
 
 
@@ -138,7 +139,7 @@ def since_window_violations(items: Iterable[tuple[str, str]], pinned: str, live:
 def schema_root_violations(a: dict, b: dict) -> list[str]:
     """Schema roots (reason, event) that differ between two manifests, one line per root."""
     return [
-        f"{root} differs ({a[root]} vs {b[root]})" for root in _SCHEMA_ROOTS if a[root] != b[root]
+        f"{root} differs ({a[root]} vs {b[root]})" for root in SCHEMA_ROOTS if a[root] != b[root]
     ]
 
 
@@ -147,7 +148,7 @@ def summary_version_violations(entries: Iterable[dict]) -> list[str]:
     return [
         f"{e['namespace']}.{e['code']}: summary names a version literal"
         for e in entries
-        if _SUMMARY_VERSION.search(e["summary"])
+        if VERSION_LITERAL.search(e["summary"])
     ]
 
 
@@ -211,3 +212,129 @@ def minor_fixture_violations(fixtures: Mapping[str, dict], live: dict, floor: st
     if by_minor and max(by_minor) != live_v.minor:
         problems.append(f"highest fixture minor {major}.{max(by_minor)} is not the registry minor")
     return problems
+
+
+class RenumberFacts(TypedDict):
+    """Tree and history facts the renumber script reads and the policy judges."""
+
+    branch_owned_schema_roots: frozenset[str]
+    anchor_version: str | None  # the docs/reasons.md `registry_version` sentence, None if absent
+    contract_versions: frozenset[str]  # every registry_version in consumer-contract.json
+    fixture: dict | None  # the branch-new manifest fixture: {"name": str, "manifest": dict}
+    added_versions: tuple[tuple[str, int, str], ...]  # (path, line, X.Y.Z) on branch-added lines
+
+
+def version_of(manifest: dict) -> str:
+    return manifest["registry_version"]
+
+
+def entries_since(manifest: dict, version: str) -> list[dict]:
+    """The entries whose ``since`` is ``version``."""
+    return [e for e in manifest["entries"] if e["since"] == version]
+
+
+def contract_versions(node: object) -> frozenset[str]:
+    """Every ``registry_version`` string anywhere inside a parsed JSON document."""
+    if isinstance(node, dict):
+        found = {v for k, v in node.items() if k == "registry_version" and isinstance(v, str)}
+        return frozenset(found.union(*(contract_versions(v) for v in node.values())))
+    if isinstance(node, list):
+        return frozenset().union(*(contract_versions(v) for v in node))
+    return frozenset()
+
+
+def restamp(node: object, version: str) -> object:
+    """``node`` with every ``registry_version`` value replaced by ``version``."""
+    if isinstance(node, dict):
+        return {
+            k: (version if k == "registry_version" else restamp(v, version))
+            for k, v in node.items()
+        }
+    return [restamp(v, version) for v in node] if isinstance(node, list) else node
+
+
+def owned_schema_roots(
+    changed: Iterable[str], merges: Iterable[tuple[str, str, str]]
+) -> frozenset[str]:
+    """Schema roots a branch owns: changed by one of its own commits, or set by a merge to a value
+    its second parent does not hold. ``merges`` holds ``(root, merge value, second parent value)``."""
+    return frozenset(changed) | {root for root, here, other in merges if here != other}
+
+
+def next_minor(version: str) -> str:
+    major, minor, _ = _version_tuple(version)
+    return f"{major}.{minor + 1}.0"
+
+
+def _by_id(manifest: dict) -> dict[tuple[str, str], dict]:
+    return {(e["namespace"], e["code"]): e for e in manifest["entries"]}
+
+
+def renumber_claim(m: dict, h: dict) -> list[str]:
+    """The distinct ``since`` values claimed by identities that ``h`` adds to main ``m``."""
+    main = _by_id(m)
+    return sorted({e["since"] for i, e in _by_id(h).items() if i not in main})
+
+
+def renumber_classification(b: dict, m: dict, h: dict, facts: RenumberFacts) -> list[str]:
+    """Refusals for renumbering branch ``h`` (forked at ``b``) onto main ``m``; each starts with its key."""
+    base, main, head = _by_id(b), _by_id(m), _by_id(h)
+    out: list[str] = []
+    for ident, entry in main.items():
+        name = f"{ident[0]}.{ident[1]}"
+        if ident not in head:
+            out.append(f"deleted-existing {name}")
+        elif head[ident] != entry:
+            both = ident not in base or base[ident] != entry
+            out.append(f"{'main-and-branch-changed' if both else 'edited-existing'} {name}")
+    new = {i: e for i, e in head.items() if i not in main}
+    claimed = renumber_claim(m, h)
+    if not claimed and h["registry_version"] != m["registry_version"]:
+        out.append("version-without-identity")
+    floor = Version(b["registry_version"])
+    for ident, entry in new.items():
+        old = Version(entry["since"])
+        if old < floor or (old == floor and b != m):
+            out.append(f"stale-since {ident[0]}.{ident[1]}")
+    if len(claimed) > 1:
+        out.append("several-minors")
+    if any(Version(c).major != Version(m["registry_version"]).major for c in claimed):
+        out.append("major-change")
+    roots = {v.split(" ")[0] for v in schema_root_violations(m, h)}
+    out += [f"schema-root {r}" for r in sorted(roots | set(facts["branch_owned_schema_roots"]))]
+    out += [
+        f"summary-version {i[0]}.{i[1]}" for i, e in new.items() if summary_version_violations([e])
+    ]
+    return out
+
+
+def renumber_check(b: dict, m: dict, h: dict, facts: RenumberFacts) -> list[str]:
+    """Why the branch head is not exactly main + 1 with every carrier agreeing; empty when it is."""
+    out = renumber_classification(b, m, h, facts)
+    head, version = _by_id(h), h["registry_version"]
+    new = {i: e for i, e in head.items() if i not in _by_id(m)}
+    want = next_minor(m["registry_version"])
+    if new and version != want:
+        out.append(f"version {version} is not {want}")
+    out += [
+        f"since {e['since']} of {i[0]}.{i[1]} is not {version}"
+        for i, e in new.items()
+        if e["since"] != version
+    ]
+    if facts["anchor_version"] != version:
+        out.append("docs/reasons.md anchor differs from the registry version")
+    if any(v != version for v in facts["contract_versions"]):
+        out.append("consumer-contract.json names a different registry version")
+    fixture = facts["fixture"]
+    if fixture:
+        match = _FIXTURE_NAME.match(fixture["name"])
+        if not match or f"{match[1]}.{match[2]}.0" != version:
+            out.append(f"fixture {fixture['name']} is not named for {version}")
+        out += _fixture_violations(fixture["name"], fixture["manifest"], version, head)
+    base_v, head_v = Version(b["registry_version"]), Version(version)
+    out += [
+        f"{path}:{line} names leftover version {v}"
+        for path, line, v in facts["added_versions"]
+        if base_v < Version(v) < head_v
+    ]
+    return out
