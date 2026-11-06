@@ -44,6 +44,7 @@ def _stored(tmp_path: Path, main_sha: str, **extra: object) -> Path:
     dest.write_text(
         json.dumps(
             {
+                "format": 1,
                 "repo": "decoy-engine",
                 "main_sha": main_sha,
                 "collected": 5,
@@ -132,6 +133,7 @@ def test_write_baseline_stores_the_failing_ids_and_the_run_mode(tmp_path: Path) 
     )
     assert rc == 1, out  # known failures still fail the plain run
     assert json.loads(dest.read_text()) == {
+        "format": 1,
         "repo": "decoy-engine",
         "main_sha": main_sha,
         "head_sha": main_sha,
@@ -297,17 +299,6 @@ def test_baseline_file_fails_when_the_branch_skips_more_than_the_baseline(tmp_pa
     assert rc == 1 and "WARNING: branch skipped 2 tests, the baseline skipped 0" in out, out
 
 
-def test_baseline_file_without_a_skipped_count_warns_and_skips_the_check(tmp_path: Path) -> None:
-    clone = seeded_clone(tmp_path)
-    venv, _log = recording_venv(tmp_path)
-    stored = _stored(tmp_path, _origin_main(clone))
-    data = json.loads(stored.read_text())
-    del data["skipped"]
-    stored.write_text(json.dumps(data))
-    rc, out = _compare(clone, venv, stored, FAKE_FAIL="tests/a.py::test_one", FAKE_SKIPPED="2")
-    assert rc == 0 and "the stored baseline has no skipped count" in out, out
-
-
 def test_baseline_file_refuses_when_pytest_prints_no_totals_line(tmp_path: Path) -> None:
     clone = seeded_clone(tmp_path)
     venv, _log = recording_venv(tmp_path)
@@ -424,7 +415,7 @@ _OTHER_PLATFORM = "darwin-arm64" if not THIS_PLATFORM.startswith("darwin") else 
         ("workers", 4),
         ("dist", "loadfile"),
         ("platform", _OTHER_PLATFORM),
-        ("order", "file-seconds:" + "0" * 64),
+        ("order", "from-a-map"),
     ],
 )
 def test_a_baseline_from_another_run_mode_is_refused_before_running(
@@ -432,7 +423,12 @@ def test_a_baseline_from_another_run_mode_is_refused_before_running(
 ) -> None:
     clone = seeded_clone(tmp_path)
     venv, log = recording_venv(tmp_path)
-    stored = _stored(tmp_path, _origin_main(clone), **{field: value})
+    extra: dict[str, object] = {field: value}
+    if field == "order":  # a self-consistent ordered baseline, so only the mode differs
+        seconds = {"tests/a.py": 3.0}
+        extra = {"order_seconds": seconds, "order": report_module().order_label(seconds)}
+        value = extra["order"]
+    stored = _stored(tmp_path, _origin_main(clone), **extra)
     rc, out = _compare(clone, venv, stored)
     assert rc == 2, out
     assert f"run mode differs in {field}" in out and "rewrite the baseline in this mode" in out, out
@@ -458,6 +454,11 @@ def test_a_baseline_ordered_by_a_map_is_refused_until_gates_can_order(tmp_path: 
         ("workers", "no workers"),
         ("order_seconds", "no order_seconds"),
         ("file_seconds", "no file_seconds"),
+        ("skipped", "no skipped"),
+        ("collected", "no collected"),
+        ("failing", "no failing"),
+        ("main_sha", "no main_sha"),
+        ("format", "has format None"),
     ],
 )
 def test_a_baseline_without_the_run_mode_fields_is_refused(
@@ -622,3 +623,164 @@ def test_the_reporter_names_the_file_it_ordered_seconds_by(tmp_path: Path) -> No
         "</testsuite>"
     )
     assert report_module().file_seconds(out, "branch") == {"t/a.py": 2.0, "t/b.py": 0.25}
+
+
+# --- review fixes: strict stored-file types, docs-walking sentries, one owner, inherited ids --
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("collected", True),
+        ("collected", "5"),
+        ("collected", -1),
+        ("skipped", False),
+        ("skipped", 0.5),
+        ("failing", "tests/a.py::test_one"),
+        ("failing", [1, 2]),
+        ("failing", None),
+        ("main_sha", ""),
+        ("main_sha", 7),
+        ("file_seconds", []),
+        ("format", 2),
+        ("format", True),
+        ("format", "1"),
+    ],
+)
+def test_a_baseline_with_a_wrongly_typed_or_unknown_field_is_refused(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    clone = seeded_clone(tmp_path)
+    venv, log = recording_venv(tmp_path)
+    stored = _stored(tmp_path, _origin_main(clone))
+    data = json.loads(stored.read_text()) | {field: value}
+    stored.write_text(json.dumps(data))
+    rc, out = _compare(clone, venv, stored, FAKE_FAIL="tests/a.py::test_one")
+    assert rc == 2 and "rewrite the baseline" in out, out
+    assert pytest_calls(log) == []
+
+
+@pytest.mark.parametrize(
+    ("order", "order_seconds"),
+    [("file-seconds:deadbeef", {}), ("collection", {"tests/a.py": 1.0})],
+)
+def test_a_baseline_whose_order_label_does_not_match_its_map_is_refused(
+    tmp_path: Path, order: str, order_seconds: dict[str, float]
+) -> None:
+    clone = seeded_clone(tmp_path)
+    venv, _log = recording_venv(tmp_path)
+    stored = _stored(tmp_path, _origin_main(clone), order=order, order_seconds=order_seconds)
+    rc, out = _compare(clone, venv, stored, FAKE_FAIL="tests/a.py::test_one")
+    assert rc == 2 and "order does not match its order_seconds" in out, out
+
+
+@pytest.mark.parametrize(
+    "walker",
+    [
+        "tests/sentry/test_sdv_import_sentry.py::test_no_citation_labels_sdv_permissive",
+        "tests/sentry/test_perf_claim_provenance.py::test_no_unsourced_perf_claims_in_docs",
+    ],
+)
+def test_a_baseline_holding_a_docs_walking_sentry_failure_is_stale_after_any_move(
+    tmp_path: Path, walker: str
+) -> None:
+    # A Markdown-only commit on main could fix this id and the branch re-break it, so the
+    # docs-only exception does not apply while the id is in the stored failing list.
+    clone = seeded_clone(tmp_path)
+    at_main(clone)
+    venv, log = recording_venv(tmp_path)
+    old = _main_moves(clone, {"docs/par-" + "unread-probe.md": "# x\n"})
+    stored = _stored(tmp_path, old, failing=["tests/a.py::test_one", walker])
+    rc, out = _compare(clone, venv, stored, FAKE_FAIL="tests/a.py::test_one")
+    assert rc == 2 and "sentry that walks docs" in out, out
+    assert pytest_calls(log) == []
+
+
+def test_gates_sh_parses_no_json_or_junit_inline() -> None:
+    # One owner per concern: the stored file and the JUnit are read only by _gates_report.py.
+    text = (DEV / "gates.sh").read_text()
+    for needle in ("python -c", "json.load", "ElementTree", "xml.etree"):
+        assert needle not in text, needle
+
+
+def test_reporter_subcommands_replace_the_inline_parsing(tmp_path: Path) -> None:
+    mod = DEV / "_gates_report.py"
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "branch-tests.xml").write_text("<testsuite")  # truncated
+    zero = subprocess.run(  # noqa: S603 -- fixed argv
+        [sys.executable, str(mod), "--suite-collected", str(out)],
+        capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert zero.stdout.strip() == "0"
+    (out / "branch-tests.xml").write_text(
+        '<testsuite tests="3" failures="0" errors="0" skipped="0"/>'
+    )
+    three = subprocess.run(  # noqa: S603 -- fixed argv
+        [sys.executable, str(mod), "--suite-collected", str(out)],
+        capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert three.stdout.strip() == "3"
+    stored = _stored(tmp_path, "abc123")
+    shown = subprocess.run(  # noqa: S603 -- fixed argv
+        [sys.executable, str(mod), "--check-stored", str(stored), "decoy-engine", "1"],
+        capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert shown.returncode == 0 and shown.stdout.strip() == "abc123"
+
+
+_INHERITED_JUNIT = (
+    '<testsuite tests="2" failures="1" errors="0" skipped="0">'
+    '<testcase classname="tests.test_child.TestChild" name="test_inherited" '
+    'file="tests/_base.py" time="2.0"><failure/></testcase>'
+    '<testcase classname="tests.test_child.TestChild" name="test_own" '
+    'file="tests/test_child.py" time="1.0"/>'
+    "</testsuite>"
+)
+
+
+def test_an_inherited_test_is_keyed_by_the_collected_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "proj"
+    (root / "tests").mkdir(parents=True)
+    (root / "tests" / "_base.py").write_text("")
+    (root / "tests" / "test_child.py").write_text("")
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "branch-tests.xml").write_text(_INHERITED_JUNIT)
+    mod = report_module()
+    monkeypatch.setattr(mod, "TEST_ROOT", root)
+    assert mod.junit_failing_ids(out, "branch") == [
+        "tests/test_child.py::TestChild::test_inherited"
+    ]
+    assert mod.file_seconds(out, "branch") == {"tests/test_child.py": 3.0}
+
+
+def test_an_inherited_test_from_a_real_run_has_a_rerunnable_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proj = tmp_path / "proj"
+    (proj / "tests").mkdir(parents=True)
+    (proj / "tests" / "__init__.py").write_text("")
+    (proj / "tests" / "_base.py").write_text(
+        "class Contract:\n    def test_inherited(self): assert False\n"
+    )
+    (proj / "tests" / "test_child.py").write_text(
+        "from tests._base import Contract\nclass TestChild(Contract):\n    pass\n"
+    )
+    xml = tmp_path / "o.xml"
+    subprocess.run(  # noqa: S603 -- fixed argv, tiny tmp project
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "junit_family=xunit1",
+         f"--junitxml={xml}", "tests/test_child.py"],
+        cwd=proj, capture_output=True, text=True, timeout=120, check=False,
+    )  # fmt: skip
+    out = tmp_path / "out"
+    out.mkdir()
+    shutil.copy(xml, out / "branch-tests.xml")
+    mod = report_module()
+    monkeypatch.setattr(mod, "TEST_ROOT", proj)
+    assert mod.junit_failing_ids(out, "branch") == [
+        "tests/test_child.py::TestChild::test_inherited"
+    ]
+    assert set(mod.file_seconds(out, "branch")) == {"tests/test_child.py"}

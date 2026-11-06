@@ -69,25 +69,44 @@ def skipped(out: Path, label: str) -> int:
 
 
 def file_seconds(out: Path, label: str) -> dict[str, float]:
-    """Seconds per test file, summed from the JUnit `time` of every case that names its file."""
+    """Seconds per collected test file, summed from the JUnit `time` of every case."""
     total: dict[str, float] = {}
     for suite in _suites(out, label):
         for case in suite.iter("testcase"):
-            if path := case.get("file"):
+            if case.get("file"):
+                path, _below = _locate(case)
                 total[path] = total.get(path, 0.0) + float(case.get("time", 0) or 0)
     return {k: round(total[k], 3) for k in sorted(total)}
 
 
+# Where classnames are resolved to files. A test inherited from a base class carries the file
+# that defines it in `file` but the collected module in `classname`, and only the collected
+# module is a node id pytest can re-run.
+TEST_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _locate(case: ET.Element) -> tuple[str, list[str]]:
+    """The collected test file and the class names below it, for a testcase that names a file."""
+    file, cls = case.get("file") or "", case.get("classname", "")
+    parts = cls.split(".") if cls else []
+    for n in range(len(parts), 0, -1):
+        rel = "/".join(parts[:n]) + ".py"
+        if (TEST_ROOT / rel).is_file():
+            return rel, parts[n:]
+    module = file.removesuffix(".py").replace("/", ".")
+    below = cls[len(module) :].strip(".") if cls.startswith(module) else cls
+    return file, [c for c in below.split(".") if c]
+
+
 def _case_id(case: ET.Element) -> str:
-    """pytest node id from an xunit1 testcase: file, then classname below the module, then name."""
+    """pytest node id from an xunit1 testcase: collected file, classes below it, then name."""
     file, cls, name = case.get("file"), case.get("classname", ""), case.get("name", "")
     if not file:
         return f"{cls}::{name}"
-    module = file.removesuffix(".py").replace("/", ".")
     if not cls:  # a collection error is reported against the file itself
         return file
-    below = cls[len(module) :].strip(".") if cls.startswith(module) else cls
-    return "::".join([file, *([c for c in below.split(".")] if below else []), name])
+    path, classes = _locate(case)
+    return "::".join([path, *classes, name])
 
 
 def _xml_failing_ids(xml: Path) -> list[str]:
@@ -248,6 +267,8 @@ def _section(out: Path, label: str) -> None:
 # the workers value are fixed here until gates.sh can run the suite in parallel.
 MODE_KEYS = ("workers", "dist", "platform", "order")
 DIST = "no"
+# The stored file's layout version; bump it when a field changes meaning.
+FORMAT = 1
 
 
 def order_label(order_seconds: dict[str, float]) -> str:
@@ -267,6 +288,30 @@ def run_mode(workers: int, order_seconds: dict[str, float]) -> dict[str, object]
     }
 
 
+def _bad_types(stored: dict[str, object]) -> list[str]:
+    """Fields whose JSON type is wrong. A bool is not a count, and ids must all be strings."""
+    bad = []
+    for key in ("collected", "skipped"):
+        v = stored[key]
+        if not isinstance(v, int) or isinstance(v, bool) or v < 0:
+            bad.append(key)
+    failing = stored["failing"]
+    if not isinstance(failing, list) or not all(isinstance(t, str) for t in failing):
+        bad.append("failing")
+    if not isinstance(stored["main_sha"], str) or not stored["main_sha"]:
+        bad.append("main_sha")
+    for key in ("order_seconds", "file_seconds"):
+        if not isinstance(stored[key], dict):
+            bad.append(key)
+    return bad
+
+
+def stored_failing_in(path: Path, files: list[str]) -> bool:
+    """True when the stored failing list holds an id from any of the given test files."""
+    failing = json.loads(path.read_text()).get("failing", [])
+    return any(t == f or t.startswith(f + "::") for t in failing for f in files)
+
+
 def check_stored(path: Path, repo: str, workers: int) -> list[str]:
     """Reasons this run may not be compared with the stored baseline (empty when it may)."""
     try:
@@ -277,11 +322,22 @@ def check_stored(path: Path, repo: str, workers: int) -> list[str]:
         return ["the stored baseline is not a JSON object; rewrite the baseline"]
     if stored.get("repo") != repo:
         return [f"the stored baseline is for repo {stored.get('repo')!r}, this run is {repo!r}"]
-    missing = [k for k in (*MODE_KEYS, "order_seconds", "file_seconds") if k not in stored]
+    if stored.get("format") != FORMAT or isinstance(stored.get("format"), bool):
+        return [
+            f"the stored baseline has format {stored.get('format')!r}, this gates.sh reads "
+            f"format {FORMAT}; rewrite the baseline"
+        ]
+    required = ("main_sha", "collected", "skipped", "failing", *MODE_KEYS)
+    missing = [k for k in (*required, "order_seconds", "file_seconds") if k not in stored]
     if missing:
         return [f"the stored baseline has no {', '.join(missing)}; rewrite the baseline"]
-    if not isinstance(stored["order_seconds"], dict):
-        return ["the stored baseline's order_seconds is not a map; rewrite the baseline"]
+    bad = _bad_types(stored)
+    if bad:
+        return [f"the stored baseline's {', '.join(bad)} has the wrong type; rewrite the baseline"]
+    if stored["order"] != order_label(stored["order_seconds"]):
+        return [
+            "the stored baseline's order does not match its order_seconds; rewrite the baseline"
+        ]
     theirs = {k: stored[k] for k in MODE_KEYS}
     # This gates.sh runs in collection order, whatever order map the baseline was built with, so
     # a baseline ordered by a map differs until gates.sh can order its run from that map.
@@ -326,11 +382,7 @@ def _stored_diff(out: Path, whole: bool) -> None:
     skip_file = out / "skip-increase"
     skip_file.write_text("")
     now_skipped = skipped(out, "branch")
-    if "skipped" not in stored:
-        print(
-            "  WARNING: the stored baseline has no skipped count (old format); skip check not done"
-        )
-    elif now_skipped > int(stored["skipped"]):
+    if now_skipped > int(stored["skipped"]):
         print(
             f"  WARNING: branch skipped {now_skipped} tests, the baseline skipped {stored['skipped']}"
         )
@@ -342,6 +394,7 @@ def write_baseline(
     out: Path, dest: Path, repo: str, main_sha: str, head_sha: str, workers: int
 ) -> None:
     data = {
+        "format": FORMAT,
         "repo": repo,
         "main_sha": main_sha,
         "head_sha": head_sha,
@@ -400,10 +453,23 @@ if __name__ == "__main__":
         sys.exit(0)
     if sys.argv[1:2] == ["--check-stored"]:
         # --check-stored FILE REPO WORKERS: exit 2 and say why when the file may not be compared.
+        # On success it prints the stored main_sha, so gates.sh parses no JSON itself.
         reasons = check_stored(Path(sys.argv[2]), sys.argv[3], int(sys.argv[4]))
         for reason in reasons:
             print(f"gates: {reason}", file=sys.stderr)
+        if not reasons:
+            print(json.loads(Path(sys.argv[2]).read_text())["main_sha"])
         sys.exit(2 if reasons else 0)
+    if sys.argv[1:2] == ["--suite-collected"]:
+        # --suite-collected OUT: cases in the branch tests JUnit; 0 when missing or unreadable.
+        try:
+            print(collected(Path(sys.argv[2]), "branch"))
+        except (ET.ParseError, ValueError):
+            print(0)
+        sys.exit(0)
+    if sys.argv[1:2] == ["--stored-failing-in"]:
+        # --stored-failing-in FILE TESTFILE...: exit 0 when the stored failing list has such an id.
+        sys.exit(0 if stored_failing_in(Path(sys.argv[2]), sys.argv[3:]) else 1)
     ap = argparse.ArgumentParser()
     ap.add_argument("out", type=Path)
     ap.add_argument("--whole-suite", action="store_true")

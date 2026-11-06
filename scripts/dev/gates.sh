@@ -49,10 +49,12 @@ PYPATH_DIRS=(src scripts)
 IMPORT_PKG=decoy_engine
 # Run mode recorded in a stored baseline and checked on a compare (see _gates_report.run_mode).
 WORKERS=1
-# Directories a test reads by walking them: a stored baseline that is behind main by a change
-# under one of these is stale even when the change is Markdown. docs/ as a whole is not listed:
-# the perf-claim sentry walks it, but that only reports a new doc as a new failing id.
+# Tests that read documentation by walking it. A stored baseline that is behind main by a change
+# under DOC_WALK_ROOTS is stale even when the change is Markdown. The two sentries below walk all
+# of docs/ (and root *.md) under one id each, so a Markdown fix on main would hide a re-break on
+# the branch: while the stored failing list holds an id from them, any main move is stale.
 DOC_WALK_ROOTS=(docs/plans/h1-wave-b/manifests)
+DOC_WALK_SENTRIES=(tests/sentry/test_sdv_import_sentry.py tests/sentry/test_perf_claim_provenance.py)
 
 ROOT=$(git rev-parse --show-toplevel) || exit 2
 VENV=${DECOY_VENV:-${UV_PROJECT_ENVIRONMENT:-$ROOT/.venv}}
@@ -187,6 +189,9 @@ baseline_is_stale() {
   local changed f root
   git -C "$ROOT" cat-file -e "$1^{commit}" 2>/dev/null || { echo "stored main_sha $1 is not in this repository"; return 0; }
   changed=$(git -C "$ROOT" diff --name-only --no-renames "$1" "$MAIN_SHA") || { echo "could not diff $1 against origin/main"; return 0; }
+  if [ -n "$changed" ] && "$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --stored-failing-in "$BASEFILE" "${DOC_WALK_SENTRIES[@]}"; then
+    echo "main moved and the stored failing list holds an id from a sentry that walks docs"; return 0
+  fi
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     case $f in
@@ -206,11 +211,9 @@ EOT
 
 if [ -n "$BASEFILE" ]; then
   [ -f "$BASEFILE" ] || { echo "gates: baseline file not found: $BASEFILE" >&2; exit 2; }
-  "$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --check-stored "$BASEFILE" "$REPO_NAME" "$WORKERS" || exit 2
+  stored_sha=$("$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --check-stored "$BASEFILE" "$REPO_NAME" "$WORKERS") || exit 2
   [ -n "$MAIN_SHA" ] || { echo "gates: --baseline-file needs origin/main; run: git fetch origin main" >&2; exit 2; }
-  stored_sha=$("$BIN/python" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("main_sha",""))' "$BASEFILE")
   if [ "$MAIN_SHA" != "$stored_sha" ]; then
-    if [ -z "$stored_sha" ]; then echo "gates: the stored baseline has no main_sha; rewrite it" >&2; exit 2; fi
     if reason=$(baseline_is_stale "$stored_sha"); then
       echo "gates: the stored baseline (main_sha $stored_sha) is stale against origin/main $MAIN_SHA: $reason; rewrite it with --write-baseline" >&2; exit 2
     fi
@@ -289,9 +292,8 @@ ver() { local v; v=$("$@" 2>/dev/null | head -n 1); echo "${v:-not installed}"; 
 
 run_steps branch "$ROOT"
 if [ -n "$BASEFILE" ]; then
-  stored_sha=$("$BIN/python" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("main_sha",""))' "$BASEFILE")
   {
-    echo "baseline:   stored file $BASEFILE (main_sha ${stored_sha:-unknown}); origin/main NOT rerun"
+    echo "baseline:   stored file $BASEFILE (main_sha $stored_sha); origin/main NOT rerun"
     echo "run mode:   workers=$WORKERS (the stored baseline was written in the same mode)"
     if [ "$MAIN_SHA" != "$stored_sha" ]; then
       echo "NOTE:       origin/main is $MAIN_SHA; main moved only in Markdown no test reads"
@@ -315,10 +317,7 @@ tests_rc=$(awk -F'\t' '$1=="tests"{print $2}' "$OUT/branch.steps")
 if awk -F'\t' '$2 == -2 {hit = 1} END {exit !hit}' "$OUT/branch.steps"; then tests_rc=skipped; fi
 SUITE_OK=0
 if [ $WHOLE_SUITE = 1 ] && { [ "$tests_rc" = 0 ] || [ "$tests_rc" = 1 ]; } &&
-  "$BIN/python" -c 'import sys, xml.etree.ElementTree as ET
-r = ET.parse(sys.argv[1]).getroot()
-s = [r] if r.tag == "testsuite" else list(r.iter("testsuite"))
-sys.exit(0 if sum(int(x.get("tests", 0)) for x in s) > 0 else 1)' "$OUT/branch-tests.xml" 2>/dev/null; then
+  [ "$("$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --suite-collected "$OUT" 2>/dev/null)" -gt 0 ] 2>/dev/null; then
   SUITE_OK=1
 fi
 if [ -n "$WRITEBASE" ]; then
