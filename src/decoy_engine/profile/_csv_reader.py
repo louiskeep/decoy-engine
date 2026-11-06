@@ -95,8 +95,6 @@ def _scan_record_widths(
     Scans only the records the read consumes (`nrows`), so a bounded sample does not walk a
     huge file. Reads through the policy-issued handle.
     """
-    if nrows == 0:
-        return  # no record is consumed, so none is checked; the read returns the empty frame
     expected = len(dialect.column_names or ())
     consumed = 0
     with open_handle() as handle, handle.open_binary() as raw:
@@ -143,6 +141,23 @@ def _scan_record_widths(
             table,
             f"has no data rows to read against its {expected} declared column_names",
         )
+
+
+def _zero_rows(
+    open_handle: OpenHandle, names: list[str], *, chunked: bool
+) -> pd.DataFrame | Iterator[pd.DataFrame]:
+    """The headerless `nrows=0` result, without tokenizing a byte of content.
+
+    Opening the handle runs the file-access policy and `stat` proves the file exists, so a
+    missing or denied path fails here as it does for any read. The empty frame matches what
+    pandas returns for `nrows=0` (object columns, empty RangeIndex); a chunked read yields
+    no chunk, as pandas does.
+    """
+    with open_handle() as handle:
+        handle.stat()
+    if chunked:
+        return iter(())
+    return pd.DataFrame({name: pd.Series(dtype=object) for name in names})
 
 
 def _unreadable(table: str, expected: int) -> PipelineValidationError:
@@ -227,7 +242,7 @@ def _read_csv_rows(
 
     Converter keys are built here, once: by name with a header, by position headerless
     (pandas ignores a name key when `header=None`). A headerless read scans the whole file
-    (or `nrows` records) at the call, before returning either result. The per-chunk width
+    (or `nrows` records) at the call; `nrows=0` skips the scan and the parse, before returning either result. The per-chunk width
     check is only a backstop for a parser disagreement; the scan is the guard.
     """
     names: list[str] | None = None
@@ -236,12 +251,12 @@ def _read_csv_rows(
         read_opts = pandas_lexeme_kwargs(lexeme_columns)
     else:
         names = list(dialect.column_names or ())
+        if nrows == 0:
+            # No record is consumed, so none is scanned or tokenized: a malformed file reads
+            # as the empty frame under every policy.
+            return _zero_rows(open_handle, names, chunked=chunksize is not None)
         _scan_record_widths(open_handle, dialect, table=table, nrows=nrows)
         read_opts = {"header": None, **_positional_lexemes(lexeme_columns, names)}
-        if nrows == 0:
-            # Zero rows: name the empty frame at the read, so a malformed first record (which
-            # was not scanned) cannot change its width.
-            read_opts["names"] = names
     kwargs: dict[str, Any] = {"sep": dialect.delimiter, "dtype": dtype, **read_opts}
     if nrows is not None:
         kwargs["nrows"] = nrows

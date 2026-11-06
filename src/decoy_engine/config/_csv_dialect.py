@@ -8,8 +8,20 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from decoy_engine.errors import ConfigError
+
+
+class _DialectDefaults(NamedTuple):
+    has_header: bool
+    column_names: None
+    delimiter: str
+
+
+# The one home of the dialect defaults. `CsvDialect`, the `FileSource` field defaults and the
+# `FileSource` dump that omits defaults all read this, so a default changes in one place.
+CSV_DIALECT_DEFAULTS = _DialectDefaults(has_header=True, column_names=None, delimiter=",")
 
 
 def csv_dialect_problem(
@@ -62,9 +74,9 @@ def csv_dialect_problem(
 class CsvDialect:
     """How a CSV source is laid out: header or declared names, and the field delimiter."""
 
-    has_header: bool = True
-    column_names: tuple[str, ...] | None = None
-    delimiter: str = ","
+    has_header: bool = CSV_DIALECT_DEFAULTS.has_header
+    column_names: tuple[str, ...] | None = CSV_DIALECT_DEFAULTS.column_names
+    delimiter: str = CSV_DIALECT_DEFAULTS.delimiter
 
     def __post_init__(self) -> None:
         # The rule runs on the raw value first, then the names are frozen to a tuple.
@@ -75,4 +87,4 @@ class CsvDialect:
             object.__setattr__(self, "column_names", tuple(self.column_names))
 
 
-__all__ = ["CsvDialect", "csv_dialect_problem"]
+__all__ = ["CSV_DIALECT_DEFAULTS", "CsvDialect", "csv_dialect_problem"]

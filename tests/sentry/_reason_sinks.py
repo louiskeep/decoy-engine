@@ -7,7 +7,8 @@ the walk that classifies each argument is another.
 from __future__ import annotations
 
 import ast
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from pathlib import Path
 
 CODE_ARG_NAMES = frozenset({"code", "reason_code", "route_reason"})
 
@@ -67,16 +68,21 @@ def discover_families(trees: Iterable[ast.Module]) -> dict[str, tuple[int | None
     return own
 
 
-def discover_function_sinks(trees: Iterable[ast.Module]) -> dict[str, int]:
-    """Plain functions with a code parameter: name -> positional index of that parameter.
+def discover_function_sinks(
+    files: Mapping[Path, ast.Module], src: Path
+) -> dict[tuple[str, str], int]:
+    """Plain functions with a code parameter: ``(path, name)`` -> positional index of that parameter.
 
-    A forwarding helper (``_refusal(code, ...)``) passes its code on, so the helper's own
-    forward is vouched for in the adapter table. That vouching holds only if every caller
-    passes a registry symbol, which is what treating the helper as a sink checks. Methods are
-    left to the class discovery; a keyword-only parameter is already seen as a ``code=`` keyword.
+    The key is the function's exact identity (its path under ``src`` and its name), so two
+    functions that share a name are two sinks. A forwarding helper (``_refusal(code, ...)``)
+    passes its code on, so the helper's own forward is vouched for in the adapter table. That
+    vouching holds only if every caller passes a registry symbol, which is what treating the
+    helper as a sink checks. Methods are left to the class discovery; a keyword-only parameter
+    is already seen as a ``code=`` keyword.
     """
-    sinks: dict[str, int] = {}
-    for tree in trees:
+    sinks: dict[tuple[str, str], int] = {}
+    for path, tree in files.items():
+        rel = path.relative_to(src).as_posix()
         methods = {
             id(item) for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef) for item in cls.body
         }
@@ -86,6 +92,6 @@ def discover_function_sinks(trees: Iterable[ast.Module]) -> dict[str, int]:
             plain = [a.arg for a in node.args.posonlyargs + node.args.args]
             for name in CODE_ARG_NAMES:
                 if name in plain:
-                    sinks[node.name] = plain.index(name)
+                    sinks[(rel, node.name)] = plain.index(name)
                     break
     return sinks

@@ -22,6 +22,7 @@ code table, and a newly added module.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 import textwrap
@@ -32,6 +33,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _reason_scan as scan
+from _reason_sinks import discover_function_sinks
 
 FIXTURES = scan.ROOT / "tests" / "fixtures" / "f29"
 
@@ -147,14 +149,33 @@ ADAPTERS: dict[tuple[str, str], str] = {
 }
 # Forwarding helpers: the scanner treats them as code sinks and checks every caller's argument,
 # so the `_HELPER` rationale ("every caller passes a registry symbol") is enforced, not assumed.
-_HELPER_NAMES = frozenset(
-    fn.rsplit(".", 1)[-1] for (_f, fn), why in ADAPTERS.items() if why == _HELPER
+# A helper is its exact `(path, function)` identity, and a call resolves to the helper defined in
+# or imported into the calling module, so a same-named function elsewhere is not a sink.
+HELPER_IDENTITIES = frozenset(key for key, why in ADAPTERS.items() if why == _HELPER)
+# Helpers whose callers still pass a literal or a forwarded parameter, found when callers began
+# to be checked (2026-11-06). Registered as `reason-unchecked-helpers` and shrink-only: each
+# entry is a DESIGN follow-up (route its callers through registry symbols, then delete it).
+UNCHECKED_HELPERS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("plan/_checks_dp.py", "_raise"),
+        ("declared_casting/_quarantine_local.py", "_qerror"),
+        ("execution/native/_crypto_reference.py", "_row_error"),
+        ("plan/_checks_declared_casting.py", "_fail"),
+        ("generation/_window_admission.py", "_refuse"),
+    }
 )
-# Helpers whose callers still pass a literal, a forwarded parameter or a name shared with another
-# module, found when callers began to be checked (2026-11-06). A ratchet: it may only shrink, and
-# each entry is a DESIGN follow-up (route its callers through registry symbols, then delete it).
-UNCHECKED_HELPERS = frozenset({"_raise", "_qerror", "_row_error", "_fail", "_refuse"})
-HELPER_SINKS = _HELPER_NAMES - UNCHECKED_HELPERS
+HELPER_SINKS = HELPER_IDENTITIES - UNCHECKED_HELPERS
+# Helpers that are not positional-`code` sinks, and why: the scanner sees their codes another way.
+_KW_CODE = "`code` is keyword-only, so every caller is checked as a `code=` keyword site"
+NOT_POSITIONAL_SINKS: dict[tuple[str, str], str] = {
+    ("execution/_positional_keys.py", "row_positions"): _KW_CODE,
+    ("execution/_positional_keys.py", "positional_key_array"): _KW_CODE,
+    ("execution/_transforms.py", "_reject_nested_keys"): _KW_CODE,
+    ("plan/_checks_top_code.py", "_reject_unusable_bound"): _KW_CODE,
+    ("generation/_pinned_compile.py", "_reject_column"): (
+        "takes no code: it raises registry-coded errors itself, so its raise sites are the scanned ones"
+    ),
+}
 # Functions whose return value is a registry symbol chosen from a table of registry symbols.
 REGISTRY_HELPERS = frozenset({"strategy_code_for_unencryptable", "strategy_code_for_checksum"})
 
@@ -187,8 +208,10 @@ def _is_violation(site: scan.Site) -> bool:
     return True
 
 
-def _scan(src: Path = scan.SRC) -> list[scan.Site]:
-    return scan.scan(src, HELPER_SINKS)
+def _scan(
+    src: Path = scan.SRC, helpers: frozenset[tuple[str, str]] | None = None
+) -> list[scan.Site]:
+    return scan.scan(src, HELPER_SINKS if helpers is None else helpers)
 
 
 def violations(sites: list[scan.Site]) -> Counter[Key]:
@@ -692,7 +715,8 @@ _HELPER_BODY = """
 
 def test_forwarding_helper_callers_are_checked(tmp_path: Path) -> None:
     root = _tree(tmp_path, "helper_callers", _HELPER_BODY)
-    found = {k[:2] for k in violations(_scan(root)) if k[0] == "helper_callers.py"}
+    helpers = frozenset({("helper_callers.py", "_refusal")})
+    found = {k[:2] for k in violations(_scan(root, helpers)) if k[0] == "helper_callers.py"}
     assert ("helper_callers.py", "bad_literal") in found
     assert ("helper_callers.py", "bad_fstring") in found
     assert ("helper_callers.py", "bad_keyword") in found
@@ -705,7 +729,93 @@ def test_the_csv_reader_refusals_are_scanned_and_registry_backed() -> None:
     assert {s.value_class for s in sites} == {"registry"}
 
 
+def _write(root: Path, name: str, body: str) -> None:
+    (root / name).write_text(textwrap.dedent(body))
+
+
+_HELPER_DEF = """
+    from decoy_engine.errors import ExecutionError
+    def _refusal(code, detail):
+        raise ExecutionError(code=code)
+"""
+
+
+def _collision_tree(tmp_path: Path) -> Path:
+    """Two modules define `_refusal`; one caller imports each; only `a.py` is registered."""
+    root = _tree(tmp_path, "unused", "")
+    _write(root, "a.py", _HELPER_DEF)
+    _write(root, "b.py", _HELPER_DEF)
+    caller = """
+        from decoy_engine.{mod} import _refusal
+        def call():
+            raise _refusal("adhoc_literal", "x")
+    """
+    _write(root, "uses_a.py", caller.format(mod="a"))
+    _write(root, "uses_b.py", caller.format(mod="b"))
+    _write(
+        root,
+        "uses_local.py",
+        textwrap.dedent(_HELPER_DEF) + '\ndef call():\n    raise _refusal("adhoc_local", "x")\n',
+    )
+    return root
+
+
+def test_same_name_helpers_in_other_modules_are_not_sinks(tmp_path: Path) -> None:
+    """Mutant: a bare-name match would check (or skip) the wrong module's `_refusal`."""
+    root = _collision_tree(tmp_path)
+
+    def callers(helper: tuple[str, str]) -> set[str]:
+        found = violations(_scan(root, frozenset({helper})))
+        return {k[0] for k in found if k[1] == "call"}  # the `call` functions, not the definitions
+
+    assert callers(("a.py", "_refusal")) == {"uses_a.py"}  # imported from the registered module
+    assert callers(("uses_local.py", "_refusal")) == {"uses_local.py"}  # its own definition
+
+
+def _ratchet_drift(
+    live: frozenset[tuple[str, str]], recorded: frozenset[str]
+) -> dict[str, set[str]]:
+    flat = {"::".join(k) for k in live}
+    return {"gained": flat - recorded, "stale": recorded - flat}
+
+
+def _recorded_unchecked() -> frozenset[str]:
+    path = scan.ROOT / "tests" / "sentry" / "baselines" / "reason-unchecked-helpers.json"
+    return frozenset(json.loads(path.read_text(encoding="utf-8"))["entries"])
+
+
+def test_unchecked_helpers_match_the_registered_baseline_exactly() -> None:
+    assert _ratchet_drift(UNCHECKED_HELPERS, _recorded_unchecked()) == {
+        "gained": set(),
+        "stale": set(),
+    }
+
+
+def test_the_unchecked_ratchet_fails_swap_regrowth_and_collision() -> None:
+    recorded = _recorded_unchecked()
+    one = sorted(UNCHECKED_HELPERS)[0]
+    other = ("execution/_positional_keys.py", "row_positions")
+    swap = (UNCHECKED_HELPERS - {one}) | {other}
+    regrow = UNCHECKED_HELPERS | {other}
+    collide = (UNCHECKED_HELPERS - {one}) | {("elsewhere/other.py", one[1])}  # same bare name
+    assert _ratchet_drift(swap, recorded)["gained"] == {"::".join(other)}
+    assert _ratchet_drift(swap, recorded)["stale"] == {"::".join(one)}
+    assert _ratchet_drift(regrow, recorded)["gained"] == {"::".join(other)}
+    assert _ratchet_drift(collide, recorded)["gained"] == {"elsewhere/other.py::" + one[1]}
+
+
 def test_every_forwarding_helper_is_checked_or_a_listed_follow_up() -> None:
-    assert UNCHECKED_HELPERS <= _HELPER_NAMES, UNCHECKED_HELPERS - _HELPER_NAMES
-    assert "_refusal" in HELPER_SINKS
-    assert len(UNCHECKED_HELPERS) <= 5  # ratchet: may shrink, never grow
+    assert UNCHECKED_HELPERS <= HELPER_IDENTITIES, UNCHECKED_HELPERS - HELPER_IDENTITIES
+    assert ("profile/_csv_reader.py", "_refusal") in HELPER_SINKS
+    assert len(UNCHECKED_HELPERS) <= 5  # in-suite floor; the registered baseline is the ratchet
+
+
+def test_every_helper_sink_is_discovered_or_has_a_recorded_rationale() -> None:
+    """A helper that the scanner cannot see as a sink would be vouched for and never checked."""
+    index = scan._Index()
+    discovered = discover_function_sinks(index.trees, scan.SRC)
+    for ident in sorted(HELPER_SINKS):
+        assert ident in discovered or NOT_POSITIONAL_SINKS.get(ident), ident
+    assert set(NOT_POSITIONAL_SINKS) <= HELPER_IDENTITIES
+    # a rationale is not a place to park a helper the scanner does see
+    assert not set(NOT_POSITIONAL_SINKS) & set(discovered)

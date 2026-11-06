@@ -51,7 +51,7 @@ from pydantic import (
     model_validator,
 )
 
-from decoy_engine.config._csv_dialect import csv_dialect_problem
+from decoy_engine.config._csv_dialect import CSV_DIALECT_DEFAULTS, csv_dialect_problem
 from decoy_engine.config._fixed_width import FixedWidthLayout
 
 
@@ -81,7 +81,7 @@ class FileSource(BaseModel):
     columns would get pandas' positional `0,1,2...` names and no rule matches.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     type: Literal["file"]
     format: Literal["csv", "parquet", "fixed_width"]
@@ -94,21 +94,21 @@ class FileSource(BaseModel):
         ),
     )
     has_header: bool = Field(
-        default=True,
+        default=CSV_DIALECT_DEFAULTS.has_header,
         description=(
             "csv only. Whether the first row is a header. Set false for a "
             "headerless file and supply `column_names`."
         ),
     )
     column_names: list[str] | None = Field(
-        default=None,
+        default=CSV_DIALECT_DEFAULTS.column_names,
         description=(
             "csv only. Column names for a headerless file (has_header=false); "
             "required in that case, forbidden when has_header is true."
         ),
     )
     delimiter: str = Field(
-        default=",",
+        default=CSV_DIALECT_DEFAULTS.delimiter,
         description=(
             "csv only. The single-character field delimiter (',' default, "
             "'\\t' for TSV, '|' for pipe-delimited)."
@@ -156,12 +156,9 @@ class FileSource(BaseModel):
         # dump itself stable, not that hash.) An explicit default means the same as
         # an omitted one, so both drop.
         data: dict[str, Any] = handler(self)
-        if data.get("has_header") is True:
-            data.pop("has_header", None)
-        if data.get("column_names") is None:
-            data.pop("column_names", None)
-        if data.get("delimiter") == ",":
-            data.pop("delimiter", None)
+        for name in CSV_DIALECT_DEFAULTS._fields:
+            if data.get(name) == getattr(CSV_DIALECT_DEFAULTS, name):
+                data.pop(name, None)
         return data
 
     @classmethod
@@ -187,7 +184,7 @@ class S3Source(BaseModel):
     in the V1 spec because the masked output is in-memory anyway.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     type: Literal["s3"]
     format: Literal["csv", "parquet"]
@@ -219,7 +216,7 @@ class GCSSource(BaseModel):
     match the GCS API surface (`bucket.object_name` vs S3 `bucket.key`).
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     type: Literal["gcs"]
     format: Literal["csv", "parquet"]

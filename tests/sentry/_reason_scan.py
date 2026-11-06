@@ -108,9 +108,11 @@ class _Index:
         self.class_consts: dict[tuple[str, str, str], ast.expr] = {}
         self.const_defs: dict[tuple[str, str], tuple[Path, ast.AST]] = {}
         self.reasons_aliases: dict[str, set[str]] = {}  # module -> names bound to the reasons pkg
+        self.module_paths: dict[str, str] = {}  # module -> its path under src
         for path in source_files(src):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             self.trees[path] = tree
+            self.module_paths[module_name(path, src)] = path.relative_to(src).as_posix()
             self._index(path, tree)
 
     def _index(self, path: Path, tree: ast.Module) -> None:
@@ -174,6 +176,19 @@ class _Index:
             parts = parts[: len(parts) - (node.level - 1)]
         base = ".".join(parts)
         return f"{base}.{node.module}" if node.module else base
+
+    def resolve_function(self, mod: str, name: str) -> tuple[str, str]:
+        """The ``(path, name)`` of the function that ``name`` refers to inside ``mod``.
+
+        An import is followed to the module that defines the name, so a call resolves to the
+        helper defined in or imported into the calling module, never to a same-named function
+        elsewhere.
+        """
+        seen: set[tuple[str, str]] = set()
+        while (mod, name) in self.imports and (mod, name) not in seen:
+            seen.add((mod, name))
+            mod, name = self.imports[(mod, name)]
+        return self.module_paths.get(mod, ""), name
 
     def resolve_def(
         self, mod: str, name: str, seen: frozenset[tuple[str, str]] = frozenset()
@@ -430,13 +445,18 @@ def _reason_literals(node: ast.AST) -> Iterator[ast.expr]:
             yield from _reason_literals(value)
 
 
-def scan(src: Path = SRC, helpers: frozenset[str] = frozenset()) -> list[Site]:
+def scan(src: Path = SRC, helpers: frozenset[tuple[str, str]] = frozenset()) -> list[Site]:
+    """``helpers`` are exact ``(path, function)`` identities, not bare names."""
     index = _Index(src)
     trees = list(index.trees.values())
     families = discover_families(trees)
     # Only the forwarding helpers the caller names are sinks: a bare `code` parameter on any
     # other function (`get`, `lookup`) is not a reason sink.
-    func_sinks = {n: i for n, i in discover_function_sinks(trees).items() if n in helpers}
+    func_sinks = {
+        ident: pos
+        for ident, pos in discover_function_sinks(index.trees, src).items()
+        if ident in helpers
+    }
     bearing = _reason_bearing(index)
     sites: list[Site] = []
     used: set[tuple[str, str]] = set()
@@ -483,7 +503,7 @@ class _Visitor(ast.NodeVisitor):
         families: dict[str, tuple[int | None, bool]],
         out: list[Site],
         bearing: frozenset[str] = frozenset(),
-        func_sinks: dict[str, int] | None = None,
+        func_sinks: dict[tuple[str, str], int] | None = None,
     ):
         self.index, self.mod, self.rel, self.families, self.out = index, mod, rel, families, out
         self.bearing = bearing
@@ -697,7 +717,11 @@ class _Visitor(ast.NodeVisitor):
         # A plain function that takes a code (a forwarding helper) is a sink too: its callers
         # are checked, so the helper's registry row cannot hide an unregistered code.
         sink_name = origin[1] if origin else name
-        sink_pos = self.func_sinks.get(sink_name) if isinstance(callee, ast.Name) else None
+        sink_pos = (
+            self.func_sinks.get(self.index.resolve_function(self.mod, callee.id))
+            if isinstance(callee, ast.Name)
+            else None
+        )
         if sink_pos is not None and sink_pos < len(node.args):
             if not isinstance(node.args[sink_pos], ast.Starred):
                 self._emit(node, "positional", sink_name, node.args[sink_pos])

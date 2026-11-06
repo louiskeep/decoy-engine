@@ -8,6 +8,7 @@ the headerless path).
 
 from __future__ import annotations
 
+import io
 import os
 from collections.abc import Iterator
 from pathlib import Path
@@ -18,6 +19,7 @@ import pytest
 
 from decoy_engine.errors import PipelineValidationError
 from decoy_engine.fileaccess import (
+    FileAccessDenied,
     FileAccessReadError,
     FileRole,
     Root,
@@ -170,47 +172,114 @@ def test_the_plain_adapter_read_still_maps_a_parser_error(
 
 def _oracle_zero(path: Path, dtype: type[str] | None) -> pd.DataFrame:
     """Plain pandas for a zero-row headerless read, with the declared names."""
-    frame = pd.read_csv(path, header=None, names=["a", "b", "c"], nrows=0, dtype=dtype)
+    # Plain pandas on a clean stream: the empty frame does not depend on the file's content.
+    frame = pd.read_csv(
+        io.StringIO("1,2,3\n"), header=None, names=["a", "b", "c"], nrows=0, dtype=dtype
+    )
     assert frame.shape == (0, 3)
     return frame
 
 
+MALFORMED_FIRST = {
+    "valid_first": b"1,2,3\n4,5,6\n",
+    "short_first": b"1,2\n4,5,6\n",
+    "long_first": b"1,2,3,4\n",
+    "empty_file": b"",
+    "bad_quote": b'zz,"unterminated\n',
+    "nul_byte": b"1,2,\x003\n",
+    "lone_cr": b"1,2,3\r4,5,6\r",
+}
+
+
 @pytest.mark.parametrize("dtype", [None, str], ids=["infer", "str"])
-@pytest.mark.parametrize(
-    "raw",
-    [b"1,2,3\n4,5,6\n", b"1,2\n4,5,6\n", b"1,2,3,4\n", b"", b'zz,"unterminated\n'],
-    ids=["valid_first", "short_first", "long_first", "empty_file", "bad_quote"],
-)
+@pytest.mark.parametrize("raw", list(MALFORMED_FIRST.values()), ids=list(MALFORMED_FIRST))
 def test_nrows_zero_returns_the_empty_frame_with_declared_columns(
     tmp_path: Path, raw: bytes, dtype: type[str] | None
 ) -> None:
     path = tmp_path / "z.csv"
     path.write_bytes(raw)
-    if raw.startswith(b"zz,"):
-        # pandas itself cannot tokenize this one; the reader keeps its coded refusal.
-        with pytest.raises(PipelineValidationError):
-            read_csv_source(path, HEADERLESS, table="t", dtype=dtype, nrows=0)
-        return
     got = read_csv_source(path, HEADERLESS, table="t", dtype=dtype, nrows=0)
     pd.testing.assert_frame_equal(got, _oracle_zero(path, dtype))
     assert list(got.columns) == ["a", "b", "c"]
     assert got.empty
 
 
-def test_nrows_zero_does_not_scan_the_first_record(tmp_path: Path) -> None:
+@pytest.mark.parametrize("policy_kind", ["ambient", "strict"])
+@pytest.mark.parametrize("chunked", [False, True], ids=["whole", "chunked"])
+@pytest.mark.parametrize("raw", list(MALFORMED_FIRST.values()), ids=list(MALFORMED_FIRST))
+def test_nrows_zero_succeeds_on_malformed_content_in_all_four_modes(
+    tmp_path: Path,
+    strict: tuple[Path, RootedFileAccess],
+    raw: bytes,
+    chunked: bool,
+    policy_kind: str,
+) -> None:
+    root, policy = strict
+    (root / "z.csv").write_bytes(raw)
+    path = "z.csv" if policy_kind == "strict" else str(root / "z.csv")
+    kwargs: dict[str, Any] = {"table": "t", "nrows": 0}
+    if policy_kind == "strict":
+        kwargs.update(file_access=policy, field_key="k")
+    if chunked:
+        kwargs["chunksize"] = 2
+    got = read_csv_source(path, HEADERLESS, **kwargs)
+    if chunked:
+        assert list(got) == []  # exactly zero chunks, as pandas yields for nrows=0
+    else:
+        assert got.shape == (0, 3) and list(got.columns) == ["a", "b", "c"]
+
+
+def test_nrows_zero_never_reaches_the_tokenizer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation anchor: a zero-row read that falls through to pandas fails here."""
     path = tmp_path / "z.csv"
-    path.write_bytes(b"1,2\n")  # malformed first row
+    path.write_bytes(b"1,2\n")
+
+    def boom(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("the tokenizer ran for nrows=0")
+
+    for name in (
+        "read_csv",
+        "read_csv_chunks",
+        "read_csv_parser_errors",
+        "read_csv_chunks_parser_errors",
+    ):
+        monkeypatch.setattr(pandas_adapter, name, boom)
     assert read_csv_source(path, HEADERLESS, table="t", nrows=0).shape == (0, 3)
-    with pytest.raises(PipelineValidationError):
+    assert list(read_csv_source(path, HEADERLESS, table="t", nrows=0, chunksize=2)) == []
+    path.write_bytes(b"1,2,3\n")
+    with pytest.raises(AssertionError):  # the guard itself is live for a real read
         read_csv_source(path, HEADERLESS, table="t", nrows=1)
 
 
-def test_nrows_zero_chunked_yields_no_rows(tmp_path: Path) -> None:
+@pytest.mark.parametrize("chunked", [False, True], ids=["whole", "chunked"])
+def test_nrows_zero_still_fails_at_the_call_for_a_missing_file(
+    tmp_path: Path, chunked: bool
+) -> None:
+    with pytest.raises(FileNotFoundError):
+        read_csv_source(
+            tmp_path / "absent.csv",
+            HEADERLESS,
+            table="t",
+            nrows=0,
+            chunksize=2 if chunked else None,
+        )
+
+
+def test_nrows_zero_is_still_policy_checked(strict: tuple[Path, RootedFileAccess]) -> None:
+    root, policy = strict
+    with pytest.raises(FileAccessDenied):
+        read_csv_source(
+            "../escape.csv", HEADERLESS, table="t", nrows=0, file_access=policy, field_key="k"
+        )
+
+
+def test_nrows_one_still_scans_the_first_record(tmp_path: Path) -> None:
     path = tmp_path / "z.csv"
     path.write_bytes(b"1,2\n")
-    chunks = list(read_csv_source(path, HEADERLESS, table="t", nrows=0, chunksize=2))
-    assert sum(len(c) for c in chunks) == 0
-    assert all(list(c.columns) == ["a", "b", "c"] for c in chunks)
+    with pytest.raises(PipelineValidationError):
+        read_csv_source(path, HEADERLESS, table="t", nrows=1)
 
 
 def test_strict_policy_parser_error_on_a_later_chunk_step_is_the_coded_refusal(
