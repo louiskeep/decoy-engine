@@ -34,6 +34,9 @@ on:
   # fire on demand so they stop failing every push (X0a). Old triggers: git history.
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   # companion-wheel-linux: builds the companion across the self-hosted single-org
   # deployment's Linux target matrix (manylinux_2_28 x86_64 + aarch64, cp310-cp312 per
@@ -102,15 +105,16 @@ jobs:
         run: |
           set -euo pipefail
           wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
+          whl_name="$(basename "$wheel")"
           PYARROW=$(bash scripts/dev/lock_version.sh pyarrow)
-          test -n "$PYARROW" || { echo "no pyarrow in uv.lock"; exit 1; }
+          test -n "$PYARROW" || { echo "no locked pyarrow"; exit 1; }
           cptag="cp${python_version//./}"
           docker run --rm --platform ${{ matrix.docker-platform }} \
             -v "$PWD/decoy-engine-native:/w" \
             "${{ matrix.smoke-image }}" bash -c "
               set -euo pipefail
               pybin=/opt/python/${cptag}-${cptag}/bin
-              \"\$pybin/pip\" install --quiet \"/w/dist/$(basename "$wheel")\" \"pyarrow==$PYARROW\"
+              \"\$pybin/pip\" install --quiet \"/w/dist/$whl_name\" \"pyarrow==$PYARROW\"
               \"\$pybin/python\" /w/scripts/parity_smoke.py
             "
         env:
@@ -159,7 +163,7 @@ jobs:
           set -euo pipefail
           wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
           PYARROW=$(bash scripts/dev/lock_version.sh pyarrow)
-          test -n "$PYARROW" || { echo "no pyarrow in uv.lock"; exit 1; }
+          test -n "$PYARROW" || { echo "no locked pyarrow"; exit 1; }
           python -m pip install "$wheel" "pyarrow==$PYARROW"
           python decoy-engine-native/scripts/parity_smoke.py
       - uses: actions/upload-artifact@v7
@@ -204,7 +208,7 @@ jobs:
           set -euo pipefail
           wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
           PYARROW=$(bash scripts/dev/lock_version.sh pyarrow)
-          test -n "$PYARROW" || { echo "no pyarrow in uv.lock"; exit 1; }
+          test -n "$PYARROW" || { echo "no locked pyarrow"; exit 1; }
           python -m pip install "$wheel" "pyarrow==$PYARROW"
           python decoy-engine-native/scripts/parity_smoke.py
       - uses: actions/upload-artifact@v7

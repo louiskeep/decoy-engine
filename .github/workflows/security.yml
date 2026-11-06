@@ -20,6 +20,14 @@ jobs:
   pip-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # One leg per supported Python, each a separate pip-audit exit code, so a green leg cannot
+    # hide a red one. pip-audit evaluates the export's markers against its own interpreter, so
+    # one run on 3.12 would skip every 3.10-only pin (requires-python >=3.10,<3.13). The legs
+    # must equal the supported minors; tests/sentry/test_ci_lock_installs.py checks that.
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12"]
 
     steps:
       - name: Check out
@@ -30,19 +38,14 @@ jobs:
       - name: Export the locked dependency set (every extra, hashed pins)
         run: uv export --frozen --all-extras --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/engine-lock.txt"
 
-      - name: Audit the lock on every supported Python
+      - name: Audit the lock
         # Audits what the engine ships, not this job's tool environment: pip-audit runs in its
-        # own uvx environment, so its own dependencies never enter the report. It evaluates the
-        # export's markers against its own interpreter, so it runs once per supported minor
-        # (requires-python >=3.10,<3.13); one run on 3.12 would skip every 3.10-only pin.
-        # --strict fails the job on any known vulnerability; no ignore list.
-        run: |
-          rc=0
-          for py in 3.10 3.11 3.12; do
-            echo "== pip-audit on Python $py"
-            uvx --python "$py" pip-audit==2.10.1 --strict --disable-pip --require-hashes -r "$RUNNER_TEMP/engine-lock.txt" || rc=1
-          done
-          exit $rc
+        # own uvx environment, so its own dependencies never enter the report. --strict fails the
+        # leg on any known vulnerability; no ignore list. Keep this one bare command: the sentry
+        # rejects || ; if, exit 0, set +e and continue-on-error around it.
+        env:
+          PY: ${{ matrix.python }}
+        run: uvx --python "$PY" pip-audit==2.10.1 --strict --disable-pip --require-hashes -r "$RUNNER_TEMP/engine-lock.txt"
 
   # F13 structural leak sentry: secret-provider modules may not log, chain exceptions, render
   # exception text or serialize, and execution modules may not reach a concrete provider.

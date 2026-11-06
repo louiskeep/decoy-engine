@@ -16,6 +16,9 @@ on:
   # fire on demand so they stop failing every push (X0a). Old triggers: git history.
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   substrate:
     runs-on: ubuntu-latest

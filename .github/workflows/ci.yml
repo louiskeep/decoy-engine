@@ -24,6 +24,9 @@ on:
   # fire on demand so they stop failing every push (X0a). Old triggers: git history.
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   ruff:
     runs-on: ubuntu-latest
@@ -240,7 +243,6 @@ jobs:
       - uses: ./.github/actions/lock-env
         with:
           extras: "dev lint vault cloud"
-          python: "3.10.20"
       - name: Assert this profile is certified (fail loud on drift)
         run: >
           uv run python -c

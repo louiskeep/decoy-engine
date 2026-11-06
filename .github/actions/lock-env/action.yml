@@ -5,10 +5,10 @@ inputs:
     description: Space-separated uv extras (for example "dev ml").
     default: ""
   python:
-    description: Exact CPython patch uv installs for the venv.
-    default: "3.10.20"
+    description: CPython patch for the venv. Empty means the lock profile (scripts/dev/lock_version.sh --python).
+    default: ""
   bootstrap:
-    description: '"true" runs scripts/dev/bootstrap.sh (the Mac gate profile) instead of a plain sync.'
+    description: '"true" runs scripts/dev/bootstrap.sh (the Mac gate profile), which also checks the key dependencies, instead of a plain sync.'
     default: "false"
 runs:
   using: composite
@@ -32,14 +32,9 @@ runs:
         else
           args=()
           for e in $EXTRAS; do args+=(--extra "$e"); done
-          uv sync --frozen ${args[@]+"${args[@]}"} --python "$PYTHON"
+          uv sync --frozen ${args[@]+"${args[@]}"} --python "${PYTHON:-$(bash scripts/dev/lock_version.sh --python)}"
         fi
     - name: Installed versions equal the lock
+      if: inputs.bootstrap != 'true'
       shell: bash
-      run: |
-        for pkg in pyarrow polars duckdb pandas; do
-          have=$(python -c "import importlib.metadata as m; print(m.version('$pkg'))")
-          want=$(bash scripts/dev/lock_version.sh "$pkg")
-          echo "$pkg installed $have lock $want"
-          test "$have" = "$want" || { echo "$pkg differs from uv.lock"; exit 1; }
-        done
+      run: bash scripts/dev/lock_version.sh --check
