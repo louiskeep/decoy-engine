@@ -15,6 +15,26 @@ L2) and a
 file-reading entry point under the file-access policy, and its output must stay
 value-free. Nothing here is destructive or irreversible. Approver: Cam.
 
+## Revision note (gap fix, 2026-11-06)
+
+- All local CSV dialect resolution and row reads, including the header guard,
+  leading-zero pass and integrity key chunks, go through CLI-DIALECT's
+  `resolve_csv_dialect` and `read_csv_source`. S1b adds column projection to
+  that reader instead of creating another pandas path.
+- Cloud CSV dialect support is dropped from V1 and recorded under V2-LOG.
+  This matches CONFIG-EXPLICIT's explicit cloud limit and the existing
+  CLI-CLOUD gate. S1a.2 now owns sample parity only.
+- `decoy scan --config` uses CONFIG-EXPLICIT's one declaration boundary with
+  a typed sources-only request. AT-C8 recognizes that mode but still rejects
+  a config-reading command that reaches rows without the returned capability.
+- S3a.1 tests the renderer directly. S3a.2 adds `--emit-config` and the final
+  G-ONE-EMITTER command guard. Dependencies now name CONFIG-EXPLICIT C1 and
+  C2 for S3a.1 and E2 for S3-engine.1.
+- S3-engine.1 does not add a second detector-to-strategy table. It extends
+  the existing engine registry in `profiling/recommendations.py` with one
+  descriptor per detector, derives the existing public defaults unchanged,
+  and puts only the starter decision algorithm in `_starter_inference.py`.
+
 Owner direction, 2026-11-05:
 
 - "a decoy scan should be able to scan multiple files at once in order to
@@ -124,9 +144,10 @@ names the finding it answers.
    standalone CLI slice, CLI-DIALECT (owned by the CONFIG-EXPLICIT row), makes
    both readers honour all three fields. It lands before S1c and S3-cli. S3-cli
    and every CLI headerless test depend on it; new test T4-runs-headerless.
-   S1a also passes the three fields through the engine's cloud CSV readers
-   (`profile/_cloud_readers.py`), which ignore them today; new test
-   T1-cloud-dialect.
+   The earlier draft also proposed passing those fields through cloud CSV
+   readers. The gap-fix revision supersedes that proposal: cloud descriptors
+   do not expose the fields, CONFIG-EXPLICIT excludes them, and CLI-CLOUD is
+   outside V1.
 2. **H1, CSV typing.** Profiling keeps the engine `CsvFileSource` type
    inference; `decoy run` reads CSV as text. The plan no longer claims scan
    sees the run's types. S1a counts sampled text values with a leading zero
@@ -303,8 +324,10 @@ database).
   data-integrity checks, on which YAML features are standard versus opt-in, or
   on whether `decoy run` reads `scan_baseline`. A separate UX discussion
   settles that. Section 4 shows how S1 and S3 work with either answer.
-- No change to the engine's legacy `DEFAULT_STRATEGY_BY_DETECTOR` table, which
-  the paused platform still reads (owner answer Q5).
+- No behavioral change to the engine's legacy
+  `DEFAULT_STRATEGY_BY_DETECTOR` public mapping, which the paused platform
+  still reads (owner answer Q5). S3-engine.1 derives that same mapping from
+  the one detector descriptor registry so the starter does not add a copy.
 - No record pruning in V1 (owner answer Q10). Retention belongs to the local
   record library plan.
 - No new masking behavior.
@@ -410,11 +433,12 @@ No custom algorithm remains in V1. The V2 FK survey is in section 7.
     baseline) fail if it reads outside the policy. Mutation M-FA: drop the
     decorator; the entry-seam sentry goes red.
   - YAML emission: `decoy/cli/_scaffold_yaml.py` is the only code that writes a
-    pipeline YAML from a scan. Guard G-ONE-EMITTER runs `decoy init x.csv
-    --has-header` and `decoy scan x.csv --has-header --emit-config` and asserts
-    identical bodies after the provenance header. Mutation M-EMIT (on a scratch
-    copy, since the old builder is deleted): route init through its old
-    `_build_scaffold_yaml`; the guard goes red.
+    pipeline YAML from a scan. At S3a.1, G-ONE-EMITTER compares `decoy init`
+    with a direct one-table renderer call because `--emit-config` is not built
+    yet. At S3a.2 the guard moves to its final sentry: it walks both command
+    entry points and compares `decoy init x.csv --has-header` with `decoy scan
+    x.csv --has-header --emit-config`, after the provenance header. Mutation
+    M-EMIT adds one inline YAML field in either command; the guard goes red.
   - Record writes: LIB owns the choke point. `Library.put` is the only writer
     under `.decoy/library/objects/`, guarded by G-LIB-WRITER (mutation
     M-LIB-INLINE) and G-KIND-CANARY (mutations M-KIND-NOFIX, M-PAYLOAD-LEAK),
@@ -486,14 +510,16 @@ means every part has merged.
 - CONFIG-EXPLICIT (plan in progress): the owner rule that a CSV source states
   `has_header`, names its columns through `column_names` or
   `column_names_file`, and lists every column in the YAML. Planned by another
-  author. S1c's `--column-names-file` flag and S3-engine depend on it.
+  author. S1c.2's `--column-names-file` and sources-only declaration mode need
+  E1, E2 and C1; S3-engine.1 needs E2; S3a.1 needs C1 and C2.
 - RESULT (`decoy-run-result/v1`), handoff
   `10_Projects/decoy/handoffs/phase0.5/p05-result-build-handoff.md` (Status
   plan): E1 (engine model and `build_run_result`), E2 (engine per-table
-  collector; adds progress events to the chunked path; one registry minor), C1
-  (CLI `_run_outcome.finish`, after F29 C1, LIB L1b and LIB L5a), C2 (CLI
-  capacity widening). LIB L1a's `run-result` kind points at E1's models; LIB
-  L5a's chunked case needs E2; LIB L3a's run-result half needs C1.
+  projection and builder), E3 (collector, chunked progress events and one
+  registry minor), C1a (CLI document and `_run_outcome.finish`), C1b
+  (evidence, notify and typed `links.log` inputs), and C2 (CLI capacity
+  widening). LIB L1a's `run-result` kind points at E1's models; LIB L5a's
+  chunked case needs E3; LIB L5b and L3a need C1a and C1b.
 - SAMPLE (`decoy run --sample N`) for LIB L3b; not defined on any branch today.
 - CLI-CLOUD for any cloud integrity pass (V2 of S1b, section 5 S1b).
 
@@ -504,7 +530,7 @@ merge time through REG-RENUMBER (`scripts/dev/registry_renumber.py`, handoff
 `10_Projects/decoy/handoffs/phase0.5/p05-reg-renumber-build-handoff.md`): such
 slices may build in parallel but merge one at a time, one new minor per branch,
 and never write a version where it does not mean the slice's own minor. The
-roadmap rows already on the chain (F35 E1a, F32 E1b, F36 slice 4) and RESULT E2
+roadmap rows already on the chain (F35 E1a, F32 E1b, F36 slice 4) and RESULT E3
 interleave by merge order. Registry-touching slices in these plans:
 
 | Slice | Identities |
@@ -516,22 +542,26 @@ interleave by merge order. Registry-touching slices in these plans:
 
 **Engine releases** go one at a time. Each is followed by one cumulative CLI
 repin that follows the engine repin checklist. Planned grouping: LIB L0, LIB
-L1a (both parts) and RESULT E1 and E2 in one release; SCAN-MULTI S1a and S1b
+L1a (both parts) and RESULT E1 to E3 in one release; SCAN-MULTI S1a and S1b
 in the next; SCAN-MULTI S3-engine (both parts) after CONFIG-EXPLICIT.
 
 **Build order.**
 
-1. LIB L0.1, L0.2, L1a.1, L1a.2 and RESULT E1, E2; one engine release. LIB
+1. LIB L0.1, L0.2, L1a.1, L1a.2 and RESULT E1 to E3; one engine release. LIB
    L1b.1 may start at once (it needs no engine change); then the repin with
    L1b.2, then L0.3 in the `run.py` lane, then L1b.3, L1c.1, L1c.2 and L1d.
 2. SCAN-MULTI S1a.1, S1a.2, then S1b-engine on a branch from S1a; one engine
    release holds them. S1b uses L0's allocator, so L0 merges first.
-3. CLI-DIALECT, then SCAN-MULTI S1c.1 and S1c.2 (repin to the step 2 release;
-   need LIB L1b.1), then LIB L2-cli (needs L1c and L1d).
-4. CONFIG-EXPLICIT, then SCAN-MULTI S3-engine.1 and S3-engine.2 and their
-   release, then S3a.1-cli and S3a.2-cli (repin), then S3b-cli.
+3. CLI-DIALECT, then SCAN-MULTI S1c.1 (repin to the step 2 release; needs LIB
+   L1b.1).
+4. CONFIG-EXPLICIT E1 and E2 and their engine release, then C1. SCAN-MULTI
+   S1c.2 uses that release and C1's config loader, then LIB L2-cli (needs L1c
+   and L1d). After CONFIG-EXPLICIT C2, build SCAN-MULTI S3-engine.1 and
+   S3-engine.2 and their release, then S3a.1-cli and S3a.2-cli (repin), then
+   S3b-cli.
 5. LIB L4a after L1c, then L4b. In the `run.py` lane after L0.3: LIB L5a
-   (needs L1b.1 and the step 1 release), F29 C1, RESULT C1, LIB L5b (also
+   (needs L1b.1 and the step 1 release), F29 C1, RESULT C1a, RESULT C1b,
+   LIB L5b (also
    needs L4a), LIB L3a, LIB L3b; SAMPLE gates L3b. LIB L5c after L5b and
    S3b-cli.
 
@@ -545,15 +575,15 @@ interleave with other rows (F32 C0 and CLI-FMT also write `run.py`):
 
 | File | Writers, in order |
 |---|---|
-| `src/decoy/cli/run.py` | L0.3, L5a, F29 C1, RESULT C1, L5b, L3a, L3b |
+| `src/decoy/cli/run.py` | L0.3, L5a, F29 C1, RESULT C1a, RESULT C1b, L5b, L3a, L3b |
 | `src/decoy/cli/scan.py` | S1c.1, S1c.2, L2, S3a.2, S3b, L5c |
 | `src/decoy/cli/library.py` | L1c.2, L4a, then L4b and L5b in either order |
 | `src/decoy_engine/profiling/scan_set.py` | S1a.1, S1a.2, S1b |
 
-### S1a-engine: `scan_sources` and `scan-set/v1` (engine, two parts, ~970 lines)
+### S1a-engine: `scan_sources` and `scan-set/v1` (engine, two parts, ~890 lines)
 
-Parts (Totals): S1a.1 is everything below except the cloud-dialect change and
-T1-cloud-dialect and T1-sample-parity, which are S1a.2.
+Parts (Totals): S1a.1 is everything below except T1-sample-parity, which is
+S1a.2.
 
 **Files.**
 - new `src/decoy_engine/profiling/scan_set.py`: `scan_sources`, `TableScan`,
@@ -564,9 +594,6 @@ T1-cloud-dialect and T1-sample-parity, which are S1a.2.
 - `src/decoy_engine/records/_kinds.py`, only if LIB L1a has merged first:
   point the `scan-set` kind at `ScanSetCore` (write model) and its read
   variant. If S1a merges first, L1a does this instead (LIB XM3).
-- `src/decoy_engine/profile/_cloud_readers.py`: the S3 and GCS CSV readers pass
-  `has_header`, `column_names` and `delimiter` through to the read; today they
-  ignore them.
 - `src/decoy_engine/profiling/__init__.py`, `src/decoy_engine/__init__.py`:
   additive exports.
 - `src/decoy_engine/fileaccess/__init__.py`: add to `ENTRY_POINTS`; sentry
@@ -577,8 +604,8 @@ T1-cloud-dialect and T1-sample-parity, which are S1a.2.
   by REG-RENUMBER (section 5.0).
 - `docs/compatibility-contract.md` (§3.1 tag list, §3.4 note),
   `docs/reasons.md`, `CHANGELOG.md`.
-- tests: `tests/unit/profiling/test_scan_set.py`,
-  `tests/unit/profile/test_cloud_csv_dialect.py`.
+- tests: `tests/unit/profiling/test_scan_set.py` and
+  `tests/unit/profiling/test_scan_sample_parity.py`.
 
 **Behavior.**
 
@@ -596,21 +623,26 @@ def scan_sources(
 ) -> ScanSet
 ```
 
-- Validates each descriptor through `SourceDescriptor` and reads it exactly as
-  declared (`has_header`, `column_names`, and `column_names_file` once
-  CONFIG-EXPLICIT adds it). No header inference.
+- Validates each descriptor through `SourceDescriptor`. For every local CSV,
+  its auxiliary passes obtain a `CsvDialect` from `resolve_csv_dialect` and
+  pass that object to every `read_csv_source` call; `build_profile_source`
+  continues to reach the same resolver internally. No scan code reads `has_header`, `column_names`,
+  `column_names_file` or `delimiter` from the descriptor, and there is no
+  header inference.
 - For each selected table, in order: `build_profile_source(...)`, bounded
   sample, header guard (CSV with `has_header: true` only),
   `profile_columns(frame, source_label=name, ..., file_access=file_access)`,
   drop the frame.
-- Header guard: detectors over the header cells as a one-row frame whose
+- Header guard: when the resolved dialect has `has_header: true`, the header
+  cells come from `read_csv_source(..., nrows=0)` and feed detectors as a
+  one-row frame whose
   column labels are neutral (`c0..cn`), so the detectors' name hints cannot
   fire on the header text. On a structured PII match, or when every cell
   parses as a number or a date, attach a `warning.scan_header_suspect`
   `ReasonRef`. Reading and names are unchanged.
-- Leading zeros (CSV only, strategies `head` and `full`): the same rows are
-  re-read as text (the first N rows for `head`, every row for `full`, streamed
-  in chunks so a full pass stays bounded) and, per column, the number of
+- Leading zeros (local CSV only, strategies `head` and `full`): the same rows
+  are re-read as text through `read_csv_source(path, dialect, dtype=str)`, with
+  `nrows=N` for `head` and `chunksize=<bounded size>` for `full`. Per column, the number of
   non-null values matching `^0\d` is stored as `leading_zero_count`. Count
   only; each text chunk is dropped at once. With `strategy="random"` the
   sampled row positions are not reproducible from the file, so
@@ -647,7 +679,6 @@ def scan_sources(
 | T1-bounded | 50 000-row parquet, `sample_rows=1000`: at most one batch past 1000 rows read (reader spy) | M1-full: `to_frame()` instead of `sample_frame` |
 | T1-sequential | at most one table frame alive while three tables scan (weakref probe) | M1-hold: keep frames in a list |
 | T1-explicit-header | a CSV source with `has_header: false` and `column_names` profiles the first row as data under those names | M1-sniff: infer the header |
-| T1-cloud-dialect | an S3 CSV source (reader double over the cloud reader's byte stream) with `has_header: false`, `column_names` and `delimiter: "\t"` profiles the first row as data under those names, split on tabs | M1-cloud-ignore: drop the three fields in the cloud reader |
 | T1-header-guard | `has_header: true` on a headerless CSV whose first row holds an email: warning attached, names unchanged, the warning text has no cell content | M1-rename: rewrite names when suspect |
 | T1-header-clean | header `first_name,email` raises no warning | M1-overeager: warn on any all-string header |
 | T1-header-titlecase | header `Name,City,State,Zip` raises no warning | M1-name-hints: label the guard frame with the header cells, so name hints fire |
@@ -669,30 +700,53 @@ change mints `v2` with a kept `v1` reader. Records will be read across engine
 versions, so a `scan-set/v1` sample joins the compatibility corpus. Two warning
 identities at one registry minor, assigned at merge. No determinism effect.
 
-### S1b-engine: declared-relationship integrity facts (engine, ~650 lines)
+**V2-LOG.** Cloud CSV dialect support remains deferred. `S3Source` and
+`GCSSource` have no dialect fields and use `extra="forbid"`; CONFIG-EXPLICIT
+explicitly leaves cloud outside its header and column-name rules, and the CLI
+cannot run cloud sources until CLI-CLOUD. S1a.2 therefore keeps only local
+format sample parity and makes no schema or cloud-reader change.
+
+### S1b-engine: declared-relationship integrity facts (engine, ~740 lines)
 
 Depends on S1a (branch from it) and on LIB L0 (the protected allocator).
 
 **Files.**
 - new `src/decoy_engine/profiling/_scan_integrity.py`: key-column streaming and
   the DuckDB anti-join.
+- `src/decoy_engine/profile/_csv_reader.py`: additive `columns` projection on
+  `read_csv_source` and `_read_csv_rows`; its existing unit test file covers
+  headered and headerless whole and chunked projection.
 - `scan_set.py`: wire the `relationships`, `integrity` and `spill_dir`
   keywords; add `RelationshipFacts`.
 - No registry edit: `warning.scan_key_type_mismatch` is registered by S1a
   (Revision 5, SM1). S1b branches from S1a's branch and ships in the same
   engine release.
 - tests: `tests/unit/profiling/test_scan_integrity.py`.
+- `docs/compatibility-contract.md` section 3.4 and `CHANGELOG.md`: document
+  the additive keyword-only projection and that order follows `columns`.
 
 **Behavior.**
 - Runs only when `integrity` is true and `relationships` is non-empty. Each
   relationship is validated through `RelationshipConfig`; tables it names must
   be in `sources` (they need not be in the profiling selection).
 - Streams only the key columns of local files: parquet through
-  `LazySource.iter_batches` with column projection; CSV through a new
-  key-column chunk reader on the existing policy-bound `CsvFileSource` handle
-  (pandas `chunksize` plus `usecols`); fixed width is read whole for its key
+  `LazySource.iter_batches` with column projection; CSV through
+  `read_csv_source(path, resolved_dialect, dtype=str, chunksize=<bounded size>,
+  columns=<relationship key columns>)`; fixed width is read whole for its key
   columns (no bounded fixed-width iterator exists) and the fact carries
   `exact: true, bounded: false`.
+- S1b extends CLI-DIALECT's public `read_csv_source` and its private
+  `_read_csv_rows` with one additive keyword-only `columns: Sequence[str] |
+  None = None`. The central reader translates it to pandas `usecols`; its
+  existing `read_csv_chunks` adapter remains the only pandas chunk seam.
+  Because pandas ignores `usecols` order, the central reader reorders every
+  returned whole frame or chunk to the exact `columns` sequence. Headerless
+  projection resolves declared names to positions inside the same reader and
+  applies the same final order. No code in `_scan_integrity.py` calls pandas,
+  opens a CSV handle or reads dialect keys. CLI-DIALECT AT-E8 and
+  CONFIG-EXPLICIT AT-E1-9 are the
+  guards; adding `pd.read_csv(..., chunksize=...)` in `_scan_integrity.py`
+  must turn them red.
 - Cloud sources: no integrity read in V1. A relationship whose parent or any
   child is an S3 or GCS source gets `status: "skipped_cloud"` and no counts,
   before any read. The cloud CSV readers have no bounded path
@@ -735,6 +789,7 @@ Depends on S1a (branch from it) and on LIB L0 (the protected allocator).
 | T5-type-mismatch | CSV string child against parquet int parent gives `key_type_mismatch`, no counts | M5-cast: cast both sides to string |
 | T5-undeclared | two tables with matching `*_id` names and no declared relationship produce no facts | M5-infer: derive edges from names |
 | T5-bounded | with `memory_limit` set to 64 MB and 40-character text keys (5 million child rows, about 200 MB of key data), the pass completes; a test seam that runs just before the result is fetched reads `duckdb_temporary_files()` and sees at least one file, and the spill directory was non-empty at that point | M5-pandas: do the anti-join in pandas `isin` |
+| T5-csv-choke | headered and headerless CSV relationships request key columns in reverse file order and receive that exact order through `read_csv_source`; a restrictive file policy remains in force for every chunk; the CSV sentries stay green | M5-direct-csv: call pandas with `chunksize` in `_scan_integrity.py`; M5-file-order: omit the final projection order |
 | T5-spill-dir | with `spill_dir` given, every DuckDB temp file appears under it, and the subdirectory is gone after the scan, also when the anti-join raises | M5-keep-spill: skip the `finally` cleanup |
 | T5-spill-default | with `spill_dir=None`, the spill directory comes from `protected_scratch_dir` (spy), is mode 0700 on POSIX, has the protected owner-only DACL on the Windows lane (read back with `GetNamedSecurityInfoW`), and is gone after the scan | M5-shared-tmp: pass the system temp directory itself; M5-mkdtemp: create the spill with `tempfile.mkdtemp` (also G-ONE-PROTECTED-DIR red) |
 | T5-spill-acl-fail | with the allocator forced to raise `scratch_acl_failed`, the scan stops with that code before any key column is read (reader spy) and no spill directory remains | M5-acl-continue: fall back to an unprotected directory |
@@ -744,7 +799,8 @@ Depends on S1a (branch from it) and on LIB L0 (the protected allocator).
 
 **Frozen-contract effects.** Additive fields on `ScanSet` and `scan-set/v1`
 (the `relationships` member) inside the same unreleased tag as S1a. No new
-reason identity. New optional `spill_dir` keyword (additive API).
+reason identity. New optional `spill_dir` and `read_csv_source(columns=...)`
+keywords (additive API).
 
 ### S1c-cli: `decoy scan` over many tables (CLI, two parts, ~1 270 lines)
 
@@ -755,7 +811,8 @@ relative paths, the integrity block, `load_scan_set` and its guard.
 Depends on S1a and S1b released and repinned, on LIB L1b.1 (the shared atomic
 writer for `--output`), and on CLI-DIALECT (handoff
 `p05-cli-dialect-build-handoff.md`); `--column-names-file` also depends on
-CONFIG-EXPLICIT (plan in progress).
+CONFIG-EXPLICIT E1. S1c.2 additionally depends on CONFIG-EXPLICIT E2 and C1
+for the sources-only declaration mode and config-load sentry.
 
 **Files.**
 - new `src/decoy/cli/_scan_multi.py`: argument resolution (positional files to
@@ -809,14 +866,33 @@ CONFIG-EXPLICIT (plan in progress).
   sources-only file holding `sources:` and an optional `relationships:` (the
   same keys and value shapes as a pipeline config; `version` optional and, when
   present, must be 2; any other top-level key is ignored in a full pipeline and
-  rejected in a sources-only file). Only those two keys are validated: the
-  sources mapping through a pydantic `TypeAdapter(dict[str,
-  SourceDescriptor])`, the relationships through `RelationshipConfig`. A full
-  pipeline is not validated as a `PipelineConfig`, so its cross-table rules
-  (tables and targets required) do not block a scan. Relative source paths
-  resolve against the config file's directory before `scan_sources`, the rule
-  `decoy run` uses. Selection defaults to every source; integrity runs for the
-  declared relationships. The CLI reference documents both shapes.
+  rejected in a sources-only file). The engine boundary validates only those
+  two keys through the existing `SourceDescriptor` and `RelationshipConfig`
+  schemas. A full pipeline is not validated as a `PipelineConfig`, so its
+  cross-table rules (tables and targets required) do not block a scan.
+- This is not an exemption from CONFIG-EXPLICIT. E2's one engine
+  `prepare_declared_sources` boundary gains a typed
+  `SourcesOnlyDeclaration` request carrying the source mapping and optional
+  relationships. It validates each `SourceDescriptor`, applies the shared CSV
+  dialect rules, resolves schema metadata and returns the same opaque prepared
+  capability, but deliberately does not apply the table and every-column
+  declaration checks because scan exists to discover those columns. The
+  normal `PipelineDeclaration` request remains unchanged. There is no boolean
+  mode flag, second source validator or CLI `TypeAdapter` copy.
+- CONFIG-EXPLICIT C1's `_config_load` resolves relative paths against the
+  config file's directory and passes the sources-only request to that engine
+  boundary. S1c.2 takes descriptors and relationships only from the returned
+  capability before `scan_sources`; it never rereads the YAML dict. Selection
+  defaults to every source; integrity runs for the declared relationships.
+  The CLI reference documents both accepted shapes.
+- AT-C8 sentry rule in CONFIG-EXPLICIT terms: every registered command that
+  both loads a pipeline config and can reach rows must consume the default
+  prepared capability, or be declared as a sources-only consumer and consume
+  a capability returned by the same `prepare_declared_sources` boundary. The
+  AST/import walk derives both cases from the mounted command tree. A direct
+  reader, direct `TypeAdapter`, or `scan_sources` call fed from the raw YAML is
+  a failure. Seed `scan --config` with a raw descriptor call and the sentry
+  must turn red.
 - Output: a summary card (table, rows scanned, columns, PII candidates, reid
   risk, key candidates), then an integrity block per declared relationship
   (`orders.customer_id -> customers.customer_id: 7 orphan rows (3 keys), 5 null,
@@ -847,7 +923,7 @@ CONFIG-EXPLICIT (plan in progress).
 | T2-headerless | `--no-header --column-names a,b` profiles the first row as data (needs CLI-DIALECT) | M2-drop-names: ignore `--column-names` |
 | T2-tsv | `x.tsv` is scanned as `format: csv` with a tab delimiter | M2-comma: treat `.tsv` as comma-separated |
 | T2-config-header | a config CSV source without explicit `has_header` exits 2 | M2-trust-default: accept the schema default |
-| T2-config-sources-only | a file with only `sources:` and `relationships:` scans, runs integrity, and exits 0; a full pipeline with no `targets` also scans | M2-full-validate: validate through `PipelineConfig` |
+| T2-config-sources-only | a file with only `sources:` and `relationships:` scans, runs integrity, and exits 0; a full pipeline with no `targets` also scans; both consume the `SourcesOnlyDeclaration` capability from `prepare_declared_sources` | M2-full-validate: validate through `PipelineConfig`; M2-boundary-bypass: feed `scan_sources` from the raw YAML |
 | T2-config-relative | a config in `cfg/` naming `data/a.csv` scans `cfg/data/a.csv` when run from another directory | M2-cwd: resolve against the current directory |
 | T2-schema-reject | `scan fields` on a dict with `scan_schema: "scan-set/v2"` exits 2 | M2-no-check: skip the tag check |
 | T2-load-bare | `fields`, `show` and `diff` given the same bare `scan-set/v1` file give the same table list; each call goes through `load_scan_set` (spy) | M2-own-reader: `diff` parses the file itself |
@@ -884,21 +960,31 @@ tests carry S1d's T6 intents and mutation names. A failed save warns and keeps
 the exit code (LIB 4.17). This reverses the earlier "persist only on
 `--output`" rule (H7b) by owner direction; the record is value-free.
 
-### S3-engine: `starter_config` and `scan_baseline` (engine, two parts, ~1 280 lines)
+### S3-engine: `starter_config` and `scan_baseline` (engine, two parts, ~1 330 lines)
 
 Parts (Totals): S3-engine.1 is the strategy port, the parity fixture, the
 `scan_baseline` field and the placeholder validator with its identity;
 S3-engine.2 is the `starter_config` builder.
 
-Depends on S1a and CONFIG-EXPLICIT (plan in progress).
+S3-engine.1 depends on S1a and CONFIG-EXPLICIT E2 because both edit
+`config/_tables.py`; S3-engine.2 depends on S3-engine.1.
 
 **Files.**
 - new `src/decoy_engine/profiling/starter_config.py`: `starter_config`,
   `StarterConfig`, `ColumnSuggestion`.
-- new `src/decoy_engine/profiling/_starter_strategies.py`: the detector to V2
-  `ColumnConfig` table ported from the CLI's `_INFERENCE_TABLE`, its REVIEW
-  copy and its `_NAMESPACE_REQUIRED_STRATEGIES` rule. The fallback stays
-  `redact` (owner answer Q9). The port is behavior-exact: the decision
+- `src/decoy_engine/profiling/recommendations.py`: extend the existing
+  `DEFAULT_STRATEGY_BY_DETECTOR` authority (`:32-101` at the plan base) into
+  one detector descriptor registry carrying both the existing platform
+  default and the starter inference fields. Keep
+  `DEFAULT_STRATEGY_BY_DETECTOR` as a derived compatibility view whose output
+  is unchanged. New `src/decoy_engine/profiling/_starter_inference.py` holds
+  only the decision algorithm ported from the CLI's
+  `_infer_strategy_for_column`; it reads the central descriptors and has no
+  detector table. The CLI `_INFERENCE_TABLE`
+  (`src/decoy/cli/_init_inference.py:71`) and
+  `_NAMESPACE_REQUIRED_STRATEGIES` (`src/decoy/cli/init.py:180`) are deleted
+  in S3a.1. The fallback stays `redact` (owner answer Q9). The port is
+  behavior-exact: the decision
   function keeps the CLI's `confidence_bucket` handling, its 0.1 ambiguity
   window and its integer-column rule as they are at CLI 8fba6af. Any later fix
   to those is its own change with a CHANGELOG line.
@@ -919,6 +1005,8 @@ Depends on S1a and CONFIG-EXPLICIT (plan in progress).
   REG-RENUMBER (section 5.0).
 - exports, `docs/compatibility-contract.md` (§3.4 config note),
   `CHANGELOG.md`; tests: `tests/unit/profiling/test_starter_config.py`,
+  `tests/unit/profiling/test_starter_inference.py`,
+  `tests/unit/test_scan_recommendations.py`,
   `tests/unit/config/test_scan_baseline.py`.
 
 **Behavior.**
@@ -993,7 +1081,7 @@ def starter_config(
 | T3-declared-kept | a declared relationship is copied unchanged | M3-edit: rewrite its `orphan_policy` |
 | T3-baseline | `scan_baseline.path` equals the given path; omitted when `None` | M3-always: emit an empty baseline |
 | T3-value-free | canary fixtures: no canary in `config` or `notes` | M3-leak: note quotes a top value |
-| T3-parity | every `FieldStats` case in the checked-in 8fba6af fixture (each detector, the fallback, an ambiguous pair inside and outside the 0.1 window, the integer rule, each `confidence_bucket` value) gets the same strategy, provider and `provider_config` from the engine function as the CLI gave | M3-drift: change one provider; M3-window: widen the ambiguity window to 0.2 |
+| T3-parity | every `FieldStats` case in the checked-in 8fba6af fixture (each detector, the fallback, an ambiguous pair inside and outside the 0.1 window, the integer rule, each `confidence_bucket` value) gets the same strategy, provider and `provider_config` from the engine function as the CLI gave; `DEFAULT_STRATEGY_BY_DETECTOR` still equals its base fixture and is derived from the same descriptors | M3-drift: change one descriptor's starter provider; M3-window: widen the ambiguity window to 0.2; M3-copy-table: add a detector literal map in `_starter_inference.py` |
 | T3-deterministic | two subprocesses with `PYTHONHASHSEED=1` and `PYTHONHASHSEED=2` render the same scan set; configs and notes are byte-equal | M3-order: iterate a set of table names |
 | T3-leading-zero-note | a column with a non-zero `leading_zero_count` gets the note with the count and no value | M3-no-note: drop the note |
 | T3-cloud-note | an S3 source gets the CLI-CLOUD REVIEW note | M3-cloud-silent: omit it |
@@ -1010,12 +1098,16 @@ at the minor REG-RENUMBER assigns. No new artifact tag.
 
 ### S3a-cli: `--emit-config`, `decoy init`, baseline ref (CLI, two parts, ~1 260 lines)
 
-Parts (Totals): S3a.1 is `_scaffold_yaml.py`, the `decoy init` rewrite and
-G-ONE-EMITTER; S3a.2 is `--emit-config`, the scan library root and the
-baseline ref, and the only part that edits `scan.py`.
+Parts (Totals): S3a.1 is `_scaffold_yaml.py`, the `decoy init` rewrite,
+renderer-level T4-validate and the renderer-level form of G-ONE-EMITTER.
+S3a.2 is `--emit-config`, the scan library root and the baseline ref, and
+moves G-ONE-EMITTER to its final two-command sentry. It is the only part that
+edits `scan.py`.
 
 Depends on LIB L2 (the saved record and `load_scan_set`'s envelope branch),
-LIB L1c (the ref lock), S3-engine released and repinned, and CLI-DIALECT.
+LIB L1c (the ref lock), S3-engine released and repinned, CLI-DIALECT, and
+CONFIG-EXPLICIT C1 and C2. C2 edits `init.py`'s `_build_scaffold_yaml`, which
+S3a.1 deletes after preserving AT-C6 behavior through the shared renderer.
 
 **Files.**
 - new `src/decoy/cli/_scaffold_yaml.py` (~420): the one renderer (takes
@@ -1089,11 +1181,21 @@ LIB L1c (the ref lock), S3-engine released and repinned, and CLI-DIALECT.
   them; when no relative path exists (another drive on Windows) the absolute
   path is written. Cloud URIs are written unchanged.
 
-**Acceptance tests and named mutations.**
+**Acceptance tests and named mutations.** S3a.1 does not invoke
+`decoy scan --emit-config`, which does not exist until S3a.2. It builds a
+three-table `StarterConfig`, calls `_scaffold_yaml.render` directly, writes the
+returned bytes to a temporary file and runs `decoy validate config`, `compile`
+and `preflight` on that file. Its renderer-level G-ONE-EMITTER assertion
+compares `decoy init` output with direct rendering of the same one-table
+starter. In S3a.2, the G-ONE-EMITTER test moves to
+`tests/sentry/test_one_emitter.py`: the AST/import walk proves both `init` and
+`scan --emit-config` reach `_scaffold_yaml.render`, and the three-table CLI
+case matches the direct renderer. There is one guard at each branch head, not
+two production mechanisms.
 
 | Test | Asserts | Mutation |
 |---|---|---|
-| T4-validate | the emitted YAML for a three-table scan with no declared relationship passes `decoy validate config`, `compile` and `preflight` (subprocess, exit 0); a hostile-name fixture (columns `yes`, `null`, `123`, `a: b`, `#id`, `it's`) loads back with every name unchanged | M4-target: no target for the last table; M4-unquoted: write names as plain scalars |
+| T4-validate | at renderer level in S3a.1, the YAML from a three-table `StarterConfig` with no declared relationship passes `decoy validate config`, `compile` and `preflight` (subprocess, exit 0); a hostile-name fixture (columns `yes`, `null`, `123`, `a: b`, `#id`, `it's`) loads back with every name unchanged | M4-target: no target for the last table; M4-unquoted: write names as plain scalars |
 | T4-runs | `decoy run` on the emitted YAML for a two-table fixture exits 0 and every unflagged column comes out redacted | M4-format: `format: csv` for a parquet source |
 | T4-join-kept | `--config` declares `orders.customer_id -> customers.customer_id` with `namespace: cust` (parquet integer keys); `decoy run` on the emitted YAML exits 0, the masked keys differ from the source keys, and every masked child key that had a parent still joins to a masked parent key | M3-key-redact (S3-engine): keys fall back to `redact` |
 | T4-placeholder-refused | the same with no namespace: `decoy validate config` and `decoy run` exit non-zero with `namespace_placeholder_unset` naming the column paths; after replacing the placeholder on every key column, both exit 0 | M4-strip-placeholder: emit no namespace on key columns |
@@ -1107,7 +1209,7 @@ LIB L1c (the ref lock), S3-engine released and repinned, and CLI-DIALECT.
 | T4-template-inert | `relationships` parses empty and the comment names every scanned table | M4-live: emit the template uncommented |
 | T4-baseline | the YAML's `scan_baseline.path` resolves to the record just written | M4-abs: write an absolute path from another directory |
 | T4-canary | no fixture data-cell canary in the YAML, or in init's output and error paths | M4-leak: REVIEW quotes a top value; M4-init-exc: init prints `str(exc)` |
-| G-ONE-EMITTER | init and scan bodies match after the header | M-EMIT |
+| G-ONE-EMITTER | in S3a.1, init and a direct one-table renderer call match after the header; in S3a.2, move the guard to the sentry and assert init and `scan --emit-config` both call that renderer and produce matching bodies | M-EMIT: add an inline YAML field in either command |
 | T4-atomic | a failing second table leaves no YAML file | M4-early: write before the last table |
 | T4-overwrite | existing target without `--yes` exits 2; same path as `--config` always exits 2 | M4-clobber |
 
@@ -1167,10 +1269,13 @@ permission helpers, record and manifest hashing.
 |---|---|---|---|
 | Private spill directory | engine `execution/out_of_core/_scratch.py:26-65` (`engine_scratch_root`, `scratch_root`, `private_dir`: `mkdtemp` plus `chmod`, removed on every exit, policy-checked for caller-named parents; no Windows DACL) | One engine allocator, LIB L0's `protected_scratch_dir` (owner-only DACL on Windows, fail closed). The out-of-core helpers move onto it in L0, and S1b calls it directly; no new temp-dir code here. A caller-named `spill_dir` keeps the ambient-policy rule. | G-ONE-PROTECTED-DIR (LIB L0, mutations M-PATH-MKDIR-INLINE and M-OS-MAKEDIRS-INLINE); T5-spill-dir, T5-spill-default, T5-spill-acl-fail |
 | DuckDB connection | `connect_duckdb` (`_duckdb.py:32`) | reused unchanged | existing |
+| CSV dialect and row reads | CLI-DIALECT Part E's `resolve_csv_dialect` and `read_csv_source`; chunk iteration is only `fileaccess.adapters.pandas.read_csv_chunks` | S1a uses the resolved dialect for the header guard and leading-zero reads; S1b adds only the reader's `columns` projection keyword and never calls pandas | CLI-DIALECT AT-E8 and CONFIG-EXPLICIT AT-E1-9; M5-direct-csv |
+| Config declaration before row reads | CONFIG-EXPLICIT E2 `prepare_declared_sources` and its opaque capability | add one typed `SourcesOnlyDeclaration` request at the same boundary; it skips table/column declaration checks but keeps source schema, dialect, path and file-access checks | CONFIG-EXPLICIT AT-C8 walks registered commands; M2-boundary-bypass |
 | Table name from a file path | engine `walks/cross_file.py:239` `_table_name_from_source_label` (strips directory and extension, keeps schema-qualified names) | S1c's normalization is a different rule (`[a-z0-9_]`, `t_` prefix, collision refusal) for a different input (positional paths only). One CLI function in `_scan_multi.py`; not merged with the walk helper, which keeps connector labels verbatim. Recorded as a deliberate second rule. | one site, no registry (cross-cutting rule: no registry for one site) |
 | Safe field record | CLI `scan.py:511` `_safe_field_record` | moves into the engine as part of `ScanSetCore` (S1a); the CLI copy is deleted in S1c | `ScanSetCore`; T1-core-model, T2-canary |
 | Saved-scan reading | `scan.py:383-405` reads file or stdin for `fields`, `show`, `diff` | one path-or-stdin reader, `load_scan_set`; `diff` retains the one-stdin-operand check | G-ONE-SCAN-READER (M-READ-INLINE); T2-stdin-legacy, T2-stdin-core, T2-stdin-double |
-| Pipeline YAML emission | CLI `init.py` (`_yaml_quote`, `_emit_column_yaml`, `_NAMESPACE_REQUIRED_STRATEGIES`) | moves into `_scaffold_yaml.py` (renderer) and the engine `_starter_strategies.py` (strategy table) | G-ONE-EMITTER (M-EMIT); T3-parity |
+| Detector-to-strategy facts | engine `profiling/recommendations.py:32-101` and CLI `_init_inference.py:71`, `init.py:180` | extend the engine authority to one descriptor per detector; derive existing `DEFAULT_STRATEGY_BY_DETECTOR` unchanged; delete both CLI copies; `_starter_inference.py` contains decision logic only | T3-parity plus an AST no-copy guard; M3-drift, M3-copy-table |
+| Pipeline YAML emission | CLI `init.py` (`_yaml_quote`, `_emit_column_yaml`) | moves into `_scaffold_yaml.py` (renderer) | G-ONE-EMITTER (M-EMIT) |
 | Reason codes | engine registry (`reasons/`), REG-RENUMBER at merge | new identities only through the registry | existing manifest and registry sentries |
 | Atomic file writes (`--output`, emitted YAML) | CLI `cli/ci.py:111-115`, `ci/debug.py:44-48`, `run.py:1622-1686`, `distribution/` (installer, layout, first install); `scan.py` has no atomic write today | S1c (`--output`) and S3a-cli (the YAML) write through LIB's shared atomic writer, `src/decoy/_atomic.py` (LIB L1b), instead of adding another copy. S1c therefore also depends on LIB L1b. | G-ONE-ATOMIC-WRITER (LIB L1b, mutation M-ATOMIC-INLINE) |
 | Record writes, hashing, retention, permissions | none in scan | all owned by LIB | LIB guards |
@@ -1188,7 +1293,6 @@ fixtures not counted). A slice over about 800 in total is cut into parts.
 | Slice | New or touched file | Expected size |
 |---|---|---|
 | S1a | engine `profiling/scan_set.py` (new) | ~380 |
-| S1a | engine `profile/_cloud_readers.py` (426) | +~25 |
 | S1a | engine `reasons/warning/_part1.py` (51) | +~20 |
 | S1b | engine `profiling/_scan_integrity.py` (new) | ~260 |
 | S1b | engine `profiling/scan_set.py` | +~60, stays under ~450 |
@@ -1196,7 +1300,8 @@ fixtures not counted). A slice over about 800 in total is cut into parts.
 | S1c | CLI `_scan_set_io.py` (new) | ~90 |
 | S1c | CLI `scan.py` (1442) | net 0 or less: the single-file path and `_safe_field_record` move out |
 | S3-engine | engine `profiling/starter_config.py` (new) | ~330 |
-| S3-engine | engine `profiling/_starter_strategies.py` (new) | ~260 |
+| S3-engine | engine `profiling/_starter_inference.py` (new) | ~170 |
+| S3-engine | engine `profiling/recommendations.py` (about 120) | about 300 after descriptors and the derived compatibility view |
 | S3-engine | engine `config/_scan_baseline.py` (new) | ~40 |
 | S3-engine | engine `config/_tables.py` (452), `_relationships.py` (49) | +~15 each |
 | S3a-cli | CLI `_scaffold_yaml.py` (new) | ~420 |
@@ -1212,15 +1317,15 @@ fixtures not counted). A slice over about 800 in total is cut into parts.
 | Slice or part | Repo | Lines (source + tests + docs) | Contents | Depends on |
 |---|---|---|---|---|
 | S1a.1-engine | engine | ~770 (420 + 300 + 50) | `scan_sources`, `ScanSetCore`, `scan_set_to_dict`, header guard, leading zeros, both warning identities; T1 tests except the two below | none |
-| S1a.2-engine | engine | ~200 (30 + 150 + 20) | cloud CSV dialect pass-through; T1-cloud-dialect, T1-sample-parity | S1a.1 |
-| S1b-engine | engine | ~650 (320 + 300 + 30) | integrity pass, spill through L0 | S1a (branch from it; one release), LIB L0 |
+| S1a.2-engine | engine | ~120 (0 + 100 + 20) | local CSV, TSV, fixed-width and Parquet sample parity; T1-sample-parity | S1a.1 |
+| S1b-engine | engine | ~740 (350 + 350 + 40) | integrity pass, CSV projection at the shared reader, spill through L0 | S1a (branch from it; one release), LIB L0 |
 | S1c.1-cli | CLI | ~620 (360 + 220 + 40) | positional files, header flags, names, card, `--json`, core-only `--output`; T2-multi, header-required, headerless, tsv, collision, atomic, parquet-compat, output-core, output-stream-core | S1a + S1b release and repin, LIB L1b.1, CLI-DIALECT |
-| S1c.2-cli | CLI | ~780 (340 + 410 + 30) | `--config` and `--table`, relative paths, integrity block, path-or-stdin `load_scan_set` bare and legacy branches with the 8fba6af fixture, G-ONE-SCAN-READER; T2-config-*, schema-reject, load-bare, legacy-*, stdin-*, integrity, canary | S1c.1; CONFIG-EXPLICIT for `--column-names-file` |
+| S1c.2-cli | CLI | ~780 (340 + 410 + 30) | `--config` and `--table`, CONFIG-EXPLICIT sources-only capability, relative paths, integrity block, path-or-stdin `load_scan_set` bare and legacy branches with the 8fba6af fixture, G-ONE-SCAN-READER; T2-config-*, schema-reject, load-bare, legacy-*, stdin-*, integrity, canary | S1c.1; CONFIG-EXPLICIT E1, E2 and C1 |
 | S1d-cli | none | 0 | replaced by LIB L2 | |
-| S3-engine.1 | engine | ~600 (430 + 130 + 40) | strategy-table port, parity fixture and capture script, `scan_baseline` field, placeholder validator and its identity; T3-parity, config-field, placeholder-error-value-free | S1a, CONFIG-EXPLICIT (plan in progress) |
+| S3-engine.1 | engine | ~650 (470 + 140 + 40) | central detector descriptors and starter decision port, parity fixture and capture script, `scan_baseline` field, placeholder validator and its identity; T3-parity, config-field, placeholder-error-value-free | S1a, CONFIG-EXPLICIT E2 |
 | S3-engine.2 | engine | ~680 (340 + 320 + 20) | `starter_config` builder; T3-valid to T3-cloud-note, key-hash, placeholder | S3-engine.1 |
-| S3a.1-cli | CLI | ~700 (480 + 190 + 30) | `_scaffold_yaml.py`, `decoy init` rewrite, G-ONE-EMITTER; T4-validate, template-inert, headerless, canary | LIB L2, S3-engine release and repin, CLI-DIALECT |
-| S3a.2-cli | CLI | ~560 (190 + 340 + 30) | `--emit-config`, scan library root, baseline ref; the remaining T4 tests of S3a | S3a.1, LIB L1c |
+| S3a.1-cli | CLI | ~700 (480 + 190 + 30) | `_scaffold_yaml.py`, `decoy init` rewrite, renderer-level G-ONE-EMITTER and T4-validate, template-inert, headerless, canary | LIB L2, S3-engine release and repin, CLI-DIALECT, CONFIG-EXPLICIT C1 and C2 |
+| S3a.2-cli | CLI | ~560 (190 + 340 + 30) | `--emit-config`, final G-ONE-EMITTER sentry, scan library root, baseline ref; the remaining T4 tests of S3a | S3a.1, LIB L1c |
 | S3b-cli | CLI | ~330 (185 + 120 + 25) | `--compare`, preflight | S3a.2, LIB L2 |
 | CLI-DIALECT | CLI | sized in its handoff | | none (branch from CLI main) |
 
