@@ -643,28 +643,28 @@ SHARED_LEDGER = [
         "sha256": "957ed128539114a8d15c4e03ac77f486f9abee53294fb6b1aadbba536f76ca21",
         "other_repo": "louiskeep/decoy",
         "other_path": "tests/sentry/ci_scan/__init__.py",
-        "other_commit": "b328d70b6a164129a8f3e798a7643435e30dfe74",
+        "other_commit": "d60d1fa1e183f3ed4787d96b24fbe944dd666707",
     },
     {
         "path": "tests/sentry/ci_scan/_shell_tokens.py",
         "sha256": "38e9fddea1c22fdc56017b492193f38649fa448aa04461557645a5921e701b78",
         "other_repo": "louiskeep/decoy",
         "other_path": "tests/sentry/ci_scan/_shell_tokens.py",
-        "other_commit": "b328d70b6a164129a8f3e798a7643435e30dfe74",
+        "other_commit": "d60d1fa1e183f3ed4787d96b24fbe944dd666707",
     },
     {
         "path": "tests/sentry/ci_scan/_identity.py",
         "sha256": "82e09cfd65539afb6289750017a79dbcb5663116010309e821bc699e2f48b096",
         "other_repo": "louiskeep/decoy",
         "other_path": "tests/sentry/ci_scan/_identity.py",
-        "other_commit": "b328d70b6a164129a8f3e798a7643435e30dfe74",
+        "other_commit": "d60d1fa1e183f3ed4787d96b24fbe944dd666707",
     },
     {
         "path": "tests/sentry/ci_scan/test_identity.py",
         "sha256": "ea864e19cd4ea0804f792520e23dec5fd181ebaae1bee8681e5cb80be97fea30",
         "other_repo": "louiskeep/decoy",
         "other_path": "tests/sentry/ci_scan/test_identity.py",
-        "other_commit": "734a3b69e3c47b545c547bd29012fb5c0487f1ab",
+        "other_commit": "d60d1fa1e183f3ed4787d96b24fbe944dd666707",
     },
 ]
 
