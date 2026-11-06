@@ -168,6 +168,7 @@ def test_seeded_findings() -> None:
         # `pip sync` entry in SYNC_SUBCOMMANDS finds these.
         "uv pip --system sync requirements.txt": ["uv sync without --frozen", "installs outside"],
         "uv pip -q sync requirements.txt": ["uv sync without --frozen", "installs outside"],
+        "uv pip --python p sync requirements.txt": ["uv sync without --frozen", "installs outside"],
         "uv --directory run sync --frozen": ["installs outside"],
         "bash scripts/dev/bootstrap.sh": ["installs outside"],
         "pip install .[dev]": ["project install"],
@@ -209,6 +210,8 @@ def test_seeded_clean_jobs() -> None:
         ("pip install ruff==0.15.22", "ruff check src"),
         (LE, "uv pip install --python x build==1.2.2"),
         (LE, "uv run --frozen pytest"),
+        # `sync` is the value of --directory here; only `run` is the subcommand.
+        (LE, "uv --directory sync run --frozen pytest"),
         ("pip install ./decoy-engine-native",),
         ({"uses": SETUP_UV_USES}, "uvx --python 3.12 pip-audit==2.10.1 -r x"),
     ]
