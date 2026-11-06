@@ -653,10 +653,10 @@ SHARED_LEDGER = [
     },
     {
         "path": "tests/sentry/ci_scan/test_identity.py",
-        "sha256": "82a95e1fcaabc7248cc9d1abb883ac104bb3e018854789202813d484cabb5b93",
+        "sha256": "ea864e19cd4ea0804f792520e23dec5fd181ebaae1bee8681e5cb80be97fea30",
         "other_repo": "louiskeep/decoy",
         "other_path": "tests/sentry/ci_scan/test_identity.py",
-        "other_commit": "b328d70b6a164129a8f3e798a7643435e30dfe74",
+        "other_commit": "734a3b69e3c47b545c547bd29012fb5c0487f1ab",
     },
 ]
 
