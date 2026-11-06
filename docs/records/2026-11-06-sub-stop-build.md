@@ -68,7 +68,7 @@ Sphinx was not run (no docs extras on the VM venv at that point).
 
 ## Files vs allowed list
 
-All files are on the list. Extra: none. `tests/sentry/test_module_size.py` changes three values only.
+All files are on the list except these, each approved by the orchestrator or required by review: `tests/unit/execution/test_auto_chunk_bookkeeping.py` (pin 351 to 356), `execution/native/_dispatch.py`, `plan/validate/_consolidator.py`, `tests/unit/plan/test_validate.py`, `tests/sentry/test_subset_run_guard_entries.py`. `tests/sentry/test_module_size.py` changes four values only (the `_dispatch.py` one is from review).
 
 ## Named limit
 
@@ -86,6 +86,10 @@ first chunk before E6 refuses. CLI and platform handling beyond the `ConfigError
 comment gains "-> 356 (SUB-STOP guard)"; `tests/sentry/test_subset_run_guard_entries.py` fails when a public
 `run_*`/`compile_*` entry that takes a `config` is neither guarded nor named exempt. The V2-LOG item about
 `run_native_or_oracle_chunked` is closed.
+
+`validate_plan` (`plan/validate/_consolidator.py`) now catches the `compile_plan` refusal and returns
+`PlanValidationResult(ok=False, plan=None)` with `PlanCheckError(code=subset_run_unsupported, path=subset)` instead of
+letting it escape (Codex V1); regression in `tests/unit/plan/test_validate.py`.
 
 ## V2-LOG additions
 
