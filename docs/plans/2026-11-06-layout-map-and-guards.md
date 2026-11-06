@@ -27,6 +27,18 @@ requires mapped sub-packages. F7 freezes engine `scripts/` at 26. F8 removes ung
 names the strategy-family pattern. F10 records the D3 process exception. F11 parameterizes census
 messages and limits byte-identical compatibility to size messages.
 
+Revision note r3 (Codex fix to green, 2026-11-06): H1 gives the layer check its own gate step and
+lock-synced `.venv-layers`, keeps the engine certified `dev+lint+vault+cloud` environment exact,
+and covers local gates, Mac and VM T3, and post-CI-E1 GitHub CI. H2 chooses option (a): exact layer
+membership is a guarded snapshot in `test_import_layers.py`, while only ignore keys use X0a; its
+acceptance cases prove that a reviewed placement and a downward tier move can pass. M1 gives
+`map_paths` an explicit base directory for repo-relative CODEMAP paths and package-relative
+`_MAP.md` paths. M2 marks layer files as `(target)` until E3 and C3 create them. L1 makes each CLI
+numeric source emit `max` and makes both ratchet copies use one vendored meta-test case table. L2
+expands both draft maps to the grammar's five columns. The whole-plan DESIGN audit also moves all
+new sentry modules into a cohesive `tests/sentry/layout/` subpackage and makes the existing
+manifest guard recursive, so neither repo grows an over-cap direct sentry package.
+
 ## 1. Guarantee and non-goals
 
 LAYOUT promises, in each repo:
@@ -34,27 +46,34 @@ LAYOUT promises, in each repo:
 1. A "Where things go" section in `CODEMAP.md`: one line per kind of module (owning package, file
    naming, where its tests and sentries live), written from today's code. Where today is
    inconsistent, the line states the target and lists today's exceptions. A sentry fails when the
-   section names a path that does not exist.
+   section names a concrete path that does not exist; a `(target)` path checks its existing parent.
 2. A fan-out ratchet: a source package holds at most 25 direct modules. Engine `scripts/` follows
    the same rule. A package over 25 today is frozen at its exact count (shrink-only) and takes new
    modules only in a sub-package the map names.
 3. Import-layer contracts checked by import-linter, declared from today's import graph, with
    today's violations in an exact ignore list that can only shrink. `exhaustive = true` means a new
-   top-level package or module fails until it is placed in a layer. Registered baseline keys include
-   `<tier>:<module>`, so moving a module between tiers is a ratcheted replacement, not a silent edit.
+   top-level package or module fails until it is placed in a layer. The layout subpackage's
+   `test_import_layers.py` pins an
+   exact ordered layer-expression snapshot, including `:` and `|` separators, and compares it with
+   `.importlinter`, so a reviewed placement or tier
+   move updates those two artifacts together and an unreviewed mismatch fails.
 4. CLI file size: about 800 lines, exact-match allowlist for today's oversize files, using the
    engine census logic (no third ratchet).
-5. Every new allowlist (size, fan-out, layer ignores) is a registered X0a baseline. Numeric
+5. Every new allowlist (size, fan-out, layer ignores) is a registered X0a baseline. Layer
+   membership is not an X0a key set. Numeric
    baseline entries carry `max`; the existing merge-base ratchet (`scripts/dev/ratchet_check.py`)
    fails when a head value exceeds its base value as well as when a key is added. This is an about
    10-line extension to shared `_ratchet.check`, not a second ratchet.
 
 Non-goals (a review finding here is a follow-up, not a blocker):
 
-- No file moves, splits or new sub-packages. H-1 does those (E1 to E8, C1, C3). LAYOUT adds the
-  map and the guards only.
+- No product-source file moves, splits or new sub-packages. H-1 does those (E1 to E8, C1, C3).
+  LAYOUT adds the map, guards and one test-only `tests/sentry/layout/` subpackage required by the
+  placement cap.
 - No change to the engine size policy (goal 600, max 700, `test_module_size.py:59`).
-- No fan-out limit on `tests/` or `docs/` (owner question Q3).
+- No broad fan-out sentry on `tests/` or `docs/` (owner question Q3). This plan still obeys the
+  placement rule: engine `tests/sentry/` is already over 25 direct modules, and the CLI would cross
+  25 with these additions, so all new layout sentries live in `tests/sentry/layout/`.
 - No size cap on CLI test files (the engine census also skips `tests/`).
 - No new rule for "the CLI reaches the engine only through its public API". The CLI's
   `test_engine_internal_boundary.py` already owns it, and sees more than import-linter can
@@ -83,6 +102,8 @@ Fan-out (direct `*.py` files, `__init__.py` not counted; sub-packages not counte
 | `E:src/decoy_engine/` (root) | 21 modules, 34 sub-packages | under; new top-level children go through `exhaustive` layers |
 | `C:src/decoy/cli/` | 31 | frozen |
 | `C:src/decoy/distribution/` | 13 | under |
+| `E:tests/sentry/` | 48 direct modules | frozen for placement; new layout sentries use `layout/` |
+| `C:tests/sentry/` | 19 direct modules | additions use `layout/` rather than crossing 25 |
 
 LAYOUT freezes engine `scripts/` rather than making it a non-goal because it is already above the
 package cap and is the active placement surface for new developer tooling. Excluding it would
@@ -151,25 +172,37 @@ Decisions:
 
 - **D1. One census mechanism, vendored.** The engine's `_size_verdict` already implements the
   wanted policy (recorded value must equal the measured value; over the hard limit may only
-  shrink). LAYOUT moves it, unchanged in behavior, into `E:tests/sentry/_layout.py` as one
+  shrink). LAYOUT moves it, unchanged in behavior, into `E:tests/sentry/layout/_layout.py` as one
   `ratchet_verdict` that takes the measured value, recorded value, goal, limit, message noun,
   allowlist name and fix advice. Size (engine 600/700, CLI 800/800) passes today's `LOC`,
   `ALLOWLIST` and `Decompose` wording so its messages stay byte-identical. Fan-out passes its own
   accurate terms. Both call the same verdict function. The CLI vendors `_layout.py`
   byte-identical from the engine merge commit. Why vendoring and not one tool: a shared package
   would be a fourth repo or a dev-only module inside the engine wheel (the CLI's own boundary
-  sentry bans private engine names, rightly). Why the engine is the source: the CLI already
-  depends on the engine and the census was born there. Drift guard: `tests/sentry/test_vendored_files.py`
+  sentry bans private engine names, rightly). Both repos import through the layout subpackage's
+  `__init__.py`, not another package's private module. Why the engine is the source: the CLI already
+  depends on the engine and the census was born there. Drift guard:
+  `tests/sentry/layout/test_vendored_files.py`
   in each repo pins the file's sha256 and the engine source commit, the X0a-h pattern
   (`P:docs/plans/2026-11-05-x0a-h-ratchet-hardening.md` E1, C1, known limit L13: no cross-repo
   check). X0a-h, when it returns, adds its rows to this same pin file instead of a new
-  `test_ratchet_vendor.py`.
+  `test_ratchet_vendor.py`. The same pin file owns `_ratchet_cases.py`; no second vendor mechanism
+  is added.
 - **D2. One ratchet.** Every new allowlist is a registered X0a baseline (`sentry_registry.toml`
   row, `_baseline_sources.py` source, generated JSON). Numeric entries include their live `max`.
   Shared `_ratchet.check` keeps its key comparison and adds one value comparison: a matching head
   entry with `max` above the base entry is red. No new ratchet or growth check is written.
   Allowlist constants are named `*_ALLOWLIST` so `test_baseline_registry.py` (`LIST_NAME`, engine
   `:26`, CLI `:29`) catches any copy that skips the registry.
+- **D2a. Layer membership uses option (a), an exact guarded snapshot.** Each
+  `tests/sentry/layout/test_import_layers.py` holds an explicit exact ordered layer-expression
+  constant, including the `:` and `|` sibling separators. The test parses
+  its repo's `.importlinter` and fails unless the constant and config agree exactly. A legitimate new
+  package or downward tier move edits `.importlinter` and the snapshot in the same reviewed diff.
+  Membership never enters the X0a baseline, because X0a intentionally rejects a new key on an
+  existing sentry id. Only exact ignore-import keys go through X0a and remain shrink-only. The two
+  representations are justified because `.importlinter` is the tool input and the snapshot is the
+  review pin; their equality test is the guard against drift.
 - **D3. No import-linter contract for CLI to engine.** import-linter sees import statements only,
   and collapses an external package to its top-level name unless both packages are roots. The
   CLI sentry already bans `decoy_engine.internal` and `_private` names through imports, attribute
@@ -188,30 +221,35 @@ Decisions:
   baseline's key format (`public-import-boundary`), which the ratchet reads as a replacement that
   adds keys. Recorded as follow-up FU-1; the layers contract does not restate it.
 - **D5. Map path checking is one function.** The engine already checks `_MAP.md` paths. The same
-  function (`_layout.map_paths`) reads the CODEMAP "Where things go" section in both repos.
+  function (`_layout.map_paths(markdown, base, columns)`) reads the CODEMAP "Where things go"
+  section in both repos. CODEMAP callers pass the repo root as `base`; the engine `_MAP.md` caller
+  passes `src/decoy_engine`. Resolution is always relative to the explicit base.
 - **D6. Config file `.importlinter` (INI) at the repo root**, not `pyproject.toml`, so shrinking
   an ignore list never edits the file `scripts/dev/lock.sh --check` compiles from (CLI).
 
-Custom code that remains: `_layout.py` (about 110 lines: `loc`, `ratchet_verdict`,
-`direct_modules`, `map_paths`, `ignore_keys`), two fan-out tests, one CLI size test, two thin
-import-linter test wrappers. Each is smaller than the tool it would replace.
+Custom code that remains: `tests/sentry/layout/_layout.py` (about 110 lines: `loc`, `ratchet_verdict`,
+`direct_modules`, `map_paths`, `ignore_keys`), `_ratchet_cases.py` (about 20 lines), two fan-out
+tests, one CLI size test, and two thin import-linter test wrappers. Each is bounded and cohesive.
 
 ## 4. The layout maps
 
 Each repo's `CODEMAP.md` gets a `## Where Things Go` section after "Where Do I Find...". Format:
 a table, one row per kind of module: `| Kind | Goes in | File naming | Tests | Sentries and registries |`.
 The first cell of each row is plain text; path cells are backticked so `map_paths` can check them.
-The grammar is exact: callers pass the repo root and the zero-based table columns to inspect;
+The grammar is exact: callers pass an explicit base directory and the zero-based table columns to inspect;
 CODEMAP checks `Goes in`, `File naming`, `Tests`, and `Sentries and registries`, while `_MAP.md`
-passes its existing path column. Every checked path is repo-relative. In a checked code span, a
-`<...>` placeholder segment or a segment containing `*` truncates validation to the existing
+passes `src/decoy_engine` and its existing path column. Every CODEMAP path is repo-relative and
+every `_MAP.md` path is package-relative. In a checked code span, a segment containing a `<...>`
+placeholder or `*` truncates validation to the existing
 parent before that segment. A code span with neither `/` nor `.py` is a symbol and is skipped.
 A future path is followed immediately by `(target)` and validates its existing parent. Every
 other concrete path must exist. Thus symbols such as `__all__` and `SCALAR_HANDLERS` are not
-paths, while a bare file name such as `sdk.py` must be written with its repo-relative prefix.
+paths. A bare `_MAP.md` file such as `sdk.py` resolves below `src/decoy_engine`; the CODEMAP form
+is `src/decoy_engine/sdk.py` because its base is the repo root.
 `_MAP.md` (engine) stays the per-package index; the new section says where a new thing goes and
 does not restate package descriptions (one place per fact). Layer membership is stated once, in
-`.importlinter`; the section links to it.
+`.importlinter`; the test carries only its guarded exact review snapshot, and the section links to
+the config.
 
 Engine rows (draft; the builder confirms each path against the build base):
 
@@ -219,31 +257,31 @@ The builder also inventories every direct sub-package below each frozen package 
 repo-relative path to the applicable row if this draft does not already show it. The fan-out
 guard compares that live inventory with the map, so the draft cannot silently omit one.
 
-| Kind | Goes in | Note |
-|---|---|---|
-| Public API | `src/decoy_engine/__init__.py` `__all__`; public facades at the root (`src/decoy_engine/sdk.py`, `src/decoy_engine/providers.py`, `src/decoy_engine/errors.py`, `src/decoy_engine/identifiers.py`) | facade list is `PUBLIC_BOUNDARY_FILES`; tests `tests/sentry/test_public_import_boundary.py` |
-| Config models | `src/decoy_engine/config/` | tests `tests/unit/config/` |
-| Plan compile and checks | `src/decoy_engine/plan/`; plan checks `src/decoy_engine/plan/_checks_<topic>.py` | frozen at 30: new checks go in `src/decoy_engine/plan/checks/` (target) |
-| Pipeline spine and routes | `src/decoy_engine/execution/` | frozen at 104: new route modules go in the cluster sub-package named for them: `src/decoy_engine/execution/chunked/` (target), `src/decoy_engine/execution/pipeline/` (target), `src/decoy_engine/execution/sequential/` (target), or `src/decoy_engine/execution/isolated/` (target); Q1 |
-| Masking strategy handler | `src/decoy_engine/execution/_strategies/_<strategy>.py`, registered in `SCALAR_HANDLERS` | frozen at 29: the next family goes in `src/decoy_engine/execution/_strategies/<family>/` (target), per Q2 |
-| Native companion bridge | `src/decoy_engine/execution/native/` | frozen at 55: new modules in `src/decoy_engine/execution/native/protocol/` or `src/decoy_engine/execution/native/draw/` (target), `src/decoy_engine/execution/native/chunked/` (target) |
-| Out-of-core FK | `src/decoy_engine/execution/out_of_core/` | frozen at 44: new modules in `src/decoy_engine/execution/out_of_core/stream/` (target) |
-| Physical seam | `src/decoy_engine/execution/physical/` | new or changed modules allowlisted in `tests/sentry/test_physical_seam_disconnection.py`; tests `tests/physical/` |
-| Arrow kernels | `src/decoy_engine/kernel/` | |
-| Transforms | `src/decoy_engine/transforms/` | at 25: the next module creates a sub-package |
-| Generation | `src/decoy_engine/generation/`, pools in `src/decoy_engine/generation/pool/` | tests `tests/generation/`, `tests/unit/generation/` |
-| Providers | `src/decoy_engine/providers_v2/`, registered in `src/decoy_engine/providers_v2/_registry.py` | |
-| Detectors, profiling | `src/decoy_engine/detection/`, `src/decoy_engine/profiling/` | |
-| Connectors | `src/decoy_engine/connectors/<name>.py` on the `src/decoy_engine/sdk.py` base classes | tests `tests/connectors/` |
-| Reason codes | `src/decoy_engine/reasons/<namespace>/` | registry `src/decoy_engine/reasons/_registry.py`; reason sentries |
-| Versioned contracts | `src/decoy_engine/contracts/<contract>.py` | |
-| Secret providers, file access | `src/decoy_engine/secret_providers/`, `src/decoy_engine/fileaccess/` | registries `tests/sentry/file_access_registry.toml`, `tests/sentry/file_access_modules.toml` |
-| Foundation (errors, reasons adapters, private leaves) | `src/decoy_engine/_<name>.py` | bottom layer in `./.importlinter` |
-| Sentry test | `tests/sentry/test_<rule>.py`, helpers `tests/sentry/_<name>.py` | listed in `tests/sentry/test_sentry_manifest.py` `SENTRIES`; allowlist named `*_ALLOWLIST`; baseline `tests/sentry/baselines/<sentry-id>.json`, row in `scripts/dev/sentry_registry.toml`, source in `tests/sentry/_baseline_sources.py` |
-| Layer contracts | `./.importlinter` beside `./pyproject.toml` | `tests/sentry/test_import_layers.py` |
-| Dev tooling | `scripts/dev/`; one-off tools `scripts/<topic>/` | root `scripts/` frozen at 26; sized by `tests/sentry/test_module_size.py` |
-| Plans, decisions, records | `docs/plans/YYYY-MM-DD-<slug>.md`, `docs/decisions/`, `docs/records/YYYY-MM-DD-<slug>.md` | undated older plans are listed as exceptions |
-| Unit tests | `tests/unit/<package>/` (target) mirroring `src/` | exceptions today: top-level `tests/parity/`, `tests/native/`, `tests/physical/`, `tests/fileaccess/`, `tests/secret_providers/`, `tests/generation/`, `tests/connectors/`, and loose files in `tests/unit/` |
+| Kind | Goes in | File naming | Tests | Sentries and registries |
+|---|---|---|---|---|
+| Public API | `src/decoy_engine/` | `src/decoy_engine/__init__.py`; root facades `src/decoy_engine/sdk.py`, `src/decoy_engine/providers.py`, `src/decoy_engine/errors.py`, `src/decoy_engine/identifiers.py` | unit tests for the owning surface | facade list `PUBLIC_BOUNDARY_FILES`; `tests/sentry/test_public_import_boundary.py` |
+| Config models | `src/decoy_engine/config/` | `src/decoy_engine/config/_<topic>.py` | `tests/unit/config/` | - |
+| Plan compile and checks | `src/decoy_engine/plan/`; new checks in `src/decoy_engine/plan/checks/` (target) | `src/decoy_engine/plan/_checks_<topic>.py` today | plan unit tests | fan-out freeze at 30 |
+| Pipeline spine and routes | `src/decoy_engine/execution/`; new route clusters in `src/decoy_engine/execution/chunked/` (target), `src/decoy_engine/execution/pipeline/` (target), `src/decoy_engine/execution/sequential/` (target), or `src/decoy_engine/execution/isolated/` (target), per Q1 | route-specific private names | execution tests | fan-out freeze at 104 |
+| Masking strategy handler | `src/decoy_engine/execution/_strategies/`; next family in `src/decoy_engine/execution/_strategies/<family>/` (target), per Q2 | `src/decoy_engine/execution/_strategies/_<strategy>.py` | strategy tests | `SCALAR_HANDLERS`; fan-out freeze at 29 |
+| Native companion bridge | `src/decoy_engine/execution/native/`; new modules in `src/decoy_engine/execution/native/protocol/` (target), `src/decoy_engine/execution/native/draw/` (target), or `src/decoy_engine/execution/native/chunked/` (target) | private by bridge concern | native tests | fan-out freeze at 55 |
+| Out-of-core FK | `src/decoy_engine/execution/out_of_core/`; new stream modules in `src/decoy_engine/execution/out_of_core/stream/` (target) | private by stage | out-of-core tests | fan-out freeze at 44 |
+| Physical seam | `src/decoy_engine/execution/physical/` | private by seam concern | `tests/physical/` | `tests/sentry/test_physical_seam_disconnection.py` |
+| Arrow kernels | `src/decoy_engine/kernel/` | by kernel operation | kernel tests | - |
+| Transforms | `src/decoy_engine/transforms/`; next module creates a named sub-package | by transform | transform tests | fan-out limit 25 |
+| Generation | `src/decoy_engine/generation/`; pools in `src/decoy_engine/generation/pool/` | by generation concern | `tests/generation/`, `tests/unit/generation/` | - |
+| Providers | `src/decoy_engine/providers_v2/` | by provider | provider tests | `src/decoy_engine/providers_v2/_registry.py` |
+| Detectors, profiling | `src/decoy_engine/detection/`, `src/decoy_engine/profiling/` | by detection or profiling concern | owning package tests | - |
+| Connectors | `src/decoy_engine/connectors/` | `src/decoy_engine/connectors/<name>.py` on `src/decoy_engine/sdk.py` base classes | `tests/connectors/` | connector entry-point checks |
+| Reason codes | `src/decoy_engine/reasons/<namespace>/` | by reason namespace | reason tests | `src/decoy_engine/reasons/_registry.py`; reason sentries |
+| Versioned contracts | `src/decoy_engine/contracts/` | `src/decoy_engine/contracts/<contract>.py` | contract tests | contract sentries |
+| Secret providers, file access | `src/decoy_engine/secret_providers/`, `src/decoy_engine/fileaccess/` | by provider or access concern | owning package tests | `tests/sentry/file_access_registry.toml`, `tests/sentry/file_access_modules.toml` |
+| Foundation (errors, reasons adapters, private leaves) | `src/decoy_engine/` | `src/decoy_engine/_<name>.py` | owning surface tests | bottom layer in `./.importlinter` (target) |
+| Sentry test | existing rules in `tests/sentry/`; layout rules in `tests/sentry/layout/` | `test_<rule>.py`; helper `_<name>.py` | self-tests and seeded mutations | `tests/sentry/test_sentry_manifest.py` recursively walks sentries; `*_ALLOWLIST`; `tests/sentry/baselines/<sentry-id>.json`; `scripts/dev/sentry_registry.toml`; `tests/sentry/_baseline_sources.py` |
+| Layer contracts | `./.importlinter` (target) beside `./pyproject.toml` | `.importlinter` | `tests/sentry/layout/test_import_layers.py` (target) | exact membership snapshot in the test; ignore baseline `tests/sentry/baselines/import-layers.json` (target) |
+| Dev tooling | `scripts/dev/`; one-off tools in `scripts/<topic>/` | by tool concern | tool tests | root `scripts/` freeze at 26; `tests/sentry/test_module_size.py` |
+| Plans, decisions, records | `docs/plans/`, `docs/decisions/`, `docs/records/` | `docs/plans/YYYY-MM-DD-<slug>.md`; `docs/records/YYYY-MM-DD-<slug>.md` | - | undated older plans are listed exceptions |
+| Unit tests | `tests/unit/<package>/` (target) mirroring `src/` | `test_<behavior>.py` | - | current exceptions: `tests/parity/`, `tests/native/`, `tests/physical/`, `tests/fileaccess/`, `tests/secret_providers/`, `tests/generation/`, `tests/connectors/`, and loose files in `tests/unit/` |
 
 Known inconsistencies listed as exceptions (not fixed here): `execution/_errors.py` and 14 other
 `execution` modules are imported from lower tiers (they are foundation code living in `execution/`; ignore list in section 5); `__version__`
@@ -251,24 +289,24 @@ read from the root facade by 7 modules (target: a leaf version module).
 
 CLI rows (draft):
 
-| Kind | Goes in | Note |
-|---|---|---|
-| Command module | `src/decoy/cli/<command>.py`, registered in `src/decoy/__main__.py` | frozen at 31: a new command or helper goes in a named sub-package (Q4); tests `tests/e2e/test_<command>*.py` (CliRunner or subprocess), unit tests `tests/unit/` |
-| Command-private helpers | `src/decoy/cli/_<name>.py` | same freeze |
-| Source readers and target writers | `src/decoy/cli/io/` (target) | rule applies now; `src/decoy/cli/_sources.py` is today's exception and moves to `src/decoy/cli/io/_sources.py` (target) under H-1 |
-| Exit codes | `src/decoy/cli/exit_codes.py` | target layer is below `src/decoy/ci/` and `src/decoy/ui/` (imported by both; listed in the layer ignores) |
-| Python API | `src/decoy/api.py` | |
-| CI integration | `src/decoy/ci/` | command wrapper stays `src/decoy/cli/ci.py` |
-| Terminal output | `src/decoy/ui/` | |
-| Shipped install and update | `src/decoy/distribution/` | |
-| Build-host release tools | `packaging_tools/` (not shipped) | sized by `tests/sentry/test_module_size.py` |
-| Packaged templates | `src/decoy/templates/` | |
-| Private cross-command helpers | `src/decoy/_<name>.py` (`src/decoy/_mask_secret.py`, `src/decoy/_native_gate.py`, LIB's `src/decoy/_atomic.py`) | bottom layer |
-| Notifications, telemetry | `src/decoy/notify.py`, `src/decoy/telemetry.py` | |
-| Sentry test | as engine row | |
-| Layer contracts | `./.importlinter` | |
-| Dev tooling | `scripts/dev/`, release `scripts/release/` | |
-| Roadmap, plans, records | `docs/ROADMAP.md`, `docs/roadmap/`, `docs/plans/`, `docs/records/` | |
+| Kind | Goes in | File naming | Tests | Sentries and registries |
+|---|---|---|---|---|
+| Command module | `src/decoy/cli/`; new commands go in a named sub-package per Q4 | `src/decoy/cli/<command>.py` | `tests/e2e/test_<command>*.py` using CliRunner or subprocess; `tests/unit/` | `src/decoy/__main__.py`; fan-out freeze at 31 |
+| Command-private helpers | a named sub-package below `src/decoy/cli/` for new work | `src/decoy/cli/_<name>.py` is the current exception | `tests/unit/` | fan-out freeze at 31 |
+| Source readers and target writers | `src/decoy/cli/io/` (target) | `src/decoy/cli/io/_sources.py` (target), `src/decoy/cli/io/_targets.py` (target) | I/O unit and E2E tests | `src/decoy/cli/_sources.py` is today's exception and moves under H-1 |
+| Exit codes | `src/decoy/cli/` | `src/decoy/cli/exit_codes.py` | CLI tests | target layer below `src/decoy/ci/` and `src/decoy/ui/`; current imports are ignored exactly |
+| Python API | `src/decoy/` | `src/decoy/api.py` | API tests | - |
+| CI integration | `src/decoy/ci/` | by CI concern; wrapper `src/decoy/cli/ci.py` | CI tests | - |
+| Terminal output | `src/decoy/ui/` | by output concern | UI tests | - |
+| Shipped install and update | `src/decoy/distribution/` | by distribution concern | distribution tests | - |
+| Build-host release tools | `packaging_tools/` | by release concern | packaging tests | `tests/sentry/layout/test_module_size.py` (target) |
+| Packaged templates | `src/decoy/templates/` | by template | template tests | package-data checks |
+| Private cross-command helpers | `src/decoy/` | `src/decoy/_<name>.py`; current examples `src/decoy/_mask_secret.py`, `src/decoy/_native_gate.py`; LIB adds `src/decoy/_atomic.py` (target) | owning tests | bottom layer |
+| Notifications, telemetry | `src/decoy/` | `src/decoy/notify.py`, `src/decoy/telemetry.py` | notification and telemetry tests | - |
+| Sentry test | existing rules in `tests/sentry/`; layout rules in `tests/sentry/layout/` (target) | `test_<rule>.py`; helper `_<name>.py` | self-tests and seeded mutations | manifest recursively walks sentries; `*_ALLOWLIST`, baselines, registry and source table as in the engine row |
+| Layer contracts | `./.importlinter` (target) | `.importlinter` | `tests/sentry/layout/test_import_layers.py` (target) | exact membership snapshot in the test; ignore baseline `tests/sentry/baselines/import-layers.json` (target) |
+| Dev tooling | `scripts/dev/`; release tools in `scripts/release/` | by tool concern | tool tests | tooling sentries |
+| Roadmap, plans, records | `docs/`, `docs/roadmap/`, `docs/plans/`, `docs/records/` | `docs/ROADMAP.md`; dated plan and record names | - | roadmap and shipped-log checks |
 
 ## 5. Import-layer contracts
 
@@ -313,33 +351,65 @@ Both configs keep import-linter's default `unmatched_ignore_imports_alerting = e
 | Rule | Choke point | Guard test | Red mutation |
 |---|---|---|---|
 | File size (engine, unchanged) | `_layout.ratchet_verdict` via `_size_verdict` | `E:tests/sentry/test_module_size.py` | grow `scripts/gen_proof_manifest.py` by one line: red |
-| File size (CLI) | same function, goal = limit = 800 | `C:tests/sentry/test_module_size.py` | append a line to `cli/report.py`: red |
-| Fan-out | `_layout.direct_modules` walk of every directory under `src/<pkg>` plus engine `scripts/`, then `ratchet_verdict`, limit 25 | `test_package_fanout.py` (both repos) | add empty `execution/_probe.py`: red; add a 26th module to `transforms/`: red; add a direct sub-package under a frozen package without a map cell: red |
-| Layers and placement | `.importlinter` with `exhaustive = true`; baseline keys include `<tier>:<module>` and ignore keys | `test_import_layers.py` (both repos) | delete one ignore line: red; move a module between tiers: ratchet red; add `src/decoy_engine/newpkg/__init__.py`: red (unplaced) |
-| No allowlist growth | shared X0a registry and value-aware `_ratchet.check` | `test_baseline_registry.py`, `ratchet_check.py` | add a key, raise a numeric `max`, or replace a `<tier>:<module>` key: ratchet red |
-| Map paths | `_layout.map_paths` | `E:test_package_map_paths.py`, `C:tests/sentry/test_codemap_paths.py` | name `src/decoy_engine/nope/` in the section: red |
-| Vendored copy | sha256 pin | `test_vendored_files.py` (both repos) | change one byte of the CLI `_layout.py`: red |
+| File size (CLI) | same function, goal = limit = 800 | `C:tests/sentry/layout/test_module_size.py` | append a line to `cli/report.py`: red |
+| Fan-out | `_layout.direct_modules` walk of every directory under `src/<pkg>` plus engine `scripts/`, then `ratchet_verdict`, limit 25 | `tests/sentry/layout/test_package_fanout.py` (both repos) | add empty `execution/_probe.py`: red; add a 26th module to `transforms/`: red; add a direct sub-package under a frozen package without a map cell: red |
+| Layers and placement | `.importlinter` with `exhaustive = true` plus the exact membership snapshot in `layout/test_import_layers.py` | `tests/sentry/layout/test_import_layers.py` (both repos) | delete one ignore line: red; change config membership without its snapshot: red; add `src/decoy_engine/newpkg/__init__.py` without placing it: red |
+| No allowlist growth | shared X0a registry and value-aware `_ratchet.check`; layer ignore keys only | `test_baseline_registry.py`, `ratchet_check.py` | add an ignore key or raise a numeric `max`: ratchet red |
+| Map paths | `_layout.map_paths` | `E:test_package_map_paths.py`, `C:tests/sentry/layout/test_codemap_paths.py` | name `src/decoy_engine/nope/` in the section: red |
+| Vendored copy | one sha256 pin table | `tests/sentry/layout/test_vendored_files.py` (both repos) | change one byte of the CLI `_layout.py` or `_ratchet_cases.py`: red |
+| Nested sentry discovery | recursive manifest walk | `tests/sentry/test_sentry_manifest.py` (both repos) | add `tests/sentry/layout/test_unlisted.py`: red |
+| Sentry gate ownership | `gates.sh` `LAYER_TEST` names the only isolated sentry; every other listed sentry belongs to the ordinary sentry step | `tests/sentry/test_sentry_manifest.py` (both repos) | remove the layer step or ignore a second sentry: red |
 
 Walk, not list: fan-out parametrizes over the directories it finds (`rglob`), never a hand
 list, and asserts that every direct sub-package of each frozen package appears in a CODEMAP path
 cell. Layers read the parsed import graph; the map check reads the markdown section. Each guard
 has a seeded-bypass meta-test (below) proving the walk sees a planted violation.
 
-The guards run in the sentry step of `scripts/dev/gates.sh` (engine `:142`, CLI `:91`), which
-runs `ratchet_check.py` first and is what the merge gate executes; each new file is added to
-`SENTRIES` in `test_sentry_manifest.py` (engine `:20`, CLI `:24`), whose own test fails otherwise.
+Every guard except the layer wrapper runs in the sentry step of `scripts/dev/gates.sh` (engine
+`:142`, CLI `:91`), which runs `ratchet_check.py` first. Each script declares the path once as
+`LAYER_TEST=tests/sentry/layout/test_import_layers.py`; the sentry command derives its explicit
+`--ignore=$LAYER_TEST`, ordinary changed-test selection filters that path, and the `layers` step
+runs exactly that path. Import-linter deliberately is absent from the engine's exact certified
+venv, so the layer wrapper belongs only to the isolated layer step. Each new test is added to
+`SENTRIES` in `test_sentry_manifest.py` (engine `:20`, CLI `:24`). The manifest recursively finds
+test files and verifies that the ordinary and isolated routes partition `SENTRIES` with no gap or
+overlap; removing the layer step or ignoring any second sentry is red.
+
+Both `gates.sh` scripts add a default `layers` step. It is a real gate, not a helper invocation:
+
+- Engine sets `UV_PROJECT_ENVIRONMENT=$ROOT/.venv-layers`, runs
+  `uv sync --frozen --extra dev --extra layers --python 3.10.20`, then runs only
+  `$LAYER_TEST` with `.venv-layers/bin/python`. It never installs into or checks the
+  certified `.venv`, whose `dev+lint+vault+cloud` profile remains exact.
+- CLI sets `DECOY_VENV=$ROOT/.venv-layers`, runs `scripts/dev/bootstrap.sh` so the separate venv is
+  synced exactly from `requirements-dev.lock`, then runs only `$LAYER_TEST` there.
+- In both repos, the wrapper imports `importlinter.application.use_cases.lint_imports` inside the
+  test function. Collection in any environment without `layers` therefore succeeds. Calling that
+  function outside the layer gate fails with install advice rather than skipping.
+
+The scripts defer their ordinary `.venv/bin` existence check until a selected step needs that
+venv. A layers-only selection also skips changed-test merge-base discovery and uses the layer
+interpreter for the evidence reporter after the sync. Therefore `gates.sh --steps layers` can
+bootstrap and run only `.venv-layers` on a clean host with no `origin/main` ref or ordinary venv.
+The step name is added to help text, validation, evidence output and the default step list.
+
+`.venv-layers/` is ignored and never becomes an output artifact. `gates.sh --baseline` runs the
+layer step for a tree that contains the wrapper and reports it not applicable for an older tree
+that predates the wrapper. The layer step is included in local T1/T2, in engine Mac and VM merge
+gates, and in CLI merge gates.
 
 ## 7. Acceptance tests
 
 Each test names the mutation that must turn it red. "Shown red" evidence goes in the part's PR.
 
-- AT-1 (map, E1, C1): `map_paths(markdown, repo_root, columns)` applies the section 4 grammar to
-  the selected path columns. Concrete repo-relative paths exist; `<...>` and `*` segments check
+- AT-1 (map, E1, C1): `map_paths(markdown, base, columns)` applies the section 4 grammar to
+  the selected path columns. Concrete paths below `base` exist; `<...>` and `*` segments check
   the parent before that segment; symbol code spans without `/` or `.py` are skipped; `(target)`
   paths check their parent; an absent concrete path is red. Separate seeded-string meta-test cases
-  cover a concrete path, placeholder, glob, skipped symbol, bare `sdk.py` resolved at the repo
-  root, target path, wrong column and missing path. Mutation: add a selected-cell path naming a
-  missing concrete path; red.
+  cover a concrete path, placeholder, glob, skipped symbol, target path, wrong column and missing
+  path. One CODEMAP case passes the repo root and resolves `src/decoy_engine/sdk.py`; one `_MAP.md`
+  case passes `src/decoy_engine` and resolves bare `sdk.py`. Mutation: pass the repo root to the
+  `_MAP.md` case or add a selected-cell path naming a missing concrete path; red.
 - AT-2 (census refactor, E2): the existing `test_size_verdict_branches` table
   (`test_module_size.py:210`) passes unchanged against the moved function, and size message
   strings are byte-identical to today's. Fan-out tests instead assert their parameterized noun,
@@ -357,23 +427,39 @@ Each test names the mutation that must turn it red. "Shown red" evidence goes in
   their allowlist value; legacy entries may only shrink. Mutations: grow `cli/run.py` by one line
   (red); remove `validate.py` from the allowlist (red).
 - AT-5 (layers, E3, C3): the wrapper fails, rather than skips, if import-linter is unavailable;
-  otherwise `lint_imports` returns true. Each mutation runs in a fresh subprocess with
+  import-linter is imported inside the test function, so collection without the dependency passes;
+  otherwise `lint_imports` returns true. `gates.sh --steps layers` also passes on a scratch checkout
+  with no ordinary `.venv` and no `origin/main` ref, proving the isolated route. Each mutation runs
+  in a fresh subprocess with
   `PYTHONPATH=<tmp>/src`, an absolute scratch-copy config path and `cache_dir=None`. The harness
   makes the subprocess report `importlib.util.find_spec()`'s module path and asserts that path is
   inside `tmp_path` before accepting the lint result. Mutations: (a) remove one ignore line: false; (b) seed
   `from decoy_engine.execution import _errors` into a tier 6 module: false; (c) add an unplaced
   top-level package: false (exhaustive); (d) add an ignore line that matches no import: false
-  (unmatched alerting); (e) move a module's baseline key from one tier to another: X0a ratchet red.
+  (unmatched alerting); (e) two reviewed scratch diffs go green: add a legitimate top-level
+  package, its five-column CODEMAP row and its downward-legal tier plus the exact snapshot, then
+  move an existing module to a lower tier and update the exact snapshot. For each, omit the
+  snapshot edit and the equality guard is red. The test also asserts that neither change needs a
+  new X0a membership key.
 - AT-6 (registry, E2, E3, C2, C3): each new allowlist's live key set equals its registered
   baseline (`test_source_matches_its_registered_baseline`); numeric entries also equal their live
-  `max`; and layer entries include both `<tier>:<module>` membership and ignore keys.
+  `max`; layer entries contain ignore keys only. The legitimate new-package placement and downward
+  tier move from AT-5(e) both leave the X0a key set unchanged and `ratchet_check.py` green; a new
+  ignore key is red and a removed ignore key is green.
   `ratchet_check.py` against the merge base reports "first inventory" for each new id and no
-  findings. Mutations: add a key, raise `max`, or replace a tier key in a follow-up commit;
-  `ratchet_check.py` red.
-- AT-7 (vendor pin, E2, C2): `sha256(tests/sentry/_layout.py)` equals the pinned value in both
-  repos, and the CLI header names the engine commit. Mutation: change one byte; red.
+  findings. Mutations: add an ignore key or raise `max`; `ratchet_check.py` red. Both repos'
+  `_ratchet.py` meta-tests parameterize the same `MAX_VALUE_CASES` table from the sha-pinned,
+  vendored `_ratchet_cases.py` for absent, equal, lower and higher `max` comparisons. The higher case is
+  red. Changing the case table in only one repo breaks the vendor pin.
+- AT-7 (vendor pin, E2, C2): sha256 for `tests/sentry/layout/_layout.py` and
+  `_ratchet_cases.py` equals
+  the pinned value in both repos, and each CLI header names the engine commit. Mutation: change one
+  byte in either vendored helper; red.
 - AT-8 (no behavior change): T1 selection green on each part's head; `git diff --stat` touches
-  no file under `src/`.
+  no file under `src/`. The manifest's on-disk walk uses `rglob("test_*.py")`; a seeded nested
+  `tests/sentry/layout/test_unlisted.py` is reported missing from `SENTRIES`. Route meta-tests
+  assert that `LAYER_TEST` is the sole sentry exclusion and is owned by the `layers` step; removing
+  that step or adding another exclusion is red.
 
 ## 8. Placement of this plan's new files
 
@@ -381,16 +467,20 @@ The map lines named are the ones this plan adds (section 4); each is a map chang
 
 | New file | Directory | Map line | Sits beside |
 |---|---|---|---|
-| `_layout.py` | `E:tests/sentry/`, vendored to `C:tests/sentry/` | Sentry test (helpers `_<name>.py`) | `_ratchet.py` |
-| `test_package_fanout.py` | `tests/sentry/` (both) | Sentry test | `test_module_size.py` |
-| `test_import_layers.py` | `tests/sentry/` (both) | Sentry test; Layer contracts | `test_public_import_boundary.py` (E), `test_engine_internal_boundary.py` (C) |
-| `test_vendored_files.py` | `tests/sentry/` (both) | Sentry test | `test_ratchet_check.py` |
-| `test_module_size.py` | `C:tests/sentry/` | Sentry test | `test_source_hygiene.py` |
-| `test_codemap_paths.py` | `C:tests/sentry/` | Sentry test | `test_sentry_manifest.py` |
+| `layout/__init__.py` | `tests/sentry/layout/` (both) | Sentry test (layout subpackage) | `_layout.py` |
+| `_layout.py` | `E:tests/sentry/layout/`, vendored to `C:tests/sentry/layout/` | Sentry test (layout helper `_<name>.py`) | `_ratchet_cases.py` |
+| `_ratchet_cases.py` | `E:tests/sentry/layout/`, vendored to `C:tests/sentry/layout/` | Sentry test (layout helper `_<name>.py`) | `_layout.py` |
+| `test_package_fanout.py` | `tests/sentry/layout/` (both) | Sentry test (layout rule) | `test_import_layers.py` |
+| `test_import_layers.py` | `tests/sentry/layout/` (both) | Sentry test; Layer contracts | `test_package_fanout.py` |
+| `test_vendored_files.py` | `tests/sentry/layout/` (both) | Sentry test (layout rule) | `_layout.py` |
+| `test_module_size.py` | `C:tests/sentry/layout/` | Sentry test (layout rule) | `test_package_fanout.py` |
+| `test_codemap_paths.py` | `C:tests/sentry/layout/` | Sentry test (layout rule) | `test_package_fanout.py` |
 | `package-fanout.json`, `import-layers.json` (both), `module-size.json` (C) | `tests/sentry/baselines/` | Sentry test (baseline) | existing baselines |
 | `.importlinter` | repo root (both) | Layer contracts | `pyproject.toml` |
 
-No new `src/` file, so no frozen package grows.
+No new `src/` file or direct `tests/sentry/*.py` module is added. The engine's 48-module sentry
+package stays frozen, the CLI's 19-module package does not approach the cap, and the cohesive new
+`layout/` subpackage starts below the cap in both repos.
 
 ## 9. Parts (slices)
 
@@ -408,58 +498,89 @@ regenerated on the part's build base, never copied from this plan.
 | C2 census | CLI | `feat/layout-c2-census` | CLI main after C1 | E2 merged (vendor source); after LIB L1b.1 | ~300 + vendored file | no |
 | C3 layers | CLI | `feat/layout-c3-layers` | CLI main after C2 | C2 | ~150 + lock | yes |
 
-E1 (engine map). `CODEMAP.md` "Where Things Go" section (section 4 rows); `tests/sentry/_layout.py`
+E1 (engine map). `CODEMAP.md` "Where Things Go" section (section 4 rows), with `.importlinter`,
+`layout/test_import_layers.py` and its baseline marked `(target)`; the new
+`tests/sentry/layout/` subpackage with public `__init__.py` and `_layout.py`
 with `map_paths` only; `test_package_map_paths.py` gains one test reading the CODEMAP section
-through `map_paths`, and its `_MAP.md` test calls the same function. AT-1. Touches no file in the
+through `map_paths` with the repo root as `base`, and its `_MAP.md` test calls the same function
+with `src/decoy_engine` as `base`. AT-1. Touches no file in the
 in-flight list: buildable now.
 
-C1 (CLI map). `CODEMAP.md` "Where Things Go" section only (docs). Its path guard arrives in C2
-with the vendored helper. Buildable now.
+C1 (CLI map). `CODEMAP.md` "Where Things Go" section only (docs), with `.importlinter`,
+`tests/sentry/layout/`, `layout/test_import_layers.py` and its baseline marked `(target)`. Its path
+guard and layout subpackage arrive in C2 with the vendored helper. Buildable now.
 
-E2 (engine census and fan-out). `_layout.py` grows to the full helper (`loc`, `ratchet_verdict`,
+E2 (engine census and fan-out). `layout/_layout.py` grows to the full helper (`loc`, `ratchet_verdict`,
 `direct_modules`, `ignore_keys`); `test_module_size.py` keeps `GOAL`, `MAX`, `ALLOWLIST` and its
 tests, and `_size_verdict` becomes a one-line call into `_layout`; new `test_package_fanout.py`
-(`FANOUT_ALLOWLIST` with `scripts/` frozen at its build-base count, a reason and the map's target
+under `tests/sentry/layout/` (`FANOUT_ALLOWLIST` with `scripts/` frozen at its build-base count, a reason and the map's target
 sub-package per entry); shared `_ratchet.check` gains the about 10-line numeric `max` comparison;
-numeric baseline sources emit `max`; new
-`test_vendored_files.py`; registry row, `_baseline_sources.py` source, generated
+numeric baseline sources emit `max`; `_ratchet_cases.py` owns the shared `MAX_VALUE_CASES`
+meta-test table and is vendored with the existing sha-pin mechanism;
+new `layout/test_vendored_files.py`; registry row, `_baseline_sources.py` source, generated
 `package-fanout.json` (`created_in = "LAYOUT-E2"`); `SENTRIES` row. AT-2, AT-3, AT-6, AT-7.
+`test_sentry_manifest.py` changes its on-disk discovery from direct `glob` to recursive `rglob` and
+adds the nested-file red mutation from AT-8.
 Waits for CI-E1 (edits `test_module_size.py` and `test_sentry_manifest.py`) and SUB-STOP (edits
 `test_module_size.py` and `_baseline_sources.py`; may add execution modules).
 
 E3 (engine layers). `import-linter==2.15` in a separate `layers` extra of `pyproject.toml`; the
-certified DP install remains exactly `dev+lint+vault` and 77 packages. After CI-E1 has landed,
-the GitHub sentry job's `ci.yml` install changes from `.[dev,cloud]` to
-`.[dev,cloud,layers]`; local layer-gate setup installs `.[layers]`; `uv.lock` is regenerated;
+certified DP install remains exactly `dev+lint+vault+cloud` and 77 packages. After CI-E1 has
+landed, `gates.sh` gains the isolated `layers` step from section 6 and its sentry step explicitly
+ignores `tests/sentry/layout/test_import_layers.py`; `uv.lock` is regenerated;
 because engine `pyproject.toml` is already over 800 lines, compact one adjacent optional-dependency
 array without changing its entries so adding `layers` does not increase the file's build-base line count;
-`.importlinter` (section 5); `test_import_layers.py`; `_baseline_sources.py` source keyed
-by `<tier>:<module>` membership plus `<contract>::<importer> -> <imported>` ignore keys via
-`_layout.ignore_keys`; generated `import-layers.json`; registry row; `SENTRIES` row; `.gitignore`
-gains `.import_linter_cache/`. The test imports import-linter directly and fails with install
-advice when the dependency is absent; it never skips. AT-5, AT-6. Lock and CI changes land only
+`.importlinter` (section 5); `layout/test_import_layers.py` with its exact membership snapshot;
+`_baseline_sources.py` source keyed only by
+`<contract>::<importer> -> <imported>` ignore keys via `_layout.ignore_keys`; generated
+`import-layers.json`; registry row; `SENTRIES` row; `.gitignore` gains `.import_linter_cache/` and
+`.venv-layers/`. The same diff drops `(target)` from the three E1 layer paths because it creates
+them. The test imports import-linter inside the test function, fails with install advice when the
+dependency is absent, and never skips. `test_sentry_manifest.py` adds the ordinary-versus-isolated
+route partition assertions from section 6. AT-5, AT-6. Lock and CI changes land only
 after CI-E1 (lock security bump and `ci.yml` rewrite). Re-measure the ignore list after CLI-DIALECT Part E
 (`profile/`, `__init__.py`) and SUB-STOP and REG-RENUMBER (`reasons/`) if they merged first.
 `scripts/dev/licenses.py` must pass for the full transitive license inventory in section 3.
 
-C2 (CLI census, fan-out, map guard). Vendored `_layout.py` (from the E2 merge commit, header
-names it); `test_vendored_files.py`; `test_module_size.py` (goal = limit = 800, `SIZE_ALLOWLIST`
+E3 also adds a dedicated post-CI-E1 GitHub `layers-gate` job. After setup-uv and the pinned Python
+setup, it calls `scripts/dev/gates.sh --steps layers`, so CI uses the same isolated sync and test
+route as local gates. Every GitHub pytest route that includes the ordinary sentry suite, including
+the regression gate, explicitly ignores the layer test; marker-only ML and packaging jobs need no
+dependency because the import is function-local. The certified job and its 77-distribution
+environment are unchanged.
+
+C2 (CLI census, fan-out, map guard). New public `tests/sentry/layout/` subpackage with vendored
+`_layout.py` (from the E2 merge commit, header names it); `test_vendored_files.py`;
+`test_module_size.py` (goal = limit = 800, `SIZE_ALLOWLIST`
 of section 2); existing `_ratchet.check` gains the same numeric `max` comparison as engine;
-`test_package_fanout.py` (`cli/` frozen); `test_codemap_paths.py`; three
+`test_package_fanout.py` (`cli/` frozen); `test_codemap_paths.py`; two
 registry rows, sources and generated baselines (`created_in = "LAYOUT-C2"`, which the CLI
-`_ratchet.py` checks for a first inventory); `SENTRIES` rows. AT-1, AT-3, AT-4, AT-6, AT-7. Waits
+`_ratchet.py` checks for a first inventory); `SENTRIES` rows. `test_sentry_manifest.py` changes its
+walk to `rglob` and carries the AT-8 nested-file mutation. AT-1, AT-3, AT-4, AT-6, AT-7. Waits
 for LIB L1b.1 (edits `sentry_registry.toml`, `_baseline_sources.py`, `test_sentry_manifest.py`).
+Each numeric CLI `Source`/`InCode` form emits both its key-to-reason mapping and live `max`; its
+ratchet meta-test consumes the same vendored `_ratchet_cases.py` table as the engine.
+C2 drops `(target)` from the C1 `tests/sentry/layout/` and `layout/test_module_size.py` map cells in
+the same diff that creates them; the layer config, layer test and ignore baseline stay marked until
+C3 creates them.
 
 C3 (CLI layers). `import-linter` in the `dev` extra, `requirements-dev.lock` regenerated with
-`scripts/dev/lock.sh`; `.importlinter`; `test_import_layers.py`; source, baseline, registry row;
-`.gitignore`. The CLI `Source` type gains a callable key form next to `InCode` (about 10 lines,
-`_baseline_sources.py:105`). The layer source emits `<tier>:<module>` keys as well as ignore
-keys, and the test fails if import-linter is absent. AT-5, AT-6.
+`scripts/dev/lock.sh`; `.importlinter`; `layout/test_import_layers.py` with its exact membership snapshot;
+ignore-key source, baseline and registry row; `.gitignore`. The CLI `Source` type gains a callable
+key form next to `InCode` (about 10 lines, `_baseline_sources.py:105`). The layer source emits
+ignore keys only. `gates.sh` gains the isolated lock-synced `.venv-layers` step, and the sentry
+step explicitly ignores the layer wrapper. The same diff drops `(target)` from the three C1 layer
+paths because it creates them. The function-local import fails if import-linter is absent when the
+test runs. `test_sentry_manifest.py` adds the ordinary-versus-isolated route partition assertions.
+AT-5, AT-6.
 
 Full-suite triggers: E3 and C3 change a dependency lock, so each runs the full suite (T3) on its
-merge head, diffed against the saved main baseline (engine on the Mac or a test VM, CLI on the
-devbox). E1, E2, C1, C2 run T1 plus the gate set only; E2 and C2 touch no shared fixture or test
-config (helpers under `tests/sentry/` are not `conftest.py`).
+merge head, diffed against the saved main baseline. Engine Mac and VM T3 first run the isolated
+`layers` gate on that head, then run the one full suite in the certified venv with
+`--ignore=tests/sentry/layout/test_import_layers.py`; CLI T3 on the devbox follows the same two-step shape
+with its two lock-synced venvs. The ignored test is not lost coverage because the immediately prior
+layer step runs it on the same head. E1, E2, C1, C2 run T1 plus the gate set only; E2 and C2 touch
+no shared fixture or test config (helpers under `tests/sentry/` are not `conftest.py`).
 
 Build now, given the in-flight list: E1 and C1. Then E2 when CI-E1 and SUB-STOP merge; C2 when E2
 and LIB L1b.1 merge; E3 after CI-E1; C3 after C2.
@@ -472,23 +593,26 @@ Hand-written lines; vendored and generated files named separately.
 |---|---|---:|---:|
 | `CODEMAP.md` | engine | 233 | 300 |
 | `CODEMAP.md` | CLI | 83 | 140 |
-| `tests/sentry/_layout.py` (new) | engine | 0 | 110 |
-| `tests/sentry/_layout.py` (vendored) | CLI | 0 | 110 (copy) |
+| `tests/sentry/layout/__init__.py` (new) | both | 0 | about 15 each |
+| `tests/sentry/layout/_layout.py` (new) | engine | 0 | 110 |
+| `tests/sentry/layout/_layout.py` (vendored) | CLI | 0 | 110 (copy) |
+| `tests/sentry/layout/_ratchet_cases.py` (new and vendored) | both | 0 | about 20 each |
 | `tests/sentry/_ratchet.py` | engine, CLI | existing | about +10 each |
 | `tests/sentry/test_package_map_paths.py` | engine | 31 | 45 |
 | `tests/sentry/test_module_size.py` | engine | 262 | 225 |
-| `tests/sentry/test_module_size.py` (new) | CLI | 0 | 90 |
-| `tests/sentry/test_package_fanout.py` (new) | each | 0 | 100 |
-| `tests/sentry/test_import_layers.py` (new) | each | 0 | 80 |
-| `tests/sentry/test_vendored_files.py` (new) | each | 0 | 30 |
-| `tests/sentry/test_codemap_paths.py` (new) | CLI | 0 | 25 |
+| `tests/sentry/layout/test_module_size.py` (new) | CLI | 0 | 90 |
+| `tests/sentry/layout/test_package_fanout.py` (new) | each | 0 | 100 |
+| `tests/sentry/layout/test_import_layers.py` (new) | each | 0 | 80 |
+| `tests/sentry/layout/test_vendored_files.py` (new) | each | 0 | 30 |
+| `tests/sentry/layout/test_codemap_paths.py` (new) | CLI | 0 | 25 |
 | `tests/sentry/_baseline_sources.py` | engine | 250 | 265 |
 | `tests/sentry/_baseline_sources.py` | CLI | 189 | 215 |
-| `tests/sentry/test_sentry_manifest.py` | engine, CLI | 125, 125 | 128, 129 |
+| `scripts/dev/gates.sh` | engine, CLI | existing | about +25 each for the isolated `layers` route |
+| `tests/sentry/test_sentry_manifest.py` | engine, CLI | 125, 125 | about 145 each |
 | `scripts/dev/sentry_registry.toml` | engine, CLI | 85, 15 | 93, 27 |
 | `.importlinter` (new) | engine, CLI | 0 | 50, 35 |
 | `pyproject.toml` | engine, CLI | 1063, 256 | engine stays at or below its build-base count while adding `layers`; CLI adds one line |
-| `ci.yml` | engine | after CI-E1 | sentry install adds `layers` |
+| `ci.yml` | engine | after CI-E1 | adds isolated `layers-gate`; certified profile unchanged |
 | baselines JSON, `uv.lock`, `requirements-dev.lock` | both | generated | generated |
 
 Every new hand-written file stays under its repo's cap. The already-over engine `pyproject.toml`
@@ -504,9 +628,11 @@ does not grow, and `test_module_size.py` shrinks.
   legacy-adoption path); the X0a baseline registry for growth; the X0a-h sha pin for vendoring.
 - Where each fact lives: limits in each repo's test (`GOAL`, `MAX`, `LIMIT`); allowlist values in
   the test constant (exact counts); allowlist keys mirrored in the baseline JSON (the ratchet's
-  copy, guarded for agreement), with numeric `max` on the same entry; layers and ignores in
-  `.importlinter`; layer membership encoded in the same registered baseline; "where a new thing
-  goes" in CODEMAP; per-package description in `_MAP.md` (engine). None restated.
+  copy, guarded for agreement), with numeric `max` on the same entry; layer definitions and ignores
+  in `.importlinter`; exact layer membership review pin in `layout/test_import_layers.py`, guarded for
+  equality with the config; ignore keys only in the registered X0a baseline; the shared ratchet
+  value-case table in sha-pinned `_ratchet_cases.py`; "where a new thing goes" in CODEMAP; per-package
+  description in `_MAP.md` (engine). None is unguardedly restated.
 - House style: pure verdict functions, typed returns, no flag arguments (goal, limit, message
   noun, allowlist name and fix advice are values, not switches), comments explain why.
 - Owner question 4.3 asked of each piece: the census function (does what `_size_verdict` does,
@@ -554,15 +680,22 @@ does not grow, and `test_module_size.py` shrinks.
 
 ### Routes (where the guards run)
 
-- Local gate sentry step: engine `scripts/dev/gates.sh:142`, CLI `scripts/dev/gates.sh:91`
-  (runs `ratchet_check.py`, then pytest over `SENTRIES`).
-- Engine GitHub CI sentry job: after CI-E1, `ci.yml` installs `.[dev,cloud,layers]` before running
-  `tests/sentry`; E3 owns that addition and cannot land before CI-E1.
+- Local gate sentry step: engine `scripts/dev/gates.sh:142`, CLI `scripts/dev/gates.sh:91` runs
+  `ratchet_check.py`, then pytest over `SENTRIES` with
+  `tests/sentry/layout/test_import_layers.py` explicitly ignored.
+- Local layer step: both `gates.sh` scripts sync `.venv-layers` from the repo lock and run only
+  `tests/sentry/layout/test_import_layers.py`; ordinary changed-test selection filters that path.
+- Engine GitHub CI: after CI-E1, a dedicated `layers-gate` syncs `dev+layers` into
+  `.venv-layers` and runs only the layer wrapper. Ordinary sentry routes ignore that wrapper. The
+  certified `dev+lint+vault+cloud` job is unchanged.
+- Engine Mac and VM T3 and CLI devbox T3: run the layer step first, then the single full suite on
+  the same head with the layer wrapper ignored in the ordinary venv.
 - Manifest: `tests/sentry/test_sentry_manifest.py:20` (engine), `:24` (CLI); a sentry file not
-  listed fails `test_manifest_lists_every_sentry_file_and_no_ghost`.
+  listed at any depth fails `test_manifest_lists_every_sentry_file_and_no_ghost`.
 - Registry mirror: `tests/sentry/test_baseline_registry.py:26` (`LIST_NAME`), sources at
   `tests/sentry/_baseline_sources.py:100` (engine) and `:120` (CLI).
-- T1 selection: guard tests are always selected (`testing.md` T1).
+- T1 selection: non-layer guard tests are always selected; the default isolated `layers` step
+  always runs the layer wrapper (`testing.md` T1).
 
 ### FK shapes
 
@@ -572,8 +705,9 @@ does not grow, and `test_module_size.py` shrinks.
 
 - N/A: no public result type is added or changed. The new constants are test-local:
   `FANOUT_ALLOWLIST`, CLI `SIZE_ALLOWLIST`, each `dict[str, int]` keyed by repo-relative path.
-  Registered numeric baseline entries add `max: int`; layer baseline keys use
-  `<tier>:<module>` plus the existing exact ignore-key form.
+  Registered numeric baseline entries add `max: int`; layer baseline keys use only the existing
+  exact ignore-key form. Exact tier membership is a snapshot in `layout/test_import_layers.py` and is not
+  an X0a entry.
 
 ### Output surfaces
 
