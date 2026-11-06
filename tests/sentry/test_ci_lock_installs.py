@@ -218,7 +218,22 @@ def _pyarrow_findings(
     return findings
 
 
-def scan_workflow(wf: dict[str, Any], *, role: str = "workflow") -> list[str]:
+WRITE_ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {}
+
+
+def permission_findings(name: str, wf: dict[str, Any], allowlist: Any = None) -> list[str]:
+    return []
+
+
+def is_mac_gate(name: str, job_name: str, job: dict[str, Any]) -> bool:
+    return False
+
+
+def scan_actions(actions_dir: Path) -> dict[str, list[str]]:
+    return {}
+
+
+def scan_workflow(wf: dict[str, Any], *, role: str = "workflow", name: str = "") -> list[str]:
     """Every lock-install violation in one parsed workflow, as `job: message` strings.
 
     One install recipe: only the lock-env composite action syncs, bootstraps or writes the venv
@@ -597,3 +612,301 @@ def test_seeded_audit_hardening_cases() -> None:
     for name, line in variants.items():
         text = "for py in 3.10 3.11 3.12; do\n" + line + "\ndone"
         assert audit_findings(job(export, text)), name
+
+
+# --- round 3 seeds: every one is red on the round-2 scanner ------------------
+
+EXPORT = "uv export --frozen --all-extras -o x.txt"
+AUDIT = 'uvx --python "$PY" pip-audit==2.10.1 --strict --disable-pip --require-hashes -r x.txt'
+
+
+def _audit_job(
+    run: str = AUDIT,
+    *,
+    legs: list[str] | None = None,
+    fail_fast: Any = False,
+    step: dict[str, Any] | None = None,
+    job: dict[str, Any] | None = None,
+    before: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    leg_list = sorted(_supported_minors()) if legs is None else legs
+    audit = {"run": run, "env": {"PY": "${{ matrix.python }}"}, **(step or {})}
+    strategy: dict[str, Any] = {"matrix": {"python": leg_list}}
+    if fail_fast is not None:
+        strategy["fail-fast"] = fail_fast
+    return {
+        "strategy": strategy,
+        "steps": [{"run": EXPORT}, *({"run": b} for b in before), audit],
+        **(job or {}),
+    }
+
+
+def test_audit_matrix_job_is_clean() -> None:
+    assert audit_findings(_audit_job()) == []
+
+
+def test_audit_cannot_be_hidden() -> None:
+    hidden = {
+        "|| true": AUDIT + " || true",
+        "multiline || true": AUDIT + " \\\n  || true",
+        "trailing || then true": AUDIT + " ||\n  true",
+        "semicolon": AUDIT + "; true",
+        "&& wrapper": AUDIT + " && echo ok",
+        "pipe": AUDIT + " | tee out.txt",
+        "if wrapper": f"if {AUDIT}; then echo ok; fi",
+        "negation": "! " + AUDIT,
+        "exit 0": AUDIT + "\nexit 0",
+        "exit 0 with ||": AUDIT + " || exit 0",
+        "set +e": "set +e\n" + AUDIT,
+        "rc plumbing": f"rc=0\nfor py in 3.10 3.11 3.12; do\n{AUDIT} || rc=1\ndone\nexit $rc",
+        "ignore": AUDIT + " --ignore-vuln PYSEC-1",
+        "unpinned": AUDIT.replace("==2.10.1", ""),
+        "not strict": AUDIT.replace(" --strict", ""),
+        "hardcoded interpreter": AUDIT.replace('"$PY"', "3.12"),
+    }
+    for name, run in hidden.items():
+        assert audit_findings(_audit_job(run)), name
+    elsewhere = {
+        "exit 0 in an earlier step": _audit_job(before=("exit 0",)),
+        "set +e in an earlier step": _audit_job(before=("set +e",)),
+        "step continue-on-error": _audit_job(step={"continue-on-error": True}),
+        "step continue-on-error expression": _audit_job(
+            step={"continue-on-error": "${{ github.event_name == 'push' }}"}
+        ),
+        "job continue-on-error": _audit_job(job={"continue-on-error": True}),
+        "step if": _audit_job(step={"if": "false"}),
+        "job if": _audit_job(job={"if": "false"}),
+        "fail-fast true": _audit_job(fail_fast=True),
+        "fail-fast absent": _audit_job(fail_fast=None),
+        "leg missing": _audit_job(legs=["3.11", "3.12"]),
+        "matrix exclude": _audit_job(
+            job={
+                "strategy": {
+                    "fail-fast": False,
+                    "matrix": {
+                        "python": sorted(_supported_minors()),
+                        "exclude": [{"python": "3.10"}],
+                    },
+                }
+            }
+        ),
+    }
+    for name, job in elsewhere.items():
+        assert audit_findings(job), name
+
+
+def _wf(
+    *steps: Any, name_job: str = "j", env: dict[str, str] | None = None, **job: Any
+) -> dict[str, Any]:
+    built = [{"run": s} if isinstance(s, str) else s for s in steps]
+    return {"jobs": {name_job: {"steps": built, **({"env": env} if env else {}), **job}}}
+
+
+def test_inline_lock_parsing_forms() -> None:
+    forms = [
+        'python -c \'import tomllib; tomllib.load(open("uv.lock", "rb"))\'',
+        "python - <uv.lock",
+        "jq . <uv.lock",
+        "cat uv.lock",
+        "sed -n 1p ./uv.lock",
+        'grep -c pyarrow "$GITHUB_WORKSPACE/uv.lock"',
+        "LOCK=uv.lock\ngrep pyarrow $LOCK",
+        "python -c 'open(\"uv.lock\")'",
+        "grep pyarrow uv.lock | head -1",
+    ]
+    for text in forms:
+        found = scan_workflow(_wf(text))
+        assert any("inline lock parsing" in f for f in found), (text, found)
+    for text in (
+        "bash scripts/dev/lock_version.sh pyarrow",
+        "uv lock --check",
+        "# uv.lock note\nls",
+    ):
+        assert not any("inline lock parsing" in f for f in scan_workflow(_wf(text))), text
+
+
+def test_option_and_command_normalisation() -> None:
+    cases = {
+        "pip install --index-url=https://x/simple ruff==1.0": "index override",
+        "pip install --extra-index-url=https://x/simple ruff==1.0": "index override",
+        "pip install --index=https://x/simple ruff==1.0": "index override",
+        "uv pip install --default-index=https://x/simple ruff==1.0": "index override",
+        "pip install -ihttps://x/simple ruff==1.0": "index override",
+        "pip install -rreqs.txt": "unlocked requirements",
+        "pip install --requirement=reqs.txt": "unlocked requirements",
+        "pip install -e. ": "project install",
+        "pip install -e.[dev]": "project install",
+        "pip install --editable=.": "project install",
+        "pip3.11 install -e .": "project install",
+        "python3 -m pip3 install .[dev]": "project install",
+        "pip install $SRC": "project install",
+        "pip install /abs/path/pkg": "project install",
+        "pip install ../other": "project install",
+        "pip install ./not-native": "project install",
+        "pip install --quiet install-ok": "not an exact",
+        "uv run --with requests pytest": "uv run --with",
+        "uv run --with=requests pytest": "uv run --with",
+        "uv run --with-requirements r.txt pytest": "uv run --with",
+        "uv add requests": "uv add",
+        "uv remove requests": "uv remove",
+        "/usr/local/bin/uv sync --extra dev": "uv sync without --frozen",
+        "$HOME/.local/bin/uv sync --frozen": "installs outside",
+        "/usr/bin/pip install -e .": "project install",
+        "uv sync --frozen --python=3.12": "installs outside",
+    }
+    for text, expected in cases.items():
+        found = scan_workflow(_wf(LE, text))
+        assert any(expected in f for f in found), (text, found)
+    clean = [
+        "pip install ./decoy-engine-native",
+        "pip install ./decoy-engine-native[dev]==1",
+        "pip install dist/x.whl",
+        "pip install /tmp/pkg/x.whl",
+        'wheel="$(find d -name \'*.whl\' | head -n1)"\npip install "$wheel" ruff==1.0',
+        "uv pip install --python=x build==1.2.2",
+    ]
+    for text in clean:
+        assert not [f for f in scan_workflow(_wf(LE, text)) if "outside" not in f], text
+
+
+def test_venv_env_copy_forms() -> None:
+    heredoc = 'cat >> "$GITHUB_ENV" <<EOF\nUV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv\nEOF'
+    for text in (heredoc, 'echo "DECOY_VENV=x" >> "$GITHUB_ENV"'):
+        assert any("copies the venv env block" in f for f in scan_workflow(_wf(text))), text
+    assert any(
+        "copies the venv env block" in f for f in scan_workflow(_wf("ls", env={"DECOY_VENV": "x"}))
+    )
+    step_env = {"run": "ls", "env": {"UV_PROJECT_ENVIRONMENT": "x"}}
+    assert any("copies the venv env block" in f for f in scan_workflow(_wf(step_env)))
+    wf = _wf("ls")
+    wf["env"] = {"UV_PROJECT_ENVIRONMENT": "x"}
+    assert any("copies the venv env block" in f for f in scan_workflow(wf))
+
+
+def test_setup_uv_needs_a_commit_sha() -> None:
+    sha = "d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86"
+    for ref in ("v5", "main", "d4b2f3b"):
+        step = {"uses": f"astral-sh/setup-uv@{ref}", "with": {"version": "0.11.19"}}
+        found = scan_workflow(_wf(step), role="setup-uv")
+        assert any("commit SHA" in f for f in found), (ref, found)
+    ok = {"uses": f"astral-sh/setup-uv@{sha}", "with": {"version": "0.11.19"}}
+    assert scan_workflow(_wf(ok), role="setup-uv") == []
+
+
+def test_permissions_sentry() -> None:
+    good = {"permissions": {"contents": "read"}, "jobs": {"a": {"steps": []}}}
+    assert permission_findings("x.yml", good) == []
+    assert permission_findings("x.yml", {"jobs": {"a": {}}}), "missing top-level block"
+    assert permission_findings("x.yml", {**good, "permissions": "write-all"})
+    assert permission_findings("x.yml", {**good, "permissions": {"contents": "write"}})
+    wide_job = {**good, "jobs": {"a": {"permissions": {"pages": "write"}}}}
+    assert permission_findings("x.yml", wide_job)
+    assert permission_findings("x.yml", {**good, "jobs": {"a": {"permissions": "write-all"}}})
+    allowed = {("x.yml", "a"): frozenset({"pages"})}
+    assert permission_findings("x.yml", wide_job, allowlist=allowed) == []
+
+
+def test_every_real_workflow_declares_permissions() -> None:
+    bad = {n: f for n, wf in _real_workflows().items() if (f := permission_findings(n, wf))}
+    assert not bad, bad
+    assert len(WRITE_ALLOWLIST) == 3, "write-scope allowlist is a ratchet at 3 entries"
+    used = {
+        (n, j)
+        for n, wf in _real_workflows().items()
+        for j, job in {**(wf.get("jobs") or {}), "": wf}.items()
+        if "write" in str((job or {}).get("permissions", ""))
+    }
+    assert used == {(n, j) for n, j in WRITE_ALLOWLIST}, "allowlist entries must all be in use"
+
+
+def test_mac_exemption_is_exactly_one_job() -> None:
+    exempt = [
+        (n, j)
+        for n, wf in _real_workflows().items()
+        for j, job in wf["jobs"].items()
+        if is_mac_gate(n, j, job)
+    ]
+    assert exempt == [("gate-selfhosted.yml", "gate")], exempt
+    mac = ["self-hosted", "macos", "decoy-gate"]
+    boot = "bash scripts/dev/bootstrap.sh"
+    on_gate = _wf(boot, name_job="gate", **{"runs-on": mac})
+    assert not any("outside" in f for f in scan_workflow(on_gate, name="gate-selfhosted.yml"))
+    other_labels = _wf(boot, name_job="gate", **{"runs-on": ["self-hosted", "linux"]})
+    assert any("outside" in f for f in scan_workflow(other_labels, name="gate-selfhosted.yml"))
+    other_job = _wf(boot, name_job="gate2", **{"runs-on": mac})
+    assert any("outside" in f for f in scan_workflow(other_job, name="gate-selfhosted.yml"))
+    other_file = _wf(boot, name_job="gate", **{"runs-on": mac})
+    assert any("outside" in f for f in scan_workflow(other_file, name="ci.yml"))
+
+
+def test_every_composite_action_is_scanned(tmp_path: Path) -> None:
+    shipped = {p.parent.name for p in ACTIONS.glob("**/action.y*ml")}
+    assert {"lock-env", "setup-uv"} <= shipped
+    assert scan_actions(ACTIONS) == {}
+    stray = tmp_path / "stray"
+    stray.mkdir()
+    (stray / "action.yaml").write_text(
+        "name: s\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      run: pip install -e .\n",
+        encoding="utf-8",
+    )
+    found = scan_actions(tmp_path)
+    assert list(found) == ["stray"] and any("project install" in f for f in found["stray"]), found
+
+
+def _shell(*args: str, cwd: Path, env: dict[str, str] | None = None) -> Any:
+    import subprocess
+
+    return subprocess.run(  # noqa: S603
+        ["bash", *args], cwd=cwd, env=env, capture_output=True, text=True, check=False
+    )
+
+
+def test_lock_profile_lives_in_lock_version_only(tmp_path: Path) -> None:
+    script = ROOT / "scripts" / "dev" / "lock_version.sh"
+    py = _shell(str(script), "--python", cwd=ROOT).stdout.strip()
+    assert re.fullmatch(r"3\.\d+\.\d+", py), py
+    others = [
+        ROOT / ".github" / "actions" / "lock-env" / "action.yml",
+        ROOT / "scripts" / "dev" / "bootstrap.sh",
+        ROOT / "scripts" / "release" / "release_checks.sh",
+    ]
+    for path in others:
+        text = path.read_text(encoding="utf-8")
+        assert py not in text, f"{path.name} restates the lock-profile Python"
+        assert not re.search(r"pyarrow\s+polars|duckdb\s+pyarrow|KEY_DEPS", text), path.name
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        for m in re.finditer(
+            r"uses:\s*" + re.escape(LOCK_ENV_USES) + r"\s*\n\s*with:\n((?:\s+.*\n)+)",
+            path.read_text(),
+        ):
+            assert f'python: "{py}"' not in m.group(1), f"{path.name} restates the profile Python"
+    lock_env = others[0].read_text(encoding="utf-8")
+    assert lock_env.count("lock_version.sh --check") == 1, "key-dep check must run once"
+    assert "importlib.metadata" not in lock_env
+    assert others[1].read_text(encoding="utf-8").count("lock_version.sh") >= 1
+
+
+def test_lock_version_check_mode(tmp_path: Path) -> None:
+    import shutil
+    import sys
+    from importlib.metadata import version
+
+    dev = tmp_path / "scripts" / "dev"
+    dev.mkdir(parents=True)
+    shutil.copy(ROOT / "scripts" / "dev" / "lock_version.sh", dev)
+    pytest_v = version("pytest")
+    (tmp_path / "uv.lock").write_text(
+        f'name = "pytest"\nversion = "{pytest_v}"\n\nname = "nopkg-zzz"\nversion = "1.0"\n',
+        encoding="utf-8",
+    )
+    venv = tmp_path / "venv" / "bin"
+    venv.mkdir(parents=True)
+    (venv / "python").symlink_to(sys.executable)
+    env = {"PATH": "/usr/bin:/bin", "DECOY_VENV": str(tmp_path / "venv")}
+    ok = _shell(str(dev / "lock_version.sh"), "--check", "pytest", cwd=tmp_path, env=env)
+    assert ok.returncode == 0 and ok.stdout.count("pytest") == 1 and "OK" in ok.stdout, ok
+    bad = _shell(
+        str(dev / "lock_version.sh"), "--check", "pytest", "nopkg-zzz", cwd=tmp_path, env=env
+    )
+    assert bad.returncode == 1 and "MISMATCH" in bad.stdout, bad
+    assert bad.stdout.count("pytest") == 1, "each package prints once"
