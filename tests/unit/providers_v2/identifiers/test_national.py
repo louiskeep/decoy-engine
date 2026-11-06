@@ -7,6 +7,7 @@ which is the only way a config reaches a provider (through the pool builder).
 
 from __future__ import annotations
 
+import random
 import re
 import subprocess
 import sys
@@ -144,12 +145,19 @@ def test_aadhaar_palindrome_fix_produces_a_valid_value() -> None:
 
 
 def test_idnr_leading_zero_is_rotated_away() -> None:
-    zero_led = 0
-    for i in range(3000):
-        raw = i.to_bytes(4, "big") * 8
-        value = SPECS["synthetic_de_idnr"].build(raw)
-        zero_led += raw[0] == 0
-        _assert_valid("synthetic_de_idnr", [value])
+    rng = random.Random("idnr-rotation")
+    inputs = [rng.randbytes(32) for _ in range(3000)]
+    zero_led = [raw for raw in inputs if _national_specs._idnr_digits(raw)[0] == "0"]
+    assert len(zero_led) > 100
+    values = [SPECS["synthetic_de_idnr"].build(raw) for raw in zero_led]
+    assert all(v[0] != "0" for v in values)
+    _assert_valid("synthetic_de_idnr", values)
+
+
+def test_different_seeds_give_different_batches() -> None:
+    for name in SPECS:
+        assert _batch(name, 20, b"\x01" * 8) != _batch(name, 20, b"\x02" * 8)
+        assert _batch(name, 20, b"\x01" * 32) != _batch(name, 20, b"\x01" * 8)
 
 
 def test_locale_rules() -> None:

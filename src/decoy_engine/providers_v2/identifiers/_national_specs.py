@@ -62,14 +62,19 @@ def _in_aadhaar(b: bytes) -> str:
     return value
 
 
-def _de_idnr(b: bytes) -> str:
-    # Exactly one digit appears twice in the first ten, as the IdNr requires.
+def _idnr_digits(b: bytes) -> list[str]:
+    """Ten digits where exactly one appears twice, as the IdNr requires; may lead with 0."""
     digits = list(string.digits)
     for i in range(9, 0, -1):
         j = b[i] % (i + 1)
         digits[i], digits[j] = digits[j], digits[i]
     chosen = digits[:9]
     chosen.insert(b[10] % 10, chosen[b[11] % 9])
+    return chosen
+
+
+def _de_idnr(b: bytes) -> str:
+    chosen = _idnr_digits(b)
     # Rotation keeps the digit counts; at most two zeros, so a non-zero lead exists.
     start = next(i for i, d in enumerate(chosen) if d != "0")
     body = "".join([*chosen[start:], *chosen[:start]])

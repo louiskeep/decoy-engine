@@ -46,7 +46,11 @@ want realistic-looking replacements rather than a redaction.
 `checksums` scheme, including its format rules. NHS numbers come only from the
 999 test range, which is never issued; the others can coincide with real issued
 numbers. Each provider accepts its own locales (for example `en_GB` for NHS);
-another locale is refused with `provider.unsupported_locale`.
+another locale is refused with `provider.unsupported_locale` when the pool is
+built, at run time rather than at plan compile (as for the other providers).
+They take no other `provider_config` options: an unknown key (for example a
+gender) is ignored, though it still changes the pool's identity and so its
+values.
 
 These, like every `faker` provider, sample a pool: the default pool holds 10,000
 values, so in deterministic mode distinct source values share masked values
