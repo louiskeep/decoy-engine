@@ -9,6 +9,22 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (V1+ track, V1P-2.4: truthful Faker locales, 2026-11-06; merge held until after CLI-REL)
+
+- Faker-backed catalogue providers advertise the locales they work in (107 for most; 104 for
+  `person_phone`; 69 for `address_state`) instead of `("en_US",)`, from the generated
+  `providers_v2/_faker_locales.py` (`scripts/gen_faker_locales.py`; a sentry regenerates and
+  compares it against the installed Faker).
+- A locale Faker refuses, or a locale without the provider's Faker method, now fails with
+  `provider.unsupported_locale` instead of a raw `AttributeError` or `capability_violation`. Nothing
+  is pre-checked: every value a working config produced before is unchanged (pinned by golden
+  digests captured before the change, including `pt-BR`, `de_de`, `it` and multi-locale lists).
+- Run metadata: capability rows feed `registry_fingerprint`, so physical runs' `plan_hash` and
+  `activation_hash` change; masked data does not.
+- Merge hold (owner decision): the CLI cockpit's provider details change. Plan:
+  `docs/plans/2026-11-06-v1plus-p2.4-faker-locales.md`; track overview: the CLI repo's
+  `docs/roadmap/v1plus-sprints.md`.
+
 ### Breaking for consumers
 
 - `run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked`, `run_native_or_oracle_chunked` and `compile_plan` now refuse a config with `subset:` set (`config.subset_run_unsupported`, registry 1.6.0) instead of masking the full sources; run `run_subset` first.

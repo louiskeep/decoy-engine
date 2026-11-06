@@ -34,6 +34,13 @@ modes draw a seeded whole-column stream from the job seed.
 
 - `provider`: the provider name (required). Providers come from the engine's
   default registry.
+- `provider_config.locale`: the Faker locale (default `en_US`). Faker decides
+  which strings it accepts, including forms such as `pt-BR`, `de_de` and `it`.
+  Each provider's capability row lists the locales it works in under the pinned
+  Faker (`address_state` lacks 38 of Faker's 107, `person_phone` 3). A locale
+  Faker refuses, or one without the provider's Faker method (for example
+  `address_state` in `fr_FR`), fails the run with `provider.unsupported_locale`
+  when the pool is built, not at plan compile.
 - `namespace`: scopes determinism and joinability.
 
 Use it for names, emails, phone numbers, addresses, and other fields where you

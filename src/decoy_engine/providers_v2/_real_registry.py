@@ -23,6 +23,7 @@ from __future__ import annotations
 import faker as faker_module
 
 from decoy_engine.providers_v2._adapter import CapabilityMatrix
+from decoy_engine.providers_v2._faker_locales import supported_locales as faker_supported_locales
 
 _FAKER_VERSION = faker_module.VERSION
 
@@ -32,7 +33,7 @@ def _faker_cap(
     *,
     poolable: bool = False,
     participates_in_fk_pk: bool = False,
-    supported_locales: tuple[str, ...] = ("en_US",),
+    supported_locales: tuple[str, ...] | None = None,
 ) -> CapabilityMatrix:
     """Build a CapabilityMatrix entry for a Faker-backed provider with
     the S4-close defaults: non-deterministic, value-reuse OK, cardinality
@@ -49,7 +50,11 @@ def _faker_cap(
         preserves_source_cardinality=False,
         participates_in_fk_pk=participates_in_fk_pk,
         poolable=poolable,
-        supported_locales=supported_locales,
+        supported_locales=(
+            supported_locales
+            if supported_locales is not None
+            else faker_supported_locales(provider)
+        ),
         supports_coherent_link=False,
         format_regex=None,
         blocklist_validators=(),

@@ -22,6 +22,7 @@ names ("person_email") to Faker method calls.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -83,6 +84,9 @@ _FAKER_DEFAULT_KWARGS: dict[str, dict[str, Any]] = {
 # until S9 removes the V1 strategy stack.
 _V2_CUSTOM_PROVIDERS: dict[str, Callable[[Any], Any]] = {}
 
+# Prefix of the AttributeError faker.Factory.create raises for a locale it refuses.
+_FAKER_INVALID_LOCALE = "Invalid configuration for faker locale"
+
 
 class FakerAdapter:
     """Concrete BackendAdapter wrapping Faker.
@@ -117,7 +121,24 @@ class FakerAdapter:
         self._caps_lookup = capabilities_lookup
         self._faker_instances: dict[str, Any] = {}
 
-    def _faker(self, locale: str | None) -> Any:
+    def _new_faker(self, provider: str, locale: str | None) -> Any:
+        """Build a Faker instance, coding Faker's invalid-locale refusal.
+
+        Faker normalizes the string itself (``-`` to ``_``, then
+        ``locale.normalize``), so it, not Decoy, decides what it accepts.
+        """
+        effective_locale = locale or self._default_locale
+        try:
+            return faker_module.Faker(effective_locale)
+        except AttributeError as exc:
+            if not str(exc).startswith(_FAKER_INVALID_LOCALE):
+                raise
+            raise AdapterError(
+                code=reasons.provider.UNSUPPORTED_LOCALE,
+                message=f"Faker does not support locale {effective_locale!r} for {provider!r}.",
+            ) from None
+
+    def _faker(self, provider: str, locale: str | None) -> Any:
         # Cached instances serve only the UNSEEDED (non-deterministic) paths;
         # seeded batches construct a fresh isolated instance in generate_batch
         # so no seeded state ever lives in this shared cache. A concurrent
@@ -125,12 +146,12 @@ class FakerAdapter:
         # harmless for random-by-default output.
         effective_locale = locale or self._default_locale
         if effective_locale not in self._faker_instances:
-            self._faker_instances[effective_locale] = faker_module.Faker(effective_locale)
+            self._faker_instances[effective_locale] = self._new_faker(provider, locale)
         return self._faker_instances[effective_locale]
 
     def _faker_call(self, provider: str, spec: ProviderSpec, fake: Any = None) -> Any:
         if fake is None:
-            fake = self._faker(spec.locale)
+            fake = self._faker(provider, spec.locale)
         # V2-native custom providers take precedence over the built-in
         # _FAKER_METHOD_MAP for names that match.
         if provider in _V2_CUSTOM_PROVIDERS:
@@ -147,14 +168,26 @@ class FakerAdapter:
             )
         kwargs = dict(_FAKER_DEFAULT_KWARGS.get(provider, {}))
         kwargs.update(spec.extra)
-        try:
-            if method_name == "date_of_birth":
-                # Faker's own date_of_birth reads the wall clock; the anchored form is a pure
-                # function of the seed. See generation/_dob_anchor.py.
-                from decoy_engine.generation._dob_anchor import anchored_date_of_birth
+        if method_name == "date_of_birth":
+            # Faker's own date_of_birth reads the wall clock; the anchored form is a pure
+            # function of the seed. See generation/_dob_anchor.py.
+            from decoy_engine.generation._dob_anchor import anchored_date_of_birth
 
-                return anchored_date_of_birth(fake, **kwargs)
-            return getattr(fake, method_name)(**kwargs)
+            method: Callable[..., Any] = functools.partial(anchored_date_of_birth, fake)
+        else:
+            # One attribute access, as before: a separate hasattr would draw from a
+            # multi-locale Faker's RNG and change output.
+            try:
+                method = getattr(fake, method_name)
+            except AttributeError:
+                # Faker builds the locale but has no such method there (e.g. `state`
+                # in fr_FR): a locale fault, not a provider fault.
+                raise AdapterError(
+                    code=reasons.provider.UNSUPPORTED_LOCALE,
+                    message=f"Locale {spec.locale!r} has no Faker method for {provider!r}.",
+                ) from None
+        try:
+            return method(**kwargs)
         except Exception as exc:
             raise AdapterError(
                 code=reasons.provider.CAPABILITY_VIOLATION,
@@ -226,7 +259,7 @@ class FakerAdapter:
         # unchanged. Mirrors the MimesisAdapter seeded-path pattern
         # (fresh `Generic(locale, seed=...)` per seeded batch).
         if spec.seed is not None:
-            fake = faker_module.Faker(spec.locale or self._default_locale)
+            fake = self._new_faker(provider, spec.locale)
             fake.seed_instance(int.from_bytes(spec.seed, "big"))
             return [self._faker_call(provider, spec, fake) for _ in range(count)]
         return [self._faker_call(provider, spec) for _ in range(count)]
