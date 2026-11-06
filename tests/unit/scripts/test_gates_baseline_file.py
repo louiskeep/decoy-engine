@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -732,7 +733,8 @@ def test_a_baseline_holding_a_docs_walking_sentry_failure_is_stale_after_any_mov
 def test_gates_sh_parses_no_json_or_junit_inline() -> None:
     # One owner per concern: the stored file and the JUnit are read only by _gates_report.py.
     text = (DEV / "gates.sh").read_text()
-    for needle in ("python -c", "json.load", "ElementTree", "xml.etree"):
+    assert not re.search(r"python\"?\s+-c\b", text), "inline python in gates.sh"
+    for needle in ("json.load", "ElementTree", "xml.etree"):
         assert needle not in text, needle
 
 
