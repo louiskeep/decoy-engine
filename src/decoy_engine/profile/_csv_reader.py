@@ -32,6 +32,7 @@ value, a path or a file name, and the library error is never chained.
 from __future__ import annotations
 
 import csv
+import dataclasses
 import io
 import os
 import sys
@@ -60,7 +61,7 @@ while True:
         _limit //= 2
 
 OpenHandle = Callable[[], FileHandle]
-_PARSER_ERRORS = (pd.errors.EmptyDataError, pd.errors.ParserError)
+_PARSER_ERRORS = pandas_adapter.PARSER_ERRORS
 
 
 def resolve_csv_dialect(descriptor: Mapping[str, Any]) -> CsvDialect:
@@ -68,12 +69,12 @@ def resolve_csv_dialect(descriptor: Mapping[str, Any]) -> CsvDialect:
 
     The only place in the engine that reads the three dialect keys of a descriptor.
     """
-    names = descriptor.get("column_names")
-    return CsvDialect(
-        has_header=descriptor.get("has_header", True),
-        column_names=None if names is None else tuple(names),
-        delimiter=descriptor.get("delimiter", ","),
-    )
+    # Only the keys present are passed, so `CsvDialect`'s field defaults are the one home of
+    # the defaults and `CsvDialect` alone validates and normalizes the values.
+    present = {
+        f.name: descriptor[f.name] for f in dataclasses.fields(CsvDialect) if f.name in descriptor
+    }
+    return CsvDialect(**present)
 
 
 def _refusal(code: str, table: str, detail: str) -> PipelineValidationError:
@@ -94,6 +95,8 @@ def _scan_record_widths(
     Scans only the records the read consumes (`nrows`), so a bounded sample does not walk a
     huge file. Reads through the policy-issued handle.
     """
+    if nrows == 0:
+        return  # no record is consumed, so none is checked; the read returns the empty frame
     expected = len(dialect.column_names or ())
     consumed = 0
     with open_handle() as handle, handle.open_binary() as raw:
@@ -168,10 +171,15 @@ def _read_whole(
     names: list[str] | None,
     table: str,
 ) -> pd.DataFrame:
+    # Headerless, the adapter lets a pandas parser error through a strict policy (its text can
+    # carry a cell) so it is replaced here by the coded refusal, which chains nothing. With a
+    # header there is no coded refusal: the plain adapter maps it to a read error, and the
+    # ambient policy keeps the library error as before.
+    read = pandas_adapter.read_csv if names is None else pandas_adapter.read_csv_parser_errors
     failed = False
     try:
         with open_handle() as handle:
-            frame = pandas_adapter.read_csv(handle, **kwargs)
+            frame = read(handle, **kwargs)
     except _PARSER_ERRORS:
         if names is None:
             raise
@@ -187,10 +195,15 @@ def _read_chunks(
     names: list[str] | None,
     table: str,
 ) -> Iterator[pd.DataFrame]:
+    read = (
+        pandas_adapter.read_csv_chunks
+        if names is None
+        else pandas_adapter.read_csv_chunks_parser_errors
+    )
     failed = False
     try:
         with open_handle() as handle:
-            for chunk in pandas_adapter.read_csv_chunks(handle, **kwargs):
+            for chunk in read(handle, **kwargs):
                 yield chunk if names is None else _named(chunk, names, table)
     except _PARSER_ERRORS:
         if names is None:
@@ -225,6 +238,10 @@ def _read_csv_rows(
         names = list(dialect.column_names or ())
         _scan_record_widths(open_handle, dialect, table=table, nrows=nrows)
         read_opts = {"header": None, **_positional_lexemes(lexeme_columns, names)}
+        if nrows == 0:
+            # Zero rows: name the empty frame at the read, so a malformed first record (which
+            # was not scanned) cannot change its width.
+            read_opts["names"] = names
     kwargs: dict[str, Any] = {"sep": dialect.delimiter, "dtype": dtype, **read_opts}
     if nrows is not None:
         kwargs["nrows"] = nrows
