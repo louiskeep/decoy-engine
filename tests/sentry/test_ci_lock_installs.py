@@ -625,6 +625,8 @@ def _fetch_other(entry: dict[str, str]) -> bytes | None:
         try:
             with urllib.request.urlopen(url, timeout=20) as response:  # noqa: S310
                 return bytes(response.read())
+        except urllib.error.HTTPError:
+            return b""  # the commit or path does not exist: a definite mismatch, not "offline"
         except (urllib.error.URLError, TimeoutError):
             continue
     return None
