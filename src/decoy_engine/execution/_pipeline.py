@@ -74,6 +74,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
+from decoy_engine.config._subset_run import refuse_unapplied_subset
 from decoy_engine.declared_casting._refusals import collect_refusals
 from decoy_engine.execution import _pipeline_context as _ctx
 from decoy_engine.execution import _pipeline_finalize
@@ -272,7 +273,11 @@ def run_pipeline(
     the `generate_tables` call below, so the shadow-parity harness can pin this
     oracle call to the SAME registry snapshot as its own coordinator-side call.
     `None` (every real caller) resolves against the live registry.
+
+    A config that sets `subset:` is refused first (`config.subset_run_unsupported`),
+    before any source is read.
     """
+    refuse_unapplied_subset(config)
     # MG-5: the `tokenize` strategy masks per-cell through a platform-injected
     # token vault. That writer is threaded only to the FULL-FRAME adapter (the
     # bounded sequential / out-of-core / chunked routes build their own
