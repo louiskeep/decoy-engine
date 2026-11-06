@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,9 +22,9 @@ from packaging.utils import canonicalize_name
 from decoy_engine.quality import dp_provenance as dp
 from tests.sentry._ci_lock_scan import ROOT
 
-try:
+if sys.version_info >= (3, 11):
     import tomllib
-except ModuleNotFoundError:  # CPython 3.10
+else:
     import tomli as tomllib
 
 _BOOTSTRAP = re.compile(r"EXTRAS=\((--extra \w+(?: --extra \w+)*)\)")
