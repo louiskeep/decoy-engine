@@ -6,6 +6,17 @@ setup-uv action, pinned to a commit SHA), no unpinned index or project install b
 parsing of uv.lock, a pip-audit leg that cannot be hidden, and explicit least-privilege
 permissions. Order is checked by step index, not data flow: a step that deletes the venv between
 install and use is not seen.
+
+Shell parsing lives in ci_scan/_shell_tokens.py, one file shared byte-for-byte with the CLI
+repository. Against the CI-E1 scanner (f2b7b3da) a 708-command differential scan shows only:
+- reworded findings: an editable install reports `project install by pip (-e)` once, because
+  `-e` now consumes its value instead of also reporting `.` or the path;
+- removed false positives: index options flagged on non-package commands (`ls -i`, `rm -f`), and
+  `uv run --frozen sync` reported as an install;
+- stricter, on purpose: index environment variables and `-f`/`--find-links`, the bodies of
+  `bash -c "..."`, global options before pip and uv subcommands, `uv pip sync`, uv options this
+  scanner does not know, and fetching `uv tool` and pipx verbs (`inject`, `upgrade`, ...).
+`uv tool run` keeps its base rule: it needs `--frozen` or UV_FROZEN like `uv run`.
 """
 
 from __future__ import annotations
@@ -19,19 +30,20 @@ import yaml
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
-from tests.sentry._ci_shell_tokens import (
+from tests.sentry.ci_scan._shell_tokens import (
     EXACT_PIN,
     INDEX_OPTIONS,
     code_lines,
     env_mapping_index_names,
     index_env_names,
+    is_package_command,
     parse_install_args,
     pip_install_args,
     tool_fetch,
     uv_run_findings,
-    uv_subcommand,
+    uv_subcommands,
 )
-from tests.sentry._ci_shell_tokens import commands as shell_commands
+from tests.sentry.ci_scan._shell_tokens import commands as shell_commands
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -44,6 +56,8 @@ CONSTRAINTS = ROOT / ".github" / "build-constraints.txt"
 ACTIONS = ROOT / ".github" / "actions"
 LOCK_ENV_USES = "./.github/actions/lock-env"
 SETUP_UV_USES = "./.github/actions/setup-uv"
+# `uv pip sync` installs a requirements file just as `uv sync` installs the project.
+SYNC_SUBCOMMANDS = {"sync", "pip sync"}
 VERSION = re.compile(r"\d+\.\d+\.\d+")
 SETUP_UV_SHA = re.compile(r"astral-sh/setup-uv@[0-9a-f]{40}")
 
@@ -86,7 +100,7 @@ def _is_consumer(cmd: list[str]) -> bool:
 def _is_lock_install(cmd: list[str]) -> bool:
     if any(t.endswith("bootstrap.sh") for t in cmd):
         return True
-    return uv_subcommand(cmd) == "sync" and "--frozen" in cmd
+    return SYNC_SUBCOMMANDS & set(uv_subcommands(cmd)) and "--frozen" in cmd
 
 
 def _wheel_vars(text: str) -> set[str]:
@@ -151,12 +165,13 @@ def _tool_findings(cmd: list[str]) -> list[str]:
 
 def _misc_findings(cmd: list[str]) -> list[str]:
     findings = _tool_findings(cmd)
-    sub = uv_subcommand(cmd)
-    if sub == "lock" and "--check" not in cmd:
+    subs = set(uv_subcommands(cmd))
+    if "lock" in subs and "--check" not in cmd:
         findings.append("uv lock without --check re-resolves the lock")
-    findings += [f"package index override ({t})" for t in cmd if t in INDEX_OPTIONS]
+    if is_package_command(cmd):
+        findings += [f"package index override ({t})" for t in cmd if t in INDEX_OPTIONS]
     findings += [f"index environment variable ({n})" for n in index_env_names(cmd)]
-    if sub in {"add", "remove"}:
+    for sub in sorted(subs & {"add", "remove"}):
         findings.append(f"uv {sub} edits the dependency set")
     return findings
 
@@ -226,7 +241,7 @@ def _step_findings(
         args = pip_install_args(cmd)
         if args is not None:
             findings += [f"{job_name}: {m}" for m in _requirement_findings(args, wheels)]
-        if uv_subcommand(cmd) == "sync" and "--frozen" not in cmd:
+        if SYNC_SUBCOMMANDS & set(uv_subcommands(cmd)) and "--frozen" not in cmd:
             findings.append(f"{job_name}: uv sync without --frozen")
     return findings
 
@@ -264,7 +279,7 @@ def scan_workflow(wf: dict[str, Any], *, role: str = "workflow", name: str = "")
                 locked_at = index
             findings += _step_findings(job_name, steps[index], texts[index], step_cmds, role)
             for cmd in step_cmds:
-                installs = uv_subcommand(cmd) == "sync" or any(
+                installs = SYNC_SUBCOMMANDS & set(uv_subcommands(cmd)) or any(
                     t.endswith("bootstrap.sh") for t in cmd
                 )
                 if role == "workflow" and not exempt and installs:

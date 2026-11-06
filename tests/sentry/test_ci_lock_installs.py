@@ -10,8 +10,6 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +34,7 @@ from tests.sentry._ci_lock_scan import (
     scan_actions,
     scan_workflow,
 )
+from tests.sentry.ci_scan._identity import fetch_raw, identity_findings, should_skip
 
 # --- acceptance tests against the real workflows -----------------------------
 
@@ -67,7 +66,7 @@ def test_setup_uv_is_pinned() -> None:
         f"astral-sh/setup-uv appears {len(uv_steps)} times; want only the setup-uv action"
     )
     version = str((uv_steps[0].get("with") or {}).get("version", ""))
-    assert VERSION.match(version), f"setup-uv version is not an exact x.y.z: {version!r}"
+    assert VERSION.fullmatch(version), f"setup-uv version is not an exact x.y.z: {version!r}"
     users = [
         n
         for n, wf in _real_workflows().items()
@@ -240,6 +239,15 @@ def test_seeded_action_tool_and_index_cases() -> None:
         "pip install -r requirements.txt": "unlocked requirements",
         "uvx pip-audit": "tool is not an exact",
         "uv tool install ruff": "tool is not an exact",
+        "uv tool --python 3.12 run black": "tool is not an exact",
+        "uv tool --cache-dir c install black": "tool is not an exact",
+        "uv tool frobnicate black": "tool is not an exact",
+        "uv tool --brand-new v install black": "tool is not an exact",
+        "uv tool --python 3.12 run ruff==0.15.22": "uv run without --frozen",
+        "uv --brand-new-option x sync": "uv sync without --frozen",
+        "uv --brand-new-option x add requests": "uv add",
+        "uv --brand-new-option run sync": "uv sync without --frozen",
+        "uv --cache-dir c --directory d --config-file f sync": "uv sync without --frozen",
         "pipx install ruff": "tool is not an exact",
         "pipx run ruff": "tool is not an exact",
     }
@@ -407,6 +415,18 @@ def test_option_and_command_normalisation() -> None:
         "uv sync --frozen --python=3.12": "installs outside",
         # Shared-core spellings: global options before the subcommand, find-links, index env.
         "uv --quiet sync --frozen": "installs outside",
+        "uv pip sync r.txt": "uv sync without --frozen",
+        "uv --quiet pip sync r.txt": "uv sync without --frozen",
+        "uv --preview-features x sync": "uv sync without --frozen",
+        "uv pip sync --frozen r.txt": "installs outside",
+        "uv tool run ruff==0.15.22": "uv run without --frozen",
+        "uv tool install ruff": "tool is not an exact",
+        "uv tool upgrade ruff": "tool is not an exact",
+        "pipx inject app requests": "tool is not an exact",
+        "pipx upgrade app": "tool is not an exact",
+        "pipx upgrade-all": "names no package",
+        "pipx reinstall app": "tool is not an exact",
+        "pipx runpip app install requests": "tool is not an exact",
         "uv --directory x sync": "uv sync without --frozen",
         "uv --quiet add requests": "uv add",
         "uv --quiet run pytest": "uv run without --frozen",
@@ -457,6 +477,11 @@ def test_setup_uv_needs_a_commit_sha() -> None:
         assert any("commit SHA" in f for f in found), (ref, found)
     ok = {"uses": f"astral-sh/setup-uv@{sha}", "with": {"version": "0.11.19"}}
     assert scan_workflow(_wf(ok), role="setup-uv") == []
+    # A trailing newline must not pass either validator (catalog class 1).
+    newline_sha = {"uses": f"astral-sh/setup-uv@{sha}\n", "with": {"version": "0.11.19"}}
+    assert any("commit SHA" in f for f in scan_workflow(_wf(newline_sha), role="setup-uv"))
+    newline_ver = {"uses": f"astral-sh/setup-uv@{sha}", "with": {"version": "0.11.19\n"}}
+    assert any("exact x.y.z" in f for f in scan_workflow(_wf(newline_ver), role="setup-uv"))
 
 
 def test_permissions_sentry() -> None:
@@ -590,72 +615,88 @@ def test_index_environment_variables_are_findings_in_every_env_block() -> None:
         assert any("index environment" in f for f in scan_workflow(wf)), name
 
 
-# --- shared shell-parsing core: identity with the CLI repository --------------
+# --- shared sentry package tests/sentry/ci_scan: identity with the CLI repository -----
 
-# Ledger of the shell-parsing core shared byte-for-byte with the CLI repository. `sha256` is this
-# repository's copy; `other_commit` is a commit in `other_repo` holding the same bytes at
-# `other_path`, fetched and compared below, so editing the local file and this hash together still
-# fails. Changing the core means landing it in the other repository first, then pointing
-# `other_commit` at that commit.
-CORE_LEDGER = {
-    "path": "tests/sentry/_ci_shell_tokens.py",
-    "sha256": "ea9a90ff78878359c3cf19f5d133b6ee3179a6637a92edddc3898e491c9058fc",
-    "other_repo": "louiskeep/decoy",
-    "other_path": "tests/sentry/_ci_shell_tokens.py",
-    "other_commit": "79201ffdea07849a0337c4304e458470d86deb7c",
-}
-
-
-def _identity_findings(entry: dict[str, str], local: bytes, other: bytes | None) -> list[str]:
-    """The core is guarded twice: against this ledger, and against the other repository's bytes."""
-    found = []
-    if hashlib.sha256(local).hexdigest() != entry["sha256"]:
-        found.append("local core differs from the sha256 in the ledger")
-    if other is None:
-        found.append("the other repository's copy could not be fetched")
-    elif other != local:
-        found.append("local core differs from the other repository's copy at the recorded commit")
-    return found
-
-
-def _fetch_other(entry: dict[str, str]) -> bytes | None:
-    url = (
-        f"https://raw.githubusercontent.com/{entry['other_repo']}"
-        f"/{entry['other_commit']}/{entry['other_path']}"
-    )
-    for _ in range(3):
-        try:
-            with urllib.request.urlopen(url, timeout=20) as response:  # noqa: S310
-                return bytes(response.read())
-        except urllib.error.HTTPError:
-            return b""  # the commit or path does not exist: a definite mismatch, not "offline"
-        except (urllib.error.URLError, TimeoutError):
-            continue
-    return None
+# Ledger of the files in tests/sentry/ci_scan, shared byte-for-byte with the CLI repository.
+# `sha256` is this repository's copy; `other_commit` is a commit in `other_repo` holding the same
+# bytes at `other_path`, fetched and compared below, so editing a local file and its hash together
+# still fails. Changing a shared file means landing it in the other repository first, then
+# pointing `other_commit` at that commit. After both repositories merge to main, the orchestrator
+# re-points every `other_commit` here, and the CLI ledger, at the merge commits on main.
+SHARED_LEDGER = [
+    {
+        "path": "tests/sentry/ci_scan/__init__.py",
+        "sha256": "957ed128539114a8d15c4e03ac77f486f9abee53294fb6b1aadbba536f76ca21",
+        "other_repo": "louiskeep/decoy",
+        "other_path": "tests/sentry/ci_scan/__init__.py",
+        "other_commit": "86732c865ea2984c59cf4d95e4abf1dc0350bc67",
+    },
+    {
+        "path": "tests/sentry/ci_scan/_shell_tokens.py",
+        "sha256": "b8049d75d6557c8de6161975632d6edd2cb1a37fbc28c454a36dd82ce69d28c7",
+        "other_repo": "louiskeep/decoy",
+        "other_path": "tests/sentry/ci_scan/_shell_tokens.py",
+        "other_commit": "86732c865ea2984c59cf4d95e4abf1dc0350bc67",
+    },
+    {
+        "path": "tests/sentry/ci_scan/_identity.py",
+        "sha256": "82e09cfd65539afb6289750017a79dbcb5663116010309e821bc699e2f48b096",
+        "other_repo": "louiskeep/decoy",
+        "other_path": "tests/sentry/ci_scan/_identity.py",
+        "other_commit": "86732c865ea2984c59cf4d95e4abf1dc0350bc67",
+    },
+    {
+        "path": "tests/sentry/ci_scan/test_identity.py",
+        "sha256": "82a95e1fcaabc7248cc9d1abb883ac104bb3e018854789202813d484cabb5b93",
+        "other_repo": "louiskeep/decoy",
+        "other_path": "tests/sentry/ci_scan/test_identity.py",
+        "other_commit": "86732c865ea2984c59cf4d95e4abf1dc0350bc67",
+    },
+]
 
 
-def test_shared_core_is_byte_identical_to_the_other_repository() -> None:
-    entry = CORE_LEDGER
-    assert re.fullmatch(r"[0-9a-f]{40}", entry["other_commit"]), "a real commit, not a label"
-    local = (ROOT / entry["path"]).read_bytes()
-    other = _fetch_other(entry)
-    if other is None and not os.environ.get("CI"):
-        pytest.skip("offline: the cross-repository check runs in CI and on networked builders")
-    assert _identity_findings(entry, local, other) == []
+def test_every_shared_file_is_in_the_ledger_and_matches_it() -> None:
+    on_disk = {
+        f"tests/sentry/ci_scan/{p.name}" for p in (ROOT / "tests/sentry/ci_scan").glob("*.py")
+    }
+    assert on_disk == {e["path"] for e in SHARED_LEDGER}
+    for entry in SHARED_LEDGER:
+        digest = hashlib.sha256((ROOT / entry["path"]).read_bytes()).hexdigest()
+        assert digest == entry["sha256"], entry["path"]
 
 
-def test_shared_core_identity_catches_one_sided_edits() -> None:
-    entry = CORE_LEDGER
-    local = (ROOT / entry["path"]).read_bytes()
-    assert _identity_findings(entry, local, local) == []
-    edited = local.replace(b"def base", b"def base ")
-    assert edited != local
-    # The one-sided edit with the local hash recomputed passes the ledger and fails the other repo.
-    rehashed = {**entry, "sha256": hashlib.sha256(edited).hexdigest()}
-    found = _identity_findings(rehashed, edited, local)
-    assert found == ["local core differs from the other repository's copy at the recorded commit"]
-    assert _identity_findings(entry, edited, local), "edit without rehash fails the ledger too"
-    assert _identity_findings(entry, local, None), "an unreachable other repository is a finding"
-    text = local.decode()
+def test_shared_files_are_byte_identical_to_the_other_repository() -> None:
+    for entry in SHARED_LEDGER:
+        assert re.fullmatch(r"[0-9a-f]{40}", entry["other_commit"]), "a real commit, not a label"
+        fetched = fetch_raw(entry["other_repo"], entry["other_commit"], entry["other_path"])
+        if should_skip(fetched, os.environ):
+            pytest.skip("offline: the cross-repository check runs in CI and on networked builders")
+        local = (ROOT / entry["path"]).read_bytes()
+        assert identity_findings(local, entry["sha256"], fetched) == [], entry["path"]
+
+
+def test_the_shared_core_is_repo_neutral() -> None:
+    text = (ROOT / "tests/sentry/ci_scan/_shell_tokens.py").read_text(encoding="utf-8")
     for word in ("requirements-", "uv.lock", "tomllib", "_ci_lock_scan", "pyproject"):
         assert word not in text, f"the shared core must not know {word}"
+
+
+def test_commands_that_only_look_like_package_commands_stay_clean() -> None:
+    clean = [
+        "uv tool list",
+        "uv tool dir",
+        "uv tool --python 3.12 list",
+        "uv tool --cache-dir c dir",
+        "uv tool update-shell",
+        "uv run --frozen sync",
+        "uv tool uninstall black",
+        "pipx list",
+        "pipx uninstall app",
+        "pipx runpip app list",
+        "rm -f build.log",
+        "docker build -f Dockerfile .",
+        "tail -f server.log",
+        "grep -f patterns.txt data.txt",
+    ]
+    for text in clean:
+        assert scan_workflow(_wf(LE, text)) == [], text
