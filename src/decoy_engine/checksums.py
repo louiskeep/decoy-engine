@@ -347,45 +347,56 @@ _CF_ODD = "[0-9LMNPQRSTUV]"  # codice fiscale digit positions (omocodia letters 
 # Body shape per scheme, checked before any calculator runs: stdnum's
 # calculators raise IndexError or KeyError, or return a digit, on a bad body.
 _NATIONAL_BODY: dict[str, tuple[re.Pattern[str], str]] = {
-    "gb_nhs": (re.compile(r"\d{9}"), "9 digits"),
-    "ca_sin": (re.compile(r"\d{8}"), "8 digits"),
-    "in_aadhaar": (re.compile(r"\d{11}"), "11 digits"),
-    "au_tfn": (re.compile(r"\d{8}"), "8 digits"),
-    "de_idnr": (re.compile(r"\d{10}"), "10 digits"),
-    "fr_nir": (re.compile(r"\d{5}(?:\d{2}|2[AB])\d{6}"), "13 characters"),
-    "es_dni": (re.compile(r"\d{8}"), "8 digits"),
-    "es_nie": (re.compile(r"[XYZ]\d{7}"), "X, Y or Z then 7 digits"),
+    "gb_nhs": (re.compile(r"[0-9]{9}"), "9 digits"),
+    "ca_sin": (re.compile(r"[0-9]{8}"), "8 digits"),
+    "in_aadhaar": (re.compile(r"[0-9]{11}"), "11 digits"),
+    "au_tfn": (re.compile(r"[0-9]{8}"), "8 digits"),
+    "de_idnr": (re.compile(r"[0-9]{10}"), "10 digits"),
+    "fr_nir": (
+        re.compile(r"[0-9]{5}(?:[0-9]{2}|2[AB])[0-9]{6}"),
+        "5 digits, a department (2 digits, 2A or 2B), then 6 digits",
+    ),
+    "es_dni": (re.compile(r"[0-9]{8}"), "8 digits"),
+    "es_nie": (re.compile(r"[XYZ][0-9]{7}"), "X, Y or Z then 7 digits"),
     "it_codice_fiscale": (
         re.compile(rf"[A-Z]{{6}}{_CF_ODD}{{2}}[ABCDEHLMPRST]{_CF_ODD}{{2}}[A-Z]{_CF_ODD}{{3}}"),
-        "15 characters",
+        "the 15-character codice fiscale pattern",
     ),
 }
 
 
-def _nhs_digit(body: str) -> str:
+def _nhs_digit(body: str) -> str | None:
     """NHS modulus 11: weights 10..2; 11 maps to 0 and 10 has no valid digit."""
     check = 11 - sum(w * int(d) for w, d in zip(range(10, 1, -1), body, strict=True)) % 11
     if check == 10:
-        raise ValueError("gb_nhs body has no valid check digit")
+        return None
     return "0" if check == 11 else str(check)
 
 
-def _tfn_digit(body: str) -> str:
+def _tfn_digit(body: str) -> str | None:
     """TFN: the last weight is 10, which is -1 modulo 11, so the digit equals the body sum."""
     check = sum(w * int(d) for w, d in zip((1, 4, 3, 7, 5, 8, 6, 9), body, strict=True)) % 11
     if check == 10:
-        raise ValueError("au_tfn body has no valid check digit")
+        return None
     return str(check)
 
 
-def _national_calc(scheme: str, calc: Callable[[str], str]) -> Callable[[str], str]:
+def _national_calc(scheme: str, calc: Callable[[str], str | None]) -> Callable[[str], str]:
     pattern, shape = _NATIONAL_BODY[scheme]
 
     def _calc(body: str) -> str:
         # Messages name the scheme and shape only: a body is part of an identifier.
+        message = f"{scheme} check-digit body must be {shape}"
         if not isinstance(body, str) or not pattern.fullmatch(body):
-            raise ValueError(f"{scheme} check-digit body must be {shape}") from None
-        return calc(body)
+            raise ValueError(message) from None
+        try:
+            check = calc(body)
+        except (KeyError, IndexError, ValueError):
+            # Unreachable after the shape check; kept because stdnum messages carry the body.
+            raise ValueError(message) from None
+        if check is None:
+            raise ValueError(f"{scheme} body has no valid check digit")
+        return check
 
     return _calc
 

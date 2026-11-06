@@ -73,18 +73,52 @@ VECTORS: dict[str, tuple[tuple[str, ...], tuple[str, ...], tuple[tuple[str, str]
 }
 
 
-# Wrong-shape bodies: empty, short, long, lowercase and out-of-alphabet. stdnum
-# alone would raise IndexError or KeyError, or return a check character, for
-# several of these.
-def _malformed_bodies(scheme: str) -> list[str]:
-    good = VECTORS[scheme][2][0][0]
-    return ["", good[:-1], good + "0", good.lower() + "x", good[:-1] + "!", "abc"]
+@pytest.mark.parametrize("scheme", sorted(checksums._KNOWN_SCHEMES))
+def test_every_scheme_has_vectors_and_both_functions(scheme: str) -> None:
+    assert scheme in VECTORS, f"{scheme} is registered without test vectors"
+    assert scheme in checksums._VALIDATORS
+    assert scheme in checksums._CHECK_DIGIT_FUNCS
+    valid, invalid, _ = VECTORS[scheme]
+    assert valid and invalid
+
+
+def test_validator_and_calculator_tables_agree() -> None:
+    assert set(checksums._VALIDATORS) == set(checksums._CHECK_DIGIT_FUNCS)
 
 
 @pytest.mark.parametrize("scheme", sorted(checksums._KNOWN_SCHEMES))
 def test_every_non_fpe_scheme_has_a_body_shape(scheme: str) -> None:
     if scheme not in checksums._FPE_CHECKSUM_SCHEMES:
         assert scheme in checksums._NATIONAL_BODY
+
+
+@pytest.mark.parametrize("scheme", sorted(VECTORS))
+def test_documented_examples(scheme: str) -> None:
+    valid, invalid, calcs = VECTORS[scheme]
+    for value in valid:
+        assert checksums.validate(scheme, value) is True, value
+    for value in invalid:
+        assert checksums.validate(scheme, value) is False, value
+    for body, check in calcs:
+        assert checksums.calc_check_digit(scheme, body) == check
+
+
+# Bodies stdnum alone would mishandle: it raises IndexError or KeyError with the
+# body in the message, or returns a check character, for several of these.
+_POSITIONAL_MALFORMED = {
+    "fr_nir": ("253072C073004", "A95109912611"),
+    "es_nie": ("A2482300",),
+    "it_codice_fiscale": ("RCCMNL83Z18D969", "RCCMNLA3S18D969", "RCCMNL83S18D96W"),
+}
+
+
+def _malformed_bodies(scheme: str) -> list[str]:
+    good = VECTORS[scheme][2][0][0]
+    arabic_indic = good.translate({ord(d): 0x0660 + int(d) for d in string.digits})
+    full_width = good.translate({ord(d): 0xFF10 + int(d) for d in string.digits})
+    bodies = ["", good[:-1], good + "0", good.lower() + "x", good[:-1] + "!", "abc"]
+    bodies += [arabic_indic, full_width, *_POSITIONAL_MALFORMED.get(scheme, ())]
+    return [b for b in bodies if b != good]
 
 
 @pytest.mark.parametrize("scheme", NATIONAL)
@@ -165,16 +199,17 @@ def test_calc_then_validate_round_trips(scheme: str) -> None:
     assert checked >= 50
 
 
-# Every national algorithm catches a single digit substitution. Mutations use
-# canonical digits only: validate normalises case, so a case change is not an error.
-SUBSTITUTION_SAFE = NATIONAL
+# Every national algorithm catches a single-character substitution. Mutations use
+# canonical upper-case letters and digits: validate normalises case, so a case
+# change is not an error.
+_CANONICAL = string.ascii_uppercase + string.digits
 
 
-@pytest.mark.parametrize("scheme", SUBSTITUTION_SAFE)
-def test_single_digit_substitution_is_caught(scheme: str) -> None:
+@pytest.mark.parametrize("scheme", NATIONAL)
+def test_single_character_substitution_is_caught(scheme: str) -> None:
     rng = random.Random(f"substitution-{scheme}")
     tried = 0
-    while tried < 40:
+    while tried < 60:
         body = _random_body(scheme, rng)
         try:
             value = body + checksums.calc_check_digit(scheme, body)
@@ -182,10 +217,9 @@ def test_single_digit_substitution_is_caught(scheme: str) -> None:
             continue
         if not _format_rules_hold(scheme, value) or not checksums.validate(scheme, value):
             continue
-        digit_positions = [i for i, c in enumerate(body) if c.isdigit()]
-        pos = rng.choice(digit_positions)
-        new = rng.choice([d for d in string.digits if d != value[pos]])
-        assert not checksums.validate(scheme, value[:pos] + new + value[pos + 1 :])
+        pos = rng.randrange(len(value))
+        new = rng.choice([c for c in _CANONICAL if c != value[pos]])
+        assert not checksums.validate(scheme, value[:pos] + new + value[pos + 1 :]), (pos, new)
         tried += 1
 
 
@@ -268,3 +302,33 @@ def test_non_fpe_schemes_are_refused_by_the_fpe_runtime(scheme: str) -> None:
             scheme,
             forward=True,
         )
+
+
+@pytest.mark.parametrize(
+    ("scheme", "body"),
+    [(scheme, body) for scheme, bodies in _POSITIONAL_MALFORMED.items() for body in bodies],
+)
+def test_shape_check_runs_before_the_calculator(scheme: str, body: str) -> None:
+    calls: list[str] = []
+
+    def spy(value: str) -> str:
+        calls.append(value)
+        return "0"
+
+    with pytest.raises(ValueError, match=scheme):
+        checksums._national_calc(scheme, spy)(body)
+    assert calls == []
+
+
+@pytest.mark.parametrize("error", [KeyError, IndexError, ValueError])
+def test_calculator_errors_are_replaced_without_the_body(error: type[Exception]) -> None:
+    body = "943476587"
+
+    def leaky(value: str) -> str:
+        raise error(f"bad input {value}")
+
+    with pytest.raises(ValueError, match="gb_nhs") as excinfo:
+        checksums._national_calc("gb_nhs", leaky)(body)
+    assert body not in str(excinfo.value)
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__suppress_context__
