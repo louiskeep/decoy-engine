@@ -1,0 +1,21 @@
+{
+ "sentry_id": "reason-policy-single-source",
+ "created_in": "REG-RENUMBER",
+ "entries": {
+  "scripts/release/sbom_checks.py::pin_violations": {
+   "reason": "requirements-file pins, unrelated"
+  },
+  "src/decoy_engine/_progress_events.py::_field_value": {
+   "reason": "emits the live registry version into one event field"
+  },
+  "src/decoy_engine/reasons/_record.py::from_payload": {
+   "reason": "checks one record's version, not a manifest comparison"
+  },
+  "src/decoy_engine/reasons/_record.py::validate": {
+   "reason": "checks one record's version, not a manifest comparison"
+  },
+  "src/decoy_engine/reasons/_registry.py::check_integrity": {
+   "reason": "the registry's own structural check over specs, not a manifest comparison"
+  }
+ }
+}
