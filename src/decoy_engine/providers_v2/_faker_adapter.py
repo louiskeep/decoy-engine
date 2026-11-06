@@ -184,7 +184,10 @@ class FakerAdapter:
                 # in fr_FR): a locale fault, not a provider fault.
                 raise AdapterError(
                     code=reasons.provider.UNSUPPORTED_LOCALE,
-                    message=f"Locale {spec.locale!r} has no Faker method for {provider!r}.",
+                    message=(
+                        f"Locale {spec.locale or self._default_locale!r} has no Faker "
+                        f"method for {provider!r}."
+                    ),
                 ) from None
         try:
             return method(**kwargs)

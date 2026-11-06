@@ -223,6 +223,27 @@ def test_other_method_failures_stay_capability_violations() -> None:
     assert excinfo.value.code == reasons.provider.CAPABILITY_VIOLATION
 
 
+def test_attribute_error_inside_a_method_stays_a_capability_violation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import faker.providers.person as person
+
+    def broken(self: object) -> str:
+        raise AttributeError("internal")
+
+    monkeypatch.setattr(person.Provider, "first_name", broken)
+    with pytest.raises(AdapterError) as excinfo:
+        FakerAdapter().generate_batch("person_first_name", spec=_spec("en_US"), count=1)
+    assert excinfo.value.code == reasons.provider.CAPABILITY_VIOLATION
+    assert isinstance(excinfo.value.__cause__, AttributeError)
+
+
+def test_default_locale_is_named_when_the_spec_has_none() -> None:
+    with pytest.raises(AdapterError) as excinfo:
+        FakerAdapter(locale="fr_FR").generate_batch("address_state", spec=_spec(None), count=1)
+    assert "fr_FR" in str(excinfo.value)
+
+
 def test_rows_advertise_observed_locales() -> None:
     registry = get_default_registry()
     state = registry.get_capabilities("address_state").supported_locales
@@ -268,11 +289,8 @@ def test_config_with_an_unsupported_locale_fails_coded(tmp_path: Path) -> None:
         _config("address_state", "de_DE", str(path)), sources={"t": source}, engine_version="t"
     )
     assert ok.outputs["t"].num_rows == 20
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(AdapterError) as excinfo:
         run_pipeline(
             _config("address_state", "fr_FR", str(path)), sources={"t": source}, engine_version="t"
         )
-    assert (
-        reasons.provider.UNSUPPORTED_LOCALE in repr(excinfo.value)
-        or getattr(excinfo.value, "code", None) == reasons.provider.UNSUPPORTED_LOCALE
-    )
+    assert excinfo.value.code == reasons.provider.UNSUPPORTED_LOCALE

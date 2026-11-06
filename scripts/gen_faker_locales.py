@@ -33,7 +33,9 @@ def build_table() -> tuple[str, tuple[str, ...], dict[str, tuple[str, ...]]]:
     import faker
     from faker.config import AVAILABLE_LOCALES
 
+    from decoy_engine import reasons
     from decoy_engine.providers_v2._adapter import ProviderSpec
+    from decoy_engine.providers_v2._errors import AdapterError
     from decoy_engine.providers_v2._faker_adapter import _FAKER_METHOD_MAP, FakerAdapter
 
     adapter = FakerAdapter()
@@ -47,7 +49,11 @@ def build_table() -> tuple[str, tuple[str, ...], dict[str, tuple[str, ...]]]:
             )
             try:
                 adapter.generate_batch(provider, spec=spec, count=1)
-            except Exception:  # any failure means "not supported in this locale"
+            except AdapterError as exc:
+                # Only a coded locale fault means "unsupported"; any other failure is a
+                # new kind of break and must surface, not be folded into the table.
+                if exc.code != reasons.provider.UNSUPPORTED_LOCALE:
+                    raise
                 failing.append(locale)
         if failing:
             unsupported[provider] = tuple(failing)
