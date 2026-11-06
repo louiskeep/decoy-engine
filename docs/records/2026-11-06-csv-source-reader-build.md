@@ -7,7 +7,7 @@ Head: see git log. Branch `feat/csv-source-reader`, engine `origin/main` base `5
 ## What changed
 
 - `profile/_csv_reader.py` (new): `read_csv_source`, `resolve_csv_dialect`, the shared core `_read_csv_rows`, the moved headerless width scan, and `_refusal`, the one constructor of this module's refusals (`<code>: source <table> <detail>`).
-- `config/_csv_dialect.py` (new): `csv_dialect_problem` and `CsvDialect`. `FileSource` and `CsvDialect` both call it; the `FileSource` error texts are unchanged.
+- `config/_csv_dialect.py` (new): `csv_dialect_problem` and `CsvDialect`. `FileSource` and `CsvDialect` both call it. The text is fixed and value-free (the delimiter is no longer echoed, for `FileSource` too; only the prefix is pinned by tests).
 - `CsvFileSource._read` delegates to `_read_csv_rows`; `_assert_record_widths`, `_positional_lexemes` and the field-size lift were deleted from `_readers_csv.py`.
 - `fileaccess/adapters/pandas.py`: `read_csv_chunks`, the guarded chunk iterator (the one chunked pandas read on a policy handle).
 - `build_profile_source` and `_build_file_source` take `table`; `_build_file_source` calls `resolve_csv_dialect`; `profile_source` passes the table name.
@@ -35,3 +35,51 @@ Head: see git log. Branch `feat/csv-source-reader`, engine `origin/main` base `5
 - Mutations, each turning its test red: AT-E1 drop `sep=`; AT-E2 default `has_header` False; AT-E3 (a) skip the scan, (b) raise inside the except, (c) no except mapping; AT-E4 lazy chunk scan; AT-E5 (a) default delimiter tab, (b) own `.get` in `_build_file_source`; AT-E6 remove `@entry_point`; AT-E7 file name as table; AT-E9 converters by name headerless; AT-E10 unguarded chunk iterator; AT-E11 (a) drop uniqueness, (b) own check in `FileSource`; AT-E8 `csv.reader` in `_readers_csv.py`.
 - T1: ruff, format, mypy, sentry and licenses steps of `gates.sh --baseline`, plus 7639 tests (named tests, behavior-kept list, `tests/sentry`, `tests/fileaccess`, `tests/unit/config`, every file naming `CsvFileSource`, `build_profile_source` or `profile_source`), no failures. The first sentry run found three branch-only failures (manifest listing, reason-registry forwarding helper, GCS-name heuristic on `.update`), fixed in the second commit.
 - Not verified: macOS arm64 run; the full suite (orchestrator, frozen-contract trigger).
+
+## Fix round 1 (review findings)
+
+- Strict policy: `fileaccess/_errors.py` gains `guarded_with_parser_errors` (the one place a library error type passes a strict policy; `guarded` is the empty-tuple case). `adapters/pandas.py` names `PARSER_ERRORS` and adds `read_csv_parser_errors` and `read_csv_chunks_parser_errors`. Only the headerless path uses them, so the reader replaces the parser text with its coded refusal; the header path and every other library failure still map to `FileAccessReadError`.
+- `nrows=0`: `_scan_record_widths` returns before touching a record; the read names the empty frame with the declared columns (`names=`), so a malformed first record cannot change its width.
+- Value echo: `csv_dialect_problem` texts no longer carry `delimiter!r`. One rendering, no copy: nothing pins the old "(got ...)" suffix.
+- Reason sentry: `tests/sentry/_reason_sinks.py` (split out of `_reason_scan.py`, which shrank from 806 to 765 lines) discovers plain functions with a `code` parameter. The scanner treats the forwarding helpers named by the registry test (`HELPER_SINKS`, derived from the `_HELPER` adapter rows) as code sinks and classifies each caller's argument. Helpers whose callers still pass literals or forwards are in the `UNCHECKED_HELPERS` ratchet (`_raise`, `_qerror`, `_row_error`, `_fail`, `_refuse`), each a DESIGN follow-up. `_refusal` is checked.
+- Defaults: `resolve_csv_dialect` passes only the keys present; `CsvDialect` field defaults are the one home, asserted equal to `FileSource.model_fields`. AT-E5 compares `resolve_csv_dialect(plain.model_dump())` with `CsvDialect(plain.has_header, plain.column_names, plain.delimiter)`.
+- `column_names`: a str, bytes, non-sequence or non-str entry is refused by the shared rule (`ConfigError` from `CsvDialect` and `resolve_csv_dialect`).
+- CODEMAP: `_csv_reader.py` in the `profile/` row, `_csv_dialect.py` in the `config/` row.
+
+### Red first (on 2aa24def, with the new tests)
+
+22 failed, 137 passed over `test_csv_reader_strict.py`, `test_csv_dialect_rules.py`, `test_csv_reader.py`, `test_reason_registry.py`. Red: strict-policy whole and chunked refusal (4), `nrows=0` malformed or empty first row (7), delimiter echo (3), non-sequence `column_names` (5), forwarding-helper callers (2). The later-chunk-step test was added after mutation N1f stayed green and is red on that mutation.
+
+### Mutations on the final head (all red)
+
+Handoff set (15 listed in the build record): AT-E1 drop `sep`; AT-E2 default `has_header` False; AT-E3 (a) skip scan, (b) raise inside except, (c) no except mapping; AT-E4 lazy chunk scan; AT-E5 (a) default delimiter tab, (b) own `.get`; AT-E6 remove `@entry_point`; AT-E7 file name as table; AT-E9 converters by name headerless; AT-E10 unguarded chunk iterator; AT-E11 (a) drop uniqueness, (b) own check in `FileSource`; AT-E8 `csv.reader` in `_readers_csv.py`. All red.
+
+New: N1a no parser pass-through in `guarded_with_parser_errors`; N1b adapter passes no types; N1c whole read uses the plain adapter; N1d header path uses the parser variant; N1e chunked read uses the plain adapter; N1f chunk steps unguarded for parser errors; N2a no early return for `nrows=0`; N2b zero-row frame unnamed; N3 and N3b delimiter echo restored; N4a unregistered literal at a `_refusal` caller (`test_no_ad_hoc_reason_codes`); N4b scanner ignores helper sinks; N5 resolve with its own delimiter default; N5b `CsvDialect` default differs from `FileSource`; N6 str `column_names` accepted. All red.
+
+### T1
+
+`tests/unit/profile tests/unit/config tests/fileaccess tests/unit/test_public_api.py tests/sentry`: 5528 passed, 6 skipped. ruff check, ruff format --check and mypy on the touched modules clean. Not run: the full suite.
+
+### Placement
+
+| New file | Directory | CODEMAP line | Neighbor |
+|---|---|---|---|
+| `src/decoy_engine/profile/_csv_reader.py` | `profile/` | `profile/` row (reader modules; "Profile types + `profile_source`; `_fixed_width_reader.py`") | `_fixed_width_reader.py`, `_readers_csv.py` |
+| `src/decoy_engine/config/_csv_dialect.py` | `config/` | `config/` row ("source/target descriptors") | `_sources.py`, `_fixed_width.py` |
+| `tests/unit/profile/test_csv_reader.py`, `test_csv_reader_strict.py`, `fixtures/csv_reader_base_frames.json` | `tests/unit/profile/` | tests mirror `src/` layout | `test_csv_delimited_params.py` |
+| `tests/unit/config/test_csv_dialect_rules.py` | `tests/unit/config/` | same | `test_filesource_delimited_params.py` |
+| `tests/sentry/test_csv_scan_single_copy.py` | `tests/sentry/` | sentries live in `tests/sentry/` | `test_reason_registry.py` |
+| `tests/sentry/_reason_sinks.py` | `tests/sentry/` | scanner helpers sit beside `_reason_scan.py` | `_reason_scan.py` |
+
+The CODEMAP had no entries for the two source files; this round adds them (the `profile/` and `config/` rows).
+
+### Line counts
+
+`_csv_reader.py` 325, `_csv_dialect.py` 78, `_errors.py` 209 (was 184), `adapters/pandas.py` 51 (was 24), `_readers_csv.py` 123 (was 277), `_reason_scan.py` 765 (was 806), `_reason_sinks.py` 91 (new), `test_reason_registry.py` 711 (was 658, over the 600 target; tests are outside the `src` cap), `test_csv_reader.py` 409, `test_csv_reader_strict.py` 233, `test_csv_dialect_rules.py` 155, `test_csv_scan_single_copy.py` 67. Total added on the branch is about 1100 lines against the 800 STOP, most of it tests and the base-frame fixture (154). If reviewers ask, the split: (1) dialect and `FileSource` delegation, (2) reader and `CsvFileSource` delegation, (3) public surface and docs, (4) the sentry and adapter changes.
+
+### V2-LOG and DESIGN follow-ups (recorded, not fixed)
+
+- Sentry AT-E8 evasion shapes: wildcard import, a bound alias of `csv.reader`, importing `_csv`, `getattr(csv, "reader")`.
+- Ratchet the callers of the `pandas_adapter` read functions (`read_csv`, `read_csv_chunks`, the parser-error variants) so a new caller outside the reader is flagged.
+- Cloud CSV readers (`profile/_cloud_readers.py`, `io/bounded_reader.py`) still bypass the dialect.
+- `UNCHECKED_HELPERS` (above): route each helper's callers through registry symbols and remove the entry. Findings behind it: `_check_dp._raise` (12 literal callers), `_window_admission._refuse` (a literal constant), `_quarantine_local._qerror` and `_checks_declared_casting._fail` (forwarded parameters), `_raise` name shared with `config/_declared_casting.py`.

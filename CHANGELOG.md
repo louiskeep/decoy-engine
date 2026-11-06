@@ -47,7 +47,10 @@ that dialect, with the schema defaults. With the default dialect and `dtype=str`
 and returns an iterator bound to the call's file-access policy. `CsvFileSource` (profile, validate, compile)
 reads through the same code, so there is one copy of the scan. The dialect rules (header against names, blank and
 duplicate names, delimiter shape) now live in one place, `config/_csv_dialect.py`, used by `FileSource` and
-`CsvDialect`; the `FileSource` error texts are unchanged.
+`CsvDialect`. Their delimiter texts no longer echo the submitted value, and a `column_names` that is not a list
+or tuple of strings is refused (`CsvDialect` and `resolve_csv_dialect`). `resolve_csv_dialect` takes the defaults
+from `CsvDialect`. Under a strict file-access policy a headerless parser disagreement is the coded refusal, not a
+read error, and `nrows=0` returns the empty frame with the declared columns.
 
 ### Changed (CLI-DIALECT: headerless CSV refusal messages, 2026-11-06)
 

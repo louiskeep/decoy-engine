@@ -294,7 +294,10 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   a refusal is `PipelineValidationError` with `source_file.column_count_mismatch`,
   `source_file.nul_byte` or `source_file.lone_cr`; the message is
   `<code>: source <table> <detail>` and holds no value, path or file name. New
-  parameters are keyword-only and additive.
+  parameters are keyword-only and additive. `CsvDialect` and `resolve_csv_dialect`
+  refuse an incoherent dialect, or a `column_names` that is not a list or tuple of
+  strings, with `ConfigError` whose fixed text never echoes a submitted value.
+  `nrows=0` returns the empty frame with the declared columns.
   It also includes `run_mask_chunked` (2026-10-01): the chunked
   dispatcher as a public entry point. Its signature is
   `run_mask_chunked(config, chunks, *, table, engine_version, registry=None,
