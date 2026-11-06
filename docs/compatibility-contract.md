@@ -286,6 +286,15 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   (A5a): a `format: fixed_width` `FileSource` can now be read through these
   names instead of importing the private `decoy_engine.profile._fixed_width_reader`
   module, which the additive-only rule in §4.1 does not cover.
+  It also includes `read_csv_source`, `CsvDialect` and `resolve_csv_dialect`
+  (CLI-DIALECT, 2026-11): `read_csv_source(path, dialect, *, table, dtype=None,
+  nrows=None, chunksize=None, file_access=None, field_key="source.path")` reads
+  a CSV source under its declared dialect. `dtype=str` with the default dialect
+  equals `pd.read_csv(path, dtype=str)`. A headerless file is width-checked and
+  a refusal is `PipelineValidationError` with `source_file.column_count_mismatch`,
+  `source_file.nul_byte` or `source_file.lone_cr`; the message is
+  `<code>: source <table> <detail>` and holds no value, path or file name. New
+  parameters are keyword-only and additive.
   It also includes `run_mask_chunked` (2026-10-01): the chunked
   dispatcher as a public entry point. Its signature is
   `run_mask_chunked(config, chunks, *, table, engine_version, registry=None,

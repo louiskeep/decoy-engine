@@ -37,6 +37,25 @@ through a scratch reader, so it runs under a strict file-access policy. The loca
 writes and is ambient-only (`arena_needs_ambient_policy` under a strict policy). See
 `docs/declared-casting.md` and `docs/security/protected-quarantine.md`.
 
+### Added (CLI-DIALECT: one public CSV source reader, 2026-11-06)
+
+`decoy_engine.read_csv_source(path, dialect, *, table, dtype=None, nrows=None, chunksize=None,
+file_access=None, field_key="source.path")` reads a CSV source under its declared dialect. `CsvDialect`
+(`has_header`, `column_names`, `delimiter`) and `resolve_csv_dialect(descriptor)` turn a source descriptor into
+that dialect, with the schema defaults. With the default dialect and `dtype=str` the frame equals
+`pd.read_csv(path, dtype=str)`. A headerless file is width-checked first; `chunksize` runs that check at the call
+and returns an iterator bound to the call's file-access policy. `CsvFileSource` (profile, validate, compile)
+reads through the same code, so there is one copy of the scan. The dialect rules (header against names, blank and
+duplicate names, delimiter shape) now live in one place, `config/_csv_dialect.py`, used by `FileSource` and
+`CsvDialect`; the `FileSource` error texts are unchanged.
+
+### Changed (CLI-DIALECT: headerless CSV refusal messages, 2026-11-06)
+
+A headerless CSV refusal (wrong field count, no data rows, NUL byte, lone CR, parser disagreement) now starts
+with its code and names the source table instead of the file name: `source_file.column_count_mismatch: source
+customers line 3 has 4 fields but column_names declares 3`. Consumers that print the code separately from the
+message (for example the CLI's `decoy preflight` check JSON and the platform's error rendering) show the code twice.
+
 ## [0.18.0] - 2026-11-01
 
 Pre-GA release (`RELEASE_PHASE = "pre-ga"`): the minor bump carries breaking changes with no shims. It is
