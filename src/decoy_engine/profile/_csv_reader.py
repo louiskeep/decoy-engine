@@ -217,14 +217,15 @@ def _read_csv_rows(
     (or `nrows` records) at the call, before returning either result. The per-chunk width
     check is only a backstop for a parser disagreement; the scan is the guard.
     """
-    kwargs: dict[str, Any] = {"sep": dialect.delimiter, "dtype": dtype}
     names: list[str] | None = None
+    read_opts: dict[str, Any]
     if dialect.has_header:
-        kwargs.update(pandas_lexeme_kwargs(lexeme_columns))
+        read_opts = pandas_lexeme_kwargs(lexeme_columns)
     else:
         names = list(dialect.column_names or ())
         _scan_record_widths(open_handle, dialect, table=table, nrows=nrows)
-        kwargs.update(header=None, **_positional_lexemes(lexeme_columns, names))
+        read_opts = {"header": None, **_positional_lexemes(lexeme_columns, names)}
+    kwargs: dict[str, Any] = {"sep": dialect.delimiter, "dtype": dtype, **read_opts}
     if nrows is not None:
         kwargs["nrows"] = nrows
     if chunksize is None:
