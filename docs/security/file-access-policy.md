@@ -6,7 +6,7 @@ The engine reads and writes files named by a config or a caller: sources, snapsh
 tables, corpora, secrets, vaults, quarantine sidecars, target directories. This page is the
 contract for an integrator (the platform, a service, a test harness) that must decide which of
 those files an engine call may touch. Plan and build record:
-[plan](../plans/2026-10-02-file-access-authz-engine-platform.md),
+[plan](https://github.com/louiskeep/decoy-engine/blob/main/docs/plans/2026-10-02-file-access-authz-engine-platform.md),
 [E1 build record](../records/2026-10-07-file-access-e1-build.md).
 
 ## The guarantee
