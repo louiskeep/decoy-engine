@@ -10,6 +10,10 @@ refused. The read model (:class:`RunResultRead`) is derived from it by :func:`_d
 older reader accepts a document whose enum gained a value or that carries an added optional field.
 Under ``/v1`` only optional fields may be added (compatibility contract section 3.1).
 
+Numbers and booleans are strict (no ``False`` as a ``0``, no ``"1"`` as a ``1``, no ``"false"`` as
+``False``), on write and on read. The ``schema`` tag is a named type that accepts only major v1, and
+the read model requires it: a document of another major is refused, never read as v1.
+
 Pattern source: the reason registry's own wire compatibility (``ReasonRecord.parse_payload``),
 reused here instead of a second validator.
 """
@@ -30,10 +34,11 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    Strict,
     create_model,
 )
 
-from decoy_engine._progress_events import safe_error_class
+from decoy_engine.progress import safe_error_class
 from decoy_engine.reasons import ReasonRecord, approve_name, approve_ref, decoy
 
 RUN_RESULT_SCHEMA: Final = "decoy-run-result/v1"
@@ -75,6 +80,18 @@ def _relative_path(value: str) -> bool:
     )
 
 
+SchemaTag = Annotated[
+    str,
+    ValueFree("schema_tag"),
+    AfterValidator(_check("schema_tag", lambda v: v == RUN_RESULT_SCHEMA)),
+]
+# The read-side stand-in for every enum: any approved identifier, so a value added in a later
+# minor reads, but free text does not.
+Token = Annotated[
+    str,
+    ValueFree("token"),
+    AfterValidator(_check("token", lambda v: approve_ref(v) is not None)),
+]
 SafeName = Annotated[
     str,
     ValueFree("safe_name"),
@@ -96,10 +113,13 @@ Sha256 = Annotated[
 Hex64 = Annotated[
     str, ValueFree("hex64"), AfterValidator(_check("hex64", _matches(r"[0-9a-f]{64}")))
 ]
+# PEP 440 public release (release segment, pre, post, dev) plus an optional lowercase local part.
+_VERSION_SHAPE = (
+    r"\d{1,6}(\.\d{1,6}){1,3}((a|b|rc)\d{1,6})?(\.post\d{1,6})?(\.dev\d{1,6})?"
+    r"(\+[0-9a-z]{1,32}(\.[0-9a-z]{1,32}){0,3})?"
+)
 Version = Annotated[
-    str,
-    ValueFree("version"),
-    AfterValidator(_check("version", _matches(r"\d{1,6}(\.\d{1,6}){1,3}[0-9A-Za-z.+\-]{0,32}"))),
+    str, ValueFree("version"), AfterValidator(_check("version", _matches(_VERSION_SHAPE)))
 ]
 UtcTimestamp = Annotated[
     str,
@@ -120,9 +140,12 @@ InvocationId = Annotated[
 ]
 RelPath = Annotated[str, ValueFree("rel_path"), AfterValidator(_check("rel_path", _relative_path))]
 
-Count = Annotated[int, Ge(0)]
-Seconds = Annotated[float, Ge(0), AllowInfNan(False)]
-ExitCode = Annotated[int, Ge(0), Le(255)]
+# Strict primitives: pydantic's lax mode turns ``False`` into 0, ``"1"`` into 1 and ``"false"`` into
+# ``False``, which would let a mistyped field pass as a number or flag.
+Count = Annotated[int, Strict(), Ge(0)]
+Seconds = Annotated[float, Strict(), Ge(0), AllowInfNan(False)]
+ExitCode = Annotated[int, Strict(), Ge(0), Le(255)]
+Flag = Annotated[bool, Strict()]
 
 RunStatus = Literal["succeeded", "findings", "partially_delivered", "failed", "cancelled"]
 FailureCategory = Literal["usage", "parameter", "runtime", "capacity", "cancelled"]
@@ -179,10 +202,22 @@ ReasonPayloadRead = Annotated[
 # --- the document -------------------------------------------------------------------------------
 
 
-class _Model(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid", frozen=True, hide_input_in_errors=True, populate_by_name=True
-    )
+class _Base(BaseModel):
+    """Alias-only (the ``pass`` count key has no second spelling) and frozen, write and read."""
+
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
+
+    def to_payload(self) -> dict[str, Any]:
+        """The JSON dict written to ``--result`` and stored as the record payload."""
+        return self.model_dump(mode="json", by_alias=True)
+
+
+class _Model(_Base):
+    model_config = ConfigDict(extra="forbid")
+
+
+class _ReadBase(_Base):
+    model_config = ConfigDict(extra="ignore")
 
 
 class ProducerInfo(_Model):
@@ -199,14 +234,14 @@ class ConfigRef(_Model):
 
 
 class NativeRoute(_Model):
-    applicable: bool
+    applicable: Flag
     state: NativeState | None
 
 
 class Route(_Model):
     execution_mode: ExecutionMode | None
     route_reason: SafeRef | None
-    chunked: bool
+    chunked: Flag
     native: NativeRoute | None
 
 
@@ -247,7 +282,7 @@ class CheckCounts(_Model):
 class Check(_Model):
     id: CheckId
     status: CheckStatus
-    blocking: bool
+    blocking: Flag
     counts: CheckCounts
     codes: Annotated[tuple[SafeRef, ...], MaxLen(64)]
 
@@ -298,9 +333,7 @@ class Links(_Model):
 
 class RunResult(_Model):
     # ``schema`` would shadow ``BaseModel.schema``, so the field has another name and the wire key.
-    schema_tag: Literal["decoy-run-result/v1"] = Field(
-        default="decoy-run-result/v1", alias="schema"
-    )
+    schema_tag: SchemaTag = Field(default=RUN_RESULT_SCHEMA, alias="schema")
     invocation_id: InvocationId
     command: Literal["run"] = "run"
     status: RunStatus
@@ -317,10 +350,6 @@ class RunResult(_Model):
     timings: Timings
     links: Links
 
-    def to_payload(self) -> dict[str, Any]:
-        """The JSON dict written to ``--result`` and stored as the record payload."""
-        return self.model_dump(mode="json", by_alias=True)
-
 
 # --- read model, derived -----------------------------------------------------------------------
 
@@ -329,12 +358,20 @@ def _is_union(origin: object) -> bool:
     return origin is Union or origin is types.UnionType
 
 
+def _has_kind(meta: list[Any], kind: str) -> bool:
+    return any(isinstance(m, ValueFree) and m.kind == kind for m in meta)
+
+
 def _read_annotation(ann: Any, cache: dict[type, type]) -> Any:
-    """The read-side annotation: the closed substitution map, applied recursively."""
+    """The read-side annotation: the closed substitution map, applied recursively.
+
+    Enums become :data:`Token`, reasons become :data:`ReasonPayloadRead`, and every other named
+    value-free type (the ``schema`` tag included) stays as it is.
+    """
     origin = get_origin(ann)
     if origin is Annotated:
         base, *meta = get_args(ann)
-        if any(isinstance(m, ValueFree) and m.kind == "reason_payload" for m in meta):
+        if _has_kind(meta, "reason_payload"):
             return ReasonPayloadRead
         return Annotated[(_read_annotation(base, cache), *meta)]
     if _is_union(origin):
@@ -343,14 +380,18 @@ def _read_annotation(ann: Any, cache: dict[type, type]) -> Any:
         args = tuple(a if a is Ellipsis else _read_annotation(a, cache) for a in get_args(ann))
         return origin[args]
     if origin is Literal or (isinstance(ann, type) and issubclass(ann, Enum)):
-        return str
+        return Token
     if isinstance(ann, type) and issubclass(ann, BaseModel):
         return _derive_read(ann, cache)
     return ann
 
 
 def _derive_read(model: type[BaseModel], cache: dict[type, type] | None = None) -> type[BaseModel]:
-    """``model`` with every enum a ``str``, reasons parsed tolerantly and unknown fields ignored."""
+    """``model`` with every enum a :data:`Token`, reasons parsed tolerantly, unknown fields ignored.
+
+    The ``schema`` tag is required on read: a writer's default must not stand in for a document
+    that never stated its major.
+    """
     cache = {} if cache is None else cache
     if model in cache:
         return cache[model]
@@ -359,13 +400,12 @@ def _derive_read(model: type[BaseModel], cache: dict[type, type] | None = None) 
         ann: Any = info.annotation
         if info.metadata:
             ann = Annotated[(ann, *info.metadata)]
-        default: Any = ... if info.is_required() else info.default
+        tagged = _has_kind(list(info.metadata), "schema_tag")
+        default: Any = ... if tagged or info.is_required() else info.default
         fields[name] = (_read_annotation(ann, cache), Field(default, alias=info.alias))
     read = create_model(
         f"{model.__name__}Read",
-        __config__=ConfigDict(
-            extra="ignore", frozen=True, hide_input_in_errors=True, populate_by_name=True
-        ),
+        __base__=_ReadBase,
         __module__=__name__,
         **fields,
     )

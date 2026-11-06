@@ -35,9 +35,10 @@ COUNT_KEYS = frozenset(
     {"rows", "bytes", "tables", "columns", "batches", "attempt", "retries", "findings", "errors"}
 )
 
-_SAFE_REF = re.compile(rf"^[A-Za-z0-9][A-Za-z0-9_.\-]{{0,{MAX_REF_LEN - 1}}}$")
-_SAFE_IDENTITY = re.compile(rf"^[a-z][a-z0-9_.:\-]{{0,{MAX_IDENTITY_LEN - 1}}}$")
-_VERSION = re.compile(r"^(\d{1,4})\.(\d{1,5})\.(\d{1,6})$")
+_SAFE_REF = re.compile(rf"^[A-Za-z0-9][A-Za-z0-9_.\-]{{0,{MAX_REF_LEN - 1}}}\Z")
+_SAFE_IDENTITY = re.compile(rf"^[a-z][a-z0-9_.:\-]{{0,{MAX_IDENTITY_LEN - 1}}}\Z")
+# ``\Z``, not ``$``: ``$`` also matches before a trailing newline.
+_VERSION = re.compile(r"^(\d{1,4})\.(\d{1,5})\.(\d{1,6})\Z")
 
 
 class Operation(str, Enum):

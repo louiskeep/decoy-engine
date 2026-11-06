@@ -6,7 +6,8 @@ import itertools
 
 import pytest
 
-from decoy_engine.run_result import Outcome, derive_outcome
+from decoy_engine.run_result import derive_outcome
+from decoy_engine.run_result._outcome import Outcome
 
 CATEGORIES = (None, "usage", "parameter", "runtime", "capacity", "cancelled")
 MODES = ("in_place", "strict", "best_effort")
@@ -59,7 +60,7 @@ def test_outcome_table() -> None:
 def test_named_cases() -> None:
     assert call(mode="best_effort", outcome="partial").status == "partially_delivered"
     assert call(mode="best_effort", outcome="partial").exit_code == 16
-    # in_place never reports partial delivery as a success state.
+    # Only best_effort maps a partial delivery to partially_delivered; elsewhere it leaves the status.
     assert call(mode="in_place", outcome="partial").status == "succeeded"
     # A failure outranks a failed blocking check; a partial best-effort run outranks findings.
     assert call(category="runtime", blocking=True).status == "failed"
