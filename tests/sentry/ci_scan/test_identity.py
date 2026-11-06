@@ -7,6 +7,7 @@ import hashlib
 import io
 import urllib.error
 from collections.abc import Callable
+from email.message import Message
 from typing import Any
 
 from tests.sentry.ci_scan._identity import (
@@ -44,7 +45,7 @@ def _script(*steps: Any) -> tuple[Callable[..., _Reply], list[str]]:
         if isinstance(step, bytes):
             return _Reply(step)
         if isinstance(step, int):
-            raise urllib.error.HTTPError(url, step, "x", {}, io.BytesIO(b""))
+            raise urllib.error.HTTPError(url, step, "x", Message(), io.BytesIO(b""))
         raise step
 
     return opener, calls

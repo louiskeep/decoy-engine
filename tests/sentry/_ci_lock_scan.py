@@ -10,7 +10,8 @@ install and use is not seen.
 Shell parsing lives in ci_scan/_shell_tokens.py, one file shared byte-for-byte with the CLI
 repository. Against the CI-E1 scanner (f2b7b3da) a 708-command differential scan shows only:
 - reworded findings: an editable install reports `project install by pip (-e)` once, because
-  `-e` now consumes its value instead of also reporting `.` or the path;
+  `-e` now consumes its value instead of also reporting `.` or the path, and `--editable` is
+  reported as `(-e)`;
 - removed false positives: index options flagged on non-package commands (`ls -i`, `rm -f`), and
   `uv run --frozen sync` reported as an install;
 - stricter, on purpose: index environment variables and `-f`/`--find-links`, the bodies of
@@ -100,7 +101,7 @@ def _is_consumer(cmd: list[str]) -> bool:
 def _is_lock_install(cmd: list[str]) -> bool:
     if any(t.endswith("bootstrap.sh") for t in cmd):
         return True
-    return SYNC_SUBCOMMANDS & set(uv_subcommands(cmd)) and "--frozen" in cmd
+    return bool(SYNC_SUBCOMMANDS & set(uv_subcommands(cmd))) and "--frozen" in cmd
 
 
 def _wheel_vars(text: str) -> set[str]:

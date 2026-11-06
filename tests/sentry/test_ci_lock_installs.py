@@ -242,7 +242,7 @@ def test_seeded_action_tool_and_index_cases() -> None:
         "uv tool --python 3.12 run black": "tool is not an exact",
         "uv tool --cache-dir c install black": "tool is not an exact",
         "uv tool --python= run black": "tool is not an exact",
-        "uv tool dir install": "tool is not an exact",
+        "uv tool dir install": "names no package",
         "pip --python= install requests": "not an exact",
         "uv pip --python= install requests": "not an exact",
         "uv tool --a x y run black": "tool is not an exact",
