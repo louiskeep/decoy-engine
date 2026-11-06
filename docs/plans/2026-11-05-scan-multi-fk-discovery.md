@@ -36,6 +36,20 @@ in section 7. V1 infers no relationships of any kind, and the name-only
 cross-file walk (`decoy_engine.walks.run_cross_file_walk`) is not wired into the
 CLI.
 
+## Revision 7 (2026-11-06): Codex round 2 on LIB 3585cc0f and SCAN-MULTI 6103684e
+
+Codex returned GO-WITH-FIXES on both. Claims checked against CLI and engine
+`origin/main` (8fba6af, 41a86f47); all held. LIB carries the matching
+Revision 7 (export link closure, L0 reopen checks, L0 made universal).
+
+| Finding | Change |
+|---|---|
+| V1 legacy bare files | Confirmed: an 8fba6af `--output` file is `profile.to_dict()` with `row_count`, `source_label` and `fields` and no `scan_schema` (CLI `tests/e2e/test_scan_command.py:85`). `load_scan_set` gains a legacy branch, strictly shape-checked against a real 8fba6af fixture, that presents the file as a one-table set. Tests T2-legacy-fields, T2-legacy-show, T2-legacy-diff, T2-legacy-reject. |
+| V1 + DESIGN L0 not universal | Fixed in LIB L0 (now L0.1 and L0.2): the engine's out-of-core, isolated-run and Postgres spill directories and the quarantine validator move onto the allocator; two output-staging sites are a reasoned ratchet. S1b's spill uses it unchanged. |
+| V1 L0 reopen | Fixed in LIB L0: `open_protected_dir` checks and tightens or refuses an existing directory. The failure-mode table gains `scratch_unsafe`. |
+| V2-LOG failure row | The "spill directory cannot be created" row now names `scratch_acl_failed` and `scratch_unsafe`, not the DuckDB error. |
+| V2-LOG Totals | The duplicate header rows in Totals are removed. |
+
 ## Revision 6 (2026-11-05): joint Codex review of LIB e636baaf and SCAN-MULTI bcb25eb5
 
 Codex returned GO-WITH-FIXES on both plans. Each claim was checked against
@@ -307,7 +321,7 @@ database).
 | Declared relationship names a cloud table | Status `skipped_cloud`, no counts, one line on the card. No cloud read happens for integrity. |
 | Declared relationship key columns | The starter YAML gives every key column of the relationship `strategy: hash` with one shared namespace, overriding any detector suggestion, with a REVIEW note naming what it replaced. `redact` would turn every key into one constant and destroy the join. |
 | Declared relationship without a namespace | The key columns get the placeholder `decoy-set-namespace-<n>` (n is the relationship's position, from 1). `PipelineConfig` validation refuses any namespace with that prefix (`namespace_placeholder_unset`, naming the column path), so `decoy validate` and `decoy run` refuse the file until the user sets a real value. |
-| Integrity spill directory cannot be created | The engine's existing `connect_duckdb` error class, reported with the table pair and the class only; no spill file outside the given directory. |
+| Integrity spill directory cannot be created or is unsafe | The protected allocator (LIB L0) raises `runtime.scratch_acl_failed` (the Windows DACL or POSIX mode could not be set) or `runtime.scratch_unsafe` (an existing directory is a symlink or reparse point, not ours, or open to others and not empty). The scan stops with that code and the table pair before any key column is read; no spill file is written anywhere. |
 | `--emit-config` target already exists | Refused without `--yes`; always refused when it is the same path as `--config`. |
 | `--config` names an unknown table, or positional files are mixed with `--config` | Usage error. |
 | Cloud source without the cloud extra | Existing engine error, mapped to the existing extras hint. |
@@ -485,7 +499,7 @@ interleave by merge order. Registry-touching slices in these plans:
 
 | Slice | Identities |
 |---|---|
-| LIB L0-engine | `runtime.scratch_acl_failed` |
+| LIB L0.1-engine | `runtime.scratch_acl_failed`, `runtime.scratch_unsafe` |
 | LIB L1a.1-engine | the CLI-side library and log event codes (LIB LM8) |
 | SCAN-MULTI S1a.1-engine | `warning.scan_header_suspect`, `warning.scan_key_type_mismatch` (S1b adds none) |
 | SCAN-MULTI S3-engine.1 | `config.namespace_placeholder_unset` |
@@ -497,7 +511,7 @@ in the next; SCAN-MULTI S3-engine (both parts) after CONFIG-EXPLICIT.
 
 **Build order.**
 
-1. LIB L0-engine, L1a.1, L1a.2 and RESULT E1, E2; one engine release. LIB
+1. LIB L0.1, L0.2, L1a.1, L1a.2 and RESULT E1, E2; one engine release. LIB
    L1b.1 may start at once (it needs no engine change); then the repin with
    L1b.2, then L1b.3, L1c.1, L1c.2 and L1d.
 2. SCAN-MULTI S1a.1, S1a.2, then S1b-engine on a branch from S1a; one engine
@@ -735,9 +749,20 @@ CONFIG-EXPLICIT (plan in progress).
   normalization and collisions), the multi-table card, the integrity block and
   the `--json` envelope. Kept out of `scan.py` (already 1442 lines).
 - new `src/decoy/cli/_scan_set_io.py`: `load_scan_set(path) -> dict`, the one
-  reader of a saved scan. S1c builds the bare-file branch: parse JSON, require
-  a top-level `scan_schema` whose major is `scan-set/v1`, else usage error
-  (exit 2) naming the tag found. LIB L2 adds the envelope branch to this same
+  reader of a saved scan. S1c builds two bare-file branches. With a
+  top-level `scan_schema`: require the major `scan-set/v1`, else usage error
+  (exit 2) naming the tag found. Without one: the legacy branch for files
+  that `decoy scan --output` wrote at 8fba6af and before (`profile.to_dict()`,
+  for example `row_count`, `source_label`, `fields`; see
+  `tests/e2e/test_scan_command.py:85`). It is strictly shape-checked: the
+  required keys and their JSON types are taken from a checked-in fixture,
+  `tests/fixtures/scan/legacy_profile_8fba6af.json`, produced by running
+  `decoy scan --output` at 8fba6af (the capture script is checked in beside
+  it); a file missing a required key or with a wrong type is a usage error
+  ("not a saved scan Decoy can read"), never a guess. A legacy file is
+  presented as a one-table set named from `source_label`. Its `top_values`
+  are never printed: `fields` and `show` render through
+  `_safe_field_record`. LIB L2 adds the envelope branch to this same
   function.
 - `src/decoy/cli/scan.py`: `SOURCE` becomes `SOURCES...`; new options
   `--config`, `--table` (repeatable), `--has-header` / `--no-header`,
@@ -789,7 +814,7 @@ CONFIG-EXPLICIT (plan in progress).
   `show` and `diff` read the dict form through
   `load_scan_set`, which rejects an unknown `scan_schema` major (the engine has
   no dict reader). A single-file bare `profile.to_dict()` from an older
-  `--output` keeps today's reader path inside `load_scan_set`.
+  `--output` is read by the legacy branch above.
 - Pre-GA change: a single CSV without a header flag is now a usage error
   (owner rule). CHANGELOG entry; the scan epilog examples gain the flag.
 - Exit codes unchanged: 0 ok, 2 usage, 3 runtime. Integrity findings never
@@ -808,6 +833,10 @@ CONFIG-EXPLICIT (plan in progress).
 | T2-config-relative | a config in `cfg/` naming `data/a.csv` scans `cfg/data/a.csv` when run from another directory | M2-cwd: resolve against the current directory |
 | T2-schema-reject | `scan fields` on a dict with `scan_schema: "scan-set/v2"` exits 2 | M2-no-check: skip the tag check |
 | T2-load-bare | `fields`, `show` and `diff` given the same bare `scan-set/v1` file give the same table list; each call goes through `load_scan_set` (spy) | M2-own-reader: `diff` parses the file itself |
+| T2-legacy-fields | `scan fields` on the 8fba6af legacy fixture exits 0 and lists every field of the fixture; its `top_values` canary appears nowhere in stdout or stderr | M2-legacy-reject: require `scan_schema` (the fixture then exits 2) |
+| T2-legacy-show | `scan show` on the legacy fixture exits 0 and reports its row count | M2-legacy-reject |
+| T2-legacy-diff | `scan diff` between the legacy fixture and a `scan-set/v1` file of the same data reports no drift; against a fixture copy with one field removed it reports that field | M2-legacy-reject; M2-legacy-wrong-table: name the table from the file name instead of `source_label` |
+| T2-legacy-reject | a dict with `row_count` but no `fields`, and one where `fields` is a string, each exit 2 with the fixed message | M2-legacy-loose: accept any dict without `scan_schema` |
 | G-ONE-SCAN-READER | syntax-tree walk of the CLI package: no `scan_schema` key read and no `records.decode` of a `scan-set` record outside `_scan_set_io.py`; a seeded bypass is shown red | M-READ-INLINE |
 | T2-parquet-compat | one parquet file: every key of a shape golden from 8fba6af is present in `--json` with the same value type, and the only extra key allowed is `library` (added by LIB L2) | M2-envelope: always emit the multi envelope; M2-extra-key: add any key other than `library` |
 | T2-output-core | canary in every cell: `--output` for one parquet file and for three tables is a `scan-set/v1` core, has no `detail` member, and contains no canary | M2-output-detail: write `detail=True` (or `profile.to_dict()`) to `--output` |
@@ -1159,15 +1188,13 @@ fixtures not counted). A slice over about 800 in total is cut into parts.
 
 ### Totals
 
-| Slice | Repo | Lines (est.) | Depends on |
-|---|---|---|---|
 | Slice or part | Repo | Lines (source + tests + docs) | Contents | Depends on |
 |---|---|---|---|---|
 | S1a.1-engine | engine | ~770 (420 + 300 + 50) | `scan_sources`, `ScanSetCore`, `scan_set_to_dict`, header guard, leading zeros, both warning identities; T1 tests except the two below | none |
 | S1a.2-engine | engine | ~200 (30 + 150 + 20) | cloud CSV dialect pass-through; T1-cloud-dialect, T1-sample-parity | S1a.1 |
 | S1b-engine | engine | ~650 (320 + 300 + 30) | integrity pass, spill through L0 | S1a (branch from it; one release), LIB L0 |
 | S1c.1-cli | CLI | ~620 (360 + 220 + 40) | positional files, header flags, names, card, `--json`, core-only `--output`; T2-multi, header-required, headerless, tsv, collision, atomic, parquet-compat, output-core, output-stream-core | S1a + S1b release and repin, LIB L1b.1, CLI-DIALECT |
-| S1c.2-cli | CLI | ~560 (300 + 230 + 30) | `--config` and `--table`, relative paths, integrity block, `load_scan_set` bare branch, G-ONE-SCAN-READER; T2-config-*, schema-reject, load-bare, integrity, canary | S1c.1; CONFIG-EXPLICIT for `--column-names-file` |
+| S1c.2-cli | CLI | ~690 (330 + 330 + 30) | `--config` and `--table`, relative paths, integrity block, `load_scan_set` bare and legacy branches with the 8fba6af fixture, G-ONE-SCAN-READER; T2-config-*, schema-reject, load-bare, legacy-*, integrity, canary | S1c.1; CONFIG-EXPLICIT for `--column-names-file` |
 | S1d-cli | none | 0 | replaced by LIB L2 | |
 | S3-engine.1 | engine | ~600 (430 + 130 + 40) | strategy-table port, parity fixture and capture script, `scan_baseline` field, placeholder validator and its identity; T3-parity, config-field, placeholder-error-value-free | S1a, CONFIG-EXPLICIT (plan in progress) |
 | S3-engine.2 | engine | ~680 (340 + 320 + 20) | `starter_config` builder; T3-valid to T3-cloud-note, key-hash, placeholder | S3-engine.1 |
