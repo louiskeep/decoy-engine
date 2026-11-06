@@ -165,6 +165,7 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine.config._subset_run import refuse_unapplied_subset
 from decoy_engine.declared_casting._eligibility import declared_route_guard
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._errors import PlanCompileError
@@ -431,6 +432,7 @@ def run_mask_pipeline_chunked(
     """
     from . import _chunked_oracle
 
+    refuse_unapplied_subset(config)
     state = _chunked_oracle._oracle_preflight(
         config,
         chunks,

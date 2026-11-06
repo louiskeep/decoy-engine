@@ -192,6 +192,37 @@ nitpick_ignore = [
     # explicitly so the resolution doesn't depend on which role the
     # autoapi version of the day decides to emit.
     ("py:obj", "abc.ABC"),
+    # CI-E1: re-exported engine names. A package `__init__.py` matches the
+    # `*/_*.py` pattern in `autoapi_ignore`, so the package page is never
+    # rendered and a name defined in a private module is not registered under
+    # the public name that re-exports it. Widening `autoapi_ignore` was
+    # measured at 117 warnings with the same targets still missing, so each
+    # target is listed here instead. This clears the warning; it does not
+    # give these public classes a page.
+    ("py:obj", "decoy_engine.errors.DecoyError"),
+    ("py:class", "decoy_engine.fileaccess.FileAccess"),
+    ("py:class", "decoy_engine.fileaccess.FileHandle"),
+    ("py:class", "decoy_engine.fileaccess.OutputTxn"),
+    ("py:class", "decoy_engine.fileaccess.OutputDir"),
+    ("py:class", "decoy_engine.fileaccess.DirHandle"),
+    ("py:class", "decoy_engine.reasons.ReasonRecord"),
+    ("py:class", "decoy_engine.reasons.ReasonContext"),
+    ("py:class", "decoy_engine.reasons.ReasonRef"),
+    ("py:class", "decoy_engine.reasons.Phase"),
+    ("py:class", "decoy_engine.reasons.ReasonCode"),
+    # CI-E1: bare aliases and a Literal that autoapi renders as a class.
+    ("py:class", "ReasonRecord"),
+    ("py:class", "Phase"),
+    ("py:class", "Status"),
+    ("py:class", "FrozenValue"),
+    ("py:class", "CodeSetConfig"),
+    ("py:class", "encrypted"),
+    # CI-E1: third-party names the intersphinx inventories do not index as
+    # classes (polars lists members, duckdb ships no inventory).
+    ("py:class", "polars.LazyFrame"),
+    ("py:class", "polars.DataFrame"),
+    ("py:class", "polars.Schema"),
+    ("py:class", "duckdb.DuckDBPyConnection"),
     # Type aliases and TypeVars defined inside the engine that autoapi
     # rendering exposes as bare class references but doesn't link to a
     # documented page.

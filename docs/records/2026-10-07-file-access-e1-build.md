@@ -2,7 +2,7 @@ Status: record
 
 # File access E1 (engine `FileAccess` policy): build record
 
-Plan: [2026-10-02-file-access-authz-engine-platform.md](../plans/2026-10-02-file-access-authz-engine-platform.md),
+Plan: [2026-10-02-file-access-authz-engine-platform.md](https://github.com/louiskeep/decoy-engine/blob/main/docs/plans/2026-10-02-file-access-authz-engine-platform.md),
 rev 3.2 and its 2026-10-07 delta. Contract page for integrators:
 [file-access-policy.md](../security/file-access-policy.md). Base: engine `main` `2ed9eb4c`
 (plan commits `37d80405`, `ce267ec3`). Branch `feat/file-access-policy`. Nothing was pushed, tagged

@@ -77,6 +77,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from decoy_engine import fileaccess
+from decoy_engine.config._subset_run import refuse_unapplied_subset
 from decoy_engine.execution._isolated_commit import (
     CommitError,
     atomic_commit,
@@ -201,6 +202,7 @@ def run_pipeline_isolated(
         Sprint 1a-part-2 will consume.
 
     Raises:
+        PipelineValidationError: `config` sets `subset:` (raised before staging or spawn).
         FileAccessUnavailable: a strict policy is installed and the call would spawn a
             child, or names a `staging_dir` or `output_dir` path. Raised before any I/O.
         ValueError: a non-None `sink`/`source_loader`/`vault_writer`/
@@ -209,6 +211,7 @@ def run_pipeline_isolated(
             JSON-serializable. Always raised BEFORE any subprocess is
             spawned.
     """
+    refuse_unapplied_subset(config)
     _reject_unserializable_kwargs(run_pipeline_kwargs)
     if mem_cap_bytes is not None and rlimit_kind not in RLIMIT_KINDS:
         raise ValueError(f"rlimit_kind={rlimit_kind!r} is not one of {sorted(RLIMIT_KINDS)}")

@@ -9,6 +9,10 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Breaking for consumers
+
+- `run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked`, `run_native_or_oracle_chunked` and `compile_plan` now refuse a config with `subset:` set (`config.subset_run_unsupported`, registry 1.6.0) instead of masking the full sources; run `run_subset` first.
+
 ### Added (RESULT E1: the run-result model, 2026-11-06)
 
 `decoy_engine.RunResult` and `RunResultRead` define the frozen `decoy-run-result/v1` document (one record per

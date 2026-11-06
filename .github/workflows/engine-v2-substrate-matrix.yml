@@ -16,6 +16,9 @@ on:
   # fire on demand so they stop failing every push (X0a). Old triggers: git history.
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   substrate:
     runs-on: ubuntu-latest
@@ -27,16 +30,10 @@ jobs:
       DECOY_SUBSTRATE: ${{ matrix.substrate }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      # Same profile as ci.yml's regression-gate (dev, lint, vault, cloud via bootstrap.sh).
+      - uses: ./.github/actions/lock-env
         with:
-          python-version: "3.10"
-          cache: pip
-      - name: Install engine + dev + cloud extras
-        # CLI install DX (2026-09-25): boto3/google-cloud-storage moved to the
-        # opt-in `cloud` extra; this job runs the same full non-benchmark
-        # suite as ci.yml's regression-gate (including
-        # tests/unit/test_v2_cloud_sources.py), so it needs `cloud` too.
-        run: pip install -e ".[dev,cloud]"
+          bootstrap: "true"
       - name: Execution tests under DECOY_SUBSTRATE=${{ matrix.substrate }}
         # Benchmark suite excluded per resolved question #19 (dedicated SKU).
         # codspeed + packaging excluded too (they need optional extras not in

@@ -43,26 +43,14 @@ jobs:
       - name: Check out
         uses: actions/checkout@v7
 
-      # Pin Python explicitly. The benchmark is sensitive to the Python
-      # version (string-handling path differs between 3.10 and 3.11+,
-      # which is part of why Pre-scan overhead measured 2.4% on Linux/3.11
-      # vs 56% on Windows/3.10 — see plans/2026-05-09-hybrid-engine-bug-followup.md).
-      # Cache pip so subsequent runs skip the dependency download phase.
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      # Install from uv.lock on Python 3.11. The benchmark is sensitive to the Python
+      # version (string-handling path differs between 3.10 and 3.11+, which is part of why
+      # Pre-scan overhead measured 2.4% on Linux/3.11 vs 56% on Windows/3.10; see
+      # plans/2026-05-09-hybrid-engine-bug-followup.md).
+      - uses: ./.github/actions/lock-env
         with:
-          python-version: '3.11'
-          cache: pip
-
-      # Install the package in editable mode + its dev extras (which
-      # includes pytest). The `[hybrid]` extras alias is empty post-Bug 1
-      # (polars + duckdb are required deps now), but kept for callers
-      # that already wrote it.
-      - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
+          extras: "dev"
+          python: "3.11.9"
       # Run the benchmark. The `-s` flag keeps print() output visible (the
       # benchmarks emit decision messages to stdout). The `-m benchmark`
       # filter only runs tests marked `@pytest.mark.benchmark` — keeps
