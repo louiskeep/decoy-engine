@@ -17,7 +17,9 @@ from pathlib import Path
 
 import pytest
 from scripts.release.reason_manifest_policy import (
+    FIXTURE_GLOB,
     entries_since,
+    fixture_name,
     minor_fixture_violations,
     renumber_classification,
 )
@@ -96,12 +98,8 @@ def nxt(version: str, n: int = 1) -> str:
     return f"{major}.{int(minor) + n}.0"
 
 
-def minor_of(version: str) -> str:
-    return version.rsplit(".", 1)[0]
-
-
 def fix_name(version: str, slug: str) -> str:
-    return f"reason-manifest-v{minor_of(version)}-{slug}.json"
+    return fixture_name(version, slug)
 
 
 def edit(repo: Path, rel: str, fn) -> None:
@@ -260,6 +258,37 @@ def test_second_slice_is_renumbered_and_every_artifact_agrees(repo):  # AT-R1
     commit(repo, "renumber")
     assert added_tokens(repo, va) == []
     assert run(repo, "--check").returncode == 0
+
+
+def test_added_lines_that_look_like_diff_headers_are_still_rewritten(repo):  # AT-R21
+    m0 = slices(repo, "a", "b", merged=False)
+    va, vt = nxt(m0), nxt(m0, 2)
+    note = repo / "docs/records/probe-b.md"
+    note.write_text(note.read_text() + f"++ note\nlands at {va}.\nb\nalso {va}\n-- tail at {va}\n")
+    commit(repo, "headers")
+    land_main(repo)
+    res = run(repo)
+    assert res.returncode == 0, out(res)
+    text = note.read_text()
+    assert f"lands at {vt}." in text and f"also {vt}" in text and f"-- tail at {vt}" in text
+    commit(repo, "renumber")
+    assert added_tokens(repo, va) == []
+    note.write_text(note.read_text() + f"stale at {va}.\n")
+    commit(repo, "leftover")
+    res = run(repo, "--check")
+    assert res.returncode == 1 and "leftover" in out(res)
+
+
+def test_a_branch_cut_from_the_main_tip_with_a_copied_since_is_renumbered(repo):  # AT-R22
+    m0 = slices(repo, "a", "b", merged=False)
+    git(repo, "checkout", "-q", "-b", "c", "main")
+    add_slice(repo, "c", nxt(m0), fixture=False)  # main already holds this minor
+    res = run(repo)
+    assert res.returncode == 0, out(res)
+    man = {f"{e['namespace']}.{e['code']}": e for e in live(repo)["entries"]}
+    assert man["runtime.probe_c"]["since"] == nxt(m0, 2) and man["platform.probe_a"][
+        "since"
+    ] == nxt(m0)
 
 
 def test_renumber_is_idempotent(repo):  # AT-R2
@@ -528,10 +557,7 @@ def test_only_the_first_of_two_green_heads_can_land(repo):  # AT-R16
 
     def landable(head: str) -> bool:
         git(repo, "checkout", "-q", head)
-        fixtures = {
-            p.name: json.loads(p.read_text())
-            for p in (repo / F29).glob("reason-manifest-v*-*.json")
-        }
+        fixtures = {p.name: json.loads(p.read_text()) for p in (repo / F29).glob(FIXTURE_GLOB)}
         sentry = minor_fixture_violations(fixtures, live(repo), floor)
         return run(repo, "--check").returncode == 0 and not sentry
 
@@ -666,7 +692,7 @@ def test_the_policy_returns_the_branch_owned_root_it_is_given():  # AT-R18 (dire
         "event_schema_version": 1,
         "entries": [],
     }
-    facts = {"branch_owned_schema_roots": frozenset({"reason_schema_version"})}
+    facts = {"branch_owned_schema_roots": frozenset({"reason_schema_version"}), "main_moved": False}
     assert renumber_classification(man, man, man, facts) == ["schema-root reason_schema_version"]
 
 

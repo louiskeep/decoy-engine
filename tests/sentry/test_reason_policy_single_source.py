@@ -80,6 +80,22 @@ def _key_constants(tree: ast.Module) -> frozenset[str]:
     return frozenset(found)
 
 
+ACCESSORS = frozenset({"version_of", "entries_since", "contract_versions"})
+
+
+def _policy_imports(tree: ast.Module, policy_consts: frozenset[str]) -> frozenset[str]:
+    """Local names bound from the policy module that carry registry keys: its key-tuple
+    constants (such as SCHEMA_ROOTS) and its key accessor functions."""
+    carry = policy_consts | ACCESSORS
+    return frozenset(
+        a.asname or a.name
+        for n in ast.walk(tree)
+        if isinstance(n, ast.ImportFrom) and n.module == POLICY_MODULE
+        for a in n.names
+        if a.name in carry
+    )
+
+
 def _bound_names(target: ast.AST) -> set[str]:
     return {n.id for n in ast.walk(target) if isinstance(n, ast.Name)}
 
@@ -194,8 +210,18 @@ def _functions(
     return found
 
 
+def _policy_key_constants(root: Path) -> frozenset[str]:
+    path = root / POLICY
+    return (
+        _key_constants(ast.parse(path.read_text(encoding="utf-8")))
+        if path.exists()
+        else frozenset()
+    )
+
+
 def guard_violations(root: Path, files: list[str], exempt: dict[tuple[str, str], str]) -> list[str]:
     problems: list[str] = []
+    policy_consts = _policy_key_constants(root)
     defined: set[tuple[str, str]] = set()
     for rel in files:
         tree = ast.parse((root / rel).read_text(encoding="utf-8"))
@@ -205,7 +231,7 @@ def guard_violations(root: Path, files: list[str], exempt: dict[tuple[str, str],
                 problems.append(f"{rel}: imports decoy_engine")
             continue
         imported = _policy_names(tree)
-        consts = _key_constants(tree)
+        consts = _key_constants(tree) | _policy_imports(tree, policy_consts)
         for qual, node in _functions(tree):
             defined.add((rel, qual))
             if node.name.startswith("test_") or not _uses_key_as_check(node, consts):
@@ -338,4 +364,30 @@ def test_guard_flags_aliases_and_keys_held_in_a_constant_tuple(tmp_path: Path) -
         "src/a.py::drift",
         "src/b.py::late",
         "src/c.py::roots_differ",
+    ]
+
+
+_POLICY_WITH_ROOTS = "SCHEMA_ROOTS = ('reason_schema_version', 'event_schema_version')\n"
+_IMPORTED_TUPLE = (
+    f"from {POLICY_MODULE} import SCHEMA_ROOTS\n"
+    "def roots_differ(a, b):\n"
+    "    return [r for r in SCHEMA_ROOTS if a[r] != b[r]]\n"
+)
+_ACCESSOR_COMPARE = (
+    f"from {POLICY_MODULE} import version_of\n"
+    "def moved(m, h):\n"
+    "    if version_of(m) != version_of(h):\n"
+    "        return ['moved']\n"
+    "    return []\n"
+)
+
+
+def test_guard_flags_policy_constants_and_accessors_used_outside_the_policy(tmp_path: Path) -> None:
+    files = _tree(
+        tmp_path,
+        {POLICY: _POLICY_WITH_ROOTS, "src/a.py": _IMPORTED_TUPLE, "src/b.py": _ACCESSOR_COMPARE},
+    )
+    assert guard_violations(tmp_path, files, {}) == [
+        "src/a.py::roots_differ",
+        "src/b.py::moved",
     ]

@@ -37,6 +37,19 @@ scratch repos build a real second and third slice, so the results do not depend 
    registry-key helpers moved into the policy module (`contract_versions`, `restamp`,
    `owned_schema_roots`, `entries_since`, `version_of`).
 
+## Dennis gate fixes (on 2c91d99f)
+
+- M2: the hunk parser reads the old and new line counts from each `@@` header and consumes exactly
+  that many lines, so an added "++ " line or a removed "-- " line is content (AT-R21).
+- M1: the guard seeds key constants imported from the policy module (`SCHEMA_ROOTS`) and treats
+  `version_of`, `entries_since` and `contract_versions` calls as key expressions. Seeded cases:
+  imported tuple filter, and `version_of(m) != version_of(h)`. The only newly flagged live function
+  was this slice's own `owned_roots`, restructured through the policy's `owned_schema_roots`.
+- M3: `fixture_prefix`, `fixture_name`, `parse_fixture_name` and `FIXTURE_GLOB` in the policy
+  module replace the script's own regex and prefix strings and the sentry's hand-built glob.
+- L1: stale-since uses the fact `main_moved` (fork != main sha) instead of comparing manifests.
+- L2 to L6: deferred to V2-LOG per the coordinator; the texts are in Dennis's gate report.
+
 ## Deviations
 
 - Sizes: the test file is about 690 lines (cap 360) after `ruff format`; the whole part is about

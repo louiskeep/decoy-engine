@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 from scripts.release.reason_manifest_policy import (
+    FIXTURE_GLOB,
     minor_fixture_violations,
     summary_version_violations,
 )
@@ -22,7 +23,6 @@ F29 = ROOT / "tests" / "fixtures" / "f29"
 # A fixed historical fact, not the moving version: 1.5.0 is the last minor that shipped
 # without a fixture (F31 #377). Never raise it to make room for a new minor.
 FLOOR = "1.5.0"
-PATTERN = "reason-manifest-v*-*." + "json"
 
 
 def _live() -> dict:
@@ -30,7 +30,7 @@ def _live() -> dict:
 
 
 def _fixtures() -> dict[str, dict]:
-    return {p.name: json.loads(p.read_text(encoding="utf-8")) for p in F29.glob(PATTERN)}
+    return {p.name: json.loads(p.read_text(encoding="utf-8")) for p in F29.glob(FIXTURE_GLOB)}
 
 
 def _entry(code: str, since: str) -> dict:

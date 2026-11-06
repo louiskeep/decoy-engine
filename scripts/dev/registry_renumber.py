@@ -37,10 +37,13 @@ from scripts.release.reason_manifest_policy import (  # noqa: E402
     VERSION_LITERAL,
     RenumberFacts,
     contract_versions,
-    next_minor,
+    fixture_name,
+    fixture_prefix,
+    parse_fixture_name,
     renumber_check,
     renumber_claim,
     renumber_classification,
+    renumber_target,
     restamp,
     version_of,
 )
@@ -60,7 +63,7 @@ ANCHORS = {
     rg.REGISTRY_PY: re.compile(r'^(REGISTRY_VERSION = ")([^"]*)(")$', re.M),
     REASONS_MD: re.compile(r"(`registry_version` \(`)([^`]*)(`\))"),
 }
-FIXTURE = re.compile(r"tests/fixtures/f29/reason-manifest-v(\d+)\.(\d+)-([a-z0-9-]+)\.json")
+FIXTURE_DIR = "tests/fixtures/f29"
 RENUMBER_LINE = "Registry renumbered at merge from"
 BASE_TESTS = (
     "tests/unit/test_reason_registry.py",
@@ -123,6 +126,7 @@ def gather_facts(root: Path, repo_facts: dict, hunks: list[rg.Hunk]) -> Renumber
     skip = {CONTRACT, *([fixture_path] if fixture_path else [])}
     return {
         "branch_owned_schema_roots": repo_facts["roots"],
+        "main_moved": repo_facts["moved"],
         "anchor_version": anchor and anchor[2],
         "contract_versions": contract,
         "fixture": fixture,
@@ -132,8 +136,7 @@ def gather_facts(root: Path, repo_facts: dict, hunks: list[rg.Hunk]) -> Renumber
 
 def plan_rewrites(root: Path, hunks, old: str, target: str, fixture: str | None):
     """Line edits {path: {line: text}}, record paths, and refusals; nothing is written."""
-    pat, prefix = token(old), f"reason-manifest-v{old.rsplit('.', 1)[0]}-"
-    swap = f"reason-manifest-v{target.rsplit('.', 1)[0]}-"
+    pat, prefix, swap = token(old), fixture_prefix(old), fixture_prefix(target)
     edits: dict[str, dict[int, str]] = {}
     refuse: list[str] = []
     records: set[str] = set()
@@ -222,7 +225,11 @@ def run(repo: Path, main: str, check: bool) -> int:
     fork = rg.fork_point(repo, msha)
     hunks = list(rg.hunks(repo, msha))
     added = rg.git(repo, "diff", "--name-only", "--diff-filter=A", msha, "HEAD").stdout.split()
-    fixtures = [p for p in added if FIXTURE.fullmatch(p)]
+    fixtures = [
+        p
+        for p in added
+        if Path(p).parent.as_posix() == FIXTURE_DIR and parse_fixture_name(Path(p).name)
+    ]
     with tempfile.TemporaryDirectory() as work:
         w = Path(work)
         (w / "m").mkdir()
@@ -235,6 +242,7 @@ def run(repo: Path, main: str, check: bool) -> int:
         h = rg.extract(repo, contract=True)["manifest"]
         repo_facts = {
             "roots": rg.owned_roots(repo, fork),
+            "moved": fork != msha,
             "fixture": fixtures[0] if len(fixtures) == 1 else None,
         }
         facts = gather_facts(repo, repo_facts, hunks)
@@ -256,15 +264,14 @@ def run(repo: Path, main: str, check: bool) -> int:
 
 def renumber(repo, w, manifests, old, facts, hunks, repo_facts) -> int:
     b, m, h = manifests
-    target = next_minor(version_of(m))
+    target = renumber_target(m)
     for rel, rx in ANCHORS.items():
         if len(rx.findall(read(repo, rel))) != 1:
             raise rg.Refusal(3, f"anchor-missing {rel}")
     fixture, new_name = repo_facts["fixture"], None
     if fixture:
-        new_name = FIXTURE.sub(
-            lambda f: fixture.replace(f"v{f[1]}.{f[2]}-", f"v{target.rsplit('.', 1)[0]}-"), fixture
-        )
+        slug = parse_fixture_name(Path(fixture).name)[1]  # type: ignore[index]
+        new_name = f"{FIXTURE_DIR}/{fixture_name(target, slug)}"
         if new_name != fixture and (repo / new_name).exists():
             raise rg.Refusal(3, f"fixture-exists {new_name}")
     edits, records, refuse = plan_rewrites(repo, hunks, old, target, fixture)

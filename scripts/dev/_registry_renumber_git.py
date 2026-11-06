@@ -17,7 +17,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import NamedTuple
 
-from scripts.release.reason_manifest_policy import SCHEMA_ROOTS, owned_schema_roots
+from scripts.release.reason_manifest_policy import owned_schema_roots
 
 REGISTRY_PY = "src/decoy_engine/reasons/_registry.py"
 CONTRACT_PY = "tests/unit/progress/test_consumer_contract.py"
@@ -31,7 +31,7 @@ print(json.dumps(out))
 """
 _TWICE = re.compile(r"reason (\w+\.\w+) is declared twice")
 _NAME = re.compile(r"[\w.]+")
-_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+_HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
 class Refusal(Exception):  # noqa: N818 - carries the exit code, not an error condition
@@ -97,53 +97,67 @@ def fork_point(repo: Path, main: str) -> str:
     return git(repo, "rev-parse", f"{chain[-1]}^").stdout.strip() if chain else main
 
 
+def _root_changed(repo: Path, fork: str, root: str) -> bool:
+    name = root.upper()
+    hit = git(repo, "log", "--first-parent", "--no-merges", f"-G^{name} =", "--format=%H",
+              f"{fork}..HEAD", "--", REGISTRY_PY)  # fmt: skip
+    return bool(hit.stdout.split())
+
+
+def _merge_values(repo: Path, fork: str, root: str) -> list[tuple[str, str]]:
+    pat = re.compile(rf"^{root.upper()} = (\d+)$", re.M)
+    merges = git(repo, "rev-list", "--first-parent", "--merges", f"{fork}..HEAD").stdout.split()
+    pairs = []
+    for merge in merges:
+        here, other = (
+            pat.search(git(repo, "show", f"{rev}:{REGISTRY_PY}").stdout)
+            for rev in (merge, f"{merge}^2")
+        )
+        pairs.append((here[1] if here else "", other[1] if other else ""))
+    return pairs
+
+
 def owned_roots(repo: Path, fork: str) -> frozenset[str]:
     """Schema roots the branch itself changed, by history (an inherited main change is not)."""
-    changed: list[str] = []
-    triples: list[tuple[str, str, str]] = []
-    merges = git(repo, "rev-list", "--first-parent", "--merges", f"{fork}..HEAD").stdout.split()
-    for root in SCHEMA_ROOTS:
-        name = root.upper()
-        pat = re.compile(rf"^{name} = (\d+)$", re.M)
-        hit = git(repo, "log", "--first-parent", "--no-merges", f"-G^{name} =", "--format=%H",
-                  f"{fork}..HEAD", "--", REGISTRY_PY)  # fmt: skip
-        if hit.stdout.split():
-            changed.append(root)
-        for merge in merges:
-            here, other = (
-                pat.search(git(repo, "show", f"{rev}:{REGISTRY_PY}").stdout)
-                for rev in (merge, f"{merge}^2")
-            )
-            triples.append((root, here[1] if here else "", other[1] if other else ""))
-    return owned_schema_roots(changed, triples)
+    return owned_schema_roots(
+        lambda root: _root_changed(repo, fork, root), lambda root: _merge_values(repo, fork, root)
+    )
 
 
 def hunks(repo: Path, main: str) -> Iterator[Hunk]:
-    """Branch-added and main-side lines per hunk of `git diff -U0 main HEAD`."""
+    """Branch-added and main-side lines per hunk of `git diff -U0 main HEAD`.
+
+    Each `@@` header gives the exact old and new line counts; that many content lines are
+    consumed, so an added line that starts with "++ " or a removed one that starts with "-- " is
+    content, never a file header. "+++ " and "--- " are headers only outside a hunk.
+    """
     diff = git(repo, "diff", "-U0", "--no-color", "--no-renames", "--no-textconv", main, "HEAD")
-    path, cur = "", None
-    removed: list[str] = []
-    added: list[tuple[int, str]] = []
-    start = line = 0
-
-    def flush() -> Iterator[Hunk]:
-        if cur is not None and (removed or added):
-            yield Hunk(path, start, tuple(removed), tuple(added))
-
-    for text in diff.stdout.split("\n"):
+    path = ""
+    lines = diff.stdout.split("\n")
+    k = 0
+    while k < len(lines):
+        text = lines[k]
+        k += 1
+        header = _HUNK.match(text)
         if text.startswith("+++ "):
-            yield from flush()
-            path, cur = text[6:], None
-            if text == "+++ /dev/null":
-                path = ""
-            removed, added = [], []
-        elif m := _HUNK.match(text):
-            yield from flush()
-            cur, start, line = True, int(m[1]), int(m[1])
-            removed, added = [], []
-        elif cur and text.startswith("+"):
-            added.append((line, text[1:]))
-            line += 1
-        elif cur and text.startswith("-") and not text.startswith("---"):
-            removed.append(text[1:])
-    yield from flush()
+            path = "" if text == "+++ /dev/null" else text[6:]
+        elif header:
+            start = no = int(header[3])
+            old_left = int(header[2]) if header[2] is not None else 1
+            new_left = int(header[4]) if header[4] is not None else 1
+            removed: list[str] = []
+            added: list[tuple[int, str]] = []
+            while (old_left or new_left) and k < len(lines):
+                body = lines[k]
+                k += 1
+                if body.startswith("\\"):
+                    continue
+                if body.startswith("-") and old_left:
+                    removed.append(body[1:])
+                    old_left -= 1
+                elif body.startswith("+") and new_left:
+                    added.append((no, body[1:]))
+                    no += 1
+                    new_left -= 1
+            if path and (removed or added):
+                yield Hunk(path, start, tuple(removed), tuple(added))

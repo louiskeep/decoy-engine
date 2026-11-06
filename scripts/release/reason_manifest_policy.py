@@ -17,7 +17,7 @@ import hashlib
 import json
 import re
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import TypedDict
 
 from packaging.version import Version
@@ -28,7 +28,8 @@ SCHEMA_ROOTS = ("reason_schema_version", "event_schema_version")
 # character or dot, not followed by a word character or ".<digit>" (so "9.9.0." ends a sentence
 # while "9.9.0.1" and "9.9.0beta" are not versions).
 VERSION_LITERAL = re.compile(r"(?<![\w.])\d+\.\d+\.\d+(?!\w|\.\d)")
-_FIXTURE_NAME = re.compile(r"reason-manifest-v(\d+)\.(\d+)-")
+_FIXTURE_NAME = re.compile(r"reason-manifest-v(\d+)\.(\d+)-([a-z0-9-]+)\.json")
+FIXTURE_GLOB = "reason-manifest-v*-*." + "json"  # built apart: a sentry scans for .json literals
 
 
 def _version_tuple(version: str) -> tuple[int, int, int]:
@@ -191,9 +192,13 @@ def minor_fixture_violations(fixtures: Mapping[str, dict], live: dict, floor: st
         return [f"registry major {live_v.major} differs from the fixture floor major {major}"]
     by_minor: dict[int, list[str]] = {}
     for name in sorted(fixtures):
-        m = _FIXTURE_NAME.match(name)
-        if m and int(m[1]) == major and int(m[2]) > floor_v.minor:
-            by_minor.setdefault(int(m[2]), []).append(name)
+        parsed = parse_fixture_name(name)
+        if (
+            parsed
+            and Version(parsed[0]).major == major
+            and Version(parsed[0]).minor > floor_v.minor
+        ):
+            by_minor.setdefault(Version(parsed[0]).minor, []).append(name)
     live_by_id = {(e["namespace"], e["code"]): e for e in live["entries"]}
     problems: list[str] = []
     for minor in range(floor_v.minor + 1, live_v.minor + 1):
@@ -218,6 +223,7 @@ class RenumberFacts(TypedDict):
     """Tree and history facts the renumber script reads and the policy judges."""
 
     branch_owned_schema_roots: frozenset[str]
+    main_moved: bool  # the branch forked from an older main than the one it is judged against
     anchor_version: str | None  # the docs/reasons.md `registry_version` sentence, None if absent
     contract_versions: frozenset[str]  # every registry_version in consumer-contract.json
     fixture: dict | None  # the branch-new manifest fixture: {"name": str, "manifest": dict}
@@ -254,11 +260,37 @@ def restamp(node: object, version: str) -> object:
 
 
 def owned_schema_roots(
-    changed: Iterable[str], merges: Iterable[tuple[str, str, str]]
+    changed: Callable[[str], bool], merge_values: Callable[[str], Iterable[tuple[str, str]]]
 ) -> frozenset[str]:
-    """Schema roots a branch owns: changed by one of its own commits, or set by a merge to a value
-    its second parent does not hold. ``merges`` holds ``(root, merge value, second parent value)``."""
-    return frozenset(changed) | {root for root, here, other in merges if here != other}
+    """Schema roots a branch owns: changed by one of its own commits (``changed(root)``), or set by
+    a merge to a value its second parent does not hold (``merge_values(root)`` yields
+    ``(merge value, second parent value)`` pairs)."""
+    return frozenset(
+        root
+        for root in SCHEMA_ROOTS
+        if changed(root) or any(here != other for here, other in merge_values(root))
+    )
+
+
+def fixture_prefix(version: str) -> str:
+    """The part of a fixture name that carries the minor (what a renumber rewrites)."""
+    major, minor, _ = _version_tuple(version)
+    return f"reason-manifest-v{major}.{minor}-"
+
+
+def fixture_name(version: str, slug: str) -> str:
+    """The pinned fixture file name for the minor of ``version``."""
+    return f"{fixture_prefix(version)}{slug}." + "json"
+
+
+def parse_fixture_name(name: str) -> tuple[str, str] | None:
+    """``(major.minor.0, slug)`` of a fixture file name, or None when it is not one."""
+    match = _FIXTURE_NAME.fullmatch(name)
+    return (f"{match[1]}.{match[2]}.0", match[3]) if match else None
+
+
+def renumber_target(manifest: dict) -> str:
+    return next_minor(manifest["registry_version"])
 
 
 def next_minor(version: str) -> str:
@@ -294,7 +326,7 @@ def renumber_classification(b: dict, m: dict, h: dict, facts: RenumberFacts) -> 
     floor = Version(b["registry_version"])
     for ident, entry in new.items():
         old = Version(entry["since"])
-        if old < floor or (old == floor and b != m):
+        if old < floor or (old == floor and facts["main_moved"]):
             out.append(f"stale-since {ident[0]}.{ident[1]}")
     if len(claimed) > 1:
         out.append("several-minors")
@@ -327,8 +359,8 @@ def renumber_check(b: dict, m: dict, h: dict, facts: RenumberFacts) -> list[str]
         out.append("consumer-contract.json names a different registry version")
     fixture = facts["fixture"]
     if fixture:
-        match = _FIXTURE_NAME.match(fixture["name"])
-        if not match or f"{match[1]}.{match[2]}.0" != version:
+        parsed = parse_fixture_name(fixture["name"])
+        if not parsed or parsed[0] != version:
             out.append(f"fixture {fixture['name']} is not named for {version}")
         out += _fixture_violations(fixture["name"], fixture["manifest"], version, head)
     base_v, head_v = Version(b["registry_version"]), Version(version)
