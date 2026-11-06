@@ -347,6 +347,7 @@ placement and new sentries go in a named sub-package.
 | `_xdist_safe_reports.py` | `tests/` | test helpers as `tests/_*.py` | `tests/_keyed_secret.py`, `tests/_dp_cert.py` |
 | `parallel/__init__.py`, `parallel/_resources.py` (the AST scan and its vocabulary), `parallel/required_serial.toml` (the required-serial registry), `parallel/test_serial_resources.py` | `tests/sentry/parallel/` (new sub-package) | map change: LAYOUT's sentry rows gain "parallel-safety sentry: `tests/sentry/parallel/`" | `tests/sentry/layout/` (LAYOUT) |
 | `test_gates_baseline_file.py`, `test_gates_parallel.py`, `test_parallel_tests_support.py` | `tests/unit/scripts/` | existing gate-script tests | `test_dev_bootstrap_gates.py` |
+| `_gates_harness.py` (shared scratch clones, recording venv and fake pytest for the gate-script tests) | `tests/unit/scripts/` | test helpers as `_*.py` beside their tests | `test_dev_bootstrap_gates.py`, `test_gates_baseline_file.py` |
 
 `tests/sentry/parallel/test_serial_resources.py` is added to `SENTRIES`
 (`tests/sentry/test_sentry_manifest.py`) and its allowlist to `scripts/dev/sentry_registry.toml`
