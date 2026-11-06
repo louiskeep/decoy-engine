@@ -101,3 +101,9 @@ lanes profile before `compile_plan`; the E6 backstop is accepted for them.
 
 Final `gates.sh --baseline` on the head, sphinx `-W`, macOS arm64 run, the `since` probe in `test_reason_release_pin`
 beyond M8. The orchestrator's T3 covers registry and frozen-contract triggers.
+
+## Gates on the exact head
+
+Head `e5d874d4`, base origin/main `55876436`, VM, `scripts/dev/gates.sh --keep-going --baseline`: branch ruff, format,
+mypy pass; sentry 4117 passed; licenses 63 passed; tests 6143 passed (baseline 6127). Failing-id diff: branch 0,
+baseline 0, branch-only 0. The commit that adds this section changes only this record.
