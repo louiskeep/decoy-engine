@@ -27,6 +27,8 @@ from enum import Enum
 from typing import Annotated, Any, Final, Literal, Union, get_args, get_origin
 
 from annotated_types import Ge, Le, MaxLen
+from packaging.version import InvalidVersion
+from packaging.version import Version as PackagingVersion
 from pydantic import (
     AfterValidator,
     AllowInfNan,
@@ -39,7 +41,13 @@ from pydantic import (
 )
 
 from decoy_engine.progress import safe_error_class
-from decoy_engine.reasons import ReasonRecord, approve_name, approve_ref, decoy
+from decoy_engine.reasons import (
+    REGISTRY_VERSION_RE,
+    ReasonRecord,
+    approve_name,
+    approve_ref,
+    decoy,
+)
 
 RUN_RESULT_SCHEMA: Final = "decoy-run-result/v1"
 
@@ -113,13 +121,35 @@ Sha256 = Annotated[
 Hex64 = Annotated[
     str, ValueFree("hex64"), AfterValidator(_check("hex64", _matches(r"[0-9a-f]{64}")))
 ]
-# PEP 440 public release (release segment, pre, post, dev) plus an optional lowercase local part.
-_VERSION_SHAPE = (
-    r"\d{1,6}(\.\d{1,6}){1,3}((a|b|rc)\d{1,6})?(\.post\d{1,6})?(\.dev\d{1,6})?"
-    r"(\+[0-9a-z]{1,32}(\.[0-9a-z]{1,32}){0,3})?"
-)
+_MAX_VERSION_LEN = 64
+
+
+def _canonical_release(value: str) -> bool:
+    """A PEP 440 version in its own canonical spelling, release segment of two or more parts.
+
+    ``packaging`` is the parser; ``str(parsed) == value`` refuses the spellings it would normalize
+    (a ``v`` prefix, uppercase, padding, surrounding whitespace, a trailing newline). An epoch is
+    refused: Decoy never releases one, so ``1!2.0`` is not a producer version.
+    """
+    if len(value) > _MAX_VERSION_LEN:
+        return False
+    try:
+        parsed = PackagingVersion(value)
+    except InvalidVersion:
+        return False
+    return str(parsed) == value and parsed.epoch == 0 and len(parsed.release) >= 2
+
+
 Version = Annotated[
-    str, ValueFree("version"), AfterValidator(_check("version", _matches(_VERSION_SHAPE)))
+    str, ValueFree("version"), AfterValidator(_check("version", _canonical_release))
+]
+# The reason registry's own version: strict X.Y.Z, the one shape ``ReasonRecord`` parses.
+RegistryVersion = Annotated[
+    str,
+    ValueFree("registry_version"),
+    AfterValidator(
+        _check("registry_version", lambda v: REGISTRY_VERSION_RE.fullmatch(v) is not None)
+    ),
 ]
 UtcTimestamp = Annotated[
     str,
@@ -219,11 +249,20 @@ class _Model(_Base):
 class _ReadBase(_Base):
     model_config = ConfigDict(extra="ignore")
 
+    def to_payload(self) -> dict[str, Any]:
+        """The read projection: what this reader understood, as the wire dict.
+
+        Reasons appear in their read form (the canonical local payload plus
+        ``written_registry_version``) or ``null``. It is a view of a read document, not a document
+        to write back; only :class:`RunResult` validates a payload for writing.
+        """
+        return super().to_payload()
+
 
 class ProducerInfo(_Model):
     cli_version: Version
     engine_version: Version
-    registry_version: Version
+    registry_version: RegistryVersion
     event_schema: Count
 
 

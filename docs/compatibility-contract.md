@@ -104,8 +104,8 @@ enum values; the read model ignores added fields, reads a new enum value as a st
 reason it cannot validate as `null`. Numbers and flags are strict on both sides (`False` is not a `0`,
 `"1"` is not a `1`). The `schema` key is required on read and accepts only `decoy-run-result/v1`: a
 document of another major (`/v2`), free text or a missing key is refused, never read as v1; a reader
-that wants `/v2` support adds a new model under a new tag. Corpus sample:
-`tests/fixtures/compat/run-result-v1.json`.
+that wants `/v2` support adds a new model under a new tag. Hand-authored corpus samples (the v1 sample and its cross-minor variants) are in
+`tests/integration/compat_corpus/run_result/`.
 
 **Rules:**
 
@@ -661,12 +661,12 @@ turns into "I can add X alongside the old X" with five more minutes of thought.
   The corpus is synthetic pre-GA: artifacts carry `synthetic: true` and
   `produced_by_engine_version: "0.1.0"`. At GA, replace or supplement with a real
   (`synthetic: false`) artifact of each read-back kind.
-- **`decoy-run-result/v1` fixtures** (`tests/fixtures/compat/run-result-v1*.json`). The run-result
-  document is checked by `tests/unit/run_result/test_model.py`, which reads the sample and the
-  cross-minor variants through `RunResultRead` and refuses them on the write model. It sits outside
-  `tests/integration/compat_corpus/` on purpose: the corpus manifest and `regenerate.py` freeze
-  artifacts produced at a known engine version, and these are hand-made reader samples with no
-  producing code to regenerate. Moving them would add a manifest kind and a second test for no gain.
+- **`decoy-run-result/v1` fixtures** (`tests/integration/compat_corpus/run_result/run-result-v1*.json`).
+  They live in the corpus directory, in their own subfolder, so the frozen samples sit in one place.
+  They are hand-authored reader samples, not artifacts minted by `regenerate.py`: there is no
+  producing code to regenerate and they have no entry in `manifest.json`. The manifest-driven corpus
+  test does not read them. `tests/unit/run_result/test_model.py` reads the sample and the cross-minor
+  variants through `RunResultRead` and refuses them on the write model.
 - **`CHANGELOG.md`** records every user-visible change.
 - **The regression-gate** runs the above on every PR.
 

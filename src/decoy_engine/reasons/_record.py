@@ -38,7 +38,7 @@ COUNT_KEYS = frozenset(
 _SAFE_REF = re.compile(rf"^[A-Za-z0-9][A-Za-z0-9_.\-]{{0,{MAX_REF_LEN - 1}}}\Z")
 _SAFE_IDENTITY = re.compile(rf"^[a-z][a-z0-9_.:\-]{{0,{MAX_IDENTITY_LEN - 1}}}\Z")
 # ``\Z``, not ``$``: ``$`` also matches before a trailing newline.
-_VERSION = re.compile(r"^(\d{1,4})\.(\d{1,5})\.(\d{1,6})\Z")
+REGISTRY_VERSION_RE = re.compile(r"^(\d{1,4})\.(\d{1,5})\.(\d{1,6})\Z")
 
 
 class Operation(str, Enum):
@@ -387,8 +387,8 @@ class ReasonRecord:
         registry = payload.get("registry_version")
         if schema != _registry.REASON_SCHEMA_VERSION or not isinstance(registry, str):
             return cls.for_reason(decoy.UNSUPPORTED_SCHEMA_VERSION), None
-        match = _VERSION.match(registry)
-        ours = _VERSION.match(_registry.REGISTRY_VERSION)
+        match = REGISTRY_VERSION_RE.match(registry)
+        ours = REGISTRY_VERSION_RE.match(_registry.REGISTRY_VERSION)
         if match is None or ours is None or match.group(1) != ours.group(1):
             return cls.for_reason(decoy.UNSUPPORTED_SCHEMA_VERSION), None
         namespace, code = payload.get("namespace"), payload.get("code")

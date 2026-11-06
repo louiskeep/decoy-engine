@@ -37,7 +37,7 @@ from decoy_engine.reasons import ReasonRecord, _registry, decoy
 from decoy_engine.run_result import RUN_RESULT_SCHEMA, RunResult, RunResultRead, _model
 from decoy_engine.run_result._model import Token, ValueFree
 
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "compat"
+FIXTURES = Path(__file__).resolve().parents[2] / "integration" / "compat_corpus" / "run_result"
 MARKER = "zz_marker_ctx"
 
 
@@ -608,9 +608,14 @@ def _compat_literals(node: ast.AST) -> list[str]:
     hits += [
         n.attr
         for n in ast.walk(node)
-        if isinstance(n, ast.Attribute) and n.attr in {"_VERSION", "REGISTRY_VERSION"}
+        if isinstance(n, ast.Attribute)
+        and n.attr in {"_VERSION", "REGISTRY_VERSION", "REGISTRY_VERSION_RE"}
     ]
-    hits += [n.id for n in ast.walk(node) if isinstance(n, ast.Name) and n.id == "_VERSION"]
+    hits += [
+        n.id
+        for n in ast.walk(node)
+        if isinstance(n, ast.Name) and n.id in {"_VERSION", "REGISTRY_VERSION_RE"}
+    ]
     return hits
 
 

@@ -24,7 +24,7 @@ REGISTRY_VERSION is `1.5.0` and is unchanged.
 | `src/decoy_engine/run_result/__init__.py`, `_model.py`, `_outcome.py` | New package `run_result/`. CODEMAP "Directory Map" and `_MAP.md` have no row for it, so it needs a new row (added in fix round 1) | `reasons/` (the reason wire types the model reuses), `plan/` (the hash it exports) |
 | `tests/unit/run_result/` | tests mirror the package (`tests/unit/<package>/`) | `tests/unit/plan/` |
 | `tests/sentry/test_run_result_constructor.py` | `tests/sentry/` holds sentries; listed in `test_sentry_manifest.py` | `tests/sentry/test_reason_registry.py` |
-| `tests/fixtures/compat/run-result-v1*.json` | the handoff names this directory (new; `tests/integration/compat_corpus/` is the older corpus) | `tests/fixtures/f29/` |
+| `tests/integration/compat_corpus/run_result/run-result-v1*.json` | moved here in fix round 3 (the handoff named `tests/fixtures/compat/`, which made two corpus locations) | `tests/integration/compat_corpus/manifest.json` artifacts |
 
 Fan-out: `run_result/` is new (3 modules). No package over its ratchet gained a module.
 
@@ -127,7 +127,7 @@ Source: Dennis and Codex findings on `2a4025e3`. Red runs are on the devbox agai
 | Bare marker trusted | the walk needs a kind from the module's named types and that type's validator in the field metadata; it also demands `Strict` on every int, bool and float |
 | Read enums as bare `str` | `Token` (approved identifier) replaces them; the walk now runs over `RunResultRead` |
 | Placement | CODEMAP Directory Map and Where Do I Find rows, `_MAP.md` row |
-| Second corpus location | contract section 6 names `decoy-run-result/v1` and `tests/fixtures/compat/` (smaller than moving nine files and adding a manifest kind; they are hand-made reader samples with nothing to regenerate) |
+| Second corpus location | round 1 kept them in `tests/fixtures/compat/` and named that in contract section 6 (smaller than moving nine files and adding a manifest kind; they are hand-made reader samples with nothing to regenerate) |
 | Private import | `safe_error_class` from `decoy_engine.progress` |
 | `Outcome` export | removed from `run_result/__init__` (not in the handoff list); the type is reached as `run_result._outcome.Outcome` |
 | LOW items | diagnostic-code null cell; alias-only models plus read `to_payload` (works on any pydantic 2, no 2.11 setting); PEP 440 `Version`; `in_place` comment; unknown values asserted kept; `\Z` on `_VERSION` |
@@ -145,3 +145,24 @@ defaulted on read; `Count`, `Flag`, `ExitCode`, `Seconds` lax; walk trusts a bar
 `to_payload`; diagnostic nulling removed; old `Version` suffix; `_VERSION` and `_SAFE_REF` back to `$`. The earlier 18
 were re-run on the new tree and are red. Not caught: the private `_progress_events` import (no sentry checks
 imports inside `src/decoy_engine`; `telemetry/_vocab.py` does the same). Listed as a DESIGN item, not guarded here.
+
+## Fix round 3
+
+Commits on top of `75bb1f7e`. Test home for the new cases: `tests/unit/run_result/test_model_shapes.py` (117 lines; `test_model.py` stays at 776, under the 800 guideline).
+
+| Item | Fix | Red on `75bb1f7e` |
+|---|---|---|
+| Two corpus locations | nine samples moved to `tests/integration/compat_corpus/run_result/`; contract 3.1 and 6, CODEMAP and this record updated. They stay hand-authored, have no manifest entry and no regeneration; the manifest-driven corpus test never read the directory, so no new kind was needed | `test_run_result_samples_live_in_the_corpus_subfolder` (module-level path check) |
+| `\Z` untested | `test_an_identity_ending_in_a_newline_is_not_kept`, `test_write_side_refuses_an_identity_ending_in_a_newline` | green on `75bb1f7e` by design (the fix was already there); they guard it. Mutation `\Z` to `$` on `_SAFE_IDENTITY` turns the first one red |
+| Hand-written `_VERSION_SHAPE` | `_canonical_release`: `packaging.version.Version`, `str(v) == v`, length cap 64, at least two release parts, no epoch | `test_a_version_must_be_canonical_and_epoch_free[01.0]` |
+| `registry_version` type | `RegistryVersion` (kind `registry_version`) built on `reasons.REGISTRY_VERSION_RE`, the old private `_VERSION` renamed and exported from `decoy_engine.reasons` | `test_registry_version_refuses_wider_release_shapes` (4 cells), `test_registry_version_reuses_the_reasons_shape` |
+| Read `to_payload` | `_ReadBase.to_payload` override with its own docstring; `test_the_read_dump_is_the_read_projection` shows the non-null reason shape without claiming it re-validates as `RunResult` | same test |
+| Kind set pin | `EXPECTED_VALUE_FREE_KINDS` | `test_the_value_free_kind_set_is_pinned` |
+
+Epoch decision: refused. Decoy never releases an epoch, so `1!2.0` can only be a mistake or a probe. Accepted: `0.18.0`, `0.1.0`, `0.18.1.dev3+g1a2b3c4.d20261106`, `1.2.3rc1`, `2.0.0.post1`, `1.0`. Refused: `1`, `v1.0.0`, uppercase, zero-padded, trailing whitespace or newline, over 64 characters.
+
+Mutations, each red: `\Z` to `$` on `_SAFE_IDENTITY`; drop `str(parsed) == value`; drop the epoch check; `registry_version` back to `Version`; remove the `_ReadBase.to_payload` override; add a ValueFree kind.
+
+Follow-ups, not done here:
+- A repo-wide private-import sentry (`telemetry/_vocab.py:16` and `telemetry/_recorder.py:20` already import `_progress_events`).
+- Other `$`-anchored validators: `connectors/postgres_snapshot.py:73`, `secret_providers/_types.py:43-44`.
