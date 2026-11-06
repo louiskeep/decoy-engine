@@ -639,6 +639,10 @@ def run_mask_chunked(
     produced it before it is brought to the first chunk's type. A column that is `null`-typed in the first
     chunk and typed later raises `ExecutionError(code="chunked_leading_null_type")`.
     """
+    # Local import: a top-level one shifts the line the secret-material census pins.
+    from decoy_engine.config._subset_run import refuse_unapplied_subset
+
+    refuse_unapplied_subset(config)
     _validate_native_threads(native_threads)
     # Progress: account every yielded chunk on the active channel (bound by the
     # caller, e.g. `run_pipeline(progress=...)`); a no-op when nothing is bound.

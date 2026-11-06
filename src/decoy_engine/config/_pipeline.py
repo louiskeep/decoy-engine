@@ -95,11 +95,12 @@ class PipelineConfig(BaseModel):
     quarantine: QuarantineConfig | None = None
     # Sprint G (2026-07-03): FK-aware subsetting pre-mask stage. None means
     # "no subsetting" (the pipeline masks its full sources, unchanged
-    # behavior). When set, `decoy_engine.subset.run_subset` runs BEFORE
-    # masking and its output becomes the mask stage's `sources`; there is no
-    # config syntax for the reverse order (subset-then-mask is structural,
-    # not a flag). See `_subset_stage_constraints` below for the one
-    # rejectable mask-then-subset shape.
+    # behavior). No run applies the block yet: every run entry refuses a
+    # config that sets it (`config/_subset_run.py`) until SUB-RUN wires
+    # `decoy_engine.subset.run_subset` in ahead of masking. There is no config
+    # syntax for the reverse order (subset-then-mask is structural, not a
+    # flag). See `_subset_stage_constraints` below for the one rejectable
+    # mask-then-subset shape.
     subset: SubsetConfig | None = None
     # F06 (declared parsing/casting): the one protected-quarantine declaration. Required by any
     # column with `error_policy: quarantine`; there is deliberately no path or key here, because
