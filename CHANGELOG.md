@@ -9,6 +9,18 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Security (locked dependencies, 2026-11-06)
+
+`uv.lock` moves eight packages to the lowest release that clears their advisories, so the `security.yml`
+audit finds nothing on CPython 3.10, 3.11 and 3.12: anyio 4.14.1 to 4.14.2 (PYSEC-2026-4023, -4024, -4025),
+certifi 2026.6.17 to 2026.10.18 (PYSEC-2026-4320), cryptography 49.0.0 to 50.0.0 (PYSEC-2026-3552),
+pyasn1 0.6.3 to 0.6.5 (PYSEC-2026-3455, -3456, -3457), setuptools 82.0.1 to 84.1.0 (PYSEC-2026-3447,
+GHSA-xmj3-9gf7-h52w), soupsieve 2.8.4 to 2.9 (PYSEC-2026-4170, -4171), urllib3 2.7.0 to 2.8.0
+(PYSEC-2026-4175, -4176, -4177) and werkzeug 3.1.8 to 3.1.9 (PYSEC-2026-4312). `pyproject.toml` ranges do not
+change. `_CERTIFIED_STACKS` gains one 3.10.20 row for the new lock profile and keeps every released row.
+Operators who route S3 or GCS through an HTTPS proxy: urllib3 2.8 takes proxy TLS settings only from
+`proxy_ssl_context`, and destination client certificates no longer apply to a forwarding proxy.
+
 ### Added (F06: declared parsing, casting and quarantine, 2026-10-29)
 
 A column can now declare `logical_type`, `parse_format`, `sentinel_to_null`, `error_policy` (`fail`, `null`,
