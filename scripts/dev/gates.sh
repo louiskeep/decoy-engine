@@ -190,7 +190,7 @@ baseline_is_stale() {
   local changed f root
   git -C "$ROOT" cat-file -e "$1^{commit}" 2>/dev/null || { echo "stored main_sha $1 is not in this repository"; return 0; }
   changed=$(git -C "$ROOT" diff --name-only --no-renames "$1" "$MAIN_SHA") || { echo "could not diff $1 against origin/main"; return 0; }
-  if [ -n "$changed" ] && "$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --stored-failing-under "$BASEFILE" "${DOC_WALK_GUARDS[@]}"; then
+  if [ -n "$changed" ] && "$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --stored-failing-under "$BASEFILE" ${DOC_WALK_GUARDS[@]+"${DOC_WALK_GUARDS[@]}"}; then
     echo "main moved and the stored failing list holds a sentry failure that a Markdown change on main could have hidden"; return 0
   fi
   while IFS= read -r f; do
