@@ -94,8 +94,10 @@ def validate_plan(
         )
     except PipelineValidationError as exc:
         # The `subset:` refusal from `compile_plan` (config.subset_run_unsupported).
+        if exc.code is None:
+            raise
         return PlanValidationResult(
-            ok=False, error=PlanCheckError(code=exc.code or "", path=exc.path, message=str(exc))
+            ok=False, error=PlanCheckError(code=exc.code, path=exc.path, message=str(exc))
         )
     except PoolCapacityError as exc:
         return PlanValidationResult(

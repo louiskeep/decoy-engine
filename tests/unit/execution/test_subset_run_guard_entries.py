@@ -25,7 +25,7 @@ GUARDED = {
     "compile_plan",
 }
 # Entries that delegate to a guarded one before any read or spawn.
-EXEMPT = {
+DELEGATING = {
     "run_job_with_governor": "every rung runs through run_pipeline_isolated",
     "run_config_only_checks": "validates the config only; it neither reads a source nor compiles a plan",
 }
@@ -63,7 +63,7 @@ def test_no_public_run_entry_is_unclassified() -> None:
         params = list(inspect.signature(fn).parameters)
         if not params or params[0] != "config":
             continue
-        assert name in GUARDED or name in EXEMPT, (
+        assert name in GUARDED or name in DELEGATING, (
             f"public entry {name} takes a config; guard it with refuse_unapplied_subset "
-            "or name it in EXEMPT with the reason"
+            "or name it in DELEGATING with the reason"
         )

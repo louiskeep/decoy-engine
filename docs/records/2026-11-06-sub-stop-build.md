@@ -68,7 +68,7 @@ Sphinx was not run (no docs extras on the VM venv at that point).
 
 ## Files vs allowed list
 
-All files are on the list except these, each approved by the orchestrator or required by review: `tests/unit/execution/test_auto_chunk_bookkeeping.py` (pin 351 to 356), `execution/native/_dispatch.py`, `plan/validate/_consolidator.py`, `tests/unit/plan/test_validate.py`, `tests/sentry/test_subset_run_guard_entries.py`. `tests/sentry/test_module_size.py` changes four values only (the `_dispatch.py` one is from review).
+All files are on the list except these, each approved by the orchestrator or required by review: `tests/unit/execution/test_auto_chunk_bookkeeping.py` (pin 351 to 356), `execution/native/_dispatch.py`, `plan/validate/_consolidator.py`, `tests/unit/plan/test_validate.py`, `tests/unit/execution/test_subset_run_guard_entries.py`. `tests/sentry/test_module_size.py` changes four values only (the `_dispatch.py` one is from review).
 
 ## Named limit
 
@@ -83,7 +83,7 @@ first chunk before E6 refuses. CLI and platform handling beyond the `ConfigError
 
 `run_native_or_oracle_chunked` (`native/_dispatch.py`) is now guarded above `reject_per_table_transforms` (module-size
 666 to 668) with a pulls == 0 test; `test_refusal_text_is_fixed` asserts the literal message; the `_pipeline.py` history
-comment gains "-> 356 (SUB-STOP guard)"; `tests/sentry/test_subset_run_guard_entries.py` fails when a public
+comment gains "-> 356 (SUB-STOP guard)"; `tests/unit/execution/test_subset_run_guard_entries.py` fails when a public
 `run_*`/`compile_*` entry that takes a `config` is neither guarded nor named exempt. The V2-LOG item about
 `run_native_or_oracle_chunked` is closed.
 
