@@ -9,6 +9,10 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Breaking for consumers
+
+- `run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked` and `compile_plan` now refuse a config with `subset:` set (`config.subset_run_unsupported`, registry 1.6.0) instead of masking the full sources; run `run_subset` first.
+
 ### Added (F06: declared parsing, casting and quarantine, 2026-10-29)
 
 A column can now declare `logical_type`, `parse_format`, `sentinel_to_null`, `error_policy` (`fail`, `null`,

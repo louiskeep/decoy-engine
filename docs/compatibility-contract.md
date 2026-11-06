@@ -60,6 +60,11 @@ with `when_outside_closed_grammar`). It is listed on every interpreter rather th
 `keyword.softkwlist`, so a config validates identically on every supported Python. The list is frozen
 on purpose; after GA any further addition is a breaking change.
 
+**Pre-GA correction (SUB-STOP, 2026-11-05).** A config with `subset:` set is refused by every run entry
+(`run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked`) and by `compile_plan`,
+with `config.subset_run_unsupported` (registry 1.6.0). Before, the block validated and the run silently masked
+the full sources. `plan_subset` and `run_subset` are unchanged; run them first and point `sources:` at their output.
+
 Until GA: use this document as the design target so we don't paint ourselves
 into a corner. After GA: this document is binding.
 
@@ -116,7 +121,8 @@ design (no raw key value, no raw filter-predicate literal), so it carries no
 re-identification risk on its own, but the same rule applies: a shape change
 mints `subset-manifest/v2` with a kept `v1` reader. The `subset:` block added
 to `PipelineConfig` (`config/_subset.py`) is additive and optional (`None` by
-default, unchanged behavior for every existing config); it is part of the
+default, unchanged behavior for every existing config, except that a run now
+refuses a config that sets it: see the SUB-STOP correction in section 1); it is part of the
 §3.4 config contract like any other optional block.
 
 ### 3.2 The vault (the catastrophic one)
