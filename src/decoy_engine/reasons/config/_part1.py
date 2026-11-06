@@ -83,6 +83,7 @@ __all__ = [
     "SUBSET_DANGLING_NOT_ACKNOWLEDGED",
     "SUBSET_DUPLICATE_SEED_TABLE",
     "SUBSET_OUTPUT_DIR_EXISTS",
+    "SUBSET_RUN_UNSUPPORTED",
     "SUBSET_SEED_KEY_TYPE",
     "SUBSET_SEED_KEY_UNCANONICALIZABLE",
     "SUBSET_SOURCE_TYPE_UNSUPPORTED",
@@ -120,6 +121,7 @@ SOURCE_FILE_COLUMN_COUNT_MISMATCH = _d(
 )
 SOURCE_FILE_LONE_CR = _d("source_file.lone_cr", "Source file lone CR.")
 SOURCE_FILE_NUL_BYTE = _d("source_file.nul_byte", "Source file NUL byte.")
+SUBSET_RUN_UNSUPPORTED = _d("subset_run_unsupported", "Subset run unsupported.", since="1.6.0")
 
 _d = _catalog.config("SubsetConfigError")
 
