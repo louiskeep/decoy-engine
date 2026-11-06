@@ -7,9 +7,15 @@ against the real workflows and actions and the seeded cases that prove each rule
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from tests.sentry._ci_lock_scan import (
     ACTIONS,
@@ -399,6 +405,18 @@ def test_option_and_command_normalisation() -> None:
         "$HOME/.local/bin/uv sync --frozen": "installs outside",
         "/usr/bin/pip install -e .": "project install",
         "uv sync --frozen --python=3.12": "installs outside",
+        # Shared-core spellings: global options before the subcommand, find-links, index env.
+        "uv --quiet sync --frozen": "installs outside",
+        "uv --directory x sync": "uv sync without --frozen",
+        "uv --quiet add requests": "uv add",
+        "uv --quiet run pytest": "uv run without --frozen",
+        "pip --python .venv/bin/python install requests": "not an exact",
+        "uv pip --python p install requests": "not an exact",
+        "pip install -f https://x ruff==1.0": "index override",
+        "pip install --find-links=https://x ruff==1.0": "index override",
+        "PIP_INDEX_URL=https://x pip install ruff==1.0": "index environment",
+        "export UV_EXTRA_INDEX_URL=https://x": "index environment",
+        'bash -c "pip install -e ."': "project install",
     }
     for text, expected in cases.items():
         found = scan_workflow(_wf(LE, text))
@@ -558,3 +576,82 @@ def test_lock_version_check_mode(tmp_path: Path) -> None:
     )
     assert bad.returncode == 1 and "MISMATCH" in bad.stdout, bad
     assert bad.stdout.count("pytest") == 1, "each package prints once"
+
+
+def test_index_environment_variables_are_findings_in_every_env_block() -> None:
+    for name in ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "UV_INDEX_URL", "UV_EXTRA_INDEX_URL"):
+        step = {"env": {name: "https://x"}, "run": "uv pip install ruff==1.0"}
+        assert any("index environment" in f for f in scan_workflow(_wf(LE, step))), name
+        job = {"jobs": {"j": {"env": {name: "x"}, "steps": [LE]}}}
+        assert any("index environment" in f for f in scan_workflow(job)), name
+        wf = {"env": {name: "x"}, "jobs": {"j": {"steps": [LE]}}}
+        assert any("index environment" in f for f in scan_workflow(wf)), name
+
+
+# --- shared shell-parsing core: identity with the CLI repository --------------
+
+# Ledger of the shell-parsing core shared byte-for-byte with the CLI repository. `sha256` is this
+# repository's copy; `other_commit` is a commit in `other_repo` holding the same bytes at
+# `other_path`, fetched and compared below, so editing the local file and this hash together still
+# fails. Changing the core means landing it in the other repository first, then pointing
+# `other_commit` at that commit.
+CORE_LEDGER = {
+    "path": "tests/sentry/_ci_shell_tokens.py",
+    "sha256": "ea9a90ff78878359c3cf19f5d133b6ee3179a6637a92edddc3898e491c9058fc",
+    "other_repo": "louiskeep/decoy",
+    "other_path": "tests/sentry/_ci_shell_tokens.py",
+    "other_commit": "79201ffdea07849a0337c4304e458470d86deb7c",
+}
+
+
+def _identity_findings(entry: dict[str, str], local: bytes, other: bytes | None) -> list[str]:
+    """The core is guarded twice: against this ledger, and against the other repository's bytes."""
+    found = []
+    if hashlib.sha256(local).hexdigest() != entry["sha256"]:
+        found.append("local core differs from the sha256 in the ledger")
+    if other is None:
+        found.append("the other repository's copy could not be fetched")
+    elif other != local:
+        found.append("local core differs from the other repository's copy at the recorded commit")
+    return found
+
+
+def _fetch_other(entry: dict[str, str]) -> bytes | None:
+    url = (
+        f"https://raw.githubusercontent.com/{entry['other_repo']}"
+        f"/{entry['other_commit']}/{entry['other_path']}"
+    )
+    for _ in range(3):
+        try:
+            with urllib.request.urlopen(url, timeout=20) as response:  # noqa: S310
+                return bytes(response.read())
+        except (urllib.error.URLError, TimeoutError):
+            continue
+    return None
+
+
+def test_shared_core_is_byte_identical_to_the_other_repository() -> None:
+    entry = CORE_LEDGER
+    assert re.fullmatch(r"[0-9a-f]{40}", entry["other_commit"]), "a real commit, not a label"
+    local = (ROOT / entry["path"]).read_bytes()
+    other = _fetch_other(entry)
+    if other is None and not os.environ.get("CI"):
+        pytest.skip("offline: the cross-repository check runs in CI and on networked builders")
+    assert _identity_findings(entry, local, other) == []
+
+
+def test_shared_core_identity_catches_one_sided_edits() -> None:
+    entry = CORE_LEDGER
+    local = (ROOT / entry["path"]).read_bytes()
+    assert _identity_findings(entry, local, local) == []
+    edited = local.replace(b"def base", b"def base ")
+    assert edited != local
+    # The one-sided edit with the local hash recomputed passes the ledger and fails the other repo.
+    rehashed = {**entry, "sha256": hashlib.sha256(edited).hexdigest()}
+    found = _identity_findings(rehashed, edited, local)
+    assert found == ["local core differs from the other repository's copy at the recorded commit"]
+    assert _identity_findings(entry, edited, local), "edit without rehash fails the ledger too"
+    assert _identity_findings(entry, local, None), "an unreachable other repository is a finding"
+    text = local.decode()
+    for word in ("requirements-", "uv.lock", "tomllib", "_ci_lock_scan", "pyproject"):
+        assert word not in text, f"the shared core must not know {word}"
