@@ -37,7 +37,7 @@ PY=$VENV/bin/python
 [ -x "$PY" ] || { echo "BOOTSTRAP FAIL: no venv at $VENV (fix: scripts/dev/bootstrap.sh)" >&2; exit 1; }
 
 lock_version() {  # first locked version of package $1
-  awk -v n="name = \"$1\"" '$0 == n { getline; gsub(/version = |"/, ""); print; exit }' uv.lock
+  bash "$ROOT/scripts/dev/lock_version.sh" "$1"
 }
 
 echo "== $REPO_NAME environment =="

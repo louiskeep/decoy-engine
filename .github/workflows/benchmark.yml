@@ -47,20 +47,10 @@ jobs:
       # version (string-handling path differs between 3.10 and 3.11+, which is part of why
       # Pre-scan overhead measured 2.4% on Linux/3.11 vs 56% on Windows/3.10; see
       # plans/2026-05-09-hybrid-engine-bug-followup.md).
-      - uses: astral-sh/setup-uv@v5
+      - uses: ./.github/actions/lock-env
         with:
-          version: "0.11.19"
-      - name: Lock venv outside the workspace
-        run: |
-          echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
-          echo "DECOY_VENV=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
-          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
-      - name: Install
-        run: uv sync --frozen --extra dev --python 3.11
-      - name: Installed versions
-        run: |
-          python -c "import importlib.metadata as m; print({d: m.version(d) for d in ('pyarrow', 'polars', 'duckdb', 'pandas')})"
-
+          extras: "dev"
+          python: "3.11.9"
       # Run the benchmark. The `-s` flag keeps print() output visible (the
       # benchmarks emit decision messages to stdout). The `-m benchmark`
       # filter only runs tests marked `@pytest.mark.benchmark` — keeps

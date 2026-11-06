@@ -1,0 +1,8 @@
+name: setup-uv
+description: Install uv at the one version uv.lock was generated with. Every workflow gets uv through here.
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v5
+      with:
+        version: "0.11.19"

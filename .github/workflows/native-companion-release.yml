@@ -133,7 +133,7 @@ jobs:
           test -n "$wheel" || { echo "no wheel produced"; exit 1; }
           python -m zipfile -l "$wheel" | grep -qE 'decoy_engine_native/_kernel[^/]*\.(so|pyd)' \
             || { echo "MISSING compiled _kernel in $wheel"; exit 1; }
-          PYARROW=$(awk '$0 == "name = \"pyarrow\"" { getline; gsub(/version = |"/, ""); print; exit }' uv.lock)
+          PYARROW=$(bash scripts/dev/lock_version.sh pyarrow)
           test -n "$PYARROW" || { echo "no pyarrow in uv.lock"; exit 1; }
           cptag="cp${python_version//./}"
           docker run --rm --platform ${{ matrix.docker-platform }} \
@@ -179,7 +179,7 @@ jobs:
           test -n "$wheel" || { echo "no wheel produced"; exit 1; }
           python -m zipfile -l "$wheel" | grep -qE 'decoy_engine_native/_kernel[^/]*\.(so|pyd)' \
             || { echo "MISSING compiled _kernel in $wheel"; exit 1; }
-          PYARROW=$(awk '$0 == "name = \"pyarrow\"" { getline; gsub(/version = |"/, ""); print; exit }' uv.lock)
+          PYARROW=$(bash scripts/dev/lock_version.sh pyarrow)
           test -n "$PYARROW" || { echo "no pyarrow in uv.lock"; exit 1; }
           python -m pip install "$wheel" "pyarrow==$PYARROW"
           python decoy-engine-native/scripts/parity_smoke.py
@@ -216,7 +216,7 @@ jobs:
           test -n "$wheel" || { echo "no wheel produced"; exit 1; }
           python -m zipfile -l "$wheel" | grep -qE 'decoy_engine_native/_kernel[^/]*\.(so|pyd)' \
             || { echo "MISSING compiled _kernel in $wheel"; exit 1; }
-          PYARROW=$(awk '$0 == "name = \"pyarrow\"" { getline; gsub(/version = |"/, ""); print; exit }' uv.lock)
+          PYARROW=$(bash scripts/dev/lock_version.sh pyarrow)
           test -n "$PYARROW" || { echo "no pyarrow in uv.lock"; exit 1; }
           python -m pip install "$wheel" "pyarrow==$PYARROW"
           python decoy-engine-native/scripts/parity_smoke.py

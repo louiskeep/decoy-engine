@@ -1,9 +1,8 @@
 """CI lock-install sentry (CI-E1): hosted engine jobs install from uv.lock, never re-resolve.
 
-A hosted job that runs `pip install -e ".[dev]"` resolves today's PyPI, so it tests a different
-dependency set than the Mac gate and the certified DP profile (pyarrow 25 vs the locked 24 made
-two error-text tests red). Every workflow is scanned with no allowlist. Order is checked by step
-index, not by data flow: a step that deletes the venv between install and use is not seen.
+pip resolving today's PyPI tested pyarrow 25 against a lock that pins 24 (two error-text tests
+went red). Every workflow and composite action is scanned, no allowlist. Order is checked by step
+index, not data flow: a step that deletes the venv between install and use is not seen.
 """
 
 from __future__ import annotations
@@ -25,6 +24,11 @@ else:
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 CONSTRAINTS = ROOT / ".github" / "build-constraints.txt"
+LOCK_ENV_USES = "./.github/actions/lock-env"
+ACTIONS = ROOT / ".github" / "actions"
+SETUP_UV_USES = "./.github/actions/setup-uv"
+VERSION = re.compile(r"^\d+\.\d+\.\d+$")
+INDEX_OPTIONS = {"--index-url", "--extra-index-url", "-i", "--index", "--default-index"}
 
 # Commands that need the engine installed (or its docs/typing toolchain) to mean anything.
 CONSUMER_TOKENS = {"pytest", "sphinx-build", "mypy"}
@@ -51,9 +55,6 @@ VALUE_OPTIONS = {
 }
 EXACT_PIN = re.compile(r"^[A-Za-z0-9_.\-]+(\[[A-Za-z0-9_,.\-]+\])?==[^<>=!~\s]+$")
 _TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
-
-
-# --- parsing -----------------------------------------------------------------
 
 
 def _step_text(step: dict[str, Any]) -> str:
@@ -125,6 +126,14 @@ def _requirement_findings(args: list[str]) -> list[str]:
         if skip:
             skip = False
             continue
+        if arg in {"-r", "--requirement"}:
+            findings.append("pip install -r reads an unlocked requirements file")
+            skip = True
+            continue
+        if arg in INDEX_OPTIONS or arg.startswith(("--index-url=", "--extra-index-url=")):
+            findings.append(f"package index override ({arg})")
+            skip = arg in INDEX_OPTIONS
+            continue
         if arg in VALUE_OPTIONS:
             skip = True
             continue
@@ -138,6 +147,45 @@ def _requirement_findings(args: list[str]) -> list[str]:
         if not EXACT_PIN.match(arg):
             findings.append(f"requirement is not an exact == pin ({arg})")
     return findings
+
+
+def _tool_findings(cmd: list[str]) -> list[str]:
+    """uvx, `uv tool install|run` and pipx fetch a tool from the index: pin it exactly."""
+    start = None
+    for i, tok in enumerate(cmd):
+        nxt = cmd[i + 1] if i + 1 < len(cmd) else ""
+        if tok == "uvx" or (tok == "pipx" and nxt in {"install", "run"}):
+            start = i + (2 if tok == "pipx" else 1)
+            break
+        if tok == "uv" and nxt == "tool" and (cmd[i + 2 : i + 3] or [""])[0] in {"install", "run"}:
+            start = i + 3
+            break
+    if start is None:
+        return []
+    skip = False
+    for arg in cmd[start:]:
+        if skip:
+            skip = False
+            continue
+        if arg in {"--python", "-p", "--with", "--from", *INDEX_OPTIONS}:
+            skip = True
+            continue
+        if arg.startswith("-"):
+            continue
+        return [] if EXACT_PIN.match(arg) else [f"tool is not an exact == pin ({arg})"]
+    return ["tool command names no package"]
+
+
+def _misc_findings(cmd: list[str]) -> list[str]:
+    findings = _tool_findings(cmd)
+    if "uv" in cmd and "lock" in cmd and "--check" not in cmd:
+        findings.append("uv lock without --check re-resolves the lock")
+    findings += [f"package index override ({t})" for t in cmd if t in INDEX_OPTIONS]
+    return findings
+
+
+def _writes_venv_env(text: str) -> bool:
+    return bool(re.search(r"(UV_PROJECT_ENVIRONMENT|DECOY_VENV)=.*GITHUB_ENV", text))
 
 
 # --- the scan ----------------------------------------------------------------
@@ -154,7 +202,7 @@ def _pyarrow_findings(
     if not any("parity_smoke.py" in t for t in texts):
         return []
     findings: list[str] = []
-    lock_read = any("uv.lock" in t for t in texts)
+    lock_read = any("lock_version.sh" in t for t in texts)
     for step_cmds in commands:
         for cmd in step_cmds:
             args = _pip_install_args(cmd)
@@ -166,12 +214,16 @@ def _pyarrow_findings(
                         f"parity smoke installs pyarrow other than the lock-read pin ({arg})"
                     )
                 elif not lock_read:
-                    findings.append("parity smoke pyarrow pin is not read from uv.lock")
+                    findings.append("parity smoke pyarrow pin is not read by lock_version.sh")
     return findings
 
 
-def scan_workflow(wf: dict[str, Any]) -> list[str]:
-    """Every lock-install violation in one parsed workflow, as `job: message` strings."""
+def scan_workflow(wf: dict[str, Any], *, role: str = "workflow") -> list[str]:
+    """Every lock-install violation in one parsed workflow, as `job: message` strings.
+
+    One install recipe: only the lock-env composite action syncs, bootstraps or writes the venv
+    env, and only the setup-uv composite action names astral-sh/setup-uv. Every other job uses
+    those actions. `role` is "lock-env" or "setup-uv" when scanning that action itself."""
     findings: list[str] = []
     for job_name, job in (wf.get("jobs") or {}).items():
         steps = job.get("steps") or []
@@ -179,8 +231,30 @@ def scan_workflow(wf: dict[str, Any]) -> list[str]:
         texts = [_step_text(s) for s in steps]
         commands = [_commands(t) for t in texts]
         locked_at: int | None = None
+        self_hosted = "self-hosted" in str(job.get("runs-on", ""))
+        uses_uv = any(str(st.get("uses", "")) in {LOCK_ENV_USES, SETUP_UV_USES} for st in steps)
         for index, step_cmds in enumerate(commands):
+            if str(steps[index].get("uses", "")) == LOCK_ENV_USES and locked_at is None:
+                locked_at = index
+            if role == "workflow" and _writes_venv_env(texts[index]):
+                findings.append(f"{job_name}: copies the venv env block; use {LOCK_ENV_USES}")
             for cmd in step_cmds:
+                findings += [f"{job_name}: {m}" for m in _misc_findings(cmd)]
+                if any(t == "uv.lock" or t.endswith("/uv.lock") for t in cmd):
+                    findings.append(
+                        f"{job_name}: inline lock parsing; use scripts/dev/lock_version.sh"
+                    )
+                if (
+                    role == "workflow"
+                    and not self_hosted
+                    and (
+                        ("uv" in cmd and "sync" in cmd)
+                        or any(t.endswith("bootstrap.sh") for t in cmd)
+                    )
+                ):
+                    findings.append(f"{job_name}: installs outside {LOCK_ENV_USES}")
+                if role == "workflow" and ("uv" in cmd or "uvx" in cmd) and not uses_uv:
+                    findings.append(f"{job_name}: runs uv without the setup-uv or lock-env action")
                 args = _pip_install_args(cmd)
                 if args is not None:
                     findings += [f"{job_name}: {m}" for m in _requirement_findings(args)]
@@ -196,11 +270,18 @@ def scan_workflow(wf: dict[str, Any]) -> list[str]:
                     )
         findings += [f"{job_name}: {m}" for m in _pyarrow_findings(job, commands, texts)]
         for step in steps:
-            if str(step.get("uses", "")).startswith("astral-sh/setup-uv") and not (
-                step.get("with") or {}
-            ).get("version"):
-                findings.append(f"{job_name}: setup-uv without a pinned version")
+            if str(step.get("uses", "")).startswith("astral-sh/setup-uv"):
+                version = str((step.get("with") or {}).get("version", ""))
+                if not VERSION.match(version):
+                    findings.append(f"{job_name}: setup-uv version is not an exact x.y.z")
+                if role != "setup-uv":
+                    findings.append(f"{job_name}: raw setup-uv; use {SETUP_UV_USES}")
     return sorted(set(findings))
+
+
+def _action_as_workflow(name: str) -> dict[str, Any]:
+    action = yaml.safe_load((ACTIONS / name / "action.yml").read_text(encoding="utf-8"))
+    return {"jobs": {name: {"steps": action["runs"]["steps"]}}}
 
 
 def _real_workflows() -> dict[str, dict[str, Any]]:
@@ -217,13 +298,16 @@ def test_engine_jobs_install_from_the_lock() -> None:
     workflows = _real_workflows()
     assert len(workflows) >= 10, "workflow scan looks empty"
     bad = {name: f for name, wf in workflows.items() if (f := scan_workflow(wf))}
+    for action in ("lock-env", "setup-uv"):
+        if action_findings := scan_workflow(_action_as_workflow(action), role=action):
+            bad[f"actions/{action}"] = action_findings
     assert not bad, "hosted jobs not installed from uv.lock:\n" + "\n".join(
         f"  {name}: {m}" for name, msgs in bad.items() for m in msgs
     )
 
 
 def _all_steps() -> list[dict[str, Any]]:
-    return [
+    return _action_as_workflow("setup-uv")["jobs"]["setup-uv"]["steps"] + [
         s
         for wf in _real_workflows().values()
         for job in (wf.get("jobs") or {}).values()
@@ -233,10 +317,19 @@ def _all_steps() -> list[dict[str, Any]]:
 
 def test_setup_uv_is_pinned() -> None:
     uv_steps = [s for s in _all_steps() if str(s.get("uses", "")).startswith("astral-sh/setup-uv")]
-    versions = {(s.get("with") or {}).get("version") for s in uv_steps}
-    assert None not in versions, "a setup-uv step has no with.version"
-    assert len(uv_steps) >= 8, "expected setup-uv in every converted job"
-    assert len(versions) == 1, f"setup-uv versions differ: {sorted(map(str, versions))}"
+    assert len(uv_steps) == 1, (
+        f"astral-sh/setup-uv appears {len(uv_steps)} times; want only the setup-uv action"
+    )
+    version = str((uv_steps[0].get("with") or {}).get("version", ""))
+    assert VERSION.match(version), f"setup-uv version is not an exact x.y.z: {version!r}"
+    users = [
+        n
+        for n, wf in _real_workflows().items()
+        for j in wf["jobs"].values()
+        for st in j.get("steps") or []
+        if str(st.get("uses", "")) == LOCK_ENV_USES
+    ]
+    assert len(users) >= 10, "expected the lock-env action in the converted jobs"
     assert not any("pip install uv" in _step_text(s) for s in _all_steps())
 
 
@@ -288,6 +381,15 @@ def audit_findings(job: dict[str, Any]) -> list[str]:
     for c in audits:
         if "-r" not in c or "--require-hashes" not in c:
             findings.append("a pip-audit call lacks -r or --require-hashes")
+        if "--strict" not in c:
+            findings.append("a pip-audit call lacks --strict")
+        if not any(re.fullmatch(r"pip-audit==\d+(\.\d+)*", t) for t in c):
+            findings.append("pip-audit is not pinned to an exact version")
+        if any(t.startswith("--ignore-vuln") for t in c):
+            findings.append("a pip-audit call ignores vulnerabilities")
+    for line in text.splitlines():
+        if "pip-audit" in line and re.search(r"\|\|\s*(true|:)(\s|$|;)", line):
+            findings.append("a pip-audit call swallows its exit code")
     interpreters: set[str] = set()
     for m in re.finditer(r"for\s+\w+\s+in\s+([0-9. ]+?)\s*;", text):
         interpreters |= set(m.group(1).split())
@@ -349,15 +451,22 @@ def _job(*steps: Any, env: dict[str, str] | None = None) -> dict[str, Any]:
     return {"jobs": {"j": {"steps": built, **({"env": env} if env else {})}}}
 
 
+LE = {"uses": LOCK_ENV_USES, "with": {"extras": "dev"}}
+
+
 def test_seeded_findings() -> None:
     cases = {
         'pip install -e ".[dev]"': ["project install"],
-        "uv sync --extra dev": ["uv sync without --frozen"],
+        "uv sync --extra dev": ["uv sync without --frozen", "installs outside"],
+        "uv sync --frozen --extra dev": ["installs outside"],
+        "bash scripts/dev/bootstrap.sh": ["installs outside"],
         "pip install .[dev]": ["project install"],
         "python -m pip install -e .[docs]": ["project install"],
         "uv pip install -e .": ["project install"],
         "pip install pip-audit": ["not an exact == pin"],
         "pip install uv": ["not an exact == pin"],
+        "awk '{print}' uv.lock": ["inline lock parsing"],
+        "python -c 'open(\"uv.lock\")' uv.lock": ["inline lock parsing"],
     }
     for text, expected in cases.items():
         found = scan_workflow(_job(text))
@@ -367,17 +476,17 @@ def test_seeded_findings() -> None:
         "project install" in f for f in scan_workflow(_job("set -e\n  pip install \\\n    -e ."))
     )
     assert any("consumer before" in f for f in scan_workflow(_job("pytest tests")))
-    assert any(
-        "consumer before" in f
-        for f in scan_workflow(_job("pytest tests", "uv sync --frozen --extra dev"))
-    )
-    assert any(
-        "uv run without" in f for f in scan_workflow(_job("uv sync --frozen", "uv run pytest"))
-    )
+    assert any("consumer before" in f for f in scan_workflow(_job("pytest tests", LE)))
+    assert any("uv run without" in f for f in scan_workflow(_job(LE, "uv run pytest")))
+    assert any("without the setup-uv" in f for f in scan_workflow(_job("uv pip install x==1")))
     codspeed = {"uses": "CodSpeedHQ/action@v4", "with": {"run": "pytest tests/codspeed/"}}
     assert any("consumer before" in f for f in scan_workflow(_job(codspeed)))
+    raw = {"uses": "astral-sh/setup-uv@v5", "with": {"version": "0.11.19"}}
+    assert any("raw setup-uv" in f for f in scan_workflow(_job(raw)))
+    assert not any("raw setup-uv" in f for f in scan_workflow(_job(raw), role="setup-uv"))
     assert any(
-        "setup-uv without" in f for f in scan_workflow(_job({"uses": "astral-sh/setup-uv@v5"}))
+        "setup-uv version" in f
+        for f in scan_workflow(_job({"uses": "astral-sh/setup-uv@v5"}), role="setup-uv")
     )
     smoke = "pip install \"$wheel\" 'pyarrow>=14'\npython parity_smoke.py"
     found = scan_workflow(_job(smoke))
@@ -386,23 +495,31 @@ def test_seeded_findings() -> None:
 
 def test_seeded_clean_jobs() -> None:
     clean = [
-        ("uv sync --frozen --extra dev", "pytest tests"),
-        ("bash scripts/dev/bootstrap.sh", "pytest tests"),
+        (LE, "pytest tests"),
         ("pip install ruff==0.15.22", "ruff check src"),
-        ("uv pip install --python x build==1.2.2",),
-        ("uv sync --frozen", "uv run --frozen pytest"),
+        (LE, "uv pip install --python x build==1.2.2"),
+        (LE, "uv run --frozen pytest"),
         ("pip install ./decoy-engine-native",),
+        ({"uses": SETUP_UV_USES}, "uvx --python 3.12 pip-audit==2.10.1 -r x"),
     ]
     for steps in clean:
         assert scan_workflow(_job(*steps)) == [], steps
-    assert scan_workflow(_job("uv sync --frozen", "uv run pytest", env={"UV_FROZEN": "1"})) == []
+    assert scan_workflow(_job(LE, "uv run pytest", env={"UV_FROZEN": "1"})) == []
     pinned = (
-        "PYARROW=$(awk '{print}' uv.lock)\n"
+        "PYARROW=$(bash scripts/dev/lock_version.sh pyarrow)\n"
         'pip install "$wheel" "pyarrow==$PYARROW"\npython parity_smoke.py'
     )
     assert scan_workflow(_job(pinned)) == []
     unread = 'pip install "$wheel" "pyarrow==$PYARROW"\npython parity_smoke.py'
-    assert any("not read from uv.lock" in f for f in scan_workflow(_job(unread)))
+    assert any("not read by lock_version.sh" in f for f in scan_workflow(_job(unread)))
+    # A fake resolver (inline parsing of the lock) must fail even when the pin looks right.
+    fake = (
+        "PYARROW=$(grep -A1 'name = \"pyarrow\"' uv.lock | tail -1)\n"
+        'pip install "$wheel" "pyarrow==$PYARROW"\npython parity_smoke.py'
+    )
+    found = scan_workflow(_job(fake))
+    assert any("inline lock parsing" in f for f in found)
+    assert any("not read by lock_version.sh" in f for f in found)
 
 
 def test_seeded_audit_and_docs_cases() -> None:
@@ -434,3 +551,49 @@ def test_seeded_audit_and_docs_cases() -> None:
         "jobs": {**good_docs["jobs"], "deploy": {**good_docs["jobs"]["deploy"], "if": "true"}},
     }
     assert docs_findings(unguarded)
+
+
+def test_seeded_action_tool_and_index_cases() -> None:
+    copy = 'echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"'
+    assert any("copies the venv env block" in f for f in scan_workflow(_job(copy)))
+    assert scan_workflow(_job(copy), role="lock-env") == []
+    findings = {
+        "uv lock": "uv lock without --check",
+        "uv lock --upgrade-package x": "uv lock without --check",
+        "pip install --index-url https://x/simple ruff==1.0": "index override",
+        "uv pip install --extra-index-url https://x/simple ruff==1.0": "index override",
+        "pip install -r requirements.txt": "unlocked requirements",
+        "uvx pip-audit": "tool is not an exact",
+        "uv tool install ruff": "tool is not an exact",
+        "pipx install ruff": "tool is not an exact",
+        "pipx run ruff": "tool is not an exact",
+    }
+    for text, expected in findings.items():
+        found = scan_workflow(_job(text))
+        assert any(expected in f for f in found), (text, found)
+    for text in (
+        "uv lock --check",
+        "uvx --python 3.12 pip-audit==2.10.1 -r x",
+        "pipx run ruff==1.0",
+    ):
+        assert scan_workflow(_job({"uses": SETUP_UV_USES}, text)) == [], text
+    for version, clean in (("latest", 0), ("0.11", 0), ("", 0), ("0.11.19", 1)):
+        step = {"uses": "astral-sh/setup-uv@v5", "with": {"version": version}}
+        found = scan_workflow(_job(step), role="setup-uv")
+        assert (found == []) == bool(clean), (version, found)
+
+
+def test_seeded_audit_hardening_cases() -> None:
+    export = "uv export --frozen --all-extras -o x.txt"
+    base = "uvx --python 3.12 pip-audit==2.10.1 --strict --disable-pip --require-hashes -r x.txt"
+    job = lambda *s: {"steps": [{"run": t} for t in s]}
+    assert audit_findings(job(export, "for py in 3.10 3.11 3.12; do\n" + base + "\ndone")) == []
+    variants = {
+        "ignore": base + " --ignore-vuln PYSEC-1",
+        "unpinned": base.replace("pip-audit==2.10.1", "pip-audit"),
+        "not strict": base.replace(" --strict", ""),
+        "swallowed": base + " || true",
+    }
+    for name, line in variants.items():
+        text = "for py in 3.10 3.11 3.12; do\n" + line + "\ndone"
+        assert audit_findings(job(export, text)), name

@@ -27,19 +27,10 @@ jobs:
       DECOY_SUBSTRATE: ${{ matrix.substrate }}
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v5
+      # Same profile as ci.yml's regression-gate (dev, lint, vault, cloud via bootstrap.sh).
+      - uses: ./.github/actions/lock-env
         with:
-          version: "0.11.19"
-      - name: Lock venv outside the workspace
-        run: |
-          echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
-          echo "DECOY_VENV=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
-          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
-      - name: Install the locked environment (dev, lint, vault, cloud)
-        # Same profile as ci.yml's regression-gate: uv sync --frozen via bootstrap.sh, which fails
-        # unless duckdb, pyarrow, polars and pandas equal uv.lock. cloud: this job runs the same
-        # full suite, including tests/unit/test_v2_cloud_sources.py.
-        run: bash scripts/dev/bootstrap.sh
+          bootstrap: "true"
       - name: Execution tests under DECOY_SUBSTRATE=${{ matrix.substrate }}
         # Benchmark suite excluded per resolved question #19 (dedicated SKU).
         # codspeed + packaging excluded too (they need optional extras not in

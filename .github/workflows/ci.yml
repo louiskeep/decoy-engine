@@ -52,18 +52,11 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v5
+      # mypy 2.3.0 and the [cloud] stubs come from uv.lock (lint and cloud extras); cloud keeps
+      # connectors/gcs.py's google.api_core/google.oauth2 imports resolvable.
+      - uses: ./.github/actions/lock-env
         with:
-          version: "0.11.19"
-      - name: Lock venv outside the workspace
-        run: |
-          echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
-          echo "DECOY_VENV=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
-          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
-      - name: Install the locked environment (dev, lint, vault, cloud)
-        # mypy 2.3.0 and the [cloud] stubs come from uv.lock via the [lint] and [cloud] extras;
-        # [cloud] is required so connectors/gcs.py's google.api_core/google.oauth2 imports resolve.
-        run: bash scripts/dev/bootstrap.sh
+          bootstrap: "true"
       - name: Type check
         # testflight/ holds real runner+invariant logic (acceptance suite); it
         # lives outside src/tests so it must be named explicitly. scripts/ stays
@@ -102,20 +95,11 @@ jobs:
           # it skip on every run, so the refactor-safety gate never actually
           # ran in CI (§SEAM-SENTRY-CI). Matches compat-preflight / regression-proof.
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v5
+      # The Mac gate's profile (bootstrap.sh): dev, lint, vault, cloud. cloud: tests/unit/test_v2_cloud_sources.py
+      # mocks google.cloud.storage and boto3 directly; lint: scripts/dev/gates.sh needs ruff. No mimesis, ner, geo, ml or perf.
+      - uses: ./.github/actions/lock-env
         with:
-          version: "0.11.19"
-      - name: Lock venv outside the workspace
-        run: |
-          echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
-          echo "DECOY_VENV=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
-          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
-      - name: Install the locked environment (dev, lint, vault, cloud)
-        # The Mac gate's profile (scripts/dev/bootstrap.sh): uv sync --frozen, then it fails unless
-        # duckdb, pyarrow, polars and pandas equal uv.lock. cloud is required because
-        # tests/unit/test_v2_cloud_sources.py mocks google.cloud.storage and boto3 directly; lint
-        # supplies the ruff that scripts/dev/gates.sh needs. No mimesis, ner, geo, ml or perf.
-        run: bash scripts/dev/bootstrap.sh
+          bootstrap: "true"
       - name: Install strace (the file-access runtime detector; it fails, never skips, without it)
         run: sudo apt-get update && sudo apt-get install -y strace
       - name: Routing guard (every named suite directory must exist)
@@ -184,19 +168,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v5
+      - uses: ./.github/actions/lock-env
         with:
-          version: "0.11.19"
-      - name: Lock venv outside the workspace
-        run: |
-          echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
-          echo "DECOY_VENV=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
-          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
-      - name: Install engine + dev + ml extras from the lock
-        run: uv sync --frozen --extra dev --extra ml --python 3.10.20
-      - name: Installed versions
-        run: |
-          python -c "import importlib.metadata as m; print({d: m.version(d) for d in ('pyarrow', 'polars', 'duckdb', 'pandas')})"
+          extras: "dev ml"
       - name: ML gate (golden retrain + provenance + privacy + classify)
         run: pytest -m ml --tb=short
 
@@ -216,22 +190,12 @@ jobs:
       PIP_CONSTRAINT: ${{ github.workspace }}/.github/build-constraints.txt
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v5
+      - uses: ./.github/actions/lock-env
         with:
-          version: "0.11.19"
-      - name: Lock venv outside the workspace
-        run: |
-          echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
-          echo "DECOY_VENV=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
-          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
-      - name: Install engine + dev extras from the lock
-        run: uv sync --frozen --extra dev --python 3.10.20
+          extras: "dev"
       - name: Install the build frontend
         # build is not in uv.lock (L-e), so it is a named exact pin like ruff.
         run: uv pip install --python "$RUNNER_TEMP/venv/bin/python" build==1.2.2
-      - name: Installed versions
-        run: |
-          python -c "import importlib.metadata as m; print({d: m.version(d) for d in ('pyarrow', 'polars', 'duckdb', 'pandas')})"
       - name: Build frontend is importable (the packaging tests importorskip without it)
         run: python -c "import build"
       - name: Build backend is the pinned hatchling
@@ -268,19 +232,15 @@ jobs:
       UV_FROZEN: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v5
+      # The certified profile (77-dist dev+lint+vault+cloud) on the exact CPython patch. cloud is
+      # required: google-cloud-storage does not survive without it, which fails
+      # check_fit_environment() below. The dist set matches the pre-split 895b9a20... profile except
+      # decoy-engine's own version, which is part of the hashed set: every engine version bump
+      # re-pins the certified row (see dp_provenance._CERTIFIED_STACKS).
+      - uses: ./.github/actions/lock-env
         with:
-          version: "0.11.19"
-      - name: Pin the exact certified CPython patch
-        run: uv python install 3.10.20
-      - name: Sync the certified profile (77-dist dev+lint+vault+cloud)
-        # cloud extra required: boto3 partially survives via moto[s3], but
-        # google-cloud-storage does not survive at all once cloud is optional,
-        # which fails check_fit_environment() below. The dist set matches the
-        # pre-split 895b9a20... profile except decoy-engine's own version,
-        # which is part of the hashed set: every engine version bump re-pins
-        # the certified row (see dp_provenance._CERTIFIED_STACKS).
-        run: uv sync --frozen --extra dev --extra lint --extra vault --extra cloud --python 3.10.20
+          extras: "dev lint vault cloud"
+          python: "3.10.20"
       - name: Assert this profile is certified (fail loud on drift)
         run: >
           uv run python -c

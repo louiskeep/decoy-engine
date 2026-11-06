@@ -43,18 +43,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v5
+      # geo extra: h3-py for geo_generalize lat/lng, required by Jobs A and B.
+      # dev extra: pytest plus test helpers (moto, hypothesis).
+      - uses: ./.github/actions/lock-env
         with:
-          version: "0.11.19"
-
-      - name: Install engine with dev and geo extras from the lock
-        # geo extra: h3-py for geo_generalize lat/lng. Required by Jobs A and B.
-        # dev extra: pytest plus test helpers (moto, hypothesis).
-        run: uv sync --frozen --extra dev --extra geo --python ${{ matrix.python-version }}
-
-      - name: Installed versions
-        run: |
-          uv run --frozen python -c "import importlib.metadata as m; print({d: m.version(d) for d in ('pyarrow', 'polars', 'duckdb', 'pandas')})"
+          extras: "dev geo"
+          python: ${{ matrix.python-version }}
 
       - name: Run test-flight suite (pandas substrate)
         run: uv run --frozen pytest testflight -m testflight --tb=short -v
