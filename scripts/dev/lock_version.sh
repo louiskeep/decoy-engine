@@ -25,6 +25,7 @@ check() {
   local py=python bad=0 pkg have want mark
   local venv=${DECOY_VENV:-${UV_PROJECT_ENVIRONMENT:-}}
   if [ -n "$venv" ]; then py=$venv/bin/python; fi
+  # shellcheck disable=SC2086  # KEY_DEPS is a space-separated word list on purpose
   [ $# -gt 0 ] || set -- $KEY_DEPS
   local installed
   installed=$("$py" - "$@" <<'PY'

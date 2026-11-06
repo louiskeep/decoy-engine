@@ -46,8 +46,15 @@ echo "lock:       uv.lock sha256 $(if command -v sha256sum >/dev/null; then sha2
 key_out=$(DECOY_VENV="$VENV" bash "$LOCK_VERSION" --check 2>&1)
 key_rc=$?
 echo "$key_out"
-if [ $key_rc != 0 ]; then
-  err "key dependencies differ from uv.lock (see table above)" "scripts/dev/bootstrap.sh (runs ${SYNC[*]+${SYNC[*]}})"
+key_bad=0
+while read -r dep _ have _ want mark; do
+  if [ "$mark" = MISMATCH ]; then
+    key_bad=1
+    err "$dep installed $have but uv.lock pins $want" "scripts/dev/bootstrap.sh (runs ${SYNC[*]+${SYNC[*]}})"
+  fi
+done <<<"$key_out"
+if [ $key_rc != 0 ] && [ $key_bad = 0 ]; then
+  err "key dependency check failed (see output above)" "scripts/dev/bootstrap.sh"
 fi
 
 abi_want=$(sed -n 's/^_EXPECTED_ABI_VERSION = "\(.*\)"/\1/p' "$ABI_SRC" 2>/dev/null)
