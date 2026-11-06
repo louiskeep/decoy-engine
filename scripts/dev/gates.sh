@@ -304,7 +304,7 @@ elif [ $BASELINE = 1 ]; then
   git -C "$ROOT" worktree add -q --detach "$WT" origin/main || exit 2
   {
     echo "baseline:   origin/main @ $(git -C "$WT" rev-parse HEAD) in a detached worktree, same venv and lock as branch"
-    echo "            $IMPORT_PKG imported from: $(cd "$WT" && PYTHONPATH=$(pypath "$WT") "$BIN/python" -c "import $IMPORT_PKG as m; print(m.__file__)" 2>&1 | tail -n 1)"
+    echo "            $IMPORT_PKG imported from: $(cd "$WT" && PYTHONPATH=$(pypath "$WT") "$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --import-origin "$IMPORT_PKG" 2>&1 | tail -n 1)"
   } >>"$OUT/meta"
   run_steps baseline "$WT"
 fi

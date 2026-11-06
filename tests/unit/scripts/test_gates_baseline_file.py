@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -729,11 +730,61 @@ def test_a_baseline_holding_a_docs_walking_sentry_failure_is_stale_after_any_mov
     assert pytest_calls(log) == []
 
 
-def test_gates_sh_parses_no_json_or_junit_inline() -> None:
+_ALLOWED_PY_ARGS = (
+    ("-m", "pytest"),
+    ("--version",),
+    ('"$ROOT/scripts/dev/_gates_report.py"',),
+    ('${junit[@]+"${junit[@]}"}',),  # args for the `bash -c` wrapper, built by gates.sh itself
+)
+
+
+def gates_sh_violations(text: str) -> list[str]:
+    """Reasons gates.sh could read the stored file or JUnit outside _gates_report.py.
+
+    By construction: every python call must run the reporter, `-m pytest` or `--version`.
+    Any inline program (-c), stdin program (-), heredoc python, aliasing of the interpreter
+    or jq is refused, so a renamed json import cannot slip past a substring list.
+    """
+    bad: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("#"):
+            continue
+        if re.search(r"(^|[^\w])jq(\s|$)", line):
+            bad.append(f"jq: {line}")
+        if "python" not in line:
+            continue
+        if "<<" in line:
+            bad.append(f"heredoc python: {line}")
+        if re.search(r"\w+=\S*python", line):
+            bad.append(f"python aliased: {line}")
+        for m in re.finditer(r'python[\d.]*"?([^\n]*)', line):
+            args = tuple(m.group(1).split()[:2])
+            if args and not any(args[: len(a)] == a for a in _ALLOWED_PY_ARGS):
+                bad.append(f"python runs something else: {line}")
+    return bad
+
+
+def test_gates_sh_runs_python_only_through_allow_listed_programs() -> None:
     # One owner per concern: the stored file and the JUnit are read only by _gates_report.py.
-    text = (DEV / "gates.sh").read_text()
-    for needle in ("json.load", "import json", "ElementTree", "xml.etree"):
-        assert needle not in text, needle
+    assert gates_sh_violations((DEV / "gates.sh").read_text()) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "\"$BIN/python\" -c 'from json import load; print(load(open(\"baseline.json\")))'",
+        "\"$BIN/python\" -c 'import json as j; j.load(open(\"b\"))'",
+        "\"$BIN/python\" -c '__import__(\"json\").load(open(\"b\"))'",
+        "\"$BIN/python\" - <<EOF",
+        "\"$BIN/python\" - < prog.py",
+        "PY=$BIN/python",
+        "jq .main_sha \"$BASEFILE\"",
+        "x=$(echo '{}' | jq -r .a)",
+    ],
+)
+def test_the_gates_sh_guard_refuses_each_seeded_reader(line: str) -> None:
+    assert gates_sh_violations("set -e\n" + line + "\n"), line
 
 
 def test_reporter_subcommands_replace_the_inline_parsing(tmp_path: Path) -> None:

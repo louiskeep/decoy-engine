@@ -133,6 +133,13 @@ discarded; the table is from the sequential run.
 - Codex 7: plan P1 test estimate is stale (819 lines against about 380).
 - `file_seconds` and `_locate` resolve `classname` against the checked-out tree, so failing ids of the
   baseline-side worktree in legacy `--baseline` mode are resolved against the branch tree.
+- Codex DESIGN fix: gates.sh single-reader guard is now a structural rule (python may run only the
+  reporter, `-m pytest` or `--version`; no `-c`, stdin program, heredoc python, aliasing or jq). The one
+  inline `-c` use (import-origin line in `--baseline` meta) moved to `_gates_report.py --import-origin`.
+- `BaselineError` keeps its cause chain (`_gates_report.py` ~394); admin diagnostics only.
+- Admin evidence prints modes, paths and failing ids (~423, ~435).
+- Direct baseline writes are non-atomic (~485); the promoter is atomic.
+- Test file is 819+ lines against about 380 planned.
 
 ## Not done
 

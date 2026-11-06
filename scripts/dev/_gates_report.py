@@ -544,6 +544,15 @@ if __name__ == "__main__":
         except (ET.ParseError, ValueError):
             print(0)
         sys.exit(0)
+    if sys.argv[1:2] == ["--import-origin"]:
+        # --import-origin PKG: where PKG imports from, or the import error; keeps gates.sh free of -c.
+        import importlib
+
+        try:
+            print(importlib.import_module(sys.argv[2]).__file__)
+        except Exception as exc:  # noqa: BLE001 -- diagnostics line for the meta file
+            print(f"{type(exc).__name__}: {exc}")
+        sys.exit(0)
     if sys.argv[1:2] == ["--stored-failing-under"]:
         # --stored-failing-under FILE PREFIX...: exit 0 when a stored failing id starts with one.
         sys.exit(0 if stored_failing_under(Path(sys.argv[2]), sys.argv[3:]) else 1)
