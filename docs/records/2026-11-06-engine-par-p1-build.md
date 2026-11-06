@@ -101,7 +101,18 @@ discarded; the table is from the sequential run.
 
 - Mac (arm64), `tests/unit/scripts` plus `test_bash32_compat.py`: 201 passed, 2 failed (the two
   Mac-only `test_fk_scale_infra.py` ids above).
-- Linux VM, T1 and gates: see "Linux" below.
+- Mac (arm64), `CI=true scripts/dev/gates.sh --keep-going --baseline` on the final head: branch `tests`
+  step 144 passed, 0 failed (baseline side 47 passed); `licenses` 63 passed; no failing test id is
+  branch-only (11 `test_native_release_workflow.py` ids fail on both sides: macOS `openssl` has no
+  ed25519 `genpkey`). Branch-only steps reported: `env`, because the Mac scratch venv `venv-p1` differs
+  from `uv.lock` (one package), a Mac environment state and not a P1 effect. `mypy` fails on both sides
+  (one unused-ignore in `fileaccess/_openat2.py`, Mac only). Overall exit 1 comes from the `env` step.
+- Linux VM, T1 (`tests/unit/scripts`, `tests/sentry`, `test_bash32_compat.py`) and gates: NOT RUN on the
+  final head. All four test VMs were busy (queues of 2 to 14 jobs behind multi-hour gates runs);
+  `vm-run` jobs sat in the lock queue for over an hour and were cancelled so none is left queued.
+  The command to run is `~/bin/vm-run engine . 'CI=true $PY -m pytest tests/unit/scripts tests/sentry
+  -q -p no:cacheprovider -rf; CI=true scripts/dev/gates.sh --keep-going --baseline'` on the head named
+  in the last section.
 
 ## Deviations from the plan (builder and this pass)
 
