@@ -29,6 +29,16 @@ Owner direction, 2026-11-05:
   relationships the user declares) and stores its result as a versioned
   snapshot in a local library that the YAML can reference as a baseline.
 
+## Revision note (Codex remediation, 2026-11-06)
+
+| Round-3 finding | Change |
+|---|---|
+| V1, saved-scan stdin regressed | `load_scan_set` remains the single reader but accepts a path or `-`. `fields`, `show`, and either side of `diff` retain stdin for legacy and `scan-set/v1` input, with at most one `-` in `diff`. |
+| V1, parent nulls counted as duplicates | S1b computes duplicate excess only over parent rows whose complete key is non-null. T5-dupes covers unary and composite nulls mixed with real duplicates. |
+| V1 + DESIGN, L0 missed CLI DuckDB staging | LIB L0.3 owns `run.py:654-670`, its Windows and fail-closed tests, and the first `run.py` writer slot. |
+| DESIGN, protected-directory guard was incomplete | LIB G-ONE-PROTECTED-DIR now covers every raw directory creation form and uses a reasoned ratchet for protected children and published-output staging. |
+| V2-LOG | No plan action: add human and JSON value canaries for legacy `show` in later test polish. |
+
 V1 is S1 (one `decoy scan` over every selected table, with integrity facts and
 a saved record in the local record library) and S3 (that scan writes one starter pipeline YAML). The
 value-based foreign key discovery slice (S2 in the first draft) is a V2 design
@@ -45,7 +55,7 @@ Revision 7 (export link closure, L0 reopen checks, L0 made universal).
 | Finding | Change |
 |---|---|
 | V1 legacy bare files | Confirmed: an 8fba6af `--output` file is `profile.to_dict()` with `row_count`, `source_label` and `fields` and no `scan_schema` (CLI `tests/e2e/test_scan_command.py:85`). `load_scan_set` gains a legacy branch, strictly shape-checked against a real 8fba6af fixture, that presents the file as a one-table set. Tests T2-legacy-fields, T2-legacy-show, T2-legacy-diff, T2-legacy-reject. |
-| V1 + DESIGN L0 not universal | Fixed in LIB L0 (now L0.1 and L0.2): the engine's out-of-core, isolated-run and Postgres spill directories and the quarantine validator move onto the allocator; two output-staging sites are a reasoned ratchet. S1b's spill uses it unchanged. |
+| V1 + DESIGN L0 not universal | Fixed in LIB L0.1 to L0.3: the engine's out-of-core, isolated-run and Postgres spill directories, the quarantine validator and CLI DuckDB source staging move onto the allocator; protected children and published-output staging use the guarded reasoned ratchet. S1b's spill uses the allocator unchanged. |
 | V1 L0 reopen | Fixed in LIB L0: `open_protected_dir` checks and tightens or refuses an existing directory. The failure-mode table gains `scratch_unsafe`. |
 | V2-LOG failure row | The "spill directory cannot be created" row now names `scratch_acl_failed` and `scratch_unsafe`, not the DuckDB error. |
 | V2-LOG Totals | The duplicate header rows in Totals are removed. |
@@ -249,8 +259,8 @@ database).
    fixed-width iterator exists), and cloud sources get no integrity pass in V1.
 4. Scan reports integrity facts: per table, null counts and key candidates in
    the scanned rows; per relationship declared in `--config` whose tables are
-   local files, exact parent duplicate-key count, child null-key count and
-   orphan row count. A relationship that names a cloud table reports
+   local files, exact parent duplicate-key count over complete non-null parent
+   keys, child null-key count and orphan row count. A relationship that names a cloud table reports
    `skipped_cloud` and no counts. It never prints a key value.
 5. Every scan saves one value-free record of kind `scan-set` (payload tag
    `scan-set/v1`) to the local record library under `.decoy/library/`, unless
@@ -410,9 +420,9 @@ No custom algorithm remains in V1. The V2 FK survey is in section 7.
     M-LIB-INLINE) and G-KIND-CANARY (mutations M-KIND-NOFIX, M-PAYLOAD-LEAK),
     both in LIB. This plan adds no store guard; the earlier G-ONE-SAVER is
     dropped because G-LIB-WRITER covers it.
-  - Saved-scan reads: `load_scan_set(path)` (CLI, created in S1c, extended in
-    LIB L2) is the only reader of a saved scan, bare or wrapped in the record
-    envelope. Guard G-ONE-SCAN-READER (S1c) walks the CLI syntax tree: no
+  - Saved-scan reads: `load_scan_set(path_or_dash)` (CLI, created in S1c,
+    extended in LIB L2) is the only path-or-stdin reader of a saved scan, bare
+    or wrapped in the record envelope. Guard G-ONE-SCAN-READER (S1c) walks the CLI syntax tree: no
     module outside `load_scan_set`'s own reads a `scan_schema` key or calls
     `records.decode` on a `scan-set` record. Mutation M-READ-INLINE: `--compare`
     checks `data["scan_schema"]` itself; the guard goes red.
@@ -513,16 +523,17 @@ in the next; SCAN-MULTI S3-engine (both parts) after CONFIG-EXPLICIT.
 
 1. LIB L0.1, L0.2, L1a.1, L1a.2 and RESULT E1, E2; one engine release. LIB
    L1b.1 may start at once (it needs no engine change); then the repin with
-   L1b.2, then L1b.3, L1c.1, L1c.2 and L1d.
+   L1b.2, then L0.3 in the `run.py` lane, then L1b.3, L1c.1, L1c.2 and L1d.
 2. SCAN-MULTI S1a.1, S1a.2, then S1b-engine on a branch from S1a; one engine
    release holds them. S1b uses L0's allocator, so L0 merges first.
 3. CLI-DIALECT, then SCAN-MULTI S1c.1 and S1c.2 (repin to the step 2 release;
    need LIB L1b.1), then LIB L2-cli (needs L1c and L1d).
 4. CONFIG-EXPLICIT, then SCAN-MULTI S3-engine.1 and S3-engine.2 and their
    release, then S3a.1-cli and S3a.2-cli (repin), then S3b-cli.
-5. LIB L4a after L1c, then L4b. In the `run.py` lane: LIB L5a (needs L1b.1
-   and the step 1 release), F29 C1, RESULT C1, LIB L5b (also needs L4a), LIB
-   L3a, LIB L3b; SAMPLE gates L3b. LIB L5c after L5b and S3b-cli.
+5. LIB L4a after L1c, then L4b. In the `run.py` lane after L0.3: LIB L5a
+   (needs L1b.1 and the step 1 release), F29 C1, RESULT C1, LIB L5b (also
+   needs L4a), LIB L3a, LIB L3b; SAMPLE gates L3b. LIB L5c after L5b and
+   S3b-cli.
 
 Steps 1 and 2 can run at the same time on different branches; their releases
 go out one after the other.
@@ -534,7 +545,7 @@ interleave with other rows (F32 C0 and CLI-FMT also write `run.py`):
 
 | File | Writers, in order |
 |---|---|
-| `src/decoy/cli/run.py` | L5a, F29 C1, RESULT C1, L5b, L3a, L3b |
+| `src/decoy/cli/run.py` | L0.3, L5a, F29 C1, RESULT C1, L5b, L3a, L3b |
 | `src/decoy/cli/scan.py` | S1c.1, S1c.2, L2, S3a.2, S3b, L5c |
 | `src/decoy/cli/library.py` | L1c.2, L4a, then L4b and L5b in either order |
 | `src/decoy_engine/profiling/scan_set.py` | S1a.1, S1a.2, S1b |
@@ -699,11 +710,14 @@ Depends on S1a (branch from it) and on LIB L0 (the protected allocator).
   until LIB L2, then `Library.scratch("scan-integrity", delete_on_exit)`, so
   scratch stays the only Decoy area that holds rows.
 - Batches are registered into a DuckDB connection from `connect_duckdb` with a
-  memory limit and that spill directory, then: parent rows, parent rows with a null
-  key component, parent duplicate keys (`count(*) - count(distinct key)`),
-  child rows, child rows with any null key component, orphan rows (anti-join on
-  all key columns, null child keys excluded) and orphan distinct keys.
-  Composite keys work because the anti-join is on every listed column.
+  memory limit and that spill directory, then: parent rows, parent rows with a
+  null key component, parent duplicate excess, child rows, child rows with any
+  null key component, orphan rows (anti-join on all key columns, null child
+  keys excluded) and orphan distinct keys. Parent duplicate excess is computed
+  only after filtering out every parent row with any null key component:
+  `non_null_parent_rows - distinct_non_null_parent_keys`. Composite distinct
+  keys and null filtering use the full key tuple. Composite anti-joins use every
+  listed column.
 - Key types are compared as `decoy run` reads them: CSV key columns are read as
   text (run reads CSV with `dtype=str`), other formats keep their declared
   types. A mismatch gives `status: key_type_mismatch` and no counts.
@@ -717,7 +731,7 @@ Depends on S1a (branch from it) and on LIB L0 (the protected allocator).
 |---|---|---|
 | T5-orphans | parent 1..100, child with 7 rows pointing at 101..103 and 5 null keys: orphan rows 7, distinct 3, null 5 | M5-nulls: count null keys as orphans |
 | T5-composite | two-column key with one partial match counts as an orphan | M5-first-col: anti-join on the first column only |
-| T5-dupes | parent with 4 duplicated keys reports 4 | M5-distinct: drop the duplicate count |
+| T5-dupes | unary and two-column parents mix null and partially null keys with genuine repeats; only repeated complete non-null keys contribute to duplicate excess | M5-dupe-nulls: include null-bearing rows in the subtraction; M5-distinct: drop the duplicate count |
 | T5-type-mismatch | CSV string child against parquet int parent gives `key_type_mismatch`, no counts | M5-cast: cast both sides to string |
 | T5-undeclared | two tables with matching `*_id` names and no declared relationship produce no facts | M5-infer: derive edges from names |
 | T5-bounded | with `memory_limit` set to 64 MB and 40-character text keys (5 million child rows, about 200 MB of key data), the pass completes; a test seam that runs just before the result is fetched reads `duckdb_temporary_files()` and sees at least one file, and the spill directory was non-empty at that point | M5-pandas: do the anti-join in pandas `isin` |
@@ -732,7 +746,7 @@ Depends on S1a (branch from it) and on LIB L0 (the protected allocator).
 (the `relationships` member) inside the same unreleased tag as S1a. No new
 reason identity. New optional `spill_dir` keyword (additive API).
 
-### S1c-cli: `decoy scan` over many tables (CLI, two parts, ~1 180 lines)
+### S1c-cli: `decoy scan` over many tables (CLI, two parts, ~1 270 lines)
 
 Parts (Totals): S1c.1 is positional files, header flags, names, the card,
 `--json` and the core-only `--output`; S1c.2 is `--config`, `--table`,
@@ -748,8 +762,10 @@ CONFIG-EXPLICIT (plan in progress).
   explicit descriptors, `--config` loading and `--table` selection, name
   normalization and collisions), the multi-table card, the integrity block and
   the `--json` envelope. Kept out of `scan.py` (already 1442 lines).
-- new `src/decoy/cli/_scan_set_io.py`: `load_scan_set(path) -> dict`, the one
-  reader of a saved scan. S1c builds two bare-file branches. With a
+- new `src/decoy/cli/_scan_set_io.py`: `load_scan_set(path_or_dash) -> dict`,
+  the one reader of a saved scan. `-` reads UTF-8 JSON from stdin, preserving
+  `scan.py:383-405`; a filesystem path uses the same decoder on its file.
+  S1c builds two bare-input branches. With a
   top-level `scan_schema`: require the major `scan-set/v1`, else usage error
   (exit 2) naming the tag found. Without one: the legacy branch for files
   that `decoy scan --output` wrote at 8fba6af and before (`profile.to_dict()`,
@@ -770,7 +786,9 @@ CONFIG-EXPLICIT (plan in progress).
   invocation goes through `scan_sources`, with `spill_dir=None` until LIB L2
   passes library scratch. `fields`, `show` and `diff` read saved scans only
   through `load_scan_set` and take `--table` (required when the set holds more
-  than one table).
+  than one table). Their existing `-` contract remains. Either `diff` operand
+  may be `-`, but both may not be `-`; the command rejects that combination
+  before reading stdin.
 - docs: scan epilog, CLI reference, `CHANGELOG.md`.
 - tests: `tests/e2e/test_scan_multi.py`, `tests/e2e/test_scan_command.py`, the
   guard G-ONE-SCAN-READER in `tests/sentry/test_scan_reader.py`, registered in
@@ -837,6 +855,9 @@ CONFIG-EXPLICIT (plan in progress).
 | T2-legacy-show | `scan show` on the legacy fixture exits 0 and reports its row count | M2-legacy-reject |
 | T2-legacy-diff | `scan diff` between the legacy fixture and a `scan-set/v1` file of the same data reports no drift; against a fixture copy with one field removed it reports that field | M2-legacy-reject; M2-legacy-wrong-table: name the table from the file name instead of `source_label` |
 | T2-legacy-reject | a dict with `row_count` but no `fields`, and one where `fields` is a string, each exit 2 with the fixed message | M2-legacy-loose: accept any dict without `scan_schema` |
+| T2-stdin-legacy | pipe the legacy fixture to `fields` and `show`; `diff - FILE` and `diff FILE -` match the file-only result | M2-file-only: call `Path.read_text` for `-` |
+| T2-stdin-core | pipe a bare `scan-set/v1` file to `fields` and `show`; `diff - FILE` and `diff FILE -` match the file-only result | M2-file-only |
+| T2-stdin-double | `diff - -` exits 2 with the existing fixed error before reading stdin | M2-read-twice: allow both operands to consume stdin |
 | G-ONE-SCAN-READER | syntax-tree walk of the CLI package: no `scan_schema` key read and no `records.decode` of a `scan-set` record outside `_scan_set_io.py`; a seeded bypass is shown red | M-READ-INLINE |
 | T2-parquet-compat | one parquet file: every key of a shape golden from 8fba6af is present in `--json` with the same value type, and the only extra key allowed is `library` (added by LIB L2) | M2-envelope: always emit the multi envelope; M2-extra-key: add any key other than `library` |
 | T2-output-core | canary in every cell: `--output` for one parquet file and for three tables is a `scan-set/v1` core, has no `detail` member, and contains no canary | M2-output-detail: write `detail=True` (or `profile.to_dict()`) to `--output` |
@@ -1144,11 +1165,11 @@ permission helpers, record and manifest hashing.
 
 | Concern | Existing code found | Decision | Choke point and guard |
 |---|---|---|---|
-| Private spill directory | engine `execution/out_of_core/_scratch.py:26-65` (`engine_scratch_root`, `scratch_root`, `private_dir`: `mkdtemp` plus `chmod`, removed on every exit, policy-checked for caller-named parents; no Windows DACL) | One engine allocator, LIB L0's `protected_scratch_dir` (owner-only DACL on Windows, fail closed). The out-of-core helpers move onto it in L0, and S1b calls it directly; no new temp-dir code here. A caller-named `spill_dir` keeps the ambient-policy rule. | G-ONE-PROTECTED-DIR (LIB L0, mutation M-MKDTEMP-INLINE); T5-spill-dir, T5-spill-default, T5-spill-acl-fail |
+| Private spill directory | engine `execution/out_of_core/_scratch.py:26-65` (`engine_scratch_root`, `scratch_root`, `private_dir`: `mkdtemp` plus `chmod`, removed on every exit, policy-checked for caller-named parents; no Windows DACL) | One engine allocator, LIB L0's `protected_scratch_dir` (owner-only DACL on Windows, fail closed). The out-of-core helpers move onto it in L0, and S1b calls it directly; no new temp-dir code here. A caller-named `spill_dir` keeps the ambient-policy rule. | G-ONE-PROTECTED-DIR (LIB L0, mutations M-PATH-MKDIR-INLINE and M-OS-MAKEDIRS-INLINE); T5-spill-dir, T5-spill-default, T5-spill-acl-fail |
 | DuckDB connection | `connect_duckdb` (`_duckdb.py:32`) | reused unchanged | existing |
 | Table name from a file path | engine `walks/cross_file.py:239` `_table_name_from_source_label` (strips directory and extension, keeps schema-qualified names) | S1c's normalization is a different rule (`[a-z0-9_]`, `t_` prefix, collision refusal) for a different input (positional paths only). One CLI function in `_scan_multi.py`; not merged with the walk helper, which keeps connector labels verbatim. Recorded as a deliberate second rule. | one site, no registry (cross-cutting rule: no registry for one site) |
 | Safe field record | CLI `scan.py:511` `_safe_field_record` | moves into the engine as part of `ScanSetCore` (S1a); the CLI copy is deleted in S1c | `ScanSetCore`; T1-core-model, T2-canary |
-| Saved-scan reading | `scan.py` reads bare dicts in `fields`, `show`, `diff` | one reader, `load_scan_set` | G-ONE-SCAN-READER (M-READ-INLINE) |
+| Saved-scan reading | `scan.py:383-405` reads file or stdin for `fields`, `show`, `diff` | one path-or-stdin reader, `load_scan_set`; `diff` retains the one-stdin-operand check | G-ONE-SCAN-READER (M-READ-INLINE); T2-stdin-legacy, T2-stdin-core, T2-stdin-double |
 | Pipeline YAML emission | CLI `init.py` (`_yaml_quote`, `_emit_column_yaml`, `_NAMESPACE_REQUIRED_STRATEGIES`) | moves into `_scaffold_yaml.py` (renderer) and the engine `_starter_strategies.py` (strategy table) | G-ONE-EMITTER (M-EMIT); T3-parity |
 | Reason codes | engine registry (`reasons/`), REG-RENUMBER at merge | new identities only through the registry | existing manifest and registry sentries |
 | Atomic file writes (`--output`, emitted YAML) | CLI `cli/ci.py:111-115`, `ci/debug.py:44-48`, `run.py:1622-1686`, `distribution/` (installer, layout, first install); `scan.py` has no atomic write today | S1c (`--output`) and S3a-cli (the YAML) write through LIB's shared atomic writer, `src/decoy/_atomic.py` (LIB L1b), instead of adding another copy. S1c therefore also depends on LIB L1b. | G-ONE-ATOMIC-WRITER (LIB L1b, mutation M-ATOMIC-INLINE) |
@@ -1194,7 +1215,7 @@ fixtures not counted). A slice over about 800 in total is cut into parts.
 | S1a.2-engine | engine | ~200 (30 + 150 + 20) | cloud CSV dialect pass-through; T1-cloud-dialect, T1-sample-parity | S1a.1 |
 | S1b-engine | engine | ~650 (320 + 300 + 30) | integrity pass, spill through L0 | S1a (branch from it; one release), LIB L0 |
 | S1c.1-cli | CLI | ~620 (360 + 220 + 40) | positional files, header flags, names, card, `--json`, core-only `--output`; T2-multi, header-required, headerless, tsv, collision, atomic, parquet-compat, output-core, output-stream-core | S1a + S1b release and repin, LIB L1b.1, CLI-DIALECT |
-| S1c.2-cli | CLI | ~690 (330 + 330 + 30) | `--config` and `--table`, relative paths, integrity block, `load_scan_set` bare and legacy branches with the 8fba6af fixture, G-ONE-SCAN-READER; T2-config-*, schema-reject, load-bare, legacy-*, integrity, canary | S1c.1; CONFIG-EXPLICIT for `--column-names-file` |
+| S1c.2-cli | CLI | ~780 (340 + 410 + 30) | `--config` and `--table`, relative paths, integrity block, path-or-stdin `load_scan_set` bare and legacy branches with the 8fba6af fixture, G-ONE-SCAN-READER; T2-config-*, schema-reject, load-bare, legacy-*, stdin-*, integrity, canary | S1c.1; CONFIG-EXPLICIT for `--column-names-file` |
 | S1d-cli | none | 0 | replaced by LIB L2 | |
 | S3-engine.1 | engine | ~600 (430 + 130 + 40) | strategy-table port, parity fixture and capture script, `scan_baseline` field, placeholder validator and its identity; T3-parity, config-field, placeholder-error-value-free | S1a, CONFIG-EXPLICIT (plan in progress) |
 | S3-engine.2 | engine | ~680 (340 + 320 + 20) | `starter_config` builder; T3-valid to T3-cloud-note, key-hash, placeholder | S3-engine.1 |
@@ -1227,7 +1248,7 @@ Answered in Revision 6:
   placeholder that validation refuses until it is set. Written into
   S3-engine and S3a-cli that way.
 
-Open:
+Status: pending owner confirm.
 
 - **Q7. Scan inside the run; standard versus opt-in YAML features; whether
   `decoy run` reads `scan_baseline`.** The UX discussion owns it (section 4).
