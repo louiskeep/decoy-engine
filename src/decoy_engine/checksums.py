@@ -392,8 +392,9 @@ def _national_calc(scheme: str, calc: Callable[[str], str | None]) -> Callable[[
         try:
             check = calc(body)
         except (KeyError, IndexError, ValueError):
-            # Unreachable after the shape check; kept because stdnum messages carry the body.
-            raise ValueError(message) from None
+            # Unreachable after the shape check, so this is a calculator fault, not bad
+            # input; stdnum messages carry the body, so it is not chained.
+            raise ValueError(f"{scheme} check-digit calculation failed") from None
         if check is None:
             raise ValueError(f"{scheme} body has no valid check digit")
         return check

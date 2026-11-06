@@ -327,7 +327,7 @@ def test_calculator_errors_are_replaced_without_the_body(error: type[Exception])
     def leaky(value: str) -> str:
         raise error(f"bad input {value}")
 
-    with pytest.raises(ValueError, match="gb_nhs") as excinfo:
+    with pytest.raises(ValueError, match="gb_nhs check-digit calculation failed") as excinfo:
         checksums._national_calc("gb_nhs", leaky)(body)
     assert body not in str(excinfo.value)
     assert excinfo.value.__cause__ is None
