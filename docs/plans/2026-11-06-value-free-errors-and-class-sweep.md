@@ -4,6 +4,8 @@ Status: plan (2026-11-06, not built). Covers engine and CLI; lives in the engine
 
 Revision note r2 (Codex applying Dennis r1 and owner Q1, 2026-11-06).
 
+Revision note r3 (Codex applying Dennis r2, 2026-11-06).
+
 Rules consulted: `~/dev-rules/README.md` (routing table), `00-universal.md`,
 `risk-and-exceptions.md`, `development-loop.md`, `workspace-and-vcs.md`, `reuse-first.md`,
 `exploration.md`, `scope-discipline.md`, `verification.md`, `code-review.md`,
@@ -27,20 +29,26 @@ Part A (VALUE-FREE-ERRORS) promises:
    structural problems: `ConfigProblem(code, location, text)`. `location` joins the original
    `loc` segments and keeps config keys, source/table/column names, file names, path patterns,
    regexes, list indexes and discriminator names. Built-in structural error text comes from a fixed
-   table keyed by error type. Certified name-only or fixed validator text remains actionable;
-   `input`, `ctx`, the `Input tag` echo, and validator text that can interpolate a data value, data
-   literal or secret are dropped. The raised config-route error has `__cause__ is None` and
-   `__context__ is None`.
+   table keyed by error type. Each row may interpolate only an explicit allowlist of
+   schema-derived `ctx` keys; input-derived keys such as `tag`, `error` and `input` are forbidden.
+   Certified name-only or fixed validator text remains actionable only when
+   `type(ctx["error"]) is errors.ConfigRuleError`; plain `ValueError` text, `input`, other `ctx`
+   keys, the `Input tag` echo, and validator text that can interpolate a data value, data literal
+   or secret are dropped. The raised config-route error has `__cause__ is None` and `__context__`
+   is None.
 2. `validate_config`, `override_sources` and a new public `parse_pipeline_config` are the engine
    routes, and every CLI site that validates an engine public model goes through
    `parse_pipeline_config`. No CLI output reads `ValidationError.errors()`, `.json()` or `str()`.
 3. Config validators that interpolate data values, data literals or secrets use a
-   `PydanticCustomError` with a registered reason code and fixed safe summary. Name-only and
-   fixed-text validators stay as they are, and their structural text survives. The sentry pins
-   each existing dynamic name-only message by `(path, qualified function, normalized AST digest)`
-   and rejects a new, changed, value-bearing or unclassified message before it can reach the
-   converter.
-4. A guard derives the public models from `decoy_engine.__all__` and the CLI routes from the Click
+   `PydanticCustomError` with a registered reason code and fixed safe summary. A2 changes certified
+   name-only and fixed-text `raise ValueError(...)` sites to
+   `raise errors.ConfigRuleError(...)`; the subclass keeps their behavior and structural text. The
+   sentry pins each permitted message by `(path, qualified function, normalized AST digest)`,
+   folds producer return expressions into that digest or classifies the interpolation as
+   unclassified, and rejects a new, changed, value-bearing or unclassified message before it can
+   reach the converter.
+4. A guard starts from public models in `decoy_engine.__all__`, recursively walks their model-field
+   types, and scans every module that defines a reachable model. The CLI routes come from the Click
    command tree, never from a handwritten list.
 
 Part B (CLASS-SWEEP) promises, in both repos: no `$`-anchored whole-value regex (class 1), a
@@ -69,13 +77,15 @@ forbidden key (`sources.customers_prod.a.zz_SECRETK`, `SECRET_TOP`), the discrim
 SECRETV`). `typing.get_args(pydantic_core.core_schema.ErrorType)` exposes 104 built-in error types.
 `PydanticCustomError` codes are outside that `Literal` and need separate handling.
 
-Engine config validators (recounted on `origin/feat/csv-source-reader`): 53
+The preliminary engine config-only census on `origin/feat/csv-source-reader` found 53
 `raise ValueError`/`PydanticCustomError` sites in `config/`. Of the 42 dynamic message sites, 42
 interpolate names or other permitted structure and 0 interpolate a data value, data literal or
 secret. One additional site passes nested `err["msg"]` as non-literal text and is treated as
-potentially value-bearing until converted to its registered reason summary. A2 regenerates this
-split on its base and migrates only the value-bearing or unclassified sites; the 42 name-only
-sites stay unchanged.
+potentially value-bearing until converted to its registered reason summary. This is not the A2
+scope: A2 regenerates the census from every model recursively reachable from the public models,
+including defining modules such as `contracts/declared_casting.py`, `sdk.py` and
+`providers_v2/_adapter.py`. It converts permitted name-only and fixed-text sites to
+`ConfigRuleError`, and migrates value-bearing or unclassified sites to registered reason errors.
 
 CLI sites (walk over `src/decoy`, 13): `cli/validate.py:277,462` and `cli/preflight.py:721` loop
 `errors()` into output; `cli/subset.py:181` prints the first error's loc and msg; `cli/run.py:684`,
@@ -124,9 +134,12 @@ pattern (a generic message plus a stable code, never reflected input) and the Op
 
 Followed sources: the converter drives its built-in text table from the public
 `typing.get_args(pydantic_core.core_schema.ErrorType)`, so a Pydantic upgrade that adds a type
-fails a guard instead of leaking. A `PydanticCustomError` type is accepted only when it is a
-registered reason code; otherwise the converter emits a generic row. A migrated validator uses
-the reason registry's fixed safe summary, so it cannot format a value into output. Class 1 uses
+fails a guard instead of leaking. Every row declares the schema-derived `ctx` keys it may format,
+and a guard rejects `tag`, `error`, `input` or any other input-derived key. For `value_error`, the
+converter trusts `msg` only when `type(ctx["error"]) is errors.ConfigRuleError`; all other
+`ValueError` instances produce the generic row. A `PydanticCustomError` type is accepted only when
+it is a registered reason code; otherwise the converter emits a generic row. A migrated validator
+uses the reason registry's fixed safe summary, so it cannot format a value into output. Class 1 uses
 `re.fullmatch` or `\Z`
 (Python `re` docs); the sentry finds `$` with the stdlib regex parser (`re._parser` on 3.11+,
 `sre_parse` on 3.10), which yields `AT_END` for `$` and `AT_END_STRING` for `\Z`, so `$` inside a
@@ -155,6 +168,11 @@ Custom code that remains: joining `loc`, the text table and registered-custom-er
 - **One ratchet mechanism.** `validation-name-messages.json`, class-3 counts and the later B3 keys
   use the existing `_ratchet.py`, `_baseline_sources.py` and registry flow. This plan adds baseline
   kinds, not another reader, comparison rule or update command.
+- **One AST index.** Extract `_reason_scan._Index`'s import-alias, literal-constant and constant-
+  expression tables into `defects/_defect_scan.py`. Both `_reason_scan.py` and the recurring-defect
+  scanners import that one index. The validator-message classifier also reuses
+  `test_log_interpolation.py`'s risky-versus-safe interpolation classification instead of creating
+  a second policy.
 - **House style.** `ConfigProblem` is a frozen dataclass (typed context object). No flag
   arguments: the converter has one mode.
 - **Class 6 and LAYOUT, V2 corrective.** LAYOUT's `layers` contract checks tier direction only. Siblings in a
@@ -182,10 +200,11 @@ map changes this plan makes.
 
 | New file | Directory | Map row | Sits beside |
 |---|---|---|---|
+| changed `errors.py` (`ConfigRuleError`) | `src/decoy_engine/` | existing LAYOUT tier 6 public typed-error module | `_error_base.py` |
 | `safe_output/_validation.py` | `src/decoy_engine/safe_output/` | map change: add row "Safe output boundary: `src/decoy_engine/safe_output/`, by output concern" | `safe_output/_exception.py` |
 | `config/_parse.py` | `src/decoy_engine/config/` | "Config models" row | `config/_errors.py` |
 | `tests/security/test_config_error_text.py` | `tests/security/` | existing security-test location (CODEMAP line 126) | `test_reason_boundary.py` |
-| `tests/sentry/defects/__init__.py`, `_defect_scan.py`, `test_anchored_regex.py`, `test_exception_context.py`, `test_validation_sites.py` | `tests/sentry/defects/` | map change: "Sentry test" row gains "recurring-defect class rules in `tests/sentry/defects/`" (engine `tests/sentry/` holds 56 entries, over the 25 cap) | `tests/sentry/layout/` |
+| `tests/sentry/defects/__init__.py`, `_defect_scan.py`, `test_anchored_regex.py`, `test_exception_context.py`, `test_validation_sites.py` | `tests/sentry/defects/` | map change: "Sentry test" row gains "recurring-defect class rules in `tests/sentry/defects/`" (engine `tests/sentry/` holds 58 entries on the measured branch, over the 25 cap; regenerate on the build base) | `tests/sentry/layout/` |
 | `validation-name-messages.json` | `tests/sentry/baselines/` | "Sentry test" baseline row | existing ratchet baselines |
 | `tests/unit/config/test_validation_messages.py` | `tests/unit/config/` | "Config models" row | `test_csv_dialect_rules.py` |
 | CLI `tests/sentry/defects/` (same three tests, `_defect_scan.py` vendored) plus `test_config_error_routes.py` | CLI `tests/sentry/defects/` | same map change in CLI CODEMAP | CLI `tests/sentry/layout/` |
@@ -197,15 +216,15 @@ No new product package; no package crosses its fan-out cap (`safe_output/` goes 
 
 | Rule | Choke point | Guard (walks) | Red mutation |
 |---|---|---|---|
-| ValidationError text is value-free | `safe_output.validation_problems`; routes `parse_pipeline_config`, `validate_config`, `override_sources` | `tests/security/test_config_error_text.py`: for every `BaseModel` in `decoy_engine.__all__`, use model-field annotations and seeded fixtures to trigger marker mapping keys, extra keys, discriminator tags, strings and wrong types, then search `text`, `code`, `str()`, `repr()` and the chain for value markers while asserting structural names remain in `location` | drop `input` filtering: red; keep the `union_tag_invalid` template: red; pass a value-bearing validator message through: red; raise inside the `except`: red |
-| Every Pydantic error type is classified | text policy table in `_validation.py` | same file: `set(get_args(core_schema.ErrorType))` equals the built-in table keys; only `value_error` may use a sentry-certified name-only or fixed message; registered `PydanticCustomError` gets its reason summary and an unregistered custom type gets the generic row | delete the `extra_forbidden` row: red; let another built-in type trust `msg`: red; trust an unregistered custom template: red |
-| No raw ValidationError reaches output (engine) | the three routes | `defects/test_validation_sites.py`: AST walk of `src/decoy_engine`, aliases resolved (class 5), flags `.model_validate*`/`TypeAdapter.validate_*` on a public model outside the routes, and any `.errors(`, `.json(`, `str()`, f-string or `%` of a name bound by import source to `pydantic.ValidationError` or `pydantic_core.ValidationError` outside `_validation.py`; internal re-validation of already-checked dicts (`execution/_transforms_table.py:129`, `profile/_fixed_width_reader.py:129`) is a reasoned ratchet entry | add `PipelineConfig.model_validate(x)` with `str(exc)` in a scratch module: red; aliases of both Pydantic classes: red; `decoy_engine.errors.ValidationError`: green |
-| Value-bearing validator messages are coded | the reason registry; existing name-only messages are the shrink-only `validation-name-messages.json` snapshot | `test_validation_sites.py` classifies dynamic messages into value-bearing, name-only and unclassified; value-bearing and unclassified must be zero after A2; every permitted dynamic message must match its `(path, qualified function, normalized AST digest)` baseline key | add `raise ValueError(f"bad value {value}")`: red; change an approved name-only expression: red; an unchanged table-name message: green |
-| CLI routes use the engine choke point | `decoy_engine.parse_pipeline_config` | CLI `defects/test_config_error_routes.py`: AST walk with the same flags over `src/decoy` (public models read from the installed engine's `__all__`); plus a route cell that walks the Click tree, invokes each command with a config-path parameter on a marker config, and searches stdout, stderr and `--json` | revert `validate.py` to the `errors()` loop: red; add a new command calling `model_validate`: red |
+| ValidationError text is value-free | `safe_output.validation_problems`; routes `parse_pipeline_config`, `validate_config`, `override_sources` | `tests/security/test_config_error_text.py`: start from every `BaseModel` in `decoy_engine.__all__`, recursively walk model-field types, and use seeded fixtures to trigger marker mapping keys, extra keys, discriminator tags, strings and wrong types, then search `text`, `code`, `str()`, `repr()` and the chain for value markers while asserting structural names remain in `location` | drop `input` filtering: red; keep the `union_tag_invalid` template: red; trust a plain `ValueError`, a `ConfigRuleError` subclass or an implicit `int(marker)` error: red; raise inside the `except`: red |
+| Every Pydantic error type is classified | text policy table in `_validation.py` | same file: `set(get_args(core_schema.ErrorType))` equals the built-in table keys; each row names only allowlisted schema-derived `ctx` keys and a guard rejects input-derived keys; `value_error` trusts `msg` only on the exact `ConfigRuleError` type; registered `PydanticCustomError` gets its reason summary and an unregistered custom type gets the generic row | delete the `extra_forbidden` row: red; add `tag` to `union_tag_invalid`'s allowlist: red; trust plain `ValueError`: red; trust an unregistered custom template: red |
+| No raw ValidationError reaches output (engine) | the three routes | `defects/test_validation_sites.py`: AST walk of `src/decoy_engine`, using the shared alias and constant index, flags `.model_validate*`/`TypeAdapter.validate_*` on a model in the recursively reachable public-model set outside the routes, and any `.errors(`, `.json(`, `str()`, f-string or `%` of a name bound by import source to `pydantic.ValidationError` or `pydantic_core.ValidationError` outside `_validation.py`; internal re-validation of already-checked dicts (`execution/_transforms_table.py:129`, `profile/_fixed_width_reader.py:129`) is a reasoned ratchet entry | add `PipelineConfig.model_validate(x)` with `str(exc)` in a scratch module: red; aliases of both Pydantic classes: red; `decoy_engine.errors.ValidationError`: green |
+| Value-bearing validator messages are coded | `errors.ConfigRuleError` for certified structural messages and the reason registry for coded messages; permitted messages are the shrink-only `validation-name-messages.json` snapshot | `test_validation_sites.py` scans the defining modules of all recursively reachable public models and reuses the log-interpolation classifier. An interpolated call result or opaque local is unclassified unless every producer return expression is folded into the normalized digest. Value-bearing and unclassified must be zero after A2; every permitted `ConfigRuleError` message matches its `(path, qualified function, normalized AST digest)` baseline key | add `raise ValueError(f"bad value {value}")`: red; change a `csv_dialect_problem` return to an f-string with a data value: red; change an approved name-only expression: red; unchanged `ConfigRuleError` table-name message: green |
+| CLI routes use the engine choke point | `decoy_engine.parse_pipeline_config` | CLI `defects/test_config_error_routes.py`: AST walk with the same flags over `src/decoy`; it flags `.model_validate*` and `TypeAdapter.validate_*` on any `BaseModel` imported from any `decoy_engine` module, not only root exports. A route cell walks the Click tree, invokes each command with a config-path parameter on a marker config, and searches stdout, stderr and `--json` | revert `validate.py` to the `errors()` loop: red; add a new command validating `decoy_engine.config.TableConfig`: red |
 | Class 1 | `re.fullmatch` or `\Z` | `defects/test_anchored_regex.py`: AST walk resolves `re` aliases and module-level pattern constants, parses each pattern, flags `AT_END`; asserts no model sets `regex_engine="python-re"` | restore `$` in `postgres_snapshot._IDENT_RE`: red; `import re as r; r.compile("x$")`: red |
 | Class 3 | shrink-only ratchet, plus config-route hoists | `defects/test_exception_context.py`: AST walk counts `raise ... from None` lexically inside an `ExceptHandler`; pin is regenerated on the part base and may only fall | add one `from None` anywhere: red; restore one config-route raise inside its handler: AT-A5 red |
 | Class 6 (cross-package private, V2 B3) | `.importlinter` contract `private_modules` | `layout/test_import_layers.py` (LAYOUT), after E3/C3 and H-1 | add `from decoy_engine.plan._top_code import x` in `kernel/`: red; delete one baseline key: red |
-| Class 6 (facade) | built-in `protected` contract on `decoy_engine._progress_events`, allowed `decoy_engine.progress` | same | restore the telemetry import: red |
+| Class 6 (facade) | the public `decoy_engine.progress` and `decoy_engine.reasons` facades | B1 uses import-linter 2.15 `protected` stanzas when LAYOUT E3 is present. Otherwise `defects/test_exception_context.py` adds an exact AST import cell forbidding `_progress_events` and `reasons._record` outside their facades. The guard is V1 and B3 does not own it. | restore either private import: the selected B1 guard goes red |
 
 Every sentry is seeded-bypass tested (a planted violation in a scratch tree turns it red, removing
 a real site lowers the count), registered in `SENTRIES` and `scripts/dev/sentry_registry.toml`,
@@ -225,13 +244,16 @@ Each test names the mutation that turns it red. Red-first evidence is an asserti
   Mutation: retain the extra value.
 - AT-A3 (tag): `type: marker_tag` under `sources` gives code `union_tag_invalid`, text naming
   `discriminator` and `expected_tags` only. Mutation: render the library template.
-- AT-A4 (validator text): a name-only `ValueError` keeps its structural text; a planted
-  value-bearing `ValueError` is rejected by the sentry; a `PydanticCustomError` with a registered
-  reason code gives that reason's safe summary, not its raise-site text. Mutation: classify a data
-  value as a name, or trust the registered error's custom template.
+- AT-A4 (validator text): a name-only `ConfigRuleError` keeps its structural text; a plain
+  `ValueError`, a `ConfigRuleError` subclass and one raised implicitly by `int(marker)` get generic
+  text; a planted value-bearing `ValueError` is rejected by the sentry; a `PydanticCustomError`
+  with a registered reason code gives that reason's safe summary, not its raise-site text.
+  Mutations: replace the exact type check with `isinstance`, trust a plain `ValueError`, classify a
+  data value as a name, or trust the registered error's custom template.
 - AT-A5 (chain): for every route, `__cause__ is None`, `__context__ is None`, and
   `traceback.format_exception` of the error holds no marker. Mutation: `raise ... from exc`.
-- AT-A6 (public-model matrix): section 6 row 1 over every public model; also asserts the observed
+- AT-A6 (public-model matrix): section 6 row 1 over every public root and recursively reachable
+  model; also asserts the observed
   error types include `missing`, `extra_forbidden`, `union_tag_invalid`, `literal_error`,
   `value_error`, `string_type`, so a fixture matrix that triggers nothing cannot pass. Mutation:
   drop the extra-key fixture; the coverage assert goes red.
@@ -250,8 +272,9 @@ Each test names the mutation that turns it red. Red-first evidence is an asserti
   regenerated on the base and cannot grow. Mutation: re-add one `from None` anywhere, or move one
   config-route raise back into its handler.
 - AT-B3 (class 6 facade, V1): `telemetry` imports `decoy_engine.progress` and callers use the public
-  `decoy_engine.reasons` facade; behavior tests stay unchanged. Mutation: restore either private
-  import; the existing boundary checks go red.
+  `decoy_engine.reasons` facade; behavior tests stay unchanged. The B1 import-linter `protected`
+  stanzas, or the B1 exact AST fallback cell when LAYOUT E3 is absent, guard both facades.
+  Mutation: restore either private import; that named B1 guard goes red.
 - AT-B4 (class 6 contract, V2): the LAYOUT membership snapshot includes `private_modules`, the
   wrapper imports the contract in `.venv-layers`, ignore keys come from `import-layers.json`, and
   both vendored files are sha256-pinned. Mutations: remove the test-path importability setup,
@@ -274,9 +297,11 @@ baselines are regenerated on the part's base, never copied from this plan.
 | B2 CLI V1 sweep and ratchet | CLI | `fix/class-sweep-b2` | CLI main | B1 merged (vendor source); CI-L1 and LAYOUT C1 merged | ~240 |
 | B3 private contract, V2 corrective | engine, CLI | `feat/class-sweep-b3-engine`, `feat/class-sweep-b3-cli` | main after LAYOUT E3 / C3 and H-1 | B1 / B2; LAYOUT E3 / C3; H-1 settled | ~170 each, no generated INI ignores |
 
-**A1.** `safe_output/_validation.py`: `ConfigProblem`, `validation_problems`, the type table,
-direct `loc` joining, `yaml_error_text`; exports from `decoy_engine.safe_output` and the
-root. `config/_errors.py`: `PipelineConfigError` gains
+**A1.** `errors.py` adds public `ConfigRuleError(ValueError)` with typed `message: str`.
+`safe_output/_validation.py`: `ConfigProblem`, `validation_problems`, the type table with per-row
+schema-derived `ctx` allowlists, exact-type `ConfigRuleError` handling, direct `loc` joining and
+`yaml_error_text`; exports from `decoy_engine.safe_output` and the root. `config/_errors.py`:
+`PipelineConfigError` gains
 `problems` and stops setting `__cause__` (docstring updated). The placed `config/_parse.py` owns
 `parse_pipeline_config(raw) -> PipelineConfig`; `config/__init__.py` only re-exports it.
 `validation/_config.py` and `config/_override.py` route through it.
@@ -286,11 +311,15 @@ classes and the name-only AST snapshot are regenerated and reviewed on the part 
 and LAYOUT E1 merge (the first two touch `__init__.py`,
 `validation/_config.py`, `config/_sources.py`, and the sentry manifest and registry).
 
-**A2.** Regenerate the validator census on the part base and classify each dynamic message as
-value-bearing, name-only or unclassified. Migrate only value-bearing and unclassified sites to an
-existing registered reason code with its fixed safe summary. The CSV-branch recount
-is 0 value-bearing, 42 name-only and 1 unclassified nested `err["msg"]`; the 42 name-only sites
-stay as they are and enter the shrink-only normalized-AST snapshot. No new reason codes. The
+**A2.** Starting from models in the public root API, recursively walk model-field types and scan
+every module defining a reachable model. Regenerate the validator census on the part base and
+classify each dynamic message as value-bearing, name-only or unclassified. Interpolated call
+results and opaque locals are unclassified unless all producer return expressions are folded into
+the normalized digest. Migrate value-bearing and unclassified sites to an existing registered
+reason code with its fixed safe summary. Change each certified name-only or fixed-text
+`raise ValueError(...)` to `raise ConfigRuleError(...)`; those sites enter the shrink-only
+normalized-AST snapshot. The preliminary config-only recount of 0 value-bearing, 42 name-only and
+1 unclassified nested `err["msg"]` is planning evidence only. No new reason codes. The
 value-bearing/unclassified ratchet falls to 0.
 `config/_tables.py` (452 lines) and `config/_pipeline.py` (330) do not grow. Release the engine
 right after A2 (owner standing authority for engine releases).
@@ -308,10 +337,14 @@ only). New `defects/test_config_error_routes.py`. Repin follows the engine repin
 `decoy_engine.progress`; `_progress_events` and `safe_output/_event.py` read `CleanupState`,
 `PublicationState`, `COUNT_KEYS`, `MAX_COUNTS` and an `is_count` from the public
 `decoy_engine.reasons` instead of `reasons._record`). Sentries `test_anchored_regex.py` and
-`test_exception_context.py` with `_defect_scan.py` (normalized per class 5). If LAYOUT E3 merged
-first, the same diff moves `telemetry` into the `progress` tier in `.importlinter` and its
-snapshot (telemetry has no importers in `src/`). B1 and A1 can build in parallel worktrees; the
-second to merge rebases the `SENTRIES` and registry rows.
+`test_exception_context.py` use `_defect_scan.py`, which is the single import-alias and constant
+index extracted from `_reason_scan._Index`; `_reason_scan.py` imports it too. If LAYOUT E3 merged
+first, the same diff adds import-linter 2.15 `protected` stanzas for both public facades, moves
+`telemetry` into the `progress` tier and updates the exact snapshot (telemetry has no importers in
+`src/`). If E3 is absent, `test_exception_context.py` lands the exact AST facade-import guard;
+when E3 later lands it replaces that fallback with the protected stanzas in the same reviewed
+change. B1 and A1 can build in parallel worktrees; the second to merge rebases the `SENTRIES` and
+registry rows.
 
 **B2.** CLI class 1 sites move to `fullmatch` or `\Z`; class 3 gets the same shrink-only ratchet at
 the base's regenerated count. Vendored `_defect_scan.py` comes from the B1 merge commit and is
@@ -320,9 +353,10 @@ sha-pinned with the repo's existing vendored-file pin (LAYOUT C2's
 rule of the engine scanner is kept (class 5).
 
 **B3, V2 corrective after LAYOUT E3/C3 and H-1.** `layout/_private_contract.py` (custom
-import-linter contract, about 100 lines, vendored to the CLI), a `private_modules` stanza and the
-`protected` stanza in each `.importlinter`. Extend LAYOUT's exact config-membership snapshot for
-the second contract. Make the dotted contract path importable in `.venv-layers` and assert a hard
+import-linter contract, about 100 lines, vendored to the CLI) and a `private_modules` stanza in
+each `.importlinter`; the V1 facade `protected` stanzas already belong to B1. Extend LAYOUT's exact
+config-membership snapshot for the second contract. Make the dotted contract path importable in
+`.venv-layers` and assert a hard
 failure when it is not. Store generated ratchet keys only in `import-layers.json`, registered
 through LAYOUT's `ignore_keys`, not as INI ignore lines. Add both copies to LAYOUT's existing
 vendored-file sha256 pin table. CLI starts with an empty ratchet list.
@@ -345,6 +379,7 @@ pin and lock), B1 and B2 (shared sentry config). A2 runs T1 plus the config and 
 
 | File | Today | After |
 |---|---:|---:|
+| `src/decoy_engine/errors.py` | existing | + about 6 |
 | `src/decoy_engine/safe_output/_validation.py` | new | ~150 |
 | `src/decoy_engine/config/_errors.py` | 28 | ~50 |
 | `src/decoy_engine/config/_parse.py` | new | ~45 |
@@ -381,8 +416,8 @@ pin and lock), B1 and B2 (shared sentry config). A2 runs T1 plus the config and 
 | 2 Strict wire and stored types | No new wire or stored model | Existing public config strictness is unchanged; no new persisted primitive field. |
 | 3 No exception context | Yes | Config routes prove empty cause and context; repo-wide bulk hoists are V2, with a shrink-only ratchet now. |
 | 4 Versioned read models | No new read model | `ConfigProblem` is an in-process typed object; CLI JSON keeps its existing keys. |
-| 5 Normalized guard scanners | Yes | `_defect_scan.py` resolves aliases and call forms; seeded cells cover each accepted spelling. |
-| 6 No private-module imports | Yes | V1 fixes the two facade bypasses; the cross-package contract is V2 B3 after LAYOUT. |
+| 5 Normalized guard scanners | Yes | `_defect_scan.py` owns one shared alias and constant index used by it and `_reason_scan.py`; seeded cells cover each accepted spelling. |
+| 6 No private-module imports | Yes | V1 fixes and guards the two facade bypasses in B1; the broader cross-package contract is V2 B3 after LAYOUT. |
 | 7 No hidden CI failures | Yes | Sentries are mandatory registry entries and fail rather than skip when dependencies are absent. |
 | 8 One trust class per entry point | Yes | Raw Pydantic errors enter one converter; engine and CLI routes use the public parse entry point. |
 | 9 Mutations on final head | Yes | Section 7 mutations rerun and record the final head. |
@@ -433,6 +468,10 @@ pin and lock), B1 and B2 (shared sentry config). A2 runs T1 plus the config and 
 - Ratchets and registry: `tests/sentry/_ratchet.py`, `scripts/dev/ratchet_check.py`,
   `sentry_registry.toml`, `_baseline_sources.py` (both repos); vendored-file pins (LAYOUT C2 or
   CI-L1).
+- Shared AST normalization: existing `tests/sentry/_reason_scan.py` `_Index` is extracted into
+  `tests/sentry/defects/_defect_scan.py`, and both scanners import that one alias and constant
+  index. Existing `tests/sentry/test_log_interpolation.py` supplies the risky-versus-safe
+  interpolation-classification approach reused for validator messages.
 - Layer tooling: LAYOUT's `.importlinter`, `layout/test_import_layers.py`, `_layout.ignore_keys`.
 - Existing CLI boundary sentries left in place: `test_engine_internal_boundary.py`,
   `test_yaml_error_leak_isolation.py`.
@@ -441,8 +480,10 @@ pin and lock), B1 and B2 (shared sentry config). A2 runs T1 plus the config and 
 
 - `PipelineConfigError` no longer sets `__cause__` (its docstring promised it). Additive
   `problems`. Recorded in the engine CHANGELOG and the compatibility contract.
-- New public names `parse_pipeline_config`, `ConfigProblem`; the
+- New public names `parse_pipeline_config`, `ConfigProblem`, `ConfigRuleError`; the
   `test_public_api.py` snapshot updates in A1.
+- Additive `decoy_engine.reasons` facade exports: `COUNT_KEYS`, `MAX_COUNTS`, `is_count`; their
+  existing state exports remain unchanged.
 - CLI `--json` keys `code`, `message`, `location` keep their names; `location` changes form and
   `message` text changes for validator rules. CLI CHANGELOG entry.
 - No reason code is added, renamed or retired.
@@ -454,6 +495,8 @@ pin and lock), B1 and B2 (shared sentry config). A2 runs T1 plus the config and 
   on `ColumnConfig`, nested model).
 - A Pydantic upgrade adds an error type whose template echoes input. The catalog-equality guard
   goes red before release.
+- A validator or called parser raises a plain `ValueError` whose message includes a data value.
+  Exact-type `ConfigRuleError` handling forces the generic row, and AT-A4 covers `int(marker)`.
 - A2 accidentally migrates a name-only validator and loses useful structure. Its regenerated
   classification inventory must show the changed site as value-bearing or unclassified; AT-A9
   shows each changed CLI message in review.
@@ -486,16 +529,23 @@ pin and lock), B1 and B2 (shared sentry config). A2 runs T1 plus the config and 
   slices, with per-site control-flow tests; no V1 slice performs the bulk refactor.
 - FU-6 (V2 corrective backlog): land B3 only after LAYOUT E3/C3 and H-1, with the four integration
   conditions in sections 4, 7 and 8.
+- When this plan merges, the orchestrator logs FU-5 and FU-6 in
+  `/home/cam/obsidian-vault/10_Projects/decoy/v2-corrective-backlog.md`. That durable V2 entry is
+  required plan close-out, not a V1 implementation or merge condition.
 
 ## 13. Done when
 
 - [ ] A1 and A2 ship together in one engine release. Structural `loc` names remain visible; no
-      input, context, discriminator echo, data value, data literal or secret reaches any tested
-      config error surface.
+      input-derived context, discriminator tag echo, data value, data literal or secret reaches
+      any tested config error surface.
 - [ ] The 104 built-in Pydantic error types equal the policy table; registered custom errors use
-      reason summaries and unregistered custom errors use the generic row.
+      reason summaries, unregistered custom errors use the generic row, per-row `ctx` allowlists
+      contain only schema-derived keys, and only exact `ConfigRuleError` text is trusted for
+      `value_error`.
 - [ ] The validator census is regenerated on the final A2 base. Value-bearing and unclassified
-      messages are zero; unchanged name-only messages match the shrink-only normalized-AST snapshot.
+      messages are zero; reachable-model defining modules are all scanned; permitted
+      `ConfigRuleError` messages and any folded producer returns match the shrink-only
+      normalized-AST snapshot.
 - [ ] All engine and CLI validation routes use the public parse choke point, including terminal,
       `--json`, CI and run-record cells, with both Pydantic ValidationError import sources seeded.
 - [ ] B1 and B2 replace the regenerated class-1 sites, land class-3 shrink-only ratchets at their
