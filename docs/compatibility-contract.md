@@ -101,7 +101,11 @@ delivery, checks, timings). The engine owns its shape (`decoy_engine.RunResult` 
 `decoy_engine.RunResultRead` to read). Every string in it is an enum or a validated name, reference,
 hash, version or timestamp, never a data value or message. The write model refuses unknown fields and
 enum values; the read model ignores added fields, reads a new enum value as a string and reads a
-reason it cannot validate as `null`. Corpus sample: `tests/fixtures/compat/run-result-v1.json`.
+reason it cannot validate as `null`. Numbers and flags are strict on both sides (`False` is not a `0`,
+`"1"` is not a `1`). The `schema` key is required on read and accepts only `decoy-run-result/v1`: a
+document of another major (`/v2`), free text or a missing key is refused, never read as v1; a reader
+that wants `/v2` support adds a new model under a new tag. Corpus sample:
+`tests/fixtures/compat/run-result-v1.json`.
 
 **Rules:**
 
@@ -657,6 +661,12 @@ turns into "I can add X alongside the old X" with five more minutes of thought.
   The corpus is synthetic pre-GA: artifacts carry `synthetic: true` and
   `produced_by_engine_version: "0.1.0"`. At GA, replace or supplement with a real
   (`synthetic: false`) artifact of each read-back kind.
+- **`decoy-run-result/v1` fixtures** (`tests/fixtures/compat/run-result-v1*.json`). The run-result
+  document is checked by `tests/unit/run_result/test_model.py`, which reads the sample and the
+  cross-minor variants through `RunResultRead` and refuses them on the write model. It sits outside
+  `tests/integration/compat_corpus/` on purpose: the corpus manifest and `regenerate.py` freeze
+  artifacts produced at a known engine version, and these are hand-made reader samples with no
+  producing code to regenerate. Moving them would add a manifest kind and a second test for no gain.
 - **`CHANGELOG.md`** records every user-visible change.
 - **The regression-gate** runs the above on every PR.
 
