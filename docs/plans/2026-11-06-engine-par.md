@@ -3,6 +3,16 @@
 Status: plan (2026-11-06, not built). Engine, plus the orchestrator scripts `~/bin/decoy-vm-t3`
 and `~/bin/vm-run`. Roadmap row 4 (CLI `docs/ROADMAP.md`).
 
+Revision r3 (Codex fixes, Dennis round 2). B1: the baseline now stores `order_seconds`, and a
+candidate orders from that exact map. AT-8 covers both write and P1-to-P2 round trips. H1: P1
+writes every mode field, including the serial platform and empty order map. M1: collection skips
+are recorded by file, and only an exactly skipped file may leave a registry entry unverified. M2:
+the stale-baseline exception now accepts only safe Markdown changes and guards doc-walk roots.
+M3: the scanner vocabulary covers the GCS helper and the memwatch comparisons. M4: collection
+runs in a scrubbed pytest subprocess and is cached once per sentry session. L1: only deleted test
+files reduce the collection floor; renames do not. L2: baseline tests start in their own file. P1
+also commits its `decoy-vm-t3` edit to `agent-config` alongside the engine change.
+
 Revision note r2 (applying Dennis r1, GO-WITH-FIXES 0/3/4/2, and the orchestrator's answers to
 Q1 to Q7, 2026-11-06). H1: directory `serial` marks come from a collection hook (a `pytestmark` in
 a `conftest.py` is ignored by pytest), and the sentry judges coverage from real collection. H2: an
@@ -46,8 +56,8 @@ The change promises:
 3. The engine gets the stored-baseline compare the platform has had since #156:
    `--write-baseline FILE` on a clean `origin/main` and `--baseline-file FILE` on a candidate, so a
    merge test runs the suite once instead of twice (Q1). A stored baseline records how it ran
-   (run mode: `workers`, `dist`, `platform`, `order`); a compare whose run mode differs is refused
-   (exit 2). `--baseline-file` also refuses (exit 2) a baseline whose `main_sha` is not
+   (run mode: `workers`, `dist`, `platform`, `order`, plus the exact `order_seconds` input map); a
+   compare whose run mode differs is refused (exit 2). `--baseline-file` also refuses (exit 2) a baseline whose `main_sha` is not
    `origin/main`, unless main moved only in docs that no test reads. On a whole-suite run, a
    collected count below the baseline's by more than the test ids the branch deleted fails (exit 1).
 4. `serial` is the only way to keep a test out of the parallel pass, and it is used only for a
@@ -243,22 +253,29 @@ section 2).
   on exactly those order-dependent ids, and so could two hosts. A stored baseline records its run
   mode: `workers` (the resolved count), `dist`, `platform` (`sys.platform` plus `platform.machine()`,
   for example `linux-x86_64`, `darwin-arm64`) and `order` (`collection`, or `file-seconds:<sha256 of
-  the ordering map>`). `--baseline-file` refuses a run whose mode differs in any field (exit 2,
-  naming both modes and "rewrite the baseline in this mode"). A write run orders by the previous
-  baseline's `file_seconds` (passed with `--order-from FILE`), so the candidate, ordered by the
-  baseline it compares with, gets the same `order` value. `auto` would let a busy host resolve to
-  a different count than the write did, so `decoy-vm-t3` and the Mac lane pin `GATES_WORKERS`
-  explicitly (4 on both) and never compare under `auto`. `--baseline` (legacy) runs both sides with
-  the same settings, so it needs no check.
+  canonical JSON of `order_seconds`>`). The baseline also stores `order_seconds`, the exact map
+  used to order that write. It is `{}` when the write has no `--order-from`, and it is always `{}`
+  in P1. `order` is `collection` when `order_seconds` is empty. A candidate orders by
+  `B.order_seconds`, never by `B.file_seconds`, so its mode matches baseline B. A later write with
+  `--order-from B` orders by `B.file_seconds` and stores that map as its new `order_seconds`.
+  `--baseline-file` refuses a run whose mode differs in any field (exit 2, naming both modes and
+  "rewrite the baseline in this mode"). `auto` would let a busy host resolve to a different count
+  than the write did, so `decoy-vm-t3` and the Mac lane pin `GATES_WORKERS` explicitly (4 on both)
+  and never compare under `auto`. `--baseline` (legacy) runs both sides with the same settings, so
+  it needs no check.
 - Stale baselines. Today only `decoy-vm-t3` refuses a stored baseline whose `main_sha` is behind
   `origin/main`; platform `gates.sh` only warns. Engine `gates.sh --baseline-file` refuses itself
-  (exit 2) unless every path in `git diff <main_sha> origin/main` matches `NON_CODE_GLOBS` and no
-  file under `tests/` names it (the same name match `changed_tests` uses for non-code paths, so a
-  doc that a sentry reads, such as `CHANGELOG.md` or a methodology page, is code here).
-  `decoy-vm-t3` then only passes the file and reports the refusal.
+  (exit 2) unless a separate stale-baseline exception passes. Every changed path must end in `.md`
+  and be outside `src/` and `tests/`. No file anywhere under `tests/` may contain the changed
+  basename. The check uses `grep -rlF` with no `--include` filter. No changed path may sit under a
+  root in `DOC_WALK_ROOTS`, a tuple seeded from the sentries that walk `docs/` by directory. This
+  rule is separate from `NON_CODE_GLOBS`. `decoy-vm-t3` only passes the file and reports a refusal.
+  Remaining limit: a docs move on main that fixes a doc-walking sentry can hide a branch that
+  breaks it again.
 - Shrinking suites. On a whole-suite `--baseline-file` run, `collected < baseline.collected -
-  deleted`, where `deleted` counts the test ids in files the branch deleted or renamed away (from
-  `--collect-only -q` of those files at the merge base), fails with exit 1 and names the shortfall.
+  deleted`, where `deleted` counts test ids only in files selected by `git diff --diff-filter=D`
+  with rename detection enabled. A rename is not a deletion. The ids come from `--collect-only -q`
+  of deleted files at the merge base. A shortfall fails with exit 1 and names the shortfall.
   A drop from a collection error in a kept file therefore fails rather than reading as a smaller,
   green suite.
 - Distribution mode: `--dist loadfile` everywhere (section 2 compares it with `worksteal`). It
@@ -329,7 +346,7 @@ placement and new sentries go in a named sub-package.
 | `_gate_workers.py` | `scripts/dev/` | local gate scripts (no map row yet; LAYOUT's "dev scripts" row) | `_gates_report.py` |
 | `_xdist_safe_reports.py` | `tests/` | test helpers as `tests/_*.py` | `tests/_keyed_secret.py`, `tests/_dp_cert.py` |
 | `parallel/__init__.py`, `parallel/_resources.py` (the AST scan and its vocabulary), `parallel/required_serial.toml` (the required-serial registry), `parallel/test_serial_resources.py` | `tests/sentry/parallel/` (new sub-package) | map change: LAYOUT's sentry rows gain "parallel-safety sentry: `tests/sentry/parallel/`" | `tests/sentry/layout/` (LAYOUT) |
-| `test_gates_parallel.py`, `test_parallel_tests_support.py` | `tests/unit/scripts/` | existing gate-script tests | `test_dev_bootstrap_gates.py` |
+| `test_gates_baseline_file.py`, `test_gates_parallel.py`, `test_parallel_tests_support.py` | `tests/unit/scripts/` | existing gate-script tests | `test_dev_bootstrap_gates.py` |
 
 `tests/sentry/parallel/test_serial_resources.py` is added to `SENTRIES`
 (`tests/sentry/test_sentry_manifest.py`) and its allowlist to `scripts/dev/sentry_registry.toml`
@@ -339,7 +356,7 @@ with a baseline under `tests/sentry/baselines/serial-resources.json`.
 
 | Rule | Choke point | Guard (walks) | Red mutation |
 |---|---|---|---|
-| A test that needs an exclusive host resource runs alone | the `serial` marker as seen at collection: a function or class decorator, a module `pytestmark`, or the `tests/conftest.py` collection hook over `SERIAL_DIRS`; `gates.sh` deselects it from the parallel pass by `-m "(...) and not serial"` | `tests/sentry/parallel/test_serial_resources.py`, two checks on one collection. (1) Coverage comes from real collection: an in-process `pytest --collect-only` of `tests/` with the `gates.sh` mark expression, recording each item's node id, `item.function` (`__module__`, `__qualname__`) and whether `item.get_closest_marker("serial")` is set. (2) The AST scan finds resource use, per function: it parses each collected test module and every `tests/**/_*.py` helper module the test module imports (resolved through its import table), and maps a helper hit back to every collected test function that calls that helper, directly or through one level of local calls. Imports are resolved to `(module, name)` (recurring class 5). Vocabulary: clocks `time.perf_counter`, `perf_counter_ns`, `monotonic`, `monotonic_ns`, `time`, `time_ns`, `process_time`; a bound check is an `assert` comparison, `pytest.fail` or `raise` under an `if` comparison, or `self.assertLess`, `assertLessEqual`, `assertGreater`, `assertGreaterEqual`, where one side is a clock value or anything derived from one, followed through local names, dict keys and attributes within the function and through the return value of a module-local function (so `run["wall"] < BOUND_S` with `run` built from a timed helper is a hit); or a name matching `*elapsed*`, `*wall*`, `*_seconds`, `*_s`, `*_ms`, `*_ns`, `p50*`, `p95*`, `*speedup*`, `*budget*`, `*BOUND*`. Memory: `resource.getrusage(...).ru_maxrss`, `psutil` memory reads, `/proc/*/status` `VmHWM`/`VmRSS`, names matching `*rss*`, `*hwm*`, `*peak*`, `*mem*cap*`, and booleans named `*memory_pressure*` or `*near_cap*` asserted true or false. Plus `threading.active_count()` against a literal, `socket.bind` with a literal non-zero port, and in-process `resource.setrlimit` (not in a child script string, not a `preexec_fn`). A hit on a test function whose collected items lack `serial` fails, unless the function is in the ratchet allowlist of exact `(path, qualname)` identities with a reason each. (3) The required-serial registry `required_serial.toml` lists exact node-id prefixes for the section 2 inventory (the 20 GCS cases, the 4 memwatch cases, `tests/perf/`) and the static finds P2 confirms; every collected item under an entry must carry `serial`, and every entry must match at least one collected item. The registry only grows; removing an entry needs a `reason` line in the same diff, checked by the ratchet (`scripts/dev/ratchet_check.py`) | add `assert elapsed < 2.0` (from `time.perf_counter`) to an unmarked scratch test: red; the same through `from time import perf_counter_ns as pc`: red; `pytest.fail(...)` under `if wall > BOUND_S` in an unmarked test: red; `self.assertLess(elapsed, 1.0)`: red; the timing done in a `tests/connectors/_x.py` helper and asserted through `run["wall"]`: red; remove `serial` from `tests/connectors/test_gcs_timeouts.py`: red (registry and scan); remove it from `TestRealChild` in `tests/unit/execution/test_isolated_memwatch_run.py`: red (registry and scan); drop `tests/perf` from `SERIAL_DIRS`: red (registry); put `pytestmark = pytest.mark.serial` in a scratch directory `conftest.py` above an unmarked RSS assert: red (collection shows no mark) |
+| A test that needs an exclusive host resource runs alone | the `serial` marker as seen at collection: a function or class decorator, a module `pytestmark`, or the `tests/conftest.py` collection hook over `SERIAL_DIRS`; `gates.sh` deselects it from the parallel pass by `-m "(...) and not serial"` | `tests/sentry/parallel/test_serial_resources.py`, two checks on one collected artifact. (1) A session fixture runs `sys.executable -m pytest --collect-only -q -p no:cacheprovider -p no:xdist -p <dump plugin> -m "<gates.sh expr>" tests` once in a subprocess. It scrubs `PYTEST_ADDOPTS` and `PYTEST_PLUGINS` and unsets `DECOY_TEST_ORDER_FILE`. The dump plugin writes JSON with each node id, `item.function.__module__`, `item.function.__qualname__`, the collected `serial` flag, and collection-time skips from `pytest_collectreport` keyed by file path with their reasons. (2) The AST scan finds resource use, per function. It parses each collected test module and every `tests/**/_*.py` helper module the test module imports, resolved through its import table. It maps a helper hit back to every collected test function that calls it directly or through one level of local calls. A hit inside any module-level function in the test module counts for every collected test that calls it on those paths. This includes `_finished` in `test_gcs_timeouts.py`, where `run["wall"] < BOUND_S` is called by both parametrized tests. Imports are resolved to `(module, name)` (recurring class 5). Clock vocabulary is `time.perf_counter`, `perf_counter_ns`, `monotonic`, `monotonic_ns`, `time`, `time_ns`, `process_time`; a bound check is an `assert` comparison, `pytest.fail` or `raise` under an `if` comparison, or `self.assertLess`, `assertLessEqual`, `assertGreater`, `assertGreaterEqual`, where one side is a clock value or anything derived from one, followed through local names, dict keys, attributes and module-local returns; or a name matching `*elapsed*`, `*wall*`, `*_seconds`, `*_s`, `*_ms`, `*_ns`, `p50*`, `p95*`, `*speedup*`, `*budget*`, `*BOUND*`. Memory vocabulary is `resource.getrusage(...).ru_maxrss`, `psutil` memory reads, `/proc/*/status` `VmHWM`/`VmRSS`, and names matching `*rss*`, `*hwm*`, `*peak*`, `*mem*cap*`, `*_mb`, or `*cap*` including `*CAP*`, when used in a comparison. A `*memory_pressure*` or `*near_cap*` name compared with any expression also counts. This covers `ev.last_mb * _MIB >= _CAP - margin` and the expected `ev.suspected_memory_pressure` check. Plus `threading.active_count()` against a literal, `socket.bind` with a literal non-zero port, and in-process `resource.setrlimit`, but not a child script string or `preexec_fn`. A hit on a test function whose collected items lack `serial` fails, unless the function is in the ratchet allowlist of exact `(path, qualname)` identities with a reason each. (3) The required-serial registry `required_serial.toml` lists exact node-id prefixes for the section 2 inventory and the static finds P2 confirms. Every matched collected item must carry `serial`. An entry with zero items passes only when its exact file is in the collection-skip set. It is reported as unverified with the skip reason. Every other zero match fails. The registry only grows; removing an entry needs a `reason` line in the same diff, checked by the ratchet (`scripts/dev/ratchet_check.py`) | add `assert elapsed < 2.0` from `time.perf_counter` to an unmarked scratch test: red; use `from time import perf_counter_ns as pc`: red; put `pytest.fail(...)` under `if wall > BOUND_S`: red; use `self.assertLess(elapsed, 1.0)`: red; put timing in a `tests/connectors/_x.py` helper and assert through `run["wall"]`: red; remove `serial` from `tests/connectors/test_gcs_timeouts.py`: red; remove it from `TestRealChild`: red; drop `tests/perf` from `SERIAL_DIRS`: red; misspell a registry node id in the gate venv: red; put `pytestmark = pytest.mark.serial` in a scratch directory `conftest.py` above an unmarked RSS assert: red |
 | A stored baseline is only compared while it is current | `gates.sh --baseline-file` | AT-16 | make the stale check warn instead of exit: AT-16 red; treat a `.md` named by a test as docs-only: AT-16's sentry-read cell red |
 | A whole-suite run never shrinks silently | `_gates_report` stored compare | AT-17 | drop the collected-count rule: AT-17 red |
 | Both passes are one run | `_gates_report._xmls` (every `tests` read goes through it) | AT-4, AT-5: reporter counts and ids identical for one or two JUnit files; a serial log without a totals line exits 3 | read only `<label>-tests.xml` in `junit_failing_ids`: AT-5 red |
@@ -348,8 +365,8 @@ with a baseline under `tests/sentry/baselines/serial-resources.json`.
 
 The sentry is seeded-bypass tested (each spelling above), registered in `SENTRIES` and
 `sentry_registry.toml`, and runs in the merge gate's sentry step. Its allowlist only shrinks; its
-required-serial registry only grows, except by a reasoned removal. The collection it walks costs
-one `--collect-only` of the suite (about 40 s on the VM), run once per sentry session.
+required-serial registry only grows, except by a reasoned removal. The subprocess collection costs
+one `--collect-only` of the suite (about 40 s on the VM) and is cached once per sentry session.
 
 ## 7. Acceptance tests
 
@@ -370,10 +387,13 @@ Red-first evidence is an assertion failure on the base tree, recorded per part.
   test, and the run is not read as green.
 - AT-7 (surrogate): a failing test that logs a lone surrogate runs under `-n 2` without
   INTERNALERROR (port).
-- AT-8 (mode-bound baseline): `--write-baseline` stores `workers`, `dist`, `platform` and `order`;
-  `--baseline-file` exits 2 naming both modes for each single-field difference: `GATES_WORKERS` 1
+- AT-8 (mode-bound baseline): `--write-baseline` stores `workers`, `dist`, `platform`, `order` and
+  `order_seconds`. `--baseline-file` exits 2 naming both modes for each single-field difference:
+  `GATES_WORKERS` 1
   vs 4, `dist` changed, a baseline whose `platform` is `darwin-arm64` on Linux, and an `order` hash
-  that differs. A candidate run with the same pinned mode passes the check.
+  that differs. Round-trip cells write A with no order, write B with `--order-from A`, then show a
+  candidate compared with B passes the mode check. A P1-format baseline compared with a P2
+  candidate under `GATES_WORKERS=1` also passes.
 - AT-9 (stored baseline, P1): the platform #156 cases ported to the engine fake-pytest harness: new
   failing id exits 1; baseline id that now passes is reported; collected-count delta reported;
   write refused for a selection, a dirty tree, or HEAD not `origin/main`; skipped count above the
@@ -381,19 +401,22 @@ Red-first evidence is an assertion failure on the base tree, recorded per part.
 - AT-10 (old tree stays serial): `--baseline` (legacy) against an `origin/main` without
   `tests/_xdist_safe_reports.py` runs that side serial and says so in the steps line.
 - AT-11 (sentry): each red mutation in section 6, red; the current tree, green with the recorded
-  allowlist and registry sizes. Before P2's marks land, the scan alone must report all 25 section 2
-  ids (red-first proof that the vocabulary sees them), not only the registry.
+  allowlist and registry sizes. In the gate venv with `dev+lint+vault+cloud`, zero registry entries
+  are skip-matched. A misspelled node id entry is red. Before P2's marks land, the scan alone must
+  report all 25 section 2 ids, not only the registry.
 - AT-12 (short socket path): `test_policy_rooted.py` passes under `-n 2 --basetemp=<130-char path>`.
 - AT-13 (the inventory): every id in section 2's xdist-only list passes in a `-n 4 --dist loadfile`
   full run on P2's head, three runs in a row on one VM, with no new failing id against a baseline
   written in the same mode.
-- AT-15 (order): with `DECOY_TEST_ORDER_FILE` (set by `gates.sh` to the `--baseline-file` path)
-  naming file seconds, collection puts files in descending seconds and keeps each file's own test
-  order; with no file, collection order is unchanged; the collected id set is the same either way.
-  Mutation: sort tests instead of files: red (intra-file order changed).
+- AT-15 (order): with `DECOY_TEST_ORDER_FILE` set by `gates.sh` to the baseline file, collection
+  reads `order_seconds`, puts files in descending seconds and keeps each file's own test order.
+  With an empty `order_seconds` map or no file, collection order is unchanged. The collected id set
+  is the same either way. Mutation: read `file_seconds` instead of `order_seconds`, red. Mutation:
+  sort tests instead of files, red because intra-file order changed.
 - AT-16 (stale baseline): `--baseline-file` with `main_sha` behind `origin/main` exits 2 when main
   moved in code; passes when main moved only in `docs/x.md` that no test names; exits 2 when the
-  only change is a `.md` that a test file names (for example a methodology page a sentry reads).
+  only change is a `.md` that a test file names. Cells for `docs/conf.py`,
+  `docs/methodology-registry.yaml`, and a `.md` named only in a `tests/**/_*.py` helper all exit 2.
 - AT-17 (shrink): a whole-suite stored run that collects 10 fewer ids than the baseline exits 1; the
   same run on a branch that deleted a test file holding those 10 ids passes and reports the delta.
 - AT-18 (directory marks): every item under `tests/perf/` carries `serial` at collection; a scratch
@@ -419,27 +442,33 @@ test tooling, so every part runs one full suite on its merge head (testing.md tr
 |---|---|---|---|---:|
 | P1 stored baseline | `feat/engine-par-p1-stored-baseline` | engine main after CI-E1 | CI-E1 merged | ~330 code, ~420 tests |
 | P2 xdist in gates.sh | `feat/engine-par-p2-xdist` | main after P1 | P1; Q2 (xdist in `dev`, fingerprint re-pin) | ~260 code, ~420 tests, plus the marks and fixes in the inventory |
-| P3 tooling defaults | `~/bin` (not a repo) plus engine `docs/` | after P2 | P2 merged | ~60 |
+| P3 tooling defaults | `agent-config` plus engine `docs/` | after P2 | P2 merged | ~60 |
 | P4 CI | `ci/engine-par-p4` | after CI-E2 | CI-E2 merged | ~20 |
 
 **P1.** Port platform #156 (and its follow-up fixes in platform main) to engine `gates.sh` and
 `_gates_report.py`: `--baseline-file`, `--write-baseline`, `--full`, JUnit-derived failing ids
 (`_case_id`, `junit_failing_ids`, the totals cross-check), the skipped-count rule and the
-`PYTEST_ADDOPTS`/`PYTEST_PLUGINS` scrub for stored runs. The baseline file gains `workers`, `dist`
-(both `1`/`no` in P1) and `file_seconds` (per test file, summed from the JUnit `time` attributes) now,
-so P2 adds no format change. Also the stale-baseline refusal and the shrink rule (section 4), with
-`decoy-vm-t3`'s own stale check reduced to passing the file. AT-9, AT-16, AT-17. Write the first engine
-baseline from main with `decoy-vm-t3 <vm> engine <main> base-eng write` and promote it. Subject:
+`PYTEST_ADDOPTS`/`PYTEST_PLUGINS` scrub for stored runs. The baseline file gains `workers=1`,
+`dist=no`, `platform` as `sys.platform + "-" + platform.machine()`, `order=collection`,
+`order_seconds={}`, and `file_seconds` per test file, summed from the JUnit `time` attributes. P2
+adds no format change. Also add the stale-baseline refusal and the shrink rule (section 4), with
+`decoy-vm-t3`'s own stale check reduced to passing the file. Commit that `~/bin/decoy-vm-t3` edit
+to the `agent-config` repo alongside P1. AT-9, AT-16, AT-17. Write the first engine baseline from
+main with `decoy-vm-t3 <vm> engine <main> base-eng write` and promote it. Subject:
 `feat(dev): stored failing-id baseline for engine gates`.
 
 **P2.** `pytest-xdist` into `dev` (Q2) with the lock and P2's own DP fingerprint re-pin. Port `_gate_workers.py`, the `gates.sh` two-pass step,
 `_gates_report._xmls`, `tests/_xdist_safe_reports.py`, `short_tmp_path`; delete the dead
 `tests/conftest.py` data-dir fixtures; add the `serial` marker (pyproject) and the marks and fixes
 for the section 2 inventory; the sentry with its registry and allowlist; the longest-files-first
-collection order read from the stored baseline's `file_seconds` (Q4; no file, no reorder); the
-stale-baseline and shrink rules if P1 did not carry them; AT-1 to AT-8, AT-10 to AT-13, AT-15 to AT-18. Update `docs/` (the gates help text and `CONTRIBUTING.md` testing notes) and the
+write order read from the `--order-from` baseline's `file_seconds` and stored as `order_seconds`
+(Q4; no file, no reorder); the stale-baseline and shrink rules if P1 did not carry them; AT-1 to
+AT-8, AT-10 to AT-13, AT-15 to AT-18. Update `docs/` (the gates help text and `CONTRIBUTING.md` testing notes) and the
 `pyproject.toml` comment that says "CI still runs the suite serially". Subject:
 `test: run the engine suite in parallel with xdist in gates.sh`.
+
+In P2, `GATES_WORKERS=1` records `dist=no`. Its candidate order comes from the compared baseline's
+`order_seconds`, not from that baseline's newly measured `file_seconds`.
 
 P2's own merge path: its merge test is `decoy-vm-t3 ... stored` with `GATES_WORKERS=1` against P1's
 serial baseline (same mode, so the mode check passes), plus AT-13's three parallel runs as
@@ -484,7 +513,8 @@ in the inventory and `tests/fileaccess/test_policy_rooted.py`.
 | `tests/conftest.py` | 301 | ~140 (dead fixtures out, `short_tmp_path` in) |
 | `tests/sentry/parallel/_resources.py` | new | ~260 |
 | `tests/sentry/parallel/test_serial_resources.py` | new | ~180 |
-| `tests/unit/scripts/test_dev_bootstrap_gates.py` | 380 | ~780 (the #156 cases; split into `test_gates_baseline_file.py` if it passes 800) |
+| `tests/unit/scripts/test_dev_bootstrap_gates.py` | 380 | ~400 |
+| `tests/unit/scripts/test_gates_baseline_file.py` | new | ~380 (the #156 cases, split from the start) |
 | `tests/unit/scripts/test_gates_parallel.py` | new | ~250 |
 | `tests/unit/scripts/test_parallel_tests_support.py` | new | ~190 |
 
@@ -547,7 +577,7 @@ Today's exits are set at `scripts/dev/gates.sh:200` to `:219`; the reporter's cr
 ### Fields
 
 - Baseline JSON (P1): `repo`, `main_sha`, `head_sha`, `collected`, `failing`, `skipped`, `workers`,
-  `dist`, `platform`, `order`, `file_seconds`.
+  `dist`, `platform`, `order`, `order_seconds`, `file_seconds`.
 - EVIDENCE header: new `workers:` line (count and reason).
 
 ### Output surfaces
@@ -574,10 +604,10 @@ and `decoy-vm-t3-promote`.
 - The EVIDENCE block keeps every line and gains `workers:`. Readers that grep it
   (`decoy-vm-t3` logs, the board) match on the `[tests]` line and the `BRANCH-ONLY` lines, which
   do not change.
-- The baseline JSON is the platform's format plus `workers`, `dist`, `platform`, `order` and
-  `file_seconds`; a reader that ignores unknown keys is unaffected. A baseline missing the mode keys
-  is refused by `--baseline-file` (exit 2): the engine has no stored baseline today, so there is no
-  older file to accept.
+- The baseline JSON is the platform's format plus `workers`, `dist`, `platform`, `order`,
+  `order_seconds` and `file_seconds`; a reader that ignores unknown keys is unaffected. A baseline
+  missing the mode keys is refused by `--baseline-file` (exit 2). The engine has no stored baseline
+  today, so there is no older file to accept.
 - The `serial` marker is a new public test marker in `pyproject.toml` markers.
 
 ## 12. Pre-mortem
