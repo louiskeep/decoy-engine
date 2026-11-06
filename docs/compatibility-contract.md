@@ -90,11 +90,18 @@ quality-shape-fidelity/v1  post-scan-integrity/v2    name-hints/v1
 ssn/v1  npi/v1  pan/v1  iban/v1  ein/v1  mrn/v1  ndc/v1  icd10/v1
 cusip/v1  address/v1  locality/v1  person/v1  provider/v1
 composite/v1  custom/v1   ... (every disguise spec)
-subset-manifest/v1
+subset-manifest/v1         decoy-run-result/v1
 ```
 
 A user runs `decoy fit`, keeps the `distribution-snapshot/v1` artifact, and
 feeds it to a later engine version. That artifact is a **contract**.
+
+`decoy-run-result/v1` is the record of one `decoy run` (status, exit code, per-table outcome,
+delivery, checks, timings). The engine owns its shape (`decoy_engine.RunResult` to write,
+`decoy_engine.RunResultRead` to read). Every string in it is an enum or a validated name, reference,
+hash, version or timestamp, never a data value or message. The write model refuses unknown fields and
+enum values; the read model ignores added fields, reads a new enum value as a string and reads a
+reason it cannot validate as `null`. Corpus sample: `tests/fixtures/compat/run-result-v1.json`.
 
 **Rules:**
 

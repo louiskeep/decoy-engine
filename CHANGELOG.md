@@ -9,6 +9,15 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (RESULT E1: the run-result model, 2026-11-06)
+
+`decoy_engine.RunResult` and `RunResultRead` define the frozen `decoy-run-result/v1` document (one record per
+`decoy run`), `RUN_RESULT_SCHEMA` names its tag, and `derive_outcome` is the one place that turns a failure
+category, delivery state and blocking check into a run status and exit code, using the caller's exit map.
+`pipeline_config_hash` exports the compiler's semantic config hash. `ReasonRecord.parse_payload` is now the one
+reason wire-compatibility parser; `from_payload` delegates to it, and it also returns the registry version the
+writer stamped. No registry change.
+
 ### Added (F06: declared parsing, casting and quarantine, 2026-10-29)
 
 A column can now declare `logical_type`, `parse_format`, `sentinel_to_null`, `error_policy` (`fail`, `null`,
