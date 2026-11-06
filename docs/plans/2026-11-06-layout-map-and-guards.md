@@ -528,18 +528,9 @@ changes. The X0a baseline JSON schema is used as is (three new files, same field
 - FU-4: a leaf version module in each repo, removing the 7 + 8 `__version__` ignore lines.
 - FU-5: H-1 C0 keeps only the pure-move checker port; its size census half is C2 here.
 
-## 14. Owner questions (pending)
+## 14. Owner questions (answered by Cam, 2026-11-06)
 
-- Q1 (pending): confirm the target sub-package names for frozen `execution/`, `execution/native/`,
-  `execution/out_of_core/` and `plan/` (section 4), so slices before H-1 E8 use the names E8 will
-  keep. Ties to H-1 Q3. Recommended: the cluster names in section 4.
-- Q2 (pending): `execution/_strategies/` is a one-module-per-strategy registry at 29. Freeze it as
-  the rule says (the next strategy starts a family sub-package), or give it a reviewed exemption
-  with a higher cap? Recommended: freeze.
-- Q3 (pending): extend the fan-out limit to `tests/` (engine `tests/parity/` 152, `tests/native/`
-  123, `tests/unit/` 70; CLI `tests/e2e/` 78)? Recommended: not in LAYOUT; the map lists them as
-  exceptions.
-- Q4 (pending): name the sub-package for new CLI command-side modules while `cli/` is frozen at
-  31, in particular CLI-FMT's planned `cli/_targets.py` (roadmap 4.1). Recommended:
-  `src/decoy/cli/io/` for source readers and target writers (`_sources.py`, `_duckdb_source.py`
-  move there under H-1).
+- Q1 answered: yes. The sub-package names in section 4 are the targets, and H-1 E8 keeps them (this also answers H-1 Q3).
+- Q2 answered: freeze. `execution/_strategies/` is frozen at today's count, and the next strategy starts a family sub-package.
+- Q3 answered: not in LAYOUT, but recorded as follow-up LAYOUT-T (test-folder fan-out and layout). Owner: "clear organized folder structure is important." The map lists today's large test folders as exceptions, and LAYOUT-T is a roadmap row.
+- Q4 answered: yes, and the naming conventions apply now. Owner: "start new proper naming conventions now, let's not introduce more technical debt." New CLI source-reader and target-writer modules go in `src/decoy/cli/io/` starting today, including CLI-FMT's target writer (`cli/io/_targets.py`, not `cli/_targets.py`), even before C2's freeze lands. The C1 map states this rule, and the CLI-FMT handoff is updated to match.
