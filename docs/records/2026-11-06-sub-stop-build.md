@@ -60,8 +60,8 @@ the test compares the pinned entry to the live entry exactly instead.
 
 VM, T1 impact tests: 1 failed, 8680 passed. The failure is
 `tests/unit/execution/test_auto_chunk_bookkeeping.py::test_pipeline_stays_at_its_exact_ratchet_and_the_new_module_under_the_goal`:
-it pins `execution/_pipeline.py` at exactly 351 lines and the guard makes it 356. That file is outside the allowed
-list, so it is left red (handoff precondition 4); the fix is a one-number pin bump.
+it pins `execution/_pipeline.py` at exactly 351 lines and the guard makes it 356. The orchestrator approved bumping that pin from 351 to 356 (intended growth from the handoff-required guard import,
+call and docstring sentence); `test_auto_chunk_bookkeeping.py:31` now pins 356.
 First `gates.sh --baseline` run on the VM: ruff, format, mypy pass; sentry and tests failed only on the census line
 shift (since fixed by the local import) and two tests since fixed. The re-run was cancelled before it finished.
 Sphinx was not run (no docs extras on the VM venv at that point).
