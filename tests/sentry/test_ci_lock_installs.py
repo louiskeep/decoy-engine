@@ -413,6 +413,8 @@ def test_option_and_command_normalisation() -> None:
         "pip --python .venv/bin/python install requests": "not an exact",
         "uv pip --python p install requests": "not an exact",
         "pip install -f https://x ruff==1.0": "index override",
+        "pip install -e dist/x.whl": "project install",
+        "uv pip install --no-deps -edist/x.whl": "project install",
         "pip install --find-links=https://x ruff==1.0": "index override",
         "PIP_INDEX_URL=https://x pip install ruff==1.0": "index environment",
         "export UV_EXTRA_INDEX_URL=https://x": "index environment",
