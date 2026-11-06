@@ -212,6 +212,7 @@ NOT_A_LIST: dict[str, str] = {
     "proof-manifest.json": "generated proof page data, regenerated and compared by test_proof_manifest",
     "reason-manifest-v1.json": "released reason manifest, frozen by the F29 registry tests",
     "reason-manifest-v1.4-f06.json": "released reason manifest, frozen by the F29 registry tests",
+    "reason-manifest-v1.6-sub-stop.json": "released reason manifest, frozen by the F29 registry tests",
     "reason-registry-release.json": "released reason registry, frozen by the F29 registry tests",
     "consumer-contract.json": "F29 consumer contract, compared whole by test_reason_registry",
     "openapi.json": "generated schema used as a negative fixture in a residual-surface test",

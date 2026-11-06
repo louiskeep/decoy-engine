@@ -113,3 +113,16 @@ class TestValidatePlanFailurePaths:
         with pytest.raises((AttributeError, TypeError)):
             result.ok = False  # type: ignore[misc]
         assert isinstance(result, PlanValidationResult)
+
+
+class TestSubsetRefusalIsReturned:
+    def test_subset_block_returns_a_failed_result_not_a_raise(self) -> None:
+        config = _valid_config()
+        config["subset"] = {"seeds": [{"table": "t", "mode": "sample", "count": 1}]}
+        result = validate_plan(config, _profile(), decoy_engine_version=_VERSION)
+        assert result.ok is False
+        assert result.plan is None
+        assert result.error is not None
+        assert result.error.code == "subset_run_unsupported"
+        assert result.error.path == "subset"
+        assert result.error.message.startswith("subset: is not applied by a pipeline run yet")
