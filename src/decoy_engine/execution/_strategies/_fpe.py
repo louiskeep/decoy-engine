@@ -63,6 +63,7 @@ from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.transforms import _ff1
 from decoy_engine.transforms._fpe_checksum import (
+    keep_bin_error,
     keep_bin_problem,
     keep_bin_problem_text,
     keep_bin_value,
@@ -94,8 +95,6 @@ _UNENCRYPTABLE_STRATEGY_CODE: dict[str, str] = {
     reasons.runtime.FPE__UNENCRYPTABLE_DOMAIN: reasons.runtime.FPE_UNENCRYPTABLE_DOMAIN,
     reasons.runtime.FPE__UNENCRYPTABLE_LENGTH: reasons.runtime.FPE_UNENCRYPTABLE_LENGTH,
 }
-# Every checksum config fault without its own code, a bad `keep_bin` included.
-CHECKSUM_CONFIG_STRATEGY_CODE = "fpe_checksum_unsupported"
 _CHECKSUM_STRATEGY_CODE: dict[str, str] = {
     reasons.runtime.FPE__CHECKSUM_INVALID_SOURCE: reasons.runtime.FPE_CHECKSUM_INVALID_SOURCE,
 }
@@ -108,7 +107,7 @@ def strategy_code_for_unencryptable(exc: FpeUnencryptableError) -> str:
 
 def strategy_code_for_checksum(exc: FpeChecksumError) -> str:
     """Map an `FpeChecksumError` onto its `StrategyError`/row-error code."""
-    return _CHECKSUM_STRATEGY_CODE.get(exc.code, CHECKSUM_CONFIG_STRATEGY_CODE)
+    return _CHECKSUM_STRATEGY_CODE.get(exc.code, "fpe_checksum_unsupported")
 
 
 class FpeStrategyHandler:
@@ -169,7 +168,7 @@ class FpeStrategyHandler:
             # Compile refuses this config; the backstop for a caller that skipped compile,
             # checked before the sequential native seam builds its kernel config.
             raise StrategyError(
-                code=CHECKSUM_CONFIG_STRATEGY_CODE,
+                code=strategy_code_for_checksum(keep_bin_error(keep_bin_fault)),
                 strategy="fpe",
                 message=f"column {column!r}: {keep_bin_problem_text(keep_bin_fault)}",
             )

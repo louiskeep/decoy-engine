@@ -63,7 +63,6 @@ from decoy_engine.execution._strategies._categorical import (
     _build_cdf,
 )
 from decoy_engine.execution._strategies._fpe import (
-    CHECKSUM_CONFIG_STRATEGY_CODE,
     FF1_KEY_LABEL,
     strategy_code_for_checksum,
     strategy_code_for_unencryptable,
@@ -76,6 +75,7 @@ from decoy_engine.execution._strategies._text_redact import _DEFAULT_TOKEN, _spl
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.kernel._scalar import _array_to_pylist, _is_missing
 from decoy_engine.transforms._fpe_checksum import (
+    keep_bin_error,
     keep_bin_problem,
     keep_bin_problem_text,
     keep_bin_value,
@@ -152,7 +152,7 @@ def fpe_array(
         keep_bin_fault = keep_bin_problem(cfg)
         if keep_bin_fault is not None:
             raise StrategyError(
-                code=CHECKSUM_CONFIG_STRATEGY_CODE,
+                code=strategy_code_for_checksum(keep_bin_error(keep_bin_fault)),
                 strategy="fpe",
                 message=f"column {column!r}: {keep_bin_problem_text(keep_bin_fault)}",
             )

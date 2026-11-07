@@ -52,11 +52,6 @@ from decoy_engine.transforms.fpe import (
     check_charset_unique,
 )
 
-_KEEP_BIN_CODES = {
-    "invalid": reasons.plan.FPE_KEEP_BIN_INVALID,
-    "requires_luhn": reasons.plan.FPE_KEEP_BIN_REQUIRES_LUHN,
-}
-
 
 def check_column_keep_bin(col_entry: dict[str, Any], table_name: str) -> None:
     """Refuse a column whose `keep_bin` the strategy cannot honour.
@@ -80,14 +75,12 @@ def check_column_keep_bin(col_entry: dict[str, Any], table_name: str) -> None:
             ),
         )
     problem = keep_bin_problem(pc)
-    if problem is not None:
-        raise PlanCompileError(
-            code=_KEEP_BIN_CODES[problem],
-            path=path,
-            message=(
-                f"fpe column {col_name!r} in table {table_name!r}: {keep_bin_problem_text(problem)}"
-            ),
-        )
+    if problem is None:
+        return
+    message = f"fpe column {col_name!r} in table {table_name!r}: {keep_bin_problem_text(problem)}"
+    if problem == "invalid":
+        raise PlanCompileError(code=reasons.plan.FPE_KEEP_BIN_INVALID, path=path, message=message)
+    raise PlanCompileError(code=reasons.plan.FPE_KEEP_BIN_REQUIRES_LUHN, path=path, message=message)
 
 
 def check_fpe_charset_config(config: dict[str, Any]) -> None:

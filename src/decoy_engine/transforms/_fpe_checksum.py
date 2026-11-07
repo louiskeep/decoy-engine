@@ -79,6 +79,11 @@ def keep_bin_problem_text(problem: KeepBinProblem) -> str:
     return _PROBLEM_TEXT[problem]
 
 
+def keep_bin_error(problem: KeepBinProblem) -> FpeChecksumError:
+    """The value-free error for a ``keep_bin_problem`` result (returned, not raised)."""
+    return FpeChecksumError(keep_bin_problem_text(problem), scheme="luhn")
+
+
 def keep_bin_value(cfg: Mapping[str, Any]) -> int:
     """The ``keep_bin`` a value call takes: 0 for off, else 6 or 8.
 
@@ -86,7 +91,7 @@ def keep_bin_value(cfg: Mapping[str, Any]) -> int:
     """
     problem = keep_bin_problem(cfg)
     if problem is not None:
-        raise FpeChecksumError(keep_bin_problem_text(problem), scheme="luhn")
+        raise keep_bin_error(problem)
     value = cfg.get(_KEEP_BIN)
     return 0 if value is None else int(value)
 
@@ -107,18 +112,6 @@ def check_keep_bin_call(keep_bin: int, checksum: str | None) -> None:
         raise FpeChecksumError(keep_bin_problem_text("invalid"), scheme=checksum)
     if keep_bin and checksum != "luhn":
         raise FpeChecksumError(keep_bin_problem_text("requires_luhn"), scheme=checksum)
-
-
-def _keep_bin_permute(s: str, key: bytes, tweak: bytes, keep_bin: int, *, forward: bool) -> str:
-    """FF1 over the account digits between the kept prefix and the Luhn check digit."""
-    from decoy_engine.checksums import calc_check_digit
-
-    prefix = s[:keep_bin]
-    account = _permute(
-        s[keep_bin:-1], key, _DIGITS, tweak + prefix.encode("ascii"), forward=forward
-    )
-    body = prefix + account
-    return body + calc_check_digit("luhn", body)
 
 
 def _check_keep_bin_shape(s: str, keep_bin: int) -> None:
@@ -326,8 +319,13 @@ def _fpe_checksum_permute(
 
         _DIGITS_ONLY = "0123456789"
 
+        # keep_bin: the issuer prefix stays and is bound into the tweak; the account
+        # digits up to the check digit are permuted; the Luhn digit is recomputed.
         if keep_bin:
-            return _keep_bin_permute(s, key, tweak, keep_bin, forward=forward)
+            prefix = s[:keep_bin]
+            tweak_with_prefix = tweak + prefix.encode("ascii")
+            account = _permute(s[keep_bin:-1], key, _DIGITS, tweak_with_prefix, forward=forward)
+            return prefix + account + calc_check_digit("luhn", prefix + account)
 
         # luhn / ean13 / gtin: digit-only, check digit at end.
         if scheme in ("luhn", "ean13", "gtin"):
