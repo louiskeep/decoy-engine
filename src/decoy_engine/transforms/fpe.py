@@ -395,9 +395,11 @@ def _fpe_value(
     ``keep_bin`` (``checksum='luhn'`` only) keeps the first 6 or 8 digits; see
     ``_fpe_checksum``. It is checked first, so it is never silently ignored."""
     try:
-        from decoy_engine.transforms._fpe_checksum import check_keep_bin_call
+        # A plain int 0 always passes the check, so the common path skips the lazy import.
+        if type(keep_bin) is not int or keep_bin:
+            from decoy_engine.transforms._fpe_checksum import check_keep_bin_call
 
-        check_keep_bin_call(keep_bin, checksum)
+            check_keep_bin_call(keep_bin, checksum)
         # Empty-string reject (plan P2): a present-but-empty value is NOT a null --
         # nulls never reach this layer at all (skipped via na_mask one layer up) --
         # so an empty string here is a genuine zero-length value with a zero-length

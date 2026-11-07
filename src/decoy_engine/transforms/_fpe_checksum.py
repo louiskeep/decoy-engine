@@ -18,7 +18,8 @@ Delphix's Payment Card framework and Protegrity's left-clear setting. The kept
 prefix is appended to the FF1 tweak, following NIST SP 800-38G's advice to use
 data statically associated with the plaintext (here the clear digits) as the
 tweak (NIST ITL Bulletin 2016-04 works this exact card example). This module is
-the only reader of the ``keep_bin`` config key.
+the only reader of the ``keep_bin`` config key; every other module goes through
+its helpers.
 """
 
 from __future__ import annotations

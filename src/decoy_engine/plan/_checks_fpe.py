@@ -30,10 +30,11 @@ Reuses `_CHARSETS` / `check_charset_unique` / `check_charset_ascii_printable`
 from `transforms/fpe.py` as the single source of truth for named charsets and
 these two rules (no duplicated table or check to drift out of sync).
 
-V1+ (card keep-BIN): the same loop checks the `keep_bin` option through
-`check_column_keep_bin`, so it runs wherever the charset check runs (both compile
-branches and `run_config_only_checks`) without growing `plan/_compile.py`. The join
-check (`_checks_fpe_join.py`) calls it first for every join-group member.
+The same loop checks the `keep_bin` option through `check_column_keep_bin`, so it
+runs wherever the charset check runs (both compile branches and
+`run_config_only_checks`) and no compile path can skip it. The join check
+(`_checks_fpe_join.py`) calls it first for every join-group member, so a bad value
+gets its own code rather than a group-mismatch code.
 
 This module exports `check_fpe_charset_config` and `check_column_keep_bin`.
 """
@@ -45,7 +46,11 @@ from typing import Any
 from decoy_engine import reasons
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.plan._errors import PlanCompileError
-from decoy_engine.transforms._fpe_checksum import keep_bin_problem, keep_bin_problem_text
+from decoy_engine.transforms._fpe_checksum import (
+    keep_bin_problem,
+    keep_bin_problem_text,
+    raw_keep_bin,
+)
 from decoy_engine.transforms.fpe import (
     _CHARSETS,
     check_charset_ascii_printable,
@@ -61,7 +66,7 @@ def check_column_keep_bin(col_entry: dict[str, Any], table_name: str) -> None:
     column and config key, never a data value.
     """
     pc = col_entry.get("provider_config")
-    if not isinstance(pc, dict) or pc.get("keep_bin") is None:
+    if not isinstance(pc, dict) or raw_keep_bin(pc) is None:
         return
     col_name = col_entry.get("name", "?")
     path = f"tables.{table_name}.columns.{col_name}.provider_config.keep_bin"

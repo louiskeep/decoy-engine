@@ -25,6 +25,8 @@ from decoy_engine.execution.native._operator_params import FpeParams, resolve_op
 from decoy_engine.execution.native._real_type_admission import _fpe_checksum_decline
 from decoy_engine.execution.out_of_core._fpe_native import decline_reason
 from decoy_engine.execution.out_of_core._mask_group_b import fpe_array
+from decoy_engine.execution.physical._compiler import compile_physical_plan
+from decoy_engine.execution.physical._snapshot import capture_physical_plan_inputs
 from decoy_engine.unmask import unmask_pipeline
 from tests.parity._d2b_shapes import run_full, run_seq, strs
 from tests.parity._d2c_fpe_data import FpeMarkingKernel, fpe_seed, install_fpe, payload_shape
@@ -234,3 +236,36 @@ def test_a_pipeline_fails_closed_on_a_short_card(tmp_path: Any) -> None:
         _full_frame(cfg, tmp_path, ["4539578763621486", "4222222222222"])
     assert info.value.code == "fpe_unencryptable_domain"
     assert "4222" not in info.value.message
+
+
+def test_keep_bin_null_is_the_same_as_absent_at_the_handler() -> None:
+    values = _values()
+    absent = {"charset": "digits", "checksum": "luhn"}
+    assert _handler(values, {**absent, "keep_bin": None}) == _handler(values, absent)
+
+
+@pytest.mark.parametrize(
+    ("source", "pc", "code"),
+    [
+        ("45395787636214861234", {}, "fpe_checksum_unsupported"),
+        ("4539578763621487", {}, "fpe_checksum_invalid_source"),
+        ("4539 5787 6362 1486", {"preserve_separators": False}, "fpe_unencryptable_value"),
+    ],
+    ids=["twenty_digits", "luhn_invalid", "no_preserve_separators"],
+)
+def test_handler_refusals_are_value_free(source: str, pc: dict[str, Any], code: str) -> None:
+    df = pd.DataFrame({"card": [source]})
+    with pytest.raises(StrategyError) as info:
+        FpeStrategyHandler().run(df, "card", fpe_seed("ns", **_PC, **pc), _Ctx())  # type: ignore[arg-type]
+    assert info.value.code == code
+    assert "4539" not in str(info.value)
+    assert df["card"].tolist() == [source]
+
+
+def test_the_physical_shadow_slice_leaves_a_keep_bin_column_unbound(tmp_path: Any) -> None:
+    source = pa.table({"card": pa.array(["4539578763621486"], pa.string())})
+    source.to_pandas().to_csv(tmp_path / "in.csv", index=False)
+    raw = _config(tmp_path)
+    inputs = capture_physical_plan_inputs(raw, {_TABLE: source}, engine_version="keep-bin-test")
+    (node,) = compile_physical_plan(inputs).tables[0].nodes
+    assert node.strategy == "fpe" and node.execution is None
