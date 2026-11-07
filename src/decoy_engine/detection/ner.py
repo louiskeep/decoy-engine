@@ -31,6 +31,7 @@ the text_redact contract (see _text_redact.py).
 
 from __future__ import annotations
 
+import importlib.metadata
 import importlib.util
 from collections.abc import Collection, Mapping, Sequence
 from types import MappingProxyType
@@ -38,6 +39,7 @@ from typing import Any, NamedTuple
 
 from decoy_engine import reasons
 from decoy_engine.detection.detectors import Span
+from decoy_engine.detection.types import validate_ner_model_name
 from decoy_engine.errors import DecoyError
 
 DEFAULT_NER_MODEL = "en_core_web_sm"
@@ -99,6 +101,16 @@ class NerUnavailableError(DecoyError):
         super().__init__(f"[{code}] {message}")
 
 
+class NerModelNameError(NerUnavailableError):
+    """`ner_model` is not a plain package name. Carries no part of the rejected value."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            code=reasons.config.NER_MODEL_INVALID,
+            message="NER model must be a plain package name (lowercase letters, digits, _).",
+        )
+
+
 def spacy_installed() -> bool:
     return importlib.util.find_spec("spacy") is not None
 
@@ -126,8 +138,35 @@ def installed_model_version(model: str = DEFAULT_NER_MODEL) -> str | None:
         return None
 
 
+def _spacy_incompatible(model: str) -> bool:
+    """True when the installed spaCy is outside the range the installed model declares.
+
+    spaCy's own helpers read the model's meta.json (`spacy_version`) and compare it, so this reads
+    no file itself and never loads the pipeline. An absent, unreadable or unparseable range is
+    not a refusal: spaCy then decides at load, as before.
+    """
+    import warnings
+
+    import spacy
+    from spacy.util import get_model_meta, get_package_path, is_compatible_version
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # get_model_meta warns on this very mismatch
+            declared = get_model_meta(get_package_path(model)).get("spacy_version")
+    except Exception:
+        return False
+    if not isinstance(declared, str) or not declared:
+        return False
+    return is_compatible_version(spacy.about.__version__, declared, prereleases=True) is False
+
+
 def ensure_ner_available(model: str = DEFAULT_NER_MODEL) -> None:
-    """Raise the typed error a config-only caller (decoy validate) needs."""
+    """Raise the typed error a config-only caller (decoy validate) needs.
+
+    The name check runs first, before any message that would carry the name is built.
+    """
+    validate_ner_model_name(model)
     if not spacy_installed():
         raise NerUnavailableError(
             code=reasons.provider.NER_SPACY_NOT_INSTALLED,
@@ -142,6 +181,15 @@ def ensure_ner_available(model: str = DEFAULT_NER_MODEL) -> None:
             message=(
                 f"text_redact `ner` model {model!r} is not installed: install its wheel "
                 "(the pinned wheels are listed in decoy_engine.detection.ner.NER_MODEL_WHEELS)."
+            ),
+        )
+    if _spacy_incompatible(model):
+        raise NerUnavailableError(
+            code=reasons.provider.NER_MODEL_INCOMPATIBLE,
+            message=(
+                f"NER model {model!r} {installed_model_version(model)} was built for another "
+                f"spaCy minor than the installed spaCy {importlib.metadata.version('spacy')}: "
+                "install the model wheel pinned for this spaCy."
             ),
         )
 
@@ -170,16 +218,19 @@ _NER_PIPE_BATCH_SIZE = 256
 # follow-up alongside sharing this config/version plumbing.)
 _NER_APPLY_WINDOW = 2048
 
-# One loaded pipeline per model name per process. Model load is ~1s. Handlers
+# One loaded pipeline per (model, installed version) per process. Model load is ~1s. Handlers
 # call iter_ner_spans_batch (nlp.pipe over a batch of cells); iter_ner_spans is
 # the single-cell path. The two reproduce the same per-doc span logic
 # independently (iter_ner_spans is kept as the batch helper's differential
-# oracle), so a change to one must be mirrored in the other.
-_PIPELINES: dict[str, Any] = {}
+# oracle), so a change to one must be mirrored in the other. Keyed by version so a model
+# upgrade inside a long-lived worker loads the new package instead of serving the old one.
+_PIPELINES: dict[tuple[str, str], Any] = {}
 
 
 def _pipeline(model: str) -> Any:
-    nlp = _PIPELINES.get(model)
+    validate_ner_model_name(model)
+    key = (model, installed_model_version(model) or "")
+    nlp = _PIPELINES.get(key)
     if nlp is None:
         ensure_ner_available(model)
         import spacy
@@ -187,8 +238,13 @@ def _pipeline(model: str) -> Any:
         # Only the NER component (and its tok2vec) runs; tagging/parsing
         # cost would be paid per cell for nothing.
         nlp = spacy.load(model, exclude=["tagger", "parser", "lemmatizer", "attribute_ruler"])
-        _PIPELINES[model] = nlp
+        _PIPELINES[key] = nlp
     return nlp
+
+
+def pipeline_version(model: str) -> str:
+    """The version of the pipeline that runs for `model`: its own `meta["version"]`, not the key."""
+    return str(_pipeline(model).meta["version"])
 
 
 def iter_ner_spans(

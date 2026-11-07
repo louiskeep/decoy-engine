@@ -79,6 +79,7 @@ _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.subset._errors", "SubsetInternalError", "runtime"),
     ("decoy_engine.providers_v2._errors", "ProviderError", "provider"),
     ("decoy_engine.providers_v2.identifiers._errors", "IdentifierError", "provider"),
+    ("decoy_engine.detection.ner", "NerModelNameError", "config"),
     ("decoy_engine.detection.ner", "NerUnavailableError", "provider"),
     ("decoy_engine.quality.carriers", "CarrierError", "quality"),
     ("decoy_engine.quality.dp", "DpError", "quality"),

@@ -7,6 +7,8 @@ from decoy_engine.reasons._types import Kind, Outcome, RetryClass, Severity
 
 __all__ = [
     "CLOUD_IO_UNSUPPORTED_FORMAT",
+    "DETECTORS_INVALID",
+    "DISMISSAL_INVALID",
     "EDGES_BAD_TYPE",
     "EDGE_BAD_TYPE",
     "EDGE_PORT_ON_NON_SPLIT",
@@ -45,6 +47,7 @@ __all__ = [
     "MASK_UNKNOWN_STRATEGY",
     "NAMESPACE_AMBIGUITY",
     "NAMESPACE_MISSING",
+    "NER_MODEL_INVALID",
     "NODES_EMPTY_LIST",
     "NODES_REF_NOT_UPSTREAM",
     "NODES_REF_UNKNOWN_ID",
@@ -56,6 +59,7 @@ __all__ = [
     "NODE_DUPLICATE_ID",
     "NODE_UNKNOWN_KIND",
     "PK_DUPLICATES",
+    "POST_SCAN_INACTIVE",
     "SOURCE_FILE_BAD_DELIMITER",
     "SOURCE_FILE_BAD_HAS_HEADER_TYPE",
     "SOURCE_FILE_BAD_ROW_LIMIT",
@@ -116,12 +120,19 @@ NAMESPACE_MISSING = _d("namespace_missing", "Namespace missing.")
 
 _d = _catalog.config("PipelineValidationError")
 
+DETECTORS_INVALID = _d("detectors_invalid", "Detectors invalid.", since="1.7.0")
+DISMISSAL_INVALID = _d("dismissal_invalid", "Dismissal invalid.", since="1.7.0")
+POST_SCAN_INACTIVE = _d("post_scan_inactive", "Post-scan inactive.", since="1.7.0")
 SOURCE_FILE_COLUMN_COUNT_MISMATCH = _d(
     "source_file.column_count_mismatch", "Source file column count mismatch."
 )
 SOURCE_FILE_LONE_CR = _d("source_file.lone_cr", "Source file lone CR.")
 SOURCE_FILE_NUL_BYTE = _d("source_file.nul_byte", "Source file NUL byte.")
 SUBSET_RUN_UNSUPPORTED = _d("subset_run_unsupported", "Subset run unsupported.", since="1.6.0")
+
+_d = _catalog.config("NerModelNameError")
+
+NER_MODEL_INVALID = _d("ner_model_invalid", "NER model invalid.", since="1.7.0")
 
 _d = _catalog.config("SubsetConfigError")
 

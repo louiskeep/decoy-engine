@@ -644,7 +644,8 @@ def _hash_config(config: dict[str, Any]) -> str:
 
     The `sources` and `targets` blocks are explicitly excluded: they
     describe data binding (where bytes come from, where bytes go) rather
-    than masking semantics. A user swapping a local file source for an
+    than masking semantics. So is `pre_scan`: it only suggests (SCAN-ML).
+    `post_scan.dismissed` stays in: under `ner_findings: fail` it decides what blocks. A user swapping a local file source for an
     S3 source does not change which columns mask how; the
     pipeline_config_hash must stay byte-identical across that swap so
     audit + reproducibility tooling can match the two runs as
@@ -654,7 +655,9 @@ def _hash_config(config: dict[str, Any]) -> str:
     stability across Python runtimes. Same masking semantics produce the
     same hash regardless of key insertion order or source/target binding.
     """
-    semantic_config = {k: v for k, v in config.items() if k not in ("sources", "targets")}
+    semantic_config = {
+        k: v for k, v in config.items() if k not in ("sources", "targets", "pre_scan")
+    }
     global_settings = semantic_config.get("global_settings")
     if isinstance(global_settings, dict) and any(
         key in global_settings for key in _NON_SEMANTIC_GLOBAL_SETTINGS
