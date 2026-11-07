@@ -184,10 +184,7 @@ from decoy_engine.profile._csv_reader import CsvDialect, read_csv_source, resolv
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
 from decoy_engine.profile._fixed_width_writer import write_fixed_width
 from decoy_engine.profiling import ColumnProfile, FieldStats, SentinelFlag, profile_columns
-from decoy_engine.profiling.model_pack._detectors import (
-    classifier_status,
-    load_detectors,
-)
+from decoy_engine.profiling.model_pack import classifier_status, load_detectors
 from decoy_engine.progress import (
     CallbackSink,
     CheckpointEvent,
