@@ -9,6 +9,22 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (V2 track, V2-5.4: edge-case test data providers, 2026-11-07; library-only, not wired into config; not merged per owner instruction)
+
+- Six `decoy_native` providers usable by name from `strategy: faker`: `edge_case_string`,
+  `edge_case_unicode`, `edge_case_integer`, `edge_case_float`, `edge_case_date` and
+  `edge_case_datetime`. Each emits awkward but type-valid values from a curated catalogue; every
+  value is checked against safety rules when the catalogue is built. No config key, strategy or
+  reason code is added; no default config, disguise or template names them.
+- One `EdgeCaseAdapter` serves all six; it declares `poolable=True` and seeds `generate_batch`
+  from the pool seed, so pools are reproducible.
+- The default registry grows from 34 to 40 providers; `docs/capability-matrix.md` and
+  `docs/proof-manifest.json` are regenerated, and the draw-site catalogue lists the new call site.
+- Merge note: the V1P-2.3 national identifier branch also edits the registry count pins (34 to
+  43), the documented-provider sets, the `gen.pool_build_faker` mirror list and its pinned digest,
+  and the generated docs. Whichever merges second takes both (count 49) and regenerates.
+  Plan: `docs/plans/2026-11-07-v2-5.4-edge-case-providers.md`.
+
 ### Breaking for consumers
 
 - `run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked`, `run_native_or_oracle_chunked` and `compile_plan` now refuse a config with `subset:` set (`config.subset_run_unsupported`, registry 1.6.0) instead of masking the full sources; run `run_subset` first.

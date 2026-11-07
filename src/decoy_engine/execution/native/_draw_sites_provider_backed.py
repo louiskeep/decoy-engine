@@ -64,11 +64,17 @@ PROVIDER_BACKED_DRAW_SITES: tuple[DrawSite, ...] = (
             "seed_instance is in the Faker adapter (providers_v2/_faker_adapter.py:224: "
             'fake.seed_instance(int.from_bytes(spec.seed, "big"))); the Mimesis adapter '
             "seeds a fresh Generic(locale, seed=int.from_bytes(spec.seed)) per batch "
-            "(providers_v2/mimesis/_adapter.py:167)."
+            "(providers_v2/mimesis/_adapter.py:167); the edge-case adapter seeds "
+            'np.random.default_rng(int.from_bytes(spec.seed, "big")) per batch and orders its '
+            "fixed catalogue by one rng.permutation per block "
+            "(providers_v2/edge_cases/_adapter.py:33). The national identifier adapter "
+            "(V1P-2.3, a separate branch) adds its own mirror to this list; whichever "
+            "merges second keeps both."
         ),
         mirror_call_sites=(
             "providers_v2/_faker_adapter.py:224",
             "providers_v2/mimesis/_adapter.py:167",
+            "providers_v2/edge_cases/_adapter.py:33",
         ),
     ),
     # -- Providers_v2: synthetic-identifier adapters -------------------------
@@ -128,7 +134,9 @@ PROVIDER_BACKED_DRAW_SITES: tuple[DrawSite, ...] = (
         notes=(
             "Every identifier adapter has two unseeded default_rng() draws: one in "
             "generate() (per row) and one in generate_batch() (per batch), across all 9 "
-            "adapters. Non-deterministic by contract (output differs run to run)."
+            "adapters. Non-deterministic by contract (output differs run to run). The "
+            "edge-case adapter's one generator construction is unseeded when a library "
+            "caller passes no spec.seed (the pool builder always passes one)."
         ),
         mirror_call_sites=(
             "providers_v2/identifiers/_ssn.py:178",
@@ -140,6 +148,7 @@ PROVIDER_BACKED_DRAW_SITES: tuple[DrawSite, ...] = (
             "providers_v2/identifiers/_mrn.py:137",
             "providers_v2/identifiers/_ndc.py:145",
             "providers_v2/identifiers/_cusip.py:196",
+            "providers_v2/edge_cases/_adapter.py:33",
         ),
     ),
 )

@@ -161,6 +161,7 @@ def get_default_registry() -> ProviderRegistry:
         # catalog (Faker + DecoyNative), then construct adapters that
         # reference the lookup.
         from decoy_engine.providers_v2._faker_adapter import FakerAdapter
+        from decoy_engine.providers_v2.edge_cases import EDGE_CASE_SPECS, EdgeCaseAdapter
         from decoy_engine.providers_v2.identifiers import (
             CusipAdapter,
             EinAdapter,
@@ -190,6 +191,9 @@ def get_default_registry() -> ProviderRegistry:
             "synthetic_iban": IbanAdapter(),
             "synthetic_cusip": CusipAdapter(),
         }
+        # Edge-case providers: one adapter per catalogue spec, registered from the spec table.
+        for edge_spec in EDGE_CASE_SPECS:
+            decoy_native_adapters[edge_spec.provider] = EdgeCaseAdapter(edge_spec)
         decoy_native_caps = {
             name: adapter.capability_matrix(name) for name, adapter in decoy_native_adapters.items()
         }

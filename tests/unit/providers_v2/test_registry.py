@@ -26,10 +26,10 @@ class TestDefaultRegistry:
     def test_has_unknown_provider_false(self) -> None:
         assert get_default_registry().has("not_a_real_provider") is False
 
-    def test_known_providers_returns_frozenset_of_34(self) -> None:
+    def test_known_providers_returns_frozenset_of_40(self) -> None:
         """19 Faker + 5 DecoyNative (S6) + 2 composite (S8) + 4 MG-1 S4
         domain providers (PAN/ICD-10/IBAN/CUSIP) + 4 MG-4 composites
-        (person/address/provider/custom) = 34. Mimesis adds more only
+        (person/address/provider/custom) + 6 edge-case providers = 40. Mimesis adds more only
         when installed AND adopted (empty by default).
 
         Drift guard: the canonical canary cell is
@@ -40,7 +40,7 @@ class TestDefaultRegistry:
         """
         known = get_default_registry().known_providers()
         assert isinstance(known, frozenset)
-        assert len(known) == 34
+        assert len(known) == 40
 
     def test_get_adapter_for_unknown_raises(self) -> None:
         with pytest.raises(ProviderError) as excinfo:
@@ -103,8 +103,8 @@ class TestFakerProviders:
 # MG-8 Step 5 (2026-05-31): single canonical canary cell.
 #
 # The 4 downstream allowlist tests (this file's per-count cell +
-# `test_capability_matrix.py::test_full_registry_has_34_entries` +
-# `mimesis/test_optional_dep.py::test_default_registry_has_34_providers` +
+# `test_capability_matrix.py::test_full_registry_has_40_entries` +
+# `mimesis/test_optional_dep.py::test_default_registry_has_40_providers` +
 # `plan/test_registry_stub.py::test_registry_contains_exactly_documented_names`)
 # are load-bearing on an exact count or an exact set, but they fail
 # AFTER the contract drifts. This cell catches the drift at the source
@@ -153,6 +153,13 @@ _DOCUMENTED_PROVIDERS: frozenset[str] = frozenset(
         "composite_address",
         "composite_provider",
         "composite_custom",
+        # Edge-case providers (6).
+        "edge_case_string",
+        "edge_case_unicode",
+        "edge_case_integer",
+        "edge_case_float",
+        "edge_case_date",
+        "edge_case_datetime",
     }
 )
 

@@ -208,6 +208,10 @@ modules:
     pattern: contextvars (PEP 567)
     source: Python PEP 567 (contextvars), PEP 3134 exception chaining
 
+  - path: src/decoy_engine/providers_v2/edge_cases/_spec.py
+    pattern: Boundary-value analysis and curated naughty-string categories
+    source: ISO/IEC/IEEE 29119-4 (BVA); Big List of Naughty Strings (MIT, category reference only); Unicode UAX #15, UAX #9, UTS #39
+
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
   # RiskFlag) was deleted under the pre-scan-reframe-C clean break

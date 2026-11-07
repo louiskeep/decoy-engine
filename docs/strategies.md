@@ -39,6 +39,44 @@ modes draw a seeded whole-column stream from the job seed.
 Use it for names, emails, phone numbers, addresses, and other fields where you
 want realistic-looking replacements rather than a redaction.
 
+**Edge-case providers (V2 track, not merged).** `edge_case_string` (ASCII text),
+`edge_case_unicode` (text), `edge_case_integer` (int64), `edge_case_float`
+(finite double), `edge_case_date` (date32) and `edge_case_datetime`
+(`timestamp[ns, tz=UTC]`) replace every value with an awkward but type-valid
+edge case from a fixed, curated catalogue: empty and whitespace strings, line
+breaks, quotes, null-like words, injection text, length limits; Unicode
+normalization pairs, right-to-left text, invisible characters, emoji and
+4-byte characters, lookalike letters; integer width limits, negative zero,
+subnormals, rounding traps; leap days, Y2038, the pandas nanosecond limits and
+daylight-saving instants. Each provider's output type does not depend on which
+values are drawn. They take no options and work with any locale (their
+`supported_locales` is empty). A pool at least as large as the catalogue holds
+every value; a small table may still not show every category.
+
+- Injection text adds no read, write, delete or network operation of its own:
+  SQL predicates are always false, there are no statement separators,
+  comments, URLs or `printf` conversions. A value spliced unquoted into your own
+  statement can still change it or cut it short; that is the bug class they
+  exist to find.
+- Strings survive pandas CSV and Parquet byte for byte. Default `read_csv`
+  reads `null`, `NA`, `NaN` and empty strings as missing, drops a
+  whitespace-only line in a one-column file, and reads some floats inexactly
+  (use `float_precision="round_trip"`).
+- With `post_validation=True`, the leakage scan treats any source value that
+  appears in the output as a leak. It compares with Python `==`, so `0`, `0.0`,
+  `-0.0` and `False` match each other; a column that already holds `0` or
+  `2024-02-29` can fail it.
+- `cardinality_mode: unique` fails once rows exceed the catalogue (20 to 80
+  values). `match_source_cardinality` and `scale_source_cardinality` return at
+  most that many distinct values without an error.
+- A nullable integer column becomes float64 (values above 2^53 lose
+  precision) and fails on the Python chunked route with
+  `chunked_schema_mismatch`; this is the shared `faker` null handling.
+- Deterministic masking needs string, integer or time-zone-aware sources, as for
+  every `faker` provider. Masking only: `generate:` mode does not reach them.
+- Not merged. The national identifier providers (V1P-2.3, a separate branch)
+  also add registry entries; once both merge the registry holds 49 providers.
+
 ### hash
 
 Produces a deterministic, joinability-preserving token:

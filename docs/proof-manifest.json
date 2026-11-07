@@ -4,7 +4,7 @@
   "surface": {
     "mask": 24,
     "generate": 12,
-    "providers": 34
+    "providers": 40
   },
   "hero": {
     "name": "HIPAA claims warehouse",
@@ -1100,6 +1100,42 @@
       "backend": "composite",
       "deterministic": false,
       "unique": true
+    },
+    {
+      "name": "edge_case_date",
+      "backend": "decoy_native",
+      "deterministic": false,
+      "unique": false
+    },
+    {
+      "name": "edge_case_datetime",
+      "backend": "decoy_native",
+      "deterministic": false,
+      "unique": false
+    },
+    {
+      "name": "edge_case_float",
+      "backend": "decoy_native",
+      "deterministic": false,
+      "unique": false
+    },
+    {
+      "name": "edge_case_integer",
+      "backend": "decoy_native",
+      "deterministic": false,
+      "unique": false
+    },
+    {
+      "name": "edge_case_string",
+      "backend": "decoy_native",
+      "deterministic": false,
+      "unique": false
+    },
+    {
+      "name": "edge_case_unicode",
+      "backend": "decoy_native",
+      "deterministic": false,
+      "unique": false
     },
     {
       "name": "lorem_text",

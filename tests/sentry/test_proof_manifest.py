@@ -64,7 +64,8 @@ def test_surface_counts_match_capability_matrix():
     # SP-10b (2026-06-28): derived_aggregate wired into generate path -> 8 + 1 = 9.
     # SP-10c (2026-06-29): grouped_series, windowed_date, group_key -> 9 + 3 = 12.
     assert surface["generate"] == 12
-    assert surface["providers"] == 34
+    # V2-5.4 (2026-11-07): six edge-case providers -> 34 + 6 = 40.
+    assert surface["providers"] == 40
 
 
 def test_hero_has_input_output_and_audit_log():

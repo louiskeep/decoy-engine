@@ -67,6 +67,13 @@ def test_registry_contains_exactly_documented_names() -> None:
             "composite_address",
             "composite_provider",
             "composite_custom",
+            # Edge-case providers (6).
+            "edge_case_string",
+            "edge_case_unicode",
+            "edge_case_integer",
+            "edge_case_float",
+            "edge_case_date",
+            "edge_case_datetime",
         }
     )
     assert expected == get_default_registry().known_providers()
