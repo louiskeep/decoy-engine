@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 import fnmatch
+import inspect
 import json
 import os
 import re
@@ -340,7 +341,7 @@ class Collected:
     """One collected test as the dump plugin saw it."""
 
     nodeid: str
-    module: str
+    source: str  # repo-relative file that defines the test function
     qualname: str
     serial: bool
 
@@ -411,7 +412,7 @@ def resource_failures(
         hits = scan(item)
         if not hits or item.serial:
             continue
-        key = f"{item.module.replace('.', '/')}.py::{item.qualname}"
+        key = f"{item.source}::{item.qualname}"
         unmarked.add(key)
         if key not in allowlist:
             kinds = ", ".join(sorted({h.kind for h in hits}))
@@ -439,13 +440,30 @@ def pytest_collectreport(report):  # type: ignore[no-untyped-def]
         _state["errors"].append({"file": str(report.nodeid), "reason": "collection error"})
 
 
+def _relative_source(fn) -> str:  # type: ignore[no-untyped-def]
+    """The repo-relative file defining `fn`; empty when there is none (a module name would not do:
+    without a package `__init__` pytest names the module by its bare file name)."""
+    if fn is None:
+        return ""
+    try:
+        src = inspect.getsourcefile(fn)
+    except TypeError:
+        return ""
+    return Path(os.path.relpath(src)).as_posix() if src else ""
+
+
 def pytest_collection_finish(session):  # type: ignore[no-untyped-def]
     for item in session.items:
         fn = getattr(item, "function", None)
+        if fn is not None:
+            try:
+                fn = inspect.unwrap(fn)  # a decorated test is scanned where it is written
+            except ValueError:
+                pass
         _state["items"].append(
             {
                 "nodeid": item.nodeid,
-                "module": getattr(fn, "__module__", ""),
+                "source": _relative_source(fn),
                 "qualname": getattr(fn, "__qualname__", ""),
                 "serial": item.get_closest_marker("serial") is not None,
             }

@@ -86,8 +86,11 @@ def test_every_host_resource_test_is_serial_or_allowlisted(
     scanner = res.Scanner(ROOT)
 
     def scan(item: res.Collected) -> frozenset[res.Hit]:
-        path = ROOT / (item.module.replace(".", "/") + ".py")
-        return scanner.hits(path, item.qualname) if path.is_file() else frozenset()
+        path = ROOT / item.source
+        if not item.source or not path.is_file():
+            assert not item.qualname, f"no source file for {item.nodeid}"
+            return frozenset()
+        return scanner.hits(path, item.qualname)
 
     failures, stale = res.resource_failures(as_items(suite), scan, allowlist())
     assert failures == [], "\n".join(failures[:40])
@@ -205,8 +208,10 @@ def test_the_scan_follows_a_helper_module_and_a_local_call(tmp_path: Path) -> No
 # --- judging: mutations of the marks and of the registry -----------------------------------
 
 
-def item(nodeid: str, serial: bool, qual: str = "test_t", module: str = "tests.x") -> res.Collected:
-    return res.Collected(nodeid, module, qual, serial)
+def item(
+    nodeid: str, serial: bool, qual: str = "test_t", source: str = "tests/x.py"
+) -> res.Collected:
+    return res.Collected(nodeid, source, qual, serial)
 
 
 def test_an_unmarked_registry_test_is_red() -> None:
