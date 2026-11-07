@@ -85,3 +85,25 @@ def test_null_index_survives_reindexing() -> None:
     report = measure_t_closeness_ordered(table, ["q"], "s")
     assert report.rows_with_null_sensitive == 2
     assert report == measure_t_closeness_ordered(plain, ["q"], "s")
+
+
+def test_order_search_runs_over_distinct_dictionaries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """500 identical chunks plus one disagreeing chunk: two distinct
+    dictionaries, so the search makes 3 subsequence checks (whole [1..4]:
+    two checks, the second fails; whole [2, 1]: one check, fails). Keyed by
+    chunk instead of dictionary contents it would make hundreds."""
+    calls: list[int] = []
+    real = classes_module._subsequence_positions
+
+    def counting(part: Any, whole: Any) -> Any:
+        calls.append(1)
+        return real(part, whole)
+
+    monkeypatch.setattr(classes_module, "_subsequence_positions", counting)
+    chunks = [_chunk([0, 3], [1.0, 2.0, 3.0, 4.0]) for _ in range(500)]
+    chunks.append(_chunk([0, 1], [2.0, 1.0]))
+    column = pa.chunked_array(chunks)
+    table = pa.table({"q": [i % 2 for i in range(len(column))], "s": column})
+    with pytest.raises(TypeError, match="'s'"):
+        measure_t_closeness_ordered(table, ["q"], "s")
+    assert len(calls) == 3
