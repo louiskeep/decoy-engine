@@ -323,6 +323,7 @@ class TestCompositeFkResolveSeparator:
 # packaging (mut_162) + boundary_conversion_ms packaging (mut_163)
 # ===========================================================================
 class TestResultTelemetryPackaging:
+    @pytest.mark.serial
     def test_timings_nonempty_and_conversion_positive_bounded(self) -> None:
         res = _run(_scalar_plan("redact"), {"t": pa.table({"a": ["x", "y"]})})
         # mut_96 binds use_collector(None) -> no records captured -> empty timings.

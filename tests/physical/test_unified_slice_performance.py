@@ -32,6 +32,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from decoy_engine.execution import run_pipeline
 from decoy_engine.execution._unified_slice import QUALITY_METRICS_KEY
@@ -62,6 +63,7 @@ def _build_source(n_rows: int) -> pa.Table:
     )
 
 
+@pytest.mark.serial
 def test_smoke_tier_output_matches_and_is_not_grossly_slower(tmp_path: Path) -> None:
     source = _build_source(_N_ROWS)
     path = write_read_only_fixture(tmp_path, source, "smoke")

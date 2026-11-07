@@ -6,6 +6,7 @@ by FAKE_* environment variables, so the stored-baseline cases run in millisecond
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -22,7 +23,8 @@ def run(
     argv: list[str], cwd: Path, check: bool = False, **extra: str
 ) -> subprocess.CompletedProcess[str]:
     # Point the scripts at the interpreter running this test so nothing is installed.
-    env = dict(os.environ, DECOY_VENV=sys.prefix) | extra
+    # One worker unless a test asks for more: `auto` would depend on the host running the tests.
+    env = dict(os.environ, DECOY_VENV=sys.prefix, GATES_WORKERS="1") | extra
     env.pop("VIRTUAL_ENV", None)
     return subprocess.run(  # noqa: S603 -- argv is test literals plus resolved tool paths
         argv, cwd=cwd, env=env, capture_output=True, text=True, timeout=600, check=check
@@ -83,15 +85,40 @@ def report_module():  # type: ignore[no-untyped-def]
 
 
 FAKE_PYTEST = """\
-import os, sys
+import json, os, sys
 from pathlib import Path
 
 argv = sys.argv[1:]
+with open(Path(__file__).with_name("argv.jsonl"), "a") as _fh:  # exact argv, spaces kept
+    _fh.write(json.dumps(argv) + "\\n")
+with open(Path(__file__).with_name("strict.log"), "a") as _fh:  # the sentry step's strictness switch
+    _fh.write(os.environ.get("DECOY_GATE_VENV_STRICT", "") + "\\n")
 if "--collect-only" in argv:
     for i in range(int(os.environ.get("FAKE_COLLECT", "0"))):
         print(f"tests/_seeded/test_gone.py::test_{i}")
     sys.exit(0)
 xml = next(a.split("=", 1)[1] for a in argv if a.startswith("--junitxml="))
+order_log = os.environ.get("FAKE_ORDER_LOG")
+if order_log:  # what the suite would read as its collection order (parallel and serial pass alike)
+    src = os.environ.get("DECOY_TEST_ORDER_FILE", "")
+    with open(order_log, "a") as fh:
+        fh.write((Path(src).read_text() if src else "unset") + "\\n")
+mark = next((argv[i + 1] for i in reversed(range(len(argv) - 1)) if argv[i] == "-m"), "")
+if mark.endswith(" and serial"):  # the serial pass of a parallel run
+    if os.environ.get("FAKE_NO_SERIAL"):
+        Path(xml).write_text('<testsuites><testsuite name="pytest" tests="0" failures="0" errors="0" skipped="0"/></testsuites>')
+        print("no tests ran in 0.01s")
+        sys.exit(5)
+    sfail = os.environ.get("FAKE_SERIAL_FAIL", "")
+    n_ok = int(os.environ.get("FAKE_SERIAL_TOTAL", "1"))
+    cases = "".join(f'<testcase classname="tests.s" name="s{i}" file="tests/s.py" time="0.5"/>' for i in range(n_ok))
+    if sfail:
+        cases += f'<testcase classname="tests.s" name="{sfail}" file="tests/s.py" time="0.5"><failure/></testcase>'
+    Path(xml).write_text(
+        f'<testsuites><testsuite name="pytest" tests="{n_ok + bool(sfail)}" failures="{int(bool(sfail))}" errors="0" skipped="0">{cases}</testsuite></testsuites>'
+    )
+    print(f"{int(bool(sfail))} failed, {n_ok} passed in 0.01s" if sfail else f"{n_ok} passed in 0.01s")
+    sys.exit(1 if sfail else 0)
 raw = os.environ.get("FAKE_FAIL", "")
 failing = raw.split("|") if "|" in raw or "[" in raw else raw.split()
 total = int(os.environ.get("FAKE_TOTAL", "5"))
@@ -192,3 +219,10 @@ def gates(clone: Path, venv: Path, *args: str, **env: str) -> tuple[int, str]:
 def pytest_calls(log: Path) -> list[list[str]]:
     lines = log.read_text().splitlines() if log.exists() else []
     return [ln.split()[1:] for ln in lines if ln.startswith("pytest ")]
+
+
+def pytest_argvs(log: Path) -> list[list[str]]:
+    """Each fake pytest call as its exact argv (a `-m` expression stays one element)."""
+    path = log.with_suffix(".jsonl")
+    lines = path.read_text().splitlines() if path.exists() else []
+    return [json.loads(ln) for ln in lines]
