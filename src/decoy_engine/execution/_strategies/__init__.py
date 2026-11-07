@@ -10,11 +10,14 @@ SP-10b adds `derived_aggregate` (intra-table scalar aggregate fill).
 SP-10c adds `grouped_series` (per-group series), `windowed_date` (bounded date
 offset from an anchor column), and `group_key` (HKDF-keyed per-group identifier).
 HC-3b adds `top_code` (numeric tail generalization, e.g. HIPAA Safe Harbor age>89).
+
+`strategy_catalog()` is the public, enumerable description of those handlers. Each handler
+declares its own catalog facts as class attributes; the function only reads them.
 """
 
 from __future__ import annotations
 
-from decoy_engine.execution._adapter import StrategyHandler
+from decoy_engine.execution._adapter import StrategyHandler, StrategyInfo, StrategyOption
 from decoy_engine.execution._strategies._bucket_perturb import BucketPerturbStrategyHandler
 from decoy_engine.execution._strategies._bucketize import BucketizeStrategyHandler
 from decoy_engine.execution._strategies._categorical import CategoricalStrategyHandler
@@ -72,6 +75,49 @@ SCALAR_HANDLERS: dict[str, StrategyHandler] = {
     )
 }
 
+# Read from each class's own `__dict__`, never by attribute lookup: an inherited default would
+# let a new handler satisfy the catalog without anyone deciding its facts.
+_CATALOG_FIELDS: dict[str, type | tuple[type, ...]] = {
+    "namespace_required": bool,
+    "join_safe": bool,
+    "wizard_options": tuple,
+    "offer_in_wizard": bool,
+}
+
+
+def _catalog_row(handler: StrategyHandler) -> StrategyInfo:
+    declared = vars(type(handler))
+    for field, expected in _CATALOG_FIELDS.items():
+        if field not in declared:
+            raise TypeError(f"strategy handler {handler.name!r} does not declare {field!r}")
+        if not isinstance(declared[field], expected):
+            raise TypeError(f"strategy handler {handler.name!r}: {field!r} has the wrong type")
+    options = declared["wizard_options"]
+    if not all(isinstance(o, StrategyOption) for o in options):
+        raise TypeError(f"strategy handler {handler.name!r}: wizard_options must hold options")
+    names = [o.name for o in options]
+    if len(set(names)) != len(names):
+        raise TypeError(f"strategy handler {handler.name!r}: duplicate option names")
+    return StrategyInfo(
+        name=handler.name,
+        namespace_required=declared["namespace_required"],
+        join_safe=declared["join_safe"],
+        options=options,
+        offer_in_wizard=declared["offer_in_wizard"],
+    )
+
+
+def strategy_catalog() -> tuple[StrategyInfo, ...]:
+    """One row per scalar strategy handler, sorted by name.
+
+    A registry of descriptors, the shape of argparse and click option metadata and of the
+    connector spec catalogs Airbyte and Singer publish: each handler declares what an operator
+    may set on it, so a front end can prompt, validate and test from this data instead of
+    keeping a parallel table.
+    """
+    return tuple(sorted((_catalog_row(h) for h in SCALAR_HANDLERS.values()), key=lambda r: r.name))
+
+
 __all__ = [
     "SCALAR_HANDLERS",
     "BucketPerturbStrategyHandler",
@@ -93,10 +139,13 @@ __all__ = [
     "PassthroughHandler",
     "RedactHandler",
     "ShuffleStrategyHandler",
+    "StrategyInfo",
+    "StrategyOption",
     "TextMaskHandler",
     "TextRedactHandler",
     "TokenizeStrategyHandler",
     "TopCodeStrategyHandler",
     "TruncateHandler",
     "WindowedDateStrategyHandler",
+    "strategy_catalog",
 ]
