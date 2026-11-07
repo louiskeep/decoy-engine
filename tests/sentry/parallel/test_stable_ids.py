@@ -17,11 +17,15 @@ def test_address_in_an_id_is_refused() -> None:
     items = [
         SimpleNamespace(nodeid="t.py::f[<list_iterator object at 0x1186e4c70>]"),
         SimpleNamespace(nodeid="t.py::g[<function f at 0x7f3a>]"),
+        SimpleNamespace(nodeid="t.py::h[<function <lambda> at 0x7f3b>]"),
+        SimpleNamespace(nodeid="t.py::k[<function outer.<locals>.f at 0x7f3c>]"),
     ]
     with pytest.raises(pytest.UsageError) as refused:
         _refuse_unstable_ids(items)  # type: ignore[arg-type]
     assert "0x1186e4c70" in str(refused.value)
     assert "0x7f3a" in str(refused.value)
+    assert "0x7f3b" in str(refused.value)
+    assert "0x7f3c" in str(refused.value)
 
 
 def test_plain_ids_pass() -> None:
