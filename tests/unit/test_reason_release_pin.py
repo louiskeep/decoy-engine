@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 from packaging.version import Version
+from scripts.release.reason_manifest_policy import since_floor_violations
 from scripts.release.reason_release_pin import PIN_PATH, pin_violations, release_pin
 
 from decoy_engine import reasons
@@ -121,15 +122,7 @@ def test_a_bumped_addition_to_the_live_catalog_passes_the_checked_in_pin() -> No
     assert pin_violations(pin, live) == []
 
 
-def since_violations(v1_pin: dict, live: dict) -> list[str]:
-    """Identities absent from the v1 pin whose ``since`` still claims the v1 version or older."""
-    pinned_ids = {(e["namespace"], e["code"]) for e in v1_pin["entries"]}
-    floor = Version(v1_pin["registry_version"])
-    return [
-        f"{e['namespace']}.{e['code']}: new since the v1 pin but claims since {e['since']}"
-        for e in live["entries"]
-        if (e["namespace"], e["code"]) not in pinned_ids and Version(e["since"]) <= floor
-    ]
+since_violations = since_floor_violations
 
 
 def test_identities_added_after_the_v1_pin_name_their_own_since() -> None:

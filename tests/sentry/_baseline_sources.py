@@ -148,6 +148,11 @@ SOURCES: tuple[Source, ...] = (
         in_code("test_exception_hierarchy.py", "_ALLOWLIST"),
     ),
     Source(
+        "reason-policy-single-source",
+        "test_reason_policy_single_source.py",
+        in_code("test_reason_policy_single_source.py", "EXEMPT"),
+    ),
+    Source(
         "file-access-entry-seams",
         "test_file_access_entry_points.py",
         in_code("test_file_access_entry_points.py", "INTERNAL_SEAMS"),
