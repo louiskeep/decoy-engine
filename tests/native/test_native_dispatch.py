@@ -1022,6 +1022,7 @@ def test_provider_config_values_reach_the_kernels_not_just_the_defaults() -> Non
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.serial
 @_NEEDS_COMPANION
 def test_kernel_evidence_accumulates_across_multiple_chunks() -> None:
     config = {

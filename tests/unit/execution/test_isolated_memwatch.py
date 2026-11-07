@@ -162,6 +162,7 @@ class TestSamplerThread:
         assert snap.samples >= 0
         assert not any(t.name == mw.THREAD_NAME and t.is_alive() for t in threading.enumerate())
 
+    @pytest.mark.serial
     def test_sampling_is_paced_by_the_interval_not_a_busy_loop(self):
         s = mw.MemorySampler(
             1, _MIB, "data", read=lambda pid, names: {"VmData": 1}, interval_s=0.05

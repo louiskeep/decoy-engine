@@ -168,25 +168,26 @@ dev = [
     # remediation 2026-06-12) is part of the default test run; without
     # this pin CI fails at collection with ModuleNotFoundError.
     "hypothesis>=6.0",
+    # Parallel suite runs: scripts/dev/gates.sh uses `-n N --dist loadfile` for the `tests`
+    # step (ENGINE-PAR P2). Part of `dev` so the lock-synced gate venv has it; the certified DP
+    # fingerprint is re-pinned in the same change (dp_provenance._CERTIFIED_STACKS).
+    "pytest-xdist>=3.5",
 ]
 # Test-Quality Program (TQ-0, 2026-07-25): coverage measurement + mutation
 # grading. pytest-cov feeds the TQ-3 diff-coverage ratchet; mutmut grades
 # whether tests catch planted bugs (the objective "adequately tested" bar).
 # Kept OUT of `dev` on purpose: the certified DP profile syncs
-# `dev+lint+vault` and its 77-dist fingerprint (dp_provenance, 895b9a20) must
+# `dev+lint+vault` and its 79-dist fingerprint (dp_provenance) must
 # stay exact, so mutmut/pytest-cov and their transitive deps (libcst, textual,
 # coverage, ...) live in this separate extra that the cert gate never installs.
 mutation = [
     "pytest-cov>=5.0",
     "mutmut>=3.0",
 ]
-# Parallel local test runs (2026-09-16). Kept OUT of `dev` on purpose, exactly
-# like `mutation` above: the certified DP profile syncs dev+lint+vault and its
-# 77-dist fingerprint (895b9a20) must stay exact, so pytest-xdist and its
-# execnet transitive dep live in this separate extra the cert gate never
-# installs. Install `.[dev,xdist]`, then `pytest tests/ -n auto`: the full suite
-# is parallel-safe and finishes in ~10 min versus over 25 min serial on a
-# 4-core box. Local convenience only; CI still runs the suite serially.
+# Compatibility alias (2026-11-07): pytest-xdist is part of `dev` now, so `.[dev,xdist]` and
+# `.[dev]` install the same set. Kept so an existing `--extra xdist` still resolves; new
+# callers use `dev`. The suite is parallel-safe through scripts/dev/gates.sh (`GATES_WORKERS`);
+# a bare `pytest -n auto` also works, but it runs the `serial` tests alongside the rest.
 xdist = [
     "pytest-xdist>=3.0",
 ]
@@ -422,7 +423,8 @@ markers = [
     "ml: Pre-scan field-recognition ML tests needing the [ml] extra (scikit-learn + lightgbm). Run by the ml-gate CI job (pytest -m ml with .[dev,ml] installed); they importorskip in the default gate where the extra is absent. Mark a new ML test module by adding pytestmark = pytest.mark.ml at module top so coverage stays automatic rather than a hand-maintained path list.",
     "ner: tests that load the real spaCy model (the [ner] extra plus the pinned en_core_web_sm wheel). Run by the ner-gate CI job (pytest -m ner). They skip when spaCy or the model is missing, as in the default gate; with DECOY_REQUIRE_NER=1 (set by ner-gate) a missing install fails instead.",
     "packaging: build-artifact tests that shell out to the wheel build frontend (DE-07 wheel-membership gate). Run by the packaging-gate CI job (pytest -m packaging with `build` installed); importorskip out of the default loop where `build` is absent.",
-    "dp_certified: requires the certified DP proof-stack (fit_dp_snapshot only completes in the 77-dist dev+lint+vault 3.10.20 profile); tests/conftest.py's pytest_collection_modifyitems skips these off that profile. Run by the dp-certified-gate CI job.",
+    "dp_certified: requires the certified DP proof-stack (fit_dp_snapshot only completes in the 79-dist dev+lint+vault 3.10.20 profile); tests/conftest.py's pytest_collection_modifyitems skips these off that profile. Run by the dp-certified-gate CI job.",
+    "serial: needs the whole host (a wall-clock budget, a process or host memory envelope, a CPU speedup ratio, an absolute thread count). scripts/dev/gates.sh runs it in a separate pass without xdist and deselects it from the parallel pass; plain `pytest` runs it like any test. Directory marks come from SERIAL_DIRS in tests/conftest.py.",
 ]
 
 # ── Tooling baseline (V2.0-prep, sprint 1) ──────────────────────────────────

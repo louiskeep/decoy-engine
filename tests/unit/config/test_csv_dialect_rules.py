@@ -233,7 +233,11 @@ def test_resolve_passes_only_the_keys_present() -> None:
     assert resolve_csv_dialect({}) == CsvDialect()
 
 
-@pytest.mark.parametrize("bad", ["ab", b"ab", 5, ("a", 1), iter(["a"])], ids=repr)
+@pytest.mark.parametrize(
+    "bad",
+    ["ab", b"ab", 5, ("a", 1), iter(["a"])],
+    ids=["str", "bytes", "int", "tuple-with-int", "iterator"],
+)
 def test_non_sequence_or_non_str_column_names_are_refused(bad: Any) -> None:
     from decoy_engine.profile._csv_reader import resolve_csv_dialect
 
