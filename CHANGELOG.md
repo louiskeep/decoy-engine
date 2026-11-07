@@ -21,10 +21,10 @@ return a regex-only set. `ensure_ner_available` now checks the model name, accep
 model distribution (a module such as `os` is refused and never imported), and refuses a model built
 for another spaCy minor (`provider.ner_model_incompatible`), at validate time instead of at load.
 `ModelPackLoadError` carries a `cause`. `detection/_ner_rate.py` holds the shared NER cell sample
-and rate. NER scores free-text columns only (median of 3 or more whitespace tokens per sampled cell)
-and flags a column at a 0.211 share of cells. A plan check that re-wraps a registered config or provider refusal now reaches consumers
-as that reason instead of `decoy.unregistered_reason`; a code registered in the raising family's own
-namespace keeps that family's record. Registry 1.7.0 adds seven reasons (see `docs/reasons.md`).
+and rate. NER scores free-text columns only (median of 3 or more whitespace tokens per sampled
+cell) and flags a column at a 0.211 share of cells. A plan check that re-wraps a registered config
+or provider refusal now reaches consumers as that reason instead of `decoy.unregistered_reason`; a
+code registered in the raising family's own namespace keeps that family's record. Registry 1.7.0 adds seven reasons (see `docs/reasons.md`).
 Nothing runs a model yet: the pre-scan, post-scan and route changes are later slices.
 
 ## [0.19.0] - 2026-11-07

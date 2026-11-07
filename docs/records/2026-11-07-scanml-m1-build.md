@@ -4,7 +4,8 @@ Status: record
 
 Date: 2026-11-07. Branch: `feat/scanml-m1`, on engine main `d46dbc85`. Plan: SCAN-ML
 (`plan/scan-ml`, `docs/plans/2026-11-07-scan-ml.md`), sections 4.1, 4.2, 4.3 (NER_MIN_RATE), 4.8,
-AT-M1a to AT-M1e, Revision 5 for the classifier placement.
+AT-M1a to AT-M1f, Revision 5 for the classifier placement, Revisions 6 and 7 for the NER
+free-text scope and `NER_MIN_RATE`.
 
 ## Problem
 
@@ -38,9 +39,10 @@ hashes.
   model is usable. `default_pack_loader(file_access=None)` is the one loader `classify_fields` and
   the status share. `ModelPackLoadError.cause` is `disabled`, `import` or `pack`, set at each raise
   site. `classify_frame` takes the pack it is given; `classify_fields` is its lenient wrapper.
-- `detection/_ner_rate.py`: `NER_SCAN_CELLS = 2_000`, the shared cell sample, the per-detector
-  rate over `iter_ner_spans_batch` (counts only, spans dropped) and the rate bucket.
-  `NER_MIN_RATE` is deliberately undefined (see below).
+- `detection/_ner_rate.py`: `NER_SCAN_CELLS = 2_000`, the shared cell sample, the free-text
+  predicate `is_free_text` (`FREE_TEXT_MIN_TOKENS = 3`), the per-detector rate over
+  `iter_ner_spans_batch` (counts only, spans dropped; `ner_rates` is the only scoring entry),
+  `NerRate.hit`, `NER_MIN_RATE = 0.211` (see below) and the rate bucket.
 - Reasons: registry 1.7.0 adds `config.detectors_invalid`, `config.post_scan_inactive`,
   `config.pre_scan_ner_inactive`, `config.ner_model_invalid`, `config.dismissal_invalid`,
   `provider.classifier_unavailable` and `provider.ner_model_incompatible`, pinned in
@@ -62,9 +64,11 @@ real-model status) and `tests/unit/profiling/` (pack cause, classifier status).
 
 Red against stubs on `decoy-test-6`: 78 failed and 40 passed in the plain venv, every failure an
 assertion or "DID NOT RAISE"; 7 failed and 2 passed for AT-M1d plus calibration in the ner and ml
-venv. Green on the final build head: sentry 4207 passed / 2 skipped; the M1 and wide set 1230
-passed / 33 skipped; ner and ml venv `-m ner` 28 passed / 2 skipped / 1 xfailed, `-m ml` 82
-passed / 2 skipped.
+venv. Green on the build head before the NER round: sentry 4207 passed / 2 skipped; the M1 and
+wide set 1230 passed / 33 skipped; ner and ml venv `-m ner` 28 passed / 2 skipped / 1 xfailed,
+`-m ml` 82 passed / 2 skipped. After the NER round (`d4b2e70f`): sentry 4210 passed / 2 skipped;
+detection_verification, config, profiling and the public API 603 passed / 29 skipped; the
+calibration test passes in the ner and ml venv and reproduces 0.211.
 
 Mutations, each reverted:
 
@@ -84,43 +88,74 @@ Mutations, each reverted:
 | upward import from detection (lazy and top level) | 1 each |
 | adapter tries the code's own namespace first | 2 (sort and dedupe keep the runtime record) |
 | adapter fallback removed | 2 (the re-wrapped NER refusals) |
+| M-M1f: `is_free_text` gate dropped in `ner_rates` | 3 (short-value columns scored) |
+| M-M1f2: `>` instead of `>=` in `is_free_text` | 6 (median-3 boundary, corpus shape, calibration) |
+| `NER_MIN_RATE` 0.212 | 3 (calibration, accepted value, boundary 211/1000) |
+| `NER_MIN_RATE` 0.210 | 3 (calibration, accepted value, boundary 210/1000) |
+| M-M1hit: `hit` uses `>` | 1 (boundary 211/1000; no measured rate is exactly 0.211) |
 
 M-M1b3 has no run path to mutate in M1; the faithful variant above stands in until M3 puts
 `classify_frame` on the run path, where it is re-run.
 
-## NER_MIN_RATE: waiting for the owner
+## NER_MIN_RATE = 0.211
 
-The Q7 rule (max of 2 x the highest false-hit rate, the highest one-sided 95% Clopper-Pearson
-upper bound, and 0.01, on the share of cells) measures 0.557 on `en_core_web_sm` 3.8.0 with spaCy
-3.8.14, above the 0.5 stop line. The constant is left undefined and its calibration test is a
-strict xfail; setting the constant and dropping the xfail makes the same test pin it. Each column
-has 2,000 cells; Clopper-Pearson uses `scipy.stats.beta.ppf(0.95, k + 1, n - k)`.
+The Q7 rule (the largest of 2 x the highest false-hit rate, the highest one-sided 95%
+Clopper-Pearson upper bound, and 0.01, on the share of cells) first measured 0.557 over every
+column shape, above the 0.5 stop line. Short name-like values drove it: bare product names hit
+`person_name` in 28% of cells. The owner then scoped NER to free-text columns (plan Revision 6): a
+column is scored only when the median whitespace-token count of its sample is at least 3
+(`is_free_text`), and any other column has no NER hit. The calibration corpus was rebuilt from
+free-text negatives only, adding prose that names companies, products, cities and streets. That
+corpus and a separate held-out corpus were committed with digests (`8f704450`) before the first
+measurement.
+
+Measured once on the frozen corpus with `en_core_web_sm` 3.8.0, 2,000 cells per column,
+Clopper-Pearson from `scipy.stats.beta.ppf(0.95, k + 1, n - k)`:
 
 | Column | Detector | Hits | Rate | Upper 95% |
 | --- | --- | --- | --- | --- |
 | redacted_notes | location | 4 | 0.0020 | 0.0046 |
 | redacted_notes | person_name | 0 | 0.0000 | 0.0015 |
-| fixture_mrn | location | 86 | 0.0430 | 0.0512 |
-| fixture_mrn | person_name | 93 | 0.0465 | 0.0550 |
-| fixture_health_plan_id | location | 176 | 0.0880 | 0.0991 |
-| fixture_health_plan_id | person_name | 162 | 0.0810 | 0.0917 |
-| fixture_iso_dates | location | 0 | 0.0000 | 0.0015 |
-| fixture_iso_dates | person_name | 0 | 0.0000 | 0.0015 |
 | faker_sentences | location | 6 | 0.0030 | 0.0059 |
 | faker_sentences | person_name | 22 | 0.0110 | 0.0157 |
 | faker_catch_phrases | location | 0 | 0.0000 | 0.0015 |
 | faker_catch_phrases | person_name | 20 | 0.0100 | 0.0145 |
 | faker_bs | location | 7 | 0.0035 | 0.0066 |
 | faker_bs | person_name | 44 | 0.0220 | 0.0282 |
-| company_names | location | 1 | 0.0005 | 0.0024 |
-| company_names | person_name | 36 | 0.0180 | 0.0237 |
-| product_names | location | 2 | 0.0010 | 0.0031 |
-| product_names | person_name | 557 | 0.2785 | 0.2955 |
-| city_names | person_name | 76 | 0.0380 | 0.0458 |
-| street_addresses | person_name | 305 | 0.1525 | 0.1663 |
+| prose_company_product | location | 14 | 0.0070 | 0.0109 |
+| prose_company_product | person_name | 169 | 0.0845 | 0.0954 |
+| prose_cities | person_name | 112 | 0.0560 | 0.0652 |
+| prose_streets | person_name | 211 | 0.1055 | 0.1175 |
 
-City and street columns are negatives for `person_name` only, because the model maps GPE, LOC
-and FAC to `location`.
+The city and street prose columns are negatives for `person_name` only, because the model maps
+GPE, LOC and FAC to `location`. Rule output: 2 x 0.1055 = 0.211; highest bound 0.1175; floor 0.01.
+
+The estimate before the measurement was about 0.044, taken from the Faker columns alone. The
+prose columns moved it: `en_core_web_sm` tags street names and product names inside sentences as
+PERSON. The value fell outside the agreed 0.02 to 0.10 band, so the build stopped there and the
+owner chose. The owner accepted 0.211 for V1 on 2026-11-07 (plan Revision 7). Options declined:
+0.118 (no 2x factor), a larger model before M1, and a narrower hit definition. Measuring
+`en_core_web_md` on the same frozen corpus is separate work, and a model swap would be its own
+slice.
+
+This is an owner spec change, not a weakened test. The rule, the corpus and the digests did not
+move after the measurement. AT-M1f now tests what 0.211 means, with the real model on 400-cell
+notes columns built from the held-out company and product templates, with a seeded Faker name
+appended to a fixed share of cells:
+
+| Case | person_name rate | Hit |
+| --- | --- | --- |
+| 1 cell in 4 names a person | 125/400 = 0.3125 | yes |
+| 1 cell in 10 names a person | 76/400 = 0.19 | no (rate stays visible) |
+| held_out_faker_sentences | 6/1000 = 0.006 | no |
+| held_out_company_product | 92/1000 = 0.092 | no |
+| held_out_places | 134/1000 = 0.134 | no |
+
+Two margins are thin. The 1-in-10 column sits 0.021 under the threshold, because the company and
+product template sentences already give about 0.09 false hits on their own. The held-out place
+prose (0.134) is above the calibration corpus's worst column (0.1055), so 2x was the factor that
+kept it under. `NerRate.hit` (`scanned_cells > 0 and rate >= NER_MIN_RATE`) is the one place a
+later slice decides a hit; a synthetic boundary test pins 211/1000 as a hit and 210/1000 as not.
 
 ## Plan deviations
 
