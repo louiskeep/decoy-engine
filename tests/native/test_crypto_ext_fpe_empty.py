@@ -220,13 +220,13 @@ def test_empty_cells_never_reach_the_transform(
     seen: list[str] = []
     real_enc, real_dec = fpe_encrypt_value, fpe_decrypt_value
 
-    def spy_enc(text: str, *args: object) -> str:
+    def spy_enc(text: str, *args: object, **kwargs: object) -> str:
         seen.append(text)
-        return real_enc(text, *args)  # type: ignore[arg-type]
+        return real_enc(text, *args, **kwargs)  # type: ignore[arg-type]
 
-    def spy_dec(text: str, *args: object) -> str:
+    def spy_dec(text: str, *args: object, **kwargs: object) -> str:
         seen.append(text)
-        return real_dec(text, *args)  # type: ignore[arg-type]
+        return real_dec(text, *args, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(_crypto_reference, "fpe_encrypt_value", spy_enc)
     monkeypatch.setattr(_crypto_reference, "fpe_decrypt_value", spy_dec)
