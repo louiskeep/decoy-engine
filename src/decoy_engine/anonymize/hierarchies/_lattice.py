@@ -106,7 +106,12 @@ class Lattice:
         return itertools.product(*(range(h + 1) for h in self._heights))
 
     def apply(self, table: pd.DataFrame | pa.Table, node: Node) -> pd.DataFrame | pa.Table:
-        """A new table with each lattice column generalized to its level in ``node``."""
+        """A new table with each lattice column generalized to its level in ``node``.
+
+        A column at level 0 is checked for coverage and left exactly as it was
+        (type, chunking, field metadata); other columns are replaced by their
+        labels, keeping the Arrow field's nullability and metadata.
+        """
         node = self._check(node)
         if isinstance(table, pd.DataFrame):
             names = list(table.columns)
@@ -123,11 +128,16 @@ class Lattice:
             error: tuple[type[Exception], str] | None = None
             try:
                 if isinstance(out, pd.DataFrame):
-                    out[name] = hierarchy.generalize(table[name], level)
+                    generalized = hierarchy.generalize(table[name], level)
+                    if level:
+                        out[name] = generalized
                 else:
                     position = names.index(name)
                     array = cast(pa.Array, hierarchy.generalize(table.column(position), level))
-                    out = out.set_column(position, pa.field(name, array.type), array)
+                    if level:
+                        # Keep the field's nullability and metadata; only the type changes.
+                        field = table.schema.field(position).with_type(array.type)
+                        out = out.set_column(position, field, array)
             except (TypeError, ValueError) as exc:
                 # Hierarchy errors are value-free; the message is kept, the chain is not.
                 error = (TypeError if isinstance(exc, TypeError) else ValueError, str(exc))

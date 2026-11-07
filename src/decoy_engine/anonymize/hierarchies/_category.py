@@ -12,7 +12,9 @@ Pattern: value generalization hierarchy (Sweeney 2002; Samarati 2001) in ARX's t
 Keys are ``str`` or ``int``. A data value matches a key only when it is equal
 and of the same type family (``decoy_engine.anonymize.type_family``), so
 ``True`` and ``1.0`` do not match key ``1`` while ``numpy.int64(1)`` does.
-Labels are ``str``. The top level (``"*"``) is added, not written in the rows.
+Labels are ``str`` and may not be ``"*"``: the top level (``"*"``) is added,
+not written in the rows, and a ``"*"`` lower down would look suppressed
+without being the single top class.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from types import MappingProxyType
 from typing import Any, ClassVar
 
 from decoy_engine.anonymize._values import type_family
-from decoy_engine.anonymize.hierarchies._base import Hierarchy
+from decoy_engine.anonymize.hierarchies._base import SUPPRESSED, Hierarchy
 
 Key = str | int
 
@@ -39,6 +41,7 @@ class CategoryHierarchy(Hierarchy):
     )
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "rows", _checked_rows(self.rows))
         lookup = {(type_family(row[0]), row[0]): tuple(row[1:]) for row in self.rows}
         object.__setattr__(self, "_lookup", MappingProxyType(lookup))
 
@@ -55,6 +58,10 @@ class CategoryHierarchy(Hierarchy):
 
 def category_hierarchy(rows: Sequence[Sequence[Key | str]]) -> CategoryHierarchy:
     """A tree given as rows ``(value, label at level 1, ..., label at level h-1)``."""
+    return CategoryHierarchy(rows=rows)  # type: ignore[arg-type]
+
+
+def _checked_rows(rows: object) -> tuple[tuple[Any, ...], ...]:
     if isinstance(rows, (str, bytes)) or not isinstance(rows, Sequence):
         raise TypeError("rows must be a sequence of rows")
     table: list[tuple[Any, ...]] = []
@@ -77,6 +84,8 @@ def category_hierarchy(rows: Sequence[Sequence[Key | str]]) -> CategoryHierarchy
         for label in row[1:]:
             if type(label) is not str:
                 raise TypeError(f"row {number}: labels must be str")
+            if label == SUPPRESSED:
+                raise ValueError(f'row {number}: "*" is reserved for the top level')
         identity = (type_family(key), key)
         if identity in seen:
             raise ValueError(f"row {number}: the value appears in an earlier row")
@@ -89,4 +98,4 @@ def category_hierarchy(rows: Sequence[Sequence[Key | str]]) -> CategoryHierarchy
                     f"not a tree: a level-{level} label maps to more than one "
                     f"level-{level + 1} label"
                 )
-    return CategoryHierarchy(rows=tuple(table))
+    return tuple(table)

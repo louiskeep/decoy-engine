@@ -12,6 +12,8 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.anonymize.hierarchies import (
+    BandHierarchy,
+    IntervalHierarchy,
     band_hierarchy,
     check_hierarchy,
     interval_hierarchy,
@@ -174,3 +176,42 @@ class TestBand:
     def test_refusals(self, cuts: object) -> None:
         with pytest.raises((TypeError, ValueError)):
             band_hierarchy(cuts)  # type: ignore[arg-type]
+
+
+class TestConstructorsValidate:
+    """The public classes validate exactly as the builders do."""
+
+    @pytest.mark.parametrize(
+        "widths",
+        [(), (5, 7), (5, 5), (10, 5), (True,), (5.0,), (0,), (np.int64(5),), "5", 5],
+    )
+    def test_interval_refusals(self, widths: object) -> None:
+        with pytest.raises((TypeError, ValueError)):
+            IntervalHierarchy(widths=widths)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize(
+        "cuts",
+        [(), ((),), ((0, 10), (5,)), ((0, 18), (0, 18)), ((18, 0),), ((True,),), "0", (5,)],
+    )
+    def test_band_refusals(self, cuts: object) -> None:
+        with pytest.raises((TypeError, ValueError)):
+            BandHierarchy(cuts=cuts)  # type: ignore[arg-type]
+
+    def test_lists_are_frozen_to_tuples(self) -> None:
+        h = IntervalHierarchy(widths=[5, 10])  # type: ignore[arg-type]
+        assert h.widths == (5, 10) and hash(h) == hash(interval_hierarchy((5, 10)))
+        b = BandHierarchy(cuts=[[0, 10], [10]])  # type: ignore[arg-type]
+        assert b.cuts == ((0, 10), (10,)) and hash(b) == hash(band_hierarchy(((0, 10), (10,))))
+
+
+@pytest.mark.skipif(np.dtype(np.longdouble).itemsize <= 8, reason="longdouble is a double here")
+def test_long_double_covered_only_when_a_double_holds_it() -> None:
+    h = interval_hierarchy((5,))
+    third = np.longdouble(1) / np.longdouble(3)
+    assert float(third) != third
+    for cells in ([np.longdouble(3), 3.0], [3.0, np.longdouble(3)]):
+        assert labels(h.generalize(obj(cells), 1)) == ["[0, 5)", "[0, 5)"]
+    for cells in ([third, 3.0], [3.0, third]):
+        assert check_hierarchy(h, obj(cells)).rows_not_covered == 1
+    typed = pd.Series([np.longdouble(3), third], dtype=np.longdouble)
+    assert check_hierarchy(h, typed).rows_not_covered == 1

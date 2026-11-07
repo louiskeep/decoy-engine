@@ -35,6 +35,11 @@ class PrefixHierarchy(Hierarchy):
     keep: tuple[int, ...]
     kind: ClassVar[str] = "prefix"
 
+    def __post_init__(self) -> None:
+        length, keep = _checked(self.length, self.keep)
+        object.__setattr__(self, "length", length)
+        object.__setattr__(self, "keep", keep)
+
     @property
     def height(self) -> int:
         return len(self.keep) + 1
@@ -59,23 +64,26 @@ def prefix_hierarchy(length: int, *, keep: Sequence[int] | None = None) -> Prefi
     decreasing within ``1..length-1``; the default keeps one character fewer
     at each level.
     """
+    if keep is None and type(length) is int:
+        keep = tuple(range(length - 1, 0, -1))
+    return PrefixHierarchy(length=length, keep=keep)  # type: ignore[arg-type]
+
+
+def _checked(length: object, keep: object) -> tuple[int, tuple[int, ...]]:
     if type(length) is not int:
         raise TypeError("length must be an int (not bool, float or a numpy scalar)")
     if length < 2:
         raise ValueError("length must be at least 2")
-    if keep is None:
-        kept = tuple(range(length - 1, 0, -1))
-    else:
-        if isinstance(keep, (str, bytes)) or not isinstance(keep, Sequence):
-            raise TypeError("keep must be a sequence of ints")
-        kept = tuple(keep)
-        if not kept:
-            raise ValueError("keep must name at least one level")
-        for size in kept:
-            if type(size) is not int:
-                raise TypeError("keep must hold ints (not bool, float or a numpy scalar)")
-            if not 1 <= size <= length - 1:
-                raise ValueError(f"keep values must be between 1 and {length - 1}")
-        if any(b >= a for a, b in itertools.pairwise(kept)):
-            raise ValueError("keep must be strictly decreasing")
-    return PrefixHierarchy(length=length, keep=kept)
+    if isinstance(keep, (str, bytes)) or not isinstance(keep, Sequence):
+        raise TypeError("keep must be a sequence of ints")
+    kept = tuple(keep)
+    if not kept:
+        raise ValueError("keep must name at least one level")
+    for size in kept:
+        if type(size) is not int:
+            raise TypeError("keep must hold ints (not bool, float or a numpy scalar)")
+        if not 1 <= size <= length - 1:
+            raise ValueError(f"keep values must be between 1 and {length - 1}")
+    if any(b >= a for a, b in itertools.pairwise(kept)):
+        raise ValueError("keep must be strictly decreasing")
+    return length, kept

@@ -11,8 +11,12 @@ Labels use the value's own wall-time year and month: ``"2024-03"``,
 pandas ``Period`` spelling for years 1000-9999). A tz-aware value is labelled
 in its own zone; an object column must hold one zone (checked in the base).
 Covered values: ``datetime.date``, ``datetime.datetime``, ``pandas.Timestamp``
-and ``numpy.datetime64`` within the pandas timestamp range. Strings are not
-parsed and are not covered.
+and ``numpy.datetime64`` that pandas can hold as a ``Timestamp`` (non-nanosecond
+units reach far beyond year 9999; years above 9999 print with more digits).
+Arrow date and timestamp columns are read as ``numpy.datetime64`` (a tz-aware
+column first as its local wall time), so the pandas and Arrow routes label
+the same and an unrepresentable value is counted as uncovered, never raised.
+Strings are not parsed and are not covered.
 """
 
 from __future__ import annotations
@@ -49,8 +53,11 @@ def _year_month(value: Any) -> tuple[int, int] | None:
 class DateHierarchy(Hierarchy):
     """Calendar levels, a subsequence of ``("month", "quarter", "year")``."""
 
-    levels: tuple[str, ...]
+    levels: tuple[str, ...] = DATE_LEVELS
     kind: ClassVar[str] = "date"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "levels", _checked_levels(self.levels))
 
     @property
     def height(self) -> int:
@@ -75,6 +82,10 @@ class DateHierarchy(Hierarchy):
 
 def date_hierarchy(levels: Sequence[str] = DATE_LEVELS) -> DateHierarchy:
     """Calendar levels, in the order month, quarter, year (any non-empty subsequence)."""
+    return DateHierarchy(levels=levels)  # type: ignore[arg-type]
+
+
+def _checked_levels(levels: object) -> tuple[str, ...]:
     if isinstance(levels, (str, bytes)) or not isinstance(levels, Sequence):
         raise TypeError("levels must be a sequence of level names")
     chosen = tuple(levels)
@@ -86,4 +97,4 @@ def date_hierarchy(levels: Sequence[str] = DATE_LEVELS) -> DateHierarchy:
     positions = [DATE_LEVELS.index(name) for name in chosen]
     if any(b <= a for a, b in itertools.pairwise(positions)):
         raise ValueError("levels must be in the order month, quarter, year, without repeats")
-    return DateHierarchy(levels=chosen)
+    return chosen

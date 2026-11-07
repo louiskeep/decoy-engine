@@ -120,3 +120,28 @@ def test_apply_refusals_name_column_only() -> None:
 def test_constructor_refusals(mapping: object) -> None:
     with pytest.raises((TypeError, ValueError)):
         Lattice(mapping)  # type: ignore[arg-type]
+
+
+def test_apply_arrow_keeps_level_zero_columns_and_field_metadata() -> None:
+    schema = pa.schema(
+        [
+            pa.field("age", pa.int64(), nullable=False, metadata={b"unit": b"years"}),
+            pa.field("zip", pa.string(), metadata={b"source": b"crm"}),
+        ]
+    )
+    table = pa.Table.from_batches(
+        [
+            pa.record_batch([pa.array([17, 34]), pa.array(["02134", "90210"])], schema=schema),
+            pa.record_batch([pa.array([51]), pa.array(["02139"])], schema=schema),
+        ]
+    )
+    lattice = Lattice({"age": AGE, "zip": ZIP})
+    out = lattice.apply(table, (2, 0))
+    assert out.column("zip").num_chunks == 2 and out.column("zip").equals(table.column("zip"))
+    assert out.schema.field("zip") == schema.field("zip")
+    assert out.schema.field("zip").metadata == {b"source": b"crm"}
+    age = out.schema.field("age")
+    assert (age.type, age.nullable, age.metadata) == (pa.string(), False, {b"unit": b"years"})
+    assert out.column("age").to_pylist() == ["[10, 20)", "[30, 40)", "[50, 60)"]
+    pandas_out = lattice.apply(table.to_pandas(), (0, 1))
+    assert pandas_out["age"].tolist() == [17, 34, 51]

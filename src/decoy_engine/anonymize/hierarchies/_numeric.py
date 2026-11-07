@@ -21,8 +21,9 @@ division can round across a bound for values above 2**53 and for subnormals,
 which would put a value outside its own label and split classes across
 levels.
 
-Covered values: ints and finite floats (Python or numpy). ``bool``,
-``Decimal``, text and infinities are not covered.
+Covered values: ints and finite floats (Python or numpy). A float wider than
+64 bits (``numpy.longdouble``) is covered only when a double holds it exactly.
+``bool``, ``Decimal``, text and infinities are not covered.
 """
 
 from __future__ import annotations
@@ -33,6 +34,8 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
+
+import numpy as np
 
 from decoy_engine.anonymize._values import type_family
 from decoy_engine.anonymize.hierarchies._base import Hierarchy
@@ -47,6 +50,10 @@ def _as_number(value: Any) -> Number | None:
         return int(value)
     if family == "float":
         number = float(value)
+        if isinstance(value, np.floating) and value.dtype.itemsize > 8 and number != value:
+            # A wider float that a double cannot hold exactly would be rounded;
+            # equal values share this outcome, so row order cannot change it.
+            return None
         return number if math.isfinite(number) else None
     return None
 
@@ -74,6 +81,9 @@ class IntervalHierarchy(Hierarchy):
     widths: tuple[int, ...]
     kind: ClassVar[str] = "interval"
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "widths", _checked_widths(self.widths))
+
     @property
     def height(self) -> int:
         return len(self.widths) + 1
@@ -98,6 +108,9 @@ class BandHierarchy(Hierarchy):
     cuts: tuple[tuple[Number, ...], ...]
     kind: ClassVar[str] = "band"
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "cuts", _checked_cuts(self.cuts))
+
     @property
     def height(self) -> int:
         return len(self.cuts) + 1
@@ -120,6 +133,15 @@ class BandHierarchy(Hierarchy):
 
 def interval_hierarchy(widths: Sequence[int]) -> IntervalHierarchy:
     """Fixed-width intervals; each width a multiple (at least 2) of the previous one."""
+    return IntervalHierarchy(widths=widths)  # type: ignore[arg-type]
+
+
+def band_hierarchy(cuts: Sequence[Sequence[Number]]) -> BandHierarchy:
+    """Bands between cut points; each coarser level's cuts a proper subset of the finer one's."""
+    return BandHierarchy(cuts=cuts)  # type: ignore[arg-type]
+
+
+def _checked_widths(widths: object) -> tuple[int, ...]:
     if isinstance(widths, (str, bytes)) or not isinstance(widths, Sequence):
         raise TypeError("widths must be a sequence of ints")
     checked = tuple(widths)
@@ -133,11 +155,10 @@ def interval_hierarchy(widths: Sequence[int]) -> IntervalHierarchy:
     for finer, coarser in itertools.pairwise(checked):
         if coarser % finer or coarser // finer < 2:
             raise ValueError("each width must be a multiple (at least 2) of the previous width")
-    return IntervalHierarchy(widths=checked)
+    return checked
 
 
-def band_hierarchy(cuts: Sequence[Sequence[Number]]) -> BandHierarchy:
-    """Bands between cut points; each coarser level's cuts a proper subset of the finer one's."""
+def _checked_cuts(cuts: object) -> tuple[tuple[Number, ...], ...]:
     if isinstance(cuts, (str, bytes)) or not isinstance(cuts, Sequence):
         raise TypeError("cuts must be a sequence of cut-point sequences")
     levels: list[tuple[Number, ...]] = []
@@ -162,4 +183,4 @@ def band_hierarchy(cuts: Sequence[Sequence[Number]]) -> BandHierarchy:
             raise ValueError(
                 "each level's cut points must be a proper subset of the previous level's"
             )
-    return BandHierarchy(cuts=tuple(levels))
+    return tuple(levels)

@@ -155,6 +155,9 @@ def distinct_values(column: object) -> Distinct:
             return Distinct(codes, uniques, "pandas", column.index, column.name)
         if column.dtype == object:
             codes, uniques = _object_codes(column)
+        elif column.dtype.kind == "f" and column.dtype.itemsize > 8:
+            # pandas factorizes long doubles as doubles, merging distinct values.
+            codes, uniques = _object_codes(column.astype(object))
         else:
             codes, uniques = _typed_codes(column)
         return Distinct(codes, uniques, "pandas", column.index, column.name)
@@ -216,12 +219,24 @@ def _arrow_codes(column: pa.Array | pa.ChunkedArray) -> tuple[IntArray, list[Any
             array = pc.if_else(nan, pa.scalar(None, array.type), array)  # type: ignore[attr-defined, unused-ignore]
         encoded = array.dictionary_encode()
         codes = pc.fill_null(encoded.indices, -1).to_numpy(zero_copy_only=False)
-        uniques = encoded.dictionary.to_pylist()
+        uniques = _arrow_uniques(encoded.dictionary)
     except _READ_ERRORS:
         failed = True
     if failed:
         raise TypeError("column values could not be read")
     return np.asarray(codes, dtype=np.int64), list(uniques)
+
+
+def _arrow_uniques(dictionary: pa.Array) -> list[Any]:
+    kind = dictionary.type
+    if pa.types.is_timestamp(kind) or pa.types.is_date(kind):
+        # numpy datetime64, as pandas reads the same column, so both routes
+        # label alike and a far-out value is uncovered rather than unreadable;
+        # a tz-aware column is read as its local wall time.
+        if pa.types.is_timestamp(kind) and kind.tz is not None:
+            dictionary = pc.local_timestamp(dictionary)  # type: ignore[attr-defined, unused-ignore]
+        return list(dictionary.to_numpy(zero_copy_only=False))
+    return list(dictionary.to_pylist())
 
 
 def _combined(column: pa.Array | pa.ChunkedArray) -> pa.Array:
@@ -257,8 +272,12 @@ def zone_key(tz: datetime.tzinfo | None) -> str | None:
 def _check_one_zone(cells: npt.NDArray[np.object_], nulls: npt.NDArray[np.bool_]) -> None:
     zones: set[str | None] = set()
     for row, cell in enumerate(cells):
-        if not nulls[row] and isinstance(cell, datetime.datetime):
+        if nulls[row]:
+            continue
+        if isinstance(cell, datetime.datetime):
             zones.add(zone_key(cell.tzinfo))
+        elif isinstance(cell, np.datetime64):
+            zones.add(None)  # numpy datetimes carry no zone: naive
     if len(zones) > 1:
         raise TypeError(
             "column holds datetimes in mixed time zones (or naive mixed with aware); "
@@ -272,7 +291,10 @@ def _check_one_zone(cells: npt.NDArray[np.object_], nulls: npt.NDArray[np.bool_]
 def _identity(column: Column) -> Column:
     if isinstance(column, pd.Series):
         return column.copy()
-    return _combined(column)
+    if isinstance(column, pa.ChunkedArray):
+        # Kept as typed (dictionaries stay encoded), as for a plain Array.
+        return column.combine_chunks()
+    return column
 
 
 def _wrap(out: npt.NDArray[np.object_], distinct: Distinct) -> Column:

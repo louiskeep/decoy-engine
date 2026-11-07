@@ -42,7 +42,8 @@ SAMPLES: dict[str, tuple[Callable[[], Hierarchy], list[Any], Any]] = {
 }  # fmt: skip
 
 
-def _kinds() -> set[type]:
+def _subclasses() -> set[type]:
+    """Every Hierarchy subclass the package defines, abstract ones included."""
     for module in pkgutil.iter_modules(package.__path__):
         importlib.import_module(f"{package.__name__}.{module.name}")
     found: set[type] = set()
@@ -53,13 +54,13 @@ def _kinds() -> set[type]:
         # dataclass(slots=True) replaces the class it decorates; the discarded
         # original can linger in __subclasses__, so keep the module's binding.
         home = sys.modules.get(cls.__module__)
-        if (
-            cls.__module__.startswith(package.__name__)
-            and getattr(home, cls.__name__, None) is cls
-            and not getattr(cls, "__abstractmethods__", None)
-        ):
+        if cls.__module__.startswith(package.__name__) and getattr(home, cls.__name__, None) is cls:
             found.add(cls)
     return found
+
+
+def _kinds() -> set[type]:
+    return {cls for cls in _subclasses() if not getattr(cls, "__abstractmethods__", None)}
 
 
 def _builds_a_hierarchy(obj: object) -> bool:
@@ -71,8 +72,8 @@ def _builds_a_hierarchy(obj: object) -> bool:
 
 
 def overriders(classes: Sequence[type]) -> list[type]:
-    """Kinds that define their own generalize (bypassing the choke point)."""
-    return [cls for cls in classes if "generalize" in vars(cls)]
+    """Classes whose generalize is not the base one, by normal attribute lookup."""
+    return [cls for cls in classes if cls.generalize is not Hierarchy.generalize]  # type: ignore[attr-defined]
 
 
 def test_walk_sees_every_kind_and_each_has_a_builder() -> None:
@@ -84,16 +85,33 @@ def test_walk_sees_every_kind_and_each_has_a_builder() -> None:
     assert len(kinds) == 5
 
 
-def test_no_kind_overrides_generalize() -> None:
-    assert overriders(sorted(_kinds(), key=lambda c: c.__name__)) == []
+def test_no_subclass_overrides_generalize() -> None:
+    assert overriders(sorted(_subclasses(), key=lambda c: c.__name__)) == []
 
 
-def test_guard_sees_a_seeded_bypass() -> None:
-    class Bypass(package.IntervalHierarchy):
+def test_guard_sees_a_seeded_bypass_on_an_intermediate_class() -> None:
+    class Middle(Hierarchy):
+        __slots__ = ()
+
         def generalize(self, column: Any, level: int) -> Any:
             return column
 
-    assert overriders([Bypass]) == [Bypass]
+    class Leaf(Middle):
+        __slots__ = ()
+        kind = "leaf"
+
+        @property
+        def height(self) -> int:
+            return 1
+
+        def _covers(self, value: Any) -> bool:
+            return True
+
+        def _labels(self, values: Sequence[Any], level: int) -> list[str]:
+            return []
+
+    assert "generalize" not in vars(Leaf)
+    assert overriders([Leaf]) == [Leaf]
 
 
 def _arrow(values: list[Any]) -> pa.Array:
@@ -159,3 +177,15 @@ def test_level_argument_checked() -> None:
             h.generalize(pd.Series([1]), level)  # type: ignore[arg-type]
     with pytest.raises(TypeError):
         h.generalize([1, 2], 1)  # type: ignore[arg-type, unused-ignore]
+
+
+def test_level_zero_keeps_arrow_dictionaries_encoded() -> None:
+    h = package.prefix_hierarchy(3)
+    plain = pa.array(["abc", "abd", None]).dictionary_encode()
+    chunked = pa.chunked_array(
+        [pa.array(["abc"]).dictionary_encode(), pa.array(["abd", None]).dictionary_encode()]
+    )
+    for column in (plain, chunked):
+        out = h.generalize(column, 0)
+        assert isinstance(out, pa.Array) and pa.types.is_dictionary(out.type)
+        assert out.to_pylist() == ["abc", "abd", None]

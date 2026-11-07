@@ -6,7 +6,11 @@ import numpy as np
 import pyarrow as pa
 import pytest
 
-from decoy_engine.anonymize.hierarchies import category_hierarchy, check_hierarchy
+from decoy_engine.anonymize.hierarchies import (
+    CategoryHierarchy,
+    category_hierarchy,
+    check_hierarchy,
+)
 
 from ._cols import labels, obj
 
@@ -70,3 +74,17 @@ def test_not_a_tree_names_the_level_only() -> None:
 def test_refusals(rows: object) -> None:
     with pytest.raises((TypeError, ValueError)):
         category_hierarchy(rows)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "rows", [(), [("a",)], [("a", "x"), ("a", "y")], [("a", "g", "t1"), ("b", "g", "t2")]]
+)
+def test_constructor_refusals(rows: object) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        CategoryHierarchy(rows=rows)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("rows", [[("a", "*")], [("a", "*", "t")], [("a", "g", "*")]])
+def test_star_label_refused(rows: list[tuple[str, ...]]) -> None:
+    with pytest.raises(ValueError, match="reserved for the top level"):
+        category_hierarchy(rows)

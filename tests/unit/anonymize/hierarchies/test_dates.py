@@ -11,7 +11,7 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
-from decoy_engine.anonymize.hierarchies import check_hierarchy, date_hierarchy
+from decoy_engine.anonymize.hierarchies import DateHierarchy, check_hierarchy, date_hierarchy
 
 from ._cols import labels, obj
 
@@ -125,3 +125,31 @@ def test_month_year_only() -> None:
 def test_refusals(levels: object) -> None:
     with pytest.raises((TypeError, ValueError)):
         date_hierarchy(levels)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("levels", [(), ("week",), ("year", "month"), "month"])
+def test_constructor_refusals(levels: object) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        DateHierarchy(levels=levels)  # type: ignore[arg-type]
+    assert DateHierarchy() == date_hierarchy()
+
+
+def test_far_dates_label_alike_on_both_routes() -> None:
+    h = date_hierarchy()
+    arrow = pa.array([3_000_000, None], pa.date32())  # 10183-09-21
+    pandas = pd.Series(arrow.to_numpy(zero_copy_only=False)).astype("datetime64[s]")
+    for level, expected in ((1, "10183-09"), (2, "10183Q3"), (3, "10183")):
+        assert labels(h.generalize(arrow, level)) == [expected, None]
+        assert labels(h.generalize(pandas, level)) == [expected, None]
+    stamps = pa.array([2**62], pa.timestamp("s"))
+    report = check_hierarchy(h, stamps)
+    assert report.rows_not_covered == 0  # read as datetime64, labelled, never raised
+    assert labels(h.generalize(stamps, 3)) == ["146138514283"]
+
+
+@pytest.mark.parametrize("first", [True, False])
+def test_numpy_datetime64_counts_as_naive(first: bool) -> None:
+    cells = [np.datetime64("2024-04-01"), datetime.datetime(2024, 4, 1, tzinfo=UTC)]
+    column = obj(cells if first else cells[::-1])
+    with pytest.raises(TypeError, match="mixed time zones"):
+        date_hierarchy().generalize(column, 1)

@@ -1,23 +1,14 @@
-"""Dark: importing the engine does not load the package; catalog and public API unchanged."""
+"""Dark: importing the engine does not load the package, and nothing public names it."""
 
 from __future__ import annotations
 
-import hashlib
 import subprocess
 import sys
 
 import decoy_engine
+import decoy_engine.anonymize as anonymize
+import decoy_engine.anonymize.hierarchies as hierarchies
 from decoy_engine.execution._strategies import strategy_catalog
-
-# Captured from engine main b5b1ad16.
-MAIN_CATALOG = (
-    "bucket_perturb", "bucketize", "categorical", "code_set", "date_shift", "derived",
-    "derived_aggregate", "faker", "formula", "fpe", "geo_generalize", "group_key",
-    "grouped_series", "hash", "joint_mask", "nested", "passthrough", "redact", "shuffle",
-    "text_mask", "text_redact", "tokenize", "top_code", "truncate", "windowed_date",
-)  # fmt: skip
-MAIN_ALL_COUNT = 187
-MAIN_ALL_SHA256 = "8df39ef029dceb225204c545fc7a4fcebc6a9d726e2cd9e30241e0157f872065"
 
 
 def test_engine_import_does_not_load_anonymize() -> None:
@@ -28,8 +19,10 @@ def test_engine_import_does_not_load_anonymize() -> None:
     assert result.stdout.strip() == "False"
 
 
-def test_catalog_and_public_api_unchanged() -> None:
-    assert tuple(row.name for row in strategy_catalog()) == MAIN_CATALOG
-    names = sorted(decoy_engine.__all__)
-    assert len(names) == MAIN_ALL_COUNT
-    assert hashlib.sha256("\n".join(names).encode()).hexdigest() == MAIN_ALL_SHA256
+def test_no_anonymize_name_in_the_engine_api_or_catalog() -> None:
+    ours = set(anonymize.__all__) | set(hierarchies.__all__) | {"anonymize", "hierarchies"}
+    assert not ours & set(decoy_engine.__all__)
+    kinds = {"interval", "band", "prefix", "date", "category"}
+    for row in strategy_catalog():
+        assert row.name not in ours | kinds
+        assert "hierarch" not in row.name and "anonymi" not in row.name

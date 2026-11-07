@@ -6,7 +6,7 @@ import numpy as np
 import pyarrow as pa
 import pytest
 
-from decoy_engine.anonymize.hierarchies import check_hierarchy, prefix_hierarchy
+from decoy_engine.anonymize.hierarchies import PrefixHierarchy, check_hierarchy, prefix_hierarchy
 
 from ._cols import labels, obj
 
@@ -59,3 +59,16 @@ def test_arrow_inputs(array: pa.Array) -> None:
 def test_refusals(length: object, keep: object) -> None:
     with pytest.raises((TypeError, ValueError)):
         prefix_hierarchy(length, keep=keep)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("length", "keep"),
+    [(1, (1,)), (True, (1,)), (5, ()), (5, (5,)), (5, (2, 3)), (5, "3"), (5, None)],
+)
+def test_constructor_refusals(length: object, keep: object) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        PrefixHierarchy(length=length, keep=keep)  # type: ignore[arg-type]
+
+
+def test_constructor_matches_builder() -> None:
+    assert PrefixHierarchy(length=5, keep=[4, 3, 2, 1]) == prefix_hierarchy(5)  # type: ignore[arg-type]
