@@ -335,6 +335,8 @@ class StrategyOption:
     `location` is `column` for a top-level `ColumnConfig` field, `provider_config` for a key of
     the free-form `provider_config` mapping, and `provider_config.ner` for a member of its `ner`
     mapping (written without the `ner_` name prefix).
+
+    `example` is test data chosen to differ from the handler default; it is never a prompt prefill.
     """
 
     name: str

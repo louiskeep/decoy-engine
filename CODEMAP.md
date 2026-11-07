@@ -126,6 +126,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `tests/` | `unit/`, `integration/golden/`, `integration/compat_corpus/`, `parity/`, `perf/`, `perf_fixtures/`, `benchmark/`, `privacy/`, `security/`, `sentry/`, `connectors/`, `snapshots/` |
 | `tests/integration/compat_corpus/` | Cross-version compatibility corpus: locked artifacts a later engine must still read (compatibility-contract section 3.1/3.2); `regenerate.py` mints the baseline |
 | `tests/sentry/ci_scan/` | CI sentry helpers shared byte-for-byte with the CLI repository: `_shell_tokens.py` (shell-command parsing), `_identity.py` (cross-repository identity fetch and compare), `test_identity.py`. The ledger is `SHARED_LEDGER` in `tests/sentry/test_ci_lock_installs.py`; a new CI scan helper goes here, not in the flat `tests/sentry/` directory. |
+| `tests/unit/strategy_catalog/` | The public strategy catalog tests (G-CATALOG): per-handler declarations, the independent expected option table, behavioral option probes. New catalog tests go here, not in the flat `tests/unit/` directory. |
 | `scripts/` | Dev/CI scripts; includes `check_compat_preflight.py` (compat pre-flight gate) and `prove_regression.py` (bugfix regression-proof gate) |
 | `docs/` | Local engine docs (security notes, parity, the compatibility contract, in-repo index). Active planning lives in the commercial platform repo. |
 | `.pytest_cache/`, `__pycache__/`, `logs/`, `mappings/` | Ignore generated/runtime content |

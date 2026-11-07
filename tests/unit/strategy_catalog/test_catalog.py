@@ -608,6 +608,16 @@ def test_a_deterministic_column_is_stable_across_run_seeds(name: str, tmp_path: 
     assert first == second
 
 
+def test_a_deterministic_categorical_column_maps_equal_inputs_to_equal_outputs(
+    tmp_path: Path,
+) -> None:
+    # A non-deterministic column keys on row position, so equal inputs at different rows differ.
+    values = pa.array([f"v{i % 7}" for i in range(70)])
+    out = _run(_entry(_row("categorical")), values, tmp_path)["val"].to_pylist()
+    assert all(out[i] == out[i % 7] for i in range(70))
+    assert len(set(out)) > 1
+
+
 def test_a_deterministic_faker_column_maps_equal_inputs_to_equal_outputs(tmp_path: Path) -> None:
     # The faker pool is built from the run seed, so only the same-seed guarantee holds.
     entry = _entry(_row("faker"))
