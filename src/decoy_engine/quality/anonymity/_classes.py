@@ -194,6 +194,16 @@ def _subsequence_positions(part: pa.Array, whole: pa.Array) -> npt.NDArray[np.in
     return positions
 
 
+def _reindexed(
+    chunk: pa.DictionaryArray, positions: IntArray, whole: pa.Array
+) -> pa.DictionaryArray:
+    valid = chunk.indices.is_valid().to_numpy(zero_copy_only=False)
+    raw = pc.fill_null(chunk.indices, 0).to_numpy(zero_copy_only=False)
+    mapped = positions[raw] if positions.size else np.zeros(raw.shape[0], dtype=np.int64)
+    indices = pa.array(mapped, type=chunk.indices.type, mask=~valid)
+    return pa.DictionaryArray.from_arrays(indices, whole, ordered=True)
+
+
 def _reconcile_ordered_chunks(
     chunks: list[pa.DictionaryArray], field: pa.Field
 ) -> tuple[list[pa.DictionaryArray], pa.Field]:
@@ -204,24 +214,31 @@ def _reconcile_ordered_chunks(
     different dictionaries). When one chunk's dictionary holds every other
     chunk's entries in the same relative order, all chunks are re-indexed onto
     it. Otherwise no order is defined, and the column is marked unordered, so
-    the ordered-distance path refuses it while the other measures, which do not
-    use order, still accept it.
+    the ordered-distance path refuses it.
+
+    Chunk dictionaries are deduplicated first, so the search is over distinct
+    dictionaries only (one, for the usual repeated row-group dictionary).
     """
-    dictionaries = [chunk.dictionary for chunk in chunks]
-    if all(d.equals(dictionaries[0]) for d in dictionaries[1:]):
+    distinct: dict[tuple[Any, ...], pa.Array] = {}
+    keys = []
+    for chunk in chunks:
+        key = tuple(chunk.dictionary.to_pylist())
+        distinct.setdefault(key, chunk.dictionary)
+        keys.append(key)
+    if len(distinct) == 1:
         return chunks, field
-    for whole in sorted(dictionaries, key=len, reverse=True):
-        rebuilt = []
-        for chunk in chunks:
-            positions = _subsequence_positions(chunk.dictionary, whole)
-            if positions is None:
+    for whole in sorted(distinct.values(), key=len, reverse=True):
+        positions: dict[tuple[Any, ...], IntArray] = {}
+        for key, dictionary in distinct.items():
+            found = _subsequence_positions(dictionary, whole)
+            if found is None:
                 break
-            valid = chunk.indices.is_valid().to_numpy(zero_copy_only=False)
-            raw = pc.fill_null(chunk.indices, 0).to_numpy(zero_copy_only=False)
-            mapped = positions[raw] if positions.size else np.zeros(raw.shape[0], dtype=np.int64)
-            indices = pa.array(mapped, type=chunk.indices.type, mask=~valid)
-            rebuilt.append(pa.DictionaryArray.from_arrays(indices, whole, ordered=True))
+            positions[key] = found
         else:
+            rebuilt = [
+                _reindexed(chunk, positions[key], whole)
+                for chunk, key in zip(chunks, keys, strict=True)
+            ]
             return rebuilt, field
     unordered = pa.dictionary(field.type.index_type, field.type.value_type, ordered=False)
     relabelled = [
@@ -231,24 +248,33 @@ def _reconcile_ordered_chunks(
     return relabelled, field.with_type(unordered)
 
 
-def _clean_dictionaries(table: pa.Table) -> pa.Table:
+def _clean_dictionaries(table: pa.Table, ordered: frozenset[str]) -> pa.Table:
     for position, field in enumerate(table.schema):
         if pa.types.is_dictionary(field.type):
             column = table.column(position)
             chunks = [_without_null_dictionary_entries(chunk) for chunk in column.chunks]
-            if field.type.ordered and len(chunks) > 1:
+            if field.name in ordered and field.type.ordered and len(chunks) > 1:
                 chunks, field = _reconcile_ordered_chunks(chunks, field)
             table = table.set_column(position, field, pa.chunked_array(chunks, type=field.type))
     return table
 
 
-def read_columns(table: pd.DataFrame | pa.Table, columns: tuple[str, ...]) -> pd.DataFrame:
-    """The named columns as pandas, converted losslessly; value-free on failure."""
+def read_columns(
+    table: pd.DataFrame | pa.Table,
+    columns: tuple[str, ...],
+    ordered: frozenset[str] = frozenset(),
+) -> pd.DataFrame:
+    """The named columns as pandas, converted losslessly; value-free on failure.
+
+    ``ordered`` names the columns whose category order is read (the ordered
+    t-closeness sensitive column); only their chunked ordered dictionaries are
+    reconciled, since every other use factorizes by value.
+    """
     if isinstance(table, pd.DataFrame):
         return table.loc[:, list(columns)]
     failed = False
     try:
-        selected = _clean_dictionaries(table.select(list(columns)))
+        selected = _clean_dictionaries(table.select(list(columns)), ordered)
         frame = selected.to_pandas(types_mapper=_arrow_type_mapper)
     except _CELL_ERRORS:
         failed = True

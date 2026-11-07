@@ -165,25 +165,35 @@ def _ordered_emd(counts: SensitiveCounts, measured: IntArray) -> npt.NDArray[np.
     return _divide(sums[measured], n_c[measured] * total * (m - 1))
 
 
+@dataclass(frozen=True)
+class _GroundDistanceKernel:
+    """Everything one ground distance decides: how sensitive cells are coded,
+    how the EMD is evaluated, and whether category order is read."""
+
+    name: GroundDistance
+    codes_of: Callable[[pd.Series, str], IntArray]
+    emd_of: Callable[[SensitiveCounts, IntArray], npt.NDArray[np.float64]]
+    reads_order: bool
+
+
 def _measure(
     table: pd.DataFrame | pa.Table,
     quasi_identifiers: Sequence[str],
     sensitive: str,
     t_target: float | None,
-    ground_distance: GroundDistance,
-    codes_of: Callable[[pd.Series, str], IntArray],
-    emd_of: Callable[[SensitiveCounts, IntArray], npt.NDArray[np.float64]],
+    kernel: _GroundDistanceKernel,
 ) -> TClosenessReport:
     columns = check_columns(table, quasi_identifiers, sensitive)
     t = check_unit_interval("t_target", t_target)
-    frame = read_columns(table, columns)
-    sensitive_series = frame.iloc[:, -1]
-    codes = codes_of(sensitive_series, sensitive)
+    frame = read_columns(
+        table, columns, frozenset({sensitive}) if kernel.reads_order else frozenset()
+    )
+    codes = kernel.codes_of(frame.iloc[:, -1], sensitive)
     classes = equivalence_classes(frame, columns[:-1])
     counts = sensitive_counts(classes, codes)
     unmeasured = counts.class_totals == 0
     measured = np.flatnonzero(~unmeasured).astype(np.int64)
-    emds = emd_of(counts, measured) if measured.size else np.zeros(0)
+    emds = kernel.emd_of(counts, measured) if measured.size else np.zeros(0)
 
     above: int | None = None
     above_rows: int | None = None
@@ -196,7 +206,7 @@ def _measure(
         meets = _verdict(classes, above, int(unmeasured.sum()))
 
     return TClosenessReport(
-        ground_distance=ground_distance,
+        ground_distance=kernel.name,
         row_count=int(classes.sizes.sum()),
         class_count=classes.count,
         classes_measured=int(measured.size),
@@ -220,6 +230,10 @@ def _verdict(classes: Classes, above: int, unmeasured: int) -> bool | None:
     return True
 
 
+_EQUAL = _GroundDistanceKernel("equal", sensitive_family_codes, _equal_emd, reads_order=False)
+_ORDERED = _GroundDistanceKernel("ordered", ordered_sensitive_codes, _ordered_emd, reads_order=True)
+
+
 def measure_t_closeness_equal(
     table: pd.DataFrame | pa.Table,
     quasi_identifiers: Sequence[str],
@@ -232,9 +246,7 @@ def measure_t_closeness_equal(
     Sensitive cells are keyed by type family, as quasi-identifiers are:
     merging ``1``, ``1.0`` and ``True`` into one value could only lower the
     distance."""
-    return _measure(
-        table, quasi_identifiers, sensitive, t_target, "equal", sensitive_family_codes, _equal_emd
-    )
+    return _measure(table, quasi_identifiers, sensitive, t_target, _EQUAL)
 
 
 def measure_t_closeness_ordered(
@@ -246,12 +258,4 @@ def measure_t_closeness_ordered(
 ) -> TClosenessReport:
     """t-closeness with ordered ground distance. ``sensitive`` must be numeric,
     decimal, temporal, or an ordered categorical / ordered Arrow dictionary."""
-    return _measure(
-        table,
-        quasi_identifiers,
-        sensitive,
-        t_target,
-        "ordered",
-        ordered_sensitive_codes,
-        _ordered_emd,
-    )
+    return _measure(table, quasi_identifiers, sensitive, t_target, _ORDERED)
