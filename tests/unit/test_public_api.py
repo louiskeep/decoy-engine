@@ -267,6 +267,12 @@ def test_all_lists_every_public_name():
         # can be materialized without importing the private
         # `profile._fixed_width_writer` module.
         "write_fixed_width",
+        # decoy-run-result/v1 model and outcome (RESULT E1).
+        "RUN_RESULT_SCHEMA",
+        "RunResult",
+        "RunResultRead",
+        "derive_outcome",
+        "pipeline_config_hash",
         # CLI-DIALECT (2026-11): the one CSV source reader, its dialect type and
         # the descriptor-to-dialect resolver.
         "CsvDialect",
