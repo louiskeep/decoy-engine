@@ -9,6 +9,19 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (generalization hierarchies, V2 track)
+
+V2 track (V2-3.1 in `docs/roadmap/v2-sprints.md`, louiskeep/decoy), built ahead, opt-in by import only;
+not merged per owner instruction. `decoy_engine.anonymize.hierarchies` builds per-column generalization
+hierarchies for quasi-identifiers: `interval_hierarchy` (fixed widths), `band_hierarchy` (cut points),
+`prefix_hierarchy` (fixed-length codes such as ZIPs), `date_hierarchy` (month, quarter, year) and
+`category_hierarchy` (a user tree). Levels run from 0 (the value) to the top (`"*"` for every row);
+coarser levels only merge classes, and a label depends only on the value. `check_hierarchy` reports
+coverage, classes per level and monotonicity without values; `Lattice` gives the level vectors a search
+walks and applies one to a pandas or Arrow table. `decoy_engine.anonymize.type_family` is the shared
+value-identity rule (`1`, `1.0` and `True` are three values). No config key, strategy, catalog row,
+planner check or reason code is added, and `import decoy_engine` does not load the package.
+
 ### Added (strategy catalog)
 
 `decoy_engine.strategy_catalog()` returns one `StrategyInfo` row per scalar strategy, sorted by name, with its
