@@ -35,6 +35,8 @@ from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.kernel import truncate_array
 from decoy_engine.plan._types import ColumnSeed
 
+_KEEP_SIDES = ("head", "tail")
+
 
 class TruncateHandler:
     """Keep the first `length` chars of each value (or last, if from_end).
@@ -55,7 +57,7 @@ class TruncateHandler:
     join_safe: bool = False
     wizard_options: tuple[StrategyOption, ...] = (
         option("length", "int", 3, required=True),
-        option("keep", "str", "head", choices=("head", "tail")),
+        option("keep", "str", "head", choices=_KEEP_SIDES),
         option("mask_char", "str", "*"),
     )
     offer_in_wizard: bool = True
@@ -87,7 +89,7 @@ class TruncateHandler:
         keep = cfg.get("keep")
         if keep is None:
             keep = "tail" if from_end_legacy else "head"
-        if keep not in ("head", "tail"):
+        if keep not in _KEEP_SIDES:
             raise StrategyError(
                 code=reasons.runtime.TRUNCATE_KEEP_INVALID,
                 strategy="truncate",

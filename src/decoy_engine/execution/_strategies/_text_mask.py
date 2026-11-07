@@ -70,7 +70,8 @@ class TextMaskHandler:
             "unmatched_span_policy",
             "str",
             "redact",
-            choices=("redact", "passthrough", "replace_with_token"),
+            # A wizard must not offer leaving unmatched text unmasked; hand-edited configs still can.
+            choices=("redact", "replace_with_token"),
         ),
         *NER_WIZARD_OPTIONS,
     )

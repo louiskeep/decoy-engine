@@ -68,7 +68,7 @@ class BucketizeStrategyHandler:
     join_safe: bool = False
     wizard_options: tuple[StrategyOption, ...] = (
         option("width", "int", 10, required=True),
-        option("format", "str", "range", choices=("lower", "range", "midpoint")),
+        option("format", "str", "range", choices=tuple(sorted(_FORMATS))),
     )
     offer_in_wizard: bool = True
 

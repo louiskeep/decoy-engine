@@ -28,6 +28,7 @@ from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.transforms.bucket_perturb import (
+    VALID_BUCKETS,
     apply_bucket_perturb,
     validate_bucket_perturb_config,
 )
@@ -72,7 +73,7 @@ class BucketPerturbStrategyHandler:
     namespace_required: bool = True
     join_safe: bool = False
     wizard_options: tuple[StrategyOption, ...] = (
-        option("bucket", "str", "month", choices=("week", "month", "quarter")),
+        option("bucket", "str", "month", choices=tuple(sorted(VALID_BUCKETS))),
         option("date_format", "str", "%Y-%m-%d"),
     )
     offer_in_wizard: bool = True

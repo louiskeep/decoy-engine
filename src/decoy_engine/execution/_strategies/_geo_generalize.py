@@ -35,6 +35,7 @@ from decoy_engine.transforms.geo_generalize import (
     _H3_LEVELS,
     _SUPPORTED_TYPES,
     _ZIP_LEVELS,
+    HIPAA_K_THRESHOLD,
     GeoGeneralizeConfig,
     cascade_latlng_column,
     cascade_zip_column,
@@ -69,7 +70,7 @@ class GeoGeneralizeHandler:
             required=True,
             choices=tuple(sorted(_ZIP_LEVELS | _H3_LEVELS)),
         ),
-        option("k_threshold", "int", 5),
+        option("k_threshold", "int", HIPAA_K_THRESHOLD),
     )
     offer_in_wizard: bool = True
 

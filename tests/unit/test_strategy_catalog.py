@@ -1,10 +1,10 @@
 """The public strategy catalog: declarations on the handlers, and the rows built from them.
 
-AT-E0a: every handler declares the four catalog attributes in its own class body, so no
-inherited default can stand in for a decision, and `strategy_catalog()` has one row per handler.
-AT-E0b: every offered row builds a column entry from its own examples that validates, compiles
-and runs on that strategy's existing fixture data; dropping a required option or misplacing an
-option fails; the join-safe set is the injective, deterministic pair the native FK route trusts.
+Every handler declares the four catalog attributes in its own class body, so no inherited
+default can stand in for a decision, and `strategy_catalog()` has one row per handler.
+Every offered row builds a column entry from its own examples that validates, compiles and runs
+on that strategy's existing fixture data; dropping a required option or misplacing an option
+fails; the join-safe set is the injective, deterministic pair the native FK route trusts.
 Option-value refusals (wrong type, unknown option, invalid choice) belong to the entry builder
 that consumes the catalog, not to this module.
 """
@@ -21,6 +21,10 @@ import pytest
 import decoy_engine
 from decoy_engine import DecoyError
 from decoy_engine.detection.ner import NER_ENTITY_MAP, model_installed, spacy_installed
+from decoy_engine.execution._chunked_fk_vocab import (
+    CHUNK_SAFE_STRATEGIES,
+    NAMESPACE_REQUIRING_STRATEGIES,
+)
 from decoy_engine.execution._sequential_native import _KEY_STRATEGIES
 from decoy_engine.execution._strategies import (
     SCALAR_HANDLERS,
@@ -138,7 +142,7 @@ def _run(entry: dict[str, Any], values: pa.Array, tmp_path: Path) -> pa.Table:
     return support.run_full_frame(cfg, source).outputs[support.TABLE]
 
 
-# --- AT-E0a ---------------------------------------------------------------------------------
+# --- declarations and rows ---------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("name", sorted(SCALAR_HANDLERS))
@@ -264,7 +268,7 @@ def test_ner_options_are_declared_once_on_the_two_text_strategies() -> None:
         assert ner[1].choices == entities == ("location", "person_name")
 
 
-# --- AT-E0b ---------------------------------------------------------------------------------
+# --- offered rows build and run ---------------------------------------------------------------------------------
 
 
 def test_the_offered_set_is_the_sixteen_simple_strategies() -> None:
@@ -323,6 +327,11 @@ def test_an_option_moved_to_the_column_level_is_refused(name: str, moved: str) -
         support.make_cfg([entry])
 
 
+def test_the_chunked_fk_namespace_set_is_the_namespace_required_chunk_safe_rows() -> None:
+    expected = {i.name for i in CATALOG if i.namespace_required} & CHUNK_SAFE_STRATEGIES
+    assert expected == NAMESPACE_REQUIRING_STRATEGIES == {"hash", "fpe", "date_shift"}
+
+
 def test_the_native_key_strategies_are_the_join_safe_rows() -> None:
     assert set(_KEY_STRATEGIES) == {i.name for i in CATALOG if i.join_safe} == JOIN_SAFE
 
@@ -358,9 +367,7 @@ def test_hash_without_a_namespace_fails_with_its_own_error(tmp_path: Path) -> No
     del entry["namespace"]
     with pytest.raises(DecoyError) as caught:
         _run(entry, _source("hash"), tmp_path)
-    assert "hash_requires_namespace" in str(caught.value) or (
-        getattr(caught.value, "code", None) == "hash_requires_namespace"
-    )
+    assert caught.value.code == "hash_requires_namespace"  # type: ignore[attr-defined]
 
 
 # Strategies whose example needs a namespace to run; code_set reads it only in gen mode.
@@ -384,8 +391,9 @@ def test_code_set_needs_a_namespace_only_in_gen_mode(tmp_path: Path) -> None:
     del entry["namespace"]
     _run(entry, _source("code_set"), tmp_path)
     entry["provider_config"]["mode"] = "gen"
-    with pytest.raises(DecoyError):
+    with pytest.raises(DecoyError) as caught:
         _run(entry, _source("code_set"), tmp_path)
+    assert caught.value.code == "code_set_gen_requires_namespace"  # type: ignore[attr-defined]
 
 
 def test_strategies_that_never_read_a_namespace_run_without_one(tmp_path: Path) -> None:
