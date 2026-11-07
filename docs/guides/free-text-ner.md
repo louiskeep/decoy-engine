@@ -78,8 +78,11 @@ Non-English models work through the same key -- `de_core_news_sm`,
 `es_core_news_sm`, the multilingual `xx_ent_wiki_sm` -- because both the
 OntoNotes label scheme (`PERSON`/`GPE`/`LOC`/`FAC`, used by English models)
 and the WikiNER scheme (`PER`/`LOC`, used by most non-English models) map onto
-the same `person_name`/`location` detector ids. Install any additional model
-the same way: `python -m spacy download de_core_news_sm`.
+the same `person_name`/`location` detector ids. Only `en_core_web_sm` has an
+engine pin. For any other model, choose a version from the spaCy models
+releases, record that wheel's SHA-256 in your deployment, check the downloaded
+file against it, and install it with `pip install --no-deps <file>`, so every
+environment runs the same model version.
 
 ## What it detects
 
