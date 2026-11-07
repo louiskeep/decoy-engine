@@ -34,6 +34,7 @@ from __future__ import annotations
 import importlib.metadata
 import importlib.util
 from collections.abc import Collection, Mapping, Sequence
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, NamedTuple
 
@@ -115,9 +116,19 @@ def spacy_installed() -> bool:
     return importlib.util.find_spec("spacy") is not None
 
 
-def model_installed(model: str = DEFAULT_NER_MODEL) -> bool:
-    """True when the model package is importable (cheap; no model load)."""
-    return importlib.util.find_spec(model) is not None
+def _distribution(model: str) -> importlib.metadata.Distribution | None:
+    try:
+        return importlib.metadata.distribution(model)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _model_meta_file(dist: importlib.metadata.Distribution, model: str) -> Path | None:
+    """The `meta.json` a spaCy model wheel installs inside its package, found from the dist's RECORD."""
+    for entry in dist.files or ():
+        if entry.parts == (model, "meta.json"):
+            return Path(str(dist.locate_file(entry)))
+    return None
 
 
 def installed_model_version(model: str = DEFAULT_NER_MODEL) -> str | None:
@@ -130,30 +141,49 @@ def installed_model_version(model: str = DEFAULT_NER_MODEL) -> str | None:
     byte-stability needs the version pinned and recorded, not just the
     model named.
     """
-    import importlib.metadata
+    dist = _distribution(model)
+    return (dist.version or None) if dist is not None else None
 
+
+def model_installed(model: str = DEFAULT_NER_MODEL) -> bool:
+    """True when `model` is an installed distribution that ships a spaCy `meta.json`.
+
+    A module that merely imports (`os`, `json`, `this`) is not a model, and nothing is imported
+    to decide: the answer comes from the distribution metadata alone.
+    """
+    dist = _distribution(model)
+    return dist is not None and bool(dist.version) and _model_meta_file(dist, model) is not None
+
+
+def _import_spacy() -> tuple[Any, str | None]:
+    """Import spaCy; on failure return the exception class name so the caller raises outside `except`."""
     try:
-        return importlib.metadata.version(model)
-    except importlib.metadata.PackageNotFoundError:
-        return None
+        import spacy
+    except (
+        Exception
+    ) as exc:  # a broken install fails at import with any error, not just ImportError
+        return None, type(exc).__name__
+    return spacy, None
 
 
-def _spacy_incompatible(model: str) -> bool:
+def _spacy_incompatible(spacy: Any, model: str) -> bool:
     """True when the installed spaCy is outside the range the installed model declares.
 
-    spaCy's own helpers read the model's meta.json (`spacy_version`) and compare it, so this reads
-    no file itself and never loads the pipeline. An absent, unreadable or unparseable range is
-    not a refusal: spaCy then decides at load, as before.
+    spaCy's own helpers read the model's meta.json (`spacy_version`) and compare it. An absent,
+    unreadable or unparseable range is not a refusal: spaCy then decides at load, as before.
     """
     import warnings
 
-    import spacy
-    from spacy.util import get_model_meta, get_package_path, is_compatible_version
+    from spacy.util import get_model_meta, is_compatible_version
 
+    dist = _distribution(model)
+    meta_file = _model_meta_file(dist, model) if dist is not None else None
+    if meta_file is None:
+        return False
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")  # get_model_meta warns on this very mismatch
-            declared = get_model_meta(get_package_path(model)).get("spacy_version")
+            declared = get_model_meta(meta_file.parent).get("spacy_version")
     except Exception:
         return False
     if not isinstance(declared, str) or not declared:
@@ -164,7 +194,8 @@ def _spacy_incompatible(model: str) -> bool:
 def ensure_ner_available(model: str = DEFAULT_NER_MODEL) -> None:
     """Raise the typed error a config-only caller (decoy validate) needs.
 
-    The name check runs first, before any message that would carry the name is built.
+    The name check runs first, before any message that would carry the name is built. Nothing
+    but spaCy itself is imported: an installed model is recognised from its metadata.
     """
     validate_ner_model_name(model)
     if not spacy_installed():
@@ -183,12 +214,21 @@ def ensure_ner_available(model: str = DEFAULT_NER_MODEL) -> None:
                 "(the pinned wheels are listed in decoy_engine.detection.ner.NER_MODEL_WHEELS)."
             ),
         )
-    if _spacy_incompatible(model):
+    spacy, failure = _import_spacy()
+    if spacy is None:
+        raise NerUnavailableError(
+            code=reasons.provider.NER_SPACY_NOT_INSTALLED,
+            message=(
+                f"spaCy is installed but cannot be imported ({failure}): reinstall it with "
+                "pip install --force-reinstall 'decoy-engine[ner]'."
+            ),
+        )
+    if _spacy_incompatible(spacy, model):
         raise NerUnavailableError(
             code=reasons.provider.NER_MODEL_INCOMPATIBLE,
             message=(
                 f"NER model {model!r} {installed_model_version(model)} was built for another "
-                f"spaCy minor than the installed spaCy {importlib.metadata.version('spacy')}: "
+                f"spaCy minor than the installed spaCy {spacy.about.__version__}: "
                 "install the model wheel pinned for this spaCy."
             ),
         )
@@ -229,11 +269,12 @@ _PIPELINES: dict[tuple[str, str], Any] = {}
 
 def _pipeline(model: str) -> Any:
     validate_ner_model_name(model)
-    key = (model, installed_model_version(model) or "")
-    nlp = _PIPELINES.get(key)
+    nlp = _PIPELINES.get((model, installed_model_version(model) or ""))
     if nlp is None:
         ensure_ner_available(model)
         import spacy
+
+        key = (model, installed_model_version(model) or "")
 
         # Only the NER component (and its tok2vec) runs; tagging/parsing
         # cost would be paid per cell for nothing.
