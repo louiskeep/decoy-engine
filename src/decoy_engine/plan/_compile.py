@@ -44,6 +44,7 @@ from typing import Any
 # to 4: the formula sandbox `hash()` function swapped from legacy
 # deterministic_hash to keyed HMAC-SHA256 via _formula_hash_keyed. Bumping
 # requires a release-notes line per done-definition.md.
+from decoy_engine.config._subset_run import refuse_unapplied_subset
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._checks import (
@@ -134,6 +135,7 @@ def compile_plan(
             ordering) run regardless: they do not consume distinct counts.
 
     Raises:
+        PipelineValidationError: `config` sets `subset:`.
         PlanCompileError: if any of the five S1 compile-time checks fails.
             The error carries `code`, `path`, and `message` for downstream
             UI rendering.
@@ -170,6 +172,7 @@ def compile_plan(
         check_orphan_fk_policy_completeness,
     )
 
+    refuse_unapplied_subset(config)
     namespace_registry = build_namespace_registry(config, profile)
     check_unknown_provider(config)
     # Row 11 (audit H5, 2026-06-12): structural (config + registry only),
