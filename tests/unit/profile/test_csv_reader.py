@@ -28,6 +28,7 @@ from decoy_engine.fileaccess import (
     Root,
     RootedFileAccess,
 )
+from decoy_engine.fileaccess._openat2 import openat2_usable
 from decoy_engine.fileaccess.adapters import pandas as pandas_adapter
 from decoy_engine.profile import _csv_reader
 from decoy_engine.profile._csv_reader import CsvDialect, read_csv_source, resolve_csv_dialect
@@ -101,6 +102,8 @@ def _file_source(path: Path, case: Case) -> CsvFileSource:
 
 
 def _rooted(root: Path) -> tuple[RootedFileAccess, int]:
+    if not openat2_usable():
+        pytest.skip("rooted file access needs Linux openat2")
     fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     roots = [Root("main", fd, frozenset({FileRole.SOURCE}), frozenset({"read", "stat"}))]
     return RootedFileAccess(roots), fd
