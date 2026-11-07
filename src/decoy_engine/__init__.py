@@ -25,6 +25,12 @@ Public API (the contract CLI and platform code depend on):
                       or ConfigError. Exported so a `format: fixed_width`
                       FileSource can be read without importing the private
                       `profile._fixed_width_reader` module directly.
+    read_csv_source / CsvDialect / resolve_csv_dialect:
+                      (decoy_engine.profile._csv_reader) the one CSV source
+                      reader: a file read under its declared dialect (header or
+                      `column_names`, delimiter), with a fail-closed width scan
+                      for headerless files. `resolve_csv_dialect(descriptor)`
+                      turns a source descriptor into the `CsvDialect`.
     RELEASE_PHASE / ReleasePhase / is_pre_ga:
                       (decoy_engine.release) the single pre-GA/GA switch the rule
                       inversions and CI gates read. Pre-GA: hard-delete is allowed
@@ -113,6 +119,7 @@ from decoy_engine.execution import (
     select_execution_adapter,
 )
 from decoy_engine.execution._chunked import run_mask_pipeline_chunked
+from decoy_engine.execution._strategies import StrategyInfo, StrategyOption, strategy_catalog
 from decoy_engine.execution._transforms_table import apply_table_transforms
 from decoy_engine.execution.native._chunked_entry import run_mask_chunked
 from decoy_engine.execution.native._companion_status import (
@@ -157,12 +164,18 @@ from decoy_engine.keyprovider import (
     SeedKeyProvider,
     WeakMaskSecret,
 )
-from decoy_engine.plan import compile_plan, job_seed_for_config, run_config_only_checks
+from decoy_engine.plan import (
+    compile_plan,
+    job_seed_for_config,
+    pipeline_config_hash,
+    run_config_only_checks,
+)
 from decoy_engine.plan.validate import (
     PlanCheckError,
     PlanValidationResult,
     validate_plan,
 )
+from decoy_engine.profile._csv_reader import CsvDialect, read_csv_source, resolve_csv_dialect
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
 from decoy_engine.profile._fixed_width_writer import write_fixed_width
 from decoy_engine.profiling import ColumnProfile, FieldStats, SentinelFlag, profile_columns
@@ -238,6 +251,7 @@ from decoy_engine.relationships import (
     check_orphan_fk_policy_completeness,
 )
 from decoy_engine.release import RELEASE_PHASE, ReleasePhase, is_pre_ga
+from decoy_engine.run_result import RUN_RESULT_SCHEMA, RunResult, RunResultRead, derive_outcome
 
 # Connector SDK.
 from decoy_engine.sdk import (
@@ -314,7 +328,7 @@ _F9_KEPT_BINDINGS = (
     SsnValidator,
 )
 
-__version__ = "0.18.0"
+__version__ = "0.19.0"
 
 __all__ = [
     "CAP_DRY_RUN",
@@ -324,6 +338,7 @@ __all__ = [
     "CAP_SIGNED_URL",
     "CAP_STREAMING",
     "RELEASE_PHASE",
+    "RUN_RESULT_SCHEMA",
     "SDK_VERSION",
     "SEED_PROTOCOL_VERSION",
     "VALIDATION_CODES",
@@ -349,6 +364,7 @@ __all__ = [
     "ConnectorAuthError",
     "ConnectorConfig",
     "ConnectorError",
+    "CsvDialect",
     "DecoyError",
     "DetectorMatch",
     "DeterminismError",
@@ -412,6 +428,8 @@ __all__ = [
     "RetryEvent",
     "RetryInfo",
     "RouteEvent",
+    "RunResult",
+    "RunResultRead",
     "SecretCachePolicy",
     "SecretDescriptor",
     "SecretKeyProvider",
@@ -422,6 +440,8 @@ __all__ = [
     "SeedKeyProvider",
     "SentinelFlag",
     "StrategyError",
+    "StrategyInfo",
+    "StrategyOption",
     "StructuredEvents",
     "StructuredEventsSink",
     "TelemetryClient",
@@ -452,6 +472,7 @@ __all__ = [
     "composite_provider",
     "derive",
     "derive_index",
+    "derive_outcome",
     "derive_value",
     "emit_fidelity",
     "emit_lineage",
@@ -473,7 +494,9 @@ __all__ = [
     "load_vault",
     "make_key_resolver",
     "native_companion_status",
+    "pipeline_config_hash",
     "profile_columns",
+    "read_csv_source",
     "read_fixed_width",
     "reason_from_exception",
     "reasons_from_report",
@@ -481,12 +504,14 @@ __all__ = [
     "register_faker_provider",
     "register_faker_provider_v2",
     "register_secret_provider",
+    "resolve_csv_dialect",
     "run_config_only_checks",
     "run_discovery_sql",
     "run_mask_chunked",
     "run_mask_pipeline_chunked",
     "run_pipeline",
     "select_execution_adapter",
+    "strategy_catalog",
     "unmask_pipeline",
     "unregister_faker_provider",
     "validate_config",

@@ -361,9 +361,10 @@ intact. Deterministic by construction. This is what lets you sanitize a
   Non-English models work through the same key: `de_core_news_sm`,
   `es_core_news_sm`, and the multilingual `xx_ent_wiki_sm` emit WikiNER-style
   `PER`/`LOC` labels, which map onto the same `person_name`/`location`
-  detector ids. Install models separately
-  (`python -m spacy download de_core_news_sm`) and PIN the model package
-  version in deployments that need byte-stable output across environments:
+  detector ids. Install models separately as version-pinned wheels checked
+  against a SHA-256 (the engine pins `en_core_web_sm` in `NER_MODEL_WHEELS`;
+  for other models the deployment owns the version and hash), because
+  byte-stable output across environments needs one model version:
   NER output is deterministic per model version, and the compiled plan stamps
   the installed version (`ner_model_version`) for the audit trail.
 

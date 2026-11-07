@@ -31,6 +31,13 @@ _KEY_CHARS = 60
 
 # (release, the entry's first 60 normalized characters) -> why it is not a separate break.
 TRIAGED: dict[tuple[str, str], str] = {
+    ("0.19.0", "A column can now declare `logical_type`, `parse_format`, `se"): (
+        "new opt-in feature: a route refuses only a job that declares casting, "
+        "a config that does not is unchanged (PLAN_VERSION is in the Breaking list)"
+    ),
+    ("0.19.0", "`decoy_engine.read_csv_source(path, dialect, *, table, dtype"): (
+        "Breaking: a column_names that is not a list or tuple of strings is refused"
+    ),
     ("0.18.0", "- Output: versus 3.10 output, at least one threshold moves i"): (
         "Breaking: weighted categorical masking moves masked output"
     ),

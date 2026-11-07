@@ -131,6 +131,11 @@ SOURCES: tuple[Source, ...] = (
         "tests/sentry/file_access_modules.toml",
         toml_keys("tests/sentry/file_access_modules.toml"),
     ),
+    Source(
+        "reason-unchecked-helpers",
+        "tests/sentry/baselines/reason-unchecked-helpers.json",
+        in_code("test_reason_registry.py", "UNCHECKED_HELPERS"),
+    ),
     Source("module-size", "test_module_size.py", in_code("test_module_size.py", "ALLOWLIST")),
     Source(
         "public-import-boundary",
@@ -141,6 +146,11 @@ SOURCES: tuple[Source, ...] = (
         "exception-hierarchy",
         "test_exception_hierarchy.py",
         in_code("test_exception_hierarchy.py", "_ALLOWLIST"),
+    ),
+    Source(
+        "reason-policy-single-source",
+        "test_reason_policy_single_source.py",
+        in_code("test_reason_policy_single_source.py", "EXEMPT"),
     ),
     Source(
         "file-access-entry-seams",
