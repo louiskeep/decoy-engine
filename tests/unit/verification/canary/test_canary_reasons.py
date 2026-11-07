@@ -1,4 +1,4 @@
-"""A4: the 12 canary reasons are registered under `verification`, in order, at an unreleased version."""
+"""A4: the 12 canary reasons are registered under `verification`, in order, at one registry version."""
 
 from __future__ import annotations
 
@@ -58,16 +58,26 @@ def test_twelve_reasons_registered_under_verification_in_order() -> None:
     assert reasons.check_integrity() == []
 
 
-def test_since_is_unreleased_registry_version() -> None:
-    pinned = json.loads(PIN.read_text())["registry_version"]
-    live = reasons.REGISTRY_VERSION
-    assert Version(live) > Version(pinned)
+def test_since_is_unreleased_or_frozen_by_the_release_pin() -> None:
+    pin = json.loads(PIN.read_text())
+    pinned, live = pin["registry_version"], reasons.REGISTRY_VERSION
+    assert Version(live) >= Version(pinned)
     specs = _canary_specs()
+    if any(Version(s.since) <= Version(pinned) for s in specs):
+        # A release has shipped them: they shipped together, and the release pin counts all 12 at
+        # that version, so test_reason_release_pin.py freezes them from here on.
+        assert {s.since for s in specs} == {specs[0].since}
+        assert pin["since_counts"].get(specs[0].since, 0) >= len(specs)
+    else:
+        assert _since_violations(specs, pinned, live) == []
+
+
+def test_since_violations_flags_a_released_or_future_version() -> None:
+    # Fixed versions, so the check stays meaningful whatever the live registry and pin are.
+    pinned, live = "1.4.0", "1.6.0"
+    specs = [dataclasses.replace(s, since="1.5.0") for s in _canary_specs()]
     assert _since_violations(specs, pinned, live) == []
-    # Seeded violation: one reason claiming the version the last release already shipped.
     seeded = [dataclasses.replace(specs[0], since=pinned), *specs[1:]]
-    assert _since_violations(seeded, pinned, live) == [f"verification.canary_match: since {pinned}"]
-    # Seeded violation: one reason claiming a version above the live registry's.
-    future = f"{Version(live).major}.{Version(live).minor + 1}.0"
-    seeded = [dataclasses.replace(specs[0], since=future), *specs[1:]]
-    assert _since_violations(seeded, pinned, live) == [f"verification.canary_match: since {future}"]
+    assert _since_violations(seeded, pinned, live) == ["verification.canary_match: since 1.4.0"]
+    seeded = [dataclasses.replace(specs[0], since="1.7.0"), *specs[1:]]
+    assert _since_violations(seeded, pinned, live) == ["verification.canary_match: since 1.7.0"]
