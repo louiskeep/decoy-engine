@@ -339,7 +339,7 @@ MASK_FORMULA_DRAW_SITE = DrawSite(
 MASK_IP_PREFIX_DRAW_SITE = DrawSite(
     draw_site_id="mask.ip_prefix",
     family="source_keyed_hmac",
-    call_site="execution/_strategies/network/_ip_prefix.py:83",
+    call_site="execution/_strategies/network/_ip_prefix.py:84",
     entropy_root="mask_key",
     seed_derivation=(
         "derive(mask_key, namespace, CRYPTOPAN_KEY_LABEL)  # 32-byte Crypto-PAn key: "

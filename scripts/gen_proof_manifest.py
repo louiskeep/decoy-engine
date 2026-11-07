@@ -1200,8 +1200,8 @@ def _generation_strategies_list() -> list[str]:
 
 
 def _benchmarks() -> list[dict]:
-    # None published: the old calibration figures timed a filtered pipeline, not masking, and
-    # overstated the rate; a number needs a run whose method it honestly describes.
+    # None published: tests/benchmark/calibration/results.md timed a filtered pipeline, not
+    # masking, and overstated the rate; a number needs a run whose method it describes.
     return []
 
 

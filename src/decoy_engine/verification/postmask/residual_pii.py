@@ -99,20 +99,22 @@ _SUBSTITUTION_STRATEGIES: frozenset[str] = frozenset(
         "faker",
         "date_shift",
         "fpe",
-        "ip_prefix",
     }
 )
 
 # Strategies that legitimately re-emit source VALUES (in new positions /
 # proportions): only FULL positional identity is a failure signal.
 # Mirrors _VALUE_REUSE_STRATEGIES in _leakage.py, plus reference (parent
-# domain == source FK domain by design), except ip_prefix: a keyed substitution
-# whose self-maps are rare, so it takes the substitution thresholds above.
+# domain == source FK domain by design). ip_prefix belongs here: reference
+# Crypto-PAn self-maps a host with probability 1/2*(3/4)**(h-1) for h keyed host
+# bits (pad bits are inherited down the prefix tree), so correct output often
+# shows 5-50% identity.
 _REUSES_SOURCE_VALUES: frozenset[str] = frozenset(
     {
         "shuffle",
         "categorical",
         "reference",
+        "ip_prefix",
     }
 )
 

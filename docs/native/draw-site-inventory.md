@@ -127,7 +127,7 @@ catalogued for totality/audit, not a native draw. Wiring the full per-value
 V1 follow-up.
 
 ### mask.ip_prefix
-`execution/_strategies/network/_ip_prefix.py:83` (opt-in `ip_prefix` strategy). One
+`execution/_strategies/network/_ip_prefix.py:84` (opt-in `ip_prefix` strategy). One
 Crypto-PAn key per `(mask_key, namespace)`: `derive(mask_key, namespace,
 CRYPTOPAN_KEY_LABEL)`, the 32 bytes split into an AES-128 key and a pad seed as the
 Crypto-PAn reference does. The label starts with `0xFF`, so no canonical cell value can

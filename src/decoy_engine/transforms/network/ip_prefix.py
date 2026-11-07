@@ -163,23 +163,11 @@ class IpPrefixMasker:
         if address.ipv4_mapped is not None:
             return _MAPPED_TEXT_PREFIX + self._v4(self._cipher.decrypt, int(address.ipv4_mapped))
         out = int(address)
-        if out >> 32 == self._image_of_mapped and self._image_of_mapped != _MAPPED_BLOCK:
+        # Block P holds the swapped outputs of Q; when Q is M itself, P is M and mapped
+        # outputs have already returned above.
+        if out >> 32 == self._image_of_mapped:
             out = (_MAPPED_BLOCK << 32) | (out & _LOW_32)
         return str(ipaddress.IPv6Address(self._cipher.decrypt(out, 128, self._keep_v6)))
-
-
-def _declared_namespaces(config: Mapping[str, Any]) -> dict[str, str]:
-    """``table.column`` -> namespace from the top-level ``namespaces`` block."""
-    out: dict[str, str] = {}
-    block = config.get("namespaces")
-    if not isinstance(block, dict):
-        return out
-    for name, entry in block.items():
-        declared = entry.get("declared_by") if isinstance(entry, dict) else None
-        for ref in declared if isinstance(declared, list) else ():
-            if isinstance(ref, str):
-                out[ref] = name
-    return out
 
 
 def check_ip_prefix_config(config: Mapping[str, Any]) -> None:
@@ -191,7 +179,6 @@ def check_ip_prefix_config(config: Mapping[str, Any]) -> None:
     Config-only and non-mutating.
     """
     tables = config.get("tables") if isinstance(config.get("tables"), list) else []
-    declared = _declared_namespaces(config)
     by_namespace: dict[str, tuple[str, IpPrefixConfig]] = {}
     for table_entry in tables or ():
         if not isinstance(table_entry, dict):
@@ -222,7 +209,9 @@ def check_ip_prefix_config(config: Mapping[str, Any]) -> None:
                     path=f"{path}.provider_config.{parsed.option}",
                     message=f"ip_prefix column {column!r} in table {table!r}: {parsed.describe()}.",
                 )
-            namespace = col.get("namespace") or declared.get(f"{table}.{column}")
+            # The column's own namespace, as the handler reads it; a column without one is
+            # refused at run (ip_prefix_requires_namespace).
+            namespace = col.get("namespace")
             if not isinstance(namespace, str) or not namespace:
                 continue
             first = by_namespace.setdefault(namespace, (f"{table}.{column}", parsed))

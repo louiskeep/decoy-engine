@@ -174,3 +174,26 @@ def test_each_malformed_cell_is_one_format_error_on_its_own_row() -> None:
     assert out[0] != "10.0.0.1" and out[0].startswith("10.0.0.")
     assert out[len(values) - 2] is None
     assert out[-1].startswith("2001:db8:")
+
+
+def test_a_declared_by_namespace_is_not_the_columns_namespace(tmp_path: Any) -> None:
+    import pyarrow as pa
+
+    # The handler reads only the column's own `namespace`, so compile must not treat a
+    # top-level `namespaces.declared_by` binding as one: two such columns with different keep
+    # bits are not a shared-namespace mismatch, and the run refuses each for its missing
+    # namespace.
+    declared = {"ns": {"declared_by": ["a.ip", "b.ip"]}}
+    cfg = s.config(
+        ("a", [s.column(namespace=None, keep_bits_v4=16)]), ("b", [s.column(namespace=None)])
+    )
+    cfg["namespaces"] = declared
+    run_config_only_checks(cfg)
+    with pytest.raises(StrategyError) as caught:
+        s.pipeline(
+            tmp_path,
+            {"t": pa.table({"ip": ["10.0.0.1"]})},
+            {"t": [s.column(namespace=None)]},
+            extra={"namespaces": {"ns": {"declared_by": ["t.ip"]}}},
+        )
+    assert caught.value.code == reasons.runtime.IP_PREFIX_REQUIRES_NAMESPACE

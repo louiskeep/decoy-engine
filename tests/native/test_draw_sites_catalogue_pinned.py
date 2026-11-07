@@ -46,7 +46,7 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
         assert protocol.draw_site_by_id(site.draw_site_id) is site
 
 
-_CATALOGUE_DIGEST = "57b3034e604c698f53bf8353eaf2fedb024e7930e59851b84b75a20ef39412d8"
+_CATALOGUE_DIGEST = "475de0a1413616cce668a6dd2127190a4fcafc8d1e78b6a3c505abdf519a62a5"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -121,7 +121,7 @@ _ENTRY_DIGESTS = [
     "46b422be131d1e91c5ed2a6174d86f970429577b88e5da660ab3a4926171dab4",
     "f698d376bd1e62f5e3f17bde97a7e4da236bf76ad09baf49d95a8c6445614c2c",
     "c8ae317b9397f7faf9152ddc3c0e4e0d0fd55de2f87148512d76b9e28a343324",
-    "c5a25f45dd2ee243a8c975ace87cf86713926cc6e603e74aee729d4e123a19b3",
+    "2f7e3a92598366a5cc031d6c1eb139faedc6dbcd51bfc02e4355109659e5bc9c",
 ]
 
 _MAP_DIGESTS = {

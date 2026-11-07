@@ -513,13 +513,19 @@ anonymisation:
   servers (Coull, Wright, Monrose, Collins and Reiter, NDSS 2007). With
   `keep_bits: 0` the network itself is exposed to these attacks.
 - The number of distinct addresses and the per-network frequencies are kept.
-  Some rows map to themselves: about one in 2^(32-N) on average for IPv4 (one in
-  four at `keep_bits_v4: 30`), but they cluster, because Crypto-PAn's flips form a
-  tree and a whole subtree can come out unflipped (32 of the 256 hosts of one /24 in a
-  test run). Post-validation reports the count per run (`value_reuse_fixed_point`).
+  Many rows map to themselves, far more than a random permutation would give. The
+  reference Crypto-PAn construction pads each prefix with the key's pad bits, so the
+  AES input for a prefix of length p equals the input for that prefix extended by the
+  pad's next bit: every child whose next bit equals the pad bit inherits its parent's
+  flip. With h keyed host bits the chance a given host maps to itself is
+  ½·(¾)^(h−1): about 1 in 15 (6.7%) at `keep_bits_v4: 24`, 21% at 28 and 37.5% at
+  30. Self-maps are all-or-nothing per block: in a /24 the expected number of fixed
+  hosts is 1.5^7 ≈ 17, yet half of all /24 blocks have none; fixed hosts come in
+  pairs. In every kept block, the host whose bits equal the key's pad bits maps either
+  to itself or to its bitwise complement. Post-validation reports the count per run
+  (`value_reuse_fixed_point`).
 - Anyone with the mask key and the namespace can invert the mapping, as for
-  `fpe`. Without a configured secret the key is the job seed, so whoever holds the
-  config can invert it.
+  `fpe`. A run refuses without a mask secret.
 
 ## The test-flight value-changing-passthrough check has a low-alphabet blind spot
 

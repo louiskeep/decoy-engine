@@ -80,8 +80,9 @@ class IpPrefixStrategyHandler:
                 strategy=STRATEGY,
                 message=f"column {column!r}: {parsed.describe()}.",
             )
-        key_box = OpaqueBox(derive(ctx.mask_key, plan.namespace, CRYPTOPAN_KEY_LABEL))
-        masker = IpPrefixMasker(CryptoPan(key_box), parsed)
+        # Built inline so the derived key is never bound to a name in this frame.
+        cipher = CryptoPan(OpaqueBox(derive(ctx.mask_key, plan.namespace, CRYPTOPAN_KEY_LABEL)))
+        masker = IpPrefixMasker(cipher, parsed)
         mask_one = functools.lru_cache(maxsize=MEMO_SIZE)(masker.mask)
 
         values = df[column].tolist()
