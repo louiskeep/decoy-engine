@@ -72,6 +72,11 @@ class NerRate:
         return self.hit_cells / self.scanned_cells if self.scanned_cells else 0.0
 
     @property
+    def hit(self) -> bool:
+        """The one place an NER hit is decided; a column that was not scored never hits."""
+        return self.scanned_cells > 0 and self.rate >= NER_MIN_RATE
+
+    @property
     def bucket(self) -> str:
         return rate_bucket(self.rate)
 

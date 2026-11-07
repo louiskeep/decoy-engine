@@ -123,3 +123,30 @@ def test_is_free_text_boundary(token_counts: list[int], expected: bool) -> None:
 def test_tokens_are_counted_by_whitespace_split() -> None:
     assert nr.is_free_text(["a   b\tc", "d\ne f"])  # runs of whitespace count once
     assert not nr.is_free_text(["a-b-c-d", "e/f/g"])  # no whitespace, one token each
+
+
+def test_the_threshold_is_the_accepted_value() -> None:
+    assert nr.NER_MIN_RATE == 0.211
+
+
+@pytest.mark.parametrize(
+    ("hits", "cells", "expected"),
+    [
+        (211, 1000, True),  # exactly at the threshold
+        (210, 1000, False),
+        (212, 1000, True),
+        (1000, 1000, True),
+        (0, 1000, False),
+        (0, 0, False),  # nothing scanned
+        (5, 0, False),
+    ],
+)
+def test_hit_is_at_or_over_the_threshold_and_needs_scanned_cells(
+    hits: int, cells: int, expected: bool
+) -> None:
+    assert nr.NerRate("person_name", hits, cells).hit is expected
+
+
+def test_a_column_that_was_not_scored_has_no_hit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(nr, "iter_ner_spans_batch", _boom)
+    assert not any(r.hit for r in nr.ner_rates([f"Given{i} Family{i}" for i in range(50)]).values())
