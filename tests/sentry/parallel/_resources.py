@@ -389,6 +389,16 @@ def unmarked_registry_entries(
     return failures, unverified
 
 
+def registry_problems(failures: list[str], unverified: list[str], strict: bool) -> list[str]:
+    """Failures, plus every unverifiable entry when `strict` (the gate venv has every extra, so
+    nothing may skip at collection there; a thinner venv only reports them)."""
+    return (
+        [*failures, *(f"unverified in strict mode: {u}" for u in unverified)]
+        if strict
+        else failures
+    )
+
+
 def removed_without_reason(base_ids: set[str], current: dict[str, list[str]]) -> list[str]:
     """Registry ids the base had that are gone and not listed under `removed` with a reason."""
     kept = set(current["serial"])

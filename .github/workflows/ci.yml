@@ -211,7 +211,7 @@ jobs:
         run: pytest -m packaging --tb=short
 
   # dp-certified-gate: `fit_dp_snapshot` only completes on the certified
-  # 77-dist `dev+lint+vault` Python 3.10.20 profile (`dp_provenance.
+  # 79-dist `dev+lint+vault` Python 3.10.20 profile (`dp_provenance.
   # check_fit_environment`); `regression-gate` above installs a different
   # profile, so the `dp_certified`-marked fit-success tests are collected
   # there but SKIPPED (tests/conftest.py's pytest_collection_modifyitems).

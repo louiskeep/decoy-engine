@@ -273,41 +273,22 @@ CERTIFIED_PLATFORM = PlatformTriple(
 _CERTIFIED_STACKS: dict[tuple[PlatformTriple, str], frozenset[str]] = {
     (CERTIFIED_PLATFORM, "3.10.20.final"): frozenset(
         {
-            # decoy-engine dev/CI certification profile: 77 distributions from
+            # decoy-engine dev/CI certification profile: 79 distributions from
             # `uv sync --frozen --extra dev --extra lint --extra vault --extra
             # cloud` on Python 3.10.20 (the profile the dps-dependency-matrix
             # workflow installs).
             # Verified directly (uv sync + installed_distribution_set +
-            # compute_lock_fingerprint, not assumed): the dist SET here is
-            # byte-identical to the pre-cloud-extra 895b9a20... profile except
-            # for decoy-engine's own version string, because boto3/botocore
-            # were already present via `moto[s3]` in [dev] and adding
-            # `--extra cloud` only pulls in the google-cloud-storage closure
-            # that wasn't there before -- so this fingerprint changed for two
-            # independent reasons landing in the same change: the cloud extra
-            # split, AND the decoy-engine 0.5.0 -> 0.6.0 version bump, since
-            # the version string is itself part of the hashed set.
-            # The prior value (6c0b2bbd...) was this same 77-dist profile on
-            # the PRE-0.5.0 lock, before the release bump and the
-            # packaging>=21.0 direct dep; 895b9a20... was the 0.5.0,
-            # pre-cloud-extra profile. Reverting only decoy-engine to 0.4.0
-            # reproduces 6c0b2bbd... exactly.
-            # 0.6.0 -> 0.7.0 release re-pin: prior value 56bff582... Verified
-            # directly (fresh 3.10.20 venv, uv sync --frozen with the extras
-            # above): still 77 dists, and setting only decoy-engine back to
-            # 0.6.0 in the installed set reproduces 56bff582... exactly, so
-            # the change is the version string alone.
+            # compute_lock_fingerprint): this row changed for two reasons in one change, the
+            # cloud extra split and the 0.5.0 -> 0.6.0 version bump (the version string is part
+            # of the hashed set). Prior rows: 6c0b2bbd... (pre-0.5.0 lock), 895b9a20... (0.5.0,
+            # pre-cloud-extra); reverting only decoy-engine to 0.4.0 reproduces 6c0b2bbd....
+            # 0.6.0 -> 0.7.0 re-pin (prior 56bff582...): still 77 dists, version string alone.
             # 0.7.0 -> 0.17.0 (prior 72c03428..., the 0.8.0-0.16.0 stamps skipped it) and
             # 0.17.0 -> 0.18.0 re-pins: same check, 77 dists each. From 0.18.0 a re-pin keeps
             # the prior release's row (here 5a76ea92...) so its snapshots still compile.
             "31ecf94503eff107631191426072eee757af72a2229ab594d2fc2e8e6bfac7b1",
             "5a76ea92769d62cb0124d89d24c2ec0e4116828e34e0611d80bf5e36edef1a23",
-            # ENGINE-PAR P2 (2026-11-07): pytest-xdist moved into the `dev` extra, so the same
-            # `uv sync --frozen --extra dev --extra lint --extra vault --extra cloud` profile
-            # installs 79 distributions (the 77 above plus pytest-xdist 3.8 and execnet 2.1.2,
-            # decoy-engine 0.18.0 unchanged). Verified on a fresh 3.10.20 VM venv built by
-            # bootstrap.sh from the lock. The two rows above stay: they certify snapshots fit
-            # before this change.
+            # 79-dist dev profile after pytest-xdist joined `dev`: docs/records/2026-11-07-engine-par-p2-build.md
             "4e494affc1a3c2b54a4dbd126454d09867e54a6b08cec8861b109ccf9b725246",
             # decoy-cli pristine RUNTIME profile: engine 0.18.0 + CLI (typer/rich/
             # duckdb) + the DP closure, no dev tooling (pytest/ruff/mypy absent).

@@ -119,3 +119,12 @@ id = "tests/unit/test_instrumentation_timing.py::TestOverheadGate::test_overhead
 
 [[serial]]
 id = "tests/unit/test_lark_parser.py::TestPerformance::test_compile_once_evaluate_10k"
+
+[[serial]]
+id = "tests/native/test_native_dispatch.py::test_kernel_evidence_accumulates_across_multiple_chunks"
+
+[[serial]]
+id = "tests/unit/execution/test_pandas_adapter_exec_kills.py::TestResultTelemetryPackaging::test_timings_nonempty_and_conversion_positive_bounded"
+
+[[serial]]
+id = "tests/unit/execution/test_sequential_run_kills.py::test_result_reports_conversion_and_timings"

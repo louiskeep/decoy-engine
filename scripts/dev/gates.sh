@@ -97,12 +97,13 @@ if [ -n "$ORDERFROM" ] && [ -z "$WRITEBASE" ]; then
 fi
 # Worker count for the tests step, recorded in a stored baseline's run mode. The reporter owns the
 # rule (_gate_workers.py); a venv without pytest-xdist resolves to 1 there and says why.
-if ! WORKERS_LINE=$("$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --workers 2>&1); then
-  echo "$WORKERS_LINE" >&2
-  case $WORKERS_LINE in
-    *GATES_WORKERS*) exit 2 ;;  # a usage error: the value is not a number or auto
-    *) echo "gates: FAIL: no complete EVIDENCE block (the reporter failed before the run)" >&2; exit 3 ;;
-  esac
+# Only stdout is captured: the reporter's own diagnostics reach the terminal as written. Exit 64
+# is its usage error (GATES_WORKERS is not a number or auto); any other failure is a crash.
+WORKERS_RC=0
+WORKERS_LINE=$("$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --workers) || WORKERS_RC=$?
+if [ $WORKERS_RC != 0 ]; then
+  if [ $WORKERS_RC = 64 ]; then exit 2; fi
+  echo "gates: FAIL: no complete EVIDENCE block (the reporter failed before the run)" >&2; exit 3
 fi
 WORKERS=${WORKERS_LINE%% *}
 WORKERS_WHY=${WORKERS_LINE#* }
@@ -289,7 +290,8 @@ run_steps() {  # $1 label, $2 tree
       mypy) cmd=("$BIN/mypy" ${MYPY_ARGS[@]+"${MYPY_ARGS[@]}"}) ;;
       # ratchet_check first (baselines never grow); skipped in trees that predate it (the baseline worktree)
       sentry)
-        cmd=(bash -c 'if [ -f scripts/dev/ratchet_check.py ]; then "$0" scripts/dev/ratchet_check.py || exit 1; fi; exec "$0" -m pytest "$@"' "$BIN/python" ${junit[@]+"${junit[@]}"} ${SENTRY_PATHS[@]+"${SENTRY_PATHS[@]}"}) ;;
+        # strict: the gate venv is the certified profile, so a registry entry that cannot be verified is a failure
+        cmd=(env DECOY_GATE_VENV_STRICT=1 bash -c 'if [ -f scripts/dev/ratchet_check.py ]; then "$0" scripts/dev/ratchet_check.py || exit 1; fi; exec "$0" -m pytest "$@"' "$BIN/python" ${junit[@]+"${junit[@]}"} ${SENTRY_PATHS[@]+"${SENTRY_PATHS[@]}"}) ;;
       # strict: a venv that drifted from uv.lock fails instead of skipping the metadata check
       licenses)
         lic=(); for p in ${LICENSE_TESTS[@]+"${LICENSE_TESTS[@]}"}; do [ -e "$tree/$p" ] && lic+=("$p"); done

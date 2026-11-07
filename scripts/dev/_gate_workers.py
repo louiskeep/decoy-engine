@@ -62,6 +62,9 @@ def choose(
     return n, f"auto: {total_gb:.1f} GB, {nproc} cpu, capped at {LARGE_HOST_MAX_WORKERS}"
 
 
+USAGE_EXIT = 64  # EX_USAGE: python itself exits 2 for a missing script, which is a crash here
+
+
 def main() -> int:
     try:
         nproc = len(os.sched_getaffinity(0))
@@ -78,7 +81,7 @@ def main() -> int:
         count, why = choose(os.environ.get("GATES_WORKERS", "auto"), nproc, total, avail, limit)
     except ValueError as exc:
         print(f"gates: {exc}", file=sys.stderr)
-        return 2
+        return USAGE_EXIT
     if count > 1 and importlib.util.find_spec("xdist") is None:
         count, why = 1, f"{why}; pytest-xdist is not installed in {sys.prefix}, running serial"
     print(count, why)

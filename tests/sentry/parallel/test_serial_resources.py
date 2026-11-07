@@ -34,10 +34,11 @@ BASELINE = ROOT / "tests" / "sentry" / "baselines" / "serial-resources.json"
 
 
 def collect_suite(
-    root: Path, expr: str, target: str = "tests"
+    root: Path, expr: str, dump_dir: Path, target: str = "tests"
 ) -> dict[str, list[dict[str, object]]]:
     """Collect `target` under `root` in a clean subprocess and return the dump plugin's report."""
-    out = root / ".serial-dump.json"
+    out = dump_dir / "dump.json"
+    out.unlink(missing_ok=True)
     env = {
         k: v
         for k, v in os.environ.items()
@@ -63,9 +64,9 @@ def as_items(data: dict[str, list[dict[str, object]]]) -> list[res.Collected]:
 
 
 @pytest.fixture(scope="session")
-def suite() -> dict[str, list[dict[str, object]]]:
+def suite(tmp_path_factory: pytest.TempPathFactory) -> dict[str, list[dict[str, object]]]:
     expr = res.parse_marker_expr((ROOT / "scripts" / "dev" / "gates.sh").read_text())
-    return collect_suite(ROOT, expr)
+    return collect_suite(ROOT, expr, tmp_path_factory.mktemp("serial-dump"))
 
 
 def unverifiable(data: dict[str, list[dict[str, object]]]) -> dict[str, str]:
@@ -101,10 +102,22 @@ def test_the_required_serial_registry_is_marked(suite: dict[str, list[dict[str, 
     failures, unverified = res.unmarked_registry_entries(
         registry_ids(REGISTRY.read_text()), as_items(suite), unverifiable(suite)
     )
-    assert failures == [], "\n".join(failures)
-    # In the gate venv (dev+lint+vault+cloud) every entry is verified.
-    if os.environ.get("DECOY_GATE_VENV_STRICT"):
-        assert unverified == []
+    # gates.sh sets DECOY_GATE_VENV_STRICT in its sentry step: that venv has every extra.
+    problems = res.registry_problems(
+        failures, unverified, bool(os.environ.get("DECOY_GATE_VENV_STRICT"))
+    )
+    assert problems == [], "\n".join(problems)
+
+
+def test_strict_mode_turns_an_entry_whose_file_skips_at_collection_red() -> None:
+    skipped = {"tests/x/test_gone.py": "could not import module"}
+    failures, unverified = res.unmarked_registry_entries(
+        ["tests/x/test_gone.py::test_a"], [], skipped
+    )
+    assert failures == [] and len(unverified) == 1
+    assert res.registry_problems(failures, unverified, strict=False) == []
+    strict = res.registry_problems(failures, unverified, strict=True)
+    assert len(strict) == 1 and "tests/x/test_gone.py::test_a" in strict[0]
 
 
 def test_the_registry_only_grows() -> None:
@@ -262,5 +275,6 @@ def test_a_conftest_pytestmark_does_not_mark_a_directory(tmp_path: Path) -> None
     (d / "conftest.py").write_text("import pytest\npytestmark = pytest.mark.serial\n")
     (d / "test_s.py").write_text("def test_s():\n    rss = 1\n    assert rss < 5\n")
     (tmp_path / "pytest.ini").write_text("[pytest]\nmarkers = serial: x\n")
-    data = collect_suite(tmp_path, "not benchmark", "scratch")
+    (tmp_path / "out").mkdir()
+    data = collect_suite(tmp_path, "not benchmark", tmp_path / "out", "scratch")
     assert [i["serial"] for i in data["items"]] == [False]

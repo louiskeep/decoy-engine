@@ -59,6 +59,15 @@ def parallel_clone(tmp_path: Path) -> Path:
     return clone
 
 
+def test_the_sentry_step_runs_in_strict_venv_mode(tmp_path: Path) -> None:
+    """The registry's zero-unverified check only runs when the gate says the venv is complete."""
+    clone = parallel_clone(tmp_path)
+    venv, log = recording_venv(tmp_path)
+    rc, out = run_gates(clone, venv, "--steps", "sentry", "--full")
+    assert rc == 0, out
+    assert log.with_name("strict.log").read_text().split() == ["1"]
+
+
 # --- AT-1, AT-2, AT-4 ---------------------------------------------------------------------
 
 

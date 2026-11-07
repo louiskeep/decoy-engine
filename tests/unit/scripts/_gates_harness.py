@@ -91,6 +91,8 @@ from pathlib import Path
 argv = sys.argv[1:]
 with open(Path(__file__).with_name("argv.jsonl"), "a") as _fh:  # exact argv, spaces kept
     _fh.write(json.dumps(argv) + "\\n")
+with open(Path(__file__).with_name("strict.log"), "a") as _fh:  # the sentry step's strictness switch
+    _fh.write(os.environ.get("DECOY_GATE_VENV_STRICT", "") + "\\n")
 if "--collect-only" in argv:
     for i in range(int(os.environ.get("FAKE_COLLECT", "0"))):
         print(f"tests/_seeded/test_gone.py::test_{i}")

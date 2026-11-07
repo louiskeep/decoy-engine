@@ -23,9 +23,6 @@
   "tests/native/test_chunked_entry_side_channels.py::test_native_route_per_column_timings_and_aggregate": {
    "reason": "Asserts a recorded timing field exists or is non-negative or is synthetic input; no bound on this host speed."
   },
-  "tests/native/test_native_dispatch.py::test_kernel_evidence_accumulates_across_multiple_chunks": {
-   "reason": "Asserts a recorded timing field exists or is non-negative or is synthetic input; no bound on this host speed."
-  },
   "tests/native/test_operator_registry.py::test_capability_diagnostics_are_routed_for_every_slice_operator": {
    "reason": "Name-only match triaged in P2: the test reads no clock, process memory, fixed port or rlimit."
   },
@@ -449,9 +446,6 @@
   "tests/unit/execution/test_pandas_adapter.py::TestPandasAdapter.test_boundary_conversion_recorded": {
    "reason": "Asserts a recorded timing field exists or is non-negative or is synthetic input; no bound on this host speed."
   },
-  "tests/unit/execution/test_pandas_adapter_exec_kills.py::TestResultTelemetryPackaging.test_timings_nonempty_and_conversion_positive_bounded": {
-   "reason": "Asserts a recorded timing field exists or is non-negative or is synthetic input; no bound on this host speed."
-  },
   "tests/unit/execution/test_pipeline_routing_route_kills.py::test_probe_forwards_resident_sample_to_spec_builder": {
    "reason": "Name-only match triaged in P2: the test reads no clock, process memory, fixed port or rlimit."
   },
@@ -471,9 +465,6 @@
    "reason": "Compares planned byte figures from estimator or budget arithmetic; reads no clock or process memory."
   },
   "tests/unit/execution/test_r3_within_route_baseline.py::test_volatile_fields_are_structure_only_and_enumerated": {
-   "reason": "Asserts a recorded timing field exists or is non-negative or is synthetic input; no bound on this host speed."
-  },
-  "tests/unit/execution/test_sequential_run_kills.py::test_result_reports_conversion_and_timings": {
    "reason": "Asserts a recorded timing field exists or is non-negative or is synthetic input; no bound on this host speed."
   },
   "tests/unit/execution/test_throughput_calibration.py::TestAnchorsRoundTrip.test_generation_anchor_within_band": {
