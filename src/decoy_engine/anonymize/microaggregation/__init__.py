@@ -14,8 +14,10 @@ Contract:
 - Every member of a group gets the same value, bit for bit, in every named
   column; a group's value is the float64 mean of its members' values, so
   column totals are kept up to rounding. Integer columns come back float64;
-  rounding them afterwards keeps the groups intact.
-- A column whose values are all equal is passed through as-is (float64) and
+  rounding them afterwards keeps the groups intact. Integers above 2**53 in
+  magnitude are rounded to the nearest float64 first, constant columns included.
+- A column whose values are all equal is written back as its first value in
+  every row (float64; ``-0.0`` and ``0.0`` count as equal and become one) and
   does not affect the grouping.
 - Deterministic: no randomness; ties go to the earliest row. The same table in
   the same row order gives the same bits on the same platform and library

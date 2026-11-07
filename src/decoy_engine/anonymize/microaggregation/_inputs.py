@@ -112,7 +112,9 @@ def read_matrix(table: Table, names: Sequence[str]) -> FloatMatrix:
 def write_table(table: Table, names: Sequence[str], values: FloatMatrix) -> Table:
     """A new table with each named column replaced by float64 ``values``; input untouched."""
     if isinstance(table, pd.DataFrame):
-        out = table.copy(deep=False)
+        # Deep: a shallow copy shares column buffers, so a caller writing into the result
+        # would change their input.
+        out = table.copy(deep=True)
         for j, name in enumerate(names):
             out[name] = pd.Series(values[:, j].copy(), index=table.index, name=name)
         return out

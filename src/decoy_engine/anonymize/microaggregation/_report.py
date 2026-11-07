@@ -65,8 +65,12 @@ def group_means(values: FloatMatrix, groups: IntArray, count: int) -> FloatMatri
 
 
 def _loss(sse: float, sst: float) -> float:
-    # The mean minimises the within-group sum, so sse <= sst; min() absorbs rounding only.
-    return min(sse / sst, 1.0) if sst > 0 else 0.0
+    if sst <= 0:
+        return 0.0
+    # The mean minimises the within-group sum, so sse <= sst up to rounding; more is a bug.
+    if sse > sst * (1 + 1e-9):
+        raise ValueError("internal error: within-group sum of squares exceeds the total")
+    return min(sse / sst, 1.0)
 
 
 def build_report(

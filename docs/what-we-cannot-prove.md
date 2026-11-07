@@ -527,6 +527,8 @@ and nothing more:
 - Columns that are not named stay as they are and can still identify a row.
 - MDAV is a heuristic: groups are not optimal, and the last group can join
   rows that are far apart.
+- Values are converted to float64 first: integers above 2^53 in magnitude are
+  rounded, in constant columns too.
 
 ## What it does do
 

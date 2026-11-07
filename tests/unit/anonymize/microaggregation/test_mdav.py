@@ -6,6 +6,7 @@ from fractions import Fraction
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 
 from decoy_engine.anonymize.microaggregation import microaggregate
@@ -85,6 +86,22 @@ def test_loop_boundaries(n: int, sizes: list[int]) -> None:
     assert sorted(counts) == sorted(sizes)
     # Groups are numbered in emission order; only the last one may exceed k.
     assert all(c == 3 for c in counts[:-1])
+
+
+def test_exactly_3k_rows_takes_the_two_group_pass() -> None:
+    # n == 3k: the first pass forms groups around x_r and x_s; a single-group pass would
+    # re-centre on the 4 rows left and partition them differently.
+    x = np.array([[8, 6], [5, 2], [3, 0], [0, 0], [1, 8], [6, 9]], dtype=np.float64)
+    assert _groups(x, 2) == [1, 2, 0, 0, 2, 1]
+
+
+def test_signed_zero_constant_column_stays_one_class() -> None:
+    table = pa.table({"a": [1.0, 2.0, 9.0, 10.0, 11.0], "c": [0.0, -0.0, 0.0, 0.0, -0.0]})
+    out = microaggregate(table, ["a", "c"], k=2).table
+    c = out.column("c").to_numpy()
+    assert not np.signbit(c).any()
+    counts = out.group_by(["a", "c"]).aggregate([("a", "count")]).column("a_count")
+    assert min(counts.to_pylist()) >= 2
 
 
 def test_second_group_anchors_on_x_s_chosen_before_first_removal() -> None:

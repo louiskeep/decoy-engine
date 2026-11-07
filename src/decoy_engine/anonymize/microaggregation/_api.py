@@ -57,8 +57,11 @@ def _centroid_rows(
         centroids = group_means(x[:, ~constant], groups, count)
     if not np.isfinite(centroids).all():
         raise ValueError("quasi-identifier values are too large to aggregate")
-    # Constant columns are written back as they are: their exact value, not a computed mean.
     out[:, ~constant] = centroids[groups]
+    # Constant columns get their first value in every row, not a computed mean (the mean of
+    # 0.1s is not 0.1), and not each row's own value (0.0 and -0.0 compare equal but group apart).
+    if len(x):
+        out[:, constant] = x[0, constant]
     return out
 
 

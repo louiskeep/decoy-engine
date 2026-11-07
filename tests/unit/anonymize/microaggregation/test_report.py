@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from decoy_engine.anonymize.microaggregation import MicroaggregationReport, microaggregate
+from decoy_engine.anonymize.microaggregation._report import _loss
 
 
 def _report(**changes: Any) -> MicroaggregationReport:
@@ -43,6 +44,14 @@ def test_impossible_values_refused(changes: dict[str, Any]) -> None:
     with pytest.raises((TypeError, ValueError)) as info:
         _report(**changes)
     assert info.value.__cause__ is None
+    assert info.value.__context__ is None
+
+
+def test_loss_clamps_rounding_and_refuses_a_real_excess() -> None:
+    assert _loss(1.0 + 1e-12, 1.0) == 1.0
+    assert _loss(0.0, 0.0) == 0.0
+    with pytest.raises(ValueError, match="internal error") as info:
+        _loss(1.0 + 1e-6, 1.0)
     assert info.value.__context__ is None
 
 

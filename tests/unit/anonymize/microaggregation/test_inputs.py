@@ -290,6 +290,17 @@ def test_pandas_input_unchanged_and_other_columns_kept() -> None:
     assert not np.shares_memory(out["x"].to_numpy(), x_buffer)
 
 
+def test_writing_into_the_result_does_not_change_the_input() -> None:
+    frame = _rich_frame()
+    before = frame.copy(deep=True)
+    out = microaggregate(frame, ["x", "y"], k=2).table
+    out.loc[70, "name"] = "zz"
+    out.loc[70, "when"] = pd.Timestamp("1999-01-01")
+    out.loc[70, "n"] = 99
+    out.loc[70, "x"] = -1.0
+    pd.testing.assert_frame_equal(frame, before, check_exact=True)
+
+
 def test_arrow_input_unchanged_and_other_columns_kept() -> None:
     frame = _rich_frame()
     table = pa.Table.from_pandas(frame, preserve_index=False).replace_schema_metadata({b"k": b"v"})
