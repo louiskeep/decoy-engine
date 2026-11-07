@@ -79,6 +79,7 @@ from decoy_engine.plan._checks_dp import (
     check_dp_generate_contract,
     verify_dp_snapshots,
 )
+from decoy_engine.plan._checks_email_mask import check_email_mask_config
 from decoy_engine.plan._checks_faker import check_faker_requires_provider
 from decoy_engine.plan._checks_fpe import check_fpe_charset_config
 from decoy_engine.plan._checks_fpe_join import check_fpe_join_groups
@@ -261,6 +262,7 @@ def compile_plan(
     # no provider (the seed-envelope builder drops them, leaking the raw value).
     # Config-only; both branches + run_config_only_checks.
     check_faker_requires_provider(config)
+    email_mask_passed = check_email_mask_config(config)
     # Row 29 (HC-7, 2026-07-17): clinical free-text advisory. WARN-ONLY --
     # unlike every check above, this never raises; it returns warning
     # strings folded into PlanCompileResult.warnings below (same shape as
@@ -351,6 +353,7 @@ def compile_plan(
             "fpe_charset_config",
             # Row 26 (DE-03 sibling): faker-without-provider rejection.
             "faker_requires_provider",
+            *email_mask_passed,
             # Row 29 (HC-7): clinical free-text advisory (warn-only).
             "freetext_advisory",
         )
@@ -431,6 +434,7 @@ def compile_plan(
             "fpe_charset_config",
             # Row 26 (DE-03 sibling): faker-without-provider rejection.
             "faker_requires_provider",
+            *email_mask_passed,
             # Row 29 (HC-7): clinical free-text advisory (warn-only).
             "freetext_advisory",
         )
@@ -534,23 +538,17 @@ def run_config_only_checks(
     check_vault_columns(config)
     # Row 15 (SP-04): reject unknown or structurally unsupported FPE checksum schemes.
     check_fpe_checksum_scheme(config)
-    # Row 16 (SP-10 / P5.S.derived): reject derived expression with missing or
-    # cyclic column refs. Config-only; config + Lark parse only.
+    # Row 16 (SP-10): derived refs missing or cyclic. Config-only; config + Lark parse only.
     check_derived_column_refs(config)
-    # Row 17 (SP-10b / P5.S.derived_aggregate): reject derived_aggregate source
-    # column refs that are missing or have an invalid op. Config-only.
+    # Row 17 (SP-10b): derived_aggregate source refs missing or op invalid. Config-only.
     check_derived_aggregate_refs(config)
-    # Row 18 (SP-10c / P5.S.grouped_series.1): reject grouped_series columns with
-    # missing group_by or order_by column refs. Config-only.
+    # Row 18 (SP-10c): grouped_series group_by / order_by refs missing. Config-only.
     check_grouped_series_refs(config)
-    # Row 19 (SP-10c / P5.S.windowed_date): reject windowed_date columns with a
-    # missing anchor column ref. Config-only.
+    # Row 19 (SP-10c): windowed_date anchor ref missing. Config-only.
     check_windowed_date_refs(config)
-    # Row 20 (SP-10c / P5.P.group_key): reject group_key columns with a missing
-    # group_by column ref. Config-only.
+    # Row 20 (SP-10c): group_key group_by ref missing. Config-only.
     check_group_key_refs(config)
-    # Row 27 (HC-3a): reject date_shift columns with a missing group_by
-    # (entity-anchor) column ref. Config-only.
+    # Row 27 (HC-3a): date_shift group_by (entity-anchor) ref missing. Config-only.
     check_date_shift_group_by_refs(config)
     check_date_preserve_values(config)
     # Row 21 (SP-46 / fpe_join_group): validate fpe_join_group declarations.
@@ -572,6 +570,7 @@ def run_config_only_checks(
     check_fpe_charset_config(config)
     # Row 26 (DE-03 sibling): faker-without-provider rejection. Config-only.
     check_faker_requires_provider(config)
+    email_mask_passed = check_email_mask_config(config)
     # F06: declared parsing/casting contracts. Reported only when a config declares any, so a
     # legacy config's list is unchanged.
     declared = (
@@ -612,6 +611,7 @@ def run_config_only_checks(
         "fpe_charset_config",
         # Row 26 (DE-03 sibling): faker-without-provider rejection.
         "faker_requires_provider",
+        *email_mask_passed,
         *declared,
     )
 

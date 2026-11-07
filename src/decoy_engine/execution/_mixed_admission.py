@@ -91,6 +91,8 @@ CHUNK_VARIANT_WARNING_CODES: frozenset[str] = frozenset(
         reasons.warning.GEO_GENERALIZE_CASCADE,
         reasons.warning.NESTED_CELL_JSON_PARSE_ERROR,
         reasons.warning.NESTED_JSONPATH_PATH_OVERLAP,
+        # Carries a malformed-row count, which differs per chunk.
+        reasons.warning.EMAIL_MASK_MALFORMED_VALUES,
     }
 )
 

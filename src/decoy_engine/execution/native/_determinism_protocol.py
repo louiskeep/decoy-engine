@@ -21,7 +21,8 @@ partitionable when the reseed key is a stable per-row identity (row index or sou
 Layout: ``DrawSite`` and the allowed enums live in ``_draw_site_types.py``; the
 entries live in per-family data modules (``_draw_sites_mask.py``,
 ``_draw_sites_gen.py``, ``_draw_sites_provider_backed.py``,
-``_draw_sites_gen_pool.py``, ``_draw_sites_tokenize.py``). This module splices
+``_draw_sites_gen_pool.py``, ``_draw_sites_tokenize.py``,
+``_draw_sites_email_mask.py``). This module splices
 them into ``DRAW_SITES`` in catalogue order, owns the coverage maps, and
 re-exports the whole protocol surface.
 """
@@ -35,6 +36,7 @@ from decoy_engine.execution.native._draw_site_types import (
     IDENTITIES,
     DrawSite,
 )
+from decoy_engine.execution.native._draw_sites_email_mask import EMAIL_MASK_DRAW_SITES
 from decoy_engine.execution.native._draw_sites_gen import GEN_DRAW_SITES, GEN_SUBSTRATE_DRAW_SITES
 from decoy_engine.execution.native._draw_sites_gen_pool import GEN_POOL_DRAW_SITES
 from decoy_engine.execution.native._draw_sites_mask import MASK_DRAW_SITES, MASK_FORMULA_DRAW_SITE
@@ -57,6 +59,7 @@ DRAW_SITES: tuple[DrawSite, ...] = (
     MASK_FORMULA_DRAW_SITE,
     *GEN_POOL_DRAW_SITES,
     *TOKENIZE_DRAW_SITES,
+    *EMAIL_MASK_DRAW_SITES,
 )
 
 # ---------------------------------------------------------------------------
@@ -79,6 +82,7 @@ MASK_STRATEGY_TO_SITE: dict[str, str] = {
     "nested": DETERMINISTIC_NO_DRAW,  # delegates to a child handler; no own draw
     "hash": "mask.hash",
     "tokenize": "mask.tokenize",
+    "email_mask": "mask.email_mask",
     "shuffle": "mask.shuffle",
     "categorical": "mask.categorical_deterministic",  # + mask.categorical_nondeterministic (seeded)
     "fpe": "mask.fpe",

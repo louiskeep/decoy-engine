@@ -61,6 +61,7 @@ from decoy_engine.execution.native._determinism_protocol import (
 from decoy_engine.execution.native._draw_site_providers_gen_pool import (
     GEN_POOL_PROVIDER_CLASSES,
 )
+from decoy_engine.execution.native._draw_sites_email_mask import EMAIL_MASK_PRIMITIVE
 from decoy_engine.execution.native._draw_sites_tokenize import TOKENIZE_PRIMITIVE
 from decoy_engine.execution.native.protocol.providers_base import (
     DrawSiteProtocolError,
@@ -184,18 +185,22 @@ class TextMaskFakerProvider(DrawSiteProvider):
 # Which keyed primitive each SINGLE-primitive source_keyed_hmac site draws
 # through. The compound sites (fpe key, code_set / joint_mask two-step keyed
 # selection) have their own dedicated providers in protocol/providers_mask.py, not this map.
-_SOURCE_KEYED_PRIMITIVE: dict[str, str] = {
-    "mask.hash": "derive",
-    "mask.date_shift": "derive",
-    "mask.bucket_perturb": "derive",
-    "mask.group_key": "derive",
-    "mask.categorical_deterministic": "derive_index",
-    # Keyed by encode_int(row ordinal) instead of the source value; same primitive.
-    "mask.categorical_nondeterministic": "derive_index",
-    "gen.pool_deterministic": "derive_index",
-    "mask.faker": "derive_index",
-    "gen.identifier_deterministic": "derive_value",
-} | TOKENIZE_PRIMITIVE
+_SOURCE_KEYED_PRIMITIVE: dict[str, str] = (
+    {
+        "mask.hash": "derive",
+        "mask.date_shift": "derive",
+        "mask.bucket_perturb": "derive",
+        "mask.group_key": "derive",
+        "mask.categorical_deterministic": "derive_index",
+        # Keyed by encode_int(row ordinal) instead of the source value; same primitive.
+        "mask.categorical_nondeterministic": "derive_index",
+        "gen.pool_deterministic": "derive_index",
+        "mask.faker": "derive_index",
+        "gen.identifier_deterministic": "derive_value",
+    }
+    | TOKENIZE_PRIMITIVE
+    | EMAIL_MASK_PRIMITIVE
+)
 
 # Dedicated mechanism providers, keyed by the single id each reproduces.
 _DEDICATED_PROVIDER_CLASSES: tuple[type[DrawSiteProvider], ...] = (

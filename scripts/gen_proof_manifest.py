@@ -393,6 +393,20 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
         namespaces={"uid": {"declared_by": ["t.user_id"]}},
     ),
     _mask_proof(
+        "email_mask",
+        "Email keeping only the domain class",
+        "email",
+        ["ann@acme.com", "bo@gmail.com", "cy@cs.stanford.edu"],
+        {"namespace": "em", "provider_config": {"keep": "domain_class"}},
+        "The local part becomes a keyed token; a free-mail domain is kept and any other domain "
+        "is replaced by a reserved class domain (corporate, edu or gov).",
+        lambda col, i, o: (
+            [b[col].split("@")[1] for b in o] == ["corporate.example", "gmail.com", "edu.example"]
+            and all(len(b[col].split("@")[0]) == 20 for b in o)
+        ),
+        namespaces={"em": {"declared_by": ["t.email"]}},
+    ),
+    _mask_proof(
         "truncate",
         "Truncation",
         "phone",
@@ -619,11 +633,20 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
 
 
 def _run_single_table(cfg: dict, df: pd.DataFrame) -> pd.DataFrame:
-    validated = PipelineConfig.model_validate(cfg).model_dump()
-    sources = {"t": pa.Table.from_pandas(df)}
-    result = run_pipeline(
-        validated, sources, engine_version=ENGINE_VERSION, key_provider=_PROOF_KEY
-    )
+    # `cfg` names no source or target: they point at the CSV of `df` written here.
+    with tempfile.TemporaryDirectory() as tmp:
+        csv_path = Path(tmp) / "t.csv"
+        df.to_csv(csv_path, index=False)
+        csv = {"type": "file", "format": "csv"}
+        files = {
+            "sources": {"t": {**csv, "path": str(csv_path)}},
+            "targets": {"t": {**csv, "path": "/dev/null"}},
+        }
+        validated = PipelineConfig.model_validate({**cfg, **files}).model_dump()
+        sources = {"t": pa.Table.from_pandas(df)}
+        result = run_pipeline(
+            validated, sources, engine_version=ENGINE_VERSION, key_provider=_PROOF_KEY
+        )
     return result.outputs["t"].to_pandas()
 
 
@@ -635,21 +658,7 @@ def _yaml_for(proof: CapabilityProof) -> str:
 
 def _run_capability(proof: CapabilityProof) -> dict:
     df = pd.DataFrame({proof.column: proof.input_values})
-    with tempfile.TemporaryDirectory() as _tmp:
-        tmp = Path(_tmp)
-        csv_path = tmp / "t.csv"
-        df.to_csv(csv_path, index=False)
-
-        cfg = {
-            **proof.config,
-            "sources": {
-                "t": {"type": "file", "format": "csv", "path": str(csv_path)},
-            },
-            "targets": {
-                "t": {"type": "file", "format": "csv", "path": "/dev/null"},
-            },
-        }
-        out_df = _run_single_table(cfg, df)
+    out_df = _run_single_table(proof.config, df)
 
     inp = _records(df, n=len(df))
     out = _records(out_df, n=len(out_df))
@@ -760,31 +769,24 @@ def _derived_proof() -> dict:
     b_values = [0.0] * len(a_values)  # placeholder; overwritten by derived
     df = pd.DataFrame({"a": a_values, "b": b_values})
 
-    with tempfile.TemporaryDirectory() as _tmp:
-        tmp = Path(_tmp)
-        csv_path = tmp / "t.csv"
-        df.to_csv(csv_path, index=False)
-
-        cfg = {
-            "version": 2,
-            "global_settings": {"seed": 1234567, "post_validation": False},
-            "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
-            "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
-            "tables": [
-                {
-                    "name": "t",
-                    "columns": [
-                        {"name": "a", "strategy": "passthrough"},
-                        {
-                            "name": "b",
-                            "strategy": "derived",
-                            "provider_config": {"expression": "a * 2"},
-                        },
-                    ],
-                }
-            ],
-        }
-        out_df = _run_single_table(cfg, df)
+    cfg = {
+        "version": 2,
+        "global_settings": {"seed": 1234567, "post_validation": False},
+        "tables": [
+            {
+                "name": "t",
+                "columns": [
+                    {"name": "a", "strategy": "passthrough"},
+                    {
+                        "name": "b",
+                        "strategy": "derived",
+                        "provider_config": {"expression": "a * 2"},
+                    },
+                ],
+            }
+        ],
+    }
+    out_df = _run_single_table(cfg, df)
 
     # Invariant: b = a * 2 for every row; all outputs differ from the placeholder
     # placeholder (0.0) except when a=0.
@@ -837,31 +839,24 @@ def _derived_aggregate_proof() -> dict:
     df = pd.DataFrame({"amount": amount_values, "total": total_values})
     expected_sum = sum(amount_values)
 
-    with tempfile.TemporaryDirectory() as _tmp:
-        tmp = Path(_tmp)
-        csv_path = tmp / "t.csv"
-        df.to_csv(csv_path, index=False)
-
-        cfg = {
-            "version": 2,
-            "global_settings": {"seed": 1234567, "post_validation": False},
-            "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
-            "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
-            "tables": [
-                {
-                    "name": "t",
-                    "columns": [
-                        {"name": "amount", "strategy": "passthrough"},
-                        {
-                            "name": "total",
-                            "strategy": "derived_aggregate",
-                            "provider_config": {"op": "sum", "column": "amount"},
-                        },
-                    ],
-                }
-            ],
-        }
-        out_df = _run_single_table(cfg, df)
+    cfg = {
+        "version": 2,
+        "global_settings": {"seed": 1234567, "post_validation": False},
+        "tables": [
+            {
+                "name": "t",
+                "columns": [
+                    {"name": "amount", "strategy": "passthrough"},
+                    {
+                        "name": "total",
+                        "strategy": "derived_aggregate",
+                        "provider_config": {"op": "sum", "column": "amount"},
+                    },
+                ],
+            }
+        ],
+    }
+    out_df = _run_single_table(cfg, df)
 
     # Invariant: every row of total == sum(amount)
     for idx, row in out_df.iterrows():
@@ -914,38 +909,31 @@ def _grouped_series_proof() -> dict:
     counter_vals = [0] * len(group_vals)
     df = pd.DataFrame({"group_id": group_vals, "order_col": order_vals, "counter": counter_vals})
 
-    with tempfile.TemporaryDirectory() as _tmp:
-        tmp = Path(_tmp)
-        csv_path = tmp / "t.csv"
-        df.to_csv(csv_path, index=False)
-
-        cfg = {
-            "version": 2,
-            "global_settings": {"seed": 42, "post_validation": False},
-            "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
-            "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
-            "tables": [
-                {
-                    "name": "t",
-                    "columns": [
-                        {"name": "group_id", "strategy": "passthrough"},
-                        {"name": "order_col", "strategy": "passthrough"},
-                        {
-                            "name": "counter",
-                            "strategy": "grouped_series",
-                            "provider_config": {
-                                "group_by": "group_id",
-                                "order_by": "order_col",
-                                "generator": "cumcount",
-                                "start": 0,
-                                "step": 1,
-                            },
+    cfg = {
+        "version": 2,
+        "global_settings": {"seed": 42, "post_validation": False},
+        "tables": [
+            {
+                "name": "t",
+                "columns": [
+                    {"name": "group_id", "strategy": "passthrough"},
+                    {"name": "order_col", "strategy": "passthrough"},
+                    {
+                        "name": "counter",
+                        "strategy": "grouped_series",
+                        "provider_config": {
+                            "group_by": "group_id",
+                            "order_by": "order_col",
+                            "generator": "cumcount",
+                            "start": 0,
+                            "step": 1,
                         },
-                    ],
-                }
-            ],
-        }
-        out_df = _run_single_table(cfg, df)
+                    },
+                ],
+            }
+        ],
+    }
+    out_df = _run_single_table(cfg, df)
 
     # Invariant: within each group, counter values are consecutive from 0.
     for group, gdf in out_df.groupby("group_id"):
@@ -999,36 +987,29 @@ def _windowed_date_proof() -> dict:
     date_vals = ["1900-01-01"] * len(anchor_vals)
     df = pd.DataFrame({"anchor": anchor_vals, "event_date": date_vals})
 
-    with tempfile.TemporaryDirectory() as _tmp:
-        tmp = Path(_tmp)
-        csv_path = tmp / "t.csv"
-        df.to_csv(csv_path, index=False)
-
-        cfg = {
-            "version": 2,
-            "global_settings": {"seed": 99, "post_validation": False},
-            "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
-            "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
-            "tables": [
-                {
-                    "name": "t",
-                    "columns": [
-                        {"name": "anchor", "strategy": "passthrough"},
-                        {
-                            "name": "event_date",
-                            "strategy": "windowed_date",
-                            "provider_config": {
-                                "anchor": "anchor",
-                                "min_days": 1,
-                                "max_days": 30,
-                                "distribution": "uniform",
-                            },
+    cfg = {
+        "version": 2,
+        "global_settings": {"seed": 99, "post_validation": False},
+        "tables": [
+            {
+                "name": "t",
+                "columns": [
+                    {"name": "anchor", "strategy": "passthrough"},
+                    {
+                        "name": "event_date",
+                        "strategy": "windowed_date",
+                        "provider_config": {
+                            "anchor": "anchor",
+                            "min_days": 1,
+                            "max_days": 30,
+                            "distribution": "uniform",
                         },
-                    ],
-                }
-            ],
-        }
-        out_df = _run_single_table(cfg, df)
+                    },
+                ],
+            }
+        ],
+    }
+    out_df = _run_single_table(cfg, df)
 
     # Invariant: each output date is within [min_days, max_days] of its anchor.
     for idx, row in out_df.iterrows():
@@ -1083,35 +1064,28 @@ def _group_key_proof() -> dict:
     key_vals = [""] * len(cluster_vals)
     df = pd.DataFrame({"cluster_id": cluster_vals, "key": key_vals})
 
-    with tempfile.TemporaryDirectory() as _tmp:
-        tmp = Path(_tmp)
-        csv_path = tmp / "t.csv"
-        df.to_csv(csv_path, index=False)
-
-        cfg = {
-            "version": 2,
-            "global_settings": {"seed": 77, "post_validation": False},
-            "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
-            "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
-            "tables": [
-                {
-                    "name": "t",
-                    "columns": [
-                        {"name": "cluster_id", "strategy": "passthrough"},
-                        {
-                            "name": "key",
-                            "strategy": "group_key",
-                            "provider_config": {
-                                "group_by": "cluster_id",
-                                "length": 16,
-                                "prefix": "GK-",
-                            },
+    cfg = {
+        "version": 2,
+        "global_settings": {"seed": 77, "post_validation": False},
+        "tables": [
+            {
+                "name": "t",
+                "columns": [
+                    {"name": "cluster_id", "strategy": "passthrough"},
+                    {
+                        "name": "key",
+                        "strategy": "group_key",
+                        "provider_config": {
+                            "group_by": "cluster_id",
+                            "length": 16,
+                            "prefix": "GK-",
                         },
-                    ],
-                }
-            ],
-        }
-        out_df = _run_single_table(cfg, df)
+                    },
+                ],
+            }
+        ],
+    }
+    out_df = _run_single_table(cfg, df)
 
     # Invariant 1: same group_by value -> same key within the result.
     group_keys: dict[str, str] = {}

@@ -134,7 +134,7 @@ ALLOWLIST: dict[str, int] = {
     "scripts/build_golden_fixtures.py": 606,
     "scripts/faker-determinism/check_determinism.py": 601,
     "scripts/fk_memory_probe.py": 1056,
-    "scripts/gen_proof_manifest.py": 1230,
+    "scripts/gen_proof_manifest.py": 1204,
     "scripts/native-baseline/bench_c1_oracle.py": 766,
     "scripts/tb3_cgroup_validation.py": 603,
     "scripts/tq_mutate.py": 822,

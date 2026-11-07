@@ -58,7 +58,7 @@ from decoy_engine.validators._types import ValidatorFinding
 # ---------------------------------------------------------------------------
 
 TRANSFORMATIVE: frozenset[str] = frozenset(
-    {"hash", "fpe", "tokenize", "redact", "text_redact", "faker", "code_set"}
+    {"hash", "fpe", "tokenize", "redact", "text_redact", "faker", "code_set", "email_mask"}
 )
 
 SHAPE_PRESERVING: frozenset[str] = frozenset(

@@ -6,6 +6,10 @@ from decoy_engine.reasons import _catalog
 
 __all__ = [
     "DEDUPE_UNSUPPORTED_TYPE",
+    "EMAIL_MASK_KEEP_INVALID",
+    "EMAIL_MASK_OPTION_UNKNOWN",
+    "EMAIL_MASK_REQUIRES_NAMESPACE",
+    "EMAIL_MASK_UNSUPPORTED_IN_NESTED",
     "SORT_UNSUPPORTED_TYPE",
     "STATISTICAL_HIGH_CARDINALITY_REQUIRES_REAL_CATEGORIES",
     "STATISTICAL_HIGH_CARDINALITY_SNAPSHOT_MISMATCH",
@@ -59,3 +63,16 @@ SORT_UNSUPPORTED_TYPE = _d("sort_unsupported_type", "Sort unsupported type.")
 _d = _catalog.plan("decoy_engine.plan._checks_top_code")
 
 TOP_CODE_INVALID_FLOOR = _d("top_code_invalid_floor", "Top code invalid floor.")
+
+_d = _catalog.plan("PlanCompileError")
+
+EMAIL_MASK_KEEP_INVALID = _d("email_mask_keep_invalid", "Email mask keep invalid.", since="1.7.0")
+EMAIL_MASK_OPTION_UNKNOWN = _d(
+    "email_mask_option_unknown", "Email mask option unknown.", since="1.7.0"
+)
+EMAIL_MASK_REQUIRES_NAMESPACE = _d(
+    "email_mask_requires_namespace", "Email mask requires namespace.", since="1.7.0"
+)
+EMAIL_MASK_UNSUPPORTED_IN_NESTED = _d(
+    "email_mask_unsupported_in_nested", "Email mask unsupported in nested.", since="1.7.0"
+)

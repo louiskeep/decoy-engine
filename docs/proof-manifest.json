@@ -2,7 +2,7 @@
   "engine_version": "0.19.0",
   "generated_at": "2026-06-14",
   "surface": {
-    "mask": 24,
+    "mask": 25,
     "generate": 12,
     "providers": 34
   },
@@ -346,6 +346,36 @@
         }
       ],
       "invariant": "Each value becomes a fixed-length keyed hex token; equal inputs hash equally, so joins survive."
+    },
+    {
+      "id": "mask.email_mask",
+      "kind": "mask",
+      "title": "Email keeping only the domain class",
+      "column": "email",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: email\n    strategy: email_mask\n    namespace: em\n    provider_config:\n      keep: domain_class",
+      "input": [
+        {
+          "email": "ann@acme.com"
+        },
+        {
+          "email": "bo@gmail.com"
+        },
+        {
+          "email": "cy@cs.stanford.edu"
+        }
+      ],
+      "output": [
+        {
+          "email": "c3622b049cdc9bfd8fb5@corporate.example"
+        },
+        {
+          "email": "b8b70f850f377460fbe3@gmail.com"
+        },
+        {
+          "email": "b0cfcad803e681679512@edu.example"
+        }
+      ],
+      "invariant": "The local part becomes a keyed token; a free-mail domain is kept and any other domain is replaced by a reserved class domain (corporate, edu or gov)."
     },
     {
       "id": "mask.truncate",

@@ -16,6 +16,19 @@ minimum engine version it was tested against via its
 (`hash` and `fpe`), whether it is offered at the wizard's `edit` prompt, and where each option lives in a column
 entry (`column`, `provider_config` or `provider_config.ner`). `StrategyInfo` and `StrategyOption` are exported too.
 
+### Added (V1+ track: email_mask, opt-in)
+
+V1+ track ([V1P-3.1](https://github.com/louiskeep/decoy/blob/claude/fervent-thompson-tm8w6d/docs/roadmap/v1plus-sprints.md)),
+built ahead of CLI V1 and opt-in; not merged per owner instruction (2026-11-07). A new mask strategy, `email_mask`,
+replaces an address's local part with a keyed 20-hex token and keeps the domain (`keep: domain`) or only its class
+(`keep: domain_class`: a listed free-mail domain, else `gov.example`, `edu.example` or `corporate.example`). It needs a
+namespace and an admitted mask secret, is Python-only on every route, and is in no default, disguise or starter config;
+the wizard does not offer it. Reason registry `1.6.0` -> `1.7.0`: seven additions (`plan.email_mask_keep_invalid`,
+`plan.email_mask_option_unknown`, `plan.email_mask_requires_namespace`, `plan.email_mask_unsupported_in_nested`,
+`runtime.email_mask_config_invalid`, `runtime.email_mask_requires_string_dtype`,
+`warning.email_mask_malformed_values`). A config without `email_mask` compiles, serialises and runs exactly as before.
+The leak it accepts is in `docs/what-we-cannot-prove.md`.
+
 ## [0.19.0] - 2026-11-07
 
 ### Breaking for consumers (since v0.18.0)

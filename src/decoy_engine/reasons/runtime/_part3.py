@@ -28,6 +28,8 @@ __all__ = [
     "DERIVE_RESULT_NOT_CONVERTIBLE",
     "DROP_COLUMN_MISSING",
     "DUPLICATE_SOURCE_FIELD_NAMES",
+    "EMAIL_MASK_CONFIG_INVALID",
+    "EMAIL_MASK_REQUIRES_STRING_DTYPE",
     "FAKER_POSITIONAL_TABLE_UNKNOWN",
     "FAKER_POSITION_OUT_OF_DOMAIN",
     "FILTER_EXPRESSION_ERROR",
@@ -309,3 +311,12 @@ _d = _catalog.runtime("decoy_engine.transforms.text_mask")
 
 CHECKSUM_INVALID = _d("checksum_invalid", "Checksum invalid.")
 SUB_MINIMUM_DOMAIN = _d("sub_minimum_domain", "Sub minimum domain.")
+
+_d = _catalog.runtime("StrategyError")
+
+EMAIL_MASK_CONFIG_INVALID = _d(
+    "email_mask_config_invalid", "Email mask config invalid.", since="1.7.0"
+)
+EMAIL_MASK_REQUIRES_STRING_DTYPE = _d(
+    "email_mask_requires_string_dtype", "Email mask requires string dtype.", since="1.7.0"
+)

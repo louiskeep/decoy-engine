@@ -25,6 +25,7 @@ from decoy_engine.execution._strategies._code_set import CodeSetHandler
 from decoy_engine.execution._strategies._date_shift import DateShiftStrategyHandler
 from decoy_engine.execution._strategies._derived import DerivedStrategyHandler
 from decoy_engine.execution._strategies._derived_aggregate import DerivedAggregateStrategyHandler
+from decoy_engine.execution._strategies._email_mask import EmailMaskStrategyHandler
 from decoy_engine.execution._strategies._faker import FakerStrategyHandler
 from decoy_engine.execution._strategies._formula import FormulaStrategyHandler
 from decoy_engine.execution._strategies._fpe import FpeStrategyHandler
@@ -72,6 +73,7 @@ SCALAR_HANDLERS: dict[str, StrategyHandler] = {
         WindowedDateStrategyHandler(),
         GroupKeyStrategyHandler(),
         TokenizeStrategyHandler(),
+        EmailMaskStrategyHandler(),
     )
 }
 
@@ -127,6 +129,7 @@ __all__ = [
     "DateShiftStrategyHandler",
     "DerivedAggregateStrategyHandler",
     "DerivedStrategyHandler",
+    "EmailMaskStrategyHandler",
     "FakerStrategyHandler",
     "FormulaStrategyHandler",
     "FpeStrategyHandler",

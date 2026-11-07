@@ -361,6 +361,30 @@ If your use case requires a formal privacy guarantee over MASKED data, over
 generated JOINT or conditional structure, or over datetime or freetext
 columns, Decoy alone does not supply it.
 
+## email_mask keeps the domain or its class
+
+`email_mask` (opt-in) replaces the local part of an address with a keyed token but
+deliberately keeps part of the address:
+
+- `keep: domain` reveals each row's employer or organisation and the domain
+  frequency table. A small domain (a family domain, a ten-person company) can
+  narrow a row to one person, and a personal domain (`jane@janedoe.name`)
+  identifies its owner outright. The outputs are routable addresses at real
+  domains: a test system fed this data must not send mail.
+- `keep: domain_class` reveals which rows use a listed free-mail provider and
+  which one, and whether the rest are government, education or other. A national
+  provider or ISP domain (`orange.fr`, `t-online.de`, `naver.com`) also reveals
+  the likely country.
+- Both modes keep row-level linkage within a namespace, as `hash` does: equal
+  addresses mask equally, and the token is the prefix of the `hash` token for the
+  same string under the same namespace.
+- The token is only as strong as the mask secret. A seed-keyed token next to a kept
+  domain would let anyone holding the config confirm a guessed `first.last@domain`,
+  so a run without an admitted secret is refused in every release phase.
+
+If organisation membership or country is itself sensitive, use `hash`, `redact`,
+or `faker` on the whole column instead.
+
 ## It does not certify legal or regulatory compliance
 
 Decoy ships configuration bundles named after regulations (for example a HIPAA

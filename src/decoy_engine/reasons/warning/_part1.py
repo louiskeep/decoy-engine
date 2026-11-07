@@ -6,6 +6,7 @@ from decoy_engine.reasons import _catalog
 
 __all__ = [
     "CARDINALITY_MATCH_DEVIATION",
+    "EMAIL_MASK_MALFORMED_VALUES",
     "FORMAT_RULE_VIOLATION",
     "FPE_JOIN_GROUP_ACTIVE",
     "FPE_PARTIAL_PLAINTEXT_DISCLOSURE",
@@ -49,3 +50,9 @@ TEXT_MASK_SUB_FLOOR_SPAN_HANDLED = _d(
 TOP_CODE_GENERALIZED = _d("top_code_generalized", "Top code generalized.")
 UNDECLARED_OUTPUT_COLUMNS = _d("undeclared_output_columns", "Undeclared output columns.")
 VALUE_REUSE_FIXED_POINT = _d("value_reuse_fixed_point", "Value reuse fixed point.")
+
+_d = _catalog.warning("QualityWarning")
+
+EMAIL_MASK_MALFORMED_VALUES = _d(
+    "email_mask_malformed_values", "Email mask malformed values.", since="1.7.0"
+)

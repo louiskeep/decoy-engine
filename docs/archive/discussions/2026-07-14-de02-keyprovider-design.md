@@ -81,6 +81,7 @@ Pandas execution strategies (`execution/_strategies/`), all threading `ctx.job_s
 | 12 | `_group_key.py:67` → `transforms/group_key.py:171` | `derive(seed, ns, source)` → group key token | **NO** |
 | 13 | `_joint_mask.py:51` | `apply_joint_mask(..., job_seed=ctx.job_seed)` | **NO** |
 | 14 | `_composite.py:122` | `ProviderSpec(seed=job_seed)` deterministic → coherent pseudonym bundle | **NO** |
+| 14a | `_email_mask/_handler.py:107` (added 2026-11-07, V1+) | `derive(mask_key, ns, NFC(value))[:20 hex]` → local-part token | n/a (after this design; keyed from the start) |
 
 Polars execution strategies (`execution/polars/_strategies/`) — separate call-sites:
 

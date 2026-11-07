@@ -244,6 +244,7 @@ _ALLOWLIST = frozenset(
         # siblings above: these are DrawSite literals whose seed_derivation/notes
         # strings quote the call shape the scan looks for.
         "execution/native/_draw_sites_tokenize.py",
+        "execution/native/_draw_sites_email_mask.py",
         # Per-family DRAW_SITES data modules assembled by _determinism_protocol.py.
         # Same rationale as the siblings above: DrawSite literals whose
         # seed_derivation/notes strings quote the call shapes the scan looks for.

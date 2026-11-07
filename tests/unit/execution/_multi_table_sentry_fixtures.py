@@ -32,6 +32,11 @@ EXTRA_FIXTURES: dict[str, tuple[list[dict[str, Any]], dict[str, pa.Array]]] = {
         [_col("val", "tokenize", namespace="tok_ns")],
         {"val": _s("pan{i}")},
     ),
+    # email_mask is Python-only (not chunk-safe), so its split stays vetoed like the others here.
+    "email_mask:deterministic": (
+        [_col("val", "email_mask", namespace="em_ns", provider_config={"keep": "domain"})],
+        {"val": _s("user{i}@example.com")},
+    ),
     "shuffle:deterministic": (
         [_col("val", "shuffle", deterministic=True, namespace="sh_ns")],
         {"val": _s("x{i}")},

@@ -342,6 +342,14 @@ _STRATEGY_SPECS: dict[str, list[tuple[dict[str, Any], list[object], pa.DataType,
     "passthrough": [({}, ["a", None, "b"], _STR, "null")],
     "redact": [({}, ["a", None, "b"], _STR, "null")],
     "truncate": [({"provider_config": {"length": 3}}, ["12345", "6789", None], _STR, "null")],
+    "email_mask": [
+        (
+            {"namespace": "em_ns", "provider_config": {"keep": "domain_class"}},
+            ["a@acme.com", None, "b@gmail.com"],
+            _STR,
+            "null",
+        )
+    ],
     "hash": [
         ({"namespace": "h_ns"}, ["a", None, "b"], _STR, "null"),
         ({"namespace": "h_ns"}, [1, 22, 333], _INT, "dtype_int"),

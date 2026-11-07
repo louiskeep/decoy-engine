@@ -142,6 +142,53 @@ covering hash for such values (that fallback was removed in DE-01); see the
 Use it when a downstream system validates the format of an identifier (credit
 card, account number) and you cannot change its shape.
 
+### email_mask
+
+Opt-in (V1+ track; in no default, disguise or starter config, and not offered by
+the init wizard). Replaces the local part of an email address with a keyed token
+and keeps either the exact domain or only its class. Needs a namespace and an
+admitted mask secret (`run(key_provider=...)` or `global_settings.mask_secret_ref`);
+a run without one is refused before any source is read.
+
+```yaml
+- name: email
+  strategy: email_mask
+  namespace: user_email
+  provider_config:
+    keep: domain_class   # or: domain
+```
+
+- Local part: the first 20 hex characters of `derive(mask_key, namespace, value)`,
+  keyed on the whole address, so `a@acme.com` and `a@globex.com` never share one.
+  Equal inputs give equal outputs; distinct inputs collide only on an 80-bit token
+  collision (not collision-resolved, like `hash`). Under the same namespace the
+  token is the prefix of the `hash` token for the same string.
+- `keep: domain`: the domain after the last `@`, exactly as written.
+- `keep: domain_class`: a domain on the committed free-mail list (about 45 large
+  consumer providers, `gmail.com`, `outlook.com`, `qq.com`, ...) is kept in the
+  list's lower-case spelling; any other domain becomes `gov.example`,
+  `edu.example` or `corporate.example` (reserved by RFC 2606). Government: a
+  `.gov` / `.mil` domain or `gov|gouv|govt|gob|go|mil` before a two-letter country
+  code. Education: `.edu`, or `ac|edu` before a country code. Everything else,
+  including any non-ASCII domain, is corporate.
+- A value with no usable domain (no `@`, empty local part, whitespace, an address
+  literal, a dotted IPv4, a trailing dot, a bad label) becomes
+  `<token>@unknown.invalid`, and the run carries one
+  `email_mask_malformed_values` warning with the count. Nulls stay null; an
+  all-null column passes untouched. A non-text column is refused with
+  `email_mask_requires_string_dtype`.
+- Refused at plan compile: `keep` other than the two exact strings
+  (`email_mask_keep_invalid`), any other option (`email_mask_option_unknown`), no
+  namespace (`email_mask_requires_namespace`), and use as a `nested` child
+  (`email_mask_unsupported_in_nested`).
+- Routes: Python only. Every route gives the same output: native routes run the
+  Python handler, auto-chunk keeps the table full-frame, the out-of-core FK route
+  falls back under `auto` (forcing `execution_mode="out_of_core"` is refused with
+  `out_of_core_strategy_unsupported`).
+
+What it keeps is a disclosure; see
+[What Decoy does not prove](what-we-cannot-prove.md#email_mask-keeps-the-domain-or-its-class).
+
 ### date_shift
 
 Shifts each date by a deterministic per-value offset within a bounded range.

@@ -168,7 +168,7 @@ def _legacy_or_none(box: OpaqueBox) -> bytes | None:
 # --- classification ------------------------------------------------------------------------
 
 # Re-identification surface regardless of the `deterministic` flag (kept in lockstep with the
-# keyed-surface map in docs/discussions/2026-07-14-de02-keyprovider-design.md). `tokenize` is
+# keyed-surface map in docs/archive/discussions/2026-07-14-de02-keyprovider-design.md). `tokenize` is
 # keyed unconditionally: a seed-derived token is dictionary-attackable without vault access.
 ALWAYS_KEYED_STRATEGIES = frozenset(
     {
@@ -184,6 +184,7 @@ ALWAYS_KEYED_STRATEGIES = frozenset(
         "group_key",
         "joint_mask",
         "tokenize",
+        "email_mask",
     }
 )
 # Strategies the config-only classifier positively knows are unkeyed absent `deterministic` /

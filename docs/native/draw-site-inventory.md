@@ -44,11 +44,11 @@ partitionable.
 
 ## Summary
 
-- 34 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
+- 35 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
   the out-of-core batched path, the delegation handlers, and the 9 identifier
   provider adapters).
-- 23 partitionable, 11 not.
-- Family breakdown: `source_keyed_hmac` 15, `numpy_pcg64` 8, `faker_seed_instance`
+- 24 partitionable, 11 not.
+- Family breakdown: `source_keyed_hmac` 16, `numpy_pcg64` 8, `faker_seed_instance`
   4, `python_mt19937` 3, `per_row_reseed` 2, `per_group_stream` 1,
   `gen_derive_context` 1.
 - GP2 (2026-09-17) added `gen.faker_pool_build` / `gen.faker_pool_selection`: a
@@ -93,7 +93,7 @@ both named honestly in the catalog's `entropy_root` field.
 
 ---
 
-## Family: source_keyed_hmac (15 sites)
+## Family: source_keyed_hmac (16 sites)
 
 The HMAC/HKDF digest IS the pseudo-randomness. There is no RNG object and no
 stream position. Every site keys on the source value (or, for `code_set` in
@@ -125,6 +125,16 @@ native-routed (no compiled kernel; per-cell vault callback), so this site is
 catalogued for totality/audit, not a native draw. Wiring the full per-value
 `_canonicalize_source` dispatch (lifting the string-only restriction) is a tracked
 V1 follow-up.
+
+### mask.email_mask
+`execution/_strategies/_email_mask/_handler.py:107` (V1+ email mask). String/object
+source only (a coded `email_mask_requires_string_dtype` refusal otherwise; an
+all-null column passes untouched). `derive(mask_key, namespace,
+nfc_normalize(str(value)).encode())`, emitted as `.hex()[:20]` followed by `@` and
+the kept domain, its class domain, or `unknown.invalid` for a malformed value. The
+local part is therefore the prefix of `mask.hash`'s token for the same string under
+the same namespace. The domain takes no draw. Null/NaN rows emit null and consume no
+derivation. Never native-routed (no operator), so catalogued for totality/audit.
 
 ### mask.categorical_deterministic
 `execution/_strategies/_categorical.py:211`. Uniform path:
@@ -551,7 +561,7 @@ The `unit_float_from_bits53(raw_u64)` primitive extracts the upper 53 bits of a
 FULL 64-bit value (`(raw_u64 >> 11) / 2**53`), matching NumPy's own `random()`
 construction and always `< 1.0` (the all-ones input maps to `(2**53 - 1) / 2**53`).
 
-Registry: exactly one provider per catalogued `draw_site_id` (34 sites; 23
+Registry: exactly one provider per catalogued `draw_site_id` (35 sites; 24
 partitionable, 11 not). An import-time invariant fails if the registry drifts
 from `DRAW_SITES`.
 
@@ -589,6 +599,7 @@ from `DRAW_SITES`.
 | mask.group_key                    | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.hash                         | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.tokenize                     | source_keyed_hmac   | yes           | seed_protocol_v7 (fresh token; vault reuse is external state) |
+| mask.email_mask                   | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.joint_mask_keyed_row         | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.text_mask_date_shift         | source_keyed_hmac   | yes           | seed_protocol_v7 |
 

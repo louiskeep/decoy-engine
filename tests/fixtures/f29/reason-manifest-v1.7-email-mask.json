@@ -1,0 +1,194 @@
+{
+  "entries": [
+    {
+      "code": "email_mask_keep_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "Email mask keep invalid.",
+      "symbol": "EMAIL_MASK_KEEP_INVALID"
+    },
+    {
+      "code": "email_mask_option_unknown",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "Email mask option unknown.",
+      "symbol": "EMAIL_MASK_OPTION_UNKNOWN"
+    },
+    {
+      "code": "email_mask_requires_namespace",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "Email mask requires namespace.",
+      "symbol": "EMAIL_MASK_REQUIRES_NAMESPACE"
+    },
+    {
+      "code": "email_mask_unsupported_in_nested",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "Email mask unsupported in nested.",
+      "symbol": "EMAIL_MASK_UNSUPPORTED_IN_NESTED"
+    },
+    {
+      "code": "email_mask_config_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "StrategyError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "Email mask config invalid.",
+      "symbol": "EMAIL_MASK_CONFIG_INVALID"
+    },
+    {
+      "code": "email_mask_requires_string_dtype",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "StrategyError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "Email mask requires string dtype.",
+      "symbol": "EMAIL_MASK_REQUIRES_STRING_DTYPE"
+    },
+    {
+      "code": "email_mask_malformed_values",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "warning",
+      "namespace": "warning",
+      "owner": "QualityWarning",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "findings",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "warning"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "Email mask malformed values.",
+      "symbol": "EMAIL_MASK_MALFORMED_VALUES"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.7.0"
+}

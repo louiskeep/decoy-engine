@@ -183,6 +183,17 @@ _MASK: dict[str, _Ortho] = {
             "per-cell vault callback, no compiled kernel."
         ),
     ),
+    # Keyed row-local local-part token plus a domain rule; static string output. No compiled
+    # kernel (no operator), so every native route coded-rejects it to the Python handler.
+    "email_mask": _Ortho(
+        True,
+        False,
+        False,
+        False,
+        True,
+        warning_codes=("email_mask_malformed_values",),
+        notes="Python-only: no operator, not chunk-safe, not out-of-core supported.",
+    ),
     # -- keyed row-local, zero-diagnostic ------------------------------------
     "fpe": _Ortho(
         True,

@@ -78,6 +78,8 @@ _STATIC_BEHAVIOR: dict[str, DistributionBehavior] = {
     # So cardinality and value frequencies are preserved up to canonicalization
     # while the values themselves change, the same class as hash and fpe.
     "tokenize": "preserves_cardinality_only",
+    # email_mask: one keyed output per distinct address (80-bit token, not collision-resolved).
+    "email_mask": "preserves_cardinality_only",
     "faker": "destroys_frequency",
     "categorical": "destroys_frequency",  # overridden by the dynamic resolver
     "bucketize": "coarsens",

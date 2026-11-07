@@ -164,6 +164,10 @@ TECHNIQUE_CLASS_BY_STRATEGY: dict[str, TechniqueClass] = {
     # linkage broken but reversible with separately-held information -- and the
     # strongest instance of it. Same class as hash/fpe.
     "tokenize": "pseudonymisation",
+    # email_mask (V1+): keyed local-part token plus the domain or its class. Re-linkable by the
+    # key holder (same derive as hash), so pseudonymisation, not anonymisation: the kept domain
+    # also leaves the organisation visible.
+    "email_mask": "pseudonymisation",
     # `nested` (MG-3 M2, 2026-05-31) is intentionally absent. It is a
     # wrapper -- its GDPR posture is the child strategy's posture, not
     # its own. Until the FE surfaces the child-strategy badge for

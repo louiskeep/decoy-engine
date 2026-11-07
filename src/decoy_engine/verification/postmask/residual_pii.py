@@ -60,6 +60,8 @@ _PRODUCES_PII_LIKE_VALUES: frozenset[str] = frozenset(
         "categorical",
         "reference",
         "date_shift",
+        # A masked address still looks like an email by design (the domain is kept or classed).
+        "email_mask",
     }
 )
 
@@ -98,6 +100,7 @@ _SUBSTITUTION_STRATEGIES: frozenset[str] = frozenset(
         "faker",
         "date_shift",
         "fpe",
+        "email_mask",
     }
 )
 

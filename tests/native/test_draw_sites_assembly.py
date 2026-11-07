@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from decoy_engine.execution.native import _determinism_protocol as protocol
 from decoy_engine.execution.native import _draw_site_types as types
+from decoy_engine.execution.native._draw_sites_email_mask import EMAIL_MASK_DRAW_SITES
 from decoy_engine.execution.native._draw_sites_gen import GEN_DRAW_SITES, GEN_SUBSTRATE_DRAW_SITES
 from decoy_engine.execution.native._draw_sites_gen_pool import GEN_POOL_DRAW_SITES
 from decoy_engine.execution.native._draw_sites_mask import MASK_DRAW_SITES, MASK_FORMULA_DRAW_SITE
@@ -19,6 +20,7 @@ _FAMILY_ORDER = (
     (MASK_FORMULA_DRAW_SITE,),
     GEN_POOL_DRAW_SITES,
     TOKENIZE_DRAW_SITES,
+    EMAIL_MASK_DRAW_SITES,
 )
 
 
@@ -31,7 +33,7 @@ def test_catalogue_is_the_family_modules_in_order() -> None:
 
 
 def test_family_sizes() -> None:
-    assert [len(family) for family in _FAMILY_ORDER] == [14, 10, 4, 1, 1, 3, 1]
+    assert [len(family) for family in _FAMILY_ORDER] == [14, 10, 4, 1, 1, 3, 1, 1]
 
 
 def test_protocol_reexports_the_record_type_and_enums() -> None:
