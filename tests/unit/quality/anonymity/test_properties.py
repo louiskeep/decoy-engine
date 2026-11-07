@@ -168,9 +168,10 @@ def test_emd_equals_dense_reference(frame: pd.DataFrame) -> None:
         assert 0.0 <= report.max_emd <= 1.0 + TOL
         # Every class is pinned by thresholds on either side of its value.
         for value in set(emds):
-            t = min(1.0, float(value) + 1e-9)
-            above = sum(1 for e in emds if float(e) > t + TOL)
-            assert measure(frame, qi, "s", t_target=t).classes_above_target == above
+            for t in (float(value) + 1e-9, float(value) - 1e-9):
+                t = min(1.0, max(0.0, t))
+                above = sum(1 for e in emds if float(e) > t + TOL)
+                assert measure(frame, qi, "s", t_target=t).classes_above_target == above
 
 
 @seed(20261107)
@@ -229,6 +230,37 @@ def test_row_order_does_not_matter(frame: pd.DataFrame, rnd: Any) -> None:
             assert b.max_emd is None
         else:
             assert math.isclose(a.max_emd, b.max_emd, rel_tol=TOL, abs_tol=TOL)
+
+
+def test_segment_split_where_ceiling_is_hit_exactly() -> None:
+    """Pinned: the split position s is the first CQ >= ceil(CP*N / n_c). Class A
+    = {0, 2, 2}, B = {1}; N = 4, CQ = (1, 2, 4). In A's first segment CP = 1,
+    ceil(4/3) = 2 = CQ(1), and CQ(1)*n_c = 6 > CP*N = 4, so position 1 is on the
+    upper side. A: cumulative r = 1/12, -1/6, 0 -> 1/4 / 2 = 1/8.
+    B: -1/4, 1/2, 0 -> 3/4 / 2 = 3/8."""
+    frame = pd.DataFrame({"q": ["A", "B", "A", "A"], "s": [0, 1, 2, 2]})
+    for t, above in ((3 / 8, 0), (3 / 8 - 1e-9, 1), (1 / 8, 1), (1 / 8 - 1e-9, 2)):
+        report = measure_t_closeness_ordered(frame, ["q"], "s", t_target=t)
+        assert report.classes_above_target == above, t
+
+
+def test_python_int_path_equals_int64_path(monkeypatch: Any) -> None:
+    """Above the int64 bound the arithmetic switches to Python ints; forcing
+    that path on ordinary inputs must give the same numbers."""
+    import decoy_engine.quality.anonymity._t_closeness as module
+
+    frames = [
+        pd.DataFrame({"q": ["A", "B", "A", "A"], "s": [0, 1, 2, 2]}),
+        pd.DataFrame({"q": list("aabbbc"), "s": [5, 1, 1, 3, 9, 9]}),
+    ]
+    expected = [
+        (measure_t_closeness_ordered(f, ["q"], "s"), measure_t_closeness_equal(f, ["q"], "s"))
+        for f in frames
+    ]
+    monkeypatch.setattr(module, "_INT64_SAFE", 0)
+    for f, (ordered, equal) in zip(frames, expected, strict=True):
+        assert measure_t_closeness_ordered(f, ["q"], "s") == ordered
+        assert measure_t_closeness_equal(f, ["q"], "s") == equal
 
 
 def test_exact_numerator_at_scale() -> None:
