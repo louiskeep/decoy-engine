@@ -246,6 +246,15 @@ def test_all_lists_every_public_name():
         "estimate_job_capacity",
         "CapacityEstimate",
         "CapacityVerdict",
+        # SCAN-ML M1: optional ML detectors (model status, loading, config blocks).
+        "Dismissal",
+        "ModelRef",
+        "ModelStatus",
+        "ModelUnavailableError",
+        "PreScanConfig",
+        "classifier_status",
+        "load_detectors",
+        "ner_status",
         # Job-time estimator: the advisory estimate_job primitive + its result type.
         "estimate_job",
         "JobEstimate",

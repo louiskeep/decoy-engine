@@ -61,7 +61,7 @@ call shape. Any external import of ``Masker`` / ``DataGenerator`` / ``run_graph`
 now fails fast.
 """
 
-from decoy_engine.config import PipelineConfig
+from decoy_engine.config import Dismissal, PipelineConfig, PreScanConfig
 from decoy_engine.context import (
     ExecutionContext,
     Logger,
@@ -80,6 +80,14 @@ from decoy_engine.data_discovery import (
     run_discovery_sql,
 )
 from decoy_engine.detection import DetectorMatch
+from decoy_engine.detection._model_status import (
+    ModelStatus,
+    ModelUnavailableError,
+    classifier_status,
+    load_detectors,
+    ner_status,
+)
+from decoy_engine.detection.types import ModelRef
 from decoy_engine.determinism import (
     SEED_PROTOCOL_VERSION,
     DeterminismError,
@@ -369,6 +377,7 @@ __all__ = [
     "DeterminismError",
     "DiscoveryResult",
     "DiscoverySqlError",
+    "Dismissal",
     "DistinctCount",
     "Domain",
     "ExecutionAdapter",
@@ -393,6 +402,9 @@ __all__ = [
     "Logger",
     "MaskSecretError",
     "MissingMaskSecret",
+    "ModelRef",
+    "ModelStatus",
+    "ModelUnavailableError",
     "NamespaceBinding",
     "NamespaceConfigError",
     "NamespaceRegistry",
@@ -411,6 +423,7 @@ __all__ = [
     "PoolCapacityError",
     "PoolSampler",
     "PostValidationRunner",
+    "PreScanConfig",
     "ProgressSink",
     "ProviderError",
     "ProviderRegistry",
@@ -460,6 +473,7 @@ __all__ = [
     "build_namespace_registry",
     "build_relationship_graph",
     "check_orphan_fk_policy_completeness",
+    "classifier_status",
     "classify_table_kinds",
     "compile_plan",
     "composite_address",
@@ -488,9 +502,11 @@ __all__ = [
     "job_seed_for_config",
     "list_generate_faker_providers",
     "load_custom_providers",
+    "load_detectors",
     "load_vault",
     "make_key_resolver",
     "native_companion_status",
+    "ner_status",
     "pipeline_config_hash",
     "profile_columns",
     "read_csv_source",
