@@ -507,7 +507,10 @@ def test_future_identity_degrades_with_the_identity_only_in_sanitized_context() 
 def test_forged_semantics_read_as_the_registry_says() -> None:
     reason = _read("forged-semantics").failure.reason
     expected = ReasonRecord.for_reason(decoy.UNEXPECTED_ERROR).to_payload()
-    assert reason == {**expected, "written_registry_version": _registry.REGISTRY_VERSION}
+    # The corpus document was written at registry 1.5.0 and is frozen; the reader keeps the
+    # version the writer stamped, whatever the current registry is.
+    assert reason == {**expected, "written_registry_version": "1.5.0"}
+    assert reason["registry_version"] == _registry.REGISTRY_VERSION
 
 
 def test_context_marker_never_survives() -> None:
