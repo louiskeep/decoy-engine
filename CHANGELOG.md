@@ -9,6 +9,13 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (strategy catalog)
+
+`decoy_engine.strategy_catalog()` returns one `StrategyInfo` row per scalar strategy, sorted by name, with its
+`StrategyOption` list. Each row says whether a namespace is required, whether the strategy is join-safe
+(`hash` and `fpe`), whether it is offered at the wizard's `edit` prompt, and where each option lives in a column
+entry (`column`, `provider_config` or `provider_config.ner`). `StrategyInfo` and `StrategyOption` are exported too.
+
 ## [0.19.0] - 2026-11-07
 
 ### Breaking for consumers (since v0.18.0)

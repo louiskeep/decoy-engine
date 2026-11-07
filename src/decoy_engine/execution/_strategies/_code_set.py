@@ -66,13 +66,19 @@ from __future__ import annotations
 import pandas as pd
 
 from decoy_engine import fileaccess, reasons
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    option,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.transforms.code_set import (
+    SHIPPED_CODE_SETS,
     CodeSetConfig,
     apply_code_set,
     describe_loaded_corpus,
@@ -102,6 +108,14 @@ class CodeSetHandler:
     """
 
     name: str = "code_set"
+    namespace_required: bool = True
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("code_set", "str", "icd10", required=True, choices=SHIPPED_CODE_SETS),
+        option("mode", "str", "gen", choices=("mask", "gen")),
+        option("chapter_preserve", "bool", True),
+    )
+    offer_in_wizard: bool = True
 
     def preflight(self, plan: ColumnSeed, ctx: StrategyContext) -> None:
         """Load and validate this column's corpus, regardless of row count.

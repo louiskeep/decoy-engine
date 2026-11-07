@@ -929,6 +929,14 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # `execution.physical`.
             "src/decoy_engine/execution/_sequential_order.py",
             "src/decoy_engine/execution/_planner_columns.py",
+            # Strategy catalog: each handler declares its own catalog attributes. Pure
+            # declarations; none imports `execution.physical`. (The other handlers are
+            # already permitted above.)
+            "src/decoy_engine/execution/_strategies/_derived_aggregate.py",
+            "src/decoy_engine/execution/_strategies/_formula.py",
+            "src/decoy_engine/execution/_strategies/_grouped_series.py",
+            "src/decoy_engine/execution/_strategies/_passthrough.py",
+            "src/decoy_engine/execution/_strategies/_redact.py",
         }
     )
     # Files allowed to change ONLY by these exact line replacements (path -> {removed: added}).
