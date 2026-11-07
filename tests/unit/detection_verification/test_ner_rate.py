@@ -112,6 +112,8 @@ def test_the_free_text_threshold_is_three_tokens() -> None:
         ([3, 3], True),
         ([1, 3, 5], True),
         ([1, 1, 5], False),
+        ([1, 1, 7], False),  # mean 3, median 1: the rule is the median
+        ([0, 3, 3], True),  # mean 2, median 3
         ([], False),  # an empty sample is not free text
     ],
 )

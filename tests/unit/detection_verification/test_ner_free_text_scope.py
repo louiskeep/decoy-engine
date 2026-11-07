@@ -2,8 +2,8 @@
 
 The cells come from the held-out sentence templates in `_ner_corpus.py`, which name companies,
 products, cities and streets but no person. Person names come from a seeded Faker name pool and
-are appended to a fixed share of cells. Seeds and ratios are fixed; the measured rates are
-asserted so the margin over the threshold is visible.
+are appended to a fixed share of cells. Seeds and ratios are fixed; the tests assert hit or no hit
+and print the measured rates, so the margin over the threshold shows in the output.
 """
 
 from __future__ import annotations

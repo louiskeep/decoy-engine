@@ -96,7 +96,9 @@ def is_free_text(cells: Sequence[str]) -> bool:
     """True when the median `len(cell.split())` over `cells` is at least `FREE_TEXT_MIN_TOKENS`.
 
     The one place this rule is computed. An empty sample is not free text, and an even sample's
-    median is the mean of its two middle counts (2 and 3 give 2.5, which is not enough).
+    median is the mean of its two middle counts (2 and 3 give 2.5, which is not enough). It is not
+    the free-text notion of `profiling/_distributions.py` (cardinality, for display) or
+    `quality/_freetext_advisory.py` (length and distinctness, for the HC-7 advisory).
     """
     if not cells:
         return False
