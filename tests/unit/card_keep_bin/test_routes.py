@@ -5,6 +5,7 @@ fails closed before any value is encrypted."""
 from __future__ import annotations
 
 import random
+import re
 from typing import Any
 
 import pandas as pd
@@ -258,7 +259,11 @@ def test_handler_refusals_are_value_free(source: str, pc: dict[str, Any], code: 
     with pytest.raises(StrategyError) as info:
         FpeStrategyHandler().run(df, "card", fpe_seed("ns", **_PC, **pc), _Ctx())  # type: ignore[arg-type]
     assert info.value.code == code
-    assert "4539" not in str(info.value)
+    # The handler chains the value-layer error on purpose, so only its own text is checked.
+    text = str(info.value) + repr(info.value.args)
+    for run in re.findall(r"\d{4,}", source):
+        for i in range(len(run) - 3):
+            assert run[i : i + 4] not in text
     assert df["card"].tolist() == [source]
 
 
