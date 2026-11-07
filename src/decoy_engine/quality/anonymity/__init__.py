@@ -36,8 +36,10 @@ Null policy:
 Value identity: quasi-identifier cells are equal when they are equal and of
 the same type family (Python and numpy ints are one family, as are floats,
 strings, and datetimes with ``pd.Timestamp``; ``bool`` is its own family),
-so ``1``, ``1.0`` and ``True`` are three values. Sensitive cells use plain
-equality, which can only lower l.
+so ``1``, ``1.0`` and ``True`` are three values. Sensitive cells are keyed the
+same way for t-closeness (merging could only lower the distance) and by
+plain equality for l-diversity (merging can only lower l). Timezone-aware
+timestamps for the same instant in different zones are one value.
 
 Reports are frozen and value-free: counts, measures, booleans and fixed
 tokens, never a cell value. They describe these syntactic models only and

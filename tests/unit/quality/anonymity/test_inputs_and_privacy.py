@@ -109,7 +109,8 @@ def test_sensitive_uses_plain_equality() -> None:
     frame = pd.DataFrame({"q": ["x", "x", "x"], "s": pd.Series([1, 1.0, True], dtype=object)})
     report = measure_l_diversity(frame, ["q"], "s")
     assert report.distinct_l_min == 1
-    assert measure_t_closeness_equal(frame, ["q"], "s").distinct_sensitive_values == 1
+    # t keys sensitive values by family instead (see test_t_keys_sensitive_values_by_family).
+    assert measure_t_closeness_equal(frame, ["q"], "s").distinct_sensitive_values == 3
 
 
 def test_native_arrow_nan_is_null() -> None:
@@ -128,6 +129,56 @@ def test_native_arrow_nan_is_null() -> None:
         t = measure(sens, ["q"], "s")
         assert t.distinct_sensitive_values == 1
         assert t.rows_with_null_sensitive == 2
+
+
+def test_t_keys_sensitive_values_by_family() -> None:
+    """1 and 1.0 are two sensitive values for t (one class each): total
+    variation 1/2. Merging them would report 0."""
+    frame = pd.DataFrame(
+        {"q": ["a", "a", "b", "b"], "s": pd.Series([1, 1, 1.0, 1.0], dtype=object)}
+    )
+    report = measure_t_closeness_equal(frame, ["q"], "s")
+    assert report.distinct_sensitive_values == 2
+    assert report.max_emd == pytest.approx(0.5, abs=1e-12)
+    assert measure_l_diversity(frame, ["q"], "s").distinct_l_min == 1
+
+
+def test_datetime_family_spans_numpy_and_pandas() -> None:
+    d = datetime.datetime(2020, 1, 1)
+    cells = [pd.Timestamp(d), np.datetime64("2020-01-01"), d]
+    frame = pd.DataFrame({"q": pd.Series(cells, dtype=object)})
+    assert measure_k_anonymity(frame, ["q"]).class_size_distribution == ((3, 1),)
+
+
+def test_date_and_datetime_are_two_families() -> None:
+    """pandas infers "date" for this mix, so the single-family shortcut must
+    not apply to it."""
+    cells = [datetime.date(2020, 1, 1), datetime.datetime(2020, 1, 1)]
+    frame = pd.DataFrame({"q": pd.Series(cells, dtype=object)})
+    assert measure_k_anonymity(frame, ["q"]).class_count == 2
+
+
+def test_arrow_dictionary_with_null_or_nan_entries() -> None:
+    import pyarrow.compute as pc
+
+    encoded = pc.dictionary_encode(pa.array(["x", None, "x"]), null_encoding="encode")
+    assert encoded.null_count == 0
+    k = measure_k_anonymity(pa.table({"q": encoded}), ["q"])
+    assert k.class_size_distribution == ((1, 1), (2, 1))
+    assert k.rows_with_null_quasi_identifier == 1
+    nan_dict = pa.DictionaryArray.from_arrays(pa.array([0, 1, 1]), pa.array([1.0, float("nan")]))
+    k = measure_k_anonymity(pa.table({"q": nan_dict}), ["q"])
+    assert k.class_size_distribution == ((1, 1), (2, 1))
+    assert k.rows_with_null_quasi_identifier == 2
+    ordered = pa.DictionaryArray.from_arrays(
+        pa.array([0, 1, 2, 0]), pa.array(["lo", None, "hi"]), ordered=True
+    )
+    table = pa.table({"q": ["x", "x", "y", "y"], "s": ordered})
+    report = measure_t_closeness_ordered(table, ["q"], "s")
+    assert report.rows_with_null_sensitive == 1
+    assert report.distinct_sensitive_values == 2
+    # x {lo}, y {hi, lo}; Q = (2/3, 1/3); x: cumulative 1 - 2/3 = 1/3 -> 1/3.
+    assert report.max_emd == pytest.approx(1 / 3, abs=1e-12)
 
 
 def test_decimal_values_compare_by_number() -> None:
@@ -401,10 +452,24 @@ def test_quality_lazy_exports_do_not_name_anonymity() -> None:
     assert not any(name in lazy for name in anonymity.__all__)
 
 
+def _resolve(node: ast.ImportFrom, package: str) -> str:
+    if not node.level:
+        return node.module or ""
+    parts = package.split(".")
+    base = parts[: len(parts) - (node.level - 1)]
+    return ".".join(base + ([node.module] if node.module else []))
+
+
 def test_package_imports_only_data_libraries() -> None:
     """``import decoy_engine`` already loads the pipeline, so a sys.modules check
-    cannot show darkness; the syntax tree of every module in the package can."""
-    allowed_roots = {"numpy", "pandas", "pyarrow", "__future__"} | set(sys.stdlib_module_names)
+    cannot show darkness; the syntax tree of every module in the package can.
+    Relative imports are resolved against the package; dynamic import
+    machinery is refused so the walk cannot be sidestepped."""
+    package = "decoy_engine.quality.anonymity"
+    forbidden = {"importlib"}
+    allowed_roots = (
+        {"numpy", "pandas", "pyarrow", "__future__"} | set(sys.stdlib_module_names)
+    ) - forbidden
     package_dir = Path(anonymity.__file__).parent
     modules = sorted(package_dir.glob("*.py"))
     assert len(modules) >= 5
@@ -414,12 +479,23 @@ def test_package_imports_only_data_libraries() -> None:
             if isinstance(node, ast.Import):
                 names = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom):
-                if node.level:
-                    continue
-                names = [node.module or ""]
+                names = [_resolve(node, package)]
+            elif isinstance(node, ast.Name) and node.id == "__import__":
+                raise AssertionError((path.name, "__import__"))
             else:
                 continue
             for name in names:
                 root = name.split(".")[0]
-                inside = name.startswith("decoy_engine.quality.anonymity")
+                inside = name == package or name.startswith(package + ".")
                 assert root in allowed_roots or inside, (path.name, name)
+
+
+def test_import_walk_sees_relative_and_dynamic_imports() -> None:
+    package = "decoy_engine.quality.anonymity"
+    outside = ast.parse("from ..report import x").body[0]
+    assert isinstance(outside, ast.ImportFrom)
+    assert _resolve(outside, package) == "decoy_engine.quality.report"
+    inside = ast.parse("from ._classes import y").body[0]
+    assert isinstance(inside, ast.ImportFrom)
+    assert _resolve(inside, package) == "decoy_engine.quality.anonymity._classes"
+    assert "importlib" in sys.stdlib_module_names

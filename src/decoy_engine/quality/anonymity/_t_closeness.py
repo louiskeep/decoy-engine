@@ -49,8 +49,8 @@ from decoy_engine.quality.anonymity._classes import (
     ordered_sensitive_codes,
     read_columns,
     rows_in,
-    sensitive_codes,
     sensitive_counts,
+    sensitive_family_codes,
 )
 from decoy_engine.quality.anonymity._report import check_report_values
 
@@ -227,9 +227,13 @@ def measure_t_closeness_equal(
     *,
     t_target: float | None = None,
 ) -> TClosenessReport:
-    """t-closeness with equal ground distance (total variation); any column type."""
+    """t-closeness with equal ground distance (total variation); any column type.
+
+    Sensitive cells are keyed by type family, as quasi-identifiers are:
+    merging ``1``, ``1.0`` and ``True`` into one value could only lower the
+    distance."""
     return _measure(
-        table, quasi_identifiers, sensitive, t_target, "equal", sensitive_codes, _equal_emd
+        table, quasi_identifiers, sensitive, t_target, "equal", sensitive_family_codes, _equal_emd
     )
 
 

@@ -264,8 +264,10 @@ def test_python_int_path_equals_int64_path(monkeypatch: Any) -> None:
 
 
 def test_exact_numerator_at_scale() -> None:
-    """n_c = 1 against N = 200001 with m = 200001: the error a float
-    accumulation would show (about N / n_c ulps) is far above 1e-12.
+    """Correctness pin at scale: n_c = 1 against N = m = 200001, where the
+    segment terms reach about 4e15. Every term stays below 2**53, so this does
+    not distinguish exact integers from float64 (an equivalent mutant at this
+    size); it checks the sparse evaluation on a large, lopsided table.
     One class holds value 0 alone; the rest share one class."""
     n = 200_001
     s = np.arange(n, dtype=np.int64)

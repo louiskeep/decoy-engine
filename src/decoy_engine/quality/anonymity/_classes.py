@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import datetime
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -156,13 +156,49 @@ def _arrow_type_mapper(arrow_type: pa.DataType) -> Any:
     return pd.ArrowDtype(arrow_type)
 
 
+def _without_null_dictionary_entries(chunk: pa.DictionaryArray) -> pa.DictionaryArray:
+    """Drop null and NaN dictionary entries, making rows that point at them null.
+
+    pandas cannot hold a null category, and a null or NaN entry means a null
+    cell under this module's null policy; the order of the remaining entries
+    (and the ``ordered`` flag) is kept.
+    """
+    dictionary = chunk.dictionary
+    bad = dictionary.is_null()
+    if pa.types.is_floating(dictionary.type):
+        nan = pc.fill_null(pc.is_nan(dictionary), False)  # type: ignore[attr-defined, unused-ignore]
+        bad = pc.or_(bad, nan)  # type: ignore[attr-defined, unused-ignore]
+    bad_np = bad.to_numpy(zero_copy_only=False)
+    if not bad_np.any():
+        return chunk
+    remap = np.cumsum(~bad_np) - 1
+    remap[bad_np] = -1
+    valid = chunk.indices.is_valid().to_numpy(zero_copy_only=False)
+    raw = pc.fill_null(chunk.indices, 0).to_numpy(zero_copy_only=False)
+    mapped = remap[raw]
+    null = ~valid | (mapped < 0)
+    indices = pa.array(np.where(null, 0, mapped), type=chunk.indices.type, mask=null)
+    kept = dictionary.filter(pc.invert(bad))  # type: ignore[attr-defined, unused-ignore]
+    return pa.DictionaryArray.from_arrays(indices, kept, ordered=chunk.type.ordered)
+
+
+def _clean_dictionaries(table: pa.Table) -> pa.Table:
+    for position, field in enumerate(table.schema):
+        if pa.types.is_dictionary(field.type):
+            column = table.column(position)
+            chunks = [_without_null_dictionary_entries(chunk) for chunk in column.chunks]
+            table = table.set_column(position, field, pa.chunked_array(chunks, type=field.type))
+    return table
+
+
 def read_columns(table: pd.DataFrame | pa.Table, columns: tuple[str, ...]) -> pd.DataFrame:
     """The named columns as pandas, converted losslessly; value-free on failure."""
     if isinstance(table, pd.DataFrame):
         return table.loc[:, list(columns)]
     failed = False
     try:
-        frame = table.select(list(columns)).to_pandas(types_mapper=_arrow_type_mapper)
+        selected = _clean_dictionaries(table.select(list(columns)))
+        frame = selected.to_pandas(types_mapper=_arrow_type_mapper)
     except _CELL_ERRORS:
         failed = True
     if failed:
@@ -232,37 +268,76 @@ def _with_null_code(nonnull_codes: IntArray, mask: npt.NDArray[np.bool_]) -> Int
     return full
 
 
-def quasi_identifier_codes(
-    series: pd.Series, column: str
+# ``infer_dtype`` results (a C-level scan) that guarantee one type family, so
+# the per-cell family pass can be skipped. "date" is not here: it also covers
+# a mix of dates and datetimes, which are two families.
+_SINGLE_FAMILY_INFERRED = frozenset(
+    {
+        "string",
+        "bytes",
+        "integer",
+        "floating",
+        "boolean",
+        "decimal",
+        "complex",
+        "datetime",
+        "datetime64",
+        "timedelta",
+        "timedelta64",
+        "time",
+    }
+)
+
+
+def _plain_codes(values: pd.Series) -> IntArray:
+    return _factorize(values)
+
+
+def _family_codes(values: pd.Series) -> IntArray:
+    codes = _factorize(values)
+    if values.dtype != object or not codes.size:
+        return codes
+    if pd.api.types.infer_dtype(values, skipna=False) in _SINGLE_FAMILY_INFERRED:
+        return codes
+    families = _factorize(np.array([type_family(v) for v in values], dtype=object))
+    return _factorize(codes * (int(families.max()) + 1) + families)
+
+
+def _nonnull_codes(
+    series: pd.Series, column: str, encode: Callable[[pd.Series], IntArray]
 ) -> tuple[IntArray, npt.NDArray[np.bool_]]:
-    """Dense codes with nulls as one extra code; object cells keyed by type family."""
     mask = null_mask(series)
     failed = False
     try:
-        values = series[~mask]
-        codes = _factorize(values)
-        if values.dtype == object and codes.size:
-            families = _factorize(np.array([type_family(v) for v in values], dtype=object))
-            codes = _factorize(codes * (int(families.max()) + 1) + families)
+        codes = encode(series[~mask])
     except _CELL_ERRORS:
         failed = True
     if failed:
         raise _unreadable(column)
+    return codes, mask
+
+
+def quasi_identifier_codes(
+    series: pd.Series, column: str
+) -> tuple[IntArray, npt.NDArray[np.bool_]]:
+    """Dense codes with nulls as one extra code; object cells keyed by type family."""
+    codes, mask = _nonnull_codes(series, column, _family_codes)
     full = _with_null_code(codes, mask)
     full[mask] = int(codes.max()) + 1 if codes.size else 0
     return full, mask
 
 
 def sensitive_codes(series: pd.Series, column: str) -> IntArray:
-    """Dense codes by plain equality; -1 for null."""
-    mask = null_mask(series)
-    failed = False
-    try:
-        codes = _factorize(series[~mask])
-    except _CELL_ERRORS:
-        failed = True
-    if failed:
-        raise _unreadable(column)
+    """Codes by plain equality, -1 for null. For l-diversity, where merging
+    equal-comparing values of different types can only lower l."""
+    codes, mask = _nonnull_codes(series, column, _plain_codes)
+    return _with_null_code(codes, mask)
+
+
+def sensitive_family_codes(series: pd.Series, column: str) -> IntArray:
+    """Codes keyed by type family, -1 for null. For t-closeness, where merging
+    ``1``, ``1.0`` and ``True`` could only lower the distance."""
+    codes, mask = _nonnull_codes(series, column, _family_codes)
     return _with_null_code(codes, mask)
 
 
