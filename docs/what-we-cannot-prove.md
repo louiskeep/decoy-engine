@@ -524,6 +524,13 @@ anonymisation:
   pairs. In every kept block, the host whose bits equal the key's pad bits maps either
   to itself or to its bitwise complement. Post-validation reports the count per run
   (`value_reuse_fixed_point`).
+- A column with few distinct addresses can come out with every row equal to its source.
+  For any d distinct addresses the chance is at most about 2^-(d/2) (25% at 4, 0.4% at 16),
+  and a single /30 at `keep_bits_v4: 30` is fully self-mapped under one key in four. Such
+  output is correct but looks like a mask that did not fire, so the residual-PII check
+  reports full identity on an `ip_prefix` column as a warning below 40 distinct source
+  addresses (worst case under one in a million at 40) and as a fail from 40 up; a
+  single-address column never escalates.
 - Anyone with the mask key and the namespace can invert the mapping, as for
   `fpe`. A run refuses without a mask secret.
 

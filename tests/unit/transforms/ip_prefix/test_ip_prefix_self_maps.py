@@ -8,8 +8,10 @@ bit inherits its parent's flip. A host with h keyed bits maps to itself with pro
 from __future__ import annotations
 
 import random
+from typing import Any
 
 import pandas as pd
+import pytest
 
 from decoy_engine._opaque import OpaqueBox
 from decoy_engine.transforms.network._cryptopan import CryptoPan
@@ -91,8 +93,30 @@ def test_correct_output_with_half_its_rows_self_mapped_does_not_fail_residual_pi
     assert _residual(src, out) == [("info", 0.5)]
 
 
-def test_a_column_whose_every_row_is_self_mapped_still_fails_residual_pii() -> None:
-    # The value-reuse rule fails on full positional identity: indistinguishable from a mask
-    # that did not fire. For a lone /30 at keep 30 that is one key in four (known limit).
+def _findings(src: list[str], out: list[str]) -> list[Any]:
+    return check_residual_pii(
+        {"t": pd.DataFrame({"ip": out})}, _CFG, source_frames={"t": pd.DataFrame({"ip": src})}
+    )
+
+
+def test_a_fully_self_mapped_slash30_is_a_warning_not_a_fail() -> None:
+    # One key in four fixes a whole /30 at keep 30: correct output, full positional identity.
     src, out = _slash30_with(4)
-    assert [s for s, _ in _residual(src, out)] == ["fail"]
+    (finding,) = _findings(src, out)
+    assert finding.severity == "warning"
+    assert "4 distinct addresses" in finding.message
+    assert not any(h in finding.message for h in src)
+
+
+def test_a_single_address_column_never_escalates() -> None:
+    assert [f.severity for f in _findings(["192.0.2.7"] * 5, ["192.0.2.7"] * 5)] == ["info"]
+
+
+@pytest.mark.parametrize(("distinct", "severity"), [(2, "warning"), (39, "warning"), (40, "fail")])
+def test_full_identity_fails_only_from_forty_distinct_addresses(
+    distinct: int, severity: str
+) -> None:
+    # Output equal to source row for row: a mask that did not fire, or (below the floor) a
+    # plausible all-self-mapped ip_prefix column.
+    src = [f"10.0.{i // 200}.{i % 200}" for i in range(distinct)] * 2
+    assert [f.severity for f in _findings(src, list(src))] == [severity]

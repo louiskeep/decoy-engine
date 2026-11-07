@@ -126,6 +126,12 @@ _REUSES_SOURCE_VALUES: frozenset[str] = frozenset(
 _LEAK_FAIL_RATE = 0.5
 _LEAK_WARN_RATE = 0.05
 _LEAK_FAIL_MIN_ROWS = 3
+# Below this many distinct source addresses, an ip_prefix column whose every row maps to
+# itself is a warning, not a fail. Reference Crypto-PAn self-maps whole subtrees together, so
+# for any d distinct addresses (any keep length, any spread over blocks) the chance that all
+# self-map is at most about 2**-(d/2): 2.5e-1 at 4, 3.9e-3 at 16, 9.5e-7 at 40 (exact maximum
+# over tree shapes; derivation in the ip_prefix plan, section 12).
+_IP_PREFIX_FULL_IDENTITY_MIN_DISTINCT = 40
 
 _SEVERITY_ORDER: dict[str, int] = {"info": 0, "warning": 1, "fail": 2, "error": 3}
 
@@ -332,6 +338,16 @@ def _escalate(
                 "expression actually masks.",
             )
         return None
+
+    if configured == "ip_prefix" and full_identity:
+        if src_distinct < _IP_PREFIX_FULL_IDENTITY_MIN_DISTINCT:
+            return (
+                "warning",
+                f"column matched {detector_id!r} and every output row equals its source, "
+                f"but it holds only {src_distinct} distinct addresses; ip_prefix maps that "
+                "few addresses all to themselves too often for this to prove the mask did "
+                "not fire -- verify the run.",
+            )
 
     # Value-reuse strategies (shuffle/categorical/reference) and any
     # other configured strategy: full positional identity means the
