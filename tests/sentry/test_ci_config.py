@@ -140,12 +140,11 @@ def test_selfhosted_gate_runs_gates_under_the_shared_lock() -> None:
 
 GATE_BRANCHES_IGNORE = [
     "plan/**",
-    "feat/v2-*",
-    "plan/v2-*",
-    "feat/v1plus-*",
-    "plan/v1plus-*",
+    "feat/v2-**",
+    "plan/v2-**",
+    "feat/v1plus-**",
+    "plan/v1plus-**",
 ]
-GATE_PATHS_IGNORE = ["docs/**", "**/*.md"]
 
 
 def test_selfhosted_gate_push_filters_are_pinned() -> None:
@@ -153,7 +152,8 @@ def test_selfhosted_gate_push_filters_are_pinned() -> None:
     wf = yaml.safe_load((WORKFLOWS / "gate-selfhosted.yml").read_text())
     push = (wf.get(True) or wf["on"])["push"]
     assert push["branches-ignore"] == GATE_BRANCHES_IGNORE
-    assert push["paths-ignore"] == GATE_PATHS_IGNORE
-    assert "branches" not in push and "paths" not in push
+    # No path filter of any kind: sentries read files under docs/ and *.md, and GitHub path
+    # filters stop evaluating after 3,000 changed files.
+    assert not {"branches", "paths", "paths-ignore"} & set(push)
     for ref in ("main", "refs/heads/main"):
         assert not any(fnmatch.fnmatchcase(ref, pat) for pat in push["branches-ignore"])

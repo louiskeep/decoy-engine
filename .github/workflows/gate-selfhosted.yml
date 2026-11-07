@@ -4,13 +4,16 @@
 # engine pushes run at once instead of queuing behind one Mac. Runners are an owner ops step.
 # The scripts must stay bash 3.2 clean because the Mac still runs them.
 #
-# Pushes that need no gate are filtered out: documentation-only pushes (docs/** and *.md) and
-# plan branches (plan/**, which go through the Dennis and Codex reviews instead), plus the V2 and
-# V1+ branches, which must not use the gate queue. workflow_dispatch still runs any branch by hand.
-# The ignore lists are pinned by tests/sentry/test_ci_config.py; main is never ignored.
+# Branches that need no gate are filtered out: plan branches (plan/**, which go through the
+# Dennis and Codex reviews instead) and the V2 and V1+ branches, which must not use the gate
+# queue. There is no path filter: files under docs/ and *.md files are read by sentries or ship
+# in the wheel, and GitHub evaluates path filters on at most 3,000 changed files, so a docs skip
+# could pass a change no gate ever saw. workflow_dispatch still runs any branch by hand. The
+# ignore list is pinned by tests/sentry/test_ci_config.py; main is never ignored.
 #
 # flock holds ~/.cache/pytest-one.lock for the whole command, the same lock ~/bin/pytest-one
-# takes, so the gate queues behind any full-suite run on the box. pytest-one cannot wrap
+# takes, so on the Mac the gate queues behind any full-suite run there. The Linux runner's VM
+# runs no other tests, so its lock only serialises gate jobs. pytest-one cannot wrap
 # gates.sh because it always runs `python -m pytest`.
 name: gate-selfhosted
 
@@ -21,13 +24,10 @@ on:
   push:
     branches-ignore:
       - "plan/**"
-      - "feat/v2-*"
-      - "plan/v2-*"
-      - "feat/v1plus-*"
-      - "plan/v1plus-*"
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
+      - "feat/v2-**"
+      - "plan/v2-**"
+      - "feat/v1plus-**"
+      - "plan/v1plus-**"
   workflow_dispatch:
 
 concurrency:
