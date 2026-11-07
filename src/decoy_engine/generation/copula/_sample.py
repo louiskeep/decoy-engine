@@ -11,6 +11,8 @@ machines the last bits of `exp` and `log` may differ.
 
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
@@ -71,7 +73,17 @@ def sample_gaussian_copula(
         _rng.check_seed(seed)
         n = _check_index(n, "n")
         start = _check_index(start, "start")
-        u = correlated_uniforms(model, n, _rng.stream(seed, _rng.SAMPLE_LABEL), start)
+        bitgen = np.random.PCG64(
+            np.random.SeedSequence(
+                int.from_bytes(
+                    hashlib.sha256(
+                        _rng.framed(_rng.SAMPLE_LABEL) + len(seed).to_bytes(4, "big") + seed
+                    ).digest(),
+                    "big",
+                )
+            )
+        )
+        u = correlated_uniforms(model, n, bitgen, start)
         position = {(v.column, v.role): j for j, v in enumerate(model.latent)}
         data: dict[str, pd.Series] = {}
         for index, column in enumerate(model.columns):

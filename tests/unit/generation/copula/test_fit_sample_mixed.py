@@ -10,11 +10,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from decoy_engine.generation.copula import _fit, _rng, fit_gaussian_copula, sample_gaussian_copula
+from decoy_engine.generation.copula import _fit, fit_gaussian_copula, sample_gaussian_copula
 from decoy_engine.generation.copula._marginals import from_snapshot_entry
 from decoy_engine.generation.copula._model import latent_layout
 
-from ._fixtures import PINNED, independent, mixed_frame, seed_bytes, snapshot
+from ._fixtures import PINNED, fit_stream, independent, mixed_frame, seed_bytes, snapshot
 from ._pairwise_fidelity import contingency_similarity, correlation_similarity
 
 SPEARMAN_MIN = 0.97
@@ -105,7 +105,7 @@ def test_interval_latents_are_normal_scores() -> None:
     snap = snapshot(frame)
     columns = tuple(from_snapshot_entry(c, snap["columns"][c]) for c in frame.columns)
     layout = latent_layout(columns)
-    scores = _fit.latent_scores(frame, columns, layout, _rng.stream(seed_bytes(1), _rng.FIT_LABEL))
+    scores = _fit.latent_scores(frame, columns, layout, fit_stream(seed_bytes(1)))
     assert abs(np.mean(scores[:, 1])) < 0.05 and abs(np.std(scores[:, 1]) - 1.0) < 0.05
     normal_score = abs(np.corrcoef(scores[:, 0], scores[:, 1])[0, 1])
     from decoy_engine.generation.copula._normal import ndtr

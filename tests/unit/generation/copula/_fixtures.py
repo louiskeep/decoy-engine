@@ -54,3 +54,13 @@ def independent(frame: pd.DataFrame, i: int) -> pd.DataFrame:
     return pd.DataFrame(
         {c: frame[c].to_numpy()[rng.permutation(len(frame))] for c in frame.columns}
     )
+
+
+def fit_stream(seed: bytes) -> np.random.PCG64:
+    """The stream `fit_gaussian_copula` derives from `seed` (same expression, for white-box tests)."""
+    import hashlib
+
+    from decoy_engine.generation.copula import _rng
+
+    digest = hashlib.sha256(_rng.framed(_rng.FIT_LABEL) + len(seed).to_bytes(4, "big") + seed)
+    return np.random.PCG64(np.random.SeedSequence(int.from_bytes(digest.digest(), "big")))

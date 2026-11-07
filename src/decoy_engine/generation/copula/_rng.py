@@ -1,4 +1,9 @@
-"""The copula's only source of randomness: a PCG64 stream keyed by caller-supplied seed bytes.
+"""Randomness framing for the copula: purpose labels, the seed check, and uniforms from raw output.
+
+The stream itself is `PCG64(SeedSequence(int(sha256(framed(label) || len(seed) || seed))))`,
+written out in `fit_gaussian_copula` and `sample_gaussian_copula` themselves so the seed is bound
+only in those two wiped frames (`tests/unit/generation/copula/test_rng_guard.py` checks the two
+derivations are the same expression and that no other code builds a generator).
 
 Pattern follows NumPy NEP-19 (`PCG64` bit-stream stability, O'Neill 2014) with `advance()` for a
 seekable stream, the counter-based idea `generation/window.py` cites (Salmon et al., SC 2011).
@@ -8,8 +13,6 @@ which would break seeking) and the stream does not depend on `Generator` interna
 """
 
 from __future__ import annotations
-
-import hashlib
 
 import numpy as np
 import numpy.typing as npt
@@ -37,22 +40,9 @@ def check_seed(seed: object) -> None:
         raise
 
 
-def stream(seed: bytes, label: bytes) -> BitGenerator:
-    """A PCG64 stream for one purpose; the label separates fit from sample for the same bytes."""
-    try:
-        return np.random.PCG64(
-            np.random.SeedSequence(
-                int.from_bytes(
-                    hashlib.sha256(
-                        len(label).to_bytes(4, "big") + label + len(seed).to_bytes(4, "big") + seed
-                    ).digest(),
-                    "big",
-                )
-            )
-        )
-    except BaseException:
-        del seed
-        raise
+def framed(label: bytes) -> bytes:
+    """The length-prefixed purpose label that starts the seed derivation."""
+    return len(label).to_bytes(4, "big") + label
 
 
 def raw_to_uniform(raw: npt.NDArray[np.uint64]) -> npt.NDArray[np.float64]:

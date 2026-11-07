@@ -90,6 +90,15 @@ def latent_layout(columns: tuple[ColumnMarginal, ...]) -> tuple[LatentVariable, 
     return tuple(out)
 
 
+def structural_zeros(layout: tuple[LatentVariable, ...]) -> npt.NDArray[np.bool_]:
+    """Pairs with no estimate by construction: a value and its own null indicator (the indicator
+    is constant wherever the value is observed). Held at exactly 0 in every released matrix."""
+    columns = np.array([v.column for v in layout])
+    out: npt.NDArray[np.bool_] = columns[:, None] == columns[None, :]
+    np.fill_diagonal(out, False)
+    return out
+
+
 def lower_triangle(matrix: npt.NDArray[np.float64]) -> tuple[float, ...]:
     rows, cols = np.tril_indices(matrix.shape[0], k=-1)
     return tuple(float(v) for v in matrix[rows, cols])
@@ -237,6 +246,8 @@ def _validate_correlation(model: GaussianCopulaModel, dimension: int) -> None:
             raise _value_error(path, "names a variable with a nonzero correlation")
         seen.add(entry.variable)
         previous = entry.variable
+    if np.any(matrix[structural_zeros(model.latent)] != 0.0):
+        raise _value_error("correlation", "is nonzero between a value and its own null indicator")
     if min_eigenvalue(matrix) < _floors.MIN_EIGENVALUE:
         raise _value_error("correlation", "is not positive definite with the required margin")
 

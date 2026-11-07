@@ -18,12 +18,14 @@ fit can later replace exactly that release. Latent scores, which never leave thi
 Correlations are Pearson on pairwise-complete rows. The disclosure floors (`_floors.py`) suppress
 whole latent variables (an identity row and column), never single cells, so the repair of the
 remaining block equals the repair of a fit without them. The matrix is repaired to the nearest
-correlation matrix (Higham 2002) with an eigenvalue floor that survives rounding the release to
-`RELEASE_DECIMALS`, then shrunk toward the identity only if still needed.
+correlation matrix (Higham 2002) with each value's pair with its own null indicator held at 0,
+shrunk toward the identity to a minimum eigenvalue that survives rounding the release to
+`RELEASE_DECIMALS`, and shrunk further by the ladder only if still needed.
 """
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from typing import Any
 
@@ -52,6 +54,7 @@ from decoy_engine.generation.copula._model import (
     Suppression,
     latent_layout,
     lower_triangle,
+    structural_zeros,
 )
 from decoy_engine.generation.copula._nearest_corr import nearest_correlation, shrink_to_definite
 from decoy_engine.generation.copula._normal import ndtri
@@ -92,12 +95,23 @@ def fit_gaussian_copula(
         if dimension * (dimension - 1) // 2 > _floors.max_latent_pairs(len(frame)):
             raise ValueError("copula: more latent pairs than half the row count; fit more rows.")
 
-        scores = latent_scores(frame, columns, layout, _rng.stream(seed, _rng.FIT_LABEL))
+        bitgen = np.random.PCG64(
+            np.random.SeedSequence(
+                int.from_bytes(
+                    hashlib.sha256(
+                        _rng.framed(_rng.FIT_LABEL) + len(seed).to_bytes(4, "big") + seed
+                    ).digest(),
+                    "big",
+                )
+            )
+        )
+        scores = latent_scores(frame, columns, layout, bitgen)
         stats = _PairStats(scores)
         suppressed = suppression(stats, columns, layout)
         raw = raw_correlation(stats, layout)
+        withheld = {s.variable for s in suppressed}
         released = release(
-            raw, [i for i in range(dimension) if i not in {s.variable for s in suppressed}]
+            raw, [i for i in range(dimension) if i not in withheld], structural_zeros(layout)
         )
         return GaussianCopulaModel(len(frame), columns, lower_triangle(released), suppressed)
     except BaseException:
@@ -247,6 +261,14 @@ class _PairStats:
         mask = (~np.isnan(scores)).astype(np.float64)
         x = np.nan_to_num(scores)
         self.observed = mask.sum(axis=0)
+        # Rows outside each variable's largest group of tied scores: a variable that tells apart
+        # only a few rows (a flag set on one row) would let its correlations locate them.
+        self.distinguished = np.array(
+            [
+                column.size - np.unique(column, return_counts=True)[1].max() if column.size else 0
+                for column in (scores[~np.isnan(scores[:, j]), j] for j in range(scores.shape[1]))
+            ]
+        )
         self.shared = mask.T @ mask
         safe = np.maximum(self.shared, 1.0)
         sum_x = x.T @ mask  # [i, j]: sum of x_i over rows where j is observed
@@ -265,11 +287,14 @@ def suppression(
 ) -> tuple[Suppression, ...]:
     """Which latent variables the floors withhold, decided before any correlation is released."""
     reasons: dict[int, str] = {}
+    structural = structural_zeros(layout)
     for j, variable in enumerate(layout):
         column = columns[variable.column]
         if variable.role == ROLE_VALUE:
             if stats.variance[j, j] <= 0:
                 reasons[j] = _floors.SUPPRESS_ZERO_VARIANCE
+            elif stats.distinguished[j] < _floors.MIN_DISTINGUISHED_ROWS:
+                reasons[j] = _floors.SUPPRESS_DISTINGUISHED_ROWS
             elif len(column.bin_counts) > column.non_null_count // _floors.ROWS_PER_BIN:
                 reasons[j] = _floors.SUPPRESS_ROWS_PER_BIN
         else:
@@ -278,7 +303,7 @@ def suppression(
                 reasons[j] = _floors.SUPPRESS_DISTINGUISHED_ROWS
     for i in range(len(layout)):
         for j in range(i + 1, len(layout)):
-            if i in reasons or j in reasons or _structural(layout, i, j):
+            if i in reasons or j in reasons or structural[i, j]:
                 continue
             if stats.shared[i, j] < _floors.MIN_PAIR_ROWS:
                 sparser = i if stats.observed[i] < stats.observed[j] else j
@@ -288,22 +313,12 @@ def suppression(
     return tuple(Suppression(v, reasons[v]) for v in sorted(reasons))
 
 
-def _structural(layout: tuple[LatentVariable, ...], i: int, j: int) -> bool:
-    """A value and its own null indicator: the indicator is constant where the value is observed."""
-    return layout[i].column == layout[j].column
-
-
 def raw_correlation(stats: _PairStats, layout: tuple[LatentVariable, ...]) -> FloatArray:
     """Pairwise-complete estimates with a unit diagonal and the structural zeros; suppressed
     variables are dropped later by `release`, which repairs only the kept block."""
-    d = len(layout)
     raw = stats.correlation.copy()
-    for i in range(d):
-        for j in range(d):
-            if i == j:
-                raw[i, j] = 1.0
-            elif _structural(layout, i, j):
-                raw[i, j] = 0.0
+    raw[structural_zeros(layout)] = 0.0
+    np.fill_diagonal(raw, 1.0)
     return raw
 
 
@@ -313,13 +328,15 @@ def _round_release(matrix: FloatArray) -> FloatArray:
     return out
 
 
-def release(raw: FloatArray, kept: list[int]) -> FloatArray:
-    """Repair the kept block, embed it in the identity, round, and shrink only if still needed."""
+def release(raw: FloatArray, kept: list[int], structural: npt.NDArray[np.bool_]) -> FloatArray:
+    """Repair the kept block with the structural zeros held, embed it in the identity, round, and
+    shrink only if still needed. Shrinking keeps every zero, so suppressed rows and structural
+    pairs stay exactly 0."""
     d = raw.shape[0]
     full = np.eye(d)
     if kept:
-        block = raw[np.ix_(kept, kept)]
-        full[np.ix_(kept, kept)] = nearest_correlation(
-            block, floor=_floors.rounding_floor(len(kept))
+        index = np.ix_(kept, kept)
+        full[index] = nearest_correlation(
+            raw[index], floor=_floors.rounding_floor(len(kept)), fixed_zero=structural[index]
         )
     return shrink_to_definite(full, _round_release, _floors.MIN_EIGENVALUE)

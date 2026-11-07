@@ -14,7 +14,6 @@ from decoy_engine.generation.copula import (
     GaussianCopulaModel,
     _fit,
     _floors,
-    _rng,
     fit_gaussian_copula,
 )
 from decoy_engine.generation.copula._marginals import (
@@ -29,10 +28,11 @@ from decoy_engine.generation.copula._model import (
     ROLE_STATE,
     ColumnMarginal,
     latent_layout,
+    structural_zeros,
 )
 from decoy_engine.generation.copula._nearest_corr import nearest_correlation
 
-from ._fixtures import mixed_frame, seed_bytes, snapshot
+from ._fixtures import fit_stream, mixed_frame, seed_bytes, snapshot
 
 TAIL = "zz-tail-label"
 
@@ -98,17 +98,16 @@ def test_variable_suppression_leaves_the_rest_as_if_absent() -> None:
     assert _suppressed(model) == {(1, "pair_rows")}
     columns = tuple(from_snapshot_entry(c, snap["columns"][c]) for c in frame.columns)
     layout = latent_layout(columns)
-    scores = _fit.latent_scores(frame, columns, layout, _rng.stream(seed_bytes(1), _rng.FIT_LABEL))
+    scores = _fit.latent_scores(frame, columns, layout, fit_stream(seed_bytes(1)))
     stats = _fit._PairStats(scores)
     kept = [i for i in range(len(layout)) if i != 1]
+    structural = structural_zeros(layout)[np.ix_(kept, kept)]
     reduced = stats.correlation[np.ix_(kept, kept)].copy()
-    for x, i in enumerate(kept):
-        for y, j in enumerate(kept):
-            if i == j:
-                reduced[x, y] = 1.0
-            elif layout[i].column == layout[j].column:
-                reduced[x, y] = 0.0
-    repaired = nearest_correlation(reduced, floor=_floors.rounding_floor(len(kept)))
+    reduced[structural] = 0.0
+    np.fill_diagonal(reduced, 1.0)
+    repaired = nearest_correlation(
+        reduced, floor=_floors.rounding_floor(len(kept)), fixed_zero=structural
+    )
     released = model.correlation_matrix()
     assert np.allclose(released[np.ix_(kept, kept)], np.round(repaired, 3), atol=1e-12, rtol=0)
     assert np.all(np.delete(released[1], 1) == 0)
@@ -170,9 +169,7 @@ def test_label_outside_the_marginal_without_a_tail_is_refused() -> None:
         "k", KIND_CATEGORICAL, "object", 0, 120, top_values=(("a", 40), ("b", 40), ("c", 40))
     )
     with pytest.raises(ValueError, match="outside its marginal") as info:
-        _fit.latent_scores(
-            frame, (column,), latent_layout((column,)), _rng.stream(seed_bytes(1), _rng.FIT_LABEL)
-        )
+        _fit.latent_scores(frame, (column,), latent_layout((column,)), fit_stream(seed_bytes(1)))
     assert "zz-unseen" not in str(info.value)
 
 
@@ -182,9 +179,7 @@ def test_kind_disagreeing_with_dtype_is_refused() -> None:
         "k", KIND_NUMERIC, "float64", 0, 120, bin_edges=(0.0, 1.0), bin_counts=(120,)
     )
     with pytest.raises(ValueError, match="kind does not match"):
-        _fit.latent_scores(
-            frame, (column,), latent_layout((column,)), _rng.stream(seed_bytes(1), _rng.FIT_LABEL)
-        )
+        _fit.latent_scores(frame, (column,), latent_layout((column,)), fit_stream(seed_bytes(1)))
 
 
 def test_state_lookup_accepts_the_closed_interval() -> None:

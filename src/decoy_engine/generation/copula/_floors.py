@@ -37,5 +37,5 @@ def rounding_floor(dimension: int) -> float:
     sqrt(d (d - 1)), which bounds how far any eigenvalue can move.
     """
     half_unit = 0.5 * 10.0**-RELEASE_DECIMALS
-    # Twice the minimum leaves room for the unit-diagonal rescale that follows the floor.
+    # Twice the minimum leaves headroom for the eigensolver's own rounding.
     return 2 * MIN_EIGENVALUE + half_unit * (dimension * (dimension - 1)) ** 0.5
