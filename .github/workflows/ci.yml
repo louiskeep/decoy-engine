@@ -177,6 +177,35 @@ jobs:
       - name: ML gate (golden retrain + provenance + privacy + classify)
         run: pytest -m ml --tb=short
 
+  # ner-gate: regression-gate installs .[dev] only, so every NER test skips there
+  # and a broken `ner` install (spaCy imports click, which typer no longer pulls
+  # in) went unseen. The model is not on PyPI and `spacy download` is an unpinned
+  # network install, so the wheel pinned in NER_MODEL_WHEELS is fetched,
+  # hash-checked and installed from a local path. DECOY_REQUIRE_NER makes an
+  # empty install fail the `ner` tests instead of skipping them.
+  ner-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DECOY_REQUIRE_NER: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/lock-env
+        with:
+          extras: "dev ner"
+      - name: Install the pinned spaCy model wheel
+        run: |
+          pin() { python -c "from decoy_engine.detection.ner import DEFAULT_NER_MODEL as m, DEFAULT_NER_MODEL_VERSION as v, NER_MODEL_WHEELS as w; print(w[(m, v)].$1)"; }
+          url=$(pin url)
+          sha=$(pin sha256)
+          mkdir -p "$RUNNER_TEMP/ner-model"
+          wheel="$RUNNER_TEMP/ner-model/$(basename "$url" .whl).whl"
+          curl --fail --silent --show-error --location --output "$wheel" "$url"
+          echo "$sha  $wheel" | sha256sum --check -
+          uv pip install --python "$RUNNER_TEMP/venv/bin/python" --no-deps "$wheel"
+      - name: NER gate (import spaCy, load the model, find person and location)
+        run: pytest -m ner --tb=short
+
   # packaging-gate: builds an actual wheel and asserts it ships the default ML
   # model pack + py.typed (DE-07). A clean wheel used to package only
   # src/decoy_engine and omit the pack (which lives under docs/), so

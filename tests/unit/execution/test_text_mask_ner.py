@@ -17,18 +17,12 @@ from decoy_engine.detection.detectors import Span
 from decoy_engine.detection.ner import (
     DEFAULT_NER_MODEL,
     installed_model_version,
-    model_installed,
-    spacy_installed,
 )
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._text_mask import TextMaskHandler
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import ColumnSeed
-
-needs_ner = pytest.mark.skipif(
-    not (spacy_installed() and model_installed(DEFAULT_NER_MODEL)),
-    reason="spacy or en_core_web_sm not installed (ner extra)",
-)
+from tests._ner import needs_ner
 
 
 def _seed(provider_config: dict, *, ner_model_version: str | None = None) -> ColumnSeed:
