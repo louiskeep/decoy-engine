@@ -55,10 +55,6 @@ def ceil_to_thousandth(value: float) -> float:
     return math.ceil(round(value * 1000, 9)) / 1000
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="NER_MIN_RATE is not defined until the measurement commit",
-)
 @needs_ner
 def test_ner_min_rate_is_the_calibrated_threshold() -> None:
     table = []
@@ -93,5 +89,5 @@ def test_ner_min_rate_is_the_calibrated_threshold() -> None:
     if path:
         Path(path).write_text(json.dumps(evidence, indent=1))
     print(json.dumps(evidence, indent=1))
-    assert expected <= 0.5, "a threshold this high makes the detector useless: ask the owner"
+    assert expected <= 0.25, f"moved from the accepted 0.211: report it, do not tune\n{evidence}"
     assert expected == nr.NER_MIN_RATE
