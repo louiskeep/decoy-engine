@@ -39,6 +39,7 @@ from decoy_engine.reasons._identity import (
     require_known,
 )
 from decoy_engine.reasons._record import (
+    REGISTRY_VERSION_RE,
     CleanupState,
     Operation,
     PublicationState,
@@ -77,6 +78,7 @@ __all__ = [
     "REASON_SCHEMA_VERSION",
     "REGISTRY_SCHEMA",
     "REGISTRY_VERSION",
+    "REGISTRY_VERSION_RE",
     "CleanupState",
     "Kind",
     "Operation",

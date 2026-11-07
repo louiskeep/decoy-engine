@@ -164,7 +164,12 @@ from decoy_engine.keyprovider import (
     SeedKeyProvider,
     WeakMaskSecret,
 )
-from decoy_engine.plan import compile_plan, job_seed_for_config, run_config_only_checks
+from decoy_engine.plan import (
+    compile_plan,
+    job_seed_for_config,
+    pipeline_config_hash,
+    run_config_only_checks,
+)
 from decoy_engine.plan.validate import (
     PlanCheckError,
     PlanValidationResult,
@@ -246,6 +251,7 @@ from decoy_engine.relationships import (
     check_orphan_fk_policy_completeness,
 )
 from decoy_engine.release import RELEASE_PHASE, ReleasePhase, is_pre_ga
+from decoy_engine.run_result import RUN_RESULT_SCHEMA, RunResult, RunResultRead, derive_outcome
 
 # Connector SDK.
 from decoy_engine.sdk import (
@@ -332,6 +338,7 @@ __all__ = [
     "CAP_SIGNED_URL",
     "CAP_STREAMING",
     "RELEASE_PHASE",
+    "RUN_RESULT_SCHEMA",
     "SDK_VERSION",
     "SEED_PROTOCOL_VERSION",
     "VALIDATION_CODES",
@@ -421,6 +428,8 @@ __all__ = [
     "RetryEvent",
     "RetryInfo",
     "RouteEvent",
+    "RunResult",
+    "RunResultRead",
     "SecretCachePolicy",
     "SecretDescriptor",
     "SecretKeyProvider",
@@ -463,6 +472,7 @@ __all__ = [
     "composite_provider",
     "derive",
     "derive_index",
+    "derive_outcome",
     "derive_value",
     "emit_fidelity",
     "emit_lineage",
@@ -484,6 +494,7 @@ __all__ = [
     "load_vault",
     "make_key_resolver",
     "native_companion_status",
+    "pipeline_config_hash",
     "profile_columns",
     "read_csv_source",
     "read_fixed_width",
