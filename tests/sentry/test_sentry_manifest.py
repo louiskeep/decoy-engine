@@ -63,6 +63,7 @@ SENTRIES = (
     "tests/sentry/test_unified_backend_map.py",
     "tests/sentry/test_validate_no_mutation.py",
     "tests/sentry/test_wave_b_no_registry_version_literal.py",
+    "tests/sentry/parallel/test_serial_resources.py",
     # Named sentries that live outside tests/sentry/.
     "tests/secret_providers/test_leak_sentry.py",
 )

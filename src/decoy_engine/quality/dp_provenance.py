@@ -302,6 +302,13 @@ _CERTIFIED_STACKS: dict[tuple[PlatformTriple, str], frozenset[str]] = {
             # the prior release's row (here 5a76ea92...) so its snapshots still compile.
             "31ecf94503eff107631191426072eee757af72a2229ab594d2fc2e8e6bfac7b1",
             "5a76ea92769d62cb0124d89d24c2ec0e4116828e34e0611d80bf5e36edef1a23",
+            # ENGINE-PAR P2 (2026-11-07): pytest-xdist moved into the `dev` extra, so the same
+            # `uv sync --frozen --extra dev --extra lint --extra vault --extra cloud` profile
+            # installs 79 distributions (the 77 above plus pytest-xdist 3.8 and execnet 2.1.2,
+            # decoy-engine 0.18.0 unchanged). Verified on a fresh 3.10.20 VM venv built by
+            # bootstrap.sh from the lock. The two rows above stay: they certify snapshots fit
+            # before this change.
+            "4e494affc1a3c2b54a4dbd126454d09867e54a6b08cec8861b109ccf9b725246",
             # decoy-cli pristine RUNTIME profile: engine 0.18.0 + CLI (typer/rich/
             # duckdb) + the DP closure, no dev tooling (pytest/ruff/mypy absent).
             # The exact third-party set is pinned in the CLI repo's

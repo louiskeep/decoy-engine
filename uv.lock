@@ -576,6 +576,7 @@ dev = [
     { name = "hypothesis" },
     { name = "moto", extra = ["s3"] },
     { name = "pytest" },
+    { name = "pytest-xdist" },
 ]
 docs = [
     { name = "furo" },
@@ -659,6 +660,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-codspeed", marker = "extra == 'perf'", specifier = ">=3.0" },
     { name = "pytest-cov", marker = "extra == 'mutation'", specifier = ">=5.0" },
+    { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.5" },
     { name = "pytest-xdist", marker = "extra == 'xdist'", specifier = ">=3.0" },
     { name = "python-stdnum", specifier = ">=2.2" },
     { name = "pyyaml", specifier = ">=6.0" },

@@ -28,9 +28,12 @@ _V0_18_0_ROWS = (
     "31ecf94503eff107631191426072eee757af72a2229ab594d2fc2e8e6bfac7b1",
     "b643894ded2ab84c4a0a9d9032a1de3d2330db89161f231e509024428b7533f3",
 )
+# The engine dev/CI profile once pytest-xdist joined `dev` (79 dists; ENGINE-PAR P2).
+_XDIST_DEV_ROW = "4e494affc1a3c2b54a4dbd126454d09867e54a6b08cec8861b109ccf9b725246"
+_ALL_ROWS = _V0_17_0_ROWS + _V0_18_0_ROWS + (_XDIST_DEV_ROW,)
 
 
-@pytest.mark.parametrize("fingerprint", _V0_17_0_ROWS + _V0_18_0_ROWS)
+@pytest.mark.parametrize("fingerprint", _ALL_ROWS)
 def test_a_snapshot_recording_a_released_row_compiles(tmp_path, fingerprint: str) -> None:
     artifact = _numeric_dp_artifact(epsilon_total=0.5)
     artifact["dp"]["provenance"]["fingerprint"] = fingerprint
@@ -39,7 +42,7 @@ def test_a_snapshot_recording_a_released_row_compiles(tmp_path, fingerprint: str
     assert plan is not None
 
 
-@pytest.mark.parametrize("fingerprint", _V0_17_0_ROWS + _V0_18_0_ROWS)
+@pytest.mark.parametrize("fingerprint", _ALL_ROWS)
 def test_recorded_provenance_admits_every_released_row(fingerprint: str) -> None:
     (plat, cpython), _ = next(iter(prov._CERTIFIED_STACKS.items()))
     prov.validate_recorded_provenance(
