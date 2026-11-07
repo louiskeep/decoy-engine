@@ -102,13 +102,16 @@ def release_pin_violations(pin: dict, live: dict) -> list[str]:
         problems.append(f"the catalog released as {pinned} changed without a registry version bump")
     counts = Counter(str(e["since"]) for e in live["entries"])
     for since, n in counts.items():
-        v = Version(since)
-        if v > current:
+        if Version(since) > current:
             problems.append(f"{n} identities claim since {since}, newer than the registry")
-        elif v <= pinned and n != pin["since_counts"].get(since, 0):
+    # Every released bucket is checked, including one that dropped to 0 in the live catalog.
+    released = {k for k in pin["since_counts"] if Version(k) <= pinned}
+    released |= {k for k in counts if Version(k) <= pinned}
+    for since in sorted(released, key=Version):
+        n, was = counts.get(since, 0), pin["since_counts"].get(since, 0)
+        if n != was:
             problems.append(
-                f"{n} identities claim an already-released since {since} "
-                f"(released with {pin['since_counts'].get(since, 0)})"
+                f"{n} identities claim an already-released since {since} (released with {was})"
             )
     return problems
 
