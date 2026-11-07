@@ -151,8 +151,9 @@ def test_datetime_family_spans_numpy_and_pandas() -> None:
 
 
 def test_date_and_datetime_are_two_families() -> None:
-    """pandas infers "date" for this mix, so the single-family shortcut must
-    not apply to it."""
+    """Documents behavior; not a guard. pandas infers "date" for this mix and
+    the single-family shortcut leaves "date" out, but a date never equals a
+    datetime, so the two stay apart on either path."""
     cells = [datetime.date(2020, 1, 1), datetime.datetime(2020, 1, 1)]
     frame = pd.DataFrame({"q": pd.Series(cells, dtype=object)})
     assert measure_k_anonymity(frame, ["q"]).class_count == 2
@@ -179,6 +180,67 @@ def test_arrow_dictionary_with_null_or_nan_entries() -> None:
     assert report.distinct_sensitive_values == 2
     # x {lo}, y {hi, lo}; Q = (2/3, 1/3); x: cumulative 1 - 2/3 = 1/3 -> 1/3.
     assert report.max_emd == pytest.approx(1 / 3, abs=1e-12)
+
+
+def test_timedelta_is_its_own_family() -> None:
+    """np.timedelta64 subclasses np.integer and hashes equal to an int of the
+    same count; it must not join the int family. All timedelta spellings of one
+    duration are one value, on the fast path and the per-cell path alike."""
+    mixed = [np.timedelta64(1, "ns"), 1]
+    frame = pd.DataFrame({"q": pd.Series(mixed, dtype=object)})
+    assert measure_k_anonymity(frame, ["q"]).class_count == 2
+    spellings = [datetime.timedelta(days=1), np.timedelta64(1, "D"), pd.Timedelta(days=1)]
+    fast = pd.DataFrame({"q": pd.Series(spellings, dtype=object)})
+    assert measure_k_anonymity(fast, ["q"]).class_size_distribution == ((3, 1),)
+    slow = pd.DataFrame({"q": pd.Series([*spellings, 5], dtype=object)})
+    assert measure_k_anonymity(slow, ["q"]).class_size_distribution == ((1, 1), (3, 1))
+
+
+def _ordered_chunks(*parts: tuple[list[int], list[float]]) -> pa.ChunkedArray:
+    return pa.chunked_array(
+        [
+            pa.DictionaryArray.from_arrays(
+                pa.array(indices, pa.int32()), pa.array(values), ordered=True
+            )
+            for indices, values in parts
+        ]
+    )
+
+
+def test_chunked_ordered_dictionary_with_conflicting_order_is_refused() -> None:
+    """Chunk dictionaries [3, 4] and [1, 3] define no common order (pandas would
+    merge them as [3, 4, 1] and keep ordered=True)."""
+    column = _ordered_chunks(([0, 1], [3.0, 4.0]), ([0, 1], [1.0, 3.0]))
+    table = pa.table({"q": ["x", "x", "y", "y"], "s": column})
+    with pytest.raises(TypeError, match="'s'") as info:
+        measure_t_closeness_ordered(table, ["q"], "s")
+    assert info.value.__cause__ is None and info.value.__context__ is None
+    # Same entries, opposite order: also no common order.
+    swapped = _ordered_chunks(([0, 1], [3.0, 4.0]), ([0, 1], [4.0, 3.0]))
+    with pytest.raises(TypeError, match="'s'"):
+        measure_t_closeness_ordered(pa.table({"q": ["x", "x", "y", "y"], "s": swapped}), ["q"], "s")
+    # Measures that do not use order still accept it.
+    assert measure_t_closeness_equal(table, ["q"], "s").distinct_sensitive_values == 3
+    assert measure_k_anonymity(pa.table({"s": column}), ["s"]).class_count == 3
+
+
+def test_chunked_ordered_dictionary_with_compatible_order() -> None:
+    """Chunk dictionaries [1, 3, 4] and [3, 4]: the first holds the second in
+    order, so the order is 1 < 3 < 4. Rows x {3, 4}, y {1, 3}: Q = (1/4, 1/2, 1/4);
+    x cumulative r = -1/4, 0, 0 -> 1/4 / 2 = 1/8; y: 1/4, 0, 0 -> 1/8. Same as
+    the float column below."""
+    column = _ordered_chunks(([1, 2], [1.0, 3.0, 4.0]), ([1, 0], [3.0, 4.0]))
+    table = pa.table({"q": ["x", "x", "y", "y"], "s": column})
+    plain = pd.DataFrame({"q": ["x", "x", "y", "y"], "s": [3.0, 4.0, 4.0, 3.0]})
+    report = measure_t_closeness_ordered(table, ["q"], "s")
+    assert report == measure_t_closeness_ordered(plain, ["q"], "s")
+    # The reviewer's repro, reordered so one chunk holds the full order.
+    repro = _ordered_chunks(([1, 2], [1.0, 3.0, 4.0]), ([0, 1], [1.0, 3.0]))
+    repro_table = pa.table({"q": ["x", "x", "y", "y"], "s": repro})
+    repro_plain = pd.DataFrame({"q": ["x", "x", "y", "y"], "s": [3.0, 4.0, 1.0, 3.0]})
+    assert measure_t_closeness_ordered(repro_table, ["q"], "s") == measure_t_closeness_ordered(
+        repro_plain, ["q"], "s"
+    )
 
 
 def test_decimal_values_compare_by_number() -> None:

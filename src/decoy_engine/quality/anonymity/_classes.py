@@ -182,11 +182,62 @@ def _without_null_dictionary_entries(chunk: pa.DictionaryArray) -> pa.Dictionary
     return pa.DictionaryArray.from_arrays(indices, kept, ordered=chunk.type.ordered)
 
 
+def _subsequence_positions(part: pa.Array, whole: pa.Array) -> npt.NDArray[np.int64] | None:
+    """Positions of ``part``'s entries in ``whole`` if they appear there in the
+    same relative order, else None."""
+    found = pc.index_in(part, value_set=whole)  # type: ignore[attr-defined, unused-ignore]
+    if found.null_count:
+        return None
+    positions = found.to_numpy(zero_copy_only=False).astype(np.int64)
+    if positions.size > 1 and not bool(np.all(np.diff(positions) > 0)):
+        return None
+    return positions
+
+
+def _reconcile_ordered_chunks(
+    chunks: list[pa.DictionaryArray], field: pa.Field
+) -> tuple[list[pa.DictionaryArray], pa.Field]:
+    """One dictionary for all chunks of an ordered dictionary column.
+
+    pandas merges differing chunk dictionaries in order of appearance and keeps
+    ``ordered=True``, which invents an order (Parquet row groups often carry
+    different dictionaries). When one chunk's dictionary holds every other
+    chunk's entries in the same relative order, all chunks are re-indexed onto
+    it. Otherwise no order is defined, and the column is marked unordered, so
+    the ordered-distance path refuses it while the other measures, which do not
+    use order, still accept it.
+    """
+    dictionaries = [chunk.dictionary for chunk in chunks]
+    if all(d.equals(dictionaries[0]) for d in dictionaries[1:]):
+        return chunks, field
+    for whole in sorted(dictionaries, key=len, reverse=True):
+        rebuilt = []
+        for chunk in chunks:
+            positions = _subsequence_positions(chunk.dictionary, whole)
+            if positions is None:
+                break
+            valid = chunk.indices.is_valid().to_numpy(zero_copy_only=False)
+            raw = pc.fill_null(chunk.indices, 0).to_numpy(zero_copy_only=False)
+            mapped = positions[raw] if positions.size else np.zeros(raw.shape[0], dtype=np.int64)
+            indices = pa.array(mapped, type=chunk.indices.type, mask=~valid)
+            rebuilt.append(pa.DictionaryArray.from_arrays(indices, whole, ordered=True))
+        else:
+            return rebuilt, field
+    unordered = pa.dictionary(field.type.index_type, field.type.value_type, ordered=False)
+    relabelled = [
+        pa.DictionaryArray.from_arrays(chunk.indices, chunk.dictionary, ordered=False)
+        for chunk in chunks
+    ]
+    return relabelled, field.with_type(unordered)
+
+
 def _clean_dictionaries(table: pa.Table) -> pa.Table:
     for position, field in enumerate(table.schema):
         if pa.types.is_dictionary(field.type):
             column = table.column(position)
             chunks = [_without_null_dictionary_entries(chunk) for chunk in column.chunks]
+            if field.type.ordered and len(chunks) > 1:
+                chunks, field = _reconcile_ordered_chunks(chunks, field)
             table = table.set_column(position, field, pa.chunked_array(chunks, type=field.type))
     return table
 
@@ -224,6 +275,11 @@ def null_mask(series: pd.Series) -> npt.NDArray[np.bool_]:
 
 def type_family(cell: object) -> str:
     """Canonical type family; equal cells of one family are one value."""
+    # Temporal checks come first: np.timedelta64 subclasses np.integer.
+    if isinstance(cell, (datetime.timedelta, np.timedelta64)):
+        return "timedelta"
+    if isinstance(cell, (datetime.datetime, np.datetime64)):
+        return "datetime"
     if isinstance(cell, (bool, np.bool_)):
         return "bool"
     if isinstance(cell, (int, np.integer)):
@@ -238,14 +294,10 @@ def type_family(cell: object) -> str:
         return "str"
     if isinstance(cell, (bytes, np.bytes_)):
         return "bytes"
-    if isinstance(cell, (datetime.datetime, np.datetime64)):
-        return "datetime"
     if isinstance(cell, datetime.date):
         return "date"
     if isinstance(cell, datetime.time):
         return "time"
-    if isinstance(cell, (datetime.timedelta, np.timedelta64)):
-        return "timedelta"
     kind = type(cell)
     return f"{kind.__module__}.{kind.__qualname__}"
 
@@ -365,7 +417,8 @@ def ordered_sensitive_codes(series: pd.Series, column: str) -> IntArray:
     if not _is_orderable(series.dtype):
         raise TypeError(
             f"ordered distance needs column {column!r} to be numeric, decimal, temporal "
-            "or an ordered categorical"
+            "or an ordered categorical (an Arrow ordered dictionary whose chunks disagree "
+            "on the order of their entries has no defined order)"
         )
     mask = null_mask(series)
     if isinstance(series.dtype, pd.CategoricalDtype):
