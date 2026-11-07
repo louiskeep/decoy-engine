@@ -1,4 +1,4 @@
-"""Polars adapter: Parquet scans and writes over policy capabilities."""
+"""Polars adapter: Parquet scans and writes, and Avro writes, over policy capabilities."""
 
 from __future__ import annotations
 
@@ -34,3 +34,8 @@ def collect_schema(handle: FileHandle, lazy: pl.LazyFrame) -> pl.Schema:
 def write_parquet(frame: pl.DataFrame, txn: OutputTxn, component: str) -> None:
     with os.fdopen(txn.create_file(component), "wb") as fh:
         guarded(txn.display, txn.strict, frame.write_parquet, fh)
+
+
+def write_avro(frame: pl.DataFrame, txn: OutputTxn, component: str) -> None:
+    with os.fdopen(txn.create_file(component), "wb") as fh:
+        guarded(txn.display, txn.strict, frame.write_avro, fh)

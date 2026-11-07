@@ -10,8 +10,8 @@ guarantees the dict is well-formed.
 Per the PO-ratified six axes (advisory 2026-05-27):
 - Strict validation (extra="forbid" at every level).
 - Closed-Literal pins on `orphan_policy` (preserve | remap | warn | fail)
-  and source/target `format` (csv | parquet; `FileSource.format` additionally
-  allows `fixed_width` per S4, engine-finish-open-ended program).
+  and source/target `format` (csv | parquet; the file variants additionally
+  allow `fixed_width`, `avro` and `orc`).
 - Single pipeline per file (no `pipelines: [...]` top-level).
 - `SourceDescriptor` AND `TargetDescriptor` discriminated unions support
   `file` + `s3` + `gcs` variants in V1 (S14-CLOUD-SRC-S3GCS +

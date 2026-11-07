@@ -1,4 +1,4 @@
-"""PyArrow adapter: Parquet and Arrow IPC reads and writes over policy capabilities."""
+"""PyArrow adapter: Parquet, ORC and Arrow IPC reads and writes over policy capabilities."""
 
 from __future__ import annotations
 
@@ -7,7 +7,9 @@ from collections.abc import Iterator
 from typing import Any
 
 import pyarrow as pa
+import pyarrow.dataset as ds
 import pyarrow.ipc
+import pyarrow.orc as orc
 import pyarrow.parquet as pq
 
 from decoy_engine.fileaccess._errors import guarded, guarded_iter
@@ -36,6 +38,27 @@ def iter_batches(
 
 def read_metadata(handle: FileHandle) -> pq.FileMetaData:
     return guarded(handle.display, _strict(handle), pq.read_metadata, handle.library_path())
+
+
+def orc_file(handle: FileHandle) -> orc.ORCFile:
+    """An ORC file's tail (schema, row and stripe counts); no stripe data is read."""
+    return guarded(handle.display, _strict(handle), orc.ORCFile, handle.library_path())
+
+
+def orc_batches(handle: FileHandle, *, batch_size: int) -> Iterator[pa.RecordBatch]:
+    """ORC record batches of at most `batch_size` rows, read below the stripe (Arrow's
+    `ORCFileReader::GetRecordBatchReader`), each step guarded under a strict handle."""
+    dataset = guarded(
+        handle.display, _strict(handle), ds.dataset, handle.library_path(), format="orc"
+    )
+    source = guarded(
+        handle.display,
+        _strict(handle),
+        dataset.to_batches,
+        batch_size=batch_size,
+        use_threads=False,
+    )
+    return guarded_iter(handle.display, _strict(handle), source)
 
 
 class _FileBacked:
@@ -87,6 +110,16 @@ def parquet_writer(txn: OutputTxn, component: str, schema: pa.Schema, **kwargs: 
     fh = _writable(txn, component)
     try:
         writer = guarded(txn.display, txn.strict, pq.ParquetWriter, fh, schema, **kwargs)
+    except BaseException:
+        fh.close()
+        raise
+    return _FileBacked(writer, fh, txn.display, txn.strict)
+
+
+def orc_writer(txn: OutputTxn, component: str) -> _FileBacked:
+    fh = _writable(txn, component)
+    try:
+        writer = guarded(txn.display, txn.strict, orc.ORCWriter, fh)
     except BaseException:
         fh.close()
         raise

@@ -517,3 +517,23 @@ To be clear about the other side: Decoy does give you deterministic,
 reproducible masking; foreign-key and join preservation across tables; a catalog
 of standard de-identification transforms; PII detection and risk profiling; and
 synthetic-data generation. Those features are real and exercised by the test suite. This page exists so the strength of those features is not mistaken for guarantees Decoy does not make.
+
+## Avro and ORC files
+
+- An Avro file has no end marker. A file cut exactly at a block boundary reads as a valid,
+  shorter file.
+- Avro `null` and `deflate` blocks and ORC stripes carry no checksum. A flipped byte inside the
+  data can decode as a different value instead of failing. Snappy Avro blocks (CRC32) and the
+  container structure of both formats are checked.
+- Row counts from the ORC file tail and the Avro block headers are what the file claims; they
+  feed estimates and profiles and are not checked against the decoded rows.
+- ORC files with timestamp columns are refused on read, including files whose timestamps are all
+  in range, because pyarrow silently wraps out-of-range ORC timestamps and nothing installed can
+  prove a file in range.
+- The Avro sync marker is deterministic (derived from the schema and the first block), not random
+  as the Avro spec suggests. A value crafted to contain it could confuse a third-party reader that
+  splits files by scanning for the marker; readers that use block sizes are not affected.
+- A malformed ORC file can abort the process inside Apache ORC's C++ code, and a Rust abort in
+  Polars (unlike a panic) cannot be caught either. The engine's own checks before the libraries
+  run narrow this; they cannot rule it out.
+

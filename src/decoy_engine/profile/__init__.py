@@ -21,6 +21,7 @@ hash-scope decision (resolution of B1 in the Dennis review).
 
 from __future__ import annotations
 
+from decoy_engine.profile._fixed_width_writer import write_fixed_width
 from decoy_engine.profile._hash import profile_hash
 from decoy_engine.profile._readers import (
     LazySource,
@@ -52,4 +53,5 @@ __all__ = [
     "profile_hash",
     "profile_source",
     "profile_to_json",
+    "write_fixed_width",
 ]

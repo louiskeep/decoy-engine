@@ -525,9 +525,14 @@ def _build_file_source(
                 f"{fileaccess.shown(repr(layout), _at(field_key, 'layout'))}"
             )
         return FixedWidthFileSource(Path(path), layout, field_key=field_key)
+    if fmt in ("avro", "orc"):
+        from decoy_engine.profile._readers_columnar import AvroFileSource, OrcFileSource
+
+        columnar = AvroFileSource if fmt == "avro" else OrcFileSource
+        return columnar(Path(path), field_key=field_key, table=table)
     raise NotImplementedError(
         f"profile_source: unsupported file format {fileaccess.shown(repr(fmt), _at(field_key, 'format'))}. "
-        "V1 supports csv | parquet | fixed_width only."
+        "Supported: csv | parquet | fixed_width | avro | orc."
     )
 
 

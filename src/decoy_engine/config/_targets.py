@@ -40,7 +40,8 @@ class FileTarget(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["file"]
-    format: Literal["csv", "parquet", "fixed_width"]
+    # avro and orc also: kept out of the docstring, which is the published JSON-schema text.
+    format: Literal["csv", "parquet", "fixed_width", "avro", "orc"]
     path: str
     layout: FixedWidthLayout | None = Field(
         default=None,

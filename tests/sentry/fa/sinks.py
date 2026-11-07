@@ -195,6 +195,7 @@ FILE_METHODS: frozenset[str] = frozenset(
         "write_parquet",
         "write_csv",
         "write_ipc",
+        "write_avro",
         "write_ndjson",
         "write_excel",
         "sink_parquet",

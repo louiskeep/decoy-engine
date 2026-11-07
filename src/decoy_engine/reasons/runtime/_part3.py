@@ -6,6 +6,9 @@ from decoy_engine.reasons import _catalog
 from decoy_engine.reasons._types import Outcome, Phase, RetryClass
 
 __all__ = [
+    "AVRO_BLOCK_TOO_LARGE",
+    "AVRO_CONTAINER_MALFORMED",
+    "AVRO_SCHEMA_UNSUPPORTED",
     "CATEGORICAL_POSITION_OUT_OF_DOMAIN",
     "CATEGORICAL_REQUIRES_CATEGORIES",
     "CATEGORICAL_REQUIRES_NAMESPACE",
@@ -49,6 +52,8 @@ __all__ = [
     "NESTED_TARGET_UNSET",
     "NESTED_TARGET_UNWRITABLE_CONTAINER",
     "NUMEXPR_REQUIRED",
+    "ORC_FILE_MALFORMED",
+    "ORC_TYPE_UNSUPPORTED",
     "SHUFFLE_REQUIRES_NAMESPACE",
     "SORT_ASCENDING_LENGTH_MISMATCH",
     "SORT_COLUMN_MISSING",
@@ -57,6 +62,8 @@ __all__ = [
     "SUBSET_CLOSURE_NONTERMINATION",
     "SUBSET_MATERIALIZE_COUNT_MISMATCH",
     "SUB_MINIMUM_DOMAIN",
+    "TARGET_COLUMN_TYPE_UNSUPPORTED",
+    "TARGET_SCHEMA_MISMATCH",
     "TOKENIZE_REQUIRES_NAMESPACE",
     "TOKENIZE_REQUIRES_STRING_DTYPE",
     "TOKENIZE_REQUIRES_VAULT",
@@ -309,3 +316,35 @@ _d = _catalog.runtime("decoy_engine.transforms.text_mask")
 
 CHECKSUM_INVALID = _d("checksum_invalid", "Checksum invalid.")
 SUB_MINIMUM_DOMAIN = _d("sub_minimum_domain", "Sub minimum domain.")
+
+_d = _catalog.runtime("AvroMalformed")
+
+AVRO_CONTAINER_MALFORMED = _d(
+    "avro_container_malformed", "Avro container malformed.", since="1.7.0"
+)
+
+_d = _catalog.runtime("AvroSchemaUnsupported")
+
+AVRO_SCHEMA_UNSUPPORTED = _d("avro_schema_unsupported", "Avro schema unsupported.", since="1.7.0")
+
+_d = _catalog.runtime("AvroBlockTooLarge")
+
+AVRO_BLOCK_TOO_LARGE = _d("avro_block_too_large", "Avro block too large.", since="1.7.0")
+
+_d = _catalog.runtime("OrcMalformed")
+
+ORC_FILE_MALFORMED = _d("orc_file_malformed", "ORC file malformed.", since="1.7.0")
+
+_d = _catalog.runtime("OrcTypeUnsupported")
+
+ORC_TYPE_UNSUPPORTED = _d("orc_type_unsupported", "ORC type unsupported.", since="1.7.0")
+
+_d = _catalog.runtime("TargetColumnTypeUnsupported")
+
+TARGET_COLUMN_TYPE_UNSUPPORTED = _d(
+    "target_column_type_unsupported", "Target column type unsupported.", since="1.7.0"
+)
+
+_d = _catalog.runtime("TargetSchemaMismatch")
+
+TARGET_SCHEMA_MISMATCH = _d("target_schema_mismatch", "Target schema mismatch.", since="1.7.0")

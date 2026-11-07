@@ -12,6 +12,7 @@ New to Decoy? Start with the quickstart, then the recipes.
 - [Free-text NER](guides/free-text-ner.md): activating spaCy person-name/location detection on `text_redact`.
 - [Relationships](relationships.md): foreign-key and referential-integrity preservation.
 - [Declared parsing, casting and quarantine](declared-casting.md): per-column parse formats, sentinels, error policies and output formats.
+- [File formats: Avro and ORC](file-formats.md): reading and writing Avro and ORC files, the type tables and the limits.
 - [Determinism](determinism.md): the seed and key protocol; what is and is not deterministic.
 - [CLI](cli.md): the `decoy` command surface.
 - [What Decoy does not prove](what-we-cannot-prove.md): the honest limitations.

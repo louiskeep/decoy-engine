@@ -2,7 +2,7 @@
 # `ordinal` is the index of the call among identical sinks in the function. An entry may be
 # removed freely; adding one needs a `rule` (how the path is built), an `owner` and a `reason`.
 # `ambient_only` marks a caller-derived path that is reached only after `require_ambient`.
-# Count: 201 (asserted by the sentry).
+# Count: 202 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -1686,6 +1686,15 @@ ordinal = 0
 rule = "in-memory bytes buffer (`io.BytesIO` of records the framer already read through a policy handle); the option constructors name no file"
 owner = "cam"
 reason = "the CSV chunk parse never opens a path; the source file is opened through `open_read` above it"
+
+[[entry]]
+module = "decoy_engine/io/avro_io.py"
+function = "_decode_group"
+sink = "polars.read_avro"
+ordinal = 0
+rule = "in-memory bytes buffer (`io.BytesIO` of Avro blocks the framer already read through a policy handle and the engine decompressed); no path is named"
+owner = "cam"
+reason = "Polars has no block-level Avro reader, so bounded reads decode one group of blocks from memory; the source file is opened through `open_read` above it. Owner exception requested in docs/plans/2026-11-07-v1plus-p4.1-avro-orc.md section 5"
 
 [[entry]]
 module = "decoy_engine/io/bounded_reader.py"

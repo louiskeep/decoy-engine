@@ -189,7 +189,7 @@ TableKind = Literal["mask", "generate"]
 TableOutcome = Literal["succeeded", "failed", "not_run"]
 RowsSource = Literal["outputs", "phase", "rate"]
 TableDeliveryState = Literal["delivered", "failed", "withheld", "dropped", "none"]
-OutputFormat = Literal["csv", "parquet", "fixed_width"]
+OutputFormat = Literal["csv", "parquet", "fixed_width", "avro", "orc"]
 CheckId = Literal["post_validation", "post_scan_integrity", "fidelity", "native_post_run"]
 CheckStatus = Literal["passed", "warned", "failed", "error", "not_run"]
 
