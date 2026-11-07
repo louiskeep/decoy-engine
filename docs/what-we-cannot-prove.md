@@ -513,8 +513,10 @@ anonymisation:
   servers (Coull, Wright, Monrose, Collins and Reiter, NDSS 2007). With
   `keep_bits: 0` the network itself is exposed to these attacks.
 - The number of distinct addresses and the per-network frequencies are kept.
-  With few host bits a row maps to itself often (about one in 2^(32-N) rows for
-  IPv4; one in four at `keep_bits_v4: 30`), which the residual-PII check reports.
+  Some rows map to themselves: about one in 2^(32-N) on average for IPv4 (one in
+  four at `keep_bits_v4: 30`), but they cluster, because Crypto-PAn's flips form a
+  tree and a whole subtree can come out unflipped (32 of the 256 hosts of one /24 in a
+  test run). Post-validation reports the count per run (`value_reuse_fixed_point`).
 - Anyone with the mask key and the namespace can invert the mapping, as for
   `fpe`. Without a configured secret the key is the job seed, so whoever holds the
   config can invert it.

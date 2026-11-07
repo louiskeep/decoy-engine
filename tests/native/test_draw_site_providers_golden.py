@@ -24,6 +24,7 @@ from decoy_engine.execution.native._determinism_protocol import (
     unit_float_from_bits53,
 )
 from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.transforms.network._cryptopan import CRYPTOPAN_KEY_LABEL
 
 _MK = bytes.fromhex("0102030405060708")
 _JOB = bytes.fromhex("1122334455667788")
@@ -157,6 +158,9 @@ _SCENARIOS: dict[str, Callable[[], Any]] = {
         _JOB, _NS, b"\x00\x02", pool_size=19
     ),
     "mask.tokenize": lambda: provider_for("mask.tokenize").draw(_MK, _NS, b"alice").hex(),
+    "mask.ip_prefix": lambda: (
+        provider_for("mask.ip_prefix").draw(_MK, _NS, CRYPTOPAN_KEY_LABEL).hex()
+    ),
 }
 
 
@@ -229,7 +233,8 @@ _GOLDEN_OUTPUT: dict[str, str] = {
     "mask.text_mask_date_shift": "4a44dc15364204a80fe80e9039455cc1608281820fe2b24f1e5233ade6af1dd5",
     "mask.text_mask_faker": "eef779676d353b92d67b9797c6b3c3b020185d961487ae78af44ca7981ab8489",
     "mask.tokenize": "b931e4cddb5420a92e65ac3c8a1368bcf04c2d1724787ff94053377dd97fd2be",
+    "mask.ip_prefix": "ee775f88f015ecaf8239f4f90cb249601a42c341c9c6dab21bbee65000ee4e52",
     "mask.windowed_date": "e7155d227e2e065ea4ad6de21ddd5f12c08f5d6a9654351f208c5f6f7b2b612a",
 }
 
-_GOLDEN_REGISTRY = "84d747bd4d004f73a8035c620f3d83d392560bb4f2a8ecdaf4f8b826ce9817ff"
+_GOLDEN_REGISTRY = "cd31040b1143fe0208182421b29e09d55313d508f0b4689801e665800e45b549"

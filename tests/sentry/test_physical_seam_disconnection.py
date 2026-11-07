@@ -937,6 +937,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_strategies/_grouped_series.py",
             "src/decoy_engine/execution/_strategies/_passthrough.py",
             "src/decoy_engine/execution/_strategies/_redact.py",
+            # ip_prefix strategy (opt-in): a new handler sub-package registered in
+            # SCALAR_HANDLERS. Runs only on the pandas oracle routes; imports nothing from
+            # `execution.physical`.
+            "src/decoy_engine/execution/_strategies/network/__init__.py",
+            "src/decoy_engine/execution/_strategies/network/_ip_prefix.py",
         }
     )
     # Files allowed to change ONLY by these exact line replacements (path -> {removed: added}).

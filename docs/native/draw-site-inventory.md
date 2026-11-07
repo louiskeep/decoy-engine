@@ -44,11 +44,11 @@ partitionable.
 
 ## Summary
 
-- 34 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
+- 35 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
   the out-of-core batched path, the delegation handlers, and the 9 identifier
   provider adapters).
-- 23 partitionable, 11 not.
-- Family breakdown: `source_keyed_hmac` 15, `numpy_pcg64` 8, `faker_seed_instance`
+- 24 partitionable, 11 not.
+- Family breakdown: `source_keyed_hmac` 16, `numpy_pcg64` 8, `faker_seed_instance`
   4, `python_mt19937` 3, `per_row_reseed` 2, `per_group_stream` 1,
   `gen_derive_context` 1.
 - GP2 (2026-09-17) added `gen.faker_pool_build` / `gen.faker_pool_selection`: a
@@ -125,6 +125,17 @@ native-routed (no compiled kernel; per-cell vault callback), so this site is
 catalogued for totality/audit, not a native draw. Wiring the full per-value
 `_canonicalize_source` dispatch (lifting the string-only restriction) is a tracked
 V1 follow-up.
+
+### mask.ip_prefix
+`execution/_strategies/network/_ip_prefix.py:83` (opt-in `ip_prefix` strategy). One
+Crypto-PAn key per `(mask_key, namespace)`: `derive(mask_key, namespace,
+CRYPTOPAN_KEY_LABEL)`, the 32 bytes split into an AES-128 key and a pad seed as the
+Crypto-PAn reference does. The label starts with `0xFF`, so no canonical cell value can
+equal it. Per value, `transforms/network/ip_prefix.py` keeps the first `keep_bits` and
+applies Crypto-PAn to the rest (one AES-ECB block per bit), so a row's output is a pure
+function of its own value: partitionable. Null rows emit null and draw nothing. Its
+provider is the generic `SourceKeyedHmacProvider` over `derive` with the label as the
+source. Python only (no compiled kernel).
 
 ### mask.categorical_deterministic
 `execution/_strategies/_categorical.py:211`. Uniform path:
@@ -551,7 +562,7 @@ The `unit_float_from_bits53(raw_u64)` primitive extracts the upper 53 bits of a
 FULL 64-bit value (`(raw_u64 >> 11) / 2**53`), matching NumPy's own `random()`
 construction and always `< 1.0` (the all-ones input maps to `(2**53 - 1) / 2**53`).
 
-Registry: exactly one provider per catalogued `draw_site_id` (34 sites; 23
+Registry: exactly one provider per catalogued `draw_site_id` (35 sites; 24
 partitionable, 11 not). An import-time invariant fails if the registry drifts
 from `DRAW_SITES`.
 
@@ -591,6 +602,7 @@ from `DRAW_SITES`.
 | mask.tokenize                     | source_keyed_hmac   | yes           | seed_protocol_v7 (fresh token; vault reuse is external state) |
 | mask.joint_mask_keyed_row         | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.text_mask_date_shift         | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.ip_prefix                    | source_keyed_hmac   | yes           | seed_protocol_v7 (Crypto-PAn key; per-value AES is the transform's) |
 
 ## References
 
