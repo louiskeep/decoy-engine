@@ -9,9 +9,15 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
-### Breaking for consumers
+## [0.19.0] - 2026-11-07
+
+### Breaking for consumers (since v0.18.0)
 
 - `run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked`, `run_native_or_oracle_chunked` and `compile_plan` now refuse a config with `subset:` set (`config.subset_run_unsupported`, registry 1.6.0) instead of masking the full sources; run `run_subset` first.
+- `PLAN_VERSION` is 3 (was 2). A plan this engine writes carries `version: 3`, which a 0.18.0 engine cannot load; this engine still loads a version-2 plan. For a config that does not use declared casting, the version line is the only change.
+- Reason registry `1.2.0` -> `1.6.0` (893 -> 1006 identities). Consumers that enumerate or map reason codes take the new identities; none was removed or renamed.
+- A headerless CSV refusal starts with its code and names the source table, not the file: `source_file.column_count_mismatch: source customers line 3 has 4 fields but column_names declares 3`. A consumer that prints the code apart from the message shows it twice; one that matched the old text must match the code.
+- A `column_names` that is not a list or tuple of strings is refused by `CsvDialect` and `resolve_csv_dialect`. The `FileSource`, `S3Source` and `GCSSource` validation errors and `validate_config` no longer carry the submitted value or the chained pydantic error.
 
 ### Security (locked dependencies, 2026-11-06)
 
