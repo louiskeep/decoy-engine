@@ -307,6 +307,7 @@ def _fpe_pure_value(
     *,
     forward: bool,
     checksum: str | None = None,
+    keep_bin: int = 0,
 ) -> str:
     """FF1-encrypt (or invert) a string consisting entirely of charset characters.
 
@@ -344,7 +345,9 @@ def _fpe_pure_value(
             # `_permute` from this module at load, so it must load AFTER fpe is ready.
             from decoy_engine.transforms._fpe_checksum import _fpe_checksum_permute
 
-            return _fpe_checksum_permute(s, key, charset, tweak, checksum, forward=forward)
+            return _fpe_checksum_permute(
+                s, key, charset, tweak, checksum, forward=forward, keep_bin=keep_bin
+            )
         if validate_luhn and len(s) >= 2:
             body = _permute(s[:-1], key, charset, tweak, forward=forward)
             return body + _luhn_check_digit(body)
@@ -364,6 +367,7 @@ def _fpe_value(
     checksum: str | None = None,
     *,
     forward: bool,
+    keep_bin: int = 0,
 ) -> str:
     """Shared encrypt/decrypt orchestration over one value.
 
@@ -386,8 +390,14 @@ def _fpe_value(
     are reinserted verbatim. The residual partial-plaintext disclosure a format
     prefix carries is surfaced by the handler as a `QualityWarning`; full
     coverage is a further follow-up (structured/typed-subfield FPE), independent
-    of the FF1 primitive swap (Task 5.2)."""
+    of the FF1 primitive swap (Task 5.2).
+
+    ``keep_bin`` (``checksum='luhn'`` only) keeps the first 6 or 8 digits; see
+    ``_fpe_checksum``. It is checked first, so it is never silently ignored."""
     try:
+        from decoy_engine.transforms._fpe_checksum import check_keep_bin_call
+
+        check_keep_bin_call(keep_bin, checksum)
         # Empty-string reject (plan P2): a present-but-empty value is NOT a null --
         # nulls never reach this layer at all (skipped via na_mask one layer up) --
         # so an empty string here is a genuine zero-length value with a zero-length
@@ -426,6 +436,7 @@ def _fpe_value(
                 validate_luhn,
                 forward=forward,
                 checksum=checksum,
+                keep_bin=keep_bin,
             )
             # Codex cross-model review (2026-07-14): the permuted body must have exactly
             # one character per in-charset position. It always does after the checksum
@@ -458,7 +469,14 @@ def _fpe_value(
                 value=val,
             )
         return _fpe_pure_value(
-            val, key, charset, tweak, validate_luhn, forward=forward, checksum=checksum
+            val,
+            key,
+            charset,
+            tweak,
+            validate_luhn,
+            forward=forward,
+            checksum=checksum,
+            keep_bin=keep_bin,
         )
     except BaseException:
         del key
@@ -473,6 +491,8 @@ def fpe_encrypt_value(
     preserve_separators: bool = True,
     validate_luhn: bool = False,
     checksum: str | None = None,
+    *,
+    keep_bin: int = 0,
 ) -> str:
     """Encrypt one value with the keyed format-preserving permutation.
 
@@ -483,10 +503,20 @@ def fpe_encrypt_value(
     ``'gtin'`` (see ``decoy_engine.checksums``).
 
     ``checksum`` takes priority over ``validate_luhn`` when both are set.
+    ``keep_bin`` (6 or 8, ``checksum='luhn'`` only; 0 is off) keeps a card's
+    issuer prefix in the clear.
     """
     try:
         return _fpe_value(
-            val, key, charset, tweak, preserve_separators, validate_luhn, checksum, forward=True
+            val,
+            key,
+            charset,
+            tweak,
+            preserve_separators,
+            validate_luhn,
+            checksum,
+            forward=True,
+            keep_bin=keep_bin,
         )
     except BaseException:
         del key
@@ -501,6 +531,8 @@ def fpe_decrypt_value(
     preserve_separators: bool = True,
     validate_luhn: bool = False,
     checksum: str | None = None,
+    *,
+    keep_bin: int = 0,
 ) -> str:
     """Invert ``fpe_encrypt_value`` under the same (key, charset, tweak, config).
 
@@ -511,7 +543,15 @@ def fpe_decrypt_value(
     """
     try:
         return _fpe_value(
-            val, key, charset, tweak, preserve_separators, validate_luhn, checksum, forward=False
+            val,
+            key,
+            charset,
+            tweak,
+            preserve_separators,
+            validate_luhn,
+            checksum,
+            forward=False,
+            keep_bin=keep_bin,
         )
     except BaseException:
         del key

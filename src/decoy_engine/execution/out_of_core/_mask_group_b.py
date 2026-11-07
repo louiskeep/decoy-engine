@@ -63,6 +63,7 @@ from decoy_engine.execution._strategies._categorical import (
     _build_cdf,
 )
 from decoy_engine.execution._strategies._fpe import (
+    CHECKSUM_CONFIG_STRATEGY_CODE,
     FF1_KEY_LABEL,
     strategy_code_for_checksum,
     strategy_code_for_unencryptable,
@@ -74,6 +75,11 @@ from decoy_engine.execution._strategies._ner_config import (
 from decoy_engine.execution._strategies._text_redact import _DEFAULT_TOKEN, _splice
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.kernel._scalar import _array_to_pylist, _is_missing
+from decoy_engine.transforms._fpe_checksum import (
+    keep_bin_problem,
+    keep_bin_problem_text,
+    keep_bin_value,
+)
 from decoy_engine.transforms.fpe import (
     FF1_TWEAK_SCOPE_COLUMN,
     FF1_TWEAK_SCOPE_JOIN_GROUP,
@@ -143,6 +149,14 @@ def fpe_array(
         charset = _fpe_charset(cfg)
         preserve_sep = bool(cfg.get("preserve_separators", True))
         checksum: str | None = cfg.get("checksum") or None
+        keep_bin_fault = keep_bin_problem(cfg)
+        if keep_bin_fault is not None:
+            raise StrategyError(
+                code=CHECKSUM_CONFIG_STRATEGY_CODE,
+                strategy="fpe",
+                message=f"column {column!r}: {keep_bin_problem_text(keep_bin_fault)}",
+            )
+        keep_bin = keep_bin_value(cfg)
         validate_luhn = (
             checksum is None
             and bool(cfg.get("validate_luhn", False))
@@ -193,6 +207,7 @@ def fpe_array(
                         preserve_sep,
                         validate_luhn,
                         checksum,
+                        keep_bin=keep_bin,
                     )
                 )
         except FpeUnencryptableError as exc:

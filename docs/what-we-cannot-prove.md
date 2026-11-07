@@ -511,6 +511,20 @@ charset), but a custom-charset or mixed-low-alphabet column would fall in this g
 Mitigation: cover the column's full alphabet with the charset (e.g. `ALPHANUM`), the
 same fix as the orphan-remap case above.
 
+## A card mask that keeps the BIN reveals the issuer
+
+The `fpe` option `keep_bin` (V1+, opt-in) keeps the first 6 or 8 digits of a
+card number in the clear. That prefix is public routing data, but it is not
+nothing: it reveals the issuer, the brand, the issuing country and often the
+product (debit, credit, prepaid, corporate). A small issuer's BIN can narrow a
+row to a few people, especially combined with other columns. The digit count
+is kept too. Masked numbers stay unique within a column, so counts of distinct
+cards per BIN are exact. The middle digits are FF1-encrypted under the column
+key with the prefix in the tweak; as with any FPE, a masked number can equal
+its source with probability about one in 10^m for m encrypted digits (at worst
+one in a million). Use plain `checksum: luhn` (no `keep_bin`) where the issuer
+mix must not be visible.
+
 ## What it does do
 
 To be clear about the other side: Decoy does give you deterministic,

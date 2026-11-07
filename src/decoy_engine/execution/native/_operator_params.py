@@ -27,6 +27,7 @@ from decoy_engine.execution._strategies._faker_positional import faker_selection
 from decoy_engine.execution._strategies._text_redact import _DEFAULT_TOKEN
 from decoy_engine.execution.native._categorical_prepared import PreparedCategorical
 from decoy_engine.execution.native._date_shift_ext import DEFAULT_MAX_DAYS, DEFAULT_MIN_DAYS
+from decoy_engine.transforms._fpe_checksum import raw_keep_bin
 from decoy_engine.transforms.date_preserve import PreserveSet, preserve_set_from_config
 
 __all__ = [
@@ -161,6 +162,8 @@ class FpeParams:
     # The target column name, framed into the per-column FF1 tweak (the join group replaces it
     # when set, so grouped columns share ciphertext).
     tweak_column: str
+    # Unvalidated, as on `FpeConfig`; it rides with `checksum`, so it never reaches here.
+    keep_bin: Any = None
 
 
 OperatorParams = (
@@ -263,6 +266,7 @@ def resolve_operator_params(
             checksum=cfg.get("checksum") or None,
             join_group=cfg.get("fpe_join_group") or None,
             tweak_column=target,
+            keep_bin=raw_keep_bin(cfg),
         )
     if strategy == "faker":
         return FakerParams(namespace)

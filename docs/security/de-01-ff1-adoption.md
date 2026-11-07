@@ -68,6 +68,13 @@ identities are intentionally distinct tweaks). This makes the tweak framing
 itself part of the pinned contract: two conforming implementations of this
 wrapper behave identically given the same inputs.
 
+With the `keep_bin` option (Luhn checksum mode), the kept card prefix (6 or 8
+ASCII digits) is appended to that tweak for the FF1 call on the account
+digits: `tweak || prefix_ascii`. The `LEN` field bounds the identity, so the
+suffix is unambiguous, and a tweak without `keep_bin` has no suffix. This
+follows SP 800-38G's advice to use data statically associated with the
+plaintext as the tweak (NIST ITL Bulletin 2016-04 works this card example).
+
 ## Deployable profile (enforced before every FF1 call)
 
 `transforms.fpe._permute` enforces, in order, fail-closed at the first

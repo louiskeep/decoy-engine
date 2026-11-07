@@ -106,4 +106,5 @@ def fpe_config_from_params(params: Any) -> FpeConfig:
         validate_luhn=params.validate_luhn,
         checksum=params.checksum,
         join_group=params.join_group,
+        keep_bin=params.keep_bin,
     )

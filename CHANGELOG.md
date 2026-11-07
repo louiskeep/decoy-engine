@@ -16,6 +16,10 @@ minimum engine version it was tested against via its
 (`hash` and `fpe`), whether it is offered at the wizard's `edit` prompt, and where each option lives in a column
 entry (`column`, `provider_config` or `provider_config.ner`). `StrategyInfo` and `StrategyOption` are exported too.
 
+### Added (V1+ track: card mask keeps the BIN; opt-in; not merged per owner instruction)
+
+V1+ track ([`v1plus-sprints.md`](https://github.com/louiskeep/decoy/blob/claude/fervent-thompson-tm8w6d/docs/roadmap/v1plus-sprints.md), V1P-3.3), built ahead of CLI V1 and dark: nothing changes unless a config names the option. `fpe` with `checksum: luhn` takes `keep_bin: 6` or `keep_bin: 8`: the masked card keeps its first 6 digits (BIN) or 8 digits (ISO/IEC 7812-1:2017 IIN), its length and separators, and a valid Luhn digit; the account digits are FF1-encrypted with the kept prefix in the tweak (NIST SP 800-38G). Plan compile refuses a bad value or combination with three new codes, `plan.fpe_keep_bin_invalid`, `plan.fpe_keep_bin_requires_luhn` and `plan.fpe_keep_bin_non_fpe_strategy` (reason registry `1.6.0` -> `1.7.0`). The native kernels decline it like any checksum column. The option is not offered by `strategy_catalog()` yet. The leak it accepts is in `docs/what-we-cannot-prove.md`.
+
 ## [0.19.0] - 2026-11-07
 
 ### Breaking for consumers (since v0.18.0)

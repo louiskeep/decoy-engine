@@ -155,7 +155,8 @@ class _ReferenceFpe:
                 config.join_group or tweak_column,
             )
             key_box = OpaqueBox(derive(mask_key, namespace, FF1_KEY_LABEL))
-            transform = fpe_encrypt_value if forward else fpe_decrypt_value
+            # `_resolve` above has refused any keep_bin but None, 6 or 8.
+            keep_bin = config.keep_bin or 0
 
             out: list[str | None] = []
             errors: list[FpeRowError] = []
@@ -170,17 +171,21 @@ class _ReferenceFpe:
                     out.append("")
                     continue
                 non_na_values.append(text)
+                args = (
+                    text,
+                    key_box.open()[0],
+                    charset,
+                    tweak,
+                    preserve_sep,
+                    validate_luhn,
+                    checksum,
+                )
                 try:
+                    # Two direct calls, not an alias, so the keep_bin call-site guard sees both.
                     out.append(
-                        transform(
-                            text,
-                            key_box.open()[0],
-                            charset,
-                            tweak,
-                            preserve_sep,
-                            validate_luhn,
-                            checksum,
-                        )
+                        fpe_encrypt_value(*args, keep_bin=keep_bin)
+                        if forward
+                        else fpe_decrypt_value(*args, keep_bin=keep_bin)
                     )
                 except FpeUnencryptableError as exc:
                     out.append(None)

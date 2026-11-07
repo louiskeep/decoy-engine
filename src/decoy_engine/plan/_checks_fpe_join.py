@@ -41,20 +41,28 @@ auditable opt-in record.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from decoy_engine import reasons
+from decoy_engine.plan._checks_fpe import check_column_keep_bin
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.transforms._fpe_checksum import keep_bin_value
 
-# FPE config keys that must match across all members of the same join group.
-# Differing values would cause the same plaintext to encrypt to different
-# ciphertexts under the same key and tweak, breaking the join property.
-_HOMOGENEITY_KEYS: tuple[str, ...] = (
-    "charset",
-    "preserve_separators",
-    "validate_luhn",
-    "checksum",
-)
+# FPE config keys that must match across all members of the same join group, each
+# with the fpe handler's default applied, so an omitted key compares equal to its
+# explicit default (an omitted charset == charset:"digits"; both join). Differing
+# values would cause the same plaintext to encrypt to different ciphertexts under
+# the same key and tweak, breaking the join property. `keep_bin` is read only after
+# `check_column_keep_bin` has refused a bad one, so its normaliser never raises.
+_SNAPSHOT: dict[str, Callable[[dict[str, Any]], Any]] = {
+    "charset": lambda pc: pc.get("charset", "digits"),
+    "preserve_separators": lambda pc: bool(pc.get("preserve_separators", True)),
+    "validate_luhn": lambda pc: bool(pc.get("validate_luhn", False)),
+    "checksum": lambda pc: pc.get("checksum") or None,
+    "keep_bin": keep_bin_value,
+}
+_HOMOGENEITY_KEYS: tuple[str, ...] = tuple(_SNAPSHOT)
 
 
 def check_fpe_join_groups(config: dict[str, Any]) -> tuple[str, ...]:
@@ -100,21 +108,15 @@ def check_fpe_join_groups(config: dict[str, Any]) -> tuple[str, ...]:
             if not group_name or not isinstance(group_name, str):
                 continue
             col_name = col_entry.get("name", "?")
+            # Before the snapshot, so a bad keep_bin gets its own code here too.
+            check_column_keep_bin(col_entry, table_name)
             groups.setdefault(group_name, []).append(
                 {
                     "table": table_name,
                     "column": col_name,
                     "strategy": col_entry.get("strategy"),
                     "namespace": col_entry.get("namespace"),
-                    # Homogeneity snapshot with the fpe handler's defaults applied,
-                    # so an omitted key compares equal to its explicit default
-                    # (e.g. an omitted charset == charset:"digits"); both join.
-                    "cfg_snap": {
-                        "charset": pc.get("charset", "digits"),
-                        "preserve_separators": bool(pc.get("preserve_separators", True)),
-                        "validate_luhn": bool(pc.get("validate_luhn", False)),
-                        "checksum": pc.get("checksum") or None,
-                    },
+                    "cfg_snap": {key: read(pc) for key, read in _SNAPSHOT.items()},
                 }
             )
 

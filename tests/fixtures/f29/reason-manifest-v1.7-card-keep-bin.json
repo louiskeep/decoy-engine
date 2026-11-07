@@ -1,0 +1,66 @@
+{
+  "entries": [
+    {
+      "code": "fpe_keep_bin_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "FPE keep_bin invalid.",
+      "symbol": "FPE_KEEP_BIN_INVALID"
+    },
+    {
+      "code": "fpe_keep_bin_non_fpe_strategy",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "FPE keep_bin non FPE strategy.",
+      "symbol": "FPE_KEEP_BIN_NON_FPE_STRATEGY"
+    },
+    {
+      "code": "fpe_keep_bin_requires_luhn",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "FPE keep_bin requires luhn.",
+      "symbol": "FPE_KEEP_BIN_REQUIRES_LUHN"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.7.0"
+}

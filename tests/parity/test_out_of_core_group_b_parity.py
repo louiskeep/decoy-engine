@@ -182,6 +182,21 @@ _PAYLOADS: dict[str, tuple[ColumnSeed, list[str | None]]] = {
             "38520000023237",
         ],
     ),
+    "fpe_checksum_luhn_keep_bin": (
+        _seed(
+            "fpe",
+            namespace="pkb",
+            provider_config=(("charset", "digits"), ("checksum", "luhn"), ("keep_bin", 6)),
+        ),
+        [
+            "4111111111111111",
+            "5555555555554444",
+            None,
+            "4012888888881881",
+            "6011111111111117",
+            "38520000023237",
+        ],
+    ),
     "fpe_alphanum": (
         _seed("fpe", namespace="pan", provider_config=(("charset", "ALPHANUM"),)),
         ["Abc123", "Xyz789", None, "Test42", "Data99", "Code77"],

@@ -30,7 +30,12 @@ Reuses `_CHARSETS` / `check_charset_unique` / `check_charset_ascii_printable`
 from `transforms/fpe.py` as the single source of truth for named charsets and
 these two rules (no duplicated table or check to drift out of sync).
 
-This module exports exactly one function: `check_fpe_charset_config`.
+V1+ (card keep-BIN): the same loop checks the `keep_bin` option through
+`check_column_keep_bin`, so it runs wherever the charset check runs (both compile
+branches and `run_config_only_checks`) without growing `plan/_compile.py`. The join
+check (`_checks_fpe_join.py`) calls it first for every join-group member.
+
+This module exports `check_fpe_charset_config` and `check_column_keep_bin`.
 """
 
 from __future__ import annotations
@@ -40,11 +45,49 @@ from typing import Any
 from decoy_engine import reasons
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.transforms._fpe_checksum import keep_bin_problem, keep_bin_problem_text
 from decoy_engine.transforms.fpe import (
     _CHARSETS,
     check_charset_ascii_printable,
     check_charset_unique,
 )
+
+_KEEP_BIN_CODES = {
+    "invalid": reasons.plan.FPE_KEEP_BIN_INVALID,
+    "requires_luhn": reasons.plan.FPE_KEEP_BIN_REQUIRES_LUHN,
+}
+
+
+def check_column_keep_bin(col_entry: dict[str, Any], table_name: str) -> None:
+    """Refuse a column whose `keep_bin` the strategy cannot honour.
+
+    `keep_bin` is an fpe option (Luhn checksum mode only); on any other strategy it
+    would be silently ignored, so it is refused there too. Messages name the table,
+    column and config key, never a data value.
+    """
+    pc = col_entry.get("provider_config")
+    if not isinstance(pc, dict) or pc.get("keep_bin") is None:
+        return
+    col_name = col_entry.get("name", "?")
+    path = f"tables.{table_name}.columns.{col_name}.provider_config.keep_bin"
+    if col_entry.get("strategy") != "fpe":
+        raise PlanCompileError(
+            code=reasons.plan.FPE_KEEP_BIN_NON_FPE_STRATEGY,
+            path=path,
+            message=(
+                f"column {col_name!r} in table {table_name!r} sets keep_bin, an fpe option "
+                f"(checksum: luhn), on strategy {col_entry.get('strategy')!r}."
+            ),
+        )
+    problem = keep_bin_problem(pc)
+    if problem is not None:
+        raise PlanCompileError(
+            code=_KEEP_BIN_CODES[problem],
+            path=path,
+            message=(
+                f"fpe column {col_name!r} in table {table_name!r}: {keep_bin_problem_text(problem)}"
+            ),
+        )
 
 
 def check_fpe_charset_config(config: dict[str, Any]) -> None:
@@ -83,6 +126,8 @@ def check_fpe_charset_config(config: dict[str, Any]) -> None:
         for col_entry in table_entry.get("columns", []) or []:
             if not isinstance(col_entry, dict):
                 continue
+            # Above the strategy skip: keep_bin on a non-fpe column is refused too.
+            check_column_keep_bin(col_entry, table_name)
             if col_entry.get("strategy") != "fpe":
                 continue
             col_name = col_entry.get("name", "?")

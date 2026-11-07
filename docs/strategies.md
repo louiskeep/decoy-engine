@@ -142,6 +142,46 @@ covering hash for such values (that fallback was removed in DE-01); see the
 Use it when a downstream system validates the format of an identifier (credit
 card, account number) and you cannot change its shape.
 
+#### Keeping a card's BIN (`keep_bin`)
+
+V1+ option, opt-in; no default config sets it. `keep_bin: 6` or `keep_bin: 8`
+on an `fpe` column with `checksum: luhn` keeps the card's issuer prefix: the BIN,
+or the ISO/IEC 7812-1:2017 8-digit IIN. So brand, issuer and country survive
+masking. The digits between the prefix and the check digit are FF1-encrypted,
+with the prefix appended to the tweak, and the Luhn digit is recomputed:
+
+```yaml
+- name: card_number
+  strategy: fpe
+  namespace: card
+  provider_config:
+    checksum: luhn   # required with keep_bin
+    keep_bin: 6      # or 8
+```
+
+`4539 5787 6362 1486` becomes `4539 57xx xxxx xxxc`: same first six digits,
+same spaces, a valid Luhn digit. Separators do not count toward the prefix.
+The output is deterministic and reverses with `unmask`. Within a column,
+different cards always get different masked numbers.
+
+- Only an absent key or `null` means off. Any other value than the integer 6
+  or 8 is refused at plan compile (`fpe_keep_bin_invalid`), and so is
+  `keep_bin` without `checksum: luhn` and the `digits` charset
+  (`fpe_keep_bin_requires_luhn`) or on a strategy other than `fpe`
+  (`fpe_keep_bin_non_fpe_strategy`). Join-group members must agree on it.
+- FF1 needs at least six encrypted digits, so a card needs at least 13 digits
+  with `keep_bin: 6` and 15 with `keep_bin: 8`. A shorter one fails the job
+  closed (`fpe_unencryptable_domain`). More than 19 digits (not an ISO/IEC 7812
+  card number) fails with `fpe_checksum_unsupported`. A card that fails Luhn
+  fails with `fpe_checksum_invalid_source`.
+- The last four digits are not kept: they include the check digit, and a
+  16-digit card would then leave too few digits for FF1.
+- It runs on the Python handler on every route; the native kernels decline it
+  like any `checksum` column.
+
+What the kept prefix reveals is in
+[what-we-cannot-prove.md](what-we-cannot-prove.md#a-card-mask-that-keeps-the-bin-reveals-the-issuer).
+
 ### date_shift
 
 Shifts each date by a deterministic per-value offset within a bounded range.

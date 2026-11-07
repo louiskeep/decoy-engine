@@ -58,6 +58,11 @@ from decoy_engine.errors import (
 )
 from decoy_engine.generation.pool._errors import GenerationError
 from decoy_engine.generation.pool._events import QualityWarning
+from decoy_engine.transforms._fpe_checksum import (
+    keep_bin_fields_problem,
+    keep_bin_problem_text,
+    raw_keep_bin,
+)
 from decoy_engine.transforms.fpe import _CHARSETS
 
 KernelInput: TypeAlias = pa.Array | pa.ChunkedArray | list[Any]
@@ -150,6 +155,8 @@ class FpeConfig:
     validate_luhn: bool = False
     checksum: str | None = None
     join_group: str | None = None
+    # Unvalidated until `_resolve` (None is off); the kernel has no keep_bin path.
+    keep_bin: Any = None
 
     @classmethod
     def from_mapping(cls, cfg: Mapping[str, Any]) -> FpeConfig:
@@ -160,6 +167,7 @@ class FpeConfig:
             validate_luhn=bool(cfg.get("validate_luhn", False)),
             checksum=cfg.get("checksum") or None,
             join_group=cfg.get("fpe_join_group") or None,
+            keep_bin=raw_keep_bin(cfg),
         )
 
     def _resolve(self) -> tuple[str, bool, bool, str | None]:
@@ -181,6 +189,9 @@ class FpeConfig:
                 "over and would leave the column unmasked."
             )
         checksum = self.checksum or None
+        keep_bin_fault = keep_bin_fields_problem(self.keep_bin, checksum, self.charset)
+        if keep_bin_fault is not None:
+            raise FpeConfigError(keep_bin_problem_text(keep_bin_fault))
         validate_luhn = (
             checksum is None
             and bool(self.validate_luhn)

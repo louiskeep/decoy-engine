@@ -6,6 +6,9 @@ from decoy_engine.reasons import _catalog
 
 __all__ = [
     "DEDUPE_UNSUPPORTED_TYPE",
+    "FPE_KEEP_BIN_INVALID",
+    "FPE_KEEP_BIN_NON_FPE_STRATEGY",
+    "FPE_KEEP_BIN_REQUIRES_LUHN",
     "SORT_UNSUPPORTED_TYPE",
     "STATISTICAL_HIGH_CARDINALITY_REQUIRES_REAL_CATEGORIES",
     "STATISTICAL_HIGH_CARDINALITY_SNAPSHOT_MISMATCH",
@@ -59,3 +62,13 @@ SORT_UNSUPPORTED_TYPE = _d("sort_unsupported_type", "Sort unsupported type.")
 _d = _catalog.plan("decoy_engine.plan._checks_top_code")
 
 TOP_CODE_INVALID_FLOOR = _d("top_code_invalid_floor", "Top code invalid floor.")
+
+_d = _catalog.plan("PlanCompileError")
+
+FPE_KEEP_BIN_INVALID = _d("fpe_keep_bin_invalid", "FPE keep_bin invalid.", since="1.7.0")
+FPE_KEEP_BIN_REQUIRES_LUHN = _d(
+    "fpe_keep_bin_requires_luhn", "FPE keep_bin requires luhn.", since="1.7.0"
+)
+FPE_KEEP_BIN_NON_FPE_STRATEGY = _d(
+    "fpe_keep_bin_non_fpe_strategy", "FPE keep_bin non FPE strategy.", since="1.7.0"
+)

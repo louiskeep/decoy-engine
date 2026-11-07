@@ -47,6 +47,7 @@ from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._strategies._fpe import FF1_KEY_LABEL
 from decoy_engine.fileaccess import FileAccess, FileHandle
 from decoy_engine.plan._seed import _normalize_job_seed
+from decoy_engine.transforms._fpe_checksum import keep_bin_value
 from decoy_engine.transforms.fpe import (
     FF1_TWEAK_SCOPE_COLUMN,
     FF1_TWEAK_SCOPE_JOIN_GROUP,
@@ -143,6 +144,8 @@ def _decrypt_column(
         # the plain inverse and silently returned WRONG plaintext (e.g. npi
         # 1234567893 -> 1770507352 -> 5577387655), still reported `reversed`.
         checksum: str | None = cfg.get("checksum") or None
+        # Raises the value-free FpeChecksumError a decrypt-time checksum fault raises.
+        keep_bin = keep_bin_value(cfg)
         validate_luhn = (
             checksum is None
             and bool(cfg.get("validate_luhn", False))
@@ -160,7 +163,9 @@ def _decrypt_column(
                 # the masked output already carries it unchanged. Mirror that
                 # here instead of calling `fpe_decrypt_value` on it.
                 return s
-            return fpe_decrypt_value(s, key, charset, tweak, preserve_sep, validate_luhn, checksum)
+            return fpe_decrypt_value(
+                s, key, charset, tweak, preserve_sep, validate_luhn, checksum, keep_bin=keep_bin
+            )
 
         values = table.column(column).to_pylist()
         decrypted = [_decrypt_one(v) for v in values]

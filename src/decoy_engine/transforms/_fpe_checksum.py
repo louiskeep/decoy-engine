@@ -10,13 +10,139 @@ It reuses the low-level `_permute` primitive from ``transforms.fpe``; that impor
 is module-level but the module itself is only imported lazily (from inside
 ``fpe._fpe_pure_value``), so ``fpe`` is always fully loaded first and no import
 cycle forms.
+
+``keep_bin`` (Luhn mode only) keeps a payment card's issuer prefix, its BIN or the
+ISO/IEC 7812-1:2017 8-digit IIN, in the clear and FF1-encrypts only the account
+digits between it and the check digit, the "preserve starting digits" pattern of
+Delphix's Payment Card framework and Protegrity's left-clear setting. The kept
+prefix is appended to the FF1 tweak, following NIST SP 800-38G's advice to use
+data statically associated with the plaintext (here the clear digits) as the
+tweak (NIST ITL Bulletin 2016-04 works this exact card example). This module is
+the only reader of the ``keep_bin`` config key.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any, Final, Literal
+
 from decoy_engine import reasons
-from decoy_engine.errors import FpeChecksumError
-from decoy_engine.transforms.fpe import _permute
+from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
+from decoy_engine.transforms import _ff1
+from decoy_engine.transforms.fpe import _permute, resolve_fpe_charset
+
+_KEEP_BIN: Final = "keep_bin"
+KEEP_BIN_LENGTHS: Final[frozenset[int]] = frozenset({6, 8})
+# ISO/IEC 7812-1: a PAN has at most 19 digits.
+PAN_MAX_DIGITS: Final = 19
+_DIGITS: Final = "0123456789"
+
+KeepBinProblem = Literal["invalid", "requires_luhn"]
+
+
+def keep_bin_problem(cfg: Mapping[str, Any]) -> KeepBinProblem | None:
+    """Why a provider config's ``keep_bin`` cannot be honoured, or None."""
+    return keep_bin_fields_problem(
+        cfg.get(_KEEP_BIN), cfg.get("checksum"), cfg.get("charset", "digits")
+    )
+
+
+def keep_bin_fields_problem(value: Any, checksum: Any, charset_spec: Any) -> KeepBinProblem | None:
+    """``keep_bin_problem`` over already-extracted fields (for config carriers).
+
+    Only None means off. Anything else must be exactly the int 6 or 8 (a bool is
+    refused even though it is an int) on ``checksum: luhn`` with the ``digits``
+    charset, since the kept prefix is "the first k digits".
+    """
+    if value is None:
+        return None
+    if type(value) is not int or value not in KEEP_BIN_LENGTHS:
+        return "invalid"
+    if checksum != "luhn":
+        return "requires_luhn"
+    if not isinstance(charset_spec, str) or resolve_fpe_charset(charset_spec) != _DIGITS:
+        return "requires_luhn"
+    return None
+
+
+_PROBLEM_TEXT: Final[dict[str, str]] = {
+    "invalid": "fpe keep_bin must be the integer 6 or 8 (or absent/null for off).",
+    "requires_luhn": (
+        "fpe keep_bin needs checksum: luhn and the digits charset; the kept prefix is the "
+        "first digits of a Luhn-checked card number."
+    ),
+}
+
+
+def keep_bin_problem_text(problem: KeepBinProblem) -> str:
+    """The value-free explanation of a ``keep_bin_problem`` result."""
+    return _PROBLEM_TEXT[problem]
+
+
+def keep_bin_value(cfg: Mapping[str, Any]) -> int:
+    """The ``keep_bin`` a value call takes: 0 for off, else 6 or 8.
+
+    Raises a value-free ``FpeChecksumError`` when the config cannot honour it.
+    """
+    problem = keep_bin_problem(cfg)
+    if problem is not None:
+        raise FpeChecksumError(keep_bin_problem_text(problem), scheme="luhn")
+    value = cfg.get(_KEEP_BIN)
+    return 0 if value is None else int(value)
+
+
+def raw_keep_bin(cfg: Mapping[str, Any]) -> Any:
+    """The unvalidated ``keep_bin`` (None for absent or null), for config carriers
+    that validate later (``FpeConfig._resolve``)."""
+    return cfg.get(_KEEP_BIN)
+
+
+def check_keep_bin_call(keep_bin: int, checksum: str | None) -> None:
+    """Value-layer backstop: refuse a ``keep_bin`` the value call cannot honour.
+
+    Every encrypt and decrypt passes through here, so a caller that skipped plan
+    compile (or built a config by hand) never has ``keep_bin`` silently ignored.
+    """
+    if type(keep_bin) is not int or (keep_bin != 0 and keep_bin not in KEEP_BIN_LENGTHS):
+        raise FpeChecksumError(keep_bin_problem_text("invalid"), scheme=checksum)
+    if keep_bin and checksum != "luhn":
+        raise FpeChecksumError(keep_bin_problem_text("requires_luhn"), scheme=checksum)
+
+
+def _keep_bin_permute(s: str, key: bytes, tweak: bytes, keep_bin: int, *, forward: bool) -> str:
+    """FF1 over the account digits between the kept prefix and the Luhn check digit."""
+    from decoy_engine.checksums import calc_check_digit
+
+    prefix = s[:keep_bin]
+    account = _permute(
+        s[keep_bin:-1], key, _DIGITS, tweak + prefix.encode("ascii"), forward=forward
+    )
+    body = prefix + account
+    return body + calc_check_digit("luhn", body)
+
+
+def _check_keep_bin_shape(s: str, keep_bin: int) -> None:
+    """Refuse a value that is not a PAN, or leaves FF1 too few digits to encrypt.
+
+    The floor itself is enforced again by ``_permute``; this check only words the
+    failure in ``keep_bin`` terms. Messages carry counts only.
+    """
+    if len(s) > PAN_MAX_DIGITS:
+        raise FpeChecksumError(
+            f"FPE checksum scheme 'luhn' with keep_bin requires at most {PAN_MAX_DIGITS} "
+            f"digits (an ISO/IEC 7812 PAN); got {len(s)}. The engine fails closed.",
+            scheme="luhn",
+        )
+    encrypted = len(s) - keep_bin - 1
+    floor = _ff1.min_domain_length(len(_DIGITS))
+    if encrypted < floor:
+        raise FpeUnencryptableError(
+            f"keep_bin={keep_bin} on a {len(s)}-digit value leaves {encrypted} digit(s) to "
+            f"encrypt; FF1 needs at least {floor} (domain 10**{floor} = "
+            f"{_ff1.FF1_MIN_DOMAIN}). Use keep_bin 6, or another strategy for this column.",
+            code=reasons.runtime.FPE__UNENCRYPTABLE_DOMAIN,
+        )
+
 
 # Valid length(s) per checksum scheme. NPI/ISBN-13/EAN-13/VIN have EXACT lengths;
 # GTIN has four legal lengths (GS1); Luhn is variable (any Luhn-protected digit
@@ -73,6 +199,7 @@ def _fpe_checksum_permute(
     scheme: str,
     *,
     forward: bool,
+    keep_bin: int = 0,
 ) -> str:
     """Permute a string and recompute the check digit for the given scheme.
 
@@ -81,6 +208,13 @@ def _fpe_checksum_permute(
 
     Per-scheme rules
     ----------------
+    luhn with keep_bin (6 or 8)
+        The first ``keep_bin`` digits are kept, the digits up to the check
+        digit are permuted with the prefix appended to the tweak, and the Luhn
+        digit is recomputed. At most 19 digits; at least ``keep_bin + 7`` (the
+        FF1 floor needs six encrypted digits). The caller (``_fpe_value``) has
+        already refused ``keep_bin`` on any other scheme.
+
     luhn / ean13 / gtin
         Digit-only schemes.  The permutation charset is constrained to
         ``'0123456789'`` regardless of the caller's charset config.  Check
@@ -169,7 +303,10 @@ def _fpe_checksum_permute(
         # single char skipped the old per-branch `len < N` floors and permuted to
         # itself) and the over-length leak/truncation (a surplus char never fit the
         # fixed-width checksum body).
+        check_keep_bin_call(keep_bin, scheme)
         _validate_scheme_length(scheme, s)
+        if keep_bin:
+            _check_keep_bin_shape(s, keep_bin)
 
         # P5-final: validate the COMPLETE source identifier (check digit included)
         # before permuting, forward direction only. `s` here has already had any
@@ -188,6 +325,9 @@ def _fpe_checksum_permute(
             )
 
         _DIGITS_ONLY = "0123456789"
+
+        if keep_bin:
+            return _keep_bin_permute(s, key, tweak, keep_bin, forward=forward)
 
         # luhn / ean13 / gtin: digit-only, check digit at end.
         if scheme in ("luhn", "ean13", "gtin"):
