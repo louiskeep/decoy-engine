@@ -10,7 +10,7 @@ Requires the ``[ml]`` optional extras:
     pip install -e '.[ml]'
 """
 
-from decoy_engine.profiling.model_pack.classify import classify_fields
+from decoy_engine.profiling.model_pack.classify import classify_fields, classify_frame
 from decoy_engine.profiling.model_pack.featurizer import flatten_features
 from decoy_engine.profiling.model_pack.loader import (
     ModelPackLoader,
@@ -29,6 +29,7 @@ __all__ = [
     "ModelPackLoader",
     "ModelPackManifest",
     "classify_fields",
+    "classify_frame",
     "derive_pack_signing_key",
     "flatten_features",
     "sign_manifest",

@@ -153,12 +153,6 @@ def classify_fields(
     - Columns with all-null values are classified from their header tokens
       and dtype alone; the feature builder handles nulls gracefully.
     """
-    import numpy as np
-
-    from decoy_engine.profiling.eval.bands import classify_band
-    from decoy_engine.profiling.eval.fixtures import NO_DETECTOR
-    from decoy_engine.profiling.features.builder import build_column_features
-    from decoy_engine.profiling.model_pack.featurizer import flatten_features
     from decoy_engine.profiling.model_pack.loader import ModelPackLoader
 
     # DE-04 (Option C): the resolved default pack is first-party (shipped in the
@@ -184,6 +178,25 @@ def classify_fields(
         _log.debug("classify_fields: pack unavailable; returning None.")
         return None
 
+    return classify_frame(pack, df)
+
+
+def classify_frame(pack: dict[str, Any], frame: pandas.DataFrame) -> dict[str, dict[str, Any]]:
+    """Classify each column of *frame* with an already loaded *pack*.
+
+    Inference only: the pack comes from the caller (`ModelPackLoader.load()`, the strict load),
+    so a pack that failed to load can never turn into a silent `None` here, and the pack is
+    hashed and unpickled once per process rather than once per call. The result has the shape
+    of one `classify_fields` entry per column and the same privacy rule (metadata and
+    statistics only, never a cell value).
+    """
+    import numpy as np
+
+    from decoy_engine.profiling.eval.bands import classify_band
+    from decoy_engine.profiling.eval.fixtures import NO_DETECTOR
+    from decoy_engine.profiling.features.builder import build_column_features
+    from decoy_engine.profiling.model_pack.featurizer import flatten_features
+
     vec = pack["vec"]
     clf = pack["clf"]
     manifest = pack["manifest"]
@@ -191,8 +204,8 @@ def classify_fields(
 
     results: dict[str, dict[str, Any]] = {}
 
-    for col_name in df.columns:
-        series = df[col_name]
+    for col_name in frame.columns:
+        series = frame[col_name]
         feats = build_column_features(series, str(col_name))
         flat = flatten_features(feats.to_dict())
 

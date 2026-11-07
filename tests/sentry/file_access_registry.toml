@@ -2,7 +2,7 @@
 # `ordinal` is the index of the call among identical sinks in the function. An entry may be
 # removed freely; adding one needs a `rule` (how the path is built), an `owner` and a `reason`.
 # `ambient_only` marks a caller-derived path that is reached only after `require_ambient`.
-# Count: 201 (asserted by the sentry).
+# Count: 202 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -1390,6 +1390,15 @@ ordinal = 0
 rule = "package data: `importlib.resources.files(\"decoy_engine\")` or `Path(__file__).parents[4]`"
 owner = "cam"
 reason = "locating the shipped default model pack"
+
+[[entry]]
+module = "decoy_engine/detection/_model_status.py"
+function = "_classifier"
+sink = "engine_dir_handle"
+ordinal = 0
+rule = "package data: the shipped default pack directory from `classify._default_pack_dir()`"
+owner = "cam"
+reason = "the strict load of the shipped default model pack"
 
 [[entry]]
 module = "decoy_engine/profiling/model_pack/loader.py"

@@ -74,6 +74,9 @@
   "entry::decoy_engine/declared_casting/_stream.py::stage_typed_sources::pyarrow.parquet.ParquetWriter::1": {
    "reason": "initial X0a inventory of tests/sentry/file_access_registry.toml; existing entry, reviewed by its own sentry"
   },
+  "entry::decoy_engine/detection/_model_status.py::_classifier::engine_dir_handle::0": {
+   "reason": "SCAN-ML M1: the strict classifier load builds the same engine-owned pack directory handle as classify_fields"
+  },
   "entry::decoy_engine/detection/name_hints/loader.py::load_name_hint_terms::engine_dir_handle::0": {
    "reason": "initial X0a inventory of tests/sentry/file_access_registry.toml; existing entry, reviewed by its own sentry"
   },
