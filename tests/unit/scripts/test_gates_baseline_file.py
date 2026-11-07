@@ -734,7 +734,7 @@ _ALLOWED_PY_ARGS = (
     ("-m", "pytest"),
     ("--version",),
     ("]",),  # `[ -x "$BIN/python" ]` existence test
-    ('"$ROOT/scripts/dev/_gates_report.py"',),
+    ("$ROOT/scripts/dev/_gates_report.py",),
     ('${junit[@]+"${junit[@]}"}',),  # args for the `bash -c` wrapper, built by gates.sh itself
 )
 
@@ -760,7 +760,7 @@ def gates_sh_violations(text: str) -> list[str]:
         if re.search(r"^(export\s+|local\s+)?\w+=[\"']?[^\s\"'()]*python", line):
             bad.append(f"python aliased: {line}")
         for m in re.finditer(r'(?<![\w-])python[\d.]*(?![\w:])"?([^\n]*)', line):
-            args = tuple(t.rstrip(")\"") for t in m.group(1).split()[:2])
+            args = tuple(t.strip(')"') for t in m.group(1).split()[:2])
             if args and not any(args[: len(a)] == a for a in _ALLOWED_PY_ARGS):
                 bad.append(f"python runs something else: {line}")
     return bad
