@@ -380,6 +380,7 @@ def _finished(run: dict[str, Any], entry: str) -> None:
 
 
 @pytest.mark.parametrize("entry", sorted(ENTRIES))
+@pytest.mark.serial
 def test_black_holed_endpoint_fails_inside_the_bound(
     entry: str, black_hole_runs: dict[str, dict[str, Any]]
 ) -> None:
@@ -394,6 +395,7 @@ def test_black_holed_endpoint_fails_inside_the_bound(
 
 
 @pytest.mark.parametrize("entry", sorted(ENTRIES))
+@pytest.mark.serial
 def test_timeout_error_text_is_value_free(
     entry: str, black_hole_runs: dict[str, dict[str, Any]]
 ) -> None:

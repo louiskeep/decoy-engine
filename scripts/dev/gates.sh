@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the local gates in CI order and print an EVIDENCE block to paste.
 # Usage: scripts/dev/gates.sh [--keep-going] [--baseline] [--baseline-file FILE]
-#        [--write-baseline FILE] [--full] [--steps LIST] [test paths...]
+#        [--write-baseline FILE [--order-from FILE]] [--full] [--steps LIST] [test paths...]
 #   --keep-going  run every step even after a failure (default: stop at the first)
 #   --baseline    rerun every step on origin/main in a temporary detached worktree, with the
 #                 SAME venv, and diff the failures of every step (test ids; mypy/ruff error
@@ -25,8 +25,21 @@
 #                 order, order_seconds, file_seconds} to FILE; refused for a selection, and
 #                 unless HEAD equals origin/main with a clean tree. Needs origin/main. The
 #                 exit code is still 1 after a successful write when main has known failures.
+#   --order-from FILE
+#                 with --write-baseline: start the longest test files first, ordered by the
+#                 file_seconds of the baseline FILE; the order map is stored as order_seconds.
+#                 Without it the run keeps collection order. A compare (--baseline-file) orders
+#                 by the order_seconds of the baseline it compares with, so its mode matches.
 #   --steps LIST  comma list from: env,ruff,format,mypy,sentry,licenses,tests (default: all)
 #   --full        run the whole `tests` directory (same as passing `tests`)
+# GATES_WORKERS=N|auto (default auto) sets the pytest-xdist worker count of the tests step.
+#   N > 1 runs two passes that partition the selection: a parallel pass (-n N --dist loadfile,
+#   tests marked `serial` deselected), then a plain serial pass of the `serial` tests, which
+#   assert on wall-clock, memory or CPU ratios and need the host to themselves. Both JUnit files
+#   count as one run. N = 1, or a venv without pytest-xdist, is one plain pytest run. auto is
+#   min(cpus, 4), at most 2 on a host under 14 GB (1 when under 4 GB is free). The workers: line
+#   of the EVIDENCE header names the choice. A stored baseline records it and refuses a run with
+#   another count (exit 2); pin GATES_WORKERS for any baseline write or compare.
 #   test paths    default: tests touching files changed against origin/main. That is a
 #                 SELECTION, not the full suite; the header says so. Use --full (or `tests`).
 set -uo pipefail
@@ -38,6 +51,7 @@ MYPY_ARGS=(src/decoy_engine testflight)
 SENTRY_PATHS=(tests/sentry tests/secret_providers/test_leak_sentry.py)
 LICENSE_TESTS=(tests/sentry/test_license_policy.py tests/sentry/test_sdv_import_sentry.py)
 PYTEST_ARGS=(-m 'not benchmark and not packaging and not codspeed')
+PYTEST_MARK=${PYTEST_ARGS[1]}  # the same expression; the parallel and serial passes add to it
 # Everything is code unless it matches NON_CODE_GLOBS: a diff with any code path must select at
 # least one test (see code_changed). List only pure-documentation or repo-metadata paths here;
 # `*` crosses `/`, so 'docs/*' also covers docs/records.
@@ -47,8 +61,6 @@ SRC_MATCH='src/*.py'   # changed files that map to a dotted module
 SRC_STRIP='src/'       # prefix removed before turning a path into a module
 PYPATH_DIRS=(src scripts)
 IMPORT_PKG=decoy_engine
-# Run mode recorded in a stored baseline and checked on a compare (see _gates_report.run_mode).
-WORKERS=1
 # Directories a test reads by walking them: a stored baseline that is behind main by a change
 # under one of these is stale even when the change is Markdown.
 DOC_WALK_ROOTS=(docs/plans/h1-wave-b/manifests)
@@ -60,7 +72,7 @@ DOC_WALK_GUARDS=(tests/sentry/ tests/secret_providers/test_leak_sentry.py)
 ROOT=$(git rev-parse --show-toplevel) || exit 2
 VENV=${DECOY_VENV:-${UV_PROJECT_ENVIRONMENT:-$ROOT/.venv}}
 BIN=$VENV/bin
-KEEP=0 BASELINE=0 FULL=0 BASEFILE='' WRITEBASE='' STEPS=env,ruff,format,mypy,sentry,licenses,tests PATHS=()
+KEEP=0 BASELINE=0 FULL=0 BASEFILE='' WRITEBASE='' ORDERFROM='' STEPS=env,ruff,format,mypy,sentry,licenses,tests PATHS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --keep-going) KEEP=1 ;;
@@ -68,6 +80,7 @@ while [ $# -gt 0 ]; do
     --full) FULL=1 ;;
     --baseline-file) BASEFILE=$2; BASELINE=1; shift ;;
     --write-baseline) WRITEBASE=$2; shift ;;
+    --order-from) ORDERFROM=$2; shift ;;
     --steps) STEPS=$2; shift ;;
     -h|--help) awk 'NR > 1 { if (!/^#/) exit; print }' "$0"; exit 0 ;;
     -*) echo "gates: unknown flag $1" >&2; exit 2 ;;
@@ -79,6 +92,21 @@ done
 # read as shared with main.
 if [ $BASELINE = 1 ]; then KEEP=1; fi
 [ -x "$BIN/python" ] || { echo "gates: no venv at $VENV; run scripts/dev/bootstrap.sh" >&2; exit 2; }
+if [ -n "$ORDERFROM" ] && [ -z "$WRITEBASE" ]; then
+  echo "gates: --order-from only applies to --write-baseline (a compare orders by the baseline it reads)" >&2; exit 2
+fi
+# Worker count for the tests step, recorded in a stored baseline's run mode. The reporter owns the
+# rule (_gate_workers.py); a venv without pytest-xdist resolves to 1 there and says why.
+# Only stdout is captured: the reporter's own diagnostics reach the terminal as written. Exit 64
+# is its usage error (GATES_WORKERS is not a number or auto); any other failure is a crash.
+WORKERS_RC=0
+WORKERS_LINE=$("$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --workers) || WORKERS_RC=$?
+if [ $WORKERS_RC != 0 ]; then
+  if [ $WORKERS_RC = 64 ]; then exit 2; fi
+  echo "gates: FAIL: no complete EVIDENCE block (the reporter failed before the run)" >&2; exit 3
+fi
+WORKERS=${WORKERS_LINE%% *}
+WORKERS_WHY=${WORKERS_LINE#* }
 OUT=$(mktemp -d "${TMPDIR:-/tmp}/gates.XXXXXX")
 WT=$OUT/baseline-tree
 MBT=$OUT/merge-base-tree
@@ -222,14 +250,39 @@ if [ -n "$BASEFILE" ]; then
   cp "$BASEFILE" "$OUT/stored-baseline.json"
 fi
 
+# The collection-order map handed to the suite (tests/conftest.py reads DECOY_TEST_ORDER_FILE): a
+# compare orders like the baseline it reads, a write with --order-from by that file's timings.
+ORDER_MAP=''
+if [ -n "$BASEFILE" ]; then
+  ORDER_MAP=$OUT/order-map.json
+  "$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --order-map "$ORDER_MAP" "$BASEFILE" order_seconds || exit 2
+elif [ -n "$ORDERFROM" ]; then
+  [ -f "$ORDERFROM" ] || { echo "gates: --order-from file not found: $ORDERFROM" >&2; exit 2; }
+  ORDER_MAP=$OUT/order-map.json
+  "$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --order-map "$ORDER_MAP" "$ORDERFROM" file_seconds || exit 2
+fi
+
 pypath() { local d out=""; for d in ${PYPATH_DIRS[@]+"${PYPATH_DIRS[@]}"}; do out="$out${out:+:}$1/$d"; done; echo "$out"; }
 
+# Exit code of the two tests passes as one: pytest's 5 (nothing collected) in one pass is not a
+# failure when the other pass ran tests; a crash code (not 0, 1 or 5) wins; else 1 beats 0.
+combine_rc() {  # $1 parallel-pass rc, $2 serial-pass rc
+  local a=$1 b=$2
+  if [ "$a" = 5 ] && [ "$b" = 5 ]; then echo 5; return; fi
+  [ "$a" = 5 ] && a=0
+  [ "$b" = 5 ] && b=0
+  case $a in 0|1) ;; *) echo "$a"; return ;; esac
+  case $b in 0|1) ;; *) echo "$b"; return ;; esac
+  if [ "$a" = 1 ] || [ "$b" = 1 ]; then echo 1; else echo 0; fi
+}
+
 run_steps() {  # $1 label, $2 tree
-  local label=$1 tree=$2 name rc stop=0 p cmd shown tests=() lic=()
+  local label=$1 tree=$2 name rc rc2 stop=0 p cmd cmd2 shown tests=() lic=() pyt w note
   : >"$OUT/$label.steps"
   for name in ${STEPS//,/ }; do
-    plain=0
-    local junit=(-p no:cacheprovider -q -rfE -o junit_family=xunit1 "--junitxml=$OUT/$label-$name.xml" ${PYTEST_ARGS[@]+"${PYTEST_ARGS[@]}"})
+    plain=0 cmd2=() note=
+    local jbase=(-p no:cacheprovider -q -rfE -o junit_family=xunit1 "--junitxml=$OUT/$label-$name.xml")
+    local junit=(${jbase[@]+"${jbase[@]}"} ${PYTEST_ARGS[@]+"${PYTEST_ARGS[@]}"})
     case $name in
       env) cmd=(bash "$ROOT/scripts/dev/bootstrap.sh" --check) ;;
       ruff) cmd=("$BIN/ruff" check --output-format concise ${RUFF_PATHS[@]+"${RUFF_PATHS[@]}"}) ;;
@@ -237,19 +290,34 @@ run_steps() {  # $1 label, $2 tree
       mypy) cmd=("$BIN/mypy" ${MYPY_ARGS[@]+"${MYPY_ARGS[@]}"}) ;;
       # ratchet_check first (baselines never grow); skipped in trees that predate it (the baseline worktree)
       sentry)
-        cmd=(bash -c 'if [ -f scripts/dev/ratchet_check.py ]; then "$0" scripts/dev/ratchet_check.py || exit 1; fi; exec "$0" -m pytest "$@"' "$BIN/python" ${junit[@]+"${junit[@]}"} ${SENTRY_PATHS[@]+"${SENTRY_PATHS[@]}"}) ;;
+        # strict: the gate venv is the certified profile, so a registry entry that cannot be verified is a failure
+        cmd=(env DECOY_GATE_VENV_STRICT=1 bash -c 'if [ -f scripts/dev/ratchet_check.py ]; then "$0" scripts/dev/ratchet_check.py || exit 1; fi; exec "$0" -m pytest "$@"' "$BIN/python" ${junit[@]+"${junit[@]}"} ${SENTRY_PATHS[@]+"${SENTRY_PATHS[@]}"}) ;;
       # strict: a venv that drifted from uv.lock fails instead of skipping the metadata check
       licenses)
         lic=(); for p in ${LICENSE_TESTS[@]+"${LICENSE_TESTS[@]}"}; do [ -e "$tree/$p" ] && lic+=("$p"); done
         cmd=(env DECOY_LICENSE_STRICT=1 "$BIN/python" -m pytest ${junit[@]+"${junit[@]}"} ${lic[@]+"${lic[@]}"}) ;;
       tests)
         tests=(); for p in ${PATHS[@]+"${PATHS[@]}"}; do [ -e "$tree/${p%%::*}" ] && tests+=("$p"); done
-        cmd=("$BIN/python" -m pytest ${junit[@]+"${junit[@]}"} ${tests[@]+"${tests[@]}"})
+        # The order map comes from this script only: an inherited one never reorders a run.
+        pyt=(env -u DECOY_TEST_ORDER_FILE ${ORDER_MAP:+"DECOY_TEST_ORDER_FILE=$ORDER_MAP"} "$BIN/python" -m pytest)
         # A stored or compared baseline must come from the whole suite: ignore selections
         # smuggled in through PYTEST_ADDOPTS, PYTEST_PLUGINS or the config's addopts (this
         # script's own -m stays, it is part of the junit array).
         if [ -n "$WRITEBASE$BASEFILE" ]; then
-          cmd=(env -u PYTEST_ADDOPTS -u PYTEST_PLUGINS PY_COLORS=0 NO_COLOR=1 "$BIN/python" -m pytest -o addopts= --color=no ${junit[@]+"${junit[@]}"} ${tests[@]+"${tests[@]}"})
+          pyt=(env -u PYTEST_ADDOPTS -u PYTEST_PLUGINS -u DECOY_TEST_ORDER_FILE PY_COLORS=0 NO_COLOR=1 ${ORDER_MAP:+"DECOY_TEST_ORDER_FILE=$ORDER_MAP"} "$BIN/python" -m pytest -o addopts= --color=no)
+        fi
+        # A tree without the xdist report scrubber (origin/main before it lands) would abort a
+        # parallel run on the first lone surrogate in a captured log, so that tree runs serial.
+        w=$WORKERS
+        note=''
+        if [ "$w" -gt 1 ] && [ ! -f "$tree/tests/_xdist_safe_reports.py" ]; then
+          w=1; note=" (serial: this tree has no tests/_xdist_safe_reports.py)"
+        fi
+        if [ "$w" -gt 1 ]; then
+          cmd=(${pyt[@]+"${pyt[@]}"} ${jbase[@]+"${jbase[@]}"} -m "($PYTEST_MARK) and not serial" -n "$w" --dist loadfile ${tests[@]+"${tests[@]}"})
+          cmd2=(${pyt[@]+"${pyt[@]}"} -p no:cacheprovider -q -rfE -o junit_family=xunit1 "--junitxml=$OUT/$label-tests-serial.xml" -m "($PYTEST_MARK) and serial" ${tests[@]+"${tests[@]}"})
+        else
+          cmd=(${pyt[@]+"${pyt[@]}"} ${junit[@]+"${junit[@]}"} ${tests[@]+"${tests[@]}"})
         fi ;;
       *) echo "gates: unknown step $name" >&2; exit 2 ;;
     esac
@@ -267,12 +335,22 @@ run_steps() {  # $1 label, $2 tree
       echo "gates: [$label] $name ..." >&2
       (cd "$tree" && PYTHONPATH=$(pypath "$tree") ${cmd[@]+"${cmd[@]}"}) >"$OUT/$label-$name.log" 2>&1
       rc=$?
+      if [ ${#cmd2[@]} -gt 0 ]; then
+        # Unconditional: the serial pass must run (and be read) even when the parallel pass failed.
+        echo "gates: [$label] $name (serial pass) ..." >&2
+        (cd "$tree" && PYTHONPATH=$(pypath "$tree") ${cmd2[@]+"${cmd2[@]}"}) >"$OUT/$label-$name-serial.log" 2>&1
+        rc2=$?
+        if [ $rc2 != 0 ] && [ $rc2 != 5 ]; then tail -n 15 "$OUT/$label-$name-serial.log" | sed "s/^/  $label $name serial| /" >&2; fi
+        rc=$(combine_rc "$rc" "$rc2")
+      fi
       if [ $rc != 0 ]; then
         tail -n 15 "$OUT/$label-$name.log" | sed "s/^/  $label $name| /" >&2
         [ $KEEP = 1 ] || stop=1
       fi
     fi
     [ $rc = -1 ] || [ $plain = 1 ] && shown=${cmd[*]+${cmd[*]}} || shown=$(printf '%q ' ${cmd[@]+"${cmd[@]}"})
+    shown="$shown$note"
+    if [ ${#cmd2[@]} -gt 0 ]; then shown="$shown; then $(printf '%q ' ${cmd2[@]+"${cmd2[@]}"})"; fi
     printf '%s\t%s\t%s\n' "$name" "$rc" "$shown" >>"$OUT/$label.steps"
   done
 }
@@ -288,6 +366,7 @@ ver() { local v; v=$("$@" 2>/dev/null | head -n 1); echo "${v:-not installed}"; 
   echo "mypy:       $(ver "$BIN/mypy" --version)"
   echo "pytest:     $(ver "$BIN/python" -m pytest --version)"
   echo "steps:      $STEPS (keep-going=$KEEP)"
+  echo "workers:    $WORKERS ($WORKERS_WHY)"
   echo "test paths: $SELECTION"
 } >"$OUT/meta"
 
@@ -295,7 +374,7 @@ run_steps branch "$ROOT"
 if [ -n "$BASEFILE" ]; then
   {
     echo "baseline:   stored file $BASEFILE (main_sha $stored_sha); origin/main NOT rerun"
-    echo "run mode:   workers=$WORKERS (the stored baseline was written in the same mode)"
+    echo "run mode:   workers=$WORKERS, order from the baseline's order_seconds (it was written in the same mode)"
     if [ "$MAIN_SHA" != "$stored_sha" ]; then
       echo "NOTE:       origin/main is $MAIN_SHA; main moved only in Markdown no test reads"
     fi
@@ -311,6 +390,7 @@ fi
 echo "logs:       $OUT" >>"$OUT/meta"
 
 REPORT_ARGS=(--workers "$WORKERS")
+[ -n "$ORDERFROM" ] && REPORT_ARGS+=(--order-file "$ORDER_MAP")
 [ $WHOLE_SUITE = 1 ] && REPORT_ARGS+=(--whole-suite)
 # A whole-suite result is only trustworthy if the tests step ran the whole suite,
 # pytest finished (rc 0 or 1), and its JUnit file parses with at least one case.
