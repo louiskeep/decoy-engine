@@ -76,6 +76,7 @@ ENTRY_POINTS: tuple[str, ...] = (
     "decoy_engine.plan._compile.run_config_only_checks",
     "decoy_engine.plan._serialize.plan_from_yaml",
     "decoy_engine.plan.validate._consolidator.validate_plan",
+    "decoy_engine.profile._csv_reader.read_csv_source",
     "decoy_engine.profile._fixed_width_reader.read_fixed_width",
     "decoy_engine.profile._fixed_width_writer.write_fixed_width",
     "decoy_engine.profile._source.profile_source",

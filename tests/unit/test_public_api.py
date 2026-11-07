@@ -273,6 +273,11 @@ def test_all_lists_every_public_name():
         "RunResultRead",
         "derive_outcome",
         "pipeline_config_hash",
+        # CLI-DIALECT (2026-11): the one CSV source reader, its dialect type and
+        # the descriptor-to-dialect resolver.
+        "CsvDialect",
+        "read_csv_source",
+        "resolve_csv_dialect",
     }
     assert set(decoy_engine.__all__) == expected
 
