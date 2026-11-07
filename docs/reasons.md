@@ -22,6 +22,8 @@ Namespaces: `config`, `plan`, `runtime`, `provider`, `quality`, `connector`, `su
 
 An older consumer that reads a record whose identity it does not know (same registry major) degrades to `decoy.unknown_reason_from_future`, keeping the original identity in an uninterpreted context field. An unsupported major becomes `decoy.unsupported_schema_version`. Neither is ever read as success or as retry advice.
 
+Slices that add codes build at the next minor of their base. At merge, `scripts/dev/registry_renumber.py` moves the slice to the next free minor and `--check` holds the merge gate. `tests/sentry/test_reason_minor_fixtures.py` requires one fixture per minor above 1.5, and `scripts/release/reason_manifest_policy.py` is the one place these rules live.
+
 ## Retry classes
 
 Advice about the required action. It never authorizes a replay and never starts a retry loop.
