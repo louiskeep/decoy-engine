@@ -50,10 +50,16 @@ EXEMPT: dict[tuple[str, str], str] = {
         "src/decoy_engine/reasons/_record.py",
         "ReasonRecord.validate",
     ): "ReasonRecord.validate: one record's version against the live registry",
+    # RESULT E1 (#397) moved the check from from_payload into parse_payload; from_payload now
+    # only delegates, so its exemption moved with the check.
     (
         "src/decoy_engine/reasons/_record.py",
-        "ReasonRecord.from_payload",
-    ): "ReasonRecord.from_payload: checks one record's version, not a manifest comparison",
+        "ReasonRecord.parse_payload",
+    ): "ReasonRecord.parse_payload: checks one record's version, not a manifest comparison",
+    (
+        "tests/unit/run_result/test_model.py",
+        "_compat_literals",
+    ): "an AST scanner that finds version literals for the one-parser test, not a validator",
 }
 
 
