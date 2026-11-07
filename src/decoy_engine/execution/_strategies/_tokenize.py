@@ -47,7 +47,7 @@ import pandas as pd
 
 from decoy_engine import reasons
 from decoy_engine.determinism import derive
-from decoy_engine.execution._adapter import StrategyContext
+from decoy_engine.execution._adapter import StrategyContext, StrategyOption
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
@@ -60,6 +60,10 @@ class TokenizeStrategyHandler:
     """Reversible tokenization: deterministic surrogate + vault-recorded mapping."""
 
     name: str = "tokenize"
+    namespace_required: bool = True
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = ()
+    offer_in_wizard: bool = False
 
     def run(
         self,

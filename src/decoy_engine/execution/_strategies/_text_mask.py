@@ -39,8 +39,14 @@ import pandas as pd
 from decoy_engine import reasons
 from decoy_engine.detection.detectors import Span
 from decoy_engine.errors import FpeUnencryptableError
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    option,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._strategies._ner_config import NER_WIZARD_OPTIONS
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.transforms.text_mask import mask_cell
@@ -56,6 +62,20 @@ class TextMaskHandler:
     """
 
     name: str = "text_mask"
+    namespace_required: bool = False
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("token", "str", "[GONE]"),
+        option(
+            "unmatched_span_policy",
+            "str",
+            "replace_with_token",
+            # A wizard must not offer leaving unmatched text unmasked; hand-edited configs still can.
+            choices=("redact", "replace_with_token"),
+        ),
+        *NER_WIZARD_OPTIONS,
+    )
+    offer_in_wizard: bool = True
 
     def run(
         self,
