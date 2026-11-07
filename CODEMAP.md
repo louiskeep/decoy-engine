@@ -39,6 +39,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/execution/_transforms_prepare.py` | `prepare_transform_sources`: transforms resident tables once before routing and records which tables are prepared |
 | `src/decoy_engine/execution/_transforms_admission.py` | Routing rules for transform-bearing jobs: prepared-table sizing and probe, the lazy-source rule, out-of-core decline telemetry |
 | `src/decoy_engine/quality/report.py` | `compute_quality_report` -> aggregate-only fidelity report (diagnostic + value-identity + shape) |
+| `src/decoy_engine/quality/anonymity/` | Value-free k-anonymity, l-diversity (distinct, entropy, recursive) and t-closeness (equal, ordered EMD) measures over named quasi-identifiers (V2-3.2, library-only; not wired into config or validators) |
 | `src/decoy_engine/execution/_substrate.py` | `select_execution_adapter`; `require_bool` / `require_positive_int` public fail-closed knob validators |
 | `src/decoy_engine/execution/_planner.py` | `classify_job` -> `ExecutionPlan` (execution-mode planner; classification never routes on its own EXCEPT the `chunked` mode, which `run_pipeline`'s `auto_chunk` knob routes; surfaced via `run_pipeline(explain_plan=True)`) |
 | `src/decoy_engine/execution/_pandas_adapter.py` | `PandasExecutionAdapter` (the only masking substrate) |

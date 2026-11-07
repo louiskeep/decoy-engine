@@ -13,6 +13,18 @@ minimum engine version it was tested against via its
 
 - `run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked`, `run_native_or_oracle_chunked` and `compile_plan` now refuse a config with `subset:` set (`config.subset_run_unsupported`, registry 1.6.0) instead of masking the full sources; run `run_subset` first.
 
+### Added (V2-3.2: anonymity metrics, 2026-11-07)
+
+V2 track, library-only, not wired into config, validators or the CLI; not merged per owner instruction.
+`decoy_engine.quality.anonymity` measures syntactic privacy models over named quasi-identifiers of a
+pandas DataFrame or pyarrow Table: `measure_k_anonymity` (class sizes, size distribution, ARX prosecutor
+risk; Sweeney 2002), `measure_l_diversity` (distinct, entropy, recursive (c, l); Machanavajjhala et al.
+2007) and `measure_t_closeness_equal` / `measure_t_closeness_ordered` (Earth Mover's Distance with equal
+or ordered ground distance; Li, Li and Venkatasubramanian 2007). Reports are frozen and value-free.
+Null quasi-identifiers are their own value; null sensitive values are excluded, and t-closeness reports
+an undetermined target while a class has no non-null sensitive value. Arrow columns convert
+losslessly; float NaN counts as null. Plan: `docs/plans/2026-11-07-v2-3.2-anonymity-metrics.md`.
+
 ### Added (F06: declared parsing, casting and quarantine, 2026-10-29)
 
 A column can now declare `logical_type`, `parse_format`, `sentinel_to_null`, `error_policy` (`fail`, `null`,
