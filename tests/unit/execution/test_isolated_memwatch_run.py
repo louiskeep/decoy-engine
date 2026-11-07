@@ -114,6 +114,7 @@ class TestLifecycle:
         assert not Path(f"/proc/{pids[0]}").exists()
         assert _sampler_threads() == []
 
+    @pytest.mark.serial
     def test_timeout_keeps_main_text_and_outcome_and_never_flags(self, tmp_path, monkeypatch):
         _install(tmp_path, monkeypatch, "hang_worker", _HANGING)
         # An 8 MiB cap is far below a live interpreter's VmData, so the last sample is
@@ -298,6 +299,7 @@ _CAP = 1024 * _MIB
 
 
 @pytest.mark.parametrize("kind", ["data", "as"])
+@pytest.mark.serial
 class TestRealChild:
     def _drive(self, tmp_path, monkeypatch, kind, target):
         _install(tmp_path, monkeypatch, "memchild_worker", _CHILD)
@@ -350,6 +352,7 @@ class TestHandshakeCleanup:
         assert hs.error == "child never sent READY"
         assert not any(_fd_open(fd) for fd in fds)
 
+    @pytest.mark.serial
     def test_a_child_that_never_reports_is_killed_and_the_channel_released(
         self, tmp_path, monkeypatch
     ):

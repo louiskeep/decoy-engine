@@ -257,6 +257,7 @@ class TestQa10F4DeriveContext:
             DeriveContext.for_column(b"\x00" * 8, "")
         assert exc.value.code == "namespace_empty"
 
+    @pytest.mark.serial
     def test_derive_context_amortises_hkdf(self):
         """Smoke check: 1000 per-row calls should take meaningfully
         less time with the context than 1000 scalar derive calls.

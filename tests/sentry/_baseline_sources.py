@@ -205,6 +205,13 @@ SOURCES: tuple[Source, ...] = (
         },
     ),
     Source(  # keys of the ratchet-schema baseline itself
+        "serial-resources",
+        "tests/sentry/baselines/serial-resources.json",
+        lambda: set(
+            json.loads((BASELINES / "serial-resources.json").read_text(encoding="utf-8"))["entries"]
+        ),
+    ),
+    Source(  # keys of the ratchet-schema baseline itself
         "gcs-call-kwargs",
         "tests/sentry/baselines/gcs-call-kwargs.json",
         lambda: set(

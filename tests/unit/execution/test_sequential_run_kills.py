@@ -760,6 +760,7 @@ def test_group_by_anchor_uses_pre_mask_snapshot(tmp_path: Path) -> None:
 # ===========================================================================
 
 
+@pytest.mark.serial
 def test_result_reports_conversion_and_timings(tmp_path: Path) -> None:
     adapter = PandasExecutionAdapter()
     fx = build_fk_relational(rows=60, width=1, orphan_frac=0.0)

@@ -33,7 +33,9 @@ _V0_19_0_ROWS = (
     "7d1c1a2a2be450a59fa17d810663a7bfe5e825204cca99bfe039ba12b6226aed",
     "795732eb0808001d9c4591f3693637187637bb383a87b8caa95b8f2f269f9211",
 )
-_ALL_ROWS = _V0_17_0_ROWS + _V0_18_0_ROWS + _V0_19_0_ROWS
+# The engine dev/CI profile on 0.19.0 once pytest-xdist joined `dev` (79 dists; ENGINE-PAR P2).
+_XDIST_DEV_ROW = "78af2b5a1bb11c826f1d3918f705dc7edada72a081804e74d55e37938d8300b6"
+_ALL_ROWS = _V0_17_0_ROWS + _V0_18_0_ROWS + _V0_19_0_ROWS + (_XDIST_DEV_ROW,)
 
 
 @pytest.mark.parametrize("fingerprint", _ALL_ROWS)
