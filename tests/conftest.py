@@ -5,6 +5,7 @@ Common fixtures for the engine tests.
 
 import json
 import os
+import re
 import shutil
 import tempfile
 from collections.abc import Iterator
@@ -94,6 +95,21 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         has_marker = item.get_closest_marker("dp_certified") is not None
         if should_skip_dp(has_marker=has_marker, certified=certified):
             item.add_marker(pytest.mark.skip(reason=reason))
+    _refuse_unstable_ids(items)
+
+
+# An object repr carries its memory address, which differs per process; xdist workers then
+# collect different test ids and the parallel run aborts before running anything.
+_UNSTABLE_ID = re.compile(r" at 0x[0-9a-fA-F]+")
+
+
+def _refuse_unstable_ids(items: list[pytest.Item]) -> None:
+    bad = [item.nodeid for item in items if _UNSTABLE_ID.search(item.nodeid)]
+    if bad:
+        raise pytest.UsageError(
+            "test ids must not contain a memory address; give these params an explicit id:\n"
+            + "\n".join(bad)
+        )
 
 
 @pytest.fixture(autouse=True)
