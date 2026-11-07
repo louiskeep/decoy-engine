@@ -184,6 +184,7 @@ ALWAYS_KEYED_STRATEGIES = frozenset(
         "group_key",
         "joint_mask",
         "tokenize",
+        "ip_prefix",
     }
 )
 # Strategies the config-only classifier positively knows are unkeyed absent `deterministic` /

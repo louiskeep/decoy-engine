@@ -31,6 +31,13 @@ Checks (each a distinct PlanCompileError code):
       to share a key. Different namespaces produce different keys regardless
       of the shared tweak.
 
+It also runs the ip_prefix config check (``check_ip_prefix_config``, which
+lives with its transform) first: like the join-group checks it decides
+whether columns sharing a namespace really share one mapping, and running it
+here reaches both compile branches and ``run_config_only_checks`` without a
+new entry in ``plan/_compile.py``'s check lists. Its failures report under
+this check's ``fpe_join_groups`` name.
+
 Config-only (no profile, no source data): safe to run in both compile
 branches and in ``run_config_only_checks``. Validation never mutates.
 
@@ -45,6 +52,7 @@ from typing import Any
 
 from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.transforms.network.ip_prefix import check_ip_prefix_config
 
 # FPE config keys that must match across all members of the same join group.
 # Differing values would cause the same plaintext to encrypt to different
@@ -81,6 +89,7 @@ def check_fpe_join_groups(config: dict[str, Any]) -> tuple[str, ...]:
     Returns:
         Manifest warning strings, one per active join group.
     """
+    check_ip_prefix_config(config)
     tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
 
     # Collect members per group name: list of {table, column, strategy, namespace, cfg}

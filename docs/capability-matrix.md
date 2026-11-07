@@ -10,7 +10,7 @@ support, disguises) must agree with this file; the drift-guard test enforces it.
 This inventory lists strategies and provider capabilities, not route eligibility. See
 [`execution-backends.md`](execution-backends.md) for route and dtype restrictions.
 
-## Mask strategies (24)
+## Mask strategies (25)
 
 | Strategy | GDPR technique class |
 | --- | --- |
@@ -28,6 +28,7 @@ This inventory lists strategies and provider capabilities, not route eligibility
 | `group_key` | pseudonymisation |
 | `grouped_series` | synthetic |
 | `hash` | pseudonymisation |
+| `ip_prefix` | pseudonymisation |
 | `joint_mask` | anonymisation |
 | `passthrough` | passthrough |
 | `redact` | anonymisation |

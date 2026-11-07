@@ -6,6 +6,11 @@ from decoy_engine.reasons import _catalog
 
 __all__ = [
     "DEDUPE_UNSUPPORTED_TYPE",
+    "IP_PREFIX_KEEPS_TOO_MANY_BITS",
+    "IP_PREFIX_KEEP_BITS_INVALID",
+    "IP_PREFIX_NAMESPACE_KEEP_BITS_MISMATCH",
+    "IP_PREFIX_UNKNOWN_OPTION",
+    "IP_PREFIX_UNSUPPORTED_IN_NESTED",
     "SORT_UNSUPPORTED_TYPE",
     "STATISTICAL_HIGH_CARDINALITY_REQUIRES_REAL_CATEGORIES",
     "STATISTICAL_HIGH_CARDINALITY_SNAPSHOT_MISMATCH",
@@ -59,3 +64,23 @@ SORT_UNSUPPORTED_TYPE = _d("sort_unsupported_type", "Sort unsupported type.")
 _d = _catalog.plan("decoy_engine.plan._checks_top_code")
 
 TOP_CODE_INVALID_FLOOR = _d("top_code_invalid_floor", "Top code invalid floor.")
+
+_d = _catalog.plan("decoy_engine.transforms.network.ip_prefix")
+
+IP_PREFIX_UNKNOWN_OPTION = _d(
+    "ip_prefix_unknown_option", "IP prefix unknown option.", since="1.7.0"
+)
+IP_PREFIX_KEEP_BITS_INVALID = _d(
+    "ip_prefix_keep_bits_invalid", "IP prefix keep bits invalid.", since="1.7.0"
+)
+IP_PREFIX_KEEPS_TOO_MANY_BITS = _d(
+    "ip_prefix_keeps_too_many_bits", "IP prefix keeps too many bits.", since="1.7.0"
+)
+IP_PREFIX_NAMESPACE_KEEP_BITS_MISMATCH = _d(
+    "ip_prefix_namespace_keep_bits_mismatch",
+    "IP prefix namespace keep bits mismatch.",
+    since="1.7.0",
+)
+IP_PREFIX_UNSUPPORTED_IN_NESTED = _d(
+    "ip_prefix_unsupported_in_nested", "IP prefix unsupported in nested.", since="1.7.0"
+)

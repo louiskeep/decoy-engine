@@ -37,7 +37,11 @@ from decoy_engine.execution.native._draw_site_types import (
 )
 from decoy_engine.execution.native._draw_sites_gen import GEN_DRAW_SITES, GEN_SUBSTRATE_DRAW_SITES
 from decoy_engine.execution.native._draw_sites_gen_pool import GEN_POOL_DRAW_SITES
-from decoy_engine.execution.native._draw_sites_mask import MASK_DRAW_SITES, MASK_FORMULA_DRAW_SITE
+from decoy_engine.execution.native._draw_sites_mask import (
+    MASK_DRAW_SITES,
+    MASK_FORMULA_DRAW_SITE,
+    MASK_IP_PREFIX_DRAW_SITE,
+)
 from decoy_engine.execution.native._draw_sites_provider_backed import PROVIDER_BACKED_DRAW_SITES
 from decoy_engine.execution.native._draw_sites_tokenize import TOKENIZE_DRAW_SITES
 
@@ -57,6 +61,7 @@ DRAW_SITES: tuple[DrawSite, ...] = (
     MASK_FORMULA_DRAW_SITE,
     *GEN_POOL_DRAW_SITES,
     *TOKENIZE_DRAW_SITES,
+    MASK_IP_PREFIX_DRAW_SITE,
 )
 
 # ---------------------------------------------------------------------------
@@ -92,6 +97,7 @@ MASK_STRATEGY_TO_SITE: dict[str, str] = {
     "text_mask": "mask.text_mask_faker",  # + mask.text_mask_date_shift
     "grouped_series": "mask.grouped_series_monotone_walk",
     "windowed_date": "mask.windowed_date",
+    "ip_prefix": "mask.ip_prefix",
 }
 
 GEN_KIND_TO_SITE: dict[str, str] = {

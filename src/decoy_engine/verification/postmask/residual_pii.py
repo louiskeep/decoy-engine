@@ -60,6 +60,7 @@ _PRODUCES_PII_LIKE_VALUES: frozenset[str] = frozenset(
         "categorical",
         "reference",
         "date_shift",
+        "ip_prefix",
     }
 )
 
@@ -98,13 +99,15 @@ _SUBSTITUTION_STRATEGIES: frozenset[str] = frozenset(
         "faker",
         "date_shift",
         "fpe",
+        "ip_prefix",
     }
 )
 
 # Strategies that legitimately re-emit source VALUES (in new positions /
 # proportions): only FULL positional identity is a failure signal.
 # Mirrors _VALUE_REUSE_STRATEGIES in _leakage.py, plus reference (parent
-# domain == source FK domain by design).
+# domain == source FK domain by design), except ip_prefix: a keyed substitution
+# whose self-maps are rare, so it takes the substitution thresholds above.
 _REUSES_SOURCE_VALUES: frozenset[str] = frozenset(
     {
         "shuffle",

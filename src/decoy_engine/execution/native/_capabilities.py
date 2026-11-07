@@ -381,6 +381,15 @@ _MASK: dict[str, _Ortho] = {
         False,
         notes="Keyed selection of a whole reference-table row; multi-column output, requires the reference state table.",
     ),
+    "ip_prefix": _Ortho(
+        True,
+        False,
+        False,
+        False,
+        True,
+        row_error_modes=("format_error",),
+        notes="Per-cell keyed Crypto-PAn over the host bits; no compiled kernel (Python only).",
+    ),
 }
 
 # Generation-only kinds (not also a mask strategy). draw_family/key_source read

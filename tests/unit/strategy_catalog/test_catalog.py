@@ -71,6 +71,8 @@ NOT_OFFERED = frozenset(
         "windowed_date",
         "group_key",
         "tokenize",
+        # Opt-in and not offered by the wizard until it is released.
+        "ip_prefix",
     }
 )
 JOIN_SAFE = frozenset({"hash", "fpe"})
@@ -176,7 +178,7 @@ def test_one_row_per_handler_with_matching_names_sorted() -> None:
     names = [info.name for info in CATALOG]
     assert names == sorted(names)
     assert set(names) == set(SCALAR_HANDLERS)
-    assert len(names) == len(SCALAR_HANDLERS) == 25
+    assert len(names) == len(SCALAR_HANDLERS) == 26
 
 
 @pytest.mark.parametrize("info", CATALOG, ids=lambda i: i.name)

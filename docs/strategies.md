@@ -142,6 +142,53 @@ covering hash for such values (that fallback was removed in DE-01); see the
 Use it when a downstream system validates the format of an identifier (credit
 card, account number) and you cannot change its shape.
 
+### ip_prefix
+
+Opt-in (V1+ track; not offered by the CLI wizard and not in any default yet). Keeps
+an IP address's network prefix and pseudonymises the host bits with Crypto-PAn
+(Xu, Fan, Ammar and Moon, ICNP 2002), so analytics that group by subnet still
+work. Needs a namespace; columns that share a namespace share the mapping and
+join, so they must use the same keep lengths (refused at plan compile otherwise,
+`plan.ip_prefix_namespace_keep_bits_mismatch`).
+
+| Option | Default | Range | Meaning |
+|---|---|---|---|
+| `keep_bits_v4` | 24 | 0 to 30 | IPv4 bits kept verbatim |
+| `keep_bits_v6` | 48 | 0 to 126 | IPv6 bits kept verbatim |
+
+What it keeps, per namespace:
+
+- The first N bits of every address, verbatim, and its family. The IPv4-mapped
+  spelling `::ffff:a.b.c.d` follows the IPv4 rule and keeps its spelling, so
+  `1.2.3.4` and `::ffff:1.2.3.4` mask to the same embedded address.
+- Prefix structure below N: two addresses that share k bits map to outputs that
+  share exactly k bits (Crypto-PAn). This holds within IPv4 and within IPv6, not
+  between an IPv4 or mapped address and another IPv6 address.
+- One output per address: the mapping is a keyed permutation per family, so it
+  never collides, and it is the same across runs and routes.
+
+`keep_bits: 0` is plain Crypto-PAn (no verbatim prefix). Output is canonical text
+(RFC 5952 lower-case compressed IPv6). Special addresses are not special-cased:
+ranges no longer than N stay in range, single addresses such as `0.0.0.0` or `::1`
+map like any other.
+
+A non-null value that is not a plain address (whitespace, leading zeros, a CIDR
+`/len`, a `%zone`, a non-string) is a `format_error` row error: the run fails, or
+the row is quarantined when `quarantine` covers `format_error`. It is never
+emitted unmasked. The full-frame and sequential routes run it; the chunked,
+native and out-of-core routes decline it with their existing reason codes.
+`unmask_pipeline` reverses it (`reversed_unverified`, like `fpe`). What it reveals
+is in [what Decoy does not prove](what-we-cannot-prove.md) ("ip_prefix publishes the network and keeps subnet structure").
+
+```yaml
+- name: client_ip
+  strategy: ip_prefix
+  namespace: client_ip
+  provider_config:
+    keep_bits_v4: 24
+    keep_bits_v6: 48
+```
+
 ### date_shift
 
 Shifts each date by a deterministic per-value offset within a bounded range.

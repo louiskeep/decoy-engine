@@ -311,8 +311,6 @@ def _mask_proof(
     column_cfg,
     invariant,
     check,
-    *,
-    namespaces=None,
 ):
     table = {
         "name": "t",
@@ -323,8 +321,8 @@ def _mask_proof(
         "global_settings": {"seed": 1234567, "post_validation": False},
         "tables": [table],
     }
-    if namespaces:
-        cfg["namespaces"] = namespaces
+    if "namespace" in column_cfg:
+        cfg["namespaces"] = {column_cfg["namespace"]: {"declared_by": [f"t.{column}"]}}
     return CapabilityProof(
         id=f"mask.{strategy_id}",
         kind="mask",
@@ -367,7 +365,6 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
         {"namespace": "acct", "provider_config": {"charset": "digits"}},
         "Output preserves the exact length and digit charset of the input, and is reversible with the key.",
         _same_length,
-        namespaces={"acct": {"declared_by": ["t.account"]}},
     ),
     _mask_proof(
         "redact",
@@ -390,7 +387,17 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
             and len({len(b[col]) for b in o}) == 1
             and all(len(b[col]) == 64 for b in o)
         ),
-        namespaces={"uid": {"declared_by": ["t.user_id"]}},
+    ),
+    _mask_proof(
+        "ip_prefix",
+        "IP prefix-preserving pseudonymisation",
+        "client_ip",
+        ["192.0.2.10", "192.0.2.77", "192.0.2.200"],
+        {"namespace": "ip", "provider_config": {"keep_bits_v4": 24}},
+        "The /24 is kept; host bits are a keyed prefix-preserving permutation (Crypto-PAn).",
+        lambda col, i, o: (
+            len({b[col] for b in o}) == 3 and all(b[col][:8] == "192.0.2." for b in o)
+        ),
     ),
     _mask_proof(
         "truncate",
@@ -453,7 +460,6 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
         "Every value is remapped onto the configured category pool; equal inputs map to the same category.",
         # Inputs are never in the target pool, so pool membership already proves remapping.
         lambda col, i, o: all(b[col] in {"bronze", "silver"} for b in o),
-        namespaces={"tier": {"declared_by": ["t.tier"]}},
     ),
     _mask_proof(
         "date_shift",
@@ -471,7 +477,6 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
             and _same_length(col, i, o)
             and all(b[col].count("-") == 2 for b in o)
         ),
-        namespaces={"dob": {"declared_by": ["t.dob"]}},
     ),
     _mask_proof(
         "bucket_perturb",
@@ -494,7 +499,6 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
             and all(b[col].count("-") == 2 for b in o)
             and all(a[col][:7] == b[col][:7] for a, b in zip(i, o, strict=True))
         ),
-        namespaces={"event_date": {"declared_by": ["t.event_date"]}},
     ),
     _mask_proof(
         "shuffle",
@@ -505,7 +509,6 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
         "Values are permuted within the column; the exact multiset of values is preserved.",
         # Shuffle may leave a value in place, so multiset equality is the correct invariant, not _all_changed.
         lambda col, i, o: sorted(a[col] for a in i) == sorted(b[col] for b in o),
-        namespaces={"salary": {"declared_by": ["t.salary"]}},
     ),
     _mask_proof(
         "faker",
@@ -516,7 +519,6 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
         "Values are replaced with synthetic provider output drawn from a value pool, not the originals.",
         # _all_changed rules out sentinel passthrough; non-empty guards a provider returning "".
         lambda col, i, o: _all_changed(col, i, o) and all(b[col] for b in o),
-        namespaces={"name": {"declared_by": ["t.first_name"]}},
     ),
     _mask_proof(
         "formula",
@@ -1198,12 +1200,8 @@ def _generation_strategies_list() -> list[str]:
 
 
 def _benchmarks() -> list[dict]:
-    # No benchmark is published here. The former calibration figures
-    # (tests/benchmark/calibration/results.md) came from a 10%-filtered,
-    # single-hash-rule pipeline timed end to end, so stating them as masking
-    # throughput overstated the real rate by roughly an order of magnitude. A
-    # number is only published next to a run whose method it honestly describes;
-    # until that record exists here, the strip renders its empty-state note.
+    # None published: the old calibration figures timed a filtered pipeline, not masking, and
+    # overstated the rate; a number needs a run whose method it honestly describes.
     return []
 
 

@@ -37,6 +37,8 @@ __all__ = [
     "FPE_UNENCRYPTABLE_LENGTH",
     "GENERATION_NOT_REPRODUCIBLE",
     "INVALID_SUBSTRATE",
+    "IP_PREFIX_CONFIG_INVALID",
+    "IP_PREFIX_REQUIRES_NAMESPACE",
     "JOINT_MASK_KEY_BY_SNAPSHOT_MISALIGNED",
     "JOINT_MASK_KEY_BY_SNAPSHOT_MISSING",
     "NER_MODEL_VERSION_MISMATCH",
@@ -309,3 +311,12 @@ _d = _catalog.runtime("decoy_engine.transforms.text_mask")
 
 CHECKSUM_INVALID = _d("checksum_invalid", "Checksum invalid.")
 SUB_MINIMUM_DOMAIN = _d("sub_minimum_domain", "Sub minimum domain.")
+
+_d = _catalog.runtime("StrategyError")
+
+IP_PREFIX_REQUIRES_NAMESPACE = _d(
+    "ip_prefix_requires_namespace", "IP prefix requires namespace.", since="1.7.0"
+)
+IP_PREFIX_CONFIG_INVALID = _d(
+    "ip_prefix_config_invalid", "IP prefix config invalid.", since="1.7.0"
+)

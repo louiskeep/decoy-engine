@@ -144,6 +144,9 @@ _STATIC_BEHAVIOR: dict[str, DistributionBehavior] = {
     # rewritten to a constant label; in-range values pass through unchanged.
     # Coarsens: same class as bucketize (many-to-one on the affected slice).
     "top_code": "coarsens",
+    # ip_prefix: a keyed bijection per address class, so cardinality and value frequencies are
+    # preserved while the host bits change; the same class as fpe.
+    "ip_prefix": "preserves_cardinality_only",
 }
 
 

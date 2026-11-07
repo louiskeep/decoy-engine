@@ -73,6 +73,7 @@ SHAPE_PRESERVING: frozenset[str] = frozenset(
         "geo_generalize",
         "group_key",
         "grouped_series",
+        "ip_prefix",
         "joint_mask",
         "nested",
         "shuffle",

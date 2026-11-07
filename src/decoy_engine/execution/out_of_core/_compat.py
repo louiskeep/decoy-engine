@@ -87,6 +87,12 @@ _DEFERRED_GROUP_B: dict[str, tuple[str, str]] = {
         "and needs whole-column format detection that does not chunk; the "
         "out-of-core route has neither, so it falls back to sequential/full-frame.",
     ),
+    "ip_prefix": (
+        "out_of_core_row_error_strategy_unsupported",
+        "ip_prefix records per-value format errors (D8-quarantined full-frame) for cells "
+        "that are not IP addresses; the out-of-core route has no row-error channel, so it "
+        "falls back to sequential/full-frame.",
+    ),
 }
 
 # SC4 deferred Group (c): investigated and NOT ported, each for a concrete reason

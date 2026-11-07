@@ -8,7 +8,7 @@ from pathlib import Path
 from decoy_engine import reasons
 
 _FIXTURE = (
-    Path(__file__).resolve().parents[1] / "fixtures" / "f29" / "reason-manifest-v1.7-ip-prefix.json"
+    Path(__file__).resolve().parents[3] / "fixtures" / "f29" / "reason-manifest-v1.7-ip-prefix.json"
 )
 _EXPECTED = {
     ("plan", "ip_prefix_unknown_option"): "decoy_engine.transforms.network.ip_prefix",

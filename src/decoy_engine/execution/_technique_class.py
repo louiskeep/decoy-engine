@@ -164,6 +164,9 @@ TECHNIQUE_CLASS_BY_STRATEGY: dict[str, TechniqueClass] = {
     # linkage broken but reversible with separately-held information -- and the
     # strongest instance of it. Same class as hash/fpe.
     "tokenize": "pseudonymisation",
+    # ip_prefix: a keyed Crypto-PAn permutation, reversible by the key holder; the kept
+    # prefix is published by design. Same class as fpe.
+    "ip_prefix": "pseudonymisation",
     # `nested` (MG-3 M2, 2026-05-31) is intentionally absent. It is a
     # wrapper -- its GDPR posture is the child strategy's posture, not
     # its own. Until the FE surfaces the child-strategy badge for

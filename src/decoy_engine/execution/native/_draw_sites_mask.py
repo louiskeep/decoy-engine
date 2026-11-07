@@ -333,3 +333,31 @@ MASK_FORMULA_DRAW_SITE = DrawSite(
         "partitionable. Non-deterministic across mask_key by design (self-seeded)."
     ),
 )
+
+# Appended last in DRAW_SITES (the catalogue is append-only), after the generation and tokenize
+# sites, the same way mask.formula follows the generation families.
+MASK_IP_PREFIX_DRAW_SITE = DrawSite(
+    draw_site_id="mask.ip_prefix",
+    family="source_keyed_hmac",
+    call_site="execution/_strategies/network/_ip_prefix.py:83",
+    entropy_root="mask_key",
+    seed_derivation=(
+        "derive(mask_key, namespace, CRYPTOPAN_KEY_LABEL)  # 32-byte Crypto-PAn key: "
+        "AES-128 key || pad seed"
+    ),
+    api_operation=(
+        "Crypto-PAn (Xu et al. 2002): per kept-prefix position, top bit of AES-128-ECB "
+        "over prefix || pad; see transforms/network/_cryptopan.py"
+    ),
+    call_shape="IpPrefixMasker.mask(value)  # per value, prefix-preserving permutation",
+    consumes_variable_draws=False,
+    identity="source_value",
+    null_draw_behavior="null rows pass through unmasked; no keyed draw",
+    partitionable=True,
+    config_fingerprint_source="namespace_registry(namespace)+keep_bits_v4+keep_bits_v6",
+    provider_version=_V6,
+    notes=(
+        "Keyed bijection per address class (IPv4 incl. IPv4-mapped; other IPv6). Reversible by "
+        "the key holder and unauthenticated: unmask reports reversed_unverified."
+    ),
+)

@@ -1,0 +1,182 @@
+{
+  "entries": [
+    {
+      "code": "ip_prefix_keep_bits_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "decoy_engine.transforms.network.ip_prefix",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "IP prefix keep bits invalid.",
+      "symbol": "IP_PREFIX_KEEP_BITS_INVALID"
+    },
+    {
+      "code": "ip_prefix_keeps_too_many_bits",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "decoy_engine.transforms.network.ip_prefix",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "IP prefix keeps too many bits.",
+      "symbol": "IP_PREFIX_KEEPS_TOO_MANY_BITS"
+    },
+    {
+      "code": "ip_prefix_namespace_keep_bits_mismatch",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "decoy_engine.transforms.network.ip_prefix",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "IP prefix namespace keep bits mismatch.",
+      "symbol": "IP_PREFIX_NAMESPACE_KEEP_BITS_MISMATCH"
+    },
+    {
+      "code": "ip_prefix_unknown_option",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "decoy_engine.transforms.network.ip_prefix",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "IP prefix unknown option.",
+      "symbol": "IP_PREFIX_UNKNOWN_OPTION"
+    },
+    {
+      "code": "ip_prefix_unsupported_in_nested",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "decoy_engine.transforms.network.ip_prefix",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "IP prefix unsupported in nested.",
+      "symbol": "IP_PREFIX_UNSUPPORTED_IN_NESTED"
+    },
+    {
+      "code": "ip_prefix_config_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "StrategyError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "IP prefix config invalid.",
+      "symbol": "IP_PREFIX_CONFIG_INVALID"
+    },
+    {
+      "code": "ip_prefix_requires_namespace",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "StrategyError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "IP prefix requires namespace.",
+      "symbol": "IP_PREFIX_REQUIRES_NAMESPACE"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.7.0"
+}

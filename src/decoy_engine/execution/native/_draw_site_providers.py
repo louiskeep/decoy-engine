@@ -184,6 +184,9 @@ class TextMaskFakerProvider(DrawSiteProvider):
 # Which keyed primitive each SINGLE-primitive source_keyed_hmac site draws
 # through. The compound sites (fpe key, code_set / joint_mask two-step keyed
 # selection) have their own dedicated providers in protocol/providers_mask.py, not this map.
+# A site whose only keyed draw is one derive under a fixed label (mask.ip_prefix's
+# Crypto-PAn key) also qualifies: the generic provider reproduces derive(mask_key, namespace,
+# label) exactly, and the per-value arithmetic after it belongs to the transform.
 _SOURCE_KEYED_PRIMITIVE: dict[str, str] = {
     "mask.hash": "derive",
     "mask.date_shift": "derive",
@@ -195,6 +198,7 @@ _SOURCE_KEYED_PRIMITIVE: dict[str, str] = {
     "gen.pool_deterministic": "derive_index",
     "mask.faker": "derive_index",
     "gen.identifier_deterministic": "derive_value",
+    "mask.ip_prefix": "derive",
 } | TOKENIZE_PRIMITIVE
 
 # Dedicated mechanism providers, keyed by the single id each reproduces.

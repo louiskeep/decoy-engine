@@ -137,8 +137,9 @@ def test_a_malformed_cell_fails_the_run_or_is_quarantined(mode: str, tmp_path: P
     assert {r["_quarantine_trigger"] for r in records} == {"format_error"}
 
 
-def test_post_validation_passes_on_hosts_of_one_slash24(tmp_path: Path) -> None:
-    ips = [f"192.0.2.{i}" for i in range(32)]
+def test_post_validation_passes_on_a_whole_slash24(tmp_path: Path) -> None:
+    # Every output is some row's source address, which a set-membership leak check would flag.
+    ips = [f"192.0.2.{i}" for i in range(256)]
     result = s.pipeline(
         tmp_path,
         {"t": pa.table({"ip": ips})},
@@ -147,8 +148,11 @@ def test_post_validation_passes_on_hosts_of_one_slash24(tmp_path: Path) -> None:
         post_validation_enforce=True,
     )
     out = result.outputs["t"].column("ip").to_pylist()
-    assert all(o.startswith("192.0.2.") for o in out)
-    assert len(set(out)) == 32
+    assert sorted(out) == sorted(ips)
+    assert out != ips
+    summary = result.quality_metrics["quality_summary"]
+    assert summary["failed_checks"] == ()
+    assert {w["code"] for w in summary["quality_warnings"]} <= {"value_reuse_fixed_point"}
 
 
 def test_no_value_reaches_messages_warnings_or_logs(

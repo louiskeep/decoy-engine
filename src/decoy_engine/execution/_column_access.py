@@ -273,6 +273,7 @@ _SCALAR_STRATEGIES: tuple[str, ...] = (
     "windowed_date",
     "group_key",
     "tokenize",
+    "ip_prefix",
 )
 _FIXED_COMPOSITES: tuple[str, ...] = (
     "composite_name_email",

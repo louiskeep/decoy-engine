@@ -31,7 +31,9 @@ from decoy_engine.validation.post._scan import (
 _NAME = "leakage"
 # Strategies whose output re-emits source values by design; set-membership leakage
 # is wrong for them (it would flag every row), so they get a positional check.
-_VALUE_REUSE_STRATEGIES = frozenset({"shuffle", "categorical"})
+# ip_prefix permutes addresses inside a kept prefix, so another row's real address can be an
+# output without any leak.
+_VALUE_REUSE_STRATEGIES = frozenset({"shuffle", "categorical", "ip_prefix"})
 
 
 def run_leakage(ctx: ScanContext) -> ScanOutcome:

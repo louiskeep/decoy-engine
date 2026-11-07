@@ -32,6 +32,10 @@ modules:
     pattern: NIST SP 800-38G FF1
     source: NIST SP 800-38G (FF1, Algorithms 5/6); cryptography (PyCA, Apache-2.0/BSD)
 
+  - path: src/decoy_engine/transforms/network/_cryptopan.py
+    pattern: Crypto-PAn prefix-preserving IP address anonymization
+    source: Xu, Fan, Ammar and Moon, ICNP 2002 (reference implementation sample trace; yacryptopan, BSD); cryptography (PyCA, Apache-2.0/BSD)
+
   - path: src/decoy_engine/checksums.py
     pattern: Check-digit validation (python-stdnum + NPPES + ISO 3779)
     source: python-stdnum (LGPL); CMS NPPES NPI Check Digit Procedure; ISO 3779 / NHTSA 49 CFR 565

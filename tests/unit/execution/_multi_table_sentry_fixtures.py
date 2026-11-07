@@ -32,6 +32,12 @@ EXTRA_FIXTURES: dict[str, tuple[list[dict[str, Any]], dict[str, pa.Array]]] = {
         [_col("val", "tokenize", namespace="tok_ns")],
         {"val": _s("pan{i}")},
     ),
+    # ip_prefix is not chunk-admitted (it records format_error row errors, which the chunked
+    # route cannot quarantine), so it runs full-frame or sequential.
+    "ip_prefix:deterministic": (
+        [_col("val", "ip_prefix", namespace="ip_ns")],
+        {"val": _s("10.1.0.{i}")},
+    ),
     "shuffle:deterministic": (
         [_col("val", "shuffle", deterministic=True, namespace="sh_ns")],
         {"val": _s("x{i}")},

@@ -2,7 +2,7 @@
   "engine_version": "0.19.0",
   "generated_at": "2026-06-14",
   "surface": {
-    "mask": 24,
+    "mask": 25,
     "generate": 12,
     "providers": 34
   },
@@ -346,6 +346,36 @@
         }
       ],
       "invariant": "Each value becomes a fixed-length keyed hex token; equal inputs hash equally, so joins survive."
+    },
+    {
+      "id": "mask.ip_prefix",
+      "kind": "mask",
+      "title": "IP prefix-preserving pseudonymisation",
+      "column": "client_ip",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: client_ip\n    strategy: ip_prefix\n    namespace: ip\n    provider_config:\n      keep_bits_v4: 24",
+      "input": [
+        {
+          "client_ip": "192.0.2.10"
+        },
+        {
+          "client_ip": "192.0.2.77"
+        },
+        {
+          "client_ip": "192.0.2.200"
+        }
+      ],
+      "output": [
+        {
+          "client_ip": "192.0.2.2"
+        },
+        {
+          "client_ip": "192.0.2.68"
+        },
+        {
+          "client_ip": "192.0.2.189"
+        }
+      ],
+      "invariant": "The /24 is kept; host bits are a keyed prefix-preserving permutation (Crypto-PAn)."
     },
     {
       "id": "mask.truncate",

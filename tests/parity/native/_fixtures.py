@@ -406,6 +406,9 @@ _STRATEGY_SPECS: dict[str, list[tuple[dict[str, Any], list[object], pa.DataType,
             "seed_deterministic",
         )
     ],
+    "ip_prefix": [
+        ({"namespace": "ip_ns"}, ["192.0.2.1", None, "2001:db8::1"], _STR, "null"),
+    ],
 }
 
 

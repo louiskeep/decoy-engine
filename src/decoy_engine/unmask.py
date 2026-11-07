@@ -12,6 +12,7 @@ What reverses and what does not:
 | strategy             | status         | why |
 |----------------------|----------------|-----|
 | fpe                  | reversed_unverified | keyed NIST SP 800-38G FF1 permutation is a bijection; key = derive(seed, ns, FF1_KEY_LABEL). ALWAYS reported unverified (never plain `reversed`, even under a real secret): FF1 is unauthenticated, so a wrong key yields plausible but wrong plaintext with no signal that it is wrong (Task 5.2 P4) |
+| ip_prefix            | reversed_unverified | keyed Crypto-PAn permutation is a bijection per address class; key = derive(seed, ns, CRYPTOPAN_KEY_LABEL). Unauthenticated like fpe, so always unverified |
 | any one-way + vault: true + vault file | vault_reversed / vault_miss | the mask run recorded the source->masked map into an encrypted vault (decoy_engine.vault); lookup keyed by (namespace, masked) |
 | hash                 | irreversible   | HMAC-SHA256 is one-way; recovery needs the column's vault |
 | redact / truncate    | irreversible   | information destroyed |
@@ -55,6 +56,13 @@ from decoy_engine.transforms.fpe import (
     fpe_decrypt_value,
     resolve_fpe_charset,
 )
+from decoy_engine.transforms.network._cryptopan import CRYPTOPAN_KEY_LABEL, CryptoPan
+from decoy_engine.transforms.network.ip_prefix import STRATEGY as IP_PREFIX
+from decoy_engine.transforms.network.ip_prefix import (
+    IpPrefixConfigFault,
+    IpPrefixMasker,
+    parse_ip_prefix_config,
+)
 
 if TYPE_CHECKING:
     from decoy_engine.keyprovider import KeyProvider
@@ -72,6 +80,10 @@ _FPE_UNVERIFIED_CAVEAT = (
     "but WRONG plaintext with no signal that it is wrong. This caveat applies "
     "regardless of whether a mask secret was supplied (Task 5.2 P4); there is "
     "no authenticated-reversal mode for FF1 today."
+)
+_IP_PREFIX_UNVERIFIED_CAVEAT = (
+    "UNVERIFIED: Crypto-PAn is unauthenticated, so a wrong key yields plausible-looking "
+    "but WRONG addresses with no signal that they are wrong."
 )
 
 
@@ -171,6 +183,50 @@ def _decrypt_column(
         raise
 
 
+def _reverse_ip_prefix_column(
+    table: pa.Table, column: str, col_cfg: dict[str, Any], table_name: str, key_box: OpaqueBox
+) -> tuple[pa.Table, UnmaskColumnReport]:
+    namespace = col_cfg.get("namespace")
+    if not namespace:
+        raise ExecutionError(
+            code=reasons.runtime.IP_PREFIX_REQUIRES_NAMESPACE,
+            message=(
+                f"column {column!r} in table {table_name!r} uses ip_prefix but has no "
+                "namespace; the key cannot be derived."
+            ),
+        )
+    parsed = parse_ip_prefix_config(col_cfg.get("provider_config") or {})
+    if isinstance(parsed, IpPrefixConfigFault):
+        raise ExecutionError(
+            code=reasons.runtime.IP_PREFIX_CONFIG_INVALID,
+            message=f"column {column!r} in table {table_name!r}: {parsed.describe()}.",
+        )
+    masker = IpPrefixMasker(
+        CryptoPan(OpaqueBox(derive(key_box.open()[0], str(namespace), CRYPTOPAN_KEY_LABEL))),
+        parsed,
+    )
+    out: list[object] = []
+    unreadable = 0
+    for value in table.column(column).to_pylist():
+        recovered = None if value is None else masker.unmask(value)
+        if value is not None and recovered is None:
+            unreadable += 1
+        out.append(value if recovered is None else recovered)
+    index = table.schema.get_field_index(column)
+    table = table.set_column(index, column, pa.array(out, type=pa.string()))
+    detail = _IP_PREFIX_UNVERIFIED_CAVEAT
+    if unreadable:
+        detail = f"{detail} {unreadable} value(s) were not IP addresses and were left as is."
+    report = UnmaskColumnReport(
+        table=table_name,
+        column=column,
+        strategy=IP_PREFIX,
+        status="reversed_unverified",
+        detail=detail,
+    )
+    return table, report
+
+
 def _vault_recover_column(
     table: pa.Table,
     column: str,
@@ -229,7 +285,7 @@ def unmask_pipeline(
     vault: FileHandle | None = None,
     file_access: FileAccess | None = None,
 ) -> UnmaskResult:
-    """Invert the fpe and vaulted columns of `masked_sources` under `config`.
+    """Invert the fpe, ip_prefix and vaulted columns of `masked_sources` under `config`.
 
     `config` is the pipeline config the mask run used (validated dump or
     raw dict; only `global_settings.seed` and the per-table `columns`
@@ -342,6 +398,10 @@ def unmask_pipeline(
                 reports.append(
                     UnmaskColumnReport(table=name, column=col, strategy=None, status="untouched")
                 )
+                continue
+            if strategy == IP_PREFIX and not col_cfg.get("vault"):
+                table, report = _reverse_ip_prefix_column(table, col, col_cfg, name, mask_key)
+                reports.append(report)
                 continue
             if strategy != "fpe":
                 if col_cfg.get("vault"):

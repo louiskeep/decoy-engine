@@ -43,6 +43,7 @@ from decoy_engine.execution._strategies._tokenize import TokenizeStrategyHandler
 from decoy_engine.execution._strategies._top_code import TopCodeStrategyHandler
 from decoy_engine.execution._strategies._truncate import TruncateHandler
 from decoy_engine.execution._strategies._windowed_date import WindowedDateStrategyHandler
+from decoy_engine.execution._strategies.network._ip_prefix import IpPrefixStrategyHandler
 
 SCALAR_HANDLERS: dict[str, StrategyHandler] = {
     handler.name: handler
@@ -72,6 +73,7 @@ SCALAR_HANDLERS: dict[str, StrategyHandler] = {
         WindowedDateStrategyHandler(),
         GroupKeyStrategyHandler(),
         TokenizeStrategyHandler(),
+        IpPrefixStrategyHandler(),
     )
 }
 
@@ -134,6 +136,7 @@ __all__ = [
     "GroupKeyStrategyHandler",
     "GroupedSeriesStrategyHandler",
     "HashStrategyHandler",
+    "IpPrefixStrategyHandler",
     "JointMaskHandler",
     "NestedStrategyHandler",
     "PassthroughHandler",

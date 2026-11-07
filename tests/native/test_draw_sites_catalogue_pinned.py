@@ -19,7 +19,7 @@ def _digest(value: object) -> str:
 
 
 def test_catalogue_length_and_order_are_unchanged() -> None:
-    assert len(protocol.DRAW_SITES) == len(_ORDERED_IDS) == 34
+    assert len(protocol.DRAW_SITES) == len(_ORDERED_IDS) == 35
     assert [site.draw_site_id for site in protocol.DRAW_SITES] == _ORDERED_IDS
 
 
@@ -46,7 +46,7 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
         assert protocol.draw_site_by_id(site.draw_site_id) is site
 
 
-_CATALOGUE_DIGEST = "e22d1fc92cbb7159bd3d20dd439bac991c2903b0f0cd32a6e10a6b4b969ea75a"
+_CATALOGUE_DIGEST = "57b3034e604c698f53bf8353eaf2fedb024e7930e59851b84b75a20ef39412d8"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -83,6 +83,7 @@ _ORDERED_IDS = [
     "gen.faker_pool_selection",
     "mask.faker_nondeterministic",
     "mask.tokenize",
+    "mask.ip_prefix",
 ]
 
 _ENTRY_DIGESTS = [
@@ -120,10 +121,11 @@ _ENTRY_DIGESTS = [
     "46b422be131d1e91c5ed2a6174d86f970429577b88e5da660ab3a4926171dab4",
     "f698d376bd1e62f5e3f17bde97a7e4da236bf76ad09baf49d95a8c6445614c2c",
     "c8ae317b9397f7faf9152ddc3c0e4e0d0fd55de2f87148512d76b9e28a343324",
+    "c5a25f45dd2ee243a8c975ace87cf86713926cc6e603e74aee729d4e123a19b3",
 ]
 
 _MAP_DIGESTS = {
-    "MASK_STRATEGY_TO_SITE": "e42b340fc017f0608c08ec988fb697bb52c84f5cbb657dfa99b9531cd56681e9",
+    "MASK_STRATEGY_TO_SITE": "77a47a7b956e399342416ad89fc94cb8791214b389ade829f3eb6f7bf6759687",
     "GEN_KIND_TO_SITE": "f5311cdfc5e5d172e6c63f12a15a79c1cb4480577f571d12fe391a94bbc6c1e1",
     "PROVIDER_IDENTIFIER_SITES": "19593ad7e4ac52025cdc024aa16bdb04ab776755b83e6f7c0e546210b6fc7cd6",
     "FAMILIES": "cbbf3f70f90b3995c7bb16f11bf1560ce135af11761cc6444aa41feaf659e811",

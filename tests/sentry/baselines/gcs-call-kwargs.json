@@ -392,6 +392,12 @@
     "decoy_engine/transforms/joint_mask.py::_pick_rows_mask::open::0": {
       "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
     },
+    "decoy_engine/transforms/network/_cryptopan.py::CryptoPan.__init__::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/transforms/network/_cryptopan.py::CryptoPan.__init__::open::1": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
     "decoy_engine/transforms/text_mask.py::_mask_fpe::open::0": {
       "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
     },
@@ -412,6 +418,9 @@
     },
     "decoy_engine/transforms/text_mask.py::mask_cell_with_spans::update::0": {
       "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/unmask.py::_reverse_ip_prefix_column::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
     },
     "decoy_engine/unmask.py::unmask_pipeline::open::0": {
       "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"

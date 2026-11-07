@@ -492,6 +492,33 @@ Mitigations for the partial and `=False` cases:
 - Use `orphan_policy:fail` to reject orphan FK values entirely.
 - Use `orphan_policy:preserve` if the source key is already non-sensitive.
 
+## ip_prefix publishes the network and keeps subnet structure
+
+`ip_prefix` (opt-in) keeps the first `keep_bits_v4` / `keep_bits_v6` bits of every
+address verbatim and maps the rest with Crypto-PAn. It is pseudonymisation, not
+anonymisation:
+
+- The kept prefix is published as-is. Through public registries (RIR whois, BGP
+  tables, GeoIP databases) it names the network, usually the organisation or ISP,
+  and an approximate location; a /24 can be one household or office. An IPv6
+  prefix longer than 64 bits keeps part of the interface identifier, which for
+  SLAAC EUI-64 addresses carries a MAC address, and a 6to4 address (`2002::/16`)
+  carries an IPv4 address inside a /48.
+- Below the kept prefix the subnet structure is kept (addresses that share k bits
+  still share k bits). Prefix-preserving schemes are attackable: someone who knows
+  or can inject real addresses (for example by causing rows from a known IP to be
+  written) learns the keyed bit function along those prefixes and can recover
+  more bits of other addresses that share them (Brekne, Årnes and Øslebø, PET 2005),
+  and the structure plus public data lets an analyst infer topology and find
+  servers (Coull, Wright, Monrose, Collins and Reiter, NDSS 2007). With
+  `keep_bits: 0` the network itself is exposed to these attacks.
+- The number of distinct addresses and the per-network frequencies are kept.
+  With few host bits a row maps to itself often (about one in 2^(32-N) rows for
+  IPv4; one in four at `keep_bits_v4: 30`), which the residual-PII check reports.
+- Anyone with the mask key and the namespace can invert the mapping, as for
+  `fpe`. Without a configured secret the key is the job seed, so whoever holds the
+  config can invert it.
+
 ## The test-flight value-changing-passthrough check has a low-alphabet blind spot
 
 The acceptance test-flight's per-position FPE leak check (`testflight/_fk_remap.py`)

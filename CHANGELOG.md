@@ -9,6 +9,17 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (V1+ track: ip_prefix strategy; opt-in; not merged per owner instruction)
+
+`strategy: ip_prefix` keeps an IP address's first `keep_bits_v4` (default 24) or `keep_bits_v6` (default 48) bits and
+pseudonymises the rest with Crypto-PAn (Xu et al. 2002), checked against the reference implementation's sample trace.
+IPv4-mapped addresses follow the IPv4 rule; output is a keyed permutation per family, so addresses never collide;
+`unmask_pipeline` reverses it as `reversed_unverified`. Opt-in only: not in any default, disguise or recommendation, and
+not offered by the CLI wizard. Reason registry `1.6.0` -> `1.7.0` with seven `ip_prefix_*` identities (renumbered at
+merge). One new secret-material census entry (`IpPrefixStrategyHandler.run`, `key_box`, boxed) needs the owner's
+exception. Leak: [what Decoy does not prove](docs/what-we-cannot-prove.md). V1+ track
+([v1plus-sprints.md](https://github.com/louiskeep/decoy/blob/claude/fervent-thompson-tm8w6d/docs/roadmap/v1plus-sprints.md)).
+
 ### Added (strategy catalog)
 
 `decoy_engine.strategy_catalog()` returns one `StrategyInfo` row per scalar strategy, sorted by name, with its
