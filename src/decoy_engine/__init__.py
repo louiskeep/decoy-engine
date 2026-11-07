@@ -79,8 +79,8 @@ from decoy_engine.data_discovery import (
     DiscoverySqlError,
     run_discovery_sql,
 )
-from decoy_engine.detection import DetectorMatch
-from decoy_engine.detection._model_status import (
+from decoy_engine.detection import (
+    DetectorMatch,
     ModelStatus,
     ModelUnavailableError,
     ner_status,

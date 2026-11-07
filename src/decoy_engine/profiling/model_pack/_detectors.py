@@ -21,8 +21,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from decoy_engine import reasons
-from decoy_engine.detection import _model_status as _ner_side
-from decoy_engine.detection._model_status import ModelStatus
+from decoy_engine.detection import ModelStatus, ner_model_state, qualified, refuse
 from decoy_engine.detection.types import (
     DETECTOR_ORDER,
     DetectorRun,
@@ -65,7 +64,7 @@ def _classifier(file_access: FileAccess | None = None) -> tuple[ModelStatus, dic
     from decoy_engine.profiling.model_pack.loader import ModelPackLoadError
 
     def down(cause: str) -> tuple[ModelStatus, None]:
-        reason = _ner_side.qualified(reasons.provider.CLASSIFIER_UNAVAILABLE)
+        reason = qualified(reasons.provider.CLASSIFIER_UNAVAILABLE)
         return ModelStatus("classifier", _DEFAULT_PACK_ID, False, None, None, reason, cause), None
 
     loader = default_pack_loader(file_access)
@@ -114,10 +113,10 @@ def load_detectors(
     if "classifier" in wanted:
         status, pack = _classifier(file_access)
         if not status.available:
-            _ner_side.refuse(status)
+            refuse(status)
     if "ner" in wanted:
         validate_ner_model_name(ner_model)  # a bad name is a config error, not an absent model
-        status, ref = _ner_side.ner_model_state(ner_model)
+        status, ref = ner_model_state(ner_model)
         if not status.available:
-            _ner_side.refuse(status)
+            refuse(status)
     return DetectorSet(wanted, pack, ref)
