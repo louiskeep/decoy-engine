@@ -25,6 +25,13 @@ change. `_CERTIFIED_STACKS` gains one 3.10.20 row for the new lock profile and k
 Operators who route S3 or GCS through an HTTPS proxy: urllib3 2.8 takes proxy TLS settings only from
 `proxy_ssl_context`, and destination client certificates no longer apply to a forwarding proxy.
 
+### Added (strategy catalog)
+
+`decoy_engine.strategy_catalog()` returns one `StrategyInfo` row per scalar strategy, sorted by name, with its
+`StrategyOption` list. Each row says whether a namespace is required, whether the strategy is join-safe
+(`hash` and `fpe`), whether it is offered at the wizard's `edit` prompt, and where each option lives in a column
+entry (`column`, `provider_config` or `provider_config.ner`). `StrategyInfo` and `StrategyOption` are exported too.
+
 ### Added (F06: declared parsing, casting and quarantine, 2026-10-29)
 
 A column can now declare `logical_type`, `parse_format`, `sentinel_to_null`, `error_policy` (`fail`, `null`,

@@ -56,7 +56,12 @@ import pandas as pd
 
 from decoy_engine import reasons
 from decoy_engine.determinism import derive_index
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    option,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._positional_keys import row_positions
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
@@ -183,6 +188,14 @@ class CategoricalStrategyHandler:
     """Remap a column onto a fixed category pool (derive_index-keyed)."""
 
     name: str = "categorical"
+    namespace_required: bool = True
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("categories", "str_list", ("gold", "silver", "bronze"), required=True),
+        option("weights", "float_list", (0.5, 0.3, 0.2)),
+        option("deterministic", "bool", True, location="column"),
+    )
+    offer_in_wizard: bool = True
 
     def run(
         self,

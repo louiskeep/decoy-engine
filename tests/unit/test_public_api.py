@@ -205,6 +205,10 @@ def test_all_lists_every_public_name():
         "PandasExecutionAdapter",
         "StrategyError",
         "get_default_executor",
+        # Public strategy catalog: one row per scalar strategy handler.
+        "StrategyInfo",
+        "StrategyOption",
+        "strategy_catalog",
         # engine-v2 S10 (Validator: compile consolidator + post-validation).
         "PlanCheckError",
         "PlanValidationResult",

@@ -25,6 +25,8 @@ import pandas as pd
 from decoy_engine import reasons
 from decoy_engine.execution._adapter import (
     StrategyContext,
+    StrategyOption,
+    option,
     pandas_column_to_kernel_input,
     provider_config_to_dict,
 )
@@ -49,6 +51,14 @@ class TruncateHandler:
     """
 
     name: str = "truncate"
+    namespace_required: bool = False
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("length", "int", 3, required=True),
+        option("keep", "str", "head", choices=("head", "tail")),
+        option("mask_char", "str", "*"),
+    )
+    offer_in_wizard: bool = True
 
     def run(
         self,

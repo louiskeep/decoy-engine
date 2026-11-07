@@ -119,6 +119,7 @@ from decoy_engine.execution import (
     select_execution_adapter,
 )
 from decoy_engine.execution._chunked import run_mask_pipeline_chunked
+from decoy_engine.execution._strategies import StrategyInfo, StrategyOption, strategy_catalog
 from decoy_engine.execution._transforms_table import apply_table_transforms
 from decoy_engine.execution.native._chunked_entry import run_mask_chunked
 from decoy_engine.execution.native._companion_status import (
@@ -430,6 +431,8 @@ __all__ = [
     "SeedKeyProvider",
     "SentinelFlag",
     "StrategyError",
+    "StrategyInfo",
+    "StrategyOption",
     "StructuredEvents",
     "StructuredEventsSink",
     "TelemetryClient",
@@ -497,6 +500,7 @@ __all__ = [
     "run_mask_pipeline_chunked",
     "run_pipeline",
     "select_execution_adapter",
+    "strategy_catalog",
     "unmask_pipeline",
     "unregister_faker_provider",
     "validate_config",
