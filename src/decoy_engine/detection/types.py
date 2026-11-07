@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, get_args
 
 DetectorSource = Literal["regex", "classifier", "ner"]
+# The one order detectors are listed in: dumps, runs and log lines all follow it.
+DETECTOR_ORDER: tuple[DetectorSource, ...] = get_args(DetectorSource)
 
 # fullmatch, not match with `$`: `$` accepts a trailing newline, so "en_core_web_sm\n" would pass.
 _NER_MODEL_NAME = re.compile(r"[a-z][a-z0-9_]{1,63}")

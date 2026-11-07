@@ -81,6 +81,26 @@
       "symbol": "POST_SCAN_INACTIVE"
     },
     {
+      "code": "pre_scan_ner_inactive",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "config",
+      "owner": "PipelineValidationError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "Pre-scan NER inactive.",
+      "symbol": "PRE_SCAN_NER_INACTIVE"
+    },
+    {
       "code": "classifier_unavailable",
       "context": [],
       "deprecated_in": null,

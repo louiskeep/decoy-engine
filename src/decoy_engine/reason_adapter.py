@@ -184,6 +184,11 @@ def _classify(exc: BaseException, phase: Phase, context: ReasonContext | None) -
     namespace = _first_in_mro(exc, coded)
     if namespace is not None:
         code = _read_code(exc)
+        # A registry symbol knows its own namespace, so a family error that re-wraps one (the
+        # plan checks wrap a provider or config refusal) keeps the identity it was raised with.
+        own = getattr(code, "namespace", None)
+        if isinstance(code, ReasonCode) and reasons.find(str(own), code) is not None:
+            return _record((str(own), str(code)), phase, context)
         if code is not None and reasons.find(namespace, code) is not None:
             return _record((namespace, code), phase, context)
         return _record(reasons.decoy.UNREGISTERED_REASON, phase, context)

@@ -1,4 +1,4 @@
-"""SCAN-ML M1 (AT-M1c): hostile config corpus. Each case is refused with its code and no value is echoed."""
+"""Hostile config corpus. Each case is refused with its code and no value is echoed."""
 
 from __future__ import annotations
 
@@ -147,8 +147,11 @@ def test_post_scan_settings_that_would_silently_do_nothing_are_refused(
     _refused(_cfg(post_scan=post_scan), "post_scan_inactive")
 
 
-def test_pre_scan_ner_model_without_ner_is_refused() -> None:
-    _refused(_cfg(pre_scan={"ner_model": "en_core_web_sm"}), "post_scan_inactive")
+def test_pre_scan_ner_model_without_ner_is_refused_with_its_own_code() -> None:
+    _refused(_cfg(pre_scan={"ner_model": "en_core_web_sm"}), "pre_scan_ner_inactive")
+    with pytest.raises(ValidationError) as caught:
+        PipelineConfig.model_validate(_cfg(pre_scan={"ner_model": "en_core_web_sm"}))
+    assert "post_scan_inactive" not in {e["type"] for e in caught.value.errors()}
 
 
 def test_the_valid_neighbours_of_the_corpus_pass() -> None:

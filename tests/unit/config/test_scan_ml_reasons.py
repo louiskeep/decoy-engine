@@ -1,4 +1,4 @@
-"""SCAN-ML M1: the six reason identities the slice owns are registered at registry 1.7.0 and pinned."""
+"""The seven reason identities this slice owns are registered at registry 1.7.0 and pinned."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ FIXTURE = (
 IDENTITIES = [
     ("config", "detectors_invalid"),
     ("config", "post_scan_inactive"),
+    ("config", "pre_scan_ner_inactive"),
     ("config", "ner_model_invalid"),
     ("config", "dismissal_invalid"),
     ("provider", "classifier_unavailable"),
@@ -62,3 +63,65 @@ def test_the_exceptions_map_to_their_reasons() -> None:
     incompatible = NerUnavailableError(code=reasons.provider.NER_MODEL_INCOMPATIBLE, message="m")
     record = reason_from_exception(incompatible)
     assert (record.namespace, record.code) == ("provider", "ner_model_incompatible")
+
+
+def test_a_bad_ner_model_reaches_consumers_as_its_registered_config_reason() -> None:
+    from decoy_engine.plan import PlanCompileError
+    from decoy_engine.plan._checks import check_text_redact_ner_available
+    from decoy_engine.reason_adapter import reason_from_exception
+
+    config = {
+        "tables": [
+            {
+                "name": "p",
+                "columns": [
+                    {
+                        "name": "n",
+                        "strategy": "text_redact",
+                        "provider_config": {"ner": {"model": "../x"}},
+                    }
+                ],
+            }
+        ]
+    }
+    with pytest.raises(PlanCompileError) as caught:
+        check_text_redact_ner_available(config)
+    record = reason_from_exception(caught.value)
+    assert (record.namespace, record.code) == ("config", "ner_model_invalid")
+
+
+def test_ner_model_not_installed_maps_to_its_registered_provider_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decoy_engine.detection import ner
+    from decoy_engine.plan import PlanCompileError
+    from decoy_engine.plan._checks import check_text_redact_ner_available
+    from decoy_engine.reason_adapter import reason_from_exception
+
+    monkeypatch.setattr(ner, "spacy_installed", lambda: True)
+    config = {
+        "tables": [
+            {
+                "name": "p",
+                "columns": [
+                    {
+                        "name": "n",
+                        "strategy": "text_redact",
+                        "provider_config": {"ner": {"model": "no_such_model_pkg"}},
+                    }
+                ],
+            }
+        ]
+    }
+    with pytest.raises(PlanCompileError) as caught:
+        check_text_redact_ner_available(config)
+    record = reason_from_exception(caught.value)
+    assert (record.namespace, record.code) == ("provider", "ner_model_not_installed")
+
+
+def test_a_family_exception_cannot_claim_an_unregistered_identity() -> None:
+    from decoy_engine.plan import PlanCompileError
+    from decoy_engine.reason_adapter import reason_from_exception
+
+    record = reason_from_exception(PlanCompileError("not_a_real_code", None, "m"))
+    assert (record.namespace, record.code) == ("decoy", "unregistered_reason")

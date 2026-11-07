@@ -4,7 +4,7 @@
 V1), the lgbm `classifier` and spaCy `ner`. Pre-scan only suggests, so this block is left out
 of the plan hash (`plan/_compile._hash_config`) and out of the dump when it is the default.
 The checks here are shape only; whether a model is installed is a preflight
-(`detection/_model_status.load_detectors`), never a config rule.
+(`profiling/model_pack/_detectors.load_detectors`), never a config rule.
 """
 
 from __future__ import annotations
@@ -23,9 +23,11 @@ from pydantic_core import PydanticCustomError
 
 from decoy_engine import reasons
 from decoy_engine.detection.ner import DEFAULT_NER_MODEL, NerModelNameError
-from decoy_engine.detection.types import DetectorSource, validate_ner_model_name
-
-CANONICAL_ORDER: tuple[DetectorSource, ...] = ("regex", "classifier", "ner")
+from decoy_engine.detection.types import (
+    DETECTOR_ORDER,
+    DetectorSource,
+    validate_ner_model_name,
+)
 
 
 def canonical_detectors(value: tuple[DetectorSource, ...]) -> tuple[DetectorSource, ...]:
@@ -38,7 +40,7 @@ def canonical_detectors(value: tuple[DetectorSource, ...]) -> tuple[DetectorSour
         raise PydanticCustomError(
             str(reasons.config.DETECTORS_INVALID), "detectors must include regex."
         )
-    return tuple(source for source in CANONICAL_ORDER if source in value)
+    return tuple(source for source in DETECTOR_ORDER if source in value)
 
 
 def checked_ner_model(value: Any) -> str:
@@ -75,7 +77,10 @@ class PreScanConfig(BaseModel):
     @model_validator(mode="after")
     def _ner_model_needs_ner(self) -> PreScanConfig:
         if "ner_model" in self.model_fields_set and "ner" not in self.detectors:
-            raise inactive("pre_scan.ner_model", "ner in pre_scan.detectors")
+            raise PydanticCustomError(
+                str(reasons.config.PRE_SCAN_NER_INACTIVE),
+                "pre_scan.ner_model needs ner in pre_scan.detectors.",
+            )
         return self
 
     @model_serializer(mode="wrap")
