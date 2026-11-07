@@ -5,7 +5,7 @@ the rate is the share of scanned cells holding at least one span of that id; `NE
 be the rate at which a column counts as a hit. Spans are counted here and dropped: the helper returns
 counts only, so no cell text reaches a log, a record or a report.
 
-`NER_MIN_RATE` is to be calibrated, not borrowed. Rule (owner decision Q7, 2026-11-07), after the
+`NER_MIN_RATE` is to be calibrated, not borrowed. Rule, after the
 Neyman-Pearson idea of fixing the false-positive bound first (Tong, Feng and Li 2018):
 
     NER_MIN_RATE = ceil_to_0.001(max(2 * highest observed false-hit rate,
@@ -46,7 +46,7 @@ asserts it equals the constant, so the constant cannot drift once set. Measured 
 
 NER_MIN_RATE is deliberately not defined yet. The rule's output is above 0.5, which would make
 the detector fire only on columns that are mostly names, so the value waits for an owner
-decision (the calibration test is an xfail until then). Nothing in M1 reads it.
+decision (the calibration test is an xfail until then). Nothing reads it yet.
 """
 
 from __future__ import annotations
