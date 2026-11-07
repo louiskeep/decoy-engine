@@ -125,6 +125,9 @@ def test_match_source_cardinality_under_delivers_without_error(tmp_path: Path) -
         pool_size=10_000,
     )
     out = _run(config, source).outputs["t"].column("c").to_pylist()
+    # 100 distinct sources, no error, and 46 distinct outputs (fixed by the job seed): the mode
+    # checks the target against the raw pool size, not the distinct pool values.
+    assert len(set(out)) == 46
     assert len(set(out)) <= len(SPECS["edge_case_string"].values) < 100
 
 

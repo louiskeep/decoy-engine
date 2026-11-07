@@ -38,7 +38,6 @@ STRING_SPEC = EdgeCaseSpec(
             "it''s",
             "\\",
             "C:\\path\\file",
-            "`backtick`",
             "a,b",
         ),
         *cases(
@@ -70,15 +69,12 @@ STRING_SPEC = EdgeCaseSpec(
             "' AND '1'='2",
             '" AND "1"="2',
             "1 AND 1=2",
-            "<script>alert(1)</script>",
             # No src or srcset: the image selects no source, fetches nothing and fires no error.
             "<img onerror=alert(1)>",
             "{{7*7}}",
             "${7*7}",
             "#{7*7}",
             "100%%",
-            "$(echo decoy)",
-            "`echo decoy`",
             "../../../../decoy-nonexistent",
             "=1+1",
             "+1+1",

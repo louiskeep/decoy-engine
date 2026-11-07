@@ -136,7 +136,9 @@ PROVIDER_BACKED_DRAW_SITES: tuple[DrawSite, ...] = (
             "generate() (per row) and one in generate_batch() (per batch), across all 9 "
             "adapters. Non-deterministic by contract (output differs run to run). The "
             "edge-case adapter's one generator construction is unseeded when a library "
-            "caller passes no spec.seed (the pool builder always passes one)."
+            "caller passes no spec.seed (the pool builder always passes one). The "
+            "national identifier adapter (V1P-2.3, a separate branch) adds its own mirrors "
+            "to this list; whichever merges second keeps both."
         ),
         mirror_call_sites=(
             "providers_v2/identifiers/_ssn.py:178",

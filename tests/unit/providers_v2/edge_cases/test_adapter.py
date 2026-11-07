@@ -90,6 +90,13 @@ def test_seeded_batch_is_identical_in_a_new_process() -> None:
         assert other[name] == [repr(v) for v in _batch(name, 100)]
 
 
+def test_unseeded_batches_differ() -> None:
+    # Unseeded means OS entropy: two batches of 63 values agree with probability 1/63!.
+    name = "edge_case_unicode"
+    n = len(SPECS[name].values)
+    assert _batch(name, n, None) != _batch(name, n, None)
+
+
 def test_unseeded_calls_return_catalogue_values() -> None:
     for name, spec in SPECS.items():
         adapter = EdgeCaseAdapter(spec)

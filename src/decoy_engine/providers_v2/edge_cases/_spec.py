@@ -9,15 +9,22 @@ An ``EdgeCaseSpec`` checks every value when it is constructed, so a catalogue th
 fails at import and no registry can be built from it. The rules:
 
 - Text is valid Unicode (no surrogates, unassigned code points, noncharacters or private use).
+  Noncharacters are category Cn, so the Cn rule refuses them; which code points are unassigned
+  depends on the interpreter's Unicode database, and a newer one only assigns more.
   The only control characters are TAB, LF, and CR immediately followed by LF: pandas ``to_csv``
   quotes a field containing LF but not one containing only CR, so a lone CR splits the row.
 - Format characters (Cf) come from an allowlist, and bidi embeddings, overrides and isolates
   are closed inside the value, so no value changes the direction of the text after it.
-- No text value adds a read, write, delete or network operation of its own: after NFKC, no
-  statement separator, pipe, chaining, comment, tautology, data-modifying keyword,
-  resource-loading attribute, printf conversion, URL or lookup. A value spliced unquoted into a
-  consumer's statement can still change or cut short that statement; no catalogue can prevent
-  that, and those are the bugs these values exist to expose.
+- Injection text: the guarantee that no value adds a read, write, delete or network operation
+  of its own rests on review of the shipped catalogue, which a test pins value for value, so any
+  change fails until it is reviewed again. The pattern list below is a backstop for named
+  classes, not a proof: after NFKC it refuses statement separators, pipes, chaining, comments,
+  tautologies, query and data-modifying keywords, file export, command execution and
+  substitution, script tags, resource-loading attributes and CSS ``url(``, ``fetch(``,
+  host-relative and UNC paths, network-reaching spreadsheet functions, printf conversions, URLs
+  and lookups. A value spliced unquoted into a consumer's statement can still change or cut short
+  that statement; no catalogue can prevent that, and those are the bugs these values exist to
+  expose.
 - Numbers are exact Python ``int`` within signed 64-bit, or finite ``float``. Dates are exactly
   ``datetime.date``. Datetimes are UTC-aware and inside the pandas nanosecond range, so a column
   of them is always ``datetime64[ns, UTC]`` (one value outside turns it into ``object`` and
@@ -62,7 +69,8 @@ _EMBED_CLOSER = "\u202c"
 _ISOLATE_OPENERS = frozenset("\u2066\u2067\u2068")
 _ISOLATE_CLOSER = "\u2069"
 
-# Matched after NFKC, case-insensitively; see the module docstring.
+# Matched after NFKC, case-insensitively. A backstop for named classes; the injection
+# guarantee rests on the reviewed, pinned catalogue (see the module docstring).
 _FORBIDDEN: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
     (name, re.compile(pattern, re.IGNORECASE))
     for name, pattern in (
@@ -70,12 +78,24 @@ _FORBIDDEN: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("tautology", r"'1'\s*=\s*'1'|\"1\"\s*=\s*\"1\"|\b1\s*=\s*1\b|\"\"\s*=\s*\"\""),
         ("separator", r"[;|&]"),
         ("comment", r"--|/\*|['\"]\s*#"),
-        ("resource_attribute", r"\b(src|href|action|srcset|data|formaction)\s*="),
-        ("url", r"://"),
+        ("query_keyword", r"\b(select|union)\b"),
+        ("file_export", r"\binto\s+(out|dump)file\b|\bcopy\b.*\bprogram\b"),
+        ("command_execution", r"xp_cmdshell|\bexec(ute)?\b"),
+        ("command_substitution", r"\$\(|`"),
+        ("script_tag", r"<\s*script"),
+        (
+            "resource_attribute",
+            r"\b(src|href|action|srcset|data|formaction|poster|background|srcdoc)\s*=",
+        ),
+        ("css_url", r"\burl\s*\("),
+        ("fetch_call", r"\bfetch\s*\("),
+        ("host_relative_path", r"//"),
+        ("unc_path", r"\\\\"),
+        ("spreadsheet_network", r"\b(import\w*|webservice|image|hyperlink)\s*\("),
         ("lookup", r"jndi"),
         (
             "modifying_keyword",
-            r"\b(drop|delete|truncate|update|insert|alter|grant|exec|rm|curl|wget|nc)\b",
+            r"\b(drop|delete|truncate|update|insert|alter|grant|rm|curl|wget|nc)\b",
         ),
     )
 )
@@ -87,10 +107,6 @@ class EdgeCase:
 
     category: str
     value: Any
-
-
-def _is_noncharacter(cp: int) -> bool:
-    return 0xFDD0 <= cp <= 0xFDEF or (cp & 0xFFFE) == 0xFFFE
 
 
 def _bidi_balanced(value: str) -> bool:
@@ -121,7 +137,7 @@ def text_problem(value: object) -> str | None:
                 return "control character"
             if ch == "\r" and value[i + 1 : i + 2] != "\n":
                 return "lone CR"
-        elif cat in ("Cs", "Co", "Cn") or _is_noncharacter(ord(ch)):
+        elif cat in ("Cs", "Co", "Cn"):
             return "surrogate, private-use, unassigned or noncharacter code point"
         elif cat == "Cf" and ch not in _ALLOWED_FORMAT:
             return "format character outside the allowlist"

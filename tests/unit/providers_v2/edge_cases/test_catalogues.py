@@ -230,6 +230,8 @@ _REFUSED: list[tuple[Kind, object, str]] = [
     ("unicode_text", "\u202e\u00e9", "unbalanced bidi"),
     ("unicode_text", "\u2067\u00e9", "unbalanced bidi"),
     ("unicode_text", "\u202c\u00e9\u202e", "unbalanced bidi"),
+    ("unicode_text", "\u202c\u00e9", "unbalanced bidi"),  # bare closer
+    ("unicode_text", "\u2069\u00e9", "unbalanced bidi"),  # bare isolate closer
     ("ascii_text", "caf\u00e9", "non-ASCII"),
     ("unicode_text", "plain", "ASCII-only"),
     ("integer", True, "not an int"),
@@ -256,10 +258,31 @@ _REFUSED: list[tuple[Kind, object, str]] = [
     ("ascii_text", "<a href=y>", "resource_attribute"),
     ("ascii_text", "%s", "printf conversion"),
     ("ascii_text", "%d%%", "printf conversion"),
-    ("ascii_text", "http://example.invalid", "url"),
+    ("ascii_text", "http://example.invalid", "host_relative_path"),
     ("ascii_text", "${jndi:x}", "lookup"),
     ("ascii_text", "DROP it", "modifying_keyword"),
     ("ascii_text", "rm x", "modifying_keyword"),
+    ("ascii_text", "' UNION SELECT password FROM users", "query_keyword"),
+    ("ascii_text", "x' SELECT 1", "query_keyword"),
+    ("ascii_text", "' AND '1'='2' INTO OUTFILE '/tmp/x'", "file_export"),
+    ("ascii_text", "COPY t TO PROGRAM 'id'", "file_export"),
+    ("ascii_text", "EXECUTE xp_cmdshell 'dir'", "command_execution"),
+    ("ascii_text", "exec x", "command_execution"),
+    ("ascii_text", "$(cat /etc/passwd)", "command_substitution"),
+    ("ascii_text", "$(touch decoy)", "command_substitution"),
+    ("ascii_text", "`id`", "command_substitution"),
+    ("ascii_text", "<script>alert(1)</script>", "script_tag"),
+    ("ascii_text", "<video poster=x>", "resource_attribute"),
+    ("ascii_text", "<body background=x>", "resource_attribute"),
+    ("ascii_text", "<iframe srcdoc=x>", "resource_attribute"),
+    ("ascii_text", "<div style=background:url(x)>", "css_url"),
+    ("ascii_text", "fetch('x')", "fetch_call"),
+    ("ascii_text", "<a b=//example.com/x>", "host_relative_path"),
+    ("ascii_text", "\\\\example.com\\share", "unc_path"),
+    ("ascii_text", "=IMPORTXML(1,2)", "spreadsheet_network"),
+    ("ascii_text", "=WEBSERVICE(1)", "spreadsheet_network"),
+    ("ascii_text", "=IMAGE(1)", "spreadsheet_network"),
+    ("ascii_text", "=HYPERLINK(1)", "spreadsheet_network"),
     ("unicode_text", "\uff24\uff32\uff2f\uff30 it", "modifying_keyword"),  # full-width DROP
     ("unicode_text", "x\uff1b y", "separator"),  # full-width semicolon
 ]
@@ -287,8 +310,24 @@ def test_construction_refuses_duplicates_and_bad_categories() -> None:
         EdgeCaseSpec("p", "integer", ("c",), (EdgeCase("d", 1),))
 
 
-def test_shipped_injection_text_is_admitted() -> None:
-    # The always-false, no-src and literal-percent forms must stay admissible.
-    injection = _in("edge_case_string", "injection_text")
-    for expected in ("' AND '1'='2", "<img onerror=alert(1)>", "100%%", "$(echo decoy)"):
-        assert expected in injection
+# The reviewed injection set. The guarantee rests on review of exactly these values, so any
+# change here needs a fresh review; the pattern list is only a backstop.
+_REVIEWED_INJECTION_TEXT = [
+    "' AND '1'='2",
+    '" AND "1"="2',
+    "1 AND 1=2",
+    "<img onerror=alert(1)>",
+    "{{7*7}}",
+    "${7*7}",
+    "#{7*7}",
+    "100%%",
+    "../../../../decoy-nonexistent",
+    "=1+1",
+    "+1+1",
+    "-1+1",
+    "@SUM(1,1)",
+]
+
+
+def test_injection_text_is_exactly_the_reviewed_set() -> None:
+    assert _in("edge_case_string", "injection_text") == _REVIEWED_INJECTION_TEXT

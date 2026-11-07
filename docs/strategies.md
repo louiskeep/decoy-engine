@@ -39,7 +39,7 @@ modes draw a seeded whole-column stream from the job seed.
 Use it for names, emails, phone numbers, addresses, and other fields where you
 want realistic-looking replacements rather than a redaction.
 
-**Edge-case providers (V2 track, not merged).** `edge_case_string` (ASCII text),
+**Edge-case providers (V2 track).** `edge_case_string` (ASCII text),
 `edge_case_unicode` (text), `edge_case_integer` (int64), `edge_case_float`
 (finite double), `edge_case_date` (date32) and `edge_case_datetime`
 (`timestamp[ns, tz=UTC]`) replace every value with an awkward but type-valid
@@ -53,11 +53,14 @@ values are drawn. They take no options and work with any locale (their
 `supported_locales` is empty). A pool at least as large as the catalogue holds
 every value; a small table may still not show every category.
 
-- Injection text adds no read, write, delete or network operation of its own:
-  SQL predicates are always false, there are no statement separators,
-  comments, URLs or `printf` conversions. A value spliced unquoted into your own
-  statement can still change it or cut it short; that is the bug class they
-  exist to find.
+- Injection text adds no read, write, delete or network operation of its own.
+  That rests on a review of the shipped values, which a test pins one by one; a
+  pattern check refuses named classes (statement separators, comments, query and
+  modifying keywords, command substitution, script tags, resource-loading
+  attributes, URLs and host paths, network spreadsheet functions, `printf`
+  conversions) as a backstop, not a proof. SQL predicates are always false. A
+  value spliced unquoted into your own statement can still change it or cut it
+  short; that is the bug class they exist to find.
 - Strings survive pandas CSV and Parquet byte for byte. Default `read_csv`
   reads `null`, `NA`, `NaN` and empty strings as missing, drops a
   whitespace-only line in a one-column file, and reads some floats inexactly
@@ -74,8 +77,9 @@ every value; a small table may still not show every category.
   `chunked_schema_mismatch`; this is the shared `faker` null handling.
 - Deterministic masking needs string, integer or time-zone-aware sources, as for
   every `faker` provider. Masking only: `generate:` mode does not reach them.
-- Not merged. The national identifier providers (V1P-2.3, a separate branch)
-  also add registry entries; once both merge the registry holds 49 providers.
+- With the national identifier providers (V1P-2.3) the registry holds 49
+  providers. Both change the `gen.pool_build_faker` and
+  `gen.identifier_nondeterministic` draw-site entries.
 
 ### hash
 
