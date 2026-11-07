@@ -208,6 +208,18 @@ modules:
     pattern: contextvars (PEP 567)
     source: Python PEP 567 (contextvars), PEP 3134 exception chaining
 
+  - path: src/decoy_engine/generation/copula/_normal.py
+    pattern: Cody ANORM and Wichura AS241 normal functions
+    source: Cody, Math. Comp. 23 (1969) / ACM TOMS 715; Wichura, Appl. Statist. 37 (1988) AS 241
+
+  - path: src/decoy_engine/generation/copula/_nearest_corr.py
+    pattern: Higham nearest correlation matrix
+    source: Higham, IMA J. Numer. Anal. 22 (2002); Higham, Strabic, Sego, SIAM Review 58 (2016)
+
+  - path: src/decoy_engine/generation/copula/_fit.py
+    pattern: Gaussian copula with rank-based normal scores
+    source: Nelsen (2006); Patki et al., IEEE DSAA 2016 (SDV, method only, BSL); Genest, Ghoudi, Rivest (1995)
+
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
   # RiskFlag) was deleted under the pre-scan-reframe-C clean break
