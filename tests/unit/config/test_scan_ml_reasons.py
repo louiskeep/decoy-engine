@@ -125,3 +125,16 @@ def test_a_family_exception_cannot_claim_an_unregistered_identity() -> None:
 
     record = reason_from_exception(PlanCompileError("not_a_real_code", None, "m"))
     assert (record.namespace, record.code) == ("decoy", "unregistered_reason")
+
+
+@pytest.mark.parametrize(
+    "symbol", [reasons.plan.SORT_UNSUPPORTED_TYPE, reasons.plan.DEDUPE_UNSUPPORTED_TYPE]
+)
+def test_a_code_registered_in_both_namespaces_keeps_the_family_record(
+    symbol: reasons.ReasonCode,
+) -> None:
+    from decoy_engine.execution._transforms import TransformError
+    from decoy_engine.reason_adapter import reason_from_exception
+
+    record = reason_from_exception(TransformError(code=symbol, message="m"))
+    assert (record.namespace, record.code) == ("runtime", str(symbol))
