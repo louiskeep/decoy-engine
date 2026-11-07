@@ -1,4 +1,4 @@
-"""SCAN-ML M1 (AT-M1b): the engine half of "asked-for ML never silently falls back"."""
+"""The engine half of "asked-for ML never silently falls back"."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from decoy_engine import reasons
 from decoy_engine.detection import _model_status as ms
 from decoy_engine.detection.ner import DEFAULT_NER_MODEL, NerModelNameError
 from decoy_engine.detection.types import DetectorRun, ModelRef
+from decoy_engine.profiling.model_pack import _detectors as det
 from decoy_engine.profiling.model_pack.loader import ModelPackLoader, ModelPackLoadError
 
 ALL = ("regex", "classifier", "ner")
@@ -22,6 +23,7 @@ ALL = ("regex", "classifier", "ner")
 def _clean(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DECOY_ML_DISABLED", raising=False)
     ms._CACHE.clear()  # type: ignore[attr-defined]
+    det._CACHE.clear()  # type: ignore[attr-defined]
 
 
 def _runtime_present(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -36,7 +38,7 @@ def _fake_pack() -> dict[str, Any]:
 
 def _refused(sources: tuple[str, ...], code: str, cause: str | None) -> ms.ModelUnavailableError:
     with pytest.raises(ms.ModelUnavailableError) as caught:
-        ms.load_detectors(sources, ner_model=DEFAULT_NER_MODEL)  # type: ignore[arg-type]
+        det.load_detectors(sources, ner_model=DEFAULT_NER_MODEL)  # type: ignore[arg-type]
     err = caught.value
     assert err.reason == code
     assert err.cause_class == cause
@@ -48,7 +50,7 @@ def test_disabled_refuses_and_never_returns_a_regex_only_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("DECOY_ML_DISABLED", "1")
-    status = ms.classifier_status()
+    status = det.classifier_status()
     assert (status.available, status.reason, status.cause) == (
         False,
         "provider.classifier_unavailable",
@@ -60,7 +62,7 @@ def test_disabled_refuses_and_never_returns_a_regex_only_set(
 
 def test_import_failure_is_its_own_cause(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "lightgbm", None)  # `import lightgbm` raises ImportError
-    assert ms.classifier_status().cause == "import"
+    assert det.classifier_status().cause == "import"
     _refused(("regex", "classifier"), "provider.classifier_unavailable", "import")
 
 
@@ -75,7 +77,7 @@ def test_an_os_error_on_import_is_cause_import(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.delitem(sys.modules, "lightgbm", raising=False)
     monkeypatch.setattr("builtins.__import__", fake_import)
-    assert ms.classifier_status().cause == "import"
+    assert det.classifier_status().cause == "import"
 
 
 def test_a_bad_pack_is_cause_pack_and_the_loader_message_does_not_cross(
@@ -110,14 +112,14 @@ def test_a_loaded_pack_gives_a_set_with_runs_in_fixed_order(
     monkeypatch.setattr(
         ModelPackLoader, "read_manifest", lambda self: _fake_pack()["manifest"], raising=False
     )
-    found = ms.load_detectors(("classifier", "regex"), ner_model=DEFAULT_NER_MODEL)
+    found = det.load_detectors(("classifier", "regex"), ner_model=DEFAULT_NER_MODEL)
     assert found.sources == ("regex", "classifier")
     assert found.classifier_pack is not None
     assert found.runs() == (
         DetectorRun("regex", None),
         DetectorRun("classifier", ModelRef("lgbm-v1", "0.1.0")),
     )
-    assert ms.load_detectors(("regex",), ner_model=DEFAULT_NER_MODEL).runs() == (
+    assert det.load_detectors(("regex",), ner_model=DEFAULT_NER_MODEL).runs() == (
         DetectorRun("regex", None),
     )
 
@@ -151,12 +153,30 @@ def test_the_error_is_a_registered_reason_family() -> None:
 
 def test_hostile_ner_model_is_refused_by_load_detectors() -> None:
     with pytest.raises(NerModelNameError) as caught:
-        ms.load_detectors(("regex", "ner"), ner_model="../x")
+        det.load_detectors(("regex", "ner"), ner_model="../x")
     assert caught.value.code == "ner_model_invalid"
     assert "../x" not in str(caught.value)
 
 
 def test_unknown_source_is_a_programming_error() -> None:
     with pytest.raises(ValueError):
-        ms.load_detectors(("regex", "oracle"), ner_model=DEFAULT_NER_MODEL)  # type: ignore[arg-type]
+        det.load_detectors(("regex", "oracle"), ner_model=DEFAULT_NER_MODEL)  # type: ignore[arg-type]
     _ = Path
+
+
+def test_the_classifier_cache_is_keyed_by_pack_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    _runtime_present(monkeypatch)
+    manifest = SimpleNamespace(pack_id="lgbm-v1", version="0.1.0")
+    loads: list[str] = []
+
+    def load(self: Any) -> dict[str, Any]:
+        loads.append(manifest.version)
+        return {"manifest": SimpleNamespace(pack_id="lgbm-v1", version=manifest.version)}
+
+    monkeypatch.setattr(ModelPackLoader, "load", load)
+    monkeypatch.setattr(ModelPackLoader, "read_manifest", lambda self: manifest, raising=False)
+    first = det.classifier_status()
+    assert det.classifier_status() == first and loads == ["0.1.0"]  # a hit, no second load
+    manifest.version = "0.2.0"  # a pack upgrade inside a long-lived worker
+    upgraded = det.classifier_status()
+    assert upgraded.version == "0.2.0" and loads == ["0.1.0", "0.2.0"]

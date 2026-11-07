@@ -1,4 +1,4 @@
-"""SCAN-ML M1: the shared NER cell sample, per-detector rate and rate bucket."""
+"""The shared NER cell sample, per-detector rate and rate bucket."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""SCAN-ML M1 (AT-M1a): the new config fields leave every legacy dump and hash where it was.
+"""The new config fields leave every legacy dump and hash where it was.
 
 Pre-scan and the model post-scan fields are additive. A config that predates them must dump,
 hash and compile byte-for-byte as before; a config that sets one changes its hash only when the

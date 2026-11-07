@@ -1,12 +1,9 @@
-"""Model status, strict loading and the detector run log for the ML detectors (SCAN-ML M1).
+"""Model status and the detector run log for the spaCy NER model.
 
-One probe answers "can this model run here, and at which version" for the lgbm classifier and the
-spaCy NER model. The gate, the scans and the setup surfaces read it; none probes on its own.
-
-The load is strict: `load_detectors` returns a set only when every requested model is usable, and
-raises `ModelUnavailableError` otherwise. It never returns a partial or regex-only set, because
-the caller asked for a model and a quiet fallback would hide that no model check ran. The lenient
-loader (`load_with_fallback`, used by `classify_fields`) is never called here.
+`ner_model_state` answers "can this model run here, and at which version"; the gate, the scans and
+the setup surfaces read it, none probes on its own. The classifier's counterpart lives in
+`profiling/model_pack/_detectors.py`, because detection is the base layer and must not import the
+profiling package.
 
 Results are cached per process, keyed by (source, model id, installed version), so a model upgrade
 inside a long-lived worker is a new key rather than a stale hit. Failures are not cached.
@@ -22,30 +19,23 @@ import logging
 import re
 import threading
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, NoReturn
 
 from decoy_engine import reasons
 from decoy_engine.detection import ner
-from decoy_engine.detection.types import (
-    DetectorRun,
-    DetectorSource,
-    ModelRef,
-    validate_ner_model_name,
-)
+from decoy_engine.detection.types import DetectorRun, ModelRef, validate_ner_model_name
 from decoy_engine.errors import DecoyError
 
 if TYPE_CHECKING:
     from decoy_engine.context import ExecutionContext
-    from decoy_engine.fileaccess import FileAccess
 
 # A child of the root engine logger, so the CLI routes and silences it with the rest. Built with
 # getChild so the string-target sentry does not read the logger name as an import path.
 _log = logging.getLogger("decoy_engine").getChild("detectors")
 _LOCK = threading.Lock()
-# (source, model id, installed version) -> (status, loaded pack or ModelRef). Successes only.
-_CACHE: dict[tuple[str, str, str], tuple[ModelStatus, Any]] = {}
-_ORDER: tuple[DetectorSource, ...] = ("regex", "classifier", "ner")
+# (model id, installed version) -> (status, ref). Successes only.
+_CACHE: dict[tuple[str, str], tuple[ModelStatus, ModelRef]] = {}
 _PHASES = ("pre_scan", "post_scan")
 _SAFE_VALUE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 
@@ -60,7 +50,7 @@ class ModelUnavailableError(DecoyError):
 
     def __init__(self, code: str, *, cause: str | None = None) -> None:
         self.code = code
-        self.reason = _qualified(code)
+        self.reason = qualified(code)
         self.cause_class = cause
         super().__init__(self.reason if cause is None else f"{self.reason} (cause: {cause})")
 
@@ -88,26 +78,6 @@ class ModelStatus:
     cause: str | None = None  # classifier only: disabled | import | pack
 
 
-@dataclass(frozen=True)
-class DetectorSet:
-    """What a scan or run was asked to use, with every requested model strictly loaded."""
-
-    sources: tuple[DetectorSource, ...]
-    classifier_pack: dict[str, Any] | None = field(default=None, repr=False, compare=False)
-    ner: ModelRef | None = None
-
-    @property
-    def classifier(self) -> ModelRef | None:
-        if self.classifier_pack is None:
-            return None
-        manifest = self.classifier_pack["manifest"]
-        return ModelRef(manifest.pack_id, manifest.version)
-
-    def runs(self) -> tuple[DetectorRun, ...]:
-        models = {"regex": None, "classifier": self.classifier, "ner": self.ner}
-        return tuple(DetectorRun(s, models[s]) for s in _ORDER if s in self.sources)
-
-
 def _spacy_version() -> str:
     try:
         return importlib.metadata.version("spacy")
@@ -115,13 +85,13 @@ def _spacy_version() -> str:
         return "unknown"
 
 
-def _qualified(code: object) -> str:
+def qualified(code: object) -> str:
     return f"{getattr(code, 'namespace', 'provider')}.{code}"
 
 
 # The identities a status can carry, keyed as `namespace.code`: a table of registry symbols.
 _REASONS = {
-    _qualified(code): code
+    qualified(code): code
     for code in (
         reasons.provider.CLASSIFIER_UNAVAILABLE,
         reasons.provider.NER_SPACY_NOT_INSTALLED,
@@ -132,104 +102,40 @@ _REASONS = {
 }
 
 
-def _classifier(file_access: FileAccess | None = None) -> tuple[ModelStatus, dict[str, Any] | None]:
-    """The classifier's status and, when usable, its strictly loaded pack. Never raises."""
-    from decoy_engine import fileaccess
-    from decoy_engine.profiling.model_pack.classify import _DEFAULT_PACK_ID, _default_pack_dir
-    from decoy_engine.profiling.model_pack.loader import ModelPackLoader, ModelPackLoadError
-
-    def down(cause: str) -> tuple[ModelStatus, None]:
-        reason = _qualified(reasons.provider.CLASSIFIER_UNAVAILABLE)
-        return ModelStatus("classifier", _DEFAULT_PACK_ID, False, None, None, reason, cause), None
-
-    loader = ModelPackLoader(
-        fileaccess.engine_dir_handle(_default_pack_dir()), trusted=True, file_access=file_access
-    )
-    if loader.is_ml_disabled:
-        return down("disabled")
-    try:  # a missing libomp raises OSError here, not ImportError
-        import lightgbm
-        import sklearn  # noqa: F401
-    except Exception:
-        return down("import")
-    try:
-        manifest = loader.read_manifest()
-        key = ("classifier", manifest.pack_id, manifest.version)
-        with _LOCK:
-            hit = _CACHE.get(key)
-            if hit is not None:
-                return hit[0], hit[1]
-            pack = loader.load()  # strict: raises rather than returning None
-            status = ModelStatus(
-                "classifier", manifest.pack_id, True, manifest.version, lightgbm.__version__, None
-            )
-            _CACHE[key] = (status, pack)
-            return status, pack
-    except ModelPackLoadError as exc:
-        return down(exc.cause)
-    except Exception:
-        return down("pack")
-
-
-def _ner(model: str) -> tuple[ModelStatus, ModelRef | None]:
+def ner_model_state(model: str) -> tuple[ModelStatus, ModelRef | None]:
     """The NER model's status and, when usable, its ref. Never raises, never echoes the name."""
+    version: str | None = None
     try:
         validate_ner_model_name(model)
         version = ner.installed_model_version(model)
-        key = ("ner", model, version or "")
         with _LOCK:
-            hit = _CACHE.get(key)
+            hit = _CACHE.get((model, version or ""))
         if hit is not None:
-            return hit[0], hit[1]
+            return hit
         ner.ensure_ner_available(model)
     except ner.NerModelNameError as exc:
-        return ModelStatus("ner", "", False, None, None, _qualified(exc.code)), None
+        return ModelStatus("ner", "", False, None, None, qualified(exc.code)), None
     except ner.NerUnavailableError as exc:
-        status = ModelStatus("ner", model, False, version, None, _qualified(exc.code))
-        return status, None
+        return ModelStatus("ner", model, False, version, None, qualified(exc.code)), None
+    version = ner.installed_model_version(model)
+    if not version:  # removed between the check and here
+        gone = qualified(reasons.provider.NER_MODEL_NOT_INSTALLED)
+        return ModelStatus("ner", model, False, None, None, gone), None
     status = ModelStatus("ner", model, True, version, _spacy_version(), None)
-    ref = ModelRef(model, version or "")
+    ref = ModelRef(model, version)
     with _LOCK:
-        _CACHE[key] = (status, ref)
+        _CACHE[(model, version)] = (status, ref)
     return status, ref
 
 
-def classifier_status() -> ModelStatus:
-    return _classifier()[0]
-
-
 def ner_status(model: str = ner.DEFAULT_NER_MODEL) -> ModelStatus:
-    return _ner(model)[0]
+    return ner_model_state(model)[0]
 
 
-def _refuse(status: ModelStatus) -> NoReturn:
+def refuse(status: ModelStatus) -> NoReturn:
     # Raised from a plain call, never inside an `except`: __cause__ and __context__ stay None,
     # so a loader message (it can carry a pack path label) cannot ride along.
     raise ModelUnavailableError(registered_model_reason(status.reason or ""), cause=status.cause)
-
-
-def load_detectors(
-    sources: Sequence[DetectorSource],
-    *,
-    ner_model: str,
-    file_access: FileAccess | None = None,
-) -> DetectorSet:
-    """Strictly load every requested model; raise `ModelUnavailableError` if any cannot run."""
-    if any(source not in _ORDER for source in sources):
-        raise ValueError("unknown detector source")
-    wanted = tuple(source for source in _ORDER if source in sources)
-    pack: dict[str, Any] | None = None
-    ref: ModelRef | None = None
-    if "classifier" in wanted:
-        status, pack = _classifier(file_access)
-        if not status.available:
-            _refuse(status)
-    if "ner" in wanted:
-        validate_ner_model_name(ner_model)  # a bad name is a config error, not an absent model
-        status, ref = _ner(ner_model)
-        if not status.available:
-            _refuse(status)
-    return DetectorSet(wanted, pack, ref)
 
 
 def log_detector_run(
@@ -246,6 +152,11 @@ def log_detector_run(
     """
     if phase not in _PHASES:
         raise ValueError("phase must be pre_scan or post_scan")
+    for run in runs:
+        if run.model is not None and not (
+            _SAFE_VALUE.fullmatch(run.model.id) and _SAFE_VALUE.fullmatch(run.model.version)
+        ):
+            raise ValueError("detector model id and version must be identifiers")
     fields = [f"sources={','.join(run.source for run in runs)}"]
     fields += [
         f"{run.source}={run.model.id}@{run.model.version}"

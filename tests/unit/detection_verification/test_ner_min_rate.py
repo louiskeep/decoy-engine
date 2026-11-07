@@ -1,4 +1,4 @@
-"""SCAN-ML M1: NER_MIN_RATE is the calibrated threshold, recomputed here from known negatives.
+"""NER_MIN_RATE is the calibrated threshold, recomputed here from known negatives.
 
 Rule (owner decision Q7, 2026-11-07; Neyman-Pearson style false-positive control, Tong, Feng and
 Li 2018; Clopper and Pearson 1934):

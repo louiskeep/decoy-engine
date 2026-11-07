@@ -1,4 +1,4 @@
-"""SCAN-ML M1 (AT-M1e): one INFO record per phase on `decoy_engine.detectors`, names and counts only."""
+"""One INFO record per phase on `decoy_engine.detectors`, names and counts only."""
 
 from __future__ import annotations
 
@@ -10,8 +10,7 @@ import pytest
 from decoy_engine.detection import _model_status as ms
 from decoy_engine.detection.types import DetectorRun, ModelRef
 
-# Joined so the string-target sentry does not read the logger name as an import path.
-LOGGER = ".".join(("decoy_engine", "detectors"))
+LOGGER = "decoy_engine.detectors"
 RUNS = (
     DetectorRun("regex", None),
     DetectorRun("classifier", ModelRef("lgbm-v1", "0.1.0")),
@@ -98,3 +97,24 @@ def test_no_context_means_no_step_event(caplog: pytest.LogCaptureFixture) -> Non
 def test_a_phase_outside_the_two_scans_is_refused() -> None:
     with pytest.raises(ValueError):
         ms.log_detector_run("mask", RUNS, {"tables": 1, "columns": 1})
+
+
+def test_the_logger_is_named_decoy_engine_detectors() -> None:
+    assert ms._log.name == "decoy_engine.detectors"
+    assert ms._log.parent is logging.getLogger("decoy_engine")
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        DetectorRun("ner", ModelRef("en_core_web_sm\nINJECTED", "3.8.0")),
+        DetectorRun("ner", ModelRef("en_core_web_sm", "3.8.0 secret=1")),
+        DetectorRun("classifier", ModelRef("lgbm v1", "0.1.0")),
+    ],
+)
+def test_model_id_and_version_must_be_identifiers_too(
+    run: DetectorRun, caplog: pytest.LogCaptureFixture
+) -> None:
+    with pytest.raises(ValueError):
+        ms.log_detector_run("pre_scan", (RUNS[0], run), {"tables": 1, "columns": 1})
+    assert _records(caplog) == []

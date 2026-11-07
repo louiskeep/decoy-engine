@@ -14,6 +14,9 @@
   "tests/sentry/test_no_residual_removed_surface.py::<removed-surface>": {
    "reason": "initial X0a inventory of test_engine_string_targets.py; existing entry, reviewed by its own sentry"
   },
+  "tests/unit/detection_verification/test_detector_run_log.py::decoy_engine.detectors": {
+   "reason": "the engine's detector run logger name, asserted literally by its test (logger category)"
+  },
   "tests/unit/test_public_api.py::decoy_engine.test": {
    "reason": "initial X0a inventory of test_engine_string_targets.py; existing entry, reviewed by its own sentry"
   },

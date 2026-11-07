@@ -246,7 +246,7 @@ def test_all_lists_every_public_name():
         "estimate_job_capacity",
         "CapacityEstimate",
         "CapacityVerdict",
-        # SCAN-ML M1: optional ML detectors (model status, loading, config blocks).
+        # Optional ML detectors (model status, loading, config blocks).
         "Dismissal",
         "ModelRef",
         "ModelStatus",

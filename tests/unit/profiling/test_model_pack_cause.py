@@ -1,4 +1,4 @@
-"""SCAN-ML M1: `ModelPackLoadError.cause` is a field set at each raise site, and `classify_frame`
+"""`ModelPackLoadError.cause` is a field set at each raise site, and `classify_frame`
 runs on a pack it is given, never one it loads itself."""
 
 from __future__ import annotations
@@ -135,3 +135,19 @@ def test_classify_fields_is_a_wrapper_over_classify_frame_and_stays_lenient(
     out = classify_mod.classify_fields(frame)
     assert seen == [pack]
     assert out is not None and out["c"]["label"] == "ssn"
+
+
+def test_default_pack_loader_is_the_one_trusted_loader_classify_fields_uses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decoy_engine.profiling.model_pack import default_pack_loader
+
+    loader = default_pack_loader()
+    assert loader._trusted is True  # the shipped default pack, and nothing else, is trusted
+    asked: list[Any] = []
+    monkeypatch.setattr(
+        classify_mod, "default_pack_loader", lambda fa=None: asked.append(fa) or loader
+    )
+    monkeypatch.setattr(ModelPackLoader, "load_with_fallback", lambda self: None)
+    assert classify_mod.classify_fields(pd.DataFrame({"c": ["x"]})) is None
+    assert asked == [None]
