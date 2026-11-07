@@ -32,14 +32,39 @@ the text_redact contract (see _text_redact.py).
 from __future__ import annotations
 
 import importlib.util
-from collections.abc import Collection, Sequence
-from typing import Any
+from collections.abc import Collection, Mapping, Sequence
+from types import MappingProxyType
+from typing import Any, NamedTuple
 
 from decoy_engine import reasons
 from decoy_engine.detection.detectors import Span
 from decoy_engine.errors import DecoyError
 
 DEFAULT_NER_MODEL = "en_core_web_sm"
+
+
+class NerModelWheel(NamedTuple):
+    """A model wheel pinned by URL and content hash."""
+
+    url: str
+    sha256: str
+
+
+# The wheel a deployment or CI job installs for each supported model. The model
+# is not on PyPI, so `pip install` cannot resolve it; a URL alone would trust
+# whatever the host serves, hence the hash. The model version must stay inside
+# the spaCy range the lock resolves (en_core_web_sm 3.8.x needs spaCy 3.8.x).
+NER_MODEL_WHEELS: Mapping[str, NerModelWheel] = MappingProxyType(
+    {
+        "en_core_web_sm": NerModelWheel(
+            url=(
+                "https://github.com/explosion/spacy-models/releases/download/"
+                "en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
+            ),
+            sha256="1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85",
+        ),
+    }
+)
 
 # spaCy entity label -> decoy detector id. The values join the regex
 # catalog's namespace, so [REDACTED:person_name] reads the same whether
