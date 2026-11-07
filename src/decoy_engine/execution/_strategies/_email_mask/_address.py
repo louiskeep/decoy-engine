@@ -57,7 +57,7 @@ def _label_ok(label: str) -> bool:
 
 
 def split_domain(value: object) -> str | None:
-    """The domain of `value` as written, or None when `value` is not a usable address."""
+    """The domain of `value` (the caller passes NFC text), or None when `value` is not a usable address."""
     if not isinstance(value, str):
         return None
     local, at, domain = value.rpartition("@")

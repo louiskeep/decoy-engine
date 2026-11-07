@@ -168,6 +168,17 @@ def test_nfd_and_nfc_spellings_give_identical_output(keep: str) -> None:
     assert warnings == []
 
 
+def test_a_kelvin_sign_is_ascii_k_after_nfc() -> None:
+    # NFC maps U+212A to ASCII "K" before parsing, so the domain is classed and kept as ASCII.
+    kelvin = chr(0x212A)
+    values = [f"x@{kelvin}orea.gov", f"x@yahoo.co.u{kelvin}"]
+    by_class, _ = s.run_handler(values, "domain_class")
+    assert [v.split("@")[1] for v in by_class] == ["gov.example", "yahoo.co.uk"]
+    kept, _ = s.run_handler(values, "domain")
+    assert [v.split("@")[1] for v in kept] == ["Korea.gov", "yahoo.co.uK"]
+    assert [v.split("@")[0] for v in kept] == [s.oracle_local(v) for v in values]
+
+
 def test_the_token_is_the_prefix_of_the_hash_token_under_the_same_namespace() -> None:
     # Documented linkage: a hash column sharing the namespace joins to this one.
     values = ["alice@acme.com", "Bob@Gmail.com", "\u00fc@b\u00fccher.de"]

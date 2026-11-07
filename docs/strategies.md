@@ -163,7 +163,7 @@ a run without one is refused before any source is read.
   Equal inputs give equal outputs; distinct inputs collide only on an 80-bit token
   collision (not collision-resolved, like `hash`). Under the same namespace the
   token is the prefix of the `hash` token for the same string.
-- `keep: domain`: the domain after the last `@`, exactly as written.
+- `keep: domain`: the domain after the last `@`, in its NFC spelling (case kept).
 - `keep: domain_class`: a domain on the committed free-mail list (about 45 large
   consumer providers, `gmail.com`, `outlook.com`, `qq.com`, ...) is kept in the
   list's lower-case spelling; any other domain becomes `gov.example`,

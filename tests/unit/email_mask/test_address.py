@@ -94,7 +94,8 @@ def test_the_253_character_limit_is_inclusive() -> None:
         ("edu.example.com", "corporate"),
         ("bücher.de", "corporate"),
         ("xn--bcher-kva.edu", "edu"),
-        # KELVIN SIGN lower-cases to ASCII "k"; a non-ASCII domain must never match a rule.
+        # Called directly, a non-ASCII domain never matches a rule (KELVIN SIGN lower-cases to
+        # ASCII "k"). Through the handler NFC has already mapped it to ASCII "K": see test_handler.
         (chr(0x212A) + "orea.gov", "corporate"),
     ],
 )
@@ -102,7 +103,7 @@ def test_domain_class(domain: str, klass: str) -> None:
     assert address.domain_class(domain) == klass
 
 
-def test_output_domain_keep_domain_is_the_domain_as_written() -> None:
+def test_output_domain_keep_domain_is_the_domain_in_its_nfc_spelling() -> None:
     assert address.output_domain("Gmail.com", "domain") == "Gmail.com"
     assert address.output_domain("Acme.COM", "domain") == "Acme.COM"
 
