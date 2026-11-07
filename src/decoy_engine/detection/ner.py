@@ -11,7 +11,7 @@ spans into the regular leftmost-longest overlap resolution.
 Optional dependency: spaCy ships in the `ner` extra
 (`pip install decoy-engine[ner]`); the language model is NOT
 pip-resolvable and is installed separately
-(`python -m spacy download en_core_web_sm`). Both absences raise typed
+(install the wheel pinned in `NER_MODEL_WHEELS`). Both absences raise typed
 errors naming the fix; the plan compiler's `text_redact_ner_available`
 check surfaces the same verdicts at validate time.
 
@@ -32,14 +32,44 @@ the text_redact contract (see _text_redact.py).
 from __future__ import annotations
 
 import importlib.util
-from collections.abc import Collection, Sequence
-from typing import Any
+from collections.abc import Collection, Mapping, Sequence
+from types import MappingProxyType
+from typing import Any, NamedTuple
 
 from decoy_engine import reasons
 from decoy_engine.detection.detectors import Span
 from decoy_engine.errors import DecoyError
 
 DEFAULT_NER_MODEL = "en_core_web_sm"
+# The version of DEFAULT_NER_MODEL that NER_MODEL_WHEELS pins and CI installs.
+DEFAULT_NER_MODEL_VERSION = "3.8.0"
+
+
+class NerModelWheel(NamedTuple):
+    """A model wheel pinned by URL and content hash, with the spaCy range it loads under."""
+
+    url: str
+    sha256: str
+    spacy_range: str
+
+
+# The wheel a deployment or CI job installs for each supported (model, version).
+# The model is not on PyPI, so `pip install` cannot resolve it; a URL alone would
+# trust whatever the host serves, hence the hash. `spacy_range` is the model's own
+# meta.json `spacy_version`: a spaCy outside it refuses to load the model.
+NER_MODEL_WHEELS: Mapping[tuple[str, str], NerModelWheel] = MappingProxyType(
+    {
+        (DEFAULT_NER_MODEL, DEFAULT_NER_MODEL_VERSION): NerModelWheel(
+            url=(
+                "https://github.com/explosion/spacy-models/releases/download/"
+                "en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
+            ),
+            sha256="1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85",
+            spacy_range=">=3.8.0,<3.9.0",
+        ),
+    }
+)
+
 
 # spaCy entity label -> decoy detector id. The values join the regex
 # catalog's namespace, so [REDACTED:person_name] reads the same whether
@@ -110,8 +140,8 @@ def ensure_ner_available(model: str = DEFAULT_NER_MODEL) -> None:
         raise NerUnavailableError(
             code=reasons.provider.NER_MODEL_NOT_INSTALLED,
             message=(
-                f"text_redact `ner` model {model!r} is not installed: "
-                f"python -m spacy download {model}"
+                f"text_redact `ner` model {model!r} is not installed: install its wheel "
+                "(the pinned wheels are listed in decoy_engine.detection.ner.NER_MODEL_WHEELS)."
             ),
         )
 

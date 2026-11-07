@@ -23,14 +23,19 @@ _V0_17_0_ROWS = (
     "5a76ea92769d62cb0124d89d24c2ec0e4116828e34e0611d80bf5e36edef1a23",
     "a7b40d54f68488ecbcc253c35a03517eefc456625a9b0240470e765e2bbc4476",
 )
-# The two rows this release certifies.
+# The two rows v0.18.0 certified.
 _V0_18_0_ROWS = (
     "31ecf94503eff107631191426072eee757af72a2229ab594d2fc2e8e6bfac7b1",
     "b643894ded2ab84c4a0a9d9032a1de3d2330db89161f231e509024428b7533f3",
 )
-# The engine dev/CI profile once pytest-xdist joined `dev` (79 dists; ENGINE-PAR P2).
-_XDIST_DEV_ROW = "4e494affc1a3c2b54a4dbd126454d09867e54a6b08cec8861b109ccf9b725246"
-_ALL_ROWS = _V0_17_0_ROWS + _V0_18_0_ROWS + (_XDIST_DEV_ROW,)
+# The two rows this release certifies (docs/records/release-r0190-facts.md).
+_V0_19_0_ROWS = (
+    "7d1c1a2a2be450a59fa17d810663a7bfe5e825204cca99bfe039ba12b6226aed",
+    "795732eb0808001d9c4591f3693637187637bb383a87b8caa95b8f2f269f9211",
+)
+# The engine dev/CI profile on 0.19.0 once pytest-xdist joined `dev` (79 dists; ENGINE-PAR P2).
+_XDIST_DEV_ROW = "78af2b5a1bb11c826f1d3918f705dc7edada72a081804e74d55e37938d8300b6"
+_ALL_ROWS = _V0_17_0_ROWS + _V0_18_0_ROWS + _V0_19_0_ROWS + (_XDIST_DEV_ROW,)
 
 
 @pytest.mark.parametrize("fingerprint", _ALL_ROWS)

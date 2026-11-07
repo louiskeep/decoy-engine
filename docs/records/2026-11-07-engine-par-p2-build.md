@@ -11,9 +11,11 @@ Test nodes are GCP `e2-standard-4` VMs through `~/bin/vm-run` (Python 3.10.20, t
 
 - `pytest-xdist>=3.5` in the `dev` extra, lock updated by hand to the two lines `uv lock` adds (a
   newer uv rewrote unrelated markers, so that output was discarded). The `xdist` extra stays as an
-  alias. DP re-pin: the dev profile is now 79 distributions and its fingerprint is
-  `4e494aff...5246` (read on a fresh VM venv built by `bootstrap.sh`). It is added to
-  `_CERTIFIED_STACKS`; the two older engine rows stay, since they certify snapshots fit earlier.
+  alias. DP re-pin: the dev profile is now 79 distributions. After the merge of engine
+  main at 0.19.0 its fingerprint is `78af2b5a...00b6`, computed from the merged `uv.lock` by the
+  `test_dp_lock_row.py` method (`uv export` plus markers) on a VM. It replaces the pre-release row
+  `4e494aff...5246`, which was only ever on this branch (version 0.18.0). It is added to
+  `_CERTIFIED_STACKS` next to the 0.19.0 rows; the released rows stay.
 - `scripts/dev/_gate_workers.py` (platform port; also resolves to 1 when xdist is missing), reached
   through `_gates_report.py --workers` so `gates.sh` keeps only reporter calls (the P1 guard).
 - `gates.sh`: `GATES_WORKERS`, the parallel pass (`-n N --dist loadfile`, `(expr) and not serial`),
