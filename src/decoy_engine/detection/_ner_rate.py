@@ -51,12 +51,15 @@ decision (the calibration test is an xfail until then). Nothing reads it yet.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import statistics
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from decoy_engine.detection.ner import DEFAULT_NER_MODEL, NER_ENTITY_MAP, iter_ner_spans_batch
 
 NER_SCAN_CELLS = 2_000
+# A column is free text when the median whitespace-token count of its sampled cells reaches this.
+FREE_TEXT_MIN_TOKENS = 3
 # Bounds the span lists held at once; far below the pipe window in `ner.py`.
 _WINDOW = 512
 
@@ -89,10 +92,27 @@ def sample_cells(values: Iterable[object], limit: int = NER_SCAN_CELLS) -> list[
     return out
 
 
+def is_free_text(cells: Sequence[str]) -> bool:
+    """True when the median `len(cell.split())` over `cells` is at least `FREE_TEXT_MIN_TOKENS`.
+
+    The one place this rule is computed. An empty sample is not free text, and an even sample's
+    median is the mean of its two middle counts (2 and 3 give 2.5, which is not enough).
+    """
+    if not cells:
+        return False
+    return statistics.median(len(cell.split()) for cell in cells) >= FREE_TEXT_MIN_TOKENS
+
+
 def ner_rates(values: Iterable[object], *, model: str = DEFAULT_NER_MODEL) -> dict[str, NerRate]:
-    """Per-detector-id rates over the cell sample of `values`; every NER id is present."""
+    """Per-detector-id rates over the cell sample of `values`; every NER id is present.
+
+    The only NER scoring entry. A column that is not free text is not scored: no cell reaches
+    spaCy and every rate is over zero scanned cells.
+    """
     cells = sample_cells(values)
     detector_ids = sorted(set(NER_ENTITY_MAP.values()))
+    if not is_free_text(cells):
+        return {i: NerRate(i, 0, 0) for i in detector_ids}
     hits = dict.fromkeys(detector_ids, 0)
     for start in range(0, len(cells), _WINDOW):
         for spans in iter_ner_spans_batch(cells[start : start + _WINDOW], model=model):

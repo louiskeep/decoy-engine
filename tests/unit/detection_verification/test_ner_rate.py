@@ -23,6 +23,11 @@ def _spans_for(texts: Any, **_k: Any) -> list[list[Span]]:
     return out
 
 
+def _prose(markers: list[str]) -> list[str]:
+    """Cells with three or more tokens, so the column is free text and gets scored."""
+    return [f"{m} then one two" for m in markers]
+
+
 def test_scan_cells_is_the_plan_value() -> None:
     assert nr.NER_SCAN_CELLS == 2_000
 
@@ -39,7 +44,7 @@ def test_rate_counts_cells_with_at_least_one_span_of_that_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(nr, "iter_ner_spans_batch", _spans_for)
-    rates = nr.ner_rates(["PP", "P", "L", "x", "PL", "y", "z", "w", "v", "u"])
+    rates = nr.ner_rates(_prose(["PP", "P", "L", "x", "PL", "y", "z", "w", "v", "u"]))
     assert set(rates) == {"person_name", "location"}
     assert (rates["person_name"].hit_cells, rates["person_name"].scanned_cells) == (3, 10)
     assert (rates["location"].hit_cells, rates["location"].scanned_cells) == (2, 10)
@@ -48,7 +53,7 @@ def test_rate_counts_cells_with_at_least_one_span_of_that_id(
 
 def test_the_helper_returns_counts_only(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(nr, "iter_ner_spans_batch", _spans_for)
-    shown = repr(nr.ner_rates(["PL"] * 5))
+    shown = repr(nr.ner_rates(_prose(["PL"] * 5)))
     assert "SECRET" not in shown
 
 
@@ -71,3 +76,50 @@ def test_an_empty_sample_has_zero_rates(monkeypatch: pytest.MonkeyPatch) -> None
 )
 def test_rate_buckets(rate: float, bucket: str) -> None:
     assert nr.rate_bucket(rate) == bucket
+
+
+def _boom(*_a: Any, **_k: Any) -> Any:
+    raise AssertionError("a cell reached the NER pipeline")
+
+
+def test_a_column_of_short_person_names_is_not_scored_and_reaches_no_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(nr, "iter_ner_spans_batch", _boom)
+    names = [f"Given{i} Family{i}" for i in range(300)]  # two tokens each
+    rates = nr.ner_rates(names)
+    assert set(rates) == {"person_name", "location"}
+    for rate in rates.values():
+        assert (rate.hit_cells, rate.scanned_cells, rate.rate) == (0, 0, 0.0)
+
+
+def test_a_free_text_column_does_reach_the_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(nr, "iter_ner_spans_batch", _spans_for)
+    rates = nr.ner_rates(["P went to the shop today"] * 4)
+    assert (rates["person_name"].hit_cells, rates["person_name"].scanned_cells) == (4, 4)
+
+
+def test_the_free_text_threshold_is_three_tokens() -> None:
+    assert nr.FREE_TEXT_MIN_TOKENS == 3
+
+
+@pytest.mark.parametrize(
+    ("token_counts", "expected"),
+    [
+        ([3], True),  # a median of exactly 3
+        ([2], False),
+        ([2, 3], False),  # even sample: median 2.5
+        ([3, 3], True),
+        ([1, 3, 5], True),
+        ([1, 1, 5], False),
+        ([], False),  # an empty sample is not free text
+    ],
+)
+def test_is_free_text_boundary(token_counts: list[int], expected: bool) -> None:
+    cells = ["w " * n for n in token_counts]
+    assert nr.is_free_text([c.strip() for c in cells]) is expected
+
+
+def test_tokens_are_counted_by_whitespace_split() -> None:
+    assert nr.is_free_text(["a   b\tc", "d\ne f"])  # runs of whitespace count once
+    assert not nr.is_free_text(["a-b-c-d", "e/f/g"])  # no whitespace, one token each
