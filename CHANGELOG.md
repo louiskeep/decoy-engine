@@ -9,9 +9,65 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
-### Breaking for consumers
+### Added (strategy catalog)
+
+`decoy_engine.strategy_catalog()` returns one `StrategyInfo` row per scalar strategy, sorted by name, with its
+`StrategyOption` list. Each row says whether a namespace is required, whether the strategy is join-safe
+(`hash` and `fpe`), whether it is offered at the wizard's `edit` prompt, and where each option lives in a column
+entry (`column`, `provider_config` or `provider_config.ner`). `StrategyInfo` and `StrategyOption` are exported too.
+
+## [0.19.0] - 2026-11-07
+
+### Breaking for consumers (since v0.18.0)
 
 - `run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked`, `run_native_or_oracle_chunked` and `compile_plan` now refuse a config with `subset:` set (`config.subset_run_unsupported`, registry 1.6.0) instead of masking the full sources; run `run_subset` first.
+- `PLAN_VERSION` is 3 (was 2). A plan this engine writes carries `version: 3`, which a 0.18.0 engine cannot load; this engine still loads a version-2 plan. For a config that does not use declared casting, the version line is the only change.
+- Reason registry `1.2.0` -> `1.6.0` (893 -> 1006 identities). Consumers that enumerate or map reason codes take the new identities; none was removed or renamed.
+- A headerless CSV refusal starts with its code and names the source table, not the file: `source_file.column_count_mismatch: source customers line 3 has 4 fields but column_names declares 3`. A consumer that prints the code apart from the message shows it twice; one that matched the old text must match the code.
+- A `column_names` that is not a list or tuple of strings is refused by `CsvDialect` and `resolve_csv_dialect`. The `FileSource`, `S3Source` and `GCSSource` validation errors and `validate_config` no longer carry the submitted value or the chained pydantic error.
+- Subset explicit keys and filters refuse a lossy cast with the coded `subset_seed_key_type` instead of selecting the wrong rows, and a non-finite `Decimal` bound (NaN, sNaN, Infinity) is refused on every operator. A caller that passed such a key or bound and got rows back now gets a refusal.
+- GCS errors have new text and, for some failures, new classes. Every connector call and every GCS profile read (`GcsParquetSource`, `GcsCsvSource`) now ends in a `TransientError` or `PermanentError` with fixed text (for example `GCS bucket or object not found`, `GCS permission denied`, `GCS transient network or service error`); the SDK message, bucket and object name no longer appear. `google.auth` transport and timeout errors map to `TransientError` (they were `PermanentError`), other `google.auth` errors map to `PermanentError("GCS credentials unavailable or invalid")`, and a profile read that raised a raw `google.api_core` or `requests` exception now raises one of those two. A consumer that caught the Google exception types or matched the old `GCS not found: ...` text must catch `ConnectorError` subclasses instead.
+
+### Added (F34: the canary span check types, 2026-11-02)
+
+`decoy_engine.verification.canary` is public: `CanarySpanReport` and its finding, status and completion types, the
+closed enums, `CanaryVerdictPolicy` with `derive_status` and `compose_reasons` over a generated 32-row
+`POLICY_TABLE`, and three fixed exceptions that carry no message (`CanarySpanReportInvalid`, `CanaryPolicyInputError`
+and the artifact read failure). Twelve canary reasons are registered (registry 1.3.0, each `since="1.3.0"`).
+`CanarySpanReport` does not yet cross-check its status against its own counts; the report builder must do that.
+Canary span text is normalized for comparison, and Arrow cells render by type with strings compared through the
+binary view, so equal values compare equal across readers.
+
+### Added (F31: `decoy_engine.safe_output`, 2026-11-03)
+
+`SafeEvent` holds only exact, bounded fields (a registry reason, a closed exception label, an approved step name,
+closed counts and flags) so an event carries no exception text and no cell value. `safe_error_type` labels an
+exception by exact type, and `phase.error_result` now takes its `error_type` from that table. The widening of the
+label domain is additive.
+
+### Added (F30: `decoy_engine.telemetry`, 2026-11-03)
+
+`SpanRecorder` pairs phase events into `SpanRecord`s under the closed `decoy-telemetry/v1` vocabulary
+(`TELEMETRY_SCHEMA`, `SPAN_NAMES`, `ATTRIBUTE_KEYS`, `RESOURCE_KEYS`). Phase names are closed, reasons are
+registry-checked and error labels are exact-type safe labels; no value, path or message reaches a span attribute.
+The engine imports no OpenTelemetry package. The caller owns the SDK, the exporter and the flush.
+
+### Added (reason registry 1.5.0: platform and safe_output namespaces, 2026-11-04)
+
+The `platform` namespace (69 identities) and the `safe_output` namespace (`invalid`, `legacy_withheld`) join the
+registry, 71 identities in all, for the safe-output boundary. Summaries carry no value, path or expression.
+
+### Security (isolated-run payload, 2026-11-04)
+
+`run_pipeline_isolated` writes its payload through the output-transaction API with a private label, so the file is
+mode `0600` from creation on both the ambient and the strict file-access paths. Errors from that write are
+value-free.
+
+### Fixed (NER extra, 2026-11-06)
+
+The `[ner]` extra declares `click>=8.1,<9`, which spaCy imports and nothing else installs any more, so a fresh
+`ner` install failed at `import spacy`. The model wheel is pinned by URL and sha256 (`NER_MODEL_WHEELS`) and the user
+docs install it from that pin instead of `spacy download`.
 
 ### Added (RESULT E1: the run-result model, 2026-11-06)
 
@@ -34,13 +90,6 @@ change. `_CERTIFIED_STACKS` gains one 3.10.20 row for the new lock profile and k
 Operators who route S3 or GCS through an HTTPS proxy: urllib3 2.8 takes proxy TLS settings only from
 `proxy_ssl_context`, and destination client certificates no longer apply to a forwarding proxy.
 
-### Added (strategy catalog)
-
-`decoy_engine.strategy_catalog()` returns one `StrategyInfo` row per scalar strategy, sorted by name, with its
-`StrategyOption` list. Each row says whether a namespace is required, whether the strategy is join-safe
-(`hash` and `fpe`), whether it is offered at the wizard's `edit` prompt, and where each option lives in a column
-entry (`column`, `provider_config` or `provider_config.ner`). `StrategyInfo` and `StrategyOption` are exported too.
-
 ### Added (F06: declared parsing, casting and quarantine, 2026-10-29)
 
 A column can now declare `logical_type`, `parse_format`, `sentinel_to_null`, `error_policy` (`fail`, `null`,
@@ -60,7 +109,7 @@ that lacks a needed capability refuses before reading the source (`declared_cast
 routing never selects it. CSV readers keep declared columns as exact lexemes (no inference, no default NA
 conversion). The quarantine seal is the last failure-capable step of a run, a sealed artifact is discarded if the
 run then fails, retrieval tokens are bound to the run (`QuarantineAccessContext(owner, run_id)`), protected records
-carry full F29 `ReasonRecord`s, and the raw row reopens with its Decimal / date / datetime types intact. See
+carry full F29 `ReasonRecord`s, and the raw row reopens with its Decimal / date / datetime types intact.
 A failed discard after the seal is reported as the registered `protected_quarantine_cleanup_failed` with the
 artifact's recovery identity, and a declared job that falls back to a less bounded route lists the refusal under
 `quality_metrics["execution"]["declared_route_refusals"]`. The out-of-core typed staging copy is named by
