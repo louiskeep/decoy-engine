@@ -13,6 +13,27 @@ minimum engine version it was tested against via its
 
 - `run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked`, `run_native_or_oracle_chunked` and `compile_plan` now refuse a config with `subset:` set (`config.subset_run_unsupported`, registry 1.6.0) instead of masking the full sources; run `run_subset` first.
 
+### Added (RESULT E1: the run-result model, 2026-11-06)
+
+`decoy_engine.RunResult` and `RunResultRead` define the frozen `decoy-run-result/v1` document (one record per
+`decoy run`), `RUN_RESULT_SCHEMA` names its tag, and `derive_outcome` is the one place that turns a failure
+category, delivery state and blocking check into a run status and exit code, using the caller's exit map.
+`pipeline_config_hash` exports the compiler's semantic config hash. `ReasonRecord.parse_payload` is now the one
+reason wire-compatibility parser; `from_payload` delegates to it, and it also returns the registry version the
+writer stamped. No registry change.
+
+### Security (locked dependencies, 2026-11-06)
+
+`uv.lock` moves eight packages to the lowest release that clears their advisories, so the `security.yml`
+audit finds nothing on CPython 3.10, 3.11 and 3.12: anyio 4.14.1 to 4.14.2 (PYSEC-2026-4023, -4024, -4025),
+certifi 2026.6.17 to 2026.10.18 (PYSEC-2026-4320), cryptography 49.0.0 to 50.0.0 (PYSEC-2026-3552),
+pyasn1 0.6.3 to 0.6.5 (PYSEC-2026-3455, -3456, -3457), setuptools 82.0.1 to 84.1.0 (PYSEC-2026-3447,
+GHSA-xmj3-9gf7-h52w), soupsieve 2.8.4 to 2.9 (PYSEC-2026-4170, -4171), urllib3 2.7.0 to 2.8.0
+(PYSEC-2026-4175, -4176, -4177) and werkzeug 3.1.8 to 3.1.9 (PYSEC-2026-4312). `pyproject.toml` ranges do not
+change. `_CERTIFIED_STACKS` gains one 3.10.20 row for the new lock profile and keeps every released row.
+Operators who route S3 or GCS through an HTTPS proxy: urllib3 2.8 takes proxy TLS settings only from
+`proxy_ssl_context`, and destination client certificates no longer apply to a forwarding proxy.
+
 ### Added (F06: declared parsing, casting and quarantine, 2026-10-29)
 
 A column can now declare `logical_type`, `parse_format`, `sentinel_to_null`, `error_policy` (`fail`, `null`,
@@ -40,6 +61,28 @@ the engine (`s0000.typed.parquet`, never the table name) inside an engine-made p
 through a scratch reader, so it runs under a strict file-access policy. The local quarantine store retries short
 writes and is ambient-only (`arena_needs_ambient_policy` under a strict policy). See
 `docs/declared-casting.md` and `docs/security/protected-quarantine.md`.
+
+### Added (CLI-DIALECT: one public CSV source reader, 2026-11-06)
+
+`decoy_engine.read_csv_source(path, dialect, *, table, dtype=None, nrows=None, chunksize=None,
+file_access=None, field_key="source.path")` reads a CSV source under its declared dialect. `CsvDialect`
+(`has_header`, `column_names`, `delimiter`) and `resolve_csv_dialect(descriptor)` turn a source descriptor into
+that dialect, with the schema defaults. With the default dialect and `dtype=str` the frame equals
+`pd.read_csv(path, dtype=str)`. A headerless file is width-checked first; `chunksize` runs that check at the call
+and returns an iterator bound to the call's file-access policy. `CsvFileSource` (profile, validate, compile)
+reads through the same code, so there is one copy of the scan. The dialect rules (header against names, blank and
+duplicate names, delimiter shape) now live in one place, `config/_csv_dialect.py`, used by `FileSource` and
+`CsvDialect`. Their delimiter texts no longer echo the submitted value, and a `column_names` that is not a list
+or tuple of strings is refused (`CsvDialect` and `resolve_csv_dialect`). `resolve_csv_dialect` takes the defaults
+from `CsvDialect`. Under a strict file-access policy a headerless parser disagreement is the coded refusal, not a
+read error, and `nrows=0` returns the empty frame with the declared columns without reading the file. `FileSource`, `S3Source` and `GCSSource` hide submitted values in their validation errors, and `validate_config` no longer chains the pydantic error (it carried the submitted descriptor).
+
+### Changed (CLI-DIALECT: headerless CSV refusal messages, 2026-11-06)
+
+A headerless CSV refusal (wrong field count, no data rows, NUL byte, lone CR, parser disagreement) now starts
+with its code and names the source table instead of the file name: `source_file.column_count_mismatch: source
+customers line 3 has 4 fields but column_names declares 3`. Consumers that print the code separately from the
+message (for example the CLI's `decoy preflight` check JSON and the platform's error rendering) show the code twice.
 
 ## [0.18.0] - 2026-11-01
 

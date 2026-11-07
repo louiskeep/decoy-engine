@@ -87,3 +87,7 @@ baseline = "tests/sentry/baselines/gcs-call-kwargs.json"
 [[sentry]]
 id = "reason-policy-single-source"
 baseline = "tests/sentry/baselines/reason-policy-single-source.json"
+
+[[sentry]]
+id = "reason-unchecked-helpers"
+baseline = "tests/sentry/baselines/reason-unchecked-helpers.json"

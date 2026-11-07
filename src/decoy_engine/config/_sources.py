@@ -51,6 +51,7 @@ from pydantic import (
     model_validator,
 )
 
+from decoy_engine.config._csv_dialect import CSV_DIALECT_DEFAULTS, csv_dialect_problem
 from decoy_engine.config._fixed_width import FixedWidthLayout
 
 
@@ -80,7 +81,7 @@ class FileSource(BaseModel):
     columns would get pandas' positional `0,1,2...` names and no rule matches.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     type: Literal["file"]
     format: Literal["csv", "parquet", "fixed_width"]
@@ -93,21 +94,21 @@ class FileSource(BaseModel):
         ),
     )
     has_header: bool = Field(
-        default=True,
+        default=CSV_DIALECT_DEFAULTS.has_header,
         description=(
             "csv only. Whether the first row is a header. Set false for a "
             "headerless file and supply `column_names`."
         ),
     )
     column_names: list[str] | None = Field(
-        default=None,
+        default=CSV_DIALECT_DEFAULTS.column_names,
         description=(
             "csv only. Column names for a headerless file (has_header=false); "
             "required in that case, forbidden when has_header is true."
         ),
     )
     delimiter: str = Field(
-        default=",",
+        default=CSV_DIALECT_DEFAULTS.delimiter,
         description=(
             "csv only. The single-character field delimiter (',' default, "
             "'\\t' for TSV, '|' for pipe-delimited)."
@@ -139,45 +140,9 @@ class FileSource(BaseModel):
                     f"(got format={self.format!r})"
                 )
             return self
-        # csv: header presence and names must agree.
-        if self.has_header and self.column_names is not None:
-            raise ValueError(
-                "FileSource: `column_names` is forbidden when has_header=true "
-                "(the header row already names the columns)"
-            )
-        if not self.has_header and not self.column_names:
-            # None OR an empty list: an empty list would read a zero-column frame
-            # and silently drop the whole file from profiling/masking.
-            raise ValueError(
-                "FileSource: has_header=false requires a non-empty `column_names` "
-                "(a headerless file has no names to read)"
-            )
-        if self.column_names is not None:
-            # Names are the handle every mask rule keys on; a blank or duplicated
-            # name would mislabel a column, so reject at config time. Count-vs-file
-            # cannot be checked here (no file read) -- the reader guards that.
-            if any(not name.strip() for name in self.column_names):
-                raise ValueError("FileSource: `column_names` entries must be non-empty")
-            if len(set(self.column_names)) != len(self.column_names):
-                raise ValueError("FileSource: `column_names` must be unique")
-        if len(self.delimiter) != 1:
-            raise ValueError(
-                f"FileSource: `delimiter` must be exactly one character (got {self.delimiter!r})"
-            )
-        if self.delimiter in ("\n", "\r"):
-            # A line terminator as the field delimiter has no coherent reader
-            # meaning (pandas treats it as a record boundary); reject at config.
-            raise ValueError("FileSource: `delimiter` must not be a line terminator")
-        if not self.delimiter.isprintable() and self.delimiter != "\t":
-            # A NUL or other control char has no coherent single-char delimiter
-            # meaning: csv.reader rejects NUL outright, and the reader drops NUL
-            # bytes before tokenizing, so a NUL delimiter would be erased rather
-            # than split on. Tab is the one control char that is a real delimiter
-            # (TSV), so it is the sole exception.
-            raise ValueError(
-                "FileSource: `delimiter` must be a printable character or a tab "
-                f"(got {self.delimiter!r})"
-            )
+        problem = csv_dialect_problem(self.has_header, self.column_names, self.delimiter)
+        if problem is not None:
+            raise ValueError(f"FileSource: {problem}")
         return self
 
     @model_serializer(mode="wrap")
@@ -191,12 +156,9 @@ class FileSource(BaseModel):
         # dump itself stable, not that hash.) An explicit default means the same as
         # an omitted one, so both drop.
         data: dict[str, Any] = handler(self)
-        if data.get("has_header") is True:
-            data.pop("has_header", None)
-        if data.get("column_names") is None:
-            data.pop("column_names", None)
-        if data.get("delimiter") == ",":
-            data.pop("delimiter", None)
+        for name in CSV_DIALECT_DEFAULTS._fields:
+            if data.get(name) == getattr(CSV_DIALECT_DEFAULTS, name):
+                data.pop(name, None)
         return data
 
     @classmethod
@@ -222,7 +184,7 @@ class S3Source(BaseModel):
     in the V1 spec because the masked output is in-memory anyway.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     type: Literal["s3"]
     format: Literal["csv", "parquet"]
@@ -254,7 +216,7 @@ class GCSSource(BaseModel):
     match the GCS API surface (`bucket.object_name` vs S3 `bucket.key`).
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     type: Literal["gcs"]
     format: Literal["csv", "parquet"]

@@ -7,9 +7,13 @@ against the real workflows and actions and the seeded cases that prove each rule
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from tests.sentry._ci_lock_scan import (
     ACTIONS,
@@ -30,6 +34,7 @@ from tests.sentry._ci_lock_scan import (
     scan_actions,
     scan_workflow,
 )
+from tests.sentry.ci_scan._identity import fetch_raw, identity_findings, should_skip
 
 # --- acceptance tests against the real workflows -----------------------------
 
@@ -61,7 +66,7 @@ def test_setup_uv_is_pinned() -> None:
         f"astral-sh/setup-uv appears {len(uv_steps)} times; want only the setup-uv action"
     )
     version = str((uv_steps[0].get("with") or {}).get("version", ""))
-    assert VERSION.match(version), f"setup-uv version is not an exact x.y.z: {version!r}"
+    assert VERSION.fullmatch(version), f"setup-uv version is not an exact x.y.z: {version!r}"
     users = [
         n
         for n, wf in _real_workflows().items()
@@ -159,6 +164,12 @@ def test_seeded_findings() -> None:
         'pip install -e ".[dev]"': ["project install"],
         "uv sync --extra dev": ["uv sync without --frozen", "installs outside"],
         "uv sync --frozen --extra dev": ["installs outside"],
+        # An option before the subcommand stops `_uv_positions` at `pip`, so only the
+        # `pip sync` entry in SYNC_SUBCOMMANDS finds these.
+        "uv pip --system sync requirements.txt": ["uv sync without --frozen", "installs outside"],
+        "uv pip -q sync requirements.txt": ["uv sync without --frozen", "installs outside"],
+        "uv pip --python p sync requirements.txt": ["uv sync without --frozen", "installs outside"],
+        "uv --directory run sync --frozen": ["installs outside"],
         "bash scripts/dev/bootstrap.sh": ["installs outside"],
         "pip install .[dev]": ["project install"],
         "python -m pip install -e .[docs]": ["project install"],
@@ -199,6 +210,8 @@ def test_seeded_clean_jobs() -> None:
         ("pip install ruff==0.15.22", "ruff check src"),
         (LE, "uv pip install --python x build==1.2.2"),
         (LE, "uv run --frozen pytest"),
+        # `sync` is the value of --directory here; only `run` is the subcommand.
+        (LE, "uv --directory sync run --frozen pytest"),
         ("pip install ./decoy-engine-native",),
         ({"uses": SETUP_UV_USES}, "uvx --python 3.12 pip-audit==2.10.1 -r x"),
     ]
@@ -234,6 +247,21 @@ def test_seeded_action_tool_and_index_cases() -> None:
         "pip install -r requirements.txt": "unlocked requirements",
         "uvx pip-audit": "tool is not an exact",
         "uv tool install ruff": "tool is not an exact",
+        "uv tool --python 3.12 run black": "tool is not an exact",
+        "uv tool --cache-dir c install black": "tool is not an exact",
+        "uv tool --python= run black": "tool is not an exact",
+        "uv tool dir install": "names no package",
+        "pip --python= install requests": "not an exact",
+        "uv pip --python= install requests": "not an exact",
+        "uv tool --a x y run black": "tool is not an exact",
+        "uv tool --a b c install black": "tool is not an exact",
+        "uv tool frobnicate black": "tool is not an exact",
+        "uv tool --brand-new v install black": "tool is not an exact",
+        "uv tool --python 3.12 run ruff==0.15.22": "uv run without --frozen",
+        "uv --brand-new-option x sync": "uv sync without --frozen",
+        "uv --brand-new-option x add requests": "uv add",
+        "uv --brand-new-option run sync": "uv sync without --frozen",
+        "uv --cache-dir c --directory d --config-file f sync": "uv sync without --frozen",
         "pipx install ruff": "tool is not an exact",
         "pipx run ruff": "tool is not an exact",
     }
@@ -399,6 +427,32 @@ def test_option_and_command_normalisation() -> None:
         "$HOME/.local/bin/uv sync --frozen": "installs outside",
         "/usr/bin/pip install -e .": "project install",
         "uv sync --frozen --python=3.12": "installs outside",
+        # Shared-core spellings: global options before the subcommand, find-links, index env.
+        "uv --quiet sync --frozen": "installs outside",
+        "uv pip sync r.txt": "uv sync without --frozen",
+        "uv --quiet pip sync r.txt": "uv sync without --frozen",
+        "uv --preview-features x sync": "uv sync without --frozen",
+        "uv pip sync --frozen r.txt": "installs outside",
+        "uv tool run ruff==0.15.22": "uv run without --frozen",
+        "uv tool install ruff": "tool is not an exact",
+        "uv tool upgrade ruff": "tool is not an exact",
+        "pipx inject app requests": "tool is not an exact",
+        "pipx upgrade app": "tool is not an exact",
+        "pipx upgrade-all": "names no package",
+        "pipx reinstall app": "tool is not an exact",
+        "pipx runpip app install requests": "tool is not an exact",
+        "uv --directory x sync": "uv sync without --frozen",
+        "uv --quiet add requests": "uv add",
+        "uv --quiet run pytest": "uv run without --frozen",
+        "pip --python .venv/bin/python install requests": "not an exact",
+        "uv pip --python p install requests": "not an exact",
+        "pip install -f https://x ruff==1.0": "index override",
+        "pip install -e dist/x.whl": "project install",
+        "uv pip install --no-deps -edist/x.whl": "project install",
+        "pip install --find-links=https://x ruff==1.0": "index override",
+        "PIP_INDEX_URL=https://x pip install ruff==1.0": "index environment",
+        "export UV_EXTRA_INDEX_URL=https://x": "index environment",
+        'bash -c "pip install -e ."': "project install",
     }
     for text, expected in cases.items():
         found = scan_workflow(_wf(LE, text))
@@ -437,6 +491,11 @@ def test_setup_uv_needs_a_commit_sha() -> None:
         assert any("commit SHA" in f for f in found), (ref, found)
     ok = {"uses": f"astral-sh/setup-uv@{sha}", "with": {"version": "0.11.19"}}
     assert scan_workflow(_wf(ok), role="setup-uv") == []
+    # A trailing newline must not pass either validator (catalog class 1).
+    newline_sha = {"uses": f"astral-sh/setup-uv@{sha}\n", "with": {"version": "0.11.19"}}
+    assert any("commit SHA" in f for f in scan_workflow(_wf(newline_sha), role="setup-uv"))
+    newline_ver = {"uses": f"astral-sh/setup-uv@{sha}", "with": {"version": "0.11.19\n"}}
+    assert any("exact x.y.z" in f for f in scan_workflow(_wf(newline_ver), role="setup-uv"))
 
 
 def test_permissions_sentry() -> None:
@@ -473,11 +532,11 @@ def test_mac_exemption_is_exactly_one_job() -> None:
         if is_mac_gate(n, j, job)
     ]
     assert exempt == [("gate-selfhosted.yml", "gate")], exempt
-    mac = ["self-hosted", "macos", "decoy-gate"]
+    mac = ["self-hosted", "decoy-gate"]
     boot = "bash scripts/dev/bootstrap.sh"
     on_gate = _wf(boot, name_job="gate", runs_on=mac)
     assert not any("outside" in f for f in scan_workflow(on_gate, name="gate-selfhosted.yml"))
-    other_labels = _wf(boot, name_job="gate", runs_on=["self-hosted", "linux"])
+    other_labels = _wf(boot, name_job="gate", runs_on=["self-hosted", "macos", "decoy-gate"])
     assert any("outside" in f for f in scan_workflow(other_labels, name="gate-selfhosted.yml"))
     other_job = _wf(boot, name_job="gate2", runs_on=mac)
     assert any("outside" in f for f in scan_workflow(other_job, name="gate-selfhosted.yml"))
@@ -558,3 +617,102 @@ def test_lock_version_check_mode(tmp_path: Path) -> None:
     )
     assert bad.returncode == 1 and "MISMATCH" in bad.stdout, bad
     assert bad.stdout.count("pytest") == 1, "each package prints once"
+
+
+def test_index_environment_variables_are_findings_in_every_env_block() -> None:
+    for name in ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "UV_INDEX_URL", "UV_EXTRA_INDEX_URL"):
+        step = {"env": {name: "https://x"}, "run": "uv pip install ruff==1.0"}
+        assert any("index environment" in f for f in scan_workflow(_wf(LE, step))), name
+        job = {"jobs": {"j": {"env": {name: "x"}, "steps": [LE]}}}
+        assert any("index environment" in f for f in scan_workflow(job)), name
+        wf = {"env": {name: "x"}, "jobs": {"j": {"steps": [LE]}}}
+        assert any("index environment" in f for f in scan_workflow(wf)), name
+
+
+# --- shared sentry package tests/sentry/ci_scan: identity with the CLI repository -----
+
+# Ledger of the files in tests/sentry/ci_scan, shared byte-for-byte with the CLI repository.
+# `sha256` is this repository's copy; `other_commit` is a commit in `other_repo` holding the same
+# bytes at `other_path`, fetched and compared below, so editing a local file and its hash together
+# still fails. Changing a shared file means landing it in the other repository first, then
+# pointing `other_commit` at that commit. After both repositories merge to main, the orchestrator
+# re-points every `other_commit` here, and the CLI ledger, at the merge commits on main.
+SHARED_LEDGER = [
+    {
+        "path": "tests/sentry/ci_scan/__init__.py",
+        "sha256": "957ed128539114a8d15c4e03ac77f486f9abee53294fb6b1aadbba536f76ca21",
+        "other_repo": "louiskeep/decoy",
+        "other_path": "tests/sentry/ci_scan/__init__.py",
+        "other_commit": "d60d1fa1e183f3ed4787d96b24fbe944dd666707",
+    },
+    {
+        "path": "tests/sentry/ci_scan/_shell_tokens.py",
+        "sha256": "38e9fddea1c22fdc56017b492193f38649fa448aa04461557645a5921e701b78",
+        "other_repo": "louiskeep/decoy",
+        "other_path": "tests/sentry/ci_scan/_shell_tokens.py",
+        "other_commit": "d60d1fa1e183f3ed4787d96b24fbe944dd666707",
+    },
+    {
+        "path": "tests/sentry/ci_scan/_identity.py",
+        "sha256": "82e09cfd65539afb6289750017a79dbcb5663116010309e821bc699e2f48b096",
+        "other_repo": "louiskeep/decoy",
+        "other_path": "tests/sentry/ci_scan/_identity.py",
+        "other_commit": "d60d1fa1e183f3ed4787d96b24fbe944dd666707",
+    },
+    {
+        "path": "tests/sentry/ci_scan/test_identity.py",
+        "sha256": "ea864e19cd4ea0804f792520e23dec5fd181ebaae1bee8681e5cb80be97fea30",
+        "other_repo": "louiskeep/decoy",
+        "other_path": "tests/sentry/ci_scan/test_identity.py",
+        "other_commit": "d60d1fa1e183f3ed4787d96b24fbe944dd666707",
+    },
+]
+
+
+def test_every_shared_file_is_in_the_ledger_and_matches_it() -> None:
+    on_disk = {
+        f"tests/sentry/ci_scan/{p.name}" for p in (ROOT / "tests/sentry/ci_scan").glob("*.py")
+    }
+    assert on_disk == {e["path"] for e in SHARED_LEDGER}
+    for entry in SHARED_LEDGER:
+        digest = hashlib.sha256((ROOT / entry["path"]).read_bytes()).hexdigest()
+        assert digest == entry["sha256"], entry["path"]
+
+
+def test_shared_files_are_byte_identical_to_the_other_repository() -> None:
+    for entry in SHARED_LEDGER:
+        assert re.fullmatch(r"[0-9a-f]{40}", entry["other_commit"]), "a real commit, not a label"
+        fetched = fetch_raw(entry["other_repo"], entry["other_commit"], entry["other_path"])
+        if should_skip(fetched, os.environ):
+            pytest.skip("offline: the cross-repository check runs in CI and on networked builders")
+        local = (ROOT / entry["path"]).read_bytes()
+        assert identity_findings(local, entry["sha256"], fetched) == [], entry["path"]
+
+
+def test_the_shared_core_is_repo_neutral() -> None:
+    text = (ROOT / "tests/sentry/ci_scan/_shell_tokens.py").read_text(encoding="utf-8")
+    for word in ("requirements-", "uv.lock", "tomllib", "_ci_lock_scan", "pyproject"):
+        assert word not in text, f"the shared core must not know {word}"
+
+
+def test_commands_that_only_look_like_package_commands_stay_clean() -> None:
+    clean = [
+        "uv tool list",
+        "uv tool dir",
+        "uv tool --python 3.12 list",
+        "uv tool --cache-dir c dir",
+        "uv tool --python= list",
+        "uv tool uninstall black",
+        "uv tool update-shell",
+        "uv run --frozen sync",
+        "uv tool uninstall black",
+        "pipx list",
+        "pipx uninstall app",
+        "pipx runpip app list",
+        "rm -f build.log",
+        "docker build -f Dockerfile .",
+        "tail -f server.log",
+        "grep -f patterns.txt data.txt",
+    ]
+    for text in clean:
+        assert scan_workflow(_wf(LE, text)) == [], text
