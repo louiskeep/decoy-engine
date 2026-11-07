@@ -48,6 +48,7 @@ from typing import Any
 import pandas as pd
 
 from decoy_engine.detection.detectors import run_all_detectors
+from decoy_engine.transforms.network.ip_prefix import host_identity
 from decoy_engine.verification.postmask.types import ResidualPIIFinding, Severity
 
 # Strategies whose output is EXPECTED to look like real PII. A detector
@@ -194,6 +195,8 @@ def check_residual_pii(
                 identity = _source_identity(source_frames, table_name, col_name, series)
             if identity is not None:
                 rate, identical_count, src_distinct = identity
+                if configured == "ip_prefix" and source_frames is not None:
+                    src_distinct = _distinct_hosts(source_frames[table_name][col_name])
                 override = _escalate(
                     configured=configured,
                     identity_rate=rate,
@@ -260,6 +263,16 @@ def _source_identity(
         return (identical / comparable, identical, src_distinct)
     except Exception:
         return None
+
+
+def _distinct_hosts(values: pd.Series) -> int:
+    """Distinct hosts as ip_prefix maps them: `::ffff:1.2.3.4` and `1.2.3.4` count once;
+    a value that is not an address counts by itself."""
+    hosts = set()
+    for value in values.dropna():
+        host = host_identity(value)
+        hosts.add(("text", repr(value)) if host is None else ("host", host))
+    return len(hosts)
 
 
 def _escalate(

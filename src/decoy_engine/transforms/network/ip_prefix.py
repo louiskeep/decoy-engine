@@ -112,6 +112,14 @@ def _parse_address(value: object) -> ipaddress.IPv4Address | ipaddress.IPv6Addre
     return address
 
 
+def host_identity(value: object) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """The host ``value`` names, as ``mask`` maps it (IPv4-mapped is its IPv4), or None."""
+    address = _parse_address(value)
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return address.ipv4_mapped
+    return address
+
+
 def canonical_text(value: object) -> str | None:
     """The canonical spelling ``mask`` and ``unmask`` emit for ``value``, or None if malformed."""
     address = _parse_address(value)

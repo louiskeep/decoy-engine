@@ -120,3 +120,26 @@ def test_full_identity_fails_only_from_forty_distinct_addresses(
     # plausible all-self-mapped ip_prefix column.
     src = [f"10.0.{i // 200}.{i % 200}" for i in range(distinct)] * 2
     assert [f.severity for f in _findings(src, list(src))] == [severity]
+
+
+@pytest.mark.parametrize("strategy", ["shuffle", "categorical"])
+def test_the_floor_is_ip_prefix_only(strategy: str) -> None:
+    # Other value-reuse strategies keep failing full identity at any distinct count.
+    src = [f"10.0.0.{i}" for i in range(4)] * 2
+    cfg = {
+        "version": 2,
+        "tables": [{"name": "t", "columns": [{"name": "ip", "strategy": strategy}]}],
+    }
+    findings = check_residual_pii(
+        {"t": pd.DataFrame({"ip": list(src)})}, cfg, source_frames={"t": pd.DataFrame({"ip": src})}
+    )
+    assert [f.severity for f in findings] == ["fail"]
+
+
+def test_distinct_addresses_are_counted_as_hosts() -> None:
+    # 39 hosts, each also in its IPv4-mapped spelling: 78 strings, 39 hosts, so below the floor.
+    hosts = [f"10.0.1.{i}" for i in range(39)]
+    src = hosts + ["::ffff:" + h for h in hosts]
+    (finding,) = _findings(src, list(src))
+    assert finding.severity == "warning"
+    assert "39 distinct addresses" in finding.message
