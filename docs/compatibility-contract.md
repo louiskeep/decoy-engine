@@ -560,11 +560,13 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   left out of the dump, so a config that predates them keeps its exact dump, `pipeline_config_hash` and
   plan hash; the plan hash leaves out `pre_scan` and keeps `post_scan.dismissed` (under
   `ner_findings: fail` a dismissal decides what blocks). Registry 1.7.0 adds `config.detectors_invalid`,
-  `config.post_scan_inactive`, `config.ner_model_invalid`, `config.dismissal_invalid`,
-  `provider.classifier_unavailable` and `provider.ner_model_incompatible`. Two behavior changes:
+  `config.post_scan_inactive`, `config.pre_scan_ner_inactive`, `config.ner_model_invalid`,
+  `config.dismissal_invalid`, `provider.classifier_unavailable` and `provider.ner_model_incompatible`. Two behavior changes:
   `ensure_ner_available` now checks the model name (one `fullmatch` rule) and refuses a model built for
   another spaCy minor, so a `text_redact` `ner` column fails at validate time where it used to fail at
-  load; `ModelPackLoadError` gains a `cause` field (`disabled`, `import` or `pack`).
+  load. A name counts as an installed model only when it is an installed distribution that ships a
+  spaCy `meta.json`; a plain importable module (`os`, `json`) is refused with
+  `provider.ner_model_not_installed` and is never imported; `ModelPackLoadError` gains a `cause` field (`disabled`, `import` or `pack`).
 - **CLI:** verb names, flag names, and the exit-code contract (0 ok, 1
   validation/usage, 2 deprecated-shim, 3 runtime).
 - **Config:** the `pipeline.yaml` schema. An old config must keep validating and

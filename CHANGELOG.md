@@ -20,10 +20,10 @@ spaCy `ner`; `post_scan` also gains `ner_model`, `ner_findings` (`warn` or `fail
 to its default stays out of the dump, so existing configs keep their dump and hashes. `decoy_engine` exports
 `ModelRef`, `ModelStatus`, `classifier_status`, `ner_status`, `load_detectors`, `ModelUnavailableError`,
 `PreScanConfig` and `Dismissal`. `load_detectors` loads every requested model strictly and raises
-`ModelUnavailableError` rather than return a regex-only set. `ensure_ner_available` now checks the model name and
-refuses a model built for another spaCy minor (`provider.ner_model_incompatible`), at validate time instead of at
-load. `ModelPackLoadError` carries a `cause`. `detection/_ner_rate.py` holds the shared NER cell sample and rate.
-Registry 1.7.0 adds six reasons (see `docs/reasons.md`). Nothing runs a model yet: the pre-scan, post-scan and
+`ModelUnavailableError` rather than return a regex-only set. `ensure_ner_available` now checks the model name, accepts only an installed model distribution
+(a module such as `os` is refused and never imported), and refuses a model built for another spaCy minor
+(`provider.ner_model_incompatible`), at validate time instead of at load. `ModelPackLoadError` carries a `cause`. `detection/_ner_rate.py` holds the shared NER cell sample and rate.
+Registry 1.7.0 adds seven reasons (see `docs/reasons.md`). Nothing runs a model yet: the pre-scan, post-scan and
 route changes are later slices.
 
 ### Added (RESULT E1: the run-result model, 2026-11-06)
