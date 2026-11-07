@@ -208,6 +208,14 @@ modules:
     pattern: contextvars (PEP 567)
     source: Python PEP 567 (contextvars), PEP 3134 exception chaining
 
+  - path: src/decoy_engine/anonymize/microaggregation/_mdav.py
+    pattern: MDAV fixed-size microaggregation (Domingo-Ferrer and Torra 2005)
+    source: Domingo-Ferrer and Torra, Ordinal, continuous and heterogeneous k-anonymity through microaggregation, DMKD 11(2) 2005; sdcMicro src/Mdav.cpp (OECD, LGPL-2.1; package GPL-2), behaviour only
+
+  - path: src/decoy_engine/anonymize/microaggregation/_report.py
+    pattern: SSE/SST information loss (Domingo-Ferrer and Mateo-Sanz 2002)
+    source: Domingo-Ferrer and Mateo-Sanz, Practical data-oriented microaggregation for statistical disclosure control, IEEE TKDE 14(1) 2002
+
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
   # RiskFlag) was deleted under the pre-scan-reframe-C clean break

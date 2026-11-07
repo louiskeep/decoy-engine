@@ -511,6 +511,23 @@ charset), but a custom-charset or mixed-low-alphabet column would fall in this g
 Mitigation: cover the column's full alphabet with the charset (e.g. `ALPHANUM`), the
 same fix as the orphan-remap case above.
 
+## Microaggregation gives k-anonymity on the named columns only
+
+`decoy_engine.anonymize.microaggregation.microaggregate` (a library function,
+not reached by any config) replaces numeric quasi-identifiers by the mean of a
+group of at least k similar rows. The output is k-anonymous on those columns,
+and nothing more:
+
+- Group means are published. A group whose members are close, or equal,
+  reveals their values almost exactly.
+- Someone who knows k-1 members of a group and their values can compute the
+  last member's value from the mean.
+- Sensitive columns are not touched. If every member of a group has the same
+  diagnosis, the group discloses it (measure l-diversity or t-closeness).
+- Columns that are not named stay as they are and can still identify a row.
+- MDAV is a heuristic: groups are not optimal, and the last group can join
+  rows that are far apart.
+
 ## What it does do
 
 To be clear about the other side: Decoy does give you deterministic,

@@ -25,6 +25,7 @@ sentry (`tests/sentry/test_package_map_paths.py`) asserts every path here exists
 | `profile/` | Source profiling, readers (CSV, Parquet, fixed-width), fixed-width writer |
 | `io/` | Bounded source readers shared by CLI and platform: CSV record framer, Parquet/CSV byte-budget chunk cutter (`ChunkBudget`) |
 | `quality/` | Fidelity report, distribution snapshot, DP fit |
+| `anonymize/` | Anonymity enforcement, library only (reached by import): `microaggregation/` (MDAV group means for numeric quasi-identifiers) |
 | `validators/` | Job-level validators (`validators:` block) |
 | `quarantine.py` | Quarantine-row routing (`quarantine:` block) |
 | `contracts/` | Versioned engine-owned contracts consumed by CLI/platform: `declared_casting.py` (F06 per-column parse/sentinel/policy/output contract), `_declared_base.py`, `_declared_formats.py` (the closed format shapes) |
