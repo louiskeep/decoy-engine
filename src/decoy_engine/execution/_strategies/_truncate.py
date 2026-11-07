@@ -57,7 +57,7 @@ class TruncateHandler:
     join_safe: bool = False
     wizard_options: tuple[StrategyOption, ...] = (
         option("length", "int", 3, required=True),
-        option("keep", "str", "head", choices=_KEEP_SIDES),
+        option("keep", "str", "tail", choices=_KEEP_SIDES),
         option("mask_char", "str", "*"),
     )
     offer_in_wizard: bool = True

@@ -112,7 +112,7 @@ class FpeStrategyHandler:
     join_safe: bool = True
     wizard_options: tuple[StrategyOption, ...] = (
         option("charset", "str", "digits"),
-        option("preserve_separators", "bool", True),
+        option("preserve_separators", "bool", False),
     )
     offer_in_wizard: bool = True
 

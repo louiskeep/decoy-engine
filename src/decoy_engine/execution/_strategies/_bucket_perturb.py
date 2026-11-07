@@ -73,7 +73,7 @@ class BucketPerturbStrategyHandler:
     namespace_required: bool = True
     join_safe: bool = False
     wizard_options: tuple[StrategyOption, ...] = (
-        option("bucket", "str", "month", choices=tuple(sorted(VALID_BUCKETS))),
+        option("bucket", "str", "quarter", choices=tuple(sorted(VALID_BUCKETS))),
         option("date_format", "str", "%Y-%m-%d"),
     )
     offer_in_wizard: bool = True

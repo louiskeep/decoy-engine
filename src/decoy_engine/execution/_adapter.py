@@ -351,8 +351,8 @@ class StrategyInfo:
 
     name: str
     namespace_required: bool  # true when ANY mode of the strategy needs a namespace
-    # Injective and deterministic per value: may mask a FK key. Assumes the full digest:
-    # `hash.truncate` shortens it, so a key column should not set it.
+    # Injective and deterministic per value with the handler's defaults, so it may mask a FK key.
+    # Options that shorten the output (hash truncate) are not offered.
     join_safe: bool
     options: tuple[StrategyOption, ...]  # allowed V1 wizard options; empty is valid
     offer_in_wizard: bool  # listed at the wizard's `edit` prompt

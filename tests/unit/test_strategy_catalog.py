@@ -11,6 +11,7 @@ that consumes the catalog, not to this module.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -112,13 +113,22 @@ def _source(name: str) -> pa.Array:
     return fixtures[key][1]["val"]
 
 
-def _entry(info: StrategyInfo, *, drop: str | None = None, ner: bool = True) -> dict[str, Any]:
-    """A column entry for `val` built only from the row's examples and placements."""
+def _entry(
+    info: StrategyInfo,
+    *,
+    drop: str | None = None,
+    ner: bool = True,
+    keep: Collection[str] | None = None,
+) -> dict[str, Any]:
+    """A column entry for `val` built only from the row's examples and placements.
+
+    `keep` limits the entry to those option names (None keeps every option).
+    """
     entry: dict[str, Any] = {"name": "val", "strategy": info.name}
     provider_config: dict[str, Any] = {}
     ner_config: dict[str, Any] = {}
     for option in info.options:
-        if option.name == drop:
+        if option.name == drop or (keep is not None and option.name not in keep):
             continue
         value = info.example_options[option.name]
         if option.location == "column":
@@ -136,13 +146,17 @@ def _entry(info: StrategyInfo, *, drop: str | None = None, ner: bool = True) -> 
     return entry
 
 
-def _run(entry: dict[str, Any], values: pa.Array, tmp_path: Path) -> pa.Table:
+def _run(
+    entry: dict[str, Any], values: pa.Array, tmp_path: Path, *, seed: int | None = None
+) -> pa.Table:
     source = pa.table({"val": values})
     cfg = support.make_cfg([entry], path=support.write_source(source, tmp_path / "s.parquet"))
+    if seed is not None:
+        cfg["global_settings"]["seed"] = seed
     return support.run_full_frame(cfg, source).outputs[support.TABLE]
 
 
-# --- declarations and rows ---------------------------------------------------------------------------------
+# --- declarations and rows ---
 
 
 @pytest.mark.parametrize("name", sorted(SCALAR_HANDLERS))
@@ -220,7 +234,7 @@ def test_the_catalog_is_exported() -> None:
     assert decoy_engine.StrategyOption is StrategyOption
 
 
-# --- option metadata ------------------------------------------------------------------------
+# --- option metadata ---
 
 _EXAMPLE_TYPE = {
     "str": str,
@@ -268,7 +282,7 @@ def test_ner_options_are_declared_once_on_the_two_text_strategies() -> None:
         assert ner[1].choices == entities == ("location", "person_name")
 
 
-# --- offered rows build and run ---------------------------------------------------------------------------------
+# --- offered rows build and run ---
 
 
 def test_the_offered_set_is_the_sixteen_simple_strategies() -> None:
@@ -362,6 +376,14 @@ def test_a_join_safe_strategy_maps_a_repeated_input_to_one_output(
     assert out[:50] == out[1000:]
 
 
+def test_no_join_safe_row_offers_an_option_that_shortens_its_output() -> None:
+    shortening = {"truncate", "length", "mask_char"}
+    for info in CATALOG:
+        if info.join_safe:
+            assert not shortening & {o.name for o in info.options}, info.name
+    assert "truncate" not in {o.name for o in _row("hash").options}
+
+
 def test_hash_without_a_namespace_fails_with_its_own_error(tmp_path: Path) -> None:
     entry = _entry(_row("hash"))
     del entry["namespace"]
@@ -370,10 +392,8 @@ def test_hash_without_a_namespace_fails_with_its_own_error(tmp_path: Path) -> No
     assert caught.value.code == "hash_requires_namespace"  # type: ignore[attr-defined]
 
 
-# Strategies whose example needs a namespace to run; code_set reads it only in gen mode.
-NAMESPACE_BITES = sorted(
-    i.name for i in OFFERED_ROWS if i.namespace_required and i.name != "code_set"
-)
+# code_set reads the namespace only in gen mode, which is its example mode.
+NAMESPACE_BITES = sorted(i.name for i in OFFERED_ROWS if i.namespace_required)
 
 
 @pytest.mark.parametrize("name", NAMESPACE_BITES)
@@ -388,12 +408,13 @@ def test_code_set_needs_a_namespace_only_in_gen_mode(tmp_path: Path) -> None:
     info = _row("code_set")
     assert info.namespace_required
     entry = _entry(info)
+    assert entry["provider_config"]["mode"] == "gen"
     del entry["namespace"]
-    _run(entry, _source("code_set"), tmp_path)
-    entry["provider_config"]["mode"] = "gen"
     with pytest.raises(DecoyError) as caught:
         _run(entry, _source("code_set"), tmp_path)
     assert caught.value.code == "code_set_gen_requires_namespace"  # type: ignore[attr-defined]
+    entry["provider_config"]["mode"] = "mask"
+    _run(entry, _source("code_set"), tmp_path)
 
 
 def test_strategies_that_never_read_a_namespace_run_without_one(tmp_path: Path) -> None:
@@ -403,3 +424,196 @@ def test_strategies_that_never_read_a_namespace_run_without_one(tmp_path: Path) 
         entry = _entry(info, ner=False)
         assert "namespace" not in entry
         _run(entry, _source(info.name), tmp_path)
+
+
+# --- the expected table, written out by hand from the handlers ---
+# (name, wire_type, required, location, choices, example), compared by repr so that 1, 1.0 and
+# True stay distinct and a choices tuple must match exactly, including its order.
+
+_PC = "provider_config"
+_NER = "provider_config.ner"
+_NER_ROWS = (
+    ("ner_model", "str", False, _NER, None, "en_core_web_sm"),
+    ("ner_entities", "str_list", False, _NER, ("location", "person_name"), ("person_name",)),
+)
+EXPECTED_OPTIONS: dict[str, tuple[tuple[Any, ...], ...]] = {
+    "passthrough": (),
+    "redact": (("redact_with", "str", False, _PC, None, "XXXX"),),
+    "truncate": (
+        ("length", "int", True, _PC, None, 3),
+        ("keep", "str", False, _PC, ("head", "tail"), "tail"),
+        ("mask_char", "str", False, _PC, None, "*"),
+    ),
+    "faker": (
+        ("provider", "str", True, "column", None, "person_first_name"),
+        ("deterministic", "bool", False, "column", None, True),
+    ),
+    "hash": (),
+    "bucketize": (
+        ("width", "int", True, _PC, None, 10),
+        ("format", "str", False, _PC, ("lower", "midpoint", "range"), "range"),
+    ),
+    "top_code": (
+        ("cap", "int", True, _PC, None, 89),
+        ("over_label", "str", True, _PC, None, "90+"),
+        ("floor", "int", False, _PC, None, 40),
+        ("under_label", "str", False, _PC, None, "under 40"),
+    ),
+    "shuffle": (("deterministic", "bool", False, "column", None, True),),
+    "categorical": (
+        ("categories", "str_list", True, _PC, None, ("gold", "silver", "bronze")),
+        ("weights", "float_list", False, _PC, None, (0.5, 0.3, 0.2)),
+        ("deterministic", "bool", False, "column", None, True),
+    ),
+    "date_shift": (
+        ("min_days", "int", False, _PC, None, -30),
+        ("max_days", "int", False, _PC, None, 30),
+        ("date_format", "str", False, _PC, None, "%Y-%m-%d"),
+    ),
+    "fpe": (
+        ("charset", "str", False, _PC, None, "digits"),
+        ("preserve_separators", "bool", False, _PC, None, False),
+    ),
+    "text_redact": (
+        ("token", "str", False, _PC, None, "[GONE]"),
+        ("label_token", "bool", False, _PC, None, True),
+        *_NER_ROWS,
+    ),
+    "text_mask": (
+        ("token", "str", False, _PC, None, "[GONE]"),
+        (
+            "unmatched_span_policy",
+            "str",
+            False,
+            _PC,
+            ("redact", "replace_with_token"),
+            "replace_with_token",
+        ),
+        *_NER_ROWS,
+    ),
+    "geo_generalize": (
+        ("type", "str", True, _PC, ("lat_lng", "zip"), "zip"),
+        (
+            "cascade",
+            "str_list",
+            True,
+            _PC,
+            (
+                "h3_resolution_5",
+                "h3_resolution_7",
+                "h3_resolution_9",
+                "state",
+                "suppress",
+                "zip3",
+                "zip5",
+            ),
+            ("zip3", "state", "suppress"),
+        ),
+        ("k_threshold", "int", False, _PC, None, 20000),
+    ),
+    "code_set": (
+        ("code_set", "str", True, _PC, ("hcpcs", "icd10", "mcc", "ndc"), "icd10"),
+        ("mode", "str", False, _PC, ("mask", "gen"), "gen"),
+        ("chapter_preserve", "bool", False, _PC, None, True),
+    ),
+    "bucket_perturb": (
+        ("bucket", "str", False, _PC, ("month", "quarter", "week"), "quarter"),
+        ("date_format", "str", False, _PC, None, "%Y-%m-%d"),
+    ),
+}
+
+
+def test_the_expected_table_covers_exactly_the_offered_strategies() -> None:
+    assert set(EXPECTED_OPTIONS) == OFFERED
+
+
+@pytest.mark.parametrize("info", OFFERED_ROWS, ids=lambda i: i.name)
+def test_each_offered_row_equals_the_expected_table_exactly(info: StrategyInfo) -> None:
+    actual = tuple(
+        (o.name, o.wire_type, o.required, o.location, o.choices, o.example) for o in info.options
+    )
+    assert repr(actual) == repr(EXPECTED_OPTIONS[info.name])
+
+
+# --- an optional option changes the output ---
+# Options whose effect the shared fixture cannot show; each reason is why, and where a probe
+# value can show it, a test below does.
+NOT_VISIBLE_ON_FIXTURE = {
+    ("date_shift", "date_format"): "the fixture already uses the auto-detected format",
+    ("bucket_perturb", "date_format"): "the fixture already uses the auto-detected format",
+    ("fpe", "charset"): "digits is the default and the fixture holds only digits",
+    ("fpe", "preserve_separators"): "the digit-only fixture has no separators to preserve",
+    ("geo_generalize", "k_threshold"): "the example is the engine default; probed with 1 below",
+    ("text_redact", "ner_model"): "needs the spaCy model",
+    ("text_redact", "ner_entities"): "needs the spaCy model",
+    ("text_mask", "ner_model"): "needs the spaCy model",
+    ("text_mask", "ner_entities"): "needs the spaCy model",
+}
+# A pair that is only valid together is added together.
+PARTNERS = {("top_code", "floor"): ("under_label",), ("top_code", "under_label"): ("floor",)}
+OPTIONAL_PROBES = [
+    (i.name, o.name)
+    for i in OFFERED_ROWS
+    for o in i.options
+    if not o.required
+    and o.name != "deterministic"
+    and (i.name, o.name) not in NOT_VISIBLE_ON_FIXTURE
+]
+
+
+def _behavior_source(name: str) -> pa.Array:
+    # Three source values would let two category mappings coincide by chance.
+    if name == "categorical":
+        return pa.array([f"v{i}" for i in range(200)])
+    return _source(name)
+
+
+def test_the_exemptions_name_real_options() -> None:
+    real = {(i.name, o.name) for i in CATALOG for o in i.options}
+    assert set(NOT_VISIBLE_ON_FIXTURE) <= real
+    assert set(PARTNERS) <= real
+
+
+@pytest.mark.parametrize(("name", "option"), OPTIONAL_PROBES)
+def test_adding_an_optional_option_changes_the_output(
+    name: str, option: str, tmp_path: Path
+) -> None:
+    info = _row(name)
+    required = set(info.required_options)
+    values = _behavior_source(name)
+    base = _run(_entry(info, keep=required, ner=False), values, tmp_path)
+    keep = required | {option, *PARTNERS.get((name, option), ())}
+    probed = _run(_entry(info, keep=keep, ner=False), values, tmp_path)
+    assert probed["val"].to_pylist() != base["val"].to_pylist()
+
+
+def test_geo_generalize_k_threshold_is_read(tmp_path: Path) -> None:
+    # The zip5 level is kept only when enough rows share the ZIP, so it shows the threshold.
+    info = _row("geo_generalize")
+    entry = _entry(info, keep=set(info.required_options))
+    entry["provider_config"]["cascade"] = ["zip5", "zip3", "suppress"]
+    base = _run(entry, _source("geo_generalize"), tmp_path)
+    entry["provider_config"]["k_threshold"] = 1
+    probed = _run(entry, _source("geo_generalize"), tmp_path)
+    assert probed["val"].to_pylist() != base["val"].to_pylist()
+
+
+@pytest.mark.parametrize("name", ["shuffle", "categorical"])
+def test_a_deterministic_column_is_stable_across_run_seeds(name: str, tmp_path: Path) -> None:
+    values = _behavior_source(name)
+    entry = _entry(_row(name), ner=False)
+    assert entry["deterministic"] is True
+    first = _run(entry, values, tmp_path, seed=1)["val"].to_pylist()
+    second = _run(entry, values, tmp_path, seed=2)["val"].to_pylist()
+    assert first == second
+
+
+def test_a_deterministic_faker_column_maps_equal_inputs_to_equal_outputs(tmp_path: Path) -> None:
+    # The faker pool is built from the run seed, so only the same-seed guarantee holds.
+    entry = _entry(_row("faker"))
+    assert entry["deterministic"] is True
+    values = pa.array([f"name{i % 7}" for i in range(70)])
+    out = _run(entry, values, tmp_path, seed=1)["val"].to_pylist()
+    again = _run(entry, values, tmp_path, seed=1)["val"].to_pylist()
+    assert out == again
+    assert all(out[i] == out[i % 7] for i in range(70))

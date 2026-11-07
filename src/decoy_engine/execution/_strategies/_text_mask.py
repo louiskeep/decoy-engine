@@ -69,7 +69,7 @@ class TextMaskHandler:
         option(
             "unmatched_span_policy",
             "str",
-            "redact",
+            "replace_with_token",
             # A wizard must not offer leaving unmatched text unmasked; hand-edited configs still can.
             choices=("redact", "replace_with_token"),
         ),

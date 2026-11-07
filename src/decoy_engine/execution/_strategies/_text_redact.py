@@ -65,7 +65,7 @@ class TextRedactHandler:
     join_safe: bool = False
     wizard_options: tuple[StrategyOption, ...] = (
         option("token", "str", "[GONE]"),
-        option("label_token", "bool", False),
+        option("label_token", "bool", True),
         *NER_WIZARD_OPTIONS,
     )
     offer_in_wizard: bool = True

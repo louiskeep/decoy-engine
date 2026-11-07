@@ -139,8 +139,8 @@ class TopCodeStrategyHandler:
     wizard_options: tuple[StrategyOption, ...] = (
         option("cap", "int", 89, required=True),
         option("over_label", "str", "90+", required=True),
-        option("floor", "int", 18),
-        option("under_label", "str", "under 18"),
+        option("floor", "int", 40),
+        option("under_label", "str", "under 40"),
     )
     offer_in_wizard: bool = True
 

@@ -77,8 +77,8 @@ from decoy_engine.execution._row_errors import RowError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import ColumnSeed
-from decoy_engine.transforms._codeset_provenance import CODESET_REGISTRY
 from decoy_engine.transforms.code_set import (
+    SHIPPED_CODE_SETS,
     CodeSetConfig,
     apply_code_set,
     describe_loaded_corpus,
@@ -111,9 +111,9 @@ class CodeSetHandler:
     namespace_required: bool = True
     join_safe: bool = False
     wizard_options: tuple[StrategyOption, ...] = (
-        option("code_set", "str", "icd10", required=True, choices=tuple(sorted(CODESET_REGISTRY))),
-        option("mode", "str", "mask", choices=("mask", "gen")),
-        option("chapter_preserve", "bool", False),
+        option("code_set", "str", "icd10", required=True, choices=SHIPPED_CODE_SETS),
+        option("mode", "str", "gen", choices=("mask", "gen")),
+        option("chapter_preserve", "bool", True),
     )
     offer_in_wizard: bool = True
 
