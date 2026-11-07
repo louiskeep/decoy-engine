@@ -76,10 +76,18 @@ def _select_validator(data: dict) -> Any:
     if data.get("version") == 2:
         from decoy_engine.config import PipelineConfig
 
+        message: str | None = None
         try:
             PipelineConfig.model_validate(data)
         except Exception as exc:  # PipelineConfigError is the typed shape
-            raise PipelineValidationError(str(exc)) from exc
+            # `PipelineConfig` hides input values from the rendered text, but the
+            # pydantic error object still carries them in `errors()` / `json()`.
+            # Only the rendered text crosses this boundary: the wrapper is raised
+            # after the `except` block so neither `__cause__` nor `__context__`
+            # holds the value-bearing error.
+            message = str(exc)
+        if message is not None:
+            raise PipelineValidationError(message)
         return None
     raise PipelineValidationError(
         "v1 mask + v1 generate config shapes are no longer validated by "

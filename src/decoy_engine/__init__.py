@@ -25,6 +25,12 @@ Public API (the contract CLI and platform code depend on):
                       or ConfigError. Exported so a `format: fixed_width`
                       FileSource can be read without importing the private
                       `profile._fixed_width_reader` module directly.
+    read_csv_source / CsvDialect / resolve_csv_dialect:
+                      (decoy_engine.profile._csv_reader) the one CSV source
+                      reader: a file read under its declared dialect (header or
+                      `column_names`, delimiter), with a fail-closed width scan
+                      for headerless files. `resolve_csv_dialect(descriptor)`
+                      turns a source descriptor into the `CsvDialect`.
     RELEASE_PHASE / ReleasePhase / is_pre_ga:
                       (decoy_engine.release) the single pre-GA/GA switch the rule
                       inversions and CI gates read. Pre-GA: hard-delete is allowed
@@ -163,6 +169,7 @@ from decoy_engine.plan.validate import (
     PlanValidationResult,
     validate_plan,
 )
+from decoy_engine.profile._csv_reader import CsvDialect, read_csv_source, resolve_csv_dialect
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
 from decoy_engine.profile._fixed_width_writer import write_fixed_width
 from decoy_engine.profiling import ColumnProfile, FieldStats, SentinelFlag, profile_columns
@@ -349,6 +356,7 @@ __all__ = [
     "ConnectorAuthError",
     "ConnectorConfig",
     "ConnectorError",
+    "CsvDialect",
     "DecoyError",
     "DetectorMatch",
     "DeterminismError",
@@ -474,6 +482,7 @@ __all__ = [
     "make_key_resolver",
     "native_companion_status",
     "profile_columns",
+    "read_csv_source",
     "read_fixed_width",
     "reason_from_exception",
     "reasons_from_report",
@@ -481,6 +490,7 @@ __all__ = [
     "register_faker_provider",
     "register_faker_provider_v2",
     "register_secret_provider",
+    "resolve_csv_dialect",
     "run_config_only_checks",
     "run_discovery_sql",
     "run_mask_chunked",
