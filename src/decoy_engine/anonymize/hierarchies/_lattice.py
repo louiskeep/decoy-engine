@@ -110,7 +110,10 @@ class Lattice:
 
         A column at level 0 is checked for coverage and left exactly as it was
         (type, chunking, field metadata); other columns are replaced by their
-        labels, keeping the Arrow field's nullability and metadata.
+        labels, keeping the Arrow field's nullability and metadata. The input is
+        never modified, but on the pandas route unchanged columns share memory
+        with it (a shallow copy), so editing the output in place can show
+        through to the input.
         """
         node = self._check(node)
         if isinstance(table, pd.DataFrame):
