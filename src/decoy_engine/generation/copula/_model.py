@@ -17,7 +17,7 @@ import itertools
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -229,7 +229,7 @@ def _validate_correlation(model: GaussianCopulaModel, dimension: int) -> None:
             raise _value_error(f"{path}.variable", "is not a latent variable index")
         if entry.variable in seen or entry.variable < previous:
             raise _value_error(f"{path}.variable", "must be unique and in ascending order")
-        if entry.reason not in _floors.SUPPRESSION_REASONS:
+        if entry.reason not in _floors.SUPPRESSION_TOKENS:
             raise _value_error(f"{path}.reason", "is not a known suppression reason")
         row = matrix[entry.variable].copy()
         row[entry.variable] = 0.0
@@ -318,10 +318,7 @@ class GaussianCopulaModel:
             _suppression_from_dict(entry, i)
             for i, entry in enumerate(_list(data["suppressed"], "suppressed"))
         )
-        row_count = data["row_count"]
-        if not _is_int(row_count):
-            raise _type_error("row_count", "an integer")
-        return cls(row_count, columns, correlation, suppressed)
+        return cls(_int(data["row_count"], "row_count"), columns, correlation, suppressed)
 
 
 def _exact_keys(
@@ -349,15 +346,15 @@ def _str(value: object, path: str) -> str:
 
 
 def _int(value: object, path: str) -> int:
-    if not isinstance(value, int) or isinstance(value, bool):
+    if not _is_int(value):
         raise _type_error(path, "an integer")
-    return value
+    return cast(int, value)
 
 
 def _number(value: object, path: str) -> float:
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
+    if not _is_number(value):
         raise _type_error(path, "a number")
-    return float(value)
+    return float(cast(float, value))
 
 
 def _column_from_dict(entry: object, index: int) -> ColumnMarginal:

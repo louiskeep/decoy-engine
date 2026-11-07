@@ -19,6 +19,7 @@ from decoy_engine.generation.copula import _rng
 from decoy_engine.generation.copula._marginals import (
     STATE_NULL,
     decode_states,
+    integer_inverse,
     intervals_for,
     is_integer_dtype,
     numeric_inverse,
@@ -45,11 +46,12 @@ def _check_index(value: object, name: str) -> int:
     return value
 
 
-def correlated_uniforms(model: GaussianCopulaModel, n: int, seed: bytes, start: int) -> FloatArray:
+def correlated_uniforms(
+    model: GaussianCopulaModel, n: int, bitgen: _rng.BitGenerator, start: int
+) -> FloatArray:
     d = len(model.latent)
     if d == 0 or n == 0:
         return np.empty((n, d))
-    bitgen = _rng.stream(seed, _rng.SAMPLE_LABEL)
     bitgen.advance(start * d)
     w = ndtri(_rng.uniforms(bitgen, n * d).reshape(n, d))
     factor = np.linalg.cholesky(model.correlation_matrix())
@@ -63,39 +65,45 @@ def sample_gaussian_copula(
     model: GaussianCopulaModel, n: int, *, seed: bytes, start: int = 0
 ) -> pd.DataFrame:
     """`n` synthetic rows, equal to rows `[start, start + n)` of any longer draw with this seed."""
-    if not isinstance(model, GaussianCopulaModel):
-        raise TypeError("copula: model must be a GaussianCopulaModel.")
-    _rng.check_seed(seed)
-    n = _check_index(n, "n")
-    start = _check_index(start, "start")
-    u = correlated_uniforms(model, n, seed, start)
-    position = {(v.column, v.role): j for j, v in enumerate(model.latent)}
-    data: dict[str, pd.Series] = {}
-    for index, column in enumerate(model.columns):
-        if column.kind == KIND_NUMERIC:
-            null_u = u[:, position[(index, ROLE_NULL)]] if (index, ROLE_NULL) in position else None
-            data[column.name] = _numeric_series(column, u[:, position[(index, ROLE_VALUE)]], null_u)
-        elif column.kind == KIND_CATEGORICAL:
-            data[column.name] = _categorical_series(column, u[:, position[(index, ROLE_STATE)]])
-        else:
-            data[column.name] = pd.Series([None] * n, dtype=object)
-    return pd.DataFrame(data, index=pd.RangeIndex(n))
+    try:
+        if not isinstance(model, GaussianCopulaModel):
+            raise TypeError("copula: model must be a GaussianCopulaModel.")
+        _rng.check_seed(seed)
+        n = _check_index(n, "n")
+        start = _check_index(start, "start")
+        u = correlated_uniforms(model, n, _rng.stream(seed, _rng.SAMPLE_LABEL), start)
+        position = {(v.column, v.role): j for j, v in enumerate(model.latent)}
+        data: dict[str, pd.Series] = {}
+        for index, column in enumerate(model.columns):
+            if column.kind == KIND_NUMERIC:
+                null_u = (
+                    u[:, position[(index, ROLE_NULL)]] if (index, ROLE_NULL) in position else None
+                )
+                data[column.name] = _numeric_series(
+                    column, u[:, position[(index, ROLE_VALUE)]], null_u
+                )
+            elif column.kind == KIND_CATEGORICAL:
+                data[column.name] = _categorical_series(column, u[:, position[(index, ROLE_STATE)]])
+            else:
+                data[column.name] = pd.Series([None] * n, dtype=object)
+        return pd.DataFrame(data, index=pd.RangeIndex(n))
+    except BaseException:
+        del seed
+        raise
 
 
 def _numeric_series(column: ColumnMarginal, u: FloatArray, null_u: FloatArray | None) -> pd.Series:
-    values = numeric_inverse(column, u)
     null = np.zeros(len(u), dtype=bool)
     if null_u is not None:
         intervals = intervals_for(column, ROLE_NULL)
         kinds = np.array([s.kind for s in intervals.states])
         null = kinds[decode_states(intervals, null_u)] == STATE_NULL
     if is_integer_dtype(column.dtype):
-        low, high = column.bin_edges[0], column.bin_edges[-1]
-        ints = np.clip(np.round(values), low, high).astype(np.int64)
+        ints = integer_inverse(column, u)
         if null_u is None:
             return pd.Series(ints, dtype=np.int64)
         return pd.Series(pd.array(ints, dtype="Int64").copy()).mask(null)
-    return pd.Series(np.where(null, np.nan, values), dtype=np.float64)
+    return pd.Series(np.where(null, np.nan, numeric_inverse(column, u)), dtype=np.float64)
 
 
 def _categorical_series(column: ColumnMarginal, u: FloatArray) -> pd.Series:

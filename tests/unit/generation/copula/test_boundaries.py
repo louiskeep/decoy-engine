@@ -46,3 +46,22 @@ def test_u_times_total_rounding_up_is_clamped() -> None:
     column = _numeric([0.0, 1.0, 2.0, 3.0], [3, 3, 0])
     top = numeric_inverse(column, np.array([1.0, np.nextafter(1.0, 0.0)]))
     assert np.all(top <= 2.0)
+
+
+def test_integer_draws_stay_in_their_bin_and_cover_it() -> None:
+    from decoy_engine.generation.copula._marginals import integer_inverse
+
+    column = ColumnMarginal("w", KIND_NUMERIC, "int64", 0, 6, (0.0, 2.5, 5.0), (3, 3))
+    u = np.linspace(0.0, 1.0, 6001)
+    values = integer_inverse(column, u)
+    assert set(values[u < 0.5].tolist()) == {0, 1, 2}
+    assert set(values[u > 0.5].tolist()) == {3, 4, 5}
+    assert np.all(np.diff(values) >= 0)
+    edge_bins = ColumnMarginal("w", KIND_NUMERIC, "int64", 0, 4, (1.0, 2.0, 3.0), (2, 2))
+    got = integer_inverse(edge_bins, np.array([0.0, 0.49, 0.51, 1.0]))
+    assert got.tolist() == [
+        1,
+        1,
+        2,
+        3,
+    ]  # the first bin is [1, 2): an integer edge belongs to the next

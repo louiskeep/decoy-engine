@@ -13,6 +13,21 @@ minimum engine version it was tested against via its
 
 - `run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked`, `run_native_or_oracle_chunked` and `compile_plan` now refuse a config with `subset:` set (`config.subset_run_unsupported`, registry 1.6.0) instead of masking the full sources; run `run_subset` first.
 
+### Added (V2-4.2 and V2-4.3: Gaussian copula synthesis, library only, 2026-11-07)
+
+V2 track, library-only, not wired into config; not merged per owner instruction. New package
+`decoy_engine.generation.copula`, reachable only by importing it: `fit_gaussian_copula(frame,
+snapshot, seed=...)` keeps the frame's `distribution-snapshot/v1` marginals (checked against a
+recomputed snapshot) and adds a latent correlation matrix (rank-based normal scores for numeric
+columns, frequency intervals for categorical columns, null as its own state), repaired to the
+nearest correlation matrix and released at 3 decimals under disclosure floors (at least 100 rows;
+sparse, near-constant or finely binned variables are suppressed whole and listed in the model).
+`sample_gaussian_copula(model, n, seed=..., start=...)` draws rows that keep pairwise dependence;
+a window equals the same rows of a full draw. The model has a strict JSON form
+(`decoy-gaussian-copula/v1`). It is not differentially private and holds the snapshot's real bin
+edges and category labels. Datetime and freetext columns are refused. No new dependency (the
+normal CDF and inverse are vectorized Cody and AS241), no reason codes.
+
 ### Added (F06: declared parsing, casting and quarantine, 2026-10-29)
 
 A column can now declare `logical_type`, `parse_format`, `sentinel_to_null`, `error_policy` (`fail`, `null`,

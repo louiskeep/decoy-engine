@@ -26,19 +26,33 @@ _SHIFT = 12
 _SCALE = 2.0**-52
 
 
-def check_seed(seed: object) -> bytes:
-    if not isinstance(seed, bytes):
-        raise TypeError("copula: seed must be bytes.")
-    if len(seed) < MIN_SEED_BYTES:
-        raise ValueError(f"copula: seed must be at least {MIN_SEED_BYTES} bytes.")
-    return seed
+def check_seed(seed: object) -> None:
+    try:
+        if not isinstance(seed, bytes):
+            raise TypeError("copula: seed must be bytes.")
+        if len(seed) < MIN_SEED_BYTES:
+            raise ValueError(f"copula: seed must be at least {MIN_SEED_BYTES} bytes.")
+    except BaseException:
+        del seed
+        raise
 
 
 def stream(seed: bytes, label: bytes) -> BitGenerator:
     """A PCG64 stream for one purpose; the label separates fit from sample for the same bytes."""
-    material = len(label).to_bytes(4, "big") + label + len(seed).to_bytes(4, "big") + seed
-    entropy = int.from_bytes(hashlib.sha256(material).digest(), "big")
-    return np.random.PCG64(np.random.SeedSequence(entropy))
+    try:
+        return np.random.PCG64(
+            np.random.SeedSequence(
+                int.from_bytes(
+                    hashlib.sha256(
+                        len(label).to_bytes(4, "big") + label + len(seed).to_bytes(4, "big") + seed
+                    ).digest(),
+                    "big",
+                )
+            )
+        )
+    except BaseException:
+        del seed
+        raise
 
 
 def raw_to_uniform(raw: npt.NDArray[np.uint64]) -> npt.NDArray[np.float64]:

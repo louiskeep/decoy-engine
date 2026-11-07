@@ -138,20 +138,42 @@ def decode_states(intervals: Intervals, u: FloatArray) -> IntArray:
     return np.clip(index, 0, kept - 1).astype(np.int64)
 
 
+def _bin_and_fraction(column: ColumnMarginal, u: FloatArray) -> tuple[IntArray, FloatArray]:
+    """The positive-count bin holding quantile `u`, and `u`'s position inside it in [0, 1]."""
+    counts = np.asarray(column.bin_counts, dtype=np.float64)
+    cumulative = np.cumsum(counts)
+    positive = np.flatnonzero(counts > 0)
+    t = np.asarray(u, dtype=np.float64) * cumulative[-1]
+    k = np.clip(np.searchsorted(cumulative, t, side="right"), positive[0], positive[-1])
+    previous = np.where(k > 0, cumulative[k - 1], 0.0)
+    return k.astype(np.int64), np.clip((t - previous) / counts[k], 0.0, 1.0)
+
+
 def numeric_inverse(column: ColumnMarginal, u: FloatArray) -> FloatArray:
     """Histogram inverse CDF of `u` in [0, 1], uniform inside the bin, never in an empty bin."""
     edges = np.asarray(column.bin_edges, dtype=np.float64)
-    counts = np.asarray(column.bin_counts, dtype=np.float64)
-    cumulative = np.cumsum(counts)
-    total = cumulative[-1]
-    positive = np.flatnonzero(counts > 0)
-    t = np.asarray(u, dtype=np.float64) * total
-    k = np.searchsorted(cumulative, t, side="right")
-    k = np.clip(k, positive[0], positive[-1])
-    previous = np.where(k > 0, cumulative[k - 1], 0.0)
-    fraction = np.clip((t - previous) / counts[k], 0.0, 1.0)
+    k, fraction = _bin_and_fraction(column, u)
     low, high = edges[k], edges[k + 1]
     out: FloatArray = np.clip(low + fraction * (high - low), low, high)
+    return out
+
+
+def integer_inverse(column: ColumnMarginal, u: FloatArray) -> IntArray:
+    """Like `numeric_inverse`, but uniform over the integers the bin holds.
+
+    A bin covers `[edge_k, edge_k+1)` (the last one is closed), so an integer column's values in
+    it are exactly those integers; drawing among them keeps every bin's share, where rounding a
+    continuous draw would push mass across bin edges. Monotone in `u`, so ranks are kept.
+    """
+    edges = np.asarray(column.bin_edges, dtype=np.float64)
+    k, fraction = _bin_and_fraction(column, u)
+    low = np.ceil(edges[k])
+    upper = edges[k + 1]
+    last = k == len(edges) - 2
+    high = np.where(last | (upper != np.floor(upper)), np.floor(upper), upper - 1.0)
+    high = np.maximum(high, low)  # a positive-count bin always holds an integer; guards rounding
+    span = high - low + 1.0
+    out: IntArray = np.minimum(low + np.floor(fraction * span), high).astype(np.int64)
     return out
 
 

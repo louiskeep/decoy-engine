@@ -72,35 +72,37 @@ def fit_gaussian_copula(
 ) -> GaussianCopulaModel:
     """Fit a copula to `frame` whose marginals are the entries of `snapshot` (the frame's own
     `distribution-snapshot/v1`). Deterministic in (frame including row order, snapshot, seed)."""
-    _rng.check_seed(seed)
-    if not isinstance(frame, pd.DataFrame):
-        raise TypeError("copula: frame must be a pandas DataFrame.")
-    names = [str(c) for c in frame.columns]
-    if len(set(names)) != len(names):
-        raise ValueError("copula: column names must be unique after conversion to str.")
-    if len(frame) < _floors.MIN_FIT_ROWS:
-        raise ValueError(f"copula: a fit needs at least {_floors.MIN_FIT_ROWS} rows.")
-    frame = frame.set_axis(names, axis=1)
-    _check_finite_numerics(frame)
-    entries = _check_snapshot_matches(frame, snapshot)
-    columns = tuple(from_snapshot_entry(name, entries[name]) for name in names)
-    if any(c.kind != KIND_NUMERIC or c.null_count for c in columns):
-        raise ValueError("copula: categorical columns and nulls are not supported yet.")
-    layout = latent_layout(columns)
-    dimension = len(layout)
-    if dimension > _floors.MAX_LATENT:
-        raise ValueError(f"copula: more than {_floors.MAX_LATENT} latent variables.")
-    if dimension * (dimension - 1) // 2 > _floors.max_latent_pairs(len(frame)):
-        raise ValueError("copula: more latent pairs than half the row count; fit more rows.")
+    try:
+        _rng.check_seed(seed)
+        if not isinstance(frame, pd.DataFrame):
+            raise TypeError("copula: frame must be a pandas DataFrame.")
+        names = [str(c) for c in frame.columns]
+        if len(set(names)) != len(names):
+            raise ValueError("copula: column names must be unique after conversion to str.")
+        if len(frame) < _floors.MIN_FIT_ROWS:
+            raise ValueError(f"copula: a fit needs at least {_floors.MIN_FIT_ROWS} rows.")
+        frame = frame.set_axis(names, axis=1)
+        _check_finite_numerics(frame)
+        entries = _check_snapshot_matches(frame, snapshot)
+        columns = tuple(from_snapshot_entry(name, entries[name]) for name in names)
+        layout = latent_layout(columns)
+        dimension = len(layout)
+        if dimension > _floors.MAX_LATENT:
+            raise ValueError(f"copula: more than {_floors.MAX_LATENT} latent variables.")
+        if dimension * (dimension - 1) // 2 > _floors.max_latent_pairs(len(frame)):
+            raise ValueError("copula: more latent pairs than half the row count; fit more rows.")
 
-    scores = latent_scores(frame, columns, layout, _rng.stream(seed, _rng.FIT_LABEL))
-    stats = _PairStats(scores)
-    suppressed = suppression(stats, columns, layout)
-    raw = raw_correlation(stats, layout, {s.variable for s in suppressed})
-    released = release(
-        raw, [i for i in range(dimension) if i not in {s.variable for s in suppressed}]
-    )
-    return GaussianCopulaModel(len(frame), columns, lower_triangle(released), suppressed)
+        scores = latent_scores(frame, columns, layout, _rng.stream(seed, _rng.FIT_LABEL))
+        stats = _PairStats(scores)
+        suppressed = suppression(stats, columns, layout)
+        raw = raw_correlation(stats, layout)
+        released = release(
+            raw, [i for i in range(dimension) if i not in {s.variable for s in suppressed}]
+        )
+        return GaussianCopulaModel(len(frame), columns, lower_triangle(released), suppressed)
+    except BaseException:
+        del seed
+        raise
 
 
 def _check_finite_numerics(frame: pd.DataFrame) -> None:
@@ -267,22 +269,22 @@ def suppression(
         column = columns[variable.column]
         if variable.role == ROLE_VALUE:
             if stats.variance[j, j] <= 0:
-                reasons[j] = _floors.REASON_ZERO_VARIANCE
+                reasons[j] = _floors.SUPPRESS_ZERO_VARIANCE
             elif len(column.bin_counts) > column.non_null_count // _floors.ROWS_PER_BIN:
-                reasons[j] = _floors.REASON_ROWS_PER_BIN
+                reasons[j] = _floors.SUPPRESS_ROWS_PER_BIN
         else:
             counts = [s.count for s in intervals_for(column, variable.role).states]
             if sum(counts) - max(counts) < _floors.MIN_DISTINGUISHED_ROWS:
-                reasons[j] = _floors.REASON_DISTINGUISHED_ROWS
+                reasons[j] = _floors.SUPPRESS_DISTINGUISHED_ROWS
     for i in range(len(layout)):
         for j in range(i + 1, len(layout)):
             if i in reasons or j in reasons or _structural(layout, i, j):
                 continue
             if stats.shared[i, j] < _floors.MIN_PAIR_ROWS:
                 sparser = i if stats.observed[i] < stats.observed[j] else j
-                reasons[sparser] = _floors.REASON_PAIR_ROWS
+                reasons[sparser] = _floors.SUPPRESS_PAIR_ROWS
             elif stats.variance[j, i] <= 0 or stats.variance[i, j] <= 0:
-                reasons[j if stats.variance[j, i] <= 0 else i] = _floors.REASON_ZERO_VARIANCE
+                reasons[j if stats.variance[j, i] <= 0 else i] = _floors.SUPPRESS_ZERO_VARIANCE
     return tuple(Suppression(v, reasons[v]) for v in sorted(reasons))
 
 
@@ -291,16 +293,16 @@ def _structural(layout: tuple[LatentVariable, ...], i: int, j: int) -> bool:
     return layout[i].column == layout[j].column
 
 
-def raw_correlation(
-    stats: _PairStats, layout: tuple[LatentVariable, ...], suppressed: set[int]
-) -> FloatArray:
+def raw_correlation(stats: _PairStats, layout: tuple[LatentVariable, ...]) -> FloatArray:
+    """Pairwise-complete estimates with a unit diagonal and the structural zeros; suppressed
+    variables are dropped later by `release`, which repairs only the kept block."""
     d = len(layout)
     raw = stats.correlation.copy()
     for i in range(d):
         for j in range(d):
             if i == j:
                 raw[i, j] = 1.0
-            elif i in suppressed or j in suppressed or _structural(layout, i, j):
+            elif _structural(layout, i, j):
                 raw[i, j] = 0.0
     return raw
 

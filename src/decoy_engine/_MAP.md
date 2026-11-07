@@ -13,7 +13,7 @@ sentry (`tests/sentry/test_package_map_paths.py`) asserts every path here exists
 | `progress.py`, `_progress_events.py` | Progress contract: `ProgressSink`, the channel, value-free versioned events (`_progress_events.py` holds the event types and serializers), `use_progress` |
 | `reasons/` | The versioned reason-code registry (`ReasonSpec`, `ReasonRecord`, one catalog module per namespace) |
 | `reason_adapter.py` | `reason_from_exception`, `reasons_from_report`, the per-run failure scope |
-| `generation/` | The generation core (resident and streamed), pinned generation, pools |
+| `generation/` | The generation core (resident and streamed), pinned generation, pools, statistical sampling, Gaussian copula (`copula/`, library only) |
 | `generators/` | `ColumnGenerator` (formula and cardinality bounds the V2 core reuses) |
 | `kernel/` | Backend-neutral Arrow masking kernels (hash, redact, truncate, passthrough) |
 | `transforms/` | Transform implementations the strategy handlers reuse (fpe, text_mask, code_set, derived, joint_mask, geo_generalize, group_key, windowed_date) |
