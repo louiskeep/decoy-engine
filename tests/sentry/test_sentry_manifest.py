@@ -25,6 +25,7 @@ SENTRIES = (
     "tests/sentry/test_ci_config.py",
     "tests/sentry/test_ci_lock_installs.py",
     "tests/sentry/test_deprecation_expiry.py",
+    "tests/sentry/test_dp_lock_row.py",
     "tests/sentry/test_engine_string_targets.py",
     "tests/sentry/test_csv_scan_single_copy.py",
     "tests/sentry/test_exception_hierarchy.py",
