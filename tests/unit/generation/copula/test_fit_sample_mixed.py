@@ -105,7 +105,7 @@ def test_interval_latents_are_normal_scores() -> None:
     snap = snapshot(frame)
     columns = tuple(from_snapshot_entry(c, snap["columns"][c]) for c in frame.columns)
     layout = latent_layout(columns)
-    scores = _fit.latent_scores(frame, columns, layout, fit_stream(seed_bytes(1)))
+    scores = _fit.latent_scores(frame, columns, layout, fit_stream(seed_bytes(1))).scores
     assert abs(np.mean(scores[:, 1])) < 0.05 and abs(np.std(scores[:, 1]) - 1.0) < 0.05
     normal_score = abs(np.corrcoef(scores[:, 0], scores[:, 1])[0, 1])
     from decoy_engine.generation.copula._normal import ndtr

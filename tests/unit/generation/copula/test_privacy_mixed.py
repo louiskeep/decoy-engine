@@ -98,8 +98,8 @@ def test_variable_suppression_leaves_the_rest_as_if_absent() -> None:
     assert _suppressed(model) == {(1, "pair_rows")}
     columns = tuple(from_snapshot_entry(c, snap["columns"][c]) for c in frame.columns)
     layout = latent_layout(columns)
-    scores = _fit.latent_scores(frame, columns, layout, fit_stream(seed_bytes(1)))
-    stats = _fit._PairStats(scores)
+    latent = _fit.latent_scores(frame, columns, layout, fit_stream(seed_bytes(1)))
+    stats = _fit._PairStats(latent)
     kept = [i for i in range(len(layout)) if i != 1]
     structural = structural_zeros(layout)[np.ix_(kept, kept)]
     reduced = stats.correlation[np.ix_(kept, kept)].copy()

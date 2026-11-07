@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -105,8 +106,7 @@ def fit_gaussian_copula(
                 )
             )
         )
-        scores = latent_scores(frame, columns, layout, bitgen)
-        stats = _PairStats(scores)
+        stats = _PairStats(latent_scores(frame, columns, layout, bitgen))
         suppressed = suppression(stats, columns, layout)
         raw = raw_correlation(stats, layout)
         withheld = {s.variable for s in suppressed}
@@ -193,15 +193,26 @@ def _snapshot_parameters(entries: Mapping[str, Any]) -> tuple[int, int, list[str
     )
 
 
+@dataclass(frozen=True)
+class LatentScores:
+    """Per latent variable: normal scores (NaN where unobserved) and the row's group, the tied
+    value or the frequency-interval state (-1 where unobserved). Groups are what the floors count:
+    the jitter inside an interval makes every score distinct, but not the rows distinguishable."""
+
+    scores: FloatArray
+    groups: npt.NDArray[np.int64]
+
+
 def latent_scores(
     frame: pd.DataFrame,
     columns: tuple[ColumnMarginal, ...],
     layout: tuple[LatentVariable, ...],
     bitgen: _rng.BitGenerator,
-) -> FloatArray:
-    """Normal scores, one column per latent variable, NaN where the variable is unobserved."""
+) -> LatentScores:
+    """Normal scores and groups, one column per latent variable."""
     n = len(frame)
     out = np.full((n, len(layout)), np.nan)
+    groups = np.full((n, len(layout)), -1, dtype=np.int64)
     for j, variable in enumerate(layout):
         column = columns[variable.column]
         series = frame[column.name]
@@ -211,6 +222,7 @@ def latent_scores(
             values = pd.to_numeric(series[observed]).astype(np.float64)
             ranks = values.rank(method="average").to_numpy()
             out[observed, j] = ndtri(ranks / (observed.sum() + 1.0))
+            groups[observed, j] = np.unique(values.to_numpy(), return_inverse=True)[1]
             continue
         intervals = intervals_for(column, variable.role)
         if variable.role == ROLE_NULL:
@@ -219,7 +231,8 @@ def latent_scores(
             _check_kind_matches_dtype(column, series)
             state = _categorical_states(intervals.states, series, column.name)
         out[:, j] = ndtri(encode_states(intervals, state, _rng.uniforms(bitgen, n)))
-    return out
+        groups[:, j] = state
+    return LatentScores(out, groups)
 
 
 def _check_kind_matches_dtype(column: ColumnMarginal, series: pd.Series) -> None:
@@ -257,17 +270,15 @@ def _categorical_states(
 class _PairStats:
     """Pairwise-complete counts, Pearson correlations and per-side variances of the latent scores."""
 
-    def __init__(self, scores: FloatArray) -> None:
+    def __init__(self, latent: LatentScores) -> None:
+        scores = latent.scores
+        self.groups = latent.groups
         mask = (~np.isnan(scores)).astype(np.float64)
+        self.present = mask.astype(bool)
         x = np.nan_to_num(scores)
         self.observed = mask.sum(axis=0)
-        # Rows outside each variable's largest group of tied scores: a variable that tells apart
-        # only a few rows (a flag set on one row) would let its correlations locate them.
         self.distinguished = np.array(
-            [
-                column.size - np.unique(column, return_counts=True)[1].max() if column.size else 0
-                for column in (scores[~np.isnan(scores[:, j]), j] for j in range(scores.shape[1]))
-            ]
+            [_distinguished(self.groups[self.present[:, j], j]) for j in range(scores.shape[1])]
         )
         self.shared = mask.T @ mask
         safe = np.maximum(self.shared, 1.0)
@@ -282,6 +293,18 @@ class _PairStats:
         self.correlation = np.clip(corr, -1.0, 1.0)
 
 
+def _distinguished(groups: npt.NDArray[np.int64]) -> int:
+    """Rows outside the largest group: a variable that tells apart only a few rows (a flag set on
+    one row, a rare state) would let its correlations locate them."""
+    return int(groups.size - np.bincount(groups).max()) if groups.size else 0
+
+
+def shared_distinguished(stats: _PairStats, i: int, j: int) -> tuple[int, int]:
+    """Each side's distinguished rows counted on the rows the pair's correlation uses."""
+    rows = stats.present[:, i] & stats.present[:, j]
+    return _distinguished(stats.groups[rows, i]), _distinguished(stats.groups[rows, j])
+
+
 def suppression(
     stats: _PairStats, columns: tuple[ColumnMarginal, ...], layout: tuple[LatentVariable, ...]
 ) -> tuple[Suppression, ...]:
@@ -290,17 +313,13 @@ def suppression(
     structural = structural_zeros(layout)
     for j, variable in enumerate(layout):
         column = columns[variable.column]
-        if variable.role == ROLE_VALUE:
-            if stats.variance[j, j] <= 0:
-                reasons[j] = _floors.SUPPRESS_ZERO_VARIANCE
-            elif stats.distinguished[j] < _floors.MIN_DISTINGUISHED_ROWS:
-                reasons[j] = _floors.SUPPRESS_DISTINGUISHED_ROWS
-            elif len(column.bin_counts) > column.non_null_count // _floors.ROWS_PER_BIN:
-                reasons[j] = _floors.SUPPRESS_ROWS_PER_BIN
-        else:
-            counts = [s.count for s in intervals_for(column, variable.role).states]
-            if sum(counts) - max(counts) < _floors.MIN_DISTINGUISHED_ROWS:
-                reasons[j] = _floors.SUPPRESS_DISTINGUISHED_ROWS
+        value = variable.role == ROLE_VALUE
+        if value and stats.variance[j, j] <= 0:
+            reasons[j] = _floors.SUPPRESS_ZERO_VARIANCE
+        elif stats.distinguished[j] < _floors.MIN_DISTINGUISHED_ROWS:
+            reasons[j] = _floors.SUPPRESS_DISTINGUISHED_ROWS
+        elif value and len(column.bin_counts) > column.non_null_count // _floors.ROWS_PER_BIN:
+            reasons[j] = _floors.SUPPRESS_ROWS_PER_BIN
     for i in range(len(layout)):
         for j in range(i + 1, len(layout)):
             if i in reasons or j in reasons or structural[i, j]:
@@ -310,6 +329,11 @@ def suppression(
                 reasons[sparser] = _floors.SUPPRESS_PAIR_ROWS
             elif stats.variance[j, i] <= 0 or stats.variance[i, j] <= 0:
                 reasons[j if stats.variance[j, i] <= 0 else i] = _floors.SUPPRESS_ZERO_VARIANCE
+            elif stats.shared[i, j] < max(stats.observed[i], stats.observed[j]):
+                # The pair sees a subset of some side's rows: count the floor on that subset.
+                left, right = shared_distinguished(stats, i, j)
+                if min(left, right) < _floors.MIN_DISTINGUISHED_ROWS:
+                    reasons[i if left < right else j] = _floors.SUPPRESS_DISTINGUISHED_ROWS
     return tuple(Suppression(v, reasons[v]) for v in sorted(reasons))
 
 
