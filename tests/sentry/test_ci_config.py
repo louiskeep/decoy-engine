@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import re
 import sys
 from pathlib import Path
@@ -122,7 +123,7 @@ def test_seeded_unsafe_selfhosted_workflows_are_caught() -> None:
 def test_selfhosted_gate_runs_gates_under_the_shared_lock() -> None:
     wf = yaml.safe_load((WORKFLOWS / "gate-selfhosted.yml").read_text())
     (job,) = wf["jobs"].values()
-    assert job["runs-on"] == ["self-hosted", "macos", "decoy-gate"]
+    assert job["runs-on"] == ["self-hosted", "decoy-gate"]
     assert "timeout-minutes" in job
     assert wf["permissions"] == {"contents": "read"}
     assert "secrets." not in (WORKFLOWS / "gate-selfhosted.yml").read_text()
@@ -135,3 +136,24 @@ def test_selfhosted_gate_runs_gates_under_the_shared_lock() -> None:
     # Host-only failures that main shares must not fail every Mac run.
     assert "scripts/dev/gates.sh --keep-going --baseline" in runs
     assert _triggers(WORKFLOWS / "gate-selfhosted.yml") == {"push", "workflow_dispatch"}
+
+
+GATE_BRANCHES_IGNORE = [
+    "plan/**",
+    "feat/v2-*",
+    "plan/v2-*",
+    "feat/v1plus-*",
+    "plan/v1plus-*",
+]
+GATE_PATHS_IGNORE = ["docs/**", "**/*.md"]
+
+
+def test_selfhosted_gate_push_filters_are_pinned() -> None:
+    # Exact lists: a later edit must not silently widen or drop them.
+    wf = yaml.safe_load((WORKFLOWS / "gate-selfhosted.yml").read_text())
+    push = (wf.get(True) or wf["on"])["push"]
+    assert push["branches-ignore"] == GATE_BRANCHES_IGNORE
+    assert push["paths-ignore"] == GATE_PATHS_IGNORE
+    assert "branches" not in push and "paths" not in push
+    for ref in ("main", "refs/heads/main"):
+        assert not any(fnmatch.fnmatchcase(ref, pat) for pat in push["branches-ignore"])

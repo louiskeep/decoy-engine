@@ -532,11 +532,11 @@ def test_mac_exemption_is_exactly_one_job() -> None:
         if is_mac_gate(n, j, job)
     ]
     assert exempt == [("gate-selfhosted.yml", "gate")], exempt
-    mac = ["self-hosted", "macos", "decoy-gate"]
+    mac = ["self-hosted", "decoy-gate"]
     boot = "bash scripts/dev/bootstrap.sh"
     on_gate = _wf(boot, name_job="gate", runs_on=mac)
     assert not any("outside" in f for f in scan_workflow(on_gate, name="gate-selfhosted.yml"))
-    other_labels = _wf(boot, name_job="gate", runs_on=["self-hosted", "linux"])
+    other_labels = _wf(boot, name_job="gate", runs_on=["self-hosted", "macos", "decoy-gate"])
     assert any("outside" in f for f in scan_workflow(other_labels, name="gate-selfhosted.yml"))
     other_job = _wf(boot, name_job="gate2", runs_on=mac)
     assert any("outside" in f for f in scan_workflow(other_job, name="gate-selfhosted.yml"))

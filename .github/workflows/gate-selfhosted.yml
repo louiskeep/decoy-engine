@@ -1,6 +1,13 @@
 # The merge gate: scripts/dev/gates.sh (env, ruff, format, mypy, sentry, licenses, impact-selected
-# tests) on the always-on Mac, so a push is checked by the same command a builder runs locally.
-# Needs a runner registered with labels self-hosted, macos, decoy-gate (owner ops step).
+# tests) on any self-hosted runner labelled decoy-gate (the always-on Mac or the Linux GCP
+# runner), so a push is checked by the same command a builder runs locally. Two runners let two
+# engine pushes run at once instead of queuing behind one Mac. Runners are an owner ops step.
+# The scripts must stay bash 3.2 clean because the Mac still runs them.
+#
+# Pushes that need no gate are filtered out: documentation-only pushes (docs/** and *.md) and
+# plan branches (plan/**, which go through the Dennis and Codex reviews instead), plus the V2 and
+# V1+ branches, which must not use the gate queue. workflow_dispatch still runs any branch by hand.
+# The ignore lists are pinned by tests/sentry/test_ci_config.py; main is never ignored.
 #
 # flock holds ~/.cache/pytest-one.lock for the whole command, the same lock ~/bin/pytest-one
 # takes, so the gate queues behind any full-suite run on the box. pytest-one cannot wrap
@@ -9,9 +16,18 @@ name: gate-selfhosted
 
 # push and workflow_dispatch only. Never pull_request or pull_request_target: this repo is
 # public and a self-hosted runner executes the branch's code, so a PR from a fork would run
-# arbitrary code on the Mac. A sentry (test_ci_config.py) enforces this for every workflow.
+# arbitrary code on the runner. A sentry (test_ci_config.py) enforces this for every workflow.
 on:
   push:
+    branches-ignore:
+      - "plan/**"
+      - "feat/v2-*"
+      - "plan/v2-*"
+      - "feat/v1plus-*"
+      - "plan/v1plus-*"
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   workflow_dispatch:
 
 concurrency:
@@ -23,7 +39,7 @@ permissions:
 
 jobs:
   gate:
-    runs-on: [self-hosted, macos, decoy-gate]
+    runs-on: [self-hosted, decoy-gate]
     timeout-minutes: 90
     # Owner-only: a push by anyone else, or from a fork, never reaches the runner.
     if: github.repository_owner == 'louiskeep' && github.actor == 'louiskeep' && !github.event.repository.fork
@@ -40,12 +56,14 @@ jobs:
         run: |
           export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
           export DECOY_VENV="$HOME/.cache/decoy-gate-venv-engine"
+          mkdir -p ~/.cache
           flock ~/.cache/pytest-one.lock bash scripts/dev/bootstrap.sh
       - name: Gate
         # EVIDENCE block names the head it tested; keep-going lists every red step. --baseline reruns
         # origin/main on this host and fails only on branch-only failures (mypy, sentry, tests), so
-        # Mac-only failures that main has too do not block every push.
+        # host-only failures that main has too do not block every push.
         run: |
           export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
           export DECOY_VENV="$HOME/.cache/decoy-gate-venv-engine"
+          mkdir -p ~/.cache
           flock ~/.cache/pytest-one.lock scripts/dev/gates.sh --keep-going --baseline

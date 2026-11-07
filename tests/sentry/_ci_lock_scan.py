@@ -76,8 +76,9 @@ WRITE_ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
     ("docs.yml", "deploy"): frozenset({"pages", "id-token"}),  # Pages deploy, main push only
     ("native-companion-release.yml", "sign-publish"): frozenset({"contents"}),  # makes the release
 }
-# The one self-hosted job that may bootstrap without the lock-env action: the Mac merge gate.
-MAC_GATE = ("gate-selfhosted.yml", "gate", ["self-hosted", "macos", "decoy-gate"])
+# The one self-hosted job that may bootstrap without the lock-env action: the merge gate, which runs
+# on any decoy-gate runner (the Mac or the Linux GCP runner).
+MAC_GATE = ("gate-selfhosted.yml", "gate", ["self-hosted", "decoy-gate"])
 
 
 def _step_text(step: dict[str, Any]) -> str:
@@ -198,7 +199,7 @@ def _frozen_env(wf: dict[str, Any], job: dict[str, Any]) -> bool:
 
 
 def is_mac_gate(name: str, job_name: str, job: dict[str, Any]) -> bool:
-    """The exact job allowed to bootstrap on a self-hosted Mac: workflow, job and labels all match."""
+    """The exact job allowed to bootstrap on a self-hosted runner: workflow, job and labels all match."""
     return (name, job_name, job.get("runs-on")) == MAC_GATE
 
 
