@@ -57,6 +57,24 @@ They are true between releases and false at the moment a release re-captures the
 was edited. The fix is a test-design call (for example compare against the pin of the previous release, or allow
 equality when the pin was captured by a release commit), not a mechanical one, so it is left to the orchestrator.
 
+## Review round 1 (Dennis GO-WITH-FIXES)
+
+- CHANGELOG `[0.19.0]`: added the merges since v0.18.0 that had no entry: #366 (subset lossless keys, as a Breaking
+  bullet), #396 (NER click and model wheel pin), #365 / #370 / #371 (canary types, normalization, typed Arrow text),
+  #368 (`safe_output`), #369 (`telemetry`), #377 (registry 1.5.0 namespaces, 71 identities), #382 (private
+  isolated-run payload) and #384 (GCS bounds). #384 changes what a consumer catches: GCS connector calls and GCS
+  profile reads now raise `TransientError` or `PermanentError` with fixed text, and `google.auth` transport errors
+  moved from permanent to transient, so it also has a Breaking bullet. The other merges since the tag are CI, dev
+  tooling, refactors and docs with no consumer-visible change. The ratchet test passes; no TRIAGED key was added
+  and the released-sections fixture has no 0.19.0 row. The dangling "See" in the F06 entry is fixed.
+- `scripts/release/reason_release_pin.py` `pin_violations` now checks every released bucket (each pinned
+  `since_counts` key at or below the pinned version, plus live keys at or below it), so a bucket that drops to 0 is
+  reported. New mutant in `test_pin_mutants_are_rejected`: all `since 1.3.0` entries moved to 9.9.0 under registry
+  9.9.0. It failed before the fix (`assert False`) and passes after.
+- `test_canary_reasons.py`: the since test pins the literal `"1.3.0"` and requires the pin count to equal 12 exactly.
+  The fixed-version seeded test is unchanged.
+- `release-r0190-facts.md`: the CLI pin-site table lists the two comment-only references.
+
 ## Not done
 
 - Mutations on the final head, hosted CI, the full suite and the cut: the orchestrator or a fresh agent.

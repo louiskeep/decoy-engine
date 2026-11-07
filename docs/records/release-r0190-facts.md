@@ -132,6 +132,7 @@ CLI (`louiskeep/decoy`, read at CLI main `dd40398`; on 0.18.0):
 | `requirements-dev.lock` | engine line | `scripts/dev/lock.sh` (only the engine line moves) |
 | `src/decoy/ci/rule_codes.py:105` literal codes (sources at engine v0.18.0), `tests/unit/test_ci_rule_codes.py:97` | v0.18.0 | the #79 way after the repin |
 | `tests/e2e/test_plan_command.py` | `plan_version` 2 | 3 (an intended plan format change) |
+| `src/decoy/cli/_token_vault.py:3`, `tests/sentry/test_engine_secret_file_check.py:3` (comment and docstring text only) | "engine ==0.18.0" / "Engine 0.18.0" | optional wording update to 0.19.0; no behavior reads them |
 
 Command: `git grep -n '0\.18\.0\|b643894d\|@v0\.18' origin/main -- pyproject.toml tests .github requirements-certified.txt scripts src docs/release`.
 

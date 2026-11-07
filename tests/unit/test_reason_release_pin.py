@@ -65,6 +65,15 @@ def test_pin_is_well_formed() -> None:
             "claim an already-released since",
         ),
         (lambda m: m.__setitem__("registry_version", "0.0.1"), "went backwards"),
+        (
+            # A whole released bucket moves to a new version under a bump: no live bucket is
+            # left at 1.3.0, so only a check over the pinned buckets sees it drop to 0.
+            lambda m: (
+                m.__setitem__("registry_version", "9.9.0"),
+                [e.__setitem__("since", "9.9.0") for e in m["entries"] if e["since"] == "1.3.0"],
+            ),
+            "0 identities claim an already-released since 1.3.0",
+        ),
     ],
 )
 def test_pin_mutants_are_rejected(mutate, expected) -> None:

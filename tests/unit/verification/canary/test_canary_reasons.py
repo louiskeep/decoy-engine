@@ -13,6 +13,7 @@ from decoy_engine.reasons.verification import _canary
 from decoy_engine.verification.canary import CanaryReason
 
 PIN = Path(__file__).resolve().parents[3] / "fixtures" / "f29" / "reason-registry-release.json"
+RELEASED_SINCE = "1.3.0"
 PLAN_ORDER = (
     "canary_match",
     "canary_scan_incomplete",
@@ -58,18 +59,14 @@ def test_twelve_reasons_registered_under_verification_in_order() -> None:
     assert reasons.check_integrity() == []
 
 
-def test_since_is_unreleased_or_frozen_by_the_release_pin() -> None:
+def test_since_is_frozen_at_the_release_that_shipped_them() -> None:
+    # Released with registry 1.3.0 (pinned as a literal, like test_platform_reasons.py pins V):
+    # all 12 shipped together, and the release pin counts exactly those 12 at that version.
     pin = json.loads(PIN.read_text())
-    pinned, live = pin["registry_version"], reasons.REGISTRY_VERSION
-    assert Version(live) >= Version(pinned)
+    assert Version(pin["registry_version"]) >= Version(RELEASED_SINCE)
     specs = _canary_specs()
-    if any(Version(s.since) <= Version(pinned) for s in specs):
-        # A release has shipped them: they shipped together, and the release pin counts all 12 at
-        # that version, so test_reason_release_pin.py freezes them from here on.
-        assert {s.since for s in specs} == {specs[0].since}
-        assert pin["since_counts"].get(specs[0].since, 0) >= len(specs)
-    else:
-        assert _since_violations(specs, pinned, live) == []
+    assert {s.since for s in specs} == {RELEASED_SINCE}
+    assert pin["since_counts"][RELEASED_SINCE] == len(specs) == 12
 
 
 def test_since_violations_flags_a_released_or_future_version() -> None:
