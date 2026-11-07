@@ -89,15 +89,15 @@ Adapted P1 cells (premise changed, not weakened): "a baseline ordered by a map i
 can order" became "is compared in that order"; the order-label-mismatch cell now expects
 `run mode differs in order`, which is the wording AT-8 asks for.
 
-T1 at `4a73bba5` (VM; vm-run sends a throwaway snapshot commit of the committed tree, so the VM's own
-`git rev-parse HEAD` differs from `4a73bba5` while the tree is identical): `tests/unit/scripts`, all of
-`tests/sentry`, the DP row test and `tests/fileaccess/test_policy_rooted.py`: 4402 passed, 2 skipped;
+T1 at `bffde0ee` (the merge of engine main 0.19.0 into the branch; tree `068bfb35`; VM decoy-test-6; vm-run sends a throwaway snapshot commit of the committed tree, so the VM's own
+`git rev-parse HEAD` differs from `4a73bba5` while the tree is identical; an earlier T1 at `4a73bba5` gave 4402 passed before the merge): `tests/unit/scripts`, all of
+`tests/sentry`, the DP row test and `tests/fileaccess/test_policy_rooted.py`: 4482 passed, 2 skipped (the merge brought main's new sentries, including `test_dp_lock_row.py`, which accepts the 0.19.0 79-dist row);
 ruff check, ruff format --check and mypy on `dp_provenance.py` clean. An earlier T1 on the tree
 before the format fix and the module-size baseline update showed 12 failures, all from those two
 steps (format check failing inside the gates.sh cells, and `module-size.json` out of step); both are
 fixed in `4a73bba5`.
 
-## Red mutations (VM, each restored after; all at `4a73bba5`)
+## Red mutations (VM, each restored after; all at `bffde0ee`, tree `068bfb35`)
 
 | Mutation | Went red |
 |---|---|
