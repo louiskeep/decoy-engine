@@ -17,11 +17,13 @@ the `text_mask` path only.
 ## Install
 
 `spacy` ships behind the optional `ner` extra; the language model is a
-separate download (not pip-resolvable, so it isn't pulled in automatically):
+separate wheel (not on PyPI, so it isn't pulled in automatically). The engine
+pins the wheel's URL and SHA-256 in `NER_MODEL_WHEELS`
+(`decoy_engine.detection.ner`); download that file, check the hash, and install it:
 
 ```
 pip install 'decoy-engine[ner]'
-python -m spacy download en_core_web_sm
+pip install --no-deps ./en_core_web_sm-3.8.0-py3-none-any.whl
 ```
 
 Without this extra installed, `decoy_engine` imports and runs normally --

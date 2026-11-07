@@ -11,7 +11,7 @@ spans into the regular leftmost-longest overlap resolution.
 Optional dependency: spaCy ships in the `ner` extra
 (`pip install decoy-engine[ner]`); the language model is NOT
 pip-resolvable and is installed separately
-(`python -m spacy download en_core_web_sm`). Both absences raise typed
+(install the wheel pinned in `NER_MODEL_WHEELS`). Both absences raise typed
 errors naming the fix; the plan compiler's `text_redact_ner_available`
 check surfaces the same verdicts at validate time.
 
@@ -41,6 +41,8 @@ from decoy_engine.detection.detectors import Span
 from decoy_engine.errors import DecoyError
 
 DEFAULT_NER_MODEL = "en_core_web_sm"
+# The version of DEFAULT_NER_MODEL that NER_MODEL_WHEELS pins and CI installs.
+DEFAULT_NER_MODEL_VERSION = "3.8.0"
 
 
 class NerModelWheel(NamedTuple):
@@ -57,7 +59,7 @@ class NerModelWheel(NamedTuple):
 # meta.json `spacy_version`: a spaCy outside it refuses to load the model.
 NER_MODEL_WHEELS: Mapping[tuple[str, str], NerModelWheel] = MappingProxyType(
     {
-        ("en_core_web_sm", "3.8.0"): NerModelWheel(
+        (DEFAULT_NER_MODEL, DEFAULT_NER_MODEL_VERSION): NerModelWheel(
             url=(
                 "https://github.com/explosion/spacy-models/releases/download/"
                 "en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
@@ -138,8 +140,8 @@ def ensure_ner_available(model: str = DEFAULT_NER_MODEL) -> None:
         raise NerUnavailableError(
             code=reasons.provider.NER_MODEL_NOT_INSTALLED,
             message=(
-                f"text_redact `ner` model {model!r} is not installed: "
-                f"python -m spacy download {model}"
+                f"text_redact `ner` model {model!r} is not installed: install its wheel "
+                "(the pinned wheels are listed in decoy_engine.detection.ner.NER_MODEL_WHEELS)."
             ),
         )
 

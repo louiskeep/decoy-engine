@@ -10,19 +10,15 @@ broken install, which is exactly the failure this gate exists to surface.
 
 from __future__ import annotations
 
-import importlib.util
-import os
-
 import pytest
 
-from decoy_engine.detection.ner import DEFAULT_NER_MODEL, iter_ner_spans, model_installed
+from decoy_engine.detection.ner import DEFAULT_NER_MODEL, iter_ner_spans
+from tests._ner import SKIP_REASON, should_skip_ner
 
 pytestmark = pytest.mark.ner
 
-if os.environ.get("DECOY_REQUIRE_NER") != "1" and (
-    importlib.util.find_spec("spacy") is None or not model_installed(DEFAULT_NER_MODEL)
-):
-    pytest.skip("spaCy or the NER model is not installed (ner extra)", allow_module_level=True)
+if should_skip_ner():
+    pytest.skip(SKIP_REASON, allow_module_level=True)
 
 
 def test_spacy_imports() -> None:

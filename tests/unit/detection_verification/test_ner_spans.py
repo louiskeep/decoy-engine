@@ -20,17 +20,7 @@ from decoy_engine.detection.ner import (
     model_installed,
     spacy_installed,
 )
-
-_NER_READY = spacy_installed() and model_installed(DEFAULT_NER_MODEL)
-_skip_without_ner = pytest.mark.skipif(
-    not _NER_READY,
-    reason="spacy or en_core_web_sm not installed (ner extra)",
-)
-
-
-def needs_ner(obj):
-    """Skip without spaCy and the model; the `ner` mark lets the ner-gate select the test."""
-    return pytest.mark.ner(_skip_without_ner(obj))
+from tests._ner import needs_ner
 
 
 class TestExtraSpansContract:
@@ -415,7 +405,6 @@ class TestBatchSizeInvariance:
 class TestMaxLengthRaiseParity:
     def test_oversized_cell_raises_same_error_class_from_batch_helper(self) -> None:
         from decoy_engine.detection.ner import (
-            DEFAULT_NER_MODEL,
             _pipeline,
             iter_ner_spans,
             iter_ner_spans_batch,

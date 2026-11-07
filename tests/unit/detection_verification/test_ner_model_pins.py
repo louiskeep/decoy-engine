@@ -10,7 +10,11 @@ import pytest
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
-from decoy_engine.detection.ner import DEFAULT_NER_MODEL, NER_MODEL_WHEELS
+from decoy_engine.detection.ner import (
+    DEFAULT_NER_MODEL,
+    DEFAULT_NER_MODEL_VERSION,
+    NER_MODEL_WHEELS,
+)
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -23,7 +27,7 @@ KEYS = sorted(NER_MODEL_WHEELS)
 
 
 def test_default_model_is_pinned() -> None:
-    assert any(model == DEFAULT_NER_MODEL for model, _ in KEYS)
+    assert (DEFAULT_NER_MODEL, DEFAULT_NER_MODEL_VERSION) in NER_MODEL_WHEELS
 
 
 @pytest.mark.parametrize(("model", "version"), KEYS)

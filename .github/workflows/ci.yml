@@ -195,7 +195,7 @@ jobs:
           extras: "dev ner"
       - name: Install the pinned spaCy model wheel
         run: |
-          pin() { python -c "from decoy_engine.detection.ner import DEFAULT_NER_MODEL as m, NER_MODEL_WHEELS as w; print(next(v for k, v in w.items() if k[0] == m).$1)"; }
+          pin() { python -c "from decoy_engine.detection.ner import DEFAULT_NER_MODEL as m, DEFAULT_NER_MODEL_VERSION as v, NER_MODEL_WHEELS as w; print(w[(m, v)].$1)"; }
           url=$(pin url)
           sha=$(pin sha256)
           mkdir -p "$RUNNER_TEMP/ner-model"
