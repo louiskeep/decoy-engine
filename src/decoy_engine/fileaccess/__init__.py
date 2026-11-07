@@ -32,6 +32,12 @@ from decoy_engine.fileaccess._errors import encode_field_key, redact_locators, s
 from decoy_engine.fileaccess._local import LocalFileAccess, engine_dir_handle, engine_handle
 from decoy_engine.fileaccess._preopened import PreopenedFileAccess
 from decoy_engine.fileaccess._private import write_private
+from decoy_engine.fileaccess._protected_dir import (
+    ProtectedDirAclFailed,
+    ProtectedDirUnsafe,
+    open_protected_dir,
+    protected_scratch_dir,
+)
 from decoy_engine.fileaccess._read import keeps_class, read_all, read_checked, read_text, shown
 from decoy_engine.fileaccess._rooted import Root, RootedFileAccess
 from decoy_engine.fileaccess._types import (
@@ -111,6 +117,8 @@ __all__ = [
     "OutputDir",
     "OutputTxn",
     "PreopenedFileAccess",
+    "ProtectedDirAclFailed",
+    "ProtectedDirUnsafe",
     "Root",
     "RootedFileAccess",
     "ambient_forbidden",
@@ -127,7 +135,9 @@ __all__ = [
     "is_ambient",
     "keeps_class",
     "map_in_context",
+    "open_protected_dir",
     "position_key",
+    "protected_scratch_dir",
     "read_all",
     "read_checked",
     "read_text",

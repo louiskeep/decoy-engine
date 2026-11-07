@@ -29,6 +29,9 @@
   "ambient_guards::decoy_engine/execution/out_of_core/_scratch.py": {
    "reason": "initial X0a inventory of tests/sentry/file_access_modules.toml; existing entry, reviewed by its own sentry"
   },
+  "ambient_guards::decoy_engine/fileaccess/_protected_dir.py": {
+   "reason": "LIB L0.1 protected directory allocator entry, added with the quarantine move; reviewed in the slice record"
+  },
   "ambient_only_modules::decoy_engine/connectors/postgres_snapshot.py": {
    "reason": "initial X0a inventory of tests/sentry/file_access_modules.toml; existing entry, reviewed by its own sentry"
   },
@@ -46,6 +49,9 @@
   },
   "ambient_only_modules::decoy_engine/execution/out_of_core/_scratch.py": {
    "reason": "initial X0a inventory of tests/sentry/file_access_modules.toml; existing entry, reviewed by its own sentry"
+  },
+  "ambient_only_modules::decoy_engine/fileaccess/_protected_dir.py": {
+   "reason": "LIB L0.1 protected directory allocator entry, added with the quarantine move; reviewed in the slice record"
   },
   "capability_modules::decoy_engine/fileaccess/_openat2.py": {
    "reason": "initial X0a inventory of tests/sentry/file_access_modules.toml; existing entry, reviewed by its own sentry"

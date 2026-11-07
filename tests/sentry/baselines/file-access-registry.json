@@ -35,18 +35,6 @@
   "entry::decoy_engine/declared_casting/_quarantine_local.py::LocalProtectedQuarantineSink._open_artifact::os.open::0": {
    "reason": "initial X0a inventory of tests/sentry/file_access_registry.toml; existing entry, reviewed by its own sentry"
   },
-  "entry::decoy_engine/declared_casting/_quarantine_local.py::LocalProtectedQuarantineSink._private_dir::os.chmod::0": {
-   "reason": "initial X0a inventory of tests/sentry/file_access_registry.toml; existing entry, reviewed by its own sentry"
-  },
-  "entry::decoy_engine/declared_casting/_quarantine_local.py::LocalProtectedQuarantineSink._private_dir::os.lstat::0": {
-   "reason": "initial X0a inventory of tests/sentry/file_access_registry.toml; existing entry, reviewed by its own sentry"
-  },
-  "entry::decoy_engine/declared_casting/_quarantine_local.py::LocalProtectedQuarantineSink._private_dir::os.lstat::1": {
-   "reason": "initial X0a inventory of tests/sentry/file_access_registry.toml; existing entry, reviewed by its own sentry"
-  },
-  "entry::decoy_engine/declared_casting/_quarantine_local.py::LocalProtectedQuarantineSink._private_dir::os.mkdir::0": {
-   "reason": "initial X0a inventory of tests/sentry/file_access_registry.toml; existing entry, reviewed by its own sentry"
-  },
   "entry::decoy_engine/declared_casting/_quarantine_local.py::LocalProtectedQuarantineSink._publish_atomic::os.open::0": {
    "reason": "initial X0a inventory of tests/sentry/file_access_registry.toml; existing entry, reviewed by its own sentry"
   },
@@ -523,6 +511,21 @@
   },
   "entry::decoy_engine/fileaccess/_local.py::_sync_dir::os.open::0": {
    "reason": "initial X0a inventory of tests/sentry/file_access_registry.toml; existing entry, reviewed by its own sentry"
+  },
+  "entry::decoy_engine/fileaccess/_protected_dir.py::_chmod_private::os.chmod::0": {
+   "reason": "LIB L0.1 protected directory allocator entry, added with the quarantine move; reviewed in the slice record"
+  },
+  "entry::decoy_engine/fileaccess/_protected_dir.py::_is_empty::os.listdir::0": {
+   "reason": "LIB L0.1 protected directory allocator entry, added with the quarantine move; reviewed in the slice record"
+  },
+  "entry::decoy_engine/fileaccess/_protected_dir.py::_lstat::os.lstat::0": {
+   "reason": "LIB L0.1 protected directory allocator entry, added with the quarantine move; reviewed in the slice record"
+  },
+  "entry::decoy_engine/fileaccess/_protected_dir.py::_mkdir::os.mkdir::0": {
+   "reason": "LIB L0.1 protected directory allocator entry, added with the quarantine move; reviewed in the slice record"
+  },
+  "entry::decoy_engine/fileaccess/_protected_dir.py::_remove::shutil.rmtree::0": {
+   "reason": "LIB L0.1 protected directory allocator entry, added with the quarantine move; reviewed in the slice record"
   },
   "entry::decoy_engine/io/bounded_reader.py::csv_convert_options::pyarrow.csv.ConvertOptions::0": {
    "reason": "initial X0a inventory of tests/sentry/file_access_registry.toml; existing entry, reviewed by its own sentry"

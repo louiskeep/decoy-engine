@@ -2,7 +2,10 @@
 # `ordinal` is the index of the call among identical sinks in the function. An entry may be
 # removed freely; adding one needs a `rule` (how the path is built), an `owner` and a `reason`.
 # `ambient_only` marks a caller-derived path that is reached only after `require_ambient`.
-# Count: 201 (asserted by the sentry).
+# `dir_category` (protected_root, protected_child, output_parent, published_output, non_row) and
+# `dir_test` (an existing pytest node id; every category but protected_root) mark directory
+# creators for tests/sentry/protected_dir (G-ONE-PROTECTED-DIR).
+# Count: 202 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -75,6 +78,8 @@ module = "decoy_engine/execution/_isolated_commit.py"
 function = "stage_tables"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "output_parent"
+dir_test = "tests/unit/execution/test_isolated_run.py::TestInProcessFallbackHonorsOutputDir::test_isolate_false_honors_output_dir_and_commits_atomically"
 rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
 reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
@@ -96,6 +101,8 @@ module = "decoy_engine/execution/_isolated_commit.py"
 function = "atomic_commit"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "output_parent"
+dir_test = "tests/unit/execution/test_isolated_run.py::TestCommitFailureIsClassified::test_pre_existing_non_empty_target_is_classified_not_a_raw_oserror"
 rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
 reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
@@ -155,6 +162,7 @@ module = "decoy_engine/execution/_isolated_run.py"
 function = "_run_isolated"
 sink = "tempfile.mkdtemp"
 ordinal = 0
+dir_category = "protected_root"
 rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
 reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
@@ -165,6 +173,7 @@ module = "decoy_engine/execution/_isolated_run.py"
 function = "_run_isolated"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "protected_root"
 rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
 reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
@@ -185,6 +194,8 @@ module = "decoy_engine/execution/_isolated_run.py"
 function = "_write_payload"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "protected_child"
+dir_test = "tests/unit/execution/test_isolated_run.py::TestPayloadFilePermissions::test_payload_json_is_written_0600"
 rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
 reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
@@ -295,6 +306,8 @@ module = "decoy_engine/execution/_isolated_worker.py"
 function = "_stage_outputs"
 sink = "os.makedirs"
 ordinal = 0
+dir_category = "protected_child"
+dir_test = "tests/unit/execution/test_isolated_run.py::TestNormalJobCompletes::test_small_job_completes_with_correct_artifacts_and_plausible_peak"
 rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
 owner = "cam"
 reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
@@ -765,6 +778,7 @@ module = "decoy_engine/execution/out_of_core/_scratch.py"
 function = "scratch_root"
 sink = "tempfile.mkdtemp"
 ordinal = 0
+dir_category = "protected_root"
 rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
 reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
@@ -957,6 +971,8 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "_LocalStageDir.create_dir"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "published_output"
+dir_test = "tests/fileaccess/test_char_sink_publish.py::test_committed_table_path_and_spill_parent"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1011,6 +1027,8 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputTxn.__init__"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "output_parent"
+dir_test = "tests/fileaccess/test_char_sink_publish.py::test_publish_into_absent_target"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1020,6 +1038,8 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputTxn.__init__"
 sink = "tempfile.mkdtemp"
 ordinal = 0
+dir_category = "published_output"
+dir_test = "tests/fileaccess/test_char_sink_publish.py::test_publish_into_absent_target"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1039,6 +1059,8 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputTxn.create_file"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "output_parent"
+dir_test = "tests/fileaccess/test_char_sink_publish.py::test_publish_into_absent_target"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1105,6 +1127,8 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputTxn.publish"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "output_parent"
+dir_test = "tests/fileaccess/test_char_sink_publish.py::test_publish_into_absent_target"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1187,6 +1211,8 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputDir.ensure_dir"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "output_parent"
+dir_test = "tests/fileaccess/test_char_sink_publish.py::test_publish_into_empty_directory"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1196,6 +1222,8 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputDir.ensure_dir"
 sink = "Path.mkdir"
 ordinal = 1
+dir_category = "published_output"
+dir_test = "tests/fileaccess/test_char_sink_publish.py::test_publish_into_empty_directory"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1232,6 +1260,8 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalFileAccess.log_handler"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "output_parent"
+dir_test = "tests/fileaccess/test_char_cli_logging.py::test_default_log_file_is_created_under_the_cwd"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1470,6 +1500,7 @@ module = "decoy_engine/connectors/postgres_snapshot.py"
 function = "_open_connection"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "protected_root"
 rule = "path derived from the caller's dest_dir or the config's temp_directory; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
 reason = "the Postgres snapshot child stages Parquet beside a platform-chosen destination and cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
@@ -1490,6 +1521,8 @@ module = "decoy_engine/connectors/postgres_snapshot.py"
 function = "snapshot_tables_to_parquet"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "output_parent"
+dir_test = "tests/connectors/test_postgres_snapshot.py::test_guarantee2_same_state_gives_byte_identical_parquet"
 rule = "path derived from the caller's dest_dir or the config's temp_directory; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
 reason = "the Postgres snapshot child stages Parquet beside a platform-chosen destination and cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
@@ -1500,6 +1533,8 @@ module = "decoy_engine/connectors/postgres_snapshot.py"
 function = "snapshot_tables_to_parquet"
 sink = "Path.mkdir"
 ordinal = 1
+dir_category = "published_output"
+dir_test = "tests/connectors/test_postgres_snapshot.py::test_guarantee2_same_state_gives_byte_identical_parquet"
 rule = "path derived from the caller's dest_dir or the config's temp_directory; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
 reason = "the Postgres snapshot child stages Parquet beside a platform-chosen destination and cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
@@ -1708,46 +1743,6 @@ ambient_only = true
 
 [[entry]]
 module = "decoy_engine/declared_casting/_quarantine_local.py"
-function = "LocalProtectedQuarantineSink._private_dir"
-sink = "os.lstat"
-ordinal = 0
-rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
-owner = "cam"
-reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/declared_casting/_quarantine_local.py"
-function = "LocalProtectedQuarantineSink._private_dir"
-sink = "os.mkdir"
-ordinal = 0
-rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
-owner = "cam"
-reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/declared_casting/_quarantine_local.py"
-function = "LocalProtectedQuarantineSink._private_dir"
-sink = "os.chmod"
-ordinal = 0
-rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
-owner = "cam"
-reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/declared_casting/_quarantine_local.py"
-function = "LocalProtectedQuarantineSink._private_dir"
-sink = "os.lstat"
-ordinal = 1
-rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
-owner = "cam"
-reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/declared_casting/_quarantine_local.py"
 function = "LocalProtectedQuarantineSink._open_artifact"
 sink = "os.open"
 ordinal = 0
@@ -1844,6 +1839,7 @@ module = "decoy_engine/execution/out_of_core/_scratch.py"
 function = "engine_scratch_root"
 sink = "tempfile.mkdtemp"
 ordinal = 0
+dir_category = "protected_root"
 rule = "an engine-created `tempfile.mkdtemp` root, under the caller's temp_dir only after `fileaccess.require_ambient` refused every policy but the ambient one; removed on exit"
 owner = "cam"
 reason = "the per-run scratch root that holds the F06 typed staging copy and the route's spill under one temp-disk budget"
@@ -1892,6 +1888,7 @@ module = "decoy_engine/execution/out_of_core/_scratch.py"
 function = "private_dir"
 sink = "os.mkdir"
 ordinal = 0
+dir_category = "protected_root"
 rule = "a directory under an engine-created scratch root (`scratch_root` / `engine_scratch_root`), named by an opaque per-run id, never by a table, column or edge name; or the missing levels of a caller-named temp_dir, reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
 reason = "engine-owned spill directories, and the levels it creates on the way to a caller temp_dir, are created 0700 level by level whatever the umask"
@@ -1914,3 +1911,54 @@ rule = "an engine-created `tempfile.mkdtemp` root, under the caller's temp_dir o
 owner = "cam"
 reason = "the per-run scratch root that holds the F06 typed staging copy and the route's spill under one temp-disk budget"
 ambient_only = true
+[[entry]]
+module = "decoy_engine/fileaccess/_protected_dir.py"
+function = "_lstat"
+sink = "os.lstat"
+ordinal = 0
+rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the single check-before and check-after lookup of the protected directory allocator"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/fileaccess/_protected_dir.py"
+function = "_mkdir"
+sink = "os.mkdir"
+ordinal = 0
+dir_category = "protected_root"
+rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the allocator creates each protected directory 0700; the one place a directory holding Decoy rows is made"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/fileaccess/_protected_dir.py"
+function = "_chmod_private"
+sink = "os.chmod"
+ordinal = 0
+rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the allocator sets 0700 whatever the umask, so a directory is never left wider than owner-only"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/fileaccess/_protected_dir.py"
+function = "_is_empty"
+sink = "os.listdir"
+ordinal = 0
+rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the allocator tightens an existing open directory only when it is empty"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/fileaccess/_protected_dir.py"
+function = "_remove"
+sink = "shutil.rmtree"
+ordinal = 0
+rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the allocator removes a directory it issued, or one it created that failed its own check"
+ambient_only = true
+
