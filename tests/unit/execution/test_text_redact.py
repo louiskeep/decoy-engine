@@ -28,10 +28,15 @@ from decoy_engine.plan._types import ColumnSeed
 # tests/unit/detection_verification/test_ner_spans.py. SKIPPED in the extras-free CI
 # environment; PASSES once `pip install decoy-engine[ner]` + `python -m
 # spacy download en_core_web_sm` have run.
-needs_ner = pytest.mark.skipif(
+_skip_without_ner = pytest.mark.skipif(
     not (spacy_installed() and model_installed(DEFAULT_NER_MODEL)),
     reason="spacy or en_core_web_sm not installed (ner extra)",
 )
+
+
+def needs_ner(obj):
+    """Skip without spaCy and the model; the `ner` mark lets the ner-gate select the test."""
+    return pytest.mark.ner(_skip_without_ner(obj))
 
 
 def _seed(provider_config: dict) -> ColumnSeed:

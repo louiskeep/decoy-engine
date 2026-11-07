@@ -22,9 +22,15 @@ from decoy_engine.detection.ner import (
 )
 
 _NER_READY = spacy_installed() and model_installed(DEFAULT_NER_MODEL)
-needs_ner = pytest.mark.skipif(
-    not _NER_READY, reason="spacy or en_core_web_sm not installed (ner extra)"
+_skip_without_ner = pytest.mark.skipif(
+    not _NER_READY,
+    reason="spacy or en_core_web_sm not installed (ner extra)",
 )
+
+
+def needs_ner(obj):
+    """Skip without spaCy and the model; the `ner` mark lets the ner-gate select the test."""
+    return pytest.mark.ner(_skip_without_ner(obj))
 
 
 class TestExtraSpansContract:

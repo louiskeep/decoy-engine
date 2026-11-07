@@ -25,10 +25,15 @@ from decoy_engine.execution._strategies._text_mask import TextMaskHandler
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import ColumnSeed
 
-needs_ner = pytest.mark.skipif(
+_skip_without_ner = pytest.mark.skipif(
     not (spacy_installed() and model_installed(DEFAULT_NER_MODEL)),
     reason="spacy or en_core_web_sm not installed (ner extra)",
 )
+
+
+def needs_ner(obj):
+    """Skip without spaCy and the model; the `ner` mark lets the ner-gate select the test."""
+    return pytest.mark.ner(_skip_without_ner(obj))
 
 
 def _seed(provider_config: dict, *, ner_model_version: str | None = None) -> ColumnSeed:

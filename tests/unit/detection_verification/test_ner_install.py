@@ -1,9 +1,9 @@
 """The ner extra plus the pinned model wheel yield a working spaCy pipeline.
 
 Marked `ner`: the ner-gate CI job installs only `dev ner` and the pinned model wheel, so a
-missing transitive import (spaCy needs click) or a bad model pin fails here. Where spaCy is
-absent (the default gate) the module skips; DECOY_REQUIRE_NER=1, set by ner-gate, turns that
-skip into a failure so an empty install cannot pass. spaCy is imported directly, not through
+missing transitive import (spaCy needs click) or a bad model pin fails here. Where spaCy or the
+model is absent (the default gate) the module skips; DECOY_REQUIRE_NER=1, set by ner-gate, turns
+that skip into a failure so an empty install cannot pass. spaCy is imported directly, not through
 importorskip, because importorskip also swallows a ModuleNotFoundError raised from inside a
 broken install, which is exactly the failure this gate exists to surface.
 """
@@ -15,12 +15,14 @@ import os
 
 import pytest
 
-from decoy_engine.detection.ner import DEFAULT_NER_MODEL, iter_ner_spans
+from decoy_engine.detection.ner import DEFAULT_NER_MODEL, iter_ner_spans, model_installed
 
 pytestmark = pytest.mark.ner
 
-if importlib.util.find_spec("spacy") is None and not os.environ.get("DECOY_REQUIRE_NER"):
-    pytest.skip("spaCy is not installed (ner extra)", allow_module_level=True)
+if os.environ.get("DECOY_REQUIRE_NER") != "1" and (
+    importlib.util.find_spec("spacy") is None or not model_installed(DEFAULT_NER_MODEL)
+):
+    pytest.skip("spaCy or the NER model is not installed (ner extra)", allow_module_level=True)
 
 
 def test_spacy_imports() -> None:
