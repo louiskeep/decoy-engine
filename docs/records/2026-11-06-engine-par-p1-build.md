@@ -141,6 +141,14 @@ discarded; the table is from the sequential run.
 - Direct baseline writes are non-atomic (~485); the promoter is atomic.
 - Test file is 819+ lines against about 380 planned.
 
+## Guard fix result (code head 76c8f461 before this record commit)
+
+Run on GCP VM decoy-test-5 (Mac lock was held by a long full run with three queued).
+`tests/unit/scripts` + `tests/sentry/test_bash32_compat.py`: 211 passed. `bash -n`, ruff check and format clean.
+- Mutation (a): appended `"$BIN/python" -c 'from json import load; ...'` to gates.sh: the guard test went red (1 failed).
+- Mutation (b): allowed `-c` in the rule: 3 seeded cases went red (3 failed, 7 passed).
+Both reverted.
+
 ## Not done
 
 - The full suite and the first baseline write and promote (`decoy-vm-t3 <vm> engine <main> base-eng write`):
