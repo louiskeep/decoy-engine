@@ -131,7 +131,9 @@ def profile_source(
     sources = profile_descriptors(config)
     tables: list[TableProfile] = []
     for table_name, source_descriptor in sources.items():
-        reader = build_profile_source(source_descriptor, field_key=f"sources.{table_name}.path")
+        reader = build_profile_source(
+            source_descriptor, field_key=f"sources.{table_name}.path", table=table_name
+        )
         table = _profile_one_source(
             reader,
             table_name=table_name,

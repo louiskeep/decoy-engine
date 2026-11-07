@@ -83,3 +83,7 @@ baseline = "tests/sentry/baselines/private-file-sinks.json"
 [[sentry]]
 id = "gcs-call-kwargs"
 baseline = "tests/sentry/baselines/gcs-call-kwargs.json"
+
+[[sentry]]
+id = "reason-unchecked-helpers"
+baseline = "tests/sentry/baselines/reason-unchecked-helpers.json"
