@@ -50,6 +50,18 @@ scratch repos build a real second and third slice, so the results do not depend 
 - L1: stale-since uses the fact `main_moved` (fork != main sha) instead of comparing manifests.
 - L2 to L6: deferred to V2-LOG per the coordinator; the texts are in Dennis's gate report.
 
+## Codex final-review fixes (on 5100e0d7)
+
+- `--check` fails closed. It rebuilds the consumer contract from the tree and requires the
+  committed file to match, reports a non-string `registry_version` as `<non-string>`, requires at
+  least one version, refuses zero fixtures when identities are new and more than one fixture
+  always, and requires exactly one `docs/reasons.md` anchor with every match checked. AT-R23 covers
+  wrong type, missing key, duplicate fixtures, no fixture, duplicate anchor, stale duplicate anchor.
+- The guard resolves module aliases: `import m as p`, `import a.b.m`, `from a.b import m`, then
+  `p.SCHEMA_ROOTS` and `p.version_of(...)`.
+- Flat test folders (`tests/sentry` and `tests/unit` hold many direct modules): not moved here.
+  The LAYOUT slice carries that, already logged.
+
 ## Deviations
 
 - Sizes: the test file is about 690 lines (cap 360) after `ruff format`; the whole part is about
@@ -69,30 +81,46 @@ the mutations below carry the right-reason evidence.
 
 ## Mutations
 
-| Id | Red test |
-|---|---|
-| M1, M12, M16 | test_second_slice_is_renumbered..., test_a_second_renumber_keeps_both_record_lines_true |
-| M2 | test_renumber_is_idempotent |
-| M3 | test_a_slice_at_main_plus_one_is_a_noop |
-| M4 | test_check_rejects_a_version_that_is_not_main_plus_one[_gap] |
-| M5 | test_refuses_an_edit_to_an_existing_code |
-| M6, M6b | test_refuses_when_main_and_branch_define_the_same_code |
-| M7 | test_refuses_more_than_one_new_minor |
-| M8, M17 | test_refuses_preconditions, test_only_the_first_of_two_green_heads_can_land |
-| M9 | test_refuses_a_version_token_on_an_unknown_surface |
-| M10 | test_refuses_a_manifest_imported_from_another_tree |
-| M11, M22 | test_refuses_a_stale_consumer_contract |
-| M13 | test_refuses_a_mixed_line |
-| M14 | test_refuses_a_stale_since |
-| M18 | test_refuses_before_writing[fixture-exists] |
-| M19, M20, M23, M24a, M24b | test_schema_root_changes_are_attributed (M24b also the direct policy test) |
-| M21 | test_refuses_a_version_in_a_summary |
-| M25 | test_merge_procedure_commands_run_by_file_path |
-| G1, G2, G3 | single-source guard seeded tests |
+Every row below was run on code head `6bd9e934` (record-only commits follow it), on a GCP test
+VM through `vm-run engine` (the Mac's shared test lock was held by a long gate run). Each turned
+the named test red and was reverted. This replaces the earlier rows that ran on `03a233fe`,
+`1e2b5fd2` and `5100e0d7`, and it includes Part 1's mutations (P1-*), which now run on the
+stacked head.
 
-Heads: M1, M2, M9, M12, M13, M16 on `03a233fe`; the rest on `1e2b5fd2` (the later commit changes
-only `plan_rewrites`). M2 was an equivalent mutant on `1e2b5fd2`; the code was changed so the
-record condition is reachable and M2 turns red again.
+| Id | What it breaks | Red test |
+|---|---|---|
+| M1, M12, M16 | branch-added line rewrite, sentence-final lookahead, renumber-line exclusion | AT-R1, AT-R12 |
+| M2 | record line written when the version did not move | AT-R2 |
+| M3 | target from the branch instead of main | AT-R3 |
+| M4 | `--check` gap case | AT-R4 |
+| M5 | edited-existing check | AT-R5 |
+| M6, M6b | duplicate-identity, main-and-branch-changed | AT-R6 |
+| M7 | several-minors | AT-R7 |
+| M8, M17 | main-not-merged precondition | AT-R8, AT-R16 |
+| M9 | unknown-surface | AT-R9 |
+| M10 | foreign-import check | AT-R10 |
+| M11, M22 | stale contract; plan applied before validation | AT-R11 |
+| M13 | mixed-line | AT-R13 |
+| M14 | stale-since | AT-R14 |
+| M18 | fixture rename before fixture-exists | AT-R17 |
+| M19, M20, M23, M24a, M24b | schema-root attribution | AT-R18 (side cases for M19, M20) |
+| M21 | summary-version | AT-R19 |
+| M25 | path block | AT-R20 |
+| N-M2 | header lines inside a hunk | AT-R21 |
+| N-L1a, N-L1b | main-moved fact | AT-R22, AT-R14 |
+| N-M3a, N-M3b | central fixture-name helpers | AT-R1, minor-fixture sentry |
+| N-C2, N-C12 | `--check` contract regeneration and version types | AT-R23 wrong type, missing key |
+| N-F1, N-F2 | `--check` fixture count | AT-R23 duplicate and missing fixture |
+| N-A1, N-A12 | `--check` anchor count and every match | AT-R23 duplicate anchors |
+| G1, G2, G3 | guard: qualified names, aliases, constant tuples | seeded guard tests |
+| N-M1a, N-M1d | guard: policy constants, accessors | seeded guard tests |
+| N-G1, N-G2, N-G3 | guard: module aliases (import-as, package import, attribute) | qualified-use test |
+| P1-M1, P1-M1b | policy message text | byte-identical message test |
+| P1-M2 | schema roots | `test_schema_root_violations` |
+| P1-M3 | summary lookahead | `test_summary_version_violations` |
+| P1-M4 | fixture sentry live identity | `test_minor_fixtures` rejects a missing identity |
+| P1-M5, P1-M5b | guard discovery | seeded validators test |
+| P1-M6 | release pin path block | `test_release_check_command_runs_by_file_path` |
 
 ## Known limit
 
@@ -102,7 +130,13 @@ The token rewrite assumes a claimed version on a branch-added line means the sli
 
 - `--check` is not wired into `gates.sh` or CI.
 - `renumber_check` repeats some classification findings (admin-only diagnostics).
-- Flat `tests/sentry` folder: deferred to the LAYOUT slice.
+- Flat `tests/sentry` and `tests/unit` folders: deferred to the LAYOUT slice.
+- Part 1 P1-AT6 accepts exit 0 or 1 where the plan says both invocations exit 0; documented, and it
+  still catches an import failure.
+- The unbumped-addition acceptance case in `test_reason_minor_fixtures.py` asserts only a non-empty
+  list, not the exact failure.
+- Several files exceed their plan estimates; none crosses the 800-line design threshold.
+- Dennis L2 to L6 (gate of 2c91d99f): deferred to V2-LOG; texts are in his gate report.
 
 ## Not verified
 
