@@ -34,6 +34,7 @@ from decoy_engine.execution._strategies import (
     _catalog_row,
     strategy_catalog,
 )
+from tests._ner import needs_ner
 from tests.unit.execution import _auto_chunk_strategies as chunk_fixtures
 from tests.unit.execution import _auto_chunk_support as support
 from tests.unit.execution import _multi_table_sentry_fixtures as extra_fixtures
@@ -317,7 +318,7 @@ def test_the_full_ner_entry_is_valid_config_even_without_the_model(info: Strateg
     support.make_cfg([entry])
 
 
-@pytest.mark.skipif(not NER_READY, reason="spaCy and en_core_web_sm are not installed")
+@needs_ner
 @pytest.mark.parametrize("name", sorted(NER_CAPABLE))
 def test_the_ner_entry_runs_when_the_model_is_installed(name: str, tmp_path: Path) -> None:
     assert _run(_entry(_row(name)), _source(name), tmp_path).num_rows > 0
