@@ -235,7 +235,7 @@ jobs:
       UV_FROZEN: "1"
     steps:
       - uses: actions/checkout@v7
-      # The certified profile (77-dist dev+lint+vault+cloud) on the exact CPython patch. cloud is
+      # The certified profile (dev+lint+vault+cloud: 77 dists, 79 once pytest-xdist joined `dev`) on the exact CPython patch. cloud is
       # required: google-cloud-storage does not survive without it, which fails
       # check_fit_environment() below. The dist set matches the pre-split 895b9a20... profile except
       # decoy-engine's own version, which is part of the hashed set: every engine version bump
