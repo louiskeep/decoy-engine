@@ -550,7 +550,7 @@ if __name__ == "__main__":
 
         try:
             print(importlib.import_module(sys.argv[2]).__file__)
-        except Exception as exc:  # noqa: BLE001 -- diagnostics line for the meta file
+        except Exception as exc:  # diagnostics line for the meta file
             print(f"{type(exc).__name__}: {exc}")
         sys.exit(0)
     if sys.argv[1:2] == ["--stored-failing-under"]:

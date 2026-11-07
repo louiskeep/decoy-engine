@@ -733,6 +733,7 @@ def test_a_baseline_holding_a_docs_walking_sentry_failure_is_stale_after_any_mov
 _ALLOWED_PY_ARGS = (
     ("-m", "pytest"),
     ("--version",),
+    ("]",),  # `[ -x "$BIN/python" ]` existence test
     ('"$ROOT/scripts/dev/_gates_report.py"',),
     ('${junit[@]+"${junit[@]}"}',),  # args for the `bash -c` wrapper, built by gates.sh itself
 )
@@ -756,10 +757,10 @@ def gates_sh_violations(text: str) -> list[str]:
             continue
         if "<<" in line:
             bad.append(f"heredoc python: {line}")
-        if re.search(r"\w+=\S*python", line):
+        if re.search(r"^(export\s+|local\s+)?\w+=[\"']?[^\s\"'()]*python", line):
             bad.append(f"python aliased: {line}")
-        for m in re.finditer(r'python[\d.]*"?([^\n]*)', line):
-            args = tuple(m.group(1).split()[:2])
+        for m in re.finditer(r'(?<![\w-])python[\d.]*(?![\w:])"?([^\n]*)', line):
+            args = tuple(t.rstrip(")\"") for t in m.group(1).split()[:2])
             if args and not any(args[: len(a)] == a for a in _ALLOWED_PY_ARGS):
                 bad.append(f"python runs something else: {line}")
     return bad
@@ -773,13 +774,13 @@ def test_gates_sh_runs_python_only_through_allow_listed_programs() -> None:
 @pytest.mark.parametrize(
     "line",
     [
-        "\"$BIN/python\" -c 'from json import load; print(load(open(\"baseline.json\")))'",
-        "\"$BIN/python\" -c 'import json as j; j.load(open(\"b\"))'",
-        "\"$BIN/python\" -c '__import__(\"json\").load(open(\"b\"))'",
-        "\"$BIN/python\" - <<EOF",
-        "\"$BIN/python\" - < prog.py",
+        '"$BIN/python" -c \'from json import load; print(load(open("baseline.json")))\'',
+        '"$BIN/python" -c \'import json as j; j.load(open("b"))\'',
+        '"$BIN/python" -c \'__import__("json").load(open("b"))\'',
+        '"$BIN/python" - <<EOF',
+        '"$BIN/python" - < prog.py',
         "PY=$BIN/python",
-        "jq .main_sha \"$BASEFILE\"",
+        'jq .main_sha "$BASEFILE"',
         "x=$(echo '{}' | jq -r .a)",
     ],
 )
