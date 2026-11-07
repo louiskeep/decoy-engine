@@ -100,7 +100,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 # An object repr carries its memory address, which differs per process; xdist workers then
 # collect different test ids and the parallel run aborts before running anything.
-_UNSTABLE_ID = re.compile(r" at 0x[0-9a-fA-F]+")
+_UNSTABLE_ID = re.compile(r"<[^<>]* at 0x[0-9a-fA-F]+>")  # the default object repr shape
 
 
 def _refuse_unstable_ids(items: list[pytest.Item]) -> None:

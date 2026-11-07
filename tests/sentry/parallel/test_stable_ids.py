@@ -14,13 +14,22 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_address_in_an_id_is_refused() -> None:
-    items = [SimpleNamespace(nodeid="t.py::f[<list_iterator object at 0x1186e4c70>]")]
-    with pytest.raises(pytest.UsageError, match="0x1186e4c70"):
+    items = [
+        SimpleNamespace(nodeid="t.py::f[<list_iterator object at 0x1186e4c70>]"),
+        SimpleNamespace(nodeid="t.py::g[<function f at 0x7f3a>]"),
+    ]
+    with pytest.raises(pytest.UsageError) as refused:
         _refuse_unstable_ids(items)  # type: ignore[arg-type]
+    assert "0x1186e4c70" in str(refused.value)
+    assert "0x7f3a" in str(refused.value)
 
 
 def test_plain_ids_pass() -> None:
-    items = [SimpleNamespace(nodeid="t.py::f[iterator]"), SimpleNamespace(nodeid="t.py::g[0x10]")]
+    items = [
+        SimpleNamespace(nodeid="t.py::f[iterator]"),
+        SimpleNamespace(nodeid="t.py::g[0x10]"),
+        SimpleNamespace(nodeid="t.py::h[located at 0xdeadbeef]"),
+    ]
     _refuse_unstable_ids(items)  # type: ignore[arg-type]
 
 
