@@ -401,7 +401,7 @@ class TestV2BehaviorRegressionPinsS11:
         """Q8 regression pin: V2 faker calls PoolSampler.sample once per
         column (vectorized), not per row. The V1 carrier was
         `transforms/faker_based.py`'s `column.apply(fake_for)`. V2
-        `execution/_strategies/_faker.py:57` calls `PoolSampler().sample(...)`
+        `execution/_strategies/_faker.py:69` calls `PoolSampler().sample(...)`
         once, then assigns the materialized list to the column.
         """
         import pandas as pd
