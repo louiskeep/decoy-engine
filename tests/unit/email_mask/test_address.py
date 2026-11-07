@@ -43,6 +43,10 @@ MALFORMED = [
     "a@" + "a" * 64 + ".com",
     "a@" + ".".join(["abcdefg"] * 32) + ".com",
     "a@acme.12",
+    # Unicode alphanumerics that are not letters, marks or ASCII digits.
+    "a@gmail.co\u00b2",
+    "a@\u217dom.com",
+    "a@acme\u0663.com",
     12345,
     b"a@acme.com",
 ]

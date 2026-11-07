@@ -369,18 +369,23 @@ deliberately keeps part of the address:
 - `keep: domain` reveals each row's employer or organisation and the domain
   frequency table. A small domain (a family domain, a ten-person company) can
   narrow a row to one person, and a personal domain (`jane@janedoe.name`)
-  identifies its owner outright. The outputs are routable addresses at real
-  domains: a test system fed this data must not send mail.
+  identifies its owner outright.
 - `keep: domain_class` reveals which rows use a listed free-mail provider and
   which one, and whether the rest are government, education or other. A national
   provider or ISP domain (`orange.fr`, `t-online.de`, `naver.com`) also reveals
   the likely country.
 - Both modes keep row-level linkage within a namespace, as `hash` does: equal
   addresses mask equally, and the token is the prefix of the `hash` token for the
-  same string under the same namespace.
+  same string under the same namespace. A `hash` column that shares the namespace
+  is therefore linkable to the masked column, and inherits its domain (or class)
+  disclosure.
 - The token is only as strong as the mask secret. A seed-keyed token next to a kept
   domain would let anyone holding the config confirm a guessed `first.last@domain`,
   so a run without an admitted secret is refused in every release phase.
+
+Both modes emit routable addresses at real domains (`keep: domain_class` writes
+real free-mail domains such as `gmail.com`): a test system fed this data must not
+send mail.
 
 If organisation membership or country is itself sensitive, use `hash`, `redact`,
 or `faker` on the whole column instead.

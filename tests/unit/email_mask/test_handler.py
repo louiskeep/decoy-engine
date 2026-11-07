@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import unicodedata
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -14,6 +16,7 @@ from hypothesis import strategies as st
 
 from decoy_engine import KeyedStrategyRequiresSecret, run_pipeline
 from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._strategies import SCALAR_HANDLERS
 from decoy_engine.execution._strategies._email_mask import _address as address
 from decoy_engine.execution._strategies._email_mask._freemail import FREEMAIL_DOMAINS
 from decoy_engine.secret_providers._requirements import (
@@ -150,6 +153,31 @@ def test_ten_thousand_distinct_addresses_give_ten_thousand_outputs() -> None:
     values = [f"user{i}@acme.com" for i in range(10_000)]
     out, _ = s.run_handler(values)
     assert len(set(out)) == 10_000
+
+
+@pytest.mark.parametrize("keep", ["domain", "domain_class"])
+def test_nfd_and_nfc_spellings_give_identical_output(keep: str) -> None:
+    nfc = "\u00fc@b\u00fccher.de"
+    nfd = unicodedata.normalize("NFD", nfc)
+    assert nfd != nfc
+    out, warnings = s.run_handler([nfd, nfc], keep)
+    assert out[0] == out[1]
+    assert out[0].split("@")[0] == s.oracle_local(nfc)
+    if keep == "domain":
+        assert out[0].endswith("@b\u00fccher.de")
+    assert warnings == []
+
+
+def test_the_token_is_the_prefix_of_the_hash_token_under_the_same_namespace() -> None:
+    # Documented linkage: a hash column sharing the namespace joins to this one.
+    values = ["alice@acme.com", "Bob@Gmail.com", "\u00fc@b\u00fccher.de"]
+    out, _ = s.run_handler(values)
+    frame = pd.DataFrame({"e": pd.Series(values, dtype=object)})
+    hashed, _ = SCALAR_HANDLERS["hash"].run(
+        frame, "e", replace(s.seed({}), strategy="hash"), s.ctx()
+    )
+    for masked, token in zip(out, hashed["e"].tolist(), strict=True):
+        assert token.startswith(masked.split("@")[0])
 
 
 def test_a_repeated_input_maps_to_one_output() -> None:

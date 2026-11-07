@@ -937,6 +937,14 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_strategies/_grouped_series.py",
             "src/decoy_engine/execution/_strategies/_passthrough.py",
             "src/decoy_engine/execution/_strategies/_redact.py",
+            # email_mask (V1+): the new handler package and its `mask.email_mask` DrawSite data
+            # sibling, split out of the capped `native/_determinism_protocol.py` like tokenize's.
+            # Neither imports `execution.physical`.
+            "src/decoy_engine/execution/_strategies/_email_mask/__init__.py",
+            "src/decoy_engine/execution/_strategies/_email_mask/_address.py",
+            "src/decoy_engine/execution/_strategies/_email_mask/_freemail.py",
+            "src/decoy_engine/execution/_strategies/_email_mask/_handler.py",
+            "src/decoy_engine/execution/native/_draw_sites_email_mask.py",
         }
     )
     # Files allowed to change ONLY by these exact line replacements (path -> {removed: added}).

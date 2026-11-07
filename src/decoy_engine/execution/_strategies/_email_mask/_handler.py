@@ -39,9 +39,9 @@ from decoy_engine.plan._types import ColumnSeed
 TOKEN_HEX_LEN = 20
 
 
-def _canonical(value: object) -> bytes:
-    # NFC like `hash`'s string branch; surrogatepass so an unpaired surrogate keys deterministically.
-    return unicodedata.normalize("NFC", str(value)).encode("utf-8", "surrogatepass")
+def _canonical(text: str) -> bytes:
+    # surrogatepass so an unpaired surrogate keys deterministically.
+    return text.encode("utf-8", "surrogatepass")
 
 
 def _config_error(column: str, detail: str) -> StrategyError:
@@ -102,9 +102,12 @@ class EmailMaskStrategyHandler:
             if is_null:
                 out.append(None)
                 continue
-            domain = split_domain(value)
+            # NFC once, like `hash`'s string branch: the token and the parsed domain must see the
+            # same spelling, or an NFD address and its NFC twin share a token but not a domain.
+            text = unicodedata.normalize("NFC", str(value))
+            domain = split_domain(text) if isinstance(value, str) else None
             malformed += domain is None
-            token = derive(ctx.mask_key, namespace, _canonical(value)).hex()[:TOKEN_HEX_LEN]
+            token = derive(ctx.mask_key, namespace, _canonical(text)).hex()[:TOKEN_HEX_LEN]
             out.append(f"{token}@{output_domain(domain, keep)}")
         df[column] = out
         if not malformed:

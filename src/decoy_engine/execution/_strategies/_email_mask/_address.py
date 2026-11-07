@@ -8,7 +8,9 @@ RFC 2606 section 2.
 The domain is the text after the LAST '@' (a domain cannot contain '@'; a quoted local part
 can). The local part is never parsed: the strategy replaces it whole, so quoted forms, dots and a
 stray '@' cannot leak. The domain must pass the host-label rule below or the value is malformed;
-RFC 6531 allows UTF-8 labels, so a non-ASCII alphanumeric counts as a label character.
+RFC 6531 allows UTF-8 labels, so a Unicode letter or combining mark counts as a label character
+(the caller passes NFC text); digits are ASCII only. This is a narrow subset of IDNA2008, not
+a full check.
 
 `domain_class` is an ARX-style one-step generalisation (value to class). The rules are short and
 lean to "corporate", which only replaces a domain: a non-ASCII domain never matches a rule,
@@ -18,6 +20,8 @@ No key material passes through this module.
 """
 
 from __future__ import annotations
+
+import unicodedata
 
 from decoy_engine.execution._strategies._email_mask._freemail import FREEMAIL_DOMAINS
 
@@ -38,14 +42,18 @@ _MAX_LABEL = 63
 _GOV_TLDS = frozenset({"gov", "mil"})
 _GOV_SECOND_LEVEL = frozenset({"gov", "gouv", "govt", "gob", "go", "mil"})
 _EDU_SECOND_LEVEL = frozenset({"ac", "edu"})
+_ASCII_DIGITS = frozenset("0123456789")
+
+
+def _letter_or_mark(ch: str) -> bool:
+    return unicodedata.category(ch)[0] in "LM"
 
 
 def _label_ok(label: str) -> bool:
     if not 1 <= len(label) <= _MAX_LABEL or label[0] == "-" or label[-1] == "-":
         return False
-    # isalnum covers ASCII letters and digits and the UTF-8 letters RFC 6531 allows; anything
-    # else (whitespace, '_', '[', a newline) makes the value malformed.
-    return all(ch == "-" or ch.isalnum() for ch in label)
+    # Not str.isalnum: that accepts superscripts, Roman numerals and non-ASCII digits.
+    return all(ch == "-" or ch in _ASCII_DIGITS or _letter_or_mark(ch) for ch in label)
 
 
 def split_domain(value: object) -> str | None:

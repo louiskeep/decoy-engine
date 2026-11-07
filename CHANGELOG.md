@@ -18,8 +18,8 @@ entry (`column`, `provider_config` or `provider_config.ner`). `StrategyInfo` and
 
 ### Added (V1+ track: email_mask, opt-in)
 
-V1+ track ([V1P-3.1](https://github.com/louiskeep/decoy/blob/claude/fervent-thompson-tm8w6d/docs/roadmap/v1plus-sprints.md)),
-built ahead of CLI V1 and opt-in; not merged per owner instruction (2026-11-07). A new mask strategy, `email_mask`,
+V1+ track (the CLI repo's docs/roadmap/v1plus-sprints.md), V1P-3.1; plan
+`docs/plans/2026-11-07-v1plus-p3.1-email-keep-domain.md`. Built ahead of CLI V1 and opt-in; not merged per owner instruction (2026-11-07). A new mask strategy, `email_mask`,
 replaces an address's local part with a keyed 20-hex token and keeps the domain (`keep: domain`) or only its class
 (`keep: domain_class`: a listed free-mail domain, else `gov.example`, `edu.example` or `corporate.example`). It needs a
 namespace and an admitted mask secret, is Python-only on every route, and is in no default, disguise or starter config;
