@@ -116,5 +116,10 @@ T1 `scripts/dev/gates.sh --keep-going --baseline` (VM, 983-file selection agains
 - `2eeeb546`: env, ruff, format, mypy PASS; sentry 4279 passed; licenses 63 passed; tests 34738
   passed, 2 failed (baseline 34683 passed, 0 failed). Branch-only: the two STOP 4 ids above.
 
-The mutation runs at `eb2abfb3` still hold: the later commits touch tests only.
+- `e499d802` (after merging main `38951412` with SCAN-ML M1 and renumbering to 1.9.0; 997-file
+  selection): env, ruff, format, mypy PASS; sentry 4296 passed; licenses 63 passed; tests 34912
+  passed, 0 failed (baseline 34855 passed, 0 failed); branch-only none.
+
+The mutation runs at `eb2abfb3` still hold: the later commits touch tests, docs and the registry
+version only.
 Registry renumbered at merge from 1.8.0 to 1.9.0 by scripts/dev/registry_renumber.py; main was at 1.8.0.
