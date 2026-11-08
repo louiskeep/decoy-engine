@@ -81,8 +81,8 @@ an `except`, no regular-file check); AT-E1-6 names from the descriptor; AT-E1-7 
 - `test_reason_registry.py` (821 lines) keeps net 0 with `# fmt: skip` on the renamed line.
 - The codemod also matches `sources=` keywords and `sources = {...}` assignments (95 edits vs the
   measured 84 literals).
-- Registry: SCAN-ML M1 merged first at 1.8.0 (#405); after merging main, `registry_renumber.py`
-  moved E1 to 1.9.0.
+- Registry: SCAN-ML M1 merged first (#405) and took the next minor, so after merging main
+  `registry_renumber.py` moved E1 to 1.9.0.
 - Not in the allowed files and still showing csv sources without `has_header`: `README.md`,
   `docs/quickstart.md`, `docs/recipes.md`, `examples/`. Needs an orchestrator decision.
 
