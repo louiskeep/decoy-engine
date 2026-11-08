@@ -159,6 +159,23 @@ def test_header_with_a_name_is_a_documented_miss(tmp_path: Path) -> None:
     assert frozenset({"email", "ssn", "us_phone", "pan", "iban", "ipv4"}) == GUARD_DETECTORS
 
 
+def test_guard_labels_cells_neutrally(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The detector allow-list already drops name-hinted detectors; the neutral label is the
+    # second layer, so a header such as `Name,City` can never supply a hint.
+    from decoy_engine.profiling import _scan_text_checks as checks
+
+    labels: list[str] = []
+    real = checks.run_all_detectors
+
+    def spy(series: pd.Series, label: str) -> Any:
+        labels.append(label)
+        return real(series, label)
+
+    monkeypatch.setattr(checks, "run_all_detectors", spy)
+    checks.header_looks_like_data(["Name", "City", "State"])
+    assert labels == ["c0", "c1", "c2"]
+
+
 def test_parquet_never_runs_the_guard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "p.parquet"
     pd.DataFrame({"a": [1, 2]}).to_parquet(path)
