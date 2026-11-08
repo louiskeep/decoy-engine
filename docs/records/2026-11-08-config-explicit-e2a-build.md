@@ -31,8 +31,9 @@ E2a). The `Literal` of `DeclarationFinding.kind` holds `table` and `column`; E2b
 
 - `PreparedDeclaredSources.checked_chunks` checks every chunk against the declared set. It does not keep
   the `for_chunks` schema's names separately, because a name outside the declared set is already refused.
-- The AT-E2a-7 corpus has no `coherent_with` case and no empty-strategy entry (compile refuses the
-  latter; AT-E2a-4 covers it against `declared_columns`).
+- The AT-E2a-7 corpus has no `coherent_with` case. It does hold an empty-strategy entry and an
+  unlisted scalar FK child: `compile_plan` accepts both, and `declared_columns` and
+  `known_output_columns` agree on them.
 
 ## Not verified
 
