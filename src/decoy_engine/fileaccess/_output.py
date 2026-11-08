@@ -48,6 +48,9 @@ CREATES_PARENTS: frozenset[str] = frozenset(STAGE_PREFIX) - {"vault"}
 
 T = TypeVar("T")
 
+# Denial key for a bad name given straight to a creator; it names the capability, never the name.
+_CREATOR_KEY = "fileaccess.stage"
+
 _DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _FILE_CREATE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 
@@ -70,15 +73,16 @@ def make_stage_dir_at(parent_fd: int, name: str) -> int:
     ``fchmod`` restores the owner bits). A mode-ignoring filesystem already shows them, so
     nothing is changed there. Failures keep only their errno; the directory this call made is
     removed if a later step fails, and an existing entry is never touched."""
+    validate_component(name, _CREATOR_KEY)
     _call(os.mkdir, name, 0o700, dir_fd=parent_fd)
     fd = -1
     try:
         try:
             fd = _call(os.open, name, _DIR_FLAGS, dir_fd=parent_fd)
         except PermissionError:
-            # Named limit L6: this chmod goes by name, so a same-user swap of the name between
-            # mkdir and here could redirect it; the only effect is 0700 on an entry the engine
-            # user owns, and the V1 threat model covers accidental leaks only. An fd-only repair
+            # Named limit L6: this chmod goes by name, so a different user who can write in the
+            # caller's output directory could swap a symlink in between mkdir and here. The effect
+            # stays bounded: 0700 on a path the engine user owns, and no read. An fd-only repair
             # is impossible: a 0000 directory cannot be opened, and fchmod on an O_PATH
             # descriptor gives EBADF. Reached only for a directory this call just created (mkdir
             # raises, EEXIST included, before this point).
@@ -125,16 +129,19 @@ def _create_private_core(dir_fd: int, name: str, restore: Callable[[int], None])
 
 def create_private_at(dir_fd: int, name: str) -> int:
     """A new 0600 file whose mode is set unconditionally (top-level private stages, arena files)."""
+    validate_component(name, _CREATOR_KEY)
     return _create_private_core(dir_fd, name, _restore_always)
 
 
 def create_private_child_at(dir_fd: int, name: str) -> int:
     """A new private file inside a stage directory: owner bits restored only when missing."""
+    validate_component(name, _CREATOR_KEY)
     return _create_private_core(dir_fd, name, _restore_missing_owner_bits)
 
 
 def create_output_file_at(dir_fd: int, name: str, mode: int) -> int:
     """A new output-mode file; the umask governs ``mode``."""
+    validate_component(name, _CREATOR_KEY)
     return _call(os.open, name, _FILE_CREATE, mode, dir_fd=dir_fd)
 
 

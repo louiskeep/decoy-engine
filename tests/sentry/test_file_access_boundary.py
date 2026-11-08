@@ -44,7 +44,9 @@ FIXTURE_ROLES = Roles(
     ),
     capabilities=frozenset(f"fx/cap/{p.name}" for p in (FIXTURES / "fx" / "cap").glob("*.py")),
     local_constructors=frozenset(),
-    creators=frozenset({"fx/cap/good_creator.py::make_it"}),
+    creators=frozenset(
+        {"fx/cap/good_creator.py::make_it", "fx/cap/bad_creator_unvalidated.py::make_unvalidated"}
+    ),
 )
 
 
@@ -321,3 +323,12 @@ def test_chmod_without_dir_fd_is_still_flagged(fixture_scan) -> None:  # type: i
         if v.site.module == "fx/cap/bad_chmod_no_dir_fd.py"
     ]
     assert flagged and "dir_fd" in flagged[0].reason
+
+
+def test_a_listed_creator_that_does_not_validate_its_name_is_still_flagged(fixture_scan) -> None:  # type: ignore[no-untyped-def]
+    flagged = [
+        v
+        for v in classify(fixture_scan, FIXTURE_ROLES, {})[0]
+        if v.site.module == "fx/cap/bad_creator_unvalidated.py"
+    ]
+    assert flagged and "component validator" in flagged[0].reason

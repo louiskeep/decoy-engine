@@ -200,7 +200,7 @@ def _upper_constant(expr: ast.AST) -> bool:
     return isinstance(expr, ast.Name) and expr.id.isupper()
 
 
-def _name_traced(expr: ast.AST, info: FunctionInfo, depth: int = 0, listed: bool = False) -> bool:
+def _name_traced(expr: ast.AST, info: FunctionInfo, depth: int = 0) -> bool:
     """A name built from a literal, a policy-generated token, held state, or a parameter the
     function validated with the component validator."""
     if depth > 6:
@@ -224,12 +224,12 @@ def _name_traced(expr: ast.AST, info: FunctionInfo, depth: int = 0, listed: bool
             return True
         if expr.id in info.params:
             private = info.qualname.rsplit(".", 1)[-1].startswith("_")
-            return expr.id in info.validated or private or listed
+            return expr.id in info.validated or private
         assigned = info.assigned.get(expr.id)
-        return assigned is not None and _name_traced(assigned, info, depth + 1, listed)
+        return assigned is not None and _name_traced(assigned, info, depth + 1)
     if isinstance(expr, ast.JoinedStr):
         return all(
-            _name_traced(v.value, info, depth + 1, listed)
+            _name_traced(v.value, info, depth + 1)
             for v in expr.values
             if isinstance(v, ast.FormattedValue)
         )
@@ -240,8 +240,8 @@ def _name_traced(expr: ast.AST, info: FunctionInfo, depth: int = 0, listed: bool
             return True
         return name in {"token_hex", "token_urlsafe", "uuid4", "hex"}
     if isinstance(expr, ast.BinOp):
-        return _name_traced(expr.left, info, depth + 1, listed) and _name_traced(
-            expr.right, info, depth + 1, listed
+        return _name_traced(expr.left, info, depth + 1) and _name_traced(
+            expr.right, info, depth + 1
         )
     return False
 
@@ -250,8 +250,9 @@ def check_capability_site(site: Site, creators: frozenset[str] = frozenset()) ->
     """Rule 2: only raw fd-relative primitives, with held descriptors and validated names."""
     info = site.scope_info
     assert info is not None
-    # A listed creator is a public choke point whose callers hold the descriptor and validate the
-    # name; it is judged like a private helper (modules.toml `capability_creators`).
+    # A listed creator is a public choke point whose callers hold the descriptor, so its fd
+    # parameter counts as held. Its name is still traced: it must validate the name itself
+    # (modules.toml `capability_creators`).
     listed = f"{site.module}::{info.qualname}" in creators
     if site.kind == "descriptor":
         args = site.node.args
@@ -297,7 +298,7 @@ def check_capability_site(site: Site, creators: frozenset[str] = frozenset()) ->
             if kw is None or not _held_fd(kw, info, listed=listed):
                 return Violation(site, "dir_fd does not trace to a held descriptor")
         for arg in args[: 2 if sink in {"os.rename", "os.replace", "os.link"} else 1]:
-            if not _name_traced(arg, info, listed=listed):
+            if not _name_traced(arg, info):
                 return Violation(site, "a name that does not trace to the component validator")
         return None
     return None

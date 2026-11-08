@@ -12,8 +12,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from decoy_engine.fileaccess import RootedFileAccess
+from decoy_engine.fileaccess import FileAccessDenied, RootedFileAccess
 from decoy_engine.fileaccess._output import (
+    create_output_file_at,
     create_private_at,
     create_private_child_at,
     make_stage_dir_at,
@@ -211,6 +212,26 @@ def test_private_at_fchmod_failure_closes_and_unlinks_what_it_created(
     assert not (tmp_path / "f").exists()
     with pytest.raises(OSError):
         os.fstat(opened[-1])  # the descriptor was closed
+
+
+@pytest.mark.parametrize("bad", ["../x", "/abs/x", "a/b", "..", ".", "", "a\0b"])
+@pytest.mark.parametrize(
+    "creator",
+    [
+        make_stage_dir_at,
+        create_private_at,
+        create_private_child_at,
+        lambda fd, name: create_output_file_at(fd, name, 0o666),
+    ],
+    ids=["stage_dir", "private", "private_child", "output_file"],
+)
+def test_creators_refuse_a_bad_name_before_creating_anything(
+    tmp_path: Path, dir_fd: int, creator: Callable[[int, str], int], bad: str
+) -> None:
+    sibling = tmp_path.parent / "x"
+    with pytest.raises(FileAccessDenied):
+        creator(dir_fd, bad)
+    assert list(tmp_path.iterdir()) == [] and not sibling.exists()
 
 
 # -- A-4 stages keep their behaviour through the named creators ---------------------------------
