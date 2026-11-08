@@ -113,7 +113,10 @@ WT=$OUT/baseline-tree
 MBT=$OUT/merge-base-tree
 # Each pytest run gets its own basetemp here, removed on exit: pytest's default
 # /tmp/pytest-of-<user> keeps the last three runs, about 14 GB each for the engine suite.
-TMP_ROOT=${OUT:?}/basetemp
+# Kept directly under /tmp, not under $OUT: TMPDIR can be long, and tests that bind
+# AF_UNIX sockets under tmp_path fail once the path passes the 104-108 byte limit.
+TMP_ROOT=$(mktemp -d /tmp/gt.XXXXXX)
+[ -n "$TMP_ROOT" ] && [ -d "$TMP_ROOT" ] || { echo "gates: FAIL: cannot create a basetemp dir" >&2; exit 3; }
 mkdir -p "$TMP_ROOT/root"
 # Pytest runs that tests start themselves have no --basetemp; this moves their default root too.
 export PYTEST_DEBUG_TEMPROOT=$TMP_ROOT/root
@@ -121,7 +124,7 @@ export PYTEST_DEBUG_TEMPROOT=$TMP_ROOT/root
 cleanup() {
   local d
   for d in "$WT" "$MBT"; do [ -d "$d" ] && git -C "$ROOT" worktree remove --force "$d" 2>/dev/null; done
-  rm -rf -- "${OUT:?}/basetemp"
+  rm -rf -- "${TMP_ROOT:?}"
   return 0
 }
 trap cleanup EXIT
