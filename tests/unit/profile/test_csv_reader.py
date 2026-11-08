@@ -288,15 +288,18 @@ def test_profile_source_resolves_the_dialect_once(
     path = tmp_path / "t.tsv"
     path.write_bytes(b"1\tAda\n2\tGrace\n")
     calls: list[dict[str, Any]] = []
+    seen_kwargs: list[dict[str, Any]] = []
     real = _readers.resolve_csv_dialect
 
-    def spy(descriptor: Any) -> CsvDialect:
+    def spy(descriptor: Any, **kwargs: Any) -> CsvDialect:
         calls.append(dict(descriptor))
-        return real(descriptor)
+        seen_kwargs.append(kwargs)
+        return real(descriptor, **kwargs)
 
     monkeypatch.setattr(_readers, "resolve_csv_dialect", spy)
     profile = profile_source(_headerless_config(path, "events", "\t"), seed=1)
     assert len(calls) == 1
+    assert seen_kwargs == [{"table": "events"}]
     assert [c.name for c in profile.tables[0].columns] == ["id", "name"]
 
 

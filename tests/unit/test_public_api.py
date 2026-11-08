@@ -285,6 +285,8 @@ def test_all_lists_every_public_name():
         # LIB L0.1: the protected directory allocator.
         "open_protected_dir",
         "protected_scratch_dir",
+        # CONFIG-EXPLICIT E1: the FileSource fields that name a file.
+        "FILE_SOURCE_PATH_FIELDS",
     }
     assert set(decoy_engine.__all__) == expected
 

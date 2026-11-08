@@ -61,7 +61,7 @@ call shape. Any external import of ``Masker`` / ``DataGenerator`` / ``run_graph`
 now fails fast.
 """
 
-from decoy_engine.config import PipelineConfig
+from decoy_engine.config import FILE_SOURCE_PATH_FIELDS, PipelineConfig
 from decoy_engine.context import (
     ExecutionContext,
     Logger,
@@ -338,6 +338,7 @@ __all__ = [
     "CAP_RESUMABLE",
     "CAP_SIGNED_URL",
     "CAP_STREAMING",
+    "FILE_SOURCE_PATH_FIELDS",
     "RELEASE_PHASE",
     "RUN_RESULT_SCHEMA",
     "SDK_VERSION",

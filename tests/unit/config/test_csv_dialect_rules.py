@@ -120,7 +120,7 @@ def test_public_delimiter_errors_are_value_free(bad: str) -> None:
     with pytest.raises(ConfigError) as direct:
         CsvDialect(True, None, bad)
     with pytest.raises(ConfigError) as resolved:
-        resolve_csv_dialect({"delimiter": bad})
+        resolve_csv_dialect({"has_header": True, "delimiter": bad})
     for err in (direct.value, resolved.value):
         _assert_no_secret(err)
         assert repr(bad) not in str(err) and repr(bad) not in repr(err)
@@ -132,8 +132,11 @@ def test_csvdialect_defaults_equal_the_filesource_defaults() -> None:
     import dataclasses
 
     fields = {f.name: f.default for f in dataclasses.fields(CsvDialect)}
-    for name, default in fields.items():
-        assert FileSource.model_fields[name].default == default, name
+    for name in ("column_names", "delimiter"):
+        assert FileSource.model_fields[name].default == fields[name], name
+    # FileSource's `None` means "not given" (refused for csv), not a dialect default.
+    assert FileSource.model_fields["has_header"].default is None
+    assert CsvDialect().has_header == CSV_DIALECT_DEFAULTS.has_header
 
 
 def test_dialect_defaults_have_one_home() -> None:
@@ -141,7 +144,8 @@ def test_dialect_defaults_have_one_home() -> None:
     assert CSV_DIALECT_DEFAULTS._fields == tuple(f.name for f in dataclasses.fields(CsvDialect))
     for name in CSV_DIALECT_DEFAULTS._fields:
         assert getattr(CsvDialect(), name) == getattr(CSV_DIALECT_DEFAULTS, name)
-        assert FileSource.model_fields[name].default == getattr(CSV_DIALECT_DEFAULTS, name)
+        if name != "has_header":
+            assert FileSource.model_fields[name].default == getattr(CSV_DIALECT_DEFAULTS, name)
     # Neither consumer restates a default as a literal: each reads the descriptor.
     from decoy_engine.config import _csv_dialect as dialect_module
 
@@ -154,6 +158,8 @@ def test_dialect_defaults_have_one_home() -> None:
                 continue
             if node.target.id not in CSV_DIALECT_DEFAULTS._fields or node.value is None:
                 continue
+            if (cls_name, node.target.id) == ("FileSource", "has_header"):
+                continue  # its `None` means "not given", not a default
             value = node.value
             if isinstance(value, ast.Call):  # Field(default=...)
                 value = next((k.value for k in value.keywords if k.arg == "default"), value)
@@ -166,8 +172,10 @@ def test_dialect_defaults_have_one_home() -> None:
 
 
 def test_filesource_dump_omits_exactly_the_descriptor_defaults() -> None:
-    plain = FileSource.model_validate({"type": "file", "format": "csv", "path": "a.csv"})
-    assert set(plain.model_dump()) == {"type", "format", "path", "layout"}
+    plain = FileSource.model_validate(
+        {"type": "file", "format": "csv", "path": "a.csv", "has_header": True}
+    )
+    assert set(plain.model_dump()) == {"type", "format", "path", "layout", "has_header"}
     tab = FileSource.model_validate(
         {
             "type": "file",
@@ -226,11 +234,15 @@ def test_source_models_hide_input_in_errors() -> None:
 def test_resolve_passes_only_the_keys_present() -> None:
     from decoy_engine.profile._csv_reader import resolve_csv_dialect
 
-    plain = FileSource.model_validate({"type": "file", "format": "csv", "path": "a.csv"})
+    plain = FileSource.model_validate(
+        {"type": "file", "format": "csv", "path": "a.csv", "has_header": True}
+    )
     assert resolve_csv_dialect(plain.model_dump()) == CsvDialect(
         plain.has_header, plain.column_names, plain.delimiter
     )
-    assert resolve_csv_dialect({}) == CsvDialect()
+    assert resolve_csv_dialect({"has_header": True}) == CsvDialect()
+    with pytest.raises(ConfigError):
+        resolve_csv_dialect({})
 
 
 @pytest.mark.parametrize(
