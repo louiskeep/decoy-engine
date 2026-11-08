@@ -47,36 +47,38 @@ from decoy_engine.io.format_errors import (
     TargetSchemaMismatch,
 )
 
-# Polars' decoded representation (16-byte string views, then one copy to Arrow) costs up to
-# about twice the per-column estimate; the RSS acceptance test is the real bound.
-_DECODE_FACTOR = 2
+# A group is held about four times while it is decoded (the payload, Polars' frame with 16-byte
+# string views, the Arrow export and its normalised copy), so groups are sized at a quarter of
+# the budget by the per-column estimate. The RSS acceptance test is the real bound.
+_DECODE_FACTOR = 4
 _FULL_GROUP_BYTES = 64 * 1024 * 1024
 _FULL_GROUP_ROWS = 1 << 30
 _SYNC_LABEL = b"\xffdecoy.avro.sync/v1"
 # Rows per written block target this many Arrow bytes, so a reader with a modest chunk budget
-# can read the file back block by block (Java's writer defaults to 64 KB blocks).
-_TARGET_BLOCK_BYTES = 256 * 1024
+# can read the file back block by block (the Java writer's default sync interval is 64 KB).
+_TARGET_BLOCK_BYTES = 64 * 1024
 _REMEDY = "raise the chunk budget or read without chunking"
 
 
 @dataclass(frozen=True)
 class _Limits:
     """How one read groups blocks: the per-block cap, the group's estimated decoded bytes and
-    rows, and whether nested fields are admitted (the whole-file and sample reads only)."""
+    rows, and whether the read is bounded (the chunked route: nested fields and a block whose
+    estimate alone exceeds the group are refused; the whole-file and sample reads take both)."""
 
     block_cap: int
     group_bytes: int
     group_rows: int
-    admit_nested: bool
+    bounded: bool
     remedy: str | None = None
 
 
 def _limits_for(budget: ChunkBudget) -> _Limits:
     cap = min(budget.chunk_budget_bytes, container.MAX_BLOCK_BYTES)
-    return _Limits(cap, budget.chunk_budget_bytes, budget.max_chunk_rows, False, _REMEDY)
+    return _Limits(cap, budget.chunk_budget_bytes, budget.max_chunk_rows, True, _REMEDY)
 
 
-_FULL = _Limits(container.MAX_BLOCK_BYTES, _FULL_GROUP_BYTES, _FULL_GROUP_ROWS, True)
+_FULL = _Limits(container.MAX_BLOCK_BYTES, _FULL_GROUP_BYTES, _FULL_GROUP_ROWS, False)
 
 
 def _arrow_type(t: pa.DataType) -> pa.DataType:
@@ -137,7 +139,7 @@ class _Source:
         self.stream = stream
         self.header = container.read_header(stream, self.length, table=name)
         self.admission = avro_schema.admit(self.header.schema_json, table=name)
-        if self.admission.nested and not limits.admit_nested:
+        if self.admission.nested and limits.bounded:
             raise AvroSchemaUnsupported(table=name, reason="nested_on_chunked_route")
         self.null_header = container.encode_header(self.header.schema_json, self.header.sync)
 
@@ -146,7 +148,12 @@ class _Source:
 
     def blocks(self, *, skip_data: bool = False) -> Iterator[container.Block]:
         return container.iter_blocks(
-            self.stream, self.header, self.length, table=self.name, skip_data=skip_data
+            self.stream,
+            self.header,
+            self.length,
+            table=self.name,
+            min_row_bytes=self.admission.min_row_bytes,
+            skip_data=skip_data,
         )
 
     def groups(self, limits: _Limits) -> Iterator[pa.Table]:
@@ -159,6 +166,9 @@ class _Source:
                 raise AvroBlockTooLarge(**self._too_large(block, limits))
             raw = self._decompress(block, limits)
             cost = _DECODE_FACTOR * (len(raw) + block.count * self.admission.fixed_row_cost)
+            if limits.bounded and cost > limits.group_bytes:
+                # Alone in its group it would still decode past the budget.
+                raise AvroBlockTooLarge(**self._too_large(block, limits))
             if pending and (
                 estimate + cost > limits.group_bytes or rows + block.count > limits.group_rows
             ):
@@ -180,7 +190,13 @@ class _Source:
         over = False
         raw = b""
         try:
-            raw = container.decompress(block, self.header.codec, limits.block_cap, table=self.name)
+            raw = container.decompress(
+                block,
+                self.header.codec,
+                limits.block_cap,
+                table=self.name,
+                min_row_bytes=self.admission.min_row_bytes,
+            )
         except AvroBlockTooLarge:
             over = True
         if over:
@@ -261,7 +277,7 @@ def avro_head(handle: FileHandle, stream: BinaryIO, rows: int, *, table: str) ->
     """At least the first `rows` rows (all, if fewer), decoding whole groups of blocks under
     the whole-file admission, so a nested or single-block file still samples."""
     source = _Source(handle, stream, name=table, limits=_FULL)
-    limits = _Limits(container.MAX_BLOCK_BYTES, _FULL_GROUP_BYTES, max(rows, 1), True)
+    limits = _Limits(container.MAX_BLOCK_BYTES, _FULL_GROUP_BYTES, max(rows, 1), False)
     parts: list[pa.Table] = []
     gathered = 0
     for decoded in source.groups(limits):

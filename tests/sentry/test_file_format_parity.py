@@ -17,7 +17,8 @@ import pytest
 
 from decoy_engine.config._sources import FileSource
 from decoy_engine.config._targets import FileTarget
-from decoy_engine.io import CALLER_WRITTEN_TARGETS, TARGET_WRITERS, write_avro, write_orc
+from decoy_engine.file_targets import CALLER_WRITTEN_TARGETS, TARGET_WRITERS
+from decoy_engine.io import write_avro, write_orc
 from decoy_engine.profile import build_profile_source
 from decoy_engine.run_result._model import OutputFormat
 
@@ -68,3 +69,25 @@ def test_writer_tables_name_only_declared_formats() -> None:
 
 def test_run_result_output_format_agrees_with_file_target() -> None:
     assert set(get_args(OutputFormat)) == set(TARGET_FORMATS)
+
+
+def test_io_does_not_import_profile() -> None:
+    """`profile` reads through `io`; `io` must not import `profile` back (no package cycle)."""
+    import ast
+
+    io_dir = Path(__file__).resolve().parents[2] / "src" / "decoy_engine" / "io"
+    offenders = []
+    for module in sorted(io_dir.glob("*.py")):
+        for node in ast.walk(ast.parse(module.read_text(encoding="utf-8"))):
+            names = (
+                [node.module or ""]
+                if isinstance(node, ast.ImportFrom)
+                else [a.name for a in node.names]
+                if isinstance(node, ast.Import)
+                else []
+            )
+            if any(
+                n == "decoy_engine.profile" or n.startswith("decoy_engine.profile.") for n in names
+            ):
+                offenders.append(module.name)
+    assert offenders == []

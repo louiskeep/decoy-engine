@@ -32,8 +32,10 @@ MAGIC = b"ORC"
 def _has_timestamp(t: pa.DataType) -> bool:
     if pa.types.is_timestamp(t):
         return True
-    if pa.types.is_list(t) or pa.types.is_large_list(t) or pa.types.is_map(t):
-        return _has_timestamp(t.value_type) or (pa.types.is_map(t) and _has_timestamp(t.key_type))
+    if pa.types.is_map(t):
+        return _has_timestamp(t.key_type) or _has_timestamp(t.item_type)
+    if pa.types.is_list(t) or pa.types.is_large_list(t):
+        return _has_timestamp(t.value_type)
     if pa.types.is_struct(t) or pa.types.is_union(t):
         return any(_has_timestamp(t.field(i).type) for i in range(t.num_fields))
     return False

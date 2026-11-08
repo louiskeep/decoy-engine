@@ -34,6 +34,9 @@ _MAX_VARINT_BYTES = 10
 _INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
 CODECS = frozenset({"null", "deflate", "snappy"})
 _SNAPPY_CRC_BYTES = 4
+# A real header holds a handful of entries; the cap keeps a header of millions of empty entries
+# from being walked one by one up to the byte cap.
+MAX_META_ENTRIES = 1024
 
 
 class _Truncated(AvroMalformed):
@@ -124,10 +127,14 @@ class Block:
 
 def _read_meta(src: _Bounded) -> dict[str, bytes]:
     meta: dict[str, bytes] = {}
+    entries = 0
     while True:
         count = read_long(src)
         if count == 0:
             return meta
+        entries += abs(count)
+        if entries > MAX_META_ENTRIES:
+            raise _Truncated
         if count < 0:
             # The block form of a map: a negative count is followed by the block's byte size.
             count = -count
@@ -159,7 +166,7 @@ def read_header(stream: BinaryIO, file_len: int, *, table: str) -> Header:
     codec_raw = meta.get("avro.codec", b"null")
     codec = codec_raw.decode("ascii", "replace")
     if codec not in CODECS:
-        raise AvroSchemaUnsupported(table=table, reason="codec", codec=codec[:32])
+        raise AvroSchemaUnsupported(table=table, reason="codec", codec="unknown")
     return Header(schema_json=schema, codec=codec, sync=sync, end=src.pos)
 
 
@@ -169,9 +176,14 @@ def iter_blocks(
     file_len: int,
     *,
     table: str,
+    min_row_bytes: int = 1,
     skip_data: bool = False,
 ) -> Iterator[Block]:
-    """Frame every block after `header`; `skip_data` seeks over the data (row counting)."""
+    """Frame every block after `header`; `skip_data` seeks over the data (row counting).
+
+    For the `null` codec a block's object count is checked against its bytes here (each record
+    encodes to at least `min_row_bytes`); for a compressed block `decompress` checks it against
+    the uncompressed bytes."""
     src = _Bounded(stream, file_len, start=header.end)
     index = 0
     while src.left:
@@ -180,7 +192,7 @@ def iter_blocks(
         try:
             count = read_long(src)
             size = read_long(src)
-            if count < 1 or size < 0 or count > size:
+            if count < 1 or size < 0 or (header.codec == "null" and count * min_row_bytes > size):
                 failure = "block_header"
             elif size > MAX_BLOCK_BYTES:
                 too_large = True
@@ -204,15 +216,21 @@ def iter_blocks(
         index += 1
 
 
-def decompress(block: Block, codec: str, cap: int, *, table: str) -> bytes:
-    """The block's uncompressed bytes, refusing more than `cap` before allocating them."""
+def decompress(block: Block, codec: str, cap: int, *, table: str, min_row_bytes: int = 1) -> bytes:
+    """The block's uncompressed bytes, refusing more than `cap` before allocating them, and a
+    block whose object count its bytes cannot hold (a lying count would make the decoder
+    allocate for it)."""
     if codec == "null":
         if len(block.data) > cap:
             raise AvroBlockTooLarge(table=table, block=block.index, limit="budget")
-        return block.data
-    if codec == "deflate":
-        return _inflate(block, cap, table=table)
-    return _unsnappy(block, cap, table=table)
+        raw = block.data
+    elif codec == "deflate":
+        raw = _inflate(block, cap, table=table)
+    else:
+        raw = _unsnappy(block, cap, table=table)
+    if block.count * min_row_bytes > len(raw):
+        raise AvroMalformed(table=table, reason="block_header", block=block.index)
+    return raw
 
 
 def _inflate(block: Block, cap: int, *, table: str) -> bytes:

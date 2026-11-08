@@ -59,11 +59,25 @@ _LOCAL_TO_UTC = {
 
 @dataclass(frozen=True)
 class Admission:
-    """What the reader needs from an admitted schema: the per-row decoded-cost estimate and
-    whether any top-level field is nested (refused on the chunked route)."""
+    """What the reader needs from an admitted schema: the per-row decoded-cost estimate, the
+    fewest bytes one record can encode to (so a block's object count can be checked against its
+    bytes before anything is decoded), and whether a top-level field is nested."""
 
     fixed_row_cost: int
     nested: bool
+    min_row_bytes: int = 1
+
+
+@dataclass(frozen=True)
+class _Shape:
+    cost: int  # decoded Arrow bytes per row that do not depend on the payload
+    nested: bool
+    min_bytes: int  # fewest encoded bytes
+
+
+# Fewest encoded bytes per primitive: a varint is at least one byte, a length-prefixed value is
+# at least its length byte, `float`/`double` are fixed width.
+_MIN_BYTES = {"boolean": 1, "int": 1, "long": 1, "float": 4, "double": 8, "bytes": 1, "string": 1}
 
 
 class _Refused(AvroSchemaUnsupported):
@@ -75,25 +89,30 @@ class _Refused(AvroSchemaUnsupported):
         self.what = what
 
 
+def _word(value: Any) -> str | None:
+    """`value` when it is a string, else None: membership tests run on strings only."""
+    return value if isinstance(value, str) else None
+
+
 def _full_name(node: dict[str, Any], namespace: str) -> tuple[str, str]:
     # Polars writes records named "" (invalid per the spec); a name only matters to a
     # reference, and every reference is refused, so an anonymous type is read as it is.
-    name = node.get("name")
-    if not isinstance(name, str) or not name:
+    name = _word(node.get("name"))
+    if not name:
         return "", namespace
     if "." in name:
         return name, name.rsplit(".", 1)[0]
-    ns = node.get("namespace", namespace)
-    ns = ns if isinstance(ns, str) else namespace
+    ns = _word(node.get("namespace", namespace))
+    ns = namespace if ns is None else ns
     return (f"{ns}.{name}" if ns else name), ns
 
 
 class _Walk:
     def __init__(self) -> None:
-        self.defined: dict[str, tuple[int, bool]] = {}  # full name -> (cost, nested)
+        self.defined: set[str] = set()
         self.defining: set[str] = set()
 
-    def ref(self, name: str, namespace: str, path: str) -> tuple[int, bool]:
+    def ref(self, name: str, namespace: str, path: str) -> _Shape:
         """Refuse every reference: recursive, undefined or (unsupported by Polars) defined."""
         full = name if "." in name or not namespace else f"{namespace}.{name}"
         for candidate in (full, name):
@@ -104,61 +123,67 @@ class _Walk:
                 raise _Refused(path, "named_reference")
         raise _Refused(path, "undefined_name")
 
-    def type_(self, node: Any, path: str, namespace: str, depth: int) -> tuple[int, bool]:
-        """(fixed decoded cost per row, nested?) of one schema node."""
+    def type_(self, node: Any, path: str, namespace: str, depth: int) -> _Shape:
         if depth > MAX_DEPTH:
             raise _Refused(path, "depth")
         if isinstance(node, str):
             if node == "null":
                 raise _Refused(path, "null")
             if node in _PRIMITIVES:
-                return _FIXED_COST[node], False
+                return _Shape(_FIXED_COST[node], False, _MIN_BYTES[node])
             return self.ref(node, namespace, path)
         if isinstance(node, list):
             return self.union(node, path, namespace, depth)
         if not isinstance(node, dict):
             raise _Refused(path, "type")
-        kind = node.get("type")
+        kind = _word(node.get("type"))
         if kind in _PRIMITIVES:
             return self.logical(node, str(kind), path)
         if kind == "record":
-            return self.record(node, path, namespace, depth), True
+            return self.record(node, path, namespace, depth)
         if kind == "enum":
-            return self.enum(node, path, namespace), False
+            return self.enum(node, path, namespace)
         if kind == "array":
             self.type_(node.get("items"), f"{path}[]", namespace, depth + 1)
-            return 0, True
+            return _Shape(0, True, 1)
         if kind == "fixed":
-            return self.fixed(node, path, namespace), False
+            return self.fixed(node, path, namespace)
         if kind == "map":
             raise _Refused(path, "map")
-        if isinstance(kind, (str, list, dict)) and kind != "null":
-            # `{"type": <named or nested type>}` wraps another schema.
-            return self.type_(kind, path, namespace, depth + 1)
+        if kind is not None and kind != "null":
+            # `{"type": "SomeName"}`: a reference, refused like a bare one.
+            return self.ref(kind, namespace, path)
+        # Anything else, including `{"type": {...}}` (Polars refuses a wrapped schema).
         raise _Refused(path, "type")
 
-    def union(self, node: list[Any], path: str, namespace: str, depth: int) -> tuple[int, bool]:
-        if len(node) != 2 or node.count("null") != 1:
+    def union(self, node: list[Any], path: str, namespace: str, depth: int) -> _Shape:
+        nulls = [branch for branch in node if branch == "null"]
+        if len(node) != 2 or len(nulls) != 1:
             raise _Refused(path, "union")
         other = node[1] if node[0] == "null" else node[0]
-        return self.type_(other, path, namespace, depth + 1)
+        inner = self.type_(other, path, namespace, depth + 1)
+        return _Shape(inner.cost, inner.nested, 1)  # the branch index alone, for a null
 
-    def logical(self, node: dict[str, Any], base: str, path: str) -> tuple[int, bool]:
-        logical = node.get("logicalType")
+    def logical(self, node: dict[str, Any], base: str, path: str) -> _Shape:
+        plain = _Shape(_FIXED_COST[base], False, _MIN_BYTES[base])
+        raw = node.get("logicalType")
+        if raw is None:
+            return plain
+        logical = _word(raw)
         if logical is None:
-            return _FIXED_COST[base], False
+            raise _Refused(path, "type")
         if logical in _REFUSED_LOGICAL:
-            raise _Refused(path, str(logical))
-        bases = _LOGICAL_BASES.get(str(logical))
+            raise _Refused(path, logical)
+        bases = _LOGICAL_BASES.get(logical)
         if bases is None:
-            return _FIXED_COST[base], False  # unknown logical type: ignored, per the spec
+            return plain  # unknown logical type: ignored, per the spec
         if base not in bases:
             raise _Refused(path, "logical_type_base")
         if logical == "decimal":
             _decimal(node, path, None)
-        return _LOGICAL_COST.get(str(logical), _FIXED_COST[base]), False
+        return _Shape(_LOGICAL_COST.get(logical, _FIXED_COST[base]), False, plain.min_bytes)
 
-    def record(self, node: dict[str, Any], path: str, namespace: str, depth: int) -> int:
+    def record(self, node: dict[str, Any], path: str, namespace: str, depth: int) -> _Shape:
         full, ns = _full_name(node, namespace)
         fields = node.get("fields")
         if not isinstance(fields, list) or not fields:
@@ -166,41 +191,49 @@ class _Walk:
         if full:
             self.defining.add(full)
         cost = 0
+        min_bytes = 0
         for i, field in enumerate(fields):
-            if not isinstance(field, dict) or not isinstance(field.get("name"), str):
+            name = _word(field.get("name")) if isinstance(field, dict) else None
+            if name is None:
                 raise _Refused(f"{path}.{i}", "field")
-            sub, _ = self.type_(field.get("type"), f"{path}.{field['name']}", ns, depth + 1)
-            cost += sub
+            sub = self.type_(field.get("type"), f"{path}.{name}", ns, depth + 1)
+            cost += sub.cost
+            min_bytes += sub.min_bytes
         self.defining.discard(full)
         if full:
-            self.defined[full] = (cost, True)
-        return cost
+            self.defined.add(full)
+        return _Shape(cost, True, min_bytes)
 
-    def enum(self, node: dict[str, Any], path: str, namespace: str) -> int:
+    def enum(self, node: dict[str, Any], path: str, namespace: str) -> _Shape:
         full, _ = _full_name(node, namespace)
         symbols = node.get("symbols")
-        if not isinstance(symbols, list) or not all(isinstance(s, str) for s in symbols):
+        if (
+            not isinstance(symbols, list)
+            or not symbols
+            or not all(isinstance(s, str) for s in symbols)
+        ):
             raise _Refused(path, "enum")
-        cost = max((len(s.encode("utf-8")) for s in symbols), default=0) + 5
-        self.defined[full] = (cost, False)
-        return cost
+        self.defined.add(full)
+        return _Shape(max(len(s.encode("utf-8")) for s in symbols) + 5, False, 1)
 
-    def fixed(self, node: dict[str, Any], path: str, namespace: str) -> int:
+    def fixed(self, node: dict[str, Any], path: str, namespace: str) -> _Shape:
         full, _ = _full_name(node, namespace)
         size = node.get("size")
         if isinstance(size, bool) or not isinstance(size, int) or size < 1:
             raise _Refused(path, "fixed_size")
-        logical = node.get("logicalType")
+        self.defined.add(full)
+        raw = node.get("logicalType")
+        logical = _word(raw)
+        if raw is not None and logical is None:
+            raise _Refused(path, "type")
         if logical in ("duration", "uuid"):
             raise _Refused(path, str(logical))
         if logical == "decimal":
             _decimal(node, path, size)
-            self.defined[full] = (17, False)
-            return 17
+            return _Shape(17, False, size)
         if logical in _LOGICAL_BASES:
             raise _Refused(path, "logical_type_base")
-        self.defined[full] = (5, False)
-        return 5
+        return _Shape(5, False, size)
 
 
 def _strict_int(value: object) -> bool:
@@ -250,14 +283,17 @@ def admit(schema_json: bytes, *, table: str) -> Admission:
         if full:
             walk.defining.add(full)
         cost = 0
+        min_bytes = 0
         nested = False
         for i, field in enumerate(fields):
-            if not isinstance(field, dict) or not isinstance(field.get("name"), str):
+            name = _word(field.get("name")) if isinstance(field, dict) else None
+            if name is None:
                 raise _Refused(str(i), "field")
-            sub, is_nested = walk.type_(field.get("type"), field["name"], ns, 1)
-            cost += sub
-            nested = nested or is_nested
-        admission = Admission(fixed_row_cost=cost, nested=nested)
+            sub = walk.type_(field.get("type"), name, ns, 1)
+            cost += sub.cost
+            min_bytes += sub.min_bytes
+            nested = nested or sub.nested
+        admission = Admission(fixed_row_cost=cost, nested=nested, min_row_bytes=min_bytes)
     except _Refused as exc:
         refused = (exc.path[:128], exc.what)
     if refused is not None:

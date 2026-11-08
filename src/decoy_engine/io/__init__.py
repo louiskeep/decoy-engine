@@ -7,9 +7,6 @@ the whole file) and write them atomically. Credential handling, pricing and fing
 with the caller: these readers take a local path and a budget, nothing else.
 """
 
-from collections.abc import Callable
-from typing import Any
-
 from decoy_engine.io import csv_framer
 from decoy_engine.io.avro_io import iter_avro_chunks, read_avro, write_avro
 from decoy_engine.io.bounded_reader import (
@@ -36,24 +33,9 @@ from decoy_engine.io.format_errors import (
     TargetSchemaMismatch,
 )
 from decoy_engine.io.orc_io import iter_orc_chunks, read_orc, write_orc
-from decoy_engine.profile import write_fixed_width
-
-# The engine's writer for each `FileTarget.format` it writes itself. CSV and Parquet targets
-# are written by the caller (pandas / pyarrow `write_table`, or `ParquetTransactionalSink`).
-TARGET_WRITERS: dict[str, Callable[..., Any]] = {
-    "avro": write_avro,
-    "fixed_width": write_fixed_width,
-    "orc": write_orc,
-}
-CALLER_WRITTEN_TARGETS: dict[str, str] = {
-    "csv": "written by the caller with pandas or pyarrow",
-    "parquet": "written by the caller with pyarrow or ParquetTransactionalSink",
-}
 
 __all__ = [
-    "CALLER_WRITTEN_TARGETS",
     "PANDAS_DEFAULT_NA_VALUES",
-    "TARGET_WRITERS",
     "AvroBlockTooLarge",
     "AvroMalformed",
     "AvroSchemaUnsupported",

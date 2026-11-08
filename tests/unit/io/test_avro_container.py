@@ -281,6 +281,10 @@ REFUSED = {
         "fields": [{"name": "next", "type": ["null", "Node"]}],
     },
     "undefined_name": "Nowhere",
+    "wrapped_schema": {"type": {"type": {"type": "long"}}},
+    "wrapped_union": {"type": ["null", "long"]},
+    "logical_type_not_a_string": {"type": "long", "logicalType": {}},
+    "fixed_logical_type_list": {"type": "fixed", "name": "G", "size": 4, "logicalType": ["x"]},
 }
 
 
@@ -352,3 +356,132 @@ def test_grouping_respects_budget_and_is_pure(sizes: list[int], budget_rows: int
     assert sum(groups[0]) == sum(sizes)
     for rows in groups[0]:
         assert rows <= budget_rows or rows in sizes  # a single block over the row cap stands alone
+
+
+# Code review round 1 -------------------------------------------------------------------------
+
+_BOOLS = record([("b", "boolean")])
+
+
+@pytest.mark.parametrize("codec", [b"deflate", b"snappy"])
+def test_highly_compressible_blocks_are_read_on_every_path(tmp_path: Path, codec: bytes) -> None:
+    from decoy_engine.profile import build_profile_source
+
+    raw_rows = b"\x01" * 10_000  # 10,000 booleans compress to far fewer than 10,000 bytes
+    data = deflate(raw_rows) if codec == b"deflate" else snappy(raw_rows)
+    assert len(data) < 10_000
+    path = _write(tmp_path, container(_BOOLS, [(10_000, data)], codec=codec))
+    chunks = list(iter_avro_chunks(path, BIG, table="t"))
+    assert sum(c.num_rows for c in chunks) == 10_000
+    source = build_profile_source({"type": "file", "format": "avro", "path": path})
+    assert source.row_count().value == 10_000
+    assert len(source.sample_frame(10)) == 10
+
+
+def test_a_count_the_bytes_cannot_hold_is_refused_before_decode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called: list[int] = []
+    monkeypatch.setattr(avro_io, "_decode_group", lambda *a, **k: called.append(1))
+    # Each record of LONG_SCHEMA is at least 2 bytes (a long and a string length).
+    lying_null = container(LONG_SCHEMA, [(1_000_000, b"\x00" * 10)])
+    assert _refused(tmp_path, lying_null).detail["reason"] == "block_header"
+    lying_deflate = container(LONG_SCHEMA, [(1_000, deflate(b"\x00" * 10))], codec=b"deflate")
+    assert _refused(tmp_path, lying_deflate).detail["reason"] == "block_header"
+    with pytest.raises(AvroMalformed):
+        list(iter_avro_chunks(_write(tmp_path, lying_null), BIG, table="t"))
+    assert not called
+
+
+def test_a_block_whose_estimate_exceeds_the_budget_is_refused_on_the_chunked_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rows = 1 << 20  # one byte each (long zero), decoding to 8 bytes plus validity per row
+    path = _write(tmp_path, container(record([("x", "long")]), [(rows, b"\x00" * rows)]))
+    budget = ChunkBudget(chunk_budget_bytes=2 << 20, max_chunk_rows=1 << 22, max_row_bytes=1 << 16)
+    called: list[int] = []
+    real = avro_io._decode_group
+    monkeypatch.setattr(avro_io, "_decode_group", lambda *a, **k: called.append(1) or real(*a, **k))
+    with pytest.raises(AvroBlockTooLarge) as info:
+        list(iter_avro_chunks(path, budget, table="t"))
+    assert info.value.detail["remedy"] and not called
+    assert read_avro(path, table="t").num_rows == rows  # the whole-file read takes it
+
+
+def test_unknown_codec_is_not_echoed(tmp_path: Path) -> None:
+    raw = container(LONG_SCHEMA, [(2, long_rows(0, 2))], codec=b"SECRET-CODEC-NAME")
+    exc = _refused(tmp_path, raw, AvroSchemaUnsupported)
+    assert exc.detail["codec"] == "unknown" and "SECRET" not in str(exc)
+
+
+def test_metadata_entry_cap(tmp_path: Path) -> None:
+    schema = json.dumps(LONG_SCHEMA).encode()
+    many = zz(c.MAX_META_ENTRIES) + (astr(b"") + astr(b"")) * c.MAX_META_ENTRIES
+    meta = zz(1) + astr(b"avro.schema") + astr(schema) + many + zz(0)
+    assert _refused(tmp_path, b"Obj\x01" + meta + SYNC).detail["reason"] == "header"
+
+
+_SLOT_KEYS = [
+    "type",
+    "name",
+    "fields",
+    "items",
+    "values",
+    "symbols",
+    "size",
+    "logicalType",
+    "precision",
+    "scale",
+    "namespace",
+]
+_JSON_LEAF = st.one_of(
+    st.none(),
+    st.booleans(),
+    st.integers(-3, 40),
+    st.sampled_from(
+        [
+            "null",
+            "long",
+            "string",
+            "record",
+            "enum",
+            "array",
+            "map",
+            "fixed",
+            "bytes",
+            "decimal",
+            "date",
+            "uuid",
+            "duration",
+            "timestamp-millis",
+            "r",
+            "x",
+            "",
+        ]
+    ),
+)
+_JSON = st.recursive(
+    _JSON_LEAF,
+    lambda inner: st.one_of(
+        st.lists(inner, max_size=3),
+        st.dictionaries(st.sampled_from(_SLOT_KEYS), inner, max_size=5),
+    ),
+    max_leaves=25,
+)
+
+
+@settings(max_examples=400, deadline=None, derandomize=True)
+@given(field_type=_JSON, top=st.dictionaries(st.sampled_from(_SLOT_KEYS), _JSON, max_size=3))
+def test_any_schema_tree_is_admitted_or_refused_with_a_code(field_type: object, top: dict) -> None:  # type: ignore[type-arg]
+    from decoy_engine.io import avro_schema
+
+    for schema in (
+        {"type": "record", "name": "r", "fields": [{"name": "f", "type": field_type}]},
+        {"type": "record", "fields": [{"name": "f", "type": "long"}], **top},
+        field_type,
+    ):
+        raw = json.dumps(schema).encode()
+        try:
+            avro_schema.admit(raw, table="t")
+        except (AvroSchemaUnsupported, AvroMalformed) as exc:
+            assert exc.__context__ is None

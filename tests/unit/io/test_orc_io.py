@@ -249,3 +249,12 @@ def test_output_bytes_are_deterministic(tmp_path: Path) -> None:
     time.sleep(1.1)  # a wall-clock field in the footer would differ across this gap
     write_orc(table, tmp_path / "b.orc", table="t")
     assert (tmp_path / "a.orc").read_bytes() == (tmp_path / "b.orc").read_bytes()
+
+
+def test_read_refuses_a_timestamp_inside_a_map(tmp_path: Path) -> None:
+    path = tmp_path / "m.orc"
+    column = pa.array([[("k", dt.datetime(2020, 1, 1))]], pa.map_(pa.string(), pa.timestamp("us")))
+    orc.write_table(pa.table({"id": [1], "m": column}), str(path))
+    with pytest.raises(OrcTypeUnsupported) as info:
+        read_orc(str(path), table="t")
+    assert info.value.detail["column"] == "m"

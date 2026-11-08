@@ -156,7 +156,7 @@ def test_every_admitted_type(tmp_path: Path) -> None:
 @settings(
     max_examples=25, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
 )
-@given(nbytes=st.integers(2_000, 200_000), rows=st.integers(1, 40))
+@given(nbytes=st.integers(10_000, 200_000), rows=st.integers(1, 40))
 def test_chunked_equals_whole(tmp_path: Path, nbytes: int, rows: int) -> None:
     path = _all_file(tmp_path)
     whole = read_avro(path, table="t")
@@ -175,14 +175,14 @@ def _normalised_polars(path: str) -> pa.Table:
 
 def test_differential_hand_built(tmp_path: Path) -> None:
     path = _all_file(tmp_path)
-    chunks = pa.concat_tables(list(iter_avro_chunks(path, _budget(4_000, 9), table="t")))
+    chunks = pa.concat_tables(list(iter_avro_chunks(path, _budget(20_000, 9), table="t")))
     assert chunks.equals(_normalised_polars(path))
 
 
 @settings(
     max_examples=15, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
 )
-@given(n=st.integers(0, 3000), nbytes=st.integers(300_000, 2_000_000))
+@given(n=st.integers(0, 3000), nbytes=st.integers(1_000_000, 4_000_000))
 def test_differential_engine_written(tmp_path: Path, n: int, nbytes: int) -> None:
     table = pa.table(
         {

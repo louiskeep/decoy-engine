@@ -70,4 +70,4 @@ def test_chunked_read_peak_rss_is_bounded(tmp_path: Path) -> None:
     rows_whole, whole = _peak_mib(path, "whole")
     assert rows == rows_whole == n
     assert whole > 64, (whole, chunked)
-    assert chunked < 32, chunked
+    assert chunked < 24, chunked

@@ -14,11 +14,11 @@ minimum engine version it was tested against via its
 V1P-4.1, built ahead on the V1+ track (sprint text: CLI repo `louiskeep/decoy`,
 `docs/roadmap/v1plus-sprints.md`, "V1P-4.1 Engine readers and writers"). `FileSource.format` and
 `FileTarget.format` accept `avro` and `orc`, and `decoy_engine.io` adds `iter_avro_chunks`,
-`read_avro`, `write_avro`, `iter_orc_chunks`, `read_orc`, `write_orc`, `TARGET_WRITERS` and seven
+`read_avro`, `write_avro`, `iter_orc_chunks`, `read_orc`, `write_orc` and seven
 coded refusals (reason registry 1.7.0: `runtime.avro_container_malformed`,
 `runtime.avro_schema_unsupported`, `runtime.avro_block_too_large`, `runtime.orc_file_malformed`,
 `runtime.orc_type_unsupported`, `runtime.target_column_type_unsupported`,
-`runtime.target_schema_mismatch`). `profile_source` reads both formats; the run-result
+`runtime.target_schema_mismatch`); `decoy_engine.file_targets.TARGET_WRITERS` names the engine writer per target format. `profile_source` reads both formats; the run-result
 `OutputFormat` gains `avro` and `orc`. A config that names neither behaves as before; the JSON
 schema and an unknown-format validation error now list the two values. ORC files with timestamp
 columns are refused on read. Reference: `docs/file-formats.md`; limits in
