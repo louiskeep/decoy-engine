@@ -98,12 +98,12 @@ def test_make_stage_dir_at_open_does_not_follow_a_swapped_in_symlink(
 
 def test_make_stage_dir_at_eexist_leaves_existing(tmp_path: Path, dir_fd: int) -> None:
     existing = tmp_path / "x"
-    existing.mkdir()
-    (existing / "keep").write_text("k")
+    existing.mkdir()  # empty, so a stray rmdir after EEXIST would succeed
+    before = os.lstat(existing).st_ino
     os.chmod(existing, 0o755)  # noqa: S103 - the test needs an open mode
     with pytest.raises(FileExistsError):
         make_stage_dir_at(dir_fd, "x")
-    assert existing.is_dir() and (existing / "keep").read_text() == "k"
+    assert existing.is_dir() and os.lstat(existing).st_ino == before
     assert _lmode(existing) == 0o755
 
 
