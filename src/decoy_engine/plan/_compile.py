@@ -636,25 +636,25 @@ _NON_SEMANTIC_GLOBAL_SETTINGS = frozenset(
         "freetext_advisory_min_distinctness",
     }
 )
+_UNHASHED_BLOCKS = ("sources", "targets", "pre_scan")
 
 
 def _hash_config(config: dict[str, Any]) -> str:
     """SHA-256 over a canonical JSON serialization of the masking-semantics
     portion of the config (M1 from S1 end-of-sprint Dennis review).
 
-    The `sources` and `targets` blocks are explicitly excluded: they
-    describe data binding (where bytes come from, where bytes go) rather
-    than masking semantics. A user swapping a local file source for an
-    S3 source does not change which columns mask how; the
-    pipeline_config_hash must stay byte-identical across that swap so
-    audit + reproducibility tooling can match the two runs as
-    semantically equivalent.
+    The `sources`, `targets` and `pre_scan` blocks are explicitly excluded: the first two describe
+    data binding (where bytes come from, where bytes go) and `pre_scan` only suggests, so none is
+    masking semantics. A user swapping a local file source for an S3 source does not change which
+    columns mask how; the pipeline_config_hash must stay byte-identical across that swap so audit
+    + reproducibility tooling can match the two runs as semantically equivalent. `post_scan`
+    stays in: under `ner_findings: fail` its `dismissed` list decides what blocks.
 
     Sort_keys=True, ensure_ascii=True, separators=(",", ":") for byte
     stability across Python runtimes. Same masking semantics produce the
     same hash regardless of key insertion order or source/target binding.
     """
-    semantic_config = {k: v for k, v in config.items() if k not in ("sources", "targets")}
+    semantic_config = {k: v for k, v in config.items() if k not in _UNHASHED_BLOCKS}
     global_settings = semantic_config.get("global_settings")
     if isinstance(global_settings, dict) and any(
         key in global_settings for key in _NON_SEMANTIC_GLOBAL_SETTINGS

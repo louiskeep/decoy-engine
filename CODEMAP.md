@@ -196,6 +196,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | Connectors | `src/decoy_engine/sdk.py`, `src/decoy_engine/connectors/` |
 | Pre-scan (product label) | `src/decoy_engine/detection/`, `profiling/`, `verification/` |
 | ML field-recognition evaluation (BF2 / ML0) | `src/decoy_engine/profiling/eval/` (harness, split, bands); see CHANGELOG §"ML-foundation measurement substrate" |
+| Optional ML detectors | `src/decoy_engine/detection/_model_status.py` (`ModelStatus`, `ner_status`, `log_detector_run`), `profiling/model_pack/_detectors.py` (`classifier_status`, `load_detectors`, `DetectorSet`; detection never imports profiling), `detection/_ner_rate.py` (NER cell sample, rate, bucket), `config/_pre_scan.py` and `config/_post_scan.py` (`pre_scan`, `post_scan.detectors`/`dismissed`), `ModelRef` and `validate_ner_model_name` in `detection/types.py` |
 | ML3.1 column-type classification | `src/decoy_engine/profiling/model_pack/classify.py` (`classify_fields` function); see CHANGELOG §"ML3 field classification and provenance" |
 | ML3.2 manifest provenance signing | `src/decoy_engine/profiling/model_pack/provenance.py` (`sign_manifest`, `verify_manifest`); signatures enforced by `ModelPackLoader` when `DECOY_PACK_SIGNING_KEY` is set |
 | Canonical caller shape | `tests/integration/golden/test_execution_e2e.py::_run` |

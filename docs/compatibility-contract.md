@@ -576,6 +576,21 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   `source_row_groups` and `source_max_row_group_rows`; `execution.loaded_fully_in_memory` is
   `False` when every source of a streamed run was read lazily. A caller that passes resident
   tables sees no change except the added `input` block.
+  SCAN-ML M1 (2026-11) adds `ModelRef`, `ModelStatus`, `classifier_status`, `ner_status`,
+  `load_detectors`, `ModelUnavailableError`, `PreScanConfig` and `Dismissal`, and the config fields
+  `pre_scan.detectors`, `pre_scan.ner_model`, `post_scan.detectors`, `post_scan.ner_model`,
+  `post_scan.ner_findings` and `post_scan.dismissed`. All are additive. A field equal to its default
+  is left out of the dump, so a config that predates them keeps its exact dump,
+  `pipeline_config_hash` and plan hash; the plan hash leaves out `pre_scan` and keeps
+  `post_scan.dismissed` (under `ner_findings: fail` a dismissal decides what blocks). Registry 1.8.0
+  adds `config.detectors_invalid`, `config.post_scan_inactive`, `config.pre_scan_ner_inactive`,
+  `config.ner_model_invalid`, `config.dismissal_invalid`, `provider.classifier_unavailable` and
+  `provider.ner_model_incompatible`. Three behavior changes. `ensure_ner_available` now checks the
+  model name (one `fullmatch` rule) and refuses a model built for another spaCy minor, so a
+  `text_redact` `ner` column fails at validate time where it used to fail at load. A name counts as
+  an installed model only when it is an installed distribution that ships a spaCy `meta.json`; a
+  plain importable module (`os`, `json`) is refused with `provider.ner_model_not_installed` and is
+  never imported. `ModelPackLoadError` gains a `cause` field (`disabled`, `import` or `pack`).
 - **CLI:** verb names, flag names, and the exit-code contract (0 ok, 1
   validation/usage, 2 deprecated-shim, 3 runtime).
 - **Config:** the `pipeline.yaml` schema. An old config must keep validating and

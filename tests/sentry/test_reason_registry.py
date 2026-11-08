@@ -64,6 +64,7 @@ ADAPTERS: dict[tuple[str, str], str] = {
     # -- constructors that store the caller's code -------------------------------------------
     ("_reference_date.py", "PinnedModeError.__init__"): _CTOR,
     ("connectors/postgres_snapshot.py", "PostgresSnapshotError.__init__"): _CTOR,
+    ("detection/_model_status.py", "ModelUnavailableError.__init__"): _CTOR,
     ("detection/ner.py", "NerUnavailableError.__init__"): _CTOR,
     ("determinism/_derive.py", "DeterminismError.__init__"): _CTOR,
     ("errors.py", "FpeChecksumError.__init__"): _CTOR,
@@ -177,7 +178,9 @@ NOT_POSITIONAL_SINKS: dict[tuple[str, str], str] = {
     ),
 }
 # Functions whose return value is a registry symbol chosen from a table of registry symbols.
-REGISTRY_HELPERS = frozenset({"strategy_code_for_unencryptable", "strategy_code_for_checksum"})
+REGISTRY_HELPERS = frozenset(
+    {"strategy_code_for_unencryptable", "strategy_code_for_checksum", "registered_model_reason"}
+)
 
 Key = tuple[str, str, str, str, str]
 

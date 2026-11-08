@@ -1414,7 +1414,7 @@ reason = "locating the shipped default model pack"
 
 [[entry]]
 module = "decoy_engine/profiling/model_pack/classify.py"
-function = "classify_fields"
+function = "default_pack_loader"
 sink = "engine_dir_handle"
 ordinal = 0
 rule = "package data: `importlib.resources.files(\"decoy_engine\")` or `Path(__file__).parents[4]`"

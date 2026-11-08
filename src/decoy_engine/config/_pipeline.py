@@ -42,6 +42,7 @@ from pydantic import (
 from decoy_engine.config._global_settings import GlobalSettings
 from decoy_engine.config._namespaces import NamespaceConfig
 from decoy_engine.config._post_scan import PostScanConfig
+from decoy_engine.config._pre_scan import PreScanConfig
 from decoy_engine.config._relationships import RelationshipConfig
 from decoy_engine.config._sources import FileSource, SourceDescriptor
 from decoy_engine.config._subset import SubsetConfig
@@ -80,6 +81,9 @@ class PipelineConfig(BaseModel):
     relationships: list[RelationshipConfig] = Field(default_factory=list)
     targets: dict[str, TargetDescriptor] = Field(min_length=1)
     namespaces: dict[str, NamespaceConfig] = Field(default_factory=dict)
+    # Pre-scan detector choice (regex always; classifier and ner opt in). Equal to the default
+    # it stays out of dumps and hashes, so a legacy config is unchanged.
+    pre_scan: PreScanConfig = Field(default_factory=PreScanConfig)
     # Post-scan controls. `post_scan.integrity` runs the post-mask integrity suite
     # (report-only) over the finished output; omitted -> disabled.
     post_scan: PostScanConfig = Field(default_factory=PostScanConfig)
@@ -114,12 +118,13 @@ class PipelineConfig(BaseModel):
         return recover_serialization_schema(core_schema, handler)
 
     @model_serializer(mode="wrap")
-    def _omit_unset_protected_quarantine(
-        self, handler: SerializerFunctionWrapHandler
-    ) -> dict[str, Any]:
+    def _omit_unset_optional_blocks(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         data: dict[str, Any] = handler(self)
         if data.get("protected_quarantine") is None:
             data.pop("protected_quarantine", None)
+        # By value, not by what was written: a pre_scan equal to the default is the legacy shape.
+        if self.pre_scan == PreScanConfig():
+            data.pop("pre_scan", None)
         return data
 
     @model_validator(mode="after")
