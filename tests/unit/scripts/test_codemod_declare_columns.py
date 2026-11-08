@@ -172,7 +172,12 @@ def test_probe_run_under_xdist_ignores_stale_worker_files(
         "declared": ["a"], "frame": str(tmp_path / "test_probe_target.py") + ":1",
     }  # fmt: skip
     (tmp_path / "probe.jsonl.oldrun.gw7").write_text(json.dumps(stale_row) + "\n", encoding="utf-8")
-    env = {k: v for k, v in os.environ.items() if k != "PYTEST_XDIST_WORKER"}
+    # An outer xdist run leaves its own worker variables behind; the inner run must start clean.
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("PYTEST_XDIST", "DECOY_DECLARE_PROBE"))
+    }
     env["DECOY_DECLARE_PROBE"] = str(out)
     env["PYTHONPATH"] = os.pathsep.join(
         [str(REPO / "scripts" / "dev" / "codemods"), env.get("PYTHONPATH", "")]
