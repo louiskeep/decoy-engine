@@ -23,4 +23,4 @@ class _ReadBase(BaseModel):
 
 def read_model_of(model: type[BaseModel]) -> type[BaseModel]:
     """``model`` with unknown fields ignored at every level and enums read as tokens."""
-    return derive_read(model, base=_ReadBase, exact_fields=_EXACT)
+    return derive_read(model, base=_ReadBase, exact_fields=_EXACT, module=__name__)

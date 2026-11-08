@@ -153,3 +153,12 @@ def test_a_version_must_be_canonical_and_epoch_free(version: str) -> None:
     for model in (RunResult, RunResultRead):
         with pytest.raises(ValidationError):
             model.model_validate(doc)
+
+
+def test_the_public_read_model_keeps_its_import_path_and_pickles() -> None:
+    import pickle
+
+    from decoy_engine import RunResultRead
+
+    assert RunResultRead.__module__ == "decoy_engine.run_result._model"
+    assert pickle.loads(pickle.dumps(RunResultRead)) is RunResultRead  # noqa: S301  # own bytes

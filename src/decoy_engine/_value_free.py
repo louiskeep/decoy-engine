@@ -153,8 +153,10 @@ class _Deriver:
         substitute: Callable[[list[Any]], Any | None] | None,
         required_kinds: Collection[str],
         exact_fields: Collection[str],
+        module: str,
     ) -> None:
         self.base = base
+        self.module = module
         self.substitute = substitute
         self.required_kinds = tuple(required_kinds)
         self.exact_fields = frozenset(exact_fields)
@@ -196,7 +198,7 @@ class _Deriver:
             read_ann = ann if keep else self.annotation(ann)
             fields[name] = (read_ann, Field(default, alias=info.alias))
         read = create_model(
-            f"{model.__name__}Read", __base__=self.base, __module__=__name__, **fields
+            f"{model.__name__}Read", __base__=self.base, __module__=self.module, **fields
         )
         self.cache[model] = read
         return read
@@ -209,6 +211,7 @@ def derive_read(
     substitute: Callable[[list[Any]], Any | None] | None = None,
     required_kinds: Collection[str] = (),
     exact_fields: Collection[str] = (),
+    module: str,
 ) -> type[BaseModel]:
     """The tolerant read model of ``model``, built on ``base`` (which sets ``extra="ignore"``).
 
@@ -217,6 +220,7 @@ def derive_read(
     its place, or ``None`` to keep going (run results swap reason payloads this way).
     ``required_kinds`` names ``ValueFree`` kinds that must be present on read even when the writer
     has a default. ``exact_fields`` keeps the named ``Literal`` fields as written, for a schema tag or a
-    producer id that a reader must match, not tolerate.
+    producer id that a reader must match, not tolerate. ``module`` is the caller's ``__name__``:
+    derived models are stamped with it so a public read model keeps its import path and pickles.
     """
-    return _Deriver(base, substitute, required_kinds, exact_fields).model(model)
+    return _Deriver(base, substitute, required_kinds, exact_fields, module).model(model)

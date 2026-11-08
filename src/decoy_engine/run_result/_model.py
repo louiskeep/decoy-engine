@@ -300,5 +300,9 @@ def _substitute(meta: list[Any]) -> Any | None:
 
 
 RunResultRead: Any = derive_read(
-    RunResult, base=_ReadBase, substitute=_substitute, required_kinds=("schema_tag",)
+    RunResult,
+    base=_ReadBase,
+    substitute=_substitute,
+    required_kinds=("schema_tag",),
+    module=__name__,
 )
