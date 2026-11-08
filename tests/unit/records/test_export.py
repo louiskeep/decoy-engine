@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, tzinfo
 from typing import Any
 
 import pytest
@@ -146,6 +147,20 @@ def test_a_naive_export_time_is_refused() -> None:
     with pytest.raises(RecordError) as caught:
         list(records.export_lines([], producer=PRODUCER, exported_at=T0.replace(tzinfo=None)))
     assert caught.value.code == "record_invalid"
+
+
+class _NoOffset(tzinfo):
+    """A zone object that reports no offset: Python treats such a time as naive."""
+
+    def utcoffset(self, dt: datetime | None) -> timedelta | None:
+        return None
+
+
+def test_a_zone_without_an_offset_is_refused() -> None:
+    with pytest.raises(RecordError):
+        list(
+            records.export_lines([], producer=PRODUCER, exported_at=T0.replace(tzinfo=_NoOffset()))
+        )
 
 
 @pytest.mark.parametrize("lines", [[], [b""], [b"\n", b"  \n"]])

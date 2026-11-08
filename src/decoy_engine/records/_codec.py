@@ -88,7 +88,7 @@ def _payload_body(spec: KindSpec, payload: Any) -> dict[str, Any]:
 def utc_stamp(value: datetime, field: str) -> str:
     """``value`` as UTC text; a naive time is refused, since reading it as host time would make
     the stored bytes depend on the machine."""
-    if not isinstance(value, datetime) or value.tzinfo is None:
+    if not isinstance(value, datetime) or value.utcoffset() is None:
         raise RecordError(reasons.runtime.RECORD_INVALID, ((field,),))
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
