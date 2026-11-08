@@ -32,7 +32,7 @@ from decoy_engine import reasons
 from decoy_engine.expressions._when_parser import validate_envelope_when
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._checks import check_statistical_columns
-from decoy_engine.plan._checks_dp import verify_dp_snapshots
+from decoy_engine.plan._checks_dp import check_dp_generate_contract, verify_dp_snapshots
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._generation import ReadSnapshot, build_generation_plan
 from decoy_engine.plan._serialize_declared import (
@@ -427,6 +427,7 @@ def _generation_plan_from_dict(data: dict[str, Any]) -> GenerationPlan:
     pinned_by_path: dict[str, ReadSnapshot] = {read.path: read for _pinned, read in decoded}
 
     config = json.loads(data["config_json"])
+    check_dp_generate_contract(config)
     _require_statistical_snapshots_pinned(config, pinned_by_path)
     dp_verified_columns, dp_verification = verify_dp_snapshots(config, pinned_by_path)
     # C-M1: `failures={}` (never `None`) here -- `_require_statistical_

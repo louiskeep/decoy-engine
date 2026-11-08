@@ -147,7 +147,8 @@ def check_dp_generate_contract(config: dict[str, Any]) -> None:
         PlanCompileError: a `type: statistical` generate column under a
             `dp`-declared pipeline sets `allow_real_categories: true`,
             `high_cardinality: true`, or `condition_on` (joint sampling,
-            out of scope -- guide section 9.8).
+            out of scope -- guide section 9.8), or a `type: reference` column
+            sets `distribution: fitted`.
     """
     if not _dp_declared(config):
         return
@@ -158,9 +159,17 @@ def check_dp_generate_contract(config: dict[str, Any]) -> None:
             continue
         table_name = table_entry.get("name", "?")
         for col_entry in table_entry.get("generate_columns", []) or []:
-            if not isinstance(col_entry, dict) or col_entry.get("type") != "statistical":
+            if not isinstance(col_entry, dict):
                 continue
             col_name = col_entry.get("name", "?")
+            if (col_entry.get("type"), col_entry.get("distribution")) == ("reference", "fitted"):
+                raise PlanCompileError(
+                    code=reasons.plan.DP_GENERATE_FITTED_FANOUT_UNSUPPORTED,
+                    path=f"tables.{table_name}.generate_columns.{col_name}.distribution",
+                    message="a DP pipeline cannot use the exact fitted fan-out; use `distribution: random`",
+                )
+            if col_entry.get("type") != "statistical":
+                continue
             where = f"{col_name!r} in table {table_name!r}"
             if col_entry.get("condition_on") is not None:
                 raise PlanCompileError(
