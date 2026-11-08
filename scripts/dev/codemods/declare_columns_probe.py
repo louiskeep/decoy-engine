@@ -5,7 +5,8 @@
 
 It swaps the module-level `check_columns_declared` that `prepare_declared_sources` and the
 capability methods resolve for one that records every finding and never raises, so a test
-that would be refused still runs to its own assertions. The rule itself stays in
+that would be refused still runs to its own assertions. With pytest-xdist each worker writes
+`OUT.<worker>`; `config_explicit.py declare-columns --record OUT` reads OUT and every `OUT.*`. The rule itself stays in
 `declaration_findings`. Output holds fixture column names only: a scratch file, never committed.
 """
 
@@ -82,10 +83,24 @@ def pytest_runtest_teardown(item: pytest.Item) -> None:
         _CURRENT.pop()
 
 
+def _output_path(session: pytest.Session) -> str | None:
+    """Where this process writes. Under xdist each worker owns `OUT.<worker>` (the codemod
+    merges them) and the controller, which records nothing, must not truncate the base file."""
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if worker:
+        return f"{_OUT}.{worker}"
+    if getattr(session.config.option, "dist", "no") != "no":
+        return None
+    return _OUT
+
+
 def pytest_sessionfinish(session: pytest.Session) -> None:
     if not _OUT:
         return
     _GLOBALS["check_columns_declared"] = _ORIGINAL
-    with open(_OUT, "w", encoding="utf-8") as handle:
+    target = _output_path(session)
+    if target is None:
+        return
+    with open(target, "w", encoding="utf-8") as handle:
         for row in _ROWS.values():
             handle.write(json.dumps(row) + "\n")

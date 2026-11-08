@@ -5,7 +5,7 @@ prints one `<mode> <path>:<line>` row per edit, for the evidence record. Modes:
 
 - `has-header`: described below.
 - `declare-columns --record out.jsonl PATH...`: applies the records `declare_columns_probe.py`
-  wrote. An undeclared column gets a `passthrough` entry in the one dict literal
+  wrote (plus any per-worker `out.jsonl.<worker>` files). An undeclared column gets a `passthrough` entry in the one dict literal
   `{"name": <table>, "columns": [...]}` (in the recorded test file or a directly imported local
   helper) whose constant column names equal the declared names; an undeclared table gets a new
   `tables` entry beside its `sources` key. Zero or several matches print `hand <node> <table>`.
@@ -246,9 +246,16 @@ def _append_edit(target: ast.List, texts: list[str]) -> tuple[int, int, str]:
     return end[0], end[1], "".join(f", {t}" for t in texts)
 
 
+def _record_lines(record_file: Path) -> list[str]:
+    """Lines of the record file and of the per-worker `<record>.<worker>` files xdist leaves."""
+    files = [record_file] if record_file.is_file() else []
+    files += sorted(record_file.parent.glob(f"{record_file.name}.*"))
+    return [ln for f in files for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()]
+
+
 def _declare(record_file: Path, roots: list[Path]) -> list[str]:
     groups: dict[tuple, dict] = {}
-    for line in record_file.read_text(encoding="utf-8").splitlines():
+    for line in _record_lines(record_file):
         rec = json.loads(line)
         key = (
             rec["frame"].rsplit(":", 1)[0],
