@@ -89,7 +89,8 @@ def _text_key_parents(config: Mapping[str, Any], generated: set[str]) -> set[tup
         if all(c.get("table") in generated for c in children):
             continue
         parent = rel.get("parent") or {}
-        out.update((str(parent.get("table")), str(c)) for c in parent.get("columns") or [])
+        for c in parent.get("columns") or []:
+            out.add((str(parent.get("table")), str(c)))
     return out
 
 

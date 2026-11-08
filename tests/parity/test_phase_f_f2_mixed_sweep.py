@@ -221,7 +221,7 @@ def _no_raw_survives(
 def _int_ids(tmp_path: Path, parent_columns: list[dict[str, Any]]) -> list[Any]:
     """The generated parent keys (via the oracle), so child keys can hit real parents."""
     child = child_table(pa.array(["x"] * 7, pa.string()))
-    config = mixed_config(tmp_path, child, parent_columns=parent_columns, coupled=False)
+    config = mixed_config(tmp_path, child, parent_columns=parent_columns, coupled=True)
     return oracle(config, {CHILD: child}).outputs[PARENT].column("id").to_pylist()
 
 

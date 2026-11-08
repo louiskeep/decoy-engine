@@ -135,7 +135,7 @@ def test_an_independent_zero_row_generated_table_matches_the_oracle_exactly(
     where the oracle publishes `null`."""
     child = child_table(pa.array(KEYS, pa.string()))
     config = mixed_config(tmp_path, child, parent_columns=[ID], parent_rows=0, coupled=False)
-    assert generate_tables_via_plan_for(config)[PARENT].schema.field("id").type == pa.string()
+    assert generate_tables_via_plan_for(config)[PARENT].schema.field("id").type == pa.int64()
 
     got = run(config, {CHILD: child})
     want = oracle(config, {CHILD: child})
@@ -143,7 +143,8 @@ def test_an_independent_zero_row_generated_table_matches_the_oracle_exactly(
         "mixed_runtime_declined:generation-shape-unsupported"
     )
     _assert_same_values_and_fields(got.outputs, want.outputs)
-    assert str(got.outputs[PARENT].schema.field("id").type) == "null"
+    # A numeric zero-row column keeps its integer type through the pandas echo (text became null).
+    assert str(got.outputs[PARENT].schema.field("id").type) == "int64"
 
 
 def test_a_zero_row_lookup_beside_a_nonempty_coupled_parent_matches_the_oracle(
@@ -161,7 +162,7 @@ def test_a_zero_row_lookup_beside_a_nonempty_coupled_parent_matches_the_oracle(
         "mixed_runtime_declined:generation-shape-unsupported"
     )
     _assert_same_values_and_fields(got.outputs, want.outputs)
-    assert str(got.outputs["lookup"].schema.field("code").type) == "null"
+    assert str(got.outputs["lookup"].schema.field("code").type) == "int64"
     assert got.outputs[PARENT].num_rows == 5
 
 

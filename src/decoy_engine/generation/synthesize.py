@@ -270,7 +270,7 @@ def _generate_column(
     pinned execution: ``windowed_date`` then resolves ``now``/``today`` anchors against it."""
     kind = col.get("type")
     if kind == "sequence":
-        values: list[Any] = _sequence(col, n)
+        values: list[Any] = _sequence(col, n, numeric_type is not None)
     elif kind == "categorical":
         values = _categorical(col, n, seed, derive_key)
     elif kind == "faker":
@@ -325,7 +325,7 @@ def _generate_column(
     return _apply_null_probability(values, col, seed, derive_key, snapshot_content_digest=digest)
 
 
-def _sequence(col: dict[str, Any], n: int) -> list[Any]:
+def _sequence(col: dict[str, Any], n: int, numeric: bool = False) -> list[Any]:
     """Sequential values, parity-frozen vs V1 ``_generate_sequence_column``
     (``columns.py:305-319``): the streamed generator's own batch, so both routes agree.
 
@@ -334,7 +334,7 @@ def _sequence(col: dict[str, Any], n: int) -> list[Any]:
     """
     from decoy_engine.generation._column_streams import SequenceStream
 
-    return SequenceStream(col).next_batch(0, n)
+    return SequenceStream(col, numeric=numeric).next_batch(0, n)
 
 
 def _derived_generate(
