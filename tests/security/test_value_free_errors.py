@@ -325,8 +325,10 @@ def test_subset_explicit_key_mismatch_is_value_free(
 ) -> None:
     exc = _keys_error(series, keys)
     assert exc.code == "subset_seed_key_type"
+    label = "boolean" if series.dtype == pl.Boolean else "integer"
     assert exc.message == (
-        "table 't': explicit seed key(s) do not match the key column dtypes (key columns: ['id'])"
+        "table 't': explicit seed key(s) for key column 'id' "
+        f"do not convert exactly to the column's {label} type"
     )
     assert_value_free(exc)
 
