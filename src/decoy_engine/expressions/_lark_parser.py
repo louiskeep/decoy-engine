@@ -389,7 +389,7 @@ class _ExprTransformer(lark.Transformer):  # type: ignore[type-arg]
             if isinstance(value, bool) or not isinstance(value, int):
                 raise ValidationError(
                     f"unsupported expression: slice() {name!r} argument must be "
-                    f"an int, got {value!r} ({type(value).__name__}). "
+                    f"an int, got {type(value).__name__}. "
                     f"slice(s, start[, end]) requires integer indices."
                 )
         return subject[start:end]

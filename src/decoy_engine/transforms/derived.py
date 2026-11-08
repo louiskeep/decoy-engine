@@ -60,6 +60,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from decoy_engine import reasons
+from decoy_engine.errors import ValidationError
 from decoy_engine.expressions import CompiledExpression, compile_expr, evaluate
 from decoy_engine.plan._errors import PlanCompileError
 
@@ -289,11 +290,28 @@ def apply_derived(
     try:
         result = evaluate(config.compiled, ctx)
     except Exception as exc:
-        parts: list[str] = []
-        if column is not None:
-            parts.append(f"column {column!r}")
-        if row_index is not None:
-            parts.append(f"row {row_index}")
-        ctx_str = ", ".join(parts) if parts else "unknown column"
-        raise ValueError(f"derived expression evaluation failed at {ctx_str}: {exc}") from exc
-    return _apply_bounds(result, config.bounds)
+        reason = _evaluation_failure_reason(exc)
+    else:
+        return _apply_bounds(result, config.bounds)
+    # Raised outside the handler with no cause: the evaluator's text can quote a cell
+    # (`fromisoformat` names the string it rejected), and this message reaches job logs.
+    parts: list[str] = []
+    if column is not None:
+        parts.append(f"column {column!r}")
+    if row_index is not None:
+        parts.append(f"row {row_index}")
+    ctx_str = ", ".join(parts) if parts else "unknown column"
+    raise ValueError(f"derived expression evaluation failed at {ctx_str}: {reason}") from None
+
+
+def _evaluation_failure_reason(exc: Exception) -> str:
+    """A closed-set reason for an evaluation failure, chosen by class, never by its text."""
+    if isinstance(exc, ZeroDivisionError):
+        return "division by zero"
+    if isinstance(exc, ValidationError):
+        return "an argument is not supported"
+    if isinstance(exc, TypeError):
+        return "an operand has an unsupported type"
+    if isinstance(exc, (ValueError, ArithmeticError)):
+        return "an operand value is invalid"
+    return "the expression could not be evaluated"
