@@ -49,7 +49,7 @@ from decoy_engine.fileaccess import (
     entry_point,
 )
 from decoy_engine.profiling import _scan_integrity
-from decoy_engine.profiling._scan_integrity import RelationshipFacts
+from decoy_engine.profiling._scan_integrity import RelationshipFacts, Status
 from decoy_engine.profiling._scan_text_checks import count_leading_zeros, header_looks_like_data
 from decoy_engine.profiling.profiler import profile_columns
 from decoy_engine.profiling.types import ColumnProfile, FieldStats
@@ -145,7 +145,7 @@ class RelationshipFactsCore(_Core):
     parent: str
     parent_columns: list[str]
     children: list[ChildFactsCore]
-    status: Literal["checked", "key_type_mismatch", "skipped_cloud"]
+    status: Status
     parent_rows: int | None
     parent_null_key_rows: int | None
     parent_duplicate_excess: int | None

@@ -397,3 +397,29 @@ def test_relationship_core_is_a_typed_versioned_read_model(tmp_path: Path) -> No
     ScanSetCoreRead.model_validate(extra)
     with pytest.raises(ValueError):
         ScanSetCore.model_validate(extra)
+
+
+def test_every_relationship_status_round_trips_through_the_scan_set_core() -> None:
+    # The persisted core must accept every status the integrity pass can emit, and no other.
+    from typing import get_args
+
+    from pydantic import ValidationError
+
+    from decoy_engine.profiling._scan_integrity import Status
+    from decoy_engine.profiling.scan_set import RelationshipFactsCore
+
+    base = {
+        "parent": "p",
+        "parent_columns": ["id"],
+        "children": [],
+        "parent_rows": None,
+        "parent_null_key_rows": None,
+        "parent_duplicate_excess": None,
+        "exact": True,
+        "bounded": False,
+        "warnings": [],
+    }
+    for status in get_args(Status):
+        assert RelationshipFactsCore.model_validate({**base, "status": status}).status == status
+    with pytest.raises(ValidationError):
+        RelationshipFactsCore.model_validate({**base, "status": "not_a_status"})
