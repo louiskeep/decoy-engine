@@ -256,9 +256,7 @@ def numeric_plan(
 
     def _pairs_agree(row: list[tuple[Key, Key]]) -> bool:
         for p, c in row:
-            if p not in cols or c not in cols:
-                return False  # an end that is not generated reads the key as text
-            pt, ct = planned(p), planned(c)
+            pt, ct = planned(p), planned(c)  # None for an end that is not generated
             if pt is None or pt != ct:
                 return False
         return True

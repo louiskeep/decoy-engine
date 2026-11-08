@@ -154,14 +154,32 @@ def test_one_generated_child_and_one_masked_child_keep_the_parent_text() -> None
     assert ("people", "id") not in numeric_plan(raw)
 
 
-def test_statistical_condition_on_a_sequence_keeps_it_text() -> None:
-    raw = config(
-        [
-            table(
-                "t",
-                6,
-                [SEQ, {"name": "tier", "type": "statistical", "condition_on": "id"}],
-            )
-        ]
-    )
-    assert ("t", "id") not in numeric_plan(raw)
+@pytest.mark.parametrize(
+    ("reader", "numeric"),
+    [
+        ({"type": "statistical", "condition_on": "id"}, False),
+        ({"type": "formula", "formula": "id", "references": ["id"]}, False),
+        ({"type": "derived_aggregate", "op": "sum", "column": "id"}, False),
+        ({"type": "grouped_series", "group_by": "id", "order_by": "other"}, False),
+        ({"type": "group_key", "group_by": "id"}, False),
+        ({"type": "windowed_date", "anchor": "id", "min_days": 1, "max_days": 3}, False),
+        ({"type": "derived", "expression": "id * 2"}, True),
+        ({"type": "grouped_series", "group_by": "other", "order_by": "id"}, True),
+    ],
+    ids=[
+        "condition_on",
+        "formula",
+        "derived_aggregate",
+        "group_by",
+        "group_key",
+        "anchor",
+        "derived",
+        "order_by",
+    ],
+)
+def test_each_reader_kind_decides_whether_the_sequence_is_numeric(
+    reader: dict[str, Any], numeric: bool
+) -> None:
+    other = {"name": "other", "type": "categorical", "categories": ["a", "b"]}
+    cols = [SEQ, other, {"name": "r", **reader}]
+    assert (("t", "id") in numeric_plan(config([table("t", 6, cols)]))) is numeric
