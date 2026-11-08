@@ -24,7 +24,6 @@ from decoy_engine import reasons
 from decoy_engine.errors import ConfigRuleError
 
 _GENERIC = "Value is not valid."
-_CUSTOM_CODE = "custom_error"
 
 # Error types with no placeholder in the library template, or whose placeholders are all
 # input-derived (the parser's own error text), so the row is fixed text.
@@ -243,7 +242,8 @@ def _problem(err: Mapping[str, Any]) -> ConfigProblem:
     specs = reasons.lookup(err_type)
     if specs:
         return ConfigProblem(err_type, location, specs[0].summary)
-    return ConfigProblem(_CUSTOM_CODE, location, _GENERIC)
+    # An unregistered custom type may be author- or data-derived, so it reports as a plain value error.
+    return ConfigProblem(_VALUE_ERROR, location, _GENERIC)
 
 
 def validation_problems(exc: ValidationError) -> tuple[ConfigProblem, ...]:

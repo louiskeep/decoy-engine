@@ -157,7 +157,7 @@ def test_validator_text_is_trusted_only_for_the_exact_rule_error() -> None:  # A
         assert got[name].code == "value_error" and got[name].text == "Value is not valid."
     summary = _reasons.lookup(_REGISTERED_CODE)[0].summary
     assert got["registered"].code == _REGISTERED_CODE and got["registered"].text == summary
-    assert got["unregistered"].code == "custom_error"
+    assert got["unregistered"].code == "value_error"
     assert got["unregistered"].text == "Value is not valid."
 
 
