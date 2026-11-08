@@ -71,9 +71,6 @@
   "src/decoy_engine/execution/out_of_core/_stream_join.py": {
    "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
   },
-  "src/decoy_engine/generation/synthesize.py": {
-   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
-  },
   "src/decoy_engine/generators/columns.py": {
    "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
   },

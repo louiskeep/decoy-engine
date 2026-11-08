@@ -272,7 +272,7 @@ derive seed, which is the proof of concept. Task 0.3 must pin `i` to a global
 row number. Flagged uncertain for that reason.
 
 ### gen.null_probability
-`generation/synthesize.py:521`.
+`generation/synthesize.py:481`.
 `np.random.default_rng(GenDeriveContext.for_column(...).base_int("np")).random(n) < null_prob`.
 This one draw IS the null decision: one float per row from a single contiguous
 stream, so row `i` depends on `n` and stream position. NOT partitionable. V1
@@ -323,7 +323,7 @@ single instance), so none is partitionable: a partition cannot resume a Python
 RNG mid-stream.
 
 ### gen.categorical
-`generation/synthesize.py:433`.
+`generation/synthesize.py:365`.
 `random.Random(GenDeriveContext.for_column(...).base_int("py")).choices(cats, weights=weights, k=n)`:
 one whole-column call. V1 mirror at `generators/columns.py:412`.
 
@@ -376,7 +376,7 @@ provider, but each site reseeds from a per-row or per-span key, so output is a
 pure function of that key.
 
 ### gen.faker_per_row
-`generation/synthesize.py:490`. Per row:
+`generation/synthesize.py:441`. Per row:
 `faker_inst.seed_instance(gen_ctx.row_int("faker", i))` then `provider_func(**kwargs)`.
 `row_int` is an HMAC over the faker family key and `i`. Partitionable. V1 mirror
 at `generators/columns.py:329` is byte-identical.

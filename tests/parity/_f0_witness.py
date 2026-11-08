@@ -20,8 +20,8 @@ compiled_index_selection   `_sampler._derive_pool_indices` -> compiled `derive_i
                            (`pool/_sampler.py:49` loader), deterministic sampler calls only
 python_index_reference     the same function when the compiled kernel is absent or declines the
                            value class (`_sampler.py:135-157` reference fallback)
-python_rng_selection       `random.Random.choices` / `.choice` (categorical `synthesize.py:377`,
-                           reference `:588-604`)
+python_rng_selection       `random.Random.choices` / `.choice` (categorical `synthesize.py:365`,
+                           reference `_synthesize_derived.py:146-162`)
 composite_direct_derive    `derive(...)` + modulo in `composite/_person.py:171` and
                            `_name_email.py`, which bypass `_sampler` entirely
 live_provider_generation   unpooled `_faker`: one provider call per output ROW
@@ -68,7 +68,13 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
-from decoy_engine.generation import _column_streams, _faker_pool, _streamed, synthesize
+from decoy_engine.generation import (
+    _column_streams,
+    _faker_pool,
+    _streamed,
+    _synthesize_derived,
+    synthesize,
+)
 from decoy_engine.generation.pool import _sampler
 from decoy_engine.generation.pool._errors import GenerationError
 from decoy_engine.generation.pool._sampler import PoolSampler
@@ -294,6 +300,8 @@ class EndToEndWitness:
         # Python RNG: the sink is a class attribute so every `random.Random(seed)` is recorded.
         _RecordingRandom.sink = lambda label, payload: outer._record(label, payload)
         mp.setattr(synthesize, "random", SimpleNamespace(Random=_RecordingRandom))
+        # `_reference` draws through its own module's `random`, not synthesize's.
+        mp.setattr(_synthesize_derived, "random", SimpleNamespace(Random=_RecordingRandom))
 
         # Live provider generation: wrap each provider the per-row path resolves.
         real_providers = synthesize.get_faker_providers
