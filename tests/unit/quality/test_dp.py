@@ -1646,3 +1646,120 @@ def _clopper_pearson_upper(successes: int, n: int, alpha: float) -> float:
         else:
             hi = mid
     return hi
+
+
+class TestCheckDpFitRequest:
+    """The check-only entry point and `fit_dp_snapshot` run one shared,
+    data-independent preparation, so a request error wins over the
+    environment gate in both and a CLI can refuse before reading a body."""
+
+    _SCHEMA = {"age": {"kind": "numeric", "carrier": "number", "bounds": (0.0, 100.0)}}
+
+    @staticmethod
+    def _dp():
+        from decoy_engine.quality import dp
+
+        return dp
+
+    @staticmethod
+    def _provenance_error(code):
+        from decoy_engine.quality.dp_provenance import ProvenanceError
+
+        return ProvenanceError(code=code, message="stub")
+
+    def _stub_gate(self, monkeypatch, *, code="dp_stack_uncertified"):
+        calls: list[str] = []
+
+        def gate():
+            calls.append("gate")
+            raise self._provenance_error(code)
+
+        monkeypatch.setattr(self._dp(), "check_fit_environment", gate)
+        return calls
+
+    def _both(self, schema, **params):
+        """Code raised by the check-only entry point and by the fit."""
+        dp = self._dp()
+        source = pd.DataFrame({"age": [1.0, 2.0]})
+        codes = []
+        with pytest.raises(Exception) as check_exc:
+            dp.check_dp_fit_request(schema, **params)
+        codes.append(check_exc.value.code)
+        with pytest.raises(Exception) as fit_exc:
+            dp.fit_dp_snapshot(source, schema, **params)
+        codes.append(fit_exc.value.code)
+        return codes
+
+    @pytest.mark.parametrize(
+        ("schema", "params", "code"),
+        [
+            pytest.param(
+                _SCHEMA, {"epsilon": 0, "delta": 1e-6}, "dp_epsilon_invalid", id="epsilon"
+            ),
+            pytest.param(_SCHEMA, {"epsilon": 1.0, "delta": 0}, "dp_delta_invalid", id="delta"),
+            pytest.param(
+                _SCHEMA,
+                {"epsilon": 1.0, "delta": 1e-6, "numeric_bins": 1},
+                "dp_numeric_bins_invalid",
+                id="numeric_bins",
+            ),
+            pytest.param(
+                {"age": {"carrier": "bogus", "bounds": (0.0, 120.0)}},
+                {"epsilon": 1.0, "delta": 1e-6},
+                "dp_carrier_unknown",
+                id="carrier_schema",
+            ),
+            pytest.param(
+                {"age": {"kind": "numeric", "carrier": "number", "bounds": (0.0, 1.7e308)}},
+                {"epsilon": 1.0, "delta": 1e-6},
+                "dp_numeric_domain_invalid",
+                id="derived_edges",
+            ),
+        ],
+    )
+    def test_invalid_request_raises_its_own_code_before_the_gate(
+        self, monkeypatch, schema, params, code
+    ):
+        gate_calls = self._stub_gate(monkeypatch)
+        assert self._both(schema, **params) == [code, code]
+        assert gate_calls == []
+
+    @pytest.mark.parametrize("code", ["dp_platform_uncertified", "dp_stack_uncertified"])
+    def test_valid_request_on_an_uncertified_host_raises_the_provenance_code(
+        self, monkeypatch, code
+    ):
+        self._stub_gate(monkeypatch, code=code)
+        assert self._both(self._SCHEMA, epsilon=1.0, delta=1e-6) == [code, code]
+
+    def test_valid_request_on_a_certified_host_returns_none(self, monkeypatch):
+        dp = self._dp()
+        calls: list[str] = []
+        monkeypatch.setattr(dp, "check_fit_environment", lambda: calls.append("gate"))
+        assert dp.check_dp_fit_request(self._SCHEMA, epsilon=1.0, delta=1e-6) is None
+        assert calls == ["gate"]
+
+    def test_both_entry_points_call_the_one_preparation_function(self, monkeypatch):
+        dp = self._dp()
+        seen: list[str] = []
+
+        def prepare(column_schema, *, epsilon, delta, numeric_bins):
+            seen.append("prepare")
+            raise DpError(code="dp_sentinel", message="stub")
+
+        monkeypatch.setattr(dp, "_prepare_dp_fit_request", prepare)
+        source = pd.DataFrame({"age": [1.0]})
+        with pytest.raises(DpError) as check_exc:
+            dp.check_dp_fit_request(self._SCHEMA, epsilon=1.0, delta=1e-6)
+        with pytest.raises(DpError) as fit_exc:
+            dp.fit_dp_snapshot(source, self._SCHEMA, epsilon=1.0, delta=1e-6)
+        assert (check_exc.value.code, fit_exc.value.code) == ("dp_sentinel", "dp_sentinel")
+        assert seen == ["prepare", "prepare"]
+
+    def test_check_takes_the_request_parameters_and_no_data(self):
+        import inspect
+
+        dp = self._dp()
+        check = inspect.signature(dp.check_dp_fit_request).parameters
+        fit = inspect.signature(dp.fit_dp_snapshot).parameters
+        assert set(check) == set(fit) - {"source"}
+        assert check["numeric_bins"].default == fit["numeric_bins"].default

@@ -304,6 +304,14 @@ def test_all_lists_every_public_name():
     assert set(decoy_engine.__all__) == expected
 
 
+def test_quality_facade_exports_the_dp_request_check():
+    from decoy_engine import quality
+    from decoy_engine.quality import dp
+
+    assert "check_dp_fit_request" in quality.__all__
+    assert quality.check_dp_fit_request is dp.check_dp_fit_request
+
+
 def test_version_attribute_exists():
     assert isinstance(decoy_engine.__version__, str)
 
