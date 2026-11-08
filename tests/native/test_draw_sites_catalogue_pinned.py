@@ -46,7 +46,7 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
         assert protocol.draw_site_by_id(site.draw_site_id) is site
 
 
-_CATALOGUE_DIGEST = "0e65c2c5afd63dc618bd49c5a7ce46c6404744d47153e90361c7f841cc02e9f6"
+_CATALOGUE_DIGEST = "17e87782fb672e0f4ae3cf5009658060396f8c74933e2cc947a2a012537cfcd4"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -86,8 +86,9 @@ _ORDERED_IDS = [
 ]
 
 _ENTRY_DIGESTS = [
-    # mask.shuffle re-pinned 2026-11-08: the unkeyed mode now draws from the mask key.
-    "1da43f39c745cb31743418efdd1f0c2606182230cf18ac3a32218e0a0c0f46a3",
+    # mask.shuffle re-pinned 2026-11-08: the unkeyed mode draws from the mask key on the shared
+    # (table, column) draw identity.
+    "84b2887fc0363d71c893d6ad99f3d7026d891ee308091c68405db6dca943afb0",
     "8dce6622cbd27e05cc798e8b209a715c78834c056613f6adefced790bc4dfe9b",
     "33858d620973b39724613d7569dc732db3707e729236eeef8754518c1dfcf87a",
     "8ba3e20fb12b8a29cf52e18ef4d41d6c691bad77c6ac10a4651620d351f2a0c1",
