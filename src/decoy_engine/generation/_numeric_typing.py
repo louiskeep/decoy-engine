@@ -89,10 +89,31 @@ def restore_numeric_dtype(
     col: Mapping[str, Any],
     values: list[Any],
     *,
+    provider_snapshot: Mapping[str, Any] | None = None,
+) -> list[Any]:
+    """Return *values* with the numeric type the column's generator declares."""
+    probe = custom = None
+    if col.get("type") == "faker":
+        from decoy_engine.generation.synthesize import _get_default_faker
+        from decoy_engine.internal.faker_setup import snapshot_custom_faker_providers
+
+        probe = _get_default_faker()
+        custom = (
+            provider_snapshot
+            if provider_snapshot is not None
+            else snapshot_custom_faker_providers()
+        )
+    return restore_with_probe(col, values, faker_probe=probe, custom_providers=custom)
+
+
+def restore_with_probe(
+    col: Mapping[str, Any],
+    values: list[Any],
+    *,
     faker_probe: Any = None,
     custom_providers: Mapping[str, Any] | None = None,
 ) -> list[Any]:
-    """Return *values* with the numeric type the column's generator declares."""
+    """:func:`restore_numeric_dtype` with the faker probe already resolved (per-batch callers)."""
     cast = numeric_cast(col, faker_probe=faker_probe, custom_providers=custom_providers)
     if cast is None:
         return values

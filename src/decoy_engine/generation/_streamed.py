@@ -57,7 +57,7 @@ from decoy_engine.generation._column_streams import (
     make_column_stream,
 )
 from decoy_engine.generation._faker_pool import pool_eligible
-from decoy_engine.generation._numeric_typing import restore_numeric_dtype
+from decoy_engine.generation._numeric_typing import restore_with_probe
 from decoy_engine.generation.pool._runtime_pool_size import DEFAULT_POOL_SIZE
 from decoy_engine.progress import get_active_channel
 
@@ -291,7 +291,7 @@ def _table_batches(
         # legacy path's `generated` mapping holds when a windowed_date column reads its anchor.
         emitted: dict[str, list[Any]] = {}
         for col, name, stream, field_ in zip(cols, names, streams, schema, strict=True):
-            values = restore_numeric_dtype(
+            values = restore_with_probe(
                 col, draw_batch(stream, offset, size, emitted), faker_probe=probe
             )
             emitted[name] = values

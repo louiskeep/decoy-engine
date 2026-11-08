@@ -116,7 +116,9 @@ def mixed_config(
             {
                 "name": "lookup",
                 "row_count": lookup_rows,
-                "generate_columns": [{"name": "code", "type": "sequence", "start": 0, "step": 1}],
+                "generate_columns": [
+                    {"name": "code", "type": "sequence", "start": 0, "step": 1, "pad_length": 1}
+                ],
             }
         )
         raw["targets"]["lookup"] = {"type": "file", "format": "csv", "path": "lookup.out.csv"}
