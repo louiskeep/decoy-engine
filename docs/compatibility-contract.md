@@ -96,6 +96,7 @@ ssn/v1  npi/v1  pan/v1  iban/v1  ein/v1  mrn/v1  ndc/v1  icd10/v1
 cusip/v1  address/v1  locality/v1  person/v1  provider/v1
 composite/v1  custom/v1   ... (every disguise spec)
 subset-manifest/v1         decoy-run-result/v1
+scan-set/v1
 ```
 
 A user runs `decoy fit`, keeps the `distribution-snapshot/v1` artifact, and
@@ -111,6 +112,12 @@ reason it cannot validate as `null`. Numbers and flags are strict on both sides 
 document of another major (`/v2`), free text or a missing key is refused, never read as v1; a reader
 that wants `/v2` support adds a new model under a new tag. Hand-authored corpus samples (the v1 sample and its cross-minor variants) are in
 `tests/integration/compat_corpus/run_result/`.
+
+`scan-set/v1` is the record of one multi-table scan (`decoy_engine.scan_sources`). The engine
+owns its shape: `ScanSetCore` to write (unknown fields refused), `ScanSetCoreRead` to read
+(unknown fields ignored). It holds counts, rates, type labels, detector ids and column names,
+never a cell value. The optional per-table `detail` member of `scan_set_to_dict(detail=True)` is
+the nested `ColumnProfile` dict; it is additive-only within `/v1` and is not part of the core.
 
 **Rules:**
 
@@ -315,6 +322,10 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   refuse an incoherent dialect, or a `column_names` that is not a list or tuple of
   strings, with `ConfigError` whose fixed text never echoes a submitted value.
   `nrows=0` returns the empty frame with the declared columns.
+  It also includes `scan_sources(sources, *, tables=None, sample_rows=10_000, strategy="head",
+  file_access=None)`, `ScanSet`, `TableScan`, `ScanSetCore` and `scan_set_to_dict(scan, *, detail)`
+  (SCAN-MULTI S1a, 2026-11): new keyword-only parameters are additive; errors name the table and
+  the cause's class only.
   It also includes `run_mask_chunked` (2026-10-01): the chunked
   dispatcher as a public entry point. Its signature is
   `run_mask_chunked(config, chunks, *, table, engine_version, registry=None,

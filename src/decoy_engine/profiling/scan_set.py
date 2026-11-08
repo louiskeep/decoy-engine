@@ -22,7 +22,7 @@ import math
 import time
 import types
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Final, Literal, Union, get_args, get_origin
 
@@ -413,7 +413,7 @@ def _table_core(t: TableScan) -> TableCore:
         sample_row_cap=p.sample_row_cap,
         fields=[_field_core(f, p.row_count, t.leading_zero_counts.get(f.name)) for f in p.fields],
         key_candidates=list(t.key_candidates),
-        warnings=[WarningRefCore(namespace=w.namespace, code=w.code) for w in t.warnings],
+        warnings=[WarningRefCore.model_validate(asdict(w)) for w in t.warnings],
         reid_risk_score=_finite(p.reid_risk_score) if p.row_count > 0 else None,
         quasi_identifier_groups=[list(g) for g in p.quasi_identifier_groups],
     )

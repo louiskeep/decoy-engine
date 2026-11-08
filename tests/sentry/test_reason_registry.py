@@ -511,6 +511,7 @@ UNCLASSIFIED: dict[str, str] = {
     ),
     # E1 file-access errors carry an encoded field key and no code. The denial has its fixed
     # identity (decoy.file_access_denied, reason_adapter._FIXED); these two have none yet.
+    "ScanSourceError": "a scan wrapper naming the table and the cause class; no stable code yet",
     "FileAccessReadError": "a library failure on an authorized file; text is the encoded position",
     "FileAccessUnavailable": "no policy where one is required, or an unservable strict route",
     # A-4 x F13: an internal carrier between the file provider and the admission boundary, which
