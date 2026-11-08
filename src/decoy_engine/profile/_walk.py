@@ -30,6 +30,7 @@ import random
 
 import pandas as pd
 
+from decoy_engine._field_names import repeated_names
 from decoy_engine.internal.pandas_compat import canonical_dtype_label
 from decoy_engine.profile._pii import detect_pii_classes
 from decoy_engine.profile._types import ColumnProfile, PIIClass, TableProfile
@@ -92,9 +93,8 @@ def walk_dataframe(
     # DataFrame instead of a Series and downstream .isna().sum() would
     # raise TypeError. Match the slice-1 invariant style (clean ValueError
     # at the boundary, named in the message).
-    col_names = [str(c) for c in df.columns]
-    if len(set(col_names)) != len(col_names):
-        dupes = sorted({n for n in col_names if col_names.count(n) > 1})
+    dupes = sorted(repeated_names(str(c) for c in df.columns))
+    if dupes:
         raise ValueError(
             f"walk_dataframe: DataFrame for table {table_name!r} has duplicate "
             f"column names {dupes!r}; column names must be unique."

@@ -87,13 +87,21 @@ def test_string_literal_values_are_not_read_normalized_or_not() -> None:
 
 @pytest.mark.parametrize("configured", [False, True], ids=["unconfigured", "configured"])
 def test_duplicate_source_column_names_raise_the_oracle_refusal(configured: bool) -> None:
-    """Gate round 1, L1: a carried duplicate name used to raise ArrowInvalid."""
+    """A carried duplicate name is refused with the registered code on both chunked entries."""
+    from decoy_engine.execution._transforms import TransformError
+
     chunk = pa.Table.from_arrays(
         [pa.array(["a", "b"]), pa.array([1, 2]), pa.array([3, 4])], names=["s", "x", "x"]
     )
     cols = [redact("s")] + ([passthrough("x")] if configured else [])
-    with pytest.raises(ValueError, match="duplicate column names") as pub:
+    with pytest.raises(TransformError) as pub:
         run_public(make_config(cols), [chunk])
-    with pytest.raises(ValueError, match="duplicate column names") as ent:
+    with pytest.raises(TransformError) as ent:
         run_entry(make_config(cols), [chunk])
-    assert str(ent.value) == str(pub.value)
+    # Only the config-key table name and a count: no field name, no cell value, nothing chained.
+    expected = "table 't' has 1 duplicated field name(s)"
+    for err in (pub.value, ent.value):
+        assert type(err) is TransformError and err.code == "duplicate_source_field_names"
+        assert str(err) == expected and err.args == (expected,)
+        assert getattr(err, "__notes__", []) == []
+        assert err.__cause__ is None and err.__context__ is None

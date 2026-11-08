@@ -892,3 +892,47 @@ def test_cheap_admission_declines_when_to_pandas_raises_on_invalid_metadata(
         {b"pandas": b"{invalid json"}
     )
     assert _cheap_ok(config, profile, invalid) is None
+
+
+_UNIFIED_OPERATORS = [
+    "bucket_perturb",
+    "categorical",
+    "date_shift",
+    "faker",
+    "fpe",
+    "group_key",
+    "hash",
+    "passthrough",
+    "redact",
+    "text_mask",
+    "text_redact",
+    "truncate",
+]
+
+
+def test_no_derived_operator_in_the_unified_slice(tmp_path: Path) -> None:
+    """T11 (slice 0 item 3, CHARACTERIZATION): `derived` has no unified-slice operator, and a
+    node bound to an operator outside the allowlist is declined, not admitted."""
+    import dataclasses
+
+    from decoy_engine.execution._operator_registry import OPERATORS
+
+    assert sorted(OPERATORS) == _UNIFIED_OPERATORS
+    assert "derived" not in OPERATORS
+
+    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
+    profile, plan = _profile_and_plan(config, source)
+    physical_plan, registry = _compile(config, profile, plan, source)
+    assert _resident_contract(physical_plan, plan, source, registry=registry) is not None
+
+    table = next(t for t in physical_plan.tables if t.table == "t")
+    node = table.nodes[0]
+    outside = dataclasses.replace(node.execution, operator_id="derived")
+    assert outside.operator_id not in _unified_slice_admission.ALLOWED_OPERATOR_IDS
+    forged_table = dataclasses.replace(table, nodes=(dataclasses.replace(node, execution=outside),))
+    forged = dataclasses.replace(
+        physical_plan,
+        tables=tuple(forged_table if t is table else t for t in physical_plan.tables),
+    )
+    assert _resident_contract(forged, plan, source, registry=registry) is None

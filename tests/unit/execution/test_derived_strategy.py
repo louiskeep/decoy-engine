@@ -319,3 +319,282 @@ class TestDerivedAdapterIntegration:
         full = result.output.column("full").to_pylist()
         assert full[0] == "Alice Smith"
         assert full[1] == "Bob Jones"
+
+
+# ---------------------------------------------------------------------------
+# Slice 0 item 3: the expression's visible context is exactly its declared
+# references, read by real column name (plan 2026-10-31-slice0-derived-visibility).
+# Labels: FAIL-BEFORE (red on main), CHARACTERIZATION (green on main and after).
+# ---------------------------------------------------------------------------
+
+import pytest  # noqa: E402
+
+from decoy_engine.execution._errors import ExecutionError  # noqa: E402
+from decoy_engine.execution._transforms import TransformError  # noqa: E402
+
+
+def _derived(expression: str) -> ColumnSeed:
+    return _col("derived", provider_config=(("expression", expression),))
+
+
+def _run_table(table: pa.Table, per_column: list[tuple[str, ColumnSeed]]) -> pa.Table:
+    plan = _plan([("t", TableSeed(per_column=tuple(per_column), per_group=()))])
+    return (
+        PandasExecutionAdapter()
+        .run_single(plan, table, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS)
+        .output
+    )
+
+
+def _float_table(columns: dict[str, list[float]]) -> pa.Table:
+    return pa.Table.from_arrays(
+        [pa.array(v, pa.float64()) for v in columns.values()], names=list(columns)
+    )
+
+
+def test_expression_never_reads_an_undeclared_column_through_a_positional_alias() -> None:
+    # T1, FAIL-BEFORE (main: [999.0, 888.0], the undeclared `first name` at position 1).
+    table = _float_table(
+        {"id": [1.0, 2.0], "first name": [999.0, 888.0], "_1": [5.0, 6.0], "d": [0.0, 0.0]}
+    )
+    out = _run_table(table, [("_1", _col("passthrough")), ("d", _derived("_1 + 0"))])
+    assert out.column("d").to_pylist() == [5.0, 6.0]
+
+
+def test_declared_underscore_column_is_readable() -> None:
+    # T2, FAIL-BEFORE (main: uncoded per-row ValueError naming '_total').
+    table = _float_table({"_total": [7.0, 8.0], "d": [0.0, 0.0]})
+    out = _run_table(table, [("_total", _col("passthrough")), ("d", _derived("_total * 2"))])
+    assert out.column("d").to_pylist() == [14.0, 16.0]
+
+
+# T6(a): valid declared references read correctly. `_1` at position 1 coincides with its
+# positional alias, so it is CHARACTERIZATION; the other underscore shapes are FAIL-BEFORE.
+_T6A = [
+    pytest.param(["total", "d"], "total", id="identifier-CHARACTERIZATION"),
+    pytest.param(["x2", "d"], "x2", id="digit-suffix-CHARACTERIZATION"),
+    pytest.param(["class_", "d"], "class_", id="keyword-suffix-CHARACTERIZATION"),
+    pytest.param(["Index", "d"], "Index", id="Index-CHARACTERIZATION"),
+    pytest.param(["pad", "_1", "d"], "_1", id="_1-at-position-1-CHARACTERIZATION"),
+    pytest.param(["_total", "d"], "_total", id="_total-FAIL-BEFORE"),
+    pytest.param(["_1", "d"], "_1", id="_1-at-position-0-FAIL-BEFORE"),
+    pytest.param(["pad", "pad2", "_1", "d"], "_1", id="_1-at-position-2-FAIL-BEFORE"),
+]
+
+
+@pytest.mark.parametrize(("names", "ref"), _T6A)
+def test_t6a_declared_reference_reads_its_own_column(names: list[str], ref: str) -> None:
+    cols = {n: [0.0, 0.0] for n in names}
+    cols[ref] = [3.0, 4.0]
+    per_column = [(n, _col("passthrough")) for n in names if n != "d"]
+    out = _run_table(_float_table(cols), [*per_column, ("d", _derived(f"{ref} * 2"))])
+    assert out.column("d").to_pylist() == [6.0, 8.0]
+
+
+def _t6b_out(undeclared_values: list[float]) -> list[object]:
+    # Swap cell: `_2` declared at position 0, `x`, `_1` UNDECLARED at position 2.
+    table = _float_table({"_2": [5.0, 6.0], "x": [1.0, 2.0], "_1": undeclared_values})
+    table = table.append_column("d", pa.array([0.0, 0.0]))
+    out = _run_table(
+        table, [("_2", _col("passthrough")), ("x", _col("passthrough")), ("d", _derived("_2 + 0"))]
+    )
+    return out.column("d").to_pylist()
+
+
+def test_t6b_swap_cell_never_reads_the_undeclared_column() -> None:
+    # FAIL-BEFORE (main: [999.0, 888.0]).
+    assert _t6b_out([999.0, 888.0]) == [5.0, 6.0]
+    assert _t6b_out([-1.0, -2.0]) == [5.0, 6.0]
+
+
+def test_t6b_case_a_output_ignores_undeclared_values() -> None:
+    # FAIL-BEFORE (main reads `first name`).
+    for undeclared in ([999.0, 888.0], [1.5, 2.5]):
+        table = _float_table(
+            {"id": [1.0, 2.0], "first name": undeclared, "_1": [5.0, 6.0], "d": [0.0, 0.0]}
+        )
+        out = _run_table(table, [("_1", _col("passthrough")), ("d", _derived("_1 + 0"))])
+        assert out.column("d").to_pylist() == [5.0, 6.0]
+
+
+@pytest.mark.parametrize("sibling", ["first name", "a.b", "naïve", "Index"])
+def test_t6b_undeclared_sibling_without_collision_does_not_influence(sibling: str) -> None:
+    # CHARACTERIZATION (main output unaffected).
+    for values in ([999.0, 888.0], [1.0, 2.0]):
+        table = _float_table({"total": [3.0, 4.0], sibling: values, "d": [0.0, 0.0]})
+        out = _run_table(table, [("total", _col("passthrough")), ("d", _derived("total * 2"))])
+        assert out.column("d").to_pylist() == [6.0, 8.0]
+
+
+@pytest.mark.parametrize("expression", ["first name + 0", "a.b + 0", "naïve + 0", "__class__"])
+def test_t6c_non_identifier_references_are_refused_at_parse(expression: str) -> None:
+    # CHARACTERIZATION: the closed grammar refuses before any handler runs.
+    from decoy_engine.errors import ValidationError
+    from decoy_engine.transforms.derived import DerivedConfig
+
+    with pytest.raises(ValidationError):
+        DerivedConfig.from_dict({"expression": expression})
+
+
+def _dup_table() -> pa.Table:
+    return pa.Table.from_arrays(
+        [pa.array([1.0, 2.0]), pa.array([3.0, 4.0]), pa.array([0.0, 0.0])],
+        names=["qty", "qty", "d"],
+    )
+
+
+def _assert_duplicate_refusal(exc: BaseException) -> None:
+    assert type(exc) is TransformError
+    assert exc.code == "duplicate_source_field_names"
+    assert "qty" not in str(exc) and all("qty" not in str(a) for a in exc.args)
+
+
+def test_t6d1_adapter_refuses_a_duplicate_labelled_table_before_the_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # FAIL-BEFORE (main: the handler runs through renamed aliases).
+    from decoy_engine.execution._strategies._derived import DerivedStrategyHandler
+
+    calls: list[str] = []
+    real = DerivedStrategyHandler.run
+    monkeypatch.setattr(
+        DerivedStrategyHandler,
+        "run",
+        lambda self, df, column, plan, ctx: (
+            calls.append(column) or real(self, df, column, plan, ctx)
+        ),
+    )
+    with pytest.raises(Exception) as exc:
+        _run_table(_dup_table(), [("qty", _col("passthrough")), ("d", _derived("qty * 2"))])
+    _assert_duplicate_refusal(exc.value)
+    assert calls == []
+
+
+def _truncate_seed() -> ColumnSeed:
+    return ColumnSeed(
+        namespace=None,
+        strategy="truncate",
+        provider="truncate",
+        backend_type="faker",
+        backend_version="v",
+        cardinality_mode="reuse",
+        deterministic=False,
+        provider_config=(("length", 1),),
+        coherent_with=(),
+    )
+
+
+def _gated_hash_seed() -> ColumnSeed:
+    from dataclasses import replace
+
+    from tests.parity._d1a_hash_data import column_seed
+
+    return replace(column_seed(), when="n == 1")
+
+
+def _run_route(route: str, table: pa.Table, per_column: list[tuple[str, ColumnSeed]]) -> None:
+    plan = _plan([("t", TableSeed(per_column=tuple(per_column), per_group=()))])
+    adapter = PandasExecutionAdapter()
+    kwargs = {"registry": _REG, "relationship_graph": _GRAPH, "namespace_registry": _NS}
+    if route == "full":
+        adapter.run(plan, {"t": table}, **kwargs)
+    else:
+        adapter.run_sequential(plan, lambda _name: table, **kwargs)
+
+
+@pytest.mark.parametrize("route", ["full", "seq"])
+@pytest.mark.parametrize("shape", ["truncate", "gated_hash"])
+def test_t6d2_duplicate_guarded_field_is_refused_with_the_code(route: str, shape: str) -> None:
+    # FAIL-BEFORE (main: uncoded KeyError from _guards.py:85 (truncate) or :113 (gated hash)).
+    table = pa.Table.from_arrays(
+        [pa.array([1, 2], pa.int64()), pa.array([3, 4], pa.int64())], names=["n", "n"]
+    )
+    seed = _truncate_seed() if shape == "truncate" else _gated_hash_seed()
+    with pytest.raises(Exception) as exc:
+        _run_route(route, table, [("n", seed)])
+    assert type(exc.value) is TransformError
+    assert exc.value.code == "duplicate_source_field_names"
+    assert "'n'" not in str(exc.value)
+
+
+def test_t6d3_direct_handler_call_refuses_a_duplicate_labelled_frame() -> None:
+    # FAIL-BEFORE (main evaluates through renamed aliases).
+    import pandas as pd
+
+    from decoy_engine.execution._strategies._derived import DerivedStrategyHandler
+
+    df = pd.DataFrame([[1.0, 3.0, 0.0], [2.0, 4.0, 0.0]], columns=["qty", "qty", "d"])
+    ctx: Any = SimpleNamespace(current_table="t")
+    with pytest.raises(Exception) as exc:
+        DerivedStrategyHandler().run(df, "d", _derived("qty * 2"), ctx)
+    _assert_duplicate_refusal(exc.value)
+
+
+def test_t8_missing_declared_ref_at_runtime_is_one_coded_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # FAIL-BEFORE (main: per-row uncoded ValueError, apply_derived called).
+    from decoy_engine.execution._strategies import _derived as handler_mod
+
+    calls: list[int] = []
+    real = handler_mod.apply_derived
+    monkeypatch.setattr(
+        handler_mod,
+        "apply_derived",
+        lambda *a, **k: calls.append(1) or real(*a, **k),
+    )
+    table = _float_table({"a": [1.0, 2.0], "d": [0.0, 0.0]})
+    with pytest.raises(Exception) as exc:
+        _run_table(table, [("a", _col("passthrough")), ("d", _derived("a + gone"))])
+    assert type(exc.value) is ExecutionError
+    assert exc.value.code == "derived_ref_missing"
+    assert "gone" in str(exc.value)
+    assert calls == []
+
+
+def test_t8_per_row_failure_is_coded_and_value_free() -> None:
+    # FAIL-BEFORE (main: uncoded ValueError echoing the cell value).
+    table = pa.table({"a": ["CANARY-SECRET", "2020-01-01"], "d": [0.0, 0.0]})
+    with pytest.raises(Exception) as exc:
+        _run_table(
+            table,
+            [("a", _col("passthrough")), ("d", _derived('days_between(a, "2020-01-02")'))],
+        )
+    assert type(exc.value) is ExecutionError
+    assert exc.value.code == "derived_evaluation_failed"
+    text = "derived expression evaluation failed at column 'd', row 0: an operand value is invalid"
+    assert exc.value.message == text
+    assert exc.value.__cause__ is None and exc.value.__context__ is None
+
+
+def test_t3_identifier_named_output_snapshot() -> None:
+    # CHARACTERIZATION: a 5-column identifier-named table; values pinned by hand.
+    table = pa.table(
+        {
+            "a": [1.0, 2.0, None],
+            "b": [10.0, 20.0, 30.0],
+            "label": ["x", "y", "z"],
+            "s": [0.0, 0.0, 0.0],
+            "t": ["", "", ""],
+        }
+    )
+    out = _run_table(
+        table,
+        [
+            ("a", _col("passthrough")),
+            ("b", _col("passthrough")),
+            ("label", _col("passthrough")),
+            ("s", _derived("a * 2 + b")),
+            ("t", _derived('concat(label, "-")')),
+        ],
+    )
+    assert out.column("s").to_pylist() == [12.0, 24.0, None]
+    assert out.column("t").to_pylist() == ["x-", "y-", "z-"]
+    assert out.column_names == ["a", "b", "label", "s", "t"]
+
+
+def test_constant_expression_fills_every_row() -> None:
+    # CHARACTERIZATION: an expression with no column reference still yields one value per row.
+    table = _float_table({"a": [1.0, 2.0, 3.0], "d": [0.0, 0.0, 0.0]})
+    out = _run_table(table, [("a", _col("passthrough")), ("d", _derived("1 + 1"))])
+    assert out.column("d").to_pylist() == [2.0, 2.0, 2.0]

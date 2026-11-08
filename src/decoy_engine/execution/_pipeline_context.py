@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from decoy_engine.execution import _pipeline_auto_chunk, _pipeline_routing
+from decoy_engine.execution import _guards, _pipeline_auto_chunk, _pipeline_routing
 from decoy_engine.execution._chunked_output_sink import OutputPublish
 from decoy_engine.execution._transforms_admission import out_of_core_declined, routing_profile
 from decoy_engine.execution._transforms_gate import reject_any_per_table_transforms
@@ -325,6 +325,12 @@ def build_run_context(
             cache_policy=secret_cache_policy,
         )
     )
+
+    # Duplicate field names are refused here, after the config-only admission and before
+    # profiling, routing and every pandas conversion: each of those looks columns up by name
+    # and would fail uncoded (or, on the loader out-of-core path, publish the duplicate).
+    _guards.refuse_duplicate_run_sources(config, caller_sources)
+    source_loader = _guards.refusing_source_loader(source_loader)
 
     profile = profile_source(config, seed=job_seed)
 

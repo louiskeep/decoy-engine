@@ -162,13 +162,10 @@ def check_transform_source_schema(
     parsed: the stored index never reaches the frame, so an expression naming it
     fails during evaluation with the existing expression error codes.
     """
-    names = list(schema.names)
-    if len(set(names)) != len(names):
-        dupes = sorted({n for n in names if names.count(n) > 1})
-        raise TransformError(
-            code=reasons.runtime.DUPLICATE_SOURCE_FIELD_NAMES,
-            message=f"table {table_name!r} has duplicate physical field names {dupes}",
-        )
+    # Function-local: `_guards` imports `TransformError` from this module.
+    from decoy_engine.execution import _guards
+
+    _guards.refuse_duplicate_field_names(table_name, schema.names)
     stored = stored_index_fields(schema)
     if not stored:
         return

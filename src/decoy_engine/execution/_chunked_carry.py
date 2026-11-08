@@ -27,6 +27,7 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine._field_names import repeated_names
 from decoy_engine.execution._column_access import (
     handler_written_columns,
     has_when,
@@ -203,7 +204,7 @@ def plan_carry(
     passthrough = passthrough_columns(
         config, table=table, names=first_schema.names, registry=registry
     )
-    if not stock or len(set(first_schema.names)) != len(first_schema.names):
+    if not stock or repeated_names(first_schema.names):
         # Carrying addresses columns by name. With duplicate names it carries nothing,
         # so the profile walk raises its own duplicate-name refusal, as on the oracle.
         return CarryPlan(stock=False, carried=frozenset(), read=tuple(sorted(passthrough)))

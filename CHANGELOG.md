@@ -18,6 +18,27 @@ config through the same private walk, so the two cannot disagree; its result is 
 composite parent key still needs the secret and is not listed. The `GlobalSettings` docstring no
 longer claims a `job_seed` fallback for a keyed plan without a secret.
 
+### Fixed (slice 0 item 3: derived expression visibility, 2026-11-01)
+
+- A `derived` expression now sees exactly the columns it references, read by real column
+  name. Before, the row context came from pandas `itertuples()._asdict()`, which renames a
+  column whose name is not an identifier or starts with an underscore to `_<position>`: an
+  expression `_1 + 0` could read an undeclared column at position 1, and a declared `_total`
+  could not be read at all.
+- A per-row `derived` failure no longer echoes the cell value: the text is the output
+  column, the row index and a fixed reason word, with nothing chained. In mask execution it is
+  `ExecutionError(code="derived_evaluation_failed")`; a reference missing from the frame is
+  refused once before any row with `derived_ref_missing` (two new `runtime` reasons, registry
+  1.9.0).
+- A source table with duplicate field names (caller Arrow tables, `LazySource` footers,
+  `source_loader` tables, non-CSV declared descriptors, chunks from any iterator) is refused
+  with `TransformError(code="duplicate_source_field_names")` at the earliest point of every
+  public entry, before routing, profiling and any pandas conversion, instead of an uncoded
+  `KeyError`/`ValueError` or a silent out-of-core success. `run_pipeline_isolated()` refuses
+  in the child, so config-only refusals win as in process; a duplicate table that Parquet
+  cannot serialize still fails at serialization. The message names the table and a count,
+  no longer the duplicated names.
+
 ### Fixed (value-free FK key and pandas-ingest attribution errors, 2026-11-02)
 
 Four `ExecutionError` messages quoted a key or a source cell, and a normal `PandasExecutionAdapter`

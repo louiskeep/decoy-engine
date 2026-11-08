@@ -675,3 +675,26 @@ class TestDerivedNullAndBoundsInternals:
         out = _apply_bounds(5.0, {"min": 0})
         assert out == 5.0
         assert isinstance(out, float)
+
+
+def test_apply_derived_sees_only_compiled_refs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T9 (structural, FAIL-BEFORE by the spy only): the evaluator's context is exactly the
+    compiled references, in a direct call and through generation, whatever the caller passes."""
+    from decoy_engine.generation.synthesize import _derived_generate
+    from decoy_engine.transforms import derived
+
+    seen: list[set[str]] = []
+    real = derived.evaluate
+
+    def spy(compiled, ctx):  # type: ignore[no-untyped-def]
+        seen.append(set(ctx))
+        return real(compiled, ctx)
+
+    monkeypatch.setattr(derived, "evaluate", spy)
+    config = derived.DerivedConfig.from_dict({"expression": "a + b"})
+    assert derived.apply_derived(config, {"a": 1, "b": 2, "extra": "X", "_0": 9}) == 3
+    assert _derived_generate(
+        {"name": "c", "expression": "a + b"}, 1, {"a": [1], "b": [2], "z": ["X"]}
+    ) == [3]
+    refs = set(derived._get_column_refs(config.compiled))
+    assert seen == [refs, refs] == [{"a", "b"}, {"a", "b"}]
