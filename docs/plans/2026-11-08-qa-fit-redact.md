@@ -3,7 +3,7 @@ Status: plan
 # QA-FIT-REDACT and QA-DP-GATED: fit snapshots withhold sensitive values; DP refusal says what to do (roadmap rows 24f, 24g)
 
 Owner: Cam. Author: claudeworkerbee (Opus). Date: 2026-11-08. Scope: engine + CLI, V1 blocker for 24f (leak
-class), V1 usability for 24g. Revision 3.
+class), V1 usability for 24g. Revision 4.
 
 Rules consulted: `dev-rules/README.md`, `00-universal.md`, `risk-and-exceptions.md`, `development-loop.md`
 (PLAN: choke point, Placement, Design notes, Established solutions), `feature-dev.md`, `architecture.md`,
@@ -40,12 +40,12 @@ Revision 2 folds in Dennis round 1 (BLOCK, 4 blockers, 8 should, 10 nits, at `6f
 | Finding | Disposition |
 |---|---|
 | B1 float grid math lands on the real min or max (7% of decimal-grid inputs) | Accepted. Grid math in `Decimal` from the `_round`ed value, outward step until strictly outside, unit floor `1e-12`; fixed AT-4 rows and a decimal-grid strategy (section 3, AT-4) |
-| B2 E2 refuses the `--include-values` escape hatch | Accepted. The marker clause applies only when `value_policy` is not exactly `"raw"`; placeholder clause stays unconditional; new AT-12 and AT-C5 cells |
+| B2 E2 refuses the `--include-values` escape hatch | Accepted in revision 2, then superseded by revision 4 C4 and C6: refusal is marker-only and the writer emits no categorical placeholder |
 | B3 second rule enum and a re-implemented select-and-stamp loop | Accepted. One `Rule` enum gains the snapshot members; `value_sensitive_names` and `stamp_value_policy` are extracted in `_value_redaction.py` and called by both artifacts |
-| B4 integer and constant columns rebuilt exactly from the histogram | Accepted. Edges stay on the unit grid; integer-valued columns get the SDC minimum-frequency rule with single-bin fallback; AT rows for 1001..1010 (int and float with NaN) and constant 7 |
+| B4 integer and constant columns rebuilt exactly from the histogram | Accepted in revision 2, then superseded by revision 4 C1: every sensitive numeric column has one bin and no interior edge |
 | S1 early DP check reverses the pinned name-check ordering | Accepted, option (a): header-only read, name checks, gate, then the full read |
 | S2 C2 hint claims redaction before C1 ships | Accepted. C2 lands after C1 |
-| S3 joint cells stay sorted by the real sensitive value | Accepted. Re-sort after redaction; relabel-invariance AT-7b |
+| S3 joint cells stay sorted by the real sensitive value | Accepted in revision 2, then superseded by revision 4 C6: a sensitive joint emits no cells |
 | S4 fidelity gate does read the pinned file | Accepted. Claim corrected; AT-15 pins the behavior; scoring on bins is F6 |
 | S5 profiling cost, Guarantee 2 overclaims | Accepted. `profile_row_cap` (CLI passes 10,000, scan's default) and Guarantee 2 reworded |
 | S6 AT-14b misses `field.get("pii_score")` | Accepted. The three names are forbidden as any string constant |
@@ -60,16 +60,29 @@ was exactly `lo' + 1`.
 | Finding | Disposition |
 |---|---|
 | H1 the `nrows=0` header read is a third `read_csv` site in `fit`; the CLI CSV-read ratchet pins 2 | Accepted. The exact read and the DP body read become one call site with mode-dependent arguments, so `fit` keeps 2 sites and the pin does not move; C2's T1 names `tests/sentry/test_csv_read_choke_point.py` (section 3, CLI DP message) |
-| H2 joint top-K truncation still keeps the cells of the alphabetically first sensitive values | Accepted. A joint with a sensitive side is computed untruncated, redacted, sorted by `(-count, unredacted side)`, then cut; AT-7b uses more than 25 tied cells with the sensitive column first |
-| H3 the integer rule contradicts its expected values and cannot hold for dense columns | Accepted, rule redrawn: the 3-row threshold applies to every sensitive numeric column; one bin only for a constant column or an all-distinct integer-valued column; expected values recomputed from the formula (section 3, section 4, AT-4b) |
+| H2 joint top-K truncation still keeps the cells of the alphabetically first sensitive values | Accepted in revision 3, then superseded by revision 4 C6: a sensitive joint emits no survivors or order |
+| H3 the integer rule contradicts its expected values and cannot hold for dense columns | Accepted in revision 3, then superseded by revision 4 C1: every sensitive numeric column has one bin |
 | Author: the outward step pins an integer minimum | Fixed with H3: bounds sit on a grid one power of ten above the range (`G > r`), so each extreme is known only to within `G`, wider than the range itself |
-| M1 the outward loop never ends near float max | Accepted. No loop: the margin is a whole grid step `G`; a written bound that is not finite or not outside the data falls back to the no-finite-range shape. AT-4 rows; the `±1e308` row calls the grid helper directly (the raw snapshot already raises "Too many bins" there) |
-| M2 a second rule applier in `_snapshot_values.py` | Accepted. S1's `_apply` gains `EMPTY_MAP` and takes the keep test as an argument; the snapshot path calls it for NULL, PLACEHOLDER, EMPTY_MAP and unknown keys; AT-14b asserts the call |
+| M1 the outward loop never ends near float max | Accepted in revision 3, then superseded by revision 4 C2: no loop, and a collision-free finite one-bin fallback remains sampleable |
+| M2 a second rule applier in `_snapshot_values.py` | Accepted. S1's `_apply` gains `EMPTY_MAP` and takes the keep test as an argument; the snapshot path calls it for NULL, EMPTY_LIST, EMPTY_MAP and unknown keys; AT-14b asserts the call |
 | M3 `value_sensitive_names(profile.fields)` passes dataclasses, which fail closed | Accepted. It takes `profile.to_dict()["fields"]`, the shape S1's redactor sees |
 | M4 AT-C3 is rejected by `exists=True` before D0 runs | Accepted. A real CSV, a `read_csv` spy, and the code `dp_usage_include_values` |
-| M5 private imports of `_numeric_stats` and `_round` | Accepted. E1 renames `_numeric_stats` to `numeric_stats` and `_joint_snapshot` to `joint_snapshot` (shorter names, so `snapshot.py` stays at 600 lines); `_round` is no longer needed (the check reads the rebuilt stats) |
+| M5 private imports of `_numeric_stats` and `_round` | Accepted. E1 renames `_numeric_stats` to `numeric_stats`; revision 4 no longer imports or renames `_joint_snapshot`, and `_round` is not needed |
 | M6 class 7 is not N/A once the header and body are read separately | Accepted. The body's columns must equal the header's, else usage error `dp_source_changed`; class 7 row and an AT-C6 cell |
-| L1 to L5 | Accepted: anchors at `1daabb74`; AT-C8 reuses the CLI call scanner and lists spellings; floor written as `Decimal(1).scaleb(-12)` and the 3-row threshold named `SNAPSHOT_MIN_BIN_ROWS` beside the registry; "before the CSV body is read"; the double gate call on a certified host is noted |
+| L1 to L5 | Accepted: anchors at `1daabb74`; AT-C8 reuses the CLI call scanner and lists spellings; floor written as `Decimal(1).scaleb(-12)`; "before the CSV body is read"; the double gate call on a certified host is noted. Revision 4 removes the threshold |
+
+Revision 4 folds in the first Codex review against the V1 bar.
+
+| Finding | Disposition |
+|---|---|
+| V1 C1 an interior numeric edge can equal a real cell, and the zero clamp writes a real zero | Accepted. Every sensitive numeric release now has one bin whose ordinary bounds are both strictly outside every finite source cell. There is no zero clamp and no interior edge. AT-4 checks integer, constant, negative, zero-crossing and grid-aligned cells (`quality/snapshot.py:401-460`) |
+| V1 C2 the non-finite-bound fallback makes a near-float-max numeric snapshot degenerate, so generation fails | Accepted. When an outward bound cannot be represented as a finite float, a deterministic collision-free finite fallback domain keeps one positive-count bin and remains sampleable. AT-3 covers a constant `1.79e308` and the close range `1.70e308..1.71e308`; AT-4 calls the grid helper directly for the pre-existing raw-snapshot failure at `+/-1e308` (`quality/snapshot.py:435-460`, `generation/statistical/_sample.py:265-287`) |
+| V1 C3 a datetime cell already at a year boundary survives unchanged as `min` or `max` | Accepted. Written bounds are the start of the year before the earliest year and the end of the year after the latest year; `year_bins` still drive sampling. AT-5 includes exact boundary cells (`quality/snapshot.py:487-501`, `generation/statistical/_sample.py:327-360`) |
+| V1 C4 unconditional refusal on the string `[redacted]` breaks a legacy or raw snapshot whose real category has that spelling | Accepted. Refusal is marker-driven only. A markerless v1 file and a `value_policy: raw` file keep the old `allow_real_categories` behavior even when a real category has that spelling; plan-produced redacted files always carry the marker (`generation/statistical/_spec.py:367-380`) |
+| V1 C5 the early environment gate preempts the engine's existing typed request checks, so `--epsilon 0` changes from exit 1 to exit 3 | Accepted. E3 extracts the data-independent request preparation already ahead of the gate in `fit_dp_snapshot` into one shared engine function and exports a check-only entry point. The CLI runs that after header name checks and before the body read, then reports request errors before environment errors exactly as the engine does (`quality/dp.py:319-345`, CLI `fit.py:474-491`) |
+| V1 C6 the fixed categorical and joint placeholder can equal a real sensitive cell, while a first-unused replacement token would reveal which earlier token-shaped values were present | Accepted. Sensitive categorical `top_values` and sensitive joint `cells` become empty lists through the existing `_apply`; their complete row mass moves to `other_count`. There is no value-shaped sentinel and no value-dependent joint survivor or order. AT-6 and AT-7 include real `[redacted]` cells (`quality/snapshot.py:464-484`, `:547-585`) |
+| V1 C7 runtime default-deny replaced an unknown snapshot key with the profile string sentinel, which can itself be a real cell | Accepted. The one `_apply` gains a `denied_value` argument whose profile default remains `[redacted]`; the snapshot passes `None`. AT-11b checks the null and a real `[redacted]` canary (`profiling/_value_redaction.py:248-265` at `1daabb74`) |
+| V1 C8 the touched CSV read catch sends `str(exc)` to human and JSON output | Accepted. C2 replaces it with a fixed value-free read error that may name the source path but never the exception text. AT-C6 raises an exception whose string is a data canary and checks every user surface (`fit.py:412-414`) |
 
 ## 1. FRAME
 
@@ -101,22 +114,26 @@ the platform triple and a 64-hex fingerprint, plus "this host is not a certified
 ### Guarantee (what V1 promises)
 
 1. A distribution snapshot written by `decoy fit` holds no raw cell value of a value-sensitive column unless
-   the user passed `--include-values`. Counts, null counts, distinct counts, kinds, year counts and text
-   lengths are kept.
+   the user passed `--include-values`. Aggregate row counts, null counts, distinct counts, kinds, year counts
+   and text lengths are kept. Per-value categorical and joint counts collapse into `other_count` with their
+   labels because retaining entries needs a value-shaped key.
 2. The set of value-sensitive columns is decided by the one engine predicate S1 introduced, through the same
    S1 helper that names them in a scan document. On the same profiled rows (the engine default profiles the
    whole frame; the CLI profiles the first 10,000 rows, which is `decoy scan`'s default), both artifacts list
    the same columns.
 3. One engine module decides, for both artifacts, which fields hold values: `_value_redaction.py`. A new stats
    key or a new snapshot kind fails CI until it is classified.
-4. Numeric and datetime sensitive columns still generate (`type: statistical`) from a redacted snapshot. A
+4. Numeric and datetime sensitive columns still generate (`type: statistical`) from a redacted snapshot,
+   including numeric columns whose outward decimal bound is not a finite float. A
    categorical sensitive column, or a `condition_on` joint through one, is refused at validate and run with a
    typed code that says what to do; `allow_real_categories: true` does not override it.
-5. On an uncertified host, `decoy fit --epsilon` says in one plain line that DP fit is not available on this
-   install, gives the next step, and refuses before the CSV body is read (only the header row is read, for
-   the column-name checks). Exit code stays 3; the JSON `code` stays.
+5. On an uncertified host, a well-formed `decoy fit --epsilon` says in one plain line that DP fit is not
+   available on this install, gives the next step, and refuses before the CSV body is read. Only the header is
+   read for the column-name checks. A malformed DP request keeps its existing typed usage error before the
+   environment error. Exit codes and JSON codes stay unchanged.
 6. `compute_distribution_snapshot` is unchanged (in-memory callers: fidelity reports, the fidelity gate).
-   Existing `distribution-snapshot/v1` files keep loading. The fidelity gate does read a pinned snapshot file
+   Existing `distribution-snapshot/v1` files keep loading, including a real category whose literal spelling is
+   `[redacted]`. The fidelity gate does read a pinned snapshot file
    (`generation/_fidelity_gate.py:139-144`); for a redacted numeric column it reports the column as not
    comparable (`no_quantiles`), which AT-15 pins.
 
@@ -138,19 +155,20 @@ the platform triple and a 64-hex fingerprint, plus "this host is not a certified
 | F-1 | A second "is this column sensitive" rule appears in the snapshot path | AT-14 parity plus the AT-14b structural guard (no threshold, no `pii_score` read in `_snapshot_values.py`) |
 | F-2 | A new stats key or snapshot kind ships unclassified | AT-10 registry sentry (observed keys plus an AST read of the kinds `snapshot.py` can emit) |
 | F-3 | A registry entry is never applied | AT-11 per-entry canary |
-| F-4 | Coarsened numeric bounds still equal, or pin, a real min or max | exact `Decimal` math on a grid one power of ten above the range, a whole grid step outside the data; AT-4 fixed rows (4.23/6.56/42, 94.0/99.8/39) and a property that each extreme's preimage is at least `G` wide |
-| F-4b | An integer or constant column is rebuilt exactly from the bins | 3-row threshold merge on every sensitive numeric column; one bin for constant and all-distinct integer columns; AT-4b |
-| F-4c | A bound near float max hangs or writes `inf` | no loop; non-finite fallback; AT-4 near-max rows under a timeout |
-| F-5 | Generation emits `[redacted]` strings as categories | AT-12 `load_spec` refusal, also with `allow_real_categories: true` |
+| F-4 | A coarsened numeric bound or interior edge equals a real cell | exact `Decimal` bounds on a grid one power of ten above the range, no zero clamp, and one bin with no interior edge; AT-4 fixed rows and a property over every finite cell |
+| F-4b | Integer, constant, negative or zero-valued data is rebuilt exactly from bins or a clamped bound | one bin for every sensitive numeric column and bounds strictly outside all finite cells; AT-4b |
+| F-4c | A bound near float max hangs, writes `inf`, or leaves a degenerate unsampleable histogram | no loop; a collision-free finite one-bin fallback; AT-3 and AT-4 near-max rows under a timeout |
+| F-5 | A fixed placeholder equals a real sensitive cell; generation emits a plan-produced sentinel; or a reader mistakes a real legacy `[redacted]` category for a sentinel | no sentinel in a redacted snapshot, marker-driven AT-12 refusal, plus real-`[redacted]` writer and legacy load cells |
 | F-6 | Redaction breaks numeric or datetime generation | AT-3, AT-5 sample through `sample_column` |
 | F-7 | `--include-values` used silently in CI | stderr warning naming columns and path; AT-C2 |
 | F-8 | The CLI keeps calling `compute_distribution_snapshot` for output | AT-C8 AST guard |
-| F-9 | DP refusal still reads the CSV body first, or hides the engine detail entirely | AT-C6 (a `read_csv` spy sees only the `nrows=0` header read; `--verbose` and JSON carry the engine message) |
+| F-9 | DP refusal still reads the CSV body first, hides the engine detail entirely, or preempts an existing typed request error | AT-C6 (a `read_csv` spy sees only the `nrows=0` header read; invalid request cells keep their code; `--verbose` and JSON carry the engine message) |
 | F-11 | The `--include-values` escape hatch is refused by E2 | AT-12 and AT-C5 raw-policy cells |
-| F-12 | Joint cell order, or which cells survive the top-K cut, still follows the real values | untruncated joint, redact, sort, then cut; AT-7b relabel invariance with more than 25 tied cells |
+| F-12 | Joint cell order, or which cells survive the top-K cut, still follows real values | a sensitive joint has no cells or survivors; all cell mass moves to `other_count`; AT-7b relabel invariance with more than 25 tied raw cells |
 | F-13 | The CSV changes between the DP header read and the body read | body columns must equal the header's; `dp_source_changed`; AT-C6 cell |
 | F-14 | The DP header read raises the CLI's CSV-read pin | one call site for the exact and DP body reads; the CSV-read sentry in C2's T1 |
 | F-10 | The CLI copies the certified profile (Python version, platform) into its own text | AT-C6 asserts the human line has no version or fingerprint; the detail comes only from the engine message |
+| F-15 | A CSV parser or decoder exception echoes a data value through human or JSON output | fixed read error with no `str(exc)`; AT-C6 canary exception in exact, DP-header and DP-body modes |
 
 ## 2. Established solutions
 
@@ -159,27 +177,27 @@ the platform triple and a 64-hex fingerprint, plus "this host is not a certified
   US Census PUMS top-coding of income): a continuous variable is released over coarse, data-independent
   intervals and its extremes are replaced by a coding bound. We replace min and max with bounds on a
   power-of-ten grid one step coarser than the column's range, so the bounds say only the range's order of
-  magnitude, and re-bin the column on a power-of-ten grid inside them.
+  magnitude, and release one interval between them.
 - **HIPAA Safe Harbor, 45 CFR 164.514(b)(2)(i)(C)**: all elements of dates except year are removed. A
   sensitive datetime column keeps its per-year counts and has min and max reduced to year bounds. Deviation:
   Safe Harbor also folds ages over 89 (and the years that imply them) into one 90-or-older group. The snapshot
   cannot tell a birth date from any other date, so years are kept as they are; top-coding birth years is F7.
-- **SDC minimum-frequency (threshold) rule** (Hundepool et al. 2012, chapter 5; `sdcMicro` and tau-Argus
-  primary suppression): a released cell must hold at least *k* contributors. A sensitive numeric column's
-  adjacent bins are merged until every non-empty bin holds at least 3 rows. Where the snapshot's own counts
-  would still pin values (a constant column, or an integer column whose values are all distinct, where a bin of
-  c rows over c integers names every one), the column is one bin.
+- **SDC global recoding at the coarsest release** (Hundepool et al. 2012, sections 3.4.2 to 3.4.3): a sensitive
+  numeric column releases one interval and its finite-row count. This is deliberately coarser than the earlier
+  minimum-frequency draft. Any interior edge can itself equal a real integer or float cell, even when its bin
+  has three contributors, so V1 has no interior edge.
 - **Heckbert, "Nice numbers for graph labels" (Graphics Gems, 1990)**: axis bounds snapped to 1, 2, 5 times a
   power of ten. We use the simplest form (powers of ten only) so the rule is one line and deterministic.
 - **The S1 pattern** (classification registry plus default-deny serializer: Google Cloud DLP
   `include_quote`, ydata-profiling `sensitive=True`, Presidio `replace`): already cited for
-  `_value_redaction.py`. Categorical values become the same `[redacted]` placeholder, counts kept; the flag is
+  `_value_redaction.py`. The snapshot uses the same default-deny applier but empties whole value-bearing
+  containers, because any string placeholder can also be a real category. Aggregate counts stay. The flag is
   `--include-values` for the same reason as `scan`.
 - **Precedent in this engine**: the DP numeric release writes `mean: null`, `std: null`, `quantiles: {}`
   (`quality/dp.py:405-418`), and fidelity already handles that shape (`quality/fidelity.py:370-377`,
   `no_quantiles`, with KS on the bins). A redacted numeric entry uses the same shape.
 
-The new module cites SDC recoding, the threshold rule, Safe Harbor and Heckbert in its docstring and gets a
+The new module cites SDC recoding, Safe Harbor and Heckbert in its docstring and gets a
 `docs/methodology-registry.yaml` entry; `_value_redaction.py`'s entry gains the snapshot registry note.
 
 ## 3. Design notes
@@ -204,20 +222,23 @@ How:
 2. **Which fields are values** lives in the same file as `VALUE_FIELDS`. `_value_redaction.py` gains
    `SNAPSHOT_VALUE_STATS` and `SNAPSHOT_VALUE_FREE_STATS`, keyed by `(scope, key)`, beside the profile
    registries, and its one `Rule` enum gains the four snapshot members. There is no second enum. The marker keys (`value_policy`, `redacted_columns`), the policy values
-   (`flagged-redacted/v1`, `raw`) and the placeholder `[redacted]` are the S1 constants, imported, never
-   redefined. One file answers "which fields of a Decoy artifact are cell values"; a reviewer reads one diff
-   to add a field to either artifact.
-3. **How a value is removed.** The rules that need no data (NULL, PLACEHOLDER, the new EMPTY_MAP, and the
+   (`flagged-redacted/v1`, `raw`) and the profile placeholder `[redacted]` are the S1 constants, imported, never
+   redefined. The snapshot does not add another placeholder: its value-bearing categorical and joint containers
+   use S1's EMPTY_LIST rule. One file answers "which fields of a Decoy artifact are cell values"; a reviewer
+   reads one diff to add a field to either artifact.
+3. **How a value is removed.** The rules that need no data (NULL, EMPTY_LIST, PLACEHOLDER, the new EMPTY_MAP,
+   and the
    default-deny replacement of unknown keys) are applied by S1's one applier, `_apply`
    (`_value_redaction.py:248-265` at `1daabb74`). E1 gives it the EMPTY_MAP branch and makes its keep test an
-   argument: `_apply(container, rules, keep)` where `keep(name, value)` says whether a key outside `rules`
-   survives. The profile path passes S1's shape check (`name in shapes and _conforms(value, shapes[name])`,
-   unchanged behavior); the snapshot path passes membership in the scope's value-free keys (its input is the
-   engine's own in-memory snapshot, not a loaded file, so there is no type to distrust). The rules that need
-   the data (COARSE_RANGE, YEAR_START, YEAR_END and the joint key positions) live in
+   arguments: `_apply(container, rules, keep, *, denied_value=REDACTED)` where `keep(name, value)` says whether
+   a key outside `rules` survives. The profile path passes S1's shape check and keeps its existing sentinel. The
+   snapshot path passes membership in the scope's value-free keys and `denied_value=None`, because a JSON null
+   cannot equal any non-null cell that reached a snapshot stat. Its input is the engine's own in-memory snapshot,
+   not a loaded file, so there is no type to distrust. The rules that need
+   the data (COARSE_RANGE, PREVIOUS_YEAR_START and NEXT_YEAR_END) live in
    `profiling/_snapshot_values.py`, because re-binning needs the series. That module applies the registry and
-   never decides membership. A key in a sensitive column's entry that neither registry names becomes
-   `[redacted]` at runtime, not only in the CI sentry.
+   never decides membership. A key in a sensitive column's entry that neither registry names becomes `null` at
+   runtime, not only in the CI sentry.
 
 ```python
 # _value_redaction.py: the existing Rule enum (NULL, PLACEHOLDER, ...) gains four members
@@ -225,42 +246,39 @@ class Rule(enum.Enum):
     ...                              # S1 members unchanged
     COARSE_RANGE = "coarse_range"    # min, max, bin_edges, bin_counts re-derived on a coarse grid
     EMPTY_MAP = "empty_map"          # applied by _apply
-    YEAR_START = "year_start"
-    YEAR_END = "year_end"
-
-# SDC threshold rule: a released numeric bin holds at least this many rows.
-SNAPSHOT_MIN_BIN_ROWS: Final = 3
+    PREVIOUS_YEAR_START = "previous_year_start"
+    NEXT_YEAR_END = "next_year_end"
 
 SNAPSHOT_VALUE_STATS: Final[Mapping[tuple[str, str], Rule]] = MappingProxyType({
     ("numeric", "min"): Rule.COARSE_RANGE,
     ("numeric", "max"): Rule.COARSE_RANGE,
     ("numeric", "bin_edges"): Rule.COARSE_RANGE,
-    ("numeric", "bin_counts"): Rule.COARSE_RANGE,  # re-binned on the new edges
+    ("numeric", "bin_counts"): Rule.COARSE_RANGE,  # one count on the new bounds
     ("numeric", "mean"): Rule.NULL,
     ("numeric", "std"): Rule.NULL,                 # with the mean, fixes both cells of a 2-row column
     ("numeric", "quantiles"): Rule.EMPTY_MAP,
-    ("top_value", "value"): Rule.PLACEHOLDER,
-    ("datetime", "min"): Rule.YEAR_START,
-    ("datetime", "max"): Rule.YEAR_END,
-    ("joint_cell", "key"): Rule.PLACEHOLDER,       # only the sensitive side's position
+    ("categorical", "top_values"): Rule.EMPTY_LIST,
+    ("datetime", "min"): Rule.PREVIOUS_YEAR_START,
+    ("datetime", "max"): Rule.NEXT_YEAR_END,
+    ("joint", "cells"): Rule.EMPTY_LIST,
 })
 SNAPSHOT_VALUE_FREE_STATS: Final[frozenset[tuple[str, str]]] = frozenset(
     _free("document", "schema_version", "row_count", "columns", "joints")
     | _free("column", "dtype", "kind", "null_count", "non_null_count", "distinct_count", "stats")
-    | _free("categorical", "top_values", "other_count", "high_cardinality")
-    | _free("top_value", "count")
+    | _free("categorical", "other_count", "high_cardinality")
     | _free("datetime", "year_bins")
     | _free("year_bin", "year", "count")
     | _free("freetext", "length", "length_bin_edges", "length_bin_counts")
     | _free("length", "min", "max", "mean", "std")
-    | _free("joint", "columns", "cell_count", "cells", "other_count")
-    | _free("joint_cell", "count")
+    | _free("joint", "columns", "cell_count", "other_count")
 )
 SNAPSHOT_KINDS: Final = frozenset({"numeric", "categorical", "datetime", "freetext", "empty"})
 ```
 
-`top_values` is value-free as a container (its length and order are kept); its entries' `value` is the value
-slot. `year` is value-free by the Safe Harbor rule. Freetext lengths describe the cells, not the cells.
+`top_values` and joint `cells` are value-bearing containers and become empty for a sensitive column or joint.
+Their full mass moves to `other_count`, so aggregate counts stay. The sentry treats those terminal containers as
+classified and does not require a second child registry that can never be applied. `year` is value-free by the
+Safe Harbor rule. Freetext lengths describe the cells, not the cells.
 
 The function:
 
@@ -283,120 +301,106 @@ def distribution_snapshot_document(
 Steps: reject a non-bool `include_values` (S1 rule); compute the raw snapshot with the same arguments (defaults
 taken from `quality/snapshot.py` constants, not retyped); profile the frame (or its first `profile_row_cap`
 rows); `names = value_sensitive_names(profile.to_dict()["fields"])`; for each sensitive column apply the rules
-for its kind; rebuild each joint with a sensitive side (below); `stamp_value_policy(doc, names,
+for its kind. Before emptying categorical `top_values`, add every listed count and the old `other_count` into the
+new `other_count`. For each joint with a sensitive side, add every listed cell count and the old `other_count`
+into the new `other_count`, then empty `cells` through `_apply`. Both paths call one local
+`_collapse_counted_items(container, item_key)` helper, so aggregate-mass bookkeeping has one implementation;
+`stamp_value_policy(doc, names,
 include_values=...)` (with `include_values=True` the raw snapshot plus `value_policy: raw` and the names). The
 raw snapshot is never mutated in place after it is shared: the function owns it.
 
 ### Numeric coarsening (global recoding)
 
-For a sensitive numeric column with finite `min` = lo and `max` = hi, and `bins` = the snapshot's bin count.
-
-All arithmetic is in `decimal.Decimal`, starting from the written `lo` and `hi` read as decimal strings, so a
-decimal-grid value such as 4.23 is exactly 4.23 (binary floats put 4.23/0.01 at 423.00000000000006, and a float
-version of this rule wrote the real min in 7% of decimal-grid inputs). `floor(log10(x))` is
-`Decimal.adjusted()`, so no step overflows.
+For a sensitive numeric column with finite written `min` = lo and `max` = hi, all arithmetic is in
+`decimal.Decimal`, starting from decimal strings. A decimal-grid value such as 4.23 is exactly 4.23. Binary
+float arithmetic was rejected because it put a real extreme back on the grid. `floor(log10(x))` is
+`Decimal.adjusted()`, so the decimal step itself does not overflow.
 
 ```
 FLOOR = Decimal(1).scaleb(-12)                     # the snapshot writes 12 decimal places
 r     = hi - lo                 if hi > lo else max(|lo|, 1)
 m     = max(|lo|, |hi|, 1)
-G     = max(10 ** (floor(log10(r)) + 1), 10 ** (floor(log10(m)) - 12), FLOOR)   # bound grid, G > r
-lo'   = floor(lo / G) * G - G                      # lo in [lo' + G, lo' + 2G)
-hi'   = floor(hi / G) * G + 2 * G                  # hi in [hi' - 2G, hi' - G)
-if lo >= 0: lo' = max(lo', 0)                      # a non-negative column stays non-negative
-S     = hi' - lo'
-u     = max(10 ** floor(log10(S / bins)), 10 ** (floor(log10(m)) - 12), FLOOR)  # bin grid, u <= G
-        integer-valued data: u = max(u, 1)
-k     = ceil(S / u / bins)                         # bin width k * u, a whole number of units
-bins' = ceil(S / (k * u)); hi' = lo' + bins' * k * u
+G     = max(10 ** (floor(log10(r)) + 1), 10 ** (floor(log10(m)) - 12), FLOOR)   # G > r
+lo'   = floor(lo / G) * G - G                      # strictly below the finite data
+hi'   = floor(hi / G) * G + 2 * G                  # strictly above the finite data
 ```
 
-Why the bounds take this form. A bound that is a function of one extreme reveals that extreme to within the
-width of its preimage. A bound snapped to the data's own resolution (one bin, or one integer) therefore pins it:
-an earlier draft stepped one unit outward, which put an integer column's minimum at exactly `lo' + 1`. Here both
-bounds use the same floor on a grid `G` one power of ten above the range, so each extreme is known only to
-within `G`, which is wider than the column's whole range, and the two bounds together never pin a constant
-(both preimages are the same width; there is no on-grid special case). Each written bound is a whole `G` outside
-the data, far more than the float error of writing it, so there is no outward loop.
+There is no zero clamp. A non-negative column that contains zero would otherwise write the real cell `0` as
+its lower bound. There is also no interior edge. Even a data-independent grid edge can equal a real integer or
+float cell, so a three-row bin does not satisfy the V1 promise. Every sensitive numeric column therefore has
+one bin over `[lo', hi']`.
 
-Then the column's stats are rebuilt by `numeric_stats(series, bins=bins', domain=(float(lo'), float(hi')))`
-(`quality/snapshot.py:401`, renamed from `_numeric_stats` in E1; its `domain` parameter has had no caller since
-the DPS Scope A removal), so coercion, finite filtering, rounding and the histogram are the snapshot's own code,
-and `sum(bin_counts)` equals the finite count. `mean` and `std` become `null` and `quantiles` becomes `{}` (the
-DP numeric shape), through `_apply`.
+For the ordinary case, both decimal bounds must convert to finite floats, the written lower bound must be
+strictly below the actual finite series minimum, and the written upper bound must be strictly above the actual
+finite series maximum. The function then calls `numeric_stats(series, bins=1, domain=(lower, upper))`
+(`quality/snapshot.py:401-460`, renamed from `_numeric_stats` in E1). That keeps coercion, finite filtering,
+rounding and histogram counting in the snapshot's one implementation. `sum(bin_counts)` equals the finite
+count. The only edges are outside every finite source cell. `mean` and `std` become `null` and `quantiles`
+becomes `{}` through `_apply`.
 
-**Check and fallback.** The rebuilt stats must satisfy `min < lo` (or `min == 0 <= lo` after the clamp), `max >
-hi`, and every value finite. A bound past `sys.float_info.max` (a column near ±1.8e308) fails it, and the
-column's stats become the no-finite-range shape `numeric_stats` already writes for an all-non-finite column
-(`min`, `max`, `mean`, `std` null, `quantiles` `{}`, empty edges and counts; `snapshot.py:412-420`).
+**Finite fallback.** An outward decimal bound near `sys.float_info.max` can convert to infinity. An empty
+histogram would make `sample_column` raise `statistical_stats_degenerate`
+(`generation/statistical/_sample.py:265-275`), so the fallback is still one positive-count bin. Let N be the
+number of finite cells. From the N+1
+finite half-integers `1.5, 2.5, ..., N+1.5`, choose the first B for which neither `-B` nor `B` equals a finite
+source cell. One must exist because N cells cannot cover N+1 absolute candidates. Call
+`numeric_stats(series, bins=1, domain=(-B, B))`; its existing clip puts every finite contributor in that bin
+(`quality/snapshot.py:435-460`). This fallback deliberately does not claim to enclose the source range. It is a
+sampleable, value-free domain for a range that has no representable outward float bound. AT-4 asserts finite
+edges, a positive count, no edge equal to a source cell, determinism and termination.
 
-**Minimum frequency (all sensitive numeric columns).** After binning, adjacent bins are merged left to right:
-a group grows bin by bin until it holds at least `SNAPSHOT_MIN_BIN_ROWS` (3) rows, then closes at that edge;
-trailing bins that hold 1 or 2 rows join the last closed group, and trailing empty bins stay as one empty
-group. Bins are half-open except the last, as in `numpy.histogram`. Merged edges are a subset of the rebinned
-edges, so every edge is still a multiple of `u`.
-
-**One bin.** Two shapes would still pin values through the counts, and the column becomes one bin over
-`[lo', hi']`: a constant column (`distinct_count == 1`), and an integer-valued column whose values are all
-distinct (`distinct_count == non_null_count`, both already in the column entry), where a bin of c rows over c
-integers would name every one. One bin over `[lo', hi']` spans more integers than the column has rows, because
-`lo' <= lo` and `hi' > hi + G`.
-
-"Integer-valued" means an integer dtype, or a float column whose finite values are all whole (pandas reads an
-integer column with a blank cell as float64).
-
-Worked values (`bins` = 10; checked with a scratch `Decimal` simulation):
+Worked values:
 
 | Column | G | Bounds | Result |
 |---|---|---|---|
-| ids 1001..1010 (`int64`, or `float64` with one NaN) | 10 | `[990, 1030]` | one bin, count 10 (all distinct) |
-| constant `int` 7, 20 rows | 10 | `[0, 20]` (clamped) | one bin, count 20 |
-| 5,000 ages 18..90 with repeats | 100 | `[0, 200]` | width-20 bins, several non-empty, each at least 3 rows |
-| `balance` 31337.25..98765.5 | 1e5 | `[0, 200000]` | width-20000 bins, merged to at least 3 rows |
-| 4.23..6.56 (42 rows) | 10 | `[0, 20]` | merged to one non-empty bin |
-| 94.0..99.8 (39 rows) | 10 | `[80, 110]` | merged to one non-empty bin |
+| ids 1001..1010 (`int64`, or `float64` with one NaN) | 10 | `[990, 1030]` | one bin, count 10 |
+| constant `int` 7, 20 rows | 10 | `[-10, 20]` | one bin, count 20 |
+| 5,000 ages 18..90 with repeats | 100 | `[-100, 200]` | one bin, count 5,000 |
+| `balance` 31337.25..98765.5 | 1e5 | `[-100000, 200000]` | one bin, finite count |
+| 4.23..6.56 (42 rows) | 10 | `[-10, 20]` | one bin, count 42 |
+| 94.0..99.8 (39 rows) | 10 | `[80, 110]` | one bin, count 39 |
 
-What a reader learns: each extreme to within `G` (more than the range), the range's order of magnitude, and
-which bins of width `k * u` hold at least 3 rows. A column with no finite value (`min: null`) is already
-value-free and is left alone. The cost is fidelity: a sensitive numeric column generates over a domain up to
-about four times its range, with a handful of occupied bins. `--include-values` restores the exact histogram.
+What a reader learns is the finite-row count and, in the ordinary case, the range's coarse order of magnitude.
+A column with no finite value (`min: null`) is already value-free and is left alone. The cost is fidelity: a
+sensitive numeric column generates uniformly inside one coarse bin. `--include-values` restores the exact
+histogram.
 
 ### Datetime, categorical, joints
 
-- Datetime: `min` becomes `YYYY-01-01T00:00:00` of the earliest year and `max` `YYYY-12-31T23:59:59` of the
-  latest; `year_bins` stay. The sampler draws a year from `year_bins` and a uniform instant in it, clamped to
-  min and max (`_sample.py:328-360`), so it keeps working and now spans whole years.
-- Categorical (including HC-5): each `top_values[i].value` becomes `[redacted]`; counts, order, `other_count`
-  and the `high_cardinality` marker stay. HC-5 is not special-cased: its values are withheld like any
-  categorical, and generation refuses it (below). Which values survive the top-20 cut may depend on the real
-  values when counts tie at the cut, but every kept entry reads `([redacted], count)`, so the document is the
-  same whichever were kept.
-- Joints: `joint_snapshot` (renamed from `_joint_snapshot`, `snapshot.py:547-586`) sorts cells by
-  `(-count, key[0], key[1])` and keeps the first `top_k` before any redaction. When the sensitive column sorts
-  first in the pair and counts tie at the cut (a unique column always gives count-1 ties), the kept cells are
-  those of the alphabetically first real values, and their other side is then disclosed for that known group.
-  So for a joint with a sensitive side the function calls `joint_snapshot(df, a, b, top_k=<row count>)`
-  (untruncated: a joint has at most one cell per row), replaces position 0 when `columns[0]` is sensitive and
-  position 1 when `columns[1]` is, sorts by `(-count, the unredacted side)` (by `-count` alone when both sides
-  are redacted, where tied entries are identical), cuts to `contingency_top_k`, and sets `other_count` to the
-  sum of the cut cells. `cell_count` is the untruncated cell count, as before. Joints with no sensitive side
-  keep the raw snapshot's entry byte for byte. The untruncated cell list costs no more than the crosstab
-  `joint_snapshot` already builds.
+- Datetime: if the earliest observed year is Y0 and the latest is Y1, `min` becomes
+  `(Y0-1)-01-01T00:00:00` and `max` becomes `(Y1+1)-12-31T23:59:59`; `year_bins` stay. A real cell at the start
+  or end of its year therefore cannot equal a written bound. Pandas datetime years leave room for these Python
+  datetime bounds. The sampler chooses a year from `year_bins`, so the wider clamp does not add a year
+  (`quality/snapshot.py:487-501`, `generation/statistical/_sample.py:327-360`).
+- Categorical (including HC-5): `top_values` becomes `[]`; `other_count` becomes the sum of its old value and
+  every removed entry's count, which equals `non_null_count`. `high_cardinality` stays. There is no placeholder
+  that can collide with a real category, and no survivor or list order that can encode a tie-break on a real
+  value. HC-5 is not special-cased and generation refuses it below.
+- Joints: when either side is sensitive, `cells` becomes `[]`; `other_count` becomes the sum of its old value
+  and every removed cell's count, which is the number of rows contributing to the joint. `columns` and
+  `cell_count` stay because names are structure and cardinalities are counts. The wrapper uses the raw joint
+  already returned by `compute_distribution_snapshot`; it does not call another crosstab, rebuild an
+  untruncated list, select survivors or preserve a value-dependent order (`snapshot.py:547-585`). A joint with
+  no sensitive side stays byte for byte unchanged.
 
 ### Generation refusal (E2)
 
-`load_spec` (`_spec.py:221`) gains one check, placed before the HC-5 requires-real check (`_spec.py:355-364`)
-and the `allow_real_categories` check, so the more useful message wins:
+`load_spec` (`_spec.py:221`) gains one marker check, placed before the HC-5 requires-real check
+(`_spec.py:355-364`) and the `allow_real_categories` check, so the more useful message wins:
 
-- the column's kind is `categorical`, not `dp_verified`, and either any `top_values[*].value` equals
-  `[redacted]` (always), or the snapshot's `value_policy` is not exactly `"raw"` and its source column is in
-  `redacted_columns`, or `redacted_columns` is present and is not a list of strings (fail closed); or
-- `condition_on` is set and either any joint cell key equals `[redacted]`, or `value_policy` is not exactly
-  `"raw"` and either joint column is in `redacted_columns`.
+- the column's kind is `categorical`, not `dp_verified`, `value_policy` is not exactly `"raw"`, and its source
+  column is in `redacted_columns`; or
+- `condition_on` is set, `value_policy` is not exactly `"raw"`, and either named source column is in
+  `redacted_columns`; or
+- either marker key is present but the pair is malformed: `value_policy` is missing or not one of
+  `"flagged-redacted/v1"` and `"raw"`, or `redacted_columns` is not a list of strings. A malformed marker
+  refuses only a categorical source or a conditional statistical column, the paths that could sample values.
 
 A `--include-values` snapshot (`value_policy: "raw"`) lists the sensitive names but holds real values, so it
 is not refused here and falls through to the ordinary `allow_real_categories` check, which is the escape hatch
-the message advertises. A missing or unknown `value_policy` beside the marker still refuses.
+the message advertises. A markerless v1 snapshot is legacy, not evidence of redaction, and keeps the same
+behavior. The literal string `[redacted]` is not a decision point: it can be a real category in an old or raw
+snapshot. A missing or unknown policy beside either marker still refuses.
 
 Code: new `plan.statistical_snapshot_values_redacted`. Message: "statistical column 'X': the snapshot withheld
 the real values of source column 'Y' (a sensitive column), so there are no categories to sample. Use a faker
@@ -415,9 +419,9 @@ code.
 - New option `--include-values` ("Keep real values of sensitive columns in the snapshot. The file then holds
   real data."). With `--epsilon` it is a usage error `dp_usage_include_values` (exit 1) in the existing D0
   block, before the CSV is read.
-- Human success output adds one line naming the sensitive columns whose entry changed in the file (a
-  sensitive freetext column, which holds no values, is not named): `values withheld for 3 sensitive
-  column(s): full_name, patient_id, ssn (counts kept; numbers rounded, dates to the year)`, and a hint: `to sample these as categories, re-run with --include-values; the file
+- Human success output reads the marker and names every sensitive column in `redacted_columns`:
+  `3 sensitive column(s) marked: full_name, patient_id, ssn (cell values withheld where the snapshot carries
+  them; category and joint counts aggregated, numbers reduced to one range, dates to years)`, and a hint: `to sample these as categories, re-run with --include-values; the file
   then holds real data.` With `--include-values`, a stderr warning: `warning: <path> holds real values of 3
   sensitive column(s): ... Do not share or commit it.`
 - JSON success payload gains `value_policy` and `redacted_columns`.
@@ -426,14 +430,20 @@ code.
 ### CLI DP message (C2)
 
 - DP mode reads the CSV header only (`pd.read_csv(source, dtype=str, keep_default_na=False, nrows=0)`), runs
-  the existing column-name checks against it, then calls
-  `decoy_engine.quality.dp_provenance.check_fit_environment()`, and only then reads the body. The pinned
+  the existing column-name checks against it, then calls the new public
+  `decoy_engine.quality.check_dp_fit_request(...)`, and only then reads the body. E3 extracts the existing
+  data-independent prefix of `fit_dp_snapshot` into one private preparation function: fit-level parameter
+  validation, schema freeze and parse, derived-edge validation, and `check_fit_environment`. The public
+  check-only wrapper and `fit_dp_snapshot` both call that function, so the CLI does not copy a validator or a
+  certified-row rule (`quality/dp.py:319-345`, `quality/dp_provenance.py:347-379`). The pinned
   ordering "name checks fire before the proof gate" (`test_phantom_number_column_reports_missing_before_proof_gate`
   and the `dp_columns_omitted` and phantom-flag tests in `tests/e2e/test_fit_command.py`) still holds, and no
-  data row is read on an uncertified host. `fit_dp_snapshot` still calls the gate too, so a certified host walks
-  the fingerprint twice; that costs a few milliseconds and keeps the engine's own check authoritative. Tests that
-  stub only `fit_dp_snapshot` (boxing capture, carrier, budget, `TestFitDpArtifactShape`) also stub the early
-  gate; C2 lists them.
+  data row is read on an uncertified host. Existing request errors still win before provenance, including
+  `dp_epsilon_invalid`, `dp_delta_invalid`, `dp_numeric_bins_invalid`, carrier declarations and derived numeric
+  edges (`quality/dp.py:145-216`, `:319-344`). `fit_dp_snapshot` still calls the shared preparation too, so a
+  certified host walks the fingerprint twice; that costs a few milliseconds and keeps the engine's own check
+  authoritative. Tests that stub only `fit_dp_snapshot` (boxing capture, carrier, budget,
+  `TestFitDpArtifactShape`) also stub `check_dp_fit_request`; C2 lists them.
 - **Read sites stay at two.** The CLI's CSV-read sentry (`tests/sentry/test_csv_read_choke_point.py`, baseline
   `tests/sentry/baselines/csv-read-allow.json`, which may shrink and never grow) allows `cli/fit.py::fit` exactly
   2 `read_csv` sites, and today those are the exact read (`fit.py:402`) and the DP body read (`:411`). C2 merges
@@ -446,6 +456,9 @@ code.
   otherwise usage error `dp_source_changed` ("the CSV changed while it was being read; run the command again"),
   exit 1. Without it, a file replaced between the two reads would reach `_build_typed_frame` with names nobody
   checked and fail with a raw `KeyError`, breaking the JSON error contract.
+- **Read errors are value-free.** The catch at `fit.py:412-414` no longer interpolates `str(exc)`. Human and
+  JSON modes say only that the named source CSV could not be read. The path is user-written structure; parser,
+  decoder and OS exception text is not copied to either surface.
 - On `dp_platform_uncertified` or `dp_stack_uncertified`, human stderr shows:
   `error: DP fit is not available on this install: it runs only on a certified platform and package set.` and
   `hint: run decoy fit without --epsilon (sensitive columns are withheld by default); see decoy explain
@@ -463,18 +476,21 @@ code.
 
 | Input | Today | After |
 |---|---|---|
-| `decoy fit patients.csv` (QA frame) | file holds every name, SSN, id | `top_values[*].value` is `[redacted]` for all three; stdout names them; exit 0 |
+| `decoy fit patients.csv` (QA frame) | file holds every name, SSN, id | `top_values` is empty and `other_count == 10` for all three; stdout names them; exit 0 |
 | same with `--include-values` | n/a | today's file plus `value_policy: raw`, `redacted_columns`; stderr warning; exit 0 |
 | `--include-values --epsilon 1 ...` | n/a | usage error, exit 1, CSV not read |
-| numeric sensitive column `balance` | exact min, max, mean, quantiles | grid bounds outside the data, re-binned counts, mean/std null, quantiles `{}` |
+| numeric sensitive column `balance` | exact min, max, mean, quantiles | one coarse bin with both edges outside every finite cell, mean/std null, quantiles `{}` |
 | integer id column 1001..1010 | every id | one bin `[990, 1030]` with count 10 |
-| datetime sensitive column | exact first and last instants | year bounds; `year_bins` unchanged |
+| numeric column too near float max for outward float bounds | exact range | collision-free finite one-bin fallback that still samples |
+| datetime sensitive column | exact first and last instants | preceding/following-year bounds; `year_bins` unchanged |
 | non-sensitive column (`status`, `diagnosis`) | raw | unchanged, byte for byte |
 | `type: statistical` on a redacted numeric or datetime column | n/a | generates inside the coarse bounds |
 | `type: statistical` on a redacted categorical column | n/a | validate and run fail with `plan.statistical_snapshot_values_redacted` and the two next steps |
 | same column, snapshot re-fit with `--include-values`, `allow_real_categories: true` | n/a | loads and samples real categories (escape hatch) |
-| a snapshot written before this change | loads | loads (no marker, no placeholders: unchanged behavior) |
+| a snapshot written before this change | loads | loads (no marker: unchanged behavior) |
+| an old or raw snapshot with a real category spelled `[redacted]` | loads with `allow_real_categories: true` | still loads with that opt-in |
 | `decoy fit --epsilon ...` on an uncertified host | engine repr and fingerprint, exit 3, CSV read first | plain line plus next step, exit 3, header read only; detail under `--verbose` and in JSON |
+| malformed DP request on an uncertified host | typed usage error before the proof gate | same typed usage error; header read only |
 | DP fit, CSV replaced between the header and body reads | n/a | usage error `dp_source_changed`, exit 1 |
 
 ## 5. Enumerations (from the code at engine `942dae2d`, CLI `de55dab5`)
@@ -538,14 +554,14 @@ Generated FK columns use `type: reference`, not the snapshot (DI QA H4 is row 24
 | numeric | `min`, `max`, `bin_edges`, `bin_counts` | coarse range |
 | numeric | `mean`, `std` | null |
 | numeric | `quantiles` | empty map |
-| categorical | `top_values`, `other_count`, `high_cardinality` | value-free containers and counts |
-| top_value | `value` / `count` | placeholder / value-free |
-| datetime | `min` / `max` / `year_bins` | year start / year end / value-free |
+| categorical | `top_values` / `other_count` / `high_cardinality` | empty list / aggregate count / value-free marker |
+| top_value | `value` / `count` | terminal child of removed `top_values`; not serialized for a sensitive column |
+| datetime | `min` / `max` / `year_bins` | previous-year start / next-year end / value-free |
 | year_bin | `year`, `count` | value-free (Safe Harbor keeps year) |
 | freetext | `length`, `length_bin_edges`, `length_bin_counts` | value-free |
 | length | `min`, `max`, `mean`, `std` | value-free (lengths, not cells) |
-| joint | `columns`, `cell_count`, `cells`, `other_count` | value-free |
-| joint_cell | `key` / `count` | placeholder on the sensitive side / value-free |
+| joint | `columns`, `cell_count`, `cells`, `other_count` | value-free names and count / empty list / aggregate count |
+| joint_cell | `key` / `count` | terminal child of removed `cells`; not serialized for a sensitive joint |
 
 ### 5.7 Output surfaces
 
@@ -562,12 +578,12 @@ Generated FK columns use `type: reference`, not the snapshot (DI QA H4 is row 24
 
 | # | Class | Applies here | Structure that closes it | Sentry or property test | Mutation that turns it red |
 |---|---|---|---|---|---|
-| 1 | Value-bearing output | raw cells in fit snapshots (R1); extremes pinned by the bounds; integer ids or constants rebuilt from bins | `distribution_snapshot_document` over `SNAPSHOT_VALUE_STATS`; `Decimal` bounds on the `G > r` grid; 3-row merge; one-bin rule | AT-1, AT-2, AT-4, AT-4b, AT-11, AT-C1 | M1: move `("top_value", "value")` to the value-free set (AT-1, AT-11 red); M1b: compute the grid in floats (AT-4 fixed rows red); M1c: skip the merge (AT-4b red); M1d: `G` from `ceil(log10(r))` (AT-4 preimage property red at r = 1, 10); M1e: drop the all-distinct one-bin rule (AT-4b ids red) |
+| 1 | Value-bearing output | raw cells in fit snapshots (R1); a categorical or joint sentinel, numeric bound or interior edge equal to a real cell; an exact datetime boundary | `distribution_snapshot_document` over `SNAPSHOT_VALUE_STATS`; empty sensitive categorical and joint value containers with aggregate counts; one numeric bin with ordinary bounds strictly outside every finite cell or a collision-free finite fallback; preceding/following-year datetime bounds | AT-1, AT-2, AT-4, AT-4b, AT-5, AT-6, AT-7, AT-11, AT-C1 | M1: keep categorical entries or joint cells (AT-1, AT-6, AT-7 red); M1a: write any string sentinel (AT-6 real-sentinel row red); M1b: restore the zero clamp (AT-4 zero row red); M1c: use more than one bin (AT-4b grid-aligned cell red); M1d: drop the finite fallback (AT-3 near-max sampling red); M1e: use the observed year boundary (AT-5 red) |
 | 2 | Cleanup missing on an exit path | N/A: no temp files or handles; the write stays on `write_local_target` | N/A | N/A | N/A |
-| 3 | State and ordering | DP refusal after the CSV read; redaction mutating the raw snapshot a caller holds; joint cells cut before redaction | header read, name checks, then `check_fit_environment`, then the body read; the function owns its raw snapshot; untruncated joint, redact, sort, cut | AT-C6 (`read_csv` spy); existing name-check-first tests; AT-9; AT-7b | M3: move the gate after the body read (AT-C6 red); M3b: redact the truncated joint (AT-7b red) |
-| 4 | Route parity and silent fallback | the CLI keeps `compute_distribution_snapshot`; a second predicate, stamp or rule applier in the snapshot path; a new read site in `fit` | AST guard on `src/decoy`; one `value_sensitive_names` / `stamp_value_policy` pair and one `_apply`; one merged body read | AT-C8, AT-14, AT-14b, the CLI CSV-read sentry | M4: in `_snapshot_values.py`, add `field.get("pii_score", 0) >= 0.5` (AT-14b red); M4b: set `quantiles` to `{}` inline instead of through `_apply` (AT-14b red); M4c: keep the DP body read as its own call (CSV-read sentry red) |
-| 5 | Referential integrity | joints keep pairs; a redacted side must not feed `condition_on`; cell order must not encode the real side | key-position redaction, re-sort, E2 refusal | AT-7, AT-7b, AT-12 | M5: drop the joint clause of the E2 check (AT-12 joint cell red); M5b: skip the re-sort (AT-7b red) |
-| 6 | Untrusted producer | a hand-edited snapshot: placeholders without a marker, an ill-typed `redacted_columns`, a marker with no or an unknown `value_policy`; an unknown stats key in a sensitive column | refusal on placeholder always and on the marker unless the policy is exactly `"raw"`; runtime default-deny | AT-12 cells, AT-11b | M6: refuse only on the marker (AT-12 placeholder cell red); M6b: treat a missing policy as raw (AT-12 red); M6c: keep unknown keys (AT-11b red) |
+| 3 | State and ordering | DP refusal after the CSV read; request errors preempted by provenance; redaction mutating the raw snapshot a caller holds | header read, name checks, then shared request preparation and environment gate, then the body read; the function owns its raw snapshot | AT-C6 (`read_csv` spy); existing name-check-first tests; AT-9 | M3: move the gate after the body read (AT-C6 red); M3a: call the environment gate without shared request preparation (invalid-epsilon cell red) |
+| 4 | Route parity and silent fallback | the CLI keeps `compute_distribution_snapshot`; a second predicate, stamp, rule applier, histogram, crosstab or DP request validator appears; a new read site in `fit` | AST guard on `src/decoy`; one `value_sensitive_names` / `stamp_value_policy` pair and one `_apply`; the raw snapshot's one histogram and crosstab; one shared DP preparation function; one merged body read | AT-C8, AT-14, AT-14b, AT-E3, AT-C6, the CLI CSV-read sentry | M4: in `_snapshot_values.py`, add `field.get("pii_score", 0) >= 0.5` (AT-14b red); M4a: call `pd.crosstab` (AT-14b red); M4b: set `quantiles` to `{}` inline instead of through `_apply` (AT-14b red); M4c: keep the DP body read as its own call (CSV-read sentry red); M4d: validate epsilon in the CLI (AT-C6 structural guard red) |
+| 5 | Referential integrity | a redacted side must not feed `condition_on`; joint survivors or order must not encode the real side | empty sensitive joint cells with aggregate `other_count`, plus E2 refusal | AT-7, AT-7b, AT-12 | M5: drop the joint clause of the E2 check (AT-12 red); M5b: retain even one sensitive joint cell (AT-7b red) |
+| 6 | Untrusted producer | an ill-typed marker, a marker with no or an unknown `value_policy`; an unknown stats key in a sensitive column; a legacy real category equal to the old profile placeholder spelling | refuse malformed or redacted marker states, never infer from a category literal; runtime default-deny to null in the writer | AT-12 cells, AT-11b | M6: infer redaction from the literal `[redacted]` (legacy AT-12 cell red); M6b: treat a missing policy beside `redacted_columns` as raw (AT-12 red); M6c: keep an unknown key or replace it with a string sentinel (AT-11b red) |
 | 7 | Check then use on a path (TOCTOU) | DP mode checks names on the header read, then reads the body | body columns must equal the header's, else `dp_source_changed` | AT-C6 changed-file cell | M7: drop the comparison (AT-C6 cell raises `KeyError`, red) |
 | 8 | Weak tests and overclaimed evidence | a fixture that never fills a value slot; a coarse bound that happens to equal a cell; a property that never draws decimal-grid values; a joint fixture too small to reach the cut | AT-11 precondition (raw holds the canary); AT-4 fixed rows and a decimal-grid strategy; AT-7b precondition (raw joint is truncated with ties at the cut) | AT-4, AT-7b, AT-11 | M8: drop the `- G` / `+ 2 * G` terms (AT-4 grid-aligned row red) |
 | 9 | Behavior-preserving refactor drift | `compute_distribution_snapshot` must stay raw; non-sensitive columns byte-identical | wrapper, not an edit; `snapshot.py` untouched | AT-8, AT-9, existing `tests/unit/quality/test_snapshot.py` | M9: redact inside `compute_distribution_snapshot` (snapshot tests and AT-9 red) |
@@ -586,58 +602,69 @@ Engine E1 (`tests/unit/profiling/test_snapshot_values.py`, `tests/sentry/profili
   `len(bin_edges) == len(bin_counts) + 1`; `sum(bin_counts)` equals the finite count; `mean is None`,
   `std is None`, `quantiles == {}`.
 - **AT-3** Numeric generation: `load_spec` plus `sample_column` over the redacted snapshot draws 1000 values
-  all inside `[min, max]`; an integer column draws `int`s.
+  all inside `[min, max]`; an integer column draws `int`s. A constant `1.79e308` and a close
+  `1.70e308..1.71e308` range use the finite fallback and also sample without a degenerate-histogram error.
 - **AT-4** Coarse-domain table and property, on the grid helper directly. Fixed rows: `(4.23, 6.56, 42)` and
-  `(94.0, 99.8, 39)` (a float rule wrote the real min and max here); the section 3 worked values; a constant
-  float column; negative-only range; a range crossing 0; `lo == 0` (clamp holds, no negative bound); ranges of
+  `(94.0, 99.8, 39)` (a float rule wrote the real min and max here); the section 3 worked values; constants at
+  `-7`, `0` and `7`; negative-only range; a range crossing 0; `lo == 0` (the lower bound is negative); ranges of
   exactly 1 and 10 (the power-of-ten boundary); `1e-9` scale; `1e15` scale; `(1e6 + 0.1, 1e6 + 0.1 + 1e-9)`
-  (range tiny against magnitude); `±1e308` and a constant `1.79e308` (fallback shape, no hang, under a 5 s
-  timeout; the raw snapshot already raises "Too many bins" on `±1e308`, so these rows call the helper, not the
-  document function). Hypothesis over finite floats and over a decimal-grid strategy (`Decimal` with 0 to 4
-  places, converted with `float(str(d))`), bins 1 to 50. Properties, on the written floats: `lo' < lo` unless
-  `lo >= 0` and `lo' == 0`; `hi' > hi + G`; `lo - lo' >= G` unless clamped; `G > r`; every edge is a multiple of
-  `u`; each bin width is a whole number of units, at least one.
-- **AT-4b** Minimum frequency and one-bin rule: ids 1001..1010 as `int64` and as `float64` with one NaN give one
-  bin `[990, 1030]` with count 10; a constant `int` 7 (20 rows) gives one bin `[0, 20]` with count 20; 5,000
-  ages 18..90 (fixed seed) keep at least 3 non-empty bins of width 20, each holding at least 3 rows; a 10-row
-  float column with distinct values keeps no non-empty bin under 3 rows; no edge is off the `u` grid; the total
-  equals the finite count.
-- **AT-5** Datetime: `admitted` from `1991-06-01` for 20 days: `min == "1991-01-01T00:00:00"`,
-  `max == "1991-12-31T23:59:59"`, `year_bins` equal the raw ones; no `1991-06` canary; sampling stays in 1991.
-- **AT-6** Categorical: `top_values` keep length, order and counts; every `value == "[redacted]"`;
-  `other_count` unchanged; an HC-5 column keeps `high_cardinality: True`.
-- **AT-7** Joints: `--joint full_name,diagnosis`-style pair: position of the sensitive side is `[redacted]`,
-  the other side and all counts unchanged; a joint of two non-sensitive columns is unchanged.
+  (range tiny against magnitude); `+/-1e308` under a 5 s timeout on the grid and fallback helper directly (the
+  raw snapshot already raises "Too many bins" for that full-span range); and document cases for a constant
+  `1.79e308` and `1.70e308..1.71e308`. Hypothesis over
+  finite floats and over a decimal-grid strategy (`Decimal` with 0 to 4 places, converted with
+  `float(str(d))`). Properties on the written document: exactly two finite edges and one positive count; the
+  total equals the finite count; neither edge equals any finite source cell; the ordinary path has
+  `lower < min(source)` and `upper > max(source)` with `G > r`; the fallback path uses the first available
+  half-integer pair and is deterministic.
+- **AT-4b** One-bin invariant: ids 1001..1010 as `int64` and as `float64` with one NaN give `[990, 1030]` and
+  count 10; constant `int` 7 gives `[-10, 20]`; 5,000 ages 18..90 give `[-100, 200]`; decimal-grid values equal
+  to likely interior cuts still produce no interior edge. Every sensitive numeric document has
+  `len(bin_edges) == 2`, `len(bin_counts) == 1`, and no edge equal to a finite source cell.
+- **AT-5** Datetime: `admitted` includes exact cells `1991-01-01T00:00:00`, `1991-12-31T23:59:59` and dates
+  between them. The document has `min == "1990-01-01T00:00:00"`,
+  `max == "1992-12-31T23:59:59"`, `year_bins` equal the raw ones, no raw timestamp canary, and sampling stays
+  in 1991.
+- **AT-6** Categorical: `top_values == []`; `other_count == non_null_count`; an HC-5 column keeps
+  `high_cardinality: True`. Fixtures include real categories `[redacted]` and `[redacted:1]`; neither appears in
+  the document. Aggregate count mass before and after is equal.
+- **AT-7** Joints: a `--joint full_name,diagnosis`-style pair and a pair whose real sensitive cell is
+  `[redacted]` both have `cells == []`; `other_count` equals the raw sum of listed cell counts plus raw
+  `other_count`; `columns` and `cell_count` stay. A joint of two non-sensitive columns is unchanged.
 - **AT-7b** Relabel invariance across the cut: a 40-row frame with a unique sensitive `email` column and a
-  3-value `status` column, so the pair sorts `(email, status)` with the sensitive side first and 40 count-1 cells
-  tie at `contingency_top_k = 25` (precondition: the raw joint has `other_count == 15`). Replacing the emails with
-  a different unique set, permuted against `status`, gives a byte-identical document. A second case puts the
-  sensitive column second in the pair.
+  3-value `status` column, so the raw pair sorts `(email, status)` with the sensitive side first and 40 count-1
+  cells tie at `contingency_top_k = 25` (precondition: raw `other_count == 15`). Replacing the emails with a
+  different unique set, permuted against `status`, gives a byte-identical document with no cells and
+  `other_count == 40`. A second case puts the sensitive column second in the pair.
 - **AT-8** Non-sensitive columns (`status`, a non-unique numeric) are equal to the raw snapshot's entries.
 - **AT-9** `include_values=True` equals `compute_distribution_snapshot(...)` with the same arguments plus
   `value_policy: "raw"` and the sensitive names; the raw snapshot passed through is not mutated.
-- **AT-10** Registry sentry: a fixture frame that produces every kind, a joint and an HC-5 column; every key
-  at every scope is in exactly one of `SNAPSHOT_VALUE_STATS` and `SNAPSHOT_VALUE_FREE_STATS`; the kinds seen
+- **AT-10** Registry sentry: a fixture frame that produces every kind, a joint and an HC-5 column; every visited
+  key is in exactly one of `SNAPSHOT_VALUE_STATS` and `SNAPSHOT_VALUE_FREE_STATS`; the walk stops below a
+  registry-classified terminal value container such as `top_values` or `cells`. The kinds seen
   equal `SNAPSHOT_KINDS`, and `SNAPSHOT_KINDS` equals the kind literals an AST read of `snapshot.py`'s
   `_stats_for` returns plus the `"empty"` assignment in `_column_snapshot`. Bite proofs: monkeypatch
   `numeric_stats` to add a key (red: unclassified), and an AST fixture with a sixth kind literal (red).
 - **AT-11** Per-entry canary: for each `SNAPSHOT_VALUE_STATS` entry, a fixture column whose raw snapshot holds
   a canary in that slot (precondition asserted), and the document does not. `bin_counts` cannot hold a canary,
-  so its entry is checked as: edges on the unit grid and the same total.
+  so its entry is checked as: one count with the same finite total, two finite edges, and neither edge equal to
+  a finite source cell.
 - **AT-11b** Runtime default-deny: monkeypatch `compute_distribution_snapshot` to add an unknown stats key
-  holding a canary to a sensitive column and to a non-sensitive column; the sensitive one becomes
-  `[redacted]`, the other is unchanged.
+  holding a canary to a sensitive column and to a non-sensitive column; the sensitive one becomes `None`, the
+  other is unchanged. A canary whose real spelling is `[redacted]` also becomes `None`.
 - **AT-13** Determinism: two calls on the same frame give identical `json.dumps(..., sort_keys=True)` bytes.
 - **AT-14** Parity: for the S1 canary frame and the QA frame, `redacted_columns` of the snapshot document
   equals `redacted_columns` of `profile_document(profile_columns(df, label))`; with `profile_row_cap=3` on a
   frame whose sensitivity changes after row 3, it equals the scan document of `df.head(3)`.
 - **AT-14b** Structural guard: `_snapshot_values.py` calls `value_sensitive_names`, `stamp_value_policy` and
-  `_apply`, and its AST holds no string constant or attribute named `pii_score`, `detector_matches`,
+  `_apply` with `denied_value=None`, and its AST holds no call or loaded member named `crosstab`,
+  `_joint_snapshot` or `joint_snapshot`,
+  no string constant or attribute named
+  `pii_score`, `detector_matches`,
   `is_likely_unique`, `value_policy` or `redacted_columns` (the last two come only from the S1 constants), no
-  float literal in `[0, 1]` (the floor is written `Decimal(1).scaleb(-12)`), no `None`, `{}` or `[redacted]`
-  assigned to a stats key (those go through `_apply`), and no integer literal used as the bin threshold
-  (`SNAPSHOT_MIN_BIN_ROWS` is imported). `redact_profile_dict` calls the same two helpers and `_apply` (AST
-  check in the same test).
+  float literal in `[0, 1]` (the floor is written `Decimal(1).scaleb(-12)`), and no `None`, `{}` or `[redacted]`
+  assigned to a stats key (those go through `_apply`). Both `top_values` and `cells` aggregation call
+  `_collapse_counted_items`. `redact_profile_dict` calls the same selection, stamp and apply helpers (AST check
+  in the same test).
 - **AT-15** Fidelity gate: a generate run whose statistical numeric column uses a redacted snapshot reports
   that column as not comparable with reason `no_quantiles`; it is neither scored nor dropped from the
   report.
@@ -645,13 +672,21 @@ Engine E1 (`tests/unit/profiling/test_snapshot_values.py`, `tests/sentry/profili
 Engine E2 (`tests/unit/generation/test_statistical_redacted.py`):
 
 - **AT-12** `load_spec` raises `statistical_snapshot_values_redacted` for: a categorical column in
-  `redacted_columns` with and without `allow_real_categories: true` (policy `flagged-redacted/v1`, policy
-  missing, policy `"other"`); a categorical column with a `[redacted]` value and no marker; a `[redacted]` value
-  under policy `"raw"`; `redacted_columns` set to a string; `condition_on` through a joint with a redacted side;
-  an HC-5 redacted column (this code, not the HC-5 requires-real code). Loads: a redacted numeric and datetime
-  column; a policy-`"raw"` snapshot listing the column, with `allow_real_categories: true`; a non-sensitive
-  categorical column of a redacted document, with `allow_real_categories: true`. The same config through the
-  plan compiler reports the same code at validate (`plan/_checks.py:378`).
+  `redacted_columns` with and without `allow_real_categories: true` under policy `flagged-redacted/v1`; a
+  missing or unknown policy beside `redacted_columns`; either marker key with an invalid type;
+  `condition_on` through a named redacted side; and an HC-5 redacted column (this code, not the HC-5
+  requires-real code). Loads: a redacted numeric and datetime column; a policy-`"raw"` snapshot listing the
+  column, with `allow_real_categories: true`; a non-sensitive categorical column of a redacted document, with
+  `allow_real_categories: true`; a markerless legacy snapshot whose real category is `[redacted]`; and a raw
+  policy snapshot whose real category is `[redacted]`. The same config through the plan compiler reports the
+  same refusal code at validate (`plan/_checks.py:378`).
+
+Engine E3 (`tests/unit/quality/test_dp.py`, `tests/unit/test_public_api.py`):
+
+- **AT-E3** The public `check_dp_fit_request` and `fit_dp_snapshot` share the same private preparation function.
+  For invalid epsilon, delta, numeric bins, carrier schema and derived numeric edges, the check-only entry point
+  raises the same typed code before `check_fit_environment`; for a valid request on an uncertified host it
+  raises the same provenance code. The quality facade exports the entry point (`quality/__init__.py:37-65`).
 
 CLI C1 (`tests/e2e/test_fit_command.py`, `tests/sentry/test_fit_value_redaction.py`):
 
@@ -678,7 +713,13 @@ CLI C2 (`tests/e2e/test_fit_command.py`, `tests/e2e/test_explain_command.py`):
   and no `fingerprint`, `PlatformTriple`, or digit run of 8 or more; `--verbose` adds the engine message;
   `--json` has `code`, `message`, `hint`. A phantom `--dp-number` column still exits 1 before the gate. With
   the gate passing and the spy returning a header and then a body with a different column name, exit 1 with
-  `dp_source_changed` and a JSON error payload, no `KeyError`.
+  `dp_source_changed` and a JSON error payload, no `KeyError`. Invalid epsilon, delta, numeric bins, numeric
+  bounds and carrier declarations keep their existing typed usage codes before provenance; the spy sees the
+  header read but no body read. An AST guard over CLI `fit.py` rejects calls to the engine's private DP
+  validators, any new semantic validator outside the pre-existing `_parse_dp_number_spec`, or a copied
+  certified-row table; the early engine decision call is the public `check_dp_fit_request`. In exact mode, the
+  DP header read and the DP body read, a fake `read_csv` exception whose string is `RAW-CELL-CANARY` produces a
+  usage error in human and JSON modes with no canary or exception text.
 - **AT-C7** `decoy fit --help` says DP runs only on a certified host; `decoy explain differential-privacy`
   summary and first paragraph say so; `decoy explain --json` lists the topic.
 
@@ -686,7 +727,7 @@ CLI C2 (`tests/e2e/test_fit_command.py`, `tests/e2e/test_explain_command.py`):
 
 None. Recommended options taken without asking (V1 bar): redact by the S1 predicate rather than every column
 (same as OQ1 of QA-SCAN-REDACT); recode numeric and datetime rather than drop them, so generation still works;
-apply the SDC threshold rule (3 rows) to integer-valued columns rather than accept per-integer bins; refuse
+release one numeric bin because any interior edge can equal a real cell; refuse
 categorical generation rather than sample placeholders; keep `--epsilon` visible but say it is gated rather
 than hide it.
 
@@ -695,26 +736,28 @@ than hide it.
 | Need | Reused | Not reused, why |
 |---|---|---|
 | Which columns | `value_sensitive_names` (extracted from S1's `redact_profile_dict`, over `is_value_sensitive`) and `profile_columns` | no snapshot-side rule |
-| Marker keys, placeholder, policy values, stamping | S1 constants and `stamp_value_policy` in `_value_redaction.py` | |
+| Marker keys, policy values, stamping | S1 constants and `stamp_value_policy` in `_value_redaction.py` | no snapshot-side copy |
 | Rule vocabulary | S1's `Rule` enum, four members added | no second enum |
-| Applying NULL, PLACEHOLDER, EMPTY_MAP and default-deny | S1's `_apply`, keep test as an argument | no second applier |
+| Applying NULL, EMPTY_LIST, EMPTY_MAP and default-deny | S1's `_apply`, with keep and denied-value arguments | no second applier |
 | Raw snapshot | `compute_distribution_snapshot` | |
-| Re-binning | `numeric_stats(domain=...)` (`snapshot.py:401`, renamed in E1) | no second histogram |
-| Joint cells | `joint_snapshot` (renamed in E1), called untruncated | no second crosstab |
+| Re-binning | `numeric_stats(domain=..., bins=1)` (`snapshot.py:401-460`, renamed in E1) | no second histogram |
+| Joint cells | the joint already returned by `compute_distribution_snapshot`; sensitive `cells` are emptied and their listed counts added to `other_count` | no second crosstab |
 | Defaults | `snapshot.py` `_DEFAULT_*` constants | not retyped |
 | Refusal plumbing | `StatisticalSpecError`, `reasons.plan` | |
 | DP gate | `check_fit_environment` | the CLI does not restate certified rows |
+| DP request validation before the early gate | E3's public check-only wrapper and `fit_dp_snapshot` call one private preparation function (`quality/dp.py:319-345`) | no CLI-side validator |
 | CLI error output | `_emit_error` (`fit.py:302-324`) | |
 
 ## 10. Placement
 
 | Item | Where | Size | Why there |
 |---|---|---|---|
-| snapshot registry, four `Rule` members, `SNAPSHOT_KINDS`, `SNAPSHOT_MIN_BIN_ROWS`, `value_sensitive_names`, `stamp_value_policy`, `_apply` keep argument and EMPTY_MAP | engine `profiling/_value_redaction.py` | +65 (356 on S1 at `1daabb74`, about 420 after) | the one file that decides which artifact fields are values and how the marker is written |
-| `distribution_snapshot_document`, `Decimal` coarse domain, minimum-frequency merge, one-bin rule, per-kind rules, untruncated joint redaction | engine `profiling/_snapshot_values.py` (new) | about 260 | profiling owns the sensitivity decision; `profiling/` has 8 modules with S1 (9 after); `quality/` already has 25 `.py` files, so a new module there would block, and `snapshot.py` is at 600 |
-| public names `numeric_stats`, `joint_snapshot` | engine `quality/snapshot.py` | 0 (renames to shorter names; stays at 600, no census entry) | the cross-package import uses public names; `snapshot.py` has no `__all__` and no outside callers of either |
+| snapshot registry, four `Rule` members, `SNAPSHOT_KINDS`, `value_sensitive_names`, `stamp_value_policy`, `_apply` keep and denied-value arguments, and EMPTY_MAP | engine `profiling/_value_redaction.py` | +65 (356 on S1 at `1daabb74`, about 420 after) | the one file that decides which artifact fields are values and how the marker is written |
+| `distribution_snapshot_document`, `Decimal` coarse domain, collision-free finite fallback, one-bin rule, per-kind rules, categorical and joint aggregation | engine `profiling/_snapshot_values.py` (new) | about 235 | profiling owns the sensitivity decision, as placed by `CODEMAP.md:227`; `profiling/` has 8 direct modules with S1 (9 after); `quality/` already has 25 direct `.py` files, so a new module there would block, and `snapshot.py` is at 600 |
+| public name `numeric_stats` | engine `quality/snapshot.py` | 0 (rename to a shorter name; stays at 600, no census entry) | the cross-package import uses a public name; `snapshot.py` has no `__all__` and no outside caller of it |
 | exports | `profiling/__init__.py`, `decoy_engine/__init__.py` | +4 | public surface for the CLI |
 | refusal | `generation/statistical/_spec.py` | +25 (481 to about 506) | the one place generation reads snapshot stats |
+| shared DP request preparation and check-only public entry point | engine `quality/dp.py`, exported by `quality/__init__.py` | about +25 (529 to about 554) | the landed fit already owns this validation and gate at `quality/dp.py:319-345`; E3 extracts that exact prefix instead of adding a CLI copy; no new module in the 25-module package |
 | reason code | `reasons/plan/_part3.py` | +8 (61 to 69) | the file holding the other statistical snapshot codes |
 | engine tests | `tests/unit/profiling/test_snapshot_values.py`, `tests/sentry/profiling/test_snapshot_value_registry.py`, `tests/unit/generation/test_statistical_redacted.py` | about 380, 160, 150 | |
 | CLI wiring | `cli/fit.py` | +35 (C1) and +30 (C2), 534 to about 600 | edits in place; no new CLI module |
@@ -725,13 +768,16 @@ than hide it.
 
 - **`distribution-snapshot/v1`**: two optional top-level keys (`value_policy`, `redacted_columns`), which the
   contract allows (`compatibility-contract.md:124-126`). Redacted values use types v1 already carries
-  (`null` mean and std, `{}` quantiles, string top values). Old readers ignore the keys; old files load.
+  (`null` mean and std, `{}` quantiles, empty `top_values` and `cells` lists). Old readers ignore the keys; old
+  files load.
 - **Reason registry**: one addition, `plan.statistical_snapshot_values_redacted`, at the next minor of the
   base (1.10.0 on today's main) with fixture `tests/fixtures/f29/reason-manifest-v1.10-fit-redact.json`;
   `tests/fixtures/f29/consumer-contract.json` pins `registry_version` and moves with it (as at `a5eb66e2`);
   `registry_renumber.py` moves both at merge if another plan takes 1.10.0 first. Escalation trigger (frozen contract): E2 runs the full engine
   suite.
-- **Engine public API**: one new export, `distribution_snapshot_document`; nothing removed.
+- **Engine public API**: new exports `distribution_snapshot_document` and
+  `decoy_engine.quality.check_dp_fit_request`; nothing removed. Public exports are declared through package
+  facades as required by `CODEMAP.md:215` and `:254`.
 - **CLI `fit --json`**: two new keys on success; the DP error payload keeps its keys, `hint` text changes.
 - **CLI pin**: C1 bumps `decoy-engine` (escalation trigger: dependency lock; full CLI suite).
 - **`docs/cli-reference.md`**: regenerated for `--include-values` and the help text (drift-checked by
@@ -741,13 +787,15 @@ than hide it.
 
 | Slice | Repo | Files (at most 10) | Lines | Tests |
 |---|---|---|---|---|
-| E1 | engine | `_value_redaction.py`, `_snapshot_values.py`, `quality/snapshot.py` (renames only), `profiling/__init__.py`, `decoy_engine/__init__.py`, unit test, sentry test, `tests/unit/test_public_api.py`, `tests/sentry/test_sentry_manifest.py`, `docs/methodology-registry.yaml` (10) | about 850 | AT-1 to AT-11b, AT-13, AT-14, AT-14b first; T1 = `tests/unit/profiling`, `tests/sentry`, `tests/unit/quality/test_snapshot.py`, `tests/unit/generation/test_statistical.py` |
+| E1 | engine | `_value_redaction.py`, `_snapshot_values.py`, `quality/snapshot.py` (rename only), `profiling/__init__.py`, `decoy_engine/__init__.py`, `tests/unit/profiling/test_snapshot_values.py`, `tests/sentry/profiling/test_snapshot_value_registry.py`, `tests/unit/test_public_api.py`, `tests/sentry/test_sentry_manifest.py`, `docs/methodology-registry.yaml` (10) | about 820 | AT-1 to AT-11b, AT-13, AT-14, AT-14b first; T1 = `tests/unit/profiling`, `tests/sentry`, `tests/unit/quality/test_snapshot.py`, `tests/unit/generation/test_statistical.py` |
 | E2 | engine | `_spec.py`, `reasons/plan/_part3.py`, fixture `reason-manifest-v1.10-fit-redact.json`, `tests/fixtures/f29/consumer-contract.json`, `reasons` version constant, `docs/reasons.md`, `tests/unit/test_reason_registry.py`, `tests/unit/generation/test_statistical_redacted.py`, `CHANGELOG.md` (one entry for E1 and E2), `CODEMAP.md` (moved from E1) (10) | about 260 | AT-12, AT-15; full engine suite (registry) |
-| R | engine | release request to claudeorchestrator after E1 and E2 merge, including the re-pin of the CLI runtime row in `_CERTIFIED_STACKS` (`quality/dp_provenance.py:297-320`) for the new engine version, so 24g does not get worse | | |
+| E3 | engine | `quality/dp.py`, `quality/__init__.py`, `tests/unit/quality/test_dp.py`, `tests/unit/test_public_api.py`, `CHANGELOG.md` (5) | about 100 | AT-E3; T1 = the two named unit files, `tests/unit/quality/test_dp_provenance.py`, `tests/sentry` |
+| R | engine | release request to claudeorchestrator after E1, E2 and E3 merge, including the re-pin of the CLI runtime row in `_CERTIFIED_STACKS` (`quality/dp_provenance.py:297-320`) for the new engine version, so 24g does not get worse | | |
 | C1 | CLI | `pyproject.toml`, `uv.lock`, `cli/fit.py`, `tests/e2e/test_fit_command.py`, `tests/sentry/test_fit_value_redaction.py`, `tests/sentry/test_sentry_manifest.py`, `docs/cli-reference.md`, `CHANGELOG.md` (8) | about 260 | AT-C1 to AT-C5, AT-C8; full CLI suite (pin bump) |
-| C2 | CLI | `cli/fit.py`, `cli/explain.py`, `tests/e2e/test_fit_command.py`, `tests/e2e/test_explain_command.py`, `docs/cli-reference.md`, `CHANGELOG.md` (6) | about 200 | AT-C6, AT-C7, plus the updated DP tests that stub only `fit_dp_snapshot` (boxing capture `:381-403`, carrier, budget and DpError `:648-700`, `TestFitDpArtifactShape` `:803`); T1 for the touched files plus `tests/sentry`, naming `tests/sentry/test_csv_read_choke_point.py` (its pin for `fit` stays 2; the baseline file is not edited) |
+| C2 | CLI | `cli/fit.py`, `cli/explain.py`, `tests/e2e/test_fit_command.py`, `tests/e2e/test_explain_command.py`, `docs/cli-reference.md`, `CHANGELOG.md` (6) | about 220 | AT-C6, AT-C7, plus the updated DP tests that stub only `fit_dp_snapshot` (boxing capture `:381-403`, carrier, budget and DpError `:648-700`, `TestFitDpArtifactShape` `:803`); those tests also stub `check_dp_fit_request`. T1 for the touched files plus `tests/sentry`, naming `tests/sentry/test_csv_read_choke_point.py` (its pin for `fit` stays 2; the baseline file is not edited) |
 
-Order: S1 of QA-SCAN-REDACT merges first (E1 imports its module). E1, then E2, then R, then C1, then C2. C2
+Order: S1 of QA-SCAN-REDACT merges first (E1 imports its module). E1, then E3, then E2, then R, then C1, then C2. E2's
+frozen-contract full suite therefore runs on the final engine head that includes E3. C2
 needs no engine change, but its hint says sensitive columns are withheld by default, which is true only once
 C1 ships. C1 and C2 both edit `fit.py` in different blocks (C1: `:398-422`
 and the success output; C2: the D0 tail and `:478-484`); the second to land rebases. CLI-QA1 also edits
@@ -765,35 +813,45 @@ and C2 carries no ticket ids (CLI-QA1 AT-S2).
   both still decide by the same predicate. Recorded.
 - **The predicate misses a column** (a repeating name column, mid-cardinality): its values stay, as in
   QA-SCAN-REDACT. AT-14 keeps both artifacts consistent, so any predicate fix lands in both at once.
-- **Small or all-distinct integer columns lose their shape.** A 10-row id column becomes one bin, so
-  generation from it is uniform over `[990, 1030]`. That is the point; `--include-values` restores exact
-  bins. Integer columns with repeats (ages, counts) keep several bins.
-- **Sensitive numeric columns generate over a wider domain.** Bounds sit a grid step `G > r` outside the data,
-  so a column generates over up to about four times its range, with a handful of occupied bins. This is the
-  price of extremes that do not pin real values; `--include-values` restores the exact histogram, and F6 lets
-  the fidelity gate score the bins.
-- **A column with few distinct values still shows where rows fall** to within one bin of width `k * u`, and each
-  occupied bin holds at least 3 rows. The DP path exists for stronger guarantees. Recorded, not blocking.
-- **A large joint with a sensitive side builds its full cell list.** It is the crosstab `joint_snapshot`
-  already computes before cutting, at most one cell per row; recorded.
+- **Sensitive numeric columns lose their histogram shape.** A 10-row id column becomes one bin over
+  `[990, 1030]`; ages and balances also have one bin. This is the price of ensuring no interior edge can equal a
+  real cell. `--include-values` restores the exact histogram.
+- **Sensitive numeric columns generate over a wider domain.** Ordinary bounds sit a grid step `G > r` outside
+  the data and generation is uniform over that bin. Near float max, the collision-free fallback may not enclose
+  the source range at all. It exists to keep generation functional when no outward finite float exists.
+  `--include-values` restores the exact histogram, and F6 lets the fidelity gate score the released bin.
 - **A user's CSV changes during a DP fit.** The body-versus-header comparison turns it into a usage error;
   content changes that keep the header are the user's own file and are fitted as read.
 - **A redacted snapshot is mistaken for a DP release.** The DP verifier requires `dps-marginal/v3` and a `dp`
   block; a `v1` file fails that check before the shape test in `_checks_dp_carrier.py`.
 - **The CLI's early DP check drifts from the engine's.** It calls the same function; there is nothing to
   drift.
-- **E1 lands without E2.** A redacted categorical column with `allow_real_categories: true` would generate the
-  string `[redacted]`. Not a leak; R waits for both, and C1 waits for R.
+- **E1 lands without E2.** A redacted categorical column with `allow_real_categories: true` would reach the
+  existing degenerate-histogram refusal instead of the new directive. It cannot emit a source value because
+  `top_values` is empty; R waits for both, and C1 waits for R.
 
 ## 14. Follow-ups (recorded, not in V1)
 
-- F1: platform: if it ever writes a distribution snapshot for users, route it through
-  `distribution_snapshot_document`.
-- F2: a display-time `redact_snapshot_dict` for loaded snapshot files, if a CLI command ever prints one.
-- F3: honour `decoy scan`'s `--strategy random` option in `fit` if users ask for it.
-- F4: the comment at `quality/_distribution_gof.py:194` still names `_numeric_stats` after the E1 rename; fix it
-  when that file is next touched.
-- F5: an `explain` topic for `fit` and `snapshot` (DI QA language audit); CLI-QA1 or a later docs pass.
-- F6: let the fidelity gate score a redacted numeric column by KS on its bins instead of reporting it as not
-  comparable.
-- F7: top-code birth years (Safe Harbor's 90-or-older group) when a column is known to be a birth date.
+- V2-LOG F1: platform: if it ever writes a distribution snapshot for users, route it through
+  `distribution_snapshot_document` (`quality/snapshot.py:143-226`).
+- V2-LOG F2: add a display-time `redact_snapshot_dict` if a CLI command ever prints a loaded snapshot
+  (`generation/statistical/_spec.py:169-198`).
+- V2-LOG F3: honour `decoy scan`'s `--strategy random` option in `fit` if users ask for it
+  (CLI `scan.py:616-619`).
+- V2-LOG F4: comments at `quality/_distribution_gof.py:194` and
+  `tests/unit/quality/test_distribution_gof.py:71` still name `_numeric_stats` after the E1 rename; fix them when
+  those files are next touched.
+- V2-LOG F5: add an `explain` topic for `fit` and `snapshot` in a later docs pass
+  (CLI `explain.py:383-407`).
+- V2-LOG F6: let the fidelity gate score a redacted numeric column by KS on its bin instead of reporting it as
+  not comparable (`quality/fidelity.py:315-327`, `:366-377`).
+- V2-LOG F7: top-code birth years when a column is known to be a birth date; this needs semantics the snapshot
+  does not carry (`quality/snapshot.py:487-501`).
+- V2-LOG F8: the existing high-cardinality UTF-8 error keeps a `UnicodeEncodeError` cause whose traceback can
+  retain a label. This is server-admin crash evidence, not a user artifact (`quality/snapshot.py:364-377`).
+- V2-LOG F9: this hand-written plan is in the 800 to 900 line cleanup band
+  (`2026-11-08-qa-fit-redact.md:1`).
+- DESIGN F10 (pre-existing, non-blocking): CLI `_parse_dp_number_spec` checks finite ordered bounds after parsing
+  the option text, while engine `parse_column_schema` checks the prepared bounds again. E3 adds no third copy;
+  consolidate the old pair only in a separately scoped compatibility plan (CLI `fit.py:83-112`, engine
+  `quality/dp.py:329-337`).
