@@ -357,11 +357,51 @@ def _local_binds(func: ast.AST, producers: Producers) -> dict[str, str]:
     return binds
 
 
-def message_findings(source: str, rel: str, producers: Producers | None = None) -> set[str]:
-    """Baseline keys for every ``ValueError`` and ``ConfigRuleError`` raise that is not fixed text."""
+def _rule_error_names(tree: ast.AST) -> set[str]:
+    """Local names that refer to ``ConfigRuleError``: import aliases and plain re-bindings."""
+    names = {"ConfigRuleError"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            names |= {a.asname for a in node.names if a.name == "ConfigRuleError" and a.asname}
+    grew = True
+    while grew:
+        grew = False
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and _last_name(node.value) in names
+                and node.targets[0].id not in names
+            ):
+                names.add(node.targets[0].id)
+                grew = True
+    return names
+
+
+def message_findings(
+    source: str, rel: str, producers: Producers | None = None, value_errors: bool = True
+) -> set[str]:
+    """Baseline keys for every ``ConfigRuleError`` construction (and, if asked, ``ValueError`` raise).
+
+    A ``ConfigRuleError`` is found at the call, however it is imported or bound, because the
+    converter trusts its text wherever it is raised from. A plain ``ValueError`` only matters in a
+    module that defines a public model, so the caller turns ``value_errors`` off elsewhere.
+    """
     tree = ast.parse(source)
     producers = engine_producers() if producers is None else producers
+    rule_names = _rule_error_names(tree)
     found: set[str] = set()
+
+    def record(call: ast.Call, callee: str, name: str, scope: Mapping[str, str]) -> None:
+        msg = call.args[0] if call.args else None
+        parts, folded = _fold(_interpolated(msg), scope, producers) if msg else ([], [])
+        kind = classify(msg, parts)
+        if kind in {"fixed", "name-only"}:
+            # A plain ValueError renders as the generic row, so a certified message
+            # must be a ConfigRuleError.
+            kind = "permitted" if callee == "ConfigRuleError" else "uncertified"
+        found.add(f"{kind}::{rel}::{name}::{_digest(msg, folded)}")
 
     def visit(node: ast.AST, qual: str, binds: Mapping[str, str]) -> None:
         for child in ast.iter_child_nodes(node):
@@ -371,30 +411,36 @@ def message_findings(source: str, rel: str, producers: Producers | None = None) 
                 name = child.name if qual == "<module>" else f"{qual}.{child.name}"
                 if not isinstance(child, ast.ClassDef):
                     scope = _local_binds(child, producers)
-            if isinstance(child, ast.Raise) and isinstance(child.exc, ast.Call):
-                callee = _last_name(child.exc.func)
-                if callee in {"ValueError", "ConfigRuleError"}:
-                    msg = child.exc.args[0] if child.exc.args else None
-                    parts, folded = _fold(_interpolated(msg), scope, producers) if msg else ([], [])
-                    kind = classify(msg, parts)
-                    if kind in {"fixed", "name-only"}:
-                        # A plain ValueError renders as the generic row, so a certified message
-                        # must be a ConfigRuleError.
-                        kind = "permitted" if callee == "ConfigRuleError" else "uncertified"
-                    if kind in {"permitted", "uncertified", "value-bearing", "unclassified"}:
-                        found.add(f"{kind}::{rel}::{name}::{_digest(msg, folded)}")
+            if (
+                value_errors
+                and isinstance(child, ast.Raise)
+                and isinstance(child.exc, ast.Call)
+                and _last_name(child.exc.func) == "ValueError"
+            ):
+                record(child.exc, "ValueError", name, scope)
+            if isinstance(child, ast.Call) and _last_name(child.func) in rule_names:
+                record(child, "ConfigRuleError", name, scope)
             visit(child, name, scope)
 
     visit(tree, "<module>", {})
     return found
 
 
-def engine_message_findings() -> set[str]:
+def scan_messages(
+    root: Path, defining: frozenset[str], producers: Producers | None = None
+) -> set[str]:
+    """Scan every module under ``root``; ``ValueError`` only where a public model is defined."""
     found: set[str] = set()
-    for path in _defining_files(reachable_models()):
-        rel = path.relative_to(SRC).as_posix()
-        found |= message_findings(path.read_text(encoding="utf-8"), rel)
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        text = path.read_text(encoding="utf-8")
+        found |= message_findings(text, rel, producers, value_errors=rel in defining)
     return found
+
+
+def engine_message_findings() -> set[str]:
+    defining = frozenset(p.relative_to(SRC).as_posix() for p in _defining_files(reachable_models()))
+    return scan_messages(SRC, defining)
 
 
 # -- tests -------------------------------------------------------------------------------------
@@ -494,3 +540,33 @@ def test_message_scanner_sees_planted_and_certified_sites() -> None:
     assert message_findings(edited, "m.py") != certified
     plain = message_findings("def v():\n    raise ValueError('fixed')\n", "m.py")
     assert len(plain) == 1 and next(iter(plain)).startswith("uncertified::")
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        # an import alias
+        "from decoy_engine.errors import ConfigRuleError as C\n"
+        "def v(value):\n    raise C(f'bad {value}')\n",
+        # a bound instance
+        "def v(value):\n    e = ConfigRuleError(f'bad {value}')\n    raise e\n",
+        # a module attribute
+        "from decoy_engine import errors\n"
+        "def v(value):\n    raise errors.ConfigRuleError(f'bad {value}')\n",
+        # a re-bound name
+        "D = ConfigRuleError\ndef v(value):\n    raise D(f'bad {value}')\n",
+    ],
+)
+def test_message_scanner_sees_aliased_and_bound_construction(src: str) -> None:
+    found = message_findings(src, "m.py", value_errors=False)
+    assert any(k.startswith("value-bearing::") for k in found)
+
+
+def test_message_scan_reaches_modules_that_define_no_public_model(tmp_path: Path) -> None:
+    (tmp_path / "helper.py").write_text(
+        "from decoy_engine.errors import ConfigRuleError\n"
+        "def check(value):\n    raise ConfigRuleError(f'bad {value}')\n",
+        encoding="utf-8",
+    )
+    found = scan_messages(tmp_path, frozenset(), producers={})
+    assert any(k.startswith("value-bearing::helper.py::check::") for k in found)
