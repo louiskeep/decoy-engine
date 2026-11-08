@@ -131,6 +131,8 @@ def resolve_column_names_file(path: str, *, delimiter: str, table: str) -> tuple
         if fileaccess.keeps_class(exc):
             raise
         failure = "not found" if isinstance(exc, FileNotFoundError) else "not readable"
+    if failure is None and len(data) > _HEADER_FILE_MAX_BYTES:
+        failure = "too large"  # the file grew after the `fstat` check
     if failure is not None:
         raise _names_file_refusal(table, failure)
     records: list[list[str]] = []

@@ -68,6 +68,7 @@ HEADER_CASES = {
     "quoted-delimiter": (b'"a,x",b\n', ",", ["a,x", "b"]),
     "crlf": (b"a,b\r\n", ",", ["a", "b"]),
     "blank-lines": (b"\n\na,b\n\n", ",", ["a", "b"]),
+    "whitespace-line": (b"  \na,b\n", ",", ["a", "b"]),
     "spaces": (b" a , b\n", ",", [" a ", " b"]),
 }
 
@@ -263,3 +264,17 @@ def test_a_resource_errno_survives_a_strict_policy(
         resolve_csv_dialect(_source("d.csv", column_names_file=NAMES_FILE), file_access=policy)
     assert info.value.errno == errno.ENOSPC
     assert not isinstance(info.value, PipelineValidationError)
+
+
+def test_only_an_os_error_becomes_a_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    header = tmp_path / NAMES_FILE
+    header.write_bytes(b"a,b\n")
+
+    def broken(*args: Any, **kwargs: Any) -> bytes:
+        raise RuntimeError("zz_marker_a")
+
+    monkeypatch.setattr(fileaccess, "read_checked", broken)
+    with pytest.raises(RuntimeError):
+        resolve_csv_dialect(_source("d.csv", column_names_file=str(header)), table="events")
