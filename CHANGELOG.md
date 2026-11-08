@@ -27,10 +27,11 @@ holds files, a symlink or a foreign-owned one is refused with `runtime.scratch_u
   and `override_sources` use the same route.
 - `PipelineConfigError` no longer sets `__cause__` (its docstring said it did): the Pydantic error
   holds the submitted values. It gains `problems`; the unused `validation_error=` argument is gone.
-- Validator text is shown only for the new `ConfigRuleError` (name-only or fixed messages). Until
-  validators move to it, their text is replaced by a generic row, so `validate_config` messages for
-  rules such as the CSV dialect no longer name the rule. A registered `PydanticCustomError` code
-  shows the reason's summary.
+- Validator text is shown only for the new `ConfigRuleError` (name-only or fixed messages). The
+  config rule validators (tables, columns, sources, targets, subset, fixed-width layout,
+  quarantine) now raise it, so `validate_config` names the broken rule again (for example the CSV
+  dialect). The quarantine trigger message no longer echoes the submitted trigger. A registered
+  `PydanticCustomError` code shows the reason's summary.
 - `validate_config` reports a YAML syntax error as `could not parse YAML: invalid syntax at line N,
   column M` (was `Failed to parse YAML: <PyYAML text>`, which echoed the offending line).
   `decoy_engine.safe_output.yaml_error_text` holds that text.

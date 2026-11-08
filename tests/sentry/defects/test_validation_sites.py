@@ -8,22 +8,26 @@ Two rules, both AST scans over ``src/decoy_engine``:
    ``ValidationError``. ``decoy_engine.errors.ValidationError`` is a different class and is fine.
 2. Validator messages. A ``raise ValueError(<message>)`` in a module that defines a reachable
    public model must not interpolate a data value. The converter trusts validator text only for
-   ``ConfigRuleError``, so each interpolated message is classified (the risky-name policy is
+   ``ConfigRuleError``, so each message is classified (the risky-name policy is
    ``test_log_interpolation``'s) as fixed, name-only, value-bearing or unclassified. A call result
-   or opaque local is unclassified. Value-bearing and unclassified sites are shrink-only in
-   ``baselines/validation-name-messages.json``; a ``ConfigRuleError`` message is pinned by
-   ``(path, qualified function, normalized AST digest)`` so editing it needs a reviewed baseline
-   change. ``PydanticCustomError`` templates are never shown (the converter prints a registered
-   reason's summary instead), so they are not scanned.
+   or opaque local is unclassified unless it comes straight from a producer function whose
+   returns are classified and folded into the digest. Value-bearing, unclassified and plain
+   ``ValueError`` sites must be zero. Each ``ConfigRuleError`` message is pinned by
+   ``(path, qualified function, normalized AST digest)`` in
+   ``baselines/validation-name-messages.json``, so editing one needs a reviewed baseline change.
+   ``PydanticCustomError`` templates are never shown (the converter prints a registered reason's
+   summary instead), so they are not scanned.
 """
 
 from __future__ import annotations
 
 import ast
+import functools
 import hashlib
 import inspect
 import json
 import typing
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pytest
@@ -67,6 +71,16 @@ STRUCTURAL_ROOTS = frozenset(
         "ref_column",
         "offenders",
         "width",
+        # A schema-int offset the layout validator itself computes.
+        "prev_end",
+        # A source's key in `sources:` (a name, like `table`).
+        "source_name",
+        # Column names common to the mask columns and a drop_column op.
+        "conflicts",
+        # The fixed wired-trigger set; the submitted trigger is never interpolated.
+        "_WIRED_TRIGGERS",
+        # The leaf-type name a `_check` validator closes over (a module-level constant).
+        "kind",
     }
 )
 _BENIGN_CALLS = frozenset(
@@ -251,11 +265,14 @@ def _interpolated(msg: ast.expr) -> list[ast.expr]:
     return [msg]
 
 
-def classify(msg: ast.expr | None) -> str:
-    """``fixed``, ``name-only``, ``value-bearing`` or ``unclassified`` for a message expression."""
+def classify(msg: ast.expr | None, parts: list[ast.expr] | None = None) -> str:
+    """``fixed``, ``name-only``, ``value-bearing`` or ``unclassified`` for a message expression.
+
+    ``parts`` replaces the interpolated parts when producer returns were folded in.
+    """
     if msg is None:
         return "fixed"
-    parts = _interpolated(msg)
+    parts = _interpolated(msg) if parts is None else parts
     if not parts:
         return "fixed"
     if any(_risky_in(p, RISKY_NAMES) for p in parts):
@@ -264,33 +281,111 @@ def classify(msg: ast.expr | None) -> str:
     return "name-only" if roots <= STRUCTURAL_ROOTS else "unclassified"
 
 
-def _digest(msg: ast.expr | None) -> str:
+def _digest(msg: ast.expr | None, folded: Sequence[ast.expr] = ()) -> str:
+    """Hash of the message expression and of every producer return folded into it."""
     dump = "" if msg is None else ast.dump(msg, annotate_fields=False)
+    dump += "".join("|" + ast.dump(r, annotate_fields=False) for r in folded)
     return hashlib.sha256(dump.encode()).hexdigest()[:10]
 
 
-def message_findings(source: str, rel: str) -> set[str]:
+Producers = Mapping[str, Sequence[ast.expr]]
+
+
+@functools.cache
+def engine_producers() -> Producers:
+    """Return expressions of each uniquely named module-level function in the engine.
+
+    A message built from a producer's result is classified from the producer's own returns, so a
+    change to a returned string moves the digest of every message that uses it. A name defined
+    twice is left out, which keeps its callers unclassified.
+    """
+    found: dict[str, list[ast.expr]] = {}
+    ambiguous: set[str] = set()
+    for path in sorted(SRC.rglob("*.py")):
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            if node.name in found:
+                ambiguous.add(node.name)
+            found[node.name] = [
+                n.value
+                for n in ast.walk(node)
+                if isinstance(n, ast.Return)
+                and n.value is not None
+                and not (isinstance(n.value, ast.Constant) and n.value.value is None)
+            ]
+    return {k: v for k, v in found.items() if k not in ambiguous}
+
+
+def _fold(
+    parts: list[ast.expr], binds: Mapping[str, str], producers: Producers
+) -> tuple[list[ast.expr], list[ast.expr]]:
+    """Replace a producer call, or a local bound to one, by the producer's returns."""
+    out: list[ast.expr] = []
+    folded: list[ast.expr] = []
+    for part in parts:
+        callee = None
+        if isinstance(part, ast.Name) and part.id in binds:
+            callee = binds[part.id]
+        elif isinstance(part, ast.Call) and _call_name(part) in producers:
+            callee = _call_name(part)
+        if callee is None:
+            out.append(part)
+            continue
+        for ret in producers[callee]:
+            folded.append(ret)
+            out.extend(_interpolated(ret))
+    return out, folded
+
+
+def _call_name(call: ast.Call) -> str:
+    return call.func.id if isinstance(call.func, ast.Name) else ""
+
+
+def _local_binds(func: ast.AST, producers: Producers) -> dict[str, str]:
+    """Locals assigned directly from a producer call: ``problem = csv_dialect_problem(...)``."""
+    binds: dict[str, str] = {}
+    for node in ast.walk(func):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Call)
+            and _call_name(node.value) in producers
+        ):
+            binds[node.targets[0].id] = _call_name(node.value)
+    return binds
+
+
+def message_findings(source: str, rel: str, producers: Producers | None = None) -> set[str]:
     """Baseline keys for every ``ValueError`` and ``ConfigRuleError`` raise that is not fixed text."""
     tree = ast.parse(source)
+    producers = engine_producers() if producers is None else producers
     found: set[str] = set()
 
-    def visit(node: ast.AST, qual: str) -> None:
+    def visit(node: ast.AST, qual: str, binds: Mapping[str, str]) -> None:
         for child in ast.iter_child_nodes(node):
             name = qual
+            scope = binds
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 name = child.name if qual == "<module>" else f"{qual}.{child.name}"
+                if not isinstance(child, ast.ClassDef):
+                    scope = _local_binds(child, producers)
             if isinstance(child, ast.Raise) and isinstance(child.exc, ast.Call):
                 callee = _last_name(child.exc.func)
                 if callee in {"ValueError", "ConfigRuleError"}:
                     msg = child.exc.args[0] if child.exc.args else None
-                    kind = classify(msg)
-                    if callee == "ConfigRuleError" and kind in {"fixed", "name-only"}:
-                        kind = "permitted"
-                    if kind in {"permitted", "value-bearing", "unclassified"}:
-                        found.add(f"{kind}::{rel}::{name}::{_digest(msg)}")
-            visit(child, name)
+                    parts, folded = _fold(_interpolated(msg), scope, producers) if msg else ([], [])
+                    kind = classify(msg, parts)
+                    if kind in {"fixed", "name-only"}:
+                        # A plain ValueError renders as the generic row, so a certified message
+                        # must be a ConfigRuleError.
+                        kind = "permitted" if callee == "ConfigRuleError" else "uncertified"
+                    if kind in {"permitted", "uncertified", "value-bearing", "unclassified"}:
+                        found.add(f"{kind}::{rel}::{name}::{_digest(msg, folded)}")
+            visit(child, name, scope)
 
-    visit(tree, "<module>")
+    visit(tree, "<module>", {})
     return found
 
 
@@ -316,6 +411,13 @@ def test_no_raw_validation_error_route() -> None:
     assert set(found) - allowed == set(), "route validates a public model or reads the raw error"
     stale = set(ROUTE_ALLOWLIST) - {(k[0], k[1]) for k in found}
     assert stale == set(), "ROUTE_ALLOWLIST entry no longer needed; remove it"
+
+
+def test_no_value_bearing_unclassified_or_uncertified_message() -> None:
+    open_kinds = ("value-bearing::", "unclassified::", "uncertified::")
+    entries = set(json.loads(BASELINE.read_text(encoding="utf-8"))["entries"])
+    assert {e for e in entries if e.startswith(open_kinds)} == set()
+    assert {f for f in engine_message_findings() if f.startswith(open_kinds)} == set()
 
 
 def test_validator_messages_match_the_baseline() -> None:
@@ -390,4 +492,5 @@ def test_message_scanner_sees_planted_and_certified_sites() -> None:
     assert len(certified) == 1 and next(iter(certified)).startswith("permitted::")
     edited = "def v(self):\n    raise ConfigRuleError(f'table {self.name!r} worse')\n"
     assert message_findings(edited, "m.py") != certified
-    assert message_findings("def v():\n    raise ValueError('fixed')\n", "m.py") == set()
+    plain = message_findings("def v():\n    raise ValueError('fixed')\n", "m.py")
+    assert len(plain) == 1 and next(iter(plain)).startswith("uncertified::")

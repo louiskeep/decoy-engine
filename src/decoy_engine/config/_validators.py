@@ -16,6 +16,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from decoy_engine.errors import ConfigRuleError
+
 # Triggers that are fully wired in this release. format_error was wired in
 # Sprint 2 honesty pack S5 (bucketize + date_shift row-error producers);
 # mask_error was wired in S6 (code_set row-error producer). A trigger is
@@ -127,15 +129,15 @@ class QuarantineConfig(BaseModel):
             return self
 
         if not self.output_path or not self.output_path.strip():
-            raise ValueError(
+            raise ConfigRuleError(
                 "quarantine output_path must not be empty when enabled is True; "
                 "a missing output_path would silently drop quarantined rows"
             )
 
         for trigger in self.triggers:
             if trigger not in _WIRED_TRIGGERS:
-                raise ValueError(
-                    f"trigger {trigger!r} is not yet wired in SP-05 and would be "
+                raise ConfigRuleError(
+                    "a quarantine trigger is not yet wired in SP-05 and would be "
                     f"a silent no-op. Wired triggers: {sorted(_WIRED_TRIGGERS)}. "
                     "See the platform quarantine-rows backlog doc "
                     "(decoy-platform phase5-gaps) for the carry-forward plan."
