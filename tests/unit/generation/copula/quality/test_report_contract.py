@@ -125,10 +125,20 @@ def test_marginal_block_holds_no_real_quantile() -> None:
 
 
 def test_inputs_unchanged() -> None:
-    real, holdout = _sentinel_frames()
-    real.loc[5, "x"] = np.nan
+    # Columns whose canonical form differs from the input: nullable ints, object NaN, bool.
+    rng = np.random.default_rng(32)
+    real = pd.DataFrame(
+        {
+            "n": pd.array(rng.integers(0, 50, 300), dtype="Int64"),
+            "c": rng.choice(np.array(["a", "b", "c"], dtype=object), 300),
+            "f": rng.random(300) < 0.4,
+        }
+    )
+    real.loc[:19, "n"] = pd.NA
+    real.loc[20:39, "c"] = np.nan
     model = fit(real)
     synth = sample(model)
+    holdout = real.iloc[:150].copy()
     before = [copy.deepcopy(f) for f in (real, synth, holdout)]
     model_before = model.to_dict()
     report(real, model, synth, holdout=holdout)
