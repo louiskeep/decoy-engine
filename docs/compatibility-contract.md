@@ -303,6 +303,9 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   (A5a): a `format: fixed_width` `FileSource` can now be read through these
   names instead of importing the private `decoy_engine.profile._fixed_width_reader`
   module, which the additive-only rule in §4.1 does not cover.
+  It also includes `generated_table_to_pandas(table)` (2026-11-08): converts a generated
+  Arrow table to pandas with every integer column kept as a pandas nullable integer, so
+  output written from the frame prints `1` where a plain `to_pandas()` prints `1.0`.
   It also includes `read_csv_source`, `CsvDialect` and `resolve_csv_dialect`
   (CLI-DIALECT, 2026-11): `read_csv_source(path, dialect, *, table, dtype=None,
   nrows=None, chunksize=None, file_access=None, field_key="source.path")` reads

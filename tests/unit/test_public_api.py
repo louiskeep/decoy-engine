@@ -49,6 +49,7 @@ def test_all_lists_every_public_name():
         # surface; submodule-only import was an unintentional gap.
         "compile_plan",
         "generate_tables",
+        "generated_table_to_pandas",
         "run_pipeline",
         # Audit H5 (2026-06-12): profile-free compile-check subset for
         # config-only callers (decoy validate).

@@ -18,6 +18,10 @@ Public API (the contract CLI and platform code depend on):
                       `select_execution_adapter().run(plan, source) -> ExecutionResult`.
     generate_tables   (decoy_engine.generation.synthesize) table-from-schema
                       synthesis for generate-mode configs.
+    generated_table_to_pandas
+                      (decoy_engine.generation) convert a generated Arrow table to
+                      pandas keeping nullable integer columns integer, so a CSV
+                      written from the frame prints `1`, not `1.0`.
     read_fixed_width  (decoy_engine.profile._fixed_width_reader) parse a
                       newline-delimited fixed-width file into a DataFrame per
                       a FixedWidthLayout, or the equivalent validated-config
@@ -133,6 +137,7 @@ from decoy_engine.execution.native._companion_status import (
     native_companion_status,
 )
 from decoy_engine.fileaccess import open_protected_dir, protected_scratch_dir
+from decoy_engine.generation import generated_table_to_pandas
 from decoy_engine.generation.composite import (
     BundlePool,
     CompositeAdapter,
@@ -501,6 +506,7 @@ __all__ = [
     "event_to_dict",
     "event_to_legacy_dict",
     "generate_tables",
+    "generated_table_to_pandas",
     "get_default_executor",
     "get_default_pool_cache",
     "get_default_registry",

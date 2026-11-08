@@ -57,7 +57,7 @@ from decoy_engine.generation._column_streams import (
     make_column_stream,
 )
 from decoy_engine.generation._faker_pool import pool_eligible
-from decoy_engine.generation._numeric_typing import restore_with_probe
+from decoy_engine.generation._numeric_typing import restore_declared
 from decoy_engine.generation.pool._runtime_pool_size import DEFAULT_POOL_SIZE
 from decoy_engine.progress import get_active_channel
 
@@ -282,18 +282,13 @@ def _table_batches(
     offset = 0
     cols = table["generate_columns"]
     names = [c["name"] for c in cols]
-    from decoy_engine.generation.synthesize import _get_default_faker
-
-    probe = _get_default_faker() if any(c.get("type") == "faker" for c in cols) else None
     for size in sizes:
         arrays = []
         # Post-null-mask values of the columns already emitted in THIS batch, which is what the
         # legacy path's `generated` mapping holds when a windowed_date column reads its anchor.
         emitted: dict[str, list[Any]] = {}
         for col, name, stream, field_ in zip(cols, names, streams, schema, strict=True):
-            values = restore_with_probe(
-                col, draw_batch(stream, offset, size, emitted), faker_probe=probe
-            )
+            values = restore_declared(col, draw_batch(stream, offset, size, emitted), field_.type)
             emitted[name] = values
             arr = pa.array(values, type=field_.type)
             if name in widths:
@@ -416,8 +411,9 @@ def run_generation(
                 ledger=ledger,
                 stage=stage,
                 faker_payload=bounds.get((name, c["name"])),
+                numeric=pa.types.is_integer(f.type),
             )
-            for c in t["generate_columns"]
+            for c, f in zip(t["generate_columns"], schema, strict=True)
         ]
         widths: dict[str, int] = {}
         for c in t["generate_columns"]:

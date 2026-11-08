@@ -15,7 +15,14 @@ Generated numeric columns are now typed int64/float64 instead of string: an unfo
 and a faker provider that returns an int or float (pyint, pyfloat and similar). `derived`
 arithmetic and `grouped_series` ordering now work on numbers. Cell text is unchanged for non-null
 values; Parquet output has numeric columns. Formatted sequences (prefix, suffix, pad) and other
-faker providers stay string.
+faker providers stay string. A column stays string when its values cannot be proven to fit int64
+(a sequence whose last value overflows, an unbounded or oversized faker int provider) and when it
+is the parent key of a relationship with a masked or source child.
+
+### Added (`generated_table_to_pandas`)
+
+`decoy_engine.generated_table_to_pandas(table)` converts a generated Arrow table to pandas with
+nullable integer dtypes, so a nullable numeric column writes `1` and not `1.0`.
 
 ### Changed (row directories use the protected allocator)
 

@@ -126,3 +126,77 @@ def test_nullable_int_columns_write_csv_without_a_decimal_point() -> None:
         for cell in line.split(","):
             assert cell == "" or cell.isdigit(), cell
     assert "1.0" not in "".join(lines)
+
+
+# ---- plan-time guards: a column is numeric only when it provably fits and is not a text key ----
+
+
+def _both_routes(cols: list[dict], rows: int = 4) -> list[pa.Table]:
+    """The streamed core and the legacy whole-table generator (forced by a fresh column)."""
+    legacy_cols = [
+        *cols,
+        {"name": "z", "type": "categorical", "categories": ["a"], "determinism": "fresh"},
+    ]
+    return [_run(cols, rows), _run(legacy_cols, rows).select([c["name"] for c in cols])]
+
+
+def test_sequence_that_overflows_int64_stays_text_on_both_routes() -> None:
+    start, step = 2**63 - 2, 10**30
+    want = [str(start + i * step) for i in range(4)]
+    for t in _both_routes([_seq(start=start, step=step)]):
+        assert t.schema.field("a").type == pa.string()
+        assert t["a"].to_pylist() == want
+
+
+def test_sequence_that_reaches_the_int64_edge_stays_numeric() -> None:
+    for t in _both_routes([_seq(start=2**63 - 4)]):
+        assert t.schema.field("a").type == pa.int64()
+        assert t["a"].to_pylist() == [2**63 - 4 + i for i in range(4)]
+
+
+def test_faker_random_number_too_wide_for_int64_stays_text_on_both_routes() -> None:
+    col = {
+        "name": "a",
+        "type": "faker",
+        "faker_type": "random_number",
+        "faker_kwargs": {"digits": 20, "fix_len": True},
+    }
+    for t in _both_routes([col]):
+        assert t.schema.field("a").type == pa.string()
+        assert all(isinstance(v, str) and len(v) == 20 for v in t["a"].to_pylist())
+
+
+@pytest.mark.parametrize(
+    ("faker_type", "kwargs", "numeric"),
+    [
+        ("random_number", {"digits": 18}, True),
+        ("random_number", {"digits": 19}, False),
+        ("pyint", {"min_value": 0, "max_value": 2**63 - 1}, True),
+        ("pyint", {"min_value": 0, "max_value": 2**63}, False),
+        ("random_int", {"min": -(2**63), "max": 5}, True),
+        ("unix_time", {}, False),
+    ],
+)
+def test_faker_int_providers_are_numeric_only_when_bounded(
+    faker_type: str, kwargs: dict, numeric: bool
+) -> None:
+    col = {"name": "a", "type": "faker", "faker_type": faker_type, "faker_kwargs": kwargs}
+    for t in _both_routes([col]):
+        assert pa.types.is_integer(t.schema.field("a").type) == numeric
+
+
+def test_suffix_only_sequence_stays_text() -> None:
+    t = _run([_seq(suffix="x")])
+    assert t["a"].to_pylist() == ["1x", "2x", "3x", "4x"]
+
+
+def test_custom_provider_under_a_stock_numeric_name_stays_text() -> None:
+    from decoy_engine import register_faker_provider, unregister_faker_provider
+
+    register_faker_provider("pyint", lambda f: "007")
+    try:
+        for t in _both_routes([{"name": "a", "type": "faker", "faker_type": "pyint"}]):
+            assert t.schema.field("a").type == pa.string()
+            assert t["a"].to_pylist() == ["007"] * 4
+    finally:
+        unregister_faker_provider("pyint")

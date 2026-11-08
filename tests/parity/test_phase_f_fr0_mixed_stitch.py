@@ -40,7 +40,7 @@ from tests.parity._f2_mixed_support import (
 )
 
 KEYS = [str(i % 5) for i in range(40)]
-ID = {"name": "id", "type": "sequence", "start": 0, "step": 1, "pad_length": 1}
+ID = {"name": "id", "type": "sequence", "start": 0, "step": 1}
 COUNT = {"name": "n", "type": "categorical", "categories": [1, 2, 3]}
 KIND = {"name": "kind", "type": "categorical", "categories": ["a", "b", "c"]}
 ALL_NULL = {"name": "allnull", "type": "faker", "faker_type": "city", "null_probability": 1.0}

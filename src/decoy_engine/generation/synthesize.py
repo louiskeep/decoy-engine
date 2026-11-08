@@ -37,7 +37,7 @@ import pyarrow as pa
 from faker import Faker
 
 from decoy_engine.generation import _faker_pool
-from decoy_engine.generation._numeric_typing import restore_numeric_dtype
+from decoy_engine.generation._numeric_typing import numeric_plan, restore_declared
 from decoy_engine.generation._statistical_column import statistical_generate
 from decoy_engine.generation.statistical import StatisticalSpec
 from decoy_engine.generators.derivation import GenDeriveContext
@@ -135,6 +135,7 @@ def _generate_tables_from_config(
     # table). V1 iterates in declared order + warns on missing deps; v2 is
     # stricter without breaking parity for already-orderable configs.
     ordered = _topo_sort(deps)
+    numeric = numeric_plan(config, provider_snapshot=provider_snapshot)
     pools: dict[str, pa.Table] = {}
     out: dict[str, pa.Table] = {}
     for name in ordered:
@@ -158,6 +159,7 @@ def _generate_tables_from_config(
                 table_name=name,
                 statistical_specs=statistical_specs,
                 provider_snapshot=provider_snapshot,
+                numeric_type=numeric.get((name, col["name"])),
             )
         # Cross-column formula post-pass: a `formula` column carrying
         # `references` was filled with None placeholders by `_formula`
@@ -251,6 +253,7 @@ def _generate_column(
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     reference_date: str | None = None,
     pinned: bool = False,
+    numeric_type: pa.DataType | None = None,
 ) -> list[Any]:
     """Dispatch a generate column to its generator by ``type`` (mirrors V1
     ``ColumnGenerator.generators``), then apply the V1 ``null_probability``
@@ -306,7 +309,7 @@ def _generate_column(
         # at validation; this branch is the defensive fallback for callers that
         # bypass validation (e.g. an unvalidated dict).
         raise ValueError(f"generate column {col.get('name')!r}: unexpected generator type {kind!r}")
-    values = restore_numeric_dtype(col, values, provider_snapshot=provider_snapshot)
+    values = restore_declared(col, values, numeric_type)
     # Pinned plans store `snapshot_file` as `sha256:<digest>`, not a path. Passing the digest keeps
     # for_column from trying to open that string as a file. The ordinary path passes None and
     # derives the null seed exactly as before.
