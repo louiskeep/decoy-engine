@@ -65,7 +65,7 @@ import itertools
 import logging
 import math
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
@@ -216,6 +216,76 @@ def _check_derived_edges(name: str, lower: float, upper: float, numeric_bins: in
         )
 
 
+class _PreparedDpRequest(NamedTuple):
+    """The public, data-independent half of a DP fit request after validation."""
+
+    column_schema: Any
+    epsilon: float
+    delta: float
+    numeric_bins: int
+    numeric_bounds: dict[str, tuple[float, float]]
+    categorical_carriers: dict[str, str]
+
+
+def _prepare_dp_fit_request(
+    column_schema: dict[str, dict], *, epsilon: float, delta: float, numeric_bins: int
+) -> _PreparedDpRequest:
+    """Everything a DP fit decides from the request alone, in the order the fit
+    has always run it: fit-level knobs, schema freeze and parse, derived bin
+    edges, then the proof-stack gate. `fit_dp_snapshot` and `check_dp_fit_request`
+    both call this, so a caller can refuse a request before reading any row and
+    get the same typed error the fit would raise. It never sees a value."""
+    _validate_fit_params(epsilon=epsilon, delta=delta, numeric_bins=numeric_bins)
+    epsilon = float(epsilon)
+    delta = float(delta)
+    numeric_bins = int(numeric_bins)
+
+    # Freeze the caller's schema once (carrier + bounds, both mapping levels) so
+    # a mutable mapping cannot drift the routing decision or domain away from the
+    # metadata recorded into the artifact between this function's several reads.
+    column_schema = freeze_column_schema(column_schema)
+
+    # Parse the schema (public-only) into the mechanism domains and bounds the
+    # schedule commits to, and reject degenerate derived bin edges -- all BEFORE
+    # the proof-stack gate and before any private cell is read.
+    numeric_bounds, categorical_carriers = parse_column_schema(column_schema)
+    for col in sorted(numeric_bounds):
+        lower, upper = numeric_bounds[col]
+        _check_derived_edges(col, lower, upper, numeric_bins)
+
+    # Fail closed on an uncertified proof stack BEFORE reading private data
+    # (guide section 3.8): the (epsilon, delta) guarantee is only honest on a
+    # tested platform + locked distribution set.
+    check_fit_environment()
+    return _PreparedDpRequest(
+        column_schema, epsilon, delta, numeric_bins, numeric_bounds, categorical_carriers
+    )
+
+
+def check_dp_fit_request(
+    column_schema: dict[str, dict],
+    *,
+    epsilon: float,
+    delta: float,
+    numeric_bins: int = _DEFAULT_NUMERIC_BINS,
+) -> None:
+    """Refuse a DP fit request that `fit_dp_snapshot` would refuse before
+    reading any row, without needing the data.
+
+    Runs the same preparation the fit runs: request errors come first, then the
+    proof-stack gate, so a malformed request keeps its own typed code on an
+    uncertified host. Takes the fit's request arguments; returns `None` when the
+    request is valid on a certified host.
+
+    Raises:
+        DpError: `dp_epsilon_invalid`, `dp_delta_invalid`,
+            `dp_numeric_bins_invalid`, `dp_numeric_domain_invalid`.
+        CarrierError: a malformed `column_schema`.
+        ProvenanceError: `dp_platform_uncertified`, `dp_stack_uncertified`.
+    """
+    _prepare_dp_fit_request(column_schema, epsilon=epsilon, delta=delta, numeric_bins=numeric_bins)
+
+
 def _flag_token(value: object) -> str:
     """The canonical serialized token for a flag category (guide section 3.4):
     `"true"`/`"false"`, never Python `str(bool)` `"True"/"False"` and never
@@ -316,32 +386,19 @@ def _fit_dp_snapshot_with_backend(
     so a test can observe the session's OWN certificate/schedule bookkeeping
     independent of real OpenDP noise. Production callers cannot reach this
     function at all, only `fit_dp_snapshot`."""
-    _validate_fit_params(epsilon=epsilon, delta=delta, numeric_bins=numeric_bins)
-    epsilon = float(epsilon)
-    delta = float(delta)
-    numeric_bins = int(numeric_bins)
-
-    # Freeze the caller's schema once (carrier + bounds, both mapping levels) so
-    # a mutable mapping cannot drift the routing decision or domain away from the
-    # metadata recorded into the artifact between this function's several reads.
-    column_schema = freeze_column_schema(column_schema)
-
-    # Parse the schema (public-only) into the mechanism domains and bounds the
-    # schedule commits to, and reject degenerate derived bin edges -- all BEFORE
-    # the proof-stack gate and before any private cell is read.
-    numeric_bounds, categorical_carriers = parse_column_schema(column_schema)
+    prepared = _prepare_dp_fit_request(
+        column_schema, epsilon=epsilon, delta=delta, numeric_bins=numeric_bins
+    )
+    column_schema = prepared.column_schema
+    epsilon = prepared.epsilon
+    delta = prepared.delta
+    numeric_bins = prepared.numeric_bins
+    numeric_bounds = prepared.numeric_bounds
+    categorical_carriers = prepared.categorical_carriers
     numeric_cols = sorted(numeric_bounds)
     categorical_cols = sorted(categorical_carriers)
-    for col in numeric_cols:
-        lower, upper = numeric_bounds[col]
-        _check_derived_edges(col, lower, upper, numeric_bins)
-
-    # Fail closed on an uncertified proof stack BEFORE reading private data
-    # (guide section 3.8): the (epsilon, delta) guarantee is only honest on a
-    # tested platform + locked distribution set. Record the certified identity
-    # into the artifact so generation can re-validate it without recomputing a
-    # fingerprint from its own (possibly different) libraries.
-    check_fit_environment()
+    # Record the certified identity into the artifact so generation can
+    # re-validate it without recomputing a fingerprint from its own libraries.
     provenance = current_provenance()
 
     # The release ID is minted once, before any value is touched, and depends on
