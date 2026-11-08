@@ -41,12 +41,14 @@ https://docs.pydantic.dev/latest/concepts/unions/#discriminated-unions.
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
     SerializerFunctionWrapHandler,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -207,6 +209,22 @@ class S3Source(BaseModel):
             "default credential chain (env vars / instance profile / etc.)."
         ),
     )
+
+    @field_validator("endpoint_url")
+    @classmethod
+    def _endpoint_is_a_host(cls, value: str | None) -> str | None:
+        """An endpoint names a service. Userinfo is a credential and a query string is a
+        request, and either would be echoed by every log line that prints the descriptor."""
+        if value is None:
+            return value
+        try:
+            parts = urlsplit(value)
+            has_userinfo = parts.username is not None or parts.password is not None
+        except ValueError:
+            raise ValueError("endpoint_url is not a valid URL") from None
+        if has_userinfo or "@" in parts.netloc or parts.query or "?" in value:
+            raise ValueError("endpoint_url must not carry credentials or a query string")
+        return value
 
 
 class GCSSource(BaseModel):

@@ -1,6 +1,44 @@
 {
   "entries": [
     {
+      "code": "scan_source_failed",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "ScanSourceError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.10.0",
+      "summary": "A table could not be scanned.",
+      "symbol": "SCAN_SOURCE_FAILED"
+    },
+    {
       "code": "scan_header_suspect",
       "context": [],
       "deprecated_in": null,

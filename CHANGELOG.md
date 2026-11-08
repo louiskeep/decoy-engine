@@ -22,11 +22,18 @@ holds files, a symlink or a foreign-owned one is refused with `runtime.scratch_u
 `scan_sources(sources, *, tables=None, sample_rows=10_000, strategy="head", file_access=None)`
 scans many declared tables in one call, one table in memory at a time, and returns a `ScanSet`.
 `scan_set_to_dict(scan, detail=False)` writes the value-free `scan-set/v1` document, defined once
-by `ScanSetCore` (`ScanSetCoreRead` ignores unknown fields). `detail=True` adds each table's
-`ColumnProfile` dict and can hold cell values. For a CSV with `has_header: true` the scan flags a
-first row that looks like data (`warning.scan_header_suspect`); for a local CSV scanned with
-`head` or `full` it counts values with a leading zero per column. Two new `warning` reasons
-(`scan_header_suspect`, `scan_key_type_mismatch`), registry 1.10.0. `read_csv_source`,
+by `ScanSetCore` (`ScanSetCoreRead` ignores unknown fields). The core holds counts, rates, type
+labels, detector ids and column names. Names come from the producer's header text, and a header
+the guard flags as data is written as `c0..cn`; a misdeclared header the guard cannot detect is
+the stated limit. `detail=True` adds each table's `ColumnProfile` dict and can hold cell values.
+An invalid source descriptor is a `PipelineConfigError`; a failed read is a `ScanSourceError`
+(`runtime.scan_source_failed`); coded engine errors pass through. For a CSV with
+`has_header: true` the scan flags a first row that looks like data
+(`warning.scan_header_suspect`); for a local CSV scanned with `head` or `full` it counts values
+with a leading zero per column. Two new `warning` reasons (`scan_header_suspect`,
+`scan_key_type_mismatch`) and one `runtime` reason (`scan_source_failed`, the fixed identity of
+`ScanSourceError`), registry 1.10.0. `S3Source.endpoint_url` refuses userinfo and a query
+string. `read_csv_source`,
 `resolve_csv_dialect` and `CsvDialect` are also exported from `decoy_engine.profile`.
 
 ### Added (init wizard E3: keyed columns of a config, 2026-11-08)

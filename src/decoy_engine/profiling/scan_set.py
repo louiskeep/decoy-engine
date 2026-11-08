@@ -1,18 +1,24 @@
 """`scan_sources`: one scan over many declared tables, and the `scan-set/v1` document.
 
 Tables are scanned one at a time and each frame is dropped before the next read, so memory is
-bounded by the largest sample, not the sum. Names come only from what the descriptor declares:
-a CSV header is read as the user said it is (`has_header`, `column_names`), never inferred.
+bounded by the largest sample, not the sum. Every source in the mapping is validated up front,
+selected or not. Column names come from the producer's header text, read as the descriptor
+declares it (`has_header`, `column_names`), never inferred. When the header guard flags a
+header row that looks like data, the persisted core writes positional names (`c0..cn`) in place
+of the header text. A header that is misdeclared and that the guard cannot recognise (a person
+name, an address) is the stated limit: its text is then a column name like any other.
 
 The persisted form is `ScanSetCore`, the one definition of the value-free core. Its write model
 refuses unknown fields; `ScanSetCoreRead` is derived from it with unknown fields ignored, so an
 older reader accepts a newer record (compatibility contract section 3.1). Nothing in the core
-can carry a cell value: it holds counts, rates, type labels, detector ids and column names.
+can carry a cell value: it holds counts, rates, type labels, detector ids and column names
+(positional when the header is suspect).
 `scan_set_to_dict(detail=True)` adds the nested `ColumnProfile` dict per table, which is
 value-bearing and for protected scratch only.
 
 Errors name the table (a config key) and the exception class, never the exception text, which
-can carry a cell value or a path.
+can carry a cell value or a path. Errors that already carry an engine reason are raised as they
+are, so their identity reaches the caller.
 """
 
 from __future__ import annotations
@@ -24,17 +30,16 @@ import types
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Any, Final, Literal, Union, get_args, get_origin
+from typing import Any, Final, Literal, Union, cast, get_args, get_origin
 
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, TypeAdapter, create_model
+from pydantic import BaseModel, ConfigDict, TypeAdapter, create_model, model_validator
 from pydantic import ValidationError as _PydanticValidationError
 
-from decoy_engine import reasons
-from decoy_engine._error_base import DecoyError
+from decoy_engine import reason_adapter, reasons
 from decoy_engine._field_names import repeated_names
-from decoy_engine.config._sources import SourceDescriptor
-from decoy_engine.errors import PipelineValidationError
+from decoy_engine.config import PipelineConfigError, SourceDescriptor
+from decoy_engine.errors import DecoyError, PipelineValidationError
 from decoy_engine.fileaccess import (
     FileAccess,
     FileAccessDenied,
@@ -58,7 +63,8 @@ _LOG = logging.getLogger(__name__)
 _DESCRIPTOR: TypeAdapter[Any] = TypeAdapter(SourceDescriptor)
 
 # Errors the file-access and CSV layers already keep value-free; wrapping them would hide
-# their codes from the caller.
+# their codes from the caller. Any other registered engine family passes through too
+# (`_is_coded`), so only an unclassified failure is wrapped.
 _PASS_THROUGH = (
     FileAccessDenied,
     FileAccessReadError,
@@ -89,6 +95,13 @@ class WarningRefCore(_Core):
     namespace: str
     code: str
 
+    @model_validator(mode="after")
+    def _known(self) -> WarningRefCore:
+        # Write side only: the read variant drops validators, so an older reader still
+        # accepts a code a newer registry added.
+        reasons.require_known(reasons.ReasonRef(self.namespace, self.code))
+        return self
+
 
 class FieldCore(_Core):
     name: str
@@ -107,7 +120,7 @@ class TableCore(_Core):
     descriptor: dict[str, Any]
     row_count: int
     row_count_exact: bool
-    sample_strategy: str
+    sample_strategy: Strategy
     sample_row_cap: int | None
     fields: list[FieldCore]
     key_candidates: list[str]
@@ -194,8 +207,9 @@ def scan_sources(
 ) -> ScanSet:
     """Scan the selected tables of `sources` and return one `ScanSet`.
 
-    `sources` maps table name to a source descriptor dict. `tables` selects and orders
-    (default: every source in mapping order). `sample_rows=None` or `strategy="full"` reads
+    `sources` maps table name to a source descriptor dict. Every descriptor is validated,
+    selected or not; an invalid one is a `PipelineConfigError` naming the table. `tables`
+    selects and orders (default: every source in mapping order). `sample_rows=None` or `strategy="full"` reads
     each table whole. `head` reads a bounded prefix; `random` reads the table and keeps a fixed
     random sample, so it is not bounded in memory.
     """
@@ -243,7 +257,7 @@ def _validated(name: str, raw: Mapping[str, Any]) -> dict[str, Any]:
         failed = True
     if failed:
         # Raised outside the handler so no validation error, and the input it holds, is chained.
-        raise ScanSourceError(name, "InvalidSourceDescriptor")
+        raise PipelineConfigError(f"source descriptor for table {name!r} is invalid")
     dumped: dict[str, Any] = model.model_dump(mode="json")
     return dumped
 
@@ -261,8 +275,15 @@ def _scan_one(
     except _PASS_THROUGH:
         raise
     except Exception as exc:
+        if _is_coded(exc):
+            raise
         cause = safe_error_class(type(exc).__name__)
     raise ScanSourceError(name, cause or "Exception")
+
+
+def _is_coded(exc: BaseException) -> bool:
+    """True for a scan error or any engine error family the reason adapter classifies."""
+    return isinstance(exc, (ScanSourceError, *reason_adapter.registered_families()))
 
 
 def _read_and_profile(
@@ -274,6 +295,7 @@ def _read_and_profile(
 ) -> TableScan:
     # Imported here because decoy_engine.profile imports this package.
     from decoy_engine import profile as src
+    from decoy_engine.execution._guards import refuse_duplicate_field_names
 
     reader = src.build_declared_source(name, descriptor)
     whole = strategy == "full" or sample_rows is None
@@ -286,8 +308,7 @@ def _read_and_profile(
         count = reader.row_count()
         frame = reader.sample_frame(sample_rows)
         total, exact = max(count.value, len(frame)), count.exact
-    if repeated_names(str(c) for c in frame.columns):
-        raise ScanSourceError(name, "DuplicateFieldNames")
+    refuse_duplicate_field_names(name, [str(c) for c in frame.columns])
 
     is_csv = descriptor["type"] == "file" and descriptor["format"] == "csv"
     warned: list[reasons.ReasonRef] = []
@@ -386,11 +407,11 @@ def _finite(value: float | None) -> float | None:
     return float(value)
 
 
-def _field_core(f: FieldStats, scanned: int, zeros: int | None) -> FieldCore:
+def _field_core(f: FieldStats, name: str, scanned: int, zeros: int | None) -> FieldCore:
     # Only these attributes of FieldStats are read: top_values, mode, min and max can hold
     # cell text and must not reach the core.
     return FieldCore(
-        name=f.name,
+        name=name,
         dtype=f.inferred_type,
         null_count=f.null_count,
         null_rate=_finite(round(f.null_rate, 4)) if scanned > 0 else None,
@@ -402,20 +423,38 @@ def _field_core(f: FieldStats, scanned: int, zeros: int | None) -> FieldCore:
     )
 
 
+def _core_names(t: TableScan) -> dict[str, str]:
+    """Real field name -> the name the persisted core writes.
+
+    A header the guard flagged as data is producer text that can hold a value, so the core
+    names those columns by position. The in-memory scan and the detail keep the real names."""
+    names = [f.name for f in t.profile.fields]
+    if reasons.warning.SCAN_HEADER_SUSPECT.spec.ref not in t.warnings:
+        return {n: n for n in names}
+    return {n: f"c{i}" for i, n in enumerate(names)}
+
+
 def _table_core(t: TableScan) -> TableCore:
     p = t.profile
+    core_name = _core_names(t)
+    fields = [
+        _field_core(f, core_name[f.name], p.row_count, t.leading_zero_counts.get(f.name))
+        for f in p.fields
+    ]
     return TableCore(
         name=t.name,
         descriptor=t.descriptor,
         row_count=t.row_count,
         row_count_exact=t.row_count_exact,
-        sample_strategy=p.sample_strategy,
+        sample_strategy=cast(Strategy, p.sample_strategy),
         sample_row_cap=p.sample_row_cap,
-        fields=[_field_core(f, p.row_count, t.leading_zero_counts.get(f.name)) for f in p.fields],
-        key_candidates=list(t.key_candidates),
+        fields=fields,
+        key_candidates=[core_name[k] for k in t.key_candidates],
         warnings=[WarningRefCore.model_validate(asdict(w)) for w in t.warnings],
         reid_risk_score=_finite(p.reid_risk_score) if p.row_count > 0 else None,
-        quasi_identifier_groups=[list(g) for g in p.quasi_identifier_groups],
+        quasi_identifier_groups=[
+            [core_name.get(n, n) for n in g] for g in p.quasi_identifier_groups
+        ],
     )
 
 

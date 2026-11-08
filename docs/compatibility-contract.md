@@ -115,8 +115,11 @@ that wants `/v2` support adds a new model under a new tag. Hand-authored corpus 
 
 `scan-set/v1` is the record of one multi-table scan (`decoy_engine.scan_sources`). The engine
 owns its shape: `ScanSetCore` to write (unknown fields refused), `ScanSetCoreRead` to read
-(unknown fields ignored). It holds counts, rates, type labels, detector ids and column names,
-never a cell value. The optional per-table `detail` member of `scan_set_to_dict(detail=True)` is
+(unknown fields ignored). It holds counts, rates, type labels, detector ids and column names.
+Column names are the producer's header text; when the scan's header guard flags a header row
+that looks like data, the core writes positional names (`c0..cn`) instead. A misdeclared header
+the guard cannot recognise (a person name, an address) is the stated limit. The core holds no
+cell value. The optional per-table `detail` member of `scan_set_to_dict(detail=True)` is
 the nested `ColumnProfile` dict; it is additive-only within `/v1` and is not part of the core.
 
 **Rules:**

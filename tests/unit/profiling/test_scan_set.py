@@ -12,7 +12,9 @@ import pandas as pd
 import pytest
 
 from decoy_engine import fileaccess, reasons
+from decoy_engine.config import PipelineConfigError
 from decoy_engine.errors import PipelineValidationError
+from decoy_engine.execution._transforms import TransformError
 from decoy_engine.fileaccess import FileAccessDenied
 from decoy_engine.profile import _readers
 from decoy_engine.profiling import (
@@ -24,6 +26,8 @@ from decoy_engine.profiling import (
 )
 from decoy_engine.profiling import scan_set as scan_module
 from decoy_engine.profiling._scan_text_checks import GUARD_DETECTORS
+from decoy_engine.profiling.scan_set import TableCore
+from decoy_engine.reason_adapter import reason_from_exception
 
 CANARY = "CANARY-9f3a71"
 
@@ -58,13 +62,24 @@ def test_bad_arguments_are_refused(tmp_path: Path, kwargs: dict[str, Any]) -> No
         scan_sources({"a": _csv(tmp_path, "a", "id\n1\n")}, **kwargs)
 
 
-def test_invalid_descriptor_names_table_only(tmp_path: Path) -> None:
+def test_invalid_descriptor_is_a_config_failure_naming_the_table(tmp_path: Path) -> None:
     bad = {"type": "file", "format": "csv", "path": CANARY, "bogus": CANARY}
-    with pytest.raises(ScanSourceError) as info:
+    with pytest.raises(PipelineConfigError) as info:
         scan_sources({"t": bad})
-    assert info.value.table == "t"
-    assert CANARY not in str(info.value)
+    assert "'t'" in str(info.value)
+    assert CANARY not in str(info.value) and CANARY not in repr(info.value)
     assert info.value.__cause__ is None and info.value.__context__ is None
+
+
+def test_every_source_is_validated_selected_or_not(tmp_path: Path) -> None:
+    sources = {"a": _csv(tmp_path, "a", "id\n1\n"), "b": {"type": "file", "bogus": 1}}
+    with pytest.raises(PipelineConfigError):
+        scan_sources(sources, tables=["a"])
+
+
+def test_scan_source_error_has_its_own_runtime_identity() -> None:
+    record = reason_from_exception(ScanSourceError("t", "BoomError"))
+    assert (record.namespace, record.code) == ("runtime", "scan_source_failed")
 
 
 def test_bounded_head_reads_one_batch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -234,18 +249,42 @@ def test_duplicate_field_names_are_refused(tmp_path: Path, monkeypatch: pytest.M
     from decoy_engine import profile
 
     monkeypatch.setattr(profile, "build_declared_source", lambda *a, **k: Double())
-    with pytest.raises(ScanSourceError) as info:
+    with pytest.raises(TransformError) as info:
         scan_sources({"t": _csv(tmp_path, "t", "a\n1\n")})
+    assert info.value.code == reasons.runtime.DUPLICATE_SOURCE_FIELD_NAMES
+    assert info.value.code == "duplicate_source_field_names"
     assert CANARY not in str(info.value)
 
 
-def test_denied_file_access_raises_before_any_read(tmp_path: Path) -> None:
+def test_denied_file_access_raises_before_any_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened: list[str] = []
+    profiled: list[int] = []
+    completed_reads: list[int] = []
+
     class Deny:
         def open_read(self, request: Any) -> Any:
+            opened.append(request.field_key)
             raise FileAccessDenied(request.field_key)
 
-    with pytest.raises(FileAccessDenied):
+    from decoy_engine import profile
+
+    real_read = profile.read_csv_source
+
+    def counted_read(*args: Any, **kwargs: Any) -> Any:
+        out = real_read(*args, **kwargs)
+        completed_reads.append(1)
+        return out
+
+    monkeypatch.setattr(profile, "read_csv_source", counted_read)
+    monkeypatch.setattr(scan_module, "profile_columns", lambda *a, **k: profiled.append(1))
+    with pytest.raises(FileAccessDenied) as info:
         scan_sources({"t": _csv(tmp_path, "t", "a\n1\n")}, file_access=Deny())  # type: ignore[arg-type]
+    assert opened
+    assert completed_reads == [] and profiled == []
+    record = reason_from_exception(info.value)
+    assert (record.namespace, record.code) == ("decoy", "file_access_denied")
 
 
 def test_headerless_width_refusal_passes_through(tmp_path: Path) -> None:
@@ -273,6 +312,111 @@ def test_reader_error_text_never_reaches_the_raised_error(
     assert "'t'" in str(info.value) and "Exception" in str(info.value)
     assert CANARY not in str(info.value) and CANARY not in repr(info.value)
     assert info.value.__cause__ is None and info.value.__context__ is None
+
+
+def _raising_double(monkeypatch: pytest.MonkeyPatch, exc: BaseException) -> None:
+    class Double:
+        def row_count(self) -> Any:
+            raise exc
+
+    from decoy_engine import profile
+
+    monkeypatch.setattr(profile, "build_declared_source", lambda *a, **k: Double())
+
+
+def test_coded_engine_error_is_not_flattened(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raised = TransformError(code=reasons.runtime.DROP_COLUMN_MISSING, message="table 't' x")
+    _raising_double(monkeypatch, raised)
+    with pytest.raises(TransformError) as info:
+        scan_sources({"t": _csv(tmp_path, "t", "a\n1\n")})
+    assert info.value is raised
+    record = reason_from_exception(info.value)
+    assert (record.namespace, record.code) == ("runtime", "drop_column_missing")
+
+
+def test_scan_source_error_from_a_layer_below_is_not_rewrapped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raised = ScanSourceError("inner", "Inner")
+    _raising_double(monkeypatch, raised)
+    with pytest.raises(ScanSourceError) as info:
+        scan_sources({"t": _csv(tmp_path, "t", "a\n1\n")})
+    assert info.value is raised
+
+
+def test_core_is_built_and_dumped_through_the_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scan = scan_sources({"t": _csv(tmp_path, "t", "id,name\n1,a\n2,b\n")})
+    real = ScanSetCore.model_dump
+    dumped: list[dict[str, Any]] = []
+
+    def spy(self: ScanSetCore, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        out = real(self, *args, **kwargs)
+        dumped.append(out)
+        return out
+
+    monkeypatch.setattr(ScanSetCore, "model_dump", spy)
+    doc = scan_set_to_dict(scan, detail=False)
+    assert len(dumped) == 1
+    assert doc == dumped[0]
+
+
+def test_header_suspect_table_never_carries_the_header_text(tmp_path: Path) -> None:
+    src = _csv(tmp_path, "t", f"{CANARY}@example.com,42\nbob@example.org,7\n")
+    scan = scan_sources({"t": src})
+    table = scan.tables[0]
+    assert table.warnings == (reasons.warning.SCAN_HEADER_SUSPECT.spec.ref,)
+    assert [f.name for f in table.profile.fields] == [f"{CANARY}@example.com", "42"]
+    doc = scan_set_to_dict(scan, detail=False)
+    assert CANARY not in json.dumps(doc)
+    core = doc["tables"][0]
+    assert [f["name"] for f in core["fields"]] == ["c0", "c1"]
+    assert all(name in {"c0", "c1"} for name in core["key_candidates"])
+    assert all(name in {"c0", "c1"} for group in core["quasi_identifier_groups"] for name in group)
+    assert [w["code"] for w in core["warnings"]] == ["scan_header_suspect"]
+    assert CANARY in json.dumps(scan_set_to_dict(scan, detail=True))
+
+
+def test_clean_header_keeps_its_names_in_the_core(tmp_path: Path) -> None:
+    scan = scan_sources({"t": _csv(tmp_path, "t", "id,city\n1,a\n2,b\n")})
+    core = scan_set_to_dict(scan, detail=False)["tables"][0]
+    assert [f["name"] for f in core["fields"]] == ["id", "city"]
+
+
+def test_closed_sets_are_types() -> None:
+    doc = {
+        "name": "t",
+        "descriptor": {},
+        "row_count": 0,
+        "row_count_exact": True,
+        "sample_strategy": "head",
+        "sample_row_cap": None,
+        "fields": [],
+        "key_candidates": [],
+        "warnings": [],
+        "reid_risk_score": None,
+        "quasi_identifier_groups": [],
+    }
+    TableCore.model_validate(doc)
+    with pytest.raises(ValueError):
+        TableCore.model_validate({**doc, "sample_strategy": "stratified"})
+    ok = {"namespace": "warning", "code": "scan_header_suspect"}
+    TableCore.model_validate({**doc, "warnings": [ok]})
+    with pytest.raises(ValueError):
+        TableCore.model_validate({**doc, "warnings": [{"namespace": "warning", "code": "nope"}]})
+    # An older reader still accepts a reason code a newer registry added; the strategy set is
+    # closed on both sides.
+    relaxed = {"scan_schema": "scan-set/v1", "engine_version": "9", "scanned_at": "x"}
+    ScanSetCoreRead.model_validate(
+        {
+            **relaxed,
+            "tables": [{**doc, "warnings": [{**ok, "code": "z"}]}],
+            "relationships": [],
+        }
+    )
 
 
 def test_entry_point_is_registered() -> None:
