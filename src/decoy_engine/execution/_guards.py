@@ -75,12 +75,12 @@ def refuse_duplicate_run_sources(
     column by name. Metadata only: a footer for Parquet, nothing for a resident table."""
     for name, source in caller_sources.items():
         refuse_duplicate_field_names(name, source.schema.names)
-    from decoy_engine.profile._readers import build_profile_source
+    from decoy_engine.profile import build_declared_source
 
     for name, descriptor in (config.get("sources") or {}).items():
         if descriptor.get("format") in _NO_DUPLICATE_FORMATS:
             continue
-        refuse_duplicate_field_names(name, build_profile_source(descriptor).schema().names)
+        refuse_duplicate_field_names(name, build_declared_source(name, descriptor).schema().names)
 
 
 def refusing_source_loader(

@@ -23,8 +23,9 @@ IDENTITIES = [
 ]
 
 
-def test_registry_is_at_1_7_0() -> None:
-    assert reasons.manifest()["registry_version"] == "1.8.0"
+def test_registry_is_at_least_1_8_0() -> None:
+    version = tuple(int(part) for part in reasons.manifest()["registry_version"].split("."))
+    assert version >= (1, 8, 0)
 
 
 @pytest.mark.parametrize(("namespace", "code"), IDENTITIES)

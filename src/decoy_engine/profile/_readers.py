@@ -462,6 +462,13 @@ def head_frame_from_batches(
 # ---------------------------------------------------------------------
 
 
+def build_declared_source(table: str, descriptor: dict[str, Any]) -> ProfileSource:
+    """The `ProfileSource` for config table `table`, read under its own config position
+    `sources.<table>.path`. Every reader of a declared source goes through here, so a policy
+    that grants access per position sees the same key from each of them."""
+    return build_profile_source(descriptor, field_key=f"sources.{table}.path", table=table)
+
+
 def build_profile_source(
     descriptor: dict[str, Any], *, field_key: str = "source.path", table: str = "source"
 ) -> ProfileSource:
