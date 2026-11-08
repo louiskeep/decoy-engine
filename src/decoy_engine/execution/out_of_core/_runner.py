@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import shutil
 from collections.abc import Mapping
+from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -195,8 +196,6 @@ def run_fk_out_of_core(
     validators = _validate_batch.build_validator_collector(
         config, plan, relationship_graph, sources
     )
-    owned_temp = temp_dir is None
-    root = scratch_root(temp_dir)
     committed = False
     # B4: the run-scoped faker pool lifecycle. Pools are Python/object memory
     # outside DuckDB's accounting, so bound them well inside the run budget and
@@ -209,6 +208,10 @@ def run_fk_out_of_core(
         job_seed=plan.seed_envelope.job_seed,
         max_pool_bytes=min(budget_bytes, _faker_pool_cap) if budget_bytes else _faker_pool_cap,
     )
+    # Entered only after the pool exists, so nothing that can fail sits between the root being
+    # made and the `try` whose `finally` removes it.
+    owned_root = ExitStack()  # removes an engine-made root; a caller-named one is left alone
+    root = scratch_root(temp_dir, owned_root)
     try:
         incoming, outgoing = _edge_indexes(relationship_graph)
         parent_relations: dict[RelationshipEdge, ParentKeyRelation] = {}
@@ -316,15 +319,14 @@ def run_fk_out_of_core(
         # The relation/join staging subtrees hold (source_key, masked_key) pairs
         # on disk and the staged subtree holds output values (which can include
         # preserved raw orphan keys); a caller-supplied temp_dir is NOT torn
-        # down (owned_temp below is False), so without this those keys sit at
+        # down (no owned_root to close), so without this those keys sit at
         # rest after a successful run. Only the parts the runner itself created
         # get wiped here; the rest of a caller-owned root is the caller's
         # responsibility.
         shutil.rmtree(root / "relations", ignore_errors=True)
         shutil.rmtree(root / "joins", ignore_errors=True)
         shutil.rmtree(root / "staged", ignore_errors=True)
-        if owned_temp:
-            shutil.rmtree(root, ignore_errors=True)
+        owned_root.close()
         # Release the run's faker pools (in-memory numpy arrays) and reset the
         # reservation ledger; nothing survives the run.
         faker_pool.close()
