@@ -37,10 +37,15 @@ import pyarrow as pa
 from faker import Faker
 
 from decoy_engine.generation import _faker_pool
+from decoy_engine.generation._numeric_typing import restore_numeric_dtype
 from decoy_engine.generation._statistical_column import statistical_generate
 from decoy_engine.generation.statistical import StatisticalSpec
 from decoy_engine.generators.derivation import GenDeriveContext
-from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
+from decoy_engine.internal.faker_setup import (
+    get_faker_providers,
+    make_faker,
+    snapshot_custom_faker_providers,
+)
 from decoy_engine.transforms.derived_aggregate import generate_derived_aggregate_column
 
 if TYPE_CHECKING:
@@ -305,6 +310,20 @@ def _generate_column(
         # at validation; this branch is the defensive fallback for callers that
         # bypass validation (e.g. an unvalidated dict).
         raise ValueError(f"generate column {col.get('name')!r}: unexpected generator type {kind!r}")
+    values = restore_numeric_dtype(
+        col,
+        values,
+        faker_probe=_get_default_faker() if kind == "faker" else None,
+        custom_providers=(
+            (
+                provider_snapshot
+                if provider_snapshot is not None
+                else snapshot_custom_faker_providers()
+            )
+            if kind == "faker"
+            else None
+        ),
+    )
     # Pinned plans store `snapshot_file` as `sha256:<digest>`, not a path. Passing the digest keeps
     # for_column from trying to open that string as a file. The ordinary path passes None and
     # derives the null seed exactly as before.
