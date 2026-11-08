@@ -86,7 +86,7 @@ an `except`, no regular-file check); AT-E1-6 names from the descriptor; AT-E1-7 
 - Not in the allowed files and still showing csv sources without `has_header`: `README.md`,
   `docs/quickstart.md`, `docs/recipes.md`, `examples/`. Needs an orchestrator decision.
 
-## STOP 4 (open, not edited)
+## STOP 4 (closed: both hashes re-pinned in `f2d2d346` on the orchestrator's decision)
 
 - `tests/unit/config/test_c8_i_when_config.py::test_a_config_without_when_hashes_exactly_as_before_the_field_existed`:
   `pipeline_config_hash` still equals the pin; `_PRE_WHEN_CANONICAL_SHA` moves (`77c4914f...` to
@@ -120,7 +120,9 @@ T1 `scripts/dev/gates.sh --keep-going --baseline` (VM, 983-file selection agains
   selection): env, ruff, format, mypy PASS; sentry 4296 passed; licenses 63 passed; tests 34912
   passed, 0 failed (baseline 34855 passed, 0 failed); branch-only none.
 
-The mutation runs at `eb2abfb3` still hold: the later commits touch tests, docs and the registry
-version only.
+The mutation runs at `eb2abfb3` still hold for the E1 source: later commits touch tests, docs and
+the registry version, plus two merge fixes after main's derived-visibility merge (#408):
+`build_declared_source` became a file-access entry point (it reaches the policy through
+`build_profile_source`), and one #408 test declares `has_header`.
 Registry renumbered at merge from 1.8.0 to 1.9.0 by scripts/dev/registry_renumber.py; main was at 1.8.0.
 Registry renumbered at merge from 1.9.0 to 1.10.0 by scripts/dev/registry_renumber.py; main was at 1.9.0.

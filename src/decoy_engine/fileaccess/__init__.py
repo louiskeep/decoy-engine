@@ -86,6 +86,7 @@ ENTRY_POINTS: tuple[str, ...] = (
     "decoy_engine.profile._csv_reader.resolve_csv_dialect",
     "decoy_engine.profile._fixed_width_reader.read_fixed_width",
     "decoy_engine.profile._fixed_width_writer.write_fixed_width",
+    "decoy_engine.profile._readers.build_declared_source",
     "decoy_engine.profile._readers.build_profile_source",
     "decoy_engine.profile._source.profile_source",
     "decoy_engine.profiling.profiler.profile_columns",
