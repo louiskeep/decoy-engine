@@ -6,7 +6,7 @@ runner overrides per job. Total replacement, not merge: every logical
 table in `config["tables"]` must be a key in the new `sources` mapping,
 and the runner cannot leave a stale binding in place.
 
-The replacement is validated by re-running `PipelineConfig.model_validate`
+The replacement is validated by re-running `parse_pipeline_config`
 on the result, so the new sources still have to pass Pydantic strict
 checks (extras forbidden, type=file format=csv|parquet|fixed_width, etc.).
 """
@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from decoy_engine.config._errors import PipelineConfigError
-from decoy_engine.config._pipeline import PipelineConfig
+from decoy_engine.config._parse import parse_pipeline_config
 
 
 def override_sources(
@@ -37,7 +37,7 @@ def override_sources(
 
     Returns:
         A new dict (input is not mutated). Validated through
-        `PipelineConfig.model_validate` before return.
+        `parse_pipeline_config` before return.
 
     Raises:
         PipelineConfigError: if source-binding coverage is wrong or the
@@ -62,9 +62,10 @@ def override_sources(
     new_config["sources"] = {k: dict(v) for k, v in sources.items()}
 
     try:
-        return PipelineConfig.model_validate(new_config).model_dump()
-    except Exception as exc:
-        raise PipelineConfigError(
-            f"override_sources: replacement failed strict validation: {exc}",
-            validation_error=exc,
-        ) from exc
+        return parse_pipeline_config(new_config).model_dump()
+    except PipelineConfigError as exc:
+        failed = exc
+    # Re-raised outside the handler so no implicit context is chained.
+    raise PipelineConfigError.from_problems(
+        failed.problems, prefix="override_sources: replacement failed strict validation"
+    )

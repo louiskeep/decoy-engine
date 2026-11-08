@@ -1,0 +1,24 @@
+{
+ "sentry_id": "validation-name-messages",
+ "created_in": "VALUE-FREE-ERRORS-A1",
+ "entries": {
+  "unclassified::config/_fixed_width.py::FixedWidthLayout._validate_column_order::37e15ba9af": {
+   "reason": "Interpolates a call result or opaque local into a ValueError message; the converter replaces this text with a generic row until it is certified or migrated."
+  },
+  "unclassified::config/_pipeline.py::PipelineConfig._subset_stage_constraints::74686e363a": {
+   "reason": "Interpolates a call result or opaque local into a ValueError message; the converter replaces this text with a generic row until it is certified or migrated."
+  },
+  "unclassified::config/_sources.py::FileSource._validate_delimited_params::516bd4b3b2": {
+   "reason": "Interpolates a call result or opaque local into a ValueError message; the converter replaces this text with a generic row until it is certified or migrated."
+  },
+  "unclassified::config/_tables.py::TableConfig._mask_xor_generate::e8464f971a": {
+   "reason": "Interpolates a call result or opaque local into a ValueError message; the converter replaces this text with a generic row until it is certified or migrated."
+  },
+  "unclassified::config/_validators.py::QuarantineConfig._fail_closed_when_enabled::2c1bf8b1a9": {
+   "reason": "Interpolates a call result or opaque local into a ValueError message; the converter replaces this text with a generic row until it is certified or migrated."
+  },
+  "unclassified::run_result/_model.py::_check.validate::3b71ccc0cc": {
+   "reason": "Interpolates a call result or opaque local into a ValueError message; the converter replaces this text with a generic row until it is certified or migrated."
+  }
+ }
+}

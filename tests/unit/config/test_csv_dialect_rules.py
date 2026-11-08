@@ -211,7 +211,9 @@ def test_public_loader_route_carries_no_submitted_delimiter() -> None:
     with pytest.raises(PipelineValidationError) as info:
         validate_config(_pipeline_with_delimiter(SECRET))
     err = info.value
-    assert "delimiter" in str(err)  # the real problem is still reported
+    # The location names the source; the rule text returns once its message is certified
+    # as name-only (until then validator text is the generic row).
+    assert "sources.s.file" in str(err)
     _assert_no_secret(err)  # str, repr, args, and no chained pydantic error carrying input
 
 
