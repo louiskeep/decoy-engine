@@ -338,6 +338,12 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   `resolve_csv_dialect(descriptor, *, table="source", file_access=None)` requires
   `has_header` in the descriptor and raises `ConfigError` before any IO without it.
   `nrows=0` returns the empty frame with the declared columns.
+  It also includes `parse_pipeline_config`, `ConfigProblem` and `ConfigRuleError`
+  (VALUE-FREE-ERRORS, 2026-11): `parse_pipeline_config(raw)` raises
+  `PipelineConfigError` whose `problems` are `ConfigProblem(code, location, text)`
+  with config names kept and submitted values dropped. `PipelineConfigError` no
+  longer sets `__cause__`; its `validation_error=` argument is removed. A
+  validator's message is shown only when it is a `ConfigRuleError`.
   It also includes `run_mask_chunked` (2026-10-01): the chunked
   dispatcher as a public entry point. Its signature is
   `run_mask_chunked(config, chunks, *, table, engine_version, registry=None,

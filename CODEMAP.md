@@ -203,6 +203,47 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | Canonical caller shape | `tests/integration/golden/test_execution_e2e.py::_run` |
 | Parity notes | `tests/parity/SEMANTIC_DIFFERENCES.md` |
 
+## Where Things Go
+
+Where a new file, folder or test belongs. One row per kind of module. This section says
+where; `src/decoy_engine/_MAP.md` says what each package holds. `(target)` marks a path
+that does not exist yet; where today differs from the target, the row lists today's
+exceptions. A sentry (`tests/sentry/test_package_map_paths.py`) fails when a row names a
+concrete path that does not exist. Layer membership will live in `./.importlinter`
+(target) and is not restated here.
+
+| Kind | Goes in | File naming | Tests | Sentries and registries |
+|---|---|---|---|---|
+| Public API | `src/decoy_engine/` | `src/decoy_engine/__init__.py`; root facades `src/decoy_engine/sdk.py`, `src/decoy_engine/providers.py`, `src/decoy_engine/errors.py`, `src/decoy_engine/identifiers.py` | unit tests for the owning surface | facade list `PUBLIC_BOUNDARY_FILES`; `tests/sentry/test_public_import_boundary.py` |
+| Config models | `src/decoy_engine/config/` | `src/decoy_engine/config/_<topic>.py` | `tests/unit/config/` | - |
+| Safe output boundary | `src/decoy_engine/safe_output/` | `src/decoy_engine/safe_output/_<output concern>.py` | `tests/unit/safe_output/`, `tests/security/` | - |
+| Plan compile and checks | `src/decoy_engine/plan/`; plan-time validation in `src/decoy_engine/plan/validate/`; new checks in `src/decoy_engine/plan/checks/` (target) | `src/decoy_engine/plan/_checks_<topic>.py` today | plan unit tests | fan-out freeze at 30 |
+| Pipeline spine and routes | `src/decoy_engine/execution/`; new route clusters in `src/decoy_engine/execution/chunked/` (target), `src/decoy_engine/execution/pipeline/` (target), `src/decoy_engine/execution/sequential/` (target), or `src/decoy_engine/execution/isolated/` (target) | route-specific private names | execution tests | fan-out freeze at 104 |
+| Masking strategy handler | `src/decoy_engine/execution/_strategies/`; next family in `src/decoy_engine/execution/_strategies/<family>/` (target) | `src/decoy_engine/execution/_strategies/_<strategy>.py` | strategy tests | `SCALAR_HANDLERS`; fan-out freeze at 29 |
+| Native companion bridge | `src/decoy_engine/execution/native/`; protocol modules in `src/decoy_engine/execution/native/protocol/`; new modules in `src/decoy_engine/execution/native/draw/` (target) or `src/decoy_engine/execution/native/chunked/` (target) | private by bridge concern | native tests | fan-out freeze at 55 |
+| Out-of-core FK | `src/decoy_engine/execution/out_of_core/`; new stream modules in `src/decoy_engine/execution/out_of_core/stream/` (target) | private by stage | out-of-core tests | fan-out freeze at 44 |
+| Physical seam | `src/decoy_engine/execution/physical/`; drivers in `src/decoy_engine/execution/physical/drivers/` | private by seam concern | `tests/physical/` | `tests/sentry/test_physical_seam_disconnection.py` |
+| Arrow kernels | `src/decoy_engine/kernel/` | by kernel operation | kernel tests | - |
+| Transforms | `src/decoy_engine/transforms/`; the next module creates a named sub-package | by transform | transform tests | fan-out limit 25 |
+| Generation | `src/decoy_engine/generation/`; pools in `src/decoy_engine/generation/pool/` | by generation concern | `tests/generation/`, `tests/unit/generation/` | - |
+| Providers | `src/decoy_engine/providers_v2/` | by provider | provider tests | `src/decoy_engine/providers_v2/_registry.py` |
+| Detectors, profiling | `src/decoy_engine/detection/`, `src/decoy_engine/profiling/` | by detection or profiling concern | owning package tests | - |
+| Connectors | `src/decoy_engine/connectors/` | `src/decoy_engine/connectors/<name>.py` on `src/decoy_engine/sdk.py` base classes | `tests/connectors/` | connector entry-point checks |
+| Reason codes | `src/decoy_engine/reasons/` with one catalog package per namespace | by reason namespace | reason tests | `src/decoy_engine/reasons/_registry.py`; reason sentries |
+| Versioned contracts | `src/decoy_engine/contracts/` | `src/decoy_engine/contracts/<contract>.py` | contract tests | contract sentries |
+| Secret providers, file access | `src/decoy_engine/secret_providers/`, `src/decoy_engine/fileaccess/` | by provider or access concern | owning package tests | `tests/sentry/file_access_registry.toml`, `tests/sentry/file_access_modules.toml` |
+| Foundation (errors, reason adapters, private leaves) | `src/decoy_engine/` | `src/decoy_engine/_<name>.py` | owning surface tests | bottom layer in `./.importlinter` (target) |
+| Sentry test | existing rules in `tests/sentry/`; layout rules in `tests/sentry/layout/`; recurring-defect class rules in `tests/sentry/defects/` | `test_<rule>.py`; helper `_<name>.py` | self-tests and seeded mutations | `tests/sentry/test_sentry_manifest.py`; `*_ALLOWLIST`; `tests/sentry/baselines/`; `scripts/dev/sentry_registry.toml`; `tests/sentry/_baseline_sources.py` |
+| Layer contracts | `./.importlinter` (target) beside `./pyproject.toml` | `.importlinter` | `tests/sentry/layout/test_import_layers.py` (target) | exact membership snapshot in the test; ignore baseline `tests/sentry/baselines/import-layers.json` (target) |
+| Dev tooling | `scripts/dev/`; one-off tools in a topic folder: `scripts/audit/`, `scripts/codeset_etl/`, `scripts/faker-determinism/`, `scripts/fk-scale/`, `scripts/native-baseline/`, `scripts/native-testing/`, `scripts/release/`, or `scripts/bench-*/` | by tool concern | tool tests | root `scripts/` freeze at 26; `tests/sentry/test_module_size.py` |
+| Plans, decisions, records | `docs/plans/`, `docs/decisions/`, `docs/records/` | `docs/plans/YYYY-MM-DD-<slug>.md`; `docs/records/YYYY-MM-DD-<slug>.md` | - | undated older plans are listed exceptions |
+| Unit tests | `tests/unit/<package>/` mirroring `src/` | `test_<behavior>.py` | - | current exceptions: `tests/parity/`, `tests/native/`, `tests/physical/`, `tests/fileaccess/`, `tests/secret_providers/`, `tests/generation/`, `tests/connectors/`, and loose files in `tests/unit/` |
+
+Known inconsistencies, listed and not fixed here: `execution/_errors.py` and 14 other
+`execution` modules are imported from lower tiers (foundation code that lives in
+`execution/`); `__version__` is read from the root facade by 7 modules (target: a leaf
+version module).
+
 ## Known Issues / Flags
 
 | Issue | Note |

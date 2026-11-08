@@ -66,6 +66,7 @@ from decoy_engine.config import (
     Dismissal,
     PipelineConfig,
     PreScanConfig,
+    parse_pipeline_config,
 )
 from decoy_engine.context import (
     ExecutionContext,
@@ -102,6 +103,7 @@ from decoy_engine.determinism import (
 )
 from decoy_engine.errors import (
     ConfigError,
+    ConfigRuleError,
     ConnectorAuthError,
     ConnectorError,
     DecoyError,
@@ -265,6 +267,7 @@ from decoy_engine.relationships import (
 )
 from decoy_engine.release import RELEASE_PHASE, ReleasePhase, is_pre_ga
 from decoy_engine.run_result import RUN_RESULT_SCHEMA, RunResult, RunResultRead, derive_outcome
+from decoy_engine.safe_output import ConfigProblem
 
 # Connector SDK.
 from decoy_engine.sdk import (
@@ -377,6 +380,8 @@ __all__ = [
     "CompositePerson",
     "CompositeProvider",
     "ConfigError",
+    "ConfigProblem",
+    "ConfigRuleError",
     "ConnectorAuthError",
     "ConnectorConfig",
     "ConnectorError",
@@ -521,6 +526,7 @@ __all__ = [
     "native_companion_status",
     "ner_status",
     "open_protected_dir",
+    "parse_pipeline_config",
     "pipeline_config_hash",
     "profile_columns",
     "protected_scratch_dir",

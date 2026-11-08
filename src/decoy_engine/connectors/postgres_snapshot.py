@@ -56,6 +56,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from decoy_engine import fileaccess, reasons
+from decoy_engine.fileaccess import open_protected_dir
 from decoy_engine.sdk import PermanentError
 
 __all__ = [
@@ -214,8 +215,7 @@ def _lit(text: str) -> str:
 
 
 def _open_connection(config: PostgresSnapshotConfig, spill_dir: Path) -> Any:
-    spill_dir.mkdir(parents=True, exist_ok=True)
-    os.chmod(spill_dir, 0o700)
+    open_protected_dir(spill_dir, create=True, parents=True)
     try:
         from decoy_engine.fileaccess.adapters import duckdb as duckdb_adapter
 
