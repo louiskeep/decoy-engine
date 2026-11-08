@@ -131,3 +131,43 @@ def test_identity_separator_cannot_collide() -> None:
     a = GenDeriveContext.for_column(None, with_table({**cfg, "name": "b,c"}, "a"), 5)
     b = GenDeriveContext.for_column(None, with_table({**cfg, "name": "c"}, "a,b"), 5)
     assert a.base_int("py") != b.base_int("py")
+
+
+def _two_tables(col: dict[str, Any]) -> dict[str, list[Any]]:
+    """The same table twice under different names. The anchor columns are constant, so only the
+    derived column's own stream can make the two outputs differ."""
+    base = [
+        {"name": "g", "type": "categorical", "categories": ["a"]},
+        {"name": "d", "type": "categorical", "categories": ["2020-01-01"]},
+        {"name": "o", "type": "sequence", "start": 1},
+    ]
+    cfg = {
+        "global_settings": {"seed": SEED},
+        "tables": [
+            {"name": t, "row_count": 200, "generate_columns": [*base, col]} for t in ("t1", "t2")
+        ],
+    }
+    out = generate_tables(compile_plan(cfg, empty_profile(), decoy_engine_version="test"))
+    return {t: tbl.column("x").to_pylist() for t, tbl in out.items()}
+
+
+@pytest.mark.parametrize(
+    "col",
+    [
+        {
+            "name": "x",
+            "type": "grouped_series",
+            "group_by": "g",
+            "order_by": "o",
+            "generator": "monotone_walk",
+            "max_step": 50,
+        },
+        {"name": "x", "type": "windowed_date", "anchor": "d", "min_days": 1, "max_days": 3000},
+        {"name": "x", "type": "group_key", "group_by": "g"},
+    ],
+    ids=lambda c: c["type"],
+)
+def test_derived_kinds_with_same_name_in_two_tables_differ(col: dict[str, Any]) -> None:
+    out = _two_tables(col)
+    assert out["t1"] != out["t2"]
+    assert out == _two_tables(col)

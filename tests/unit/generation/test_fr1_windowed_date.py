@@ -172,7 +172,7 @@ def test_pinned_oracle_digest() -> None:
     assert fingerprints(out)["w"]["table"] == PINNED_PLAIN
 
 
-PINNED_PLAIN = "bcb40341b6ad82d46eb610b77dabe634076b9fc74d43db6762eb5db6be07e2b7"
+PINNED_PLAIN = "50eadb5c8acbabff812b125bdba8b7f95ec739d7b4f2819b9d50562f00a9b06f"
 
 
 # ---- null anchor: propagate, no draw ----------------------------------------------------------

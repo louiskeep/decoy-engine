@@ -31,7 +31,7 @@ import pandas as pd
 
 from decoy_engine.generation import _faker_pool
 from decoy_engine.generation._bounds import faker_pool_bytes
-from decoy_engine.generators.derivation import GenDeriveContext, with_table
+from decoy_engine.generators.derivation import GenDeriveContext, column_identity, with_table
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 
 if TYPE_CHECKING:
@@ -64,7 +64,7 @@ class WindowedDateStream:
                 cfg[key] = col[key]
         self._config = WindowedDateConfig.from_dict(cfg)
         self._seed = seed.to_bytes(8, "big")
-        self._namespace = f"windowed_date/{col.get('name', 'windowed_date_col')}"
+        self._namespace = f"windowed_date/{column_identity(col)}"
 
     @property
     def anchor(self) -> str:

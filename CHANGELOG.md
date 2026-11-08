@@ -21,7 +21,8 @@ Adding a column or growing `row_count` still leaves the other columns unchanged.
 Output changes for existing seeds and keys. This is accepted before GA and there is no opt-in to
 the old seeding. Renaming a column or moving it to another table now changes its values. The
 `_legacy_column_name_seed` column option is removed. Grouped-series, windowed-date and group-key
-columns keep their own per-column namespace and are unchanged.
+columns derive their namespace from the same table and column identity, so a column of the same
+name in two tables no longer shares a stream.
 
 ### Changed (row directories use the protected allocator)
 
