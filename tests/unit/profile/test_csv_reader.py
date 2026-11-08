@@ -448,7 +448,7 @@ def test_projection_returns_exactly_the_requested_order(
 def test_projection_refuses_unknown_and_repeated_names_without_quoting_them(
     tmp_path: Any, text: str, dialect: CsvDialect
 ) -> None:
-    for bad in (["zz_secret_name"], ["a", "a"]):
+    for bad in (["zz_secret_name"], ["a", "a"], []):
         with pytest.raises(ValueError) as info:
             _projected(tmp_path, text, dialect, columns=bad)
         assert "zz_secret_name" not in str(info.value)

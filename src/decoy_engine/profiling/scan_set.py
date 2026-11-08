@@ -132,12 +132,34 @@ class TableCore(_Core):
     quasi_identifier_groups: list[list[str]]
 
 
+class ChildFactsCore(_Core):
+    table: str
+    columns: list[str]
+    rows: int | None
+    null_key_rows: int | None
+    orphan_rows: int | None
+    orphan_distinct_keys: int | None
+
+
+class RelationshipFactsCore(_Core):
+    parent: str
+    parent_columns: list[str]
+    children: list[ChildFactsCore]
+    status: Literal["checked", "key_type_mismatch", "skipped_cloud"]
+    parent_rows: int | None
+    parent_null_key_rows: int | None
+    parent_duplicate_excess: int | None
+    exact: bool
+    bounded: bool
+    warnings: list[WarningRefCore]
+
+
 class ScanSetCore(_Core):
     scan_schema: Literal["scan-set/v1"]
     engine_version: str
     scanned_at: str
     tables: list[TableCore]
-    relationships: list[dict[str, Any]]
+    relationships: list[RelationshipFactsCore]
 
 
 def _relaxed(model: type[BaseModel]) -> type[BaseModel]:
@@ -496,7 +518,7 @@ def scan_set_to_dict(s: ScanSet, *, detail: bool) -> dict[str, Any]:
         engine_version=s.engine_version,
         scanned_at=s.scanned_at,
         tables=[_table_core(t) for t in s.tables],
-        relationships=[r.to_dict() for r in s.relationships],
+        relationships=[RelationshipFactsCore.model_validate(r.to_dict()) for r in s.relationships],
     )
     doc: dict[str, Any] = core.model_dump()
     if detail:

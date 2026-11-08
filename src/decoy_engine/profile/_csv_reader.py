@@ -205,6 +205,8 @@ def _projection(
 
     With a header a callable keeps a missing name from raising a pandas error that quotes it;
     `_ordered` then refuses the mismatch with a fixed message."""
+    if not columns:
+        raise ValueError("read_csv_source: columns names no column")
     if len(set(columns)) != len(columns):
         raise ValueError("read_csv_source: columns names a column more than once")
     if dialect.has_header:
@@ -301,7 +303,11 @@ def _read_csv_rows(
         if nrows == 0:
             # No record is consumed, so none is scanned or tokenized: a malformed file reads
             # as the empty frame under every policy.
-            return _zero_rows(open_handle, list(columns or names), chunked=chunksize is not None)
+            return _zero_rows(
+                open_handle,
+                names if columns is None else list(columns),
+                chunked=chunksize is not None,
+            )
         _scan_record_widths(open_handle, dialect, table=table, nrows=nrows)
         read_opts = {"header": None, **_positional_lexemes(lexeme_columns, names)}
     kwargs: dict[str, Any] = {"sep": dialect.delimiter, "dtype": dtype, **read_opts, **use}

@@ -9,7 +9,6 @@ import stat
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -17,7 +16,13 @@ import pytest
 from decoy_engine import fileaccess, profile, reasons
 from decoy_engine.config import PipelineConfigError
 from decoy_engine.fileaccess import FileAccessDenied
-from decoy_engine.profiling import _scan_integrity, scan_set_to_dict, scan_sources
+from decoy_engine.profiling import (
+    ScanSetCore,
+    ScanSetCoreRead,
+    _scan_integrity,
+    scan_set_to_dict,
+    scan_sources,
+)
 from decoy_engine.profiling._scan_integrity import ChildFacts, RelationshipFacts
 from decoy_engine.reason_adapter import reason_from_exception
 
@@ -333,4 +338,62 @@ def test_fixed_width_keys_are_read_whole_and_unbounded(tmp_path: Path) -> None:
     src = {"f": fixed, "c": _csv(tmp_path, "c", "id\n001\n009\n")}
     f = _facts(src, _rel(("f", ["id"]), ("c", ["id"])))
     assert f.bounded is False and f.exact is True
-    assert pd is not None
+    assert f.parent_rows == 2
+    assert f.children[0].orphan_rows == 1
+
+
+def test_denied_policy_stops_every_chunk_not_just_the_first_open(tmp_path: Path) -> None:
+    src = {"p": _csv(tmp_path, "p", "id\n1\n"), "c": _csv(tmp_path, "c", "id\n1\n")}
+    real = fileaccess.current
+    opens: list[str] = []
+
+    class AllowOnce:
+        """Allows the header probe, denies the chunked key read."""
+
+        def __init__(self) -> None:
+            self.inner = real()
+
+        def open_read(self, request: Any) -> Any:
+            opens.append(request.field_key)
+            if len(opens) > 1:
+                raise FileAccessDenied(request.field_key)
+            return self.inner.open_read(request)
+
+    with pytest.raises(FileAccessDenied):
+        scan_sources(
+            src,
+            tables=[],
+            relationships=[_rel(("p", ["id"]), ("c", ["id"]))],
+            file_access=AllowOnce(),  # type: ignore[arg-type]
+        )
+    assert len(opens) >= 2
+
+
+def _core_doc(tmp_path: Path) -> dict[str, Any]:
+    src = {"p": _csv(tmp_path, "p", "id,n\n1,a\n"), "c": _csv(tmp_path, "c", "id,n\n2,a\n")}
+    scan = scan_sources(src, tables=[], relationships=[_rel(("p", ["id"]), ("c", ["id"]))])
+    return scan_set_to_dict(scan, detail=False)
+
+
+def test_relationship_core_is_a_typed_versioned_read_model(tmp_path: Path) -> None:
+    doc = _core_doc(tmp_path)
+    ScanSetCore.model_validate(doc)
+    ScanSetCoreRead.model_validate(doc)
+    for model in (ScanSetCore, ScanSetCoreRead):
+        bad_status = json.loads(json.dumps(doc))
+        bad_status["relationships"][0]["status"] = "maybe"
+        with pytest.raises(ValueError):
+            model.model_validate(bad_status)
+        for path in ("parent_rows", "children.0.orphan_rows"):
+            bad_count = json.loads(json.dumps(doc))
+            holder = bad_count["relationships"][0]
+            if path.startswith("children"):
+                holder = holder["children"][0]
+            holder[path.split(".")[-1]] = True
+            with pytest.raises(ValueError):
+                model.model_validate(bad_count)
+    extra = json.loads(json.dumps(doc))
+    extra["relationships"][0]["children"][0]["later"] = 1
+    ScanSetCoreRead.model_validate(extra)
+    with pytest.raises(ValueError):
+        ScanSetCore.model_validate(extra)
