@@ -33,8 +33,20 @@ class _OutsideTheTableError(Exception):
 _CASES = [
     ("bad-date-str", 'days_between(a, "2020-01-02")', STR_MARKER, 1, "an operand value is invalid"),
     ("bad-date-int", 'days_between(a, "2020-01-02")', INT_MARKER, 1, "an operand value is invalid"),
-    ("bad-date-list", 'days_between(a, "2020-01-02")', LIST_MARKER, 1, "an operand value is invalid"),
-    ("bad-date-dict", 'days_between(a, "2020-01-02")', DICT_MARKER, 1, "an operand value is invalid"),
+    (
+        "bad-date-list",
+        'days_between(a, "2020-01-02")',
+        LIST_MARKER,
+        1,
+        "an operand value is invalid",
+    ),
+    (
+        "bad-date-dict",
+        'days_between(a, "2020-01-02")',
+        DICT_MARKER,
+        1,
+        "an operand value is invalid",
+    ),
     ("division-int", "a / b", INT_MARKER, 0, "division by zero"),
     ("type-mismatch-str", "a + 1", STR_MARKER, 1, "an operand has an unsupported type"),
     ("type-mismatch-list", "a + 1", LIST_MARKER, 1, "an operand has an unsupported type"),
