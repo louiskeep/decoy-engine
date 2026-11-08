@@ -10,6 +10,7 @@ import ctypes
 import errno
 import os
 import sys
+from collections.abc import Callable
 
 from decoy_engine.fileaccess._component import is_valid_component
 
@@ -30,10 +31,10 @@ class _OpenHow(ctypes.Structure):
     ]
 
 
-_syscall = None
+_syscall: Callable[..., int] | None = None
 
 
-def _bind() -> object:
+def _bind() -> Callable[..., int]:
     global _syscall
     if _syscall is None:
         libc = ctypes.CDLL(None, use_errno=True)
@@ -59,9 +60,7 @@ def openat2(dir_fd: int, rel: str, flags: int, mode: int = 0, resolve: int = CON
     how = _OpenHow(flags | os.O_CLOEXEC, mode, resolve)
     fn = _bind()
     while True:
-        fd = fn(  # type: ignore[operator]
-            _SYS_OPENAT2, dir_fd, os.fsencode(rel), ctypes.byref(how), ctypes.sizeof(how)
-        )
+        fd = fn(_SYS_OPENAT2, dir_fd, os.fsencode(rel), ctypes.byref(how), ctypes.sizeof(how))
         if fd >= 0:
             return int(fd)
         err = ctypes.get_errno()
