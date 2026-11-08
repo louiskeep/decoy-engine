@@ -30,10 +30,10 @@ from pathlib import Path
 from typing import Any, Final, Literal
 
 import pyarrow as pa
-from pydantic import ValidationError as _PydanticValidationError
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine.config import PipelineConfigError, RelationshipConfig
+from decoy_engine.config._parse import parse_relationship_config
 
 # Small enough that the keys of a large table never sit in memory together.
 MEMORY_LIMIT: Final = "512MB"
@@ -117,15 +117,7 @@ def declare(
     """Validate each relationship against `RelationshipConfig` and `sources`. Reads no data."""
     declared = []
     for position, raw in enumerate(relationships, 1):
-        failed = False
-        try:
-            config = RelationshipConfig.model_validate(dict(raw))
-        except _PydanticValidationError:
-            failed = True
-        if failed:
-            # Raised outside the handler so the validation error, which holds the input, is
-            # not chained.
-            raise PipelineConfigError(f"relationship {position} is invalid")
+        config = parse_relationship_config(dict(raw), prefix=f"relationship {position} is invalid")
         for end in (config.parent, *config.children):
             if end.table not in sources:
                 raise PipelineConfigError(
