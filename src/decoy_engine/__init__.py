@@ -185,7 +185,15 @@ from decoy_engine.plan.validate import (
 from decoy_engine.profile._csv_reader import CsvDialect, read_csv_source, resolve_csv_dialect
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
 from decoy_engine.profile._fixed_width_writer import write_fixed_width
-from decoy_engine.profiling import ColumnProfile, FieldStats, SentinelFlag, profile_columns
+from decoy_engine.profiling import (
+    ColumnProfile,
+    FieldStats,
+    SentinelFlag,
+    is_value_sensitive,
+    profile_columns,
+    profile_document,
+    redact_profile_dict,
+)
 from decoy_engine.profiling.model_pack import classifier_status, load_detectors
 from decoy_engine.progress import (
     CallbackSink,
@@ -505,6 +513,7 @@ __all__ = [
     "get_default_pool_cache",
     "get_default_registry",
     "is_pre_ga",
+    "is_value_sensitive",
     "job_seed_for_config",
     "keyed_columns_for_config",
     "list_generate_faker_providers",
@@ -517,11 +526,13 @@ __all__ = [
     "open_protected_dir",
     "pipeline_config_hash",
     "profile_columns",
+    "profile_document",
     "protected_scratch_dir",
     "read_csv_source",
     "read_fixed_width",
     "reason_from_exception",
     "reasons_from_report",
+    "redact_profile_dict",
     "register_faker_list_provider",
     "register_faker_provider",
     "register_faker_provider_v2",
