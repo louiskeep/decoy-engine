@@ -6,6 +6,7 @@ import inspect
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -68,6 +69,10 @@ def _descriptor(kind: str, tmp: Path) -> dict[str, Any]:
         sep = {"tab": "\t", "pipe": "|"}[kind]
         (tmp / "d.csv").write_text(f"id{sep}email{sep}age\n1{sep}a{sep}2\n", encoding="utf-8")
         return _csv(tmp / "d.csv", delimiter=sep)
+    if kind == "parquet_index":
+        frame = pd.DataFrame({"email": ["a"], "age": [2]}, index=pd.Index([1], name="id_idx"))
+        pq.write_table(pa.Table.from_pandas(frame), tmp / "d.parquet")
+        return {"type": "file", "format": "parquet", "path": str(tmp / "d.parquet")}
     if kind == "parquet":
         pq.write_table(pa.table({"id": [1], "email": ["a"], "age": [2]}), tmp / "d.parquet")
         return {"type": "file", "format": "parquet", "path": str(tmp / "d.parquet")}
@@ -82,7 +87,17 @@ def _descriptor(kind: str, tmp: Path) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize(
-    "kind", ["headered", "headerless", "names_file", "tab", "pipe", "parquet", "fixed_width"]
+    "kind",
+    [
+        "headered",
+        "headerless",
+        "names_file",
+        "tab",
+        "pipe",
+        "parquet",
+        "parquet_index",
+        "fixed_width",
+    ],
 )
 def test_source_columns_match_profile(kind: str, tmp_path: Path) -> None:
     descriptor = _descriptor(kind, tmp_path)
@@ -173,9 +188,16 @@ def test_undeclared_tables_and_order() -> None:
         {"name": "a", "columns": [_col("x")]},
         {"name": "b", "columns": [_col("x")]},
         {"name": "c", "columns": [_col("fk"), _col("other", "")]},
+        {"name": "d", "columns": [_col("v")]},
         {"name": "gen", "generate_columns": [{"name": "g"}], "row_count": 3},
     ]
-    config = _config({}, tables)
+    scalar_fk = {
+        "parent": {"table": "a", "columns": ["x"]},
+        "children": [{"table": "d", "columns": ["fk"]}],
+        "orphan_policy": "preserve",
+        "namespace": "ns",
+    }
+    config = _config({}, tables, relationships=[scalar_fk])
     # An unlisted table is refused before any column check, in input order.
     inputs = [
         DeclarationInput("a", ("x", "zz"), "t"),
@@ -191,9 +213,13 @@ def test_undeclared_tables_and_order() -> None:
     with pytest.raises(PipelineValidationError) as caught:
         check_columns_declared(config, _inputs("a", "x", "zz"))
     assert "column 2 of 2 (1 undeclared)" in str(caught.value)
-    # An entry with an empty strategy and a scalar FK child left out of `columns` are undeclared.
+    # An entry with an empty strategy is undeclared.
     with pytest.raises(PipelineValidationError) as caught:
         check_columns_declared(config, _inputs("c", "fk", "other"))
+    assert "column 2 of 2 (1 undeclared)" in str(caught.value)
+    # A scalar FK child left out of `columns` is undeclared; only composite children count.
+    with pytest.raises(PipelineValidationError) as caught:
+        check_columns_declared(config, _inputs("d", "v", "fk"))
     assert "column 2 of 2 (1 undeclared)" in str(caught.value)
     # A generate table has no source columns to declare.
     assert check_columns_declared(config, _inputs("gen", "anything")) is None
@@ -224,8 +250,6 @@ def test_source_columns_reads_header_only(tmp_path: Path, monkeypatch: pytest.Mo
     assert source_columns(headerless, table="t") == ("a", "b")
     assert opened == []
 
-    import pandas as pd
-
     frame = pd.DataFrame({"a": [1]}, index=pd.Index(["k"], name="idx"))
     assert arrow_columns(pa.Table.from_pandas(frame).schema) == ("a",)
 
@@ -251,8 +275,11 @@ def test_prepared_capability(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     with pytest.raises(PipelineValidationError):
         prepare_declared_sources(DeclarationRequest.for_run(config, {"t": extra}))
     wide = _config({"t": _csv(path)}, [{"name": "t", "columns": [_col("id")]}])
+    # The supplied schema is fully declared here, so only the descriptor can refuse.
+    only_id = pa.schema([("id", pa.string())])
+    prepare_declared_sources(DeclarationRequest.for_supplied(wide, {"t": only_id}))
     with pytest.raises(PipelineValidationError):
-        prepare_declared_sources(DeclarationRequest.for_run(wide, {"t": ok}))
+        prepare_declared_sources(DeclarationRequest.for_run(wide, {"t": only_id}))
 
     calls: list[int] = []
     real = _declared_columns.check_columns_declared
@@ -306,70 +333,92 @@ def _fk(parent: str, pcols: list[str], child: str, ccols: list[str]) -> dict[str
     }
 
 
-def _corpus() -> list[dict[str, Any]]:
+def _corpus() -> list[tuple[dict[str, Any], dict[str, list[str]]]]:
+    """Configs paired with source columns that the config does not declare, per table."""
     return [
-        _config(
+        (
+            _config(
+                {},
+                [
+                    {"name": "p", "columns": [_col("k1"), _col("k2")]},
+                    {"name": "c", "columns": []},
+                ],
+                relationships=[_fk("p", ["k1", "k2"], "c", ["k1", "k2"])],
+            ),
             {},
-            [
-                {"name": "p", "columns": [_col("k1"), _col("k2")]},
-                {"name": "c", "columns": []},
-            ],
-            relationships=[_fk("p", ["k1", "k2"], "c", ["k1", "k2"])],
         ),
-        _config(
+        (
+            _config(
+                {},
+                [
+                    {"name": "p", "columns": [_col("id")]},
+                    {"name": "c", "columns": [_col("pid"), _col("v")]},
+                ],
+                relationships=[_fk("p", ["id"], "c", ["pid"])],
+            ),
             {},
-            [
-                {"name": "p", "columns": [_col("id")]},
-                {"name": "c", "columns": [_col("pid"), _col("v")]},
-            ],
-            relationships=[_fk("p", ["id"], "c", ["pid"])],
         ),
-        _config(
+        (
+            _config(
+                {},
+                [{"name": "n", "columns": [_col("id"), _col("boss")]}],
+                relationships=[_fk("n", ["id"], "n", ["boss"])],
+            ),
             {},
-            [{"name": "n", "columns": [_col("id"), _col("boss")]}],
-            relationships=[_fk("n", ["id"], "n", ["boss"])],
         ),
-        _config(
+        (
+            _config(
+                {},
+                [
+                    {
+                        "name": "d",
+                        "columns": [_col("a")],
+                        "transforms": [{"op": "drop_column", "columns": ["b"]}],
+                    }
+                ],
+            ),
             {},
-            [
-                {
-                    "name": "d",
-                    "columns": [_col("a")],
-                    "transforms": [{"op": "drop_column", "columns": ["b"]}],
-                }
-            ],
+        ),
+        # A scalar FK child missing from `columns` is not declared by the relationship.
+        (
+            _config(
+                {},
+                [
+                    {"name": "p", "columns": [_col("id")]},
+                    {"name": "c", "columns": [_col("v")]},
+                ],
+                relationships=[_fk("p", ["id"], "c", ["pid"])],
+            ),
+            {"c": ["pid"]},
+        ),
+        # An entry with an empty strategy is not declared.
+        (
+            _config({}, [{"name": "e", "columns": [_col("a"), _col("b", "")]}]),
+            {"e": ["b"]},
         ),
     ]
 
 
+def _drops(config: dict[str, Any], name: str) -> set[str]:
+    entry = next(t for t in config["tables"] if t["name"] == name)
+    return {col for op in entry.get("transforms", []) for col in op["columns"]}
+
+
 def test_declared_columns_agree_with_de03(tmp_path: Path) -> None:
-    for config in _corpus():
+    for config, extra in _corpus():
         config["sources"] = {}
         tables = [t["name"] for t in config["tables"]]
-        # Sources are written so profile_source sees every column the config can declare.
+        # Sources hold every declared column plus the ones the config leaves out, so
+        # profile_source sees what the plan would.
         for name in tables:
-            names = list(declared_columns(config, name))
-            drops = {
-                col
-                for op in next(t for t in config["tables"] if t["name"] == name).get(
-                    "transforms", []
-                )
-                for col in op["columns"]
-            }
+            declared = list(declared_columns(config, name))
+            names = declared + extra.get(name, [])
             path = tmp_path / f"{name}.csv"
             path.write_text(",".join(names) + "\n" + ",".join("1" for _ in names) + "\n")
             config["sources"][name] = _csv(path)
-            assert set(declared_columns(config, name)) - drops <= set(names)
         profile = profile_source(config, seed=0)
         plan = compile_plan(config, profile, decoy_engine_version="0")
         for name in tables:
-            drops = {
-                col
-                for op in next(t for t in config["tables"] if t["name"] == name).get(
-                    "transforms", []
-                )
-                for col in op["columns"]
-            }
-            assert set(declared_columns(config, name)) - drops == set(
+            assert set(declared_columns(config, name)) - _drops(config, name) == set(
                 known_output_columns(plan, name)
             ), name

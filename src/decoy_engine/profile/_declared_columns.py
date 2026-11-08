@@ -89,7 +89,7 @@ def source_columns(
         )
         return tuple(str(c) for c in frame.columns)
     schema = build_declared_source(table, dict(descriptor), file_access=file_access).schema()
-    return tuple(schema.names)
+    return arrow_columns(schema)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -131,6 +131,7 @@ def declaration_findings(
                     item.table,
                     f"has no tables entry{width}; add a table named {item.table} that lists "
                     "every column, or remove the source",
+                    item.columns or (),
                 )
             )
         elif item.columns is not None and kinds.get(item.table) == "mask":
@@ -156,9 +157,12 @@ def check_columns_declared(config: Mapping[str, Any], inputs: Sequence[Declarati
     if not findings:
         return
     first = findings[0]
-    if first.kind == "table":
+    kind = first.kind
+    if kind == "table":
         raise source_refusal(CODES.SOURCE_FILE_UNDECLARED_TABLE, first.table, first.detail)
-    raise source_refusal(CODES.SOURCE_FILE_UNDECLARED_COLUMN, first.table, first.detail)
+    if kind == "column":
+        raise source_refusal(CODES.SOURCE_FILE_UNDECLARED_COLUMN, first.table, first.detail)
+    raise AssertionError("unreachable finding kind")
 
 
 def _config_sources(config: Mapping[str, Any]) -> tuple[tuple[str, Mapping[str, Any]], ...]:
