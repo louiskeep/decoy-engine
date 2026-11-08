@@ -138,3 +138,12 @@ def test_profile_types_refuses_any_walk_error(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(_value_redaction, "_walk", lambda root: ({}, ["unclassified X.y"]))
     with pytest.raises(TypeError, match=r"cannot cover: \['unclassified X.y'\]"):
         profile_types.__wrapped__()
+
+
+def test_a_value_free_field_the_shape_check_cannot_verify_fails_the_walk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    free = _value_redaction.VALUE_FREE_FIELDS | {("FieldStats", "extra")}
+    monkeypatch.setattr(_value_redaction, "VALUE_FREE_FIELDS", free)
+    _, errors = _walk(_root(("fields", list[_field_stats_with("extra", dict[str, int])])))
+    assert errors == ["unchecked shape FieldStats.extra"]

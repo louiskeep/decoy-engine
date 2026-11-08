@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, get_type_hints
 
 import pandas as pd
 import pytest
@@ -25,7 +25,9 @@ from decoy_engine.profiling._value_redaction import (
     POLICY_REDACTED,
     REDACTED,
     VALUE_FIELDS,
+    VALUE_FREE_FIELDS,
     Rule,
+    _conforms,
     profile_types,
 )
 
@@ -298,6 +300,54 @@ def test_an_unknown_key_in_a_sensitive_column_is_replaced() -> None:
         {"value": REDACTED, "count": 1, "pct": 1.0, "first_seen": REDACTED}
     ]
     assert "CANARY" not in json.dumps(doc)
+
+
+def _every_owner() -> dict[str, Any]:
+    field = {
+        "name": "ssn",
+        **_SENSITIVE,
+        "top_values": [{"value": "v", "count": 1, "pct": 1.0}],
+        "detector_matches": [{"detector_id": "ssn", "match_rate": 1.0}],
+        "sentinels": [{"kind": "k", "value": "v", "count": 1, "note": "n"}],
+        "distribution": {"kind": "categorical", "data": [1.0], "labels": ["v"]},
+        "detection_trail": [{"signal": "s"}],
+    }
+    return {"source_label": "t.csv", "fields": [field]}
+
+
+_OWNER_PATHS: dict[str, tuple[Any, ...]] = {
+    "ColumnProfile": (),
+    "FieldStats": ("fields", 0),
+    "TopValue": ("fields", 0, "top_values", 0),
+    "DetectorMatch": ("fields", 0, "detector_matches", 0),
+    "SentinelFlag": ("fields", 0, "sentinels", 0),
+    "Distribution": ("fields", 0, "distribution"),
+    "DetectionSignal": ("fields", 0, "detection_trail", 0),
+}
+
+
+@pytest.mark.parametrize("slot", sorted(VALUE_FREE_FIELDS), ids="/".join)
+def test_an_ill_typed_value_free_slot_is_replaced(slot: tuple[str, str]) -> None:
+    # A hand-edited file can put a cell in any slot; only the declared type keeps it.
+    type_name, key = slot
+    canary = f"CANARY-{type_name}-{key}"
+    classes = {cls.__name__: cls for cls in profile_types().values()}
+    hint = get_type_hints(classes[type_name])[key]
+    value: Any = {"x": canary} if _conforms(canary, hint) else canary
+    doc = _every_owner()
+    owner: Any = doc
+    for step in _OWNER_PATHS[type_name]:
+        owner = owner[step]
+    owner[key] = value
+    assert canary in json.dumps(doc)
+    assert canary not in json.dumps(redact_profile_dict(doc))
+
+
+def test_a_well_typed_sensitive_column_keeps_its_value_free_slots() -> None:
+    out = redact_profile_dict(_every_owner())["fields"][0]
+    assert out["pii_score"] == 1.0 and out["is_likely_unique"] is True
+    assert out["top_values"][0]["count"] == 1 and out["detector_matches"][0]["match_rate"] == 1.0
+    assert out["distribution"]["data"] == [1.0] and out["detection_trail"] == [{"signal": "s"}]
 
 
 def test_an_unknown_key_outside_a_sensitive_column_follows_its_scope() -> None:

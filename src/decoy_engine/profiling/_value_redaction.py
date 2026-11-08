@@ -20,6 +20,7 @@ import dataclasses
 import enum
 import functools
 import math
+import numbers
 import types
 from collections.abc import Iterator, Mapping
 from typing import Any, Final, TypeGuard, Union, get_args, get_origin, get_type_hints
@@ -123,6 +124,37 @@ def _nests_dataclass(hint: Any) -> bool:
     )
 
 
+_SCALARS: Final[Mapping[Any, tuple[type, ...]]] = types.MappingProxyType(
+    {bool: (bool,), int: (numbers.Integral,), float: (numbers.Real,), str: (str,)}
+)
+
+
+def _checkable(hint: Any) -> bool:
+    """True when `_conforms` can verify a value against `hint` (scalars, `list`, `Optional`)."""
+    origin = get_origin(hint)
+    if origin in (Union, types.UnionType, list):
+        return all(_checkable(a) for a in get_args(hint))
+    return hint is type(None) or hint in _SCALARS or dataclasses.is_dataclass(hint)
+
+
+def _conforms(value: Any, hint: Any) -> bool:
+    """Does a loaded JSON value have the declared type? Nested dataclasses are checked as containers."""
+    origin = get_origin(hint)
+    if origin in (Union, types.UnionType):
+        return any(_conforms(value, a) for a in get_args(hint))
+    if origin is list:
+        (item,) = get_args(hint)
+        return type(value) is list and all(_conforms(v, item) for v in value)
+    if dataclasses.is_dataclass(hint):
+        return True
+    if hint is type(None):
+        return value is None
+    if isinstance(value, bool):
+        return hint is bool  # a bool is not a count or a score
+    # numbers ABCs, so a NumPy count or score from the profiler still conforms.
+    return isinstance(value, _SCALARS.get(hint, ()))
+
+
 def _has_value_rules(cls: type) -> bool:
     return any(t == cls.__name__ for t, _ in VALUE_FIELDS)
 
@@ -148,6 +180,8 @@ def _walk(root: type) -> tuple[dict[_Steps, type], list[str]]:
             pair = (cls.__name__, f.name)
             if (pair in VALUE_FIELDS) == (pair in VALUE_FREE_FIELDS):
                 errors.append(f"unclassified {cls.__name__}.{f.name}")
+            elif pair in VALUE_FREE_FIELDS and not _checkable(hints[f.name]):
+                errors.append(f"unchecked shape {cls.__name__}.{f.name}")
             inner, steps = _unwrap(hints[f.name])
             if dataclasses.is_dataclass(inner) and isinstance(inner, type):
                 visit(inner, (*path, f.name, *steps))
@@ -211,10 +245,12 @@ def _containers(node: Any, steps: _Steps, parent: Any, key: Any) -> Iterator[dic
         yield from _containers(node[step], rest, node, step)
 
 
-def _apply(container: dict[str, Any], rules: Mapping[str, Rule], known: frozenset[str]) -> None:
-    # Default-deny: a key this engine does not know (a newer writer, a hand edit) may hold a cell.
-    for name in container.keys() - known:
-        container[name] = REDACTED
+def _apply(container: dict[str, Any], rules: Mapping[str, Rule], shapes: Mapping[str, Any]) -> None:
+    # Default-deny: a key this engine does not know (a newer writer, a hand edit) may hold a cell,
+    # and so may a value-free slot whose value is not the declared type (a string score).
+    for name in container.keys() - rules.keys():
+        if name not in shapes or not _conforms(container[name], shapes[name]):
+            container[name] = REDACTED
     for name, rule in rules.items():
         if name not in container or container[name] is None:
             continue
@@ -229,25 +265,33 @@ def _apply(container: dict[str, Any], rules: Mapping[str, Rule], known: frozense
             container[name] = REDACTED
 
 
-def _known(cls: type) -> frozenset[str]:
-    return frozenset(f.name for f in dataclasses.fields(cls))
+def _shapes(cls: type) -> Mapping[str, Any]:
+    """Declared type of each value-free field of `cls`, by key."""
+    hints = get_type_hints(cls)
+    return types.MappingProxyType(
+        {
+            f.name: hints[f.name]
+            for f in dataclasses.fields(cls)
+            if (cls.__name__, f.name) in VALUE_FREE_FIELDS
+        }
+    )
 
 
 @functools.cache
-def _field_plan() -> tuple[tuple[_Steps, Mapping[str, Rule], frozenset[str]], ...]:
-    """(steps below one `fields[*]` entry, rules, known keys) for every type under a field."""
+def _field_plan() -> tuple[tuple[_Steps, Mapping[str, Rule], Mapping[str, Any]], ...]:
+    """(steps below one `fields[*]` entry, rules, value-free shapes) for every type under a field."""
     plan = []
     for path, cls in profile_types().items():
         if path[:2] == ("fields", _ITEM):
             rules = {f: r for (t, f), r in VALUE_FIELDS.items() if t == cls.__name__}
-            plan.append((path[2:], types.MappingProxyType(rules), _known(cls)))
+            plan.append((path[2:], types.MappingProxyType(rules), _shapes(cls)))
     return tuple(plan)
 
 
 def _redact_field(fields: list[Any], index: int) -> None:
-    for steps, rules, known in _field_plan():
+    for steps, rules, shapes in _field_plan():
         for container in _containers(fields[index], steps, fields, index):
-            _apply(container, rules, known)
+            _apply(container, rules, shapes)
 
 
 def _detached(root: Mapping[str, Any]) -> dict[str, Any]:
@@ -272,9 +316,9 @@ def redact_profile_dict(doc: Mapping[str, Any], *, include_values: bool = False)
     """A copy of a profile document with the value-sensitive columns' cell values removed.
 
     Never mutates `doc` and never trusts its `value_policy` marker, so a second pass is a
-    no-op and a forged or legacy file is still redacted. A key no profile type declares is
-    replaced at the root and inside a value-sensitive column, since a newer or hand-edited
-    file may keep a cell there. `include_values=True` keeps every value and adds a `raw`
+    no-op and a forged or legacy file is still redacted. A key no profile type declares, or a
+    value-free key holding a value of the wrong type, is replaced at the root and inside a
+    value-sensitive column, since a newer or hand-edited file may keep a cell there. `include_values=True` keeps every value and adds a `raw`
     policy only when the document has none.
     """
     if not isinstance(doc, Mapping):
@@ -283,8 +327,8 @@ def redact_profile_dict(doc: Mapping[str, Any], *, include_values: bool = False)
         raise TypeError(f"include_values must be a bool, not {type(include_values).__name__}")
     out = _detached(doc)
     if not include_values:
-        for key in out.keys() - _known(ColumnProfile) - {VALUE_POLICY_KEY, REDACTED_COLUMNS_KEY}:
-            out[key] = REDACTED
+        # The two marker keys are rewritten below, so their loaded values never survive.
+        _apply(out, {}, _shapes(ColumnProfile))
     fields = out.get("fields")
     names: list[str] = []
     if isinstance(fields, list):
