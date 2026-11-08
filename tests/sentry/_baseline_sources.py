@@ -122,16 +122,6 @@ SOURCES: tuple[Source, ...] = (
         ),
     ),
     Source(
-        "file-access-registry",
-        "tests/sentry/file_access_registry.toml",
-        toml_keys("tests/sentry/file_access_registry.toml"),
-    ),
-    Source(
-        "file-access-modules",
-        "tests/sentry/file_access_modules.toml",
-        toml_keys("tests/sentry/file_access_modules.toml"),
-    ),
-    Source(
         "reason-unchecked-helpers",
         "tests/sentry/baselines/reason-unchecked-helpers.json",
         in_code("test_reason_registry.py", "UNCHECKED_HELPERS"),
@@ -234,6 +224,8 @@ NOT_A_LIST: dict[str, str] = {
     "reason-registry-release.json": "released reason registry, frozen by the F29 registry tests",
     "consumer-contract.json": "F29 consumer contract, compared whole by test_reason_registry",
     "openapi.json": "generated schema used as a negative fixture in a residual-surface test",
+    "file_access_registry.toml": "file access registry, allowed to grow; guarded by its Count header",
+    "file_access_modules.toml": "file access module list, allowed to grow with new access modules",
 }
 
 
