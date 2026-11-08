@@ -128,7 +128,7 @@ def test_a_tampered_input_is_refused() -> None:
 
 def test_logs_travel_with_their_hash() -> None:
     log = b'{"log_schema":"decoy-job-log/v1"}\n{"kind":"phase"}\n'
-    lines = _lines([], logs=[("11111111-2222-4333-8444-555555555555", log)])
+    lines = _lines([], keep_paths=True, logs=[("11111111-2222-4333-8444-555555555555", log)])
     header, item = _read(lines)
     assert isinstance(item, ExportedLog) and item.verified and item.content.encode() == log
     tampered = lines[1].replace(b"phase", b"phasf")
@@ -137,7 +137,7 @@ def test_logs_travel_with_their_hash() -> None:
 
 def test_non_utf8_log_is_refused() -> None:
     with pytest.raises(RecordError):
-        _lines([], logs=[("x", b"\xff\xfe")])
+        _lines([], keep_paths=True, logs=[("x", b"\xff\xfe")])
 
 
 @pytest.mark.parametrize(
