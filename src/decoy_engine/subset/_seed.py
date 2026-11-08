@@ -60,29 +60,37 @@ def _predicate_expr(p: Predicate, kf: pl.DataFrame, table: str) -> pl.Expr:
     if p.op == "is_not_null":
         return c.is_not_null()
     target = kf.schema[p.column]
-    values = list(p.value) if p.op == "in" else [p.value]
     try:
-        if p.op in _ORDERING and _is_decimal_on_float(p.value, target):
-            # Decimal("0.1") round-trips through Float64 0.1 but is below it.
-            return _range_expr(c, p.op, p.value, target)
-        try:
-            literal = _literals_exact(values, target)
-        except _LITERAL_ERRORS:
-            if p.op not in _ORDERING:
-                raise
-            bridged = _naive_temporal_range(c, p.op, p.value, target)
-            if bridged is not None:
-                return bridged
-            if not _is_real_bound(p.value, target):
-                raise
-            return _range_expr(c, p.op, p.value, target)
+        expr = _literal_predicate_expr(c, p, target)
     except _LITERAL_ERRORS:
+        expr = None
+    if expr is None:
         # Same boundary as explicit keys: polars' error text echoes the literal.
+        # Raised outside the handler so no chained cause or context carries it.
         raise SubsetConfigError(
             code=reasons.config.SUBSET_SEED_KEY_TYPE,
             message=f"table {table!r}: filter literal(s) for column {p.column!r} do not "
             f"convert exactly to the column's {_dtype_label(target)} type",
-        ) from None
+        )
+    return expr
+
+
+def _literal_predicate_expr(c: pl.Expr, p: Predicate, target: pl.DataType) -> pl.Expr:
+    values = list(p.value) if p.op == "in" else [p.value]
+    if p.op in _ORDERING and _is_decimal_on_float(p.value, target):
+        # Decimal("0.1") round-trips through Float64 0.1 but is below it.
+        return _range_expr(c, p.op, p.value, target)
+    try:
+        literal = _literals_exact(values, target)
+    except _LITERAL_ERRORS:
+        if p.op not in _ORDERING:
+            raise
+        bridged = _naive_temporal_range(c, p.op, p.value, target)
+        if bridged is not None:
+            return bridged
+        if not _is_real_bound(p.value, target):
+            raise
+        return _range_expr(c, p.op, p.value, target)
     if p.op == "in":
         return c.is_in(literal.implode())
     return _OPS[p.op](c, pl.lit(literal).first())
@@ -404,12 +412,15 @@ def _select_keys(spec: SeedSpec, kf: pl.DataFrame) -> frozenset[int]:
         try:
             col = _literals_exact([tup[i] for tup in spec.keys], kf.schema[c])
         except _LITERAL_ERRORS:
-            # The cast error text echoes key values; name only table and column.
+            col = None
+        if col is None:
+            # The cast error text echoes key values; name only table and column, with
+            # no chained cause or context.
             raise SubsetConfigError(
                 code=reasons.config.SUBSET_SEED_KEY_TYPE,
                 message=f"table {spec.table!r}: explicit seed key(s) for key column {c!r} "
                 f"do not convert exactly to the column's {_dtype_label(kf.schema[c])} type",
-            ) from None
+            )
         columns.append(col.alias(c))
     # Engine null-key rule (`fk_join_key_tuple` callers skip any tuple with a
     # NULL_FK_KEY part): a requested tuple with a null part matches no row.
