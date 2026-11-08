@@ -79,10 +79,9 @@ def kind_spec(kind: str) -> KindSpec | None:
 
 
 def require_writable(kind: str) -> KindSpec:
-    """The spec to build a record of ``kind`` from. Unknown names and reserved kinds are refused."""
+    """The spec to build a record of ``kind`` from. Unknown names are refused; ``build`` refuses a
+    reserved kind where it needs the write model."""
     spec = _registry.get(kind)
     if spec is None:
         raise RecordError("record_invalid", (("kind",),))
-    if spec.reserved:
-        raise RecordError("record_kind_reserved")
     return spec
