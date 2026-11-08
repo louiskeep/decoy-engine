@@ -962,11 +962,18 @@ class TestDefectsThroughRoutes:
         tables_equal(out, expected)
         assert out.column_names == ["id", "s"]
 
-    def test_duplicate_field_table_without_transforms_fails_as_on_main(self, tmp_path):
+    def test_duplicate_field_table_without_transforms_is_refused_with_the_code(self, tmp_path):
         clean = pa.table({"a": [1, 2], "s": ["x", "y"]})
         cfg = single_table_config(tmp_path, clean, columns=[{"name": "s", "strategy": "redact"}])
-        with pytest.raises(KeyError, match="exists 2 times"):
+        with pytest.raises(TransformError) as exc:
             _run(cfg, _dup_table())
+        err = exc.value
+        assert type(err) is TransformError and err.code == _DUP
+        # Only the config-key table name and a count: no field name, no cell value, nothing chained.
+        expected = "table 't' has 1 duplicated field name(s)"
+        assert str(err) == expected and err.args == (expected,)
+        assert getattr(err, "__notes__", []) == []
+        assert err.__cause__ is None and err.__context__ is None
 
     def test_stored_index_reference_without_transforms_fails_as_on_main(self, tmp_path):
         tbl = _stored_table()

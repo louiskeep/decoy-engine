@@ -89,9 +89,8 @@ class GlobalSettings(BaseModel):
     `SecretKeyProvider` and NEVER serializes the raw secret into the plan,
     a log, or the manifest. A programmatically supplied
     `run(key_provider=...)` takes precedence over this ref. Unset means no
-    secret: pre-GA the keyed surface falls back to `job_seed`
-    (byte-identical to today); at GA a keyed plan with no secret
-    hard-errors. See `decoy_engine.keyprovider`.
+    secret: a keyed plan with no secret is refused before any source
+    read (no `job_seed` fallback). See `decoy_engine.keyprovider`.
     `freetext_advisory_min_avg_length` / `freetext_advisory_min_distinctness`
     (HC-7) drive the compile-time clinical free-text advisory
     (`quality._freetext_advisory`): an unmasked (`strategy: passthrough`)

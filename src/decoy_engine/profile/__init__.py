@@ -26,6 +26,7 @@ from decoy_engine.profile._readers import (
     LazySource,
     ProfileSource,
     RowCount,
+    build_declared_source,
     build_profile_source,
 )
 from decoy_engine.profile._serialize import profile_from_json, profile_to_json
@@ -47,6 +48,7 @@ __all__ = [
     "Relationship",
     "RowCount",
     "TableProfile",
+    "build_declared_source",
     "build_profile_source",
     "profile_from_json",
     "profile_hash",

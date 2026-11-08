@@ -39,7 +39,7 @@ from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.profile._readers import (
     BOUNDED_FALLBACK_ROWS,
     ProfileSource,
-    build_profile_source,
+    build_declared_source,
 )
 from decoy_engine.profile._types import Profile, Relationship, TableProfile
 from decoy_engine.profile._walk import walk_dataframe
@@ -131,9 +131,7 @@ def profile_source(
     sources = profile_descriptors(config)
     tables: list[TableProfile] = []
     for table_name, source_descriptor in sources.items():
-        reader = build_profile_source(
-            source_descriptor, field_key=f"sources.{table_name}.path", table=table_name
-        )
+        reader = build_declared_source(table_name, source_descriptor)
         table = _profile_one_source(
             reader,
             table_name=table_name,

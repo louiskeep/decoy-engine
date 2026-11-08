@@ -9,6 +9,77 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (init wizard E3: keyed columns of a config, 2026-11-08)
+
+`decoy_engine` and `decoy_engine.secret_providers` export `keyed_columns_for_config` and
+`KeyedColumn`. They list each config column that needs the mask secret as table, column and
+strategy, in config order, skipping generate tables. `secret_requirements_for_config` now walks the
+config through the same private walk, so the two cannot disagree; its result is unchanged. A
+composite parent key still needs the secret and is not listed. The `GlobalSettings` docstring no
+longer claims a `job_seed` fallback for a keyed plan without a secret.
+
+### Fixed (slice 0 item 3: derived expression visibility, 2026-11-01)
+
+- A `derived` expression now sees exactly the columns it references, read by real column
+  name. Before, the row context came from pandas `itertuples()._asdict()`, which renames a
+  column whose name is not an identifier or starts with an underscore to `_<position>`: an
+  expression `_1 + 0` could read an undeclared column at position 1, and a declared `_total`
+  could not be read at all.
+- A per-row `derived` failure no longer echoes the cell value: the text is the output
+  column, the row index and a fixed reason word, with nothing chained. In mask execution it is
+  `ExecutionError(code="derived_evaluation_failed")`; a reference missing from the frame is
+  refused once before any row with `derived_ref_missing` (two new `runtime` reasons, registry
+  1.9.0).
+- A source table with duplicate field names (caller Arrow tables, `LazySource` footers,
+  `source_loader` tables, non-CSV declared descriptors, chunks from any iterator) is refused
+  with `TransformError(code="duplicate_source_field_names")` at the earliest point of every
+  public entry, before routing, profiling and any pandas conversion, instead of an uncoded
+  `KeyError`/`ValueError` or a silent out-of-core success. `run_pipeline_isolated()` refuses
+  in the child, so config-only refusals win as in process; a duplicate table that Parquet
+  cannot serialize still fails at serialization. The message names the table and a count,
+  no longer the duplicated names.
+
+### Fixed (value-free FK key and pandas-ingest attribution errors, 2026-11-02)
+
+Four `ExecutionError` messages quoted a key or a source cell, and a normal `PandasExecutionAdapter`
+or `run_pipeline` job reached each one. Each message now names the table and column only:
+
+- `fk_nullable_int_array` (`out_of_core_fk_key_dtype_unsupported`): a resolved FK key above the
+  UInt64 range or below the Int64 range (e.g. a categorical parent result) used to be printed, and a
+  uint64 orphan beside a negative resolved key used to append pandas' text (`Python integer ... out of
+  bounds for uint64`). The message is now `FK output column <table>.<column>: a resolved key exceeds
+  the UInt64 range` / `is below the Int64 range` / `cannot share one lossless nullable UInt64 array`,
+  raised with no cause or context. The function takes keyword-only `table` and `column`.
+- `to_pandas_fk_safe`: the ingestion backstop no longer appends the Arrow error or the Arrow type.
+- `full_frame_value_unrepresentable` and `chunked_passthrough_value_unrepresentable` no longer append
+  the pandas/Arrow conversion error (`Value 3001 has non-zero nanoseconds`, `year 12921 is out of
+  range`). The full-frame error's chain is suppressed; the chunked error keeps the conversion error as
+  its `__cause__` for diagnosis.
+
+### Fixed (value-free discovery, subset-seed and derived-expression errors, 2026-11-01)
+
+Several public error texts forwarded library or engine text that can quote a source cell, and that
+text reaches API responses and job logs through `str(exc)`. Each one now carries a fixed message per
+failure class and no cause or context chain:
+
+- `run_discovery_sql`: `DiscoverySqlError` no longer includes DuckDB's text (a failed cast quoted the
+  string, e.g. an SSN). Its message is one of `SQL_CONVERSION_FAILED` (conversion, out of range,
+  invalid input), `SQL_NOT_EXECUTABLE` (parser, binder, catalog) or `SQL_FAILED`, under both the
+  ambient and strict policies. An execution error at the fetch step under the ambient policy used to
+  escape as a raw `duckdb.Error`; it is now a `DiscoverySqlError`, as at the execute step. A
+  statement DuckDB cannot parse used to raise a raw `ParserException` from the statement-kind check;
+  it is now `DiscoverySqlError(SQL_NOT_EXECUTABLE)`. Memory and policy failures under a strict policy
+  still keep their class.
+- `select_seed_rows` (`SubsetConfigError`): `subset_seed_key_type` names the table, the key column
+  and its type instead of quoting Polars' text with the mismatched keys, and neither an explicit-key
+  nor a filter-literal refusal chains the conversion error as its cause or context. `subset_seed_key_uncanonicalizable` names
+  the key column and a reason chosen by reason code (float, timezone-naive datetime).
+- `_canonicalize_source` (`GenerationError`, `float_canonicalization_unsupported`,
+  `timezone_naive_datetime`) no longer formats the value with `!r`.
+- Derived expressions: a row-evaluation failure gives the column and row with a closed-set reason
+  instead of the evaluator's text, and the `slice()` argument error names the argument's type, not
+  its value.
+
 ### Breaking for consumers
 
 - A csv file source must set `has_header` (CONFIG-EXPLICIT E1). Without it validation fails with

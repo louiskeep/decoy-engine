@@ -285,12 +285,14 @@ from decoy_engine.sdk import (
     WriteResult,
 )
 from decoy_engine.secret_providers import (
+    KeyedColumn,
     SecretCachePolicy,
     SecretDescriptor,
     SecretProvider,
     SecretProviderError,
     SecretProviderRegistry,
     SecretRef,
+    keyed_columns_for_config,
     register_secret_provider,
 )
 from decoy_engine.unmask import UnmaskColumnReport, UnmaskResult, unmask_pipeline
@@ -403,6 +405,7 @@ __all__ = [
     "IdentityDomain",
     "JobEstimate",
     "KeyProvider",
+    "KeyedColumn",
     "KeyedStrategyRequiresSecret",
     "LicenseError",
     "LicenseExpiredError",
@@ -509,6 +512,7 @@ __all__ = [
     "get_default_registry",
     "is_pre_ga",
     "job_seed_for_config",
+    "keyed_columns_for_config",
     "list_generate_faker_providers",
     "load_custom_providers",
     "load_detectors",

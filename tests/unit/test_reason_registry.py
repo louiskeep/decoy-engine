@@ -233,3 +233,15 @@ def test_the_baseline_fixture_is_frozen() -> None:
 
     digest = hashlib.sha256((FIXTURES / "reason-baseline.json").read_bytes()).hexdigest()
     assert digest == "8b3345c2d8e5eb3541cde2f238b7048d712e5fc3903806f7ec79642520fed118"
+
+
+@pytest.mark.parametrize("code", ["derived_ref_missing", "derived_evaluation_failed"])
+def test_derived_visibility_codes_are_registered_execution_errors(code: str) -> None:
+    """T7 (slice 0 item 3): the two additive `runtime` identities exist, owned by
+    `ExecutionError`, with an exported symbol whose value is the wire string."""
+    from decoy_engine import reasons
+
+    spec = reasons.find("runtime", code)
+    assert spec is not None
+    assert spec.owner == "ExecutionError"
+    assert getattr(reasons.runtime, code.upper()) == code

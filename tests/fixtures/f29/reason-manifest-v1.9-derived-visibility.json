@@ -1,0 +1,82 @@
+{
+  "entries": [
+    {
+      "code": "derived_evaluation_failed",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "ExecutionError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.9.0",
+      "summary": "Derived evaluation failed.",
+      "symbol": "DERIVED_EVALUATION_FAILED"
+    },
+    {
+      "code": "derived_ref_missing",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "ExecutionError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.9.0",
+      "summary": "Derived reference missing.",
+      "symbol": "DERIVED_REF_MISSING"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.9.0"
+}

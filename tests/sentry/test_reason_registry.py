@@ -492,7 +492,7 @@ UNCLASSIFIED: dict[str, str] = {
     "FixedWidthWriteError": "data-derived layout errors; no stable code",
     "CsvRecordTooLarge": "input-shape error raised inside the CSV framer; no stable code yet",
     "CsvUnterminatedQuote": "input-shape error raised inside the CSV framer; no stable code yet",
-    "DiscoverySqlError": "data-discovery SQL failures can echo statements; no stable code",
+    "DiscoverySqlError": "data-discovery SQL failures carry fixed per-class text; no stable code",
     "NameHintLoaderError": "a reference-data load error; no stable code",
     "ModelPackLoadError": "a model-pack load error; no stable code",
     "Ff1Error": "an FF1 primitive error; surfaces as FpeUnencryptable/Checksum where it matters",
