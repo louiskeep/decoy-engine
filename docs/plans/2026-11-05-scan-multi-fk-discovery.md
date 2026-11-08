@@ -604,8 +604,20 @@ S1a.2.
   by REG-RENUMBER (section 5.0).
 - `docs/compatibility-contract.md` (§3.1 tag list, §3.4 note),
   `docs/reasons.md`, `CHANGELOG.md`.
+- new `src/decoy_engine/profiling/_scan_text_checks.py`: the suspect-header guard and the
+  leading-zero count, split out of `scan_set.py` to keep it under the size budget.
+- `src/decoy_engine/execution/__init__.py`: export `refuse_duplicate_field_names` so the scan
+  calls the one duplicate-name refusal through the public execution boundary.
 - tests: `tests/unit/profiling/test_scan_set.py` and
   `tests/unit/profiling/test_scan_sample_parity.py`.
+
+**Placement** (against CODEMAP "Where Things Go" on `7a61be3c`).
+
+| New file | CODEMAP row | Neighbor | Directory count |
+|---|---|---|---|
+| `src/decoy_engine/profiling/scan_set.py` | `profiling/` (Profiling and detectors) | `profiling/profiler.py` | 9 direct modules after, under the 25 cap |
+| `src/decoy_engine/profiling/_scan_text_checks.py` | `profiling/` | `profiling/_patterns.py` | same |
+| `tests/unit/profiling/test_scan_set.py`, `test_scan_sample_parity.py` | `tests/unit/<package>/` | `tests/unit/profiling/` existing tests | existing directory |
 
 **Behavior.**
 

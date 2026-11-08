@@ -86,6 +86,7 @@ from decoy_engine.execution._governor import (
     GovernorTripRecord,
     run_job_with_governor,
 )
+from decoy_engine.execution._guards import refuse_duplicate_field_names
 from decoy_engine.execution._isolated_common import IsolatedRunResult
 from decoy_engine.execution._isolated_run import run_pipeline_isolated
 from decoy_engine.execution._job_estimate import JobEstimate, estimate_job
@@ -168,6 +169,7 @@ __all__ = [
     "order_work",
     "probe_fits",
     "probe_peak_bytes",
+    "refuse_duplicate_field_names",
     "run_job_with_governor",
     "run_mask_chunked",
     "run_mask_pipeline_chunked",
