@@ -9,6 +9,15 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (init wizard E3: keyed columns of a config, 2026-11-08)
+
+`decoy_engine` and `decoy_engine.secret_providers` export `keyed_columns_for_config` and
+`KeyedColumn`. They list each config column that needs the mask secret as table, column and
+strategy, in config order, skipping generate tables. `secret_requirements_for_config` now walks the
+config through the same private walk, so the two cannot disagree; its result is unchanged. A
+composite parent key still needs the secret and is not listed. The `GlobalSettings` docstring no
+longer claims a `job_seed` fallback for a keyed plan without a secret.
+
 ### Added (SCAN-ML M1: optional ML detector config, status and loading, 2026-11-07)
 
 `pre_scan.detectors` and `post_scan.detectors` choose between `regex` (always on), the lgbm
