@@ -599,7 +599,7 @@ phases: Pre-scan (`pre_scan`: profile / detect), Transform (`transform`: mask / 
 ### Added (F29: stable machine-readable errors and progress, engine slices, 2026-10-29)
 
 New public `decoy_engine.reasons`: one engine-owned, versioned registry of reason codes (`registry_version`
-1.0.0; 868 identities across 12 namespaces when F29 landed, 884 across 14 after the STORM close-out merge below, 891 across 14 after the F13 merge (the seven `runtime` secret-provider identities, registry 1.1.0; the pinned manifest stays the 884-entry append-only baseline), 893 across 14 after slice 0 item 3 (registry 1.9.0), of which 841 are the frozen baseline and 2 are tombstones) with a fixed safe summary, kind, phase rules and, per phase,
+1.0.0; 868 identities across 12 namespaces when F29 landed, 884 across 14 after the STORM close-out merge below, 891 across 14 after the F13 merge (the seven `runtime` secret-provider identities, registry 1.1.0; the pinned manifest stays the 884-entry append-only baseline), of which 841 are the frozen baseline and 2 are tombstones) with a fixed safe summary, kind, phase rules and, per phase,
 a severity, outcome category and retry class (`never`, `configuration_repair`, `environment_repair`,
 `retry_operation`, `restart_attempt`, `unknown`). Every producer now references a registry symbol whose
 value is the legacy wire string, so existing `.code` values, `CODES` attributes and exception
