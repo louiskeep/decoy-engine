@@ -70,6 +70,7 @@ SENTRIES = (
     "tests/sentry/test_wave_b_no_registry_version_literal.py",
     "tests/sentry/parallel/test_serial_resources.py",
     "tests/sentry/parallel/test_stable_ids.py",
+    "tests/sentry/profiling/test_profile_value_registry.py",
     # Named sentries that live outside tests/sentry/.
     "tests/secret_providers/test_leak_sentry.py",
 )
