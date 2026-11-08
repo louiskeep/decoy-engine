@@ -43,10 +43,14 @@ hashes.
   predicate `is_free_text` (`FREE_TEXT_MIN_TOKENS = 3`), the per-detector rate over
   `iter_ner_spans_batch` (counts only, spans dropped; `ner_rates` is the only scoring entry),
   `NerRate.hit`, `NER_MIN_RATE = 0.211` (see below) and the rate bucket.
-- Reasons: registry 1.7.0 adds `config.detectors_invalid`, `config.post_scan_inactive`,
+- Reasons: registry 1.8.0 adds `config.detectors_invalid`, `config.post_scan_inactive`,
   `config.pre_scan_ner_inactive`, `config.ner_model_invalid`, `config.dismissal_invalid`,
   `provider.classifier_unavailable` and `provider.ner_model_incompatible`, pinned in
-  `tests/fixtures/f29/reason-manifest-v1.7-scanml-m1.json` (the SUB-STOP pattern).
+  `tests/fixtures/f29/reason-manifest-v1.8-scanml-m1.json` (the SUB-STOP pattern). The
+  slice first claimed the previous minor; LIB L0.1 took that minor on main first, so the merge renumbered this
+  slice to 1.8.0 by hand (the renumber tool refuses the one-line manifest list in
+  `docs/reasons.md` as `mixed-line`). `registry_renumber.py --check` still flags
+  `docs/reasons.md:21`; that line is L0.1's own entry, a known false positive.
 - Reason adapter: when a family exception carries a registered `ReasonCode` that is not in the
   family's namespace, the record uses the code's own namespace. The family lookup runs first, so a
   code registered in both namespaces keeps the family record (a `TransformError` with
@@ -163,11 +167,12 @@ later slice decides a hit; a synthetic boundary test pins 211/1000 as a hit and 
   not `detection/`, because detection is the base layer and must not import profiling. The plan
   carries this as Revision 5.
 - `pre_scan.ner_model` without `ner` in `pre_scan.detectors` is refused with its own code,
-  `config.pre_scan_ner_inactive`, in the same 1.7.0 claim.
+  `config.pre_scan_ner_inactive`, in the same 1.8.0 claim.
 - `ModelStatus` and `ModelUnavailableError` carry a `cause` the plan does not list, so a caller
   can tell a disabled, unimportable or bad pack apart.
 - The logger is built with `getChild` in `src`, so the string-target sentry does not read its name
-  as an import path; the test asserts the literal name.
+  as an import path; the test builds the name the same way and asserts it is the
+  `decoy_engine.detectors` logger and its parent.
 - The `pip install '.[ml]'` hint in the classifier refusal is left to M2, which moves the ML
   packages into the base install.
 - AT-M1d checks both models on the `ner-gate` leg, but that job installs `dev ner` without
