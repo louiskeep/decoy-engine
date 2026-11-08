@@ -343,6 +343,8 @@ def run_multi_table_split(
     warnings: list[Any] = []
     conversion_ms = 0.0
     corpora: list[Any] = []
+    # date_shift entity_key no-entity counts, one entry per (table, column) across both halves.
+    entity_fallback: list[Any] = []
     route_by_table: dict[str, Any] = {}
     lane_blocks: dict[str, Mapping[str, Any]] = {}
     for table in split.dispatched:
@@ -372,6 +374,7 @@ def run_multi_table_split(
         warnings.extend(unit_warnings)
         conversion_ms += unit_ms
         corpora.extend(unit_metrics.get("code_set_corpora", ()))
+        entity_fallback.extend(unit_metrics.get("date_shift_entity_fallback", ()))
         route_by_table[table] = unit_metrics["chunked_route"]
         lane_blocks[table] = unit_metrics["auto_chunk"]
         if sink is None and output_reason is not None:
@@ -406,6 +409,7 @@ def run_multi_table_split(
         warnings.extend(group.warnings)
         conversion_ms += group.boundary_conversion_ms
         corpora.extend(group_metrics.pop("code_set_corpora", ()))
+        entity_fallback.extend(group_metrics.pop("date_shift_entity_fallback", ()))
         row_errors = group.row_errors
 
     outputs = (
@@ -419,6 +423,10 @@ def run_multi_table_split(
     quality_metrics = group_metrics
     if corpora:
         quality_metrics["code_set_corpora"] = corpora
+    if entity_fallback:
+        quality_metrics["date_shift_entity_fallback"] = sorted(
+            entity_fallback, key=lambda e: (e["table"], e["column"])
+        )
     quality_metrics["chunked_route_by_table"] = route_by_table
     quality_metrics["auto_chunk"] = {
         "lane": _pipeline_auto_chunk.LANE_DISPATCHER,

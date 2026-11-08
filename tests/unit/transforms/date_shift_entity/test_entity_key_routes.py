@@ -291,3 +291,42 @@ def test_mixed_generate_and_mask_job_equals_the_oracle(tmp_path: Path) -> None:
         delta = _days(child["seen"][i].as_py(), out["seen"][i])
         assert offsets.setdefault(key, delta) == delta
     assert CHILD in got.quality_metrics["mixed_route"]["mask_tables"]
+
+
+def _keyed_table(rows: int) -> pa.Table:
+    return pa.table(
+        {
+            "pid": [None if i % 5 == 0 else f"p{i // 3}" for i in range(rows)],
+            "d": [f"2021-{1 + i % 12:02d}-{1 + i % 27:02d}" for i in range(rows)],
+        }
+    )
+
+
+@pytest.mark.parametrize(("rows_a", "rows_b"), [(40, 40), (40, 6)], ids=["both", "split"])
+def test_multi_table_chunked_run_reports_every_fallback(
+    tmp_path: Path, rows_a: int, rows_b: int
+) -> None:
+    """Both tables dispatched, or one dispatched and one below the threshold (whole frame)."""
+    cols = [passthrough("pid"), date_col("d", entity_key="pid")]
+    sources = {"a": _keyed_table(rows_a), "b": _keyed_table(rows_b)}
+    cfg = config(tmp_path, {"a": cols, "b": cols})
+    full = run(tmp_path, cfg, sources, execution_mode="full_frame")
+    chunked = run(tmp_path, cfg, sources, auto_chunk_threshold_rows=10, chunk_size_rows=7)
+    by_table = {
+        e["table"]: e["dispatched"] for e in chunked.quality_metrics["auto_chunk"]["tables"]
+    }
+    assert by_table == {"a": True, "b": rows_b == 40}
+    for name in sources:
+        assert chunked.outputs[name].equals(full.outputs[name]), name
+    want = full.quality_metrics["date_shift_entity_fallback"]
+    assert [e["table"] for e in want] == ["a", "b"]
+    assert chunked.quality_metrics["date_shift_entity_fallback"] == want
+
+
+def test_multi_table_chunked_run_without_entity_key_adds_no_key(tmp_path: Path) -> None:
+    cols = [passthrough("pid"), date_col("d")]
+    sources = {"a": _keyed_table(40), "b": _keyed_table(40)}
+    cfg = config(tmp_path, {"a": cols, "b": cols})
+    chunked = run(tmp_path, cfg, sources, auto_chunk_threshold_rows=10, chunk_size_rows=7)
+    assert "chunked_route_by_table" in chunked.quality_metrics
+    assert "date_shift_entity_fallback" not in chunked.quality_metrics
