@@ -10,12 +10,15 @@ touches raw data.
 
 A ColumnProfile's `to_dict()` is the raw form. Output meant to be saved or shown goes
 through `profile_document` (or `redact_profile_dict` for a loaded document), which removes
-cell values of value-sensitive columns unless `include_values=True`.
+cell values of value-sensitive columns unless `include_values=True`. A distribution
+snapshot meant to be written goes through `distribution_snapshot_document`, which does the
+same for the snapshot's stats.
 
 Pre-scan phase: the profiling entrypoint is `profile_columns`, returning a
 `ColumnProfile`. Depends on `decoy_engine.detection`.
 """
 
+from decoy_engine.profiling._snapshot_values import distribution_snapshot_document
 from decoy_engine.profiling._value_redaction import (
     is_value_sensitive,
     profile_document,
@@ -44,6 +47,7 @@ __all__ = [
     "SentinelFlag",
     "StrategyDefault",
     "TopValue",
+    "distribution_snapshot_document",
     "get_default_strategy",
     "is_value_sensitive",
     "known_detector_ids",

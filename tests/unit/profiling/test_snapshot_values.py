@@ -19,14 +19,14 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from decoy_engine.generation.statistical import load_spec, sample_column
+from decoy_engine.profiling import _snapshot_values as sv
 from decoy_engine.profiling import (
     distribution_snapshot_document,
     profile_columns,
     profile_document,
 )
-from decoy_engine.profiling import _snapshot_values as sv
 from decoy_engine.profiling._value_redaction import POLICY_RAW, POLICY_REDACTED, REDACTED
-from decoy_engine.quality.snapshot import compute_distribution_snapshot
+from decoy_engine.quality.snapshot import compute_distribution_snapshot, numeric_stats
 
 _FIRST = [
     "Abel", "Brina", "Cosmo", "Delia", "Ewan", "Fiora", "Gideon", "Hester", "Ivo", "Juno",
@@ -235,9 +235,7 @@ def test_the_fallback_takes_the_first_half_integer_no_cell_uses() -> None:
 
 
 @settings(max_examples=150, deadline=None)
-@given(
-    cells=st.lists(st.floats(allow_nan=False, allow_infinity=False), min_size=1, max_size=25)
-)
+@given(cells=st.lists(st.floats(allow_nan=False, allow_infinity=False), min_size=1, max_size=25))
 def test_the_domain_is_finite_and_never_a_cell(cells: list[float]) -> None:
     arr = np.array(cells)
     lo, hi = float(arr.min()), float(arr.max())
@@ -260,9 +258,9 @@ _DECIMALS = st.integers(0, 4).flatmap(
 @given(cells=st.lists(_DECIMALS.map(lambda d: float(str(d))), min_size=2, max_size=30))
 def test_decimal_grid_data_never_meets_an_edge(cells: list[float]) -> None:
     df = pd.DataFrame({"v": cells})
-    stats = _col(distribution_snapshot_document(df), "v")["stats"]
-    if not stats:
-        return  # not value-sensitive, so left as the raw snapshot
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(sv, "value_sensitive_names", lambda fields: [f["name"] for f in fields])
+        stats = _col(distribution_snapshot_document(df), "v")["stats"]
     assert len(stats["bin_edges"]) == 2
     assert stats["bin_counts"] == [len(cells)]
     assert not set(stats["bin_edges"]) & set(cells)
@@ -286,10 +284,13 @@ def test_one_bin_for_ids_ages_and_constants(force_sensitive: None) -> None:
     assert (stats["bin_edges"], stats["bin_counts"]) == ([-100, 200], [5000])
 
 
-def test_a_column_with_no_finite_value_is_left_alone(force_sensitive: None) -> None:
-    stats = _numeric([float("inf"), float("-inf")])
+def test_a_column_with_no_finite_value_is_left_alone() -> None:
+    series = pd.Series([float("inf"), float("-inf")])
+    stats = numeric_stats(series, bins=10)
+    before = copy.deepcopy(stats)
+    sv._coarse_range(series, stats, ["min", "max", "bin_edges", "bin_counts"])
+    assert stats == before
     assert stats["min"] is None
-    assert stats["bin_edges"] == []
 
 
 # AT-5
@@ -318,7 +319,7 @@ def test_datetime_bounds_are_the_years_around_the_data(force_sensitive: None) ->
 
 def test_categorical_values_become_aggregate_mass(force_sensitive: None) -> None:
     labels = ["[redacted]", "[redacted:1]", *[f"label-{i}" for i in range(38)]]
-    df = pd.DataFrame({"code": labels, "ssn": labels[::-1]})
+    df = pd.DataFrame({"code": labels, "ssn": [labels[i % 25] for i in range(40)]})
     raw = compute_distribution_snapshot(df, high_cardinality_columns=["code"])
     doc = distribution_snapshot_document(df, high_cardinality_columns=["code"])
     assert "[redacted" not in json.dumps(doc)
@@ -349,7 +350,8 @@ def _joint_frame(emails: list[str]) -> pd.DataFrame:
 
 
 _EMAILS = [f"user{i}@example.com" for i in range(40)]
-_OTHER_EMAILS = [f"w{(i * 7) % 40}@corp.example.org" for i in range(40)]
+# Same length profile as _EMAILS: lengths are kept, so only the labels may differ.
+_OTHER_EMAILS = [f"mail{(i * 7) % 40}@example.com" for i in range(40)]
 
 
 def test_a_joint_with_a_sensitive_side_has_no_cells() -> None:

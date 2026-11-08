@@ -16,8 +16,8 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from decoy_engine.profiling import distribution_snapshot_document
 from decoy_engine.profiling import _value_redaction as vr
+from decoy_engine.profiling import distribution_snapshot_document
 from decoy_engine.profiling._value_redaction import (
     SNAPSHOT_KINDS,
     SNAPSHOT_VALUE_FREE_STATS,
@@ -157,9 +157,7 @@ def test_a_sixth_kind_literal_is_seen_by_the_source_read() -> None:
 def _containers(doc: dict[str, Any], scope: str, names: set[str]) -> list[dict[str, Any]]:
     if scope == "joint":
         return list(doc["joints"])
-    return [
-        c["stats"] for n, c in doc["columns"].items() if c["kind"] == scope and n in names
-    ]
+    return [c["stats"] for n, c in doc["columns"].items() if c["kind"] == scope and n in names]
 
 
 def _numbers(node: Any) -> set[float]:

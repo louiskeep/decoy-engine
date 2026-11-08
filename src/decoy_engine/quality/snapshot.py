@@ -279,7 +279,7 @@ def _stats_for(
         stats = _categorical_stats(non_null.astype(str), top_k=top_k)
         return "categorical", stats
     if pd.api.types.is_numeric_dtype(non_null):
-        stats = _numeric_stats(non_null, bins=numeric_bins)
+        stats = numeric_stats(non_null, bins=numeric_bins)
         return "numeric", stats
     if pd.api.types.is_datetime64_any_dtype(non_null):
         return "datetime", _datetime_stats(non_null)
@@ -398,7 +398,7 @@ def _high_cardinality_categorical_stats(non_null: pd.Series) -> dict[str, Any]:
     return stats
 
 
-def _numeric_stats(
+def numeric_stats(
     non_null: pd.Series, *, bins: int, domain: tuple[float, float] | None = None
 ) -> dict[str, Any]:
     arr = pd.to_numeric(non_null, errors="coerce").dropna().to_numpy(dtype=float)
@@ -592,7 +592,7 @@ def _round(value: float) -> float:
     """Round to the snapshot's float precision; return 0.0 for non-finite.
 
     JSON does not encode NaN / +-Inf. Callers feed only finite values
-    here (the non-finite filter sits in _numeric_stats) but the round
+    here (the non-finite filter sits in numeric_stats) but the round
     helper keeps the guard local to avoid future regressions.
     """
     if not math.isfinite(value):
