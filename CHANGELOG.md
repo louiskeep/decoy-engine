@@ -25,9 +25,11 @@ similarity and contingency similarity per column pair (SDMetrics definitions, me
 chunked Gower distance to closest record with a real-to-real baseline and an optional holdout
 comparison, and the existing new-row and attack checks bundled as `synth-report/v1`. Every
 statistic of the real table passes the copula's disclosure floors first: pair scores are withheld
-for variables the model suppressed, for pairs whose rows fail the floors, for high-cardinality
-columns and over the release budget; contingency states under 11 rows are merged; DCR percentiles
-need 11 rows beyond them. `real` must reproduce the model's marginals. No change to any `quality`
+for variables the model suppressed, for pairs whose rows fail the floors, over the release budget,
+and for columns detectable as high-cardinality (more than 30 labels, or a full vocabulary longer
+than a collapsed column's top-K; a shorter full vocabulary is scored, under recoding); contingency states under 11 rows are merged; DCR percentiles
+need 11 rows beyond them, on the smaller of the query and reference sides. `synthetic` must be
+rows sampled from the model: with caller-chosen rows the report answers questions about `real`. `real` must reproduce the model's marginals. No change to any `quality`
 module, no new dependency, no reason codes.
 
 ### Added (V2-4.2 and V2-4.3: Gaussian copula synthesis, library only, 2026-11-07)

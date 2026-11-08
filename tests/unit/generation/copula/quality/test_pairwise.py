@@ -71,22 +71,54 @@ def test_spearman_matches_pandas_with_ties_and_nulls() -> None:
     assert pair(result, "x", "y").score == expected
 
 
+def _no_small_states() -> pd.DataFrame:
+    """Correlated columns whose every discrete state holds well over 11 rows: uniform marginals
+    (10 equal bins of about 500 rows), three- and two-state categoricals, 5% nulls."""
+    from decoy_engine.generation.copula._normal import ndtr
+
+    rng = np.random.default_rng(70)
+    z = (
+        rng.standard_normal((5000, 4))
+        @ np.linalg.cholesky(
+            [[1, 0.7, -0.4, 0.5], [0.7, 1, -0.3, 0.4], [-0.4, -0.3, 1, 0], [0.5, 0.4, 0, 1]]
+        ).T
+    )
+    u = ndtr(z)
+    frame = pd.DataFrame(
+        {
+            "x": u[:, 0],
+            "y": u[:, 1] * 100,
+            "w": u[:, 2] * 10,
+            "c": np.where(u[:, 3] < 0.3, "a", np.where(u[:, 3] < 0.7, "b", "c")).astype(object),
+            "f": np.where(u[:, 0] + 0.3 * rng.random(5000) > 0.6, "yes", "no").astype(object),
+        }
+    )
+    frame.loc[rng.random(5000) < 0.05, "w"] = np.nan
+    frame.loc[rng.random(5000) < 0.05, "c"] = None
+    return frame
+
+
 def test_matches_the_copula_test_helper() -> None:
-    real = mixed_frame(0)
+    from decoy_engine.generation.copula._quality_inputs import _raw_states, canonical
+
+    real = _no_small_states()
     model = fit(real)
     synth = sample(model)
+    canon = canonical(real, model)
+    for column in model.columns:
+        counts = np.bincount(_raw_states(canon[column.name], column)[0])
+        assert all(c == 0 or c >= 11 for c in counts), column.name  # nothing is recoded
     result = report(real, model, synth)
     helper = {(p.a, p.b, p.metric): p.score for p in pairwise_fidelity(real, synth)}
-    compared = 0
     for p in result.pairs:
         assert p.status == "scored"
-        kind = "spearman" if p.metric == _SPEARMAN else "contingency"
-        expected = helper[(p.columns[0], p.columns[1], kind)]
-        # Rounding to 3 decimals, the helper's unrounded edges, and the recoded sparse tail bins
-        # (a few dozen rows of 5,000).
-        assert p.score == pytest.approx(expected, abs=0.002)
-        compared += 1
-    assert compared == 15
+        if p.metric == _SPEARMAN:
+            expected = helper[(p.columns[0], p.columns[1], "spearman")]
+            assert expected is not None and p.score == round(expected, 3)
+        else:
+            expected = helper[(p.columns[0], p.columns[1], "contingency")]
+            assert p.score == pytest.approx(expected, abs=0.0005)  # rounding only
+    assert len(result.pairs) == 10
 
 
 @pytest.mark.parametrize("i", PINNED)

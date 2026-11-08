@@ -58,8 +58,8 @@ def check_arguments(
     dcr_max_rows: object,
     attack_extras: object,
 ) -> None:
-    """Every refusal of section 3 of the plan that needs no statistic. Messages name an argument
-    or a column and the rule, never a value."""
+    """Every refusal that needs no statistic. Messages name an argument or a column and the
+    rule, never a value."""
     if not isinstance(model, GaussianCopulaModel):
         raise TypeError(f"{_PREFIX}: model must be a GaussianCopulaModel.")
     frames = {"real": real, "synthetic": synthetic}

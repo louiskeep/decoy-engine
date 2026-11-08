@@ -143,13 +143,19 @@ def nearest(
     return out
 
 
-def summarize(distances: FloatArray) -> DcrSummary:
-    """Percentiles behind the floor: q is released when min(q, 1 - q) * rows reaches the floor."""
+def summarize(distances: FloatArray, reference_rows: int) -> DcrSummary:
+    """Percentiles behind the floor: q is released when min(q, 1 - q) * rows reaches the floor,
+    where rows is the smaller of the query and reference row counts (a few reference rows are a
+    few real records, however many query rows reach them)."""
     rows = int(distances.size)
+    floor_rows = min(rows, reference_rows)
     values: dict[str, float | None] = {}
     withheld: list[tuple[str, str]] = []
     for name, percent in PERCENTILES:
-        if rows and min(percent, 100 - percent) * rows >= _floors.MIN_DISTINGUISHED_ROWS * 100:
+        if (
+            rows
+            and min(percent, 100 - percent) * floor_rows >= _floors.MIN_DISTINGUISHED_ROWS * 100
+        ):
             values[name] = _round(float(np.quantile(distances, percent / 100)))
         else:
             values[name] = None
@@ -196,14 +202,14 @@ def compute_dcr_block(
             rows_compared=int(hold_m.shape[0]),
             closer_to_real_share=_round(share),
             protection_score=_round(min(2.0 * (1.0 - share), 1.0)),
-            synthetic_to_holdout=summarize(to_hold),
+            synthetic_to_holdout=summarize(to_hold, hold_m.shape[0]),
         )
     return DcrBlock(
         columns=spec.columns,
         real_rows_sampled=k_r,
         synthetic_rows_sampled=k_s,
-        synthetic_to_real=summarize(to_real),
+        synthetic_to_real=summarize(to_real, k_r),
         exact_match_share=_round(float(np.mean(to_real == 0.0))),
-        real_to_real=summarize(nearest(real_m, real_m, spec, exclude_self=True)),
+        real_to_real=summarize(nearest(real_m, real_m, spec, exclude_self=True), k_r - 1),
         holdout=comparison,
     )

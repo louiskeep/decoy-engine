@@ -71,6 +71,7 @@ def test_scores_in_unit_interval_are_kept(monkeypatch: pytest.MonkeyPatch) -> No
         {"label": "SENTINEL_LABEL"},
         {"nested": {"a": 0.5}},
         {"count": 1234.0},
+        {"shift": -0.5},
         {"Bad-Key": 0.5},
         ["not", "a", "mapping"],
         {"nan": float("nan")},
@@ -106,3 +107,50 @@ def test_synth_report_is_embedded_unchanged() -> None:
     )
     assert result.to_dict()["synth_report"] == expected
     assert expected["schema_version"] == "synth-report/v1" and expected["disclaimers"]
+
+
+def test_copied_rows_with_nullable_ints_match() -> None:
+    rng = np.random.default_rng(21)
+    real = pd.DataFrame(
+        {"n": pd.array(rng.integers(0, 1000, 300), dtype="Int64"), "x": rng.normal(size=300)}
+    )
+    real.loc[:29, "n"] = pd.NA
+    model = fit(real)
+    synth = sample(model)
+    # The synthetic table as float64 (e.g. read back from a file): 5.0 for 5, NaN for <NA>.
+    synth["n"] = synth["n"].astype("Float64").astype("float64")
+    synth.loc[:9, "n"] = real.loc[20:29, "n"].astype("Float64").astype("float64").to_numpy()
+    synth.loc[:9, "x"] = real.loc[20:29, "x"].to_numpy()
+    synth.loc[10:14, "n"] = real.loc[30:34, "n"].astype("Float64").astype("float64").to_numpy()
+    synth.loc[10:14, "x"] = real.loc[30:34, "x"].to_numpy()
+    # Fail-before: raw frames hash "<NA>" against "nan" and "5" against "5.0".
+    assert compute_new_row_synthesis(real, synth)["matched_rows"] == 0
+    result = report(real, model, synth)
+    assert result.synth_report["new_row_synthesis"]["matched_rows"] == 15
+
+
+def test_extras_editing_its_inputs_changes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    real = _real()
+    model = fit(real)
+    synth = sample(model)
+    holdout = real.iloc[:150].copy()
+    baseline = report(real, model, synth, holdout=holdout).to_dict()
+    saved = [f.copy(deep=True) for f in (real, synth, holdout)]
+
+    def vandal(source: pd.DataFrame, output: pd.DataFrame, *, holdout: Any = None) -> Any:
+        for frame in (source, output, holdout):
+            frame["x"] = 0.0
+            frame["c"] = "z"
+        return {"auc": 0.5}
+
+    module = types.ModuleType(_EXTRAS)
+    module.run_privacy_attacks = vandal  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, _EXTRAS, module)
+    result = report(real, model, synth, holdout=holdout, attack_extras=_EXTRAS).to_dict()
+    for frame, before in zip((real, synth, holdout), saved, strict=True):
+        pd.testing.assert_frame_equal(frame, before, check_exact=True)
+    for key in ("marginal", "pairs", "pairwise", "dcr"):
+        assert result[key] == baseline[key]
+    assert (
+        result["synth_report"]["new_row_synthesis"] == baseline["synth_report"]["new_row_synthesis"]
+    )

@@ -41,34 +41,88 @@ def _imported_modules(tree: ast.AST, package: str) -> list[tuple[int, str]]:
     return out
 
 
+def _aliases(tree: ast.Module) -> tuple[set[str], set[str], set[str]]:
+    """Names bound to the PairScore class, to the dataclasses module, and to dataclasses.replace,
+    through any import form or alias."""
+    pair_score, dataclasses_module, replace = {"PairScore"}, set(), set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "dataclasses":
+                    dataclasses_module.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == "PairScore":
+                    pair_score.add(alias.asname or alias.name)
+                if node.module == "dataclasses" and alias.name == "replace":
+                    replace.add(alias.asname or alias.name)
+    return pair_score, dataclasses_module, replace
+
+
+def _annotation_nodes(tree: ast.Module) -> set[int]:
+    """ids of every node inside a type annotation (a type named there builds nothing)."""
+    roots: list[ast.AST] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AnnAssign):
+            roots.append(node.annotation)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.returns is not None:
+                roots.append(node.returns)
+            args = node.args
+            for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg]:
+                if arg is not None and arg.annotation is not None:
+                    roots.append(arg.annotation)
+    return {id(n) for root in roots for n in ast.walk(root)}
+
+
 def scan_pair_score_builders(root: Path) -> list[str]:
-    """`PairScore(...)` outside `score_pairs`, any `replace(...)`, any `object.__setattr__`."""
+    """Any use of PairScore (by any alias, called or bound to another name) outside
+    `_quality_pairwise.score_pairs` and type annotations; any dataclasses.replace by any alias;
+    any __setattr__ call."""
+    return [
+        f for path in _report_modules(root) for f in _scan_builders(path.name, path.read_text())
+    ]
+
+
+def _scan_builders(filename: str, source: str) -> list[str]:
     found: list[str] = []
-    for path in _report_modules(root):
-        tree = ast.parse(path.read_text())
-        for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
-            for node in ast.walk(function):
-                if not isinstance(node, ast.Call):
-                    continue
-                func = node.func
-                name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-                where = f"{path.name}:{node.lineno}"
-                if name == "PairScore" and not (
-                    path.name == "_quality_pairwise.py" and function.name == "score_pairs"
-                ):
-                    found.append(f"{where} PairScore built outside score_pairs")
-                if name == "replace" and not isinstance(getattr(func, "value", None), ast.Constant):
-                    if isinstance(func, ast.Name) or getattr(func.value, "id", "") in {
-                        "dataclasses",
-                        "dc",
-                    }:
-                        found.append(f"{where} dataclasses.replace")
-                if name == "__setattr__":
-                    found.append(f"{where} __setattr__")
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module == "dataclasses":
-                if any(alias.name == "replace" for alias in node.names):
-                    found.append(f"{path.name}:{node.lineno} imports dataclasses.replace")
+    tree = ast.parse(source)
+    pair_score, dataclasses_module, replace = _aliases(tree)
+    annotations = _annotation_nodes(tree)
+
+    def visit(node: ast.AST, function: str | None) -> None:
+        where = f"{filename}:{getattr(node, 'lineno', 0)}"
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for child in ast.iter_child_nodes(node):
+                visit(child, node.name)
+            return
+        if isinstance(node, ast.ClassDef) and node.name == "PairScore":
+            return  # the definition itself
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            return
+        in_score_pairs = filename == "_quality_pairwise.py" and function == "score_pairs"
+        if id(node) not in annotations and not in_score_pairs:
+            if isinstance(node, ast.Name) and node.id in pair_score:
+                found.append(f"{where} PairScore used outside score_pairs")
+            if isinstance(node, ast.Attribute) and node.attr == "PairScore":
+                found.append(f"{where} PairScore used outside score_pairs")
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id in replace:
+                found.append(f"{where} dataclasses.replace")
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr == "replace"
+                and isinstance(func.value, ast.Name)
+                and func.value.id in dataclasses_module
+            ):
+                found.append(f"{where} dataclasses.replace")
+            if isinstance(func, ast.Attribute) and func.attr == "__setattr__":
+                found.append(f"{where} __setattr__")
+        for child in ast.iter_child_nodes(node):
+            visit(child, function)
+
+    visit(tree, None)
     return found
 
 
@@ -115,6 +169,15 @@ def test_quality_never_imports_generation() -> None:
         "from dataclasses import replace\ndef f(p):\n    return replace(p, score=1.0)\n",
         "import dataclasses as dc\ndef f(p):\n    return dc.replace(p, score=1.0)\n",
         "def f(p):\n    object.__setattr__(p, 'score', 1.0)\n",
+        "from decoy_engine.generation.copula._quality_pairwise import PairScore as PS\n"
+        "def f():\n    return PS(('a', 'b'), 'm', 'scored', None, 1.0)\n",
+        "FORGED = PairScore(('a', 'b'), 'm', 'scored', None, 1.0)\n",
+        "async def f():\n    return PairScore(('a', 'b'), 'm', 'scored', None, 1.0)\n",
+        "forge = lambda: PairScore(('a', 'b'), 'm', 'scored', None, 1.0)\n",
+        "import dataclasses as d2\ndef f(p):\n    return d2.replace(p, score=1.0)\n",
+        "Builder = PairScore\n",
+        "from decoy_engine.generation.copula import _quality_pairwise as qp\n"
+        "def f():\n    return qp.PairScore(('a', 'b'), 'm', 'scored', None, 1.0)\n",
     ],
 )
 def test_builder_scanner_sees_seeded_violations(tmp_path: Path, source: str) -> None:

@@ -115,6 +115,22 @@ def test_contingency_distinguished_rows_after_recoding() -> None:
     _scored(report(real, fit(real)), "x", "c")
 
 
+def test_contingency_floor_applies_to_the_second_column() -> None:
+    real = _binned_frame(10)[["c", "x"]]  # the degenerate column second in model order
+    _withheld(report(real, fit(real)), "c", "x", "distinguished_rows")
+
+
+def test_short_full_vocabulary_without_a_collapsed_column_is_not_detected() -> None:
+    # Documented gap: a high-cardinality column of at most 30 labels and no collapsed neighbour
+    # looks like an ordinary categorical, so R4 cannot see it; recoding still merges its states
+    # under 11 rows. Here every label holds 20 rows, so the pair is scored.
+    rng = np.random.default_rng(17)
+    h = np.array([f"h{i:02d}" for i in range(25)] * 20, dtype=object)
+    real = pd.DataFrame({"h": rng.permutation(h), "x": rng.normal(size=500)})
+    model = fit(real, high_cardinality_columns=["h"])
+    _scored(report(real, model), "h", "x")
+
+
 def test_high_cardinality_contingency_withheld() -> None:
     rng = np.random.default_rng(6)
     labels = np.array([f"h{i:03d}" for i in range(200)] * 2, dtype=object)
@@ -141,9 +157,17 @@ def test_short_high_cardinality_vocabulary_next_to_a_collapsed_column() -> None:
     _withheld(report(real, model), "h", "k", "high_cardinality")
 
 
-def _independent_numeric(columns: int) -> pd.DataFrame:
+def _independent_numeric(columns: int, rows: int = 100) -> pd.DataFrame:
     rng = np.random.default_rng(8)
-    return pd.DataFrame({f"v{i}": rng.normal(size=100) for i in range(columns)})
+    return pd.DataFrame({f"v{i}": rng.normal(size=rows) for i in range(columns)})
+
+
+def test_release_budget_boundary() -> None:
+    # 8 numeric columns: 28 latent pairs + 28 column pairs = 56.
+    real = _independent_numeric(8, rows=112)  # budget 56: exactly at it, released
+    assert all(p.status == "scored" for p in report(real, fit(real)).pairs)
+    real = _independent_numeric(8, rows=110)  # budget 55: one over, withheld
+    assert {p.reason for p in report(real, fit(real)).pairs} == {"release_budget"}
 
 
 def test_release_budget_withholds_every_pair_and_keeps_the_rest() -> None:
@@ -186,3 +210,38 @@ def test_aggregates_use_scored_pairs_only() -> None:
     scored = [p.score for p in result.pairs if p.status == "scored"]
     assert any(p.status == "withheld" for p in result.pairs)
     assert result.pairwise_score == round(sum(scored) / len(scored), 3)
+
+
+def test_no_real_statistic_for_a_withheld_pair(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from decoy_engine.generation.copula import _quality_pairwise as pairwise
+
+    spearman_calls: list[tuple[str, str]] = []
+    contingency_calls: list[int] = []
+    real_spearman, real_contingency = pairwise._spearman_score, pairwise.contingency
+
+    def spy_spearman(real, synthetic, names):  # type: ignore[no-untyped-def]
+        spearman_calls.append(names)
+        return real_spearman(real, synthetic, names)
+
+    def spy_contingency(*args):  # type: ignore[no-untyped-def]
+        contingency_calls.append(1)
+        return real_contingency(*args)
+
+    monkeypatch.setattr(pairwise, "_spearman_score", spy_spearman)
+    monkeypatch.setattr(pairwise, "contingency", spy_contingency)
+    rng = np.random.default_rng(2)
+    x, w = correlated(300, 0.6, seed=2)
+    c = np.where(x < -0.4, "lo", np.where(x < 0.4, "mid", "hi")).astype(object)
+    real = pd.DataFrame({"x": x, "w": w, "c": c, "z": rng.normal(size=300)})
+    real.loc[rng.choice(300, 3, replace=False), "w"] = np.nan
+    result = report(real, fit(real))
+    withheld = [p for p in result.pairs if p.status == "withheld"]
+    assert withheld
+    scored_spearman = [
+        p.columns for p in result.pairs if p.status == "scored" and p.metric.startswith("spearman")
+    ]
+    scored_contingency = [
+        p for p in result.pairs if p.status == "scored" and p.metric.startswith("contingency")
+    ]
+    assert spearman_calls == scored_spearman
+    assert len(contingency_calls) == len(scored_contingency)

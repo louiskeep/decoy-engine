@@ -196,6 +196,11 @@ def compute_copula_quality_report(
 ) -> CopulaQualityReport:
     """Score `synthetic` (rows drawn from `model`) against `real` (the table `model` was fit on).
 
+    Precondition: `synthetic` must be rows sampled from `model`, never rows the caller chose. With
+    chosen rows the report is an oracle on `real`: a repeated probe row shows up in the new-row and
+    distance blocks (membership), and chosen column values make a pair score give back the real
+    coefficient. A wiring slice must draw `synthetic` itself and not accept it from a user.
+
     `holdout` is real rows the fit never saw, for the overfitting comparison and the attack
     contract. `attack_extras` names an optional attacks module to run (None: attacks not run).
     """
@@ -216,12 +221,14 @@ def compute_copula_quality_report(
     scored = [p for p in pairs if p.status == STATUS_SCORED and p.score is not None]
 
     attacks = _filter_attack_results(
+        # Copies: an extras module that edits its inputs must not reach the caller's frames or
+        # the rest of the report.
         compute_attack_metrics(
-            real,
-            synthetic,
+            real.copy(deep=True),
+            synthetic.copy(deep=True),
             enable_attacks=attack_extras is not None,
             extras_module=attack_extras or _DEFAULT_EXTRAS,
-            holdout=holdout,
+            holdout=None if holdout is None else holdout.copy(deep=True),
         )
     )
     synth_report = assemble_synth_report(

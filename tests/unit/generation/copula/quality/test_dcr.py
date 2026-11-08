@@ -48,11 +48,13 @@ def test_matches_brute_force(seed: int) -> None:
     slow = brute_nearest(query, reference, _SPEC.columns, _SPEC.numeric, _SPEC.ranges)
     assert np.allclose(fast, slow, rtol=0, atol=1e-12)
     (only,) = encode([reference], _SPEC)
-    self_fast = nearest(only, only, _SPEC, exclude_self=True)
     self_slow = brute_nearest(
         reference, reference, _SPEC.columns, _SPEC.numeric, _SPEC.ranges, exclude_self=True
     )
-    assert np.allclose(self_fast, self_slow, rtol=0, atol=1e-12)
+    # Block 7 over 31 rows: self-exclusion must hold in every block, not only the first.
+    for block in (7, 256):
+        self_fast = nearest(only, only, _SPEC, exclude_self=True, block=block)
+        assert np.allclose(self_fast, self_slow, rtol=0, atol=1e-12)
 
 
 def test_block_size_does_not_change_the_result() -> None:
@@ -60,6 +62,17 @@ def test_block_size_does_not_change_the_result() -> None:
     q, r = encode([_random_frame(rng, 600), _random_frame(rng, 300)], _SPEC)
     results = [nearest(q, r, _SPEC, block=b) for b in (1, 7, 256)]
     assert all(np.array_equal(results[0], other) for other in results[1:])
+    selfs = [nearest(r, r, _SPEC, exclude_self=True, block=b) for b in (1, 7, 256)]
+    assert all(np.array_equal(selfs[0], other) for other in selfs[1:])
+    slow = brute_nearest(
+        *(_random_frame(np.random.default_rng(98), 300),) * 2,
+        _SPEC.columns,
+        _SPEC.numeric,
+        _SPEC.ranges,
+        exclude_self=True,
+    )
+    (m,) = encode([_random_frame(np.random.default_rng(98), 300)], _SPEC)
+    assert np.allclose(nearest(m, m, _SPEC, exclude_self=True), slow, rtol=0, atol=1e-12)
 
 
 def test_null_rules() -> None:
@@ -90,7 +103,7 @@ def test_systematic_sample() -> None:
     ],
 )
 def test_percentile_floor(rows: int, released: set[str]) -> None:
-    summary = summarize(np.linspace(0.0, 1.0, rows))
+    summary = summarize(np.linspace(0.0, 1.0, rows), rows)
     values = {"p05": summary.p05, "p25": summary.p25, "median": summary.median}
     values |= {"p75": summary.p75, "p95": summary.p95}
     assert {k for k, v in values.items() if v is not None} == released
@@ -106,7 +119,18 @@ def test_isolated_group_is_not_released_by_the_baseline() -> None:
     (m,) = encode([pd.DataFrame({"x": values})], spec)
     distances = nearest(m, m, spec, exclude_self=True)
     assert float(np.quantile(distances, 0.95)) > 0.005  # the leak an unfloored p95 would carry
-    assert summarize(distances).p95 is None
+    assert summarize(distances, 99).p95 is None
+
+
+def test_floor_counts_the_smaller_side() -> None:
+    summary = summarize(np.linspace(0.0, 1.0, 1000), 150)
+    assert summary.p05 is None and summary.p95 is None and summary.p25 is not None
+    real = mixed_frame(8, n=150)
+    model = fit(real)
+    result = report(real, model, sample(model, 1000))
+    assert result.dcr is not None and result.dcr.synthetic_to_real.rows == 1000
+    assert result.dcr.synthetic_to_real.p05 is None
+    assert result.dcr.synthetic_to_real.p25 is not None
 
 
 def test_baseline_excludes_only_self() -> None:
