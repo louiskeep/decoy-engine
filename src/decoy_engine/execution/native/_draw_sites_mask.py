@@ -16,7 +16,7 @@ MASK_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="mask.shuffle",
         family="numpy_pcg64",
-        call_site="execution/_strategies/_shuffle.py:56",
+        call_site="execution/_strategies/_shuffle.py:62",
         entropy_root="mask_key",
         seed_derivation=(
             "int.from_bytes(derive(ctx.mask_key, plan.namespace, "
@@ -56,7 +56,7 @@ MASK_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="mask.categorical_deterministic",
         family="source_keyed_hmac",
-        call_site="execution/_strategies/_categorical.py:198",
+        call_site="execution/_strategies/_categorical.py:211",
         entropy_root="mask_key",
         seed_derivation=(
             "derive_index(ctx.mask_key, plan.namespace, _canonicalize_source(value), "
@@ -82,7 +82,7 @@ MASK_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="mask.categorical_nondeterministic",
         family="source_keyed_hmac",
-        call_site="execution/_strategies/_categorical.py:198",
+        call_site="execution/_strategies/_categorical.py:211",
         entropy_root="mask_key",
         seed_derivation="derive_index(mask_key, namespace, encode_int(row_offset + i), pool_size=n)",
         api_operation="determinism.derive_index -> index in [0, pool_size)",
@@ -116,7 +116,7 @@ MASK_DRAW_SITES: tuple[DrawSite, ...] = (
             "unmask always reports reversed_unverified for this strategy."
         ),
         mirror_call_sites=(
-            "execution/_strategies/_fpe.py:176",
+            "execution/_strategies/_fpe.py:188",
             "execution/out_of_core/_mask_group_b.py:153",
         ),
     ),
@@ -139,15 +139,15 @@ MASK_DRAW_SITES: tuple[DrawSite, ...] = (
         provider_version=_V6,
         notes=(
             "Execution handler derives the column key via derive(mask_key, namespace, "
-            "value) (execution/_strategies/_date_shift.py:185). Legacy no-key configs "
+            "value) (execution/_strategies/_date_shift.py:198). Legacy no-key configs "
             "use md5(value) (transforms/date_shift.py:108)."
         ),
-        mirror_call_sites=("execution/_strategies/_date_shift.py:185",),
+        mirror_call_sites=("execution/_strategies/_date_shift.py:198",),
     ),
     DrawSite(
         draw_site_id="mask.bucket_perturb",
         family="source_keyed_hmac",
-        call_site="transforms/bucket_perturb.py:118",
+        call_site="transforms/bucket_perturb.py:119",
         entropy_root="mask_key",
         seed_derivation="derive(job_seed, namespace, _canonicalize_source(value_str))",
         api_operation="determinism.derive -> within-bucket offset",

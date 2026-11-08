@@ -30,6 +30,7 @@ _LOAD_ENVELOPE_S: dict[str, float] = {
 
 
 @pytest.mark.parametrize("tier_name", available_tiers() or ["small"])
+@pytest.mark.serial
 def test_tier_loads_within_envelope(tier_name: str) -> None:
     t0 = time.perf_counter()
     df = load_tier(tier_name)

@@ -31,6 +31,13 @@ from decoy_engine.fileaccess._entry import (
 from decoy_engine.fileaccess._errors import encode_field_key, redact_locators, scrub
 from decoy_engine.fileaccess._local import LocalFileAccess, engine_dir_handle, engine_handle
 from decoy_engine.fileaccess._preopened import PreopenedFileAccess
+from decoy_engine.fileaccess._private import write_private
+from decoy_engine.fileaccess._protected_dir import (
+    ProtectedDirAclFailed,
+    ProtectedDirUnsafe,
+    open_protected_dir,
+    protected_scratch_dir,
+)
 from decoy_engine.fileaccess._read import keeps_class, read_all, read_checked, read_text, shown
 from decoy_engine.fileaccess._rooted import Root, RootedFileAccess
 from decoy_engine.fileaccess._types import (
@@ -75,6 +82,7 @@ ENTRY_POINTS: tuple[str, ...] = (
     "decoy_engine.plan._compile.run_config_only_checks",
     "decoy_engine.plan._serialize.plan_from_yaml",
     "decoy_engine.plan.validate._consolidator.validate_plan",
+    "decoy_engine.profile._csv_reader.read_csv_source",
     "decoy_engine.profile._fixed_width_reader.read_fixed_width",
     "decoy_engine.profile._fixed_width_writer.write_fixed_width",
     "decoy_engine.profile._source.profile_source",
@@ -109,6 +117,8 @@ __all__ = [
     "OutputDir",
     "OutputTxn",
     "PreopenedFileAccess",
+    "ProtectedDirAclFailed",
+    "ProtectedDirUnsafe",
     "Root",
     "RootedFileAccess",
     "ambient_forbidden",
@@ -125,7 +135,9 @@ __all__ = [
     "is_ambient",
     "keeps_class",
     "map_in_context",
+    "open_protected_dir",
     "position_key",
+    "protected_scratch_dir",
     "read_all",
     "read_checked",
     "read_text",
@@ -136,4 +148,5 @@ __all__ = [
     "scope",
     "scrub",
     "shown",
+    "write_private",
 ]

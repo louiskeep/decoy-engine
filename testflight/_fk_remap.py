@@ -27,7 +27,7 @@ from ._spec import FKIntegritySpec, RelationshipSpec
 # Aligned with docs/what-we-cannot-prove.md (the carry-forward items that the
 # bijective-relabelling limitation affects).  Candidates not listed here
 # (shuffle, categorical, derived) have their own correctness teeth.
-_VALUE_CHANGING_STRATEGIES: frozenset[str] = frozenset({"fpe", "hash", "code_set"})
+_VALUE_CHANGING_STRATEGIES: frozenset[str] = frozenset({"fpe", "hash", "code_set", "tokenize"})
 
 # Maximum tolerated PER-POSITION across-row character retention for an FPE
 # column.  FPE is format-preserving: output has the same length as the source,

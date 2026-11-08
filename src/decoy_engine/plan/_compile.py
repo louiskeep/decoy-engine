@@ -44,6 +44,7 @@ from typing import Any
 # to 4: the formula sandbox `hash()` function swapped from legacy
 # deterministic_hash to keyed HMAC-SHA256 via _formula_hash_keyed. Bumping
 # requires a release-notes line per done-definition.md.
+from decoy_engine.config._subset_run import refuse_unapplied_subset
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._checks import (
@@ -72,6 +73,7 @@ from decoy_engine.plan._checks_date_shift import (
     check_date_preserve_values,
     check_date_shift_group_by_refs,
 )
+from decoy_engine.plan._checks_declared_casting import compile_declared_casting_contract
 from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
 from decoy_engine.plan._checks_dp import (
     check_dp_generate_contract,
@@ -100,11 +102,13 @@ from decoy_engine.plan._types import (
 from decoy_engine.profile._hash import profile_hash
 from decoy_engine.profile._types import Profile
 
+# F06: bumped 2 -> 3 for the pinned `declared_casting` payload. A version-2 YAML loads with
+# `declared_casting=None` (it never declared any) and runs exactly as before.
 # DPS Scope B (guide 4.7): bumped 1 -> 2 for the pinned `GenerationPlan`
 # payload. A plan_version 1 YAML predates `generation` entirely and
 # deserializes with `generation=None` -- the correct pre-GA hard-delete
 # behavior (`generate_tables` raises the moment it's asked to generate).
-PLAN_VERSION = 2
+PLAN_VERSION = 3
 
 
 @entry_point
@@ -131,6 +135,7 @@ def compile_plan(
             ordering) run regardless: they do not consume distinct counts.
 
     Raises:
+        PipelineValidationError: `config` sets `subset:`.
         PlanCompileError: if any of the five S1 compile-time checks fails.
             The error carries `code`, `path`, and `message` for downstream
             UI rendering.
@@ -167,6 +172,7 @@ def compile_plan(
         check_orphan_fk_policy_completeness,
     )
 
+    refuse_unapplied_subset(config)
     namespace_registry = build_namespace_registry(config, profile)
     check_unknown_provider(config)
     # Row 11 (audit H5, 2026-06-12): structural (config + registry only),
@@ -465,6 +471,7 @@ def compile_plan(
             + freetext_advisory_warnings,
         ),
         generation=generation_plan,
+        declared_casting=compile_declared_casting_contract(config),
     )
 
 
@@ -565,6 +572,13 @@ def run_config_only_checks(
     check_fpe_charset_config(config)
     # Row 26 (DE-03 sibling): faker-without-provider rejection. Config-only.
     check_faker_requires_provider(config)
+    # F06: declared parsing/casting contracts. Reported only when a config declares any, so a
+    # legacy config's list is unchanged.
+    declared = (
+        ("declared_casting_contract",)
+        if compile_declared_casting_contract(config) is not None
+        else ()
+    )
     return (
         "unknown_provider",
         "when_with_coherent_with",
@@ -598,6 +612,7 @@ def run_config_only_checks(
         "fpe_charset_config",
         # Row 26 (DE-03 sibling): faker-without-provider rejection.
         "faker_requires_provider",
+        *declared,
     )
 
 
@@ -621,25 +636,25 @@ _NON_SEMANTIC_GLOBAL_SETTINGS = frozenset(
         "freetext_advisory_min_distinctness",
     }
 )
+_UNHASHED_BLOCKS = ("sources", "targets", "pre_scan")
 
 
 def _hash_config(config: dict[str, Any]) -> str:
     """SHA-256 over a canonical JSON serialization of the masking-semantics
     portion of the config (M1 from S1 end-of-sprint Dennis review).
 
-    The `sources` and `targets` blocks are explicitly excluded: they
-    describe data binding (where bytes come from, where bytes go) rather
-    than masking semantics. A user swapping a local file source for an
-    S3 source does not change which columns mask how; the
-    pipeline_config_hash must stay byte-identical across that swap so
-    audit + reproducibility tooling can match the two runs as
-    semantically equivalent.
+    The `sources`, `targets` and `pre_scan` blocks are explicitly excluded: the first two describe
+    data binding (where bytes come from, where bytes go) and `pre_scan` only suggests, so none is
+    masking semantics. A user swapping a local file source for an S3 source does not change which
+    columns mask how; the pipeline_config_hash must stay byte-identical across that swap so audit
+    + reproducibility tooling can match the two runs as semantically equivalent. `post_scan`
+    stays in: under `ner_findings: fail` its `dismissed` list decides what blocks.
 
     Sort_keys=True, ensure_ascii=True, separators=(",", ":") for byte
     stability across Python runtimes. Same masking semantics produce the
     same hash regardless of key insertion order or source/target binding.
     """
-    semantic_config = {k: v for k, v in config.items() if k not in ("sources", "targets")}
+    semantic_config = {k: v for k, v in config.items() if k not in _UNHASHED_BLOCKS}
     global_settings = semantic_config.get("global_settings")
     if isinstance(global_settings, dict) and any(
         key in global_settings for key in _NON_SEMANTIC_GLOBAL_SETTINGS

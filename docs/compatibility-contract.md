@@ -60,6 +60,11 @@ with `when_outside_closed_grammar`). It is listed on every interpreter rather th
 `keyword.softkwlist`, so a config validates identically on every supported Python. The list is frozen
 on purpose; after GA any further addition is a breaking change.
 
+**Pre-GA correction (SUB-STOP, 2026-11-05).** A config with `subset:` set is refused by every run entry
+(`run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked`, `run_native_or_oracle_chunked`) and by `compile_plan`,
+with `config.subset_run_unsupported` (registry 1.6.0). Before, the block validated and the run silently masked
+the full sources. `plan_subset` and `run_subset` are unchanged; run them first and point `sources:` at their output.
+
 Until GA: use this document as the design target so we don't paint ourselves
 into a corner. After GA: this document is binding.
 
@@ -90,11 +95,22 @@ quality-shape-fidelity/v1  post-scan-integrity/v2    name-hints/v1
 ssn/v1  npi/v1  pan/v1  iban/v1  ein/v1  mrn/v1  ndc/v1  icd10/v1
 cusip/v1  address/v1  locality/v1  person/v1  provider/v1
 composite/v1  custom/v1   ... (every disguise spec)
-subset-manifest/v1
+subset-manifest/v1         decoy-run-result/v1
 ```
 
 A user runs `decoy fit`, keeps the `distribution-snapshot/v1` artifact, and
 feeds it to a later engine version. That artifact is a **contract**.
+
+`decoy-run-result/v1` is the record of one `decoy run` (status, exit code, per-table outcome,
+delivery, checks, timings). The engine owns its shape (`decoy_engine.RunResult` to write,
+`decoy_engine.RunResultRead` to read). Every string in it is an enum or a validated name, reference,
+hash, version or timestamp, never a data value or message. The write model refuses unknown fields and
+enum values; the read model ignores added fields, reads a new enum value as a string and reads a
+reason it cannot validate as `null`. Numbers and flags are strict on both sides (`False` is not a `0`,
+`"1"` is not a `1`). The `schema` key is required on read and accepts only `decoy-run-result/v1`: a
+document of another major (`/v2`), free text or a missing key is refused, never read as v1; a reader
+that wants `/v2` support adds a new model under a new tag. Hand-authored corpus samples (the v1 sample and its cross-minor variants) are in
+`tests/integration/compat_corpus/run_result/`.
 
 **Rules:**
 
@@ -116,7 +132,8 @@ design (no raw key value, no raw filter-predicate literal), so it carries no
 re-identification risk on its own, but the same rule applies: a shape change
 mints `subset-manifest/v2` with a kept `v1` reader. The `subset:` block added
 to `PipelineConfig` (`config/_subset.py`) is additive and optional (`None` by
-default, unchanged behavior for every existing config); it is part of the
+default, unchanged behavior for every existing config, except that a run now
+refuses a config that sets it: see the SUB-STOP correction in section 1); it is part of the
 §3.4 config contract like any other optional block.
 
 ### 3.2 The vault (the catastrophic one)
@@ -286,6 +303,18 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   (A5a): a `format: fixed_width` `FileSource` can now be read through these
   names instead of importing the private `decoy_engine.profile._fixed_width_reader`
   module, which the additive-only rule in §4.1 does not cover.
+  It also includes `read_csv_source`, `CsvDialect` and `resolve_csv_dialect`
+  (CLI-DIALECT, 2026-11): `read_csv_source(path, dialect, *, table, dtype=None,
+  nrows=None, chunksize=None, file_access=None, field_key="source.path")` reads
+  a CSV source under its declared dialect. `dtype=str` with the default dialect
+  equals `pd.read_csv(path, dtype=str)`. A headerless file is width-checked and
+  a refusal is `PipelineValidationError` with `source_file.column_count_mismatch`,
+  `source_file.nul_byte` or `source_file.lone_cr`; the message is
+  `<code>: source <table> <detail>` and holds no value, path or file name. New
+  parameters are keyword-only and additive. `CsvDialect` and `resolve_csv_dialect`
+  refuse an incoherent dialect, or a `column_names` that is not a list or tuple of
+  strings, with `ConfigError` whose fixed text never echoes a submitted value.
+  `nrows=0` returns the empty frame with the declared columns.
   It also includes `run_mask_chunked` (2026-10-01): the chunked
   dispatcher as a public entry point. Its signature is
   `run_mask_chunked(config, chunks, *, table, engine_version, registry=None,
@@ -524,6 +553,21 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   `source_row_groups` and `source_max_row_group_rows`; `execution.loaded_fully_in_memory` is
   `False` when every source of a streamed run was read lazily. A caller that passes resident
   tables sees no change except the added `input` block.
+  SCAN-ML M1 (2026-11) adds `ModelRef`, `ModelStatus`, `classifier_status`, `ner_status`,
+  `load_detectors`, `ModelUnavailableError`, `PreScanConfig` and `Dismissal`, and the config fields
+  `pre_scan.detectors`, `pre_scan.ner_model`, `post_scan.detectors`, `post_scan.ner_model`,
+  `post_scan.ner_findings` and `post_scan.dismissed`. All are additive. A field equal to its default
+  is left out of the dump, so a config that predates them keeps its exact dump,
+  `pipeline_config_hash` and plan hash; the plan hash leaves out `pre_scan` and keeps
+  `post_scan.dismissed` (under `ner_findings: fail` a dismissal decides what blocks). Registry 1.8.0
+  adds `config.detectors_invalid`, `config.post_scan_inactive`, `config.pre_scan_ner_inactive`,
+  `config.ner_model_invalid`, `config.dismissal_invalid`, `provider.classifier_unavailable` and
+  `provider.ner_model_incompatible`. Three behavior changes. `ensure_ner_available` now checks the
+  model name (one `fullmatch` rule) and refuses a model built for another spaCy minor, so a
+  `text_redact` `ner` column fails at validate time where it used to fail at load. A name counts as
+  an installed model only when it is an installed distribution that ships a spaCy `meta.json`; a
+  plain importable module (`os`, `json`) is refused with `provider.ner_model_not_installed` and is
+  never imported. `ModelPackLoadError` gains a `cause` field (`disabled`, `import` or `pack`).
 - **CLI:** verb names, flag names, and the exit-code contract (0 ok, 1
   validation/usage, 2 deprecated-shim, 3 runtime).
 - **Config:** the `pipeline.yaml` schema. An old config must keep validating and
@@ -547,6 +591,18 @@ namespaces would collapse to one token. tokenize is an always-keyed strategy,
 so at GA it requires a resolved >=32-byte secret like every other keyed
 surface (`keyed_strategy_requires_secret`); it never derives tokens from the
 public job seed.
+
+`keyed_columns_for_config` and `KeyedColumn` joined the public API on 2026-11-08
+(init wizard part E3), additive under §4.1. `keyed_columns_for_config(config)`
+returns every column of a raw config mapping that needs the mask secret, in
+config order, as `KeyedColumn(table, column, strategy)`; each field is the name
+as written, or `None` when the config leaves it out. It reads names only, never
+a value, a schema or a row. It uses the same column walk as
+`secret_requirements_for_config`, so a config needs the mask secret exactly when
+this list is non-empty or a relationship has a composite parent key (keyed with
+no single field, so not listed) or a missing or malformed parent, which fails
+safe. `tests/secret_providers/test_keyed_columns.py`
+pins the result with a written-out oracle and the parity rule.
 
 ### 3.5 Disguises
 
@@ -650,6 +706,12 @@ turns into "I can add X alongside the old X" with five more minutes of thought.
   The corpus is synthetic pre-GA: artifacts carry `synthetic: true` and
   `produced_by_engine_version: "0.1.0"`. At GA, replace or supplement with a real
   (`synthetic: false`) artifact of each read-back kind.
+- **`decoy-run-result/v1` fixtures** (`tests/integration/compat_corpus/run_result/run-result-v1*.json`).
+  They live in the corpus directory, in their own subfolder, so the frozen samples sit in one place.
+  They are hand-authored reader samples, not artifacts minted by `regenerate.py`: there is no
+  producing code to regenerate and they have no entry in `manifest.json`. The manifest-driven corpus
+  test does not read them. `tests/unit/run_result/test_model.py` reads the sample and the cross-minor
+  variants through `RunResultRead` and refuses them on the write model.
 - **`CHANGELOG.md`** records every user-visible change.
 - **The regression-gate** runs the above on every PR.
 
@@ -711,6 +773,7 @@ retrofitted after users hold artifacts we no longer have fixtures for.
 - Engineering best practices §8 (pre-GA/post-GA), §3.3 (library stays narrow):
   `decoy-platform/docs/guides/engineering-best-practices.md`
 - Determinism contract: `decoy-engine/docs/determinism.md`
-- Roadmap versioning lock: `decoy-platform/docs/ROADMAP.md` ("Versioning")
+- Roadmap versioning lock: `decoy/docs/ROADMAP.md` section 5.5, the versioning freeze at V1
+  (https://github.com/louiskeep/decoy/blob/main/docs/ROADMAP.md)
 - This document should be linked from each repo's `CONTRIBUTING.md` and named as
   a required pre-read in the PR template.

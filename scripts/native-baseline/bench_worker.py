@@ -143,7 +143,6 @@ def main() -> None:
         cfg,
         sources,
         engine_version="phase2-baseline",
-        substrate="pandas",
         execution_mode="full_frame",
         auto_chunk=False,
         key_provider=key_provider,

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, runtime_checkable
 
 import numpy as np
 import pandas as pd
@@ -69,6 +69,10 @@ class ExecutionResult:
     # table-attributed by the adapter's drain point. Additive; default empty
     # tuple leaves every existing ExecutionResult construction unchanged.
     row_errors: tuple[RowErrorRecord, ...] = ()
+    # F06: the serializable, value-free token that opens this run's protected quarantine
+    # artifact. None when no row was quarantined. Hidden from repr and never serialized into
+    # evidence, because possessing it is the read right.
+    quarantine_access: Any = field(default=None, repr=False)
 
     @property
     def output(self) -> pa.Table:
@@ -313,6 +317,81 @@ class StrategyHandler(Protocol):
     ) -> tuple[pd.DataFrame, list[QualityWarning]]:
         """Mutate `df[column]` per the plan; return (df, warnings)."""
         ...
+
+
+# Strategy catalog rows. They live beside `StrategyHandler` because every handler module imports
+# this module and the `_strategies` package `__init__` imports every handler: defining the row
+# types there would be an import cycle.
+WireType = Literal["str", "int", "float", "bool", "str_list", "float_list"]
+OptionLocation = Literal["column", "provider_config", "provider_config.ner"]
+OptionExample = str | int | float | bool | tuple[str, ...] | tuple[float, ...]
+OptionValue = str | int | float | bool | list[str] | list[float]
+
+
+@dataclass(frozen=True)
+class StrategyOption:
+    """One value an operator may set on a strategy, with where it lives in a column entry.
+
+    `location` is `column` for a top-level `ColumnConfig` field, `provider_config` for a key of
+    the free-form `provider_config` mapping, and `provider_config.ner` for a member of its `ner`
+    mapping (written without the `ner_` name prefix).
+
+    `example` is test data chosen to differ from the handler default; it is never a prompt prefill.
+    """
+
+    name: str
+    wire_type: WireType
+    required: bool
+    location: OptionLocation
+    choices: tuple[str, ...] | None
+    example: OptionExample
+
+
+@dataclass(frozen=True)
+class StrategyInfo:
+    """What the catalog knows about one strategy."""
+
+    name: str
+    namespace_required: bool  # true when ANY mode of the strategy needs a namespace
+    # Injective and deterministic per value with the handler's defaults, so it may mask a FK key.
+    # Options that shorten the output (hash truncate) are not offered.
+    join_safe: bool
+    options: tuple[StrategyOption, ...]  # allowed V1 wizard options; empty is valid
+    offer_in_wizard: bool  # listed at the wizard's `edit` prompt
+
+    @property
+    def required_options(self) -> tuple[str, ...]:
+        return tuple(o.name for o in self.options if o.required)
+
+    @property
+    def example_options(self) -> Mapping[str, OptionValue]:
+        """Each option's example, with tuples as lists (the shape a parsed config holds)."""
+        return {
+            o.name: cast("OptionValue", list(o.example))
+            if isinstance(o.example, tuple)
+            else o.example
+            for o in self.options
+        }
+
+
+def option(
+    name: str,
+    wire_type: WireType,
+    example: OptionExample,
+    *,
+    required: bool = False,
+    location: OptionLocation = "provider_config",
+    choices: tuple[str, ...] | None = None,
+) -> StrategyOption:
+    """Shorthand for a handler's `wizard_options` entry; `provider_config` is the common place."""
+    return StrategyOption(
+        name=name,
+        wire_type=wire_type,
+        required=required,
+        location=location,
+        choices=choices,
+        example=example,
+    )
 
 
 @runtime_checkable

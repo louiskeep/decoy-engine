@@ -1,0 +1,23 @@
+bringing up nodes...
+bringing up nodes...
+
+........................................................................ [ 12%]
+........................................................................ [ 25%]
+........................................................................ [ 38%]
+........................................................................ [ 51%]
+........................................................................ [ 64%]
+........................................................................ [ 76%]
+........................................................................ [ 89%]
+..........................................................               [100%]
+=============================== warnings summary ===============================
+tests/acceptance/test_f06_route_cells.py: 44 warnings
+tests/acceptance/test_f06_route_parity.py: 2 warnings
+  /home/user/decoy-engine/src/decoy_engine/execution/out_of_core/_batch_join.py:262: UserWarning: Arrow output on a DB-API result makes an extra copy of the rows, use con.sql(query).to_arrow_reader() instead.
+    for result in self._conn.execute(query).to_arrow_reader(batch.num_rows):
+
+tests/acceptance/test_f06_route_parity.py::test_out_of_core_streams_lazy_sources_into_a_sink_with_the_same_result[null-1]
+  /home/user/decoy-engine/src/decoy_engine/execution/out_of_core/_stream_join.py:504: UserWarning: Arrow output on a DB-API result makes an extra copy of the rows, use con.sql(query).to_arrow_reader() instead.
+    yield from conn.execute(query).to_arrow_reader(batch_rows)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+562 passed, 47 warnings in 6.04s

@@ -19,6 +19,15 @@ from decoy_engine.fileaccess import (
 SENTINEL = b"SENTINEL-CONTENT"
 
 
+@pytest.fixture
+def root_dir(short_tmp_path: Path) -> Path:
+    """The confinement root, kept short: `test_fifo_and_device_are_denied` binds a Unix socket
+    in it, and a long basetemp (an xdist worker, a long $TMPDIR) overflows the AF_UNIX limit."""
+    root = short_tmp_path / "root"
+    root.mkdir()
+    return root
+
+
 def _req(locator: str, role: FileRole = FileRole.SOURCE, access: str = "read") -> FileRequest:
     return FileRequest(role, access, locator, "sources.t.path")  # type: ignore[arg-type]
 

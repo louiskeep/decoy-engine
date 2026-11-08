@@ -28,6 +28,7 @@ from . import _chunked_code_set as code_set_gate
 from . import _chunked_dgrn as dgrn
 from . import _chunked_group_key as group_key
 from . import _chunked_text_mask as text_mask_gate
+from . import _guards
 from ._chunked_adapter_gate import chunked_adapter_touches_pandas_ingestion
 from ._chunked_carry import adapter_fk_safe_columns, plan_carry
 from ._chunked_fk import (
@@ -196,6 +197,10 @@ def _oracle_preflight_admitted(
     chunk_iter = iter(chunks)
     first = next(chunk_iter, None)
     if first is not None:
+        # Duplicate field names first: every check below looks fields up by name. The
+        # per-chunk refusal is the innermost wrapper, so it runs before every later wrap.
+        _guards.refuse_duplicate_field_names(table, first.schema.names)
+        chunk_iter = _guards.refused_per_chunk(chunk_iter, table=table)
         # Before the carry plan, the profile and the compile: pandas would consume the
         # stored index field, so a config naming it could not resolve (or raise a raw
         # KeyError) after the work above had started.

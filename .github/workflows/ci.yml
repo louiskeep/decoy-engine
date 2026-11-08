@@ -20,14 +20,17 @@
 name: ci
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # Manual dispatch only. gate-selfhosted.yml is the merge gate; the paid runners
+  # fire on demand so they stop failing every push (X0a). Old triggers: git history.
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   ruff:
     runs-on: ubuntu-latest
-    # Observed 2026-10: ruff/mypy ~1 min, gates 1-4 min, regression-gate 27-44 min.
+    # Observed 2026-10: ruff/mypy ~1 min, gates 1-4 min; regression-gate is slower (see its note).
     # A hung run otherwise burns the 6h default (failed runs reached 2h+).
     timeout-minutes: 10
     steps:
@@ -52,17 +55,11 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      # mypy 2.3.0 and the [cloud] stubs come from uv.lock (lint and cloud extras); cloud keeps
+      # connectors/gcs.py's google.api_core/google.oauth2 imports resolvable.
+      - uses: ./.github/actions/lock-env
         with:
-          python-version: "3.10"
-          cache: pip
-      - name: Install engine + dev extras
-        # mypy pinned for the same reason as ruff: a minor bump can surface
-        # new error categories on unchanged code. Version mirrors the [lint]
-        # dev-deps group in pyproject.toml. [cloud] is required so
-        # connectors/gcs.py's google.api_core/google.oauth2 imports resolve;
-        # the pyproject mypy override only covers google.cloud.
-        run: pip install -e ".[dev,cloud]" mypy==2.3.0
+          bootstrap: "true"
       - name: Type check
         # testflight/ holds real runner+invariant logic (acceptance suite); it
         # lives outside src/tests so it must be named explicitly. scripts/ stays
@@ -88,7 +85,8 @@ jobs:
   # parity, substrate-matrix, benchmark, and docs stay as separate workflows.
   regression-gate:
     runs-on: ubuntu-latest
-    # Observed 27-44 min; see the ruff job note on why a cap is needed.
+    # Measured 2026-11-05 on the pip install: job 66m44s, pytest 1:05:34 (run 42026173384).
+    # See the ruff job note on why a cap is needed.
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
@@ -100,19 +98,11 @@ jobs:
           # it skip on every run, so the refactor-safety gate never actually
           # ran in CI (§SEAM-SENTRY-CI). Matches compat-preflight / regression-proof.
           fetch-depth: 0
-      - uses: actions/setup-python@v6
+      # The Mac gate's profile (bootstrap.sh): dev, lint, vault, cloud. cloud: tests/unit/test_v2_cloud_sources.py
+      # mocks google.cloud.storage and boto3 directly; lint: scripts/dev/gates.sh needs ruff. No mimesis, ner, geo, ml or perf.
+      - uses: ./.github/actions/lock-env
         with:
-          python-version: "3.10"
-          cache: pip
-      - name: Install engine + dev + cloud extras
-        # CLI install DX (2026-09-25): boto3/google-cloud-storage moved from
-        # hard deps to the opt-in `cloud` extra. tests/unit/test_v2_cloud_sources.py
-        # mocks google.cloud.storage.Client/boto3 directly (no importorskip
-        # guard), so this job needs `cloud` too or it fails on ModuleNotFoundError
-        # instead of running the connector suite. `[dev]` alone is now the true
-        # lean-install profile; see packaging-gate below for the corresponding
-        # "base wheel does not require boto3/google-cloud-storage" assertion.
-        run: pip install -e ".[dev,cloud]"
+          bootstrap: "true"
       - name: Install strace (the file-access runtime detector; it fails, never skips, without it)
         run: sudo apt-get update && sudo apt-get install -y strace
       - name: Routing guard (every named suite directory must exist)
@@ -181,14 +171,40 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: ./.github/actions/lock-env
         with:
-          python-version: "3.10"
-          cache: pip
-      - name: Install engine + dev + ml extras
-        run: pip install -e ".[dev,ml]"
+          extras: "dev ml"
       - name: ML gate (golden retrain + provenance + privacy + classify)
         run: pytest -m ml --tb=short
+
+  # ner-gate: regression-gate installs .[dev] only, so every NER test skips there
+  # and a broken `ner` install (spaCy imports click, which typer no longer pulls
+  # in) went unseen. The model is not on PyPI and `spacy download` is an unpinned
+  # network install, so the wheel pinned in NER_MODEL_WHEELS is fetched,
+  # hash-checked and installed from a local path. DECOY_REQUIRE_NER makes an
+  # empty install fail the `ner` tests instead of skipping them.
+  ner-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DECOY_REQUIRE_NER: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/lock-env
+        with:
+          extras: "dev ner"
+      - name: Install the pinned spaCy model wheel
+        run: |
+          pin() { python -c "from decoy_engine.detection.ner import DEFAULT_NER_MODEL as m, DEFAULT_NER_MODEL_VERSION as v, NER_MODEL_WHEELS as w; print(w[(m, v)].$1)"; }
+          url=$(pin url)
+          sha=$(pin sha256)
+          mkdir -p "$RUNNER_TEMP/ner-model"
+          wheel="$RUNNER_TEMP/ner-model/$(basename "$url" .whl).whl"
+          curl --fail --silent --show-error --location --output "$wheel" "$url"
+          echo "$sha  $wheel" | sha256sum --check -
+          uv pip install --python "$RUNNER_TEMP/venv/bin/python" --no-deps "$wheel"
+      - name: NER gate (import spaCy, load the model, find person and location)
+        run: pytest -m ner --tb=short
 
   # packaging-gate: builds an actual wheel and asserts it ships the default ML
   # model pack + py.typed (DE-07). A clean wheel used to package only
@@ -200,20 +216,31 @@ jobs:
   packaging-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # hatchling is the engine's build backend and is not in uv.lock; python -m build installs it
+      # into an isolated env with pip, which reads PIP_CONSTRAINT (see .github/build-constraints.txt).
+      PIP_CONSTRAINT: ${{ github.workspace }}/.github/build-constraints.txt
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: ./.github/actions/lock-env
         with:
-          python-version: "3.10"
-          cache: pip
-      - name: Install engine + dev extras + build frontend
-        # build pinned like ruff/mypy: a frontend bump should be deliberate.
-        run: pip install -e ".[dev]" build==1.2.2
+          extras: "dev"
+      - name: Install the build frontend
+        # build is not in uv.lock (L-e), so it is a named exact pin like ruff.
+        run: uv pip install --python "$RUNNER_TEMP/venv/bin/python" build==1.2.2
+      - name: Build frontend is importable (the packaging tests importorskip without it)
+        run: python -c "import build"
+      - name: Build backend is the pinned hatchling
+        run: |
+          # -v makes build print pip's resolution; without it the log never names the backend version.
+          set -o pipefail
+          python -m build -v --sdist --outdir "$RUNNER_TEMP/sdist-check" 2>&1 | tee "$RUNNER_TEMP/build.log"
+          grep -q "hatchling-1.32.4" "$RUNNER_TEMP/build.log"
       - name: Packaging gate (wheel ships the model pack + py.typed)
         run: pytest -m packaging --tb=short
 
   # dp-certified-gate: `fit_dp_snapshot` only completes on the certified
-  # 77-dist `dev+lint+vault` Python 3.10.20 profile (`dp_provenance.
+  # 79-dist `dev+lint+vault` Python 3.10.20 profile (`dp_provenance.
   # check_fit_environment`); `regression-gate` above installs a different
   # profile, so the `dp_certified`-marked fit-success tests are collected
   # there but SKIPPED (tests/conftest.py's pytest_collection_modifyitems).
@@ -232,19 +259,19 @@ jobs:
   dp-certified-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # Every uv run below must use the lock as is, never re-resolve.
+      UV_FROZEN: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v5
-      - name: Pin the exact certified CPython patch
-        run: uv python install 3.10.20
-      - name: Sync the certified profile (77-dist dev+lint+vault+cloud)
-        # cloud extra required: boto3 partially survives via moto[s3], but
-        # google-cloud-storage does not survive at all once cloud is optional,
-        # which fails check_fit_environment() below. The dist set matches the
-        # pre-split 895b9a20... profile except decoy-engine's own version,
-        # which is part of the hashed set: every engine version bump re-pins
-        # the certified row (see dp_provenance._CERTIFIED_STACKS).
-        run: uv sync --frozen --extra dev --extra lint --extra vault --extra cloud --python 3.10.20
+      # The certified profile (dev+lint+vault+cloud: 77 dists, 79 once pytest-xdist joined `dev`) on the exact CPython patch. cloud is
+      # required: google-cloud-storage does not survive without it, which fails
+      # check_fit_environment() below. The dist set matches the pre-split 895b9a20... profile except
+      # decoy-engine's own version, which is part of the hashed set: every engine version bump
+      # re-pins the certified row (see dp_provenance._CERTIFIED_STACKS).
+      - uses: ./.github/actions/lock-env
+        with:
+          extras: "dev lint vault cloud"
       - name: Assert this profile is certified (fail loud on drift)
         run: >
           uv run python -c

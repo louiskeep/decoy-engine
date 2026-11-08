@@ -205,6 +205,10 @@ def test_all_lists_every_public_name():
         "PandasExecutionAdapter",
         "StrategyError",
         "get_default_executor",
+        # Public strategy catalog: one row per scalar strategy handler.
+        "StrategyInfo",
+        "StrategyOption",
+        "strategy_catalog",
         # engine-v2 S10 (Validator: compile consolidator + post-validation).
         "PlanCheckError",
         "PlanValidationResult",
@@ -232,6 +236,9 @@ def test_all_lists_every_public_name():
         "SecretProviderRegistry",
         "SecretRef",
         "register_secret_provider",
+        # Init wizard E3 (2026-11-08): keyed columns of a config, beside the secret requirement.
+        "KeyedColumn",
+        "keyed_columns_for_config",
         "SecretKeyProvider",
         "SeedKeyProvider",
         "MaskSecretError",
@@ -246,6 +253,15 @@ def test_all_lists_every_public_name():
         "estimate_job_capacity",
         "CapacityEstimate",
         "CapacityVerdict",
+        # Optional ML detectors (model status, loading, config blocks).
+        "Dismissal",
+        "ModelRef",
+        "ModelStatus",
+        "ModelUnavailableError",
+        "PreScanConfig",
+        "classifier_status",
+        "load_detectors",
+        "ner_status",
         # Job-time estimator: the advisory estimate_job primitive + its result type.
         "estimate_job",
         "JobEstimate",
@@ -267,6 +283,20 @@ def test_all_lists_every_public_name():
         # can be materialized without importing the private
         # `profile._fixed_width_writer` module.
         "write_fixed_width",
+        # decoy-run-result/v1 model and outcome (RESULT E1).
+        "RUN_RESULT_SCHEMA",
+        "RunResult",
+        "RunResultRead",
+        "derive_outcome",
+        "pipeline_config_hash",
+        # CLI-DIALECT (2026-11): the one CSV source reader, its dialect type and
+        # the descriptor-to-dialect resolver.
+        "CsvDialect",
+        "read_csv_source",
+        "resolve_csv_dialect",
+        # LIB L0.1: the protected directory allocator.
+        "open_protected_dir",
+        "protected_scratch_dir",
     }
     assert set(decoy_engine.__all__) == expected
 
@@ -392,7 +422,7 @@ class TestV2BehaviorRegressionPinsS11:
         """Q8 regression pin: V2 faker calls PoolSampler.sample once per
         column (vectorized), not per row. The V1 carrier was
         `transforms/faker_based.py`'s `column.apply(fake_for)`. V2
-        `execution/_strategies/_faker.py:57` calls `PoolSampler().sample(...)`
+        `execution/_strategies/_faker.py:69` calls `PoolSampler().sample(...)`
         once, then assigns the materialized list to the column.
         """
         import pandas as pd

@@ -401,6 +401,7 @@ def test_mid_export_failure_removes_first_relations_staged_file(
     assert _tree(cfg.temp_directory) == []
 
 
+@pytest.mark.serial
 def test_deadline_aborts_a_long_export_and_cleans_up(pg, make_config, tmp_path):
     s = pg.schema
     pg.run(

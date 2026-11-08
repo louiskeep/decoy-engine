@@ -7,17 +7,16 @@
 set -uo pipefail
 
 REPO_NAME=decoy-engine
-# The profile ci.yml's dp-certified-gate syncs: the one CI job built from uv.lock.
-PY_VERSION=3.10.20
 EXTRAS=(--extra dev --extra lint --extra vault --extra cloud)
-KEY_DEPS=(duckdb pyarrow polars pandas)
 ABI_SRC=src/decoy_engine/execution/native/_crypto_ext.py
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$ROOT" || exit 2
+LOCK_VERSION="$ROOT/scripts/dev/lock_version.sh"  # the lock profile: Python patch, key deps, locked versions
+PY_VERSION=$(bash "$LOCK_VERSION" --python)
 export UV_PROJECT_ENVIRONMENT=${DECOY_VENV:-${UV_PROJECT_ENVIRONMENT:-$ROOT/.venv}}
 VENV=$UV_PROJECT_ENVIRONMENT
-SYNC=(uv sync --frozen "${EXTRAS[@]}" --python "$PY_VERSION")
+SYNC=(uv sync --frozen ${EXTRAS[@]+"${EXTRAS[@]}"} --python "$PY_VERSION")
 CHECK=0
 case ${1:-} in
   --check) CHECK=1 ;;
@@ -30,15 +29,11 @@ err() { ERRORS+=("$1|$2"); }
 
 command -v uv >/dev/null || { echo "BOOTSTRAP FAIL: uv not on PATH (fix: install uv, https://docs.astral.sh/uv/)" >&2; exit 1; }
 if [ $CHECK = 0 ]; then
-  echo "bootstrap: ${SYNC[*]}" >&2
-  "${SYNC[@]}" >&2 || { echo "BOOTSTRAP FAIL: uv sync --frozen failed (fix: read the uv error above)" >&2; exit 1; }
+  echo "bootstrap: ${SYNC[*]+${SYNC[*]}}" >&2
+  ${SYNC[@]+"${SYNC[@]}"} >&2 || { echo "BOOTSTRAP FAIL: uv sync --frozen failed (fix: read the uv error above)" >&2; exit 1; }
 fi
 PY=$VENV/bin/python
 [ -x "$PY" ] || { echo "BOOTSTRAP FAIL: no venv at $VENV (fix: scripts/dev/bootstrap.sh)" >&2; exit 1; }
-
-lock_version() {  # first locked version of package $1
-  awk -v n="name = \"$1\"" '$0 == n { getline; gsub(/version = |"/, ""); print; exit }' uv.lock
-}
 
 echo "== $REPO_NAME environment =="
 echo "venv:       $VENV"
@@ -46,26 +41,21 @@ py_have=$("$PY" -c 'import platform; print(platform.python_version())')
 echo "python:     $py_have (lock profile expects $PY_VERSION)"
 [ "$py_have" = "$PY_VERSION" ] ||
   err "python is $py_have, expected $PY_VERSION" "rm -rf $VENV && scripts/dev/bootstrap.sh"
-echo "lock:       uv.lock sha256 $(sha256sum uv.lock | cut -c1-16)  extras: ${EXTRAS[*]}"
+echo "lock:       uv.lock sha256 $(if command -v sha256sum >/dev/null; then sha256sum uv.lock; else shasum -a 256 uv.lock; fi | cut -c1-16)  extras: ${EXTRAS[*]+${EXTRAS[*]}}"
 
-installed=$("$PY" - "${KEY_DEPS[@]}" <<'PY'
-import importlib.metadata as m, sys
-for name in sys.argv[1:]:
-    try:
-        print(name, m.version(name))
-    except m.PackageNotFoundError:
-        print(name, "absent")
-PY
-)
-for dep in "${KEY_DEPS[@]}"; do
-  have=$(awk -v n="$dep" '$1 == n { print $2 }' <<<"$installed")
-  want=$(lock_version "$dep")
-  if [ "$have" = "$want" ]; then mark=OK; else
-    mark=MISMATCH
-    err "$dep installed $have but uv.lock pins $want" "scripts/dev/bootstrap.sh (runs ${SYNC[*]})"
+key_out=$(DECOY_VENV="$VENV" bash "$LOCK_VERSION" --check 2>&1)
+key_rc=$?
+echo "$key_out"
+key_bad=0
+while read -r dep _ have _ want mark; do
+  if [ "$mark" = MISMATCH ]; then
+    key_bad=1
+    err "$dep installed $have but uv.lock pins $want" "scripts/dev/bootstrap.sh (runs ${SYNC[*]+${SYNC[*]}})"
   fi
-  printf '%-11s installed %-10s lock %-10s %s\n' "$dep" "$have" "$want" "$mark"
-done
+done <<<"$key_out"
+if [ $key_rc != 0 ] && [ $key_bad = 0 ]; then
+  err "key dependency check failed (see output above)" "scripts/dev/bootstrap.sh"
+fi
 
 abi_want=$(sed -n 's/^_EXPECTED_ABI_VERSION = "\(.*\)"/\1/p' "$ABI_SRC" 2>/dev/null)
 abi_have=$("$PY" -c 'from decoy_engine_native import _kernel; print(_kernel.abi_version())' 2>/dev/null)
@@ -79,7 +69,7 @@ else
     "uv pip install --python $PY -e ./decoy-engine-native (rebuild from this tree), or uninstall it"
 fi
 
-if sync_out=$("${SYNC[@]}" --check 2>&1); then
+if sync_out=$(${SYNC[@]+"${SYNC[@]}"} --check 2>&1); then
   echo "full env:   in sync with uv.lock ($(grep -o 'Checked [0-9]* packages' <<<"$sync_out"))"
 else
   echo "full env:   DIFFERS from uv.lock:"
@@ -91,7 +81,7 @@ if ! uv lock --check --offline >/dev/null 2>&1; then
 fi
 
 if [ ${#ERRORS[@]} -gt 0 ]; then
-  for e in "${ERRORS[@]}"; do
+  for e in ${ERRORS[@]+"${ERRORS[@]}"}; do
     echo "BOOTSTRAP FAIL: ${e%%|*}" >&2
     echo "  fix: ${e#*|}" >&2
   done

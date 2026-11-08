@@ -90,8 +90,10 @@ class _FakeBlob:
         self.size = None
         self.content_type = None
         self.updated = None
+        self.calls: list[tuple[str, object, object]] = []
 
-    def reload(self):
+    def reload(self, timeout=None, retry=None):
+        self.calls.append(("reload", timeout, retry))
         if self.name not in self.store:
             raise gax_exc.NotFound(f"No such object: {self.name}")
         entry = self.store[self.name]
@@ -99,7 +101,8 @@ class _FakeBlob:
         self.content_type = entry["content_type"]
         self.updated = entry["updated"]
 
-    def open(self, mode: str):
+    def open(self, mode: str, timeout=None, retry=None):
+        self.calls.append(("open", timeout, retry))
         return _FakeBlobFile(self.store, self.name, mode)
 
 
@@ -108,8 +111,10 @@ class _FakeBucket:
         self.store = store
         self.name = name
         self._exists = exists
+        self.calls: list[tuple[str, object, object]] = []
 
-    def list_blobs(self, prefix: str | None = None):
+    def list_blobs(self, prefix: str | None = None, timeout=None, retry=None):
+        self.calls.append(("list_blobs", timeout, retry))
         for key, entry in sorted(self.store.items()):
             if prefix and not key.startswith(prefix):
                 continue
@@ -131,11 +136,13 @@ class _FakeStorageClient:
         self.credentials = credentials
         self._store = store
         self._buckets = {"test-bucket": _FakeBucket(store, "test-bucket")}
+        self.calls: list[tuple[str, object, object]] = []
 
     def bucket(self, name: str) -> _FakeBucket:
         return self._buckets.setdefault(name, _FakeBucket(self._store, name))
 
-    def get_bucket(self, name: str) -> _FakeBucket:
+    def get_bucket(self, name: str, timeout=None, retry=None) -> _FakeBucket:
+        self.calls.append(("get_bucket", timeout, retry))
         if name not in self._buckets:
             raise gax_exc.NotFound(f"Bucket not found: {name}")
         return self._buckets[name]

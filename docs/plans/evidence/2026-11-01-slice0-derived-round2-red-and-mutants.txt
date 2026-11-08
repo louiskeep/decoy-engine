@@ -1,0 +1,77 @@
+Slice 0 item 3 (derived visibility), build round 2: red-first record and mutation proofs.
+Environment: venvs synced from uv.lock with `uv sync --frozen --extra dev --extra lint --extra vault --extra cloud`
+(Python 3.10.20 and 3.12.3; pyarrow 24.0.0, pandas 2.3.3; native companion not installed), one per tree.
+Trees: build head before this round 4f9c66ed; fix commit a0adb86; main 1132d29 (branch base 1ee89e68).
+
+1. Red first: the three changed expectations, new test text, before the fix.
+
+1a. On the round-1 head 4f9c66ed (parent check still present), the edited E3 cells:
+FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[auto-res-derived-row7/2-FAIL-BEFORE]
+FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[auto-res-redact-row7/2-FAIL-BEFORE]
+FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[full_frame-res-derived-row7/2-FAIL-BEFORE]
+FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[full_frame-res-redact-row7/2-FAIL-BEFORE]
+FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[sequential-res-derived-row7/2-FAIL-BEFORE]
+FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[sequential-res-redact-row7/2-FAIL-BEFORE]
+FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[out_of_core-res-redact-row7/2-FAIL-BEFORE]
+FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[out_of_core-res-derived-row7/2-FAIL-BEFORE]
+FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[auto-res-transform-row4-CHARACTERIZATION-result]
+FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[full_frame-res-transform-row4-CHARACTERIZATION-result]
+FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[sequential-res-transform-row4-CHARACTERIZATION-result]
+FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[out_of_core-res-transform-row1-CONFIG-FIRST]
+FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_unwritable_duplicate_surfaces_the_serialization_failure
+13 failed, 16 passed, 110 deselected in 35.76s
+  (test_e3_isolated_default: the 8 res FAIL-BEFORE cells and 3 res transform cells fail on
+  `assert spawned and result.pid is not None` (the parent refused with no child); the
+  out_of_core-res-transform CONFIG-FIRST cell is finding 2 itself: duplicate_source_field_names
+  instead of per_table_transforms_present. The discriminating cell: DID NOT RAISE
+  ArrowNotImplementedError, because the parent returned the duplicate refusal.)
+  The two edited pinned tests PASS on 4f9c66ed (the round-1 code already refuses); their new
+  expectations are red on main:
+
+1b. On main 1132d29 with the edited test files copied in (restored after with git checkout):
+FAILED tests/unit/execution/test_engine_transforms_exact.py::TestDefectsThroughRoutes::test_duplicate_field_table_without_transforms_is_refused_with_the_code
+FAILED tests/native/test_chunked_entry_rev9_nfkc.py::test_duplicate_source_column_names_raise_the_oracle_refusal[unconfigured]
+FAILED tests/native/test_chunked_entry_rev9_nfkc.py::test_duplicate_source_column_names_raise_the_oracle_refusal[configured]
+3 failed in 1.50s
+  (main: KeyError 'Field "a" exists 2 times in schema'; ValueError "walk_dataframe: DataFrame
+  for table 't' has duplicate column names ['x']" on both chunked entries.)
+
+1c. After the fix (a0adb86), 3.10: test_duplicate_field_names_matrix.py, test_engine_transforms_exact.py,
+    test_chunked_entry_rev9_nfkc.py, tests/sentry/test_module_size.py: 1033 passed.
+
+2. Mutants. Each applied alone to the working tree, its named test run with -x, the file restored
+with `git checkout -- <file>`; `git status --porcelain src` empty before and after. No commit
+while a mutation was applied. Round 1 had 20; M11 (drop the isolated parent check) and M20
+(isolated parent result echoes str(exc)) no longer exist: the mechanism is removed. The other 18,
+re-run on a0adb86 (3.10):
+M1 RED ['FAILED tests/unit/transforms/test_derived.py::test_apply_derived_sees_only_compiled_refs'] | 1 failed in 0.25s
+M2 RED ['FAILED tests/unit/execution/test_derived_strategy.py::test_expression_never_reads_an_undeclared_column_through_a_positional_alias'] | 1 failed in 0.25s
+M3 RED ['FAILED tests/unit/transforms/test_derived_value_free.py::test_apply_derived_failure_is_value_free[bad-date-str]'] | 1 failed in 0.27s
+M4 RED ['FAILED tests/unit/transforms/test_derived_value_free.py::test_apply_derived_failure_is_value_free[bad-date-str]'] | 1 failed in 0.22s
+M5 RED ['FAILED tests/unit/execution/test_derived_strategy.py::test_t8_missing_declared_ref_at_runtime_is_one_coded_error'] | 1 failed in 0.23s
+M6 RED ['FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e1_run_pipeline[auto-res-derived-row7-FAIL-BEFORE]'] | 1 failed in 0.55s
+M7 RED ['FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_t6d5_shared_refusal_names_the_table_and_a_count_only[names0-1]'] | 1 failed in 0.25s
+M8 RED ['FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e1_run_pipeline[auto-desc-derived-row2-FAIL-BEFORE]'] | 1 failed, 29 passed in 1.35s
+M9 RED ['FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e1_run_pipeline[auto-res-derived-row7-FAIL-BEFORE]'] | 1 failed in 0.48s
+M10 RED ['FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e1_run_pipeline[auto-loader-redact-row17-FAIL-BEFORE]'] | 1 failed, 26 passed in 1.44s
+M12 RED ['FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e4_e5_chunked[E4-redact-first-row15-FAIL-BEFORE]'] | 1 failed in 0.25s
+M13 RED ['FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_e4_e5_chunked[E5-redact-later-row16a-FAIL-BEFORE]'] | 1 failed, 6 passed in 0.49s
+M14 RED ['FAILED tests/unit/execution/test_derived_strategy.py::test_t6d2_duplicate_guarded_field_is_refused_with_the_code[truncate-full]'] | 1 failed in 0.23s
+M15 RED ['FAILED tests/unit/execution/test_derived_strategy.py::test_t6d3_direct_handler_call_refuses_a_duplicate_labelled_frame'] | 1 failed in 0.23s
+M16 RED ['FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_t6d4_transform_schema_check_keeps_type_and_code_with_a_value_free_message'] | 1 failed, 9 skipped, 34762 deselected in 25.65s
+M17 RED ['FAILED tests/unit/execution/test_derived_strategy.py::test_t6d2_duplicate_guarded_field_is_refused_with_the_code[truncate-seq]'] | 1 failed, 1 passed in 0.25s
+M18 RED ['FAILED tests/unit/execution/test_derived_strategy.py::test_constant_expression_fills_every_row'] | 1 failed in 0.35s
+M19 RED ['FAILED tests/unit/execution/test_duplicate_field_names_matrix.py::test_t7c_shared_refusal_raises_the_pinned_owner_only'] | 1 failed in 0.23s
+porcelain-src-after: ''
+
+Extra (round 2, the two edited pinned tests): shared refusal made a no-op (`if repeated:` ->
+`if False:`): all 3 ids RED; refusal message echoes the names: all 3 ids RED.
+The removal itself has no new mechanism to mutate; its inverse (the parent check present) is the
+4f9c66ed red record in 1a.
+
+3. Canary probe of the narrowed contract's excluded input (open finding, plan section 13):
+dup + month_day_nano_interval -> ArrowNotImplementedError raised out of run_pipeline_isolated(),
+args ('Unhandled type for Arrow to Parquet schema conversion: month_day_nano_interval',), no
+cause/context/notes; struct/list nesting under canary field names: same type-only text; table
+named 'CANARY/TBL': FileNotFoundError naming .../sources/CANARY/TBL.parquet; 360-char table name:
+OSError [Errno 36] with the path (table name in raw text). Pre-existing on main for every input.

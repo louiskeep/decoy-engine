@@ -1,0 +1,3 @@
+E       AssertionError: no registered refusal for 'chunked': ['out_of_core']
+E       assert 'chunked' in {'out_of_core': {'route': 'out_of_core', 'namespace': 'route', 'code': 'declared_cast_route_unsupported', 'missing': ['cast_before_join']}}
+1 failed, 7 deselected in 0.31s

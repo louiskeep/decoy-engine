@@ -515,6 +515,7 @@ class TestSingleQuoteHint:
 class TestPerformance:
     """SP-06 perf budget: compile once + evaluate 10k rows in under 5s."""
 
+    @pytest.mark.serial
     def test_compile_once_evaluate_10k(self):
         compile_expr, evaluate = _get_parser()
         expr = "a * b + c"

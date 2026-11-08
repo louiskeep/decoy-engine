@@ -21,7 +21,12 @@ from pathlib import Path
 from typing import BinaryIO, Literal, TextIO
 
 from decoy_engine.fileaccess._errors import deny
-from decoy_engine.fileaccess._output import CREATES_PARENTS, STAGE_PREFIX, STAGE_SUFFIX
+from decoy_engine.fileaccess._output import (
+    CREATES_PARENTS,
+    PRIVATE_LABELS,
+    STAGE_PREFIX,
+    STAGE_SUFFIX,
+)
 from decoy_engine.fileaccess._types import (
     FileAccessUnavailable,
     FileRequest,
@@ -231,15 +236,23 @@ class LocalOutputTxn(_LocalStageDir):
                 return os.open(self._target, _CREATE_IN_PLACE, 0o666)
             if self._label in CREATES_PARENTS:
                 self._target.parent.mkdir(parents=True, exist_ok=True)
-            if self._mode == "replace" and self._writes_through():
+            private = self._label in PRIVATE_LABELS
+            # A private stage never writes through: publish replaces a symlink, not its target.
+            if self._mode == "replace" and not private and self._writes_through():
                 self._direct = True
                 self._staged_file = self._target
                 return os.open(self._target, os.O_WRONLY | os.O_TRUNC | os.O_CLOEXEC)
             prefix = STAGE_PREFIX[self._label]
             suffix = STAGE_SUFFIX.get(self._label, "")
-            if self._label == "quarantine":
+            if private:
                 fd, name = tempfile.mkstemp(prefix=prefix, suffix=suffix, dir=self._target.parent)
                 self._staged_file = Path(name)
+                try:  # mkstemp's 0600 is narrowed by the umask; under 0777 it is born 000
+                    os.fchmod(fd, 0o600)
+                except OSError:
+                    os.close(fd)
+                    self.abort()
+                    raise
                 return fd
             stage = self._target.parent / f"{prefix}{secrets.token_hex(6)}{suffix}"
             self._staged_file = stage

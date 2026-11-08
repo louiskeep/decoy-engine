@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from decoy_engine.execution import _pipeline_auto_chunk, _pipeline_routing
+from decoy_engine.execution import _guards, _pipeline_auto_chunk, _pipeline_routing
 from decoy_engine.execution._chunked_output_sink import OutputPublish
 from decoy_engine.execution._transforms_admission import out_of_core_declined, routing_profile
 from decoy_engine.execution._transforms_gate import reject_any_per_table_transforms
@@ -152,6 +152,8 @@ class PipelineRunContext:
     post_validation_sample_size: int
     post_validation_enforce: bool
     now_iso: str | None
+    # F06: the resolved protected-quarantine runtime (sink + owner); None unless supplied.
+    quarantine_runtime: Any = None
 
 
 @dataclass(frozen=True)
@@ -209,6 +211,7 @@ def build_run_context(
     secret_scope: AdmissionScope,
     secret_registry: SecretProviderRegistry | None = None,
     secret_cache_policy: SecretCachePolicy | None = None,
+    quarantine_runtime: Any = None,
 ) -> PipelineRunContext:
     """Resolve and validate every run input, in the order the inline code did.
 
@@ -216,6 +219,7 @@ def build_run_context(
     `run_pipeline` so the call resolves through `_pipeline`'s module namespace at run time.
     Existing tests count its calls by patching `_pipeline.prepare_transform_sources`.
     """
+    from decoy_engine.declared_casting._eligibility import preflight_declared_casting
     from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
     from decoy_engine.execution._substrate import (
         SUBSTRATE,
@@ -225,6 +229,7 @@ def build_run_context(
     )
     from decoy_engine.execution.out_of_core._route_policy import resolve_reorder_threshold_rows
     from decoy_engine.plan import compile_plan
+    from decoy_engine.plan._checks_declared_casting import compile_declared_casting_contract
     from decoy_engine.profile import profile_source
     from decoy_engine.providers_v2 import get_default_registry
     from decoy_engine.relationships import (
@@ -234,6 +239,17 @@ def build_run_context(
         check_orphan_fk_policy_completeness,
     )
     from decoy_engine.secret_providers import admit_mask_key, assert_plan_requirements_admitted
+
+    # F06 preflight: config-only, so a bad declared contract, an incapable explicit route or a
+    # missing protected-quarantine store is refused before the source is profiled or read.
+    declared_plan = compile_declared_casting_contract(config)
+    if declared_plan is not None:
+        preflight_declared_casting(
+            declared_plan,
+            config,
+            execution_mode=execution_mode,
+            quarantine_runtime=quarantine_runtime,
+        )
 
     # Adapter selection runs up front, before any profiling or plan
     # compilation, so an invalid substrate or count knob fails at submit
@@ -309,6 +325,12 @@ def build_run_context(
             cache_policy=secret_cache_policy,
         )
     )
+
+    # Duplicate field names are refused here, after the config-only admission and before
+    # profiling, routing and every pandas conversion: each of those looks columns up by name
+    # and would fail uncoded (or, on the loader out-of-core path, publish the duplicate).
+    _guards.refuse_duplicate_run_sources(config, caller_sources)
+    source_loader = _guards.refusing_source_loader(source_loader)
 
     profile = profile_source(config, seed=job_seed)
 
@@ -404,6 +426,7 @@ def build_run_context(
         post_validation_sample_size=post_validation_sample_size,
         post_validation_enforce=post_validation_enforce,
         now_iso=now_iso,
+        quarantine_runtime=quarantine_runtime,
     )
 
 

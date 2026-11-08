@@ -1,0 +1,16 @@
+478 passed, 21 skipped, 14 warnings in 26.01s
+
+
+skips by reason (count<TAB>reason):
+2	time64_ns: refused by the engine with estimate routing off (known issue)
+2	struct: refused by the engine with estimate routing off (known issue)
+2	sparse_union: refused by the engine with estimate routing off (known issue)
+2	ree_string_view: refused by the engine with estimate routing off (known issue)
+2	map: refused by the engine with estimate routing off (known issue)
+2	list: refused by the engine with estimate routing off (known issue)
+2	large_list: refused by the engine with estimate routing off (known issue)
+2	dictionary_float16: refused by the engine with estimate routing off (known issue)
+2	dense_union: refused by the engine with estimate routing off (known issue)
+1	pre-GA: synthetic baseline is sufficient; capture real artifacts at GA
+1	fixed_size_list: refused by the engine with estimate routing off (known issue)
+1	fixed_shape_tensor: refused by the engine with estimate routing off (known issue)
