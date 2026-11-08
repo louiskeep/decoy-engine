@@ -579,10 +579,10 @@ class PandasExecutionAdapter:
                 # dtype for an all-null resolved column (see
                 # `_fk_keys.fk_all_null_array`'s docstring).
                 child_frame[c] = fk_all_null_array(len(safe_ints), child_frame[c].dtype)
+            elif safe_ints is not None:
+                child_frame[c] = fk_nullable_int_array(safe_ints, table=node.table, column=c)
             else:
-                child_frame[c] = (
-                    fk_nullable_int_array(safe_ints) if safe_ints is not None else values
-                )
+                child_frame[c] = values
         # S2: emit one cascaded RowError per child row whose key was excluded
         # from the parent map (parent key row-errored). The masked cell is
         # already None (set above), so even a downstream bug in quarantine

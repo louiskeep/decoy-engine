@@ -69,20 +69,22 @@ def _raise_if_source_value_unrepresentable(
             continue
         fk_cols = fk_columns_for_table(edges, table)
         for name in tbl.column_names:
+            # The pandas/Arrow error quotes the cell: name the column only, and keep it out of
+            # the rendered chain (the caller is inside its own handler for `exc`).
             try:
                 to_pandas_fk_safe(tbl.select([name]), fk_cols & {name})
+                continue
             except Exception as again:
-                if type(again) is type(exc) and str(again) == str(exc):
-                    raise ExecutionError(
-                        code=reasons.runtime.FULL_FRAME_VALUE_UNREPRESENTABLE,
-                        message=(
-                            f"table {table!r} column {name!r} holds a value pandas "
-                            f"cannot represent ({type(exc).__name__}: {exc}). The "
-                            "full-frame pandas route converts every column to pandas; "
-                            "the default native (Rust) route keeps columns in Arrow "
-                            "and does not hit this limit."
-                        ),
-                    ) from exc
+                if type(again) is not type(exc) or str(again) != str(exc):
+                    continue
+            raise ExecutionError(
+                code=reasons.runtime.FULL_FRAME_VALUE_UNREPRESENTABLE,
+                message=(
+                    f"table {table!r} column {name!r} holds a value pandas cannot represent. "
+                    "The full-frame pandas route converts every column to pandas; the default "
+                    "native (Rust) route keeps columns in Arrow and does not hit this limit."
+                ),
+            ) from None
 
 
 def _render_and_seal(cast_run: Any, result: ExecutionResult) -> ExecutionResult:
