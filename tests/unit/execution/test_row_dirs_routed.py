@@ -10,16 +10,23 @@ from __future__ import annotations
 import os
 import stat
 import sys
+import tempfile
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
 import pytest
 
+from decoy_engine import fileaccess
 from decoy_engine.connectors import postgres_snapshot as ps
 from decoy_engine.execution import _isolated_run
-from decoy_engine.execution.out_of_core import _scratch
+from decoy_engine.execution.out_of_core import _runner, _scratch, run_fk_out_of_core
 from decoy_engine.fileaccess import ProtectedDirUnsafe
+from decoy_engine.providers_v2 import get_default_registry
+from decoy_engine.relationships._graph import RelationshipGraph
+from tests.fileaccess.protected_dir.test_protected_dir import _Strict
+from tests.unit.execution.test_out_of_core_join_chunked import _edge, _plan
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Windows lane is L0.1w")
 
@@ -55,14 +62,24 @@ def test_ooc_engine_made_root_comes_from_the_allocator(monkeypatch: pytest.Monke
 
 
 def test_ooc_engine_made_root_is_the_engines_own_under_any_policy(tmp_path: Path) -> None:
+    jail = tmp_path / "jail"
+    jail.mkdir()
+    policy = _Strict(jail)
     stack = ExitStack()
     try:
-        root = _scratch.scratch_root(None, stack)
-        again = _scratch.scratch_root(root, stack)  # a live issued root needs no ambient policy
-        assert again == root
-        _scratch.private_dir(root / "child" / "grandchild")
+        with fileaccess.scope(policy):
+            root = _scratch.scratch_root(None, stack)  # the engine's own root, outside the jail
+            assert _scratch.scratch_root(root, stack) == root  # a live issued root is taken again
+            child = _scratch.private_dir(root / "a" / "b")
+            assert child.is_dir() and _mode(child) == 0o700
+            caller = tmp_path / "caller"
+            with pytest.raises(fileaccess.FileAccessUnavailable):
+                _scratch.scratch_root(caller, stack)
+            assert not caller.exists()
     finally:
         stack.close()
+        policy.close()
+    assert not root.exists()
 
 
 def test_ooc_per_run_root_comes_from_the_allocator(
@@ -238,3 +255,69 @@ def test_pg_symlinked_spill_dir_is_refused(tmp_path: Path) -> None:
     )
     with pytest.raises(ProtectedDirUnsafe):
         ps._open_connection(config, tmp_path / "spill")
+
+
+# -- the runner removes what it made -------------------------------------------------------------
+
+
+def _small_job() -> tuple[Any, Any, dict[str, pa.Table]]:
+    graph = RelationshipGraph(edges=(_edge(),), ordering=())
+    sources = {
+        "customers": pa.table({"customer_id": ["c1", "c2"]}),
+        "orders": pa.table({"customer_id": ["c1", "c2", "c1"], "amount": [1, 2, 3]}),
+    }
+    return _plan(), graph, sources
+
+
+def _run_small(**kwargs: Any) -> None:
+    plan, graph, sources = _small_job()
+    run_fk_out_of_core(
+        plan, sources, registry=get_default_registry(), relationship_graph=graph, **kwargs
+    )
+
+
+def _ooc_dirs(base: Path) -> list[str]:
+    return [p.name for p in base.iterdir() if p.name.startswith("decoy-ooc-")]
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_runner_removes_its_engine_made_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fail: bool
+) -> None:
+    sys_tmp = tmp_path / "systmp"
+    sys_tmp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(sys_tmp))
+    roots = _spy(monkeypatch, _scratch, "protected_scratch_dir")
+    if fail:
+
+        def boom(*_: Any, **__: Any) -> None:
+            assert _ooc_dirs(sys_tmp)  # the root exists while the run is live
+            raise RuntimeError("route failed")
+
+        monkeypatch.setattr(_runner, "decide_route", boom)
+        with pytest.raises(RuntimeError):
+            _run_small()
+    else:
+        _run_small()
+    assert len(roots) == 1
+    assert _ooc_dirs(sys_tmp) == []
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_runner_wipes_its_subtrees_but_keeps_a_caller_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fail: bool
+) -> None:
+    work = tmp_path / "work"
+    if fail:
+
+        def boom(*_: Any, **__: Any) -> None:
+            raise RuntimeError("route failed")
+
+        monkeypatch.setattr(_runner, "decide_route", boom)
+        with pytest.raises(RuntimeError):
+            _run_small(temp_dir=work)
+    else:
+        _run_small(temp_dir=work)
+    assert work.is_dir() and _mode(work) == 0o700
+    for sub in ("relations", "joins", "staged"):
+        assert not (work / sub).exists()

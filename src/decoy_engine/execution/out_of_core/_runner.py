@@ -196,8 +196,6 @@ def run_fk_out_of_core(
     validators = _validate_batch.build_validator_collector(
         config, plan, relationship_graph, sources
     )
-    owned_root = ExitStack()  # removes an engine-made root; a caller-named one is left alone
-    root = scratch_root(temp_dir, owned_root)
     committed = False
     # B4: the run-scoped faker pool lifecycle. Pools are Python/object memory
     # outside DuckDB's accounting, so bound them well inside the run budget and
@@ -210,6 +208,10 @@ def run_fk_out_of_core(
         job_seed=plan.seed_envelope.job_seed,
         max_pool_bytes=min(budget_bytes, _faker_pool_cap) if budget_bytes else _faker_pool_cap,
     )
+    # Entered only after the pool exists, so nothing that can fail sits between the root being
+    # made and the `try` whose `finally` removes it.
+    owned_root = ExitStack()  # removes an engine-made root; a caller-named one is left alone
+    root = scratch_root(temp_dir, owned_root)
     try:
         incoming, outgoing = _edge_indexes(relationship_graph)
         parent_relations: dict[RelationshipEdge, ParentKeyRelation] = {}
