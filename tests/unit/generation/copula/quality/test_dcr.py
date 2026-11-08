@@ -224,3 +224,16 @@ def test_memory_is_bounded_by_the_block() -> None:
     finally:
         tracemalloc.stop()
     assert peak < 100 * 1024 * 1024
+
+
+@pytest.mark.parametrize(("rows", "tails"), [(220, False), (221, True)])
+def test_real_to_real_floor_counts_other_rows(rows: int, tails: bool) -> None:
+    # A real row's neighbours are the other k_r - 1 rows: at 220 rows that is 219, under the
+    # 220 the 5th and 95th percentiles need.
+    rng = np.random.default_rng(18)
+    real = pd.DataFrame({"x": rng.normal(size=rows), "y": rng.normal(size=rows)})
+    result = report(real, fit(real))
+    assert result.dcr is not None
+    baseline = result.dcr.real_to_real
+    assert (baseline.p05 is not None, baseline.p95 is not None) == (tails, tails)
+    assert baseline.median is not None

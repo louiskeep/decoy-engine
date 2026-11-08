@@ -54,7 +54,6 @@ from decoy_engine.quality.synth_report import (
 
 COPULA_QUALITY_REPORT_SCHEMA_VERSION = "decoy-copula-quality-report/v1"
 
-_DEFAULT_EXTRAS = "decoy_engine_privacy_attacks"
 _RESULT_KEY = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _RESULTS_WITHHELD = "withheld_not_value_free"
 _GOF_KEYS = ("ks_complement", "chi_cramers_v")
@@ -220,17 +219,20 @@ def compute_copula_quality_report(
     pairs = score_pairs(ctx, synth_c, synth_states)
     scored = [p for p in pairs if p.status == STATUS_SCORED and p.score is not None]
 
-    attacks = _filter_attack_results(
+    if attack_extras is None:
+        attacks = compute_attack_metrics(real, synthetic, enable_attacks=False)
+    else:
         # Copies: an extras module that edits its inputs must not reach the caller's frames or
         # the rest of the report.
-        compute_attack_metrics(
-            real.copy(deep=True),
-            synthetic.copy(deep=True),
-            enable_attacks=attack_extras is not None,
-            extras_module=attack_extras or _DEFAULT_EXTRAS,
-            holdout=None if holdout is None else holdout.copy(deep=True),
+        attacks = _filter_attack_results(
+            compute_attack_metrics(
+                real.copy(deep=True),
+                synthetic.copy(deep=True),
+                enable_attacks=True,
+                extras_module=attack_extras,
+                holdout=None if holdout is None else holdout.copy(deep=True),
+            )
         )
-    )
     synth_report = assemble_synth_report(
         new_row_synthesis=compute_new_row_synthesis(real_c, synth_c), dcr=None, attacks=attacks
     )
