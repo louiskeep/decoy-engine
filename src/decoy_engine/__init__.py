@@ -126,6 +126,7 @@ from decoy_engine.execution.native._companion_status import (
     NativeCompanionStatus,
     native_companion_status,
 )
+from decoy_engine.fileaccess import open_protected_dir, protected_scratch_dir
 from decoy_engine.generation.composite import (
     BundlePool,
     CompositeAdapter,
@@ -494,8 +495,10 @@ __all__ = [
     "load_vault",
     "make_key_resolver",
     "native_companion_status",
+    "open_protected_dir",
     "pipeline_config_hash",
     "profile_columns",
+    "protected_scratch_dir",
     "read_csv_source",
     "read_fixed_width",
     "reason_from_exception",

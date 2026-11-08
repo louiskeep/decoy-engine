@@ -9,6 +9,17 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (protected directories)
+
+`decoy_engine.protected_scratch_dir` and `open_protected_dir` are the one allocator for directories that
+hold Decoy's own rows. Directories are owner-only from creation, an existing directory is reused only when
+it is a real directory owned by the caller with no group or other access, and a failure never falls back.
+Two reasons join the registry at 1.7.0: `runtime.scratch_unsafe` and `runtime.scratch_acl_failed`.
+
+Behavior change: the local protected quarantine arena goes through the allocator. On POSIX an empty arena
+with a permissive mode is now tightened to 0700 and accepted. A permissive arena that already holds files is
+still refused (`arena_unsafe`).
+
 ### Added (strategy catalog)
 
 `decoy_engine.strategy_catalog()` returns one `StrategyInfo` row per scalar strategy, sorted by name, with its

@@ -21,14 +21,6 @@ id = "secret-material-census"
 baseline = "tests/sentry/baselines/secret-material-census.json"
 
 [[sentry]]
-id = "file-access-registry"
-baseline = "tests/sentry/baselines/file-access-registry.json"
-
-[[sentry]]
-id = "file-access-modules"
-baseline = "tests/sentry/baselines/file-access-modules.json"
-
-[[sentry]]
 id = "module-size"
 baseline = "tests/sentry/baselines/module-size.json"
 

@@ -282,6 +282,9 @@ def test_all_lists_every_public_name():
         "CsvDialect",
         "read_csv_source",
         "resolve_csv_dialect",
+        # LIB L0.1: the protected directory allocator.
+        "open_protected_dir",
+        "protected_scratch_dir",
     }
     assert set(decoy_engine.__all__) == expected
 
