@@ -147,6 +147,7 @@ def chunk_route_evidence(
     pandas_read_passthrough: Iterable[str] = (),
     kernel_idle_columns: Iterable[str] = (),
     preserved_rows: Mapping[str, int] | None = None,
+    entity_fallback_rows: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
     """One chunk's evidence: every column called once, with its own elapsed time.
 
@@ -161,6 +162,7 @@ def chunk_route_evidence(
 
     `preserved_rows` maps each column that opted into D1c `preserve_values` to the rows it passed
     through this chunk. Only those columns carry the key, so an unset config adds nothing.
+    `entity_fallback_rows` is the same for a date_shift `entity_key` column's no-entity rows.
 
     `decline_records` is the table's structured decline causes (OBS-2b), fixed at preflight so
     every chunk carries the same list; the payload form is `decline_payload`, exactly
@@ -177,6 +179,7 @@ def chunk_route_evidence(
     per-column `calls` field is a different, per-column chunk count and is unchanged."""
     idle = frozenset(kernel_idle_columns)
     kept = preserved_rows or {}
+    fallback = entity_fallback_rows or {}
     return {
         "table": table,
         "native_admitted": native_admitted,
@@ -195,6 +198,7 @@ def chunk_route_evidence(
                 "calls": 1,
                 "elapsed_ms": float(elapsed_ms.get(c.column, 0.0)),
                 **({"preserved_rows": kept[c.column]} if c.column in kept else {}),
+                **({"entity_fallback_rows": fallback[c.column]} if c.column in fallback else {}),
             }
             for c in columns
         ],
@@ -265,8 +269,9 @@ def aggregate_chunked_route_evidence(results: Iterable[Any]) -> dict[str, Any]:
             else:
                 acc["calls"] += col["calls"]
                 acc["elapsed_ms"] += col["elapsed_ms"]
-                if "preserved_rows" in col:
-                    acc["preserved_rows"] = acc.get("preserved_rows", 0) + col["preserved_rows"]
+                for counted in ("preserved_rows", "entity_fallback_rows"):
+                    if counted in col:
+                        acc[counted] = acc.get(counted, 0) + col[counted]
                 merge_executed_backend(acc, col)
     if head is None:
         return {

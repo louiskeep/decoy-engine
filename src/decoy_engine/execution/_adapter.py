@@ -247,6 +247,8 @@ class StrategyContext:
     # D1c: rows a date operator emitted unchanged because they matched `preserve_values`,
     # summed per (table, column). A count only, never a value; empty unless a column opts in.
     date_preserved: dict[tuple[str, str], int] = field(default_factory=dict)
+    # date_shift entity_key rows with no entity, which took the per-value shift instead.
+    date_shift_entity_fallback: dict[tuple[str, str], int] = field(default_factory=dict)
     # D2a: the sequential route's per-run hash decisions. Set only by `run_sequential`; every
     # other caller leaves it None, so the hash handler stays the Python path there.
     seq_native: SeqNativeRun | None = None
@@ -279,6 +281,30 @@ class StrategyContext:
         """Add ``count`` sentinel rows a date operator passed through for ``column``."""
         key = (self.current_table, self.nested_outer_column or column)
         self.date_preserved[key] = self.date_preserved.get(key, 0) + count
+
+    def record_date_shift_entity_fallback(self, column: str, count: int) -> None:
+        """Add ``count`` no-entity rows an ``entity_key`` date_shift column shifted per value."""
+        key = (self.current_table, column)
+        self.date_shift_entity_fallback[key] = self.date_shift_entity_fallback.get(key, 0) + count
+
+    def handler_metrics(self) -> dict[str, Any]:
+        """Every handler-recorded metric: code_set provenance, D1c preserve and entity fallback."""
+        return {
+            **self.code_set_corpora_metrics(),
+            **self.date_preserve_metrics(),
+            **self.date_shift_entity_fallback_metrics(),
+        }
+
+    def date_shift_entity_fallback_metrics(self) -> dict[str, Any]:
+        """The per-column fallback counts, or {} when no entity_key column fell back."""
+        if not self.date_shift_entity_fallback:
+            return {}
+        return {
+            "date_shift_entity_fallback": [
+                {"table": table, "column": column, "fallback_rows": count}
+                for (table, column), count in sorted(self.date_shift_entity_fallback.items())
+            ]
+        }
 
     def date_preserve_metrics(self) -> dict[str, Any]:
         """The D1c aggregate preserved-row counts, or {} when no column preserved a row."""

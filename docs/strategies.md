@@ -159,6 +159,65 @@ across runs. Null and unparseable values are left as-is. Needs a namespace.
 Use it for HIPAA-style date generalization where relative spacing matters but
 the absolute date must move.
 
+#### Per-entity offsets (`entity_key`)
+
+`entity_key: <column>` moves every date of one entity (a patient, a customer) by the same
+offset, so intervals and order within the entity survive: length of stay, time between visits,
+admission before discharge. The offset is keyed by the mask secret, the namespace and the entity
+value, so it is the same in every column and table that shares the namespace and range.
+
+```yaml
+tables:
+  - name: admissions
+    columns:
+      - {name: patient_id, strategy: hash, namespace: patient_ids}
+      - name: admitted_on
+        strategy: date_shift
+        namespace: patient_dates
+        provider_config: {entity_key: patient_id, min_days: -180, max_days: 180, date_format: "%Y-%m-%d"}
+      - name: discharged_on
+        strategy: date_shift
+        namespace: patient_dates
+        provider_config: {entity_key: patient_id, min_days: -180, max_days: 180, date_format: "%Y-%m-%d"}
+  - name: labs
+    columns:
+      - {name: subject, strategy: passthrough}
+      - name: drawn_on
+        strategy: date_shift
+        namespace: patient_dates
+        provider_config: {entity_key: subject, min_days: -180, max_days: 180, date_format: "%Y-%m-%d"}
+```
+
+- The entity column must be another entry in the same table's `columns` (declare it, for
+  example as `passthrough`). It is read before any column is masked, so it may itself be hashed.
+- Use one namespace per kind of entity. Every `entity_key` column in a namespace must use the
+  same `min_days` and `max_days` (resolved, after the default and the swap), and two
+  `entity_key` columns of one table that name the same entity column must share a namespace;
+  compile refuses otherwise (`plan.date_shift_entity_key_inconsistent`).
+- With `entity_key`, `min_days` and `max_days` must be plain integers within ±106751 days (the
+  largest day count pandas can add).
+- Keys: integers, integral decimals and their decimal text are one entity (`123`, `"123"`,
+  `Decimal("123.0")`); strings are compared after Unicode NFC normalisation, with no trimming or
+  case folding; a UUID equals its lowercase hyphenated text; a date equals its ISO text. A null,
+  empty or all-blank key means "no entity": that row gets the ordinary per-value shift, and the
+  run reports the count as `quality_metrics["date_shift_entity_fallback"]`. A key of any other
+  type (float, boolean, datetime, bytes) fails the run with
+  `runtime.date_shift_entity_key_unsupported_value`.
+- Not combinable with `group_by`, `preserve_values` or `when`, inside `nested`, or on a date
+  column that is part of a relationship (`plan.date_shift_entity_key_unsupported_combination`).
+  A misspelling of the option one edit away (`entity-key`, `EntityKey`, `entity_kye`) is refused
+  as `plan.date_shift_entity_key_invalid` rather than ignored.
+- A shifted date that would leave pandas' date range (before 1677-09-21 or after 2262-04-11)
+  is a `format_error` row; a source date outside that range (a `9999-12-31` sentinel) already is,
+  and since `preserve_values` is refused here, such a column needs quarantine.
+- Runs on the full-frame, sequential and chunked routes with identical output; native executors
+  and out-of-core decline it.
+
+`entity_key` is preferred over the older `group_by` option: `group_by` derives its offset in the
+same domain as `hash`, so a `hash` or `group_key` column on the entity in the same namespace
+reveals the offset. That is fixed separately for `group_by`. What the option keeps and leaks is
+in [what we cannot prove](what-we-cannot-prove.md#per-entity-date-offsets).
+
 ### bucket_perturb
 
 Coarse time-bucket generalization: snaps each date to a deterministic position

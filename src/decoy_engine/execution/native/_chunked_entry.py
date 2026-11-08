@@ -59,7 +59,7 @@ from decoy_engine.execution.native._chunked_evidence import (
     chunk_route_evidence,
     plan_column_backends,
 )
-from decoy_engine.execution.native._chunked_oracle_rows import _oracle_preserved_rows
+from decoy_engine.execution.native._chunked_oracle_rows import _oracle_row_counts
 from decoy_engine.execution.native._chunked_pools import (
     prepared_categoricals,
     resolve_admitted_pools,
@@ -153,7 +153,7 @@ def _oracle_route(
                 columns=columns,
                 elapsed_ms=elapsed,
                 pandas_read_passthrough=read_passthrough,
-                preserved_rows=_oracle_preserved_rows(result.quality_metrics),
+                **_oracle_row_counts(result.quality_metrics),
             )
             chunk_result_sink.append(
                 dataclasses.replace(

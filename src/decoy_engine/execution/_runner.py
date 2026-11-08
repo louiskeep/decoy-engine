@@ -166,6 +166,7 @@ def date_shift_group_columns(plan: Plan, registry: ProviderRegistry) -> dict[str
     (`check_date_shift_group_by_refs`), so this walker never has to guess.
     """
     from decoy_engine.execution._adapter import provider_config_to_dict
+    from decoy_engine.transforms.dates.entity_offset import date_shift_anchor
 
     out: dict[str, set[str]] = {}
     for node in build_work_list(plan, registry):
@@ -173,9 +174,9 @@ def date_shift_group_columns(plan: Plan, registry: ProviderRegistry) -> dict[str
             continue
         if not isinstance(node.plan_slice, ColumnSeed):
             continue
-        group_by = provider_config_to_dict(node.plan_slice.provider_config).get("group_by")
-        if isinstance(group_by, str) and group_by:
-            out.setdefault(node.table, set()).add(group_by)
+        anchor = date_shift_anchor(provider_config_to_dict(node.plan_slice.provider_config))
+        if anchor is not None and isinstance(anchor.column, str) and anchor.column:
+            out.setdefault(node.table, set()).add(anchor.column)
     return out
 
 

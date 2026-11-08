@@ -54,6 +54,16 @@ back to anchoring on ITS OWN date value (the no-`group_by` behavior for
 that one row): deterministic, no crash, and every null-group row is *not*
 forced to collide on one shared offset (each keeps its own date-derived
 offset, same as an ungrouped column).
+
+entity_key (`transforms/dates/entity_offset.py`): the per-entity offset in its own derivation
+domain. The digest input is `0xFF || b"date-shift-entity/v1" || 0x00 || text(entity)`, which no
+canonicalised cell can equal, so a `hash` or `group_key` column on the entity key in the same
+namespace cannot reveal the offset (it can for `group_by`). Integer, integral-Decimal and text
+keys agree, so one entity keeps one offset across tables whatever the key's storage type. The
+anchor is the same pre-mask snapshot `group_by` uses. A null or blank entity falls back to the
+per-value shift of the row's own date and is counted (`date_shift_entity_fallback`); an entity
+of another type fails the run with a value-free code; a shift that would leave pandas' date range
+is a `format_error` row instead of an overflow crash. No native or out-of-core executor runs it.
 """
 
 from __future__ import annotations
@@ -78,6 +88,29 @@ from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.transforms.date_preserve import preserve_set_from_config
 from decoy_engine.transforms.date_shift import _detect_format
+from decoy_engine.transforms.dates.entity_offset import (
+    Anchor,
+    AnchorDomain,
+    EntityKeyFault,
+    FaultKind,
+    UnsupportedEntityValue,
+    date_shift_anchor,
+    entity_key_present,
+    entity_source,
+    parse_entity_key,
+)
+
+# A raw plan (no compile) can still carry a bad entity_key; a combination that would drop the
+# anchor gets its own code, every other fault the generic config code.
+_ENTITY_FAULT_RUNTIME_CODE: dict[FaultKind, str] = {
+    FaultKind.KEY_INVALID: reasons.runtime.DATE_SHIFT_INVALID_CONFIG,
+    FaultKind.BOUND_INVALID: reasons.runtime.DATE_SHIFT_INVALID_CONFIG,
+    FaultKind.WITH_GROUP_BY: reasons.runtime.DATE_SHIFT_ENTITY_KEY_UNSUPPORTED_COMBINATION,
+    FaultKind.WITH_PRESERVE_VALUES: reasons.runtime.DATE_SHIFT_ENTITY_KEY_UNSUPPORTED_COMBINATION,
+}
+_SECONDS_PER_UNIT = {"s": 1, "ms": 10**3, "us": 10**6, "ns": 10**9}
+_INT64_MIN_VALID = -(2**63) + 1  # -2**63 is NaT
+_INT64_MAX = 2**63 - 1
 
 
 class DateShiftStrategyHandler:
@@ -112,6 +145,16 @@ class DateShiftStrategyHandler:
                 message=f"column {column!r} uses date_shift but has no namespace.",
             )
         cfg = provider_config_to_dict(plan.provider_config)
+        entity = parse_entity_key(cfg)
+        if isinstance(entity, EntityKeyFault):
+            raise StrategyError(
+                code=_ENTITY_FAULT_RUNTIME_CODE[entity.kind],
+                strategy="date_shift",
+                message=(
+                    f"date_shift column {column!r}: invalid entity_key configuration "
+                    f"(option {entity.option!r})."
+                ),
+            )
         min_days = int(cfg.get("min_days", -365))
         max_days = int(cfg.get("max_days", 365))
         if min_days > max_days:
@@ -125,7 +168,8 @@ class DateShiftStrategyHandler:
                 strategy="date_shift",
                 message=f"date_shift column {column!r}: {exc}",
             ) from exc
-        if preserve is not None and cfg.get("group_by"):
+        anchor = date_shift_anchor(cfg)
+        if preserve is not None and anchor is not None:
             raise StrategyError(
                 code=reasons.runtime.DATE_PRESERVE_VALUES_WITH_GROUP_BY_UNSUPPORTED,
                 strategy="date_shift",
@@ -141,55 +185,15 @@ class DateShiftStrategyHandler:
             col = col.astype(object)
         fmt = cfg.get("date_format") or _detect_format(col)
 
-        # HC-3(a): group_by anchors the digest input to a sibling entity
-        # column read from the PRE-MASK snapshot in ctx, not the live frame
-        # (see module docstring "Anchor source"). Existence + a non-empty
-        # string ref are plan-compile checks (check_date_shift_group_by_refs).
-        group_by = cfg.get("group_by")
+        # The anchor (group_by or entity_key) is read from the PRE-MASK snapshot in ctx, not the
+        # live frame (see module docstring "Anchor source"). Existence + a non-empty string ref
+        # are plan-compile checks.
         anchor_col: pd.Series | None = None
-        if group_by:
-            snapshot = ctx.group_anchor_snapshots.get((ctx.current_table, group_by))
-            if snapshot is None:
-                raise StrategyError(
-                    code=reasons.runtime.DATE_SHIFT_GROUP_ANCHOR_SNAPSHOT_MISSING,
-                    strategy="date_shift",
-                    message=(
-                        f"column {column!r} uses date_shift group_by {group_by!r} "
-                        "but no pre-mask anchor snapshot was provided for it; the "
-                        "run cannot anchor the shift deterministically. This is an "
-                        "adapter wiring error, not a config error."
-                    ),
-                )
-            # The snapshot must line up ROW-FOR-ROW with the frame this handler
-            # sees. On every SUPPORTED path a date_shift+group_by column gets the
-            # full table frame -- a `when` gate, an FK-participating column, and a
-            # nested child are ALL compile-rejected for group_by -- so the snapshot,
-            # built from that same pre-mask frame, has an identical index. Require
-            # that identity and FAIL CLOSED otherwise instead of silently
-            # reindexing: a future/unknown route that handed a filtered or
-            # reordered frame (a fresh RangeIndex) would otherwise mis-anchor
-            # UNDETECTABLY -- the exact wrong-output class this snapshot exists to
-            # prevent (Dennis R2 LOW-1). This backstops any execution route not yet
-            # accounted for at the handler, turning a silent-wrong-output into a
-            # loud fail-closed raise.
-            if not snapshot.index.equals(col.index):
-                raise StrategyError(
-                    code=reasons.runtime.DATE_SHIFT_GROUP_ANCHOR_SNAPSHOT_MISALIGNED,
-                    strategy="date_shift",
-                    message=(
-                        f"column {column!r} date_shift group_by {group_by!r}: the "
-                        "pre-mask anchor snapshot does not row-align with the frame "
-                        "being masked (indexes differ). Anchoring would be wrong, so "
-                        "the run fails closed. This indicates an execution route not "
-                        "yet supported for group_by, not a config error."
-                    ),
-                )
-            anchor_col = snapshot
-            if pd.api.types.is_extension_array_dtype(anchor_col.dtype):
-                anchor_col = anchor_col.astype(object)
+        if anchor is not None:
+            anchor_col = _anchor_snapshot(ctx, column, anchor, col.index)
 
-        # group_by is not native, but admission declines it, so the seam books the row and
-        # returns None (reporting the honest python_scalar backend) rather than being gated out.
+        # group_by and entity_key are not native; admission declines them, so the seam books the
+        # row and returns None (reporting the honest python_scalar backend).
         seq = getattr(ctx, "seq_native", None)
         if seq is not None:
             native_out = seq.date_shift_column(
@@ -204,8 +208,36 @@ class DateShiftStrategyHandler:
                 preserve=preserve,
             )
             if native_out is not None:
+                if entity_key_present(cfg):
+                    # The native gate declines every entity_key column; output here would carry
+                    # per-value offsets and silently break every entity's intervals.
+                    raise StrategyError(
+                        code=reasons.runtime.DATE_SHIFT_INVALID_CONFIG,
+                        strategy="date_shift",
+                        message=(
+                            f"date_shift column {column!r}: a native executor returned output "
+                            "for an entity_key column; refusing it."
+                        ),
+                    )
                 df[column] = native_out
                 return df, []
+
+        if anchor is not None and anchor.domain is AnchorDomain.ENTITY and anchor_col is not None:
+            out, error_rows, overflow_rows = _shift_entity_rows(
+                col, fmt, anchor_col, ctx, plan.namespace, min_days, range_size, column
+            )
+            _record_format_errors(ctx, column, error_rows)
+            for i in overflow_rows:
+                ctx.row_errors.append(
+                    RowError(
+                        column=column,
+                        row_index=int(i),
+                        trigger="format_error",
+                        reason="shifted date is outside the supported date range",
+                    )
+                )
+            df[column] = out
+            return df, []
 
         preserved = preserve.mask(col) if preserve is not None else None
         if preserve is None or preserved is None or not preserved.any():
@@ -231,17 +263,63 @@ class DateShiftStrategyHandler:
                 cells[position] = text
             out = cells
             ctx.record_date_preserved(column, int(preserved.sum()))
-        for i in error_rows:
-            ctx.row_errors.append(
-                RowError(
-                    column=column,
-                    row_index=int(i),
-                    trigger="format_error",
-                    reason="value is not a parseable date under date_shift",
-                )
-            )
+        _record_format_errors(ctx, column, error_rows)
         df[column] = out
         return df, []
+
+
+def _record_format_errors(ctx: StrategyContext, column: str, error_rows: Any) -> None:
+    for i in error_rows:
+        ctx.row_errors.append(
+            RowError(
+                column=column,
+                row_index=int(i),
+                trigger="format_error",
+                reason="value is not a parseable date under date_shift",
+            )
+        )
+
+
+def _anchor_snapshot(
+    ctx: StrategyContext, column: str, anchor: Anchor, index: pd.Index
+) -> pd.Series:
+    """The pre-mask anchor column, row-aligned with the frame being masked, or fail closed."""
+    snapshot = ctx.group_anchor_snapshots.get((ctx.current_table, anchor.column))
+    if snapshot is None:
+        raise StrategyError(
+            code=reasons.runtime.DATE_SHIFT_GROUP_ANCHOR_SNAPSHOT_MISSING,
+            strategy="date_shift",
+            message=(
+                f"column {column!r} uses date_shift {anchor.option} {anchor.column!r} "
+                "but no pre-mask anchor snapshot was provided for it; the "
+                "run cannot anchor the shift deterministically. This is an "
+                "adapter wiring error, not a config error."
+            ),
+        )
+    # The snapshot must line up ROW-FOR-ROW with the frame this handler
+    # sees. On every SUPPORTED path an anchored date_shift column gets the
+    # full table frame -- a `when` gate, an FK-participating column, and a
+    # nested child are ALL compile-rejected for an anchor -- so the snapshot,
+    # built from that same pre-mask frame, has an identical index. Require
+    # that identity and FAIL CLOSED otherwise instead of silently
+    # reindexing: a future/unknown route that handed a filtered or
+    # reordered frame (a fresh RangeIndex) would otherwise mis-anchor
+    # UNDETECTABLY.
+    if not snapshot.index.equals(index):
+        raise StrategyError(
+            code=reasons.runtime.DATE_SHIFT_GROUP_ANCHOR_SNAPSHOT_MISALIGNED,
+            strategy="date_shift",
+            message=(
+                f"column {column!r} date_shift {anchor.option} {anchor.column!r}: the "
+                "pre-mask anchor snapshot does not row-align with the frame "
+                "being masked (indexes differ). Anchoring would be wrong, so "
+                "the run fails closed. This indicates an execution route not "
+                f"yet supported for {anchor.option}, not a config error."
+            ),
+        )
+    if pd.api.types.is_extension_array_dtype(snapshot.dtype):
+        snapshot = snapshot.astype(object)
+    return snapshot
 
 
 def _shift_rows(
@@ -303,6 +381,17 @@ def _shift_rows(
         for i, d in zip(usable_idx, digests, strict=True):
             shifts[i] = min_days + (int.from_bytes(d[:8], "big") % range_size)
 
+    out = _render(col, parsed, shifts, fmt, unusable)
+    return out, np.flatnonzero(unusable & ~source_null)
+
+
+def _render(
+    col: pd.Series,
+    parsed: pd.Series,
+    shifts: list[int],
+    fmt: str | None,
+    unusable: np.ndarray[Any, Any],
+) -> list[Any]:
     shifted = parsed + pd.to_timedelta(shifts, unit="D")
     formatted = shifted.dt.strftime(fmt) if fmt else shifted.astype(str)
 
@@ -316,7 +405,93 @@ def _shift_rows(
     # exact scalar objects, so unusable cells must be the very objects
     # `col.iloc[i]` returns (a boxed or np.where'd source changes the
     # dtype of all-null float32/float16, None, NaT and NA-only columns).
-    out = formatted.to_numpy(dtype=object).tolist()
+    out: list[Any] = formatted.to_numpy(dtype=object).tolist()
     for i in np.flatnonzero(unusable):
         out[i] = col.iloc[i]
-    return out, np.flatnonzero(unusable & ~source_null)
+    return out
+
+
+def _shift_entity_rows(
+    col: pd.Series,
+    fmt: str | None,
+    anchor_col: pd.Series,
+    ctx: StrategyContext,
+    namespace: str,
+    min_days: int,
+    range_size: int,
+    column: str,
+) -> tuple[list[Any], np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+    """Shift every parseable date by its entity's offset.
+
+    Returns ``(cells, format_error_positions, overflow_positions)``. A row with no entity (null or
+    blank key) takes the plain per-value shift of its own date and is counted as a fallback.
+    """
+    parsed = pd.to_datetime(col, format=fmt, errors="coerce")
+    unusable = parsed.isna().to_numpy()
+    source_null = col.isna().to_numpy()
+    values = list(col)
+    usable_idx = np.flatnonzero(~unusable)
+    sources: list[bytes] = []
+    fallback = 0
+    unsupported: str | None = None
+    for i in usable_idx:
+        src = entity_source(anchor_col.iloc[i])
+        if isinstance(src, UnsupportedEntityValue):
+            unsupported = src.type_name
+            break
+        if src is None:
+            fallback += 1
+            src = _canonicalize_source(values[i])
+        sources.append(src)
+    if unsupported is not None:
+        raise StrategyError(
+            code=reasons.runtime.DATE_SHIFT_ENTITY_KEY_UNSUPPORTED_VALUE,
+            strategy="date_shift",
+            message=(
+                f"date_shift column {column!r} in table {ctx.current_table!r}: an entity_key "
+                f"value of type {unsupported} has no stable text form. Use integer, string, "
+                "decimal, UUID or date entity keys."
+            ),
+        )
+    if fallback:
+        ctx.record_date_shift_entity_fallback(column, fallback)
+
+    shifts = [0] * len(values)
+    if sources:
+        digests = DeriveContext.for_column(ctx.mask_key, namespace).derive_sources(
+            namespace, sources
+        )
+        for i, d in zip(usable_idx, digests, strict=True):
+            shifts[i] = min_days + (int.from_bytes(d[:8], "big") % range_size)
+    overflow = _overflow_positions(parsed, shifts, usable_idx)
+    for i in overflow:
+        shifts[i] = 0
+    unusable[overflow] = True
+    out = _render(col, parsed, shifts, fmt, unusable)
+    errors = np.flatnonzero(parsed.isna().to_numpy() & ~source_null)
+    return out, errors, overflow
+
+
+def _overflow_positions(
+    parsed: pd.Series, shifts: list[int], positions: np.ndarray[Any, Any]
+) -> np.ndarray[Any, Any]:
+    """Positions whose shifted value would leave pandas' Timestamp range.
+
+    Computed in the unit the sum is taken in (the finer of the parsed Series' unit and the
+    day timedelta's), so a non-nanosecond Series is bounded correctly; NaT rows are not in
+    ``positions``.
+    """
+    if positions.size == 0 or not pd.api.types.is_datetime64_any_dtype(parsed):
+        return np.empty(0, dtype=np.intp)
+    unit = str(parsed.dt.unit)
+    td_unit = str(pd.to_timedelta([0], unit="D").unit)
+    result_unit = unit if _SECONDS_PER_UNIT[unit] >= _SECONDS_PER_UNIT[td_unit] else td_unit
+    widen = _SECONDS_PER_UNIT[result_unit] // _SECONDS_PER_UNIT[unit]
+    per_day = 86_400 * _SECONDS_PER_UNIT[result_unit]
+    raw = parsed.array.asi8
+    bad = [
+        i
+        for i in positions
+        if not _INT64_MIN_VALID <= int(raw[i]) * widen + shifts[i] * per_day <= _INT64_MAX
+    ]
+    return np.asarray(bad, dtype=np.intp)

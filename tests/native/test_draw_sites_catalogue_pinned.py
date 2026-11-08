@@ -19,7 +19,7 @@ def _digest(value: object) -> str:
 
 
 def test_catalogue_length_and_order_are_unchanged() -> None:
-    assert len(protocol.DRAW_SITES) == len(_ORDERED_IDS) == 34
+    assert len(protocol.DRAW_SITES) == len(_ORDERED_IDS) == 35
     assert [site.draw_site_id for site in protocol.DRAW_SITES] == _ORDERED_IDS
 
 
@@ -46,7 +46,8 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
         assert protocol.draw_site_by_id(site.draw_site_id) is site
 
 
-_CATALOGUE_DIGEST = "e22d1fc92cbb7159bd3d20dd439bac991c2903b0f0cd32a6e10a6b4b969ea75a"
+# With mask.date_shift_entity appended; the 34-site prefix digest was e22d1fc9...a75a.
+_CATALOGUE_DIGEST = "701286ecd598acd0e338303280a76b7bf701ba95f87d3591d503c64d39ab3346"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -83,6 +84,7 @@ _ORDERED_IDS = [
     "gen.faker_pool_selection",
     "mask.faker_nondeterministic",
     "mask.tokenize",
+    "mask.date_shift_entity",
 ]
 
 _ENTRY_DIGESTS = [
@@ -120,6 +122,7 @@ _ENTRY_DIGESTS = [
     "46b422be131d1e91c5ed2a6174d86f970429577b88e5da660ab3a4926171dab4",
     "f698d376bd1e62f5e3f17bde97a7e4da236bf76ad09baf49d95a8c6445614c2c",
     "c8ae317b9397f7faf9152ddc3c0e4e0d0fd55de2f87148512d76b9e28a343324",
+    "0f6c09695c0f1bbcf859b392867ba0177970789600bc5a25f86e796b91e60ea2",
 ]
 
 _MAP_DIGESTS = {

@@ -44,11 +44,11 @@ partitionable.
 
 ## Summary
 
-- 34 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
+- 35 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
   the out-of-core batched path, the delegation handlers, and the 9 identifier
   provider adapters).
-- 23 partitionable, 11 not.
-- Family breakdown: `source_keyed_hmac` 15, `numpy_pcg64` 8, `faker_seed_instance`
+- 24 partitionable, 11 not.
+- Family breakdown: `source_keyed_hmac` 16, `numpy_pcg64` 8, `faker_seed_instance`
   4, `python_mt19937` 3, `per_row_reseed` 2, `per_group_stream` 1,
   `gen_derive_context` 1.
 - GP2 (2026-09-17) added `gen.faker_pool_build` / `gen.faker_pool_selection`: a
@@ -149,6 +149,16 @@ Out-of-core mirror at `_mask_group_b.py:132`.
 handler derives the column key via `derive(mask_key, namespace, value)`
 (`execution/_strategies/_date_shift.py:198`). Legacy no-key configs fall back to
 `md5(value)` (`transforms/date_shift.py:108`), preserved for reproducibility.
+
+### mask.date_shift_entity
+`execution/_strategies/_date_shift.py` (`_shift_entity_rows`). A `date_shift` column with
+`provider_config.entity_key`:
+`min_days + (int.from_bytes(derive(mask_key, namespace, entity_source(e))[:8], "big") % range_size)`
+where `entity_source(e)` is `0xFF || b"date-shift-entity/v1" || 0x00 || text(e)`
+(`transforms/dates/entity_offset.py`). Identity is the entity value (`group_key`), so every date
+of one entity draws the same offset; partitionable. A row with a null or blank entity falls back
+to `mask.date_shift` on its own date. The `0xFF` prefix keeps the source out of reach of every
+canonicalised cell value, so no `hash` or `group_key` output in the namespace reveals an offset.
 
 ### mask.bucket_perturb
 `transforms/bucket_perturb.py:119`. `derive(job_seed, namespace, _canonicalize_source(value_str))`
@@ -551,7 +561,7 @@ The `unit_float_from_bits53(raw_u64)` primitive extracts the upper 53 bits of a
 FULL 64-bit value (`(raw_u64 >> 11) / 2**53`), matching NumPy's own `random()`
 construction and always `< 1.0` (the all-ones input maps to `(2**53 - 1) / 2**53`).
 
-Registry: exactly one provider per catalogued `draw_site_id` (34 sites; 23
+Registry: exactly one provider per catalogued `draw_site_id` (35 sites; 24
 partitionable, 11 not). An import-time invariant fails if the registry drifts
 from `DRAW_SITES`.
 
@@ -583,6 +593,7 @@ from `DRAW_SITES`.
 | mask.categorical_nondeterministic | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.code_set                     | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.date_shift                   | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.date_shift_entity            | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.faker                        | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.faker_nondeterministic       | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.fpe                          | source_keyed_hmac   | yes           | seed_protocol_v7 |

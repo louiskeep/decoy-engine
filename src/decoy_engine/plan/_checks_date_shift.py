@@ -19,6 +19,32 @@ from typing import Any
 from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.transforms.date_preserve import has_preserve_values, preserve_config_problem
+from decoy_engine.transforms.dates.entity_offset import (
+    EntityKeyConfig,
+    FaultKind,
+    entity_key_present,
+    near_miss_entity_keys,
+    parse_entity_key,
+)
+
+# One plan code per single-column fault; a test asserts every FaultKind is mapped.
+_ENTITY_FAULT_CODE: dict[FaultKind, str] = {
+    FaultKind.KEY_INVALID: reasons.plan.DATE_SHIFT_ENTITY_KEY_INVALID,
+    FaultKind.BOUND_INVALID: reasons.plan.DATE_SHIFT_ENTITY_KEY_INVALID,
+    FaultKind.WITH_GROUP_BY: reasons.plan.DATE_SHIFT_ENTITY_KEY_UNSUPPORTED_COMBINATION,
+    FaultKind.WITH_PRESERVE_VALUES: reasons.plan.DATE_SHIFT_ENTITY_KEY_UNSUPPORTED_COMBINATION,
+}
+_ENTITY_FAULT_TEXT: dict[FaultKind, str] = {
+    FaultKind.KEY_INVALID: "entity_key must be a non-blank column name",
+    FaultKind.BOUND_INVALID: (
+        "with entity_key, min_days and max_days must be plain integers within +/-106751 days"
+    ),
+    FaultKind.WITH_GROUP_BY: "entity_key and group_by cannot both be set",
+    FaultKind.WITH_PRESERVE_VALUES: "entity_key and preserve_values cannot both be set",
+}
+
+# (namespace, (min_days, max_days), table, entity column, date column) per entity_key column.
+_EntityUse = tuple[Any, tuple[int, int], str, str, str]
 
 
 def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
@@ -50,6 +76,10 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
        only safe while a when-gated subset keeps its parent-table labels.
        Per-route positional anchoring for when-gated subsets is not implemented,
        so the combination is failed closed until it lands.
+
+    The same pass validates ``entity_key`` (``_check_entity_key``): a bad or near-miss option,
+    a combination it cannot honour, and, across the config, one range per namespace and one
+    namespace per (table, entity column) (``_check_entity_consistency``).
 
     date_shift is mask-kind only (no generate-kind `type: date_shift`), so
     unlike windowed_date/group_key the top-level check has a single loop.
@@ -86,6 +116,7 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
                 if end_table and end_col:
                     fk_cols.add((str(end_table), str(end_col)))
 
+    entity_uses: list[_EntityUse] = []
     tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
     for table_entry in tables:
         if not isinstance(table_entry, dict):
@@ -119,6 +150,20 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
             # generic branch below.
             if col_entry.get("strategy") == "nested" and pc.get("strategy") == "date_shift":
                 nested_cfg = pc.get("strategy_config") or {}
+                if isinstance(nested_cfg, dict) and entity_key_present(nested_cfg):
+                    raise PlanCompileError(
+                        code=reasons.plan.DATE_SHIFT_ENTITY_KEY_UNSUPPORTED_COMBINATION,
+                        path=(
+                            f"tables.{table_name}.columns.{col_name}"
+                            ".provider_config.strategy_config.entity_key"
+                        ),
+                        message=(
+                            f"date_shift column {col_name!r} in table {table_name!r} sets "
+                            "entity_key inside a `nested` strategy. The nested child masks a "
+                            "single-column leaf batch with no sibling columns, so the entity "
+                            "column can never be read. Move it to a top-level column."
+                        ),
+                    )
                 if isinstance(nested_cfg, dict) and nested_cfg.get("group_by"):
                     raise PlanCompileError(
                         code=reasons.plan.DATE_SHIFT_GROUP_BY_UNSUPPORTED_IN_NESTED,
@@ -140,6 +185,9 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
 
             if col_entry.get("strategy") != "date_shift":
                 continue
+            use = _check_entity_key(table_name, col_name, col_entry, pc, all_col_names, fk_cols)
+            if use is not None:
+                entity_uses.append(use)
             group_by = pc.get("group_by")
             # Falsy (None, "", 0, []) means "no group_by": the handler's own
             # `if group_by:` gate skips it, so compile agrees and does not error.
@@ -215,6 +263,123 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
                         "`group_by` from this column."
                     ),
                 )
+    _check_entity_consistency(entity_uses)
+
+
+def _entity_message(table: str, column: str, text: str) -> str:
+    return f"date_shift column {column!r} in table {table!r}: {text}."
+
+
+def _check_entity_key(
+    table: str,
+    column: str,
+    col_entry: dict[str, Any],
+    pc: dict[str, Any],
+    table_columns: set[str],
+    fk_cols: set[tuple[str, str]],
+) -> _EntityUse | None:
+    """Validate one top-level date_shift column's ``entity_key``; return its use, if set.
+
+    Also refuses a near-miss spelling of the option (an owner-approved exception to ignoring
+    unknown keys): such a key can only be a typo, and ignoring it would silently disable the
+    per-entity offset.
+    """
+    prefix = f"tables.{table}.columns.{column}.provider_config"
+    misses = near_miss_entity_keys(pc)
+    if misses:
+        raise PlanCompileError(
+            code=reasons.plan.DATE_SHIFT_ENTITY_KEY_INVALID,
+            path=f"{prefix}.{misses[0]}",
+            message=_entity_message(
+                table,
+                column,
+                "a provider_config key is a misspelling of entity_key; spell it entity_key",
+            ),
+        )
+    parsed = parse_entity_key(pc)
+    if parsed is None:
+        return None
+    if not isinstance(parsed, EntityKeyConfig):
+        raise PlanCompileError(
+            code=_ENTITY_FAULT_CODE[parsed.kind],
+            path=f"{prefix}.{parsed.option}",
+            message=_entity_message(
+                table,
+                column,
+                _ENTITY_FAULT_TEXT[parsed.kind],
+            ),
+        )
+    if parsed.column == column or parsed.column not in table_columns:
+        raise PlanCompileError(
+            code=reasons.plan.DATE_SHIFT_ENTITY_KEY_INVALID,
+            path=f"{prefix}.entity_key",
+            message=_entity_message(
+                table,
+                column,
+                "entity_key must name another column declared in the same table's columns",
+            ),
+        )
+    when_val = col_entry.get("when")
+    if isinstance(when_val, str) and when_val.strip():
+        raise PlanCompileError(
+            code=reasons.plan.DATE_SHIFT_ENTITY_KEY_UNSUPPORTED_COMBINATION,
+            path=f"tables.{table}.columns.{column}.when",
+            message=_entity_message(
+                table,
+                column,
+                "entity_key cannot be combined with `when`",
+            ),
+        )
+    if (table, column) in fk_cols:
+        raise PlanCompileError(
+            code=reasons.plan.DATE_SHIFT_ENTITY_KEY_UNSUPPORTED_COMBINATION,
+            path=f"{prefix}.entity_key",
+            message=_entity_message(
+                table,
+                column,
+                "entity_key cannot be set on a column that is part of a relationship, since equal "
+                "keys could then shift apart",
+            ),
+        )
+    return (
+        col_entry.get("namespace"),
+        (parsed.min_days, parsed.max_days),
+        table,
+        parsed.column,
+        column,
+    )
+
+
+def _check_entity_consistency(uses: list[_EntityUse]) -> None:
+    """One range per namespace, one namespace per (table, entity column).
+
+    Either mismatch gives one entity two offsets, which breaks the intervals the option keeps.
+    """
+    ranges: dict[Any, tuple[int, int]] = {}
+    namespaces: dict[tuple[str, str], Any] = {}
+    for namespace, bounds, table, entity, column in uses:
+        path = f"tables.{table}.columns.{column}.provider_config"
+        if namespace is not None and ranges.setdefault(namespace, bounds) != bounds:
+            raise PlanCompileError(
+                code=reasons.plan.DATE_SHIFT_ENTITY_KEY_INCONSISTENT,
+                path=path,
+                message=_entity_message(
+                    table,
+                    column,
+                    "entity_key columns in one namespace must use the same min_days and max_days",
+                ),
+            )
+        if namespaces.setdefault((table, entity), namespace) != namespace:
+            raise PlanCompileError(
+                code=reasons.plan.DATE_SHIFT_ENTITY_KEY_INCONSISTENT,
+                path=f"tables.{table}.columns.{column}.namespace",
+                message=_entity_message(
+                    table,
+                    column,
+                    "entity_key columns of one table that name the same entity column must use "
+                    "the same namespace",
+                ),
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +511,16 @@ def check_date_preserve_values(config: dict[str, Any]) -> None:
                         code=reasons.plan.DATE_SHIFT_PRESERVE_VALUES_INVALID,
                         path=f"{prefix}.preserve_values",
                         message=f"date_shift column {name!r} in table {table_name!r}: {problem}",
+                    )
+                if entity_key_present(pc):
+                    raise PlanCompileError(
+                        code=reasons.plan.DATE_SHIFT_ENTITY_KEY_UNSUPPORTED_COMBINATION,
+                        path=f"{prefix}.entity_key",
+                        message=_entity_message(
+                            table_name,
+                            name,
+                            "entity_key and preserve_values cannot both be set",
+                        ),
                     )
                 if pc.get("group_by"):
                     raise PlanCompileError(

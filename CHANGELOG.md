@@ -9,6 +9,23 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (V2 track: per-entity date offsets, opt-in)
+
+`date_shift` takes `provider_config.entity_key: <column>`: every date of one entity moves by the
+same keyed offset, so intervals and order within the entity survive across columns and tables
+that share the namespace and range. The offset is derived in its own domain, so no `hash` or
+`group_key` column reveals it; integer, decimal and text keys agree. Compile refuses an
+inconsistent range or namespace, unsupported combinations and near-miss spellings of the option
+(reason registry 1.7.0: `plan.date_shift_entity_key_invalid`,
+`plan.date_shift_entity_key_unsupported_combination`, `plan.date_shift_entity_key_inconsistent`,
+`runtime.date_shift_entity_key_unsupported_value`,
+`runtime.date_shift_entity_key_unsupported_combination`). Full-frame, sequential and chunked
+routes give identical output; native and out-of-core decline it. New draw site
+`mask.date_shift_entity`. A config that does not set the option is unchanged, except that a
+`date_shift` key one edit away from `entity_key` is now refused (owner-approved). V2 track, built
+ahead and opt-in; not merged per owner instruction. Sprint "V2-2.1 Per-entity date offset" in the
+CLI repo (`louiskeep/decoy`), `docs/roadmap/v2-sprints.md`.
+
 ### Added (strategy catalog)
 
 `decoy_engine.strategy_catalog()` returns one `StrategyInfo` row per scalar strategy, sorted by name, with its

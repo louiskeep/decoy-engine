@@ -187,6 +187,7 @@ class TextMaskFakerProvider(DrawSiteProvider):
 _SOURCE_KEYED_PRIMITIVE: dict[str, str] = {
     "mask.hash": "derive",
     "mask.date_shift": "derive",
+    "mask.date_shift_entity": "derive",
     "mask.bucket_perturb": "derive",
     "mask.group_key": "derive",
     "mask.categorical_deterministic": "derive_index",

@@ -113,7 +113,7 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/_sequential_native.py": 697,
     # sequential FK route threading; split the per-table mask/quarantine loop.
     # cross-column V1 folds joint_mask key_by into the source-anchor build (a comment, no new logic).
-    "src/decoy_engine/execution/_sequential.py": 664,
+    "src/decoy_engine/execution/_sequential.py": 663,
     # transactional publish hardening and row mask; split the publish cluster.
     "src/decoy_engine/quarantine.py": 638,
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.

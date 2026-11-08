@@ -511,6 +511,31 @@ charset), but a custom-charset or mixed-low-alphabet column would fall in this g
 Mitigation: cover the column's full alphabet with the charset (e.g. `ALPHANUM`), the
 same fix as the orphan-remap case above.
 
+## Per-entity date offsets
+
+`date_shift` with `entity_key` moves every date of one entity by one keyed offset. That is the
+point of the option, and it is also what it leaks:
+
+- Intervals and order within an entity are exact. Anyone who knows one true date of an entity (a
+  published admission, a birth date) learns its offset, and with it every date of that entity in
+  every column and table of the namespace.
+- The offset is bounded: a shifted date `d'` came from a date in `[d' - max_days, d' - min_days]`.
+- When the range includes 0, about one entity in `max_days - min_days + 1` is not moved at all.
+- The pattern of intervals of one entity (a long, distinctive treatment history) is itself a
+  quasi-identifier. Date shifting is not HIPAA Safe Harbor, which removes every date element finer
+  than the year (45 CFR 164.514(b)(2)); it is a technique an Expert Determination may accept.
+  Decoy classes it as pseudonymisation.
+- Rows whose entity key is null, empty or blank take the ordinary per-value shift: equal source
+  dates in those rows shift equally and their intervals are not kept. The run reports how many
+  such rows each column had, never which.
+- Whoever holds the mask secret can recompute every offset from a source entity value.
+
+What it does keep apart: the offset is derived in its own domain (a source starting with byte
+`0xFF`, which no canonicalised cell can produce), so a `hash` or `group_key` column on the same
+entity in the same namespace does not reveal it. The older `group_by` option does not have that
+separation yet; until it is fixed, do not give a `group_by` date column the namespace of a `hash`
+or `group_key` column.
+
 ## What it does do
 
 To be clear about the other side: Decoy does give you deterministic,

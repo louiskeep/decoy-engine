@@ -141,6 +141,15 @@ def _generic(entry: Mapping[str, Any]) -> ColumnAccess:
     return ColumnAccess(reads=_siblings(entry))
 
 
+def _date_shift(entry: Mapping[str, Any]) -> ColumnAccess:
+    """date_shift reads its `entity_key` column; kept off the generic sibling keys so a stray
+    `entity_key` on another strategy declares no read."""
+    from decoy_engine.transforms.dates.entity_offset import entity_column
+
+    entity = entity_column(entry)
+    return ColumnAccess(reads=_siblings(entry) | (frozenset({entity}) if entity else frozenset()))
+
+
 def _derived(entry: Mapping[str, Any]) -> ColumnAccess:
     from decoy_engine.expressions import compile_expr
     from decoy_engine.transforms.derived import _get_column_refs
@@ -284,6 +293,7 @@ _FIXED_COMPOSITES: tuple[str, ...] = (
 
 SURFACE_DECLARATIONS: dict[str, Declaration] = {
     **{f"scalar:{name}": _generic for name in _SCALAR_STRATEGIES},
+    "scalar:date_shift": _date_shift,
     "scalar:derived": _derived,
     "scalar:derived_aggregate": _derived_aggregate,
     "scalar:joint_mask": _joint_mask,

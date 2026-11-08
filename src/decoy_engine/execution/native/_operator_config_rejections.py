@@ -168,7 +168,17 @@ def date_shift_config_rejection(
     """
     if not namespace:
         return f"date_shift_requires_namespace:{name}"
-    if provider_config.get("group_by"):
+    from decoy_engine.transforms.dates.entity_offset import (
+        AnchorDomain,
+        date_shift_anchor,
+        entity_key_present,
+    )
+
+    # Presence alone declines entity_key: an unparsable value must not run the per-value kernel.
+    if entity_key_present(provider_config):
+        return f"date_shift_entity_key_not_native:{name}"
+    anchor = date_shift_anchor(provider_config)
+    if anchor is not None and anchor.domain is AnchorDomain.VALUE_KEYED_GROUP:
         return f"date_shift_group_by_not_native:{name}"
     date_format = provider_config.get("date_format")
     if not isinstance(date_format, str) or not date_format:

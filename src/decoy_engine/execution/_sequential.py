@@ -583,8 +583,7 @@ def run_sequential(
         # identically whether the job runs table-at-a-time (here) or
         # full-frame.
         quality_metrics: dict[str, Any] = {
-            **ctx.code_set_corpora_metrics(),  # HC-1 evidence
-            **ctx.date_preserve_metrics(),  # D1c: {} unless a column opted in
+            **ctx.handler_metrics(),  # HC-1, D1c, entity fallback: {} unless used
             **native_run.metrics(),  # D2a: {} unless the plan hashes a column
         }
         quarantine_token = seal_evidence(cast_run, quality_metrics)  # last, before the commit

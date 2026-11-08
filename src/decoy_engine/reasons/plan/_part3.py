@@ -5,6 +5,9 @@ from __future__ import annotations
 from decoy_engine.reasons import _catalog
 
 __all__ = [
+    "DATE_SHIFT_ENTITY_KEY_INCONSISTENT",
+    "DATE_SHIFT_ENTITY_KEY_INVALID",
+    "DATE_SHIFT_ENTITY_KEY_UNSUPPORTED_COMBINATION",
     "DEDUPE_UNSUPPORTED_TYPE",
     "SORT_UNSUPPORTED_TYPE",
     "STATISTICAL_HIGH_CARDINALITY_REQUIRES_REAL_CATEGORIES",
@@ -59,3 +62,17 @@ SORT_UNSUPPORTED_TYPE = _d("sort_unsupported_type", "Sort unsupported type.")
 _d = _catalog.plan("decoy_engine.plan._checks_top_code")
 
 TOP_CODE_INVALID_FLOOR = _d("top_code_invalid_floor", "Top code invalid floor.")
+
+_d = _catalog.plan("decoy_engine.plan._checks_date_shift")
+
+DATE_SHIFT_ENTITY_KEY_INCONSISTENT = _d(
+    "date_shift_entity_key_inconsistent", "Date shift entity key inconsistent.", since="1.7.0"
+)
+DATE_SHIFT_ENTITY_KEY_INVALID = _d(
+    "date_shift_entity_key_invalid", "Date shift entity key invalid.", since="1.7.0"
+)
+DATE_SHIFT_ENTITY_KEY_UNSUPPORTED_COMBINATION = _d(
+    "date_shift_entity_key_unsupported_combination",
+    "Date shift entity key unsupported combination.",
+    since="1.7.0",
+)

@@ -24,6 +24,7 @@ from decoy_engine.execution.native._determinism_protocol import (
     unit_float_from_bits53,
 )
 from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.transforms.dates.entity_offset import entity_source
 
 _MK = bytes.fromhex("0102030405060708")
 _JOB = bytes.fromhex("1122334455667788")
@@ -71,6 +72,9 @@ _SCENARIOS: dict[str, Callable[[], Any]] = {
     ).draw(_MK, _NS, b"\x00\x01", pool_size=5),
     "mask.fpe": lambda: provider_for("mask.fpe").column_key(_MK, _NS).hex(),
     "mask.date_shift": lambda: provider_for("mask.date_shift").draw(_MK, _NS, b"2020").hex(),
+    "mask.date_shift_entity": lambda: (
+        provider_for("mask.date_shift_entity").draw(_MK, _NS, entity_source("p1")).hex()
+    ),
     "mask.bucket_perturb": lambda: provider_for("mask.bucket_perturb").draw(_MK, _NS, b"7").hex(),
     "mask.group_key": lambda: provider_for("mask.group_key").draw(_MK, _NS, b"g").hex(),
     "mask.code_set": lambda: (
@@ -217,6 +221,7 @@ _GOLDEN_OUTPUT: dict[str, str] = {
     "mask.categorical_nondeterministic": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
     "mask.code_set": "39a5ea421300c982f5be9f92e7d0116858035a23de91be98ac64d9ab5a45afd3",
     "mask.date_shift": "6d09a52becbc2be47b141fbaef6417e684f1d543def38adbb356d9d1af1d78dc",
+    "mask.date_shift_entity": "86a1695e7c454ff5ec91c3638cea2ae9e5e2db5a78b2853ca62d28b927b9718e",
     "mask.faker": "ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d",
     "mask.faker_nondeterministic": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
     "mask.formula": "8a2485547325a73e8b0837a111c526674f9fc24c8d416534b866d5d9c9513fc8",
@@ -232,4 +237,5 @@ _GOLDEN_OUTPUT: dict[str, str] = {
     "mask.windowed_date": "e7155d227e2e065ea4ad6de21ddd5f12c08f5d6a9654351f208c5f6f7b2b612a",
 }
 
-_GOLDEN_REGISTRY = "84d747bd4d004f73a8035c620f3d83d392560bb4f2a8ecdaf4f8b826ce9817ff"
+# The registry with mask.date_shift_entity appended; without it the digest is 84d747bd...17ff.
+_GOLDEN_REGISTRY = "a1eaec6bbfb57b1f1b1103eba500bd8a37dd6d861cf1ebb6b16797a281948d4b"

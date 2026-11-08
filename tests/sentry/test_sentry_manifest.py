@@ -22,6 +22,7 @@ SENTRIES = (
     "tests/sentry/test_bash32_compat.py",
     "tests/sentry/test_capability_matrix.py",
     "tests/sentry/test_cdf_threshold_ratchet.py",
+    "tests/sentry/test_date_shift_anchor_reads.py",
     "tests/sentry/test_ci_config.py",
     "tests/sentry/test_ci_lock_installs.py",
     "tests/sentry/test_deprecation_expiry.py",

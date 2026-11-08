@@ -333,3 +333,31 @@ MASK_FORMULA_DRAW_SITE = DrawSite(
         "partitionable. Non-deterministic across mask_key by design (self-seeded)."
     ),
 )
+
+# Appended after the first cut (catalogue order is append-only).
+MASK_DATE_SHIFT_ENTITY_DRAW_SITE = DrawSite(
+    draw_site_id="mask.date_shift_entity",
+    family="source_keyed_hmac",
+    call_site="execution/_strategies/_date_shift.py:451",
+    entropy_root="mask_key",
+    seed_derivation=(
+        "min_days + (int.from_bytes(derive(mask_key, namespace, "
+        'domain_separated_source(b"date-shift-entity/v1", entity_text(e)))[:8], "big") '
+        "% range_size)"
+    ),
+    api_operation="determinism.derive -> one day offset per entity_key value",
+    call_shape="per entity value; every date of the entity shifts by the same offset",
+    consumes_variable_draws=False,
+    identity="group_key",
+    null_draw_behavior=(
+        "null or blank entity rows fall back to mask.date_shift on their own date; "
+        "null or unparseable dates draw nothing"
+    ),
+    partitionable=True,
+    config_fingerprint_source="namespace_registry(namespace)+min_days+max_days",
+    provider_version=_V6,
+    notes=(
+        "date_shift with provider_config.entity_key. The 0xFF-prefixed source cannot equal "
+        "any canonicalised cell, so no hash or group_key output reveals the offset."
+    ),
+)

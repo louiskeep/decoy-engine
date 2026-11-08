@@ -37,7 +37,11 @@ from decoy_engine.execution.native._draw_site_types import (
 )
 from decoy_engine.execution.native._draw_sites_gen import GEN_DRAW_SITES, GEN_SUBSTRATE_DRAW_SITES
 from decoy_engine.execution.native._draw_sites_gen_pool import GEN_POOL_DRAW_SITES
-from decoy_engine.execution.native._draw_sites_mask import MASK_DRAW_SITES, MASK_FORMULA_DRAW_SITE
+from decoy_engine.execution.native._draw_sites_mask import (
+    MASK_DATE_SHIFT_ENTITY_DRAW_SITE,
+    MASK_DRAW_SITES,
+    MASK_FORMULA_DRAW_SITE,
+)
 from decoy_engine.execution.native._draw_sites_provider_backed import PROVIDER_BACKED_DRAW_SITES
 from decoy_engine.execution.native._draw_sites_tokenize import TOKENIZE_DRAW_SITES
 
@@ -57,6 +61,7 @@ DRAW_SITES: tuple[DrawSite, ...] = (
     MASK_FORMULA_DRAW_SITE,
     *GEN_POOL_DRAW_SITES,
     *TOKENIZE_DRAW_SITES,
+    MASK_DATE_SHIFT_ENTITY_DRAW_SITE,
 )
 
 # ---------------------------------------------------------------------------
@@ -82,7 +87,7 @@ MASK_STRATEGY_TO_SITE: dict[str, str] = {
     "shuffle": "mask.shuffle",
     "categorical": "mask.categorical_deterministic",  # + mask.categorical_nondeterministic (seeded)
     "fpe": "mask.fpe",
-    "date_shift": "mask.date_shift",
+    "date_shift": "mask.date_shift",  # + mask.date_shift_entity (entity_key)
     "bucket_perturb": "mask.bucket_perturb",
     "group_key": "mask.group_key",
     "code_set": "mask.code_set",
