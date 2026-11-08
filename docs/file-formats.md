@@ -89,7 +89,11 @@ refusal and an existing target is left as it was.
 
 The Avro header is the engine's: record `topLevelRecord`, codec `null`, field names
 `[A-Za-z_][A-Za-z0-9_]*` and unique. Blocks hold about 64 KiB each (the Java writer's default
-sync interval), so a chunk budget of 1 MiB or more reads the file back on the chunked route. The sync marker is derived from the schema and the first block: the same
+sync interval), so a chunk budget of 1 MiB or more reads the file back on the chunked route. Third-party files
+need more: Java writes 64 KB blocks, and a block of narrow numeric columns decodes to several
+times its size (ten small `long` columns per row: refused at 1 and 2 MiB, read at 3 MiB), so use a
+chunk budget of about 4 MiB or more for third-party Avro on the chunked route. A block that does
+not fit is refused with `avro_block_too_large`; the whole-file read takes it. The sync marker is derived from the schema and the first block: the same
 data gives the same bytes. ORC output bytes are deterministic too.
 
 Avro to Avro keeps every admitted type except: `enum` becomes `string`, `fixed` becomes `bytes`,

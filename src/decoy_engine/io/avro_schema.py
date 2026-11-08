@@ -27,9 +27,10 @@ from decoy_engine.io.format_errors import AvroMalformed, AvroSchemaUnsupported
 
 MAX_DEPTH = 64
 _PRIMITIVES = frozenset({"boolean", "int", "long", "float", "double", "bytes", "string"})
-# Arrow bytes per value after decoding, plus one validity byte. Strings and bytes add their
-# payload, which is never larger than its encoded bytes (counted separately by the caller).
-_FIXED_COST = {"boolean": 2, "int": 5, "long": 9, "float": 5, "double": 9, "bytes": 5, "string": 5}
+# Arrow bytes per value after decoding: the value width, or the 4-byte offset of a string or
+# bytes value, whose payload is never larger than its encoded bytes (counted separately by the
+# caller). Validity is a bitmap (one bit per value), so it is left out; a boolean rounds up to 1.
+_FIXED_COST = {"boolean": 1, "int": 4, "long": 8, "float": 4, "double": 8, "bytes": 4, "string": 4}
 _LOGICAL_BASES: dict[str, frozenset[str]] = {
     "date": frozenset({"int"}),
     "time-millis": frozenset({"int"}),
@@ -43,10 +44,10 @@ _LOGICAL_BASES: dict[str, frozenset[str]] = {
 }
 _REFUSED_LOGICAL = frozenset({"duration", "timestamp-nanos", "local-timestamp-nanos"})
 _LOGICAL_COST = {
-    "date": 5,
-    "time-millis": 9,  # read as time64[ns]
-    "time-micros": 9,
-    "decimal": 17,
+    "date": 4,
+    "time-millis": 8,  # read as time64[ns]
+    "time-micros": 8,
+    "decimal": 16,
 }
 _MAX_DECIMAL_PRECISION = 38
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -214,7 +215,7 @@ class _Walk:
         ):
             raise _Refused(path, "enum")
         self.defined.add(full)
-        return _Shape(max(len(s.encode("utf-8")) for s in symbols) + 5, False, 1)
+        return _Shape(max(len(s.encode("utf-8")) for s in symbols) + 4, False, 1)
 
     def fixed(self, node: dict[str, Any], path: str, namespace: str) -> _Shape:
         full, _ = _full_name(node, namespace)
@@ -230,10 +231,10 @@ class _Walk:
             raise _Refused(path, str(logical))
         if logical == "decimal":
             _decimal(node, path, size)
-            return _Shape(17, False, size)
+            return _Shape(16, False, size)
         if logical in _LOGICAL_BASES:
             raise _Refused(path, "logical_type_base")
-        return _Shape(5, False, size)
+        return _Shape(4, False, size)
 
 
 def _strict_int(value: object) -> bool:

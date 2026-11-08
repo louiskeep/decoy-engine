@@ -71,23 +71,50 @@ def test_run_result_output_format_agrees_with_file_target() -> None:
     assert set(get_args(OutputFormat)) == set(TARGET_FORMATS)
 
 
-def test_io_does_not_import_profile() -> None:
-    """`profile` reads through `io`; `io` must not import `profile` back (no package cycle)."""
+def _imports_profile(source: str, package: str) -> bool:
+    """True when `source` (a module of `package`) imports `decoy_engine.profile`, absolutely or
+    relatively (`from ..profile import x`, resolved against the module's package)."""
     import ast
 
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            names = [a.name for a in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                parts = package.split(".")
+                anchor = parts[: len(parts) - (node.level - 1)]
+                base = ".".join(anchor + ([base] if base else []))
+            names = [base] + [f"{base}.{a.name}" for a in node.names]
+        else:
+            continue
+        if any(n == "decoy_engine.profile" or n.startswith("decoy_engine.profile.") for n in names):
+            return True
+    return False
+
+
+def test_io_does_not_import_profile() -> None:
+    """`profile` reads through `io`; `io` must not import `profile` back (no package cycle)."""
     io_dir = Path(__file__).resolve().parents[2] / "src" / "decoy_engine" / "io"
-    offenders = []
-    for module in sorted(io_dir.glob("*.py")):
-        for node in ast.walk(ast.parse(module.read_text(encoding="utf-8"))):
-            names = (
-                [node.module or ""]
-                if isinstance(node, ast.ImportFrom)
-                else [a.name for a in node.names]
-                if isinstance(node, ast.Import)
-                else []
-            )
-            if any(
-                n == "decoy_engine.profile" or n.startswith("decoy_engine.profile.") for n in names
-            ):
-                offenders.append(module.name)
+    offenders = [
+        m.name
+        for m in sorted(io_dir.glob("*.py"))
+        if _imports_profile(m.read_text(encoding="utf-8"), "decoy_engine.io")
+    ]
     assert offenders == []
+
+
+def test_the_import_scan_sees_every_spelling() -> None:
+    package = "decoy_engine.io"
+    for seeded in (
+        "import decoy_engine.profile",
+        "from decoy_engine.profile import build_profile_source",
+        "from decoy_engine import profile",
+        "from decoy_engine.profile._hash import profile_hash",
+        "from ..profile import _hash",
+        "from .. import profile",
+        "from ..profile._readers import RowCount",
+    ):
+        assert _imports_profile(seeded, package), seeded
+    for clean in ("from . import avro_io", "from .avro_io import read_avro", "import pyarrow"):
+        assert not _imports_profile(clean, package), clean
