@@ -138,7 +138,20 @@ def test_logs_travel_with_their_hash() -> None:
 
 def test_non_utf8_log_is_refused() -> None:
     with pytest.raises(RecordError):
-        _lines([], keep_paths=True, logs=[("x", b"\xff\xfe")])
+        _lines([], keep_paths=True, logs=[(INVOCATION, b"\xff\xfe")])
+
+
+def test_a_naive_export_time_is_refused() -> None:
+    # Read as host time, the same input would give different header bytes per machine.
+    with pytest.raises(RecordError) as caught:
+        list(records.export_lines([], producer=PRODUCER, exported_at=T0.replace(tzinfo=None)))
+    assert caught.value.code == "record_invalid"
+
+
+@pytest.mark.parametrize("lines", [[], [b""], [b"\n", b"  \n"]])
+def test_an_export_with_no_header_is_refused(lines: list[bytes]) -> None:
+    with pytest.raises(RecordError):
+        _read(lines)
 
 
 @pytest.mark.parametrize(

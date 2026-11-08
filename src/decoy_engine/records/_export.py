@@ -11,7 +11,7 @@ import json
 import re
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import (
@@ -28,7 +28,7 @@ from decoy_engine import reasons
 from decoy_engine._value_free import InvocationId
 from decoy_engine.records import _kinds  # noqa: F401  (registers the V1 kinds)
 from decoy_engine.records._canonical import canonical_bytes, payload_digest, record_id, sha256_tag
-from decoy_engine.records._codec import decode
+from decoy_engine.records._codec import decode, utc_stamp
 from decoy_engine.records._envelope import (
     ENVELOPE_SCHEMA,
     DecodedRecord,
@@ -219,7 +219,7 @@ def export_lines(
         raise RecordError(reasons.runtime.RECORD_INVALID, (("logs",),))
     withheld = () if keep_paths else tuple(owner for owner, _ in log_list)
     header = ExportHeader(
-        exported_at=exported_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        exported_at=utc_stamp(exported_at, "exported_at"),
         producer=producer if isinstance(producer, Producer) else Producer.model_validate(producer),
         record_count=len(lines),
         refs={name: id_map.get(target, target) for name, target in (refs or {}).items()},
@@ -267,7 +267,8 @@ def read_export(
     Yields the ``ExportHeader`` first, then an ``ExportedRecord`` or ``ExportedLog`` per good
     line and a ``BadLine`` per line that fails by itself (bad JSON, an id that does not match,
     an unknown line type). A file whose first line is not a current header raises
-    ``RecordError`` (``record_invalid``), because nothing after it can be trusted.
+    ``RecordError`` (``record_invalid``), because nothing after it can be trusted; so does a
+    file with no header at all.
     """
     seen_header = False
     for number, line in enumerate(lines, 1):
@@ -287,6 +288,9 @@ def read_export(
             yield header
             continue
         yield _read_line(number, wrapper)
+    if not seen_header:
+        # An empty or blank file is a truncated export, not an empty library.
+        raise RecordError(reasons.runtime.RECORD_INVALID)
 
 
 def _read_line(number: int, wrapper: dict[str, Any] | None) -> Any:
