@@ -222,15 +222,15 @@ class S3Source(BaseModel):
             return value
         lowered = value.lower()
         if any(mark in lowered for mark in ("@", "?", "#", "%40", "%3f", "%23")):
-            raise ValueError("endpoint_url must not carry credentials, a query or a fragment")
+            raise ConfigRuleError("endpoint_url must not carry credentials, a query or a fragment")
         try:
             parts = urlsplit(value)
             has_host = bool(parts.hostname)
             parts.port  # noqa: B018 - raises ValueError on a malformed port
         except ValueError:
-            raise ValueError("endpoint_url is not a valid URL") from None
+            raise ConfigRuleError("endpoint_url is not a valid URL") from None
         if parts.scheme not in ("http", "https") or not has_host:
-            raise ValueError("endpoint_url must be an http or https URL with a host")
+            raise ConfigRuleError("endpoint_url must be an http or https URL with a host")
         return value
 
 

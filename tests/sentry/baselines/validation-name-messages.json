@@ -56,6 +56,15 @@
   "permitted::config/_sources.py::FileSource._validate_layout_matches_format::3101cb4554": {
    "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
   },
+  "permitted::config/_sources.py::S3Source._endpoint_is_a_host::7346ded063": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_sources.py::S3Source._endpoint_is_a_host::aeb29126bf": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_sources.py::S3Source._endpoint_is_a_host::db0456a69d": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
   "permitted::config/_subset.py::SubsetSeedConfig._mode_consistency::36eb5f1b44": {
    "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
   },
@@ -138,6 +147,18 @@
    "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
   },
   "permitted::config/_validators.py::QuarantineConfig._fail_closed_when_enabled::ef73970c20": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::profiling/scan_set.py::scan_sources::0b163aa9c9": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::profiling/scan_set.py::scan_sources::1c4a79050c": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::profiling/scan_set.py::scan_sources::7795e1c266": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::profiling/scan_set.py::scan_sources::b3962e74a6": {
    "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
   },
   "permitted::run_result/_model.py::_check.validate::3b71ccc0cc": {

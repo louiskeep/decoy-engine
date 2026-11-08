@@ -28,7 +28,7 @@ import math
 import time
 import types
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Final, Literal, Union, cast, get_args, get_origin
 
@@ -39,7 +39,7 @@ from pydantic import ValidationError as _PydanticValidationError
 from decoy_engine import reason_adapter, reasons
 from decoy_engine._field_names import repeated_names
 from decoy_engine.config import PipelineConfigError, SourceDescriptor
-from decoy_engine.errors import DecoyError, PipelineValidationError
+from decoy_engine.errors import ConfigRuleError, DecoyError, PipelineValidationError
 from decoy_engine.fileaccess import (
     FileAccess,
     FileAccessDenied,
@@ -216,18 +216,18 @@ def scan_sources(
     from decoy_engine import __version__
 
     if strategy not in ("head", "random", "full"):
-        raise ValueError("strategy must be 'head', 'random' or 'full'")
+        raise ConfigRuleError("strategy must be 'head', 'random' or 'full'")
     if sample_rows is not None and (
         isinstance(sample_rows, bool) or not isinstance(sample_rows, int) or sample_rows < 1
     ):
-        raise ValueError("sample_rows must be a positive integer or None")
+        raise ConfigRuleError("sample_rows must be a positive integer or None")
     descriptors = {name: _validated(name, raw) for name, raw in sources.items()}
     selected = list(descriptors) if tables is None else list(tables)
     if repeated_names(selected):
-        raise ValueError("tables selects the same table more than once")
+        raise ConfigRuleError("tables selects the same table more than once")
     unknown = [t for t in selected if t not in descriptors]
     if unknown:
-        raise ValueError(f"tables names {len(unknown)} table(s) that are not in sources")
+        raise ConfigRuleError("tables names a table that is not in sources")
 
     scans = []
     for name in selected:
@@ -450,7 +450,7 @@ def _table_core(t: TableScan) -> TableCore:
         sample_row_cap=p.sample_row_cap,
         fields=fields,
         key_candidates=[core_name[k] for k in t.key_candidates],
-        warnings=[WarningRefCore.model_validate(asdict(w)) for w in t.warnings],
+        warnings=[WarningRefCore(namespace=w.namespace, code=w.code) for w in t.warnings],
         reid_risk_score=_finite(p.reid_risk_score) if p.row_count > 0 else None,
         quasi_identifier_groups=[[core_name[n] for n in g] for g in p.quasi_identifier_groups],
     )
