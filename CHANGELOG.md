@@ -28,6 +28,26 @@ Without a mask secret the mask key is the job seed, so anyone with the config an
 can recompute the permutation and undo it, as with every keyed strategy; set a secret
 (required at GA) when that matters.
 
+### Changed (value-free config errors, converter, 2026-11-08)
+
+- `decoy_engine.parse_pipeline_config(raw)` is the one route from a mapping to a `PipelineConfig`.
+  A failure raises `PipelineConfigError` with `problems`, a tuple of `ConfigProblem(code, location,
+  text)`. `location` keeps config keys, source, table and column names and list indexes
+  (`tables[0].name`); `text` comes from a fixed table keyed by Pydantic error type. The submitted
+  value, the discriminator tag echo and a plain `ValueError` message never appear. `validate_config`
+  and `override_sources` use the same route.
+- `PipelineConfigError` no longer sets `__cause__` (its docstring said it did): the Pydantic error
+  holds the submitted values. It gains `problems`; the unused `validation_error=` argument is gone.
+- Validator text is shown only for the new `ConfigRuleError` (name-only or fixed messages). The
+  config rule validators (tables, columns, sources, targets, subset, fixed-width layout,
+  quarantine) now raise it, so `validate_config` names the broken rule again (for example the CSV
+  dialect). The quarantine trigger message no longer echoes the submitted trigger. A registered
+  `PydanticCustomError` code shows the reason's summary.
+- `validate_config` reports a YAML syntax error as `could not parse YAML: invalid syntax at line N,
+  column M` (was `Failed to parse YAML: <PyYAML text>`, which echoed the offending line).
+  `decoy_engine.safe_output.yaml_error_text` holds that text.
+- New public names: `parse_pipeline_config`, `ConfigProblem`, `ConfigRuleError`.
+
 ### Added (init wizard E3: keyed columns of a config, 2026-11-08)
 
 `decoy_engine` and `decoy_engine.secret_providers` export `keyed_columns_for_config` and
