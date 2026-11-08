@@ -224,6 +224,9 @@ NOT_A_LIST: dict[str, str] = {
     "reason-manifest-v1.10-config-explicit-e1.json": (
         "released reason manifest, frozen by the F29 registry tests"
     ),
+    "reason-manifest-v1.11-config-explicit-e2a.json": (
+        "released reason manifest, frozen by the F29 registry tests"
+    ),
     "reason-manifest-v1.8-scanml-m1.json": "released reason manifest, frozen by the F29 registry tests",
     "reason-registry-release.json": "released reason registry, frozen by the F29 registry tests",
     "consumer-contract.json": "F29 consumer contract, compared whole by test_reason_registry",

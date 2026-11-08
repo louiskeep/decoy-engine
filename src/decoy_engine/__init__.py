@@ -188,6 +188,14 @@ from decoy_engine.plan.validate import (
     validate_plan,
 )
 from decoy_engine.profile._csv_reader import CsvDialect, read_csv_source, resolve_csv_dialect
+from decoy_engine.profile._declared_columns import (
+    DeclarationRequest,
+    PreparedDeclaredSources,
+    check_columns_declared,
+    declared_columns,
+    prepare_declared_sources,
+    source_columns,
+)
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
 from decoy_engine.profile._fixed_width_writer import write_fixed_width
 from decoy_engine.profiling import ColumnProfile, FieldStats, SentinelFlag, profile_columns
@@ -381,6 +389,7 @@ __all__ = [
     "ConnectorConfig",
     "ConnectorError",
     "CsvDialect",
+    "DeclarationRequest",
     "DecoyError",
     "DetectorMatch",
     "DeterminismError",
@@ -434,6 +443,7 @@ __all__ = [
     "PoolSampler",
     "PostValidationRunner",
     "PreScanConfig",
+    "PreparedDeclaredSources",
     "ProgressSink",
     "ProviderError",
     "ProviderRegistry",
@@ -484,6 +494,7 @@ __all__ = [
     "atomic_swap_db_providers",
     "build_namespace_registry",
     "build_relationship_graph",
+    "check_columns_declared",
     "check_orphan_fk_policy_completeness",
     "classifier_status",
     "classify_table_kinds",
@@ -493,6 +504,7 @@ __all__ = [
     "composite_name_email",
     "composite_person",
     "composite_provider",
+    "declared_columns",
     "derive",
     "derive_index",
     "derive_outcome",
@@ -522,6 +534,7 @@ __all__ = [
     "ner_status",
     "open_protected_dir",
     "pipeline_config_hash",
+    "prepare_declared_sources",
     "profile_columns",
     "protected_scratch_dir",
     "read_csv_source",
@@ -539,6 +552,7 @@ __all__ = [
     "run_mask_pipeline_chunked",
     "run_pipeline",
     "select_execution_adapter",
+    "source_columns",
     "strategy_catalog",
     "unmask_pipeline",
     "unregister_faker_provider",

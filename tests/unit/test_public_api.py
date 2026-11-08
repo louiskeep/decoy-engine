@@ -299,6 +299,13 @@ def test_all_lists_every_public_name():
         "protected_scratch_dir",
         # CONFIG-EXPLICIT E1: the FileSource fields that name a file.
         "FILE_SOURCE_PATH_FIELDS",
+        # CONFIG-EXPLICIT E2a: the declared-columns boundary.
+        "DeclarationRequest",
+        "PreparedDeclaredSources",
+        "check_columns_declared",
+        "declared_columns",
+        "prepare_declared_sources",
+        "source_columns",
     }
     assert set(decoy_engine.__all__) == expected
 
