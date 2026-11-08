@@ -236,9 +236,17 @@ def test_union_tag_is_covered_by_the_full_config() -> None:
     assert "union_tag_invalid" in {p.code for p in _problems(bad).problems}
 
 
-def test_yaml_error_reports_position_only(tmp_path: Path) -> None:  # AT-A7
+@pytest.mark.parametrize(
+    "body",
+    [
+        f"a: [\n  {VALUE}: : {VALUE}\n",
+        # PyYAML puts an unknown tag into its message text, so this one fails if the text is shown.
+        f"a: !{VALUE} x\n",
+    ],
+)
+def test_yaml_error_reports_position_only(tmp_path: Path, body: str) -> None:  # AT-A7
     path = tmp_path / "bad.yaml"
-    path.write_text(f"a: [\n  {VALUE}: : {VALUE}\n")
+    path.write_text(body)
     with pytest.raises(ConfigError) as info:
         validate_config(path)
     assert "line" in str(info.value) and "column" in str(info.value)
