@@ -191,20 +191,20 @@ def test_no_stage_operation_uses_rename_exchange() -> None:
 
 @pytest.mark.parametrize("bad", BAD_NAMES)
 def test_every_name_taking_operation_validates_before_any_syscall(
-    rooted: RootedFileAccess, root_dir: Path, tmp_path: Path, bad: str
+    rooted: RootedFileAccess, root_dir: Path, bad: str
 ) -> None:
-    sentinel_dir = tmp_path / "beside"
+    base = root_dir.parent
+    sentinel_dir = base / "beside"
     sentinel_dir.mkdir()
     (sentinel_dir / "s").write_text("S")
+    assert (sentinel_dir / "s").is_file()
     txn = _out(rooted).begin("dir", "exclusive", label="table_sink")
     _put(txn, "good")
 
     def snapshot() -> dict[str, tuple[int, ...]]:
         # The stage's parent changes when the stage is removed, which is not a leak.
         return {
-            k: v
-            for k, v in _inodes(tmp_path).items()
-            if "_decoy_stage_" not in k and k != "root/out"
+            k: v for k, v in _inodes(base).items() if "_decoy_stage_" not in k and k != "root/out"
         }
 
     before = snapshot()
@@ -246,10 +246,11 @@ def test_publish_validates_the_final_leaf(rooted: RootedFileAccess) -> None:
 
 
 def test_a_planted_symlink_in_the_stage_is_not_followed(
-    rooted: RootedFileAccess, root_dir: Path, tmp_path: Path
+    rooted: RootedFileAccess, root_dir: Path
 ) -> None:
-    outside = tmp_path / "outside"
+    outside = root_dir.parent / "outside"
     outside.write_text("OUT")
+    assert outside.is_file()
     txn = _out(rooted).begin("dir", "exclusive", label="table_sink")
     os.symlink(outside, _stage_path(root_dir) / "planted")
     with pytest.raises(OSError):
