@@ -32,7 +32,7 @@ def test_every_path_in_the_package_map_exists() -> None:
 def test_every_path_in_the_codemap_layout_section_exists() -> None:
     text = section((ROOT / "CODEMAP.md").read_text(encoding="utf-8"), LAYOUT_HEADING)
     rows = [line for line in text.splitlines() if line.startswith("| ") and "`" in line]
-    assert len(rows) >= 15, "the CODEMAP layout section lost its rows"
+    assert len(rows) >= 22, "the CODEMAP layout section lost its rows"
     missing = map_paths(text, ROOT, LAYOUT_COLUMNS)
     assert not missing, f"CODEMAP 'Where Things Go' names paths that do not exist: {missing}"
 
@@ -97,6 +97,11 @@ def test_map_paths_ignores_columns_it_was_not_given(tree: Path) -> None:
     text = "| a | b | c |\n|---|---|---|\n| x | `src/gone/` | `src/pkg/` |\n"
     assert map_paths(text, tree, (2,)) == []
     assert map_paths(text, tree, (1,)) != []
+
+
+def test_map_paths_checks_every_column_it_was_given(tree: Path) -> None:
+    text = "| a | b | c |\n|---|---|---|\n| x | `src/pkg/` | `src/gone/` |\n"
+    assert map_paths(text, tree, (1, 2)) == ["src/gone/ -> src/gone"]
 
 
 def test_map_paths_resolves_relative_to_the_given_base(tree: Path) -> None:

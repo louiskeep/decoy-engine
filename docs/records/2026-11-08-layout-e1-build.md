@@ -28,6 +28,13 @@ Plan: `docs/plans/2026-11-06-layout-map-and-guards.md`, part E1 (engine map).
 | M4 | placeholder/glob truncation removed | codemap test and 2 meta-tests red |
 | M5 | `(target)` treated as concrete | codemap test and target meta-test red |
 | M6 | symbols checked as paths | codemap test and symbol meta-test red |
-| M7 | walk returns `[]` (vacuous) | 6 meta-tests red; real-map tests stay green, which is why the meta-tests exist |
+| M7 | walk returns `[]` (vacuous) | 8 meta-tests red; real-map tests stay green, which is why the meta-tests exist |
 
-Green on the final head: `tests/sentry/test_package_map_paths.py` 13 passed.
+Green on the final head: `tests/sentry/test_package_map_paths.py` 14 passed.
+
+## Gate fixes
+
+- Every given column is checked: a meta-test names a missing path in the second of two columns (Dennis X4 mutant, `columns[:1]`, now red).
+- The CODEMAP row floor is 22, the section's row count.
+- The Unit tests row is concrete, not `(target)`: `tests/unit/config/` and `tests/unit/generation/` exist.
+- Under the section 4 grammar the `_MAP.md` check skips a bare span with no `/` and no `.py` (for example `README.md`); no current entry is such a span.
