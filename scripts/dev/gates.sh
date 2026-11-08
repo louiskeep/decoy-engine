@@ -113,7 +113,9 @@ MBT=$OUT/merge-base-tree
 # Each pytest run gets its own basetemp here, removed on exit: pytest's default
 # /tmp/pytest-of-<user> keeps the last three runs, about 14 GB each for the engine suite.
 TMP_ROOT=$OUT/basetemp
-mkdir -p "$TMP_ROOT"
+mkdir -p "$TMP_ROOT/root"
+# Pytest runs that tests start themselves have no --basetemp; this moves their default root too.
+export PYTEST_DEBUG_TEMPROOT=$TMP_ROOT/root
 # shellcheck disable=SC2329  # invoked by the EXIT trap
 cleanup() {
   local d
