@@ -181,8 +181,10 @@ COMPOSITE_OUTPUT_COLUMN_MISSING = _d(
     "composite_output_column_missing", "Composite output column missing."
 )
 CYCLIC_WORK_ORDERING = _d("cyclic_work_ordering", "Cyclic work ordering.")
-DERIVED_EVALUATION_FAILED = _d("derived_evaluation_failed", "Derived evaluation failed.")
-DERIVED_REF_MISSING = _d("derived_ref_missing", "Derived reference missing.")
+DERIVED_EVALUATION_FAILED = _d(
+    "derived_evaluation_failed", "Derived evaluation failed.", since="1.9.0"
+)
+DERIVED_REF_MISSING = _d("derived_ref_missing", "Derived reference missing.", since="1.9.0")
 FK_FULL_FRAME_OOM_RISK_REJECTED = _d(
     "fk_full_frame_oom_risk_rejected", "FK full frame OOM risk rejected."
 )
