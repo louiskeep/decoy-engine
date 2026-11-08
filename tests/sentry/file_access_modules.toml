@@ -35,8 +35,6 @@ ambient_only_modules = [
   "decoy_engine/execution/out_of_core/_scratch.py",
   # F06 local quarantine store: opens beneath the caller-given root only after the guard.
   "decoy_engine/declared_casting/_quarantine_local.py",
-  # LIB L0.1 protected directory allocator: a caller path only after its own guard.
-  "decoy_engine/fileaccess/_protected_dir.py",
 ]
 
 # Modules that must call `fileaccess.require_ambient`, the guard the ambient-only entries rely on.

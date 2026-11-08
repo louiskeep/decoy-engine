@@ -71,10 +71,25 @@ def _key(path: str | os.PathLike[str]) -> str:
     return os.path.normcase(os.path.abspath(os.fspath(path)))
 
 
-def _live(key: str) -> bool:
-    """True for a root this module issued and has not removed, or a path beneath one."""
+def _live_root(key: str) -> str | None:
+    """The root this module issued (and has not removed) that holds ``key``, else None."""
     with _LOCK:
-        return any(key == root or key.startswith(root + os.sep) for root in _ISSUED)
+        return next((r for r in _ISSUED if key == r or key.startswith(r + os.sep)), None)
+
+
+def _vet_live(raw: str, path: str, root: str) -> None:
+    """Refuse a ``..`` component, and any symlink or reparse point between the issued root and
+    ``path``: containment is lexical, so a planted link would otherwise lead outside the root."""
+    if ".." in raw.replace("\\", "/").split("/"):
+        raise ProtectedDirUnsafe
+    current = path[: len(root)]
+    for part in [p for p in path[len(root) :].split(os.sep) if p] or [""]:
+        current = os.path.join(current, part) if part else current
+        found = _lstat(current)
+        if found is None:
+            return
+        if stat.S_ISLNK(found.st_mode) or getattr(found, "st_file_attributes", 0) & _REPARSE_POINT:
+            raise ProtectedDirUnsafe
 
 
 # -- filesystem calls, each with OS text and context stripped ----------------------------------
@@ -190,7 +205,16 @@ def _make(path: str, *, parents: bool) -> None:
             levels.append(parent)
             parent = os.path.dirname(parent)
     for level in reversed(levels):
-        _create_level(level)
+        clash = False
+        try:
+            _create_level(level)
+        except FileExistsError:
+            clash = True  # a concurrent opener made this level; accept it if it is sound
+        if clash:
+            found = _lstat(level)
+            if found is None:
+                raise ProtectedDirUnsafe
+            _check(level, found, tighten=False)
 
 
 def _open(path: str, *, create: bool, parents: bool) -> None:
@@ -198,16 +222,8 @@ def _open(path: str, *, create: bool, parents: bool) -> None:
     if found is None:
         if not create:
             raise OSError(errno.ENOENT, os.strerror(errno.ENOENT))
-        raced = False
-        try:
-            _make(path, parents=parents)
-        except FileExistsError:
-            raced = True  # another opener won the creation; judge what it left
-        if not raced:
-            return
-        found = _lstat(path)
-        if found is None:
-            raise ProtectedDirUnsafe
+        _make(path, parents=parents)
+        return
     _check(path, found, tighten=True)
 
 
@@ -221,10 +237,15 @@ def open_protected_dir(
 
     Idempotent: a directory that passes is returned unchanged, so repeated opens do nothing. A
     caller path needs the ambient policy; a live issued root and its children do not."""
-    if not _live(_key(path)):
+    raw = os.fspath(path)
+    absolute = os.path.abspath(raw)  # every later call uses this, so the cwd cannot shift it
+    root = _live_root(_key(absolute))
+    if root is None:
         require_ambient(_WHAT)
-    _open(os.fspath(path), create=create, parents=parents)
-    return Path(path)
+    else:
+        _vet_live(raw, absolute, root)
+    _open(absolute, create=create, parents=parents)
+    return Path(absolute)
 
 
 @contextmanager
@@ -237,9 +258,12 @@ def protected_scratch_dir(
         raise ProtectedDirUnsafe
     base = tempfile.gettempdir()
     if parent is not None:
-        if not _live(_key(parent)):
+        base = os.path.abspath(os.fspath(parent))
+        root = _live_root(_key(base))
+        if root is None:
             require_ambient(_WHAT)
-        base = os.fspath(parent)
+        else:
+            _vet_live(os.fspath(parent), base, root)
         if _lstat(base) is None:
             _make(base, parents=True)
     root = ""

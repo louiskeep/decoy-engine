@@ -1916,10 +1916,9 @@ module = "decoy_engine/fileaccess/_protected_dir.py"
 function = "_lstat"
 sink = "os.lstat"
 ordinal = 0
-rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one"
+rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one (an issued root runs under every policy)"
 owner = "cam"
 reason = "the single check-before and check-after lookup of the protected directory allocator"
-ambient_only = true
 
 [[entry]]
 module = "decoy_engine/fileaccess/_protected_dir.py"
@@ -1927,38 +1926,34 @@ function = "_mkdir"
 sink = "os.mkdir"
 ordinal = 0
 dir_category = "protected_root"
-rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one"
+rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one (an issued root runs under every policy)"
 owner = "cam"
 reason = "the allocator creates each protected directory 0700; the one place a directory holding Decoy rows is made"
-ambient_only = true
 
 [[entry]]
 module = "decoy_engine/fileaccess/_protected_dir.py"
 function = "_chmod_private"
 sink = "os.chmod"
 ordinal = 0
-rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one"
+rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one (an issued root runs under every policy)"
 owner = "cam"
 reason = "the allocator sets 0700 whatever the umask, so a directory is never left wider than owner-only"
-ambient_only = true
 
 [[entry]]
 module = "decoy_engine/fileaccess/_protected_dir.py"
 function = "_is_empty"
 sink = "os.listdir"
 ordinal = 0
-rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one"
+rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one (an issued root runs under every policy)"
 owner = "cam"
 reason = "the allocator tightens an existing open directory only when it is empty"
-ambient_only = true
 
 [[entry]]
 module = "decoy_engine/fileaccess/_protected_dir.py"
 function = "_remove"
 sink = "shutil.rmtree"
 ordinal = 0
-rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one"
+rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one (an issued root runs under every policy)"
 owner = "cam"
 reason = "the allocator removes a directory it issued, or one it created that failed its own check"
-ambient_only = true
 

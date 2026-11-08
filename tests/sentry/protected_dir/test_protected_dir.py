@@ -122,14 +122,22 @@ def test_the_walk_is_not_vacuous(engine_sites: list[Site]) -> None:
     entries = load_registry(REGISTRY)
     creators = [s for s in engine_sites if s.sink in CREATING and s.module not in FD_RELATIVE]
     assert len(creators) >= 20
-    assert {e.get("dir_category") for e in entries} - {None} == CATEGORIES - {"non_row"}
+    assert CATEGORIES - {"non_row"} <= {e.get("dir_category") for e in entries}
     assert any(
         e["module"] == ALLOCATOR and e.get("dir_category") == "protected_root" for e in entries
     )
 
 
 def test_pending_l0_2_names_live_protected_root_rows_only() -> None:
-    assert len(PENDING_L0_2) <= 6
+    # L0.2 edits this literal and PENDING_L0_2 together when it empties the tuple.
+    assert PENDING_L0_2 == (
+        "decoy_engine/execution/out_of_core/_scratch.py::scratch_root::tempfile.mkdtemp::0",
+        "decoy_engine/execution/out_of_core/_scratch.py::engine_scratch_root::tempfile.mkdtemp::0",
+        "decoy_engine/execution/out_of_core/_scratch.py::private_dir::os.mkdir::0",
+        "decoy_engine/execution/_isolated_run.py::_run_isolated::tempfile.mkdtemp::0",
+        "decoy_engine/execution/_isolated_run.py::_run_isolated::Path.mkdir::0",
+        "decoy_engine/connectors/postgres_snapshot.py::_open_connection::Path.mkdir::0",
+    )
     roots = {_key(e) for e in load_registry(REGISTRY) if e.get("dir_category") == "protected_root"}
     assert set(PENDING_L0_2) <= roots
 

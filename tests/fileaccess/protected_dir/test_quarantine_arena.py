@@ -61,3 +61,14 @@ def test_an_unwritable_parent_is_unavailable(tmp_path: Path) -> None:
         assert _detail(locked / "q") == (False, "arena_unavailable")
     finally:
         os.chmod(locked, 0o700)
+
+
+def test_a_failed_protection_is_unavailable_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*a: object, **k: object) -> None:
+        raise PermissionError(1, "injected")
+
+    monkeypatch.setattr(os, "chmod", broken)
+    assert _detail(tmp_path / "q") == (False, "arena_unavailable")
+    assert not (tmp_path / "q").exists()
