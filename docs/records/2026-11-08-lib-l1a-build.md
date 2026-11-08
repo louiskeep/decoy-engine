@@ -67,3 +67,30 @@ MA1-evidence-drift, MA1-unregistered, MA1-batch, MA1-export-view, plus ME-no-rem
 MJ-argv, MJ-trunc, SEC-1, SEC-2, SEC-3. A first pass showed MA1-ascii, MA1-open and MA1-hidden green because of a
 mutation-script pattern hitting a docstring, a duplicated reserved-kind guard and a wrong `-k`; the script and the
 guard were fixed and all three went red.
+
+## Gate round 1 fixes
+
+| Id | Fix | Red test (red on 4e57038f, green now) |
+|---|---|---|
+| B1 | Reason codes are registry symbols (`reasons.runtime.RECORD_*`) everywhere in `records/`; the string `_CODES` set is a frozenset of the three symbols; `RecordError.__init__` is a listed forwarding adapter in the reason sentry | `tests/sentry/test_reason_registry.py::test_no_ad_hoc_reason_codes` |
+| H1 | `_dump` validates `producer`, `labels` and each link through their models, and the id is computed over that stored form, so a `None` label no longer makes an undecodable record | `test_a_none_label_is_dropped_before_the_id_is_computed` |
+| H2 | One deriver, `_value_free.derive_read`, with a substitution hook (run results swap reason payloads), required tag kinds and exact `Literal` fields (records keep `schema_version`, `producer`, the schema tags). `run_result` and `records/_read_model.py` both call it; both copies are gone. Records now read a later enum value as a checked token | `test_a_later_enum_value_under_the_same_payload_tag_still_reads`, `test_there_is_one_deriver` |
+| H3 | The run-result value-free types moved to `src/decoy_engine/_value_free.py` (names still importable from `run_result._model`). Envelope, labels, producer, job-log header and sample-run names use `SafeName`, `SafeRef`, `Version`, `UtcTimestamp`, `InvocationId` (uuid4), `RelPath`, `Sha256`, `Count`. Only the inherited `cli-local-1` names and paths, and sample-run machine paths (export reduces them), stay loose, with a comment | `test_the_envelope_uses_the_shared_value_free_types`, `test_labels_hold_names_and_refs_only`, `test_invocation_id_is_a_uuid4`, `test_sample_run_names_are_safe_names` |
+| M1 | Tests that kill two surviving mutants: the `payload_digest` check and the duplicate-key hook (both mutants applied on VM, each now red) | `test_a_stale_payload_digest_is_corrupt_even_when_the_id_matches`, `test_a_duplicate_key_is_corrupt_even_when_the_last_value_verifies` |
+| M2 | Every `RecordError` is raised after its `except` block closes, so no validator or JSON error (whose input holds the caller's text) stays reachable as `__context__` | `test_a_record_error_keeps_no_cause_or_context` (13 failure paths) |
+| M3 | Withheld logs go in the header field `withheld_logs`, not `unstripped`; a log owner must be an invocation id on write (`record_invalid`) and on read (`BadLine`) | `test_withheld_logs_have_their_own_header_field`, `test_a_log_owner_must_be_an_invocation_id`, `test_a_log_line_with_a_bad_owner_is_a_bad_line` |
+| M4 | Corpus samples for `decoy-record/v1`, `sample-run/v1`, `decoy-library-export/v1` and `decoy-job-log/v1` under `tests/integration/compat_corpus/records/`, read by `tests/unit/records/test_corpus.py` | `test_decoy_*_sample_*` in `test_corpus.py` |
+| L2 | `export_lines` documents that callers filter out non-v1 envelopes (`RecordNeedsNewer`) before passing `raw` values | docstring |
+
+Deviation recorded for M3: SEC-1 stays as built (no `--include-logs-without-keep-paths` flag in the engine).
+Without `keep_paths`, logs are withheld and named in `withheld_logs`. Any CLI flag that includes logs without
+`keep_paths` is a deviation from the plan until the log lines can be stripped like payloads.
+
+Test input changes forced by H3, not weakened assertions: the SEC-2 test builds with a relative
+`labels.pipeline` (`proj/pipelines/claims.yaml`) because the plan says the pipeline label is project-relative and
+`RelPath` refuses an absolute one; the SEC-1 test uses an invocation id as log owner.
+
+### V2-LOG (not fixed this round)
+
+L1, L3, L4 and the remaining low findings from gate round 1 are logged here as V2-LOG items: none breaks
+function, loses data or leaks to a non-admin.

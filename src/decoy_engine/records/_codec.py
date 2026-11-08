@@ -16,6 +16,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
 
+from decoy_engine import reasons
 from decoy_engine.records import _kinds  # noqa: F401  (registers the V1 kinds)
 from decoy_engine.records._canonical import canonical_bytes, payload_digest, record_id
 from decoy_engine.records._envelope import (
@@ -48,22 +49,35 @@ def _locations(
     return tuple((*prefix, *e["loc"]) for e in errors)
 
 
-def _dump(value: Any, model: type[BaseModel]) -> dict[str, Any]:
-    if isinstance(value, model):
-        return value.model_dump(mode="json", exclude_none=model is Labels)
-    if isinstance(value, Mapping):
-        return dict(value)
-    raise RecordError("record_invalid")
+def _dump(value: Any, model: type[BaseModel], field: str) -> dict[str, Any]:
+    """The stored form of an envelope part: validated by its model, so the id covers what is kept.
+
+    A caller's mapping can hold a value the model drops on write (an unset label); the id is
+    computed over this result, never over the mapping the caller passed.
+    """
+    failed: tuple[tuple[object, ...], ...] | None = None
+    try:
+        parsed = value if isinstance(value, model) else model.model_validate(value)
+    except ValidationError as exc:
+        failed = _locations(exc, (field,))
+    # Raised after the except block closes: inside it the validator error would stay reachable as
+    # __context__, and its input holds the caller's value.
+    if failed is not None:
+        raise RecordError(reasons.runtime.RECORD_INVALID, failed or ())
+    return parsed.model_dump(mode="json", exclude_none=model is Labels)
 
 
 def _payload_body(spec: KindSpec, payload: Any) -> dict[str, Any]:
     model = spec.write_model
     if model is None:
-        raise RecordError("record_kind_reserved")
+        raise RecordError(reasons.runtime.RECORD_KIND_RESERVED)
+    failed: tuple[tuple[object, ...], ...] | None = None
     try:
         parsed = payload if isinstance(payload, model) else model.model_validate(payload)
     except ValidationError as exc:
-        raise RecordError("record_invalid", _locations(exc, ("payload",))) from None
+        failed = _locations(exc, ("payload",))
+    if failed is not None:
+        raise RecordError(reasons.runtime.RECORD_INVALID, failed or ())
     to_payload = getattr(parsed, "to_payload", None)
     if to_payload is not None:
         return dict(to_payload())
@@ -73,8 +87,19 @@ def _payload_body(spec: KindSpec, payload: Any) -> dict[str, Any]:
 
 def _stamp(created_at: datetime) -> str:
     if not isinstance(created_at, datetime) or created_at.tzinfo is None:
-        raise RecordError("record_invalid", (("created_at",),))
+        raise RecordError(reasons.runtime.RECORD_INVALID, (("created_at",),))
     return created_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _digest(body: dict[str, Any]) -> str:
+    bad = False
+    try:
+        digest = payload_digest(body)
+    except ValueError:
+        bad = True
+    if bad:
+        raise RecordError(reasons.runtime.RECORD_INVALID, (("payload",),))
+    return digest
 
 
 def build(
@@ -96,27 +121,25 @@ def build(
     """
     spec = require_writable(kind)
     body = _payload_body(spec, payload)
-    try:
-        digest = payload_digest(body)
-    except ValueError:
-        raise RecordError("record_invalid", (("payload",),)) from None
     parts: dict[str, Any] = {
         "record_schema": ENVELOPE_SCHEMA,
         "kind": spec.kind,
         "payload_schema": spec.payload_schema,
         "created_at": _stamp(created_at),
         "invocation_id": str(invocation_id),
-        "producer": _dump(producer, Producer),
-        "labels": _dump(labels if labels is not None else {}, Labels),
-        "links": [_dump(link, Link) for link in links],
-        "payload_digest": digest,
+        "producer": _dump(producer, Producer, "producer"),
+        "labels": _dump(labels if labels is not None else {}, Labels, "labels"),
+        "links": [_dump(link, Link, "links") for link in links],
+        "payload_digest": _digest(body),
         "payload": body,
     }
+    failed: tuple[tuple[object, ...], ...] | None = None
     try:
         RecordEnvelope.model_validate({**parts, "id": _PLACEHOLDER_ID})
         return RecordEnvelope.model_validate({**parts, "id": record_id(parts)})
     except ValidationError as exc:
-        raise RecordError("record_invalid", _locations(exc)) from None
+        failed = _locations(exc)
+    raise RecordError(reasons.runtime.RECORD_INVALID, failed or ())
 
 
 def encode(envelope: RecordEnvelope | Mapping[str, Any]) -> bytes:
@@ -125,7 +148,8 @@ def encode(envelope: RecordEnvelope | Mapping[str, Any]) -> bytes:
     try:
         return canonical_bytes(data)
     except ValueError:
-        raise RecordError("record_invalid") from None
+        pass
+    raise RecordError(reasons.runtime.RECORD_INVALID)
 
 
 def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -140,13 +164,15 @@ def _refuse_constant(_: str) -> Any:
 
 
 def _parse(data: bytes | str) -> dict[str, Any]:
+    raw: Any = None
     try:
         text = data.decode("utf-8") if isinstance(data, bytes) else data
         raw = json.loads(text, object_pairs_hook=_no_duplicates, parse_constant=_refuse_constant)
     except (ValueError, RecursionError):
-        raise RecordError("record_corrupt") from None
+        # A JSON decode error keeps the input text in its ``doc``; none of it may leave.
+        raw = None
     if not isinstance(raw, dict):
-        raise RecordError("record_corrupt")
+        raise RecordError(reasons.runtime.RECORD_CORRUPT)
     return raw
 
 
@@ -167,25 +193,23 @@ def decode(data: bytes | str) -> DecodedRecord | OpaqueRecord | RecordNeedsNewer
     raw = _parse(data)
     schema = _str(raw, "record_schema")
     if not schema.startswith(_ENVELOPE_FAMILY):
-        raise RecordError("record_corrupt")
+        raise RecordError(reasons.runtime.RECORD_CORRUPT)
     if schema != ENVELOPE_SCHEMA:
         # A later envelope major cannot be verified by this version's rule. Its id and kind
         # are still held to their formats, and the result is marked unverified.
         if not (_ID.fullmatch(_str(raw, "id")) and _KIND.fullmatch(_str(raw, "kind"))):
-            raise RecordError("record_corrupt")
+            raise RecordError(reasons.runtime.RECORD_CORRUPT)
         return RecordNeedsNewer(
             raw["kind"], raw["id"], _str(raw, "payload_schema"), "envelope", raw, verified=False
         )
+    envelope: Any = None
     try:
-        if raw.get("id") != record_id(raw):
-            raise RecordError("record_corrupt")
-        envelope = RecordEnvelopeRead.model_validate(raw)
-    except ValidationError:
-        raise RecordError("record_corrupt") from None
-    except ValueError:
-        raise RecordError("record_corrupt") from None
-    if payload_digest(raw["payload"]) != raw["payload_digest"]:
-        raise RecordError("record_corrupt")
+        if raw.get("id") == record_id(raw):
+            envelope = RecordEnvelopeRead.model_validate(raw)
+    except ValueError:  # includes pydantic's ValidationError
+        envelope = None
+    if envelope is None or payload_digest(raw["payload"]) != raw["payload_digest"]:
+        raise RecordError(reasons.runtime.RECORD_CORRUPT)
     spec = kind_spec(raw["kind"])
     if spec is None or spec.reserved:
         return OpaqueRecord(
@@ -206,13 +230,16 @@ def _typed(spec: KindSpec, raw: dict[str, Any], envelope: Any) -> DecodedRecord 
     found = major_of(raw["payload_schema"])
     model = spec.read_model
     if wanted is None or model is None:
-        raise RecordError("record_kind_reserved")
+        raise RecordError(reasons.runtime.RECORD_KIND_RESERVED)
     if found is None or found[0] != wanted[0] or found[1] < wanted[1]:
-        raise RecordError("record_corrupt")
+        raise RecordError(reasons.runtime.RECORD_CORRUPT)
     if found[1] > wanted[1]:
         return RecordNeedsNewer(spec.kind, raw["id"], raw["payload_schema"], "payload", raw)
+    failed: tuple[tuple[object, ...], ...] | None = None
     try:
         view = model.model_validate(raw["payload"])
     except ValidationError as exc:
-        raise RecordError("record_invalid", _locations(exc, ("payload",))) from None
+        failed = _locations(exc, ("payload",))
+    if failed is not None:
+        raise RecordError(reasons.runtime.RECORD_INVALID, failed or ())
     return DecodedRecord(raw=raw, envelope=envelope, view=view)

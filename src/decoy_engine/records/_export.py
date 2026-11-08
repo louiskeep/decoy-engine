@@ -14,8 +14,18 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    TypeAdapter,
+    ValidationError,
+)
 
+from decoy_engine import reasons
+from decoy_engine._value_free import InvocationId
 from decoy_engine.records import _kinds  # noqa: F401  (registers the V1 kinds)
 from decoy_engine.records._canonical import canonical_bytes, payload_digest, record_id, sha256_tag
 from decoy_engine.records._codec import decode
@@ -45,7 +55,12 @@ _SEPARATORS = re.compile(r"[\\/]+")
 
 
 class ExportHeader(BaseModel):
-    """First line of an export. ``unstripped`` lists records whose paths could not be reduced."""
+    """First line of an export.
+
+    ``unstripped`` lists records whose paths could not be reduced. ``withheld_logs`` lists the
+    invocations whose job log was left out because its lines can name paths this version cannot
+    strip.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
 
@@ -57,10 +72,20 @@ class ExportHeader(BaseModel):
     refs: dict[StrictStr, StrictStr]
     paths_stripped: StrictBool
     unstripped: tuple[dict[str, Any], ...]
+    withheld_logs: tuple[InvocationId, ...] = ()
     external_links: StrictInt
 
 
 ExportHeaderRead: Any = read_model_of(ExportHeader)
+_OWNER: TypeAdapter[str] = TypeAdapter(InvocationId)
+
+
+def _is_invocation_id(value: object) -> bool:
+    try:
+        _OWNER.validate_python(value, strict=True)
+    except ValidationError:
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -145,6 +170,12 @@ def export_lines(
     recomputed; a record whose links and payload are both unchanged keeps its id and gets
     ``source_id: null``. A payload this version cannot fully read is copied byte for byte and
     listed under ``unstripped``. A link to a record outside the export keeps its id and is counted.
+
+    Every envelope in ``records`` must be a v1 envelope: this function refuses a later major with
+    ``record_corrupt`` because it cannot verify or rewrite one, so callers filter out
+    ``RecordNeedsNewer`` results before passing ``raw`` values in. Logs (``(invocation_id, bytes)``)
+    are written only with ``keep_paths``; otherwise their owners go in the header's
+    ``withheld_logs``.
     """
     id_map: dict[str, str] = {}
     lines: list[dict[str, Any]] = []
@@ -153,7 +184,7 @@ def export_lines(
     external = 0
     for raw in records:
         if raw.get("record_schema") != ENVELOPE_SCHEMA or raw.get("id") != record_id(raw):
-            raise RecordError("record_corrupt")
+            raise RecordError(reasons.runtime.RECORD_CORRUPT)
         rec = copy.deepcopy(dict(raw))
         links = []
         for link in rec["links"]:
@@ -184,8 +215,9 @@ def export_lines(
         id_map[raw["id"]] = rec["id"]
         lines.append({"type": "record", "source_id": raw["id"] if changed else None, "record": rec})
     log_list = list(logs)
-    if not keep_paths:
-        unstripped.extend({"id": None, "source_id": None, "log": owner} for owner, _ in log_list)
+    if not all(_is_invocation_id(owner) for owner, _ in log_list):
+        raise RecordError(reasons.runtime.RECORD_INVALID, (("logs",),))
+    withheld = () if keep_paths else tuple(owner for owner, _ in log_list)
     header = ExportHeader(
         exported_at=exported_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
         producer=producer if isinstance(producer, Producer) else Producer.model_validate(producer),
@@ -193,6 +225,7 @@ def export_lines(
         refs={name: id_map.get(target, target) for name, target in (refs or {}).items()},
         paths_stripped=stripped_any,
         unstripped=tuple(unstripped),
+        withheld_logs=withheld,
         external_links=external,
     )
     for entry in [header.model_dump(mode="json"), *lines]:
@@ -201,10 +234,13 @@ def export_lines(
         if not keep_paths:
             # Log lines can name paths and this version cannot strip them, so they stay out.
             continue
+        content: str | None = None
         try:
             content = data.decode("utf-8")
         except UnicodeDecodeError:
-            raise RecordError("record_invalid") from None
+            content = None
+        if content is None:
+            raise RecordError(reasons.runtime.RECORD_INVALID)
         entry = {
             "type": "log",
             "invocation_id": invocation_id,
@@ -239,14 +275,14 @@ def read_export(
             continue
         wrapper = _wrapper(line)
         if not seen_header:
+            header: Any = None
             try:
-                if wrapper is None or wrapper.get("type") != "header":
-                    raise ValueError
-                header = ExportHeaderRead.model_validate(wrapper)
-                if header.export_schema != EXPORT_SCHEMA:
-                    raise ValueError
-            except ValueError:
-                raise RecordError("record_invalid") from None
+                if wrapper is not None and wrapper.get("type") == "header":
+                    header = ExportHeaderRead.model_validate(wrapper)
+            except ValueError:  # includes pydantic's ValidationError
+                header = None
+            if header is None or header.export_schema != EXPORT_SCHEMA:
+                raise RecordError(reasons.runtime.RECORD_INVALID)
             seen_header = True
             yield header
             continue
@@ -255,23 +291,25 @@ def read_export(
 
 def _read_line(number: int, wrapper: dict[str, Any] | None) -> Any:
     if wrapper is None:
-        return BadLine(number, "record_corrupt")
+        return BadLine(number, reasons.runtime.RECORD_CORRUPT)
     kind = wrapper.get("type")
     if kind == "record":
         source, record = wrapper.get("source_id"), wrapper.get("record")
         if not isinstance(record, dict) or not (source is None or isinstance(source, str)):
-            return BadLine(number, "record_invalid")
+            return BadLine(number, reasons.runtime.RECORD_INVALID)
         try:
             decoded = decode(canonical_bytes(record))
             if isinstance(decoded, RecordNeedsNewer) and not decoded.verified:
-                return BadLine(number, "record_invalid")
+                return BadLine(number, reasons.runtime.RECORD_INVALID)
             return ExportedRecord(source, decoded, number)
         except (RecordError, ValueError) as exc:
-            return BadLine(number, getattr(exc, "code", "record_corrupt"))
+            return BadLine(number, getattr(exc, "code", reasons.runtime.RECORD_CORRUPT))
     if kind == "log":
         content, digest, owner = (wrapper.get(k) for k in ("content", "sha256", "invocation_id"))
         if isinstance(content, str) and isinstance(digest, str) and isinstance(owner, str):
+            if not _is_invocation_id(owner):
+                return BadLine(number, reasons.runtime.RECORD_INVALID)
             verified = sha256_tag(content.encode("utf-8")) == digest
             return ExportedLog(owner, digest, content, verified, number)
-        return BadLine(number, "record_invalid")
-    return BadLine(number, "record_invalid")
+        return BadLine(number, reasons.runtime.RECORD_INVALID)
+    return BadLine(number, reasons.runtime.RECORD_INVALID)

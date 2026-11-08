@@ -11,10 +11,12 @@ import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, StrictInt, ValidationError
+from pydantic import BaseModel, ConfigDict, StrictInt
 
+from decoy_engine import reasons
+from decoy_engine._value_free import InvocationId, RelPath, UtcTimestamp
 from decoy_engine.records._canonical import canonical_bytes
-from decoy_engine.records._envelope import InvocationId, Producer, RelPath, Timestamp
+from decoy_engine.records._envelope import Producer
 from decoy_engine.records._errors import RecordError
 from decoy_engine.records._read_model import read_model_of
 
@@ -33,7 +35,7 @@ class JobLogHeader(BaseModel):
     invocation_id: InvocationId
     command: Literal["run", "scan"]
     pipeline: RelPath | None
-    started_at: Timestamp
+    started_at: UtcTimestamp
     producer: Producer
 
 
@@ -66,23 +68,27 @@ def _object(line: str) -> dict[str, Any] | None:
 def read_job_log(data: bytes | str) -> JobLog:
     """Read a log. A header that is missing or invalid raises ``RecordError`` (``record_corrupt``);
     a truncated last line is skipped and flagged, and any other bad line is skipped and counted."""
+    text: str | None = None
     try:
         text = data.decode("utf-8") if isinstance(data, bytes) else data
     except UnicodeDecodeError:
-        raise RecordError("record_corrupt") from None
+        text = None
+    if text is None:
+        raise RecordError(reasons.runtime.RECORD_CORRUPT)
     lines = text.split("\n")
     complete = text.endswith("\n")
     if lines and lines[-1] == "":
         lines.pop()
     if not lines:
-        raise RecordError("record_corrupt")
+        raise RecordError(reasons.runtime.RECORD_CORRUPT)
     first = _object(lines[0])
+    header: Any = None
     try:
         header = JobLogHeaderRead.model_validate(first)
-        if header.log_schema != JOB_LOG_SCHEMA:
-            raise ValueError
-    except (ValidationError, ValueError):
-        raise RecordError("record_corrupt") from None
+    except ValueError:  # includes pydantic's ValidationError
+        header = None
+    if header is None or header.log_schema != JOB_LOG_SCHEMA:
+        raise RecordError(reasons.runtime.RECORD_CORRUPT)
     events: list[dict[str, Any]] = []
     bad = 0
     truncated = False

@@ -68,6 +68,7 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("detection/ner.py", "NerUnavailableError.__init__"): _CTOR,
     ("determinism/_derive.py", "DeterminismError.__init__"): _CTOR,
     ("errors.py", "FpeChecksumError.__init__"): _CTOR,
+    ("records/_errors.py", "RecordError.__init__"): _CTOR,
     ("errors.py", "FpeUnencryptableError.__init__"): _CTOR,
     ("errors.py", "PipelineValidationError.__init__"): _CTOR,
     ("errors.py", "ValidationError.__init__"): _CTOR,

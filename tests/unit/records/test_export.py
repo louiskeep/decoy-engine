@@ -10,6 +10,7 @@ import pytest
 from decoy_engine import records
 from decoy_engine.records import BadLine, ExportedLog, ExportedRecord, RecordError, canonical_bytes
 from tests.unit.records._helpers import (
+    INVOCATION,
     PRODUCER,
     SHA_B,
     T0,
@@ -182,17 +183,18 @@ def test_sample_payload_helper_is_used() -> None:
 def test_sec1_logs_stay_out_without_keep_paths_and_are_listed() -> None:
     """SEC-1: a log line can name paths; it is never exported unstripped."""
     log = b'{"log_schema":"decoy-job-log/v1","pipeline":"/home/u/p.yaml"}\n'
-    lines = _lines([], logs=[("inv-1", log)])
+    lines = _lines([], logs=[(INVOCATION, log)])
     items = _read(lines)
     assert len(items) == 1
-    assert items[0].unstripped == ({"id": None, "source_id": None, "log": "inv-1"},)
-    kept = _read(_lines([], keep_paths=True, logs=[("inv-1", log)]))
+    assert items[0].withheld_logs == (INVOCATION,) and items[0].unstripped == ()
+    kept = _read(_lines([], keep_paths=True, logs=[(INVOCATION, log)]))
+    assert kept[0].withheld_logs == ()
     assert isinstance(kept[1], ExportedLog)
 
 
 def test_sec2_label_pipeline_path_is_reduced_and_the_id_follows() -> None:
     """SEC-2."""
-    rec = raw_of(make(labels={"pipeline": "/home/u/proj/pipelines/claims.yaml"}))
+    rec = raw_of(make(labels={"pipeline": "proj/pipelines/claims.yaml"}))
     header, item = _read(_lines([rec]))
     assert item.record.raw["labels"]["pipeline"] == "claims.yaml"
     assert item.source_id == rec["id"] and records.record_id(item.record.raw) == item.record.id

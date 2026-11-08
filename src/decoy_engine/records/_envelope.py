@@ -13,6 +13,14 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr, StringConstraints
 
+from decoy_engine._value_free import (
+    InvocationId,
+    RelPath,
+    SafeName,
+    SafeRef,
+    UtcTimestamp,
+    Version,
+)
 from decoy_engine.records._read_model import read_model_of
 
 __all__ = [
@@ -30,17 +38,9 @@ __all__ = [
 ENVELOPE_SCHEMA = "decoy-record/v1"
 
 RecordId = Annotated[StrictStr, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
-# Names, relative paths and versions: no control characters, bounded length, never free text.
-_PLAIN = r"^[^\x00-\x1f\x7f]+$"
-Name = Annotated[StrictStr, StringConstraints(min_length=1, max_length=256, pattern=_PLAIN)]
-RelPath = Annotated[StrictStr, StringConstraints(min_length=1, max_length=1024, pattern=_PLAIN)]
-Timestamp = Annotated[
-    StrictStr,
-    StringConstraints(pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$"),
-]
-InvocationId = Annotated[
-    StrictStr,
-    StringConstraints(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+# A payload tag is `family/vN` or the inherited `family-N` (`cli-local-1`).
+PayloadTag = Annotated[
+    StrictStr, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,63}(?:/v|-)\d{1,4}$")
 ]
 TAG_PATTERN = re.compile(r"^(?P<family>[a-z][a-z0-9-]*?)(?:/v|-)(?P<major>\d+)$")
 
@@ -50,18 +50,18 @@ class _Closed(BaseModel):
 
 
 class Producer(_Closed):
-    name: Name
-    version: Name
-    engine_version: Name
+    name: SafeRef
+    version: Version
+    engine_version: Version
 
 
 class Labels(_Closed):
     """The indexed fields: a closed set, strict types, so no free text and no float gets in."""
 
     pipeline: RelPath | None = None
-    tables: tuple[Name, ...] | None = None
-    status: Name | None = None
-    route: Name | None = None
+    tables: tuple[SafeName, ...] | None = None
+    status: SafeRef | None = None
+    route: SafeRef | None = None
     exit_code: StrictInt | None = None
 
 
@@ -82,9 +82,9 @@ class Link(_Closed):
 class RecordEnvelope(_Closed):
     record_schema: Literal["decoy-record/v1"] = "decoy-record/v1"
     kind: Annotated[StrictStr, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,63}$")]
-    payload_schema: Name
+    payload_schema: PayloadTag
     id: RecordId
-    created_at: Timestamp
+    created_at: UtcTimestamp
     invocation_id: InvocationId
     producer: Producer
     labels: Labels

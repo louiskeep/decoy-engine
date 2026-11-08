@@ -21,13 +21,19 @@ from pydantic import (
     StringConstraints,
 )
 
-from decoy_engine.records._envelope import Name, RelPath
+from decoy_engine._value_free import Count, SafeName, Sha256
 
 __all__ = ["EvidencePayload", "SampleRunPayload"]
 
-Sha = Annotated[StrictStr, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 Number = StrictInt | StrictFloat
-Count = Annotated[StrictInt, Field(ge=0)]
+# The `cli-local-1` manifest predates the shared value-free types, so its names and paths
+# keep their wider shape: a manifest already on disk must still read. New payloads use SafeName,
+# Sha256 and the other shared types.
+_PLAIN = r"^[^\x00-\x1f\x7f]+$"
+Name = Annotated[StrictStr, StringConstraints(min_length=1, max_length=256, pattern=_PLAIN)]
+RelPath = Annotated[StrictStr, StringConstraints(min_length=1, max_length=1024, pattern=_PLAIN)]
+# Sample-run paths are machine paths, reduced to file names by export, so they stay loose too.
+PathText = RelPath
 
 
 class _Model(BaseModel):
@@ -36,7 +42,7 @@ class _Model(BaseModel):
 
 class FileFingerprint(_Model):
     path: RelPath
-    fingerprint: Sha | None
+    fingerprint: Sha256 | None
     fingerprint_method: Literal["full"] | None
     size_bytes: Count | None
 
@@ -75,7 +81,7 @@ class EvidencePayload(_Model):
     cli_version: Name
     engine_version: Name
     pipeline_path: RelPath
-    pipeline_fingerprint: Sha
+    pipeline_fingerprint: Sha256
     input_fingerprints: dict[Name, FileFingerprint]
     output_fingerprints: dict[Name, OutputFingerprint]
     row_counts: dict[Name, Count]
@@ -83,28 +89,28 @@ class EvidencePayload(_Model):
     warnings: tuple[Name | EvidenceWarning, ...]
     timings: tuple[Timing, ...]
     strategies: tuple[Strategy, ...]
-    manifest_hash: Sha
+    manifest_hash: Sha256
 
 
 class ColumnRef(_Model):
-    table: Name
-    column: Name
+    table: SafeName
+    column: SafeName
 
 
 class SampleOutput(_Model):
-    table: Name
-    path: RelPath
-    sha256: Sha
+    table: SafeName
+    path: PathText
+    sha256: Sha256
 
 
 class SampleRunPayload(_Model):
     """Metadata of one ``--sample N`` run. Sample rows are scratch and never part of a record."""
 
     sample_size: Annotated[StrictInt, Field(ge=1)]
-    root_table: Name
-    table_rows: dict[Name, Count]
-    subset_seed_counts: dict[Name, Count]
+    root_table: SafeName
+    table_rows: dict[SafeName, Count]
+    subset_seed_counts: dict[SafeName, Count]
     approximate_columns: tuple[ColumnRef, ...]
-    scratch_dir: RelPath
+    scratch_dir: PathText
     outputs: tuple[SampleOutput, ...]
     ttl_seconds: Annotated[StrictInt, Field(ge=1)]

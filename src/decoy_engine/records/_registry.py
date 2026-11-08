@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel
 
+from decoy_engine import reasons
 from decoy_engine.records._envelope import TAG_PATTERN
 from decoy_engine.records._errors import RecordError
 
@@ -83,5 +84,5 @@ def require_writable(kind: str) -> KindSpec:
     reserved kind where it needs the write model."""
     spec = _registry.get(kind)
     if spec is None:
-        raise RecordError("record_invalid", (("kind",),))
+        raise RecordError(reasons.runtime.RECORD_INVALID, (("kind",),))
     return spec

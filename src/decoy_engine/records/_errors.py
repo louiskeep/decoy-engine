@@ -12,7 +12,13 @@ import re
 from decoy_engine import reasons
 from decoy_engine._error_base import DecoyError
 
-_CODES = frozenset({"record_invalid", "record_corrupt", "record_kind_reserved"})
+_CODES = frozenset(
+    {
+        reasons.runtime.RECORD_INVALID,
+        reasons.runtime.RECORD_CORRUPT,
+        reasons.runtime.RECORD_KIND_RESERVED,
+    }
+)
 _SEGMENT = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _MAX_FIELDS = 8
 
@@ -30,7 +36,7 @@ class RecordError(DecoyError, ValueError):
     """A record cannot be built, decoded or exported. ``code`` is a ``runtime`` reason code."""
 
     def __init__(self, code: str, fields: tuple[tuple[object, ...], ...] = ()) -> None:
-        if code not in _CODES or not reasons.is_registered(code):
+        if code not in _CODES:
             raise ValueError("unknown record error code")
         self.code = code
         self.fields = tuple(_safe_location(loc) for loc in fields[:_MAX_FIELDS])
