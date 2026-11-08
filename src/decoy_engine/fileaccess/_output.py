@@ -76,6 +76,12 @@ def make_stage_dir_at(parent_fd: int, name: str) -> int:
         try:
             fd = _call(os.open, name, _DIR_FLAGS, dir_fd=parent_fd)
         except PermissionError:
+            # Named limit L6: this chmod goes by name, so a same-user swap of the name between
+            # mkdir and here could redirect it; the only effect is 0700 on an entry the engine
+            # user owns, and the V1 threat model covers accidental leaks only. An fd-only repair
+            # is impossible: a 0000 directory cannot be opened, and fchmod on an O_PATH
+            # descriptor gives EBADF. Reached only for a directory this call just created (mkdir
+            # raises, EEXIST included, before this point).
             _call(os.chmod, name, 0o700, dir_fd=parent_fd)
             fd = _call(os.open, name, _DIR_FLAGS, dir_fd=parent_fd)
         if (os.fstat(fd).st_mode & 0o700) != 0o700:
