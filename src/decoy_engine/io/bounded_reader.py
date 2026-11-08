@@ -27,10 +27,11 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.csv as pa_csv
-import pyarrow.parquet as pq
 
-from decoy_engine import reasons
+from decoy_engine import fileaccess, reasons
 from decoy_engine.errors import DecoyError
+from decoy_engine.fileaccess import FileAccess, FileRequest, FileRole
+from decoy_engine.fileaccess.adapters import arrow as arrow_adapter
 from decoy_engine.io import csv_framer as framer
 
 # pandas' default `na_values`, the set the full-frame CSV read (`read_csv(dtype=str)`)
@@ -256,35 +257,82 @@ def cut_batch(
         raise RowExceedsMaxRowBytes(table=table, row=row_base + limit)
 
 
-def iter_parquet_chunks(path: str, budget: ChunkBudget, *, table: str) -> Iterator[pa.Table]:
+@fileaccess.entry_point
+def iter_parquet_chunks(
+    path: str,
+    budget: ChunkBudget,
+    *,
+    table: str,
+    file_access: FileAccess | None = None,
+    field_key: str = "source.path",
+) -> Iterator[pa.Table]:
     """Owned chunks of a Parquet file within `budget`, row group by row group."""
-    schema = pq.read_schema(path)
-    dictionary_columns = [f.name for f in schema if str(f.type) in _STRING_TYPES]
-    parquet_file = pq.ParquetFile(path, read_dictionary=dictionary_columns or None)
-    row_base = 0
-    for group in range(parquet_file.num_row_groups):
-        for batch in parquet_file.iter_batches(
-            batch_size=budget.read_rows, row_groups=[group], use_threads=False
-        ):
-            rows = batch.num_rows
-            yield from cut_batch(batch, budget, table=table, row_base=row_base)
-            row_base += rows
-            del batch
+    with fileaccess.current().open_read(
+        FileRequest(FileRole.SOURCE, "read", path, field_key)
+    ) as handle:
+        schema = arrow_adapter.parquet_file(handle).schema_arrow
+        dictionary_columns = [f.name for f in schema if str(f.type) in _STRING_TYPES]
+        parquet_file = arrow_adapter.parquet_file(
+            handle, read_dictionary=dictionary_columns or None
+        )
+        row_base = 0
+        for group in range(parquet_file.num_row_groups):
+            for batch in arrow_adapter.iter_batches(
+                handle,
+                parquet_file,
+                batch_size=budget.read_rows,
+                row_groups=[group],
+                use_threads=False,
+            ):
+                rows = batch.num_rows
+                yield from cut_batch(batch, budget, table=table, row_base=row_base)
+                row_base += rows
+                del batch
 
 
-def csv_convert_options(names: list[str]) -> pa_csv.ConvertOptions:
+def csv_convert_options(
+    names: list[str], lexeme_columns: frozenset[str] = frozenset()
+) -> pa_csv.ConvertOptions:
+    # Arrow has one global null list, so a declared lexeme column turns NA conversion off for
+    # the read and `restore_default_na` re-applies the legacy vocabulary to every other column.
     return pa_csv.ConvertOptions(
         column_types={name: pa.string() for name in names},
-        null_values=list(PANDAS_DEFAULT_NA_VALUES),
+        null_values=[] if lexeme_columns else list(PANDAS_DEFAULT_NA_VALUES),
         strings_can_be_null=True,
     )
 
 
-def iter_csv_chunks(path: str, budget: ChunkBudget, *, table: str) -> Iterator[pa.Table]:
+def restore_default_na(table: pa.Table, lexeme_columns: frozenset[str]) -> pa.Table:
+    """The legacy NA vocabulary on every column that did not declare a contract."""
+    if not lexeme_columns:
+        return table
+    na = pa.array(sorted(PANDAS_DEFAULT_NA_VALUES), pa.string())
+    for index, name in enumerate(table.column_names):
+        if name in lexeme_columns:
+            continue
+        column = table.column(index)
+        # pc.* funcs are dynamically generated; stubs miss them.
+        hit = pc.is_in(column, value_set=na)  # type: ignore[attr-defined, unused-ignore]
+        nulled = pc.if_else(hit, pa.scalar(None, pa.string()), column)  # type: ignore[attr-defined, unused-ignore]
+        table = table.set_column(index, name, nulled)
+    return table
+
+
+@fileaccess.entry_point
+def iter_csv_chunks(
+    path: str,
+    budget: ChunkBudget,
+    *,
+    table: str,
+    file_access: FileAccess | None = None,
+    field_key: str = "source.path",
+    lexeme_columns: frozenset[str] = frozenset(),
+) -> Iterator[pa.Table]:
     """Owned string-typed chunks of a CSV file within `budget`, framed record by
     record so no record larger than `max_row_bytes` ever reaches the parser."""
     parse_options = pa_csv.ParseOptions(newlines_in_values=True)
-    with open(path, "rb") as fh:
+    handle = fileaccess.current().open_read(FileRequest(FileRole.SOURCE, "read", path, field_key))
+    with handle, handle.open_binary() as fh:
         records = framer.iter_csv_records(fh, max_record_bytes=budget.max_row_bytes)
         record_index = 0
         try:
@@ -298,7 +346,7 @@ def iter_csv_chunks(path: str, budget: ChunkBudget, *, table: str) -> Iterator[p
         names = framer.split_record_fields(header)
         if names is None:
             raise CsvMalformed(table=table, record=0)
-        convert_options = csv_convert_options(names)
+        convert_options = csv_convert_options(names, lexeme_columns)
         ncols = len(names)
         per_record = 4 * ncols + math.ceil(ncols / 8) + budget.out_row_bound
         batch: list[bytes] = []
@@ -313,11 +361,14 @@ def iter_csv_chunks(path: str, budget: ChunkBudget, *, table: str) -> Iterator[p
                 use_threads=False, block_size=min(len(payload) + 1, 2**31 - 1)
             )
             try:
-                return pa_csv.read_csv(
-                    io.BytesIO(payload),
-                    read_options=read_options,
-                    parse_options=parse_options,
-                    convert_options=convert_options,
+                return restore_default_na(
+                    pa_csv.read_csv(
+                        io.BytesIO(payload),
+                        read_options=read_options,
+                        parse_options=parse_options,
+                        convert_options=convert_options,
+                    ),
+                    lexeme_columns,
                 )
             except pa.ArrowInvalid:
                 raise CsvMalformed(table=table, record=first_index) from None

@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from scripts.release.reason_manifest_policy import append_only_violations
 
 from decoy_engine import reasons
 
@@ -21,66 +22,12 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "f29"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "sentry"))
 import _reason_baseline as baseline_builder  # noqa: E402
 
-_SEMANTIC_FIELDS = ("namespace", "code", "kind", "rules", "owner", "context", "since")
-
 
 def _load(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text())
 
 
-def _version_tuple(version: str) -> tuple[int, int, int]:
-    major, minor, patch = (int(p) for p in version.split("."))
-    return (major, minor, patch)
-
-
-def manifest_violations(pinned: dict, live: dict) -> list[str]:
-    """Why ``live`` is not an append-only successor of ``pinned``; empty when it is."""
-    problems: list[str] = []
-    live_by_id = {(e["namespace"], e["code"]): e for e in live["entries"]}
-    pinned_version = _version_tuple(pinned["registry_version"])
-    live_version = _version_tuple(live["registry_version"])
-    if live_version < pinned_version:
-        problems.append("registry_version went backwards")
-    if live["reason_schema_version"] < pinned["reason_schema_version"]:
-        problems.append("reason_schema_version went backwards")
-    summary_changed = False
-    for old in pinned["entries"]:
-        ident = (old["namespace"], old["code"])
-        new = live_by_id.get(ident)
-        if new is None:
-            problems.append(f"deleted identity {ident}")
-            continue
-        for field in _SEMANTIC_FIELDS:
-            if new[field] != old[field]:
-                problems.append(
-                    f"{ident}: {field} changed (retry/outcome/phase semantics are frozen)"
-                )
-        if new["summary"] != old["summary"]:
-            summary_changed = True
-        if new["symbol"] != old["symbol"]:
-            problems.append(f"{ident}: symbol changed")
-        if old["deprecated_in"] is not None and new["deprecated_in"] != old["deprecated_in"]:
-            problems.append(f"{ident}: tombstone changed")
-    if (
-        summary_changed
-        and live_version[:2] == pinned_version[:2]
-        and live_version == pinned_version
-    ):
-        problems.append("a fixed safe summary changed without a registry version bump")
-    added = set(live_by_id) - {(e["namespace"], e["code"]) for e in pinned["entries"]}
-    if added and live_version[:2] == pinned_version[:2] and live_version[2] == pinned_version[2]:
-        problems.append("identities were added without a registry minor version bump")
-    for entry in live["entries"]:
-        link = entry["replaced_by"]
-        if link is not None and entry["deprecated_in"] is None:
-            problems.append(
-                f"{entry['namespace']}.{entry['code']}: replacement without deprecation"
-            )
-        if link is not None and tuple(link) not in live_by_id:
-            problems.append(
-                f"{entry['namespace']}.{entry['code']}: replacement {tuple(link)} is not an identity"
-            )
-    return problems
+manifest_violations = append_only_violations
 
 
 def test_v1_manifest_is_append_only() -> None:

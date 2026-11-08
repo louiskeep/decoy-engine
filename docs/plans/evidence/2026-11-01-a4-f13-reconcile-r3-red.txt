@@ -1,0 +1,91 @@
+# A-4 x F13 reconcile, remediation round 3: red-first records (Python 3.10.20, venv from uv.lock)
+# Each block: the new tests run against the tree with the tests added and the fix not yet applied.
+
+## f1
+FAILED tests/fileaccess/test_nested_explicit_policy.py::test_an_explicit_policy_broader_than_or_unrelated_to_the_installed_one_is_refused[strict_installed_ambient_explicit-capture]
+FAILED tests/fileaccess/test_nested_explicit_policy.py::test_an_explicit_policy_broader_than_or_unrelated_to_the_installed_one_is_refused[strict_installed_ambient_explicit-entry_point]
+FAILED tests/fileaccess/test_nested_explicit_policy.py::test_an_explicit_policy_broader_than_or_unrelated_to_the_installed_one_is_refused[strict_installed_ambient_explicit-scope]
+FAILED tests/fileaccess/test_nested_explicit_policy.py::test_an_explicit_policy_broader_than_or_unrelated_to_the_installed_one_is_refused[strict_installed_other_strict_explicit-capture]
+FAILED tests/fileaccess/test_nested_explicit_policy.py::test_an_explicit_policy_broader_than_or_unrelated_to_the_installed_one_is_refused[strict_installed_other_strict_explicit-entry_point]
+FAILED tests/fileaccess/test_nested_explicit_policy.py::test_an_explicit_policy_broader_than_or_unrelated_to_the_installed_one_is_refused[strict_installed_other_strict_explicit-scope]
+FAILED tests/fileaccess/test_nested_explicit_policy.py::test_a_nested_entry_inside_a_strict_call_cannot_switch_to_ambient
+FAILED tests/fileaccess/test_nested_explicit_policy.py::test_every_resolution_refusal_is_raised_bare_inside_a_callers_handler[capture]
+FAILED tests/fileaccess/test_nested_explicit_policy.py::test_every_resolution_refusal_is_raised_bare_inside_a_callers_handler[current]
+FAILED tests/fileaccess/test_nested_explicit_policy.py::test_every_resolution_refusal_is_raised_bare_inside_a_callers_handler[entry_point]
+FAILED tests/fileaccess/test_nested_explicit_policy.py::test_every_resolution_refusal_is_raised_bare_inside_a_callers_handler[forbidden_explicit_ambient]
+FAILED tests/fileaccess/test_nested_explicit_policy.py::test_every_resolution_refusal_is_raised_bare_inside_a_callers_handler[require_ambient]
+FAILED tests/fileaccess/test_nested_explicit_policy.py::test_every_resolution_refusal_is_raised_bare_inside_a_callers_handler[scope]
+13 failed, 15 passed in 0.38s
+
+## f2
+FAILED tests/fileaccess/test_entry_frame_locals.py::test_no_engine_frame_of_a_failing_admission_holds_the_ref[key_provider_from_ref]
+FAILED tests/fileaccess/test_entry_frame_locals.py::test_no_engine_frame_of_a_failing_admission_holds_the_ref[key_provider_from_ref_kw]
+FAILED tests/fileaccess/test_entry_frame_locals.py::test_no_engine_frame_of_a_failing_admission_holds_the_ref[parse_ref]
+FAILED tests/fileaccess/test_entry_frame_locals.py::test_the_entry_point_wrapper_keeps_no_argument_when_the_call_fails
+FAILED tests/fileaccess/test_entry_frame_locals.py::test_the_generator_wrapper_keeps_no_argument_when_resolution_fails
+FAILED tests/fileaccess/test_entry_frame_locals.py::test_the_wrapper_keeps_no_argument_when_resolution_fails
+FAILED tests/fileaccess/test_entry_frame_locals.py::test_a_context_bound_task_keeps_no_argument_when_it_fails
+FAILED tests/fileaccess/test_x1_secret.py::test_a_bad_secret_leaves_nothing_in_the_error[bad_base64]
+FAILED tests/fileaccess/test_x1_secret.py::test_a_bad_secret_leaves_nothing_in_the_error[bad_hex]
+FAILED tests/fileaccess/test_x1_secret.py::test_a_bad_secret_leaves_nothing_in_the_error[invalid_utf8]
+FAILED tests/fileaccess/test_x1_secret.py::test_a_bad_secret_leaves_nothing_in_the_error[non_ascii_utf8]
+FAILED tests/fileaccess/test_x1_secret.py::test_the_same_inside_a_callers_active_handler[bad_base64]
+FAILED tests/fileaccess/test_x1_secret.py::test_the_same_inside_a_callers_active_handler[bad_hex]
+FAILED tests/fileaccess/test_x1_secret.py::test_the_same_inside_a_callers_active_handler[invalid_utf8]
+FAILED tests/fileaccess/test_x1_secret.py::test_the_same_inside_a_callers_active_handler[non_ascii_utf8]
+FAILED tests/fileaccess/test_x1_secret.py::test_a_weak_secret_inside_a_handler_leaves_nothing
+16 failed, 17 passed in 0.46s
+
+## f3
+FAILED tests/secret_providers/test_boundary_caller_context.py::test_a_failing_policy_resolution_inside_a_callers_handler_has_no_context[key_provider_from_ref]
+1 failed, 11 passed in 0.28s
+
+## f4
+E           assert ('CANARY' not in '/tmp/pytest...ected shape.'
+E           assert ('CANARY' not in '/tmp/pytest...3 (overflow)'
+E           assert ('CANARY' not in 'tenant-a/pr...ected shape.'
+E           assert ('CANARY' not in 'tenant-a/pr...3 (overflow)'
+FAILED tests/fileaccess/test_fixed_width_writer_strict_text.py::test_a_strict_write_error_names_only_the_field_position[absolute-bad_layout]
+FAILED tests/fileaccess/test_fixed_width_writer_strict_text.py::test_a_strict_write_error_names_only_the_field_position[absolute-overflow]
+FAILED tests/fileaccess/test_fixed_width_writer_strict_text.py::test_a_strict_write_error_names_only_the_field_position[relative-bad_layout]
+FAILED tests/fileaccess/test_fixed_width_writer_strict_text.py::test_a_strict_write_error_names_only_the_field_position[relative-overflow]
+4 failed, 2 passed in 0.35s
+
+## f5
+E       AssertionError: assert 779970 in []
+E        +  where 779970 = os.stat_result(st_mode=16877, st_ino=779970, st_dev=65024, st_nlink=2, st_uid=0, st_gid=0, st_size=4096, st_atime=1793502725, st_mtime=1793502725, st_ctime=1793502725).st_ino
+E        +    where os.stat_result(st_mode=16877, st_ino=779970, st_dev=65024, st_nlink=2, st_uid=0, st_gid=0, st_size=4096, st_atime=1793502725, st_mtime=1793502725, st_ctime=1793502725) = stat()
+E        +      where stat = (PosixPath('/tmp/pytest-of-root/pytest-9/test_fsync_dir_survives_close_0') / 'out').stat
+E       AssertionError: assert 779973 in []
+E        +  where 779973 = os.stat_result(st_mode=16877, st_ino=779973, st_dev=65024, st_nlink=2, st_uid=0, st_gid=0, st_size=4096, st_atime=1793502725, st_mtime=1793502725, st_ctime=1793502725).st_ino
+E        +    where os.stat_result(st_mode=16877, st_ino=779973, st_dev=65024, st_nlink=2, st_uid=0, st_gid=0, st_size=4096, st_atime=1793502725, st_mtime=1793502725, st_ctime=1793502725) = stat()
+E        +      where stat = (PosixPath('/tmp/pytest-of-root/pytest-9/test_fsync_dir_survives_close_1') / 'out').stat
+E       AssertionError: assert 779976 in []
+E        +  where 779976 = os.stat_result(st_mode=16877, st_ino=779976, st_dev=65024, st_nlink=2, st_uid=0, st_gid=0, st_size=4096, st_atime=1793502725, st_mtime=1793502725, st_ctime=1793502725).st_ino
+E        +    where os.stat_result(st_mode=16877, st_ino=779976, st_dev=65024, st_nlink=2, st_uid=0, st_gid=0, st_size=4096, st_atime=1793502725, st_mtime=1793502725, st_ctime=1793502725) = stat()
+E        +      where stat = (PosixPath('/tmp/pytest-of-root/pytest-9/test_fsync_dir_survives_close_2') / 'out').stat
+E       AssertionError: assert 779979 in []
+E        +  where 779979 = os.stat_result(st_mode=16877, st_ino=779979, st_dev=65024, st_nlink=2, st_uid=0, st_gid=0, st_size=4096, st_atime=1793502725, st_mtime=1793502725, st_ctime=1793502725).st_ino
+E        +    where os.stat_result(st_mode=16877, st_ino=779979, st_dev=65024, st_nlink=2, st_uid=0, st_gid=0, st_size=4096, st_atime=1793502725, st_mtime=1793502725, st_ctime=1793502725) = stat()
+E        +      where stat = (PosixPath('/tmp/pytest-of-root/pytest-9/test_fsync_dir_survives_close_3') / 'out').stat
+FAILED tests/unit/test_fixed_width_writer.py::test_fsync_dir_survives_close_error[ok-ambient]
+FAILED tests/unit/test_fixed_width_writer.py::test_fsync_dir_survives_close_error[ok-strict]
+FAILED tests/unit/test_fixed_width_writer.py::test_fsync_dir_survives_close_error[fsync_and_close_fail-ambient]
+FAILED tests/unit/test_fixed_width_writer.py::test_fsync_dir_survives_close_error[fsync_and_close_fail-strict]
+4 failed, 38 deselected in 2.08s
+
+## mutants (each applied alone, test run, file restored)
+M1 _not_broader always true: RED | 7 failed, 21 passed in 0.37s
+M2a wrapper keeps args: RED | 13 failed, 20 passed in 0.44s
+M2b gen_wrapper keeps args: RED | 1 failed, 10 passed in 0.83s
+M2c run_in_context task keeps args: RED | 1 failed, 10 passed in 0.38s
+M2d _Arguments repr shows contents: RED | 6 failed, 5 passed in 0.33s
+M2e key_provider_from_ref keeps ref: RED | 11 failed, 22 passed in 0.46s
+M2f parse_ref keeps text: RED | 1 failed, 10 passed in 0.29s
+M3 _unavailable keeps context: RED | 13 failed, 27 passed in 0.44s
+M4a writer row error names path: RED | 2 failed, 4 passed in 0.33s
+M4b writer layout error names path: RED | 2 failed, 4 passed in 0.29s
+M5a ambient publish skips dir fsync: RED | 2 failed, 2 passed in 0.34s
+M5b strict publish skips dir fsync: RED | 2 failed, 2 passed in 0.34s
+M5c ambient dir fsync error not swallowed: RED | 1 failed, 3 passed in 0.33s
+M5d strict dir fsync error not swallowed: RED | 1 failed, 3 passed in 0.36s

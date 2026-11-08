@@ -21,11 +21,13 @@ Pattern: HMAC-SHA256-keyed deterministic offset (HMAC RFC 2104).
 
 import hashlib
 import hmac
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
 import pandas as pd
 
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.errors import MaskKeyDerivationError
 from decoy_engine.transforms.base import BaseMaskingStrategy
 
@@ -116,10 +118,14 @@ def _shift_for_value_keyed(key: bytes, val: str, min_days: int, max_days: int) -
     Same value + same key -> same shift, but the shift amount is not
     derivable from the value alone (unlike the legacy MD5 path).
     """
-    range_size = max_days - min_days + 1
-    digest = hmac.new(key, val.encode("utf-8", errors="replace"), hashlib.sha256).digest()
-    h = int.from_bytes(digest[:8], "big")
-    return min_days + (h % range_size)
+    try:
+        range_size = max_days - min_days + 1
+        digest = hmac.new(key, val.encode("utf-8", errors="replace"), hashlib.sha256).digest()
+        h = int.from_bytes(digest[:8], "big")
+        return min_days + (h % range_size)
+    except BaseException:
+        del key
+        raise
 
 
 class DateShiftStrategy(BaseMaskingStrategy):
@@ -135,7 +141,9 @@ class DateShiftStrategy(BaseMaskingStrategy):
     The output format matches the input format unless ``date_format`` is set.
     """
 
-    def __init__(self, seed: int = 42, logger=None, derive_key=None):
+    def __init__(
+        self, seed: int = 42, logger=None, derive_key: Callable[[str], bytes] | None = None
+    ):
         super().__init__(seed, logger, derive_key=derive_key)
         self.strategy_name = "date_shift"
 
@@ -144,7 +152,7 @@ class DateShiftStrategy(BaseMaskingStrategy):
         max_days = int(rule.get("max_days", 365))
         date_format: str | None = rule.get("date_format") or None
         column_name = rule.get("column", "unnamed")
-        column_key = self._column_key(column_name)
+        column_key_box = OpaqueBox(self._column_key(column_name))
 
         if min_days > max_days:
             min_days, max_days = max_days, min_days
@@ -162,9 +170,11 @@ class DateShiftStrategy(BaseMaskingStrategy):
 
         fmt = date_format or _detect_format(column)
 
-        if column_key is not None:
+        if column_key_box.open()[0] is not None:
             self.logger.debug(f"Applying keyed date_shift to column '{column_name}'")
-            shift_fn = lambda s: _shift_for_value_keyed(column_key, s, min_days, max_days)
+            shift_fn = lambda s: _shift_for_value_keyed(
+                column_key_box.open()[0], s, min_days, max_days
+            )
         else:
             self.logger.debug(f"Applying legacy date_shift (MD5) to column '{column_name}'")
             shift_fn = lambda s: _shift_for_value_md5(s, min_days, max_days)
@@ -233,7 +243,7 @@ class DateShiftStrategy(BaseMaskingStrategy):
         master key. The degradation was invisible to the operator
         (only a WARNING log). Now: derive_key failures RAISE so the
         job fails explicitly + the operator gets a typed error.
-        derive_key=None (legacy seed-only configs that explicitly
+        derive_key: Callable[[str], bytes] | None = None (legacy seed-only configs that explicitly
         opted out of the master key) still returns None as before;
         that's an explicit opt-out, not a silent degradation. Mirrors
         the same fix applied to FPE._column_key (QA F1).

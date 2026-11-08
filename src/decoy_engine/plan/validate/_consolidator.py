@@ -24,6 +24,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine.errors import PipelineValidationError
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation.pool._errors import PoolCapacityError
 from decoy_engine.plan._compile import compile_plan
 from decoy_engine.plan._errors import PlanCompileError
@@ -65,12 +67,14 @@ class PlanValidationResult:
     plan: Plan | None = field(default=None)
 
 
+@entry_point
 def validate_plan(
     config: dict[str, Any],
     profile: Profile,
     *,
     decoy_engine_version: str,
     no_profile: bool = False,
+    file_access: FileAccess | None = None,
 ) -> PlanValidationResult:
     """Run every compile-time check (via `compile_plan`) and report the result.
 
@@ -87,6 +91,13 @@ def validate_plan(
     except PlanCompileError as exc:
         return PlanValidationResult(
             ok=False, error=PlanCheckError(code=exc.code, path=exc.path, message=exc.message)
+        )
+    except PipelineValidationError as exc:
+        # The `subset:` refusal from `compile_plan` (config.subset_run_unsupported).
+        if exc.code is None:
+            raise
+        return PlanValidationResult(
+            ok=False, error=PlanCheckError(code=exc.code, path=exc.path, message=str(exc))
         )
     except PoolCapacityError as exc:
         return PlanValidationResult(

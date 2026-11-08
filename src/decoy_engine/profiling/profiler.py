@@ -27,6 +27,7 @@ from decoy_engine.detection.types import (
     DetectionSignal,
     DetectorMatch,
 )
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.profiling._classification import (
     _classify_alphabet,
     _classify_numeric_range,
@@ -444,6 +445,7 @@ def _profile_column(
 # ── public entry point ───────────────────────────────────────────────────────
 
 
+@entry_point
 def profile_columns(
     df: pd.DataFrame,
     source_label: str,
@@ -453,6 +455,7 @@ def profile_columns(
     custom_detectors: list[CustomDetectorSpec] | None = None,
     extra_name_hints: dict[str, list[str]] | None = None,
     ctx: ExecutionContext | None = None,
+    file_access: FileAccess | None = None,
 ) -> ColumnProfile:
     """Scan a DataFrame and produce a ColumnProfile.
 

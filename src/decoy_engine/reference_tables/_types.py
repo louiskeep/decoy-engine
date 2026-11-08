@@ -116,9 +116,13 @@ class ReferenceTable:
         Returns:
             Row dict for the derived index, from the id-sorted table.
         """
-        hex_digest = hmac_hex(hmac_key, key_value)
-        if hex_digest is None:
-            raise ValueError("hmac_hex returned None for a non-None key_value")
-        # First 8 hex chars -> 32-bit int; modulo row_count for id-sorted index.
-        index = int(hex_digest[:8], 16) % self.row_count
-        return self.row(index)
+        try:
+            hex_digest = hmac_hex(hmac_key, key_value)
+            if hex_digest is None:
+                raise ValueError("hmac_hex returned None for a non-None key_value")
+            # First 8 hex chars -> 32-bit int; modulo row_count for id-sorted index.
+            index = int(hex_digest[:8], 16) % self.row_count
+            return self.row(index)
+        except BaseException:
+            del hmac_key
+            raise

@@ -1,0 +1,3 @@
+# Seeded corpus: a `private` row not on write_private and not baselined (P2).
+def save(target, v):
+    open(target, "wb").write(v)

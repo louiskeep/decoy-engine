@@ -106,7 +106,11 @@ def _span_key(mask_key: bytes, matched_text: str) -> bytes:
     Verbatim shape of ``transforms/text_mask.py:_span_key``: the key depends on
     the matched text only, so the same real value keys the same replacement.
     """
-    return hmac.new(mask_key, matched_text.encode("utf-8"), hashlib.sha256).digest()
+    try:
+        return hmac.new(mask_key, matched_text.encode("utf-8"), hashlib.sha256).digest()
+    except BaseException:
+        del mask_key
+        raise
 
 
 class TextMaskDateShiftProvider(DrawSiteProvider):
@@ -120,15 +124,23 @@ class TextMaskDateShiftProvider(DrawSiteProvider):
     draw_site_id = "mask.text_mask_date_shift"
 
     def shift_days(self, mask_key: bytes, matched_text: str, min_days: int, max_days: int) -> int:
-        range_size = max_days - min_days + 1
-        offset_seed = int.from_bytes(_span_key(mask_key, matched_text)[:8], "big")
-        return min_days + (offset_seed % range_size)
+        try:
+            range_size = max_days - min_days + 1
+            offset_seed = int.from_bytes(_span_key(mask_key, matched_text)[:8], "big")
+            return min_days + (offset_seed % range_size)
+        except BaseException:
+            del mask_key
+            raise
 
     def partitioned_draw(
         self, mask_key: bytes, matched_text: str, min_days: int, max_days: int
     ) -> int:
-        self.assert_partitionable()
-        return self.shift_days(mask_key, matched_text, min_days, max_days)
+        try:
+            self.assert_partitionable()
+            return self.shift_days(mask_key, matched_text, min_days, max_days)
+        except BaseException:
+            del mask_key
+            raise
 
 
 class TextMaskFakerProvider(DrawSiteProvider):
@@ -142,15 +154,27 @@ class TextMaskFakerProvider(DrawSiteProvider):
     draw_site_id = "mask.text_mask_faker"
 
     def span_seed(self, mask_key: bytes, matched_text: str) -> int:
-        return int.from_bytes(_span_key(mask_key, matched_text)[:4], "big")
+        try:
+            return int.from_bytes(_span_key(mask_key, matched_text)[:4], "big")
+        except BaseException:
+            del mask_key
+            raise
 
     def run(self, faker_inst: Any, method_name: str, mask_key: bytes, matched_text: str) -> Any:
-        faker_inst.seed_instance(self.span_seed(mask_key, matched_text))
-        return getattr(faker_inst, method_name)()
+        try:
+            faker_inst.seed_instance(self.span_seed(mask_key, matched_text))
+            return getattr(faker_inst, method_name)()
+        except BaseException:
+            del mask_key
+            raise
 
     def partitioned_draw(self, mask_key: bytes, matched_text: str) -> int:
-        self.assert_partitionable()
-        return self.span_seed(mask_key, matched_text)
+        try:
+            self.assert_partitionable()
+            return self.span_seed(mask_key, matched_text)
+        except BaseException:
+            del mask_key
+            raise
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,154 @@
+{
+ "blank_lines": {
+  "columns": [
+   "id",
+   "name"
+  ],
+  "dtypes": [
+   "int64",
+   "object"
+  ],
+  "json": "{\"columns\":[\"id\",\"name\"],\"index\":[0,1],\"data\":[[1,\"Ada\"],[2,\"Grace\"]]}"
+ },
+ "bom": {
+  "columns": [
+   "id",
+   "name"
+  ],
+  "dtypes": [
+   "int64",
+   "object"
+  ],
+  "json": "{\"columns\":[\"id\",\"name\"],\"index\":[0],\"data\":[[1,\"Ada\"]]}"
+ },
+ "comma_header": {
+  "columns": [
+   "id",
+   "name"
+  ],
+  "dtypes": [
+   "int64",
+   "object"
+  ],
+  "json": "{\"columns\":[\"id\",\"name\"],\"index\":[0,1],\"data\":[[1,\"Ada\"],[2,\"Grace\"]]}"
+ },
+ "crlf": {
+  "columns": [
+   "id",
+   "name"
+  ],
+  "dtypes": [
+   "int64",
+   "object"
+  ],
+  "json": "{\"columns\":[\"id\",\"name\"],\"index\":[0,1],\"data\":[[1,\"Ada\"],[2,\"Grace\"]]}"
+ },
+ "headerless_blank_lines": {
+  "columns": [
+   "id",
+   "name"
+  ],
+  "dtypes": [
+   "int64",
+   "object"
+  ],
+  "json": "{\"columns\":[\"id\",\"name\"],\"index\":[0,1],\"data\":[[1,\"Ada\"],[2,\"Grace\"]]}"
+ },
+ "headerless_bom": {
+  "columns": [
+   "id",
+   "name"
+  ],
+  "dtypes": [
+   "int64",
+   "object"
+  ],
+  "json": "{\"columns\":[\"id\",\"name\"],\"index\":[0,1],\"data\":[[1,\"Ada\"],[2,\"Grace\"]]}"
+ },
+ "headerless_comma": {
+  "columns": [
+   "id",
+   "name"
+  ],
+  "dtypes": [
+   "int64",
+   "object"
+  ],
+  "json": "{\"columns\":[\"id\",\"name\"],\"index\":[0,1],\"data\":[[1,\"Ada\"],[2,\"Grace\"]]}"
+ },
+ "headerless_pipe": {
+  "columns": [
+   "id",
+   "name"
+  ],
+  "dtypes": [
+   "int64",
+   "object"
+  ],
+  "json": "{\"columns\":[\"id\",\"name\"],\"index\":[0,1],\"data\":[[1,\"Ada\"],[2,\"Grace\"]]}"
+ },
+ "no_trailing_newline": {
+  "columns": [
+   "id",
+   "name"
+  ],
+  "dtypes": [
+   "int64",
+   "object"
+  ],
+  "json": "{\"columns\":[\"id\",\"name\"],\"index\":[0],\"data\":[[1,\"Ada\"]]}"
+ },
+ "one_column_headerless": {
+  "columns": [
+   "a"
+  ],
+  "dtypes": [
+   "object"
+  ],
+  "json": "{\"columns\":[\"a\"],\"index\":[0,1],\"data\":[[\"x\"],[\"y\"]]}"
+ },
+ "pipe_header": {
+  "columns": [
+   "id",
+   "name"
+  ],
+  "dtypes": [
+   "int64",
+   "object"
+  ],
+  "json": "{\"columns\":[\"id\",\"name\"],\"index\":[0,1],\"data\":[[1,\"Ada\"],[2,\"Grace\"]]}"
+ },
+ "quoted_delimiter": {
+  "columns": [
+   "id",
+   "name"
+  ],
+  "dtypes": [
+   "int64",
+   "object"
+  ],
+  "json": "{\"columns\":[\"id\",\"name\"],\"index\":[0],\"data\":[[1,\"Lovelace, Ada\"]]}"
+ },
+ "quoted_newline": {
+  "columns": [
+   "id",
+   "name"
+  ],
+  "dtypes": [
+   "int64",
+   "object"
+  ],
+  "json": "{\"columns\":[\"id\",\"name\"],\"index\":[0,1],\"data\":[[1,\"line1\\nline2\"],[2,\"x\"]]}"
+ },
+ "tab_header": {
+  "columns": [
+   "id",
+   "name"
+  ],
+  "dtypes": [
+   "int64",
+   "object"
+  ],
+  "json": "{\"columns\":[\"id\",\"name\"],\"index\":[0,1],\"data\":[[1,\"Ada\"],[2,\"Grace\"]]}"
+ }
+}

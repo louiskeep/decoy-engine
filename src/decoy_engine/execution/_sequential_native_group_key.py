@@ -185,18 +185,22 @@ def group_key_column(
     `to_pandas_fk_safe` frame does (a null-bearing int64 sibling is the nullable `Int64` dtype,
     not float64-widened), then the shared raw-hex derivation produces the key. Output is
     positional, matching the Python handler, so a `when` selection lands on the right rows."""
-    gate = run.admitted(ctx, column, GROUP_KEY, len(df))
-    if gate is None:
-        return None
-    decision, bound = gate
-    out = derive_group_key_from_strings(
-        stringify_group_by_series(df[group_by]),
-        length=length,
-        prefix=prefix,
-        mask_key=mask_key,
-        namespace=namespace,
-        raw_hex_kernel=bound.kernel,
-        native_threads=bound.native_threads,
-    )
-    decision.native_calls += 1
-    return out.to_pylist()
+    try:
+        gate = run.admitted(ctx, column, GROUP_KEY, len(df))
+        if gate is None:
+            return None
+        decision, bound = gate
+        out = derive_group_key_from_strings(
+            stringify_group_by_series(df[group_by]),
+            length=length,
+            prefix=prefix,
+            mask_key=mask_key,
+            namespace=namespace,
+            raw_hex_kernel=bound.kernel,
+            native_threads=bound.native_threads,
+        )
+        decision.native_calls += 1
+        return out.to_pylist()
+    except BaseException:
+        del mask_key
+        raise

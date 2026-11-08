@@ -1,0 +1,12 @@
+pytest -p no:cacheprovider --tb=no  (r2 test files at 13d3ab5e against r1 source 6b8867e1)
+  tests/security/test_f06_quarantine_boundary.py: 25 failed, 52 passed
+  tests/acceptance/test_f06_declared_casting.py: 7 failed, 37 passed
+  tests/acceptance/test_f06_csv_framing.py: 6 failed, 1 passed
+  tests/acceptance/test_f06_route_parity.py: 27 failed, 2 passed
+  tests/unit/declared_casting/test_batch_boundary.py: 10 failed
+  tests/unit/declared_casting/test_route_capabilities.py: 9 failed, 2 passed
+  tests/sentry/test_f06_declared_casting.py: 1 failed, 27 passed
+  tests/sentry/test_f06_route_matrix.py: 2 failed, 1 passed
+  tests/property/test_f06_declared_casting.py: 12 passed (unchanged contract)
+  tests/unit/declared_casting/test_kernels.py: 66 passed (unchanged contract)
+total new/changed-contract failures on r1: 87

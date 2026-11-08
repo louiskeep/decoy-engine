@@ -306,7 +306,8 @@ class CODES:
 
     # ── FK preservation codes ──
     #
-    # Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG;
+    # Pattern: SDV HMA1 method (Patki et al., IEEE DSAA 2016; method only, no
+    # SDV code: SDV is BUSL-1.1). Parent-first DAG;
     # materialize parent pool; child samples with replacement.
     #
     # Codes split into validation-time (validator stage 9) and runtime

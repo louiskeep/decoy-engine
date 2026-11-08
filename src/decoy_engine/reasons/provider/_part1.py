@@ -9,6 +9,7 @@ __all__ = [
     "BATCH_DETERMINISTIC_UNSUPPORTED",
     "BLOCKLIST_EXHAUSTED",
     "CAPABILITY_VIOLATION",
+    "CLASSIFIER_UNAVAILABLE",
     "DETERMINISTIC_REQUIRES_NAMESPACE_AND_SEED",
     "DETERMINISTIC_REQUIRES_SOURCE_VALUE",
     "INVALID_CUSIP_CHAR",
@@ -16,6 +17,7 @@ __all__ = [
     "MISSING_NAMESPACE",
     "MISSING_SEED",
     "NAMESPACE_EMPTY",
+    "NER_MODEL_INCOMPATIBLE",
     "NER_MODEL_NOT_INSTALLED",
     "NER_SPACY_NOT_INSTALLED",
     "SEED_WRONG_LENGTH",
@@ -44,8 +46,13 @@ BLOCKLIST_EXHAUSTED = _d("blocklist_exhausted", "Blocklist exhausted.")
 INVALID_CUSIP_CHAR = _d("invalid_cusip_char", "Invalid cusip char.")
 INVALID_INPUT_LENGTH = _d("invalid_input_length", "Invalid input length.")
 
+_d = _catalog.provider("ModelUnavailableError")
+
+CLASSIFIER_UNAVAILABLE = _d("classifier_unavailable", "Classifier unavailable.", since="1.8.0")
+
 _d = _catalog.provider("NerUnavailableError")
 
+NER_MODEL_INCOMPATIBLE = _d("ner_model_incompatible", "NER model incompatible.", since="1.8.0")
 NER_MODEL_NOT_INSTALLED = _d("ner_model_not_installed", "NER model not installed.")
 NER_SPACY_NOT_INSTALLED = _d("ner_spacy_not_installed", "NER spacy not installed.")
 

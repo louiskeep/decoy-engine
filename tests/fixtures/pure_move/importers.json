@@ -1,0 +1,13 @@
+{
+  "consumer": {
+    "path": "src/decoy_engine/detection/consumer.py",
+    "base": "\"\"\"Reads detectors.\"\"\"\n\nfrom decoy_engine.detection.detectors import DEFAULT_MIN_MATCH_RATE, _SPAN_DETECTORS, detect_email\n\n\ndef rate():\n    from decoy_engine.detection.detectors import detect_ssn\n\n    return DEFAULT_MIN_MATCH_RATE, _SPAN_DETECTORS, detect_email, detect_ssn\n",
+    "head": "\"\"\"Reads detectors.\"\"\"\n\nfrom decoy_engine.detection._scoring import DEFAULT_MIN_MATCH_RATE\nfrom decoy_engine.detection.builtin import detect_email\nfrom decoy_engine.detection.detectors import _SPAN_DETECTORS\n\n\ndef rate():\n    from decoy_engine.detection.builtin import detect_ssn\n\n    return DEFAULT_MIN_MATCH_RATE, _SPAN_DETECTORS, detect_email, detect_ssn\n",
+    "head_extra_hunk": "\"\"\"Reads detectors.\"\"\"\n\nfrom decoy_engine.detection._scoring import DEFAULT_MIN_MATCH_RATE\nfrom decoy_engine.detection.builtin import detect_email\nfrom decoy_engine.detection.detectors import _SPAN_DETECTORS\n\n\ndef rate():\n    from decoy_engine.detection.builtin import detect_ssn\n\n    return DEFAULT_MIN_MATCH_RATE, detect_email, detect_ssn, _SPAN_DETECTORS\n"
+  },
+  "unlisted": {
+    "path": "src/decoy_engine/detection/other.py",
+    "base": "from decoy_engine.detection.detectors import detect_email\n\nHANDLERS = [detect_email]\n",
+    "head": "from decoy_engine.detection.builtin import detect_email\n\nHANDLERS = [detect_email]\n"
+  }
+}

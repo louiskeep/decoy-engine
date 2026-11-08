@@ -46,6 +46,7 @@ _LOG = logging.getLogger(__name__)
 
 # Supported bucket names and their corresponding date-truncation strategies.
 _VALID_BUCKETS = frozenset({"week", "month", "quarter"})
+VALID_BUCKETS = _VALID_BUCKETS  # public alias for the strategy catalog
 
 # strftime directives by what they write back. bucket_perturb perturbs the
 # calendar date, so only DATE directives let a date survive the round trip; the
@@ -123,10 +124,14 @@ def _perturb_date(
     Returns:
         A date within the same bucket as ``date``.
     """
-    bucket_start, bucket_size = _bucket_start_and_size(date, bucket)
-    digest = derive(job_seed, namespace, _canonicalize_source(value_str))
-    offset = int.from_bytes(digest[:8], "big") % bucket_size
-    return bucket_start + datetime.timedelta(days=offset)
+    try:
+        bucket_start, bucket_size = _bucket_start_and_size(date, bucket)
+        digest = derive(job_seed, namespace, _canonicalize_source(value_str))
+        offset = int.from_bytes(digest[:8], "big") % bucket_size
+        return bucket_start + datetime.timedelta(days=offset)
+    except BaseException:
+        del job_seed
+        raise
 
 
 def apply_bucket_perturb(
@@ -151,34 +156,38 @@ def apply_bucket_perturb(
     Returns:
         A new pandas Series with perturbed dates (same format as input).
     """
-    from decoy_engine.transforms.date_shift import _detect_format
+    try:
+        from decoy_engine.transforms.date_shift import _detect_format
 
-    if pd.api.types.is_extension_array_dtype(series.dtype):
-        series = series.astype(object)
+        if pd.api.types.is_extension_array_dtype(series.dtype):
+            series = series.astype(object)
 
-    fmt = date_format or _detect_format(series)
-    if fmt is None:
-        _LOG.warning(
-            "bucket_perturb: could not detect date format; column values passed through unchanged."
-        )
-        return series.copy()
+        fmt = date_format or _detect_format(series)
+        if fmt is None:
+            _LOG.warning(
+                "bucket_perturb: could not detect date format; column values passed through unchanged."
+            )
+            return series.copy()
 
-    parsed = pd.to_datetime(series, format=fmt, errors="coerce")
-    null_mask = series.isna()
-    parse_failed = parsed.isna() & ~null_mask
+        parsed = pd.to_datetime(series, format=fmt, errors="coerce")
+        null_mask = series.isna()
+        parse_failed = parsed.isna() & ~null_mask
 
-    str_values = series.astype(str)
-    result = series.astype(object).copy()
+        str_values = series.astype(str)
+        result = series.astype(object).copy()
 
-    for i in range(len(series)):
-        if null_mask.iloc[i] or parse_failed.iloc[i]:
-            continue  # preserve null / unparseable values
-        orig_date = parsed.iloc[i].date()
-        value_str = str_values.iloc[i]
-        perturbed = _perturb_date(orig_date, bucket, job_seed, namespace, value_str)
-        result.iloc[i] = perturbed.strftime(fmt)
+        for i in range(len(series)):
+            if null_mask.iloc[i] or parse_failed.iloc[i]:
+                continue  # preserve null / unparseable values
+            orig_date = parsed.iloc[i].date()
+            value_str = str_values.iloc[i]
+            perturbed = _perturb_date(orig_date, bucket, job_seed, namespace, value_str)
+            result.iloc[i] = perturbed.strftime(fmt)
 
-    return result
+        return result
+    except BaseException:
+        del job_seed
+        raise
 
 
 def bucket_perturb_date_format_problem(date_format: Any) -> str | None:

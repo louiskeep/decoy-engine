@@ -17,7 +17,7 @@ import pandas as pd
 
 from decoy_engine import reasons
 from decoy_engine.determinism import derive
-from decoy_engine.execution._adapter import StrategyContext
+from decoy_engine.execution._adapter import StrategyContext, StrategyOption, option
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
@@ -27,6 +27,12 @@ class ShuffleStrategyHandler:
     """Permute the non-null values of a column (multiset + nulls preserved)."""
 
     name: str = "shuffle"
+    namespace_required: bool = True
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("deterministic", "bool", True, location="column"),
+    )
+    offer_in_wizard: bool = True
 
     def run(
         self,

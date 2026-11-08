@@ -8,6 +8,7 @@ from pathlib import Path
 
 from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution.out_of_core._scratch import private_dir
 
 # `_budget.py` (`resolve_budget` / `resolve_ooc_memory_limit`) is the only
 # producer of the `memory_limit` string this module consumes, and it always
@@ -15,6 +16,9 @@ from decoy_engine.execution._errors import ExecutionError
 # literally). Parsing that shape back to bytes here is exact for every
 # in-repo caller; an unrecognized shape (a hand-written literal outside that
 # contract) degrades to no thread override rather than guessing.
+# COPY options for a scratch Parquet file `precreate_private` made 0600: DuckDB writes that file
+# in place instead of a sibling temp file renamed over it with an umask-derived mode.
+PRIVATE_COPY = "FORMAT PARQUET, USE_TMP_FILE false"
 _MEMORY_LIMIT_MB_PATTERN = re.compile(r"^(\d+)MB$")
 
 # Per-thread working-set estimate DuckDB's own threads config is sized
@@ -28,14 +32,14 @@ _THREAD_BYTES_PER_THREAD = 2 * 1024 * 1024 * 1024  # 2 GiB
 def connect_duckdb(*, temp_dir: Path, memory_limit: str | None = None):
     """Open an in-memory DuckDB connection with a restricted temp directory."""
     try:
-        import duckdb
+        from decoy_engine.fileaccess.adapters import duckdb as duckdb_adapter
     except ModuleNotFoundError as exc:  # pragma: no cover - covered in no-duckdb envs
         raise ExecutionError(
             code=reasons.runtime.OUT_OF_CORE_BACKEND_UNAVAILABLE,
             message="DuckDB is required for the out-of-core relationship route.",
         ) from exc
 
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    private_dir(temp_dir)
     os.chmod(temp_dir, 0o700)
     # duckdb.connect's config maps str keys to a union value type; widen the
     # annotation to that surface even though every value here is a str/bool/int.
@@ -57,7 +61,7 @@ def connect_duckdb(*, temp_dir: Path, memory_limit: str | None = None):
         threads = _threads_for_memory_limit(memory_limit)
         if threads is not None:
             config["threads"] = threads
-    return duckdb.connect(database=":memory:", config=config)
+    return duckdb_adapter.connect_internal(config)
 
 
 def _threads_for_memory_limit(memory_limit: str | None) -> int | None:

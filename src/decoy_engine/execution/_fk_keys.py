@@ -47,13 +47,14 @@ contract now covers signed, unsigned, and narrower-than-int64 FK keys, not
 
 from __future__ import annotations
 
+import datetime as dt
 import decimal
 import math
 import numbers
 from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, NoReturn
 
 import pandas as pd
 import pyarrow as pa
@@ -205,7 +206,28 @@ def fk_join_key(value: object) -> str:
         # child's own scale; the join token still must fold scale-only
         # differences the oracle's dict already folds for free.
         return f"\x00DEC:{_decimal_join_token(normalized)}"
+    if isinstance(normalized, dt.datetime):
+        # The oracle's dict folds one instant read at two Arrow units (`as_py()` gives
+        # `pd.Timestamp` for ns, `datetime` otherwise), so the token is the canonical instant:
+        # exact epoch nanoseconds (pandas `Timestamp.value`, Arrow's storage) as an unbounded
+        # Python int. NaT (unequal to itself) and zone-aware values keep the OBJ path.
+        if normalized.tzinfo is None and normalized == normalized:
+            return f"\x00TS:{_epoch_nanoseconds(normalized)}"
+    elif isinstance(normalized, dt.date):
+        return f"\x00DATE:{normalized.toordinal()}"
     return f"\x00OBJ:{type(normalized).__qualname__}:{normalized!r}"
+
+
+_EPOCH: Final = dt.datetime(1970, 1, 1)
+
+
+def _epoch_nanoseconds(value: dt.datetime) -> int:
+    nanosecond = 0
+    if isinstance(value, pd.Timestamp):
+        nanosecond = value.nanosecond
+        value = value.to_pydatetime(warn=False)
+    delta = value - _EPOCH
+    return (delta.days * 86_400 + delta.seconds) * 10**9 + delta.microseconds * 1_000 + nanosecond
 
 
 def fk_join_key_tuple(values: tuple[object, ...]) -> str:
@@ -391,7 +413,9 @@ def lossless_fk_int_values(values: Sequence[object]) -> list[int | None] | None:
     return None
 
 
-def fk_nullable_int_array(values: Sequence[int | None]) -> pd.api.extensions.ExtensionArray:
+def fk_nullable_int_array(
+    values: Sequence[int | None], *, table: str | None = None, column: str | None = None
+) -> pd.api.extensions.ExtensionArray:
     """Build the pandas array for one resolved FK write-back column from
     `lossless_fk_int_values`'s classified `int | None` output.
 
@@ -408,7 +432,8 @@ def fk_nullable_int_array(values: Sequence[int | None]) -> pd.api.extensions.Ext
     but checked so a future one fails closed instead of corrupting) raises
     `FK_KEY_DTYPE_UNSUPPORTED_CODE`, the SAME code every other genuinely
     unrepresentable FK key shape raises, rather than surfacing pandas' raw
-    construction error.
+    construction error. Every message is fixed text naming `table`.`column`
+    only: a resolved key is a real (or masked) value and never reaches it.
 
     Deliberately does NOT attempt to reproduce a NARROWER width (int8/16/32)
     than `Int64`/`UInt64`: this is the WRITE-BACK path for a RESOLVED key
@@ -424,37 +449,27 @@ def fk_nullable_int_array(values: Sequence[int | None]) -> pd.api.extensions.Ext
     for value in values:
         if value is None:
             continue
-        if value > _INT64_MAX:
-            if value > _UINT64_MAX:
-                raise ExecutionError(
-                    code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
-                    message=(
-                        f"FK output column has a resolved key value {value} that "
-                        "exceeds UInt64's maximum representable value "
-                        f"({_UINT64_MAX}); no lossless dtype can hold it."
-                    ),
-                )
-            needs_uint64 = True
-        elif value < _INT64_MIN:
-            raise ExecutionError(
-                code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
-                message=(
-                    f"FK output column has a resolved key value {value} that is "
-                    f"below Int64's minimum representable value ({_INT64_MIN}); "
-                    "no lossless dtype can hold it."
-                ),
-            )
+        if value > _UINT64_MAX:
+            _raise_fk_range(table, column, "exceeds the UInt64 range")
+        if value < _INT64_MIN:
+            _raise_fk_range(table, column, "is below the Int64 range")
+        needs_uint64 = needs_uint64 or value > _INT64_MAX
     dtype_name = "UInt64" if needs_uint64 else "Int64"
+    # pandas' and Arrow's construction errors quote the offending key, so the
+    # coded error is raised outside the handler with neither cause nor context.
     try:
         return pd.array(values, dtype=dtype_name)
-    except (pa.lib.ArrowInvalid, OverflowError, TypeError, ValueError) as exc:
-        raise ExecutionError(
-            code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
-            message=(
-                f"FK output column could not be built as a lossless nullable "
-                f"{dtype_name} array: {exc}"
-            ),
-        ) from exc
+    except (pa.lib.ArrowInvalid, OverflowError, TypeError, ValueError):
+        pass
+    _raise_fk_range(table, column, f"cannot share one lossless nullable {dtype_name} array")
+
+
+def _raise_fk_range(table: str | None, column: str | None, reason: str) -> NoReturn:
+    where = f" {table}.{column}" if table and column else ""
+    raise ExecutionError(
+        code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
+        message=f"FK output column{where}: a resolved key {reason}.",
+    )
 
 
 def fk_all_null_array(length: int, source_dtype: object) -> pd.api.extensions.ExtensionArray:
@@ -552,15 +567,13 @@ def to_pandas_fk_safe(table: pa.Table, fk_columns: Collection[str]) -> pd.DataFr
             # all, so assigning it is always positional regardless of `df`'s
             # index.
             df[col] = fk_series.array
-        except (pa.lib.ArrowInvalid, OverflowError) as exc:
-            raise ExecutionError(
-                code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
-                message=(
-                    f"FK column {col!r} (Arrow type {arrow_type}) could not be cast "
-                    "to its matching lossless nullable pandas dtype during "
-                    f"ingestion: {exc}"
-                ),
-            ) from exc
+            continue
+        except (pa.lib.ArrowInvalid, OverflowError):
+            pass
+        raise ExecutionError(
+            code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
+            message=f"FK column {col!r} could not be ingested as a lossless nullable integer.",
+        )
     return df
 
 

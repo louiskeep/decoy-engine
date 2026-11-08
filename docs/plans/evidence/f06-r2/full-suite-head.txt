@@ -1,0 +1,63 @@
+3 failed, 27854 passed, 5338 skipped, 4 xfailed, 60 xpassed, 57 warnings in 788.81s (0:13:08)
+
+FAILED tests/physical/test_shadow_snapshot.py::test_fixture_is_written_then_made_read_only
+FAILED tests/unit/execution/test_r3_failure_publication_trace.py::test_failure_and_publication_trace_is_unchanged[f_forced_ooc_incompatible]
+FAILED tests/unit/execution/test_r3_failure_publication_trace.py::test_forced_out_of_core_on_an_ineligible_job_is_a_config_error_before_any_write
+
+skips by reason (count<TAB>reason):
+2290	decoy-engine-native companion not installed; the companion-present CI job covers this
+539	compiled companion not installed; the companion-present job covers this
+360	decoy-engine-native abi-3 companion not loadable; the companion-present job covers this
+346	compiled decoy-engine-native companion unavailable
+277	decoy-engine-native text_redact span kernel not available (old or absent companion)
+264	decoy_engine_native is not installed: no compiled kernel to prove
+198	compiled decoy-engine-native companion unavailable; the native shadow path requires it
+170	compiled decoy-engine-native companion unavailable; the native group_key path requires it
+135	needs the abi-3 companion
+97	compiled companion not installed
+90	decoy-engine-native text_redact span kernel not loadable; the companion-present job covers this
+83	requires the certified DP proof-stack; this env is not it
+77	decoy-engine-native text_redact kernel not loadable; the companion-present job covers this
+61	decoy-engine-native companion not installed (maturin develop); the companion-present CI job covers this
+60	cannot start postgres container
+53	needs the text_redact span kernel
+35	compiled decoy-engine-native companion unavailable; the native FPE path requires it
+27	decoy-engine-native index kernel not loadable; the companion-present job covers this
+24	decoy-engine-native raw-hex kernel not loadable; the companion-present job covers this
+23	companion not installed
+18	spacy or en_core_web_sm not installed (ner extra)
+14	compiled index companion not installed
+11	could not import 'h3': No module named 'h3'
+10	decoy-engine-native companion not installed
+8	date64 is stored as date32 in Parquet, so the lazy leg is the date32 case
+7	native companion not installed
+7	compiled index kernel not available
+5	needs the native companion
+5	lgbm-v1 pack or ml extra (scikit-learn/lightgbm) not installed
+3	postgres extension cannot be installed for the test fixture
+3	needs the text span kernel
+3	compiled decoy-engine-native companion unavailable; the native OOC path requires it
+3	NER spaCy model not installed; text_redact NER path not exercisable here
+3	NER spaCy model not installed; text_mask NER path not exercisable here
+2	needs the abi-3 companion and a Python Unicode table older than 16
+2	could not import 'sklearn': No module named 'sklearn'
+2	could not import 'lightgbm': No module named 'lightgbm'
+2	could not import 'joblib': No module named 'joblib'
+2	compiled raw-hex kernel unavailable; the companion-present CI job covers this
+2	baseline writer
+2	a blank predicate is normalized to None, not refused
+1	wheel-build frontend not installed (packaging-gate only)
+1	this environment is not the certified DP proof-stack
+1	platform api.jobs.v2_runner not importable from engine tests
+1	no companion installed on this box
+1	mutmut extra not installed (local/TQ runs only)
+1	multi-GB forced-overflow reproducer; set DECOY_RUN_HEAVY=1 to run
+1	large tier not on disk (regenerate to enable this check)
+1	golden writer
+1	de_core_news_sm not installed (locale model)
+1	could not import 'paramiko': No module named 'paramiko'
+1	could not import 'mimesis': No module named 'mimesis'
+1	could not import 'decoy_engine_native': No module named 'decoy_engine_native'
+1	companion absent; the byte-parity gate's fallback runs on the Python path
+1	audited safe path
+1	Sink does not advertise supports_multipart

@@ -110,6 +110,7 @@ GUARDED_MODULES: tuple[str, ...] = (
     "execution/native/_operator_params.py",
     "execution/native/_operator_step.py",
     "execution/out_of_core/_runner.py",
+    "execution/out_of_core/_rewrite_pass.py",
     "execution/out_of_core/_compat.py",
     "execution/out_of_core/_preflight.py",
     "execution/out_of_core/_null_int_guard.py",
@@ -395,6 +396,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_pipeline_routing_fk_dtype.py",
             "src/decoy_engine/execution/out_of_core/_multi_parent.py",
             "src/decoy_engine/execution/out_of_core/_stream_driver_support.py",
+            # F06 r3: the per-table rewrite pass split out of `out_of_core/_runner.py` (a pure
+            # move; `_runner` stays in GUARDED_MODULES). It imports nothing from `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/_rewrite_pass.py",
             "src/decoy_engine/execution/out_of_core/_null_int_guard.py",
             # D3b (token vault on the bounded out-of-core route): the vault collector the two
             # out-of-core drivers call. It imports nothing from `execution.physical`.
@@ -652,6 +656,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # OBS-2: the non-empty-source preflight wiring split out of `_chunked_entry.py` for
             # module headroom (pure move); imports nothing from `execution.physical`.
             "src/decoy_engine/execution/native/_chunked_preflight_wiring.py",
+            # A-4 x F13 merge: pure moves out of three modules to hold main's size ceilings
+            # (re-exported where callers import them); none imports `execution.physical`.
+            "src/decoy_engine/execution/native/_chunked_oracle_rows.py",
+            "src/decoy_engine/execution/_chunked_aggregate.py",
+            "src/decoy_engine/execution/_pipeline_routing_samples.py",
             # OBS-2c: bounded value-free row-error summary (schema ids, trigger codes, counts);
             # pure, imports nothing from `execution.physical`.
             "src/decoy_engine/execution/_row_error_summary.py",
@@ -738,6 +747,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_chunked_group_key.py",
             "src/decoy_engine/execution/native/_chunked_group_key_gate.py",
             "src/decoy_engine/execution/native/_group_key_kernel.py",
+            # A-4 secret-material census: both raw-hex derivations wipe the mask key on raise and the
+            # KAT vector's key field is `repr=False` (adds `dataclasses.field`); no `execution.physical`.
+            "src/decoy_engine/execution/native/_group_key_ext.py",
             # C6c-i (text_redact as an ARROW_PYTHON operator): the scalar kernel module gains
             # `native_text_redact`, which calls the oracle's `iter_spans` and `_splice`. It imports
             # nothing from `execution.physical`, and the import-direction sweeps above still apply.
@@ -830,6 +842,10 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # are DuckDB EXPLAIN strings, not an import).
             "src/decoy_engine/execution/out_of_core/_payload_store.py",
             "src/decoy_engine/execution/out_of_core/_stream_join.py",
+            # Typed temporal FK seam (slice 0 item 2): `empty_output_table` types a zero-row temporal
+            # FK column at the joiner's fixed type through `_join.fk_output_array`. Imports nothing
+            # from `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/_emit.py",
             # D3a (validators on the bounded out-of-core route): `_validate_batch.py` is new -- it
             # computes validator admission, evaluates the admitted per-cell validators per masked
             # batch, and assembles the ValidationReport. `_runner.py` / `_stream_driver.py` hook it at
@@ -887,6 +903,40 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # `native/_draw_site_providers.py`. Pure moves; none imports `execution.physical`.
             "src/decoy_engine/execution/_fk_key_compat.py",
             "src/decoy_engine/execution/native/_draw_sites_tokenize.py",
+            # E1: opaque scratch identifiers for config-derived table/edge/relation names
+            # (X4). The reorder/batch relation paths are built from per-run ids, not names,
+            # and import nothing from execution.physical.
+            "src/decoy_engine/execution/out_of_core/_relation.py",
+            # E1 (the FileAccess policy, 2026-10-07): every file the engine opens goes through
+            # `decoy_engine.fileaccess`. These modules gain a policy-bound reader, a stage or a
+            # propagated context and import nothing from `execution.physical`: the governor and its
+            # RSS monitor thread (`run_in_context`), the FPE thread pool (`map_in_context`), the
+            # capacity estimate (a lexical path join), the DuckDB connection helper (the adapter),
+            # the spill estimate's output-device probe (a policy `stat`), the out-of-core key
+            # stager's scratch `LazySource`, and the new scratch-root helper. Also the chunked
+            # code_set resolver and the code_set and joint_mask handlers and the shared
+            # out-of-core resolver, which name the column a corpus read belongs to (`at_position`).
+            # (`_strategies/_fpe.py` is already permitted above.)
+            "src/decoy_engine/execution/_governor_monitor.py",
+            "src/decoy_engine/execution/out_of_core/_duckdb.py",
+            "src/decoy_engine/execution/out_of_core/_scratch.py",
+            "src/decoy_engine/execution/out_of_core/_spill_estimate.py",
+            "src/decoy_engine/execution/out_of_core/_stage.py",
+            "src/decoy_engine/execution/_chunked_code_set.py",
+            "src/decoy_engine/execution/_strategies/_code_set.py",
+            # F06 r2 module-size decomposition: the sequential table order and the planner's
+            # config column lookups split out of capped modules. Pure moves; neither imports
+            # `execution.physical`.
+            "src/decoy_engine/execution/_sequential_order.py",
+            "src/decoy_engine/execution/_planner_columns.py",
+            # Strategy catalog: each handler declares its own catalog attributes. Pure
+            # declarations; none imports `execution.physical`. (The other handlers are
+            # already permitted above.)
+            "src/decoy_engine/execution/_strategies/_derived_aggregate.py",
+            "src/decoy_engine/execution/_strategies/_formula.py",
+            "src/decoy_engine/execution/_strategies/_grouped_series.py",
+            "src/decoy_engine/execution/_strategies/_passthrough.py",
+            "src/decoy_engine/execution/_strategies/_redact.py",
         }
     )
     # Files allowed to change ONLY by these exact line replacements (path -> {removed: added}).

@@ -1,0 +1,8 @@
+full_frame parse exec full_frame auto_chunk full_frame uni False mixed False refusals None ['auto_chunk', 'declared_casting', 'execution']
+full_frame format exec full_frame auto_chunk full_frame uni False mixed False refusals None ['auto_chunk', 'declared_casting', 'execution']
+sequential parse exec sequential auto_chunk None uni False mixed False refusals None ['declared_casting', 'execution', 'sequential_hash']
+sequential format exec sequential auto_chunk None uni False mixed False refusals None ['declared_casting', 'execution', 'sequential_hash']
+chunked parse exec out_of_core auto_chunk None uni False mixed False refusals None ['declared_casting', 'execution', 'out_of_core_hash', 'residency']
+chunked format exec out_of_core auto_chunk None uni False mixed False refusals None ['declared_casting', 'execution', 'out_of_core_hash', 'residency']
+unified_slice parse exec out_of_core auto_chunk None uni False mixed False refusals None ['declared_casting', 'execution', 'out_of_core_hash', 'residency']
+unified_slice format exec out_of_core auto_chunk None uni False mixed False refusals None ['declared_casting', 'execution', 'out_of_core_hash', 'residency']

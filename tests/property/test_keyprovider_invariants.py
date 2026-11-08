@@ -751,6 +751,7 @@ def test_resolve_ref_invalid_utf8_file_error_severs_original_exception(tmp_path)
     severed (never chained), so decoder internals and the path cannot leak."""
     bad_path = tmp_path / "bad-utf8.bin"
     bad_path.write_bytes(b"\xff\xfe\x00secret")
+    bad_path.chmod(0o600)  # E1: owner-only secret file
     with pytest.raises(MaskSecretError) as ei:
         key_provider_from_ref(f"file:{bad_path}")
     assert ei.value.code == "bad_secret_ref"
@@ -767,6 +768,7 @@ def test_resolve_ref_file_is_decoded_as_utf8_not_locale(tmp_path) -> None:
     half = len(raw_hex) // 2
     path = tmp_path / "secret-nbsp.txt"
     path.write_bytes(f"{raw_hex[:half]}\u00a0{raw_hex[half:]}".encode())
+    path.chmod(0o600)  # E1: owner-only secret file
     assert key_provider_from_ref(f"file:{path}").mask_key() == SecretKeyProvider(raw).mask_key()
 
 

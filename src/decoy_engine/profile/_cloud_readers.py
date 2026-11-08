@@ -24,6 +24,8 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from decoy_engine._lexeme import LEXEME_KEY, pandas_lexeme_kwargs
+from decoy_engine.connectors import _clients
 from decoy_engine.profile._readers import (
     ProfileSource,
     RowCount,
@@ -129,7 +131,9 @@ def _csv_row_count_from_window(size: int, window: bytes) -> RowCount:
     return estimate_csv_rows(size, header_bytes, data_lines)
 
 
-def _csv_sample_from_window(window: bytes, size: int, sample_rows: int) -> pd.DataFrame:
+def _csv_sample_from_window(
+    window: bytes, size: int, sample_rows: int, lexeme_columns: Any = None
+) -> pd.DataFrame:
     """Parse up to `sample_rows` rows from a leading CSV byte window.
 
     If the window is a prefix of a larger object it may end mid-row; the last
@@ -137,7 +141,9 @@ def _csv_sample_from_window(window: bytes, size: int, sample_rows: int) -> pd.Da
     """
     if len(window) < size:
         window = window.rsplit(b"\n", 1)[0] + b"\n"
-    return pd.read_csv(io.BytesIO(window), nrows=sample_rows)
+    return pd.read_csv(
+        io.BytesIO(window), nrows=sample_rows, **pandas_lexeme_kwargs(lexeme_columns)
+    )
 
 
 # ---------------------------------------------------------------------
@@ -272,16 +278,21 @@ class S3CsvSource:
         size, window = self._size_and_window()
         # Reuse the sample parser so a window truncated mid-row is trimmed to
         # whole lines before pandas infers the schema.
-        head = _csv_sample_from_window(window, size, _CSV_ESTIMATE_ROWS)
+        head = _csv_sample_from_window(
+            window, size, _CSV_ESTIMATE_ROWS, self._descriptor.get(LEXEME_KEY)
+        )
         return pa.Table.from_pandas(head, preserve_index=False).schema
 
     def sample_frame(self, sample_rows: int) -> pd.DataFrame:
         size, window = self._size_and_window()
-        return _csv_sample_from_window(window, size, sample_rows)
+        return _csv_sample_from_window(window, size, sample_rows, self._descriptor.get(LEXEME_KEY))
 
     def to_frame(self) -> pd.DataFrame:
         client = _s3_client(self._descriptor)
-        return pd.read_csv(io.BytesIO(_s3_full(client, self._bucket, self._key)))
+        return pd.read_csv(
+            io.BytesIO(_s3_full(client, self._bucket, self._key)),
+            **pandas_lexeme_kwargs(self._descriptor.get(LEXEME_KEY)),
+        )
 
 
 def build_s3_profile_source(descriptor: dict[str, Any]) -> ProfileSource:
@@ -309,7 +320,7 @@ def _gcs_blob(descriptor: dict[str, Any], client: Any) -> Any:
 def _gcs_size(blob: Any) -> int:
     if blob.size is None:
         # size is populated by a metadata fetch, not an object download.
-        blob.reload()
+        _clients.gcs_reload(blob)
     return int(blob.size)
 
 
@@ -320,16 +331,14 @@ class GcsParquetSource:
         self._descriptor = descriptor
 
     def _with_reads(self, consume: Callable[[int, Callable[[int, int], bytes]], Any]) -> Any:
-        from google.cloud import storage
-
         # Q18: storage.Client owns an HTTP transport; close it via the context
         # manager once all ranged reads for this call have completed.
-        with storage.Client() as client:
+        with _clients.gcs_client() as client:
             blob = _gcs_blob(self._descriptor, client)
             size = _gcs_size(blob)
 
             def fetch(start: int, end_inclusive: int) -> bytes:
-                return bytes(blob.download_as_bytes(start=start, end=end_inclusive))
+                return bytes(_clients.gcs_download(blob, start=start, end=end_inclusive))
 
             return consume(size, fetch)
 
@@ -343,10 +352,8 @@ class GcsParquetSource:
         return self._with_reads(lambda size, fetch: _read_parquet_sample(size, fetch, sample_rows))
 
     def to_frame(self) -> pd.DataFrame:
-        from google.cloud import storage
-
-        with storage.Client() as client:
-            data = _gcs_blob(self._descriptor, client).download_as_bytes()
+        with _clients.gcs_client() as client:
+            data = _clients.gcs_download(_gcs_blob(self._descriptor, client))
         return pd.read_parquet(io.BytesIO(data))
 
 
@@ -357,15 +364,13 @@ class GcsCsvSource:
         self._descriptor = descriptor
 
     def _size_and_window(self) -> tuple[int, bytes]:
-        from google.cloud import storage
-
-        with storage.Client() as client:
+        with _clients.gcs_client() as client:
             blob = _gcs_blob(self._descriptor, client)
             size = _gcs_size(blob)
             if size == 0:
                 return 0, b""
             end = min(_CSV_SAMPLE_WINDOW_BYTES, size) - 1
-            window = bytes(blob.download_as_bytes(start=0, end=end))
+            window = bytes(_clients.gcs_download(blob, start=0, end=end))
         return size, window
 
     def row_count(self) -> RowCount:
@@ -376,19 +381,21 @@ class GcsCsvSource:
         size, window = self._size_and_window()
         # Reuse the sample parser so a window truncated mid-row is trimmed to
         # whole lines before pandas infers the schema.
-        head = _csv_sample_from_window(window, size, _CSV_ESTIMATE_ROWS)
+        head = _csv_sample_from_window(
+            window, size, _CSV_ESTIMATE_ROWS, self._descriptor.get(LEXEME_KEY)
+        )
         return pa.Table.from_pandas(head, preserve_index=False).schema
 
     def sample_frame(self, sample_rows: int) -> pd.DataFrame:
         size, window = self._size_and_window()
-        return _csv_sample_from_window(window, size, sample_rows)
+        return _csv_sample_from_window(window, size, sample_rows, self._descriptor.get(LEXEME_KEY))
 
     def to_frame(self) -> pd.DataFrame:
-        from google.cloud import storage
-
-        with storage.Client() as client:
-            data = _gcs_blob(self._descriptor, client).download_as_bytes()
-        return pd.read_csv(io.BytesIO(data))
+        with _clients.gcs_client() as client:
+            data = _clients.gcs_download(_gcs_blob(self._descriptor, client))
+        return pd.read_csv(
+            io.BytesIO(data), **pandas_lexeme_kwargs(self._descriptor.get(LEXEME_KEY))
+        )
 
 
 def build_gcs_profile_source(descriptor: dict[str, Any]) -> ProfileSource:
@@ -405,7 +412,7 @@ def build_gcs_profile_source(descriptor: dict[str, Any]) -> ProfileSource:
 def _require_str(descriptor: dict[str, Any], field: str, kind: str) -> str:
     value = descriptor.get(field)
     if not isinstance(value, str) or not value:
-        raise ValueError(f"profile_source: {kind} source missing {field}, got {value!r}")
+        raise ValueError(f"profile_source: {kind} source missing {field}")
     return value
 
 

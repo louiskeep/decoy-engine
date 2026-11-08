@@ -46,12 +46,22 @@ Same source value + same namespace + same weights => same category.
 from __future__ import annotations
 
 import bisect
+import math
+import sys
+from collections.abc import Sequence
+from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from decoy_engine import reasons
 from decoy_engine.determinism import derive_index
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    option,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._positional_keys import row_positions
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
@@ -66,56 +76,111 @@ _WEIGHTED_CDF_RES = 1_000_000
 _POSITION_DOMAIN_CODE = reasons.runtime.CATEGORICAL_POSITION_OUT_OF_DOMAIN
 
 
-def _build_cdf(weights: list[float]) -> list[int]:
-    """Normalize weights + return the CDF as cumulative integer
-    thresholds over ``_WEIGHTED_CDF_RES``. The returned list has the
-    same length as ``weights``; entry i is the upper-bound (exclusive)
-    threshold for category i, so ``bisect_right(cdf, x)`` picks the
-    matching index for a uniform ``x`` in ``[0, _WEIGHTED_CDF_RES)``."""
-    total = sum(weights)
-    if total <= 0:
-        raise StrategyError(
-            code=reasons.runtime.CATEGORICAL_WEIGHTS_NONPOSITIVE,
-            strategy="categorical",
-            message="categorical weights sum to <= 0; cannot normalize.",
-        )
-    cdf: list[int] = []
-    running = 0.0
-    prev_threshold = 0
+# Exact weight types, decided on `type(w)` alone so a subclass (bool, a float subclass with
+# a lying `__float__`) is refused rather than trusted. Integer members are built from C type
+# codes because named numpy integer aliases differ by platform.
+_EXACT_INT_TYPES: frozenset[type] = frozenset({int} | {np.dtype(c).type for c in "bBhHiIlLqQ"})
+_EXACT_FLOAT_TYPES: frozenset[type] = frozenset({float, np.float16, np.float32, np.float64})
+_MAX_DOUBLE_RATIO = float.as_integer_ratio(sys.float_info.max)
+
+
+def _admit_weights(weights: Sequence[Any]) -> list[Any]:
+    """The weights unchanged, as a list, once every one is an exact admitted type.
+
+    The single type admission for categorical weights: every route that builds a CDF
+    (resident handler, out-of-core group B, native prepared artifact) passes the raw
+    configured weights here, never a coerced copy, and `_build_cdf` calls it again."""
     for i, w in enumerate(weights):
-        if w < 0:
+        if type(w) not in _EXACT_INT_TYPES and type(w) not in _EXACT_FLOAT_TYPES:
+            raise StrategyError(
+                code=reasons.runtime.CATEGORICAL_WEIGHTS_NONPOSITIVE,
+                strategy="categorical",
+                message=f"categorical weight at index {i:d} is not a number; cannot normalize.",
+            )
+    return list(weights)
+
+
+def _exact_ratios(weights: Sequence[Any]) -> list[tuple[int, int]]:
+    """Each weight as an exact `(numerator, power-of-two denominator)`; refusals run as
+    whole-vector passes (type, then non-finite) and report the lowest index only."""
+    weights = _admit_weights(weights)
+    ratios: list[tuple[int, int]] = []
+    for i, w in enumerate(weights):
+        if type(w) in _EXACT_INT_TYPES:
+            ratios.append((int(w), 1))
+            continue
+        x = float(w)
+        if not math.isfinite(x):
+            raise StrategyError(
+                code=reasons.runtime.CATEGORICAL_WEIGHTS_NONPOSITIVE,
+                strategy="categorical",
+                message=f"categorical weight at index {i:d} is NaN or infinite; cannot normalize.",
+            )
+        ratios.append(float.as_integer_ratio(x))
+    return ratios
+
+
+def _build_cdf(weights: Sequence[Any]) -> list[int]:
+    """Cumulative integer thresholds over ``_WEIGHTED_CDF_RES``: entry i is the exclusive
+    upper bound for category i, so ``bisect_right(cdf, x)`` maps a uniform ``x`` in
+    ``[0, _WEIGHTED_CDF_RES)`` to its category.
+
+    Exact arithmetic, so the result does not depend on the interpreter's float summation
+    (CPython 3.12 made ``sum()`` of floats compensated). Every finite binary64 value is a
+    dyadic rational (IEEE 754-2019 section 3.3; ``float.as_integer_ratio``), so scaling to
+    the largest power-of-two denominator makes each weight, prefix sum ``C_i`` and total
+    ``T`` an exact ``int``. Thresholds are ``(2 * C_i * RES + T) // (2 * T)`` (round half
+    up): the integer-frequency normalization of range coding and ANS (Witten, Neal, Cleary
+    1987, CACM 30(6); Duda 2013, arXiv:1311.2540).
+
+    Refusals, each a whole-vector pass reporting the lowest index and no weight value:
+    not a number, NaN or infinite, negative, total above the largest double or zero, and
+    a positive weight whose slot rounds to zero width (QA-3 F9: such a category would
+    never be selected)."""
+    ratios = _exact_ratios(weights)
+    for i, (num, _) in enumerate(ratios):
+        if num < 0:
             raise StrategyError(
                 code=reasons.runtime.CATEGORICAL_WEIGHTS_NEGATIVE,
                 strategy="categorical",
-                message=f"categorical weight {w!r} is negative.",
+                message=f"categorical weight at index {i:d} is negative.",
             )
-        running += w
-        # Round the cumulative threshold so weights distribute evenly.
-        threshold = int(running / total * _WEIGHTED_CDF_RES)
-        # QA-3 F9 (2026-05-31): reject weights that round down to a
-        # zero-width CDF slot. The bisect_right lookup over a CDF with
-        # zero-width slots silently never selects that category, so a
-        # weight smaller than 1 / _WEIGHTED_CDF_RES of the total
-        # contributed nothing to the output even though the operator
-        # asked for it. Fail loud at compile so the operator knows the
-        # weight is below the CDF resolution; the alternative -- bump
-        # _WEIGHTED_CDF_RES -- breaks determinism for existing plans.
-        if w > 0 and threshold == prev_threshold:
+    denom = max((d for _, d in ratios), default=1)
+    scaled = [num * (denom // d) for num, d in ratios]
+    total = 0
+    for v in scaled:
+        total += v
+    max_num, max_den = _MAX_DOUBLE_RATIO
+    if total * max_den > max_num * denom:
+        raise StrategyError(
+            code=reasons.runtime.CATEGORICAL_WEIGHTS_NONPOSITIVE,
+            strategy="categorical",
+            message="categorical weights sum above the largest finite double; cannot normalize.",
+        )
+    if total == 0:
+        raise StrategyError(
+            code=reasons.runtime.CATEGORICAL_WEIGHTS_NONPOSITIVE,
+            strategy="categorical",
+            message="categorical weights sum to 0; cannot normalize.",
+        )
+    cdf: list[int] = []
+    running = 0
+    prev_threshold = 0
+    for i, v in enumerate(scaled):
+        running += v
+        threshold = (2 * running * _WEIGHTED_CDF_RES + total) // (2 * total)
+        if v > 0 and threshold == prev_threshold:
             raise StrategyError(
                 code=reasons.runtime.CATEGORICAL_WEIGHT_BELOW_RESOLUTION,
                 strategy="categorical",
                 message=(
-                    f"categorical weight {w!r} at index {i} is below the CDF "
-                    f"resolution (1 / {_WEIGHTED_CDF_RES} of total). The "
-                    "category would never be selected. Either remove the "
-                    "category or use weights >= "
-                    f"{1.0 / _WEIGHTED_CDF_RES * total:.2e}."
+                    f"categorical weight at index {i:d} is below the CDF resolution "
+                    f"(1 / {_WEIGHTED_CDF_RES:d} of total). The category would never be "
+                    "selected; remove the category or raise its weight."
                 ),
             )
         prev_threshold = threshold
         cdf.append(threshold)
-    # Last entry always lands at the resolution to absorb rounding drift.
-    cdf[-1] = _WEIGHTED_CDF_RES
     return cdf
 
 
@@ -123,6 +188,14 @@ class CategoricalStrategyHandler:
     """Remap a column onto a fixed category pool (derive_index-keyed)."""
 
     name: str = "categorical"
+    namespace_required: bool = True
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("categories", "str_list", ("gold", "silver", "bronze"), required=True),
+        option("weights", "float_list", (0.5, 0.3, 0.2)),
+        option("deterministic", "bool", True, location="column"),
+    )
+    offer_in_wizard: bool = True
 
     def run(
         self,
@@ -160,7 +233,7 @@ class CategoricalStrategyHandler:
             )
         # MG-1 S5: optional weights. None = uniform (V1 path).
         weights_raw = cfg.get("weights")
-        weights: list[float] | None = None
+        weights: list[Any] | None = None
         if weights_raw is not None:
             if not isinstance(weights_raw, (list, tuple)) or len(weights_raw) != len(categories):
                 raise StrategyError(
@@ -173,7 +246,7 @@ class CategoricalStrategyHandler:
                         f"len={len(weights_raw) if hasattr(weights_raw, '__len__') else 'n/a'}."
                     ),
                 )
-            weights = [float(w) for w in weights_raw]
+            weights = _admit_weights(weights_raw)
 
         source = df[column]
         na_mask = source.isna().to_numpy()

@@ -30,6 +30,497 @@ minimum engine version it was tested against via its
   cannot serialize still fails at serialization. The message names the table and a count,
   no longer the duplicated names.
 
+### Fixed (value-free FK key and pandas-ingest attribution errors, 2026-11-02)
+
+Four `ExecutionError` messages quoted a key or a source cell, and a normal `PandasExecutionAdapter`
+or `run_pipeline` job reached each one. Each message now names the table and column only:
+
+- `fk_nullable_int_array` (`out_of_core_fk_key_dtype_unsupported`): a resolved FK key above the
+  UInt64 range or below the Int64 range (e.g. a categorical parent result) used to be printed, and a
+  uint64 orphan beside a negative resolved key used to append pandas' text (`Python integer ... out of
+  bounds for uint64`). The message is now `FK output column <table>.<column>: a resolved key exceeds
+  the UInt64 range` / `is below the Int64 range` / `cannot share one lossless nullable UInt64 array`,
+  raised with no cause or context. The function takes keyword-only `table` and `column`.
+- `to_pandas_fk_safe`: the ingestion backstop no longer appends the Arrow error or the Arrow type.
+- `full_frame_value_unrepresentable` and `chunked_passthrough_value_unrepresentable` no longer append
+  the pandas/Arrow conversion error (`Value 3001 has non-zero nanoseconds`, `year 12921 is out of
+  range`). The full-frame error's chain is suppressed; the chunked error keeps the conversion error as
+  its `__cause__` for diagnosis.
+
+### Fixed (value-free discovery, subset-seed and derived-expression errors, 2026-11-01)
+
+Several public error texts forwarded library or engine text that can quote a source cell, and that
+text reaches API responses and job logs through `str(exc)`. Each one now carries a fixed message per
+failure class and no cause or context chain:
+
+- `run_discovery_sql`: `DiscoverySqlError` no longer includes DuckDB's text (a failed cast quoted the
+  string, e.g. an SSN). Its message is one of `SQL_CONVERSION_FAILED` (conversion, out of range,
+  invalid input), `SQL_NOT_EXECUTABLE` (parser, binder, catalog) or `SQL_FAILED`, under both the
+  ambient and strict policies. An execution error at the fetch step under the ambient policy used to
+  escape as a raw `duckdb.Error`; it is now a `DiscoverySqlError`, as at the execute step. A
+  statement DuckDB cannot parse used to raise a raw `ParserException` from the statement-kind check;
+  it is now `DiscoverySqlError(SQL_NOT_EXECUTABLE)`. Memory and policy failures under a strict policy
+  still keep their class.
+- `select_seed_rows` (`SubsetConfigError`): `subset_seed_key_type` names the table, the key column
+  and its type instead of quoting Polars' text with the mismatched keys, and neither an explicit-key
+  nor a filter-literal refusal chains the conversion error as its cause or context. `subset_seed_key_uncanonicalizable` names
+  the key column and a reason chosen by reason code (float, timezone-naive datetime).
+- `_canonicalize_source` (`GenerationError`, `float_canonicalization_unsupported`,
+  `timezone_naive_datetime`) no longer formats the value with `!r`.
+- Derived expressions: a row-evaluation failure gives the column and row with a closed-set reason
+  instead of the evaluator's text, and the `slice()` argument error names the argument's type, not
+  its value.
+
+### Added (SCAN-ML M1: optional ML detector config, status and loading, 2026-11-07)
+
+`pre_scan.detectors` and `post_scan.detectors` choose between `regex` (always on), the lgbm
+`classifier` and spaCy `ner`; `post_scan` also gains `ner_model`, `ner_findings` (`warn` or `fail`)
+and `dismissed`. A field equal to its default stays out of the dump, so existing configs keep their
+dump and hashes. `decoy_engine` exports `ModelRef`, `ModelStatus`, `classifier_status`,
+`ner_status`, `load_detectors`, `ModelUnavailableError`, `PreScanConfig` and `Dismissal`.
+`load_detectors` loads every requested model strictly and raises `ModelUnavailableError` rather than
+return a regex-only set. `ensure_ner_available` now checks the model name, accepts only an installed
+model distribution (a module such as `os` is refused and never imported), and refuses a model built
+for another spaCy minor (`provider.ner_model_incompatible`), at validate time instead of at load.
+`ModelPackLoadError` carries a `cause`. `detection/_ner_rate.py` holds the shared NER cell sample
+and rate. NER scores free-text columns only (median of 3 or more whitespace tokens per sampled
+cell) and flags a column at a 0.211 share of cells. A plan check that re-wraps a registered config
+or provider refusal now reaches consumers as that reason instead of `decoy.unregistered_reason`; a
+code registered in the raising family's own namespace keeps that family's record. Registry 1.8.0
+adds seven reasons (see `docs/reasons.md`). Nothing runs a model yet: the pre-scan, post-scan and
+route changes are later slices.
+
+### Added (protected directories)
+
+`decoy_engine.protected_scratch_dir` and `open_protected_dir` are the one allocator for directories that
+hold Decoy's own rows. Directories are owner-only from creation, an existing directory is reused only when
+it is a real directory owned by the caller with no group or other access, and a failure never falls back.
+Two reasons join the registry at 1.7.0: `runtime.scratch_unsafe` and `runtime.scratch_acl_failed`.
+
+Behavior change: the local protected quarantine arena goes through the allocator. On POSIX an empty arena
+with a permissive mode is now tightened to 0700 and accepted. A permissive arena that already holds files is
+still refused (`arena_unsafe`).
+
+### Added (strategy catalog)
+
+`decoy_engine.strategy_catalog()` returns one `StrategyInfo` row per scalar strategy, sorted by name, with its
+`StrategyOption` list. Each row says whether a namespace is required, whether the strategy is join-safe
+(`hash` and `fpe`), whether it is offered at the wizard's `edit` prompt, and where each option lives in a column
+entry (`column`, `provider_config` or `provider_config.ner`). `StrategyInfo` and `StrategyOption` are exported too.
+
+## [0.19.0] - 2026-11-07
+
+### Breaking for consumers (since v0.18.0)
+
+- `run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked`, `run_native_or_oracle_chunked` and `compile_plan` now refuse a config with `subset:` set (`config.subset_run_unsupported`, registry 1.6.0) instead of masking the full sources; run `run_subset` first.
+- `PLAN_VERSION` is 3 (was 2). A plan this engine writes carries `version: 3`, which a 0.18.0 engine cannot load; this engine still loads a version-2 plan. For a config that does not use declared casting, the version line is the only change.
+- Reason registry `1.2.0` -> `1.6.0` (893 -> 1006 identities). Consumers that enumerate or map reason codes take the new identities; none was removed or renamed.
+- A headerless CSV refusal starts with its code and names the source table, not the file: `source_file.column_count_mismatch: source customers line 3 has 4 fields but column_names declares 3`. A consumer that prints the code apart from the message shows it twice; one that matched the old text must match the code.
+- A `column_names` that is not a list or tuple of strings is refused by `CsvDialect` and `resolve_csv_dialect`. The `FileSource`, `S3Source` and `GCSSource` validation errors and `validate_config` no longer carry the submitted value or the chained pydantic error.
+- Subset explicit keys and filters refuse a lossy cast with the coded `subset_seed_key_type` instead of selecting the wrong rows, and a non-finite `Decimal` bound (NaN, sNaN, Infinity) is refused on every operator. A caller that passed such a key or bound and got rows back now gets a refusal.
+- GCS errors have new text and, for some failures, new classes. Every connector call and every GCS profile read (`GcsParquetSource`, `GcsCsvSource`) now ends in a `TransientError` or `PermanentError` with fixed text (for example `GCS bucket or object not found`, `GCS permission denied`, `GCS transient network or service error`); the SDK message, bucket and object name no longer appear. `google.auth` transport and timeout errors map to `TransientError` (they were `PermanentError`), other `google.auth` errors map to `PermanentError("GCS credentials unavailable or invalid")`, and a profile read that raised a raw `google.api_core` or `requests` exception now raises one of those two. A consumer that caught the Google exception types or matched the old `GCS not found: ...` text must catch `ConnectorError` subclasses instead.
+
+### Added (F34: the canary span check types, 2026-11-02)
+
+`decoy_engine.verification.canary` is public: `CanarySpanReport` and its finding, status and completion types, the
+closed enums, `CanaryVerdictPolicy` with `derive_status` and `compose_reasons` over a generated 32-row
+`POLICY_TABLE`, and three fixed exceptions that carry no message (`CanarySpanReportInvalid`, `CanaryPolicyInputError`
+and the artifact read failure). Twelve canary reasons are registered (registry 1.3.0, each `since="1.3.0"`).
+`CanarySpanReport` does not yet cross-check its status against its own counts; the report builder must do that.
+Canary span text is normalized for comparison, and Arrow cells render by type with strings compared through the
+binary view, so equal values compare equal across readers.
+
+### Added (F31: `decoy_engine.safe_output`, 2026-11-03)
+
+`SafeEvent` holds only exact, bounded fields (a registry reason, a closed exception label, an approved step name,
+closed counts and flags) so an event carries no exception text and no cell value. `safe_error_type` labels an
+exception by exact type, and `phase.error_result` now takes its `error_type` from that table. The widening of the
+label domain is additive.
+
+### Added (F30: `decoy_engine.telemetry`, 2026-11-03)
+
+`SpanRecorder` pairs phase events into `SpanRecord`s under the closed `decoy-telemetry/v1` vocabulary
+(`TELEMETRY_SCHEMA`, `SPAN_NAMES`, `ATTRIBUTE_KEYS`, `RESOURCE_KEYS`). Phase names are closed, reasons are
+registry-checked and error labels are exact-type safe labels; no value, path or message reaches a span attribute.
+The engine imports no OpenTelemetry package. The caller owns the SDK, the exporter and the flush.
+
+### Added (reason registry 1.5.0: platform and safe_output namespaces, 2026-11-04)
+
+The `platform` namespace (69 identities) and the `safe_output` namespace (`invalid`, `legacy_withheld`) join the
+registry, 71 identities in all, for the safe-output boundary. Summaries carry no value, path or expression.
+
+### Security (isolated-run payload, 2026-11-04)
+
+`run_pipeline_isolated` writes its payload through the output-transaction API with a private label, so the file is
+mode `0600` from creation on both the ambient and the strict file-access paths. Errors from that write are
+value-free.
+
+### Fixed (NER extra, 2026-11-06)
+
+The `[ner]` extra declares `click>=8.1,<9`, which spaCy imports and nothing else installs any more, so a fresh
+`ner` install failed at `import spacy`. The model wheel is pinned by URL and sha256 (`NER_MODEL_WHEELS`) and the user
+docs install it from that pin instead of `spacy download`.
+
+### Added (RESULT E1: the run-result model, 2026-11-06)
+
+`decoy_engine.RunResult` and `RunResultRead` define the frozen `decoy-run-result/v1` document (one record per
+`decoy run`), `RUN_RESULT_SCHEMA` names its tag, and `derive_outcome` is the one place that turns a failure
+category, delivery state and blocking check into a run status and exit code, using the caller's exit map.
+`pipeline_config_hash` exports the compiler's semantic config hash. `ReasonRecord.parse_payload` is now the one
+reason wire-compatibility parser; `from_payload` delegates to it, and it also returns the registry version the
+writer stamped. No registry change.
+
+### Security (locked dependencies, 2026-11-06)
+
+`uv.lock` moves eight packages to the lowest release that clears their advisories, so the `security.yml`
+audit finds nothing on CPython 3.10, 3.11 and 3.12: anyio 4.14.1 to 4.14.2 (PYSEC-2026-4023, -4024, -4025),
+certifi 2026.6.17 to 2026.10.18 (PYSEC-2026-4320), cryptography 49.0.0 to 50.0.0 (PYSEC-2026-3552),
+pyasn1 0.6.3 to 0.6.5 (PYSEC-2026-3455, -3456, -3457), setuptools 82.0.1 to 84.1.0 (PYSEC-2026-3447,
+GHSA-xmj3-9gf7-h52w), soupsieve 2.8.4 to 2.9 (PYSEC-2026-4170, -4171), urllib3 2.7.0 to 2.8.0
+(PYSEC-2026-4175, -4176, -4177) and werkzeug 3.1.8 to 3.1.9 (PYSEC-2026-4312). `pyproject.toml` ranges do not
+change. `_CERTIFIED_STACKS` gains one 3.10.20 row for the new lock profile and keeps every released row.
+Operators who route S3 or GCS through an HTTPS proxy: urllib3 2.8 takes proxy TLS settings only from
+`proxy_ssl_context`, and destination client certificates no longer apply to a forwarding proxy.
+
+### Added (F06: declared parsing, casting and quarantine, 2026-10-29)
+
+A column can now declare `logical_type`, `parse_format`, `sentinel_to_null`, `error_policy` (`fail`, `null`,
+`quarantine`) and `output_format`. The engine owns one versioned contract (`decoy_engine.contracts.declared_casting`,
+catalog version 1) and one casting boundary (`decoy_engine.declared_casting`): exact strings, strict integers,
+exact `Decimal` (precision 1..38, no float, no rounding, a pinned `decimal` context), restricted dates
+(`%Y %m %d`, no locale), explicit currency, ASCII overpunch, EBCDIC zoned decimal and COMP-3. Sentinels become
+null before parsing and are counted apart from source nulls; counts and every failure are value-free and use
+registered F29 reasons (`registry_version` 1.4.0, 29 new identities, after F34's 1.3.0). Fixed-width layouts gain
+`exact_record_width` (default off) so an over-length record is a framing error.
+`run_pipeline(quarantine_runtime=...)` takes a protected-quarantine runtime; the local reference sink writes
+Fernet-encrypted, `0700`/`0600`, finite-retention artifacts and the run returns a portable
+`ExecutionResult.quarantine_access` token. `PLAN_VERSION` is now 3 (the only YAML change for configs that do not
+use the feature is the version line; a version-2 plan still loads). Declared columns run on the full-frame,
+chunked, sequential, out-of-core, mixed and unified-slice routes through one batch-shaped casting kernel; a route
+that lacks a needed capability refuses before reading the source (`declared_cast_route_unsupported`) and `auto`
+routing never selects it. CSV readers keep declared columns as exact lexemes (no inference, no default NA
+conversion). The quarantine seal is the last failure-capable step of a run, a sealed artifact is discarded if the
+run then fails, retrieval tokens are bound to the run (`QuarantineAccessContext(owner, run_id)`), protected records
+carry full F29 `ReasonRecord`s, and the raw row reopens with its Decimal / date / datetime types intact.
+A failed discard after the seal is reported as the registered `protected_quarantine_cleanup_failed` with the
+artifact's recovery identity, and a declared job that falls back to a less bounded route lists the refusal under
+`quality_metrics["execution"]["declared_route_refusals"]`. The out-of-core typed staging copy is named by
+the engine (`s0000.typed.parquet`, never the table name) inside an engine-made per-run root, and is read back
+through a scratch reader, so it runs under a strict file-access policy. The local quarantine store retries short
+writes and is ambient-only (`arena_needs_ambient_policy` under a strict policy). See
+`docs/declared-casting.md` and `docs/security/protected-quarantine.md`.
+
+### Added (CLI-DIALECT: one public CSV source reader, 2026-11-06)
+
+`decoy_engine.read_csv_source(path, dialect, *, table, dtype=None, nrows=None, chunksize=None,
+file_access=None, field_key="source.path")` reads a CSV source under its declared dialect. `CsvDialect`
+(`has_header`, `column_names`, `delimiter`) and `resolve_csv_dialect(descriptor)` turn a source descriptor into
+that dialect, with the schema defaults. With the default dialect and `dtype=str` the frame equals
+`pd.read_csv(path, dtype=str)`. A headerless file is width-checked first; `chunksize` runs that check at the call
+and returns an iterator bound to the call's file-access policy. `CsvFileSource` (profile, validate, compile)
+reads through the same code, so there is one copy of the scan. The dialect rules (header against names, blank and
+duplicate names, delimiter shape) now live in one place, `config/_csv_dialect.py`, used by `FileSource` and
+`CsvDialect`. Their delimiter texts no longer echo the submitted value, and a `column_names` that is not a list
+or tuple of strings is refused (`CsvDialect` and `resolve_csv_dialect`). `resolve_csv_dialect` takes the defaults
+from `CsvDialect`. Under a strict file-access policy a headerless parser disagreement is the coded refusal, not a
+read error, and `nrows=0` returns the empty frame with the declared columns without reading the file. `FileSource`, `S3Source` and `GCSSource` hide submitted values in their validation errors, and `validate_config` no longer chains the pydantic error (it carried the submitted descriptor).
+
+### Changed (CLI-DIALECT: headerless CSV refusal messages, 2026-11-06)
+
+A headerless CSV refusal (wrong field count, no data rows, NUL byte, lone CR, parser disagreement) now starts
+with its code and names the source table instead of the file name: `source_file.column_count_mismatch: source
+customers line 3 has 4 fields but column_names declares 3`. Consumers that print the code separately from the
+message (for example the CLI's `decoy preflight` check JSON and the platform's error rendering) show the code twice.
+
+## [0.18.0] - 2026-11-01
+
+Pre-GA release (`RELEASE_PHASE = "pre-ga"`): the minor bump carries breaking changes with no shims. It is
+0.17.0 plus the A-4 file-access policy reconciled with F13 secret admission, the typed out-of-core temporal
+FK seam, the SBOM error-handling fixes, the exact-integer categorical CDF builder, and the generated NOTICE
+with its license gate and the SDV citation fixes.
+
+### Breaking for consumers (since v0.17.0)
+
+- A `file:` mask secret (`global_settings.mask_secret_ref: file:<path>`, or `keyprovider.key_provider_from_ref
+  ("file:...")`) must be owner-only. Any group or other permission bit (0640, 0644, 0444, 0660 ...) refuses it
+  with `runtime.secret_file_permissions_unsafe`, checked with `fstat` on the descriptor that is read; no bypass
+  setting. The mode is checked before the length, so a short secret at 0644 is refused for its mode, not as
+  `weak_mask_secret`. Deployed secret mounts and test fixtures that write a secret file under the default
+  umask must `chmod 0600` (or 0400) it. Windows ACLs are not inspected.
+- `env:` and `file:` secrets are never cached, whatever the `SecretCachePolicy` TTL.
+- Reason registry `1.1.0` -> `1.2.0` (891 -> 893 identities). New: `runtime.secret_file_permissions_unsafe`,
+  `decoy.file_access_denied` (the identity of `FileAccessDenied`). A consumer that pins the registry version or
+  the identity count, or maps reason codes to its own messages, must add both.
+- `keyprovider.key_provider_from_ref(ref, *, key_version=None, file_access=None)`: `file_access=` is new and
+  the function is a file-access entry point (`key_version=None` is unchanged since 0.17.0).
+- `quarantine.write_jsonl_staged` returns the staged `OutputTxn` (was the final `Path`); the caller publishes it.
+  `publish_staged_jsonl` and `discard_staged_jsonl` take that `OutputTxn` as `staged_path` (was a `Path`).
+- A bare `joint_mask.reference` name must be a shipped reference table. Any other bare name (a path, `../x`,
+  an absolute path) now fails with `FileNotFoundError` (config validation: `joint_mask_reference_not_found`)
+  and reads no file; 0.17.0 joined it onto the data directory and read it. Migration: reference a customer
+  table as `customer:<path>`.
+- A shipped code-set corpus name (`provider_config.code_set` with `corpus_source` unset or `shipped`) must be a
+  registered corpus. Any other name (`icd10.parquet`, `../x`, an absolute stem) now fails with
+  `PlanCompileError` `code_set_corpus_not_found`; 0.17.0 joined it onto the corpora directory and loaded that
+  file. Migration: `corpus_source: "customer:<path>"`.
+- `run_discovery_sql` runs on a locked DuckDB connection with external access off: SQL that reads a file
+  through a DuckDB function (`read_text`, `read_blob`, `glob`, ...) now fails with `DiscoverySqlError`
+  ("SQL execution failed: Permission Error ..."); 0.17.0 read the file. Multiple statements were already
+  refused in 0.17.0. Migration: pass each file as an entry of `tables=` and query it by name.
+- 42 file-reading or file-writing entry points (`decoy_engine.fileaccess.ENTRY_POINTS`, `run_pipeline`
+  included) take a keyword-only `file_access=None`. Additive with no policy installed; under an installed
+  policy an explicit `file_access=` must be that policy or narrower, else `FileAccessUnavailable`.
+- Out-of-core temporal FK columns publish the resolved unit of their key (were always `timestamp[us]`); a key
+  outside the resolved type is refused with `out_of_core_fk_key_dtype_unsupported`.
+- Weighted categorical masking (`strategy: categorical` with `weights`) moves masked output: the CDF
+  thresholds are now rounded half up over exact integers instead of floored from a float running sum. On the
+  seeded 20,000-vector corpus (`tests/unit/execution/_cdf_oracle.py`) at least one threshold moves in about 99%
+  of weight vectors, every moved threshold by at most one slot, so a row changes category with probability
+  about 5e-5. `[1, 1, 1]` gives `[333333, 666667, 1000000]` (was `[333333, 666666, 1000000]`). Output is now
+  identical on 3.10, 3.11 and 3.12. Weight vectors that built before and are now refused: a weight under one
+  slot after rounding (`[1.0, 2e-6, 1.0]`), a total above the largest double (`[1e308, 1e308]`), and `bool`,
+  `str`, `Decimal`, `Fraction` or subclass weights, refused with `StrategyError`
+  (`categorical_weights_nonpositive`) on the resident, out-of-core and chunked routes alike (the native
+  operator declines them, so the run takes the refusing route); NaN or infinite weights raise that
+  `StrategyError` instead of a bare `ValueError`. Migration: write weights as plain numbers.
+- `ProviderSpec.seed`, `ValuePool.seed`, `SeedEnvelope.job_seed`, `StrategyContext.job_seed`/`mask_key` and
+  `ShadowContext.job_seed`/`mask_key` are `repr=False`: they no longer appear in `repr()` output.
+- No public module or exported symbol was removed or renamed (`CodeSetConfig` moved to a private module and is
+  still importable from `decoy_engine.transforms.code_set`).
+- DP: certified rows are added for 0.18.0 (`31ecf945...`, engine dev/CI profile; `b643894d...`, the
+  decoy-cli runtime profile). The CLI's `requirements-certified.txt` header fingerprint moves to `b643894d...`;
+  a CLI install of 0.18.0 cannot run a certified fit until it does. The 0.17.0 rows (`5a76ea92...`,
+  `a7b40d54...`) stay certified, so a DP snapshot fit under 0.17.0 still compiles.
+
+The generated `NOTICE`, the license gate and the SDV citation fixes are not breaking: no runtime code,
+dependency or public symbol changes.
+
+### Changed (release R-b, 2026-11-01)
+
+`pyproject.toml`, `decoy_engine.__version__`, the `uv.lock` root entry and the proof-manifest stamp move to
+0.18.0, and a DP certified row is added for each profile (reverting only the engine version to 0.17.0 reproduces
+the 0.17.0 rows exactly; those rows stay in the certified set). The reason release pin (`tests/fixtures/f29/reason-registry-release.json`) is re-captured at
+registry 1.2.0 (893 identities: 884 `since` 1.0.0, 7 `since` 1.1.0, 2 `since` 1.2.0). The Phase F FR0
+manifest is re-frozen for engine minor `0.18` (envelope digests only; every golden table digest is
+unchanged).
+
+### Fixed (categorical CDF: exact integer builder, 2026-11-01)
+
+The weighted categorical CDF summed weights with the builtin `sum()`, which CPython 3.12 made
+compensated, so about 2.3% of weight vectors got thresholds one slot apart on 3.12 versus 3.10/3.11 and
+masked output depended on the interpreter. `_build_cdf` now converts each weight to its exact dyadic
+rational and computes `(2 * C_i * RES + T) // (2 * T)` (round half up) over exact integers. Plan:
+`docs/plans/2026-10-31-categorical-cdf-exact-arithmetic.md` on branch `plan/cdf-exact-arithmetic` (f89f4ab7), not on main.
+
+- Output: versus 3.10 output, at least one threshold moves in about 99% of weight vectors, each by at most
+  one slot (a row changes category with probability about 5e-5); `[1, 1, 1]` becomes
+  `[333333, 666667, 1000000]` (was `[333333, 666666, 1000000]`). `[1.0, 2e-6, 1.0]` is now refused as below
+  resolution (0.999999 of a slot); `[1e308, 1e308]` is refused as an overflowing total.
+- Weights must be `int`, a numpy integer, `float` or numpy `float16/32/64`, by exact type: `bool`, `str`,
+  `None`, `Decimal`, `Fraction` and subclasses are refused. NaN and infinity raise `StrategyError`
+  (`categorical_weights_nonpositive`) instead of a bare `ValueError`. Refusals run as whole-vector passes
+  (type, non-finite, negative, total, resolution) and their messages carry the index only, no value.
+
+### Changed (licensing: generated NOTICE, license gate, SDV citations, 2026-11-01)
+
+- `NOTICE` (shipped in the wheel) is generated from `uv.lock` by `scripts/dev/licenses_write.sh`: name,
+  version, license and scope (`[runtime]` or `[extra: ...]`) for all 103 pins that installing the engine or
+  a runtime extra can pull in, plus the named exceptions (`paramiko` LGPL-2.1 and `tqdm` MPL-2.0 AND MIT,
+  optional only; `certifi` MPL-2.0; `python-stdnum` LGPL-2.0-or-later; numpy's SPDX expression). The
+  licensor name is a marked owner placeholder. Policy: `docs/license-policy.md`.
+- `tests/sentry/test_license_policy.py` and the `licenses` step of `scripts/dev/gates.sh` fail on a stale or
+  hand-edited `NOTICE`, a license outside the policy, or `NOTICE` disagreeing with installed metadata.
+- SDV citations no longer call SDV MIT: SDV is BUSL-1.1. The engine cites the HMA1 and PAR methods (papers
+  named) and uses no SDV code; `tests/sentry/test_sdv_import_sentry.py` fails on an SDV or sdmetrics import
+  and on a citation labelling SDV permissive.
+
+
+### Fixed (out-of-core: typed temporal FK seam, release R-b, 2026-11-01)
+
+The out-of-core FK join rebuilt every child FK value from Python scalars by type inference, so a
+`timestamp[ns]` key was published as `timestamp[us]` (nanosecond keys collapsed), and its join token was
+tagged by Python class, so one instant read at two units (`ns` on one side, `s|ms|us` on the other) missed
+itself and published false orphans. Plan: `docs/plans/2026-10-31-slice0-ooc-fk-typed-seam.md`.
+
+- Join tokens encode a tz-naive instant as exact epoch nanoseconds: equal instants match across units.
+- Each FK component has one fixed Arrow type from the schemas: tz-naive timestamps unify to the finest unit
+  among the policy's candidates; under `orphan_policy: fail` the masked-parent type alone. Every output array
+  (matched, orphan, REMAP input, zero-row table) is built at that type through one function
+  (`out_of_core/_join.fk_output_array`): exact, or the registered `out_of_core_fk_key_dtype_unsupported`
+  refusal for an instant outside the type's range or finer than its unit. Out-of-core temporal FK columns now
+  publish the resolved unit (were `timestamp[us]`).
+- The router no longer diverts a tz-naive unit promotion over an identity parent key (passthrough or no
+  seed): every published value is a child instant or a parent instant equal to one, so it is in range.
+- Error text: a refused FK key, and a failed FK chunk cast, carry no key value, cause or context.
+- Resource exhaustion (`MemoryError`, including `pyarrow.ArrowMemoryError`) propagates through the seam
+  unchanged instead of being reported as an unsupported key type.
+
+### Changed (BREAKING, pre-GA: the file-access policy meets F13 secret admission, 2026-11-01)
+
+- A `file:` mask secret is read through the installed file-access policy (`FileRole.SECRET` at
+  `global_settings.mask_secret_ref`) and must be owner-only: group or other permission bits refuse
+  it with the new `runtime.secret_file_permissions_unsafe`, checked with `fstat` on the descriptor
+  the bytes are read from. Windows ACLs are not inspected. No bypass setting.
+- Under a strict policy, `FileAccessDenied`, `FileAccessUnavailable`, `MemoryError` and
+  `ENOMEM`/`ENOSPC`/`EDQUOT` from that read keep their class across the admission boundary, as fresh
+  value-free instances; every other failure is still a `MaskSecretError`.
+- `env:` and `file:` secrets are never cached, even with a positive `SecretCachePolicy` TTL.
+- Admission errors no longer inherit an exception the caller was handling as `__context__`.
+- `keyprovider.key_provider_from_ref` takes `file_access=` and is a file-access entry point.
+- `FileAccessDenied` has the registry identity `decoy.file_access_denied`. With
+  `runtime.secret_file_permissions_unsafe` the registry has 893 identities; `REGISTRY_VERSION` 1.2.0.
+- A strict-policy table sink's abort records cleanup `attempted` (was `unknown`).
+- New `fileaccess.reset_for_tests()` for host test isolation (instead of `fileaccess._entry`).
+- Under an installed policy, an explicit `file_access=` (and the `scope`/`capture` argument) must be
+  that same policy or narrower than an installed ambient one; any other raises
+  `FileAccessUnavailable`. Policy-resolution refusals carry no `__cause__`/`__context__`.
+- No `entry_point` wrapper frame, nor `key_provider_from_ref`'s or `parse_ref`'s, keeps a caller
+  argument (ref, path, value) in its locals on a failing call.
+- `write_fixed_width` under a strict policy names `target.path` in its errors, never the path
+  (ambient text unchanged). File outputs published by replace fsync their directory again
+  (best effort, ambient and strict), as main's fixed-width writer did.
+- `secret_providers.parse_ref` refuses with no cause or context, even inside a caller's handler.
+- `build_profile_source` names "the value at <position>" instead of a malformed `path`, `layout`,
+  `format` or `type` value under a strict policy (ambient text unchanged). `plan_from_yaml` refuses
+  a corrupted embedded snapshot or an unpinned `snapshot_file` with its manifest position only,
+  under every policy, and no longer chains the JSON decoder error.
+- No public entry keeps secret material (raw secret, mask key, derived key) in its frame locals on
+  a failure: `vault.load_vault`, `vault_writer_for_config`, `VaultWriter`,
+  `assert_vault_writer_keyed`, `unmask_pipeline`, `run_fk_out_of_core`, `run_sequential`
+  (`StrategyContext` no longer renders `mask_key`), `make_key_resolver`, `require_mask_key`,
+  `resolve_mask_key`, `SecretKeyProvider`, `derive`/`derive_index`/`derive_value`,
+  `REQUIREMENTS[*].prepare`, `SecretBuffer`, `secret_providers.vault.client_from_env` (which held
+  the environment mapping, `VAULT_TOKEN` included). Paths, refs and configs in entry frames are not
+  covered yet (F31).
+
+### Changed (BREAKING, pre-GA: file-access coverage after the main merge, 2026-10-29)
+
+`write_fixed_width`, `estimate_job`, `compile_pinned_plan`, `compile_pinned_plan_with_generation`,
+`execute_pinned`, `generate_rows`, `io.iter_parquet_chunks` and `io.iter_csv_chunks` are file-access
+entry points: each takes a keyword-only `file_access=` and installs it for the call. The fixed-width
+write goes through a policy-issued `OutputDir` (staged, then published), and the bounded readers open
+their source through the policy. `postgres_snapshot.snapshot_tables_to_parquet` refuses any policy but
+the ambient one. `LazySource.iter_batches` and `to_table` take an optional `columns=` projection, which
+replaces the two direct Parquet opens in the out-of-core null guard and the mixed route.
+
+### Added (the `FileAccess` policy, built 2026-10-07, first released in 0.18.0)
+
+New public package `decoy_engine.fileaccess`. Every file the engine opens, stats, lists, creates,
+renames or deletes on behalf of a config value or a caller now goes through one `FileAccess` policy
+or a capability it issued (an open file handle, a directory capability, an output transaction), so a
+host that serves several users can decide which files an engine call may touch without keeping a list
+of config fields. Entry points (`run_pipeline`, `run_mask_pipeline_chunked`, `run_mask_chunked`,
+`profile_source`, `compile_plan`, `load_table`, `load_corpus`, `run_subset`, `run_discovery_sql`,
+`unmask_pipeline`, `load_vault`, `vault_writer_for_config`, and the rest of
+`decoy_engine.fileaccess.ENTRY_POINTS`) take a keyword-only `file_access=`. Policies ship for the
+ambient CLI behavior (`LocalFileAccess`), deny-by-default rooted access confined with
+`openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` (`RootedFileAccess`), and pre-opened descriptors
+(`PreopenedFileAccess`). A process that must never fall back to ambient access calls
+`fileaccess.forbid_ambient()` once at startup. `ParquetTransactionalSink`, `LazySource`,
+`VaultWriter`, `load_vault` and `unmask_pipeline` also accept the capability objects directly. A
+denial is one `FileAccessDenied` whose message is `file access denied: <config position>`, with no
+path, basename or file content; a library failure on a file the policy allowed (corrupt Parquet, bad
+YAML) is a separate `FileAccessReadError` with the same hygiene, and memory and disk-quota errors keep
+their class. Contract: `docs/security/file-access-policy.md`.
+
+With no policy argument the engine behaves as before: paths, symlinks, error text, output names, the
+default log file, accepted and rejected table names and the table sink's publish and failure
+semantics are unchanged. A new sentry fails CI if any engine code reaches a file-system call outside
+an adapter, a capability module or a reviewed registry entry.
+
+### Changed (BREAKING, pre-GA: bare reference names and discovery SQL, built 2026-10-07, first released in 0.18.0)
+
+Two behavior changes, both closing a read of an arbitrary host file.
+
+- A bare `joint_mask.reference` name must be one of the shipped reference tables. A name that is not
+  shipped, including `../../x` and an absolute path, raises the same `FileNotFoundError` as before
+  (validation reports `joint_mask_reference_not_found`) and never reads a file. Before, the loader
+  joined any bare name onto its data directory. `customer:<path>` is unchanged and is the only path
+  form.
+- `run_discovery_sql` runs on a locked in-memory DuckDB connection with external access off and
+  accepts exactly one `SELECT` over the tables it is given. `read_text`, `read_blob`, `glob`,
+  `FROM '<path>'`, `COPY`, `ATTACH`, `INSTALL`, `LOAD` and `SET` can no longer reach a file, write
+  one or turn this off. Tables are registered as Arrow datasets, so projections and predicates still
+  push down.
+
+Smaller changes under the same program: the three unused helpers `get_file_size`, `is_path_exists`
+and `create_directory_for_file` in `internal/fs.py` are removed; `quarantine.write_jsonl_staged`
+returns an opaque stage (publish it with `publish_staged_jsonl`, discard it with
+`discard_staged_jsonl`) instead of a path; `ParquetTransactionalSink` and the hold-back spill create
+their stages through the policy, with the same directory names, publish semantics and error behavior;
+a vault write to a path keeps writing in place, as before (a strict policy's `OutputDir` gets an exclusive create instead); subset output is staged and
+published with one rename instead of being written in place. Under a policy other than the ambient
+one, `run_pipeline_isolated` (when it would spawn a child or is given a `staging_dir` or `output_dir`)
+and `run_fk_out_of_core` with a caller-named `temp_dir` raise `FileAccessUnavailable` before any I/O.
+
+### Changed (BREAKING, pre-GA: strict error boundary and scratch names, built 2026-10-08, first released in 0.18.0)
+
+- A shipped corpus name resolves only if it is a registry key, through a registry-owned path,
+  before any file-system call. Any other name (`../x`, an absolute stem, `icd10.parquet`) raises
+  `code_set_corpus_not_found` with one fixed message that echoes neither the name nor a path. Before,
+  the name was joined onto the corpora directory, so an absolute stem could load an arbitrary
+  Parquet file as a "shipped" corpus.
+- Under a policy other than the ambient one, no engine error or log line names a file locator or the
+  descriptor path (`/proc/self/fd/<n>`) a library was handed: snapshot, corpus, model-pack,
+  name-hint, discovery, lockfile, custom-provider and quarantine diagnostics name the config position
+  instead. A secret file that fails to decode, validate or parse raises a fresh error built from the
+  config position, with no cause or context, even when the caller is already handling another error.
+  Text from the content of a file the principal may read can still appear.
+- Under such a policy every handler that translates, stores or swallows a file error re-raises the
+  policy errors, `MemoryError` (including Arrow's), DuckDB's out-of-memory error, `ENOMEM`, `ENOSPC`
+  and `EDQUOT` unchanged, so OOM classification and disk-quota handling still see them.
+- Scratch files the engine derives from a table, column or edge name (the out-of-core `joins/`,
+  `relations/` and `staged/` trees and relation files, the native pool-quality spool, the isolated
+  route's input copies) are now named by opaque per-run ids. A name holding `/` or `..`, or an absolute
+  name, can no longer place a scratch file outside the scratch directory. Output table files are
+  unchanged.
+
+## [0.17.0] - 2026-11-01
+
+Pre-GA release (`RELEASE_PHASE = "pre-ga"`): the minor bump carries breaking changes with no shims.
+Everything since v0.16.0 is below; the 0.14.2 to 0.16.0 sections are reconstructed from their tags.
+
+### Breaking for consumers (since v0.16.0)
+
+- Pipeline config: `version: 2` is required (`version: 1` is rejected). `run_storm: true` is gone; use
+  `post_scan: {integrity: true}`. `PipelineConfig.run_storm` -> `PipelineConfig.post_scan` (`PostScanConfig`).
+- Wire names: `quality_metrics["storm_postmask"]` -> `quality_metrics["post_scan_integrity"]`; report schema
+  `storm-post-mask/v1` -> `post-scan-integrity/v2`; profiler event `storm.scan` -> `pre_scan.profile`; route
+  reason `run_storm_requested` -> `post_scan_integrity_requested`; resident reason `run_storm` ->
+  `post_scan_integrity` (the old two stay resolvable as registry tombstones only).
+- `PostMaskReport.residual_pii` / `.fk_preservation` / `.policy_validation` are tuples (were lists);
+  `PostValidationRunner.run` returns its summary and no longer writes `quality_metrics`.
+- Keyed masking needs an admitted secret in every release phase (the `job_seed` fallback is removed):
+  `keyed_strategy_requires_secret`.
+- `decoy_engine.keyprovider`: `resolve_key_provider` and `resolve_mask_secret_ref` removed (use
+  `decoy_engine.secret_providers.admit_mask_key`); `resolve_mask_key` lost `mask_secret_ref`;
+  `key_provider_from_ref` returns `KeyProvider` and its `key_version` defaults to `None` (was `"v1"`); the
+  incidental `keyprovider.is_pre_ga` re-export is gone (use `decoy_engine.is_pre_ga`). An unknown secret ref
+  scheme is `secret_provider_unknown` (was `bad_secret_ref`).
+- `when:` grammar: `type` is a reserved name on every Python.
+- DP: the certified rows are re-pinned for 0.17.0; the CLI's `requirements-certified.txt` header fingerprint
+  moves to `a7b40d54...`.
+
+### Changed (release R-a: one version source, release pins, 2026-11-01)
+
+`pyproject.toml` `[project].version` is the single source of the engine version. `decoy_engine.__version__`,
+the `uv.lock` root entry, the installed metadata, the newest dated section of this file and the
+`docs/proof-manifest.json` stamp (its generator used to read this file's newest heading) are held to it by
+`tests/unit/test_version_agreement.py`; `scripts/release/cut-release.sh` (dry run by default, `APPLY=1` to tag)
+reads the tag name from it and refuses any branch but `main`, a dirty tree, an unexpected head, or an existing
+tag. Releases are now cut from `main` itself. The 0.8.0 to 0.16.0 tags were version stamps off `main`, so `main`
+kept reporting 0.7.0 and the DP certified rows were never re-pinned for them: a certified `fit_dp_snapshot`
+could not complete on any of those tagged installs. Both certified rows are re-pinned for 0.17.0
+(`5a76ea92...`, the engine dev/CI profile; `a7b40d54...`, the decoy-cli runtime profile, which the CLI repo's
+`requirements-certified.txt` header must also record), and the Phase F FR0 manifest is re-frozen for engine
+minor `0.17` (envelope digests only; every golden table digest is unchanged).
+
+The reason registry ships at `registry_version` 1.1.0 (891 identities). The seven F13 `runtime.secret_*`
+identities now declare `since` 1.1.0, the registry version that introduced them (they said 1.0.0).
+`tests/fixtures/f29/reason-registry-release.json` pins the shipped catalog (digest and per-`since` counts):
+any change at 1.1.0, or a new identity claiming an already-released `since`, now fails
+`tests/unit/test_reason_release_pin.py`.
+
 ### Added (R1-c: CycloneDX SBOM generator, 2026-10-31)
 
 `scripts/release/sbom.sh` writes a reproducible CycloneDX 1.6 SBOM of the wheel's base runtime closure from `uv.lock` (tool environment pinned, hash-enforced and wheel-only from `scripts/release/sbom-tool-requirements.txt`, run isolated with `python -I`, `uv --no-config`, no ambient `UV_*` settings and CPython 3.12 only; lock hashes; no timestamp or serial; public-index runtime closure only, keyed by name, version and source; well-formed hashed pins only, with the generated components checked against the pins). Not signed or published. Docs: `docs/sbom.md`.
@@ -131,6 +622,10 @@ authored by route selection; foreign text must not steer a reroute). `IsolatedRu
 field before `memory_evidence`, which stays last. See [Reason codes and progress events](docs/reasons.md).
 Consumer slices (CLI exits, platform persistence) are separate work and are not part of this change.
 
+## [0.16.0] - 2026-10-29
+
+Version stamp `5da40c2c` over main `2a44723f`, cut off main. Section reconstructed from the tag.
+
 ### Changed (BREAKING, pre-GA: `TokenVaultWriter.put` returns the authoritative token, 2026-10-29)
 
 `TokenVaultWriter.put(namespace, plaintext, token)` now returns `str`: the token the vault actually
@@ -139,6 +634,20 @@ stored, which may differ from the proposed `token` when a concurrent writer comm
 proposal, so a published token always has a reverse mapping. A writer that returns `None`, an empty
 string or a non-`str` fails the run closed (`tokenize_vault_error`). Writers must be updated to return
 the stored token; there is no compatibility shim. Ships in the next engine minor.
+
+## [0.15.1] - 2026-10-26
+
+Version stamp `fd51be10`, cut off main. Section reconstructed from the tag; the DI1 entry existed only there.
+
+### Added (DI1: datetime and free-text goodness-of-fit measurement, 2026-10-26)
+
+Report-only generation-output goodness-of-fit (GOF) measurement now covers datetime and free-text
+columns. Datetime runs a KS-complement on the yearly ECDF; free-text runs it on the string-length
+histogram. Both reuse the existing `ks_complement_binned` statistic, so no new statistical primitive
+is introduced. The values are reported as additive `extra_metrics`: they are not folded into any
+per-section similarity score or the overall score, and they make no distribution-preserving,
+differential-privacy, or utility claim. An absent histogram reports `comparable: false` with a coded
+reason rather than a fabricated statistic.
 
 ### Added (parity E2a: shared bounded reader + progress stream, 2026-10-26)
 
@@ -161,66 +670,6 @@ The inert execution knobs `substrate`, `max_workers`, and `fallback_to_pandas`, 
 `decoy_engine.license` (`LicenseVerifier`) and `decoy_engine.schema` (`SchemaInspector`) packages,
 are removed (pre-GA hard delete; no consumer in the CLI or platform). `DECOY_SUBSTRATE` stays
 pandas-only.
-### Added (B-6: tokenization write-seam, 2026-10-26)
-
-A `tokenize` strategy writes a deterministic surrogate token for each source
-value and records the plaintext-to-token mapping in a caller-supplied vault, so
-the mapping can be reversed later by an authorized reader. `run_pipeline` grows
-a keyword-only `token_vault_writer` parameter (default `None`, additive, recorded
-in the compatibility contract section 3.4): the platform passes the vault through
-it. A tokenize job runs full-frame only, so supplying the writer forces the
-full-frame route and disables auto-chunk; the bounded routes do not thread the
-writer and a bounded route with a vault fails closed with `tokenize_requires_vault`.
-The token is derived from the mask key, the column namespace, and the
-NFC-normalized source string (the same canonicalization as `mask.hash`'s string
-branch), and the same string is stored as the vault plaintext, so round-trip and
-determinism hold. tokenize accepts only string or object dtype columns and fails
-closed on any other dtype with `tokenize_requires_string_dtype`; it also requires
-a namespace (`tokenize_requires_namespace`).
-
-The token is always derived from the secret mask key, never the public job seed:
-tokenize is an always-keyed strategy, so at GA a tokenize job with no resolved
-secret fails closed with `keyed_strategy_requires_secret` rather than minting
-seed-derived, dictionary-attackable tokens. The `TokenVaultWriter` seam is scoped
-by namespace: `lookup_existing(namespace, plaintext)` and
-`put(namespace, plaintext, token)` take the column namespace, so the same plaintext
-under two namespaces is two distinct vault entries with two distinct tokens and the
-namespaces cannot be linked through a shared token. A vault callback that raises is
-translated to a coded, run-aborting `tokenize_vault_error` whose message carries
-neither the source value nor the token, with the original exception chain
-suppressed, so a vault error that echoes the value cannot leak the plaintext
-through the pipeline's exception. The run aborts with no output table and no
-partial sink commit.
-
-### Changed (Phase D / Dmp: multi-parent FK admitted on the out-of-core route, 2026-10-24)
-
-A child FK column tuple that references several parent tables (the polymorphic
-association) now runs on the out-of-core route; `out_of_core_multi_parent_child_unsupported`
-is gone (pre-GA hard delete). The route merges the parents' key relations into one
-first-hit-wins relation in relationship order (the order the full-frame and sequential routes
-already resolve in) and joins the child once, so the output, warnings and FAIL code match the
-full-frame oracle exactly (`tests/parity/test_phase_d_dmp_multi_parent_ooc.py`). The one
-shape the route refuses is parents whose masked key types differ (for example an integer and
-a float key), which fails closed with `out_of_core_fk_key_dtype_unsupported` before any
-output; run such a job with `execution_mode="sequential"`. The compile-time
-`orphan_policy_conflict` rule is unchanged, and the out-of-core merge re-checks it under the same
-code, so a relationship graph that bypassed the planner with conflicting per-edge policies fails
-closed before any output instead of resolving under the first edge's policy.
-
-### Changed (Phase D / Dcomp-OOC: composite FK on the out-of-core route, 2026-10-24)
-
-The out-of-core FK route's `orphan_fk_violation` error (orphan policy `fail` with a genuine
-orphan) now carries the same message as the full-frame and sequential routes ("N orphan
-row(s) in <child>.<columns> reference no parent key in <parent>.<columns>
-(orphan_policy=fail)."); the code is unchanged, and every route (full-frame, sequential, both
-out-of-core lanes, the mixed generate-parent bridge) now builds it through the one producer
-`_fk_resolve.orphan_fk_violation_error`. A composite FK chain (a composite child
-used as a parent key) is declined out-of-core with the new code
-`out_of_core_composite_fk_chain_unsupported` instead of `out_of_core_parent_seed_missing`;
-the job runs on the sequential route as before. Composite FK groups out-of-core are now
-pinned strictly against the oracle (`tests/parity/test_phase_d_dcomp_composite_ooc*.py`);
-the pre-existing route-level differences they surfaced are recorded in
-`tests/parity/SEMANTIC_DIFFERENCES.md` (Dcomp-OOC section).
 
 ### Added (parity E2a: shared bounded reader, 2026-10-24)
 
@@ -293,6 +742,80 @@ block, stamped only when `fpe_chunk_count` is non-default, drops its
 `requested_substrate`, `max_workers` and `fallback_to_pandas` keys. The never-implemented
 `SchemaInspector` and always-free `LicenseVerifier` stubs are deleted from the public API.
 Pre-GA hard delete: a caller passing a removed kwarg gets a `TypeError`.
+
+## [0.15.0] - 2026-10-26
+
+Version stamp `ec3fc5c4` over main `e3abfdf7`, cut off main. Section reconstructed from the tag.
+
+### Added (B-6: tokenization write-seam, 2026-10-26)
+
+A `tokenize` strategy writes a deterministic surrogate token for each source
+value and records the plaintext-to-token mapping in a caller-supplied vault, so
+the mapping can be reversed later by an authorized reader. `run_pipeline` grows
+a keyword-only `token_vault_writer` parameter (default `None`, additive, recorded
+in the compatibility contract section 3.4): the platform passes the vault through
+it. A tokenize job runs full-frame only, so supplying the writer forces the
+full-frame route and disables auto-chunk; the bounded routes do not thread the
+writer and a bounded route with a vault fails closed with `tokenize_requires_vault`.
+The token is derived from the mask key, the column namespace, and the
+NFC-normalized source string (the same canonicalization as `mask.hash`'s string
+branch), and the same string is stored as the vault plaintext, so round-trip and
+determinism hold. tokenize accepts only string or object dtype columns and fails
+closed on any other dtype with `tokenize_requires_string_dtype`; it also requires
+a namespace (`tokenize_requires_namespace`).
+
+The token is always derived from the secret mask key, never the public job seed:
+tokenize is an always-keyed strategy, so at GA a tokenize job with no resolved
+secret fails closed with `keyed_strategy_requires_secret` rather than minting
+seed-derived, dictionary-attackable tokens. The `TokenVaultWriter` seam is scoped
+by namespace: `lookup_existing(namespace, plaintext)` and
+`put(namespace, plaintext, token)` take the column namespace, so the same plaintext
+under two namespaces is two distinct vault entries with two distinct tokens and the
+namespaces cannot be linked through a shared token. A vault callback that raises is
+translated to a coded, run-aborting `tokenize_vault_error` whose message carries
+neither the source value nor the token, with the original exception chain
+suppressed, so a vault error that echoes the value cannot leak the plaintext
+through the pipeline's exception. The run aborts with no output table and no
+partial sink commit.
+
+## [0.14.2] - 2026-10-25
+
+Version stamp `ec9be3fc` over main `b2749ab1`, cut off main. Section reconstructed from the tag; the `### Fixed` entry existed only there.
+
+### Fixed
+
+- Subset single-table over-budget now returns a typed structured error instead of a
+  `max()`-on-empty crash when a table has no edges (#312).
+
+### Changed (Phase D / Dmp: multi-parent FK admitted on the out-of-core route, 2026-10-24)
+
+A child FK column tuple that references several parent tables (the polymorphic
+association) now runs on the out-of-core route; `out_of_core_multi_parent_child_unsupported`
+is gone (pre-GA hard delete). The route merges the parents' key relations into one
+first-hit-wins relation in relationship order (the order the full-frame and sequential routes
+already resolve in) and joins the child once, so the output, warnings and FAIL code match the
+full-frame oracle exactly (`tests/parity/test_phase_d_dmp_multi_parent_ooc.py`). The one
+shape the route refuses is parents whose masked key types differ (for example an integer and
+a float key), which fails closed with `out_of_core_fk_key_dtype_unsupported` before any
+output; run such a job with `execution_mode="sequential"`. The compile-time
+`orphan_policy_conflict` rule is unchanged, and the out-of-core merge re-checks it under the same
+code, so a relationship graph that bypassed the planner with conflicting per-edge policies fails
+closed before any output instead of resolving under the first edge's policy.
+
+### Changed (Phase D / Dcomp-OOC: composite FK on the out-of-core route, 2026-10-24)
+
+The out-of-core FK route's `orphan_fk_violation` error (orphan policy `fail` with a genuine
+orphan) now carries the same message as the full-frame and sequential routes ("N orphan
+row(s) in <child>.<columns> reference no parent key in <parent>.<columns>
+(orphan_policy=fail)."); the code is unchanged, and every route (full-frame, sequential, both
+out-of-core lanes, the mixed generate-parent bridge) now builds it through the one producer
+`_fk_resolve.orphan_fk_violation_error`. A composite FK chain (a composite child
+used as a parent key) is declined out-of-core with the new code
+`out_of_core_composite_fk_chain_unsupported` instead of `out_of_core_parent_seed_missing`;
+the job runs on the sequential route as before. Composite FK groups out-of-core are now
+pinned strictly against the oracle (`tests/parity/test_phase_d_dcomp_composite_ooc*.py`);
+the pre-existing route-level differences they surfaced are recorded in
+`tests/parity/SEMANTIC_DIFFERENCES.md` (Dcomp-OOC section).
 
 ### Added (§CSV-PARAMS: declare headerless and non-comma delimited sources, 2026-10-23)
 
@@ -4187,8 +4710,9 @@ own branches and are not part of this batch.
   validators ship: `luhn`, `npi`, `iban`, `vin` (all delegate to
   `checksums.validate` from SP-04), `fk_intact` (every non-null child FK value
   resolves to a parent PK), and `no_orphan_children` (every child row has a
-  non-null FK value). The two FK validators implement the SDV HMA1 parent-first
-  DAG pattern (sdv-dev/SDV, MIT). `validate(outputs, config)` is the single
+  non-null FK value). The two FK validators implement the parent-first DAG
+  pattern of the SDV HMA1 method (Patki et al., IEEE DSAA 2016; method only, no
+  SDV code is used: SDV is BUSL-1.1). `validate(outputs, config)` is the single
   entry point; it returns a frozen `ValidationReport` and never mutates output.
   The `ValidationReport` and per-finding `ValidatorFinding` are persisted to the
   evidence manifest under `quality_metrics["validation"]["validators"]`.

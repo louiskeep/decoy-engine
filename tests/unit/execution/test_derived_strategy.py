@@ -562,7 +562,7 @@ def test_t8_per_row_failure_is_coded_and_value_free() -> None:
         )
     assert type(exc.value) is ExecutionError
     assert exc.value.code == "derived_evaluation_failed"
-    text = "derived expression evaluation failed at column 'd', row 0: invalid_value"
+    text = "derived expression evaluation failed at column 'd', row 0: an operand value is invalid"
     assert exc.value.message == text
     assert exc.value.__cause__ is None and exc.value.__context__ is None
 

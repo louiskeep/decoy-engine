@@ -48,10 +48,17 @@ import numpy as np
 import pandas as pd
 
 from decoy_engine import reasons
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    option,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._errors import StrategyError
+from decoy_engine.fileaccess import map_in_context
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.transforms import _ff1
@@ -101,6 +108,13 @@ class FpeStrategyHandler:
     """Format-preserving encryption via NIST SP 800-38G FF1, keyed onto derive."""
 
     name: str = "fpe"
+    namespace_required: bool = True
+    join_safe: bool = True
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("charset", "str", "digits"),
+        option("preserve_separators", "bool", False),
+    )
+    offer_in_wizard: bool = True
 
     def __init__(self, *, chunk_count: int = 4) -> None:
         self._chunk_count = chunk_count
@@ -180,12 +194,12 @@ class FpeStrategyHandler:
                 df[column] = tokens
                 return df, native_warnings
 
-        # One key per (mask_key, namespace), derived once, not per cell.
-        key = derive(ctx.mask_key, namespace, FF1_KEY_LABEL)
+        # One key per (mask_key, namespace), derived once, not per cell; boxed (`_opaque`).
+        key_box = OpaqueBox(derive(ctx.mask_key, namespace, FF1_KEY_LABEL))
 
         def encrypt_one(value: str) -> str:
             return fpe_encrypt_value(
-                value, key, charset, tweak, preserve_sep, validate_luhn, checksum
+                value, key_box.open()[0], charset, tweak, preserve_sep, validate_luhn, checksum
             )
 
         source = df[column]
@@ -342,6 +356,6 @@ class FpeStrategyHandler:
         chunks = [list(chunk) for chunk in np.array_split(np.array(values, dtype=object), workers)]
         with ThreadPoolExecutor(max_workers=workers) as executor:
             chunk_results = list(
-                executor.map(lambda chunk: [encrypt_one(v) for v in chunk], chunks)
+                map_in_context(executor, lambda chunk: [encrypt_one(v) for v in chunk], chunks)
             )
         return [value for chunk_result in chunk_results for value in chunk_result]

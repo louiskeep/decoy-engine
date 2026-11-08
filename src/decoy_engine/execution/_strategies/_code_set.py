@@ -65,14 +65,20 @@ from __future__ import annotations
 
 import pandas as pd
 
-from decoy_engine import reasons
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine import fileaccess, reasons
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    option,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.transforms.code_set import (
+    SHIPPED_CODE_SETS,
     CodeSetConfig,
     apply_code_set,
     describe_loaded_corpus,
@@ -102,6 +108,14 @@ class CodeSetHandler:
     """
 
     name: str = "code_set"
+    namespace_required: bool = True
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("code_set", "str", "icd10", required=True, choices=SHIPPED_CODE_SETS),
+        option("mode", "str", "gen", choices=("mask", "gen")),
+        option("chapter_preserve", "bool", True),
+    )
+    offer_in_wizard: bool = True
 
     def preflight(self, plan: ColumnSeed, ctx: StrategyContext) -> None:
         """Load and validate this column's corpus, regardless of row count.
@@ -180,7 +194,8 @@ class CodeSetHandler:
         record_key = (ctx.current_table, ctx.nested_outer_column or column)
         corpus_record = ctx.code_set_records.get(record_key)
         if corpus_record is None:
-            corpus_record = resolve_corpus_record(code_cfg)
+            with fileaccess.at_position(f"tables.{record_key[0]}.columns.{record_key[1]}"):
+                corpus_record = resolve_corpus_record(code_cfg)
             ctx.code_set_records[record_key] = corpus_record
         evidence = describe_loaded_corpus(code_cfg, record=corpus_record)
 

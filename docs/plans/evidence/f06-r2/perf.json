@@ -1,0 +1,27 @@
+{
+  "batch_peak_mib_per_100k_rows": 14.01,
+  "budget": {
+    "batch_peak_mib_per_100k_rows_max": 120.0,
+    "issue_heavy_cells_per_s_min": 50000,
+    "kernel_cells_per_s_min": 100000,
+    "quarantine_rows_per_s_min": 5000,
+    "streamed_vs_whole_time_ratio_max": 3.0
+  },
+  "budget_misses": [],
+  "cpus": 4,
+  "issue_heavy_cells_per_s": 358805,
+  "kernel_cells_per_s": {
+    "cobol/comp-3/v1": 284455,
+    "cobol/overpunch-ascii-trailing/v1": 459886,
+    "currency/explicit/v1": 182095,
+    "date/iso8601/v1": 845726,
+    "decimal/plain/v1": 426258,
+    "integer/ascii/v1": 967380
+  },
+  "platform": "Linux-6.18.44-fc-v185-x86_64-with-glibc2.39",
+  "pyarrow": "24.0.0",
+  "python": "3.11.17",
+  "quarantine_rows_per_s": 16536,
+  "quarantine_streamed_vs_whole_time_ratio": 0.95,
+  "rows": 200000
+}

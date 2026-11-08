@@ -150,6 +150,10 @@ def _install_fake_ner(monkeypatch, spans_by_marker: dict[str, str]) -> None:
     `iter_ner_spans_batch` (what `_text_mask.py` actually calls, Phase 5)."""
     monkeypatch.setattr("decoy_engine.detection.ner.spacy_installed", lambda: True)
     monkeypatch.setattr("decoy_engine.detection.ner.model_installed", lambda model=None: True)
+    monkeypatch.setattr("decoy_engine.detection.ner._import_spacy", lambda: (object(), None))
+    monkeypatch.setattr(
+        "decoy_engine.detection.ner._spacy_incompatible", lambda spacy, model: False
+    )
 
     def _find_spans(text: str) -> list[Span]:
         found = []
@@ -678,6 +682,10 @@ class TestNerDefaultAndVersionGuard:
         run without touching the filesystem."""
         monkeypatch.setattr("decoy_engine.detection.ner.spacy_installed", lambda: True)
         monkeypatch.setattr("decoy_engine.detection.ner.model_installed", lambda model=None: True)
+        monkeypatch.setattr("decoy_engine.detection.ner._import_spacy", lambda: (object(), None))
+        monkeypatch.setattr(
+            "decoy_engine.detection.ner._spacy_incompatible", lambda spacy, model: False
+        )
         monkeypatch.setattr("decoy_engine.detection.ner.iter_ner_spans", lambda *a, **k: [])
         monkeypatch.setattr(
             "decoy_engine.detection.ner.iter_ner_spans_batch",

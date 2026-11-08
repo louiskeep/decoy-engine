@@ -44,7 +44,9 @@ from typing import Any
 # to 4: the formula sandbox `hash()` function swapped from legacy
 # deterministic_hash to keyed HMAC-SHA256 via _formula_hash_keyed. Bumping
 # requires a release-notes line per done-definition.md.
+from decoy_engine.config._subset_run import refuse_unapplied_subset
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._checks import (
     check_basic_uniqueness_pre_flight,
     check_composite_columns_length_match,
@@ -71,6 +73,7 @@ from decoy_engine.plan._checks_date_shift import (
     check_date_preserve_values,
     check_date_shift_group_by_refs,
 )
+from decoy_engine.plan._checks_declared_casting import compile_declared_casting_contract
 from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
 from decoy_engine.plan._checks_dp import (
     check_dp_generate_contract,
@@ -99,19 +102,23 @@ from decoy_engine.plan._types import (
 from decoy_engine.profile._hash import profile_hash
 from decoy_engine.profile._types import Profile
 
+# F06: bumped 2 -> 3 for the pinned `declared_casting` payload. A version-2 YAML loads with
+# `declared_casting=None` (it never declared any) and runs exactly as before.
 # DPS Scope B (guide 4.7): bumped 1 -> 2 for the pinned `GenerationPlan`
 # payload. A plan_version 1 YAML predates `generation` entirely and
 # deserializes with `generation=None` -- the correct pre-GA hard-delete
 # behavior (`generate_tables` raises the moment it's asked to generate).
-PLAN_VERSION = 2
+PLAN_VERSION = 3
 
 
+@entry_point
 def compile_plan(
     config: dict[str, Any],
     profile: Profile,
     *,
     decoy_engine_version: str,
     no_profile: bool = False,
+    file_access: FileAccess | None = None,
 ) -> Plan:
     """Compile (config, profile, engine_version) into a frozen Plan.
 
@@ -128,6 +135,7 @@ def compile_plan(
             ordering) run regardless: they do not consume distinct counts.
 
     Raises:
+        PipelineValidationError: `config` sets `subset:`.
         PlanCompileError: if any of the five S1 compile-time checks fails.
             The error carries `code`, `path`, and `message` for downstream
             UI rendering.
@@ -164,29 +172,26 @@ def compile_plan(
         check_orphan_fk_policy_completeness,
     )
 
+    refuse_unapplied_subset(config)
     namespace_registry = build_namespace_registry(config, profile)
     check_unknown_provider(config)
     # Row 11 (audit H5, 2026-06-12): structural (config + registry only),
     # runs in both branches right after unknown_provider so a missing
     # provider still surfaces as row 2 first.
     check_non_poolable_provider_with_pool_backend(config)
-    # DPS Scope B (guide 4.7/5): read-and-pin once so every check below
-    # sees the same bytes; DP verification runs before check_statistical_
-    # columns, which needs its dp_verified verdict per column.
+    # DPS Scope B (guide 4.7/5): read-and-pin once so every check below sees the same bytes;
+    # DP verification runs first, as check_statistical_columns needs its dp_verified verdicts.
     _pinned_snapshots, _snapshot_read_failures = read_and_pin_snapshots(config)
     check_dp_generate_contract(config)  # Row 31 (DPS-3): anti-DP knob + condition_on reject
     _dp_verified_columns, _dp_verification = verify_dp_snapshots(config, _pinned_snapshots)
-    # Row 12 (capability-gaps WS3, 2026-06-12): statistical generate
-    # columns vs their snapshot artifacts. Config + artifact only, so it
-    # runs in both branches and in run_config_only_checks. `_snapshot_
-    # read_failures` (C-M1) lets a path the read-once pass already
-    # attempted raise its classified verdict instead of being reopened.
+    # Row 12 (capability-gaps WS3, 2026-06-12): statistical generate columns vs their snapshot
+    # artifacts; runs in both branches and in run_config_only_checks. `_snapshot_read_failures`
+    # (C-M1) lets a path the read-once pass attempted raise its classified verdict, not reopen it.
     _column_specs = check_statistical_columns(
         config, _pinned_snapshots, _dp_verified_columns, failures=_snapshot_read_failures
     )
-    # Row 13 (capability-gaps WS2, 2026-06-12): text_redact `ner` opt-in
-    # requires the spacy extra + model on THIS host. Config + installed
-    # packages only; both branches + run_config_only_checks.
+    # Row 13 (capability-gaps WS2, 2026-06-12): text_redact `ner` opt-in requires the spacy
+    # extra + model on THIS host; both branches + run_config_only_checks.
     check_text_redact_ner_available(config)
     # Row 30 (TX-2, 2026-07-20): text_mask `ner` opt-in requires the same
     # spacy extra + model on THIS host. Config + installed packages only;
@@ -466,6 +471,7 @@ def compile_plan(
             + freetext_advisory_warnings,
         ),
         generation=generation_plan,
+        declared_casting=compile_declared_casting_contract(config),
     )
 
 
@@ -474,7 +480,10 @@ def compile_plan(
 # ---------------------------------------------------------------------
 
 
-def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
+@entry_point
+def run_config_only_checks(
+    config: dict[str, Any], *, file_access: FileAccess | None = None
+) -> tuple[str, ...]:
     """Run the profile-free subset of plan-compile checks.
 
     Audit H5 (2026-06-12): `decoy validate` only schema-checked configs,
@@ -563,6 +572,13 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     check_fpe_charset_config(config)
     # Row 26 (DE-03 sibling): faker-without-provider rejection. Config-only.
     check_faker_requires_provider(config)
+    # F06: declared parsing/casting contracts. Reported only when a config declares any, so a
+    # legacy config's list is unchanged.
+    declared = (
+        ("declared_casting_contract",)
+        if compile_declared_casting_contract(config) is not None
+        else ()
+    )
     return (
         "unknown_provider",
         "when_with_coherent_with",
@@ -596,6 +612,7 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
         "fpe_charset_config",
         # Row 26 (DE-03 sibling): faker-without-provider rejection.
         "faker_requires_provider",
+        *declared,
     )
 
 
@@ -619,25 +636,25 @@ _NON_SEMANTIC_GLOBAL_SETTINGS = frozenset(
         "freetext_advisory_min_distinctness",
     }
 )
+_UNHASHED_BLOCKS = ("sources", "targets", "pre_scan")
 
 
 def _hash_config(config: dict[str, Any]) -> str:
     """SHA-256 over a canonical JSON serialization of the masking-semantics
     portion of the config (M1 from S1 end-of-sprint Dennis review).
 
-    The `sources` and `targets` blocks are explicitly excluded: they
-    describe data binding (where bytes come from, where bytes go) rather
-    than masking semantics. A user swapping a local file source for an
-    S3 source does not change which columns mask how; the
-    pipeline_config_hash must stay byte-identical across that swap so
-    audit + reproducibility tooling can match the two runs as
-    semantically equivalent.
+    The `sources`, `targets` and `pre_scan` blocks are explicitly excluded: the first two describe
+    data binding (where bytes come from, where bytes go) and `pre_scan` only suggests, so none is
+    masking semantics. A user swapping a local file source for an S3 source does not change which
+    columns mask how; the pipeline_config_hash must stay byte-identical across that swap so audit
+    + reproducibility tooling can match the two runs as semantically equivalent. `post_scan`
+    stays in: under `ner_findings: fail` its `dismissed` list decides what blocks.
 
     Sort_keys=True, ensure_ascii=True, separators=(",", ":") for byte
     stability across Python runtimes. Same masking semantics produce the
     same hash regardless of key insertion order or source/target binding.
     """
-    semantic_config = {k: v for k, v in config.items() if k not in ("sources", "targets")}
+    semantic_config = {k: v for k, v in config.items() if k not in _UNHASHED_BLOCKS}
     global_settings = semantic_config.get("global_settings")
     if isinstance(global_settings, dict) and any(
         key in global_settings for key in _NON_SEMANTIC_GLOBAL_SETTINGS

@@ -55,6 +55,7 @@ Run:  pytest tests/property/test_fk_keys_invariants.py -q
 
 from __future__ import annotations
 
+import datetime as dt
 import math
 from decimal import Decimal
 
@@ -124,6 +125,21 @@ def scalar_values() -> st.SearchStrategy[object]:
         st.decimals(
             min_value=-(10**6), max_value=10**6, allow_nan=False, allow_infinity=False, places=None
         ),
+        # Temporal keys (slice 0 item 2): naive datetimes over the whole year 1..9999 range,
+        # dates, and in-range Timestamps that carry a nanosecond part (so no Timestamp here
+        # is ever equal to a datetime; the cross-unit equal-instant case is the dedicated
+        # unit-pair property below). NaT is excluded and pinned in the token snapshot.
+        st.datetimes(min_value=dt.datetime(1, 1, 1), max_value=dt.datetime(9999, 12, 31)),
+        st.dates(),
+        _ns_timestamps(),
+    )
+
+
+def _ns_timestamps() -> st.SearchStrategy[pd.Timestamp]:
+    return (
+        st.integers(min_value=pd.Timestamp.min.value, max_value=pd.Timestamp.max.value)
+        .filter(lambda n: n % 1000 != 0)
+        .map(pd.Timestamp)
     )
 
 
@@ -927,3 +943,128 @@ def test_to_pandas_fk_safe_cast_failure_raises_the_coded_execution_error(monkeyp
     with pytest.raises(ExecutionError) as ei:
         to_pandas_fk_safe(table, {"k"})
     assert ei.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
+
+
+# --------------------------------------------------------------------------
+# Temporal join tokens (slice 0 item 2, plan T9 and T10).
+# Labels: CH = characterization (green before and after), FB = fail-before (red on main).
+# --------------------------------------------------------------------------
+
+_EPOCH = dt.datetime(1970, 1, 1)
+
+
+@pytest.mark.parametrize(
+    ("value", "token"),
+    [
+        pytest.param(5, "\x00INT:5", id="int-CH"),
+        pytest.param(2.5, "\x00DEC:Decimal('2.5')", id="float-CH"),
+        pytest.param(Decimal("1.20"), "\x00DEC:Decimal('1.2')", id="decimal-CH"),
+        pytest.param("ab", "\x00STR:2:ab", id="str-CH"),
+        pytest.param(True, "\x00INT:1", id="bool-CH"),
+        pytest.param(None, "\x00NULL", id="none-CH"),
+        # NaT is an instance of datetime: the TS branch must exclude it.
+        pytest.param(pd.NaT, "\x00OBJ:NaTType:NaT", id="nat-CH"),
+        pytest.param(dt.datetime(2020, 1, 1), "\x00TS:1577836800000000000", id="datetime-FB"),
+        pytest.param(
+            pd.Timestamp("2020-01-01 00:00:00.000000001"),
+            "\x00TS:1577836800000000001",
+            id="timestamp_ns-FB",
+        ),
+        pytest.param(
+            dt.datetime(1969, 12, 31, 23, 59, 59, 999999), "\x00TS:-1000", id="pre_epoch-FB"
+        ),
+        pytest.param(
+            dt.datetime(9999, 12, 31, 23, 59, 59, 999999),
+            "\x00TS:253402300799999999000",
+            id="far_date_beyond_int64_ns-FB",
+        ),
+        pytest.param(dt.date(2020, 1, 1), "\x00DATE:737425", id="date-FB"),
+    ],
+)
+def test_fk_join_key_token_snapshot(value: object, token: str) -> None:
+    """T9: every pre-existing token is byte-identical; naive temporal values mint `TS`
+    (exact integer nanoseconds since the epoch, no int64 bound) and dates mint `DATE`."""
+    assert fk_join_key(value) == token
+
+
+def test_an_arrow_null_timestamp_arrives_as_none_not_nat() -> None:
+    """T9 (CH): the join reads keys through `to_pylist`, where an Arrow null is `None`, so the
+    NaT exclusion in the token branch is defensive; pinned so a change is visible."""
+    assert pa.array([None], pa.timestamp("ns")).to_pylist() == [None]
+
+
+_UNIT_FACTOR = {"s": 10**9, "ms": 10**6, "us": 10**3, "ns": 1}
+_DATETIME_NS_RANGE = (
+    (dt.datetime(1, 1, 1) - _EPOCH) // dt.timedelta(microseconds=1) * 1000,
+    (dt.datetime(9999, 12, 31, 23, 59, 59) - _EPOCH) // dt.timedelta(microseconds=1) * 1000,
+)
+_NS_RANGE = (pd.Timestamp.min.value, pd.Timestamp.max.value)
+
+
+def _as_py(ns_value: int, unit: str) -> object:
+    return pa.scalar(ns_value // _UNIT_FACTOR[unit], pa.timestamp(unit)).as_py()
+
+
+def _instants_for(u1: str, u2: str) -> st.SearchStrategy[int]:
+    """Integer nanoseconds representable exactly at both units (aligned to the coarser one)."""
+    lo, hi = _NS_RANGE if "ns" in (u1, u2) else _DATETIME_NS_RANGE
+    step = max(_UNIT_FACTOR[u1], _UNIT_FACTOR[u2])
+    return st.integers(min_value=-(-lo // step), max_value=hi // step).map(lambda k: k * step)
+
+
+_UNIT_PAIRS = [
+    pytest.param(u1, u2, id=f"{u1}-{u2}-{'FB' if (u1 == 'ns') != (u2 == 'ns') else 'CH'}")
+    for u1 in ("s", "ms", "us", "ns")
+    for u2 in ("s", "ms", "us", "ns")
+]
+
+
+@pytest.mark.parametrize(("u1", "u2"), _UNIT_PAIRS)
+@given(data=st.data())
+def test_equal_instants_at_two_units_mint_equal_tokens(
+    u1: str, u2: str, data: st.DataObject
+) -> None:
+    """T10: the oracle's dict treats one instant read at two Arrow units as one key
+    (`datetime == Timestamp` for equal instants), so the join token must too; two distinct
+    instants keep distinct tokens. Red on main exactly when one side is `ns`, because
+    `as_py()` yields `pd.Timestamp` there and `datetime` elsewhere."""
+    first = data.draw(_instants_for(u1, u2))
+    second = data.draw(_instants_for(u1, u2))
+    a, b = _as_py(first, u1), _as_py(first, u2)
+    assert a == b
+    assert fk_join_key(a) == fk_join_key(b)
+    if second != first:
+        assert fk_join_key(_as_py(second, u2)) != fk_join_key(a)
+
+
+@pytest.mark.parametrize("unit", ["s", "ms", "us"])
+@pytest.mark.parametrize(
+    "instant",
+    [dt.datetime(1, 1, 1), dt.datetime(9999, 12, 31, 23, 59, 58), dt.datetime(1900, 1, 1, 0, 0, 1)],
+    ids=["year_1", "year_9999", "pre_epoch"],
+)
+def test_far_and_pre_epoch_instants_keep_distinct_tokens_CH(
+    unit: str, instant: dt.datetime
+) -> None:
+    """T10 (CH): far dates and negative epochs at s/ms/us are distinct from their neighbour."""
+    value = pa.scalar(instant, pa.timestamp(unit)).as_py()
+    neighbour = pa.scalar(instant + dt.timedelta(seconds=1), pa.timestamp(unit)).as_py()
+    assert fk_join_key(value) != fk_join_key(neighbour)
+    assert fk_join_key(value) == fk_join_key(instant)
+
+
+def test_date_and_midnight_datetime_never_share_a_token_CH() -> None:
+    """T10 (CH): `date(2020,1,1) == datetime(2020,1,1)` is False in Python, so the oracle's dict
+    keeps them apart; so must the token (date32 never unifies with timestamp)."""
+    assert dt.date(2020, 1, 1) != dt.datetime(2020, 1, 1)
+    assert fk_join_key(dt.date(2020, 1, 1)) != fk_join_key(dt.datetime(2020, 1, 1))
+    assert fk_join_key(dt.date(2020, 1, 1)) != fk_join_key(pd.Timestamp("2020-01-01"))
+
+
+def test_tz_aware_values_stay_on_the_obj_path_CH() -> None:
+    """T10 (CH): zone-aware keys are refused up front for output typing; their token keeps the
+    `OBJ` path rather than folding onto a naive instant."""
+    aware = dt.datetime(2020, 1, 1, tzinfo=dt.timezone.utc)
+    assert fk_join_key(aware).startswith("\x00OBJ:")
+    assert fk_join_key(pd.Timestamp("2020-01-01", tz="UTC")).startswith("\x00OBJ:")
+    assert fk_join_key(aware) != fk_join_key(dt.datetime(2020, 1, 1))

@@ -54,7 +54,7 @@ Error handling:
   A per-row evaluation failure raises ValueError whose text is exactly
   `derived expression evaluation failed at column <name>, row <index>: <reason>`,
   with the reason word looked up by exact exception type in `_FAILURE_REASONS`
-  (default `evaluation_error`). The cell value, the original message, its class
+  (default "the expression could not be evaluated"). The cell value, the original message, its class
   name and the reference name never reach the text, `args` or `__notes__`, and the
   error is raised after the `except` block so neither `__cause__` nor `__context__`
   links the value-bearing original (PEP 3134; `from None` alone keeps `__context__`).
@@ -300,7 +300,7 @@ def apply_derived(
             return None
         result = evaluate(config.compiled, ctx)
     except Exception as exc:
-        reason = _FAILURE_REASONS.get(type(exc), "evaluation_error")
+        reason = _FAILURE_REASONS.get(type(exc), _DEFAULT_FAILURE_REASON)
     if reason is not None:
         raise ValueError(evaluation_failure_text(column, row_index, reason))
     return _apply_bounds(result, config.bounds)
@@ -308,13 +308,14 @@ def apply_derived(
 
 # Exact-type table: a subclass or an unlisted type gets the default word, and the
 # exception's own name and message are never read (they can carry the cell value).
+_DEFAULT_FAILURE_REASON = "the expression could not be evaluated"
 _FAILURE_REASONS: dict[type[BaseException], str] = {
-    ZeroDivisionError: "division_by_zero",
-    TypeError: "type_mismatch",
-    ValueError: "invalid_value",
-    OverflowError: "overflow",
-    KeyError: "missing_reference",
-    ValidationError: "unsupported_expression",
+    ZeroDivisionError: "division by zero",
+    TypeError: "an operand has an unsupported type",
+    ValueError: "an operand value is invalid",
+    OverflowError: "an operand value is invalid",
+    KeyError: "a referenced column is missing",
+    ValidationError: "an argument is not supported",
 }
 
 

@@ -1,0 +1,36 @@
+== tests/acceptance/test_f06_parent_quarantine.py
+E       Failed: full_frame/format published: parent rows=1, completeness unchecked
+E       Failed: sequential/format published: parent rows=1, completeness unchecked
+E       Failed: chunked/format published: parent rows=1, completeness unchecked
+E       Failed: unified_slice/format published: parent rows=1, completeness unchecked
+E       Failed: DID NOT RAISE DeclaredCastRouteError
+FAILED tests/acceptance/test_f06_parent_quarantine.py::test_quarantined_parent_row_never_orphans_its_children[format-full_frame]
+FAILED tests/acceptance/test_f06_parent_quarantine.py::test_quarantined_parent_row_never_orphans_its_children[format-sequential]
+FAILED tests/acceptance/test_f06_parent_quarantine.py::test_quarantined_parent_row_never_orphans_its_children[format-chunked]
+FAILED tests/acceptance/test_f06_parent_quarantine.py::test_quarantined_parent_row_never_orphans_its_children[format-unified_slice]
+FAILED tests/acceptance/test_f06_parent_quarantine.py::test_auto_mode_refuses_before_any_read
+5 failed, 5 passed in 1.47s
+== tests/unit/declared_casting/test_stream_staging.py
+E       AssertionError: assert PosixPath('/tmp/pytest-of-root/pytest-20/test_staged_copy_lives_under_t0/caller-root') in <PosixPath.parents>
+E       Failed: DID NOT RAISE ExecutionError
+E       Failed: DID NOT RAISE ExecutionError
+FAILED tests/unit/declared_casting/test_stream_staging.py::test_staged_copy_lives_under_the_callers_temp_dir_and_is_removed
+FAILED tests/unit/declared_casting/test_stream_staging.py::test_staged_copy_counts_against_the_temp_disk_budget
+FAILED tests/unit/declared_casting/test_stream_staging.py::test_budget_applies_without_a_caller_temp_dir
+3 failed in 0.48s
+== tests/unit/declared_casting/test_quarantine_begin_failure.py
+E       AssertionError: assert 'not_needed' == 'confirmed'
+E       AssertionError: assert 'not_needed' == 'confirmed'
+E       AssertionError: assert 'not_needed' == 'failed'
+FAILED tests/unit/declared_casting/test_quarantine_begin_failure.py::test_failed_open_closes_the_fd_and_removes_the_partial[fchmod]
+FAILED tests/unit/declared_casting/test_quarantine_begin_failure.py::test_failed_open_closes_the_fd_and_removes_the_partial[write]
+FAILED tests/unit/declared_casting/test_quarantine_begin_failure.py::test_failed_open_reports_a_cleanup_that_could_not_finish
+3 failed in 0.35s
+== tests/unit/declared_casting/test_qualify_runtime.py
+E       AssertionError: assert None == 'empty_owner'
+E       AssertionError: assert '/secret/path...ission denied' == 'unqualified'
+FAILED tests/unit/declared_casting/test_qualify_runtime.py::test_empty_owner_is_refused
+FAILED tests/unit/declared_casting/test_qualify_runtime.py::test_sink_detail_is_mapped_to_a_fixed_token[/secret/path: permission denied-unqualified]
+2 failed, 2 passed in 0.30s
+== tests/unit/declared_casting/test_route_capabilities.py
+12 passed in 0.33s

@@ -125,6 +125,58 @@ class ColumnConfig(BaseModel):
     # Per-row gate: only rows where the predicate is true are masked. Accepts the closed
     # `when` grammar only (see `expressions/_when_parser`); a blank value means no gate.
     when: str | None = None
+    # F06 declared parsing/casting contract (see `decoy_engine.contracts.declared_casting`).
+    # All five stay unset for a legacy column and are then omitted from dumps, so configs
+    # that do not use them hash and serialize exactly as before the fields existed.
+    logical_type: str | None = None
+    parse_format: Any = None
+    sentinel_to_null: Any = None
+    error_policy: str | None = None
+    output_format: Any = None
+
+    @field_validator("logical_type", mode="before")
+    @classmethod
+    def _f06_logical(cls, value: Any) -> Any:
+        from decoy_engine.config import _declared_casting as dc
+
+        return dc.closed_choice(value, dc.LOGICAL_TYPES, "logical_type")
+
+    @field_validator("error_policy", mode="before")
+    @classmethod
+    def _f06_policy(cls, value: Any) -> Any:
+        from decoy_engine.config import _declared_casting as dc
+
+        return dc.closed_choice(value, dc.ERROR_POLICIES, "error_policy")
+
+    @field_validator("parse_format", mode="before")
+    @classmethod
+    def _f06_parse(cls, value: Any) -> Any:
+        from decoy_engine.config import _declared_casting as dc
+
+        return dc.typed_format(value, "parse")
+
+    @field_validator("output_format", mode="before")
+    @classmethod
+    def _f06_output(cls, value: Any) -> Any:
+        from decoy_engine.config import _declared_casting as dc
+
+        return dc.typed_format(value, "output")
+
+    @field_validator("sentinel_to_null", mode="before")
+    @classmethod
+    def _f06_sentinel(cls, value: Any) -> Any:
+        from decoy_engine.config import _declared_casting as dc
+
+        return dc.typed_sentinel(value)
+
+    @model_validator(mode="after")
+    def _f06_contract(self) -> ColumnConfig:
+        from decoy_engine.config import _declared_casting as dc
+
+        default_policy = dc.check_column(self)
+        if default_policy is not None:
+            self.error_policy = default_policy
+        return self
 
     @field_validator("when")
     @classmethod
@@ -159,10 +211,9 @@ class ColumnConfig(BaseModel):
         generic object; asking again without the `serialization` entry recovers the field
         schema, as `GlobalSettings` does for its `dp` serializer.
         """
-        schema = handler(core_schema)
-        if "properties" not in schema and "$ref" not in schema:
-            schema = handler({k: v for k, v in core_schema.items() if k != "serialization"})
-        return schema
+        from decoy_engine.config._declared_casting import recover_serialization_schema
+
+        return recover_serialization_schema(core_schema, handler)
 
     @model_serializer(mode="wrap")
     def _omit_unset_when(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
@@ -171,6 +222,15 @@ class ColumnConfig(BaseModel):
         data: dict[str, Any] = handler(self)
         if data.get("when") is None:
             data.pop("when", None)
+        for key in (
+            "logical_type",
+            "parse_format",
+            "sentinel_to_null",
+            "error_policy",
+            "output_format",
+        ):
+            if data.get(key) is None:
+                data.pop(key, None)
         return data
 
 

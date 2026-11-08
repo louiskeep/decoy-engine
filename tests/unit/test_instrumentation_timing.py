@@ -148,6 +148,7 @@ class TestOverheadGate:
     """
 
     @pytest.mark.parametrize("iterations", [1000])
+    @pytest.mark.serial
     def test_overhead_below_5_percent_on_tight_loop(self, iterations):
         # Baseline: do the empty work N times without any timing.
         def do_work() -> None:
@@ -182,6 +183,7 @@ class TestOverheadGate:
         # Records should have been collected.
         assert len(c.records) == iterations
 
+    @pytest.mark.serial
     def test_overhead_negligible_when_no_collector(self):
         # Without an active collector, timed_strategy should add negligible
         # overhead because the cheap path returns immediately.

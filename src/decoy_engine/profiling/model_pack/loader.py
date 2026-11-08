@@ -29,7 +29,17 @@ import os
 from pathlib import Path
 from typing import Any
 
+from decoy_engine import fileaccess
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.errors import DecoyError
+from decoy_engine.fileaccess import (
+    DirHandle,
+    FileAccess,
+    FileAccessDenied,
+    FileAccessUnavailable,
+    FileRequest,
+    FileRole,
+)
 from decoy_engine.profiling.model_pack.provenance import (
     SIGNING_KEY_ENV,
     load_signing_key_from_env,
@@ -49,7 +59,23 @@ _REQUIRE_SIG_FALSY = frozenset({"0", "false", "no", "off", ""})
 
 
 class ModelPackLoadError(DecoyError, ValueError):
-    """Raised when a pack fails any validation check."""
+    """Raised when a pack fails any validation check.
+
+    `cause` says why the pack is unusable and is set where the error is raised, never parsed
+    from the message: `disabled` (DECOY_ML_DISABLED), `import` (a runtime library will not
+    import) or `pack` (the pack itself is missing, altered or unreadable; the default).
+    """
+
+    def __init__(self, message: str, *, cause: str = "pack") -> None:
+        super().__init__(message)
+        self.cause = cause
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (_rebuild_load_error, (str(self.args[0]) if self.args else "", self.cause))
+
+
+def _rebuild_load_error(message: str, cause: str) -> ModelPackLoadError:
+    return ModelPackLoadError(message, cause=cause)
 
 
 def _require_signature_enabled() -> bool:
@@ -91,7 +117,13 @@ class ModelPackLoader:
     >>> pack["clf"].predict_proba(...)
     """
 
-    def __init__(self, pack_dir: Path, *, trusted: bool = False) -> None:
+    def __init__(
+        self,
+        pack_dir: Path | DirHandle,
+        *,
+        trusted: bool = False,
+        file_access: FileAccess | None = None,
+    ) -> None:
         """Construct a loader for the pack at *pack_dir*.
 
         ``trusted`` marks the pack as the first-party default artifact (shipped
@@ -105,8 +137,46 @@ class ModelPackLoader:
         for the bytes. ``classify_fields`` sets ``trusted=True`` only for its
         resolved default pack.
         """
-        self._pack_dir = pack_dir
+        # A path is read through the policy, whatever `trusted` claims: the flag governs
+        # signature enforcement, never file access. Only a directory handle the caller
+        # already holds (the shipped default pack, opened by `classify_fields`) skips it.
+        self._handle: DirHandle | None = None if isinstance(pack_dir, (str, Path)) else pack_dir
+        self._policy = fileaccess.capture(file_access) if self._handle is None else None
+        self._pack_dir = pack_dir if self._handle is None else self._handle.display
+        # What a message or log line calls the pack: its path for the ambient CLI policy, its
+        # config position for any other (a locator never crosses).
+        self._label = (
+            self._handle.display
+            if self._handle is not None
+            else (str(pack_dir) if fileaccess.is_ambient(self._policy) else "pre_scan.model_pack")
+        )
         self._trusted = trusted
+
+    def _open_dir(self) -> DirHandle:
+        if self._handle is not None:
+            return self._handle
+        if self._policy is None:  # pragma: no cover - a held handle returned above
+            raise FileAccessUnavailable("no policy and no directory handle")
+        return self._policy.open_dir(
+            FileRequest(
+                FileRole.MODEL_PACK_ROOT, "read_dir", str(self._pack_dir), "pre_scan.model_pack"
+            )
+        )
+
+    def _read_member(self, name: str) -> bytes | None:
+        """The bytes of one pack file, or None when it is absent."""
+        directory = self._open_dir()
+        try:
+            member = directory.open_file(name)
+            try:
+                return member.read_all()
+            finally:
+                member.close()
+        except (FileNotFoundError, NotADirectoryError):
+            return None
+        finally:
+            if self._handle is None:
+                directory.close()
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -134,7 +204,8 @@ class ModelPackLoader:
         """
         if self.is_ml_disabled:
             raise ModelPackLoadError(
-                "ML is disabled via DECOY_ML_DISABLED=1; engine uses deterministic fallback."
+                "ML is disabled via DECOY_ML_DISABLED=1; engine uses deterministic fallback.",
+                cause="disabled",
             )
 
         manifest = self._load_manifest()
@@ -147,6 +218,10 @@ class ModelPackLoader:
         pack_obj = self._deserialise(model_bytes)
         pack_obj["manifest"] = manifest
         return pack_obj
+
+    def read_manifest(self) -> ModelPackManifest:
+        """The pack's manifest alone (identity and version), without hashing or loading weights."""
+        return self._load_manifest()
 
     def load_with_fallback(self) -> dict[str, Any] | None:
         """Try to load the pack; return ``None`` on any failure + log a warning.
@@ -161,6 +236,8 @@ class ModelPackLoader:
             _log.warning("Model pack unavailable; falling back to regex baseline: %s", exc)
             return None
         except Exception as exc:
+            if fileaccess.keeps_class(exc):
+                raise
             _log.warning(
                 "Unexpected error loading model pack; falling back to regex baseline: %s", exc
             )
@@ -169,17 +246,17 @@ class ModelPackLoader:
     # ── Private helpers ───────────────────────────────────────────────────────
 
     def _load_manifest(self) -> ModelPackManifest:
-        manifest_path = self._pack_dir / "manifest.json"
-        if not manifest_path.exists():
+        data = self._read_member("manifest.json")
+        if data is None:
             raise ModelPackLoadError(
-                f"Missing manifest.json in {self._pack_dir}. "
+                f"Missing manifest.json in {self._label}. "
                 "The pack directory must contain manifest.json and model.joblib."
             )
         try:
-            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+            raw = json.loads(data.decode("utf-8"))
             return ModelPackManifest.from_dict(raw)
         except (json.JSONDecodeError, TypeError, KeyError) as exc:
-            raise ModelPackLoadError(f"Corrupt manifest.json in {self._pack_dir}: {exc}") from exc
+            raise ModelPackLoadError(f"Corrupt manifest.json in {self._label}: {exc}") from exc
 
     def _check_format(self, manifest: ModelPackManifest) -> None:
         if manifest.format_version != PACK_FORMAT:
@@ -198,15 +275,17 @@ class ModelPackLoader:
             )
 
     def _read_weights(self) -> bytes:
-        model_path = self._pack_dir / "model.joblib"
-        if not model_path.exists():
-            raise ModelPackLoadError(f"Missing model.joblib in {self._pack_dir}.")
         try:
-            return model_path.read_bytes()
+            weights = self._read_member("model.joblib")
+        except FileAccessDenied:
+            raise
         except OSError as exc:
-            raise ModelPackLoadError(
-                f"Cannot read model.joblib in {self._pack_dir}: {exc}"
-            ) from exc
+            if fileaccess.keeps_class(exc):
+                raise
+            raise ModelPackLoadError(f"Cannot read model.joblib in {self._label}: {exc}") from exc
+        if weights is None:
+            raise ModelPackLoadError(f"Missing model.joblib in {self._label}.")
+        return weights
 
     def _check_sha256(self, model_bytes: bytes, manifest: ModelPackManifest) -> None:
         if not manifest.sha256:
@@ -261,13 +340,15 @@ class ModelPackLoader:
         outside signature scope but are never read by the loader, and the
         weights are independently SHA-256 checked.
         """
-        key = load_signing_key_from_env()
+        # Boxed (`_opaque`): this frame raises below while the key is live, and a traceback keeps
+        # it; the key is unboxed only inside the call that consumes it.
+        key_box = OpaqueBox(load_signing_key_from_env())
         # Fail CLOSED on a set-but-unparseable key: an operator who configured
         # DECOY_PACK_SIGNING_KEY intended enforcement, so a typo'd/invalid value
         # must not silently collapse to "no key" (which would let a tampered
         # signed pack through on the trusted default). Mirrors the fail-closed
         # posture of _require_signature_enabled on an ambiguous flag.
-        if key is None and os.environ.get(SIGNING_KEY_ENV, "").strip():
+        if key_box.open()[0] is None and os.environ.get(SIGNING_KEY_ENV, "").strip():
             raise ModelPackLoadError(
                 f"{SIGNING_KEY_ENV} is set but could not be parsed as a valid "
                 "signing key; refusing to load (fail-closed). Fix the key value "
@@ -278,21 +359,21 @@ class ModelPackLoader:
         # hard-lockdown flag is set (which also tightens the trusted default).
         require_sig = _require_signature_enabled() or not self._trusted
 
-        if key is not None:
+        if key_box.open()[0] is not None:
             # A key is configured: enforce the signature regardless of trust.
             if not signed:
                 raise ModelPackLoadError(
-                    f"Pack {self._pack_dir} is unsigned (manifest_hmac is empty) "
+                    f"Pack {self._label} is unsigned (manifest_hmac is empty) "
                     "but DECOY_PACK_SIGNING_KEY is configured. "
                     "Sign the pack with sign_manifest() before deploying."
                 )
-            if not verify_manifest(manifest, key):
+            if not verify_manifest(manifest, key_box.open()[0]):
                 raise ModelPackLoadError(
-                    f"Pack {self._pack_dir} signature verification FAILED. "
+                    f"Pack {self._label} signature verification FAILED. "
                     "The manifest may have been tampered with. "
                     "Re-sign with the current key or investigate the discrepancy."
                 )
-            _log.debug("Pack %s signature verified (ML3.2).", self._pack_dir)
+            _log.debug("Pack %s signature verified (ML3.2).", self._label)
             return
 
         # No key configured.
@@ -310,10 +391,10 @@ class ModelPackLoader:
                 _log.error(
                     "SECURITY: refusing to deserialise untrusted model pack %s "
                     "without a verified signature (DE-04).",
-                    self._pack_dir,
+                    self._label,
                 )
             raise ModelPackLoadError(
-                f"Refusing to load pack {self._pack_dir}: {reason}, but no "
+                f"Refusing to load pack {self._label}: {reason}, but no "
                 "DECOY_PACK_SIGNING_KEY is configured to verify it (DE-04). "
                 "Sign the pack (sign_manifest / sign_pack) and set "
                 "DECOY_PACK_SIGNING_KEY to the key derived from the instance "
@@ -325,14 +406,14 @@ class ModelPackLoader:
             _log.warning(
                 "Pack %s has a manifest_hmac signature but DECOY_PACK_SIGNING_KEY "
                 "is not configured; signature verification skipped.",
-                self._pack_dir,
+                self._label,
             )
         else:
             _log.warning(
                 "Pack %s is unsigned (manifest_hmac empty) and no "
                 "DECOY_PACK_SIGNING_KEY is configured. "
                 "Provenance cannot be verified (ML3.2).",
-                self._pack_dir,
+                self._label,
             )
 
     def _deserialise(self, model_bytes: bytes) -> dict[str, Any]:
@@ -344,9 +425,13 @@ class ModelPackLoader:
             import joblib
         except ImportError as exc:
             raise ModelPackLoadError(
-                "joblib is required to load a model pack. Install via: pip install -e '.[ml]'"
+                "joblib is required to load a model pack. Install via: pip install -e '.[ml]'",
+                cause="import",
             ) from exc
         try:
             return dict(joblib.load(io.BytesIO(model_bytes)))
         except Exception as exc:
-            raise ModelPackLoadError(f"Failed to deserialise model.joblib: {exc}") from exc
+            raise ModelPackLoadError(
+                f"Failed to deserialise model.joblib: {exc}",
+                cause="import" if isinstance(exc, ImportError) else "pack",
+            ) from exc

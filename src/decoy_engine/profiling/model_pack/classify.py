@@ -26,11 +26,17 @@ Determinism:
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine import fileaccess
+from decoy_engine.fileaccess import FileAccess
+
 if TYPE_CHECKING:
     import pandas  # classify_fields signature only; imported lazily at call-time
+
+    from decoy_engine.profiling.model_pack.loader import ModelPackLoader
 
 _log = logging.getLogger(__name__)
 
@@ -84,23 +90,35 @@ def _default_pack_dir() -> Path:
 
 
 def _is_default_pack_dir(pack_dir: Path) -> bool:
-    """True if *pack_dir* resolves to the first-party default pack location.
+    """True if *pack_dir* names the first-party default pack location (a lexical comparison;
+    the path is never opened).
 
     Lets a caller that passes the default path explicitly keep the trusted
     posture (avoids a silent ML-off downgrade for callers -- e.g. the platform
     classify-fields endpoint -- that were already pointing at the shipped pack);
     a genuinely different pack stays untrusted (DE-04 Option C).
     """
-    try:
-        return pack_dir.resolve() == _default_pack_dir().resolve()
-    except OSError:
-        return False
+    return Path(os.path.abspath(pack_dir)) == Path(os.path.abspath(_default_pack_dir()))
+
+
+def default_pack_loader(file_access: FileAccess | None = None) -> ModelPackLoader:
+    """The one loader for the shipped default pack, the only pack the engine trusts unsigned.
+
+    The default is package data the engine owns, so it is read directly: a caller path that
+    names it is replaced by the engine's own constant, never opened.
+    """
+    from decoy_engine.profiling.model_pack.loader import ModelPackLoader
+
+    return ModelPackLoader(
+        fileaccess.engine_dir_handle(_default_pack_dir()), trusted=True, file_access=file_access
+    )
 
 
 def classify_fields(
     df: pandas.DataFrame,
     *,
     pack_dir: Path | None = None,
+    file_access: FileAccess | None = None,
 ) -> dict[str, dict[str, Any]] | None:
     """Classify each column in *df* using the trained LightGBM model pack.
 
@@ -150,33 +168,42 @@ def classify_fields(
     - Columns with all-null values are classified from their header tokens
       and dtype alone; the feature builder handles nulls gracefully.
     """
-    import numpy as np
-
-    from decoy_engine.profiling.eval.bands import classify_band
-    from decoy_engine.profiling.eval.fixtures import NO_DETECTOR
-    from decoy_engine.profiling.features.builder import build_column_features
-    from decoy_engine.profiling.model_pack.featurizer import flatten_features
-    from decoy_engine.profiling.model_pack.loader import ModelPackLoader
-
     # DE-04 (Option C): the resolved default pack is first-party (shipped in the
     # wheel, SHA-256 verified) and is trusted; a caller-supplied pack_dir crosses
     # an untrusted boundary and must carry a verifiable signature (the loader
     # fail-closes it before joblib.load runs). A pack_dir that resolves to the
     # default location stays trusted, so a caller pinning the shipped pack
     # explicitly (e.g. the platform endpoint) is not silently downgraded to None.
-    if pack_dir is None:
-        resolved_dir = _default_pack_dir()
-        trusted = True
+    if pack_dir is None or _is_default_pack_dir(pack_dir):
+        loader = default_pack_loader(file_access)
     else:
-        resolved_dir = pack_dir
-        trusted = _is_default_pack_dir(pack_dir)
+        from decoy_engine.profiling.model_pack.loader import ModelPackLoader
 
-    loader = ModelPackLoader(resolved_dir, trusted=trusted)
+        loader = ModelPackLoader(pack_dir, trusted=False, file_access=file_access)
     pack = loader.load_with_fallback()
     if pack is None:
         # ML disabled or pack unavailable; caller uses the regex baseline.
         _log.debug("classify_fields: pack unavailable; returning None.")
         return None
+
+    return classify_frame(pack, df)
+
+
+def classify_frame(pack: dict[str, Any], frame: pandas.DataFrame) -> dict[str, dict[str, Any]]:
+    """Classify each column of *frame* with an already loaded *pack*.
+
+    Inference only: the pack comes from the caller (`ModelPackLoader.load()`, the strict load),
+    so a pack that failed to load can never turn into a silent `None` here, and the pack is
+    hashed and unpickled once per process rather than once per call. The result has the shape
+    of one `classify_fields` entry per column and the same privacy rule (metadata and
+    statistics only, never a cell value).
+    """
+    import numpy as np
+
+    from decoy_engine.profiling.eval.bands import classify_band
+    from decoy_engine.profiling.eval.fixtures import NO_DETECTOR
+    from decoy_engine.profiling.features.builder import build_column_features
+    from decoy_engine.profiling.model_pack.featurizer import flatten_features
 
     vec = pack["vec"]
     clf = pack["clf"]
@@ -185,8 +212,8 @@ def classify_fields(
 
     results: dict[str, dict[str, Any]] = {}
 
-    for col_name in df.columns:
-        series = df[col_name]
+    for col_name in frame.columns:
+        series = frame[col_name]
         feats = build_column_features(series, str(col_name))
         flat = flatten_features(feats.to_dict())
 

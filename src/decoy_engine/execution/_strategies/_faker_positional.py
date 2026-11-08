@@ -79,12 +79,16 @@ def positional_pool_indices(
     the selected rows' full-table positions (C8-iii-d). Uses the compiled `derive_index_batch`
     when the native companion is present and the byte-identical reference otherwise, as
     `PoolSampler` does."""
-    keys = positional_key_array(row_offset, n, code=_DOMAIN_CODE, gate_positions=gate_positions)
-    kernel = _compiled_index_kernel() or _reference_index_kernel()
-    idx: pa.Array = kernel.derive_index_batch(
-        keys, mask_key=job_seed, namespace=namespace, pool_size=pool_size
-    )
-    return _validated_index_array(idx, expected_len=n, pool_size=pool_size)
+    try:
+        keys = positional_key_array(row_offset, n, code=_DOMAIN_CODE, gate_positions=gate_positions)
+        kernel = _compiled_index_kernel() or _reference_index_kernel()
+        idx: pa.Array = kernel.derive_index_batch(
+            keys, mask_key=job_seed, namespace=namespace, pool_size=pool_size
+        )
+        return _validated_index_array(idx, expected_len=n, pool_size=pool_size)
+    except BaseException:
+        del job_seed
+        raise
 
 
 __all__ = [

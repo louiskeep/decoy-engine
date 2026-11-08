@@ -178,15 +178,19 @@ class SourceKeyedHmacProvider(DrawSiteProvider):
         source bytes the shipped call keys on (canonicalization is the caller's
         job, the same boundary as ``derive``).
         """
-        if self.primitive == "derive":
-            return derive(seed, namespace, source)
-        if self.primitive == "derive_index":
-            if pool_size is None:
-                raise ValueError("derive_index site requires pool_size")
-            return derive_index(seed, namespace, source, pool_size=pool_size)
-        if domain is None:
-            raise ValueError("derive_value site requires domain")
-        return derive_value(seed, namespace, source, domain=domain)
+        try:
+            if self.primitive == "derive":
+                return derive(seed, namespace, source)
+            if self.primitive == "derive_index":
+                if pool_size is None:
+                    raise ValueError("derive_index site requires pool_size")
+                return derive_index(seed, namespace, source, pool_size=pool_size)
+            if domain is None:
+                raise ValueError("derive_value site requires domain")
+            return derive_value(seed, namespace, source, domain=domain)
+        except BaseException:
+            del seed
+            raise
 
     def partitioned_draw(
         self,
@@ -197,8 +201,12 @@ class SourceKeyedHmacProvider(DrawSiteProvider):
         pool_size: int | None = None,
         domain: Domain | None = None,
     ) -> Any:
-        self.assert_partitionable()
-        return self.draw(seed, namespace, source, pool_size=pool_size, domain=domain)
+        try:
+            self.assert_partitionable()
+            return self.draw(seed, namespace, source, pool_size=pool_size, domain=domain)
+        except BaseException:
+            del seed
+            raise
 
 
 # ---------------------------------------------------------------------------

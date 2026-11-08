@@ -13,13 +13,8 @@
 name: Benchmark
 
 on:
-  # Fires when someone adds a label to a PR. We gate inside the job to only
-  # run when the label is `run-bench`. Other labels are no-ops.
-  pull_request:
-    types: [labeled]
-  # Manual fire button in the Actions tab. Useful for "run on main"
-  # baseline captures or ad-hoc reruns. The branch picker lets you pick
-  # any branch (default: the workflow file's branch).
+  # Manual dispatch only. gate-selfhosted.yml is the merge gate; the paid runners
+  # fire on demand so they stop failing every push (X0a). Old triggers: git history.
   workflow_dispatch:
 
 # `actions/github-script` posts a comment on the PR; that needs write
@@ -48,26 +43,14 @@ jobs:
       - name: Check out
         uses: actions/checkout@v7
 
-      # Pin Python explicitly. The benchmark is sensitive to the Python
-      # version (string-handling path differs between 3.10 and 3.11+,
-      # which is part of why Pre-scan overhead measured 2.4% on Linux/3.11
-      # vs 56% on Windows/3.10 — see plans/2026-05-09-hybrid-engine-bug-followup.md).
-      # Cache pip so subsequent runs skip the dependency download phase.
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      # Install from uv.lock on Python 3.11. The benchmark is sensitive to the Python
+      # version (string-handling path differs between 3.10 and 3.11+, which is part of why
+      # Pre-scan overhead measured 2.4% on Linux/3.11 vs 56% on Windows/3.10; see
+      # plans/2026-05-09-hybrid-engine-bug-followup.md).
+      - uses: ./.github/actions/lock-env
         with:
-          python-version: '3.11'
-          cache: pip
-
-      # Install the package in editable mode + its dev extras (which
-      # includes pytest). The `[hybrid]` extras alias is empty post-Bug 1
-      # (polars + duckdb are required deps now), but kept for callers
-      # that already wrote it.
-      - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
+          extras: "dev"
+          python: "3.11.9"
       # Run the benchmark. The `-s` flag keeps print() output visible (the
       # benchmarks emit decision messages to stdout). The `-m benchmark`
       # filter only runs tests marked `@pytest.mark.benchmark` — keeps

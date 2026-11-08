@@ -246,18 +246,20 @@ def _oracle_preflight_admitted(
     plan = compile_plan(config, profile, decoy_engine_version=engine_version, no_profile=True)
     # Late defense in depth: the plan may not need more than admission (config-only) covered.
     # The per-chunk adapter.run() re-gates via require_mask_key.
+    from decoy_engine._opaque import OpaqueBox
     from decoy_engine.keyprovider import require_mask_key
     from decoy_engine.secret_providers import assert_plan_requirements_admitted
 
     assert_plan_requirements_admitted(plan, admitted)
-    _resolved_mask_key = require_mask_key(plan, key_provider)
+    # Boxed (`_opaque`): this frame outlives the raises below.
+    resolved = OpaqueBox(require_mask_key(plan, key_provider))
     # The vault holds reversible plaintext PII and cannot be written under a key
     # that differs from the resolved mask key, so this entry runs the same
     # vault-key guard as run_pipeline.
     if vault_writer is not None:
         from decoy_engine.vault import assert_vault_writer_keyed
 
-        assert_vault_writer_keyed(vault_writer, _resolved_mask_key)
+        assert_vault_writer_keyed(vault_writer, resolved.open()[0])
     graph = RelationshipGraph(edges=(), ordering=())
     # Corpus pinning is resolved before the empty-input return, so a zero-row job
     # with an invalid or version-mismatched corpus fails closed like the oracle

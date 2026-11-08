@@ -165,6 +165,9 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine.config._subset_run import refuse_unapplied_subset
+from decoy_engine.declared_casting._eligibility import declared_route_guard
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._errors import PlanCompileError
 
 from . import _chunked_bucket_perturb as bucket_perturb_gate
@@ -173,6 +176,10 @@ from . import _chunked_code_set as code_set_gate
 from . import _chunked_dgrn as dgrn
 from . import _chunked_group_key as group_key
 from . import _chunked_text_mask as text_mask_gate
+
+# Re-exported: callers import the rollups from here.
+from ._chunked_aggregate import aggregate_chunk_timings as aggregate_chunk_timings
+from ._chunked_aggregate import aggregate_chunk_warnings as aggregate_chunk_warnings
 from ._chunked_fk import (
     CHUNK_SAFE_STRATEGIES,
     gate_fk_child_edges,
@@ -270,6 +277,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry:
         chunked_bucket_perturb_fk_key_unsupported: `bucket_perturb` as an FK key column.
         per_table_transforms_present: `table` declares transforms.
     """
+    declared_route_guard("chunked", config=config, raise_on_decline=True)
     tables = config.get("tables") or []
     table_cfg = next((t for t in tables if isinstance(t, dict) and t.get("name") == table), None)
     if table_cfg is None:
@@ -366,6 +374,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry:
         )
 
 
+@entry_point
 def run_mask_pipeline_chunked(
     config: dict[str, Any],
     chunks: Iterable[pa.Table],
@@ -378,6 +387,7 @@ def run_mask_pipeline_chunked(
     chunk_result_sink: list[Any] | None = None,
     key_provider: Any = None,
     base_row_offset: int = 0,
+    file_access: FileAccess | None = None,
 ) -> Iterator[pa.Table]:
     """Mask `table`'s rows chunk-by-chunk under `config`.
 
@@ -422,6 +432,7 @@ def run_mask_pipeline_chunked(
     """
     from . import _chunked_oracle
 
+    refuse_unapplied_subset(config)
     state = _chunked_oracle._oracle_preflight(
         config,
         chunks,
@@ -572,57 +583,6 @@ def concat_masked_chunks(chunks: list[pa.Table], *, table: str) -> pa.Table:
     target = pa.schema(fields)
     normalized = [c if c.schema.equals(target) else c.cast(target) for c in chunks]
     return pa.concat_tables(normalized).combine_chunks()
-
-
-def aggregate_chunk_warnings(chunk_results: list[Any]) -> tuple[Any, ...]:
-    """Order-stable union of per-chunk QualityWarnings.
-
-    The same warning re-emitted by every chunk (they all run the same
-    plan) collapses to one, exactly what the full-frame run would have
-    emitted; genuinely distinct warnings keep first-emission order.
-    Equality-based dedup because QualityWarning carries a dict detail
-    (unhashable); warning counts are tiny, so O(n^2) is irrelevant.
-    """
-    seen: list[Any] = []
-    for result in chunk_results:
-        for warning in result.warnings:
-            if warning not in seen:
-                seen.append(warning)
-    return tuple(seen)
-
-
-def aggregate_chunk_timings(chunk_results: list[Any]) -> tuple[Any, ...]:
-    """Coarse per-(strategy, column) rollup of per-chunk timing records.
-
-    Elapsed times sum (the chunks really ran serially); memory deltas
-    take the max, because per-chunk peaks measure the same bounded
-    working set repeatedly -- summing them would fabricate a peak no run
-    ever had. One record per (strategy, column), the same shape the
-    full-frame result carries.
-    """
-    from decoy_engine.instrumentation.timing import StrategyTimingRecord
-
-    order: list[tuple[str, str]] = []
-    elapsed: dict[tuple[str, str], float] = {}
-    peak: dict[tuple[str, str], int] = {}
-    for result in chunk_results:
-        for record in result.timings:
-            key = (record.strategy_type, record.column)
-            if key not in elapsed:
-                order.append(key)
-                elapsed[key] = 0.0
-                peak[key] = 0
-            elapsed[key] += record.elapsed_ms
-            peak[key] = max(peak[key], record.peak_memory_delta_kb)
-    return tuple(
-        StrategyTimingRecord(
-            strategy_type=strategy,
-            column=column,
-            elapsed_ms=elapsed[(strategy, column)],
-            peak_memory_delta_kb=peak[(strategy, column)],
-        )
-        for strategy, column in order
-    )
 
 
 def _chain_first(first: pa.Table, rest: Iterator[pa.Table]) -> Iterator[pa.Table]:

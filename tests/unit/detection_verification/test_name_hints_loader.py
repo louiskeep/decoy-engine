@@ -132,7 +132,7 @@ class TestManifestErrors:
 
     def test_manifest_files_entry_not_string(self, tmp_path: Path) -> None:
         _write(tmp_path, "manifest.yaml", "files:\n  - 42\n")
-        with pytest.raises(NameHintLoaderError, match="entry must be a string"):
+        with pytest.raises(NameHintLoaderError, match="entry that is not a string"):
             load_name_hint_terms(tmp_path)
 
     def test_listed_file_missing(self, tmp_path: Path) -> None:

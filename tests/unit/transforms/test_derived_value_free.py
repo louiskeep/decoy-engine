@@ -31,14 +31,14 @@ class _OutsideTheTableError(Exception):
 
 # (id, expression, a-value, b-value, expected reason word)
 _CASES = [
-    ("bad-date-str", 'days_between(a, "2020-01-02")', STR_MARKER, 1, "invalid_value"),
-    ("bad-date-int", 'days_between(a, "2020-01-02")', INT_MARKER, 1, "invalid_value"),
-    ("bad-date-list", 'days_between(a, "2020-01-02")', LIST_MARKER, 1, "invalid_value"),
-    ("bad-date-dict", 'days_between(a, "2020-01-02")', DICT_MARKER, 1, "invalid_value"),
-    ("division-int", "a / b", INT_MARKER, 0, "division_by_zero"),
-    ("type-mismatch-str", "a + 1", STR_MARKER, 1, "type_mismatch"),
-    ("type-mismatch-list", "a + 1", LIST_MARKER, 1, "type_mismatch"),
-    ("missing-reference", "a + gone", STR_MARKER, 1, "missing_reference"),
+    ("bad-date-str", 'days_between(a, "2020-01-02")', STR_MARKER, 1, "an operand value is invalid"),
+    ("bad-date-int", 'days_between(a, "2020-01-02")', INT_MARKER, 1, "an operand value is invalid"),
+    ("bad-date-list", 'days_between(a, "2020-01-02")', LIST_MARKER, 1, "an operand value is invalid"),
+    ("bad-date-dict", 'days_between(a, "2020-01-02")', DICT_MARKER, 1, "an operand value is invalid"),
+    ("division-int", "a / b", INT_MARKER, 0, "division by zero"),
+    ("type-mismatch-str", "a + 1", STR_MARKER, 1, "an operand has an unsupported type"),
+    ("type-mismatch-list", "a + 1", LIST_MARKER, 1, "an operand has an unsupported type"),
+    ("missing-reference", "a + gone", STR_MARKER, 1, "a referenced column is missing"),
 ]
 
 
@@ -132,7 +132,7 @@ def test_mask_failure_is_coded_and_value_free(expression: str, a: Any, b: Any, w
             relationship_graph=RelationshipGraph(edges=(), ordering=()),
             namespace_registry=NamespaceRegistry(bindings=()),
         )
-    if word == "missing_reference":
+    if word == "a referenced column is missing":
         # The mask path refuses a missing reference once, before any row (T8).
         assert type(exc.value) is ExecutionError and exc.value.code == "derived_ref_missing"
         return
@@ -159,7 +159,7 @@ def test_exception_outside_the_table_is_evaluation_error(monkeypatch: pytest.Mon
     monkeypatch.setattr(derived, "evaluate", boom)
     with pytest.raises(ValueError) as exc:
         derived.apply_derived(_config("a + 1"), {"a": 1}, column="d", row_index=0)
-    _assert_value_free(exc.value, _text("d", 0, "evaluation_error"))
+    _assert_value_free(exc.value, _text("d", 0, "the expression could not be evaluated"))
     assert "_OutsideTheTable" not in str(exc.value)
 
 

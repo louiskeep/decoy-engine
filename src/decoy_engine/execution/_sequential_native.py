@@ -79,7 +79,9 @@ from decoy_engine.execution._sequential_native_ops import (
     HashCall,
     NativeOp,
     TextRedactCall,
+    _declined_entry,
     _load_text_redact,
+    _table_columns,
     bucket_perturb_op,
     categorical_op,
     date_shift_op,
@@ -95,6 +97,7 @@ from decoy_engine.execution._sequential_native_text_mask import (
     TextMaskCall,
     text_mask_op,
 )
+from decoy_engine.execution._strategies import strategy_catalog
 from decoy_engine.execution._strategies._faker_positional import resolve_selection_namespace
 from decoy_engine.execution.native._bucket_perturb_ext import native_range_exceeded
 from decoy_engine.execution.native._chunk_masking import pool_values_are_strings
@@ -113,38 +116,19 @@ if TYPE_CHECKING:
     from decoy_engine.execution._adapter import StrategyContext
     from decoy_engine.generation.pool import ValuePool
     from decoy_engine.generation.pool._events import QualityWarning
-    from decoy_engine.plan._types import ColumnSeed, Plan, TableSeed
+    from decoy_engine.plan._types import ColumnSeed, Plan
     from decoy_engine.relationships._graph import RelationshipGraph
     from decoy_engine.transforms.date_preserve import PreserveSet
 
 PATH_INHERITED = "fk_inherited"
-PATH_KEY_DECLINED = "fk_key_declined"
 INHERITED = "inherited"
 REASON_REMAP_PARENT_PYTHON = reasons.route.REMAP_PARENT_STAYS_PYTHON
 REASON_REMAP_INPUT_NOT_ARROW = reasons.route.REMAP_INPUT_NOT_ARROW
 REASON_KEY_NOT_INJECTIVE = reasons.route.SEQUENTIAL_FK_KEY_INJECTIVITY_NOT_GUARANTEED
-# Injective per-value maps: a masked FK key stays unique and joinable. Everything else native
-# is deterministic but may collide, so it is not accelerated as a key.
-_KEY_STRATEGIES = (HASH, FPE)
+# Injective per-value maps (the catalog's join_safe rows); the rest may collide, so not keys.
+_KEY_STRATEGIES = tuple(info.name for info in strategy_catalog() if info.join_safe)
 REASON_BUCKET_OUT_OF_RANGE = reasons.route.SEQUENTIAL_BUCKET_PERTURB_DATE_OUT_OF_NATIVE_RANGE
 _CONVERSION_ERRORS = (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError)
-
-
-def _declined_entry(table: str, column: str, reason: str) -> dict[str, Any]:
-    return {
-        "table": table,
-        "column": column,
-        "path": PATH_KEY_DECLINED,
-        "executed_backend": PYTHON_SCALAR,
-        "reason": reason,
-    }
-
-
-def _table_columns(plan: Plan, table: str) -> dict[str, ColumnSeed]:
-    seed: TableSeed | None = next(
-        (t for name, t in plan.seed_envelope.per_table if name == table), None
-    )
-    return dict(seed.per_column) if seed is not None else {}
 
 
 # Loaders live here, not in the ops module, so each resolves through this module's globals at
@@ -330,8 +314,12 @@ class SeqNativeRun:
 
         `exact` is the column's recorded typed Arrow values, used in place of the frame column
         when the frame widened an integer column with nulls to float."""
-        call = HashCall(namespace, mask_key, truncate)
-        return self.key_column(ctx, df, column, HASH, call, exact)
+        try:
+            call = HashCall(namespace, mask_key, truncate)
+            return self.key_column(ctx, df, column, HASH, call, exact)
+        except BaseException:
+            del mask_key
+            raise
 
     def key_column(
         self,
@@ -367,13 +355,17 @@ class SeqNativeRun:
 
         The handler's own resolved pool (categories, and the CDF when weighted) is the call
         payload; admission already proved the pool is all-string and the CDF buildable."""
-        call = CategoricalCall(
-            namespace,
-            mask_key,
-            tuple(categories),
-            None if cdf is None else tuple(cdf),
-        )
-        return self.native_column(ctx, df, column, CATEGORICAL, call)
+        try:
+            call = CategoricalCall(
+                namespace,
+                mask_key,
+                tuple(categories),
+                None if cdf is None else tuple(cdf),
+            )
+            return self.native_column(ctx, df, column, CATEGORICAL, call)
+        except BaseException:
+            del mask_key
+            raise
 
     def bucket_column(
         self,
@@ -392,29 +384,33 @@ class SeqNativeRun:
         Order matters: the sentinel mask comes from the original column first, the range check
         sees only the rows the kernel will see, and the preserved count is recorded once, only
         by the native path, so a declined column's count is left to the Python handler."""
-        gate = self.admitted(ctx, column, BUCKET_PERTURB, len(df))
-        if gate is None:
-            return None
-        decision, bound = gate
-        if date_format is None:  # pragma: no cover - admission requires an explicit format
-            raise AssertionError("bucket_perturb admitted without a date_format.")
-        preserved = preserve.mask(df[column]) if preserve is not None else None
-        array = self._pinned_array(df[column], decision)
-        rest = array if preserved is None else array.filter(pa.array(~preserved))
-        if native_range_exceeded(rest, bucket, date_format):
-            # Python's date arithmetic covers the whole calendar; native does not. Declining
-            # keeps this route a superset of what the Python path accepts.
-            decision.backend, decision.reason = PYTHON_SCALAR, REASON_BUCKET_OUT_OF_RANGE
-            return None
-        call = BucketCall(namespace, mask_key, bucket, date_format, preserved, [])
-        result = _OPS[BUCKET_PERTURB].apply(bound, array, call)
-        decision.native_calls += sum(call.derive_calls)
-        if preserved is not None:
-            count = int(preserved.sum())
-            decision.counts_preserved = True
-            decision.preserved_rows += count
-            ctx.record_date_preserved(column, count)
-        return result.values.to_pylist()
+        try:
+            gate = self.admitted(ctx, column, BUCKET_PERTURB, len(df))
+            if gate is None:
+                return None
+            decision, bound = gate
+            if date_format is None:  # pragma: no cover - admission requires an explicit format
+                raise AssertionError("bucket_perturb admitted without a date_format.")
+            preserved = preserve.mask(df[column]) if preserve is not None else None
+            array = self._pinned_array(df[column], decision)
+            rest = array if preserved is None else array.filter(pa.array(~preserved))
+            if native_range_exceeded(rest, bucket, date_format):
+                # Python's date arithmetic covers the whole calendar; native does not. Declining
+                # keeps this route a superset of what the Python path accepts.
+                decision.backend, decision.reason = PYTHON_SCALAR, REASON_BUCKET_OUT_OF_RANGE
+                return None
+            call = BucketCall(namespace, mask_key, bucket, date_format, preserved, [])
+            result = _OPS[BUCKET_PERTURB].apply(bound, array, call)
+            decision.native_calls += sum(call.derive_calls)
+            if preserved is not None:
+                count = int(preserved.sum())
+                decision.counts_preserved = True
+                decision.preserved_rows += count
+                ctx.record_date_preserved(column, count)
+            return result.values.to_pylist()
+        except BaseException:
+            del mask_key
+            raise
 
     def faker_column(
         self, ctx: StrategyContext, df: pd.DataFrame, column: str, plan: ColumnSeed, pool: ValuePool
@@ -531,36 +527,40 @@ class SeqNativeRun:
         Unparseable cells keep their text and are appended to `ctx.row_errors` as the handler
         does; the pipeline decides fail versus quarantine. Positions need no rebasing: the
         kernel rebases past sentinel rows and the `when` gate maps back to table positions."""
-        gate = self.admitted(ctx, column, DATE_SHIFT, len(df))
-        if gate is None:
-            return None
-        decision, bound = gate
-        if date_format is None:  # pragma: no cover - admission requires an explicit format
-            raise AssertionError("date_shift admitted without a date_format.")
-        preserved = preserve.mask(df[column]) if preserve is not None else None
-        array = self._pinned_array(df[column], decision)
-        derive_calls: list[int] = []
-        out, positions = native_date_shift(
-            array,
-            min_days=min_days,
-            max_days=max_days,
-            date_format=date_format,
-            mask_key=mask_key,
-            namespace=namespace,
-            index_kernel=bound.kernel,
-            native_threads=bound.native_threads,
-            derive_calls=derive_calls,
-            preserved=preserved,
-        )
-        decision.native_calls += sum(derive_calls)
-        ctx.row_errors.extend(date_shift_row_errors(column, positions))
-        if preserved is not None:
-            count = int(preserved.sum())
-            decision.counts_preserved = True
-            decision.preserved_rows += count
-            if count:  # the Python handler records a count only when a sentinel matched
-                ctx.record_date_preserved(column, count)
-        return out.to_pylist()
+        try:
+            gate = self.admitted(ctx, column, DATE_SHIFT, len(df))
+            if gate is None:
+                return None
+            decision, bound = gate
+            if date_format is None:  # pragma: no cover - admission requires an explicit format
+                raise AssertionError("date_shift admitted without a date_format.")
+            preserved = preserve.mask(df[column]) if preserve is not None else None
+            array = self._pinned_array(df[column], decision)
+            derive_calls: list[int] = []
+            out, positions = native_date_shift(
+                array,
+                min_days=min_days,
+                max_days=max_days,
+                date_format=date_format,
+                mask_key=mask_key,
+                namespace=namespace,
+                index_kernel=bound.kernel,
+                native_threads=bound.native_threads,
+                derive_calls=derive_calls,
+                preserved=preserved,
+            )
+            decision.native_calls += sum(derive_calls)
+            ctx.row_errors.extend(date_shift_row_errors(column, positions))
+            if preserved is not None:
+                count = int(preserved.sum())
+                decision.counts_preserved = True
+                decision.preserved_rows += count
+                if count:  # the Python handler records a count only when a sentinel matched
+                    ctx.record_date_preserved(column, count)
+            return out.to_pylist()
+        except BaseException:
+            del mask_key
+            raise
 
     def native_column(
         self,

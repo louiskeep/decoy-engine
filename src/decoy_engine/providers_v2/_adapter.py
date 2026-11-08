@@ -24,9 +24,13 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ConfigDict
 
 from decoy_engine import reasons
+from decoy_engine._opaque import validate_after_init
 from decoy_engine.providers_v2._errors import ProviderError
 
 
+# Validated after the generated __init__ returns: its frame holds `seed`, which may be the
+# 32-byte mask key (`_opaque`).
+@validate_after_init
 @dataclass(frozen=True)
 class ProviderSpec:
     """The structured argument every adapter call carries.
@@ -36,7 +40,7 @@ class ProviderSpec:
     plan's per-column block at execute-time (or earlier at pool-build
     time for S5).
 
-    `__post_init__` runs three defensive checks (per S4 spec §3):
+    `_validate` runs three defensive checks (per S4 spec §3):
 
     1. `deterministic=True` requires both `namespace` and `seed` non-None.
     2. When `seed is not None`, `len(seed)` is 8 (job_seed) or 32 (DE-02
@@ -53,10 +57,10 @@ class ProviderSpec:
     locale: str | None
     deterministic: bool
     namespace: str | None
-    seed: bytes | None
+    seed: bytes | None = field(repr=False)
     extra: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self) -> None:
+    def _validate(self) -> None:
         if self.deterministic:
             if self.namespace is None or self.seed is None:
                 raise ProviderError(

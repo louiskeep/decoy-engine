@@ -134,7 +134,8 @@ class FlagPauseSignal(DecoyError):  # noqa: N818 -- control-flow Signal, not a r
 
 # ── FK preservation (Sprint 4, item 4) ────────────────────────────────
 #
-# Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG;
+# Pattern: SDV HMA1 method (Patki et al., IEEE DSAA 2016; method only, no SDV
+# code: SDV is BUSL-1.1). Parent-first DAG;
 # materialize parent pool; child samples with replacement.
 #
 # Raised when a declared FK in `column_relationships` cannot be resolved
@@ -458,6 +459,17 @@ class FixedWidthParseError(DecoyError):
     """
 
 
+class FixedWidthRecordOverlongError(FixedWidthParseError):
+    """A record is longer than an ``exact_record_width`` layout allows.
+
+    A framing error, kept apart from value-cast errors: the extra bytes would otherwise be
+    silently ignored (or, for a misaligned file, bleed into a neighbouring field and surface as a
+    misleading ``declared_*_invalid``). Carries a registered code; the message holds position only.
+    """
+
+    code: str = reasons.runtime.FIXED_WIDTH_RECORD_OVERLONG
+
+
 class FixedWidthWriteError(DecoyError):
     """Raised when a value cannot be written to a fixed-width file such that
     it reads back unchanged against its `FixedWidthLayout` column-spec
@@ -491,6 +503,7 @@ __all__ = [
     "EmptyParentPoolError",
     "FKPreservationError",
     "FixedWidthParseError",
+    "FixedWidthRecordOverlongError",
     "FixedWidthWriteError",
     "FlagPauseSignal",
     "FpeChecksumError",

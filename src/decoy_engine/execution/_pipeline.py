@@ -74,9 +74,10 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
+from decoy_engine.config._subset_run import refuse_unapplied_subset
+from decoy_engine.declared_casting._refusals import collect_refusals
 from decoy_engine.execution import _pipeline_context as _ctx
 from decoy_engine.execution import _pipeline_finalize
-from decoy_engine.execution import _pipeline_full_frame as _full_frame
 from decoy_engine.execution import _pipeline_route_dispatch as _dispatch
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._pipeline_context import classify_table_kinds
@@ -85,6 +86,7 @@ from decoy_engine.execution._planner import (
     OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
 )
 from decoy_engine.execution._transforms_prepare import prepare_transform_sources
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.progress import ProgressChannel, ProgressSink, use_progress
 from decoy_engine.secret_providers import AdmissionScope
@@ -100,18 +102,16 @@ if TYPE_CHECKING:
 
 __all__ = ["classify_table_kinds", "run_pipeline"]
 
-# The substrate/auto-chunk knob defaults live on `_pipeline_finalize` now
-# (single source of truth for both this signature and the non-default-ness
-# check `stamp_execution_metrics` computes); referenced here via the
-# already-imported module so this file does not re-declare them.
-# SC2 out-of-core auto-routing thresholds (per largest mask table). Defaults
-# target the 32 GB deployment box; see `_planner` for the memory-model
-# reasoning. Plumbed as run_pipeline kwargs so the platform SC5 estimator can
-# override them with box+schema-calibrated values.
+# The substrate/auto-chunk knob defaults live on `_pipeline_finalize` now (single source of truth
+# for this signature and the non-default-ness check `stamp_execution_metrics` computes).
+# SC2 out-of-core auto-routing thresholds (per largest mask table). Defaults target the 32 GB
+# deployment box; see `_planner` for the memory-model reasoning. Plumbed as run_pipeline kwargs so
+# the platform SC5 estimator can override them with box+schema-calibrated values.
 _OUT_OF_CORE_THRESHOLD_DEFAULT = OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT
 _FULL_FRAME_REJECT_DEFAULT = FULL_FRAME_REJECT_ROWS_DEFAULT
 
 
+@entry_point
 def run_pipeline(
     config: dict[str, Any],
     sources: Mapping[str, pa.Table | LazySource] | None = None,
@@ -150,9 +150,11 @@ def run_pipeline(
     unified_slice_enabled: bool = True,
     progress: ProgressSink | None = None,
     progress_interval_s: float = 1.0,
+    quarantine_runtime: Any = None,
     secret_registry: SecretProviderRegistry | None = None,
     secret_cache_policy: SecretCachePolicy | None = None,
     _provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+    file_access: FileAccess | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -249,6 +251,19 @@ def run_pipeline(
     is reproducible from its manifest; the all-default path stamps
     nothing, keeping golden fixtures byte-identical.
 
+    `quarantine_runtime` (F06): a `decoy_engine.declared_casting.ProtectedQuarantineRuntime`
+    (sink + owner). Required, and checked before the source is read, by any column with
+    `error_policy: quarantine`; the run returns its portable retrieval token on
+    `ExecutionResult.quarantine_access`. A declared job runs on any route whose capabilities
+    cover its contracts; an explicit `execution_mode` lacking one is refused before any read.
+
+    Under `auto`, a declared job that an admission layer kept off a route (mixed, chunked,
+    unified slice, out-of-core, or the multi-table split) falls back to a capable route and says
+    so: `quality_metrics["execution"]["declared_route_refusals"]` lists one value-free
+    `{route, namespace, code, missing}` entry per route, taken from that route's own registered
+    refusal. An undeclared job has no such key, and a forced `execution_mode` still refuses
+    instead of falling back.
+
     `unified_slice_enabled` (default True since 2026-09-20; admission is the safety
     gate, pass False for legacy): see `_unified_slice.maybe_run_unified_slice`.
 
@@ -259,15 +274,14 @@ def run_pipeline(
     oracle call to the SAME registry snapshot as its own coordinator-side call.
     `None` (every real caller) resolves against the live registry.
     """
+    refuse_unapplied_subset(config)  # `subset:` is refused first, before any source is read
     # MG-5: the `tokenize` strategy masks per-cell through a platform-injected
-    # token vault. That writer is threaded only to the FULL-FRAME adapter (the
-    # bounded sequential / out-of-core / chunked routes build their own
-    # StrategyContext without it), so a tokenize job MUST run full-frame or it
-    # would fail closed with `tokenize_requires_vault` on a bounded route. A
-    # token vault is passed only for a tokenize job, so its presence is the
-    # signal: force full-frame and disable auto-chunk when the caller left the
-    # route on `auto`. An explicit execution_mode is left untouched (a caller
-    # that forces a bounded route for a tokenize job gets the honest fail-closed).
+    # token vault, threaded only to the FULL-FRAME adapter (bounded routes build
+    # their own StrategyContext without it) and else failing closed with
+    # `tokenize_requires_vault`. A vault is passed only for a tokenize job, so its
+    # presence is the signal: force full-frame and disable auto-chunk when the
+    # caller left the route on `auto`. An explicit execution_mode is left untouched
+    # (a caller that forces a bounded route for a tokenize job gets the honest fail-closed).
     if token_vault_writer is not None and execution_mode == "auto":
         execution_mode = "full_frame"
         auto_chunk = False
@@ -314,21 +328,15 @@ def run_pipeline(
                 unified_slice_enabled=unified_slice_enabled,
                 provider_snapshot=_provider_snapshot,
                 prepare_sources=prepare_transform_sources,
+                quarantine_runtime=quarantine_runtime,
                 secret_scope=secret_scope,
                 secret_registry=secret_registry,
                 secret_cache_policy=secret_cache_policy,
             )
-        decision = _ctx.decide_route(ctx)
-        _emit_route(_progress, decision)
-
-        # Layer-1 dispatch: every route is an executor over the same (ctx, decision).
-        if ctx.has_mask_table and decision.route == "sequential":
-            return _dispatch.execute_sequential_route(ctx, decision)
-        if ctx.has_mask_table and decision.route == "out_of_core":
-            return _dispatch.execute_out_of_core_route(ctx, decision)
-        if ctx.has_mask_table and decision.route == "mixed":
-            return _dispatch.execute_mixed_route(ctx, decision)
-        return _full_frame.run_full_frame_route(ctx, decision)
+        with collect_refusals() as refusals:
+            decision = _ctx.decide_route(ctx)
+            _emit_route(_progress, decision)
+            return _dispatch.execute_route(ctx, decision, refusals)
 
 
 def _emit_route(channel: ProgressChannel, decision: Any) -> None:

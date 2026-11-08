@@ -36,12 +36,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from decoy_engine import fileaccess
 from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._throughput_calibration import (
     RuntimeBand,
     estimate_generation_runtime_band,
     estimate_mask_runtime_band,
 )
+from decoy_engine.fileaccess import FileAccess
 
 _PEAK_PATHS = frozenset({"full_frame", "out_of_core", "sequential"})
 
@@ -76,7 +78,10 @@ def _generation_rows(config: dict[str, Any]) -> tuple[int, bool]:
     return total, declared
 
 
-def estimate_job(config_dump: dict[str, Any], base_dir: Path | str) -> JobEstimate:
+@fileaccess.entry_point
+def estimate_job(
+    config_dump: dict[str, Any], base_dir: Path | str, *, file_access: FileAccess | None = None
+) -> JobEstimate:
     """Estimate `config_dump`'s route, peak memory, and runtime band without
     running it. Advisory: returns a flagged `JobEstimate`, never raises.
 

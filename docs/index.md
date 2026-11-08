@@ -11,6 +11,7 @@ New to Decoy? Start with the quickstart, then the recipes.
 - [Strategy catalog](strategies.md): every mask and generation strategy.
 - [Free-text NER](guides/free-text-ner.md): activating spaCy person-name/location detection on `text_redact`.
 - [Relationships](relationships.md): foreign-key and referential-integrity preservation.
+- [Declared parsing, casting and quarantine](declared-casting.md): per-column parse formats, sentinels, error policies and output formats.
 - [Determinism](determinism.md): the seed and key protocol; what is and is not deterministic.
 - [CLI](cli.md): the `decoy` command surface.
 - [What Decoy does not prove](what-we-cannot-prove.md): the honest limitations.
@@ -31,11 +32,13 @@ link to GitHub rather than into the rendered API reference.
 
 ## Security
 
+- [File access policy](security/file-access-policy.md): the `FileAccess` contract for integrators: roles, capabilities, denial shape, strict policies, and the routes a strict policy does not serve.
 - [Error reporting and data exposure](security/error-reporting-and-data-exposure.md): what error messages promise about the sensitive input data being masked, and why error trackers must not capture frame locals.
 - [Key derivation](security/key-derivation.md): the KeyProvider / `mask_secret_ref` model and HKDF-SHA256 derivation contract.
 - [Secret providers](security/secret-providers.md): the versioned `secret-provider/v1` contract, before-read admission, per-algorithm validation, cache/lifetime bounds and the HashiCorp Vault KV v2 adapter.
 - [SQL surfaces](security/sql-surfaces.md): parameter-binding posture across in-tree connectors.
 - [Token vault](security/token-vault.md): handling and threat model for the reversible token vault.
+- [Protected quarantine](security/protected-quarantine.md): the encrypted, finite-retention store for rows a declared contract rejects, and its portable access token.
 - [DE-01: NIST SP 800-38G FF1 adoption](security/de-01-ff1-adoption.md): the FPE cipher, conformance claim, key/tweak model, and documented leakage (equality, fixed points, unauthenticated reversal).
 - [DE-01 FPE remediation design](https://github.com/louiskeep/decoy-engine/blob/main/docs/security/de-01-fpe-remediation-design.md): the tech-lead decision brief behind the fail-closed FPE fix (removal of the covering-hash fallback). Excluded from the built docs site (`docs/conf.py`); linked here for discoverability.
 - [DE-02 KeyProvider design](https://github.com/louiskeep/decoy-engine/blob/main/docs/security/de-02-keyprovider-design.md): the tech-lead decision brief behind the current key-derivation model. Excluded from the built docs site (`docs/conf.py`); linked here for discoverability.
@@ -60,12 +63,13 @@ link to GitHub rather than into the rendered API reference.
 
 - [CI regression gate](ci-regression-gate.md): the performance / regression gate contract.
 - [SBOM](sbom.md): generating the CycloneDX SBOM for the engine wheel.
+- [License policy](license-policy.md): allowed licenses, named exceptions, and how NOTICE is generated and checked.
 - Engine-scoped implementation plans, decision records, and the findings register live in `docs/plans/`, `docs/decisions/`, and `docs/remediation-source.md` (working docs, not guides).
 - Shipped-work history (sprint plans, review snapshots, superseded design discussions) is kept in `docs/archive/` for context; see `docs/archive/README.md`. None of it is current how-to guidance.
 
 ---
 
-This repo owns the engine-scoped durable docs (reference, `security/` and `decisions/` records, API reference) and its own `plans/` for engine work. The single cross-repo roadmap and the shipped program status live in the platform docs hub (`decoy-platform/docs/ROADMAP.md`), which indexes engine plans too.
+This repo owns the engine-scoped durable docs (reference, `security/` and `decisions/` records, API reference) and its own `plans/` for engine work. The single cross-repo roadmap and the shipped log live in the CLI repo ([`decoy/docs/ROADMAP.md`](https://github.com/louiskeep/decoy/blob/main/docs/ROADMAP.md) and `decoy/docs/RECENTLY-SHIPPED.md`, moved from `decoy-platform` on 2026-11-05); the roadmap indexes engine plans too.
 
 ```{toctree}
 :hidden:
@@ -99,6 +103,7 @@ native/supported-matrix
 
 ci-regression-gate
 sbom
+license-policy
 ```
 
 ```{toctree}
