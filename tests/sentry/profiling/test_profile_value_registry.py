@@ -13,7 +13,7 @@ from typing import Any, get_type_hints
 import pytest
 
 from decoy_engine.detection.types import DetectorMatch
-from decoy_engine.profiling import profile_document
+from decoy_engine.profiling import _value_redaction, profile_document
 from decoy_engine.profiling._value_redaction import (
     VALUE_FIELDS,
     VALUE_FREE_FIELDS,
@@ -132,3 +132,9 @@ def test_every_value_rule_is_applied(entry: tuple[str, str]) -> None:
     assert canary in json.dumps(profile.to_dict())
     assert canary not in json.dumps(profile_document(profile))
     assert canary in json.dumps(profile_document(profile, include_values=True))
+
+
+def test_profile_types_refuses_any_walk_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_value_redaction, "_walk", lambda root: ({}, ["unclassified X.y"]))
+    with pytest.raises(TypeError, match=r"cannot cover: \['unclassified X.y'\]"):
+        profile_types.__wrapped__()

@@ -25,6 +25,7 @@ from decoy_engine.profiling._value_redaction import (
     POLICY_REDACTED,
     REDACTED,
     VALUE_FIELDS,
+    Rule,
     profile_types,
 )
 
@@ -278,3 +279,91 @@ def test_a_non_list_fields_value_is_replaced_and_counted() -> None:
     doc = redact_profile_dict({"fields": {"name": "CANARY"}})
     assert doc["fields"] == REDACTED
     assert doc["redacted_columns"] == [REDACTED]
+
+
+_SENSITIVE = {"detector_matches": [], "pii_score": 1.0, "is_likely_unique": True}
+
+
+def test_an_unknown_key_in_a_sensitive_column_is_replaced() -> None:
+    field = {
+        "name": "ssn",
+        **_SENSITIVE,
+        "raw_sample": "CANARY",
+        "top_values": [{"value": "CANARY", "count": 1, "pct": 1.0, "first_seen": "CANARY"}],
+    }
+    doc = redact_profile_dict({"fields": [field]})
+    out = doc["fields"][0]
+    assert out["raw_sample"] == REDACTED
+    assert out["top_values"] == [
+        {"value": REDACTED, "count": 1, "pct": 1.0, "first_seen": REDACTED}
+    ]
+    assert "CANARY" not in json.dumps(doc)
+
+
+def test_an_unknown_key_outside_a_sensitive_column_follows_its_scope() -> None:
+    doc = {"fields": [{"name": "status", **_SAFE, "note": "kept"}], "dump": ["CANARY"]}
+    redacted = redact_profile_dict(doc)
+    assert redacted["fields"][0]["note"] == "kept"
+    assert redacted["dump"] == REDACTED
+    assert redact_profile_dict(doc, include_values=True)["dump"] == ["CANARY"]
+
+
+@pytest.mark.parametrize("flag", ["false", 1, 0, None, "True"], ids=repr)
+def test_include_values_must_be_a_bool(flag: Any) -> None:
+    with pytest.raises(TypeError, match="include_values must be a bool"):
+        redact_profile_dict({"fields": []}, include_values=flag)
+
+
+def _nested(depth: int) -> list[Any]:
+    root: list[Any] = []
+    node = root
+    for _ in range(depth):
+        child: list[Any] = []
+        node.append(child)
+        node = child
+    return root
+
+
+def _depth(node: list[Any]) -> int:
+    depth = 0
+    while node:
+        node, depth = node[0], depth + 1
+    return depth
+
+
+def test_a_deeply_nested_document_is_copied_without_recursion() -> None:
+    trail = _nested(5000)
+    doc = {"fields": [{"name": "status", **_SAFE, "detection_trail": trail}]}
+    out = redact_profile_dict(doc)
+    copied = out["fields"][0]["detection_trail"]
+    assert copied is not trail
+    assert _depth(copied) == 5000
+    assert _depth(trail) == 5000
+
+
+@pytest.mark.parametrize(
+    "inputs",
+    [
+        {"detector_matches": [{}], "pii_score": 0.0, "is_likely_unique": False},
+        {"detector_matches": [], "pii_score": 0.6, "is_likely_unique": False},
+        {"detector_matches": [], "pii_score": 0.0, "is_likely_unique": True},
+    ],
+    ids=["detector-only", "threshold-only", "unique-only"],
+)
+def test_each_predicate_branch_alone_is_sensitive(inputs: dict[str, Any]) -> None:
+    assert is_value_sensitive(inputs)
+
+
+_SHAPE = {
+    Rule.NULL: lambda v: v is None,
+    Rule.EMPTY_LIST: lambda v: v == [],
+    Rule.PLACEHOLDER: lambda v: v == REDACTED,
+    Rule.PLACEHOLDER_EACH: lambda v: isinstance(v, list) and set(v) <= {REDACTED},
+}
+
+
+@pytest.mark.parametrize("slot", sorted(VALUE_FIELDS), ids="/".join)
+def test_each_value_slot_takes_its_rule_shape(raw: dict[str, Any], slot: tuple[str, str]) -> None:
+    after = slot_values(redact_profile_dict(raw), *slot)
+    assert after, f"no {slot} slot in the fixture"
+    assert all(v is None or _SHAPE[VALUE_FIELDS[slot]](v) for v in after)

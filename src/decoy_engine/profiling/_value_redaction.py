@@ -16,7 +16,6 @@ Findings omit the quote unless asked (DLP); counts and shape survive while value
 
 from __future__ import annotations
 
-import copy
 import dataclasses
 import enum
 import functools
@@ -212,7 +211,10 @@ def _containers(node: Any, steps: _Steps, parent: Any, key: Any) -> Iterator[dic
         yield from _containers(node[step], rest, node, step)
 
 
-def _apply(container: dict[str, Any], rules: Mapping[str, Rule]) -> None:
+def _apply(container: dict[str, Any], rules: Mapping[str, Rule], known: frozenset[str]) -> None:
+    # Default-deny: a key this engine does not know (a newer writer, a hand edit) may hold a cell.
+    for name in container.keys() - known:
+        container[name] = REDACTED
     for name, rule in rules.items():
         if name not in container or container[name] is None:
             continue
@@ -227,33 +229,62 @@ def _apply(container: dict[str, Any], rules: Mapping[str, Rule]) -> None:
             container[name] = REDACTED
 
 
+def _known(cls: type) -> frozenset[str]:
+    return frozenset(f.name for f in dataclasses.fields(cls))
+
+
 @functools.cache
-def _field_plan() -> tuple[tuple[_Steps, Mapping[str, Rule]], ...]:
-    """(steps below one `fields[*]` entry, rules) for every type that has value fields."""
+def _field_plan() -> tuple[tuple[_Steps, Mapping[str, Rule], frozenset[str]], ...]:
+    """(steps below one `fields[*]` entry, rules, known keys) for every type under a field."""
     plan = []
     for path, cls in profile_types().items():
-        rules = {f: r for (t, f), r in VALUE_FIELDS.items() if t == cls.__name__}
-        if rules and path[:2] == ("fields", _ITEM):
-            plan.append((path[2:], types.MappingProxyType(rules)))
+        if path[:2] == ("fields", _ITEM):
+            rules = {f: r for (t, f), r in VALUE_FIELDS.items() if t == cls.__name__}
+            plan.append((path[2:], types.MappingProxyType(rules), _known(cls)))
     return tuple(plan)
 
 
 def _redact_field(fields: list[Any], index: int) -> None:
-    for steps, rules in _field_plan():
+    for steps, rules, known in _field_plan():
         for container in _containers(fields[index], steps, fields, index):
-            _apply(container, rules)
+            _apply(container, rules, known)
+
+
+def _detached(root: Mapping[str, Any]) -> dict[str, Any]:
+    """Copy of a JSON object without recursion, so a deeply nested file cannot crash the redactor."""
+    out: dict[str, Any] = {}
+    stack: list[tuple[Any, Any]] = [(root, out)]
+    while stack:
+        src, dst = stack.pop()
+        for key, value in src.items() if isinstance(src, Mapping) else enumerate(src):
+            child = value
+            if isinstance(value, (Mapping, list, tuple)):
+                child = {} if isinstance(value, Mapping) else []
+                stack.append((value, child))
+            if isinstance(dst, dict):
+                dst[key] = child
+            else:
+                dst.append(child)
+    return out
 
 
 def redact_profile_dict(doc: Mapping[str, Any], *, include_values: bool = False) -> dict[str, Any]:
     """A copy of a profile document with the value-sensitive columns' cell values removed.
 
     Never mutates `doc` and never trusts its `value_policy` marker, so a second pass is a
-    no-op and a forged or legacy file is still redacted. `include_values=True` keeps every
-    value and adds a `raw` policy only when the document has none.
+    no-op and a forged or legacy file is still redacted. A key no profile type declares is
+    replaced at the root and inside a value-sensitive column, since a newer or hand-edited
+    file may keep a cell there. `include_values=True` keeps every value and adds a `raw`
+    policy only when the document has none.
     """
     if not isinstance(doc, Mapping):
         raise TypeError(f"a profile document is a JSON object, not {type(doc).__name__}")
-    out = copy.deepcopy(dict(doc))
+    if type(include_values) is not bool:
+        raise TypeError(f"include_values must be a bool, not {type(include_values).__name__}")
+    out = _detached(doc)
+    if not include_values:
+        for key in out.keys() - _known(ColumnProfile) - {VALUE_POLICY_KEY, REDACTED_COLUMNS_KEY}:
+            out[key] = REDACTED
     fields = out.get("fields")
     names: list[str] = []
     if isinstance(fields, list):
