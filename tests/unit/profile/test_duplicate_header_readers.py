@@ -77,7 +77,10 @@ class _FakeBlob:
 
     def reload(self) -> None: ...
 
-    def download_as_bytes(self, start: int | None = None, end: int | None = None) -> bytes:
+    def download_as_bytes(
+        self, start: int | None = None, end: int | None = None, **sdk_options: Any
+    ) -> bytes:
+        # Real google-cloud-storage accepts `timeout`, `retry` and more; the engine passes some.
         if start is None:
             return self._data
         return self._data[start : (end or len(self._data) - 1) + 1]
@@ -158,10 +161,14 @@ def test_r3_headerless_repeated_column_names_are_refused_by_config(tmp_path: Pat
                 "targets": {"t": {"type": "file", "format": "csv", "path": str(path) + ".out"}},
             }
         )
-    # Unreachable from a validated config; recorded as it is.
+    # The dialect refuses the repeat on a direct reader too (main's CsvDialect rule), so the
+    # repeated names never reach a frame or a schema.
+    from decoy_engine.errors import ConfigError
+
     direct = CsvFileSource(path, has_header=False, column_names=KEPT)
-    assert list(direct.sample_frame(10).columns) == KEPT
-    with pytest.raises(ValueError, match="Duplicate column names"):
+    with pytest.raises(ConfigError, match="column_names` must be unique"):
+        direct.sample_frame(10)
+    with pytest.raises(ConfigError, match="column_names` must be unique"):
         direct.schema()
 
 
