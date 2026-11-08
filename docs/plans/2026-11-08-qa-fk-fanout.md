@@ -3,7 +3,7 @@ Status: plan
 # QA-FK-FANOUT: generated reference columns keep the fitted fan-out (roadmap row 24h)
 
 Owner: Cam. Author: claudeworkerbee (Opus). Date: 2026-11-08. Scope: engine + CLI `fit`, V1 (owner decision
-2026-11-08). Revision 2.
+2026-11-08). Revision 3.
 
 Rules consulted: `dev-rules/README.md`, `00-universal.md`, `risk-and-exceptions.md`, `development-loop.md`
 (PLAN: choke point, Placement, Design notes, Established solutions), `feature-dev.md`, `architecture.md`,
@@ -30,11 +30,12 @@ parents** are parents with at least one child.
 ## 0. Review dispositions
 
 Revision 2 folds in Dennis round 1 (GO-WITH-FIXES, 0 blocker, 3 high, 3 medium, 4 low).
+Revision 3 folds in Codex round 1 (GO-WITH-FIXES, 3 V1, 2 V2-LOG).
 
 | Finding | Disposition |
 |---|---|
 | H1 the null mask reopens `snapshot_file` (`synthesize.py:311-320` passes a digest only for pinned statistical columns; `for_column` then reads the file, `derivation.py:145-151`) | Accepted. `_generate_column` also passes `sha256:<spec.digest>` for a fitted reference column. AT-5 sets `null_probability > 0`; mutant M3b |
-| H2 a DP-declared config accepts `fitted` against a non-DP snapshot, so the exact source degree histogram reaches DP output | Accepted. `check_dp_generate_contract` (`plan/_checks_dp.py:141`) refuses a fitted reference column when `global_settings.dp` is present, with a fifth code `plan.dp_generate_fitted_fanout_unsupported`, the same precedent as `condition_on` and HC-5. AT-6b |
+| H2 a DP-declared config accepts `fitted` against a non-DP snapshot, so the exact source degree histogram reaches DP output | Accepted. `check_dp_generate_contract` (`plan/_checks_dp.py:141`) refuses a fitted reference column when `global_settings.dp` is present, with `plan.dp_generate_fitted_fanout_unsupported`, the same precedent as `condition_on` and HC-5. AT-6b |
 | H3 raised size pins: `synthesize.py` 662 to 672, `_compile.py` 680 to 684, `snapshot.py` 600 to 614 | Accepted, all three shrink or hold. `synthesize.py`: new prep slice E1b lands the already planned H-1 Wave B E6a move (`tests/fixtures/h1/definition_owners.json` `"E6a"`: `_derived_generate`, `_formula`, `_reference` to `generation/_synthesize_derived.py`), so the file drops to about 505 and the fitted branch lands in the moved `_reference`. A new `generation/_reference.py`, as suggested, would fail that owners test (a moved name must land in its planned file). `_compile.py`: the two calls switch to one wrapper, net 0 lines. `snapshot.py`: the edit is the keyword plus one delegated call, offset by an equal trim in the same slice so the file stays at 600 |
 | M1 plan load is not covered: `_serialize.py:383` repeats the `type != "statistical"` predicate and `_generation_plan_from_dict` (`:430-446`) runs only the statistical checks | Accepted. One predicate `column_pins_snapshot(col)` in `plan/_generation.py`, used by `_snapshot_field_keys` and `_require_statistical_snapshots_pinned`. One wrapper `check_generate_snapshot_columns` (statistical checks, then fitted checks) replaces `check_statistical_columns` at all three call sites (`_compile.py:190`, `:525`, `_serialize.py:439`). AT-7 cell for a manifest whose fitted snapshot was removed |
 | M2 `quality` reaches into a private `generation` module | Accepted. `generation/statistical/__init__.py` exports `add_fanout`; the lazy import names the package, not `_fanout`. CODEMAP records the one `quality` to `generation` call and why it is lazy (slice D) |
@@ -43,6 +44,9 @@ Revision 2 folds in Dennis round 1 (GO-WITH-FIXES, 0 blocker, 3 high, 3 medium, 
 | L2 digest prefix and float `K` | Fixed: the digest is passed as `sha256:<hex>`; `K` uses integer half-even rounding via `divmod` |
 | L3 "stratified" is the wrong name | Fixed: systematic resampling with the offset fixed at 0.5 (deterministic quantiles) |
 | L4 boundary adherence 1.0 may be unreachable; AT-C1 implied a value-free snapshot | Accepted. Allocation caps each degree at the source maximum whenever `N <= K * dmax` (section 3), so AT-1 keeps 1.0; AT-3 asserts the cap. AT-C1 now claims only that the fan-out block and stdout hold no key value; the rest of the snapshot is 24f's |
+| Codex V1-1 an empty generated parent pool returned `[None] * N`, contradicting the fitted no-orphan guarantee (`synthesize.py:594-608`) | Accepted. `N == 0` still returns an empty column. For `N > 0`, fitted generation refuses an empty unique non-null parent pool with `plan.reference_parent_pool_empty`; non-fitted distributions keep today's behavior. AT-2 and AT-7 cover both sides |
+| Codex V1-2 E2b made exact fitted fan-out runnable before E2a added the DP-declared-config refusal, and plan load did not invoke that refusal (`_plan_entry.py:98-108` checks receipts only when a statistical column exists; `_serialize.py:429-439` goes from config decode to snapshot checks; `_checks_dp.py:141-162` is the DP knob choke point) | Accepted. The DP refusal, its compile regression and a serialized-Plan regression move into E0, before fitted execution exists. `_generation_plan_from_dict` calls the same `check_dp_generate_contract`; no second DP predicate is added. Later slices create no unsafe intermediate head |
+| Codex V1-3 the persisted fan-out decoder said `int` but did not require strict stored types, so Python bools could be accepted as counts (`bool` is accepted by ordinary integer checks; the existing stored-spec reconstruction also coerces fields at `_spec.py:125-136`) | Accepted. The decoder uses exact built-in types, refuses bools, floats and numeric strings at every count position, and never echoes a rejected value. AT-6 adds strict-type and value-free-message cells |
 
 ## 1. FRAME
 
@@ -69,15 +73,16 @@ per-parent block (`quality/snapshot.py:143-227`).
    drawn from the fitted histogram. When the generated parent and child row counts keep the source ratio, the
    generated degree histogram (zeros included) matches the source within the AT-1 tolerance; when they equal
    the source counts, it matches exactly.
-3. Every generated child key is a key of the generated parent table (no orphans), and the column has exactly
-   `row_count` rows.
+3. On success, every non-null generated child key is a key of the generated parent table (no orphans), and the
+   column has exactly `row_count` rows. A fitted column with child rows but no unique non-null generated parent
+   key refuses instead of emitting an all-null pseudo-FK (`generation/synthesize.py:594-608`).
 4. Same master key, same label and same snapshot bytes give byte-identical output on every route that accepts
    the column; a different label gives different output.
 5. Columns without `distribution: fitted` are byte-identical to today (`random`, `sequential`, `weighted`, the
    min/max repair, the streamed core and the native goldens do not move).
 6. A config that asks for `fitted` but cannot get it (no fan-out in the snapshot, a DP snapshot, conflicting
-   keys, the pinned API) fails at validate and at run with a typed code that says what to do. It never falls
-   back to uniform draws.
+   keys, an empty generated parent pool with child rows, the pinned API) fails with a typed code that says what
+   to do. It never falls back to uniform draws or an all-null pseudo-FK.
 
 ### Non-goals (V1)
 
@@ -101,7 +106,7 @@ per-parent block (`quality/snapshot.py:143-227`).
 | F-1 | Child row count does not match the fitted total (`row_count` 60 against a source of 20) | allocation scales to exactly `row_count` with integer largest-remainder; AT-3 property (sum equals `row_count`) |
 | F-2 | Empty parents: zero-child share lost or invented | active count `K = round(N * keys / rows)`, clamped; AT-1 shape test counts zeros; AT-2 exact QA repro |
 | F-3 | More active parents asked for than exist, or more than child rows | `K = min(P, N, ...)`; AT-3 edge rows |
-| F-4 | Parent pool empty, child rows > 0 | today's `[None] * n` behavior kept and stated; AT-3 row |
+| F-4 | Parent pool empty, child rows > 0 | fitted generation refuses `plan.reference_parent_pool_empty`; today's `[None] * n` behavior stays byte-identical for non-fitted distributions (`synthesize.py:607-608`); AT-2, AT-7 |
 | F-5 | DP snapshot, or a snapshot fitted without `--fanout` | refusal `plan.reference_fanout_missing` at validate and run; AT-6 |
 | F-5b | DP-declared config with a plain `--fanout` snapshot | `check_dp_generate_contract` refuses with `plan.dp_generate_fitted_fanout_unsupported`; AT-6b |
 | F-6 | Hand-edited or truncated fan-out block | decoder validates totals; refusal `plan.reference_fanout_invalid`; AT-6 |
@@ -111,6 +116,7 @@ per-parent block (`quality/snapshot.py:143-227`).
 | F-9 | `fitted` silently becomes uniform (unknown `distribution` values fall back to random today, `synthesize.py:627-630`) | compile check recognizes `fitted`; the generation branch raises on a missing spec rather than falling through; AT-6, AT-7 |
 | F-10 | A redacted snapshot (24f) strips or blanks the fan-out | the fan-out keys are classified value-free in the 24f registry; AT-9 |
 | F-11 | Existing reference output moves | AT-8 byte-identity of the non-fitted distributions, existing parity and golden suites |
+| F-12 | A hand-edited block uses bool, float or numeric-string counts, or an error echoes a rejected data value | decoder requires exact built-in `int` objects at every count position and builds messages from field names and invariant names only; AT-6 strict-type and canary cells |
 
 ## 2. Established solutions
 
@@ -156,7 +162,8 @@ There are three, each one place:
    wrapper, `check_generate_snapshot_columns(config, pinned, dp_verified, failures)` in the same module: it
    calls `check_statistical_columns` and then `check_fitted_references`, and replaces the three existing
    `check_statistical_columns` calls (`_compile.py:190`, `:525`, `_serialize.py:439`), so compile and plan load
-   run the same checks.
+   run the same checks. It returns `check_statistical_columns`'s column-spec list unchanged for
+   `build_generation_plan`, whose current input contract is the four-tuple list at `_generation.py:228-243`.
 3. **Generation: `_reference`.** E1b first lands the planned H-1 Wave B E6a move, so `_reference` lives in
    `generation/_synthesize_derived.py` (moved verbatim from `synthesize.py:556-647`; `synthesize` imports it by
    name, so `monkeypatch.setattr(synthesize, "_reference", ...)` in `test_phase_f_f0_invariants.py:345-355`
@@ -164,7 +171,9 @@ There are three, each one place:
    call (today `:610-614`). The branch delegates to `_fanout.fitted_reference_values`. The streamed core declines
    `fitted` in `classify_reference` (`_admission.py:178`), so the legacy route is the only route that runs it.
    Pinned execution calls the same `_generate_column`, but pinned compile already refuses a `snapshot_file` on
-   a non-statistical column (`_pinned_compile.py:162-166`), so it never gets there.
+   a non-statistical column (`_pinned_compile.py:162-166`), so it never gets there. For `N > 0`, the fitted
+   branch refuses an empty `ref_vals` before seed derivation; the earlier `N == 0` return remains an empty
+   successful column (`synthesize.py:594-610`).
 
 ### The fan-out block (fit side)
 
@@ -181,7 +190,11 @@ An optional per-column key, written only for columns named in `fanout_columns`:
 
 - `rows` is the non-null row count and `keys` the number of distinct non-null keys. `degrees` lists
   `[degree, parents]` pairs in ascending degree, with no zero degrees. Invariants: `sum(parents) == keys` and
-  `sum(degree * parents) == rows`.
+   `sum(degree * parents) == rows`. The reader requires a built-in `dict` block, a built-in `list` for
+   `degrees`, a two-item built-in `list` for each pair, and `type(value) is int` for `rows`, `keys`, every degree
+   and every parent count. Bools, floats, numeric strings, tuples and custom containers are refused rather than
+   coerced. Decoder errors name only the field and failed invariant, never the rejected value; this is stricter
+   than the coercing stored spec reconstruction at `_spec.py:125-136`.
 - Computed as `counts = series.dropna().astype(str).value_counts(); counts.value_counts()`, sorted, ints only.
   Keys are compared as strings, matching how the snapshot already treats keys (`_categorical_stats`). The size
   is at most about `sqrt(2 * rows)` pairs.
@@ -222,7 +235,7 @@ of the generated parent column, insertion order, as `_reference` builds it today
 
 ```
 if N == 0: return []                   # no child rows
-if P == 0: return [None] * N           # today's empty-pool behavior (synthesize.py:607-608), unchanged
+if P == 0: raise reference_parent_pool_empty  # no valid FK value exists (synthesize.py:607-608)
 K = clamp(half_even_div(N * keys, rows), 1, min(P, N))       # active parents
 base[i] = Q((2i + 1) / (2K))  for i in 0..K-1                   # inverse CDF at fixed offset 0.5
 target = largest_remainder(base, N)                             # sum == N, every entry >= 1
@@ -235,10 +248,14 @@ target = cap(target, dmax)                                      # no degree abov
   integers: `cum_parents(d) * 2K >= (2i + 1) * keys`.
 - Largest remainder: `share_i = base_i * N`. The floor is `max(1, share_i // S)` with `S = sum(base)`. Leftover
   units go to the largest `share_i % S` (ties: larger `base_i`, then higher `i`). If the floors of 1 push the
-  sum over `N`, the largest entries above 1 are decremented (ties: higher `i`) until the sum is `N`.
+   sum over `N`, the largest entries above 1 are decremented (ties: higher `i`) until the sum is `N`. This
+   terminates because the vector's minimum possible sum is `K`, and `K <= N`, so at least the excess over `N`
+   is removable above the floor of one.
 - Cap: `dmax` is the largest source degree. When `N <= K * dmax`, each entry above `dmax` is lowered to `dmax`
   and the removed units go one at a time to the entries below `dmax` with the largest `base_i` (ties: higher
-  `i`). The sum stays `N`, so no generated parent has more children than the largest source parent. When
+   `i`). The redistribution terminates after exactly the number of removed units: after lowering, total
+   headroom is at least that number because `N <= K * dmax`. The sum stays `N`, so no generated parent has more
+   children than the largest source parent. When
   `N > K * dmax` (only when `K` was clamped to `P`), the cap cannot hold and the excess stays where largest
   remainder put it; the docs say so.
 - Why `K = N * keys / rows`: it keeps the source's mean children per active parent (`rows / keys`). When the
@@ -252,7 +269,9 @@ target = cap(target, dmax)                                      # no degree abov
 
 ### Assignment and row order (the only random draws)
 
-`fitted_reference_values(pool, spec, n, rng)`:
+`allocate` returns the length-`K` positive degree vector. `fitted_reference_values(pool, spec, n, rng)` returns
+the child column and is the boundary that either returns exactly `n` entries from the pool or raises the empty
+pool refusal (`synthesize.py:594-608`):
 
 1. `degrees = allocate(spec, len(pool), n)` (length K, ascending).
 2. `slots = degrees + [0] * (P - K)`; `rng.shuffle(slots)`. This assigns degrees to parents in pool order.
@@ -287,7 +306,8 @@ each generate column with `type: reference` and `distribution: fitted`:
 | source column absent, or its entry has no `fanout` (a snapshot fitted without `--fanout`, every DP release) | `plan.reference_fanout_missing` |
 | the `fanout` block breaks a decoder invariant, or `keys == 0` | `plan.reference_fanout_invalid` |
 
-Each message gives the next step. For example, for missing: "reference column 'visits.patient_id': snapshot
+Each message gives the next step and contains structure names only, never a rejected count or other snapshot
+data value. For example, for missing: "reference column 'visits.patient_id': snapshot
 'visits.snap.json' has no fan-out for column 'patient_id'. Re-run `decoy fit visits.csv --fanout patient_id`,
 or use `distribution: random`. DP snapshots do not carry fan-out."
 
@@ -295,25 +315,30 @@ The check calls `fanout_spec_from_snapshot`, the same decoder generation uses. `
 over the hard max, shrink-only) is not touched.
 
 DP: `check_dp_generate_contract` (`plan/_checks_dp.py:141-200`) is the one place that refuses anti-DP generate
-knobs when `global_settings.dp` is present. Its loop skips non-statistical columns today (`:161`); E2a adds one
+knobs when `global_settings.dp` is present. Its loop skips non-statistical columns today (`:161`); E0 adds one
 clause before that skip that refuses a reference column with `distribution: fitted` with the new code
 `plan.dp_generate_fitted_fanout_unsupported` ("a DP pipeline cannot use the exact fitted fan-out; use
 `distribution: random`"). The file is 589 lines; the clause is held to about 10 lines so it stays at or under
-600.
+600. E0 lands the clause before fitted execution exists. It also calls this same function immediately after
+the embedded config is decoded in `_generation_plan_from_dict`, before DP verification and snapshot-column
+checks (`plan/_serialize.py:429-439`), so a hand-edited serialized Plan cannot bypass the one DP decision point.
 
 ### Generation wiring
 
 - `_plan_entry._prepare_generation` (`:105-125`) builds `reference_fanouts: {(table, column): FanoutSpec}`.
   It reads each fitted reference column of the plan's embedded config, matches its `snapshot_file` against
-  `generation.snapshots[*].source_path`, and decodes the already-pinned payload. The result goes in
-  `legacy_kwargs` beside `statistical_specs`.
+  `generation.snapshots[*].source_path`, and decodes the already-pinned payload. `FanoutSpec.digest` comes from
+  that matched `PinnedSnapshot.sha256`, whose shape is bare hex (`plan/_generation.py:61-73`), not from the path
+  and not from a new hash or read. The result goes in `legacy_kwargs` beside `statistical_specs`.
 - `synthesize._generate_tables_from_config` and `_generate_column` thread `reference_fanouts` to `_reference`,
   and `_generate_column` passes the fitted column's `seed_digest` to `_apply_null_probability` (section 3,
   Assignment).
 - In `_reference` (in `_synthesize_derived.py` after E1b), after the pool is built (today `:594-608`) and
   before the `for_column` call, `distribution == "fitted"` returns `fitted_reference_values(...)`. A missing
   spec raises `StatisticalSpecError (plan.reference_fanout_missing)`: this covers a direct
-  `_generate_tables_from_config` caller that skipped compile.
+   `_generate_tables_from_config` caller that skipped compile. If `n > 0` and that pool is empty, the same
+   boundary raises `StatisticalSpecError (plan.reference_parent_pool_empty)`; non-fitted columns still take the
+   existing `[None] * n` return (`synthesize.py:607-608`).
 - `_admission.classify_reference` declines `fitted` with the reason string `reference_fitted_fanout` (admission
   reasons are strings, not registry codes, `_admission.py:170-171`). The whole plan then takes the legacy
   route (`_admission.py:10-11`). The F-audit oracle `tests/parity/_f_audit_matrix.py:89-106` re-derives
@@ -351,6 +376,7 @@ clause before that skip that refuses a reference column with `distribution: fitt
 | reference `distribution: random`/`sequential`/`weighted`, with or without min/max | uniform or weighted draws, repair | byte-identical |
 | reference `distribution: fitted`, `P = 10`, `N = 20`, QA snapshot | n/a (unknown value became random) | degrees `8/5/2/1/1/1/1/1/0/0` exactly; no orphans |
 | same, `P = 30`, `N = 60` | random: max about 5, about 25 of 30 active | max 8, 24 of 30 active, histogram scaled from the source |
+| fitted reference, `P = 0`, `N > 0` | all nulls | refused `plan.reference_parent_pool_empty`; non-fitted output is unchanged (`synthesize.py:607-608`) |
 | `fitted` without `--fanout` in the snapshot, or a DP snapshot | n/a | validate and run fail `plan.reference_fanout_missing` |
 | `fitted` with `weights` or `min_per_parent` | n/a | `plan.reference_fanout_conflict` |
 | `fitted` in a config with `global_settings.dp` | n/a | `plan.dp_generate_fitted_fanout_unsupported` at validate and run |
@@ -382,9 +408,9 @@ declines reference columns (`execution/physical/_shadow_generation.py:91`, `:326
 |---|---|---|
 | CLI `fit` usage errors (D0 block, `fit.py:337-395`) | 1 | `--fanout` with `--epsilon`; `--fanout` naming a missing column (checked after the CSV read, beside `--parse-dates`, `:415-419`) |
 | engine `compute_distribution_snapshot` bad `fanout_columns` | `DistributionSnapshotError` | new code `quality.fanout_column_unknown` |
-| plan compile (validate, run) | `PlanError` with the codes in section 3 | four new plan codes |
+| plan compile (validate, run) | `PlanError` with the codes in section 3 | five new plan codes |
 | plan load (`plan_from_yaml`) | `PlanCompileError` | existing `plan.statistical_snapshot_not_pinned` and the fitted checks now cover fitted columns |
-| generation without compile, missing spec | `StatisticalSpecError` | `plan.reference_fanout_missing` |
+| generation without compile, missing spec or empty runtime parent pool | `StatisticalSpecError` | `plan.reference_fanout_missing` or `plan.reference_parent_pool_empty` |
 | success | 0 | new stdout line, JSON key |
 
 ### 5.3 FK shapes
@@ -422,7 +448,7 @@ that each still loads a snapshot that carries `fanout`.
 | snapshot file (`fit --output`) | optional `columns.<c>.fanout` when `--fanout` is given |
 | `fit` human stdout | one line per fan-out column (counts only) |
 | `fit --json` | `fanout_columns: [...]` |
-| `validate` and `run` errors | four new plan codes (section 3) |
+| `validate` and `run` errors | five new plan codes (section 3) |
 | generated child table | the fitted fan-out instead of independent draws, for `fitted` columns only |
 | `fit --help`, `docs/cli-reference.md`, engine `docs/strategies.md` (reference section `:1268`) | the option and the `fitted` distribution |
 
@@ -435,7 +461,7 @@ that each still loads a snapshot that carries `fanout`.
 | 3 | State and ordering | the fitted branch and the null mask must not reach `for_column`'s file read; allocation before shuffles | early return in `_reference`; the digest passed to the null mask; one stream, fixed draw order | AT-5 (file deleted after compile, `null_probability > 0`), AT-7 | M3: place the branch after the existing `for_column` call (AT-5 red); M3b: keep the null-mask digest condition statistical-only (AT-5 red) |
 | 4 | Route parity and silent fallback | `fitted` on the streamed core, an unknown value falling back to random, plan load skipping the fitted checks, or a DP config taking the exact fan-out | streamed decline plus the F-audit matrix; compile check; one predicate and one wrapper at compile and load; DP contract clause; raise on missing spec | AT-6, AT-6b, AT-7, `test_phase_f_audit_no_legacy.py` | M4: drop the decline in `classify_reference` (AT-7 red: the streamed core treats `fitted` as random); M4b: call `check_statistical_columns` directly in `_serialize.py` (AT-7 load cell red); M4c: drop the DP clause (AT-6b red) |
 | 5 | Referential integrity | every child key in the parent pool; exact row count | stubs built only from pool entries; largest remainder sums to `N` | AT-2, AT-3 | M5: build stubs from the snapshot's degree list without the pool (AT-3 orphan check red) |
-| 6 | Untrusted producer | a hand-edited fan-out block (totals off, zero degrees, negative counts, unsorted) | decoder invariants | AT-6 malformed cells | M6: skip the `sum(degree * parents) == rows` check (AT-6 red) |
+| 6 | Untrusted producer | a hand-edited fan-out block (totals off, zero degrees, negative counts, unsorted, bool/float/string counts) | strict exact-type decoder plus invariants; value-free messages | AT-6 malformed, strict-type and canary cells | M6: skip the `sum(degree * parents) == rows` check (AT-6 red); M6b: replace `type(v) is int` with `isinstance(v, int)` (bool cell red) |
 | 7 | Check then use on a path (TOCTOU) | the snapshot read at compile and again at generation | pinned bytes only; generation never opens the path | AT-5 | M7: decode from `snapshot_file` at generation (AT-5 red) |
 | 8 | Weak tests and overclaimed evidence | a shape test that passes for uniform draws | AT-1 includes a heavy-tailed source on which today's `random` scores below the bar (precondition asserted) | AT-1 | M8: allocate equal degrees (AT-1 red) |
 | 9 | Behavior-preserving refactor drift | non-fitted reference output, snapshot bytes without `--fanout`; the E1b move of three functions | new branch only; keyword default empty; E1b moves code verbatim and flips the owners fixture | AT-8, existing parity and golden suites, `tests/unit/test_wave_b_definition_owners.py` | M9: route `random` through the new helper (AT-8 red); M9b: leave `_reference` defined in `synthesize.py` after the flip (owners test red) |
@@ -453,9 +479,11 @@ Engine E1 (`tests/unit/generation/statistical/test_fanout.py`, `tests/unit/quali
   - deterministic (same inputs give the same list);
   - `K == keys` and the multiset equals the source when `N == rows` and `P >= keys`;
   - `max <= dmax` whenever `N <= K * dmax`;
-  - `K` equals `round(N * keys / rows)` under Python's half-even `round` of a `Fraction`.
+  - for `P > 0` and `N > 0`, `K == min(P, N, max(1, round(N * keys / rows)))` under Python's half-even
+    `round` of a `Fraction`.
 
-  Fixed rows: `N == 0`; `P == 0` (gives `[None] * N`); `N < K`; `N` far above `rows` (`K == P`); `keys == 1`.
+  Fixed rows: `N == 0`; `P == 0, N > 0` (typed refusal at `fitted_reference_values`); `N < source keys`
+  (the clamp gives `K <= N`); `N` far above `rows` (`K == P`); `keys == 1`.
 - **AT-4** Snapshot contract:
   - `fanout_columns=("patient_id",)` on the QA visits frame writes `{"rows": 20, "keys": 8, "degrees":
     [[1, 5], [2, 1], [5, 1], [8, 1]]}`;
@@ -484,6 +512,9 @@ Engine E2b (`tests/unit/generation/test_reference_fanout.py`):
   - `P = 10, N = 20`: sorted degrees are `[8, 5, 2, 1, 1, 1, 1, 1, 0, 0]`.
   - `P = 30, N = 60`: max 8, 24 active parents.
   - Every child key is in the parent table (no orphans), and the column has exactly `N` rows.
+  - `P = 0, N > 0` raises `plan.reference_parent_pool_empty`; `P = 0, N = 0` returns an empty column. The same
+    empty parent with `random`, `sequential` or `weighted` still returns `[None] * N` as today
+    (`synthesize.py:607-608`).
 - **AT-5** Pinned bytes: compile the plan with `null_probability: 0.1` on the fitted column, delete
   `snapshot_file`, then generate from the plan. Output (values and null pattern) equals a run with the file
   present, and no `open` of the path happens (`fileaccess` spy). A changed snapshot file between compile and
@@ -496,15 +527,23 @@ Engine E2b (`tests/unit/generation/test_reference_fanout.py`):
   - A plan YAML round trip (`plan_from_yaml`) generates the same bytes.
   - A probe run (`_probe_scale`) completes.
 
+Engine E0 (`tests/unit/plan/test_fitted_reference_checks.py`):
+
+- **AT-6b** DP: a config with `global_settings.dp` and a fitted reference column is refused with
+  `plan.dp_generate_fitted_fanout_unsupported` by compile and config-only checks before any snapshot read. A
+  serialized Plan carrying the same embedded config is refused by `plan_from_yaml` before snapshot verification;
+  a spy proves both paths called `check_dp_generate_contract`, the one predicate at `_checks_dp.py:141-162`.
+  The same configs with `distribution: random` pass this check.
+
 Engine E2a (`tests/unit/plan/test_fitted_reference_checks.py`):
 
 - **AT-6** Refusals at validate (`compile_plan`) and run, each with its code and next step: no `snapshot_file`;
   unreadable file; column absent; no `fanout` key; a DP-shaped snapshot (no `fanout`); `keys == 0`; totals off;
-  a zero degree; unsorted degrees; `weights` set; `min_per_parent` set; `max_per_parent` set. A direct
+  a zero degree; unsorted degrees; non-dict block, tuple `degrees` or pair, and bool, float and numeric-string
+  values in each count position; `weights` set;
+  `min_per_parent` set; `max_per_parent` set. For each malformed-value cell, a distinct data-value canary is
+  absent from `str(exc)` and `exc.message`; field and column names remain allowed structure. A direct
   `_generate_tables_from_config` call without specs raises `reference_fanout_missing` (this cell lands in E2b).
-- **AT-6b** DP: a config with `global_settings.dp` and a fitted reference column against a plain `--fanout`
-  snapshot is refused with `plan.dp_generate_fitted_fanout_unsupported` at validate and run; the same config
-  with `distribution: random` compiles past this check.
 - **AT-7b** Plan load: a serialized Plan whose manifest has the fitted column's snapshot removed raises
   `plan.statistical_snapshot_not_pinned` from `plan_from_yaml`; a manifest whose embedded fan-out block breaks
   an invariant raises `plan.reference_fanout_invalid` at load. An AST check finds no direct
@@ -584,11 +623,12 @@ None. Recommended options taken without asking (V1 bar):
 - **`distribution-snapshot/v1`**: one optional per-column key, `fanout`, written only on request. The contract
   allows additive optional fields (`compatibility-contract.md:124-126`). Old readers ignore it (AT-4). Old files
   have no `fanout` and keep loading; asking for `fitted` on one gives a typed refusal, not a crash.
-- **Reason registry**: five additions:
+- **Reason registry**: six additions:
   - `quality.fanout_column_unknown`
   - `plan.reference_fanout_missing`
   - `plan.reference_fanout_invalid`
   - `plan.reference_fanout_conflict`
+  - `plan.reference_parent_pool_empty`
   - `plan.dp_generate_fitted_fanout_unsupported`
 
   They take the next minor after whatever is on `main` when E0 lands (1.10.0 today; 1.11.0 if QA-FIT-REDACT E2
@@ -612,11 +652,11 @@ None. Recommended options taken without asking (V1 bar):
 
 | Slice | Repo | Files (at most 10) | Lines | Tests |
 |---|---|---|---|---|
-| E0 | engine | `reasons/quality/<part>.py`, `reasons/plan/<part>.py`, `reasons/_registry.py` (version), fixture `reason-manifest-v1.NN-fk-fanout.json`, `tests/fixtures/f29/consumer-contract.json`, `docs/reasons.md`, `tests/unit/test_reason_registry.py` (7) | about 90 | registry tests; full engine suite (registry trigger) |
+| E0 | engine | `reasons/quality/<part>.py`, `reasons/plan/<part>.py`, `reasons/_registry.py` (version), fixture `reason-manifest-v1.NN-fk-fanout.json`, `tests/fixtures/f29/consumer-contract.json`, `docs/reasons.md`, `plan/_checks_dp.py`, `plan/_serialize.py`, `tests/unit/plan/test_fitted_reference_checks.py`, `tests/unit/test_reason_registry.py` (10) | about 150 | registry tests, AT-6b compile and serialized-Plan cells; full engine suite (registry trigger) |
 | E1 | engine | `generation/statistical/_fanout.py`, `quality/snapshot.py`, `tests/sentry/test_module_size.py`, `tests/unit/generation/statistical/test_fanout.py`, `tests/unit/quality/test_snapshot_fanout.py`, `docs/methodology-registry.yaml` (6; plus `profiling/_value_redaction.py` if 24f E1 is on `main`, 7) | about 400 | AT-3, AT-4 (and AT-9 if 24f is on `main`) first; T1 = `tests/unit/quality`, `tests/unit/generation/statistical`, `tests/sentry`, `tests/integration/compat_corpus` |
 | E1b | engine | `generation/synthesize.py`, `generation/_synthesize_derived.py` (new), `tests/fixtures/h1/definition_owners.json`, `tests/sentry/test_module_size.py` (4) | about 180 moved, about 10 new | behavior-preserving move, no new test; T1 = `tests/unit/test_wave_b_definition_owners.py`, `tests/parity`, `tests/native/test_determinism_goldens.py`, `tests/unit/test_v2_generation.py`, `tests/sentry` |
-| E2b | engine | `generation/synthesize.py`, `generation/_synthesize_derived.py`, `generation/_plan_entry.py`, `generation/_admission.py`, `plan/_generation.py` (`column_pins_snapshot` only), `execution/native/_draw_sites_gen.py`, `tests/native/test_draw_sites_catalogue_pinned.py`, `tests/parity/_f_audit_matrix.py`, `tests/unit/generation/test_reference_fanout.py`, `CHANGELOG.md` (10) | about 400 | AT-1, AT-2, AT-5, AT-7, AT-8 first; T1 = `tests/unit/generation`, `tests/unit/plan`, `tests/parity`, `tests/native`, `tests/unit/test_v2_generation.py`, `tests/sentry` |
-| E2a | engine | `plan/_generation.py`, `plan/_compile.py`, `plan/_serialize.py`, `plan/_checks_dp.py`, `tests/unit/plan/test_fitted_reference_checks.py`, `CHANGELOG.md` (6) | about 260 | AT-6, AT-6b, AT-7b first; T1 = `tests/unit/plan`, `tests/unit/generation/test_reference_fanout.py`, `tests/sentry` |
+| E2b | engine | `generation/synthesize.py`, `generation/_synthesize_derived.py`, `generation/_plan_entry.py`, `generation/_admission.py`, `plan/_generation.py` (`column_pins_snapshot` only), `execution/native/_draw_sites_gen.py`, `tests/native/test_draw_sites_catalogue_pinned.py`, `tests/parity/_f_audit_matrix.py`, `tests/unit/generation/test_reference_fanout.py`, `CHANGELOG.md` (10) | about 400 | AT-1, AT-2, AT-5, AT-6b regression, AT-7, AT-8 first; T1 = `tests/unit/generation`, `tests/unit/plan`, `tests/parity`, `tests/native`, `tests/unit/test_v2_generation.py`, `tests/sentry` |
+| E2a | engine | `plan/_generation.py`, `plan/_compile.py`, `plan/_serialize.py`, `tests/unit/plan/test_fitted_reference_checks.py`, `CHANGELOG.md` (5) | about 250 | AT-6, AT-7b first; AT-6b stays as a regression; T1 = `tests/unit/plan`, `tests/unit/generation/test_reference_fanout.py`, `tests/sentry` |
 | D | engine | `docs/strategies.md` (reference section), `CODEMAP.md` (the fan-out module and the lazy `quality` to `generation` call) (2) | about 60 | docs link check |
 | R | engine | release request to claudeorchestrator after E0, E1, E1b, E2b, E2a and D merge | | |
 | C1 | CLI | `pyproject.toml`, `uv.lock`, `cli/fit.py`, `tests/e2e/test_fit_command.py`, `docs/cli-reference.md`, `CHANGELOG.md` (6) | about 160 | AT-C1 to AT-C3; full CLI suite (pin bump) |
@@ -625,8 +665,10 @@ Order: E0, then E1, then E1b, then E2b, then E2a, then D, then R, then C1.
 - E1b is independent of the fan-out code and may land any time before E2b.
 - E2b depends on E1 (decoder and allocator), E1b (the moved `_reference`) and E0 (codes). It goes before E2a so
   that `main` never compiles a `fitted` column that generation would treat as random: with E2b alone, a fitted
-  column with no usable spec raises `plan.reference_fanout_missing` at run (fail closed). E2a then adds the
-  validate-time refusals and the load path.
+  column with no usable spec raises `plan.reference_fanout_missing` at run (fail closed), an empty parent pool
+  raises `plan.reference_parent_pool_empty`, and E0 already made both compile and serialized-Plan load call
+  `check_dp_generate_contract` (`_checks_dp.py:141-162`; `_serialize.py:429-439`). E2a then adds the remaining
+  fitted snapshot refusals and the fitted snapshot load path.
 - C1 waits for R.
 - QA-FIT-REDACT C1 and C2 edit other blocks of `fit.py` (the snapshot call and the DP tail); whichever lands
   second rebases. When both are in, `--fanout` is passed through `distribution_snapshot_document`, which
@@ -667,3 +709,9 @@ Order: E0, then E1, then E1b, then E2b, then E2a, then D, then R, then C1.
 - F6: a cardinality-shape line in `report fidelity` for reference columns (DI QA M3).
 - F7: when native generation is built, it takes the `gen.reference` draw site as specified here.
 - F8: SDC top-coding of rare high degrees, if an owner asks.
+- V2-LOG: the existing statistical compile wrapper preserves a `StatisticalSpecError` as `__cause__` when it
+  raises `PlanCompileError` (`plan/_checks.py:384-389`). That chain is server-admin traceback material under the
+  standing bar. Do not widen this V1 slice to change the established statistical error path.
+- V2-LOG: the existing statistical check imports `StatisticalSpecError` from the private `_spec` module even
+  though the package exports it (`plan/_checks.py:335-337`; `generation/statistical/__init__.py:12-18`). The
+  fitted code uses the public package API; clean the old import in the V2 pass.
