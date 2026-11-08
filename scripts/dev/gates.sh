@@ -115,6 +115,7 @@ MBT=$OUT/merge-base-tree
 # /tmp/pytest-of-<user> keeps the last three runs, about 14 GB each for the engine suite.
 # Kept directly under /tmp, not under $OUT: TMPDIR can be long, and tests that bind
 # AF_UNIX sockets under tmp_path fail once the path passes the 104-108 byte limit.
+# /tmp on purpose, ignoring TMPDIR: keeps AF_UNIX socket paths under the length limit.
 TMP_ROOT=$(mktemp -d /tmp/gt.XXXXXX)
 [ -n "$TMP_ROOT" ] && [ -d "$TMP_ROOT" ] || { echo "gates: FAIL: cannot create a basetemp dir" >&2; exit 3; }
 mkdir -p "$TMP_ROOT/root"
