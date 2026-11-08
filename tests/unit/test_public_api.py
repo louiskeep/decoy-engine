@@ -115,6 +115,7 @@ def test_all_lists_every_public_name():
         "ValidationResult",
         "profile_columns",
         "profile_document",
+        "distribution_snapshot_document",
         "redact_profile_dict",
         "is_value_sensitive",
         "ColumnProfile",
