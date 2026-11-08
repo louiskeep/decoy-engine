@@ -50,3 +50,20 @@ Branch `feat/lib-l1a-records`, base engine `origin/main` `a5eb66e2` (registry 1.
   identifier-shaped prints as `?`.
 - The CLI half of A1-canonical-shared (`evidence.compute_manifest_hash` calling `records.canonical_bytes`) belongs to
   the CLI slice; the engine test pins the byte form against a copy of the CLI function.
+
+## Security review fixes
+
+| Id | Fix | Red test (red without the fix) |
+|---|---|---|
+| SEC-1 | Without `keep_paths`, job logs are not exported and are listed under `unstripped` (`log` key); log lines can name paths and this version cannot strip them | `test_sec1_logs_stay_out_without_keep_paths_and_are_listed` |
+| SEC-2 | Without `keep_paths`, `labels.pipeline` is reduced to its file name for every record (known, newer, opaque) and the id is recomputed | `test_sec2_label_pipeline_path_is_reduced_and_the_id_follows` |
+| SEC-3 | A newer-envelope record must still carry a well-formed id and kind, comes back with `verified=False`, and `read_export` turns it into a `BadLine`, so no importer path upserts by an unverified id | `test_sec3_newer_envelope_is_unverified_and_never_read_as_an_export_record` |
+
+## Mutations (VM, each applied once and reverted)
+
+All red on the named test: MA1-unsorted, MA1-skip, MA1-raw-bytes, MA1-ascii, MA1-extra, MA1-read-strict,
+MA1-reencode-view, MA1-unknown-raise, MA1-float, MA1-open, MA1-trust, MA1-crash, MA1-hidden, MA1-copy-result,
+MA1-evidence-drift, MA1-unregistered, MA1-batch, MA1-export-view, plus ME-no-remap, ME-no-strip, ME-keep-id,
+MJ-argv, MJ-trunc, SEC-1, SEC-2, SEC-3. A first pass showed MA1-ascii, MA1-open and MA1-hidden green because of a
+mutation-script pattern hitting a docstring, a duplicated reserved-kind guard and a wrong `-k`; the script and the
+guard were fixed and all three went red.
