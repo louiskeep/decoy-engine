@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import copy
 import json
-import time
+import signal
 from decimal import Decimal
 from typing import Any
 
@@ -190,9 +190,9 @@ _GRID_ROWS = [
 
 
 @pytest.mark.parametrize(("lohi", "expected"), _GRID_ROWS, ids=[str(r[0]) for r in _GRID_ROWS])
-def test_the_grid_bounds_table(lohi: tuple[float, float], expected: tuple[Any, Any]) -> None:
+def test_the_grid_edges_table(lohi: tuple[float, float], expected: tuple[Any, Any]) -> None:
     lo, hi = lohi
-    lower, upper = sv._grid_bounds(lo, hi)
+    lower, upper = sv._grid_edges(lo, hi)
     assert (lower, upper) == (Decimal(expected[0]), Decimal(expected[1]))
     assert lower < Decimal(repr(lo))
     assert upper > Decimal(repr(hi))
@@ -200,7 +200,7 @@ def test_the_grid_bounds_table(lohi: tuple[float, float], expected: tuple[Any, A
 
 def test_a_range_tiny_against_its_magnitude_stays_outside() -> None:
     lo, hi = 1e6 + 0.1, 1e6 + 0.1 + 1e-9
-    lower, upper = sv._grid_bounds(lo, hi)
+    lower, upper = sv._grid_edges(lo, hi)
     assert lower < Decimal(repr(lo))
     assert upper > Decimal(repr(hi))
 
@@ -220,18 +220,25 @@ def test_a_float_rule_would_have_written_the_real_extremes(
     assert stats["bin_edges"] == edges
 
 
-def test_full_span_floats_use_the_finite_fallback_quickly() -> None:
+def test_full_span_floats_use_the_finite_fallback_and_terminate() -> None:
+    def hung(*_: object) -> None:
+        raise TimeoutError("no domain within five seconds")
+
     cells = np.array([-1e308, 1e308])
-    started = time.perf_counter()
-    domain = sv._coarse_domain(-1e308, 1e308, cells)
-    assert time.perf_counter() - started < 5
+    previous = signal.signal(signal.SIGALRM, hung)
+    signal.alarm(5)
+    try:
+        domain = sv._coarse_domain(-1e308, 1e308, cells)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
     assert domain == (-1.5, 1.5)
     assert sv._coarse_domain(-1e308, 1e308, cells) == domain
 
 
 def test_the_fallback_takes_the_first_half_integer_no_cell_uses() -> None:
-    assert sv._fallback_bound(np.array([1.5, -2.5, 3.5])) == 4.5
-    assert sv._fallback_bound(np.array([7.0])) == 1.5
+    assert sv._fallback_edge(np.array([1.5, -2.5, 3.5])) == 4.5
+    assert sv._fallback_edge(np.array([7.0])) == 1.5
 
 
 @settings(max_examples=150, deadline=None)
@@ -244,7 +251,7 @@ def test_the_domain_is_finite_and_never_a_cell(cells: list[float]) -> None:
     assert lower < upper
     assert lower not in cells
     assert upper not in cells
-    if upper != sv._fallback_bound(arr):  # the ordinary path encloses the data
+    if upper != sv._fallback_edge(arr):  # the ordinary path encloses the data
         assert lower < lo
         assert upper > hi
 

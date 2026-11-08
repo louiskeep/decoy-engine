@@ -4,6 +4,8 @@ Which columns are sensitive, which stats are cell values and how the marker is w
 from `_value_redaction.py`, the same helpers a scan document uses. This module only applies the
 rules that need the data: re-binning a numeric column and bounding a datetime by years.
 
+Pattern: statistical disclosure control global recoding; HIPAA Safe Harbor year-only dates.
+
 Numeric columns are released as one coarse interval (statistical disclosure control global
 recoding, Hundepool et al., Statistical Disclosure Control, Wiley 2012, sections 3.4.2 to
 3.4.3; R sdcMicro `globalRecode`). The bounds sit on a power-of-ten grid one step above the
@@ -47,7 +49,7 @@ _FLOOR: Final = Decimal(1).scaleb(-12)
 _PRECISION: Final = 80
 
 
-def _grid_bounds(lo: float, hi: float) -> tuple[Decimal, Decimal]:
+def _grid_edges(lo: float, hi: float) -> tuple[Decimal, Decimal]:
     """Bounds on a power-of-ten grid strictly outside `[lo, hi]`, in exact decimal arithmetic.
 
     Float arithmetic put a real extreme back on the grid for about 7% of decimal-grid inputs,
@@ -69,7 +71,7 @@ def _grid_bounds(lo: float, hi: float) -> tuple[Decimal, Decimal]:
     return lower, upper
 
 
-def _fallback_bound(cells: np.ndarray) -> float:
+def _fallback_edge(cells: np.ndarray) -> float:
     """First half-integer B in 1.5 .. N+1.5 with neither -B nor B equal to a cell.
 
     N cells cannot cover N+1 absolute candidates, so one exists, and it is a function of the
@@ -85,15 +87,15 @@ def _fallback_bound(cells: np.ndarray) -> float:
 
 def _coarse_domain(lo: float, hi: float, cells: np.ndarray) -> tuple[float, float]:
     """The one-bin domain for a numeric column: grid bounds, or the finite fallback near float max."""
-    lower, upper = _grid_bounds(lo, hi)
+    lower, upper = _grid_edges(lo, hi)
     try:
         flo, fhi = float(lower), float(upper)
     except OverflowError:
         flo, fhi = math.inf, math.inf
     if math.isfinite(flo) and math.isfinite(fhi) and flo < cells.min() and fhi > cells.max():
         return flo, fhi
-    bound = _fallback_bound(cells)
-    return -bound, bound
+    edge = _fallback_edge(cells)
+    return -edge, edge
 
 
 def _finite_cells(non_null: pd.Series) -> np.ndarray:
@@ -107,10 +109,11 @@ def _coarse_range(non_null: pd.Series, stats: dict[str, Any], keys: Collection[s
     cells = _finite_cells(non_null)
     domain = _coarse_domain(stats["min"], stats["max"], cells)
     coarse = numeric_stats(non_null, bins=1, domain=domain)
-    stats.update({key: coarse[key] for key in keys})
+    for key in keys:
+        stats[key] = coarse[key]
 
 
-def _year_bound(rule: Rule, stats: dict[str, Any]) -> str | None:
+def _year_edge(rule: Rule, stats: dict[str, Any]) -> str | None:
     years = [b["year"] for b in stats.get("year_bins", [])]
     if not years:
         return None
@@ -147,7 +150,7 @@ def _redact_column(non_null: pd.Series, col: dict[str, Any]) -> None:
         _coarse_range(non_null, stats, coarse)
     for key, rule in data_keys.items():
         if rule is not Rule.COARSE_RANGE and key in stats:
-            stats[key] = _year_bound(rule, stats)
+            stats[key] = _year_edge(rule, stats)
     _withhold(stats, kind)
 
 
