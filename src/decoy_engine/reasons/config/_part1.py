@@ -132,7 +132,9 @@ SOURCE_FILE_COLUMN_COUNT_MISMATCH = _d(
     "source_file.column_count_mismatch", "Source file column count mismatch."
 )
 SOURCE_FILE_COLUMN_NAMES_FILE_INVALID = _d(
-    "source_file.column_names_file_invalid", "Source file column names file invalid.", since="1.10.0"
+    "source_file.column_names_file_invalid",
+    "Source file column names file invalid.",
+    since="1.10.0",
 )
 SOURCE_FILE_LONE_CR = _d("source_file.lone_cr", "Source file lone CR.")
 SOURCE_FILE_NUL_BYTE = _d("source_file.nul_byte", "Source file NUL byte.")
