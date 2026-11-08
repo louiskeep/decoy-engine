@@ -35,6 +35,15 @@ def test_plain_endpoints_are_accepted(url: str | None) -> None:
         f"https://host.example/path?token={CANARY}",
         f"https://host.example?{CANARY}",
         f"https://host.example/path?{CANARY}#frag",
+        f"https://host.example#user:{CANARY}@x",
+        f"https://host.example/p#{CANARY}",
+        f"https://host.example%40{CANARY}",
+        f"https://user%40{CANARY}.example",
+        f"https://host.example/p%3F{CANARY}",
+        f"https://host.example/p%3f{CANARY}",
+        f"https://host.example/p%23{CANARY}",
+        f"ftp://host.example/{CANARY}",
+        f"//host.example/{CANARY}",
     ],
 )
 def test_userinfo_and_query_are_refused_without_echoing_the_value(url: str) -> None:
