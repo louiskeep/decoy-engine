@@ -152,6 +152,21 @@ class TestShuffle:
             orders.append(out["_nested_leaves"].tolist())
         assert orders[0] != orders[1]
 
+    @pytest.mark.parametrize("bare", [False, True], ids=["empty-table", "no-table-field"])
+    def test_unkeyed_shuffle_without_a_table_fails_closed(self, bare: bool) -> None:
+        # An unstamped table would key every same-named column of every table on one draw.
+        from decoy_engine.execution._errors import StrategyError
+        from decoy_engine.execution._strategies._shuffle import ShuffleStrategyHandler
+
+        ctx: Any = SimpleNamespace(job_seed=_SEED, mask_key=_SEED) if bare else _Ctx()
+        if not bare:
+            ctx.current_table = ""
+        seed = _col("shuffle", deterministic=False)
+        with pytest.raises(StrategyError) as exc:
+            ShuffleStrategyHandler().run(pd.DataFrame({"c": ["a", "b"]}), "c", seed, ctx)
+        assert exc.value.code == "faker_positional_table_unknown"
+        assert exc.value.strategy == "shuffle"
+
     def test_deterministic_permutation_is_the_pinned_known_answer(self) -> None:
         # Pins the exact derive-seeded permutation, so a mutated seed slice
         # (derive(...)[:8] -> [:9]) or a nulled deterministic rng produces a

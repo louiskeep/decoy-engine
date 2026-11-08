@@ -22,8 +22,11 @@ holds files, a symlink or a foreign-owned one is refused with `runtime.scratch_u
 `shuffle` without `deterministic: true` drew from an unseeded generator, so two runs with the
 same config, seed and mask secret gave different output. That mode is the default, so plain
 `strategy: shuffle` (as in the GDPR template) did not repeat. It now draws from the mask key
-with the job seed and the table and column names bound in, and repeats across processes. Its output changes
-once. The multi-table split no longer holds a table whole because of it.
+with the job seed and the table and column names bound in, and repeats across processes. Its
+output changes once. The multi-table split no longer holds a table whole because of it.
+Without a mask secret the mask key is the job seed, so anyone with the config and the output
+can recompute the permutation and undo it, as with every keyed strategy; set a secret
+(required at GA) when that matters.
 
 ### Added (init wizard E3: keyed columns of a config, 2026-11-08)
 

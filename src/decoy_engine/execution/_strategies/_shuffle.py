@@ -7,9 +7,10 @@ The column name is bound into the derivation source so two shuffle columns
 sharing a namespace draw distinct permutations; otherwise they would be
 permuted in lockstep and re-link the values masking is meant to decouple.
 Non-deterministic mode is unkeyed (no namespace) but still drawn from the mask
-key, with the job seed, table and column bound in, so the same config, seed and
-secret reproduce the output. Null positions are preserved; only the non-null
-values are permuted.
+key, with the job seed and the shared length-prefixed (table, column) identity
+(`context_draw_identity`, the one non-deterministic Faker keys on) bound in, so the
+same config, seed and secret reproduce the output. Null positions are preserved;
+only the non-null values are permuted.
 """
 
 from __future__ import annotations
@@ -19,13 +20,17 @@ import pandas as pd
 
 from decoy_engine import reasons
 from decoy_engine.determinism import derive
-from decoy_engine.execution._adapter import StrategyContext, StrategyOption, option
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    context_draw_identity,
+    option,
+)
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 
-# Derivation namespace of the unkeyed mode. A user namespace never collides with it in
-# practice because the source also carries NULs between seed, table and column.
+# Derivation namespace of the unkeyed mode, distinct from any configured namespace.
 UNKEYED_SHUFFLE_NAMESPACE = "decoy.shuffle.unkeyed/v1"
 
 
@@ -61,12 +66,12 @@ class ShuffleStrategyHandler:
                 )
             namespace, draw_source = plan.namespace, column
         else:
-            # Table and real column are bound in so no two unkeyed shuffles permute in
-            # lockstep (a nested child is always called `_nested_leaves`); the job seed is
-            # bound in so changing the seed changes the permutation.
-            column_id = getattr(ctx, "nested_outer_column", "") or column
+            # The (table, outer column) identity keeps two unkeyed shuffles out of lockstep (a
+            # nested child is always called `_nested_leaves`); the job seed makes a new seed
+            # draw a new permutation. Its hex has no `/`, so the join cannot be ambiguous.
+            identity = context_draw_identity(ctx, column, strategy="shuffle")
             namespace = UNKEYED_SHUFFLE_NAMESPACE
-            draw_source = f"{ctx.job_seed.hex()}\x00{ctx.current_table}\x00{column_id}"
+            draw_source = f"{ctx.job_seed.hex()}/{identity}"
         seed_int = int.from_bytes(
             derive(ctx.mask_key, namespace, draw_source.encode("utf-8"))[:8], "big"
         )
