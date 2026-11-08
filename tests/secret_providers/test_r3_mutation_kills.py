@@ -328,6 +328,7 @@ def _wait(predicate) -> None:
         time.sleep(0.005)
 
 
+@pytest.mark.serial
 def test_a_second_invalidation_fences_a_load_that_began_after_the_first():
     cache, owners, clock = SecretCache(), (object(),), FakeClock()
     a_in, a_go, b_in, b_go = (threading.Event() for _ in range(4))
@@ -385,6 +386,7 @@ def test_a_second_clear_fences_a_load_that_began_after_the_first():
     assert len(cache) == 0
 
 
+@pytest.mark.serial
 def test_flights_count_their_callers_and_outlive_all_but_the_last():
     cache, owners = SecretCache(), (object(),)
     clock = FakeClock()

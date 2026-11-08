@@ -16,7 +16,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.7.0",
+      "since": "1.8.0",
       "summary": "Detectors invalid.",
       "symbol": "DETECTORS_INVALID"
     },
@@ -36,7 +36,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.7.0",
+      "since": "1.8.0",
       "summary": "Dismissal invalid.",
       "symbol": "DISMISSAL_INVALID"
     },
@@ -56,7 +56,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.7.0",
+      "since": "1.8.0",
       "summary": "NER model invalid.",
       "symbol": "NER_MODEL_INVALID"
     },
@@ -76,7 +76,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.7.0",
+      "since": "1.8.0",
       "summary": "Post-scan inactive.",
       "symbol": "POST_SCAN_INACTIVE"
     },
@@ -96,7 +96,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.7.0",
+      "since": "1.8.0",
       "summary": "Pre-scan NER inactive.",
       "symbol": "PRE_SCAN_NER_INACTIVE"
     },
@@ -122,7 +122,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.7.0",
+      "since": "1.8.0",
       "summary": "Classifier unavailable.",
       "symbol": "CLASSIFIER_UNAVAILABLE"
     },
@@ -148,11 +148,11 @@
           "severity": "error"
         }
       ],
-      "since": "1.7.0",
+      "since": "1.8.0",
       "summary": "NER model incompatible.",
       "symbol": "NER_MODEL_INCOMPATIBLE"
     }
   ],
   "reason_schema_version": 1,
-  "registry_version": "1.7.0"
+  "registry_version": "1.8.0"
 }

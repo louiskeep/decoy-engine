@@ -24,9 +24,27 @@ for another spaCy minor (`provider.ner_model_incompatible`), at validate time in
 and rate. NER scores free-text columns only (median of 3 or more whitespace tokens per sampled
 cell) and flags a column at a 0.211 share of cells. A plan check that re-wraps a registered config
 or provider refusal now reaches consumers as that reason instead of `decoy.unregistered_reason`; a
-code registered in the raising family's own namespace keeps that family's record. Registry 1.7.0
+code registered in the raising family's own namespace keeps that family's record. Registry 1.8.0
 adds seven reasons (see `docs/reasons.md`). Nothing runs a model yet: the pre-scan, post-scan and
 route changes are later slices.
+
+### Added (protected directories)
+
+`decoy_engine.protected_scratch_dir` and `open_protected_dir` are the one allocator for directories that
+hold Decoy's own rows. Directories are owner-only from creation, an existing directory is reused only when
+it is a real directory owned by the caller with no group or other access, and a failure never falls back.
+Two reasons join the registry at 1.7.0: `runtime.scratch_unsafe` and `runtime.scratch_acl_failed`.
+
+Behavior change: the local protected quarantine arena goes through the allocator. On POSIX an empty arena
+with a permissive mode is now tightened to 0700 and accepted. A permissive arena that already holds files is
+still refused (`arena_unsafe`).
+
+### Added (strategy catalog)
+
+`decoy_engine.strategy_catalog()` returns one `StrategyInfo` row per scalar strategy, sorted by name, with its
+`StrategyOption` list. Each row says whether a namespace is required, whether the strategy is join-safe
+(`hash` and `fpe`), whether it is offered at the wizard's `edit` prompt, and where each option lives in a column
+entry (`column`, `provider_config` or `provider_config.ner`). `StrategyInfo` and `StrategyOption` are exported too.
 
 ## [0.19.0] - 2026-11-07
 

@@ -121,10 +121,10 @@ NAMESPACE_MISSING = _d("namespace_missing", "Namespace missing.")
 
 _d = _catalog.config("PipelineValidationError")
 
-DETECTORS_INVALID = _d("detectors_invalid", "Detectors invalid.", since="1.7.0")
-DISMISSAL_INVALID = _d("dismissal_invalid", "Dismissal invalid.", since="1.7.0")
-POST_SCAN_INACTIVE = _d("post_scan_inactive", "Post-scan inactive.", since="1.7.0")
-PRE_SCAN_NER_INACTIVE = _d("pre_scan_ner_inactive", "Pre-scan NER inactive.", since="1.7.0")
+DETECTORS_INVALID = _d("detectors_invalid", "Detectors invalid.", since="1.8.0")
+DISMISSAL_INVALID = _d("dismissal_invalid", "Dismissal invalid.", since="1.8.0")
+POST_SCAN_INACTIVE = _d("post_scan_inactive", "Post-scan inactive.", since="1.8.0")
+PRE_SCAN_NER_INACTIVE = _d("pre_scan_ner_inactive", "Pre-scan NER inactive.", since="1.8.0")
 SOURCE_FILE_COLUMN_COUNT_MISMATCH = _d(
     "source_file.column_count_mismatch", "Source file column count mismatch."
 )
@@ -134,7 +134,7 @@ SUBSET_RUN_UNSUPPORTED = _d("subset_run_unsupported", "Subset run unsupported.",
 
 _d = _catalog.config("NerModelNameError")
 
-NER_MODEL_INVALID = _d("ner_model_invalid", "NER model invalid.", since="1.7.0")
+NER_MODEL_INVALID = _d("ner_model_invalid", "NER model invalid.", since="1.8.0")
 
 _d = _catalog.config("SubsetConfigError")
 

@@ -559,7 +559,7 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   `post_scan.ner_findings` and `post_scan.dismissed`. All are additive. A field equal to its default
   is left out of the dump, so a config that predates them keeps its exact dump,
   `pipeline_config_hash` and plan hash; the plan hash leaves out `pre_scan` and keeps
-  `post_scan.dismissed` (under `ner_findings: fail` a dismissal decides what blocks). Registry 1.7.0
+  `post_scan.dismissed` (under `ner_findings: fail` a dismissal decides what blocks). Registry 1.8.0
   adds `config.detectors_invalid`, `config.post_scan_inactive`, `config.pre_scan_ner_inactive`,
   `config.ner_model_invalid`, `config.dismissal_invalid`, `provider.classifier_unavailable` and
   `provider.ner_model_incompatible`. Three behavior changes. `ensure_ner_available` now checks the

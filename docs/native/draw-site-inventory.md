@@ -108,7 +108,7 @@ emitted as `.hex()[:truncate]`. Joinability-preserving. Null/NaN rows emit null
 and consume no derivation.
 
 ### mask.tokenize
-`execution/_strategies/_tokenize.py:122` (MG-5 reversible tokenization). V0 is
+`execution/_strategies/_tokenize.py:126` (MG-5 reversible tokenization). V0 is
 string-only: a coded, value-free `tokenize_requires_string_dtype` preflight rejects
 any source column that is not string/object dtype, which sidesteps every OTHER
 `mask.hash` canonicalization branch (int-null-widening, float, tz-naive datetime)
@@ -127,7 +127,7 @@ catalogued for totality/audit, not a native draw. Wiring the full per-value
 V1 follow-up.
 
 ### mask.categorical_deterministic
-`execution/_strategies/_categorical.py:198`. Uniform path:
+`execution/_strategies/_categorical.py:211`. Uniform path:
 `derive_index(mask_key, namespace, _canonicalize_source(value), pool_size=len(categories))`.
 Weighted path: `derive_index(..., pool_size=_WEIGHTED_CDF_RES)` then a bisect over
 the CDF. Mirror: the out-of-core categorical kernel
@@ -147,11 +147,11 @@ Out-of-core mirror at `_mask_group_b.py:132`.
 `transforms/date_shift.py:120`. Keyed path:
 `min_days + (HMAC-SHA256(column_key, value)[:8] % range_size)`. The execution
 handler derives the column key via `derive(mask_key, namespace, value)`
-(`execution/_strategies/_date_shift.py:185`). Legacy no-key configs fall back to
+(`execution/_strategies/_date_shift.py:198`). Legacy no-key configs fall back to
 `md5(value)` (`transforms/date_shift.py:108`), preserved for reproducibility.
 
 ### mask.bucket_perturb
-`transforms/bucket_perturb.py:118`. `derive(job_seed, namespace, _canonicalize_source(value_str))`
+`transforms/bucket_perturb.py:119`. `derive(job_seed, namespace, _canonicalize_source(value_str))`
 gives a within-bucket offset per value.
 
 ### mask.group_key
@@ -160,7 +160,7 @@ group-by source, giving a 32-byte group key. Generation reuses the same call
 (the `group_key` generation kind maps here).
 
 ### mask.categorical_nondeterministic
-`execution/_strategies/_categorical.py:198`. Seeded and position-keyed:
+`execution/_strategies/_categorical.py:211`. Seeded and position-keyed:
 `derive_index(ctx.mask_key, plan.namespace, encode_int(ctx.row_offset + i), pool_size=len(categories))`
 per non-null row (weighted configs use `pool_size=_WEIGHTED_CDF_RES` and the shared CDF, as the
 deterministic site does). `encode_int` is the public `decoy_engine.kernel` encoder, the same
@@ -189,7 +189,7 @@ version only: the modular index shifts if `row_count` changes.
 `HMAC-SHA256(mask_key, matched_text)`. The span text keys the shift.
 
 ### mask.faker
-`execution/_strategies/_faker.py:119`. The masking `faker` strategy, deterministic
+`execution/_strategies/_faker.py:131`. The masking `faker` strategy, deterministic
 selection. The value-visible draw is the pool SELECTION: `PoolSampler.sample` runs a
 per-row `derive_index(mask_key, namespace, canonical(source), pool.size)` over a provider
 value pool. The selection re-keys onto `mask_key`; the pool BUILD stays on `job_seed` (see
@@ -199,7 +199,7 @@ value pool. The selection re-keys onto `mask_key`; the pool BUILD stays on `job_
 `job_seed` through `PoolSampler` (`gen.pool_nondeterministic`) and are not partitionable.
 
 ### mask.faker_nondeterministic
-`execution/_strategies/_faker.py:102`. Position-keyed on `job_seed`, for non-deterministic
+`execution/_strategies/_faker.py:114`. Position-keyed on `job_seed`, for non-deterministic
 `cardinality_mode: reuse`. Row `g` takes
 `pool.values[derive_index(job_seed, selection_namespace, encode_int(g), pool_size=pool.size)]`,
 where `g = ctx.row_offset + i` and `i` is the row's ordinal in the frame the handler
@@ -251,7 +251,7 @@ whole-column vector draws and are therefore NOT partitionable. The exception is
 HMAC of the row index.
 
 ### mask.shuffle
-`execution/_strategies/_shuffle.py:56`. Whole-column, multiset-preserving
+`execution/_strategies/_shuffle.py:62`. Whole-column, multiset-preserving
 permutation. Seed:
 `int.from_bytes(derive(mask_key, plan.namespace, column.encode("utf-8"))[:8], "big")`,
 then `default_rng(seed).permutation(len(non_na_values))`. NOT partitionable: a

@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import StrategyContext, StrategyOption, provider_config_to_dict
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.transforms.derived import DerivedConfig, apply_derived
@@ -50,6 +50,10 @@ class DerivedStrategyHandler:
     """
 
     name: str = "derived"
+    namespace_required: bool = False
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = ()
+    offer_in_wizard: bool = False
 
     def run(
         self,

@@ -122,16 +122,6 @@ SOURCES: tuple[Source, ...] = (
         ),
     ),
     Source(
-        "file-access-registry",
-        "tests/sentry/file_access_registry.toml",
-        toml_keys("tests/sentry/file_access_registry.toml"),
-    ),
-    Source(
-        "file-access-modules",
-        "tests/sentry/file_access_modules.toml",
-        toml_keys("tests/sentry/file_access_modules.toml"),
-    ),
-    Source(
         "reason-unchecked-helpers",
         "tests/sentry/baselines/reason-unchecked-helpers.json",
         in_code("test_reason_registry.py", "UNCHECKED_HELPERS"),
@@ -205,6 +195,13 @@ SOURCES: tuple[Source, ...] = (
         },
     ),
     Source(  # keys of the ratchet-schema baseline itself
+        "serial-resources",
+        "tests/sentry/baselines/serial-resources.json",
+        lambda: set(
+            json.loads((BASELINES / "serial-resources.json").read_text(encoding="utf-8"))["entries"]
+        ),
+    ),
+    Source(  # keys of the ratchet-schema baseline itself
         "gcs-call-kwargs",
         "tests/sentry/baselines/gcs-call-kwargs.json",
         lambda: set(
@@ -223,10 +220,13 @@ NOT_A_LIST: dict[str, str] = {
     "reason-manifest-v1.json": "released reason manifest, frozen by the F29 registry tests",
     "reason-manifest-v1.4-f06.json": "released reason manifest, frozen by the F29 registry tests",
     "reason-manifest-v1.6-sub-stop.json": "released reason manifest, frozen by the F29 registry tests",
-    "reason-manifest-v1.7-scanml-m1.json": "released reason manifest, frozen by the F29 registry tests",
+    "reason-manifest-v1.7-lib-l0-1.json": "released reason manifest, frozen by the F29 registry tests",
+    "reason-manifest-v1.8-scanml-m1.json": "released reason manifest, frozen by the F29 registry tests",
     "reason-registry-release.json": "released reason registry, frozen by the F29 registry tests",
     "consumer-contract.json": "F29 consumer contract, compared whole by test_reason_registry",
     "openapi.json": "generated schema used as a negative fixture in a residual-surface test",
+    "file_access_registry.toml": "file access registry, allowed to grow; guarded by its Count header",
+    "file_access_modules.toml": "file access module list, allowed to grow with new access modules",
 }
 
 

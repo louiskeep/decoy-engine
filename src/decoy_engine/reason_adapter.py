@@ -77,6 +77,8 @@ _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.execution.native._draw_site_providers", "DrawSiteProtocolError", "runtime"),
     ("decoy_engine.execution.native._pool_quality", "PoolQualityError", "runtime"),
     ("decoy_engine.io.bounded_reader", "BoundedReadError", "runtime"),
+    ("decoy_engine.fileaccess._protected_dir", "ProtectedDirAclFailed", "runtime"),
+    ("decoy_engine.fileaccess._protected_dir", "ProtectedDirUnsafe", "runtime"),
     ("decoy_engine.subset._errors", "SubsetError", "subset"),
     ("decoy_engine.subset._errors", "SubsetInternalError", "runtime"),
     ("decoy_engine.providers_v2._errors", "ProviderError", "provider"),

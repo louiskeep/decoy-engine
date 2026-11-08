@@ -13,6 +13,7 @@ from __future__ import annotations
 import time
 
 import pandas as pd
+import pytest
 
 from decoy_engine.execution._strategies._text_redact import TextRedactHandler
 from decoy_engine.plan._types import ColumnSeed
@@ -63,6 +64,7 @@ class TestTokenLiteralness:
 
 
 class TestPerformanceCeiling:
+    @pytest.mark.serial
     def test_text_redact_long_input_with_many_matches_completes_under_5s(self):
         # 500 email spans in one cell. Bounded by iter_spans + splice.
         text = " ".join(f"user{i}@example.com noise" for i in range(500))
@@ -76,6 +78,7 @@ class TestPerformanceCeiling:
         assert "user0@example.com" not in out["notes"].iloc[0]
         assert out["notes"].iloc[0].count("[REDACTED]") == 500
 
+    @pytest.mark.serial
     def test_text_redact_no_matches_no_validator_short_circuit(self):
         # Prose with no PII across many rows. Should complete fast.
         rows = ["just clinical prose; no identifiers in this row"] * 5000

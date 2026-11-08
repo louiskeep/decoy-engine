@@ -176,6 +176,7 @@ def _measure(api: str, path: Path) -> dict[str, int]:
 
 
 @pytest.mark.parametrize("api", ["iter_batches", "raw_parent", "open_reader"])
+@pytest.mark.serial
 def test_spill_reader_does_not_hold_file_resident(api: str, spill_files: dict[str, Path]) -> None:
     path = spill_files[api]
     file_kb = path.stat().st_size // 1024

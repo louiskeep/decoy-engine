@@ -23,10 +23,18 @@ from __future__ import annotations
 import pandas as pd
 
 from decoy_engine import reasons
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    option,
+    provider_config_to_dict,
+)
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.transforms.geo_generalize import (
+    CASCADE_LEVELS,
+    HIPAA_K_THRESHOLD,
+    SUPPORTED_TYPES,
     GeoGeneralizeConfig,
     cascade_latlng_column,
     cascade_zip_column,
@@ -50,6 +58,20 @@ class GeoGeneralizeHandler:
     """
 
     name: str = "geo_generalize"
+    namespace_required: bool = False
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("type", "str", "zip", required=True, choices=SUPPORTED_TYPES),
+        option(
+            "cascade",
+            "str_list",
+            ("zip3", "state", "suppress"),
+            required=True,
+            choices=CASCADE_LEVELS,
+        ),
+        option("k_threshold", "int", HIPAA_K_THRESHOLD),
+    )
+    offer_in_wizard: bool = True
 
     def run(
         self,

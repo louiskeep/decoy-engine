@@ -8,7 +8,7 @@
 #    extras dev+lint+vault+cloud: the same profile as ci.yml's dp-certified-gate).
 # 3. In that venv: the version-agreement and reason-release-pin tests, the reason pin --check, and
 #    the DP fit gate (check_fit_environment), which fails unless this engine version's own
-#    77-dist profile is a certified row.
+#    79-dist profile is a certified row.
 # 4. The CycloneDX SBOM from the lock (scripts/release/sbom.sh), written to $SBOM_OUT or a temp
 #    path; its sha256 is printed. A path inside the checkout dirties the tree and cut-release.sh
 #    then refuses to tag.

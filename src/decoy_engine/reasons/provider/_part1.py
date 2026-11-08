@@ -48,11 +48,11 @@ INVALID_INPUT_LENGTH = _d("invalid_input_length", "Invalid input length.")
 
 _d = _catalog.provider("ModelUnavailableError")
 
-CLASSIFIER_UNAVAILABLE = _d("classifier_unavailable", "Classifier unavailable.", since="1.7.0")
+CLASSIFIER_UNAVAILABLE = _d("classifier_unavailable", "Classifier unavailable.", since="1.8.0")
 
 _d = _catalog.provider("NerUnavailableError")
 
-NER_MODEL_INCOMPATIBLE = _d("ner_model_incompatible", "NER model incompatible.", since="1.7.0")
+NER_MODEL_INCOMPATIBLE = _d("ner_model_incompatible", "NER model incompatible.", since="1.8.0")
 NER_MODEL_NOT_INSTALLED = _d("ner_model_not_installed", "NER model not installed.")
 NER_SPACY_NOT_INSTALLED = _d("ner_spacy_not_installed", "NER spacy not installed.")
 

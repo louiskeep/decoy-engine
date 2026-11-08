@@ -1,4 +1,4 @@
-"""The seven reason identities this slice owns are registered at registry 1.7.0 and pinned."""
+"""The seven reason identities this slice owns are registered at registry 1.8.0 and pinned."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 from decoy_engine import reasons
 
 FIXTURE = (
-    Path(__file__).resolve().parents[2] / "fixtures" / "f29" / "reason-manifest-v1.7-scanml-m1.json"
+    Path(__file__).resolve().parents[2] / "fixtures" / "f29" / "reason-manifest-v1.8-scanml-m1.json"
 )
 IDENTITIES = [
     ("config", "detectors_invalid"),
@@ -24,21 +24,21 @@ IDENTITIES = [
 
 
 def test_registry_is_at_1_7_0() -> None:
-    assert reasons.manifest()["registry_version"] == "1.7.0"
+    assert reasons.manifest()["registry_version"] == "1.8.0"
 
 
 @pytest.mark.parametrize(("namespace", "code"), IDENTITIES)
 def test_identity_is_registered_since_1_7_0(namespace: str, code: str) -> None:
     spec = reasons.find(namespace, code)
     assert spec is not None
-    assert spec.since == "1.7.0"
+    assert spec.since == "1.8.0"
     assert spec.rules[0].outcome.value == "configuration"
     assert spec.rules[0].retry.value == "configuration_repair"
 
 
 def test_the_slice_adds_exactly_these_identities_and_no_later_slice_code() -> None:
     added = {
-        (e["namespace"], e["code"]) for e in reasons.manifest()["entries"] if e["since"] == "1.7.0"
+        (e["namespace"], e["code"]) for e in reasons.manifest()["entries"] if e["since"] == "1.8.0"
     }
     assert added == set(IDENTITIES)
     assert reasons.find("post_scan", "ner_blocked") is None  # M4's
@@ -46,12 +46,12 @@ def test_the_slice_adds_exactly_these_identities_and_no_later_slice_code() -> No
 
 
 def test_the_minor_is_pinned_in_its_own_fixture() -> None:
-    assert FIXTURE.is_file(), "the 1.7 addition is pinned in reason-manifest-v1.7-scanml-m1.json"
+    assert FIXTURE.is_file(), "the 1.8 addition is pinned in reason-manifest-v1.8-scanml-m1.json"
     pinned = json.loads(FIXTURE.read_text())
     live = json.loads(json.dumps(reasons.manifest()))
-    assert pinned["registry_version"] == "1.7.0"
+    assert pinned["registry_version"] == "1.8.0"
     assert pinned["reason_schema_version"] == live["reason_schema_version"]
-    assert pinned["entries"] == [e for e in live["entries"] if e["since"] == "1.7.0"]
+    assert pinned["entries"] == [e for e in live["entries"] if e["since"] == "1.8.0"]
 
 
 def test_the_exceptions_map_to_their_reasons() -> None:
