@@ -185,7 +185,17 @@ from decoy_engine.plan.validate import (
 from decoy_engine.profile._csv_reader import CsvDialect, read_csv_source, resolve_csv_dialect
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
 from decoy_engine.profile._fixed_width_writer import write_fixed_width
-from decoy_engine.profiling import ColumnProfile, FieldStats, SentinelFlag, profile_columns
+from decoy_engine.profiling import (
+    ColumnProfile,
+    FieldStats,
+    ScanSet,
+    ScanSetCore,
+    SentinelFlag,
+    TableScan,
+    profile_columns,
+    scan_set_to_dict,
+    scan_sources,
+)
 from decoy_engine.profiling.model_pack import classifier_status, load_detectors
 from decoy_engine.progress import (
     CallbackSink,
@@ -446,6 +456,8 @@ __all__ = [
     "RouteEvent",
     "RunResult",
     "RunResultRead",
+    "ScanSet",
+    "ScanSetCore",
     "SecretCachePolicy",
     "SecretDescriptor",
     "SecretKeyProvider",
@@ -460,6 +472,7 @@ __all__ = [
     "StrategyOption",
     "StructuredEvents",
     "StructuredEventsSink",
+    "TableScan",
     "TelemetryClient",
     "TerminalEvent",
     "TransientError",
@@ -532,6 +545,8 @@ __all__ = [
     "run_mask_chunked",
     "run_mask_pipeline_chunked",
     "run_pipeline",
+    "scan_set_to_dict",
+    "scan_sources",
     "select_execution_adapter",
     "strategy_catalog",
     "unmask_pipeline",

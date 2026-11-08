@@ -19,6 +19,16 @@ from decoy_engine.profiling.recommendations import (
     get_default_strategy,
     known_detector_ids,
 )
+from decoy_engine.profiling.scan_set import (
+    SCAN_SET_SCHEMA,
+    ScanSet,
+    ScanSetCore,
+    ScanSetCoreRead,
+    ScanSourceError,
+    TableScan,
+    scan_set_to_dict,
+    scan_sources,
+)
 from decoy_engine.profiling.types import (
     ColumnProfile,
     Distribution,
@@ -29,13 +39,21 @@ from decoy_engine.profiling.types import (
 
 __all__ = [
     "DEFAULT_STRATEGY_BY_DETECTOR",
+    "SCAN_SET_SCHEMA",
     "ColumnProfile",
     "Distribution",
     "FieldStats",
+    "ScanSet",
+    "ScanSetCore",
+    "ScanSetCoreRead",
+    "ScanSourceError",
     "SentinelFlag",
     "StrategyDefault",
+    "TableScan",
     "TopValue",
     "get_default_strategy",
     "known_detector_ids",
     "profile_columns",
+    "scan_set_to_dict",
+    "scan_sources",
 ]

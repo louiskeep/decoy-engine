@@ -1,0 +1,70 @@
+{
+  "entries": [
+    {
+      "code": "scan_header_suspect",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "warning",
+      "namespace": "warning",
+      "owner": "QualityWarning",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "findings",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "warning"
+        }
+      ],
+      "since": "1.10.0",
+      "summary": "First row looks like data, not a header.",
+      "symbol": "SCAN_HEADER_SUSPECT"
+    },
+    {
+      "code": "scan_key_type_mismatch",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "warning",
+      "namespace": "warning",
+      "owner": "QualityWarning",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "findings",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "warning"
+        }
+      ],
+      "since": "1.10.0",
+      "summary": "Relationship key columns differ in type.",
+      "symbol": "SCAN_KEY_TYPE_MISMATCH"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.10.0"
+}
