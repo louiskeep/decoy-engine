@@ -592,6 +592,17 @@ so at GA it requires a resolved >=32-byte secret like every other keyed
 surface (`keyed_strategy_requires_secret`); it never derives tokens from the
 public job seed.
 
+`keyed_columns_for_config` and `KeyedColumn` joined the public API on 2026-11-08
+(init wizard part E3), additive under §4.1. `keyed_columns_for_config(config)`
+returns every column of a raw config mapping that needs the mask secret, in
+config order, as `KeyedColumn(table, column, strategy)`; each field is the name
+as written, or `None` when the config leaves it out. It reads names only, never
+a value, a schema or a row. It uses the same column walk as
+`secret_requirements_for_config`, so a config needs the mask secret exactly when
+this list is non-empty or a relationship has a composite parent key (keyed with
+no single field, so not listed). `tests/secret_providers/test_keyed_columns.py`
+pins the result with a written-out oracle and the parity rule.
+
 ### 3.5 Disguises
 
 Disguises are dated/versioned specs (`disguises/`, `disguises/loader.py`,

@@ -230,11 +230,14 @@ def column_is_keyed(
 
 @dataclass(frozen=True)
 class KeyedColumn:
-    """One config column that needs the mask secret. Names only, never a value."""
+    """One config column that needs the mask secret. Names only, never a value.
 
-    table: str
-    column: str
-    strategy: str
+    The walk reads the raw config before validation, so a missing name or strategy is ``None``
+    rather than dropped: dropping it would also drop the secret requirement it implies."""
+
+    table: str | None
+    column: str | None
+    strategy: str | None
 
 
 def _walk_keyed_columns(config: Mapping[str, Any]) -> Iterator[KeyedColumn]:
@@ -253,7 +256,7 @@ def _walk_keyed_columns(config: Mapping[str, Any]) -> Iterator[KeyedColumn]:
                 vault=bool(col.get("vault")),
                 provider_config=pcfg if isinstance(pcfg, dict) else {},
             ):
-                yield KeyedColumn(table.get("name"), col.get("name"), col.get("strategy"))  # type: ignore[arg-type]
+                yield KeyedColumn(table.get("name"), col.get("name"), col.get("strategy"))
 
 
 def keyed_columns_for_config(config: Mapping[str, Any]) -> tuple[KeyedColumn, ...]:
