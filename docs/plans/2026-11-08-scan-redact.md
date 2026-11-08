@@ -207,7 +207,8 @@ shapes:
   the real min and max (`_distributions.py:46-56`). This also wipes fixed labels such as the pattern buckets
   and freetext length buckets; that loses nothing a user needs and keeps the rule simple. The `data` array is
   untouched, so lengths stay equal (F-4).
-- `mean_value` and `Distribution.mean` are aggregates, not cells: kept (VALUE_FREE).
+- `mean_value` and `Distribution.mean` are VALUE (NULL): with one non-null value, or a constant column, the
+  mean is the cell itself (S1 build, security review).
 - `SentinelFlag.value` is a cell literal even when it belongs to a fixed sentinel list. `SentinelFlag.note`
   also repeats the literal for known dates and numerics (`sentinels.py:34-50`) and interpolates the normalized
   string cell (`sentinels.py:226-240`). Both fields become `"[redacted]"` for a value-sensitive column. AT-12
@@ -324,7 +325,7 @@ N/A: a scan profile has no keys across tables, and S1a relationships carry colum
 | Type.field | Source anchor | Class |
 |---|---|---|
 | `FieldStats.min_value`, `max_value` | `profiler.py:360-361` | VALUE (NULL) |
-| `FieldStats.mean_value` | `profiler.py:362` | aggregate, kept |
+| `FieldStats.mean_value` | `profiler.py:362` | VALUE (NULL): equals the cell on a constant column |
 | `FieldStats.date_min`, `date_max` | `profiler.py:366-367,398-399` | VALUE (NULL) |
 | `FieldStats.sample_invalid` | `profiler.py:402` | VALUE (EMPTY_LIST) |
 | `FieldStats.mode_value` | `profiler.py:421`, `_classification.py:162-187` | VALUE (NULL) |
@@ -335,7 +336,8 @@ N/A: a scan profile has no keys across tables, and S1a relationships carry colum
 | `DetectorMatch.*` others | `detection/types.py:83-110` | kept |
 | `Distribution.labels` | `_distributions.py:35,46-50,85` | VALUE (PLACEHOLDER_EACH) |
 | `Distribution.min`, `max` | `_distributions.py:36-37,55-56,72-73` | VALUE (NULL) |
-| `Distribution.kind`, `data`, `mean` | `_distributions.py` | kept |
+| `Distribution.kind`, `data` | `_distributions.py` | kept |
+| `Distribution.mean` | `_distributions.py` | VALUE (NULL) |
 | `SentinelFlag.value`, `note` | `sentinels.py:34-50,177-199,214-240` | VALUE (PLACEHOLDER) |
 | `DetectionSignal.*` | `detection/types.py:116-133` | header text, kept |
 | `FieldStats` shape and rate fields, `ColumnProfile.*` | `types.py:63-156` (FieldStats), `:159-197` (ColumnProfile) | kept |
