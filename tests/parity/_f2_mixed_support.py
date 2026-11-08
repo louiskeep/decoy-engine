@@ -61,7 +61,7 @@ def child_table(keys: pa.Array, *, rows: int | None = None) -> pa.Table:
 
 
 def string_parent_columns() -> list[dict[str, Any]]:
-    return [{"name": "id", "type": "sequence", "start": 0, "step": 1}]
+    return [{"name": "id", "type": "sequence", "start": 0, "step": 1, "pad_length": 1}]
 
 
 def mixed_config(

@@ -9,6 +9,14 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (generated numeric columns are typed)
+
+Generated numeric columns are now typed int64/float64 instead of string: an unformatted `sequence`
+and a faker provider that returns an int or float (pyint, pyfloat and similar). `derived`
+arithmetic and `grouped_series` ordering now work on numbers. Cell text is unchanged for non-null
+values; Parquet output has numeric columns. Formatted sequences (prefix, suffix, pad) and other
+faker providers stay string.
+
 ### Changed (row directories use the protected allocator)
 
 The out-of-core spill root and its subdirectories, the isolated-run work root, and the Postgres

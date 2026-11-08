@@ -182,6 +182,13 @@ def mutant_lost_declared_type(t: dict[str, pa.Table]) -> dict[str, pa.Table]:
     return {**t, "nulls": tbl.set_column(idx, "cat_all_null", pa.nulls(tbl.num_rows))}
 
 
+def mutant_lost_numeric_type(t: dict[str, pa.Table]) -> dict[str, pa.Table]:
+    tbl = t["nulls"]
+    idx = tbl.column_names.index("seq_partial")
+    text = tbl.column("seq_partial").cast(pa.string())
+    return {**t, "nulls": tbl.set_column(idx, "seq_partial", text)}
+
+
 MUTANTS = [
     (
         "permuted_composite_field",
@@ -200,6 +207,7 @@ MUTANTS = [
     ("broken_cardinality", "reference", mutant_broken_cardinality, "per-parent counts"),
     ("broken_null_propagation", "derived", mutant_broken_null_propagation, "null state differs"),
     ("lost_declared_type", "nulls", mutant_lost_declared_type, "declared string type"),
+    ("lost_numeric_type", "nulls", mutant_lost_numeric_type, "declared int64 type"),
 ]
 
 

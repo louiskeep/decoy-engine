@@ -49,7 +49,7 @@ def _faker_numeric_cast(
         return None
 
 
-def _sequence_is_plain(col: Mapping[str, Any]) -> bool:
+def sequence_is_plain(col: Mapping[str, Any]) -> bool:
     return not col.get("prefix") and not col.get("suffix") and int(col.get("pad_length", 0)) <= 0
 
 
@@ -65,7 +65,7 @@ def numeric_cast(
     qualify. Text that merely looks numeric (zip codes, padded ids) is never inferred from values.
     """
     kind = col.get("type")
-    if kind == "sequence" and _sequence_is_plain(col):
+    if kind == "sequence" and sequence_is_plain(col):
         return int
     if kind == "faker" and faker_probe is not None:
         return _faker_numeric_cast(
@@ -105,3 +105,16 @@ def restore_numeric_dtype(
                 pass
         out.append(v)
     return out
+
+
+def generated_table_to_pandas(table: pa.Table) -> Any:
+    """Convert a generated table to pandas without widening nullable ints to float64.
+
+    ``Table.to_pandas()`` turns an int64 column that holds any null into float64, which prints
+    ``1.0`` where the cell text was ``1``. Every integer column goes through pandas' nullable
+    integer dtypes instead, so the text written from the frame matches the generated values.
+    """
+    from decoy_engine.execution._fk_keys import to_pandas_fk_safe
+
+    ints = {f.name for f in table.schema if pa.types.is_integer(f.type)}
+    return to_pandas_fk_safe(table, ints)

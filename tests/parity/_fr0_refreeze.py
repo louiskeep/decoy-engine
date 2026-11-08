@@ -26,18 +26,41 @@ from tests.parity import _f0_fixtures as fx
 from tests.parity import _fr0_semantic_gate as gate
 from tests.parity._f0_canonical import table_fingerprint
 
-RE_FROZEN_ON = "2026-10-18"
-# Fixtures whose checked-in digest moved in this re-freeze, and why.
+RE_FROZEN_ON = "2026-11-08"
+# Fixtures whose checked-in digest moved in the latest re-freeze, and why. `nulls` moved twice;
+# its previous digests are those of the 2026-10-18 re-freeze.
 REFROZEN: dict[str, dict[str, Any]] = {
-    "nulls": {
+    "sequence": {
         "reason": (
-            "schema only: the all-null categorical column and the zero-row table now carry their "
-            "declared string type instead of Arrow's inferred null type; every value digest is "
-            "unchanged"
+            "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row"
         ),
         "previous_tables": {
-            "nulls": "85588c66a32d807e060337af1abc3c12a9369902c91a6528943b81c02ceb0855",
-            "empty": "6fb55c2d1210f8fb8e4ac79c3ff6fca06158df62f07e768834f439eaec685322",
+            "seq": "3df0c6047f7783128b54df894c8f737792708e97a3fb318223c710a621d3698b"
+        },
+    },
+    "live_faker": {
+        "reason": (
+            "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row"
+        ),
+        "previous_tables": {
+            "live": "571f2ecd49f43a7cfbb6d37f979bc25008fdef09ac2e9abdc73fdb57c969ed79"
+        },
+    },
+    "reference": {
+        "reason": (
+            "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row"
+        ),
+        "previous_tables": {
+            "ref_child": "81619e14f5bc9f70a517ca6e21d4ff21080b701dd15494f9123f83f8e98861ef"
+        },
+    },
+    "nulls": {
+        "reason": (
+            "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row (also the 2026-10-18 null-type change, see _f0_expected.py)"
+        ),
+        "previous_tables": {
+            "nulls": "232902afc3faf49c772ad7bd6cddaba7846f58599e9e1c5b8c7f533d229cd271",
+            "empty": "2445c1c0db89b65b0be8c6c6f88cf5befd76dd3251e7a8f9701fffe9db6872fd",
         },
     },
 }
@@ -66,6 +89,9 @@ def g_sequence(t: dict[str, pa.Table]) -> None:
         _col(t, "seq", "padded"), start=100, step=7, prefix="INV-", suffix="/x", pad=6
     )
     gate.check_sequence(_col(t, "seq", "neg"), start=50, step=-4)
+    for name in ("plain", "neg"):
+        gate.check_declared_integer_column(t["seq"], name)
+    gate.check_declared_string_column(t["seq"], "padded")
 
 
 def g_categorical(t: dict[str, pa.Table]) -> None:
@@ -105,13 +131,17 @@ def g_keyed(t: dict[str, pa.Table]) -> None:
 
 
 def g_nulls(t: dict[str, pa.Table]) -> None:
+    # Numeric generators declare int64/float64; formatted and categorical text stays string.
     for name in t["nulls"].column_names:
-        gate.check_declared_string_column(t["nulls"], name)
-    gate.check_declared_string_column(t["empty"], "id")
+        if name == "seq_partial":
+            gate.check_declared_integer_column(t["nulls"], name)
+        else:
+            gate.check_declared_string_column(t["nulls"], name)
+    gate.check_declared_integer_column(t["empty"], "id")
     assert t["empty"].num_rows == 0
     assert all(v is None for v in _col(t, "nulls", "cat_all_null"))
     for i, v in enumerate(_col(t, "nulls", "seq_partial")):
-        assert v is None or v == str(1 + i), "a non-null sequence value moved off its ordinal"
+        assert v is None or v == 1 + i, "a non-null sequence value moved off its ordinal"
     assert set(_col(t, "nulls", "cat_partial")) <= {"u", "v", None}
 
 

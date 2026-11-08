@@ -104,3 +104,25 @@ def test_writers_emit_the_same_text_as_text_cells(tmp_path: Path) -> None:
     rows = Path(out).read_text().splitlines()
     assert [(r[:4].strip(), r[4:].strip()) for r in rows] == as_text
     assert read_fixed_width(out, layout)["f"].tolist() == t["f"].to_pylist()
+
+
+def test_nullable_int_columns_write_csv_without_a_decimal_point() -> None:
+    from decoy_engine.generation._numeric_typing import generated_table_to_pandas
+
+    cols = [
+        {**_seq(), "null_probability": 0.5},
+        {
+            "name": "p",
+            "type": "faker",
+            "faker_type": "pyint",
+            "faker_kwargs": {"min_value": 10, "max_value": 99},
+            "null_probability": 0.5,
+        },
+    ]
+    t = _run(cols, rows=40)
+    assert t["a"].null_count > 0 and t["p"].null_count > 0
+    lines = generated_table_to_pandas(t).to_csv(index=False).splitlines()[1:]
+    for line in lines:
+        for cell in line.split(","):
+            assert cell == "" or cell.isdigit(), cell
+    assert "1.0" not in "".join(lines)

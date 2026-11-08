@@ -37,7 +37,7 @@ import pyarrow as pa
 from faker import Faker
 
 from decoy_engine.generation import _faker_pool
-from decoy_engine.generation._numeric_typing import restore_numeric_dtype
+from decoy_engine.generation._numeric_typing import restore_numeric_dtype, sequence_is_plain
 from decoy_engine.generation._statistical_column import statistical_generate
 from decoy_engine.generation.statistical import StatisticalSpec
 from decoy_engine.generators.derivation import GenDeriveContext
@@ -339,20 +339,22 @@ def _generate_column(
     return _apply_null_probability(values, col, seed, derive_key, snapshot_content_digest=digest)
 
 
-def _sequence(col: dict[str, Any], n: int) -> list[str]:
+def _sequence(col: dict[str, Any], n: int) -> list[Any]:
     """Sequential string values, parity-frozen vs V1 ``_generate_sequence_column``
     (``columns.py:305-319``).
 
     V1 ALWAYS wraps every value through ``f"{prefix}{value_str}{suffix}"`` (S6-ENG-1
     gate finding M1: the ENG-1 spine returned ints when unformatted; corrected here).
-    Returns strings in every configuration. ``pad_length`` zero-fills the numeric
-    body; ``prefix`` / ``suffix`` wrap it.
+    Returns ints for a bare counter and strings once a prefix, suffix or pad applies.
+    ``pad_length`` zero-fills the numeric body; ``prefix`` / ``suffix`` wrap it.
     """
     start = int(col.get("start", 1))
     step = int(col.get("step", 1))
     prefix = str(col.get("prefix", ""))
     suffix = str(col.get("suffix", ""))
     pad = int(col.get("pad_length", 0))
+    if sequence_is_plain(col):
+        return [start + i * step for i in range(n)]
     out: list[str] = []
     for i in range(n):
         value = start + i * step

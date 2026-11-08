@@ -63,7 +63,7 @@ def check_sequential_reference(
 
 
 def check_sequence(
-    values: Sequence[str | None],
+    values: Sequence[str | int | None],
     *,
     start: int,
     step: int,
@@ -71,10 +71,13 @@ def check_sequence(
     suffix: str = "",
     pad: int = 0,
 ) -> None:
-    expected = []
+    formatted = bool(prefix or suffix or pad > 0)
+    expected: list[str | int] = []
     for i in range(len(values)):
         body = str(start + i * step)
         expected.append(f"{prefix}{body.zfill(pad) if pad > 0 else body}{suffix}")
+        if not formatted:
+            expected[-1] = start + i * step
     assert list(values) == expected, "sequence order/step/format broke"
     if step != 0:
         assert len(set(values)) == len(values), "sequence values are not unique"
@@ -134,6 +137,12 @@ def check_marginal(
 def check_declared_string_column(table: pa.Table, column: str) -> None:
     assert pa.types.is_string(table.schema.field(column).type), (
         f"{column}: declared string type was lost ({table.schema.field(column).type})"
+    )
+
+
+def check_declared_integer_column(table: pa.Table, column: str) -> None:
+    assert pa.types.is_int64(table.schema.field(column).type), (
+        f"{column}: declared int64 type was lost ({table.schema.field(column).type})"
     )
 
 

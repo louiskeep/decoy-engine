@@ -43,7 +43,7 @@ KINDS: dict[str, dict[str, Any]] = {
     },
 }
 DECLARED = {
-    "sequence": pa.string(),
+    "sequence": pa.int64(),
     "categorical": pa.string(),
     "faker": pa.string(),
     "windowed_date": pa.string(),

@@ -269,8 +269,8 @@ def test_a_selection_in_the_core_no_selection_column_is_flagged(
     monkeypatch.setattr(_faker_pool, "N_THRESHOLD", _THRESHOLD)
     with w.end_to_end(monkeypatch) as witness:
 
-        def drawing(self: Any, offset: int, size: int) -> list[str]:
-            return [str(v) for v in _column_streams.random.Random(3).choices(["x", "y"], k=size)]
+        def drawing(self: Any, offset: int, size: int) -> list[int]:
+            return list(_column_streams.random.Random(3).choices([7, 8], k=size))
 
         monkeypatch.setattr(_column_streams.SequenceStream, "next_batch", drawing)
         tables = _run()
