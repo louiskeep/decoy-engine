@@ -600,7 +600,8 @@ as written, or `None` when the config leaves it out. It reads names only, never
 a value, a schema or a row. It uses the same column walk as
 `secret_requirements_for_config`, so a config needs the mask secret exactly when
 this list is non-empty or a relationship has a composite parent key (keyed with
-no single field, so not listed). `tests/secret_providers/test_keyed_columns.py`
+no single field, so not listed) or a missing or malformed parent, which fails
+safe. `tests/secret_providers/test_keyed_columns.py`
 pins the result with a written-out oracle and the parity rule.
 
 ### 3.5 Disguises

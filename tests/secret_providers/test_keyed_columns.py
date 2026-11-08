@@ -139,6 +139,13 @@ ORACLE = [
         },
         (),
     ),
+    (
+        "missing table and column names are kept",
+        {"tables": [{"columns": [{"strategy": "hash"}]}]},
+        (K(None, None, "hash"),),
+    ),
+    ("relationship with no parent", {"relationships": [{"children": []}]}, ()),
+    ("relationship that is not a mapping", {"relationships": ["x"]}, ()),
     *[(f"always keyed {s}", _cfg(_col("a", s)), (K("t", "a", s),)) for s in ALWAYS_KEYED],
     *[(f"known unkeyed {s}", _cfg(_col("a", s)), ()) for s in KNOWN_UNKEYED],
     *[
@@ -157,10 +164,12 @@ def test_keyed_columns_oracle(config, expected):
 
 @pytest.mark.parametrize(("config", "expected"), [c[1:] for c in ORACLE], ids=IDS)
 def test_secret_needed_exactly_when_keyed_or_composite_parent(config, expected):
+    # A relationship whose parent is missing or malformed also needs the secret: the classifier
+    # cannot prove it is a single-column key, so it fails safe.
     composite = any(
-        isinstance(r, dict)
-        and isinstance(r.get("parent"), dict)
-        and len(r["parent"].get("columns") or []) > 1
+        not isinstance(r, dict)
+        or not isinstance(r.get("parent"), dict)
+        or len(r["parent"].get("columns") or []) > 1
         for r in config.get("relationships") or []
     )
     assert bool(secret_requirements_for_config(config)) == (bool(expected) or composite)
