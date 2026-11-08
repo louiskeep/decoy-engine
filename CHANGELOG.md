@@ -9,6 +9,25 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (SCAN-ML M1: optional ML detector config, status and loading, 2026-11-07)
+
+`pre_scan.detectors` and `post_scan.detectors` choose between `regex` (always on), the lgbm
+`classifier` and spaCy `ner`; `post_scan` also gains `ner_model`, `ner_findings` (`warn` or `fail`)
+and `dismissed`. A field equal to its default stays out of the dump, so existing configs keep their
+dump and hashes. `decoy_engine` exports `ModelRef`, `ModelStatus`, `classifier_status`,
+`ner_status`, `load_detectors`, `ModelUnavailableError`, `PreScanConfig` and `Dismissal`.
+`load_detectors` loads every requested model strictly and raises `ModelUnavailableError` rather than
+return a regex-only set. `ensure_ner_available` now checks the model name, accepts only an installed
+model distribution (a module such as `os` is refused and never imported), and refuses a model built
+for another spaCy minor (`provider.ner_model_incompatible`), at validate time instead of at load.
+`ModelPackLoadError` carries a `cause`. `detection/_ner_rate.py` holds the shared NER cell sample
+and rate. NER scores free-text columns only (median of 3 or more whitespace tokens per sampled
+cell) and flags a column at a 0.211 share of cells. A plan check that re-wraps a registered config
+or provider refusal now reaches consumers as that reason instead of `decoy.unregistered_reason`; a
+code registered in the raising family's own namespace keeps that family's record. Registry 1.8.0
+adds seven reasons (see `docs/reasons.md`). Nothing runs a model yet: the pre-scan, post-scan and
+route changes are later slices.
+
 ### Added (protected directories)
 
 `decoy_engine.protected_scratch_dir` and `open_protected_dir` are the one allocator for directories that

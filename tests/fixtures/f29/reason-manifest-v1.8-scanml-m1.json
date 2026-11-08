@@ -1,0 +1,158 @@
+{
+  "entries": [
+    {
+      "code": "detectors_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "config",
+      "owner": "PipelineValidationError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.8.0",
+      "summary": "Detectors invalid.",
+      "symbol": "DETECTORS_INVALID"
+    },
+    {
+      "code": "dismissal_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "config",
+      "owner": "PipelineValidationError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.8.0",
+      "summary": "Dismissal invalid.",
+      "symbol": "DISMISSAL_INVALID"
+    },
+    {
+      "code": "ner_model_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "config",
+      "owner": "NerModelNameError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.8.0",
+      "summary": "NER model invalid.",
+      "symbol": "NER_MODEL_INVALID"
+    },
+    {
+      "code": "post_scan_inactive",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "config",
+      "owner": "PipelineValidationError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.8.0",
+      "summary": "Post-scan inactive.",
+      "symbol": "POST_SCAN_INACTIVE"
+    },
+    {
+      "code": "pre_scan_ner_inactive",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "config",
+      "owner": "PipelineValidationError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.8.0",
+      "summary": "Pre-scan NER inactive.",
+      "symbol": "PRE_SCAN_NER_INACTIVE"
+    },
+    {
+      "code": "classifier_unavailable",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "provider",
+      "owner": "ModelUnavailableError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "generate",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.8.0",
+      "summary": "Classifier unavailable.",
+      "symbol": "CLASSIFIER_UNAVAILABLE"
+    },
+    {
+      "code": "ner_model_incompatible",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "provider",
+      "owner": "NerUnavailableError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "generate",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.8.0",
+      "summary": "NER model incompatible.",
+      "symbol": "NER_MODEL_INCOMPATIBLE"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.8.0"
+}
