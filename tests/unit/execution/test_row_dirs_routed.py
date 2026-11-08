@@ -134,7 +134,7 @@ def _run_isolated(staging_dir: Path | None, monkeypatch: pytest.MonkeyPatch) -> 
 def test_isolated_default_work_root_comes_from_the_allocator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls = _spy(monkeypatch, _isolated_run, "protected_scratch_dir")
+    calls = _spy(monkeypatch, _isolated_run.fileaccess, "protected_scratch_dir")
     (root,) = _run_isolated(None, monkeypatch)
     assert len(calls) == 1 and calls[0][1] == {"prefix": "decoy-isolated-run-"}
     assert not root.exists()  # removed when the run returns
@@ -143,7 +143,7 @@ def test_isolated_default_work_root_comes_from_the_allocator(
 def test_isolated_caller_named_staging_dir_comes_from_the_allocator(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    calls = _spy(monkeypatch, _isolated_run, "open_protected_dir")
+    calls = _spy(monkeypatch, _isolated_run.fileaccess, "open_protected_dir")
     staging = tmp_path / "work_root"
     old = os.umask(0)
     try:

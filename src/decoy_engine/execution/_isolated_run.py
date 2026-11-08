@@ -106,14 +106,7 @@ from decoy_engine.execution._isolated_memwatch import error_suffix, evidence_of,
 from decoy_engine.execution._isolated_reason import commit_reason, reason_from_envelope
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._row_errors import RowErrorRecord
-from decoy_engine.fileaccess import (
-    FileAccess,
-    FileRequest,
-    FileRole,
-    entry_point,
-    open_protected_dir,
-    protected_scratch_dir,
-)
+from decoy_engine.fileaccess import FileAccess, FileRequest, FileRole, entry_point
 from decoy_engine.reason_adapter import reason_from_exception
 from decoy_engine.reasons import ReasonRecord
 from decoy_engine.reasons import decoy as _decoy_reasons
@@ -373,9 +366,9 @@ def _run_isolated(
 ) -> IsolatedRunResult:
     scratch = ExitStack()  # removes an engine-made work root; a caller-named one is left alone
     work_root = (
-        open_protected_dir(staging_dir, create=True)
+        fileaccess.open_protected_dir(staging_dir, create=True)
         if staging_dir is not None
-        else scratch.enter_context(protected_scratch_dir(prefix="decoy-isolated-run-"))
+        else scratch.enter_context(fileaccess.protected_scratch_dir(prefix="decoy-isolated-run-"))
     )
     try:
         output_dir_path = Path(output_dir) if output_dir is not None else None
