@@ -79,11 +79,20 @@ def test_contract_passes_other_distributions_under_dp(distribution: str) -> None
     check_dp_generate_contract(_config(distribution, **extra))
 
 
+@pytest.mark.parametrize("col_type", ["statistical", "windowed_date", "categorical"])
+def test_contract_ignores_fitted_distribution_on_non_reference_columns(col_type: str) -> None:
+    cfg = _config("random")
+    cfg["tables"][1]["generate_columns"] = [
+        {"name": "x", "type": col_type, "distribution": "fitted"}
+    ]
+    check_dp_generate_contract(cfg)
+
+
 def test_contract_passes_fitted_reference_without_dp() -> None:
     check_dp_generate_contract(_config("fitted", dp=False))
 
 
-def test_compile_plan_refuses_before_any_snapshot_read(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_compile_plan_refuses_before_snapshot_verification(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
     real = _compile.check_dp_generate_contract
 
