@@ -72,6 +72,10 @@ def test_all_lists_every_public_name():
         "select_execution_adapter",
         # engine-v2 S1 (Pipeline config schema, the validation choke-point).
         "PipelineConfig",
+        # VALUE-FREE-ERRORS A1: the value-free config parse route and its error vocabulary.
+        "parse_pipeline_config",
+        "ConfigProblem",
+        "ConfigRuleError",
         # S9: Masker + DataGenerator removed from the public surface. The
         # platform mask + generate paths run through the v2 ExecutionAdapter +
         # generation.synthesize directly; graph-mode keeps the run_graph /

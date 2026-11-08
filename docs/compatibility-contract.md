@@ -329,6 +329,12 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   file_access=None)`, `ScanSet`, `TableScan`, `ScanSetCore` and `scan_set_to_dict(scan, *, detail)`
   (SCAN-MULTI S1a, 2026-11): new keyword-only parameters are additive; errors name the table and
   the cause's class only.
+  It also includes `parse_pipeline_config`, `ConfigProblem` and `ConfigRuleError`
+  (VALUE-FREE-ERRORS, 2026-11): `parse_pipeline_config(raw)` raises
+  `PipelineConfigError` whose `problems` are `ConfigProblem(code, location, text)`
+  with config names kept and submitted values dropped. `PipelineConfigError` no
+  longer sets `__cause__`; its `validation_error=` argument is removed. A
+  validator's message is shown only when it is a `ConfigRuleError`.
   It also includes `run_mask_chunked` (2026-10-01): the chunked
   dispatcher as a public entry point. Its signature is
   `run_mask_chunked(config, chunks, *, table, engine_version, registry=None,

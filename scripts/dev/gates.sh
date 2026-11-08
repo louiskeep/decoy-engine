@@ -108,12 +108,24 @@ fi
 WORKERS=${WORKERS_LINE%% *}
 WORKERS_WHY=${WORKERS_LINE#* }
 OUT=$(mktemp -d "${TMPDIR:-/tmp}/gates.XXXXXX")
+[ -n "$OUT" ] && [ -d "$OUT" ] || { echo "gates: FAIL: cannot create a temp dir" >&2; exit 3; }
 WT=$OUT/baseline-tree
 MBT=$OUT/merge-base-tree
+# Each pytest run gets its own basetemp here, removed on exit: pytest's default
+# /tmp/pytest-of-<user> keeps the last three runs, about 14 GB each for the engine suite.
+# Kept directly under /tmp, not under $OUT: TMPDIR can be long, and tests that bind
+# AF_UNIX sockets under tmp_path fail once the path passes the 104-108 byte limit.
+# /tmp on purpose, ignoring TMPDIR: keeps AF_UNIX socket paths under the length limit.
+TMP_ROOT=$(mktemp -d /tmp/gt.XXXXXX)
+[ -n "$TMP_ROOT" ] && [ -d "$TMP_ROOT" ] || { echo "gates: FAIL: cannot create a basetemp dir" >&2; exit 3; }
+mkdir -p "$TMP_ROOT/root"
+# Pytest runs that tests start themselves have no --basetemp; this moves their default root too.
+export PYTEST_DEBUG_TEMPROOT=$TMP_ROOT/root
 # shellcheck disable=SC2329  # invoked by the EXIT trap
 cleanup() {
   local d
   for d in "$WT" "$MBT"; do [ -d "$d" ] && git -C "$ROOT" worktree remove --force "$d" 2>/dev/null; done
+  rm -rf -- "${TMP_ROOT:?}"
   return 0
 }
 trap cleanup EXIT
@@ -281,7 +293,9 @@ run_steps() {  # $1 label, $2 tree
   : >"$OUT/$label.steps"
   for name in ${STEPS//,/ }; do
     plain=0 cmd2=() note=
-    local jbase=(-p no:cacheprovider -q -rfE -o junit_family=xunit1 "--junitxml=$OUT/$label-$name.xml")
+    # tmp_path_retention_policy=failed: a passing test's tmp_path is deleted at its teardown.
+    local tmpargs=(-o tmp_path_retention_policy=failed)
+    local jbase=(-p no:cacheprovider -q -rfE -o junit_family=xunit1 "--junitxml=$OUT/$label-$name.xml" "--basetemp=$TMP_ROOT/$label-$name" ${tmpargs[@]+"${tmpargs[@]}"})
     local junit=(${jbase[@]+"${jbase[@]}"} ${PYTEST_ARGS[@]+"${PYTEST_ARGS[@]}"})
     case $name in
       env) cmd=(bash "$ROOT/scripts/dev/bootstrap.sh" --check) ;;
@@ -315,7 +329,7 @@ run_steps() {  # $1 label, $2 tree
         fi
         if [ "$w" -gt 1 ]; then
           cmd=(${pyt[@]+"${pyt[@]}"} ${jbase[@]+"${jbase[@]}"} -m "($PYTEST_MARK) and not serial" -n "$w" --dist loadfile ${tests[@]+"${tests[@]}"})
-          cmd2=(${pyt[@]+"${pyt[@]}"} -p no:cacheprovider -q -rfE -o junit_family=xunit1 "--junitxml=$OUT/$label-tests-serial.xml" -m "($PYTEST_MARK) and serial" ${tests[@]+"${tests[@]}"})
+          cmd2=(${pyt[@]+"${pyt[@]}"} -p no:cacheprovider -q -rfE -o junit_family=xunit1 "--junitxml=$OUT/$label-tests-serial.xml" "--basetemp=$TMP_ROOT/$label-tests-serial" ${tmpargs[@]+"${tmpargs[@]}"} -m "($PYTEST_MARK) and serial" ${tests[@]+"${tests[@]}"})
         else
           cmd=(${pyt[@]+"${pyt[@]}"} ${junit[@]+"${junit[@]}"} ${tests[@]+"${tests[@]}"})
         fi ;;

@@ -55,6 +55,7 @@ from pydantic import (
 
 from decoy_engine.config._csv_dialect import CSV_DIALECT_DEFAULTS, csv_dialect_problem
 from decoy_engine.config._fixed_width import FixedWidthLayout
+from decoy_engine.errors import ConfigRuleError
 
 
 def _strip_serialization(node: Any) -> Any:
@@ -120,9 +121,11 @@ class FileSource(BaseModel):
     @model_validator(mode="after")
     def _validate_layout_matches_format(self) -> FileSource:
         if self.format == "fixed_width" and self.layout is None:
-            raise ValueError("FileSource: format='fixed_width' requires a `layout` column-spec")
+            raise ConfigRuleError(
+                "FileSource: format='fixed_width' requires a `layout` column-spec"
+            )
         if self.format != "fixed_width" and self.layout is not None:
-            raise ValueError(
+            raise ConfigRuleError(
                 "FileSource: `layout` is only valid when format='fixed_width' "
                 f"(got format={self.format!r})"
             )
@@ -136,7 +139,7 @@ class FileSource(BaseModel):
         if self.format != "csv":
             offenders = sorted({"has_header", "column_names", "delimiter"} & self.model_fields_set)
             if offenders:
-                raise ValueError(
+                raise ConfigRuleError(
                     "FileSource: delimited params "
                     f"({', '.join(offenders)}) are only valid when format='csv' "
                     f"(got format={self.format!r})"
@@ -144,7 +147,7 @@ class FileSource(BaseModel):
             return self
         problem = csv_dialect_problem(self.has_header, self.column_names, self.delimiter)
         if problem is not None:
-            raise ValueError(f"FileSource: {problem}")
+            raise ConfigRuleError(f"FileSource: {problem}")
         return self
 
     @model_serializer(mode="wrap")
