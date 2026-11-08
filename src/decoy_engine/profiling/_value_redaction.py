@@ -23,8 +23,9 @@ import functools
 import math
 import types
 from collections.abc import Iterator, Mapping
-from typing import Any, Final, Union, get_args, get_origin, get_type_hints
+from typing import Any, Final, TypeGuard, Union, get_args, get_origin, get_type_hints
 
+from decoy_engine.errors import DecoyError
 from decoy_engine.profiling.types import ColumnProfile
 
 
@@ -49,6 +50,8 @@ VALUE_FIELDS: Final[Mapping[tuple[str, str], Rule]] = types.MappingProxyType(
         ("FieldStats", "date_min"): Rule.NULL,
         ("FieldStats", "date_max"): Rule.NULL,
         ("FieldStats", "mode_value"): Rule.NULL,
+        # One non-null value, or a constant column, makes the mean the cell itself.
+        ("FieldStats", "mean_value"): Rule.NULL,
         ("FieldStats", "sample_invalid"): Rule.EMPTY_LIST,
         ("TopValue", "value"): Rule.PLACEHOLDER,
         ("DetectorMatch", "sample_misses"): Rule.EMPTY_LIST,
@@ -56,6 +59,7 @@ VALUE_FIELDS: Final[Mapping[tuple[str, str], Rule]] = types.MappingProxyType(
         ("Distribution", "labels"): Rule.PLACEHOLDER_EACH,
         ("Distribution", "min"): Rule.NULL,
         ("Distribution", "max"): Rule.NULL,
+        ("Distribution", "mean"): Rule.NULL,
         # The note repeats the literal for known dates and interpolates string sentinels.
         ("SentinelFlag", "value"): Rule.PLACEHOLDER,
         ("SentinelFlag", "note"): Rule.PLACEHOLDER,
@@ -77,7 +81,7 @@ VALUE_FREE_FIELDS: Final[frozenset[tuple[str, str]]] = frozenset(
     | _free(
         "FieldStats",
         "name", "inferred_type", "dtype_raw", "row_count", "null_count", "null_rate",
-        "distinct_count", "unique_rate", "is_likely_unique", "mean_value", "min_length",
+        "distinct_count", "unique_rate", "is_likely_unique", "min_length",
         "max_length", "avg_length", "date_format", "invalid_count", "casing_pattern",
         "format_pattern", "alphabet", "value_set_size_class", "numeric_range_class",
         "mode_freq", "top_values", "detector_matches", "sentinels", "pii_score",
@@ -88,7 +92,7 @@ VALUE_FREE_FIELDS: Final[frozenset[tuple[str, str]]] = frozenset(
         "DetectorMatch",
         "detector_id", "match_rate", "format_pattern", "confidence", "domain",
     )
-    | _free("Distribution", "kind", "data", "mean")
+    | _free("Distribution", "kind", "data")
     | _free("SentinelFlag", "kind", "count")
     # Signal text holds detector ids and header names, not cells.
     | _free("DetectionSignal", "signal", "confidence", "winner", "ml", "skipped")
@@ -98,7 +102,7 @@ _ITEM: Final = "*"
 _Steps = tuple[str, ...]
 
 
-class UnclassifiedProfileFieldError(TypeError):
+class UnclassifiedProfileFieldError(DecoyError, TypeError):
     """A field reachable from the profile root is in neither registry, or in both."""
 
     def __init__(self, pairs: list[tuple[str, str]]) -> None:
@@ -153,7 +157,7 @@ def profile_types() -> Mapping[_Steps, type]:
     return types.MappingProxyType(_profile_types(ColumnProfile))
 
 
-def _is_score(value: Any) -> bool:
+def _is_score(value: Any) -> TypeGuard[float]:
     return type(value) is float and math.isfinite(value) and 0.0 <= value <= 1.0
 
 

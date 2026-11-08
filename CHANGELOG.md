@@ -13,8 +13,8 @@ minimum engine version it was tested against via its
 
 `decoy_engine` and `decoy_engine.profiling` export `profile_document`, `redact_profile_dict` and
 `is_value_sensitive`. `profile_document(profile)` is `ColumnProfile.to_dict()` with the cell values of
-every value-sensitive column removed: `min_value`, `max_value`, `date_min`, `date_max` and
-`mode_value` become `null`, `sample_invalid` and detector `sample_misses` become `[]`, and top-value
+every value-sensitive column removed: `min_value`, `max_value`, `mean_value`, `date_min`,
+`date_max`, `mode_value` and the distribution `min`, `max` and `mean` become `null`, `sample_invalid` and detector `sample_misses` become `[]`, and top-value
 text, distribution labels and sentinel value and note text become `"[redacted]"`, so counts, rates
 and array lengths are kept. A column is value-sensitive when any detector fired, its `pii_score` is
 at least 0.6, or it is near-unique; a loaded document with a missing or ill-typed input counts as
