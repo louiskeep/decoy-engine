@@ -79,8 +79,7 @@ def test_matrix_row_records_changed_semantics() -> None:
     ("cols", "reason"),
     [
         ([_win(), DOB], "windowed_date_anchor_not_earlier"),
-        ([{"name": "dob", "type": "sequence", "prefix": "d"}, _win()], None),
-        ([{"name": "dob", "type": "sequence"}, _win()], "windowed_date_anchor_type_unsupported"),
+        ([{"name": "dob", "type": "sequence"}, _win()], None),
         (
             [{"name": "dob", "type": "categorical", "categories": [1, 2]}, _win()],
             "windowed_date_anchor_type_unsupported",

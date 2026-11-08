@@ -19,7 +19,9 @@ Anything else stays text exactly as before. Rendered text is unchanged for numer
 from __future__ import annotations
 
 import inspect
+import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import pyarrow as pa
@@ -81,55 +83,194 @@ def _faker_type(
     return pa.float64() if annotation is float else None
 
 
-def _text_key_parents(config: Mapping[str, Any], generated: set[str]) -> set[tuple[str, str]]:
-    """Parent columns of relationships that have a child table that is not generated."""
-    out: set[tuple[str, str]] = set()
-    for rel in config.get("relationships") or []:
-        children = rel.get("children") or []
-        if all(c.get("table") in generated for c in children):
-            continue
-        parent = rel.get("parent") or {}
-        for c in parent.get("columns") or []:
-            out.add((str(parent.get("table")), str(c)))
-    return out
+@dataclass(frozen=True)
+class Reader:
+    """How one kind of sibling-value reader treats a numeric column."""
+
+    safe: bool
+    why: str
+
+
+# The closed registry of every way a generated column's values are read by another column. A
+# numeric column must be safe for ALL of its readers, so a reader that is not listed here, or a
+# column type that is not listed in READER_KEYS, keeps the column text. Add a kind here only after
+# checking it against typed input; tests/sentry/test_numeric_reader_registry.py fails otherwise.
+READERS: dict[str, Reader] = {
+    "formula.references": Reader(
+        False, "formula locals are the cell text; str methods and + need text"
+    ),
+    "derived.expression": Reader(
+        True, "closed-grammar arithmetic is the consumer numeric typing serves"
+    ),
+    "derived_aggregate.column": Reader(
+        False, "aggregate input coercion is not verified for typed input"
+    ),
+    "grouped_series.order_by": Reader(True, "orders by value, so numeric order is the correct one"),
+    "grouped_series.group_by": Reader(False, "the group label is hashed from its text"),
+    "group_key.group_by": Reader(False, "the group label is hashed from its text"),
+    "windowed_date.anchor": Reader(False, "the anchor must be date text"),
+    "statistical.condition_on": Reader(False, "matched against snapshot category labels as text"),
+    "reference.reference_column": Reader(
+        True, "copies the parent cell and its type; the group is checked together"
+    ),
+    "relationship": Reader(
+        True, "safe only when every paired column is generated with the same planned type"
+    ),
+}
+# column type -> (config key, registry id) for each sibling it reads. `expression` is scanned for
+# identifiers. Types that read no sibling map to an empty tuple.
+READER_KEYS: dict[str, tuple[tuple[str, str], ...]] = {
+    "faker": (),
+    "sequence": (),
+    "categorical": (),
+    "formula": (("references", "formula.references"),),
+    "reference": (),
+    "statistical": (("condition_on", "statistical.condition_on"),),
+    "derived": (("expression", "derived.expression"),),
+    "derived_aggregate": (("column", "derived_aggregate.column"),),
+    "grouped_series": (
+        ("order_by", "grouped_series.order_by"),
+        ("group_by", "grouped_series.group_by"),
+    ),
+    "windowed_date": (("anchor", "windowed_date.anchor"),),
+    "group_key": (("group_by", "group_key.group_by"),),
+}
+_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+Key = tuple[str, str]
+
+
+def _names_read(col: Mapping[str, Any], key: str) -> set[str]:
+    value = col.get(key)
+    if key == "expression":
+        return set(_IDENTIFIER.findall(value)) if isinstance(value, str) else set()
+    return {v for v in (value if isinstance(value, list) else [value]) if isinstance(v, str)}
+
+
+def _reference_root(tables: Mapping[str, Any], key: Key) -> Key:
+    """Follow ``reference`` columns to the column that decides the type (cycles stop at the loop)."""
+    seen: set[Key] = set()
+    while key not in seen:
+        seen.add(key)
+        col = next(
+            (c for c in tables.get(key[0], {}).get("generate_columns", []) if c["name"] == key[1]),
+            None,
+        )
+        if col is None or col.get("type") != "reference":
+            return key
+        key = (str(col.get("reference_table")), str(col.get("reference_column")))
+    return key
 
 
 def numeric_plan(
     config: Mapping[str, Any],
     *,
     provider_snapshot: Mapping[str, Any] | None = None,
-) -> dict[tuple[str, str], pa.DataType]:
-    """``{(table, column): int64 | float64}`` for each generated column that is numeric."""
+) -> dict[Key, pa.DataType]:
+    """``{(table, column): int64 | float64}`` for each generated column that is numeric.
+
+    A column starts as a candidate when its values provably fit (see the module docstring) and
+    then stays numeric only while every reader of it, and of every ``reference`` column that copies
+    it, is numeric-safe. Removing a column can make another reader unsafe, so this runs to a fixed
+    point; it only ever removes, so it terminates.
+    """
+    from decoy_engine.generation._admission import _categorical_type
     from decoy_engine.generation.synthesize import _get_default_faker
     from decoy_engine.internal.faker_setup import snapshot_custom_faker_providers
 
-    tables = [t for t in config.get("tables") or [] if t.get("generate_columns")]
+    tables = {t["name"]: t for t in config.get("tables") or [] if t.get("generate_columns")}
+    cols: dict[Key, Mapping[str, Any]] = {
+        (tn, c["name"]): c for tn, t in tables.items() for c in t["generate_columns"]
+    }
     probe = custom = None
-    out: dict[tuple[str, str], pa.DataType] = {}
-    held_as_text: set[tuple[str, str]] | None = None
-    for t in tables:
-        for col in t["generate_columns"]:
-            kind = col.get("type")
-            if kind == "sequence":
-                dtype = _sequence_type(col, int(t.get("row_count") or 0))
-            elif kind == "faker":
-                if probe is None:
-                    probe = _get_default_faker()
-                    custom = (
-                        provider_snapshot
-                        if provider_snapshot is not None
-                        else snapshot_custom_faker_providers()
-                    )
-                dtype = _faker_type(col, probe, custom or {})
-            else:
+    base: dict[Key, pa.DataType] = {}
+    for (tn, cn), col in cols.items():
+        kind = col.get("type")
+        if kind == "sequence":
+            dtype = _sequence_type(col, int(tables[tn].get("row_count") or 0))
+        elif kind == "faker":
+            if probe is None:
+                probe = _get_default_faker()
+                custom = (
+                    provider_snapshot
+                    if provider_snapshot is not None
+                    else snapshot_custom_faker_providers()
+                )
+            dtype = _faker_type(col, probe, custom or {})
+        else:
+            continue
+        if dtype is not None:
+            base[(tn, cn)] = dtype
+    if not base:
+        return {}
+
+    members: dict[Key, list[Key]] = {}
+    for key in cols:
+        members.setdefault(_reference_root(tables, key), []).append(key)
+    pairs: list[list[tuple[Key, Key]]] = []  # one entry per relationship column pair
+    for rel in config.get("relationships") or []:
+        parent = rel.get("parent") or {}
+        for i, pcol in enumerate(parent.get("columns") or []):
+            row = [
+                (
+                    (str(parent.get("table")), str(pcol)),
+                    (str(c.get("table")), str((c.get("columns") or [])[i])),
+                )
+                for c in rel.get("children") or []
+                if i < len(c.get("columns") or [])
+            ]
+            pairs.append(row)
+    in_pairs = {end for row in pairs for p, c in row for end in (p, c)}
+
+    candidates = set(base)
+
+    def planned(key: Key) -> pa.DataType | None:
+        root = _reference_root(tables, key)
+        if root in candidates:
+            return base[root]
+        col = cols.get(root)
+        if col is None:
+            return None
+        kind = col.get("type")
+        if kind in ("sequence", "faker"):
+            return pa.string()
+        if kind == "categorical":
+            return _categorical_type(dict(col))[0]
+        return None
+
+    def reader_ok(m: Key) -> bool:
+        tn, cn = m
+        for other in tables[tn]["generate_columns"]:
+            if other["name"] == cn:
                 continue
-            if dtype is None:
-                continue
-            if held_as_text is None:
-                held_as_text = _text_key_parents(config, {t["name"] for t in tables})
-            if (t["name"], col["name"]) not in held_as_text:
-                out[(t["name"], col["name"])] = dtype
-    return out
+            spec = READER_KEYS.get(str(other.get("type")))
+            if spec is None:
+                return False  # unknown column type: it may read anything
+            for key, rid in spec:
+                if cn in _names_read(other, key) and not READERS[rid].safe:
+                    return False
+        if m in in_pairs:
+            for row in pairs:
+                if any(m in (p, c) for p, c in row) and not _pairs_agree(row):
+                    return False
+        return True
+
+    def _pairs_agree(row: list[tuple[Key, Key]]) -> bool:
+        for p, c in row:
+            if p not in cols or c not in cols:
+                return False  # an end that is not generated reads the key as text
+            pt, ct = planned(p), planned(c)
+            if pt is None or pt != ct:
+                return False
+        return True
+
+    changed = True
+    while changed:
+        changed = False
+        for root in list(candidates):
+            if not all(reader_ok(m) for m in members.get(root, [root])):
+                candidates.discard(root)
+                changed = True
+    return {k: base[k] for k in candidates}
 
 
 def restore_declared(
