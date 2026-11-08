@@ -29,6 +29,20 @@ class ConfigError(DecoyError):
     """Raised when a pipeline config is malformed."""
 
 
+class ConfigRuleError(ConfigError, ValueError):
+    """A config validator's refusal whose ``message`` is fixed text or names only.
+
+    Raised from a Pydantic validator, it is the one ``ValueError`` shape whose message the config
+    error converter shows. Any other ``ValueError`` (including a subclass of this one) may have
+    interpolated a data value, so the converter replaces its text. Never put a data value, a data
+    literal or a secret in ``message``.
+    """
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+        super().__init__(message)
+
+
 class PipelineValidationError(ConfigError):
     """Raised when a pipeline configuration fails validation.
 
@@ -497,6 +511,7 @@ class FixedWidthWriteError(DecoyError):
 
 __all__ = [
     "ConfigError",
+    "ConfigRuleError",
     "ConnectorAuthError",
     "ConnectorError",
     "DecoyError",

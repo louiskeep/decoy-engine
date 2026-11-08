@@ -43,6 +43,7 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from decoy_engine.config._transforms import TransformOp
+from decoy_engine.errors import ConfigRuleError
 
 CardinalityModeLiteral = Literal[
     "reuse",
@@ -299,9 +300,9 @@ class GenerateColumnConfig(BaseModel):
             return self
         extras = self.model_extra or {}
         if not extras.get("reference_table"):
-            raise ValueError(f"reference column {self.name!r} requires `reference_table`")
+            raise ConfigRuleError(f"reference column {self.name!r} requires `reference_table`")
         if not extras.get("reference_column"):
-            raise ValueError(f"reference column {self.name!r} requires `reference_column`")
+            raise ConfigRuleError(f"reference column {self.name!r} requires `reference_column`")
         return self
 
     @model_validator(mode="after")
@@ -324,7 +325,7 @@ class GenerateColumnConfig(BaseModel):
         pass through. Only missing-required-params are caught."""
         extras = self.model_extra or {}
         if self.type == "faker" and not extras.get("faker_type"):
-            raise ValueError(f"faker column {self.name!r} requires `faker_type`")
+            raise ConfigRuleError(f"faker column {self.name!r} requires `faker_type`")
         # GP2 (dennis review, 2026-09-17): `pooled` is a faker-only build-
         # strategy toggle. Pooling sources its values from a Faker provider,
         # so the flag has no meaning on any other type. Reject it at config
@@ -341,29 +342,29 @@ class GenerateColumnConfig(BaseModel):
         # (Codex FINAL gate finding 1, 2026-09-17; verified). With StrictBool
         # above, only a real bool (`true`/`false`) reaches here on a non-faker.
         if self.type != "faker" and self.pooled is not None:
-            raise ValueError(
+            raise ConfigRuleError(
                 f"{self.type} column {self.name!r}: `pooled` is only valid on `type: faker` columns"
             )
         if self.type == "sequence" and extras.get("start") is None:
-            raise ValueError(f"sequence column {self.name!r} requires `start`")
+            raise ConfigRuleError(f"sequence column {self.name!r} requires `start`")
         if self.type == "categorical" and not extras.get("categories"):
-            raise ValueError(f"categorical column {self.name!r} requires `categories`")
+            raise ConfigRuleError(f"categorical column {self.name!r} requires `categories`")
         if self.type == "formula" and not extras.get("formula"):
-            raise ValueError(f"formula column {self.name!r} requires `formula`")
+            raise ConfigRuleError(f"formula column {self.name!r} requires `formula`")
         if self.type == "statistical" and not extras.get("snapshot_file"):
-            raise ValueError(f"statistical column {self.name!r} requires `snapshot_file`")
+            raise ConfigRuleError(f"statistical column {self.name!r} requires `snapshot_file`")
         if self.type == "derived" and not extras.get("expression"):
-            raise ValueError(f"derived column {self.name!r} requires `expression`")
+            raise ConfigRuleError(f"derived column {self.name!r} requires `expression`")
         if self.type == "grouped_series" and not extras.get("group_by"):
-            raise ValueError(f"grouped_series column {self.name!r} requires `group_by`")
+            raise ConfigRuleError(f"grouped_series column {self.name!r} requires `group_by`")
         if self.type == "grouped_series" and not extras.get("order_by"):
-            raise ValueError(f"grouped_series column {self.name!r} requires `order_by`")
+            raise ConfigRuleError(f"grouped_series column {self.name!r} requires `order_by`")
         if self.type == "windowed_date" and not extras.get("anchor"):
-            raise ValueError(f"windowed_date column {self.name!r} requires `anchor`")
+            raise ConfigRuleError(f"windowed_date column {self.name!r} requires `anchor`")
         if self.type == "windowed_date" and extras.get("max_days") is None:
-            raise ValueError(f"windowed_date column {self.name!r} requires `max_days`")
+            raise ConfigRuleError(f"windowed_date column {self.name!r} requires `max_days`")
         if self.type == "group_key" and not extras.get("group_by"):
-            raise ValueError(f"group_key column {self.name!r} requires `group_by`")
+            raise ConfigRuleError(f"group_key column {self.name!r} requires `group_by`")
         return self
 
 
@@ -408,22 +409,22 @@ class TableConfig(BaseModel):
     def _mask_xor_generate(self) -> TableConfig:
         if self.generate_columns:
             if self.columns:
-                raise ValueError(
+                raise ConfigRuleError(
                     f"table {self.name!r}: a generate table (generate_columns) must "
                     f"not also declare mask columns"
                 )
             if self.row_count is None or self.row_count < 0:
-                raise ValueError(
+                raise ConfigRuleError(
                     f"table {self.name!r}: a generate table requires a non-negative row_count"
                 )
         else:
             if not self.columns:
-                raise ValueError(
+                raise ConfigRuleError(
                     f"table {self.name!r}: a mask table requires at least one column "
                     f"(or use generate_columns + row_count to generate)"
                 )
             if self.row_count is not None:
-                raise ValueError(
+                raise ConfigRuleError(
                     f"table {self.name!r}: row_count is only valid on a generate table "
                     f"(with generate_columns)"
                 )
@@ -441,10 +442,9 @@ class TableConfig(BaseModel):
                 if isinstance(op, DropColumnOp):
                     conflicts = mask_col_names & set(op.columns)
                     if conflicts:
-                        sorted_conflicts = sorted(conflicts)
-                        raise ValueError(
+                        raise ConfigRuleError(
                             f"table {self.name!r}: drop_column transform drops columns "
-                            f"{sorted_conflicts} that also have mask strategies declared. "
+                            f"{sorted(conflicts)} that also have mask strategies declared. "
                             f"Either drop the columns OR mask them, not both -- mask "
                             f"strategies run AFTER transforms, so the strategy would land "
                             f"on a missing column and fail mid-run."
