@@ -219,7 +219,8 @@ def test_p0_codes_are_registered_with_fixed_messages() -> None:
         assert "/" not in str(err)
     assert issubclass(ProtectedDirUnsafe, ValueError)
     assert issubclass(ProtectedDirAclFailed, OSError)
-    assert reasons.REGISTRY_VERSION == "1.7.0"
+    # Later additions raise the registry past the release these two codes joined.
+    assert tuple(map(int, reasons.REGISTRY_VERSION.split("."))) >= (1, 7, 0)
 
 
 # -- Dennis round 1: relative paths, concurrent creation, symlinks inside a live root ------------
