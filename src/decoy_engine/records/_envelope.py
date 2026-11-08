@@ -154,3 +154,6 @@ class RecordNeedsNewer:
     payload_schema: str
     scope: Literal["envelope", "payload"]
     raw: dict[str, Any] = field(repr=False)
+    # A later envelope major cannot be checked by this version's id rule, so its id is only a
+    # claim. Nothing may upsert, overwrite or delete by an unverified id.
+    verified: bool = True

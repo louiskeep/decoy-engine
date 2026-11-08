@@ -8,6 +8,7 @@ envelope is returned untouched next to that view so a copy never drops a field.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from typing import Any
@@ -35,6 +36,8 @@ __all__ = ["build", "decode", "encode"]
 
 _PLACEHOLDER_ID = "sha256:" + "0" * 64
 _ENVELOPE_FAMILY = "decoy-record/v"
+_ID = re.compile(r"sha256:[0-9a-f]{64}")
+_KIND = re.compile(r"[a-z][a-z0-9-]{0,63}")
 
 
 def _locations(
@@ -166,9 +169,12 @@ def decode(data: bytes | str) -> DecodedRecord | OpaqueRecord | RecordNeedsNewer
     if not schema.startswith(_ENVELOPE_FAMILY):
         raise RecordError("record_corrupt")
     if schema != ENVELOPE_SCHEMA:
-        # A later envelope major cannot be verified by this version's rule.
+        # A later envelope major cannot be verified by this version's rule. Its id and kind
+        # are still held to their formats, and the result is marked unverified.
+        if not (_ID.fullmatch(_str(raw, "id")) and _KIND.fullmatch(_str(raw, "kind"))):
+            raise RecordError("record_corrupt")
         return RecordNeedsNewer(
-            _str(raw, "kind"), _str(raw, "id"), _str(raw, "payload_schema"), "envelope", raw
+            raw["kind"], raw["id"], _str(raw, "payload_schema"), "envelope", raw, verified=False
         )
     try:
         if raw.get("id") != record_id(raw):

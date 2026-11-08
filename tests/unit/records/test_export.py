@@ -89,9 +89,9 @@ def test_refs_follow_the_new_ids() -> None:
 
 
 def _newer_and_opaque() -> list[dict[str, Any]]:
-    newer = raw_of(make())
+    newer = raw_of(make(labels={"status": "ok"}))
     newer["payload"]["later_field"] = "/home/user/x.csv"
-    opaque = raw_of(make())
+    opaque = raw_of(make(labels={"status": "ok"}))
     opaque.update(kind="future-thing", payload_schema="future-thing/v1", payload={"p": "/a/b.csv"})
     return [seal(newer), seal(opaque)]
 
@@ -177,3 +177,42 @@ def test_header_is_the_first_line_and_json_lines_are_canonical() -> None:
 
 def test_sample_payload_helper_is_used() -> None:
     assert sample_payload()["sample_size"] == 50
+
+
+def test_sec1_logs_stay_out_without_keep_paths_and_are_listed() -> None:
+    """SEC-1: a log line can name paths; it is never exported unstripped."""
+    log = b'{"log_schema":"decoy-job-log/v1","pipeline":"/home/u/p.yaml"}\n'
+    lines = _lines([], logs=[("inv-1", log)])
+    items = _read(lines)
+    assert len(items) == 1
+    assert items[0].unstripped == ({"id": None, "source_id": None, "log": "inv-1"},)
+    kept = _read(_lines([], keep_paths=True, logs=[("inv-1", log)]))
+    assert isinstance(kept[1], ExportedLog)
+
+
+def test_sec2_label_pipeline_path_is_reduced_and_the_id_follows() -> None:
+    """SEC-2."""
+    rec = raw_of(make(labels={"pipeline": "/home/u/proj/pipelines/claims.yaml"}))
+    header, item = _read(_lines([rec]))
+    assert item.record.raw["labels"]["pipeline"] == "claims.yaml"
+    assert item.source_id == rec["id"] and records.record_id(item.record.raw) == item.record.id
+    assert header.paths_stripped is True
+    kept = _read(_lines([rec], keep_paths=True))[1]
+    assert kept.record.raw["labels"]["pipeline"] == rec["labels"]["pipeline"]
+
+
+def test_sec3_newer_envelope_is_unverified_and_never_read_as_an_export_record() -> None:
+    """SEC-3."""
+    from decoy_engine.records import _codec
+
+    raw = raw_of(make())
+    raw["record_schema"] = "decoy-record/v2"
+    got = records.decode(canonical_bytes(raw))
+    assert isinstance(got, records.RecordNeedsNewer) and got.verified is False
+    for bad in ({"id": "../../x"}, {"id": "sha256:" + "A" * 64}, {"kind": "../k"}):
+        with pytest.raises(RecordError):
+            _codec.decode(canonical_bytes({**raw, **bad}))
+    header = _lines([], keep_paths=True)[0]
+    line = json.dumps({"type": "record", "source_id": None, "record": raw}).encode()
+    bad_line = _read([header, line])[1]
+    assert isinstance(bad_line, BadLine)

@@ -173,12 +173,19 @@ def export_lines(
             rec["payload"] = reduced[0]
             rec["payload_digest"] = payload_digest(reduced[0])
             changed = stripped_any = True
+        pipeline = rec["labels"].get("pipeline")
+        if not keep_paths and isinstance(pipeline, str) and _file_name(pipeline) != pipeline:
+            rec["labels"]["pipeline"] = _file_name(pipeline)
+            changed = stripped_any = True
         if changed:
             rec["id"] = record_id(rec)
         if not keep_paths and reduced is None:
             unstripped.append({"id": rec["id"], "source_id": raw["id"] if changed else None})
         id_map[raw["id"]] = rec["id"]
         lines.append({"type": "record", "source_id": raw["id"] if changed else None, "record": rec})
+    log_list = list(logs)
+    if not keep_paths:
+        unstripped.extend({"id": None, "source_id": None, "log": owner} for owner, _ in log_list)
     header = ExportHeader(
         exported_at=exported_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
         producer=producer if isinstance(producer, Producer) else Producer.model_validate(producer),
@@ -190,7 +197,10 @@ def export_lines(
     )
     for entry in [header.model_dump(mode="json"), *lines]:
         yield canonical_bytes(entry) + b"\n"
-    for invocation_id, data in logs:
+    for invocation_id, data in log_list:
+        if not keep_paths:
+            # Log lines can name paths and this version cannot strip them, so they stay out.
+            continue
         try:
             content = data.decode("utf-8")
         except UnicodeDecodeError:
@@ -252,7 +262,10 @@ def _read_line(number: int, wrapper: dict[str, Any] | None) -> Any:
         if not isinstance(record, dict) or not (source is None or isinstance(source, str)):
             return BadLine(number, "record_invalid")
         try:
-            return ExportedRecord(source, decode(canonical_bytes(record)), number)
+            decoded = decode(canonical_bytes(record))
+            if isinstance(decoded, RecordNeedsNewer) and not decoded.verified:
+                return BadLine(number, "record_invalid")
+            return ExportedRecord(source, decoded, number)
         except (RecordError, ValueError) as exc:
             return BadLine(number, getattr(exc, "code", "record_corrupt"))
     if kind == "log":

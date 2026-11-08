@@ -188,11 +188,19 @@ def test_unknown_kind_cannot_be_built() -> None:
     assert caught.value.code == "record_invalid"
 
 
-def test_a_changed_payload_value_fails_decode() -> None:
-    """A1-decode-verify."""
-    text = records.encode(make()).decode("utf-8").replace('"ttl_seconds":86400', '"ttl_seconds":1')
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ('"ttl_seconds":86400', '"ttl_seconds":1'),  # payload and digest disagree
+        ('"status":"ok"', '"status":"bad"'),  # only the id disagrees
+    ],
+)
+def test_a_changed_value_fails_decode(old: str, new: str) -> None:
+    """A1-decode-verify: each defense is exercised alone."""
+    text = records.encode(make()).decode("utf-8")
+    assert old in text
     with pytest.raises(RecordError) as caught:
-        records.decode(text)
+        records.decode(text.replace(old, new))
     assert caught.value.code == "record_corrupt"
 
 
