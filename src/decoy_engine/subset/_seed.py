@@ -76,13 +76,13 @@ def _predicate_expr(p: Predicate, kf: pl.DataFrame, table: str) -> pl.Expr:
             if not _is_real_bound(p.value, target):
                 raise
             return _range_expr(c, p.op, p.value, target)
-    except _LITERAL_ERRORS as exc:
+    except _LITERAL_ERRORS:
         # Same boundary as explicit keys: polars' error text echoes the literal.
         raise SubsetConfigError(
             code=reasons.config.SUBSET_SEED_KEY_TYPE,
             message=f"table {table!r}: filter literal(s) for column {p.column!r} do not "
             f"convert exactly to the column's {_dtype_label(target)} type",
-        ) from exc
+        ) from None
     if p.op == "in":
         return c.is_in(literal.implode())
     return _OPS[p.op](c, pl.lit(literal).first())
@@ -403,13 +403,13 @@ def _select_keys(spec: SeedSpec, kf: pl.DataFrame) -> frozenset[int]:
     for i, c in enumerate(spec.key_columns):
         try:
             col = _literals_exact([tup[i] for tup in spec.keys], kf.schema[c])
-        except _LITERAL_ERRORS as exc:
+        except _LITERAL_ERRORS:
             # The cast error text echoes key values; name only table and column.
             raise SubsetConfigError(
                 code=reasons.config.SUBSET_SEED_KEY_TYPE,
                 message=f"table {spec.table!r}: explicit seed key(s) for key column {c!r} "
                 f"do not convert exactly to the column's {_dtype_label(kf.schema[c])} type",
-            ) from exc
+            ) from None
         columns.append(col.alias(c))
     # Engine null-key rule (`fk_join_key_tuple` callers skip any tuple with a
     # NULL_FK_KEY part): a requested tuple with a null part matches no row.
