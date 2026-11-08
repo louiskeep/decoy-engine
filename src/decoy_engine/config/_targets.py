@@ -25,6 +25,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from decoy_engine.config._fixed_width import FixedWidthLayout
+from decoy_engine.errors import ConfigRuleError
 
 
 class FileTarget(BaseModel):
@@ -53,9 +54,11 @@ class FileTarget(BaseModel):
     @model_validator(mode="after")
     def _validate_layout_matches_format(self) -> FileTarget:
         if self.format == "fixed_width" and self.layout is None:
-            raise ValueError("FileTarget: format='fixed_width' requires a `layout` column-spec")
+            raise ConfigRuleError(
+                "FileTarget: format='fixed_width' requires a `layout` column-spec"
+            )
         if self.format != "fixed_width" and self.layout is not None:
-            raise ValueError(
+            raise ConfigRuleError(
                 "FileTarget: `layout` is only valid when format='fixed_width' "
                 f"(got format={self.format!r})"
             )
