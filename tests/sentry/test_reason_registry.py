@@ -500,9 +500,6 @@ UNCLASSIFIED: dict[str, str] = {
     "LicenseError": "platform-owned license state, not a run failure",
     "LicenseExpiredError": "platform-owned license state, not a run failure",
     "FieldMissing": "an internal memwatch parse signal, never surfaced",
-    "UnclassifiedProfileFieldError": (
-        "a developer-facing registry invariant from the profile type walk; never a run outcome"
-    ),
     "PoolBuildFailed": "an internal shadow-plan signal, never surfaced",
     "_RejectError": "an internal parser signal, never surfaced",
     "_InfeasibleAtEpsQError": "an internal DP control-flow signal, never surfaced",

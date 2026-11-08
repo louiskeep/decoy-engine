@@ -272,3 +272,9 @@ def test_a_non_object_field_entry_is_replaced() -> None:
     doc = redact_profile_dict({"fields": ["CANARY", 3]})
     assert doc["fields"] == [REDACTED, REDACTED]
     assert doc["redacted_columns"] == [REDACTED, REDACTED]
+
+
+def test_a_non_list_fields_value_is_replaced_and_counted() -> None:
+    doc = redact_profile_dict({"fields": {"name": "CANARY"}})
+    assert doc["fields"] == REDACTED
+    assert doc["redacted_columns"] == [REDACTED]

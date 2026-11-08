@@ -25,7 +25,6 @@ import types
 from collections.abc import Iterator, Mapping
 from typing import Any, Final, TypeGuard, Union, get_args, get_origin, get_type_hints
 
-from decoy_engine.errors import DecoyError
 from decoy_engine.profiling.types import ColumnProfile
 
 
@@ -102,14 +101,6 @@ _ITEM: Final = "*"
 _Steps = tuple[str, ...]
 
 
-class UnclassifiedProfileFieldError(DecoyError, TypeError):
-    """A field reachable from the profile root is in neither registry, or in both."""
-
-    def __init__(self, pairs: list[tuple[str, str]]) -> None:
-        self.pairs = pairs
-        super().__init__(f"profile fields not classified exactly once: {pairs}")
-
-
 def _unwrap(hint: Any) -> tuple[Any, _Steps]:
     """Strip `X | None` and `list[...]` layers, returning the inner type and its item steps."""
     steps: _Steps = ()
@@ -126,35 +117,56 @@ def _unwrap(hint: Any) -> tuple[Any, _Steps]:
             return hint, steps
 
 
-def _profile_types(root: type) -> dict[_Steps, type]:
-    """Dict path of every dataclass reachable from `root` through its type hints.
+def _nests_dataclass(hint: Any) -> bool:
+    return any(
+        (dataclasses.is_dataclass(a) and isinstance(a, type)) or _nests_dataclass(a)
+        for a in get_args(hint)
+    )
 
-    Raises `UnclassifiedProfileFieldError` when a reached field is in neither registry or in both.
+
+def _has_value_rules(cls: type) -> bool:
+    return any(t == cls.__name__ for t, _ in VALUE_FIELDS)
+
+
+def _walk(root: type) -> tuple[dict[_Steps, type], list[str]]:
+    """Dict path of every dataclass reachable from `root`, plus every reason the walk is unsafe.
+
+    The redactor only knows `list` and `Optional` nesting, value types under `fields[*]`, and
+    one class per name, so anything else is reported instead of silently skipped.
     """
     found: dict[_Steps, type] = {}
-    bad: list[tuple[str, str]] = []
+    by_name: dict[str, type] = {}
+    errors: list[str] = []
 
     def visit(cls: type, path: _Steps) -> None:
         found[path] = cls
+        if by_name.setdefault(cls.__name__, cls) is not cls:
+            errors.append(f"two classes named {cls.__name__}")
+        if _has_value_rules(cls) and path[:2] != ("fields", _ITEM):
+            errors.append(f"value type {cls.__name__} at {'.'.join(path) or 'root'}")
         hints = get_type_hints(cls)
         for f in dataclasses.fields(cls):
             pair = (cls.__name__, f.name)
             if (pair in VALUE_FIELDS) == (pair in VALUE_FREE_FIELDS):
-                bad.append(pair)
+                errors.append(f"unclassified {cls.__name__}.{f.name}")
             inner, steps = _unwrap(hints[f.name])
             if dataclasses.is_dataclass(inner) and isinstance(inner, type):
                 visit(inner, (*path, f.name, *steps))
+            elif _nests_dataclass(inner):
+                errors.append(f"unsupported container {cls.__name__}.{f.name}")
 
     visit(root, ())
-    if bad:
-        raise UnclassifiedProfileFieldError(bad)
-    return found
+    return found, errors
 
 
 @functools.cache
 def profile_types() -> Mapping[_Steps, type]:
     """Dict path (`("fields", "*", "top_values", "*")`) to dataclass, from `ColumnProfile`."""
-    return types.MappingProxyType(_profile_types(ColumnProfile))
+    found, errors = _walk(ColumnProfile)
+    if errors:
+        # Names only, never values: this fails an engine change in CI, not a user run.
+        raise TypeError(f"profile types the redactor cannot cover: {errors}")
+    return types.MappingProxyType(found)
 
 
 def _is_score(value: Any) -> TypeGuard[float]:
@@ -252,8 +264,10 @@ def redact_profile_dict(doc: Mapping[str, Any], *, include_values: bool = False)
             names.append(name if isinstance(name, str) else REDACTED)
             if not include_values:
                 _redact_field(fields, i)
-    elif fields is not None and not include_values:
-        out["fields"] = REDACTED
+    elif fields is not None:
+        names.append(REDACTED)
+        if not include_values:
+            out["fields"] = REDACTED
     if include_values:
         out.setdefault(VALUE_POLICY_KEY, POLICY_RAW)
     else:

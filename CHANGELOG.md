@@ -12,17 +12,18 @@ minimum engine version it was tested against via its
 ### Added (value redaction for saved scan documents, 2026-11-08)
 
 `decoy_engine` and `decoy_engine.profiling` export `profile_document`, `redact_profile_dict` and
-`is_value_sensitive`. `profile_document(profile)` is `ColumnProfile.to_dict()` with the cell values of
-every value-sensitive column removed: `min_value`, `max_value`, `mean_value`, `date_min`,
-`date_max`, `mode_value` and the distribution `min`, `max` and `mean` become `null`, `sample_invalid` and detector `sample_misses` become `[]`, and top-value
-text, distribution labels and sentinel value and note text become `"[redacted]"`, so counts, rates
-and array lengths are kept. A column is value-sensitive when any detector fired, its `pii_score` is
-at least 0.6, or it is near-unique; a loaded document with a missing or ill-typed input counts as
-sensitive. The document gains `value_policy` (`flagged-redacted/v1`, or `raw` with
-`include_values=True`) and `redacted_columns`. `redact_profile_dict` applies the same rules to a
-loaded document and ignores any marker it already carries. `to_dict()` is unchanged and still
-returns the raw form. Every field reachable from `ColumnProfile` must be classified in
-`profiling/_value_redaction.py`; a sentry fails on a new unclassified field.
+`is_value_sensitive`. `profile_document(profile)` is `ColumnProfile.to_dict()` with the cell values
+of every value-sensitive column removed: `min_value`, `max_value`, `mean_value`, `date_min`,
+`date_max`, `mode_value` and the distribution `min`, `max` and `mean` become `null`,
+`sample_invalid` and detector `sample_misses` become `[]`, and top-value text, distribution labels
+and sentinel value and note text become `"[redacted]"`, so counts, rates and array lengths are kept.
+A column is value-sensitive when any detector fired, its `pii_score` is at least 0.6, or it is
+near-unique; a loaded document with a missing or ill-typed input counts as sensitive. The document
+gains `value_policy` (`flagged-redacted/v1`, or `raw` with `include_values=True`) and
+`redacted_columns`. `redact_profile_dict` applies the same rules to a loaded document and ignores
+any marker it already carries. `to_dict()` is unchanged and still returns the raw form. Every field
+reachable from `ColumnProfile` must be classified in `profiling/_value_redaction.py`; a sentry fails
+on a new unclassified field.
 
 ### Changed (row directories use the protected allocator)
 

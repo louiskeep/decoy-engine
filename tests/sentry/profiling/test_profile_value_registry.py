@@ -17,8 +17,7 @@ from decoy_engine.profiling import profile_document
 from decoy_engine.profiling._value_redaction import (
     VALUE_FIELDS,
     VALUE_FREE_FIELDS,
-    UnclassifiedProfileFieldError,
-    _profile_types,
+    _walk,
     profile_types,
 )
 from decoy_engine.profiling.types import (
@@ -54,24 +53,54 @@ def test_the_walk_reaches_the_nested_types_by_path() -> None:
     assert paths[("fields", "*", "detector_matches", "*")] == "DetectorMatch"
 
 
-def test_an_unclassified_field_fails_the_walk() -> None:
+def _field_stats_with(name: str, hint: Any) -> type:
+    """`FieldStats` with one extra field, under the same class name."""
     hints = get_type_hints(FieldStats)
-    augmented = dataclasses.make_dataclass(
+    return dataclasses.make_dataclass(
         "FieldStats",
         [
             *(
                 (f.name, hints[f.name], dataclasses.field(default=None))
                 for f in dataclasses.fields(FieldStats)
             ),
-            ("extra", str, dataclasses.field(default="")),
+            (name, hint, dataclasses.field(default=None)),
         ],
     )
-    root = dataclasses.make_dataclass(
-        "ColumnProfile", [("fields", list[augmented], dataclasses.field(default_factory=list))]
+
+
+def _root(*extra: tuple[str, Any]) -> type:
+    return dataclasses.make_dataclass(
+        "ColumnProfile",
+        [(name, hint, dataclasses.field(default=None)) for name, hint in extra],
     )
-    with pytest.raises(UnclassifiedProfileFieldError) as exc:
-        _profile_types(root)
-    assert exc.value.pairs == [("FieldStats", "extra")]
+
+
+def test_an_unclassified_field_fails_the_walk() -> None:
+    _, errors = _walk(_root(("fields", list[_field_stats_with("extra", str)])))
+    assert errors == ["unclassified FieldStats.extra"]
+
+
+def test_a_value_type_outside_fields_fails_the_walk() -> None:
+    _, errors = _walk(_root(("fields", list[FieldStats]), ("sample_top", list[TopValue])))
+    assert errors == [
+        "unclassified ColumnProfile.sample_top",
+        "value type TopValue at sample_top.*",
+    ]
+
+
+def test_a_dataclass_in_an_unknown_container_fails_the_walk() -> None:
+    hint = dict[str, TopValue]
+    _, errors = _walk(_root(("fields", list[_field_stats_with("examples", hint)])))
+    assert errors == [
+        "unclassified FieldStats.examples",
+        "unsupported container FieldStats.examples",
+    ]
+
+
+def test_two_classes_with_one_name_fail_the_walk() -> None:
+    impostor = dataclasses.make_dataclass("TopValue", [("note", str)])
+    _, errors = _walk(_root(("fields", list[FieldStats]), ("other", impostor)))
+    assert "two classes named TopValue" in errors
 
 
 def _profile_with(type_name: str, field: str, canary: str) -> ColumnProfile:
