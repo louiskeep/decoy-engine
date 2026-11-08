@@ -158,8 +158,8 @@ def _fk_job(tmp_path) -> tuple[dict, dict[str, pa.Table]]:
             "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
-                "customers": {"type": "file", "format": "csv", "path": cpath},
-                "orders": {"type": "file", "format": "csv", "path": opath},
+                "customers": {"type": "file", "format": "csv", "has_header": True, "path": cpath},
+                "orders": {"type": "file", "format": "csv", "has_header": True, "path": opath},
             },
             "tables": [
                 {

@@ -194,7 +194,9 @@ def test_filesource_validation_error_is_value_free(bad: str) -> None:
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError) as info:
-        FileSource.model_validate({"type": "file", "format": "csv", "path": "p", "delimiter": bad})
+        FileSource.model_validate(
+            {"type": "file", "format": "csv", "path": "p", "has_header": True, "delimiter": bad}
+        )
     err = info.value
     for text in (str(err), repr(err), repr(err.args)):
         assert bad not in text
@@ -205,7 +207,13 @@ def _pipeline_with_delimiter(delimiter: str) -> dict[str, Any]:
         "version": 2,
         "global_settings": {"seed": 1},
         "sources": {
-            "s": {"type": "file", "format": "csv", "path": "p.csv", "delimiter": delimiter}
+            "s": {
+                "type": "file",
+                "format": "csv",
+                "has_header": True,
+                "path": "p.csv",
+                "delimiter": delimiter,
+            }
         },
         "tables": [{"name": "t", "source": "s", "columns": []}],
         "targets": {"o": {"type": "file", "format": "csv", "path": "o.csv"}},

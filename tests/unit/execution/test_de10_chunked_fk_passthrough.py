@@ -365,8 +365,13 @@ def test_dtype_field_reachable_through_validated_pipeline_config() -> None:
         "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
-            "customers": {"type": "file", "format": "csv", "path": "customers.csv"},
-            "orders": {"type": "file", "format": "csv", "path": "orders.csv"},
+            "customers": {
+                "type": "file",
+                "format": "csv",
+                "has_header": True,
+                "path": "customers.csv",
+            },
+            "orders": {"type": "file", "format": "csv", "has_header": True, "path": "orders.csv"},
         },
         "targets": {
             "customers": {"type": "file", "format": "csv", "path": "customers-out.csv"},

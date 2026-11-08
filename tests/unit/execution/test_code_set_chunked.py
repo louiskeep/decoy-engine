@@ -77,7 +77,14 @@ def _config(
     extra_tables: list[dict] | None = None,
 ) -> dict:
     tables = [{"name": table, "columns": columns}]
-    sources = {table: {"type": "file", "format": "csv", "path": str(tmp_path / f"{table}.csv")}}
+    sources = {
+        table: {
+            "type": "file",
+            "format": "csv",
+            "has_header": True,
+            "path": str(tmp_path / f"{table}.csv"),
+        }
+    }
     targets = {table: {"type": "file", "format": "csv", "path": str(tmp_path / f"{table}_out.csv")}}
     for extra in extra_tables or []:
         tables.append(extra)
@@ -575,8 +582,18 @@ class TestCorpusPinning:
             "version": 2,
             "global_settings": {"seed": _SEED},
             "sources": {
-                "a": {"type": "file", "format": "csv", "path": str(tmp_path / "a.csv")},
-                "b": {"type": "file", "format": "csv", "path": str(tmp_path / "b.csv")},
+                "a": {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": str(tmp_path / "a.csv"),
+                },
+                "b": {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": str(tmp_path / "b.csv"),
+                },
             },
             "targets": {
                 "a": {"type": "file", "format": "csv", "path": str(tmp_path / "a_out.csv")},

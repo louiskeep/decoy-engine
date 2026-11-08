@@ -24,7 +24,12 @@ def _scalar_mask_config(tmp_path) -> dict:
             "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
-                "customers": {"type": "file", "format": "csv", "path": str(tmp_path / "c.csv")},
+                "customers": {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": str(tmp_path / "c.csv"),
+                },
             },
             "tables": [
                 {

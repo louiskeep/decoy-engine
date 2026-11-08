@@ -91,7 +91,9 @@ def _config(*columns: dict, seed: int = 20260830) -> dict:
     raw = {
         "version": 2,
         "global_settings": {"seed": seed, "post_validation": False},
-        "sources": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
+        "sources": {
+            "t": {"type": "file", "format": "csv", "has_header": True, "path": "/dev/null"}
+        },
         "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
         "tables": [{"name": "t", "columns": list(columns)}],
     }

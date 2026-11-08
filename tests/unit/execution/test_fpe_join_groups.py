@@ -299,6 +299,7 @@ class TestT5UnmaskRoundTrip:
                 "subs": {
                     "type": "file",
                     "format": "csv",
+                    "has_header": True,
                     "path": str(tmp_path / "subs.csv"),
                 },
             },
@@ -387,11 +388,13 @@ class TestT5UnmaskRoundTrip:
                 "subscribers": {
                     "type": "file",
                     "format": "csv",
+                    "has_header": True,
                     "path": str(tmp_path / "subs.csv"),
                 },
                 "cdr": {
                     "type": "file",
                     "format": "csv",
+                    "has_header": True,
                     "path": str(tmp_path / "cdr.csv"),
                 },
             },
@@ -710,6 +713,7 @@ class TestT8AuditSignal:
                 "subs": {
                     "type": "file",
                     "format": "csv",
+                    "has_header": True,
                     "path": str(tmp_path / "subs.csv"),
                 }
             },
@@ -769,6 +773,7 @@ class TestT8AuditSignal:
                 "t": {
                     "type": "file",
                     "format": "csv",
+                    "has_header": True,
                     "path": str(tmp_path / "t.csv"),
                 }
             },

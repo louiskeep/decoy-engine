@@ -50,7 +50,14 @@ def _compile(_unused, columns):
         {
             "version": 2,
             "global_settings": {"seed": 1},
-            "sources": {"t": {"type": "file", "format": "csv", "path": str(_DIR / "t.csv")}},
+            "sources": {
+                "t": {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": str(_DIR / "t.csv"),
+                }
+            },
             "tables": [{"name": "t", "columns": columns}],
             "targets": {"t": {"type": "file", "format": "csv", "path": str(_DIR / "o.csv")}},
         }

@@ -87,6 +87,7 @@ def _mask_config(tmp_path, n_cols: int) -> dict[str, Any]:
                 "customers": {
                     "type": "file",
                     "format": "csv",
+                    "has_header": True,
                     "path": str(tmp_path / "customers.csv"),
                 },
             },

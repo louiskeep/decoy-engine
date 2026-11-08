@@ -91,7 +91,9 @@ def _csv_config(
     raw = {
         "version": 2,
         "global_settings": {"seed": 20260929},
-        "sources": {table: {"type": "file", "format": "csv", "path": str(csv_path)}},
+        "sources": {
+            table: {"type": "file", "format": "csv", "has_header": True, "path": str(csv_path)}
+        },
         "targets": {
             "t": {
                 "type": "file",

@@ -39,7 +39,9 @@ def _config() -> dict:
     raw = {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {"customers": {"type": "file", "format": "csv", "path": src}},
+        "sources": {
+            "customers": {"type": "file", "format": "csv", "has_header": True, "path": src}
+        },
         "tables": [
             {
                 "name": "customers",

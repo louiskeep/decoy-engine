@@ -297,7 +297,9 @@ def _validated_config_with_when(predicate: str) -> dict[str, Any]:
     return {
         "version": 2,
         "global_settings": {"seed": 1},
-        "sources": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
+        "sources": {
+            "t": {"type": "file", "format": "csv", "has_header": True, "path": "/dev/null"}
+        },
         "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
         "tables": [
             {

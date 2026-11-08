@@ -827,8 +827,18 @@ def _two_csv_build_parents_config(tmp_path: Path, *, mid_rows: int = 2000) -> di
         "version": 2,
         "global_settings": {"job_name": "two-csv-parents", "seed": 7},
         "sources": {
-            "aaa": {"type": "file", "path": _write_csv(tmp_path, aaa, "aaa"), "format": "csv"},
-            "bbb": {"type": "file", "path": _write_csv(tmp_path, bbb, "bbb"), "format": "csv"},
+            "aaa": {
+                "type": "file",
+                "path": _write_csv(tmp_path, aaa, "aaa"),
+                "format": "csv",
+                "has_header": True,
+            },
+            "bbb": {
+                "type": "file",
+                "path": _write_csv(tmp_path, bbb, "bbb"),
+                "format": "csv",
+                "has_header": True,
+            },
             "ccc": {
                 "type": "file",
                 "path": _write_parquet(tmp_path, ccc, "ccc"),

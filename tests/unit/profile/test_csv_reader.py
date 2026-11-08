@@ -252,7 +252,9 @@ def test_dtype_other_than_none_or_str_is_a_type_error(tmp_path: Path) -> None:
 def test_resolve_csv_dialect_defaults_and_explicit_keys() -> None:
     from decoy_engine.config import FileSource
 
-    plain = FileSource.model_validate({"type": "file", "format": "csv", "path": "a.csv"})
+    plain = FileSource.model_validate(
+        {"type": "file", "format": "csv", "path": "a.csv", "has_header": True}
+    )
     assert resolve_csv_dialect(plain.model_dump()) == CsvDialect(
         plain.has_header, plain.column_names, plain.delimiter
     )

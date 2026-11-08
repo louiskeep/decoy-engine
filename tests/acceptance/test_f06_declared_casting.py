@@ -449,8 +449,8 @@ def test_b3_fk_parent_042_joins_child_42_after_both_become_integer(tmp_path: Pat
         "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
-            "parent": {"type": "file", "format": "csv", "path": par},
-            "child": {"type": "file", "format": "csv", "path": chi},
+            "parent": {"type": "file", "format": "csv", "has_header": True, "path": par},
+            "child": {"type": "file", "format": "csv", "has_header": True, "path": chi},
         },
         "tables": [
             {"name": "parent", "columns": [int_col("id")]},

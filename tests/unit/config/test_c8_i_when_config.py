@@ -31,7 +31,9 @@ def _raw(when: Any = "s == 'a'", *, strategy: str = "redact") -> dict[str, Any]:
     return {
         "version": 2,
         "global_settings": {"seed": 7, "post_validation": False},
-        "sources": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
+        "sources": {
+            "t": {"type": "file", "format": "csv", "has_header": True, "path": "/dev/null"}
+        },
         "tables": [{"name": "t", "columns": [column, {"name": "n", "strategy": "passthrough"}]}],
         "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
     }
@@ -162,7 +164,9 @@ def _hash_fixture(**column_extra: object) -> dict:
     return {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {"t": {"type": "file", "format": "csv", "path": "/tmp/x.csv"}},
+        "sources": {
+            "t": {"type": "file", "format": "csv", "has_header": True, "path": "/tmp/x.csv"}
+        },
         "targets": {"t": {"type": "file", "format": "csv", "path": "/tmp/y.csv"}},
         "tables": [
             {

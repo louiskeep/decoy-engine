@@ -113,8 +113,8 @@ def _two_tables(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
-            "a": {"type": "file", "format": "csv", "path": a},
-            "b": {"type": "file", "format": "csv", "path": b},
+            "a": {"type": "file", "format": "csv", "has_header": True, "path": a},
+            "b": {"type": "file", "format": "csv", "has_header": True, "path": b},
         },
         "tables": [
             {"name": "a", "columns": [column("id"), age]},

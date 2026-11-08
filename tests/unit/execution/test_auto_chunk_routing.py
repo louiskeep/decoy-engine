@@ -59,7 +59,14 @@ def _config(tmp_path, columns: list[dict], table: str = "accounts") -> dict:
         {
             "version": 2,
             "global_settings": {"seed": 42},
-            "sources": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
+            "sources": {
+                table: {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": str(tmp_path / "in.csv"),
+                }
+            },
             "tables": [{"name": table, "columns": columns}],
             "targets": {
                 table: {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}
@@ -481,7 +488,12 @@ class TestFailClosed:
                 "version": 2,
                 "global_settings": {"seed": 42},
                 "sources": {
-                    "accounts": {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}
+                    "accounts": {
+                        "type": "file",
+                        "format": "csv",
+                        "has_header": True,
+                        "path": str(tmp_path / "in.csv"),
+                    }
                 },
                 "tables": [
                     {
@@ -536,11 +548,13 @@ class TestFailClosed:
                     "customers": {
                         "type": "file",
                         "format": "csv",
+                        "has_header": True,
                         "path": str(tmp_path / "customers.csv"),
                     },
                     "orders": {
                         "type": "file",
                         "format": "csv",
+                        "has_header": True,
                         "path": str(tmp_path / "orders.csv"),
                     },
                 },

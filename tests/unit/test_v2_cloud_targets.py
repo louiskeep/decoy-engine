@@ -22,7 +22,7 @@ def _base_config_with_target(target: dict[str, Any]) -> dict[str, Any]:
         "version": 2,
         "global_settings": {"seed": 0},
         "sources": {
-            "t": {"type": "file", "format": "csv", "path": "/tmp/in.csv"},
+            "t": {"type": "file", "format": "csv", "has_header": True, "path": "/tmp/in.csv"},
         },
         "tables": [
             {

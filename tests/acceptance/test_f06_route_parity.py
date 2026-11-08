@@ -162,8 +162,8 @@ def _fk_cfg(tmp_path: Path, *, endpoints: bool, policy: str = "null") -> dict[st
         "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
-            "parent": {"type": "file", "format": "csv", "path": par},
-            "child": {"type": "file", "format": "csv", "path": chi},
+            "parent": {"type": "file", "format": "csv", "has_header": True, "path": par},
+            "child": {"type": "file", "format": "csv", "has_header": True, "path": chi},
         },
         "tables": [
             {"name": "parent", "columns": [parent_key if endpoints else plain, column("label")]},
