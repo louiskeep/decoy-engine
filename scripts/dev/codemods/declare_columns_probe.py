@@ -6,7 +6,8 @@
 It swaps the module-level `check_columns_declared` that `prepare_declared_sources` and the
 capability methods resolve for one that records every finding and never raises, so a test
 that would be refused still runs to its own assertions. With pytest-xdist each worker writes
-`OUT.<worker>`; `config_explicit.py declare-columns --record OUT` reads OUT and every `OUT.*`. The rule itself stays in
+`OUT.<run>.<worker>` and OUT holds a manifest naming the run; `config_explicit.py
+declare-columns --record OUT` reads only that run's files. The rule itself stays in
 `declaration_findings`. Output holds fixture column names only: a scratch file, never committed.
 """
 
@@ -16,6 +17,7 @@ import inspect
 import json
 import os
 import sys
+import uuid
 from typing import Any
 
 import pytest
@@ -32,6 +34,7 @@ _GLOBALS = inspect.unwrap(prepare_declared_sources).__globals__
 _ORIGINAL = check_columns_declared
 _ROWS: dict[tuple[Any, ...], dict[str, Any]] = {}
 _CURRENT: list[str] = []
+_RUN_ENV = "DECOY_DECLARE_PROBE_RUN"
 
 
 def _test_frame() -> str:
@@ -83,24 +86,32 @@ def pytest_runtest_teardown(item: pytest.Item) -> None:
         _CURRENT.pop()
 
 
-def _output_path(session: pytest.Session) -> str | None:
-    """Where this process writes. Under xdist each worker owns `OUT.<worker>` (the codemod
-    merges them) and the controller, which records nothing, must not truncate the base file."""
+def _output_path() -> str:
+    """Where this process writes. Under xdist each worker owns `OUT.<run>.<worker>`, where
+    `<run>` is minted once by the controller before workers start; the controller records
+    nothing and writes only a `{"run": <run>}` manifest to OUT, so files of earlier runs under
+    the same OUT are never read."""
     worker = os.environ.get("PYTEST_XDIST_WORKER")
     if worker:
-        return f"{_OUT}.{worker}"
-    if getattr(session.config.option, "dist", "no") != "no":
-        return None
+        return f"{_OUT}.{os.environ[_RUN_ENV]}.{worker}"
     return _OUT
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    if _OUT and not os.environ.get("PYTEST_XDIST_WORKER"):
+        os.environ[_RUN_ENV] = uuid.uuid4().hex[:12]
 
 
 def pytest_sessionfinish(session: pytest.Session) -> None:
     if not _OUT:
         return
     _GLOBALS["check_columns_declared"] = _ORIGINAL
-    target = _output_path(session)
-    if target is None:
-        return
+    target = _output_path()
+    controller = not os.environ.get("PYTEST_XDIST_WORKER")
+    manifest = controller and getattr(session.config.option, "dist", "no") != "no"
     with open(target, "w", encoding="utf-8") as handle:
+        if manifest:
+            handle.write(json.dumps({"run": os.environ[_RUN_ENV]}) + "\n")
+            return
         for row in _ROWS.values():
             handle.write(json.dumps(row) + "\n")

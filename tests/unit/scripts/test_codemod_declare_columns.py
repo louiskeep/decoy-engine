@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
+import os
 from pathlib import Path
 from types import ModuleType
 
@@ -132,16 +133,90 @@ def test_table_record_matches_only_the_config_naming_the_source(
     assert [t["name"] for t in ns["B"]["tables"]] == ["s"]
 
 
-def test_declare_columns_merges_per_worker_records(
-    codemod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_declare_columns_merges_only_the_manifest_run(codemod: ModuleType, tmp_path: Path) -> None:
     one = tmp_path / "one.py"
     one.write_text(ONE, encoding="utf-8")
-    base = _record(tmp_path, one, "t", "column", ["b"], ["a"])
-    base.rename(tmp_path / "rec.jsonl.gw0")
-    assert not base.exists()
-    assert codemod.main(["declare-columns", "--record", str(base), str(one)]) == 0
-    assert one.read_text().count("passthrough") == 1
+    out = tmp_path / "rec.jsonl"
+    current = _record(tmp_path, one, "t", "column", ["b"], ["a"])
+    stale = current.read_text(encoding="utf-8").replace('["b"]', '["zz_stale"]')
+    current.rename(tmp_path / "rec.jsonl.run2.gw0")
+    (tmp_path / "rec.jsonl.run1.gw7").write_text(stale, encoding="utf-8")
+    out.write_text(json.dumps({"run": "run2"}) + "\n", encoding="utf-8")
+    assert codemod.main(["declare-columns", "--record", str(out), str(one)]) == 0
+    text = one.read_text()
+    assert text.count("passthrough") == 1
+    assert "zz_stale" not in text
+
+
+def test_probe_run_under_xdist_ignores_stale_worker_files(
+    codemod: ModuleType, tmp_path: Path
+) -> None:
+    import subprocess
+    import sys
+
+    (tmp_path / "test_probe_target.py").write_text(
+        "import pyarrow as pa\n"
+        "from decoy_engine.profile import DeclarationRequest, prepare_declared_sources\n"
+        "CONFIG = {'sources': {}, 'tables': [{'name': 't', 'columns': "
+        "[{'name': 'a', 'strategy': 'hash'}]}]}\n"
+        "SCHEMA = pa.schema([('a', pa.string()), ('zz_fresh', pa.string())])\n\n"
+        "def test_one():\n"
+        "    prepare_declared_sources(DeclarationRequest.for_supplied(CONFIG, {'t': SCHEMA}))\n\n"
+        "def test_two():\n"
+        "    prepare_declared_sources(DeclarationRequest.for_supplied(CONFIG, {'t': SCHEMA}))\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "probe.jsonl"
+    stale_row = {
+        "node": "n", "table": "t", "kind": "column", "undeclared": ["zz_stale"],
+        "declared": ["a"], "frame": str(tmp_path / "test_probe_target.py") + ":1",
+    }  # fmt: skip
+    (tmp_path / "probe.jsonl.oldrun.gw7").write_text(json.dumps(stale_row) + "\n", encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if k != "PYTEST_XDIST_WORKER"}
+    env["DECOY_DECLARE_PROBE"] = str(out)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(REPO / "scripts" / "dev" / "codemods"), env.get("PYTHONPATH", "")]
+    )
+    done = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "pytest", "-p", "declare_columns_probe", "-n", "2", "-q",
+         "-p", "no:cacheprovider", str(tmp_path / "test_probe_target.py")],
+        cwd=tmp_path, env=env, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert done.returncode == 0, done.stdout[-2000:]
+    target = tmp_path / "test_probe_target.py"
+    assert codemod.main(["declare-columns", "--record", str(out), str(target)]) == 0
+    text = target.read_text()
+    assert "zz_fresh" in text
+    assert "zz_stale" not in text
+
+
+def test_shared_helper_literal_is_edited_once(
+    codemod: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "helper_cfg.py").write_text(ONE.replace("CONFIG", "HELPER"), encoding="utf-8")
+    rows = []
+    for name, undeclared in (("test_one.py", ["b", "c"]), ("test_two.py", ["b"])):
+        test = tmp_path / name
+        test.write_text("from helper_cfg import HELPER\n", encoding="utf-8")
+        rows.append(
+            json.dumps(
+                {
+                    "node": f"{name}::n",
+                    "table": "t",
+                    "kind": "column",
+                    "undeclared": undeclared,
+                    "declared": ["a"],
+                    "frame": f"{test}:1",
+                }
+            )
+        )
+    rec = tmp_path / "rec.jsonl"
+    rec.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    codemod.main(["declare-columns", "--record", str(rec), str(tmp_path)])
+    helper = ast.literal_eval((tmp_path / "helper_cfg.py").read_text().split("=", 1)[1].strip())
+    names = [c["name"] for c in helper["tables"][0]["columns"]]
+    assert names == ["a", "b", "c"]
 
 
 def test_source_schema_mode(
@@ -231,16 +306,19 @@ def test_probe_writes_per_worker_files_under_xdist(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     out = tmp_path / "probe.jsonl"
-    out.write_text("keep\n", encoding="utf-8")
+    out.write_text("stale\n", encoding="utf-8")
     monkeypatch.setenv("DECOY_DECLARE_PROBE", str(out))
+    monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
     probe = _load_probe()
+    probe.pytest_configure(None)
+    run = os.environ["DECOY_DECLARE_PROBE_RUN"]
     monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw1")
     probe.pytest_sessionfinish(_Session("load"))
-    assert (tmp_path / "probe.jsonl.gw1").is_file()
-    assert out.read_text() == "keep\n"
-    # The controller records nothing and must leave the base file alone.
+    assert (tmp_path / f"probe.jsonl.{run}.gw1").is_file()
+    assert out.read_text() == "stale\n"
+    # The controller records nothing: OUT holds only the manifest naming this run.
     monkeypatch.delenv("PYTEST_XDIST_WORKER")
     probe.pytest_sessionfinish(_Session("load"))
-    assert out.read_text() == "keep\n"
+    assert [json.loads(x) for x in out.read_text().splitlines()] == [{"run": run}]
     probe.pytest_sessionfinish(_Session("no"))
     assert out.read_text() == ""

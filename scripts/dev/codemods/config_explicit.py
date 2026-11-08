@@ -5,7 +5,7 @@ prints one `<mode> <path>:<line>` row per edit, for the evidence record. Modes:
 
 - `has-header`: described below.
 - `declare-columns --record out.jsonl PATH...`: applies the records `declare_columns_probe.py`
-  wrote (plus any per-worker `out.jsonl.<worker>` files). An undeclared column gets a `passthrough` entry in the one dict literal
+  wrote (plus the per-worker files of the run its manifest line names). An undeclared column gets a `passthrough` entry in the one dict literal
   `{"name": <table>, "columns": [...]}` (in the recorded test file or a directly imported local
   helper) whose constant column names equal the declared names; an undeclared table gets a new
   `tables` entry beside its `sources` key. Zero or several matches print `hand <node> <table>`.
@@ -247,10 +247,18 @@ def _append_edit(target: ast.List, texts: list[str]) -> tuple[int, int, str]:
 
 
 def _record_lines(record_file: Path) -> list[str]:
-    """Lines of the record file and of the per-worker `<record>.<worker>` files xdist leaves."""
-    files = [record_file] if record_file.is_file() else []
-    files += sorted(record_file.parent.glob(f"{record_file.name}.*"))
-    return [ln for f in files for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    """Record rows of one probe run. Rows are in `record_file` itself, or in the per-worker
+    `<record>.<run>.<worker>` files of the run its `{"run": id}` manifest line names; files of
+    any other run are stale and never read."""
+    lines = record_file.read_text(encoding="utf-8").splitlines() if record_file.is_file() else []
+    out = [ln for ln in lines if ln.strip() and "run" not in json.loads(ln)]
+    for ln in lines:
+        if ln.strip() and "run" in json.loads(ln):
+            run = re.escape(str(json.loads(ln)["run"]))
+            for f in sorted(record_file.parent.glob(f"{record_file.name}.*")):
+                if re.fullmatch(rf"{re.escape(record_file.name)}\.{run}\.[^.]+", f.name):
+                    out += [x for x in f.read_text(encoding="utf-8").splitlines() if x.strip()]
+    return out
 
 
 def _declare(record_file: Path, roots: list[Path]) -> list[str]:
@@ -267,7 +275,9 @@ def _declare(record_file: Path, roots: list[Path]) -> list[str]:
         merged["undeclared"] += [n for n in rec["undeclared"] if n not in merged["undeclared"]]
         merged["nodes"].append(rec["node"])
     rows: list[str] = []
-    edits: dict[Path, list[tuple[int, int, str]]] = {}
+    # One entry per exact literal: records from different tests that reach the same helper
+    # literal add their names to it, so the literal is edited once.
+    targets: dict[tuple[Path, int, int], dict] = {}
     for (file, _table, kind, _), rec in groups.items():
         path = Path(file)
         if not path.is_file() or not any(r == path or r in path.parents for r in roots):
@@ -283,10 +293,17 @@ def _declare(record_file: Path, roots: list[Path]) -> list[str]:
             rows.append(f"hand {rec['nodes'][0]} {rec['table']}")
             continue
         target_path, target = hits[0]
-        texts = _entries(rec["undeclared"])
-        if kind == "table":
-            texts = [f'{{"name": "{rec["table"]}", "columns": [{", ".join(texts)}]}}']
-        edit = _append_edit(target, texts)
+        entry = targets.setdefault(
+            (target_path, target.lineno, target.col_offset),
+            {"list": target, "kind": kind, "table": rec["table"], "names": []},
+        )
+        entry["names"] += [n for n in rec["undeclared"] if n not in entry["names"]]
+    edits: dict[Path, list[tuple[int, int, str]]] = {}
+    for (target_path, _, _), entry in targets.items():
+        texts = _entries(entry["names"])
+        if entry["kind"] == "table":
+            texts = [f'{{"name": "{entry["table"]}", "columns": [{", ".join(texts)}]}}']
+        edit = _append_edit(entry["list"], texts)
         edits.setdefault(target_path, []).append(edit)
         rows.append(f"declare-columns {target_path}:{edit[0]}")
     for path, items in edits.items():
