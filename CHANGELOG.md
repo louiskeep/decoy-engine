@@ -36,6 +36,19 @@ with a leading zero per column. Two new `warning` reasons (`scan_header_suspect`
 host and refuses userinfo, a query, a fragment and their percent-encoded forms. `read_csv_source`,
 `resolve_csv_dialect` and `CsvDialect` are also exported from `decoy_engine.profile`.
 
+### Added (SCAN-MULTI S1b: declared-relationship integrity facts, 2026-11-08)
+
+`scan_sources` takes `relationships` (declared `RelationshipConfig` dicts), `integrity=True` and
+`spill_dir=None`. For each declared relationship it returns `RelationshipFacts`: parent rows,
+parent rows with a null key part, parent duplicate excess over complete keys, and per child the
+rows, null-key rows, orphan rows and distinct orphan keys. A null child key is not an orphan.
+Only key columns are read, from local files, and the anti-join runs in DuckDB under a memory limit
+with its spill in a `protected_scratch_dir` directory removed on every exit. CSV keys are read as
+text; a parent and child key type difference gives `key_type_mismatch`, a
+`warning.scan_key_type_mismatch` and no counts; a relationship that names a cloud table is
+`skipped_cloud`. No key value is ever returned. `read_csv_source` gains the keyword-only `columns`
+projection (returned in the order given); `connect_duckdb` is exported from `decoy_engine.execution`.
+
 ### Added (init wizard E3: keyed columns of a config, 2026-11-08)
 
 `decoy_engine` and `decoy_engine.secret_providers` export `keyed_columns_for_config` and

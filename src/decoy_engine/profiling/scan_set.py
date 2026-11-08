@@ -30,6 +30,7 @@ import types
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Final, Literal, Union, cast, get_args, get_origin
 
 import pandas as pd
@@ -47,6 +48,8 @@ from decoy_engine.fileaccess import (
     FileAccessUnavailable,
     entry_point,
 )
+from decoy_engine.profiling import _scan_integrity
+from decoy_engine.profiling._scan_integrity import RelationshipFacts
 from decoy_engine.profiling._scan_text_checks import count_leading_zeros, header_looks_like_data
 from decoy_engine.profiling.profiler import profile_columns
 from decoy_engine.profiling.types import ColumnProfile, FieldStats
@@ -185,7 +188,7 @@ class TableScan:
 @dataclass(frozen=True)
 class ScanSet:
     tables: tuple[TableScan, ...]
-    relationships: tuple[dict[str, Any], ...]
+    relationships: tuple[RelationshipFacts, ...]
     scan_schema: str
     engine_version: str
     scanned_at: str
@@ -203,6 +206,9 @@ def scan_sources(
     tables: Sequence[str] | None = None,
     sample_rows: int | None = 10_000,
     strategy: Strategy = "head",
+    relationships: Sequence[Mapping[str, Any]] = (),
+    integrity: bool = True,
+    spill_dir: Path | None = None,
     file_access: FileAccess | None = None,
 ) -> ScanSet:
     """Scan the selected tables of `sources` and return one `ScanSet`.
@@ -212,6 +218,11 @@ def scan_sources(
     selects and orders (default: every source in mapping order). `sample_rows=None` or `strategy="full"` reads
     each table whole. `head` reads a bounded prefix; `random` reads the table and keeps a fixed
     random sample, so it is not bounded in memory.
+
+    `relationships` are declared `RelationshipConfig` dicts. With `integrity` true they get
+    key, null and orphan counts (`RelationshipFacts`), read from key columns only and spilled to
+    a protected directory under `spill_dir` (default: the system temp directory). The tables
+    they name must be in `sources` but need not be selected. Nothing is inferred.
     """
     from decoy_engine import __version__
 
@@ -229,6 +240,8 @@ def scan_sources(
     if unknown:
         raise ValueError(f"tables names {len(unknown)} table(s) that are not in sources")
 
+    declared = _scan_integrity.declare(descriptors, relationships) if integrity else ()
+
     scans = []
     for name in selected:
         started = time.monotonic()
@@ -242,11 +255,30 @@ def scan_sources(
         scans.append(scan)
     return ScanSet(
         tables=tuple(scans),
-        relationships=(),
+        relationships=_integrity_facts(descriptors, declared, spill_dir),
         scan_schema=SCAN_SET_SCHEMA,
         engine_version=__version__,
         scanned_at=datetime.now(timezone.utc).isoformat(),
     )
+
+
+def _integrity_facts(
+    descriptors: Mapping[str, dict[str, Any]],
+    declared: Sequence[_scan_integrity.DeclaredRelationship],
+    spill_dir: Path | None,
+) -> tuple[RelationshipFacts, ...]:
+    if not declared:
+        return ()
+    cause: str | None = None
+    try:
+        return _scan_integrity.relationship_facts(descriptors, declared, spill_dir=spill_dir)
+    except (*_PASS_THROUGH, PipelineConfigError):
+        raise
+    except Exception as exc:
+        if _is_coded(exc):
+            raise
+        cause = safe_error_class(type(exc).__name__)
+    raise ScanSourceError("relationships", cause or "Exception")
 
 
 def _validated(name: str, raw: Mapping[str, Any]) -> dict[str, Any]:
@@ -464,7 +496,7 @@ def scan_set_to_dict(s: ScanSet, *, detail: bool) -> dict[str, Any]:
         engine_version=s.engine_version,
         scanned_at=s.scanned_at,
         tables=[_table_core(t) for t in s.tables],
-        relationships=[dict(r) for r in s.relationships],
+        relationships=[r.to_dict() for r in s.relationships],
     )
     doc: dict[str, Any] = core.model_dump()
     if detail:
