@@ -10,7 +10,7 @@ import pytest
 from decoy_engine.detection import _model_status as ms
 from decoy_engine.detection.types import DetectorRun, ModelRef
 
-LOGGER = "decoy_engine.detectors"
+LOGGER = logging.getLogger("decoy_engine").getChild("detectors").name
 RUNS = (
     DetectorRun("regex", None),
     DetectorRun("classifier", ModelRef("lgbm-v1", "0.1.0")),
@@ -100,7 +100,7 @@ def test_a_phase_outside_the_two_scans_is_refused() -> None:
 
 
 def test_the_logger_is_named_decoy_engine_detectors() -> None:
-    assert ms._log.name == "decoy_engine.detectors"
+    assert ms._log is logging.getLogger("decoy_engine").getChild("detectors")
     assert ms._log.parent is logging.getLogger("decoy_engine")
 
 

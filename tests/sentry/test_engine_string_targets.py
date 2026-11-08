@@ -37,9 +37,6 @@ MUTANT = ROOT / "tests" / "fixtures" / "h1" / "engine_string_target_mutant.py.tx
 EXEMPT = {
     ("tests/unit/test_structured_events.py", f"{ENGINE}.test"): "logger",
     ("tests/unit/test_public_api.py", f"{ENGINE}.test"): "logger",
-    ("tests/unit/detection_verification/test_detector_run_log.py", f"{ENGINE}.detectors"): (
-        "logger"
-    ),
     ("tests/fileaccess/test_char_cli_logging.py", f"{ENGINE}.log"): "filename",
     ("tests/sentry/test_ga_stub_exports.py", f"{ENGINE}.schema"): "deleted",
     ("tests/sentry/test_ga_stub_exports.py", f"{ENGINE}.license"): "deleted",
