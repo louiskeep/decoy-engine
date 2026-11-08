@@ -24,6 +24,13 @@ from decoy_engine.profile._source import profile_source
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 BASELINE = json.loads((FIXTURES / "f06" / "legacy-compat-baseline.json").read_text())
+# The frozen F06 config predates the required csv has_header; the old default keeps its read.
+LEGACY_RAW: dict[str, Any] = {
+    **BASELINE["raw_config"],
+    "sources": {"p": {**BASELINE["raw_config"]["sources"]["p"], "has_header": True}},
+}
+# A csv dump now always carries has_header, so only that field moves the dump sha.
+DUMP_SHA256_WITH_HAS_HEADER = "5e4147baae457372e80f819346b646eb6f02c9f79fb53e5b8bfc2845e24ce905"
 
 NER_DISMISSAL: dict[str, Any] = {
     "table": "p",
@@ -42,7 +49,7 @@ FAIL_POST_SCAN: dict[str, Any] = {
 
 
 def _raw(tmp_path: Path, **extra: Any) -> dict[str, Any]:
-    raw = copy.deepcopy(BASELINE["raw_config"])
+    raw = copy.deepcopy(LEGACY_RAW)
     (tmp_path / "p.csv").write_text("id,age,note\n1,42,a\n2,7,b\n3,13,c\n")
     raw["sources"]["p"]["path"] = str(tmp_path / "p.csv")
     raw.update(extra)
@@ -59,10 +66,12 @@ def _hash(tmp_path: Path, **extra: Any) -> str:
 
 
 def test_f06_baseline_dump_hash_and_plan_are_unchanged(tmp_path: Path) -> None:
-    dump = json.dumps(
-        PipelineConfig.model_validate(BASELINE["raw_config"]).model_dump(), sort_keys=True
-    )
-    assert hashlib.sha256(dump.encode()).hexdigest() == BASELINE["config_dump_sha256"]
+    cfg = PipelineConfig.model_validate(LEGACY_RAW).model_dump()
+    dump = json.dumps(cfg, sort_keys=True)
+    assert hashlib.sha256(dump.encode()).hexdigest() == DUMP_SHA256_WITH_HAS_HEADER
+    del cfg["sources"]["p"]["has_header"]
+    legacy_dump = json.dumps(cfg, sort_keys=True)
+    assert hashlib.sha256(legacy_dump.encode()).hexdigest() == BASELINE["config_dump_sha256"]
     plan = _compile(_raw(tmp_path))
     assert plan.pipeline_config_hash == BASELINE["pipeline_config_hash"]
     assert plan_to_yaml(plan) == BASELINE["plan_yaml_at_baseline"].replace(
@@ -85,6 +94,8 @@ def _config_fixtures() -> list[tuple[str, dict[str, Any]]]:
             data = yaml.safe_load(path.read_text())
         except Exception:
             continue
+        if path.name == "legacy-compat-baseline.json":
+            data = {"raw_config": LEGACY_RAW}
         if isinstance(data, dict) and isinstance(data.get("raw_config"), dict):
             data = data["raw_config"]
         if (
@@ -109,7 +120,7 @@ def test_every_config_fixture_validates_and_dumps_without_new_keys() -> None:
 
 
 def test_default_values_are_dropped_from_the_dump_even_when_written_out() -> None:
-    raw = copy.deepcopy(BASELINE["raw_config"])
+    raw = copy.deepcopy(LEGACY_RAW)
     plain = PipelineConfig.model_validate(raw).model_dump()
     explicit = PipelineConfig.model_validate(
         {
@@ -143,7 +154,7 @@ def test_default_values_are_dropped_from_the_dump_even_when_written_out() -> Non
 
 
 def test_new_fields_round_trip_in_canonical_order() -> None:
-    raw = copy.deepcopy(BASELINE["raw_config"])
+    raw = copy.deepcopy(LEGACY_RAW)
     raw["pre_scan"] = {"detectors": ["ner", "classifier", "regex"], "ner_model": "en_core_web_sm"}
     raw["post_scan"] = {
         **FAIL_POST_SCAN,

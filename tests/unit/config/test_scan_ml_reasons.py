@@ -24,7 +24,9 @@ IDENTITIES = [
 
 
 def test_registry_is_at_1_7_0() -> None:
-    assert reasons.manifest()["registry_version"] == "1.8.0"
+    # Later additions raise the registry past the release these codes joined.
+    version = tuple(map(int, reasons.manifest()["registry_version"].split(".")))
+    assert version >= (1, 8, 0)
 
 
 @pytest.mark.parametrize(("namespace", "code"), IDENTITIES)
