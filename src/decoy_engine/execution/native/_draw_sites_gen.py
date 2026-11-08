@@ -59,7 +59,7 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="gen.reference",
         family="python_mt19937",
-        call_site="generation/synthesize.py:624",
+        call_site="generation/_synthesize_derived.py:151",
         entropy_root="job_seed",
         seed_derivation='random.Random(GenDeriveContext.for_column(...).base_int("py"))',
         api_operation="random.Random(col_seed).choice / .choices per row",
@@ -101,7 +101,7 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
         ),
         mirror_call_sites=(
             "generators/_formula.py:144",
-            "generation/synthesize.py:559",
+            "generation/_synthesize_derived.py:84",
         ),
     ),
     # -- Generation: statistical sampler per-row reseed ----------------------

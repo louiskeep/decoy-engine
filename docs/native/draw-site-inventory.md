@@ -328,7 +328,7 @@ RNG mid-stream.
 one whole-column call. V1 mirror at `generators/columns.py:412`.
 
 ### gen.reference
-`generation/synthesize.py:624`. `random.Random(col_seed)` then per row
+`generation/_synthesize_derived.py:151`. `random.Random(col_seed)` then per row
 `choice(ref_vals)` or `choices(..., k=1)`; the `sequential` distribution draws
 nothing (`ref_vals[i % len]`). Cardinality repair
 (`generators/columns.py:596-656`) adds `shuffle`/`choices` on the same stream.
@@ -357,7 +357,7 @@ variable number of values internally (the reseed contains it).
 `local_seed = gen_ctx.row_int("py", i); row_rng.seed(local_seed); self.faker.seed_instance(gen_ctx.row_int("faker", i))`,
 then `safe_eval(formula, scope)`. The referenced-formula post-pass
 (`generators/_formula.py:144`) and the V2 delegation
-(`generation/synthesize.py:559`) mirror it.
+(`generation/_synthesize_derived.py:84`) mirror it.
 
 ### gen.statistical_per_row
 `generation/statistical/_sample.py:260`. `rng.seed(col_seed + i)` per row (the
