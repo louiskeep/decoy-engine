@@ -17,21 +17,10 @@ import pytest
 
 import decoy_engine.execution._strategies._text_redact as txr_mod
 from decoy_engine.detection.detectors import Span
-from decoy_engine.detection.ner import DEFAULT_NER_MODEL, model_installed, spacy_installed
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._text_redact import TextRedactHandler
 from decoy_engine.plan._types import ColumnSeed
-
-# TX-1 (2026-07-20): gates the real-model smoke test below on spaCy + the
-# default model actually being importable, mirroring the ml/geo extras
-# convention (importorskip) and the identical predicate used by
-# tests/unit/detection_verification/test_ner_spans.py. SKIPPED in the extras-free CI
-# environment; PASSES once `pip install decoy-engine[ner]` + `python -m
-# spacy download en_core_web_sm` have run.
-needs_ner = pytest.mark.skipif(
-    not (spacy_installed() and model_installed(DEFAULT_NER_MODEL)),
-    reason="spacy or en_core_web_sm not installed (ner extra)",
-)
+from tests._ner import needs_ner
 
 
 def _seed(provider_config: dict) -> ColumnSeed:

@@ -21,19 +21,8 @@
 name: codspeed
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "src/decoy_engine/**"
-      - "tests/codspeed/**"
-      - "pyproject.toml"
-      - ".github/workflows/codspeed.yml"
-  pull_request:
-    paths:
-      - "src/decoy_engine/**"
-      - "tests/codspeed/**"
-      - "pyproject.toml"
-      - ".github/workflows/codspeed.yml"
+  # Manual dispatch only. gate-selfhosted.yml is the merge gate; the paid runners
+  # fire on demand so they stop failing every push (X0a). Old triggers: git history.
   workflow_dispatch:
 
 permissions:
@@ -52,15 +41,10 @@ jobs:
       - name: Check out
         uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: ./.github/actions/lock-env
         with:
-          python-version: "3.11"
-          cache: pip
-
-      - name: Install engine + dev + perf extras
-        run: pip install -e ".[dev,perf]"
-
+          extras: "dev perf"
+          python: "3.11.9"
       # The `codspeed` marker keeps this suite out of every other job's
       # default pytest run (see the addopts comment in pyproject.toml); this
       # is the one place it is selected explicitly, same pattern as

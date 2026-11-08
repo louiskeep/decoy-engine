@@ -19,6 +19,7 @@ from decoy_engine import reasons
 from decoy_engine.determinism import derive
 from decoy_engine.execution._adapter import (
     StrategyContext,
+    StrategyOption,
     pandas_column_to_kernel_input,
     provider_config_to_dict,
 )
@@ -33,6 +34,10 @@ class HashStrategyHandler:
     """Deterministic joinability-preserving hash via derive(...)."""
 
     name: str = "hash"
+    namespace_required: bool = True
+    join_safe: bool = True
+    wizard_options: tuple[StrategyOption, ...] = ()
+    offer_in_wizard: bool = True
 
     def run(
         self,

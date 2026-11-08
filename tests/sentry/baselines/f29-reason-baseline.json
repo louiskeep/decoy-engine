@@ -1,0 +1,2529 @@
+{
+ "sentry_id": "f29-reason-baseline",
+ "created_in": "X0a",
+ "entries": {
+  "config::cloud_io.unsupported_format": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::edge.bad_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::edge.port_on_non_split": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::edge.unknown_from_node": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::edge.unknown_port": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::edge.unknown_to_node": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::edges.bad_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::fk.custom_provider_unregistered": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::fk.empty_parent_pool": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::fk.ineligible_child_kind": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::fk.m2m_bad_pool": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::fk.m2m_unknown_column": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::fk.m2m_unknown_node": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::fk.multi_parent_bad_shape": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::fk.nondeterministic_mask": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::fk.parallel_branches": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::fk.parent_after_child": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::fk.parent_unresolved": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::fk.self_cycle": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::fk.self_ref_inert": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::fk.self_reference": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::fk.sequential_bounds_conflict": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::fk.unknown_column": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::fk.unknown_node": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::generation.key_required": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::generation.random_not_allowed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::graph.cycle": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::graph.format_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::graph.node_insufficient_inputs": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::graph.node_too_many_inputs": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::graph.sink_has_outputs": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::mask.bad_column_spec_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::mask.bad_columns_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::mask.formula_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::mask.reference_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::mask.unknown_column": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::mask.unknown_strategy": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::namespace_ambiguity": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::namespace_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::node.bad_config_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::node.bad_id": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::node.bad_name": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::node.bad_native_engine": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::node.bad_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::node.duplicate_id": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::node.unknown_kind": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::nodes.empty_list": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::nodes_ref.not_upstream": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::nodes_ref.unknown_id": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::pk.duplicates": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_file.bad_delimiter": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_file.bad_has_header_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_file.bad_row_limit": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_file.column_count_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_file.column_names_with_header": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_file.csv_param_on_non_csv": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_file.file_not_found": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_file.lone_cr": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_file.missing_fw_columns": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_file.missing_path": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_file.no_header_columns": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_file.nul_byte": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_file.unsupported_format": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_gcs.missing_bucket": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_gcs.missing_credentials": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_gcs.missing_path": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_s3.missing_bucket": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_s3.missing_credentials": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_s3.missing_path": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_sftp.missing_auth": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_sftp.missing_host": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_sftp.missing_path": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::source_sftp.missing_username": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::subset_config_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::subset_dangling_not_acknowledged": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::subset_duplicate_seed_table": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::subset_output_dir_exists": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::subset_seed_key_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::subset_seed_key_uncanonicalizable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::subset_source_type_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::subset_unknown_edge": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::target_file.format_inferred": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::target_file.missing_output_filename": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::target_file.path_outside_output_dir": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::target_file.unsupported_format": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::target_gcs.missing_bucket": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::target_gcs.missing_credentials": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::target_gcs.missing_path": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::target_s3.missing_bucket": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::target_s3.missing_credentials": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::target_s3.missing_path": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::target_sftp.missing_auth": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::target_sftp.missing_host": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::target_sftp.missing_path": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::target_sftp.missing_username": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::top_level.bad_engine": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::top_level.bad_mode": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::top_level.bad_schema_version": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::untagged": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::variable.unknown_scope": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::variable.unresolved": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "config::when_outside_closed_grammar": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "connector::ambiguous_name": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "connector::catalog_read_failed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "connector::column_not_found": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "connector::deadline_exceeded": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "connector::duckdb_unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "connector::duplicate_relation": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "connector::export_failed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "connector::extension_unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "connector::extension_untrusted_location": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "connector::no_selections": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "connector::relation_not_found": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "connector::source_unreachable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "connector::unsupported_column_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "connector::value_guard_failed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "connector::value_not_representable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::cell-value-diff": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::diagnostics-diff": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::duplicate-node-declaration": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::faker-pool-non-string-output": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::full-frame-dispatch-missing-dependency": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::full-frame-driver-unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::full-frame-runtime-feature-unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::full-frame-substrate-unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::generation-shape-unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::global-shuffle-determinism-unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::global-strategy-unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::mixed-driver-unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::mixed-fk-unadmitted-child": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::native_companion_unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::null-mask-diff": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::ooc-dispatch-missing-dependency": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::ooc-fk-parity-diff": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::operator-invariant-violation": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::operator-not-executed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::planned-vs-actual-route-diff": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::publication-attempt": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::resource-limit-breach": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::row-count-diff": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::row-order-diff": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::schema-diff": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "physical::snapshot-identity-diff": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::allow_collisions_mode_conflict": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::bucket_perturb_date_format_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::bucket_perturb_preserve_values_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::bucketize_width_unresolvable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::categorical_categories_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::categorical_categories_not_list": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::categorical_nondeterministic_not_chunk_safe": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_bucket_perturb_fk_key_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_bucket_perturb_source_dtype_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_bucket_perturb_when_not_supported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_categorical_nondeterministic_when_not_supported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_code_set_fk_key_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_code_set_source_dtype_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_code_set_when_not_supported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_faker_nondeterministic_when_not_supported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_fk_child_config_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_fk_child_key_dtype_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_fk_child_key_dtype_unprovable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_fk_child_namespace_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_fk_child_namespace_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_fk_child_strategy_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_fk_child_strategy_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_fk_child_when_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_fk_composite_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_fk_endpoint_not_scalar": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_fk_key_dtype_not_cross_adapter_safe": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_fk_orphan_policy_not_remap": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_fk_parent_namespace_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_fk_parent_namespace_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_fk_parent_not_root": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_fk_parent_strategy_not_self_mask_safe": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_fk_parent_when_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_generate_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_group_key_group_by_dtype_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_group_key_when_not_supported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_strategy_conditions_unmet": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_table_unknown": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_text_mask_source_dtype_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_text_mask_when_not_supported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::chunked_windowed_date_when_not_supported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_chapter_absent": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_chapter_column_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_corpus_duplicate_codes": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_corpus_empty": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_corpus_empty_code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_corpus_incoherent_chapter": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_corpus_missing_code_column": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_corpus_missing_provenance": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_corpus_not_found": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_corpus_null_code": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_corpus_path_not_found": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_corpus_provenance_identity_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_corpus_provenance_malformed_stamp": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_corpus_read_error": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_corpus_source_version_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_corpus_version_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_gen_requires_namespace": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_name_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_reserved_licensed_name": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_single_row_corpus": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::code_set_sole_member_bucket": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::composite_columns_length_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::composite_custom_bundle_item_missing_keys": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::composite_custom_bundle_item_shape": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::composite_custom_bundle_size": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::composite_custom_duplicate_columns": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::composite_custom_no_nesting": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::composite_requires_bundle_path": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::composite_wiring_inconsistent": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::date_preserve_values_unsupported_fk_shape": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::date_preserve_values_with_group_by_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::date_shift_group_by_on_fk_column_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::date_shift_group_by_unsupported_in_nested": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::date_shift_group_by_with_when_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::date_shift_missing_group_by_ref": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::date_shift_preserve_values_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::dedupe_unsupported_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::derived_aggregate_column_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::derived_aggregate_missing_column_ref": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::derived_aggregate_op_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::derived_aggregate_op_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::derived_bounds_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::derived_bounds_inverted": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::derived_cyclic_reference": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::derived_expression_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::derived_missing_column_ref": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::derived_null_propagation_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::deterministic_namespace_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::deterministic_requires_source_and_seed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::dp_budget_declaration_malformed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::dp_budget_exceeded": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::dp_flag_token_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::dp_generate_allow_real_categories_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::dp_generate_high_cardinality_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::dp_joint_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::dp_pinned_snapshot_digest_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::dp_pinned_snapshot_payload_not_json": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::dp_snapshot_codec_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::dp_snapshot_embedded_artifact_too_large": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::dp_snapshot_numeric_edges_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::dp_snapshot_numeric_shape_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::dp_snapshot_release_shape_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::empty_domain_pool": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::empty_locality_table": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::faker_requires_provider": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::fk_cycle": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::fpe_charset_degenerate": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::fpe_charset_duplicate_symbols": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::fpe_charset_non_ascii": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::fpe_checksum_charset_incompatible": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::fpe_checksum_iban_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::fpe_checksum_unknown_scheme": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::fpe_join_group_config_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::fpe_join_group_namespace_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::fpe_join_group_non_fpe_member": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::fpe_join_group_singleton": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::generation_not_class_a": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::generation_unbounded_column": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::geo_generalize_invalid_cascade": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::geo_generalize_invalid_cascade_level": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::geo_generalize_missing_suppress": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::geo_generalize_unsupported_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::group_key_group_by_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::group_key_length_odd": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::group_key_length_out_of_range": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::group_key_missing_group_by_ref": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::grouped_series_generator_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::grouped_series_group_by_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::grouped_series_missing_group_by_ref": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::grouped_series_missing_order_by_ref": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::grouped_series_order_by_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::grouped_series_step_out_of_range": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::joint_mask_column_not_in_reference": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::joint_mask_columns_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::joint_mask_key_by_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::joint_mask_reference_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::joint_mask_reference_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::joint_mask_reference_not_found": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::non_poolable_provider_with_pool_backend": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::null_bearing_int_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::orphan_fk_policy_duplicate": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::orphan_fk_policy_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::orphan_fk_policy_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::orphan_policy_conflict": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::per_table_transforms_present": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::pinned_determinism_fresh": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::pinned_live_token": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::pinned_not_generation_only": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::pinned_plan_malformed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::pinned_reference_date_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::pinned_runtime_changed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::pinned_seed_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::pinned_snapshot_file_not_statistical": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::pinned_statistical_digest_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::pinned_type_not_allowlisted": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::pinned_windowed_anchor_not_absolute": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::plan_schema_deterministic_map_renamed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::pool_capacity_pre_flight_unique": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::pool_size_location_conflict": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::pool_size_overflow": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::seed_not_numeric": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::seed_overflow": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::sort_unsupported_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::source_length_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_allow_real_categories_invalid_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_column_not_in_snapshot": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_condition_column_unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_condition_kind_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_dp_carrier_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_flag_other_mode_emit_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_flag_requires_dp_declaration": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_flag_token_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_high_cardinality_invalid_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_high_cardinality_kind_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_high_cardinality_requires_real_categories": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_high_cardinality_snapshot_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_high_cardinality_wrong_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_joint_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_kind_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_other_mode_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_real_categories_not_allowed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_snapshot_file_required": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_snapshot_index_out_of_range": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_snapshot_not_pinned": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_snapshot_schema_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_snapshot_unreadable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_spec_not_pinned": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::statistical_stats_degenerate": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::strategy_not_chunk_safe": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::top_code_bounds_unresolvable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::top_code_floor_ge_cap": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::top_code_invalid_floor": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::top_code_missing_over_label": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::top_code_missing_under_label": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::top_code_under_label_without_floor": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::top_code_unsupported_in_nested": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::top_code_with_when_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::truncate_keep_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::truncate_length_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::truncate_mask_char_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::unknown_composite": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::unknown_provider": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::vault_requires_cryptography": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::vault_requires_namespace": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::vault_strategy_reversible": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::vault_strategy_unmasked": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::when_outside_closed_grammar": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::when_string_output_on_numeric_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::when_with_coherent_with_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::windowed_date_anchor_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::windowed_date_distribution_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::windowed_date_max_days_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::windowed_date_min_exceeds_max": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "plan::windowed_date_missing_anchor_ref": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "provider::batch_deterministic_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "provider::blocklist_exhausted": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "provider::capability_violation": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "provider::deterministic_requires_namespace_and_seed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "provider::deterministic_requires_source_value": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "provider::invalid_cusip_char": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "provider::invalid_input_length": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "provider::missing_namespace": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "provider::missing_seed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "provider::namespace_empty": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "provider::ner_model_not_installed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "provider::ner_spacy_not_installed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "provider::seed_wrong_length": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "provider::unknown_provider": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "provider::unsupported_locale": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_adapter_ambiguous_column": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_adapter_duplicate_column": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_adapter_missing_column": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_adapter_source_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_budget_categorical_pair_unscheduled": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_budget_infeasible": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_carrier_backend_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_carrier_bounds_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_carrier_bounds_nonfinite": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_carrier_bounds_order": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_carrier_bounds_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_carrier_flag_dtype": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_carrier_flag_length": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_carrier_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_carrier_number_dtype": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_carrier_number_length": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_carrier_row_count_negative": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_carrier_row_count_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_carrier_schema_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_carrier_text_shape": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_carrier_type_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_carrier_unknown": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_carrier_validity_length": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_carrier_validity_shape": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_delta_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_duplicate_release": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_epsilon_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_epsilon_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_kind_carrier_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_kind_unknown": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_lock_installed_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_lock_parse_error": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_numeric_bins_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_numeric_domain_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_platform_uncertified": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_provenance_distribution_unnamed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_provenance_duplicate_distribution": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_provenance_record_malformed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_schedule_incomplete": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_schedule_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_schema_column_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_schema_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_stack_uncertified": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::dp_unscheduled_release": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::high_cardinality_ambiguous_string_coercion": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::high_cardinality_columns_not_collection": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::high_cardinality_distinct_limit_exceeded": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::high_cardinality_invalid_label_encoding": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::high_cardinality_label_bytes_limit_exceeded": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "quality::high_cardinality_non_string_dtype": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::adapter_requested": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::bucket_perturb_config_declined": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::bucket_perturb_source_not_string": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::byte_estimate_bounded_out_of_core": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::byte_estimate_full_frame_fits": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::categorical_source_not_string": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::chunked_admitted": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::chunked_extra_source_frame": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::chunked_lazy_source_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::chunked_source_below_threshold": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::chunked_source_dtype_unstable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::chunked_source_frame_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::clock_dependent_without_controlled_clock": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::cross_table_cycle": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::crypto_ext_unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::crypto_extension_unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::custom_provider_without_deterministic_contract": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::depends_on_excluded_column": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::determinism_fresh": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::dispatcher_disabled": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::eligible": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::empty_input": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::faker_metadata_not_allowlisted": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::faker_provider_not_native": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::faker_provider_output_not_string": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::faker_schema_not_guaranteed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::faker_source_not_string": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::fallback_policy_not_native": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::fidelity_report_requested": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::fk_relationship": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::forced_out_of_core_incompatible": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::forced_out_of_core_ineligible": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::forced_out_of_core_no_mask_table": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::forced_sequential_cyclic": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::forced_sequential_ineligible": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::forced_sequential_no_mask_table": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::fpe_checksum_not_native": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::fpe_ext_unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::fpe_extension_unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::fpe_join_group": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::generate_plus_mask": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::generate_tables_present": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::group_key_masked_sibling": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::group_key_self_anchor": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::group_key_sibling_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::group_key_sibling_type_not_native": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::hash_config_rejected": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::hash_input_type_not_native_admitted": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::hash_input_type_tz_timestamp_deferred": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::index_ext_unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::index_extension_unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::invalid_substrate": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::lazy_source_null_count_unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::masks_one_table_per_run": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::no_mask_nodes": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::no_mask_tables": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::no_native_bucket_calls": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::no_native_date_shift_calls": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::no_native_kernel_calls": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::no_native_kernel_or_pool": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::no_relationship_route": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::no_relationships": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::no_rows_hashed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::non_pandas_substrate_requested": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::non_scalar_composite": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::non_scalar_node": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::other": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::out_of_core_below_threshold": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::out_of_core_cross_table_cycle": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::out_of_core_fk_key_dtype_hazard": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::out_of_core_incompatible": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::out_of_core_large_fk": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::out_of_core_no_mask_table": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::out_of_core_no_size_signal": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::out_of_core_ready": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::override_full_frame": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::override_out_of_core": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::probe_recovered_full_frame": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::pure_mask_fk": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::raw_hex_ext_unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::relationship_route_deferred": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::remap_input_not_arrow": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::remap_parent_stays_python": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::resident_source": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::sequential_bucket_perturb_date_out_of_native_range": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::sequential_fk_key_injectivity_not_guaranteed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::slice_native_admitted": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::source_type_not_string": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::strategy_vetoed_chunked": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::text_mask_extension_unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::text_redact_extension_unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::unconfigured_set_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::uncovered_or_missing_columns": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::validators_present": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::vault_writer_requested": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::when_outside_subset": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::when_predicate_not_native": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "route::when_reads_masked_column": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::bad_secret_ref": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::bounded_read_error": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::bucket_perturb_invalid_config": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::bucket_perturb_requires_namespace": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::bucket_perturb_unrecognized_bucket": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::bucketize_width_unresolvable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::bundle_missing_output_columns": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::capacity_source_unprofilable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::cardinality_target_exceeds_pool": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::categorical_categories_not_list": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::categorical_position_out_of_domain": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::categorical_requires_categories": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::categorical_requires_namespace": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::categorical_weight_below_resolution": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::categorical_weights_negative": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::categorical_weights_nonpositive": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::categorical_weights_shape": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::checksum_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::chunked_faker_deterministic_pool_not_string": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::chunked_faker_nondeterministic_pool_not_string": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::chunked_fk_declared_dtype_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::chunked_fk_key_dtype_not_cross_adapter_safe": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::chunked_leading_null_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::chunked_passthrough_value_unrepresentable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::chunked_route_evidence_inconsistent": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::chunked_route_evidence_mixed_tables": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::chunked_row_offset_out_of_domain": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::chunked_schema_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::code_set_gen_requires_namespace": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::composite_custom_bundle_shape": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::composite_fk_group_no_edge": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::composite_namespace_unresolved": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::composite_output_column_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::config_references_stored_index": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::crypto_ext.unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::csv_malformed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::csv_record_exceeds_max_row_bytes": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::cyclic_work_ordering": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::date_preserve_values_with_group_by_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::date_shift_group_anchor_snapshot_misaligned": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::date_shift_group_anchor_snapshot_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::date_shift_invalid_config": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::date_shift_requires_namespace": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::dedupe_column_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::dedupe_unsupported_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::derive_column_already_exists": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::derive_expression_error": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::derive_result_not_convertible": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::deterministic_mode_unsupported_cardinality": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::deterministic_requires_source_and_namespace": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::drop_column_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::duplicate_source_field_names": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::exact_int_null_mask_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::faker_position_out_of_domain": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::faker_positional_table_unknown": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::filter_expression_error": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::filter_expression_not_boolean": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::fk_full_frame_oom_risk_rejected": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::fk_full_frame_oom_risk_rejected_estimated": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::float_canonicalization_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::fpe.checksum_invalid_source": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::fpe.checksum_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::fpe.config_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::fpe.unencryptable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::fpe.unencryptable_domain": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::fpe.unencryptable_length": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::fpe_charset_degenerate": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::fpe_charset_duplicate_symbols": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::fpe_checksum_invalid_source": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::fpe_requires_namespace": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::fpe_unencryptable_domain": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::fpe_unencryptable_length": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::full_frame_value_unrepresentable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::gated_hash_on_integer_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::gated_string_output_on_numeric_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::generation-shape-unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::generation_budget_exceeded": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::generation_column_unbounded": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::generation_not_class_a": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::generation_not_reproducible": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::generation_table_unknown": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::generation_window_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::generation_window_timeout": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::hash_requires_namespace": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::hold_back_spill_unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::index_batch_length_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::index_batch_null_mask_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::index_batch_out_of_bounds": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::index_batch_type_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::internal_publish_not_committed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::invalid_execution_knob": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::invalid_native_threads": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::invalid_seed_length": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::invalid_substrate": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::joint_mask_key_by_snapshot_misaligned": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::joint_mask_key_by_snapshot_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::keyed_strategy_requires_secret": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::lazy_source_changed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::lazy_source_row_count_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::mask.key_derivation_failed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::mask.key_required": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::missing_mask_secret": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::mixed-driver-unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::mixed-fk-cross-generate-unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::mixed-fk-topology-unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::mixed_key_payload_misaligned": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::multi_table_result_has_no_single_output": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::namespace_empty": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::native_chunk_schema_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::native_companion.check_failed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::native_type_not_admitted": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::ner_model_version_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::nested_child_row_error_unmappable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::nested_child_strategy_unknown": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::nested_jsonpath_parse_error": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::nested_recursive_nested_rejected": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::nested_strategy_unset": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::nested_target_matched_nothing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::nested_target_unset": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::nested_target_unwritable_container": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::null_bearing_int_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::null_canonicalization_unreachable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::numexpr_required": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::orphan_fk_violation": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::orphan_policy_conflict": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::orphan_remap_parent_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_backend_unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_batch_rows_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_bucket_perturb_autodetect_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_bucket_perturb_column_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_bucket_perturb_date_out_of_native_range": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_bucket_perturb_source_type_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_budget_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_categorical_column_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_categorical_nondeterministic_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_categorical_source_type_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_categorical_unprepared": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_child_column_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_child_key_types_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_code_set_row_error_unreachable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_code_set_shape_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_concurrency_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_faker_column_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_faker_index_unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_faker_pool_budget_exceeded": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_faker_pool_budget_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_faker_pool_size_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_faker_pool_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_faker_source_type_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_faker_source_type_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_faker_unprepared": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_fanin_exceeds_budget": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_fk_join_plan_unverified": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_fk_key_dtype_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_fk_reorder_contiguity": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_fk_row_alignment": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_fpe_column_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_fpe_column_required": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_fpe_native_result_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_fpe_source_type_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_fpe_unprepared": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_hash_column_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_hash_input_type_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_hash_native_result_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_insufficient_memory": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_memory_detection_failed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_parent_column_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_parent_rows_unresolved": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_parent_seed_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_parent_strategy_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_predicted_spill_bytes_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_rejected": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_relationship_cycle": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_remap_seeds_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_remap_values_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_reorder_budget_too_small": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_reorder_disk_budget_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_reorder_fan_in_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_reorder_head_fit_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_reorder_threshold_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_reorder_unbudgeted": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_reserved_bytes_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_sort_invalid_state": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_sort_key_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_sort_key_null": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_sort_key_type_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_sort_key_type_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_sort_row_index_unbounded": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_sort_row_too_wide": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_sorter_schema_not_slim": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_source_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_source_schema_required": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_strategy_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_temp_disk_exceeded": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_text_mask_column_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_text_mask_native_result_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_text_mask_source_type_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_text_mask_unprepared": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_text_redact_column_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_text_redact_native_result_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_text_redact_source_type_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_text_redact_unprepared": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_validators_not_admitted": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::out_of_core_vault_config_required": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::pk.duplicates": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::pool_capacity_unverifiable_no_profile": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::pool_exceeds_cache_budget": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::pool_quality.threshold_exceeded": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::pool_size_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::pool_size_overflow": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::pool_too_small_for_source": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::provider_not_poolable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::raw_hex_batch_length_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::raw_hex_batch_type_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::raw_hex_batch_unexpected_null": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::relationship_cycle": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::row_exceeds_max_row_bytes": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::run_single_requires_table": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::seed_wrong_length": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::sequential_bucket_perturb_input_type_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::sequential_categorical_input_type_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::sequential_composite_fk_chain_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::sequential_date_shift_input_type_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::sequential_faker_input_type_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::sequential_fpe_input_type_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::sequential_fpe_key_integer_not_preserved": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::sequential_fpe_native_result_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::sequential_group_key_input_type_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::sequential_hash_input_type_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::sequential_text_mask_input_type_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::sequential_text_redact_input_type_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::shuffle_requires_namespace": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::site_not_partitionable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::site_not_reproducible": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::sort_ascending_length_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::sort_column_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::sort_unsupported_type": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::source_length_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::source_required_for_cardinality_mode": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::split_sink_needs_all_dispatched": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::sub_minimum_domain": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::subset_closure_invariant_violated": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::subset_closure_nontermination": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::subset_materialize_count_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::timezone_naive_datetime": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::tokenize_requires_namespace": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::tokenize_requires_string_dtype": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::tokenize_requires_vault": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::tokenize_vault_error": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::top_code_bounds_unresolvable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::top_code_non_integral_object_column": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::top_code_with_when_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::transform_lineage_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::transform_source_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::truncate_keep_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::truncate_length_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::truncate_mask_char_invalid": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::undeclared_output_columns": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::unified_slice_invariant_violation": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::uniqueness_impossible": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::unknown_cardinality_mode": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::unknown_transform_op": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::unsupported_strategy": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::value_exceeds_declared_bound": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::vault_crypto_not_installed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::vault_format_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::vault_key_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::vault_protocol_version_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::vault_unreadable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::vault_writer_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::weak_mask_secret": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::when_expression_error": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::when_expression_not_boolean": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::when_outside_closed_grammar": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::when_predicate_not_native": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::when_predicate_outside_native_subset": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::when_predicate_reads_masked_column": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "runtime::windowed_date_position_out_of_domain": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "subset::subset_budget_exceeded": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "subset::subset_relationship_column_missing": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "subset::subset_relationship_composite_length": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "subset::subset_relationship_duplicate_column": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "subset::subset_relationship_key_float_unsupported": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "subset::subset_relationship_type_mismatch": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "subset::subset_requires_parquet": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "subset::subset_reserved_column": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "subset::subset_source_orphans": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "subset::subset_unknown_table": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "verification::cardinality": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "verification::column_survival": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "verification::composite_coherence": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "verification::determinism_sample": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "verification::fk_validity": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "verification::format_rules": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "verification::gof_unavailable": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "verification::kind_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "verification::leakage": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "verification::no_comparable_columns": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "verification::no_comparable_joints": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "verification::null_audit": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "verification::null_drift": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "verification::pk_uniqueness": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "verification::row_count": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "verification::sampled_values": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "warning::cardinality_match_deviation": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "warning::format_rule_violation": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "warning::fpe_join_group_active": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "warning::fpe_partial_plaintext_disclosure": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "warning::geo_generalize_cascade": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "warning::mimesis_locale_fallback": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "warning::nested_cell_json_parse_error": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "warning::nested_jsonpath_path_overlap": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "warning::orphan_fk": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "warning::out_of_core_caller_managed_residency": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "warning::pool_dominates_cache": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "warning::scan_crashed": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "warning::source_value_leak": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "warning::text_mask_sub_floor_span_handled": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "warning::top_code_generalized": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "warning::undeclared_output_columns": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  },
+  "warning::value_reuse_fixed_point": {
+   "reason": "initial X0a inventory of tests/fixtures/f29/reason-baseline.json; existing entry, reviewed by its own sentry"
+  }
+ }
+}

@@ -39,8 +39,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from decoy_engine import fileaccess
+from decoy_engine._lexeme import LEXEME_KEY
 from decoy_engine.fileaccess import FileAccess, FileHandle, FileRequest, FileRole
 from decoy_engine.fileaccess.adapters import arrow as arrow_adapter
+from decoy_engine.profile._csv_reader import resolve_csv_dialect
 from decoy_engine.profile._fixed_width_reader import read_fixed_width_handle
 from decoy_engine.profile._policy_bound import _PolicyBound
 from decoy_engine.profile._readers_csv import CsvFileSource, estimate_csv_rows
@@ -458,7 +460,7 @@ def head_frame_from_batches(
 
 
 def build_profile_source(
-    descriptor: dict[str, Any], *, field_key: str = "source.path"
+    descriptor: dict[str, Any], *, field_key: str = "source.path", table: str = "source"
 ) -> ProfileSource:
     """Build the `ProfileSource` for one validated source descriptor. A local file is
     read through the installed policy under `field_key`, the config position it came from.
@@ -469,7 +471,7 @@ def build_profile_source(
     """
     src_type = descriptor.get("type")
     if src_type == "file":
-        return _build_file_source(descriptor, field_key)
+        return _build_file_source(descriptor, field_key, table=table)
     if src_type == "s3":
         from decoy_engine.profile._cloud_readers import build_s3_profile_source
 
@@ -492,7 +494,9 @@ def _at(field_key: str, name: str) -> str:
     return f"the value at {base}.{name}"
 
 
-def _build_file_source(descriptor: dict[str, Any], field_key: str) -> ProfileSource:
+def _build_file_source(
+    descriptor: dict[str, Any], field_key: str, *, table: str = "source"
+) -> ProfileSource:
     fmt = descriptor.get("format")
     path = descriptor.get("path")
     if not isinstance(path, str):
@@ -501,12 +505,15 @@ def _build_file_source(descriptor: dict[str, Any], field_key: str) -> ProfileSou
             f"{fileaccess.shown(repr(path), _at(field_key, 'path'))}"
         )
     if fmt == "csv":
+        dialect = resolve_csv_dialect(descriptor)
         return CsvFileSource(
             Path(path),
-            has_header=descriptor.get("has_header", True),
-            column_names=descriptor.get("column_names"),
-            delimiter=descriptor.get("delimiter", ","),
+            has_header=dialect.has_header,
+            column_names=None if dialect.column_names is None else list(dialect.column_names),
+            delimiter=dialect.delimiter,
+            lexeme_columns=tuple(descriptor.get(LEXEME_KEY) or ()),
             field_key=field_key,
+            table=table,
         )
     if fmt == "parquet":
         return ParquetFileSource(Path(path), field_key=field_key)

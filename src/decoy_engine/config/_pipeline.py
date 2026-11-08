@@ -28,9 +28,16 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 from decoy_engine.config._global_settings import GlobalSettings
 from decoy_engine.config._namespaces import NamespaceConfig
@@ -41,6 +48,7 @@ from decoy_engine.config._subset import SubsetConfig
 from decoy_engine.config._tables import TableConfig
 from decoy_engine.config._targets import FileTarget, TargetDescriptor
 from decoy_engine.config._validators import QuarantineConfig, ValidatorEntry
+from decoy_engine.contracts.declared_casting import ProtectedQuarantineConfig
 
 
 class PipelineConfig(BaseModel):
@@ -87,12 +95,39 @@ class PipelineConfig(BaseModel):
     quarantine: QuarantineConfig | None = None
     # Sprint G (2026-07-03): FK-aware subsetting pre-mask stage. None means
     # "no subsetting" (the pipeline masks its full sources, unchanged
-    # behavior). When set, `decoy_engine.subset.run_subset` runs BEFORE
-    # masking and its output becomes the mask stage's `sources`; there is no
-    # config syntax for the reverse order (subset-then-mask is structural,
-    # not a flag). See `_subset_stage_constraints` below for the one
-    # rejectable mask-then-subset shape.
+    # behavior). No run applies the block yet: every run entry refuses a
+    # config that sets it (`config/_subset_run.py`) until SUB-RUN wires
+    # `decoy_engine.subset.run_subset` in ahead of masking. There is no config
+    # syntax for the reverse order (subset-then-mask is structural, not a
+    # flag). See `_subset_stage_constraints` below for the one rejectable
+    # mask-then-subset shape.
     subset: SubsetConfig | None = None
+    # F06 (declared parsing/casting): the one protected-quarantine declaration. Required by any
+    # column with `error_policy: quarantine`; there is deliberately no path or key here, because
+    # the store is a runtime capability. Unset stays out of dumps (legacy hashes are unchanged).
+    protected_quarantine: ProtectedQuarantineConfig | None = None
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> Any:
+        from decoy_engine.config._declared_casting import recover_serialization_schema
+
+        return recover_serialization_schema(core_schema, handler)
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_protected_quarantine(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if data.get("protected_quarantine") is None:
+            data.pop("protected_quarantine", None)
+        return data
+
+    @model_validator(mode="after")
+    def _f06_protected_quarantine_required(self) -> PipelineConfig:
+        from decoy_engine.config._declared_casting import require_protected_block
+
+        require_protected_block(self)
+        return self
 
     @model_validator(mode="after")
     def _per_table_kind_consistency(self) -> PipelineConfig:

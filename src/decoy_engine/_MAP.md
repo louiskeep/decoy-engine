@@ -12,6 +12,7 @@ sentry (`tests/sentry/test_package_map_paths.py`) asserts every path here exists
 | `execution/` | `run_pipeline` spine, routes (full-frame oracle, unified slice, chunked dispatcher, sequential and out-of-core FK), strategy handlers, native companion bridge, transactional sink, capacity |
 | `progress.py`, `_progress_events.py` | Progress contract: `ProgressSink`, the channel, value-free versioned events (`_progress_events.py` holds the event types and serializers), `use_progress` |
 | `reasons/` | The versioned reason-code registry (`ReasonSpec`, `ReasonRecord`, one catalog module per namespace) |
+| `run_result/` | The `decoy-run-result/v1` run record: write and read models, value-free types, `derive_outcome` |
 | `reason_adapter.py` | `reason_from_exception`, `reasons_from_report`, the per-run failure scope |
 | `generation/` | The generation core (resident and streamed), pinned generation, pools |
 | `generators/` | `ColumnGenerator` (formula and cardinality bounds the V2 core reuses) |
@@ -26,6 +27,8 @@ sentry (`tests/sentry/test_package_map_paths.py`) asserts every path here exists
 | `quality/` | Fidelity report, distribution snapshot, DP fit |
 | `validators/` | Job-level validators (`validators:` block) |
 | `quarantine.py` | Quarantine-row routing (`quarantine:` block) |
+| `contracts/` | Versioned engine-owned contracts consumed by CLI/platform: `declared_casting.py` (F06 per-column parse/sentinel/policy/output contract), `_declared_base.py`, `_declared_formats.py` (the closed format shapes) |
+| `declared_casting/` | F06 casting boundary: `_catalog.py` (the only format registry + capability manifest), `_numeric.py`/`_date.py`/`_cobol.py` kernels, `_boundary.py` (`DeclaredCastRun`: pre-mask cast, post-mask format), `_counts.py`, `_eligibility.py` (`evaluate_declared_casting`, `declared_route_guard`), `_quarantine_protocol.py`, `_quarantine_local.py` (Fernet reference sink) |
 | `validation/`, `validation_result.py` | `validate_config` and the validation wire shape |
 | `relationships/` | Relationship graph, namespace registry, orphan policy |
 | `subset/` | FK-aware subsetting (preflight, plan, run) |

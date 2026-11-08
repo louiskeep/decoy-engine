@@ -57,7 +57,7 @@ import jsonpath_ng
 import pandas as pd
 
 from decoy_engine import reasons
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import StrategyContext, StrategyOption, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.execution._technique_class import technique_class_for
@@ -98,6 +98,10 @@ class NestedStrategyHandler:
     """JSONPath-targeted child-strategy wrapper."""
 
     name: str = "nested"
+    namespace_required: bool = True
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = ()
+    offer_in_wizard: bool = False
 
     def _resolve_child(self, plan: ColumnSeed, column: str | None = None) -> tuple[Any, ColumnSeed]:
         """Resolve the child strategy handler + a synthetic child `ColumnSeed`.

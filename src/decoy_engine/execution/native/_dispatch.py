@@ -44,6 +44,7 @@ from typing import Any, Literal
 
 import pyarrow as pa
 
+from decoy_engine.config._subset_run import refuse_unapplied_subset
 from decoy_engine.execution._operator_registry import OPERATORS, POSITIONAL_FAKER_SOURCE_TYPES
 from decoy_engine.execution._transforms_gate import reject_per_table_transforms
 from decoy_engine.execution.native._chunk_masking import (  # noqa: F401 -- re-exported for tests
@@ -639,6 +640,7 @@ def run_native_or_oracle_chunked(
     """
     # Before `_run_chunked` touches `chunks`: a rejected job must not consume a
     # chunk, and this entry keeps its own route name in the message.
+    refuse_unapplied_subset(config)
     reject_per_table_transforms(config, table=table, route="native chunked execution")
     # Lazy import: `_chunked_entry` imports this module for `plan_native_route`.
     from decoy_engine.execution.native._chunked_entry import _run_chunked

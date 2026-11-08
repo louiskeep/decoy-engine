@@ -371,7 +371,7 @@ def write_jsonl_staged(final_path: str, records: list[dict[str, Any]]) -> Output
         records: List of dicts to serialise, one JSON object per line.
 
     Returns:
-        Path to the private staging file.
+        The opaque staged ``OutputTxn``; publish it with ``publish_staged_jsonl``.
     """
     txn = _quarantine_dir(final_path).begin("file", "exclusive", label="quarantine")
     try:

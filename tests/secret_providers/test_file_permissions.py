@@ -7,6 +7,7 @@ descriptor (never a path `stat` followed by a second open, the check-then-use ra
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import traceback
 import uuid
@@ -37,6 +38,14 @@ def _key(path: Path) -> bytes:
     return key_provider_from_ref(f"file:{path}").mask_key()
 
 
+def _assert_mode_not_rendered(exc: BaseException, mode: int) -> None:
+    # Only what the error itself renders: traceback file paths and line numbers depend on where
+    # the checkout lives (a vm-run folder `w...-1794031666` contains "666") and on unrelated edits.
+    shown = [str(exc), repr(exc), repr(exc.args), *traceback.format_exception_only(type(exc), exc)]
+    for text in shown:
+        assert f"{mode:o}" not in text and oct(mode) not in text
+
+
 @pytest.mark.parametrize("mode", [0o600, 0o400], ids=lambda m: f"{m:o}")
 def test_owner_only_modes_are_accepted(tmp_path: Path, registry, mode: int) -> None:
     assert len(_key(_write(tmp_path, mode))) == 32
@@ -55,7 +64,7 @@ def test_group_or_other_bits_are_refused(tmp_path: Path, registry, mode: int) ->
     rendered = [str(exc), repr(exc), repr(exc.args), "".join(traceback.format_exception(exc))]
     for text in rendered:
         assert TOKEN not in text and str(path) not in text
-        assert f"{mode:o}" not in text and oct(mode) not in text
+    _assert_mode_not_rendered(exc, mode)
     assert exc.__cause__ is None and exc.__context__ is None
     # As AT-X1: engine frame locals never hold the file's bytes. (The caller's own `ref`
     # argument is in the caller-facing frames by design and is not secret material.)
@@ -63,6 +72,34 @@ def test_group_or_other_bits_are_refused(tmp_path: Path, registry, mode: int) ->
     engine = [f for f in frames if "/src/decoy_engine/" in f.filename]
     assert engine, "positive control: the engine frames were rendered"
     assert all("SECRET-" + TOKEN not in repr(f.locals) for f in engine)
+
+
+def test_the_mode_check_ignores_where_the_frames_live(tmp_path: Path, registry) -> None:
+    """A frame whose file sits in a folder named like `...1794031666`, at line 666, renders "666"
+    in the traceback; the mode check still passes a clean refusal and fails a leaking one."""
+    folder = tmp_path / "w354aec-2117809-1794031666"
+    folder.mkdir()
+    seeded = folder / "seeded_frames.py"
+    seeded.write_text("\n" * 664 + "def through(fn, *args):\n    return fn(*args)\n")
+    spec = importlib.util.spec_from_file_location("seeded_frames", seeded)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    through = module.through
+
+    def leak() -> None:
+        raise MaskSecretError(code=UNSAFE, message=f"file mode {0o666:o}")
+
+    with pytest.raises(MaskSecretError) as clean:
+        through(_key, _write(tmp_path, 0o666))
+    trace = "".join(traceback.format_exception(clean.value))
+    assert str(folder) in trace and "line 666" in trace, "positive control: the seed is rendered"
+    _assert_mode_not_rendered(clean.value, 0o666)
+
+    with pytest.raises(MaskSecretError) as leaked:
+        through(leak)
+    with pytest.raises(AssertionError):
+        _assert_mode_not_rendered(leaked.value, 0o666)
 
 
 def test_a_symlink_is_judged_by_its_target(tmp_path: Path, registry) -> None:

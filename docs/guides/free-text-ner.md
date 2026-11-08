@@ -17,11 +17,13 @@ the `text_mask` path only.
 ## Install
 
 `spacy` ships behind the optional `ner` extra; the language model is a
-separate download (not pip-resolvable, so it isn't pulled in automatically):
+separate wheel (not on PyPI, so it isn't pulled in automatically). The engine
+pins the wheel's URL and SHA-256 in `NER_MODEL_WHEELS`
+(`decoy_engine.detection.ner`); download that file, check the hash, and install it:
 
 ```
 pip install 'decoy-engine[ner]'
-python -m spacy download en_core_web_sm
+pip install --no-deps ./en_core_web_sm-3.8.0-py3-none-any.whl
 ```
 
 Without this extra installed, `decoy_engine` imports and runs normally --
@@ -76,8 +78,11 @@ Non-English models work through the same key -- `de_core_news_sm`,
 `es_core_news_sm`, the multilingual `xx_ent_wiki_sm` -- because both the
 OntoNotes label scheme (`PERSON`/`GPE`/`LOC`/`FAC`, used by English models)
 and the WikiNER scheme (`PER`/`LOC`, used by most non-English models) map onto
-the same `person_name`/`location` detector ids. Install any additional model
-the same way: `python -m spacy download de_core_news_sm`.
+the same `person_name`/`location` detector ids. Only `en_core_web_sm` has an
+engine pin. For any other model, choose a version from the spaCy models
+releases, record that wheel's SHA-256 in your deployment, check the downloaded
+file against it, and install it with `pip install --no-deps <file>`, so every
+environment runs the same model version.
 
 ## What it detects
 

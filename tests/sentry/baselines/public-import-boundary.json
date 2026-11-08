@@ -1,0 +1,9 @@
+{
+ "sentry_id": "public-import-boundary",
+ "created_in": "X0a",
+ "entries": {
+  "providers.py": {
+   "reason": "initial X0a inventory of test_public_import_boundary.py; existing entry, reviewed by its own sentry"
+  }
+ }
+}

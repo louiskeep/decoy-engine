@@ -1,0 +1,3 @@
+from decoy_engine import reasons
+
+assert reasons.REGISTRY_VERSION == "1.1.0"

@@ -34,6 +34,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
+from decoy_engine._lexeme import profile_descriptors
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.profile._readers import (
     BOUNDED_FALLBACK_ROWS,
@@ -126,10 +127,13 @@ def profile_source(
     fk_specs_per_table = _derive_fk_specs(relationships_config)
     relationships = tuple(_build_relationships(relationships_config))
 
-    sources = config.get("sources", {}) or {}
+    # F06: declared columns are read as exact lexemes (no NA conversion, no inference).
+    sources = profile_descriptors(config)
     tables: list[TableProfile] = []
     for table_name, source_descriptor in sources.items():
-        reader = build_profile_source(source_descriptor, field_key=f"sources.{table_name}.path")
+        reader = build_profile_source(
+            source_descriptor, field_key=f"sources.{table_name}.path", table=table_name
+        )
         table = _profile_one_source(
             reader,
             table_name=table_name,

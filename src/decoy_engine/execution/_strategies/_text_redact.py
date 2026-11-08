@@ -40,8 +40,14 @@ from __future__ import annotations
 import pandas as pd
 
 from decoy_engine.detection.detectors import Span, iter_spans
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    option,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._strategies._ner_config import (
+    NER_WIZARD_OPTIONS,
     enforce_ner_model_version,
     resolve_ner_config,
 )
@@ -55,6 +61,14 @@ class TextRedactHandler:
     """Replace PII spans in each cell with a fixed token."""
 
     name: str = "text_redact"
+    namespace_required: bool = False
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("token", "str", "[GONE]"),
+        option("label_token", "bool", True),
+        *NER_WIZARD_OPTIONS,
+    )
+    offer_in_wizard: bool = True
 
     def run(
         self,
