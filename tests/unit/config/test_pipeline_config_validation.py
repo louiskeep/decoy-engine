@@ -240,11 +240,13 @@ class TestOverrideSources:
             "customers": {
                 "type": "file",
                 "format": "csv",
+                "has_header": True,
                 "path": "/runtime/customers_v2.csv",
             },
             "orders": {
                 "type": "file",
                 "format": "csv",
+                "has_header": True,
                 "path": "/runtime/orders_v2.csv",
             },
         }
@@ -262,8 +264,8 @@ class TestOverrideSources:
         cfg = PipelineConfig.model_validate(base_config()).model_dump()
         snapshot = copy.deepcopy(cfg)
         new_sources = {
-            "customers": {"type": "file", "format": "csv", "path": "/x.csv"},
-            "orders": {"type": "file", "format": "csv", "path": "/y.csv"},
+            "customers": {"type": "file", "format": "csv", "has_header": True, "path": "/x.csv"},
+            "orders": {"type": "file", "format": "csv", "has_header": True, "path": "/y.csv"},
         }
         override_sources(cfg, sources=new_sources)
         assert cfg == snapshot

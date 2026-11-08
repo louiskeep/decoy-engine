@@ -84,7 +84,12 @@ def _config(
     for extra in extra_tables or []:
         tables.append(extra)
         name = extra["name"]
-        sources[name] = {"type": "file", "format": "csv", "path": str(tmp_path / f"{name}.csv")}
+        sources[name] = {
+            "type": "file",
+            "format": "csv",
+            "has_header": True,
+            "path": str(tmp_path / f"{name}.csv"),
+        }
         targets[name] = {"type": "file", "format": "csv", "path": str(tmp_path / f"{name}_out.csv")}
     cfg: dict = {
         "version": 2,

@@ -79,6 +79,11 @@ def _write_parquet(tmp_path: Path, table: pa.Table, name: str) -> str:
     return str(p)
 
 
+def _header(fmt: str) -> dict[str, bool]:
+    # csv sources must say whether the first row is a header; other formats must not.
+    return {"has_header": True} if fmt == "csv" else {}
+
+
 def _write_csv(tmp_path: Path, table: pa.Table, name: str) -> str:
     p = tmp_path / f"{name}.csv"
     table.to_pandas().to_csv(p, index=False)
@@ -110,8 +115,13 @@ def _ooc_config(
         "version": 2,
         "global_settings": {"job_name": "capacity-estimate-test", "seed": 7},
         "sources": {
-            "parent": {"type": "file", "path": parent_src, "format": parent_fmt},
-            "child": {"type": "file", "path": child_src, "format": child_fmt},
+            "parent": {
+                "type": "file",
+                "path": parent_src,
+                "format": parent_fmt,
+                **_header(parent_fmt),
+            },
+            "child": {"type": "file", "path": child_src, "format": child_fmt, **_header(child_fmt)},
         },
         "targets": {
             "parent": {

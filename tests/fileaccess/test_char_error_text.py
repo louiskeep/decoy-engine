@@ -60,14 +60,18 @@ def test_r1_parquet_sample_missing() -> None:
 
 @pytest.mark.parametrize("method", ["row_count", "schema"])
 def test_r1_csv_source_missing(method: str) -> None:
-    source = build_profile_source({"type": "file", "format": "csv", "path": "nope.csv"})
+    source = build_profile_source(
+        {"type": "file", "format": "csv", "has_header": True, "path": "nope.csv"}
+    )
     exc = _raises(getattr(source, method))
     assert isinstance(exc, FileNotFoundError)
     assert _text(exc) == "[Errno 2] No such file or directory: 'nope.csv'"
 
 
 def test_r1_csv_sample_and_frame_missing() -> None:
-    source = build_profile_source({"type": "file", "format": "csv", "path": "nope.csv"})
+    source = build_profile_source(
+        {"type": "file", "format": "csv", "has_header": True, "path": "nope.csv"}
+    )
     for call in (lambda: source.sample_frame(5), source.to_frame):
         exc = _raises(call)
         assert isinstance(exc, FileNotFoundError)

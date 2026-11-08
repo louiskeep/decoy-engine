@@ -411,7 +411,12 @@ class TestFailClosed:
                 "version": 2,
                 "global_settings": {"seed": 42},
                 "sources": {
-                    name: {"type": "file", "format": "csv", "path": str(tmp_path / f"{name}.csv")}
+                    name: {
+                        "type": "file",
+                        "format": "csv",
+                        "has_header": True,
+                        "path": str(tmp_path / f"{name}.csv"),
+                    }
                     for name in ("a", "b")
                 },
                 "tables": [

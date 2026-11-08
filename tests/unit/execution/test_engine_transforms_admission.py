@@ -393,7 +393,12 @@ class TestLazySources:
         for name, tbl in sources.items():
             csv_path = tmp_path / f"{name}.csv"
             tbl.to_pandas().to_csv(csv_path, index=False)
-            cfg["sources"][name] = {"type": "file", "format": "csv", "path": str(csv_path)}
+            cfg["sources"][name] = {
+                "type": "file",
+                "format": "csv",
+                "has_header": True,
+                "path": str(csv_path),
+            }
         with pytest.raises(ExecutionError) as exc:
             _run(
                 cfg,

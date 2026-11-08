@@ -49,7 +49,7 @@ def _base_config(tmp_path, tables: list[dict], sources: dict[str, str]) -> dict:
             "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
-                name: {"type": "file", "format": "csv", "path": path}
+                name: {"type": "file", "format": "csv", "has_header": True, "path": path}
                 for name, path in sources.items()
             },
             "tables": tables,

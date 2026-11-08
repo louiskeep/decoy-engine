@@ -135,6 +135,7 @@ class TestFixedWidthSourceSchema:
             "t": {
                 "type": "file",
                 "format": "csv",
+                "has_header": True,
                 "path": "/tmp/in.csv",
                 "layout": _simple_layout(),
             },

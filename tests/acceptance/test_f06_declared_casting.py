@@ -287,6 +287,8 @@ def test_a9_binary_cobol_on_a_text_source_is_rejected_at_compile(
     path = tmp_path / "t.txt"
     path.write_text("0123\n", encoding="utf-8")
     source: dict[str, Any] = {"type": "file", "format": kind, "path": str(path)}
+    if kind == "csv":
+        source["has_header"] = True
     if kind == "fixed_width":
         source["layout"] = {
             "exact_record_width": True,
