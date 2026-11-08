@@ -193,3 +193,24 @@ def test_near_miss_keys(key: str) -> None:
 )
 def test_not_near_misses(key: str) -> None:
     assert near_miss_entity_keys({key: "pid"}) == ()
+
+
+def test_char_padding_is_trimmed_and_nothing_else() -> None:
+    assert entity_source("123  ") == entity_source(123) == entity_source("123")
+    for other in (" 123", "0123", "123\t", "123\u00a0", "ABC"):
+        assert entity_source(other) != entity_source("123"), other
+    assert entity_source("abc") != entity_source("ABC")
+
+
+def test_draw_site_call_site_names_the_entity_derivation() -> None:
+    from pathlib import Path
+
+    from decoy_engine.execution.native._determinism_protocol import draw_site_by_id
+
+    site = draw_site_by_id("mask.date_shift_entity")
+    path, line = site.call_site.rsplit(":", 1)
+    root = Path(__file__).resolve().parents[4] / "src" / "decoy_engine"
+    lines = (root / path).read_text(encoding="utf-8").splitlines()
+    assert "derive_sources(" in lines[int(line) - 1]
+    entity_fn = "\n".join(lines[: int(line)]).rsplit("\ndef ", 1)[1]
+    assert entity_fn.startswith("_shift_entity_rows(")

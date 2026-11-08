@@ -198,7 +198,10 @@ tables:
   largest day count pandas can add).
 - Keys: integers, integral decimals and their decimal text are one entity (`123`, `"123"`,
   `Decimal("123.0")`); strings are compared after Unicode NFC normalisation, with no trimming or
-  case folding; a UUID equals its lowercase hyphenated text; a date equals its ISO text. A null,
+  case folding, except that trailing spaces (U+0020 only, the padding of a SQL `CHAR(n)` column)
+  are dropped, so `"123  "` is entity `123`. Leading spaces, tabs and other whitespace, case and
+  leading zeros are not normalised: `" 123"` and `"0123"` are other entities than `123`. A UUID
+  equals its lowercase hyphenated text; a date equals its ISO text. A null,
   empty or all-blank key means "no entity": that row gets the ordinary per-value shift, and the
   run reports the count as `quality_metrics["date_shift_entity_fallback"]`. A key of any other
   type (float, boolean, datetime, bytes) fails the run with
@@ -206,7 +209,7 @@ tables:
 - Not combinable with `group_by`, `preserve_values` or `when`, inside `nested`, or on a date
   column that is part of a relationship (`plan.date_shift_entity_key_unsupported_combination`).
   A misspelling of the option one edit away (`entity-key`, `EntityKey`, `entity_kye`) is refused
-  as `plan.date_shift_entity_key_invalid` rather than ignored.
+  as `plan.date_shift_entity_key_invalid` rather than ignored, as is `entity_key: null`.
 - A shifted date that would leave pandas' date range (before 1677-09-21 or after 2262-04-11)
   is a `format_error` row; a source date outside that range (a `9999-12-31` sentinel) already is,
   and since `preserve_values` is refused here, such a column needs quarantine.
@@ -215,7 +218,7 @@ tables:
 
 `entity_key` is preferred over the older `group_by` option: `group_by` derives its offset in the
 same domain as `hash`, so a `hash` or `group_key` column on the entity in the same namespace
-reveals the offset. That is fixed separately for `group_by`. What the option keeps and leaks is
+reveals the offset. That is tracked separately (CLI roadmap row 24c). What the option keeps and leaks is
 in [what we cannot prove](what-we-cannot-prove.md#per-entity-date-offsets).
 
 ### bucket_perturb

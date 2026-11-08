@@ -22,6 +22,7 @@ from decoy_engine.transforms.date_preserve import has_preserve_values, preserve_
 from decoy_engine.transforms.dates.entity_offset import (
     EntityKeyConfig,
     FaultKind,
+    entity_key_explicit_null,
     entity_key_present,
     near_miss_entity_keys,
     parse_entity_key,
@@ -294,6 +295,14 @@ def _check_entity_key(
                 table,
                 column,
                 "a provider_config key is a misspelling of entity_key; spell it entity_key",
+            ),
+        )
+    if entity_key_explicit_null(pc):
+        raise PlanCompileError(
+            code=reasons.plan.DATE_SHIFT_ENTITY_KEY_INVALID,
+            path=f"{prefix}.entity_key",
+            message=_entity_message(
+                table, column, "entity_key is set to null; name a column or remove the option"
             ),
         )
     parsed = parse_entity_key(pc)

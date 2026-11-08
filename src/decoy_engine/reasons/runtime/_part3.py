@@ -17,6 +17,7 @@ __all__ = [
     "CODE_SET_GEN_REQUIRES_NAMESPACE",
     "CONFIG_REFERENCES_STORED_INDEX",
     "DATE_PRESERVE_VALUES_WITH_GROUP_BY_UNSUPPORTED",
+    "DATE_SHIFT_ENTITY_KEY_NOT_NATIVE",
     "DATE_SHIFT_ENTITY_KEY_UNSUPPORTED_COMBINATION",
     "DATE_SHIFT_ENTITY_KEY_UNSUPPORTED_VALUE",
     "DATE_SHIFT_GROUP_ANCHOR_SNAPSHOT_MISALIGNED",
@@ -118,6 +119,11 @@ DATE_SHIFT_GROUP_ANCHOR_SNAPSHOT_MISSING = _d(
     "date_shift_group_anchor_snapshot_missing", "Date shift group anchor snapshot missing."
 )
 DATE_SHIFT_INVALID_CONFIG = _d("date_shift_invalid_config", "Date shift invalid config.")
+DATE_SHIFT_ENTITY_KEY_NOT_NATIVE = _d(
+    "date_shift_entity_key_not_native",
+    "Date shift entity key not native.",
+    since="1.7.0",
+)
 DATE_SHIFT_ENTITY_KEY_UNSUPPORTED_COMBINATION = _d(
     "date_shift_entity_key_unsupported_combination",
     "Date shift entity key unsupported combination.",

@@ -182,7 +182,8 @@ def test_native_output_for_an_entity_column_is_refused() -> None:
     object.__setattr__(c, "seq_native", _NativeSeam())
     with pytest.raises(StrategyError) as info:
         DateShiftStrategyHandler().run(df, "d", seed(entity_key="pid"), c)
-    assert info.value.code == reasons.runtime.DATE_SHIFT_INVALID_CONFIG
+    assert info.value.code == reasons.runtime.DATE_SHIFT_ENTITY_KEY_NOT_NATIVE
+    assert "engine error" in str(info.value)
 
 
 def test_hashed_key_order_does_not_matter() -> None:

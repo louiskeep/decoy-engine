@@ -151,7 +151,7 @@ handler derives the column key via `derive(mask_key, namespace, value)`
 `md5(value)` (`transforms/date_shift.py:108`), preserved for reproducibility.
 
 ### mask.date_shift_entity
-`execution/_strategies/_date_shift.py` (`_shift_entity_rows`). A `date_shift` column with
+`execution/_strategies/_date_shift.py:463` (`_shift_entity_rows`). A `date_shift` column with
 `provider_config.entity_key`:
 `min_days + (int.from_bytes(derive(mask_key, namespace, entity_source(e))[:8], "big") % range_size)`
 where `entity_source(e)` is `0xFF || b"date-shift-entity/v1" || 0x00 || text(e)`

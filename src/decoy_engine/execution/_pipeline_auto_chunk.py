@@ -417,6 +417,7 @@ def run_auto_chunk(
     from decoy_engine.execution._chunked import aggregate_chunk_timings, aggregate_chunk_warnings
     from decoy_engine.execution._chunked_code_set import aggregate_chunk_code_set_corpora
     from decoy_engine.execution.native._chunked_evidence import aggregate_chunked_route_evidence
+    from decoy_engine.execution.native._chunked_oracle_rows import entity_fallback_metric
 
     lane, lane_reason = select_lane(dispatcher_enabled)
     if sink is None and isinstance(source, LazySource):
@@ -488,6 +489,7 @@ def run_auto_chunk(
         warnings = aggregate_chunk_warnings(chunk_results)
         conversion_ms = sum(r.boundary_conversion_ms for r in chunk_results)
     quality_metrics["chunked_route"] = evidence
+    quality_metrics |= entity_fallback_metric(table, evidence, chunk_results)
     quality_metrics["auto_chunk"] = {
         "lane": lane,
         "lane_reason": lane_reason,

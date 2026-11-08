@@ -338,7 +338,7 @@ MASK_FORMULA_DRAW_SITE = DrawSite(
 MASK_DATE_SHIFT_ENTITY_DRAW_SITE = DrawSite(
     draw_site_id="mask.date_shift_entity",
     family="source_keyed_hmac",
-    call_site="execution/_strategies/_date_shift.py:451",
+    call_site="execution/_strategies/_date_shift.py:463",
     entropy_root="mask_key",
     seed_derivation=(
         "min_days + (int.from_bytes(derive(mask_key, namespace, "

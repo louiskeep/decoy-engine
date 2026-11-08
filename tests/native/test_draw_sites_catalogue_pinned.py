@@ -47,7 +47,7 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
 
 
 # With mask.date_shift_entity appended; the 34-site prefix digest was e22d1fc9...a75a.
-_CATALOGUE_DIGEST = "701286ecd598acd0e338303280a76b7bf701ba95f87d3591d503c64d39ab3346"
+_CATALOGUE_DIGEST = "edb31b0ab662144c4c2a45d75689bb20e3546713354d2c90ceaae364869702c6"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -122,7 +122,7 @@ _ENTRY_DIGESTS = [
     "46b422be131d1e91c5ed2a6174d86f970429577b88e5da660ab3a4926171dab4",
     "f698d376bd1e62f5e3f17bde97a7e4da236bf76ad09baf49d95a8c6445614c2c",
     "c8ae317b9397f7faf9152ddc3c0e4e0d0fd55de2f87148512d76b9e28a343324",
-    "0f6c09695c0f1bbcf859b392867ba0177970789600bc5a25f86e796b91e60ea2",
+    "74791c52679c510365ebba443fc655ca5ed10bcfdf0ff2acc943ebe23e5224fb",
 ]
 
 _MAP_DIGESTS = {

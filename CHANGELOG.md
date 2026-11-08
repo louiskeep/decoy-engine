@@ -19,7 +19,7 @@ inconsistent range or namespace, unsupported combinations and near-miss spelling
 (reason registry 1.7.0: `plan.date_shift_entity_key_invalid`,
 `plan.date_shift_entity_key_unsupported_combination`, `plan.date_shift_entity_key_inconsistent`,
 `runtime.date_shift_entity_key_unsupported_value`,
-`runtime.date_shift_entity_key_unsupported_combination`). Full-frame, sequential and chunked
+`runtime.date_shift_entity_key_unsupported_combination`, `runtime.date_shift_entity_key_not_native`). Full-frame, sequential and chunked
 routes give identical output; native and out-of-core decline it. New draw site
 `mask.date_shift_entity`. A config that does not set the option is unchanged, except that a
 `date_shift` key one edit away from `entity_key` is now refused (owner-approved). V2 track, built

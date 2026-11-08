@@ -18,7 +18,10 @@ never occurs in UTF-8, so no ``hash``, ``group_key``, ``fpe`` key or plain ``dat
 can reproduce an entity offset. ``domain_separated_source`` is the reusable form of that rule.
 
 Entity text is type-stable: integers, integral Decimals and their decimal strings agree, so an id
-stored as int64 in one table and as text in another gets one offset.
+stored as int64 in one table and as text in another gets one offset. Trailing U+0020 spaces are
+dropped from text keys before encoding, as SQL compares CHAR(n) values (``"123  "`` from a
+padded column is entity ``123``). Nothing else is normalised: leading spaces, other whitespace,
+case and leading zeros all make a different entity. An all-blank key is no entity.
 
 The near-miss check uses the optimal-string-alignment form of the Damerau-Levenshtein distance
 (Damerau 1964), so one transposition counts as one edit.
@@ -112,6 +115,11 @@ class UnsupportedEntityValue:
 def entity_key_present(provider_config: Mapping[str, Any]) -> bool:
     """True when ``entity_key`` is set to anything but None, valid or not."""
     return provider_config.get(ENTITY_KEY_OPTION) is not None
+
+
+def entity_key_explicit_null(provider_config: Mapping[str, Any]) -> bool:
+    """True when the config names ``entity_key`` but sets it to null (refused at compile)."""
+    return ENTITY_KEY_OPTION in provider_config and provider_config[ENTITY_KEY_OPTION] is None
 
 
 def _bound(raw: Any, default: int) -> int | None:
@@ -221,7 +229,8 @@ def _entity_text(value: Any) -> bytes | None | UnsupportedEntityValue:
     if isinstance(value, numbers.Integral):
         return str(int(value)).encode("ascii")
     if isinstance(value, str):
-        return canonicalize_derive_source(value) if value.strip() else None
+        # CHAR(n) padding only: trailing U+0020, never other whitespace or leading spaces.
+        return canonicalize_derive_source(value.rstrip(" ")) if value.strip() else None
     if isinstance(value, uuid.UUID):
         return str(value).encode("ascii")
     if isinstance(value, date) and not isinstance(value, datetime):
@@ -263,6 +272,7 @@ __all__ = [
     "date_shift_anchor",
     "domain_separated_source",
     "entity_column",
+    "entity_key_explicit_null",
     "entity_key_present",
     "entity_source",
     "near_miss_entity_keys",

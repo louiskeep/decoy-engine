@@ -61,6 +61,44 @@
       "symbol": "DATE_SHIFT_ENTITY_KEY_UNSUPPORTED_COMBINATION"
     },
     {
+      "code": "date_shift_entity_key_not_native",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "StrategyError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.7.0",
+      "summary": "Date shift entity key not native.",
+      "symbol": "DATE_SHIFT_ENTITY_KEY_NOT_NATIVE"
+    },
+    {
       "code": "date_shift_entity_key_unsupported_combination",
       "context": [],
       "deprecated_in": null,

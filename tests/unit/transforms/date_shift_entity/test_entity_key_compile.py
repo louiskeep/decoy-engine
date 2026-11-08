@@ -64,6 +64,7 @@ def _refused(cfg: dict[str, Any], entry: str, code: str, path: str) -> None:
 
 _ONE_TABLE_CASES: list[tuple[str, dict[str, Any], dict[str, Any], str, str]] = [
     ("not_a_string", {"entity_key": 123}, {}, INVALID, PC + ".entity_key"),
+    ("explicit_null", {"entity_key": None}, {}, INVALID, PC + ".entity_key"),
     ("blank", {"entity_key": "  "}, {}, INVALID, PC + ".entity_key"),
     ("missing_column", {"entity_key": "nope"}, {}, INVALID, PC + ".entity_key"),
     ("self", {"entity_key": "d"}, {}, INVALID, PC + ".entity_key"),

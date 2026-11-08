@@ -91,6 +91,19 @@ def test_full_frame_auto_chunk_and_chunked_entry_are_identical(tmp_path: Path) -
     }
     assert chunked == {e["column"]: e["fallback_rows"] for e in want}
 
+    assert auto.quality_metrics["date_shift_entity_fallback"] == want
+    legacy = run(
+        tmp_path,
+        cfg,
+        {"t": src},
+        auto_chunk_threshold_rows=10,
+        chunk_size_rows=7,
+        chunked_dispatcher_enabled=False,
+    )
+    assert legacy.quality_metrics["auto_chunk"]["mode"] == "chunked"
+    assert legacy.outputs["t"].equals(full.outputs["t"])
+    assert legacy.quality_metrics["date_shift_entity_fallback"] == want
+
     for size in (1, 7, 33):
         chunks = [src.slice(i, size) for i in range(0, N, size)]
         got = [
@@ -245,3 +258,36 @@ def test_native_gate_unchanged_without_entity_key() -> None:
     assert gate("d", "t", None, namespace=NS, provider_config={**base, "group_by": "g"}) == (
         "date_shift_group_by_not_native:d"
     )
+
+
+def test_mixed_generate_and_mask_job_equals_the_oracle(tmp_path: Path) -> None:
+    from tests.parity._f2_mixed_support import (
+        CHILD,
+        FK,
+        assert_outputs_identical,
+        mixed_config,
+        oracle,
+    )
+    from tests.parity._f2_mixed_support import run as run_mixed
+
+    child = pa.table(
+        {
+            FK: pa.array([i // 3 for i in range(N)], pa.int64()),
+            "seen": [f"2021-{1 + i % 12:02d}-{1 + i % 27:02d}" for i in range(N)],
+        }
+    )
+    cfg = mixed_config(
+        tmp_path,
+        child,
+        child_columns=[date_col("seen", entity_key=FK, min_days=-60, max_days=60)],
+        coupled=False,
+    )
+    got = run_mixed(cfg, {CHILD: child})
+    want = oracle(cfg, {CHILD: child})
+    assert_outputs_identical(got.outputs, want.outputs)
+    out = got.outputs[CHILD].to_pydict()
+    offsets: dict[int, int] = {}
+    for i, key in enumerate(child[FK].to_pylist()):
+        delta = _days(child["seen"][i].as_py(), out["seen"][i])
+        assert offsets.setdefault(key, delta) == delta
+    assert CHILD in got.quality_metrics["mixed_route"]["mask_tables"]

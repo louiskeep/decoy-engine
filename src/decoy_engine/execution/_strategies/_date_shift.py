@@ -212,11 +212,13 @@ class DateShiftStrategyHandler:
                     # The native gate declines every entity_key column; output here would carry
                     # per-value offsets and silently break every entity's intervals.
                     raise StrategyError(
-                        code=reasons.runtime.DATE_SHIFT_INVALID_CONFIG,
+                        code=reasons.runtime.DATE_SHIFT_ENTITY_KEY_NOT_NATIVE,
                         strategy="date_shift",
                         message=(
-                            f"date_shift column {column!r}: a native executor returned output "
-                            "for an entity_key column; refusing it."
+                            f"date_shift column {column!r}: engine error, a native executor "
+                            "returned output for an entity_key column, which only the Python "
+                            "handler may run. The output is refused; the configuration is not "
+                            "at fault."
                         ),
                     )
                 df[column] = native_out
