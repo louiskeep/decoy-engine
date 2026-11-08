@@ -67,13 +67,17 @@ def test_declined_families_are_declined_with_a_reason(col: dict[str, Any]) -> No
 @pytest.mark.parametrize(
     ("col", "arrow_type"),
     [
-        ({"type": "sequence", "start": 1}, pa.string()),
+        ({"type": "sequence", "start": 1}, pa.int64()),
+        ({"type": "sequence", "start": 1, "prefix": "ID-"}, pa.string()),
+        ({"type": "sequence", "start": 1, "pad_length": 4}, pa.string()),
         ({"type": "categorical", "categories": ["a", "b"]}, pa.string()),
         ({"type": "categorical", "categories": [1, 2, 3]}, pa.int64()),
         ({"type": "categorical", "categories": [1.5, 2.0]}, pa.float64()),
         ({"type": "categorical", "categories": [True, False]}, pa.bool_()),
         ({"type": "faker", "faker_type": "city"}, pa.string()),
-        ({"type": "faker", "faker_type": "pyint", "faker_kwargs": {"min_value": 1}}, pa.string()),
+        ({"type": "faker", "faker_type": "pyint", "faker_kwargs": {"min_value": 1}}, pa.int64()),
+        ({"type": "faker", "faker_type": "pyfloat"}, pa.float64()),
+        ({"type": "faker", "faker_type": "zipcode"}, pa.string()),
         ({"type": "faker", "faker_type": "no_such_provider"}, pa.string()),
     ],
 )
