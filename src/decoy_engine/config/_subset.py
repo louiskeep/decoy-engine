@@ -12,6 +12,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from decoy_engine.errors import ConfigRuleError
+
 PredicateOpLiteral = Literal["eq", "ne", "lt", "le", "gt", "ge", "in", "is_null", "is_not_null"]
 SeedModeLiteral = Literal["sample", "filter", "keys"]
 EdgeDirectionLiteral = Literal["both", "downward", "upward", "none"]
@@ -42,33 +44,33 @@ class SubsetSeedConfig(BaseModel):
         # the config-layer and frozen-dataclass-layer rules must never drift.
         if self.mode == "sample":
             if not self.key_columns:
-                raise ValueError(
+                raise ConfigRuleError(
                     f"subset seed for table {self.table!r}: mode='sample' requires "
                     "non-empty key_columns"
                 )
             has_fraction = self.fraction is not None
             has_count = self.count is not None
             if has_fraction == has_count:
-                raise ValueError(
+                raise ConfigRuleError(
                     f"subset seed for table {self.table!r}: mode='sample' requires exactly "
                     "one of fraction/count"
                 )
         elif self.mode == "filter":
             if not self.predicates:
-                raise ValueError(
+                raise ConfigRuleError(
                     f"subset seed for table {self.table!r}: mode='filter' requires "
                     "non-empty predicates"
                 )
         elif self.mode == "keys":
             if not self.key_columns or not self.keys:
-                raise ValueError(
+                raise ConfigRuleError(
                     f"subset seed for table {self.table!r}: mode='keys' requires non-empty "
                     "key_columns and keys"
                 )
             width = len(self.key_columns)
             for tup in self.keys:
                 if len(tup) != width:
-                    raise ValueError(
+                    raise ConfigRuleError(
                         f"subset seed for table {self.table!r}: every key tuple must have "
                         f"length {width} (== len(key_columns))"
                     )
