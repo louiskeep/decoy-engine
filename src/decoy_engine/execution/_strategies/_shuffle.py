@@ -6,8 +6,10 @@ Re-keyed onto S3 (S9 spec §4 row 9 / R19): the permutation rng is seeded from
 The column name is bound into the derivation source so two shuffle columns
 sharing a namespace draw distinct permutations; otherwise they would be
 permuted in lockstep and re-link the values masking is meant to decouple.
-Non-deterministic mode uses an unseeded `default_rng`. Null positions are
-preserved; only the non-null values are permuted.
+Non-deterministic mode is unkeyed (no namespace) but still drawn from the mask
+key, with the job seed, table and column bound in, so the same config, seed and
+secret reproduce the output. Null positions are preserved; only the non-null
+values are permuted.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 
 # Derivation namespace of the unkeyed mode. A user namespace never collides with it in
-# practice because the source also carries a NUL between table and column.
+# practice because the source also carries NULs between seed, table and column.
 UNKEYED_SHUFFLE_NAMESPACE = "decoy.shuffle.unkeyed/v1"
 
 
@@ -59,9 +61,12 @@ class ShuffleStrategyHandler:
                 )
             namespace, draw_source = plan.namespace, column
         else:
-            # The table is bound in so same-named, same-length columns of two tables never
-            # permute in lockstep.
-            namespace, draw_source = UNKEYED_SHUFFLE_NAMESPACE, f"{ctx.current_table}\x00{column}"
+            # Table and real column are bound in so no two unkeyed shuffles permute in
+            # lockstep (a nested child is always called `_nested_leaves`); the job seed is
+            # bound in so changing the seed changes the permutation.
+            column_id = getattr(ctx, "nested_outer_column", "") or column
+            namespace = UNKEYED_SHUFFLE_NAMESPACE
+            draw_source = f"{ctx.job_seed.hex()}\x00{ctx.current_table}\x00{column_id}"
         seed_int = int.from_bytes(
             derive(ctx.mask_key, namespace, draw_source.encode("utf-8"))[:8], "big"
         )

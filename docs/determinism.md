@@ -88,8 +88,8 @@ for the full model.
   in the frame being masked, so the same seed and input give the same output. It
   is keyed by position, not by source value, so it does not preserve joins.
 - Non-deterministic `shuffle` (the default when `deterministic` is not set): the
-  permutation is drawn from the mask key with the table and column names bound in,
-  so the same config, seed and secret give the same output. It needs no namespace,
+  permutation is drawn from the mask key with the job seed and the table and column
+  names bound in, so the same config, seed and secret give the same output. It needs no namespace,
   and the same column in two tables gets two different permutations.
 - Strategies that are deterministic by construction: `bucketize` (same value,
   same bucket), `redact` and `text_redact` (pure function of input and config),

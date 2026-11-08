@@ -133,6 +133,24 @@ class TestShuffle:
         assert first["c"].tolist() == again["c"].tolist()
         assert first["c"].tolist() != other["c"].tolist()
         assert first["c"].tolist() != src["c"].tolist()
+        reseeded = _Ctx()
+        reseeded.job_seed = (0x78).to_bytes(8, "big")
+        moved, _ = ShuffleStrategyHandler().run(src.copy(), "c", seed, reseeded)  # type: ignore[arg-type]
+        assert moved["c"].tolist() != first["c"].tolist()
+
+    def test_two_nested_unkeyed_shuffles_in_one_table_do_not_move_in_lockstep(self) -> None:
+        # nested calls every child `_nested_leaves`; the outer column keeps them apart.
+        from decoy_engine.execution._strategies._shuffle import ShuffleStrategyHandler
+
+        leaves = pd.DataFrame({"_nested_leaves": [f"v{i}" for i in range(40)]})
+        seed = _col("shuffle", deterministic=False)
+        orders = []
+        for outer in ("a", "b"):
+            ctx = _Ctx()
+            ctx.nested_outer_column = outer
+            out, _ = ShuffleStrategyHandler().run(leaves.copy(), "_nested_leaves", seed, ctx)  # type: ignore[arg-type]
+            orders.append(out["_nested_leaves"].tolist())
+        assert orders[0] != orders[1]
 
     def test_deterministic_permutation_is_the_pinned_known_answer(self) -> None:
         # Pins the exact derive-seeded permutation, so a mutated seed slice

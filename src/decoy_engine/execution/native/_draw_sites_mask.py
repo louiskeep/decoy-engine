@@ -16,13 +16,14 @@ MASK_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="mask.shuffle",
         family="numpy_pcg64",
-        call_site="execution/_strategies/_shuffle.py:70",
+        call_site="execution/_strategies/_shuffle.py:75",
         entropy_root="mask_key",
         seed_derivation=(
             "int.from_bytes(derive(ctx.mask_key, plan.namespace, "
             'column.encode("utf-8"))[:8], "big"); unkeyed mode: '
             "derive(ctx.mask_key, UNKEYED_SHUFFLE_NAMESPACE, "
-            '(current_table + "\\x00" + column).encode("utf-8"))'
+            '(job_seed.hex() + "\\x00" + current_table + "\\x00" + '
+            '(nested_outer_column or column)).encode("utf-8"))'
         ),
         api_operation="numpy.random.default_rng(seed_int).permutation",
         call_shape="permutation(len(non_na_values))  # whole-column",
@@ -35,7 +36,7 @@ MASK_DRAW_SITES: tuple[DrawSite, ...] = (
         notes=(
             "Whole-column multiset permutation. A partition sees only its slice, "
             "so it cannot reproduce the global permutation order. Non-deterministic "
-            "mode is unkeyed but drawn from the mask key with table and column bound in."
+            "mode is unkeyed but drawn from the mask key with job seed, table and column bound in."
         ),
     ),
     # -- Masking: source-keyed HMAC family (per-row, partitionable) ----------

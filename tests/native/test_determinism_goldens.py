@@ -201,7 +201,7 @@ class TestMaskShuffleGolden:
         plan = dataclasses.replace(_shuffle_plan("sh"), namespace=None, deterministic=False)
         out_df, _ = ShuffleStrategyHandler().run(pd.DataFrame({col: values}), col, plan, ctx)
         perm = provider_for("mask.shuffle").permutation(
-            _MASK_KEY, UNKEYED_SHUFFLE_NAMESPACE, f"t\x00{col}", len(values)
+            _MASK_KEY, UNKEYED_SHUFFLE_NAMESPACE, f"{_MASK_KEY.hex()}\x00t\x00{col}", len(values)
         )
         assert out_df[col].tolist() == [values[i] for i in perm]
 
