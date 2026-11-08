@@ -121,7 +121,7 @@ def test_p0_not_a_directory_is_refused(tmp_path: Path) -> None:
 def test_p0_foreign_owner_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     target = tmp_path / "mine"
     open_protected_dir(target, create=True)
-    monkeypatch.setattr(os, "getuid", lambda: os.lstat(target).st_uid + 1)
+    monkeypatch.setattr(os, "geteuid", lambda: os.lstat(target).st_uid + 1)
     with pytest.raises(ProtectedDirUnsafe):
         open_protected_dir(target, create=True)
 

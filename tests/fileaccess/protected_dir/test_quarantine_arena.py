@@ -47,7 +47,7 @@ def test_a_permissive_arena_holding_a_file_is_unsafe_but_an_empty_one_is_tighten
 def test_a_foreign_owner_arena_is_unsafe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     arena = tmp_path / "q"
     arena.mkdir(mode=0o700)
-    monkeypatch.setattr(os, "getuid", lambda: os.lstat(arena).st_uid + 1)
+    monkeypatch.setattr(os, "geteuid", lambda: os.lstat(arena).st_uid + 1)
     assert _detail(arena) == (False, "arena_unsafe")
 
 
