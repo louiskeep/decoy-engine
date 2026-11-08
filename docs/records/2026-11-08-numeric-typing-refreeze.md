@@ -3,10 +3,21 @@
 Status: record
 
 Generated numeric columns are now typed. An unformatted `sequence` (no prefix, suffix or
-`pad_length`) is int64. A stock faker provider annotated `int` or `float` (pyint, pyfloat,
-random_int and similar) is int64 or float64. Formatted sequences, categorical text and every other
-faker provider stay string. The rule lives in `generation/_numeric_typing.py`; the declared schema
-(`_admission.py`) and the emitted values come from the same function.
+`pad_length`) is int64. A stock faker provider is int64 or float64. Formatted sequences, categorical text and every other
+faker provider stay string. The decision is made once at plan time by `numeric_plan` in
+`generation/_numeric_typing.py`; the declared schema (`_admission.py`) and both emitters read it.
+
+A column is numeric only when all of these hold, otherwise it stays string as before:
+
+- Its values provably fit int64. A sequence needs `start` and `start + (row_count - 1) * step` in
+  range. The faker int providers are an allowlist: `pyint` and `random_int` need `min`/`max`
+  inside int64, `random_number` needs `digits` of 18 or fewer, `random_digit` and
+  `random_digit_not_null` are always in range. Faker float providers are float64.
+- It is not a stock-provider name overridden by a custom provider.
+- It is not the parent key of a relationship that has a child table that is not generated. A
+  masked or source child reads the key as text, so a typed parent would stop matching it.
+
+The pinned-plan path (`_pinned_execute`) passes no numeric type and keeps text, as before.
 
 ## Re-frozen goldens
 
@@ -31,8 +42,6 @@ Files: `tests/parity/_f0_expected.py` (captured with `_f0_capture`), `tests/fixt
   `lost_declared_type` mutant stays; `lost_numeric_type` is added to kill a mutant that turns a
   numeric column back into text.
 - The audit witness marks an int sequence by offset instead of a text prefix.
-- Mixed-route fixtures that join a text FK to a generated parent now give the parent `pad_length`,
-  so the parent key stays text.
 - The core-selection witness mutant draws ints.
 
 ## Output text
@@ -41,3 +50,25 @@ CSV, fixed-width and Parquet get the same cell text for non-null values. Parquet
 int64/double instead of string. A nullable int column converted with a plain `Table.to_pandas()`
 becomes float64 and prints `1.0`; `generated_table_to_pandas` keeps pandas nullable ints so it
 prints `1`.
+
+## CLI repin
+
+The engine exports `decoy_engine.generated_table_to_pandas(table)` (also in
+`decoy_engine.generation`). At repin the CLI replaces `table.to_pandas()` with it wherever a
+generated or masked output table becomes a frame that is written as text. A plain `to_pandas()`
+turns a nullable int64 column into float64 and prints `1.0`.
+
+Sites on CLI `origin/main` (grep `to_pandas()` to confirm line numbers at repin time):
+
+- `src/decoy/api.py:563`, `outputs = {name: table.to_pandas() ...}` in `mask()`.
+- `src/decoy/cli/io/_targets.py:336` (fixed_width frame), `:364` (CSV write) and `:461` (chunked
+  mask CSV write).
+- The writers reached from `_write_mask_outputs` in `src/decoy/cli/run.py`, the demo output
+  write in `src/decoy/cli/demo.py` and the unmask read in `src/decoy/cli/unmask.py`; each one that
+  calls `.to_pandas()` on an engine table changes the same way.
+
+Also needed: pin the engine release that carries this change, and add a CLI test that runs a
+generated nullable plain sequence (`null_probability` above 0) through the CSV writer and asserts
+the cells are `1`, `2` and so on and never `1.0`.
+
+The engine does not edit the CLI repo; this list is the whole change.
