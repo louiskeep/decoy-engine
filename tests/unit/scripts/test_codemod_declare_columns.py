@@ -224,6 +224,26 @@ def test_shared_helper_literal_is_edited_once(
     assert names == ["a", "b", "c"]
 
 
+def test_two_undeclared_tables_in_one_config_stay_separate(
+    codemod: ModuleType, tmp_path: Path
+) -> None:
+    both = tmp_path / "both.py"
+    both.write_text('CFG = {"sources": {"s1": {}, "s2": {}}, "tables": []}\n', encoding="utf-8")
+    rows = [
+        {"node": "n", "table": t, "kind": "table", "undeclared": u, "declared": [],
+         "frame": f"{both}:1"}
+        for t, u in (("s1", ["a"]), ("s2", ["b"]))
+    ]  # fmt: skip
+    rec = tmp_path / "rec.jsonl"
+    rec.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    codemod.main(["declare-columns", "--record", str(rec), str(both)])
+    tables = ast.literal_eval(both.read_text().split("=", 1)[1].strip())["tables"]
+    assert {t["name"]: [c["name"] for c in t["columns"]] for t in tables} == {
+        "s1": ["a"],
+        "s2": ["b"],
+    }
+
+
 def test_source_schema_mode(
     codemod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

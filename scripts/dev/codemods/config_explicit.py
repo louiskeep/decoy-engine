@@ -295,14 +295,20 @@ def _declare(record_file: Path, roots: list[Path]) -> list[str]:
         target_path, target = hits[0]
         entry = targets.setdefault(
             (target_path, target.lineno, target.col_offset),
-            {"list": target, "kind": kind, "table": rec["table"], "names": []},
+            {"list": target, "kind": kind, "tables": {}},
         )
-        entry["names"] += [n for n in rec["undeclared"] if n not in entry["names"]]
+        names = entry["tables"].setdefault(rec["table"], [])
+        names += [n for n in rec["undeclared"] if n not in names]
     edits: dict[Path, list[tuple[int, int, str]]] = {}
     for (target_path, _, _), entry in targets.items():
-        texts = _entries(entry["names"])
+        # A column list belongs to one table; a `tables` list takes one entry per table.
         if entry["kind"] == "table":
-            texts = [f'{{"name": "{entry["table"]}", "columns": [{", ".join(texts)}]}}']
+            texts = [
+                f'{{"name": {json.dumps(table)}, "columns": [{", ".join(_entries(names))}]}}'
+                for table, names in entry["tables"].items()
+            ]
+        else:
+            texts = _entries([n for names in entry["tables"].values() for n in names])
         edit = _append_edit(entry["list"], texts)
         edits.setdefault(target_path, []).append(edit)
         rows.append(f"declare-columns {target_path}:{edit[0]}")
