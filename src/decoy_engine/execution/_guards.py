@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine._field_names import repeated_names
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._runner import build_work_list
 from decoy_engine.execution._transforms import TransformError
@@ -42,10 +43,7 @@ def refuse_duplicate_field_names(table: str, names: Iterable[str]) -> None:
     and a count, never the names: a header is producer-controlled text. The owner stays
     `TransformError`, the pinned owner of this reason identity.
     """
-    seen: set[str] = set()
-    repeated: set[str] = set()
-    for name in names:
-        (repeated if name in seen else seen).add(name)
+    repeated = repeated_names(names)
     if repeated:
         raise TransformError(
             code=reasons.runtime.DUPLICATE_SOURCE_FIELD_NAMES,

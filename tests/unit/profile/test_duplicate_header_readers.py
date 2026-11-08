@@ -105,12 +105,13 @@ class _FakeGcsClient:
         return _Bucket()
 
 
-def _stub_cloud(monkeypatch: pytest.MonkeyPatch, data: bytes) -> None:
-    from google.cloud import storage
-
+def _stub_cloud(monkeypatch: pytest.MonkeyPatch, data: bytes, kind: str) -> None:
     from decoy_engine.profile import _cloud_readers
 
-    monkeypatch.setattr(_cloud_readers, "_s3_client", lambda descriptor: _FakeS3(data))
+    if kind == "s3":
+        monkeypatch.setattr(_cloud_readers, "_s3_client", lambda descriptor: _FakeS3(data))
+        return
+    storage = pytest.importorskip("google.cloud.storage")
     monkeypatch.setattr(storage, "Client", lambda *a, **k: _FakeGcsClient(data))
 
 
@@ -124,7 +125,7 @@ def test_r2_cloud_csv_sample_helper_renames() -> None:
 def test_r2_cloud_csv_sources_rename(kind: str, monkeypatch: pytest.MonkeyPatch) -> None:
     from decoy_engine.profile._readers import build_profile_source
 
-    _stub_cloud(monkeypatch, DUP_CSV)
+    _stub_cloud(monkeypatch, DUP_CSV, kind)
     descriptor: dict[str, Any] = {"type": kind, "format": "csv", "bucket": "b"}
     descriptor["key" if kind == "s3" else "object"] = "dup.csv"
     src = build_profile_source(descriptor)
@@ -224,7 +225,7 @@ def test_r6_cloud_parquet_descriptor_is_refused_before_profiling(
     from tests.unit.execution._transform_testkit import ENGINE_VERSION, validated
 
     path = _dup_parquet(tmp_path)
-    _stub_cloud(monkeypatch, path.read_bytes())
+    _stub_cloud(monkeypatch, path.read_bytes(), kind)
     profiled: list[int] = []
     real_profile = profile_pkg.profile_source
     monkeypatch.setattr(
