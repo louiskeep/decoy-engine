@@ -13,6 +13,7 @@ sentry (`tests/sentry/test_package_map_paths.py`) asserts every path here exists
 | `progress.py`, `_progress_events.py` | Progress contract: `ProgressSink`, the channel, value-free versioned events (`_progress_events.py` holds the event types and serializers), `use_progress` |
 | `reasons/` | The versioned reason-code registry (`ReasonSpec`, `ReasonRecord`, one catalog module per namespace) |
 | `run_result/` | The `decoy-run-result/v1` run record: write and read models, value-free types, `derive_outcome` |
+| `records/` | The local record library's engine side: `decoy-record/v1` envelope, `build`/`encode`/`decode`, the kind registry, canonical form and ids, the `decoy-library-export/v1` codec, the `decoy-job-log/v1` header and reader (no filesystem access) |
 | `reason_adapter.py` | `reason_from_exception`, `reasons_from_report`, the per-run failure scope |
 | `generation/` | The generation core (resident and streamed), pinned generation, pools |
 | `generators/` | `ColumnGenerator` (formula and cardinality bounds the V2 core reuses) |

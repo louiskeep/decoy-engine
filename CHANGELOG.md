@@ -9,6 +9,17 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (record library, engine side)
+
+`decoy_engine.records` holds the envelope the CLI's local record library and the platform importer share: `build`,
+`encode` and `decode` for `decoy-record/v1`, one canonical JSON form and content-addressed ids, a kind registry
+(`evidence`, `run-result`, `sample-run/v1`, and `scan-set`, `publication`, `checkpoint` reserved), the
+`decoy-library-export/v1` codec and the `decoy-job-log/v1` header and reader. A record of an unknown kind or a later
+major decodes to an opaque record or `RecordNeedsNewer` instead of an error. Seven reasons join the registry at
+1.10.0: `runtime.record_invalid`, `runtime.record_corrupt`, `runtime.record_kind_reserved`,
+`warning.library_write_failed`, `warning.job_log_write_failed`, `warning.library_degraded` and
+`warning.library_delete_skipped`.
+
 ### Added (init wizard E3: keyed columns of a config, 2026-11-08)
 
 `decoy_engine` and `decoy_engine.secret_providers` export `keyed_columns_for_config` and

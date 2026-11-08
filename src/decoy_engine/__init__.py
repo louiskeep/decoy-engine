@@ -247,6 +247,13 @@ from decoy_engine.providers_v2.identifiers import (
 )
 from decoy_engine.reason_adapter import reason_from_exception, reasons_from_report
 from decoy_engine.reasons import ReasonContext, ReasonRecord
+from decoy_engine.records import (
+    DecodedRecord,
+    OpaqueRecord,
+    RecordEnvelope,
+    RecordError,
+    RecordNeedsNewer,
+)
 from decoy_engine.relationships import (
     NamespaceBinding,
     NamespaceConfigError,
@@ -375,6 +382,7 @@ __all__ = [
     "ConnectorConfig",
     "ConnectorError",
     "CsvDialect",
+    "DecodedRecord",
     "DecoyError",
     "DetectorMatch",
     "DeterminismError",
@@ -414,6 +422,7 @@ __all__ = [
     "NamespaceRegistry",
     "NativeCompanionStatus",
     "NullCount",
+    "OpaqueRecord",
     "OrphanPolicy",
     "PandasExecutionAdapter",
     "PermanentError",
@@ -438,6 +447,9 @@ __all__ = [
     "RateSample",
     "ReasonContext",
     "ReasonRecord",
+    "RecordEnvelope",
+    "RecordError",
+    "RecordNeedsNewer",
     "RelationshipEdge",
     "RelationshipGraph",
     "ReleasePhase",
