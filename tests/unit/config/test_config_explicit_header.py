@@ -17,7 +17,7 @@ from pydantic import ValidationError
 from decoy_engine import reasons
 from decoy_engine.config import PipelineConfig
 from decoy_engine.config._csv_dialect import csv_dialect_problem
-from decoy_engine.config._sources import FileSource
+from decoy_engine.config._sources import FILE_SOURCE_PATH_FIELDS, FileSource
 from decoy_engine.errors import ConfigError
 from decoy_engine.profile import _csv_reader
 from decoy_engine.profile._csv_reader import resolve_csv_dialect
@@ -200,3 +200,8 @@ def test_old_dump_fails_with_fix_line(tmp_path: Path) -> None:
     frame = build_profile_source(fixed).to_frame()
     expected = pd.DataFrame({"id": [1, 2], "name": ["Ada", "Grace"]})
     pd.testing.assert_frame_equal(frame.reset_index(drop=True), expected, check_dtype=False)
+
+
+def test_file_source_path_fields_name_every_path_marked_field() -> None:
+    # The CLI and platform resolve and contain relative paths by this tuple.
+    assert FILE_SOURCE_PATH_FIELDS == ("path", "column_names_file")

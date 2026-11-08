@@ -349,6 +349,8 @@ def _base_config(
     source_entry: dict[str, Any] = {"type": "file", "format": source_format, "path": source_path}
     if source_format == "fixed_width":
         source_entry["layout"] = {"columns": layout_columns}
+    if source_format == "csv":
+        source_entry["has_header"] = True
     return {
         "version": 2,
         "global_settings": {"seed": seed},
