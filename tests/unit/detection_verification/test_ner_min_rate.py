@@ -75,13 +75,13 @@ def test_ner_min_rate_is_the_calibrated_threshold() -> None:
                 }
             )
     highest_rate = max(row["rate"] for row in table)
-    highest_bound = max(row["upper_95"] for row in table)
-    threshold = max(2 * highest_rate, highest_bound, 0.01)
+    highest_upper_95 = max(row["upper_95"] for row in table)
+    threshold = max(2 * highest_rate, highest_upper_95, 0.01)
     expected = ceil_to_thousandth(threshold)
     evidence = {
         "rows": table,
         "2x_highest_rate": 2 * highest_rate,
-        "highest_upper_95": highest_bound,
+        "highest_upper_95": highest_upper_95,
         "threshold": threshold,
         "NER_MIN_RATE": expected,
     }
