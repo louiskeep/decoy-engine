@@ -151,6 +151,13 @@ def _conforms(value: Any, hint: Any) -> bool:
         return value is None
     if isinstance(value, bool):
         return hint is bool  # a bool is not a count or a score
+    if hint is float:
+        # The profiler writes finite floats here; an integer or a NaN came from another writer and may be a cell.
+        return (
+            isinstance(value, numbers.Real)
+            and not isinstance(value, numbers.Integral)
+            and math.isfinite(value)
+        )
     # numbers ABCs, so a NumPy count or score from the profiler still conforms.
     return isinstance(value, _SCALARS.get(hint, ()))
 

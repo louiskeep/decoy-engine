@@ -343,6 +343,74 @@ def test_an_ill_typed_value_free_slot_is_replaced(slot: tuple[str, str]) -> None
     assert canary not in json.dumps(redact_profile_dict(doc))
 
 
+def _float_slots() -> list[tuple[str, str]]:
+    classes = {cls.__name__: cls for cls in profile_types().values()}
+    out = []
+    for type_name, key in sorted(VALUE_FREE_FIELDS):
+        hint = get_type_hints(classes[type_name])[key]
+        takes_floats = _conforms(0.5, hint) or _conforms([0.5], hint)
+        if takes_floats and not (_conforms("s", hint) or _conforms(["s"], hint)):
+            out.append((type_name, key))
+    return out
+
+
+@pytest.mark.parametrize("number", [31337, float("nan"), float("inf")], ids=repr)
+@pytest.mark.parametrize("slot", _float_slots(), ids="/".join)
+def test_a_number_the_profiler_never_writes_in_a_float_slot_is_replaced(
+    slot: tuple[str, str], number: float
+) -> None:
+    # 31337 could be an id or a balance; a float slot only ever receives finite floats from the profiler.
+    type_name, key = slot
+    doc = _every_owner()
+    owner: Any = doc
+    for step in _OWNER_PATHS[type_name]:
+        owner = owner[step]
+    owner[key] = [number] if isinstance(owner.get(key), list) else number
+    out: Any = redact_profile_dict(doc)
+    for step in _OWNER_PATHS[type_name]:
+        out = out[step]
+    assert out[key] == REDACTED
+
+
+def _real_frames() -> list[pd.DataFrame]:
+    n = 24
+    return [
+        _frame(),
+        pd.DataFrame(
+            {
+                "email": [f"user{i}@example.com" for i in range(n)],
+                "account": list(range(100_000, 100_000 + n)),
+                "score": [i / 7 if i % 5 else None for i in range(n)],
+                "blank": [None] * n,
+                "mixed": [i if i % 2 else f"x{i}" for i in range(n)],
+                "when": pd.date_range("1991-06-01", periods=n, freq="D"),
+            }
+        ),
+    ]
+
+
+@pytest.mark.parametrize("index", range(2))
+def test_a_real_profile_loses_only_value_slots(index: int) -> None:
+    # Guards the float rule above against redacting what the profiler itself writes.
+    value_keys = {key for _, key in VALUE_FIELDS}
+    doc = profile_document(profile_columns(_real_frames()[index], "real.csv"))
+    assert doc["redacted_columns"]
+    stack: list[Any] = [doc]
+    while stack:
+        node = stack.pop()
+        items = (
+            node.items()
+            if isinstance(node, dict)
+            else enumerate(node)
+            if isinstance(node, list)
+            else ()
+        )
+        for key, child in items:
+            if child == REDACTED or (isinstance(child, list) and REDACTED in child):
+                assert key in value_keys or isinstance(key, int), key
+            stack.append(child)
+
+
 def test_a_well_typed_sensitive_column_keeps_its_value_free_slots() -> None:
     out = redact_profile_dict(_every_owner())["fields"][0]
     assert out["pii_score"] == 1.0 and out["is_likely_unique"] is True
