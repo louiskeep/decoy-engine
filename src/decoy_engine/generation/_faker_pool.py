@@ -20,7 +20,7 @@ finding R2).
 
 Determinism (Codex round-2/3 spec B): both the pool build and the selection
 draw are keyed off the SAME per-column ``GenDeriveContext`` root
-(``strategy_config_fingerprint``-derived, so rename-invariant per R3.10) via
+(``strategy_config_fingerprint``-derived, so identity-scoped per column) via
 two disjoint HMAC label domains, ``"faker_pool_build"`` and
 ``"faker_pool_selection"``. Build seeds a FRESH ``make_faker(locale)``
 instance once (mirrors ``providers_v2/_faker_adapter.py:224``); selection

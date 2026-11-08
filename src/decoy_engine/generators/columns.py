@@ -11,7 +11,7 @@ from faker import Faker
 
 from decoy_engine.generators._distribution import _DistributionMixin
 from decoy_engine.generators._formula import _FormulaMixin
-from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.generators.derivation import GenDeriveContext, with_table
 from decoy_engine.internal.faker_setup import (
     get_faker_providers,
     make_faker,
@@ -131,7 +131,7 @@ class ColumnGenerator(_DistributionMixin, _FormulaMixin):
         """Per-column generation derivation context (v6, F2/F3).
 
         The full-width replacement for `_column_seed`: same R3.10 keying
-        rules (fingerprint-scoped, rename-stable, fresh + legacy paths),
+        rules (fingerprint plus table and column identity, fresh path),
         but exposes per-family (`base_int`) and per-row (`row_int`)
         derivations that consume all 32 bytes instead of the legacy
         4-byte int. Base-only consumers call `base_int(family)`; per-row
@@ -165,6 +165,7 @@ class ColumnGenerator(_DistributionMixin, _FormulaMixin):
         Returns:
             pandas.Series with generated data
         """
+        column_config = with_table(column_config, table_name)
         column_name = column_config.get("name", "unnamed_column")
         data_type = column_config.get("type", "faker")
         null_probability = column_config.get("null_probability", 0.0)

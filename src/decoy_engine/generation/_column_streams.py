@@ -31,7 +31,7 @@ import pandas as pd
 
 from decoy_engine.generation import _faker_pool
 from decoy_engine.generation._bounds import faker_pool_bytes
-from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.generators.derivation import GenDeriveContext, with_table
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 
 if TYPE_CHECKING:
@@ -258,6 +258,7 @@ def make_column_stream(
     faker_payload: int | None,
 ) -> ColumnStream:
     """Build one column's stream. Reservations taken here live until `stage` closes."""
+    col = with_table(col, table)
     ctx = GenDeriveContext.for_column(derive_key=derive_key, column_config=col, fallback_seed=seed)
     kind = col.get("type")
     inner: ColumnStream

@@ -17,6 +17,7 @@ from simpleeval import FunctionNotDefined, NameNotDefined
 
 from decoy_engine.expressions import BASE_GLOBALS, safe_eval
 from decoy_engine.generation._dob_anchor import anchored_date_of_birth
+from decoy_engine.generators.derivation import TABLE_KEY
 from decoy_engine.internal.crypto import hmac_hex
 
 
@@ -125,6 +126,7 @@ class _FormulaMixin:
         formula: str,
         references: list[str],
         out: pd.DataFrame,
+        table_name: str = "",
     ) -> pd.Series:
         """Evaluate a formula column whose expression reads sibling columns.
 
@@ -143,7 +145,7 @@ class _FormulaMixin:
             )
             return pd.Series([None] * len(out), dtype=object)
 
-        gen_ctx = self._column_ctx(col_name)
+        gen_ctx = self._column_ctx(col_name, {TABLE_KEY: table_name})
         values: list = []
         # Track null sibling cells coerced to '' so the substitution is
         # diagnosable: a null in a referenced column silently blanks the formula

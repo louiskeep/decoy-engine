@@ -456,12 +456,12 @@ def test_ordinary_generation_is_untouched_by_pinned_mode(snap: str) -> None:
 
 
 GOLDEN_ORDINARY_NULL_STATISTICAL = (
-    "7c609d6c04f896bde2c5073cf0bf0b2ca9dbc4c9fd5de71778285b32438e2082"
+    "0cac2778439c4d77a0e333d399bfdff53f3c88bd289762015ab06595e664f048"
 )
 
 
 def test_ordinary_statistical_null_injection_matches_origin_main_golden() -> None:
-    """Digest captured from clean origin/main (b63be004); guards the ordinary null-seed path."""
+    """Digest of the ordinary null-seed path; re-pinned when column identity joined the seed."""
     from tests.unit._dps_helpers import compile_and_generate
 
     snap_path = Path(__file__).resolve().parents[2] / "fixtures/phase_f_f0/stat_snapshot.json"
