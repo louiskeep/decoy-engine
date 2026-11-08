@@ -9,6 +9,15 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (row directories use the protected allocator)
+
+The out-of-core spill root and its subdirectories, the isolated-run work root, and the Postgres
+snapshot spill directory now come from `protected_scratch_dir` / `open_protected_dir`. A
+caller-named `temp_dir`, `staging_dir` or spill directory that already exists must be a real
+directory you own with no group or other access: an empty open one is tightened to 0700, one that
+holds files, a symlink or a foreign-owned one is refused with `runtime.scratch_unsafe`. A caller-named
+`staging_dir` is created with `open_protected_dir(create=True)`, so its parent must exist.
+
 ### Added (init wizard E3: keyed columns of a config, 2026-11-08)
 
 `decoy_engine` and `decoy_engine.secret_providers` export `keyed_columns_for_config` and
