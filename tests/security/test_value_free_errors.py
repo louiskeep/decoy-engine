@@ -28,7 +28,7 @@ from decoy_engine.generation.pool._errors import GenerationError
 from decoy_engine.subset._errors import SubsetConfigError
 from decoy_engine.subset._keys import RI
 from decoy_engine.subset._seed import select_seed_rows
-from decoy_engine.subset._types import SeedSpec
+from decoy_engine.subset._types import Predicate, SeedSpec
 from tests.fileaccess.support import RootRelative
 from tests.fileaccess.x_support import rendered
 
@@ -331,6 +331,30 @@ def test_subset_explicit_key_mismatch_is_value_free(
         f"do not convert exactly to the column's {label} type"
     )
     assert_value_free(exc)
+
+
+@pytest.mark.parametrize(
+    ("op", "value"),
+    [
+        ("eq", SSN),
+        ("eq", EMAIL),
+        ("gt", LONG),
+        ("eq", NAIVE),
+        ("in", (1, SSN)),
+        ("in", (NAIVE,)),
+    ],
+    ids=["eq-ssn", "eq-email", "gt-long", "eq-datetime", "in-ssn", "in-datetime"],
+)
+def test_subset_filter_literal_mismatch_is_value_free(op: str, value: Any) -> None:
+    # The literal check catches the conversion error; the refusal must not chain it, since
+    # polars and TypeError text quote the literal.
+    spec = SeedSpec(
+        table="t", mode="filter", predicates=(Predicate(column="id", op=op, value=value),)
+    )
+    with pytest.raises(SubsetConfigError) as info:
+        select_seed_rows(seeds=(spec,), key_frames={"t": _kf(INT_KEY)}, job_seed=JOB_SEED)
+    assert info.value.code == "subset_seed_key_type"
+    assert_value_free(info.value)
 
 
 @pytest.mark.parametrize(

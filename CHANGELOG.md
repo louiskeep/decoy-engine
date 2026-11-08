@@ -40,8 +40,9 @@ failure class and no cause or context chain:
   statement DuckDB cannot parse used to raise a raw `ParserException` from the statement-kind check;
   it is now `DiscoverySqlError(SQL_NOT_EXECUTABLE)`. Memory and policy failures under a strict policy
   still keep their class.
-- `select_seed_rows` (`SubsetConfigError`): `subset_seed_key_type` names the table and key columns
-  instead of quoting Polars' text with the mismatched keys. `subset_seed_key_uncanonicalizable` names
+- `select_seed_rows` (`SubsetConfigError`): `subset_seed_key_type` names the table, the key column
+  and its type instead of quoting Polars' text with the mismatched keys, and neither an explicit-key
+  nor a filter-literal refusal chains the conversion error as its cause or context. `subset_seed_key_uncanonicalizable` names
   the key column and a reason chosen by reason code (float, timezone-naive datetime).
 - `_canonicalize_source` (`GenerationError`, `float_canonicalization_unsupported`,
   `timezone_naive_datetime`) no longer formats the value with `!r`.
