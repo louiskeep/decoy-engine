@@ -19,7 +19,7 @@ so a headerless or non-comma delimited file can be declared. The fields
 are csv-only; setting any on a parquet/fixed_width source is a validation
 error.
 
-CONFIG-EXPLICIT E1 (pre-GA correction, registry 1.8.0): a csv source must
+CONFIG-EXPLICIT E1 (pre-GA correction): a csv source must
 set `has_header`; the old silent default of `true` is gone. A headerless
 file names its columns inline (`column_names`) or in a one-record header
 file (`column_names_file`). The coded checks raise `PydanticCustomError`
