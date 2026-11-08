@@ -71,7 +71,7 @@ _FREETEXT_NAME_TOKENS: tuple[str, ...] = (
 )
 
 _FREETEXT_NAME_PATTERN = re.compile(
-    r"(?i)^(?:.*[._-])?(" + "|".join(re.escape(t) for t in _FREETEXT_NAME_TOKENS) + r")$"
+    r"(?i)^(?:.*[._-])?(" + "|".join(re.escape(t) for t in _FREETEXT_NAME_TOKENS) + r")\Z"
 )
 
 

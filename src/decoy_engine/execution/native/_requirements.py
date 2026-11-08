@@ -85,7 +85,7 @@ _DTYPE_TO_ARROW: dict[str, pa.DataType] = {
 # canonical_dtype_label (internal.pandas_compat) always normalizes a tz-aware
 # datetime column to "datetime64[ns, <tz>]" regardless of source resolution,
 # so this is the one pattern needed to recover the zone for pa.timestamp.
-_TZ_DATETIME_LABEL = re.compile(r"^datetime64\[ns, (?P<tz>.+)\]$")
+_TZ_DATETIME_LABEL = re.compile(r"^datetime64\[ns, (?P<tz>.+)\]\Z")
 
 # The native-hash kernel's admitted input set (decoy-engine-native/src/
 # canonicalize.rs::is_admitted_type), mirrored exactly: a value the compiled

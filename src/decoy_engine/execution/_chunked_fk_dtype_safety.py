@@ -77,7 +77,7 @@ _DECLARED_SIMPLE_SAFE_ALIASES: dict[str, pa.DataType] = {
 # through verbatim, case preserved (`re.IGNORECASE` only affects the literal
 # keywords "timestamp"/"tz", not group contents).
 _TIMESTAMP_DECLARED_RE = re.compile(
-    r"^timestamp\[(?P<unit>s|ms|us|ns)(?:,\s*tz=(?P<tz>.+))?\]$", re.IGNORECASE
+    r"^timestamp\[(?P<unit>s|ms|us|ns)(?:,\s*tz=(?P<tz>.+))?\]\Z", re.IGNORECASE
 )
 
 # PyArrow's own `str()` form with an explicit width: "decimal128(P, S)" (also
@@ -85,7 +85,7 @@ _TIMESTAMP_DECLARED_RE = re.compile(
 # rejected regardless of scale (via the shared real-type predicate below),
 # rather than silently constructing a 128-bit type for a 256-bit declaration.
 _DECIMAL_WITH_WIDTH_DECLARED_RE = re.compile(
-    r"^decimal(32|64|128|256)\(\s*(\d+)\s*,\s*(-?\d+)\s*\)$", re.IGNORECASE
+    r"^decimal(32|64|128|256)\(\s*(\d+)\s*,\s*(-?\d+)\s*\)\Z", re.IGNORECASE
 )
 
 # SQL-style, no width: "decimal(P, S)" / "numeric(P, S)". Ambiguous between a
@@ -94,7 +94,7 @@ _DECIMAL_WITH_WIDTH_DECLARED_RE = re.compile(
 # > 38, which would need decimal256 -- itself excluded from the safe set
 # regardless of scale, so falling back to it would never help).
 _DECIMAL_BARE_WIDTH_DECLARED_RE = re.compile(
-    r"^(?:decimal|numeric)\(\s*(\d+)\s*,\s*(-?\d+)\s*\)$", re.IGNORECASE
+    r"^(?:decimal|numeric)\(\s*(\d+)\s*,\s*(-?\d+)\s*\)\Z", re.IGNORECASE
 )
 
 

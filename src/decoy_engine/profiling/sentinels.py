@@ -84,7 +84,7 @@ _REASONABLE_DOB_LOWER = date(1880, 1, 1)
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-_ISO_DATE_RE = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T].*)?$")
+_ISO_DATE_RE = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T].*)?\Z")
 
 
 def _to_date(v: Any) -> date | None:

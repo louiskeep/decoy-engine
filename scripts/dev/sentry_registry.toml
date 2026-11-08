@@ -87,3 +87,7 @@ baseline = "tests/sentry/baselines/reason-policy-single-source.json"
 [[sentry]]
 id = "reason-unchecked-helpers"
 baseline = "tests/sentry/baselines/reason-unchecked-helpers.json"
+
+[[sentry]]
+id = "exception-context"
+baseline = "tests/sentry/baselines/exception-context.json"

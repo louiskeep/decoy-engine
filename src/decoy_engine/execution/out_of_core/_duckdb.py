@@ -19,7 +19,7 @@ from decoy_engine.execution.out_of_core._scratch import private_dir
 # COPY options for a scratch Parquet file `precreate_private` made 0600: DuckDB writes that file
 # in place instead of a sibling temp file renamed over it with an umask-derived mode.
 PRIVATE_COPY = "FORMAT PARQUET, USE_TMP_FILE false"
-_MEMORY_LIMIT_MB_PATTERN = re.compile(r"^(\d+)MB$")
+_MEMORY_LIMIT_MB_PATTERN = re.compile(r"^(\d+)MB\Z")
 
 # Per-thread working-set estimate DuckDB's own threads config is sized
 # against: each thread holds its own scan/build buffers on top of the shared

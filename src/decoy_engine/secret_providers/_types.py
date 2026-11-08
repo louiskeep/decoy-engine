@@ -40,8 +40,8 @@ ENCODINGS = ("base64", "hex", "raw")
 _PROCESS_SALT = os.urandom(32)
 
 _SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]*):")
-_VERSION_RE = re.compile(r"^[1-9][0-9]{0,9}$")
-_LOGICAL_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,63}$")
+_VERSION_RE = re.compile(r"^[1-9][0-9]{0,9}\Z")
+_LOGICAL_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,63}\Z")
 # RFC 3986 §2.1: "%" only ever starts a two-hex-digit escape. Python's ``unquote`` passes a
 # malformed one through unchanged; the Vault grammar rejects it instead.
 _MALFORMED_ESCAPE_RE = re.compile(r"%(?![0-9A-Fa-f]{2})")
