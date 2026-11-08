@@ -511,6 +511,29 @@ charset), but a custom-charset or mixed-low-alphabet column would fall in this g
 Mitigation: cover the column's full alphabet with the charset (e.g. `ALPHANUM`), the
 same fix as the orphan-remap case above.
 
+## The copula quality report releases statistics of the real table
+
+`compute_copula_quality_report` (V2-4.4, library only) publishes, next to a synthetic table the
+reader holds, numbers computed from the real table. Each pair score gives the real Spearman
+coefficient up to its sign at 3 decimals; each contingency score is one total-variation number over
+the recoded real joint table; distance-to-closest-record percentiles are distances between
+specific rows. They are gated by the copula's heuristic disclosure floors (at least 50 shared rows,
+11 rows outside the largest group, states of fewer than 11 rows merged, percentiles only with 11
+rows beyond them, pair scores charged to the model's release budget), not by a formal bound:
+
+- An attacker who knows every other row can still learn about the rest. Reports on neighbouring
+  tables can be differenced: one row moves a Spearman coefficient by about `1/n`, far above the
+  0.001 resolution below about 1,000 rows. A library call cannot count releases across calls.
+- With the margins in the model, a contingency score over two large binary states fixes their
+  joint count, the same release class as the model's own latent correlation.
+- Results from an attack extras module are kept only as booleans and numbers in `[0, 1]`, but a
+  number in that range can still be a raw proportion of the real data; the filter cannot tell,
+  and the caller chooses the module.
+- The report's DCR is not `synth-report/v1`'s: the same data gives different numbers when numeric
+  columns hold nulls or are constant.
+
+The report is not differentially private.
+
 ## What it does do
 
 To be clear about the other side: Decoy does give you deterministic,

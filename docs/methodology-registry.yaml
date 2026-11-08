@@ -220,6 +220,14 @@ modules:
     pattern: Gaussian copula with rank-based normal scores
     source: Nelsen (2006); Patki et al., IEEE DSAA 2016 (SDV, method only, BSL); Genest, Ghoudi, Rivest (1995)
 
+  - path: src/decoy_engine/generation/copula/_quality_pairwise.py
+    pattern: SDMetrics column-pair similarity
+    source: SDMetrics CorrelationSimilarity and ContingencySimilarity (sdv-dev, method only, BSL); Hundepool et al., Statistical Disclosure Control (2012) global recoding
+
+  - path: src/decoy_engine/generation/copula/_quality_dcr.py
+    pattern: SDMetrics DCR
+    source: SDMetrics calculate_dcr and DCROverfittingProtection (sdv-dev, method only, BSL); Gower (1971); Park et al., PVLDB 11(10) (2018)
+
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
   # RiskFlag) was deleted under the pre-scan-reframe-C clean break

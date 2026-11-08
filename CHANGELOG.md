@@ -13,6 +13,23 @@ minimum engine version it was tested against via its
 
 - `run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked`, `run_native_or_oracle_chunked` and `compile_plan` now refuse a config with `subset:` set (`config.subset_run_unsupported`, registry 1.6.0) instead of masking the full sources; run `run_subset` first.
 
+### Added (V2-4.4: quality report for Gaussian copula output, library only, 2026-11-08)
+
+V2 track (CLI repo `louiskeep/decoy`, `docs/roadmap/v2-sprints.md`, sprint V2-4), opt-in by import
+only; not merged per owner instruction, and mergeable only after the V2-4.2/4.3 copula entry above.
+`decoy_engine.generation.copula.compute_copula_quality_report(real, synthetic, model, *,
+holdout=None, dcr_max_rows=5000, attack_extras=None)` returns a frozen, value-free
+`CopulaQualityReport` (`decoy-copula-quality-report/v1`): per-column goodness of fit (the
+snapshot-only `ks_complement` / `chi_cramers_v` of `compute_fidelity`), Spearman correlation
+similarity and contingency similarity per column pair (SDMetrics definitions, method only), a
+chunked Gower distance to closest record with a real-to-real baseline and an optional holdout
+comparison, and the existing new-row and attack checks bundled as `synth-report/v1`. Every
+statistic of the real table passes the copula's disclosure floors first: pair scores are withheld
+for variables the model suppressed, for pairs whose rows fail the floors, for high-cardinality
+columns and over the release budget; contingency states under 11 rows are merged; DCR percentiles
+need 11 rows beyond them. `real` must reproduce the model's marginals. No change to any `quality`
+module, no new dependency, no reason codes.
+
 ### Added (V2-4.2 and V2-4.3: Gaussian copula synthesis, library only, 2026-11-07)
 
 V2 track, library-only, not wired into config; not merged per owner instruction. New package
