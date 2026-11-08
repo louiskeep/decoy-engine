@@ -22,6 +22,10 @@ from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 
+# Derivation namespace of the unkeyed mode. A user namespace never collides with it in
+# practice because the source also carries a NUL between table and column.
+UNKEYED_SHUFFLE_NAMESPACE = "decoy.shuffle.unkeyed/v1"
+
 
 class ShuffleStrategyHandler:
     """Permute the non-null values of a column (multiset + nulls preserved)."""
@@ -53,12 +57,15 @@ class ShuffleStrategyHandler:
                     strategy="shuffle",
                     message=f"column {column!r} uses deterministic shuffle but has no namespace.",
                 )
-            seed_int = int.from_bytes(
-                derive(ctx.mask_key, plan.namespace, column.encode("utf-8"))[:8], "big"
-            )
-            rng = np.random.default_rng(seed_int)
+            namespace, draw_source = plan.namespace, column
         else:
-            rng = np.random.default_rng()
+            # The table is bound in so same-named, same-length columns of two tables never
+            # permute in lockstep.
+            namespace, draw_source = UNKEYED_SHUFFLE_NAMESPACE, f"{ctx.current_table}\x00{column}"
+        seed_int = int.from_bytes(
+            derive(ctx.mask_key, namespace, draw_source.encode("utf-8"))[:8], "big"
+        )
+        rng = np.random.default_rng(seed_int)
 
         permuted = non_na_values[rng.permutation(len(non_na_values))]
         out: list[object] = [None] * len(source)

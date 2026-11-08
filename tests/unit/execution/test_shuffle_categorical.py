@@ -65,6 +65,7 @@ class _Ctx:
 
     job_seed = _SEED
     mask_key = THROWAWAY_KEY_PROVIDER.mask_key()
+    current_table = "t"
 
 
 def _direct_seed() -> ColumnSeed:
@@ -106,7 +107,7 @@ class TestShuffle:
         assert exc.value.strategy == "shuffle"
 
     def test_non_deterministic_shuffle_runs_and_preserves_multiset(self) -> None:
-        # The unseeded rng branch (deterministic=False) is a distinct code path;
+        # The unkeyed branch (deterministic=False) is a distinct code path;
         # a mutant that nulls that rng would crash here. No namespace needed.
         src = pa.table({"c": ["a", "b", "c", "d", "e", None]})
         out = (
@@ -116,6 +117,22 @@ class TestShuffle:
         )
         assert out[5] is None
         assert Counter(v for v in out if v is not None) == Counter(["a", "b", "c", "d", "e"])
+
+    def test_unkeyed_shuffle_repeats_and_binds_the_table(self) -> None:
+        # QA row 24d: the unkeyed mode is drawn from the mask key, so two calls agree; the
+        # table name is in the derivation, so the same column in another table differs.
+        from decoy_engine.execution._strategies._shuffle import ShuffleStrategyHandler
+
+        src = pd.DataFrame({"c": [f"v{i}" for i in range(40)]})
+        seed = _col("shuffle", deterministic=False)
+        first, _ = ShuffleStrategyHandler().run(src.copy(), "c", seed, _Ctx())  # type: ignore[arg-type]
+        again, _ = ShuffleStrategyHandler().run(src.copy(), "c", seed, _Ctx())  # type: ignore[arg-type]
+        other_ctx = _Ctx()
+        other_ctx.current_table = "u"
+        other, _ = ShuffleStrategyHandler().run(src.copy(), "c", seed, other_ctx)  # type: ignore[arg-type]
+        assert first["c"].tolist() == again["c"].tolist()
+        assert first["c"].tolist() != other["c"].tolist()
+        assert first["c"].tolist() != src["c"].tolist()
 
     def test_deterministic_permutation_is_the_pinned_known_answer(self) -> None:
         # Pins the exact derive-seeded permutation, so a mutated seed slice

@@ -17,6 +17,13 @@ caller-named `temp_dir`, `staging_dir` or spill directory that already exists mu
 directory you own with no group or other access: an empty open one is tightened to 0700, one that
 holds files, a symlink or a foreign-owned one is refused with `runtime.scratch_unsafe`. A caller-named
 `staging_dir` is created with `open_protected_dir(create=True)`, so its parent must exist.
+### Fixed (QA row 24d: shuffle determinism, 2026-11-08)
+
+`shuffle` without `deterministic: true` drew from an unseeded generator, so two runs with the
+same config, seed and mask secret gave different output. That mode is the default, so plain
+`strategy: shuffle` (as in the GDPR template) did not repeat. It now draws from the mask key
+with the table and column names bound in, and repeats across processes. Its output changes
+once. The multi-table split no longer holds a table whole because of it.
 
 ### Added (init wizard E3: keyed columns of a config, 2026-11-08)
 
