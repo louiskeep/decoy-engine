@@ -236,6 +236,9 @@ def test_all_lists_every_public_name():
         "SecretProviderRegistry",
         "SecretRef",
         "register_secret_provider",
+        # Init wizard E3 (2026-11-08): keyed columns of a config, beside the secret requirement.
+        "KeyedColumn",
+        "keyed_columns_for_config",
         "SecretKeyProvider",
         "SeedKeyProvider",
         "MaskSecretError",
