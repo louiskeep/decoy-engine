@@ -1956,4 +1956,3 @@ ordinal = 0
 rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one (an issued root runs under every policy)"
 owner = "cam"
 reason = "the allocator removes a directory it issued, or one it created that failed its own check"
-
