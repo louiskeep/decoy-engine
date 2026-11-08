@@ -81,7 +81,13 @@ def _error(cfg: dict[str, Any]) -> PipelineConfigError:
 
 
 def test_producer_rule_text_reaches_the_user_without_the_submitted_delimiter() -> None:
-    src = {"type": "file", "format": "csv", "path": "in.csv", "delimiter": VALUE}
+    src = {
+        "type": "file",
+        "format": "csv",
+        "path": "in.csv",
+        "has_header": True,
+        "delimiter": VALUE,
+    }
     err = _error(_with(sources={"customers_prod": src}))
     assert "`delimiter` must be exactly one character" in str(err)
     assert VALUE not in str(err)
