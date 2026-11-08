@@ -452,9 +452,7 @@ def _table_core(t: TableScan) -> TableCore:
         key_candidates=[core_name[k] for k in t.key_candidates],
         warnings=[WarningRefCore.model_validate(asdict(w)) for w in t.warnings],
         reid_risk_score=_finite(p.reid_risk_score) if p.row_count > 0 else None,
-        quasi_identifier_groups=[
-            [core_name.get(n, n) for n in g] for g in p.quasi_identifier_groups
-        ],
+        quasi_identifier_groups=[[core_name[n] for n in g] for g in p.quasi_identifier_groups],
     )
 
 

@@ -32,8 +32,8 @@ An invalid source descriptor is a `PipelineConfigError`; a failed read is a `Sca
 (`warning.scan_header_suspect`); for a local CSV scanned with `head` or `full` it counts values
 with a leading zero per column. Two new `warning` reasons (`scan_header_suspect`,
 `scan_key_type_mismatch`) and one `runtime` reason (`scan_source_failed`, the fixed identity of
-`ScanSourceError`), registry 1.10.0. `S3Source.endpoint_url` refuses userinfo and a query
-string. `read_csv_source`,
+`ScanSourceError`), registry 1.10.0. `S3Source.endpoint_url` accepts only an http or https URL with a
+host and refuses userinfo, a query, a fragment and their percent-encoded forms. `read_csv_source`,
 `resolve_csv_dialect` and `CsvDialect` are also exported from `decoy_engine.profile`.
 
 ### Added (init wizard E3: keyed columns of a config, 2026-11-08)
