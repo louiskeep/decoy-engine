@@ -32,8 +32,7 @@ from typing import Any, Final, Literal
 import pyarrow as pa
 
 from decoy_engine import fileaccess, reasons
-from decoy_engine.config import PipelineConfigError, RelationshipConfig
-from decoy_engine.config._parse import parse_relationship_config
+from decoy_engine.config import PipelineConfigError, RelationshipConfig, parse_relationship_config
 
 # Small enough that the keys of a large table never sit in memory together.
 MEMORY_LIMIT: Final = "512MB"

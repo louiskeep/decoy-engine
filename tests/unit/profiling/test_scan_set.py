@@ -189,12 +189,15 @@ def test_parquet_never_runs_the_guard(tmp_path: Path, monkeypatch: pytest.Monkey
 
 @pytest.mark.parametrize("strategy", ["head", "full"])
 def test_leading_zero_count_is_a_count_on_text(tmp_path: Path, strategy: str) -> None:
-    src = _csv(tmp_path, "t", f"code,other\n007,{CANARY}\n012,{CANARY}\n5,0.5\n")
+    # The probe value is longer than any digit run in a timestamp or epoch, so it cannot
+    # match the document's own metadata by chance.
+    probe = "0098765432101"
+    src = _csv(tmp_path, "t", f"code,other\n{probe},{CANARY}\n012,{CANARY}\n5,0.5\n")
     scan = scan_sources({"t": src}, strategy=strategy)  # type: ignore[arg-type]
     table = scan.tables[0]
     assert table.leading_zero_counts == {"code": 2, "other": 0}
     assert {f.name: f.inferred_type for f in table.profile.fields}["code"] == "integer"
-    assert "007" not in json.dumps(scan_set_to_dict(scan, detail=False))
+    assert probe not in json.dumps(scan_set_to_dict(scan, detail=False))
 
 
 def test_leading_zero_is_unchecked_for_random(tmp_path: Path) -> None:
