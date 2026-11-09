@@ -87,6 +87,10 @@ for the full model.
 - Non-deterministic `categorical`: seeded by the job seed and the row's position
   in the frame being masked, so the same seed and input give the same output. It
   is keyed by position, not by source value, so it does not preserve joins.
+- Non-deterministic `shuffle` (the default when `deterministic` is not set): the
+  permutation is drawn from the mask key with the job seed and the table and column
+  names bound in, so the same config, seed and secret give the same output. It needs no namespace,
+  and the same column in two tables gets two different permutations.
 - Strategies that are deterministic by construction: `bucketize` (same value,
   same bucket), `redact` and `text_redact` (pure function of input and config),
   `truncate`, `formula` (deterministic by its expression).
@@ -96,8 +100,6 @@ for the full model.
 
 ## What is NOT deterministic
 
-- Non-deterministic `shuffle`. It can run in a non-deterministic mode that draws
-  from an unseeded RNG; two runs differ. This is opt-in and is not the keyed path.
 - Profiling without a seed. `profile_source` falls back to OS entropy for
   reservoir sampling if no seed is passed and none is set in
   `global_settings.seed`; on tables larger than the sample cap this makes the
