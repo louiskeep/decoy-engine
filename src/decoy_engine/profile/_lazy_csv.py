@@ -190,7 +190,8 @@ class CsvLazySource(LazySource):
             row_groups=0,
             max_row_group_rows=0,
         )
-        self._seen.update(facts=facts, identity=before)
+        self._seen["facts"] = facts
+        self._seen["identity"] = before
         return facts
 
     @property
