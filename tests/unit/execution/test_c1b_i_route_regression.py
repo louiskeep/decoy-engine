@@ -149,7 +149,7 @@ class TestMultiTableStaysWhole:
         assert pmt.position_keyed_deferred_nodes(plan) == ()
         assert pmt.unseeded_random_nodes(plan) == ()
 
-    def test_shuffle_is_still_unseeded_and_not_positional_deferred(self) -> None:
+    def test_unkeyed_shuffle_is_neither_unseeded_nor_positional_deferred(self) -> None:
         shuffle = ColumnSeed(
             namespace=None,
             strategy="shuffle",
@@ -162,7 +162,8 @@ class TestMultiTableStaysWhole:
             coherent_with=(),
         )
         plan = _single_table_plan(shuffle)
-        assert pmt.unseeded_random_nodes(plan) == (("t", "c0", "shuffle"),)
+        assert "shuffle" not in pmt.UNSEEDED_RANDOM_STRATEGIES
+        assert pmt.unseeded_random_nodes(plan) == ()
         assert pmt.position_keyed_deferred_nodes(plan) == ()
 
     @pytest.mark.parametrize("kind", ["categorical", "nested"])

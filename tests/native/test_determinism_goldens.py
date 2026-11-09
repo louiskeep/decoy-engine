@@ -30,6 +30,7 @@ The count of routed vectors is asserted so the gate cannot silently shrink.
 
 from __future__ import annotations
 
+import dataclasses
 import random
 from datetime import datetime, timedelta
 
@@ -192,6 +193,23 @@ class TestMaskShuffleGolden:
 
         assert reproduced == shipped
         _record("mask.shuffle")
+
+    def test_provider_reproduces_the_unkeyed_permutation(self) -> None:
+        from decoy_engine.execution._strategies._shuffle import UNKEYED_SHUFFLE_NAMESPACE
+
+        col, values = "email", ["a", "b", "c", "d", "e", "f", "g"]
+        ctx = _Ctx()
+        ctx.current_table = "t"
+        plan = dataclasses.replace(_shuffle_plan("sh"), namespace=None, deterministic=False)
+        out_df, _ = ShuffleStrategyHandler().run(pd.DataFrame({col: values}), col, plan, ctx)
+        perm = provider_for("mask.shuffle").permutation(
+            # job seed hex, then the shared length-prefixed (table, column) draw identity
+            _MASK_KEY,
+            UNKEYED_SHUFFLE_NAMESPACE,
+            f"{_MASK_KEY.hex()}/1:t/5:email",
+            len(values),
+        )
+        assert out_df[col].tolist() == [values[i] for i in perm]
 
 
 class TestMaskHashGolden:

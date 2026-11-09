@@ -173,11 +173,15 @@ def test_the_socket_test_passes_under_xdist_with_a_very_long_basetemp(tmp_path: 
     base.parent.mkdir()
     proc = subprocess.run(  # noqa: S603 -- literals plus this interpreter
         [
-            sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q", "-n", "2",
-            "-o", "addopts=", f"--basetemp={base}", "tests/fileaccess/test_policy_rooted.py",
+            sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-v", "-n", "2",
+            "-o", "addopts=", f"--basetemp={base}",
+            "tests/fileaccess/test_policy_rooted.py", "tests/fileaccess/test_policy_portable.py",
         ],
         cwd=REPO, capture_output=True, text=True, timeout=900, check=False,
     )  # fmt: skip
     out = proc.stdout + proc.stderr
     assert "AF_UNIX path too long" not in out, out[-2000:]
     assert proc.returncode == 0, out[-2000:]
+    for module in ("test_policy_rooted", "test_policy_portable"):
+        needle = f"{module}.py::test_fifo_and_device_are_denied"
+        assert any(needle in ln and "PASSED" in ln for ln in out.splitlines()), out[-2000:]

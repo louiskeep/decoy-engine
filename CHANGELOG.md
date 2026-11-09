@@ -24,6 +24,22 @@ the old seeding. Renaming a column or moving it to another table now changes its
 columns derive their namespace from the same table and column identity, so a column of the same
 name in two tables no longer shares a stream.
 
+### Added (value redaction for saved scan documents, 2026-11-08)
+
+`decoy_engine` and `decoy_engine.profiling` export `profile_document`, `redact_profile_dict` and
+`is_value_sensitive`. `profile_document(profile)` is `ColumnProfile.to_dict()` with the cell values
+of every value-sensitive column removed: `min_value`, `max_value`, `mean_value`, `date_min`,
+`date_max`, `mode_value` and the distribution `min`, `max` and `mean` become `null`,
+`sample_invalid` and detector `sample_misses` become `[]`, and top-value text, distribution labels
+and sentinel value and note text become `"[redacted]"`, so counts, rates and array lengths are kept.
+A column is value-sensitive when any detector fired, its `pii_score` is at least 0.6, or it is
+near-unique; a loaded document with a missing or ill-typed input counts as sensitive. The document
+gains `value_policy` (`flagged-redacted/v1`, or `raw` with `include_values=True`) and
+`redacted_columns`. `redact_profile_dict` applies the same rules to a loaded document and ignores
+any marker it already carries. `to_dict()` is unchanged and still returns the raw form. Every field
+reachable from `ColumnProfile` must be classified in `profiling/_value_redaction.py`; a sentry fails
+on a new unclassified field.
+
 ### Changed (row directories use the protected allocator)
 
 The out-of-core spill root and its subdirectories, the isolated-run work root, and the Postgres
@@ -32,6 +48,36 @@ caller-named `temp_dir`, `staging_dir` or spill directory that already exists mu
 directory you own with no group or other access: an empty open one is tightened to 0700, one that
 holds files, a symlink or a foreign-owned one is refused with `runtime.scratch_unsafe`. A caller-named
 `staging_dir` is created with `open_protected_dir(create=True)`, so its parent must exist.
+### Fixed (QA row 24d: shuffle determinism, 2026-11-08)
+
+`shuffle` without `deterministic: true` drew from an unseeded generator, so two runs with the
+same config, seed and mask secret gave different output. That mode is the default, so plain
+`strategy: shuffle` (as in the GDPR template) did not repeat. It now draws from the mask key
+with the job seed and the table and column names bound in, and repeats across processes. Its
+output changes once. The multi-table split no longer holds a table whole because of it.
+Without a mask secret the mask key is the job seed, so anyone with the config and the output
+can recompute the permutation and undo it, as with every keyed strategy; set a secret
+(required at GA) when that matters.
+
+### Changed (value-free config errors, converter, 2026-11-08)
+
+- `decoy_engine.parse_pipeline_config(raw)` is the one route from a mapping to a `PipelineConfig`.
+  A failure raises `PipelineConfigError` with `problems`, a tuple of `ConfigProblem(code, location,
+  text)`. `location` keeps config keys, source, table and column names and list indexes
+  (`tables[0].name`); `text` comes from a fixed table keyed by Pydantic error type. The submitted
+  value, the discriminator tag echo and a plain `ValueError` message never appear. `validate_config`
+  and `override_sources` use the same route.
+- `PipelineConfigError` no longer sets `__cause__` (its docstring said it did): the Pydantic error
+  holds the submitted values. It gains `problems`; the unused `validation_error=` argument is gone.
+- Validator text is shown only for the new `ConfigRuleError` (name-only or fixed messages). The
+  config rule validators (tables, columns, sources, targets, subset, fixed-width layout,
+  quarantine) now raise it, so `validate_config` names the broken rule again (for example the CSV
+  dialect). The quarantine trigger message no longer echoes the submitted trigger. A registered
+  `PydanticCustomError` code shows the reason's summary.
+- `validate_config` reports a YAML syntax error as `could not parse YAML: invalid syntax at line N,
+  column M` (was `Failed to parse YAML: <PyYAML text>`, which echoed the offending line).
+  `decoy_engine.safe_output.yaml_error_text` holds that text.
+- New public names: `parse_pipeline_config`, `ConfigProblem`, `ConfigRuleError`.
 
 ### Added (init wizard E3: keyed columns of a config, 2026-11-08)
 

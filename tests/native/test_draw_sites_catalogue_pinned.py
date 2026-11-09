@@ -46,7 +46,8 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
         assert protocol.draw_site_by_id(site.draw_site_id) is site
 
 
-_CATALOGUE_DIGEST = "30b73b7cdc6086ce41a65c26d23826af330499941e16cb6e85336a5d84e4a941"
+# Re-pinned at the GEN-C1 main merge: carries both the shuffle and the derive_context re-pins.
+_CATALOGUE_DIGEST = "e4b914b9d75226d927e91b27960370c88fb99b1fe700813a33fdbb0849e3f304"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -86,7 +87,9 @@ _ORDERED_IDS = [
 ]
 
 _ENTRY_DIGESTS = [
-    "92bbc34889a8b120e65c01891948d52d3e61addb16ea16772ca9f945dde21fb5",
+    # mask.shuffle re-pinned 2026-11-08: the unkeyed mode draws from the mask key on the shared
+    # (table, column) draw identity.
+    "84b2887fc0363d71c893d6ad99f3d7026d891ee308091c68405db6dca943afb0",
     "8dce6622cbd27e05cc798e8b209a715c78834c056613f6adefced790bc4dfe9b",
     "33858d620973b39724613d7569dc732db3707e729236eeef8754518c1dfcf87a",
     "8ba3e20fb12b8a29cf52e18ef4d41d6c691bad77c6ac10a4651620d351f2a0c1",
