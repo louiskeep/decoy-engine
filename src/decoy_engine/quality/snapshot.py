@@ -113,17 +113,13 @@ class DistributionSnapshotError(DecoyError):
 # fidelity scoring (which tolerates several percent drift).
 _FLOAT_PRECISION = 12
 
-# Fallback bin count when the caller does not override. 10 matches the
-# profiling/profiler histogram so the snapshot and the existing per-column
-# profile visualization line up at the bin level.
-_DEFAULT_NUMERIC_BINS = 10
+# Fallback bin count; 10 matches the profiling/profiler histogram.
+DEFAULT_NUMERIC_BINS = 10
 
-# Top-K caps. Categorical columns past the cap collapse into "other_count";
-# joint contingency tables past the cap do the same. Keep these modest:
-# the snapshot is for evidence, not for analysis, and the JSON size needs
-# to fit in a job-record column at D2 time.
-_DEFAULT_CATEGORICAL_TOP_K = 20
-_DEFAULT_CONTINGENCY_TOP_K = 25
+# Top-K caps. Categorical columns and joint contingency tables past the cap collapse
+# into "other_count". Kept modest so the JSON fits a job-record column.
+DEFAULT_CATEGORICAL_TOP_K = 20
+DEFAULT_CONTINGENCY_TOP_K = 25
 
 # Cardinality cap that splits "categorical" from "freetext" for object
 # columns. Mirrors profiling/_distributions._PROFILE_CATEGORICAL_DISTINCT_CAP (30)
@@ -144,9 +140,9 @@ def compute_distribution_snapshot(
     df: pd.DataFrame,
     *,
     joint_columns: Sequence[tuple[str, str]] | None = None,
-    numeric_bins: int = _DEFAULT_NUMERIC_BINS,
-    categorical_top_k: int = _DEFAULT_CATEGORICAL_TOP_K,
-    contingency_top_k: int = _DEFAULT_CONTINGENCY_TOP_K,
+    numeric_bins: int = DEFAULT_NUMERIC_BINS,
+    categorical_top_k: int = DEFAULT_CATEGORICAL_TOP_K,
+    contingency_top_k: int = DEFAULT_CONTINGENCY_TOP_K,
     high_cardinality_columns: Collection[str] = (),
 ) -> dict[str, Any]:
     """Compute a deterministic, JSON-serializable distribution snapshot.
@@ -398,18 +394,24 @@ def _high_cardinality_categorical_stats(non_null: pd.Series) -> dict[str, Any]:
     return stats
 
 
+def _numeric_cells(series: pd.Series) -> np.ndarray[Any, np.dtype[np.float64]]:
+    return np.asarray(pd.to_numeric(series, errors="coerce").dropna(), dtype=float)
+
+
+def finite_numeric_cells(series: pd.Series) -> np.ndarray[Any, np.dtype[np.float64]]:
+    """The series' numeric cells as floats with nan and +-inf dropped."""
+    arr = _numeric_cells(series)
+    return np.extract(np.isfinite(arr), arr)
+
+
 def numeric_stats(
     non_null: pd.Series, *, bins: int, domain: tuple[float, float] | None = None
 ) -> dict[str, Any]:
-    arr = pd.to_numeric(non_null, errors="coerce").dropna().to_numpy(dtype=float)
-    # to_numpy + dropna handles object columns of stringified numbers
-    # without surprising the histogram math below.
-    if arr.size == 0:
-        return {}
-    finite = arr[np.isfinite(arr)]
+    finite = finite_numeric_cells(non_null)
     if finite.size == 0:
-        # All values were inf / -inf / nan. Report an empty numeric stat
-        # rather than crashing; JSON cannot encode inf.
+        if _numeric_cells(non_null).size == 0:
+            return {}
+        # Only inf cells: an empty stat, as JSON cannot encode inf.
         return {
             "min": None,
             "max": None,
@@ -420,9 +422,7 @@ def numeric_stats(
             "bin_counts": [],
         }
     mean = float(finite.mean())
-    # std with ddof=0 matches pandas describe()'s "population" semantics
-    # only when explicitly requested; we use ddof=1 to align with
-    # pandas defaults and profiling/profiler precedent.
+    # ddof=1 matches the pandas default and the profiling/profiler precedent.
     std = float(finite.std(ddof=1)) if finite.size > 1 else 0.0
 
     quantiles_idx = [0.05, 0.25, 0.50, 0.75, 0.95]

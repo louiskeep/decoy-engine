@@ -10,7 +10,8 @@ Numeric columns are released as one coarse interval (statistical disclosure cont
 recoding, Hundepool et al., Statistical Disclosure Control, Wiley 2012, sections 3.4.2 to
 3.4.3; R sdcMicro `globalRecode`). The bounds sit on a power-of-ten grid one step above the
 column's range and strictly outside every cell, so they say the range's order of magnitude and
-nothing else; there is no interior edge because any edge can equal a real cell. Datetimes keep
+nothing else; there is no interior edge because any edge can equal a real cell. Near float max
+the grid cannot be written, so the bounds are the fixed (-1.5, 1.5). Datetimes keep
 their per-year counts and are bounded by the years around them (HIPAA Safe Harbor,
 45 CFR 164.514(b)(2)(i)(C)). Pretty-number axis bounds follow Heckbert, "Nice numbers for graph
 labels" (Graphics Gems, 1990), in the powers-of-ten form.
@@ -37,16 +38,18 @@ from decoy_engine.profiling._value_redaction import (
 )
 from decoy_engine.profiling.profiler import profile_columns
 from decoy_engine.quality.snapshot import (
-    _DEFAULT_CATEGORICAL_TOP_K,
-    _DEFAULT_CONTINGENCY_TOP_K,
-    _DEFAULT_NUMERIC_BINS,
+    DEFAULT_CATEGORICAL_TOP_K,
+    DEFAULT_CONTINGENCY_TOP_K,
+    DEFAULT_NUMERIC_BINS,
     compute_distribution_snapshot,
+    finite_numeric_cells,
     numeric_stats,
 )
 
 # The snapshot writes 12 decimal places, so a finer grid step could not be written.
 _FLOOR: Final = Decimal(1).scaleb(-12)
 _PRECISION: Final = 80
+_FALLBACK_DOMAIN: Final = (-1.5, 1.5)
 
 
 def _grid_edges(lo: float, hi: float) -> tuple[Decimal, Decimal]:
@@ -71,22 +74,11 @@ def _grid_edges(lo: float, hi: float) -> tuple[Decimal, Decimal]:
     return lower, upper
 
 
-def _fallback_edge(cells: np.ndarray) -> float:
-    """First half-integer B in 1.5 .. N+1.5 with neither -B nor B equal to a cell.
-
-    N cells cannot cover N+1 absolute candidates, so one exists, and it is a function of the
-    count and which candidates the data touches, not of any other cell.
-    """
-    n = cells.size
-    offsets = np.abs(cells) - 1.5
-    hit = (offsets >= 0) & (offsets <= n) & (offsets == np.floor(offsets))
-    taken = set(offsets[hit].astype(np.int64).tolist())
-    k = next(i for i in range(n + 1) if i not in taken)
-    return k + 1.5
-
-
 def _coarse_domain(lo: float, hi: float, cells: np.ndarray) -> tuple[float, float]:
-    """The one-bin domain for a numeric column: grid bounds, or the finite fallback near float max."""
+    """The one-bin domain for a numeric column: grid bounds, or a fixed domain near float max.
+
+    The fallback never reads the data, so it reveals nothing even when it equals a cell.
+    """
     lower, upper = _grid_edges(lo, hi)
     try:
         flo, fhi = float(lower), float(upper)
@@ -94,19 +86,13 @@ def _coarse_domain(lo: float, hi: float, cells: np.ndarray) -> tuple[float, floa
         flo, fhi = math.inf, math.inf
     if math.isfinite(flo) and math.isfinite(fhi) and flo < cells.min() and fhi > cells.max():
         return flo, fhi
-    edge = _fallback_edge(cells)
-    return -edge, edge
-
-
-def _finite_cells(non_null: pd.Series) -> np.ndarray:
-    arr = pd.to_numeric(non_null, errors="coerce").dropna().to_numpy(dtype=float)
-    return arr[np.isfinite(arr)]
+    return _FALLBACK_DOMAIN
 
 
 def _coarse_range(non_null: pd.Series, stats: dict[str, Any], keys: Collection[str]) -> None:
     if stats.get("min") is None:
         return  # no finite cell, so nothing here is a value
-    cells = _finite_cells(non_null)
+    cells = finite_numeric_cells(non_null)
     domain = _coarse_domain(stats["min"], stats["max"], cells)
     coarse = numeric_stats(non_null, bins=1, domain=domain)
     for key in keys:
@@ -160,9 +146,9 @@ def distribution_snapshot_document(
     source_label: str = "<frame>",
     include_values: bool = False,
     joint_columns: Sequence[tuple[str, str]] | None = None,
-    numeric_bins: int = _DEFAULT_NUMERIC_BINS,
-    categorical_top_k: int = _DEFAULT_CATEGORICAL_TOP_K,
-    contingency_top_k: int = _DEFAULT_CONTINGENCY_TOP_K,
+    numeric_bins: int = DEFAULT_NUMERIC_BINS,
+    categorical_top_k: int = DEFAULT_CATEGORICAL_TOP_K,
+    contingency_top_k: int = DEFAULT_CONTINGENCY_TOP_K,
     high_cardinality_columns: Collection[str] = (),
     profile_row_cap: int | None = None,
 ) -> dict[str, Any]:
@@ -174,6 +160,13 @@ def distribution_snapshot_document(
     """
     if type(include_values) is not bool:
         raise TypeError(f"include_values must be a bool, not {type(include_values).__name__}")
+    if profile_row_cap is not None:
+        if type(profile_row_cap) is not int:
+            raise TypeError(
+                f"profile_row_cap must be an int or None, not {type(profile_row_cap).__name__}"
+            )
+        if profile_row_cap < 1:
+            raise ValueError(f"profile_row_cap must be at least 1, not {profile_row_cap}")
     doc = compute_distribution_snapshot(
         df,
         joint_columns=joint_columns,
@@ -182,7 +175,7 @@ def distribution_snapshot_document(
         contingency_top_k=contingency_top_k,
         high_cardinality_columns=high_cardinality_columns,
     )
-    profiled = df.head(profile_row_cap) if profile_row_cap else df
+    profiled = df if profile_row_cap is None else df.head(profile_row_cap)
     profile = profile_columns(profiled, source_label)
     names = value_sensitive_names(profile.to_dict()["fields"])
     if not include_values:
