@@ -6,8 +6,8 @@
 #   --keep-going  run every step even after a failure (default: stop at the first)
 #   --baseline    rerun on origin/main, in a temporary detached worktree with the SAME venv,
 #                 only the steps that failed on the branch, and diff their failures (test ids;
-#                 mypy/ruff error lines). The tests step reruns only the test files that hold
-#                 a failing branch test. A branch with no failing step builds no worktree and
+#                 mypy/ruff error lines). A failed tests step reruns the branch's whole path
+#                 list (the same shard), so main runs in the same context. A branch with no failing step builds no worktree and
 #                 reruns nothing. Fails only on branch-only failures.
 #   --baseline-file FILE
 #                 with --baseline (implied): do NOT rerun origin/main. Load the stored
@@ -92,7 +92,7 @@ while [ $# -gt 0 ]; do
     --write-baseline) WRITEBASE=$2; shift ;;
     --order-from) ORDERFROM=$2; shift ;;
     --steps) STEPS=$2; shift ;;
-    --shard) SHARD=$2; shift ;;
+    --shard) [ $# -ge 2 ] && [ -n "$2" ] || { echo "gates: --shard wants I/N" >&2; exit 2; }; SHARD=$2; shift ;;
     -h|--help) awk 'NR > 1 { if (!/^#/) exit; print }' "$0"; exit 0 ;;
     -*) echo "gates: unknown flag $1" >&2; exit 2 ;;
     *) PATHS+=("$1") ;;
@@ -470,20 +470,18 @@ if [ -n "$BASEFILE" ]; then
 elif [ $BASELINE = 1 ]; then
   # Rerun main only for what failed here. A fully green branch builds no worktree: run_steps
   # records every baseline step as not rerun without touching the tree.
+  # A failed tests step reruns main with the SAME path list the branch ran (the shard's files),
+  # not just the failing files: collection hooks, session fixtures, ordering and xdist allocation
+  # depend on the whole selection, so a narrower rerun could call a branch regression "shared".
   BASE_PATHS=()
-  if ! branch_step_ok tests; then
-    BASE_FILES=$("$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --failing-files "$OUT") || BASE_FILES=''
-    while IFS= read -r p; do [ -n "$p" ] && BASE_PATHS+=("$p"); done <<EOT
-$BASE_FILES
-EOT
-  fi
+  if ! branch_step_ok tests; then BASE_PATHS=(${PATHS[@]+"${PATHS[@]}"}); fi
   NEED_MAIN=0
   for name in ${STEPS//,/ }; do branch_step_ok "$name" || NEED_MAIN=1; done
   if [ $NEED_MAIN = 1 ]; then
     git -C "$ROOT" worktree add -q --detach "$WT" origin/main || exit 2
     {
       echo "baseline:   origin/main @ $(git -C "$WT" rev-parse HEAD) in a detached worktree, same venv and lock as branch"
-      echo "            only the steps that failed on the branch rerun; tests rerun the files with a failing test"
+      echo "            only the steps that failed on the branch rerun; a failed tests step reruns the branch's whole path list"
       echo "            $IMPORT_PKG imported from: $(cd "$WT" && PYTHONPATH=$(pypath "$WT") "$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --import-origin "$IMPORT_PKG" 2>&1 | tail -n 1)"
     } >>"$OUT/meta"
   else

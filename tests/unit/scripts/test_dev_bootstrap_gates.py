@@ -155,16 +155,23 @@ def test_gates_baseline_skips_main_when_the_branch_is_green(tmp_path: Path) -> N
     assert "detached worktree" not in out, out
 
 
-def test_gates_baseline_reruns_only_the_files_with_a_failing_test(tmp_path: Path) -> None:
+def test_gates_baseline_reruns_main_with_the_branch_path_list(tmp_path: Path) -> None:
+    # Main must run in the branch's execution context (same selection), not only the failing
+    # files: a narrower rerun could call a branch regression "shared".
     clone = _seeded_clone(tmp_path)
-    argv = [str(BASH), "scripts/dev/gates.sh", "--steps", "tests", "--baseline", "tests/_seeded"]
+    files = [f"tests/_seeded/test_seed_{n}.py" for n in ("ok", "shared", "branch")]
+    argv = [str(BASH), "scripts/dev/gates.sh", "--steps", "tests", "--baseline", *files]
     proc = _run(argv, clone)
     out = proc.stdout + proc.stderr
-    base = out.split("-- baseline --", 1)[1].split("-- FAILING TEST IDS --", 1)[0]
-    # main reran the shared failing file and nothing else: not the passing file, not the branch's
-    assert "test_seed_shared.py" in base, out
-    assert "test_seed_ok.py" not in base, out
-    assert "test_seed_branch.py" not in base, out
+    branch, base = out.split("-- branch --", 1)[1].split("-- baseline --", 1)
+    base = base.split("-- FAILING TEST IDS --", 1)[0]
+
+    def paths(section: str) -> list[str]:
+        return re.findall(r"tests/_seeded/test_seed_\w+\.py", section.split("$ ", 1)[1])
+
+    assert paths(branch.split("-- baseline --")[0]) == files, out
+    # Identical list and order; the only drop is the file main does not have.
+    assert paths(base) == [f for f in files if not f.endswith("_branch.py")], out
     assert re.search(r"BRANCH-ONLY\s+tests/_seeded/test_seed_branch\.py::test_branch", out), out
 
 

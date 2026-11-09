@@ -108,6 +108,7 @@ jobs:
           export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
           export DECOY_VENV="$HOME/.cache/decoy-gate-venv-engine"
           mkdir -p ~/.cache
-          if [ "${{ matrix.shard }}" = 1 ]; then steps=env,ruff,format,mypy,sentry,licenses,tests; else steps=tests; fi
+          # Shard 1 takes gates.sh's own default step list (one owner); the rest run only tests.
+          if [ "${{ matrix.shard }}" = 1 ]; then steps=; else steps="--steps tests"; fi
           if [ "${{ github.event_name }}" = push ]; then mode=--full; else mode=--baseline; fi
-          flock ~/.cache/pytest-one.lock scripts/dev/gates.sh --keep-going $mode --steps "$steps" --shard "${{ matrix.shard }}/2"
+          flock ~/.cache/pytest-one.lock scripts/dev/gates.sh --keep-going $mode $steps --shard "${{ matrix.shard }}/2"

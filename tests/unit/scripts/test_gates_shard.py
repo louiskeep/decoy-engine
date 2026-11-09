@@ -126,3 +126,11 @@ def test_baseline_shard_with_only_main_shared_failures_is_green(tmp_path: Path) 
     out = proc.stdout + proc.stderr
     assert proc.returncode == 0, out
     assert re.search(r"BOTH\s+tests/_seeded/test_seed_shared\.py::test_shared", out), out
+
+
+@pytest.mark.parametrize("argv", [["--shard"], ["--shard", ""]])
+def test_bare_shard_flag_exits_2(tmp_path: Path, argv: list[str]) -> None:
+    clone = diff_clone(tmp_path, FILES)
+    proc = _run([*GATES, "--steps", "tests", *argv], clone)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "--shard wants I/N" in proc.stderr

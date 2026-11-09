@@ -170,10 +170,12 @@ def test_full_gate_runs_only_on_dispatch_and_main_in_two_shards() -> None:
     # The exact command line: lock, keep-going, mode, step list, shard. Shard 1 owns the lint,
     # type, sentry and licence steps; every other shard runs only its slice of the tests.
     assert (
-        'flock ~/.cache/pytest-one.lock scripts/dev/gates.sh --keep-going $mode --steps "$steps"'
+        "flock ~/.cache/pytest-one.lock scripts/dev/gates.sh --keep-going $mode $steps"
         ' --shard "${{ matrix.shard }}/2"'
     ) in runs
-    assert "steps=env,ruff,format,mypy,sentry,licenses,tests; else steps=tests" in runs
+    # The step list has one owner, gates.sh: shard 1 passes no --steps, the others only tests.
+    assert 'if [ "${{ matrix.shard }}" = 1 ]; then steps=; else steps="--steps tests"; fi' in runs
+    assert "env,ruff" not in runs
 
 
 def test_fast_check_is_hosted_owner_guarded_and_push_only() -> None:
