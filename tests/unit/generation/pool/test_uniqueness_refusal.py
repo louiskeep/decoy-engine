@@ -92,3 +92,40 @@ class TestMaskingSamplerUsesTheBuilder:
         assert MARKER not in exc.value.message
         for v in pool.values:
             assert str(v) not in exc.value.message
+
+
+def test_remedy_comes_from_a_fixed_table_by_kind():
+    masking = refuse(needed=2, available=1, kind="pool sample").message
+    assert "row_count" not in masking and "drop unique" not in masking
+    assert "row_count" in refuse(needed=2, available=1).message
+    assert "tuples" in refuse(needed=2, available=1, kind="bundle sample").message
+
+
+class TestBundleSampleRefusal:
+    def _pool(self, size):
+        from tests.unit.generation.pool.test_sampler_native_index_parity import _bundle_pool
+
+        return _bundle_pool([(f"a{i}", f"b{i}") for i in range(size)], ("x", "y"))
+
+    def _sample(self, pool, n):
+        return PoolSampler().sample_bundle(pool, n, mode=CardinalityMode.UNIQUE, seed=b"\x00" * 8)
+
+    def test_n_equal_to_pool_size_succeeds_with_distinct_tuples(self):
+        out = self._sample(self._pool(4), 4)
+        assert len(set(zip(out["x"], out["y"], strict=True))) == 4
+
+    def test_one_past_pool_size_refuses_through_the_builder(self, monkeypatch):
+        import decoy_engine.generation.pool._sampler as sampler_mod
+
+        calls = []
+        real = sampler_mod.raise_uniqueness_impossible
+
+        def spy(**kw):
+            calls.append(kw)
+            real(**kw)
+
+        monkeypatch.setattr(sampler_mod, "raise_uniqueness_impossible", spy)
+        with pytest.raises(GenerationError) as exc:
+            self._sample(self._pool(4), 5)
+        assert exc.value.code == "uniqueness_impossible"
+        assert calls == [{"needed": 5, "available": 4, "kind": "bundle sample"}]

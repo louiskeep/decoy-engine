@@ -72,7 +72,8 @@ def test_unique_keys_are_still_refused_until_the_wiring_slice():
         PipelineConfig.model_validate(cfg)
     assert {e["type"] for e in exc.value.errors()} == {str(reasons.config.GENERATE_OPTION_UNKNOWN)}
 
-    table = {"name": "t", "row_count": 3, "unique_together": [], "generate_columns": [col]}
+    plain = {"name": "c", "type": "sequence", "start": 1}
+    table = {"name": "t", "row_count": 3, "unique_together": [], "generate_columns": [plain]}
     with pytest.raises(ValidationError):
         PipelineConfig.model_validate({**cfg, "tables": [table]})
 

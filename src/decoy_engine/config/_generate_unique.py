@@ -130,8 +130,17 @@ def _columns(table: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return [c for c in table.get("generate_columns") or [] if isinstance(c, Mapping)]
 
 
+def _is_set(value: Any) -> bool:
+    """An option counts as set unless it is absent or its explicit off value (0, False, None)."""
+    return (
+        value is not None
+        and value is not False
+        and not (type(value) in (int, float) and value == 0)
+    )
+
+
 def _pair_member_blocked(member: Mapping[str, Any]) -> bool:
-    if any(member.get(key) is not None for key in _PAIR_MEMBER_BLOCKED):
+    if any(_is_set(member.get(key)) for key in _PAIR_MEMBER_BLOCKED):
         return True
     if member.get("determinism") == "fresh":
         return True
@@ -189,12 +198,15 @@ def _pair_domain_bound(
     """Product of the two parents' row counts; None when either is unknown or the pair is malformed."""
     if not isinstance(pair, (list, tuple)) or len(pair) != 2:
         return None
+    if not all(isinstance(name, str) for name in pair):
+        return None
     bound = 1
     for name in pair:
         member = by_name.get(name)
         if member is None or member.get("type") != "reference":
             return None
-        parent_rows = rows_by_name.get(member.get("reference_table"))
+        parent = member.get("reference_table")
+        parent_rows = rows_by_name.get(parent) if isinstance(parent, str) else None
         if parent_rows is None:
             return None
         bound *= parent_rows
@@ -219,7 +231,8 @@ def cross_table_unique_problems(tables: Sequence[Mapping[str, Any]]) -> list[Pro
         for c_idx, col in enumerate(columns):
             if col.get("type") != "reference" or col.get("unique") is not True:
                 continue
-            parent_rows = rows_by_name.get(col.get("reference_table"))
+            parent = col.get("reference_table")
+            parent_rows = rows_by_name.get(parent) if isinstance(parent, str) else None
             if parent_rows is not None and not _capacity_ok(parent_rows, rows):
                 problems.append((("tables", t_idx, "generate_columns", c_idx), _TOO_SMALL))
         for p_idx, pair in enumerate(table.get("unique_together") or []):

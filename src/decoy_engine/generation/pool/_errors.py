@@ -56,6 +56,14 @@ class PoolCapacityError(DecoyError):
         super().__init__(f"[{code}] {message}" if message else f"[{code}]")
 
 
+# Fixed remedy sentence per refusal kind; never built from a value.
+_DEFAULT_REMEDY = "Lower row_count, drop unique, or use a source with more values."
+_REMEDY = {
+    "pool sample": "Lower the output row count, or use a pool with more distinct values.",
+    "bundle sample": "Lower the output row count, or use a bundle pool with more distinct tuples.",
+}
+
+
 def _count(name: str, value: int) -> int:
     # A bool or a str is refused without echoing it: the builder must never format a value
     # that came from generated or parent data.
@@ -88,5 +96,5 @@ def raise_uniqueness_impossible(
     message = f"{where}: {what} needs {needed:,} distinct value(s) but only {available:,} exist"
     if row is not None:
         message += f"; the domain ran out at row {_count('row', row) + 1:,}"
-    message += ". Lower row_count, drop unique, or use a source with more values."
+    message += f". {_REMEDY.get(kind or '', _DEFAULT_REMEDY)}"
     raise GenerationError(code=reasons.runtime.UNIQUENESS_IMPOSSIBLE, message=message)

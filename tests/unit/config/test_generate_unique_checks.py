@@ -241,6 +241,20 @@ class TestPairShape:
         got = gu.table_unique_problems(pair_table(10, **extra))
         assert set(codes(got)) == {CONFLICT}
 
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            {"unique": False},
+            {"null_probability": 0},
+            {"null_probability": 0.0},
+            {"min_per_parent": 0},
+            {"max_per_parent": 0},
+            {"unique": None},
+        ],
+    )
+    def test_explicit_off_values_count_as_absent(self, extra):
+        assert gu.table_unique_problems(pair_table(10, **extra)) == []
+
     def test_default_distribution_and_stable_determinism_allowed(self):
         t = pair_table(10, distribution="random", determinism="stable")
         assert gu.table_unique_problems(t) == []
@@ -281,6 +295,19 @@ class TestCrossTable:
         assert gu.cross_table_unique_problems([*parents(10, 1), t]) == []
         t["row_count"] = 101
         assert codes(gu.cross_table_unique_problems([*parents(10, 1), t])) == [TOO_SMALL]
+
+    def test_non_string_pair_names_do_not_crash(self):
+        t = pair_table(999, pairs=[[["x"], ["y"]]])
+        assert gu.cross_table_unique_problems([*parents(1, 1), t]) == []
+        assert codes(gu.table_unique_problems(t)) == [CONFLICT]
+
+    def test_non_string_reference_table_does_not_crash(self):
+        col = ref("p", ["emp"], unique=True)
+        child = {"name": "c", "row_count": 999, "generate_columns": [col]}
+        assert gu.cross_table_unique_problems([*parents(1, 1), child]) == []
+        t = pair_table(999)
+        t["generate_columns"][0]["reference_table"] = ["emp"]
+        assert gu.cross_table_unique_problems([*parents(1, 1), t]) == []
 
     def test_malformed_pair_is_skipped_here_and_refused_by_the_table_check(self):
         t = pair_table(999, pairs=[["emp_id"]])
