@@ -425,7 +425,14 @@ class TestFailClosedDpDeclaration:
         raw = {
             "version": 2,
             "global_settings": {"seed": 1},
-            "sources": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-in.csv"}},
+            "sources": {
+                "people": {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": "/tmp/dps-in.csv",
+                }
+            },
             "tables": [
                 {
                     "name": "people",
@@ -473,7 +480,14 @@ class TestFailClosedDpDeclaration:
 
         base = {
             "version": 2,
-            "sources": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-in.csv"}},
+            "sources": {
+                "people": {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": "/tmp/dps-in.csv",
+                }
+            },
             "tables": [
                 {
                     "name": "people",
@@ -510,7 +524,14 @@ class TestFailClosedDpDeclaration:
         raw = {
             "version": 2,
             "global_settings": {"seed": 1, "dp": None},
-            "sources": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-in.csv"}},
+            "sources": {
+                "people": {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": "/tmp/dps-in.csv",
+                }
+            },
             "tables": [
                 {
                     "name": "people",
@@ -631,7 +652,14 @@ class TestFailClosedDpDeclaration:
 
         base = {
             "version": 2,
-            "sources": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-in.csv"}},
+            "sources": {
+                "people": {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": "/tmp/dps-in.csv",
+                }
+            },
             "tables": [
                 {
                     "name": "people",

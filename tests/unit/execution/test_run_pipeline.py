@@ -148,6 +148,7 @@ def _pure_mask_config(tmp_path) -> dict:
                 "customers": {
                     "type": "file",
                     "format": "csv",
+                    "has_header": True,
                     "path": str(tmp_path / "customers.csv"),
                 },
             },
@@ -204,6 +205,7 @@ def _mixed_config(tmp_path) -> dict:
                 "customers": {
                     "type": "file",
                     "format": "csv",
+                    "has_header": True,
                     "path": str(tmp_path / "customers.csv"),
                 },
             },
@@ -318,6 +320,7 @@ def _fidelity_mask_config(tmp_path) -> dict:
                 "customers": {
                     "type": "file",
                     "format": "csv",
+                    "has_header": True,
                     "path": str(tmp_path / "customers.csv"),
                 },
             },

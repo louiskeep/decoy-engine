@@ -87,6 +87,10 @@ for the full model.
 - Non-deterministic `categorical`: seeded by the job seed and the row's position
   in the frame being masked, so the same seed and input give the same output. It
   is keyed by position, not by source value, so it does not preserve joins.
+- Non-deterministic `shuffle` (the default when `deterministic` is not set): the
+  permutation is drawn from the mask key with the job seed and the table and column
+  names bound in, so the same config, seed and secret give the same output. It needs no namespace,
+  and the same column in two tables gets two different permutations.
 - Strategies that are deterministic by construction: `bucketize` (same value,
   same bucket), `redact` and `text_redact` (pure function of input and config),
   `truncate`, `formula` (deterministic by its expression).
@@ -96,8 +100,6 @@ for the full model.
 
 ## What is NOT deterministic
 
-- Non-deterministic `shuffle`. It can run in a non-deterministic mode that draws
-  from an unseeded RNG; two runs differ. This is opt-in and is not the keyed path.
 - Profiling without a seed. `profile_source` falls back to OS entropy for
   reservoir sampling if no seed is passed and none is set in
   `global_settings.seed`; on tables larger than the sample cap this makes the
@@ -236,7 +238,9 @@ correctness defects (F2 and F3 in `docs/remediation-source.md`):
 The v6 rewrite replaces `synthetic_column_seed` with
 `GenDeriveContext` (`generators/derivation.py`). One full-32-byte column
 root is resolved per column (keyed path: full `derive_key("gen:" +
-fingerprint)`, no truncation). Per-RNG-family and per-row sub-keys are
+fingerprint + ":" + identity)`, no truncation; identity is the table name plus
+the column name, so renaming a column or moving it to another table re-keys it).
+Per-RNG-family and per-row sub-keys are
 derived from that root via `_gen_hmac`, which mixes `SEED_PROTOCOL_VERSION`
 into its HMAC input (mirroring the mask-path envelope in
 `determinism/_derive.py`). The three RNG families (`py`, `np`, `faker`)

@@ -19,15 +19,6 @@ from decoy_engine.fileaccess import (
 SENTINEL = b"SENTINEL-CONTENT"
 
 
-@pytest.fixture
-def root_dir(short_tmp_path: Path) -> Path:
-    """The confinement root, kept short: `test_fifo_and_device_are_denied` binds a Unix socket
-    in it, and a long basetemp (an xdist worker, a long $TMPDIR) overflows the AF_UNIX limit."""
-    root = short_tmp_path / "root"
-    root.mkdir()
-    return root
-
-
 def _req(locator: str, role: FileRole = FileRole.SOURCE, access: str = "read") -> FileRequest:
     return FileRequest(role, access, locator, "sources.t.path")  # type: ignore[arg-type]
 
@@ -79,9 +70,11 @@ def test_stays_readable_after_the_name_is_unlinked(
     ],
 )
 def test_every_escape_missing_or_non_regular_is_the_one_denial(
-    rooted: RootedFileAccess, root_dir: Path, tmp_path: Path, locator: str
+    rooted: RootedFileAccess, root_dir: Path, locator: str
 ) -> None:
-    (tmp_path / "outside").write_bytes(SENTINEL)
+    outside = root_dir.parent / "outside"
+    outside.write_bytes(SENTINEL)
+    assert outside.is_file()
     (root_dir / "real.bin").write_bytes(SENTINEL)
     (root_dir / "dir").mkdir()
     (root_dir / "dir" / "a.bin").write_bytes(SENTINEL)
@@ -134,10 +127,8 @@ def test_denylisted_inode_is_denied_even_beneath_the_root(
         os.close(fd)
 
 
-def test_rename_race_never_reads_outside_the_root(
-    rooted: RootedFileAccess, root_dir: Path, tmp_path: Path
-) -> None:
-    (tmp_path / "outside").write_bytes(b"OUTSIDE")
+def test_rename_race_never_reads_outside_the_root(rooted: RootedFileAccess, root_dir: Path) -> None:
+    (root_dir.parent / "outside").write_bytes(b"OUTSIDE")
     (root_dir / "leaf").write_bytes(SENTINEL)
     stop = threading.Event()
 
@@ -145,7 +136,7 @@ def test_rename_race_never_reads_outside_the_root(
         while not stop.is_set():
             try:
                 os.replace(root_dir / "leaf", root_dir / "held")
-                os.symlink(tmp_path / "outside", root_dir / "leaf")
+                os.symlink(root_dir.parent / "outside", root_dir / "leaf")
                 os.unlink(root_dir / "leaf")
                 os.replace(root_dir / "held", root_dir / "leaf")
             except OSError:
@@ -166,14 +157,15 @@ def test_rename_race_never_reads_outside_the_root(
 
 
 def test_directory_capability_children_open_only_beneath_the_original_fd(
-    rooted: RootedFileAccess, root_dir: Path, tmp_path: Path
+    rooted: RootedFileAccess, root_dir: Path
 ) -> None:
     (root_dir / "providers").mkdir()
     (root_dir / "providers" / "a.txt").write_text("x")
     (root_dir / "providers" / "sub").mkdir()
     (root_dir / "providers" / "sub" / "b.txt").write_text("y")
     (root_dir / "providers" / "ln").symlink_to(root_dir / "providers" / "a.txt")
-    (tmp_path / "outside").write_text("OUT")
+    (root_dir.parent / "outside").write_text("OUT")
+    assert (root_dir.parent / "outside").is_file()
     request = FileRequest(FileRole.CUSTOM_PROVIDER_ROOT, "read_dir", "providers", "providers")
     handle = rooted.open_dir(request)
     assert sorted(e.name for e in handle.entries()) == ["a.txt", "ln", "sub"]

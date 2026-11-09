@@ -43,7 +43,9 @@ def test_r1_local_csv_renames_a_repeated_header(tmp_path: Path) -> None:
 
     path = tmp_path / "dup.csv"
     path.write_bytes(DUP_CSV)
-    src = build_profile_source({"type": "file", "format": "csv", "path": str(path)})
+    src = build_profile_source(
+        {"type": "file", "format": "csv", "path": str(path), "has_header": True}
+    )
     assert src.schema().names == RENAMED
     assert list(src.sample_frame(10).columns) == RENAMED
     assert list(src.to_frame().columns) == RENAMED

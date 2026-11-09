@@ -30,7 +30,7 @@ import pyarrow as pa
 from decoy_engine import reasons
 from decoy_engine.generation.pool._capacity import unique_capacity_ok
 from decoy_engine.generation.pool._cardinality import CardinalityMode
-from decoy_engine.generation.pool._errors import GenerationError
+from decoy_engine.generation.pool._errors import GenerationError, raise_uniqueness_impossible
 
 if TYPE_CHECKING:
     from decoy_engine.execution.native._index_ext import IndexDerivationKernel
@@ -303,14 +303,8 @@ class PoolSampler:
                 # byte-identical to the previous index draw. (Codex HIGH-2, 2026-07-14.)
                 distinct_values = pd.unique(pool.values)
                 if not unique_capacity_ok(len(distinct_values), required):
-                    raise GenerationError(
-                        code=reasons.runtime.UNIQUENESS_IMPOSSIBLE,
-                        message=(
-                            f"UNIQUE-mode sample needs {required} distinct value(s) "
-                            f"(non-null output rows) but the pool has only "
-                            f"{len(distinct_values)} distinct value(s): cannot draw "
-                            "without replacement."
-                        ),
+                    raise_uniqueness_impossible(
+                        needed=int(required), available=len(distinct_values), kind="pool sample"
                     )
                 drawn = distinct_values[rng.permutation(len(distinct_values))[:required]]
                 if nonnull_mask is None:
@@ -523,13 +517,9 @@ class PoolSampler:
             # Non-deterministic: with-replacement by default; UNIQUE without.
             rng = np.random.default_rng(_seed_bytes_to_int(seed))
             if mode is CardinalityMode.UNIQUE:
-                if n > pool.size:
-                    raise GenerationError(
-                        code=reasons.runtime.UNIQUENESS_IMPOSSIBLE,
-                        message=(
-                            f"UNIQUE-mode bundle sample of size {n} from pool of size "
-                            f"{pool.size}: cannot draw without replacement."
-                        ),
+                if not unique_capacity_ok(pool.size, n):
+                    raise_uniqueness_impossible(
+                        needed=int(n), available=int(pool.size), kind="bundle sample"
                     )
                 indices = rng.permutation(pool.size)[:n]
             else:

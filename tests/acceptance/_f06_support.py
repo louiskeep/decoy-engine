@@ -78,7 +78,9 @@ def config(
     return {
         "version": 2,
         "global_settings": {"seed": 7},
-        "sources": {table: {"type": "file", "format": "csv", "path": source_path}},
+        "sources": {
+            table: {"type": "file", "format": "csv", "has_header": True, "path": source_path}
+        },
         "tables": [{"name": table, "columns": columns}],
         "targets": {table: {"type": "file", "format": "csv", "path": source_path + ".out"}},
         "relationships": [],

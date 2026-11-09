@@ -32,6 +32,7 @@ from decoy_engine.generation._pinned_plan import (
     runtime_identity,
     validate_seed,
 )
+from decoy_engine.generation._statistical_column import arrow_table
 from decoy_engine.generation.statistical import StatisticalSpec, spec_from_dict
 
 
@@ -205,5 +206,5 @@ def _run(
                 reference_date=plan.reference_date,
                 pinned=True,
             )
-        pools[name] = pa.table(data)
+        pools[name] = arrow_table(data, table_name=name, statistical_specs=specs)
     return {name: pools[name] for name in sorted(pools)}

@@ -7,6 +7,9 @@ Self-contained; imported back into profiler.py via _build_distribution.
 
 from __future__ import annotations
 
+import math
+
+import numpy as np
 import pandas as pd
 
 from decoy_engine.detection.types import DetectorMatch
@@ -24,6 +27,7 @@ _PROFILE_CATEGORICAL_DISTINCT_CAP = 30
 def _distribution_numeric(non_null: pd.Series) -> Distribution | None:
     """10 equal-width bins between min and max, with counts + min/max/mean."""
     series = pd.to_numeric(non_null, errors="coerce").dropna()
+    series = series[np.isfinite(series.to_numpy(dtype=float))]  # pd.cut rejects inf
     if len(series) == 0:
         return None
     # When all values are identical pd.cut errors on zero range - fall back to
@@ -44,7 +48,10 @@ def _distribution_numeric(non_null: pd.Series) -> Distribution | None:
     # otherwise show two decimals so tight ranges stay readable.
     labels = []
     for iv in bin_counts.index:
-        if (iv.right - iv.left) >= 1:
+        if not (math.isfinite(iv.left) and math.isfinite(iv.right)):
+            # pd.cut widens the range, so an edge can pass float max and has no int form.
+            labels.append(f"{iv.left:.6g}-{iv.right:.6g}")
+        elif (iv.right - iv.left) >= 1:
             labels.append(f"{int(iv.left)}-{int(iv.right)}")
         else:
             labels.append(f"{iv.left:.2f}-{iv.right:.2f}")

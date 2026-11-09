@@ -230,7 +230,14 @@ def test_full_frame_unrepresentable_value_is_value_free(tmp_path: Any) -> None:
         {
             "version": 2,
             "global_settings": {"seed": 42},
-            "sources": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "t.csv")}},
+            "sources": {
+                "t": {
+                    "type": "file",
+                    "format": "csv",
+                    "path": str(tmp_path / "t.csv"),
+                    "has_header": True,
+                }
+            },
             "tables": [
                 {
                     "name": "t",

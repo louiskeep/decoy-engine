@@ -1,0 +1,26 @@
+{
+  "entries": [
+    {
+      "code": "statistical_cell_format_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "StatisticalSpecError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.16.0",
+      "summary": "Statistical cell format invalid.",
+      "symbol": "STATISTICAL_CELL_FORMAT_INVALID"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.16.0"
+}

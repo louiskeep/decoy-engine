@@ -43,7 +43,7 @@ REFROZEN: dict[str, dict[str, Any]] = {
             "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row"
         ),
         "previous_tables": {
-            "live": "571f2ecd49f43a7cfbb6d37f979bc25008fdef09ac2e9abdc73fdb57c969ed79"
+            "live": "8aba04ab3f97f3d163a41609c45e4cad07b93e724a9fddf4b5d199240a2e83b7"
         },
     },
     "reference": {
@@ -51,7 +51,7 @@ REFROZEN: dict[str, dict[str, Any]] = {
             "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row"
         ),
         "previous_tables": {
-            "ref_child": "81619e14f5bc9f70a517ca6e21d4ff21080b701dd15494f9123f83f8e98861ef"
+            "ref_child": "adf4fc4788230dd109a649b6278057e5438d272a84f7720b6ae616d9526d0790"
         },
     },
     "nulls": {
@@ -59,7 +59,7 @@ REFROZEN: dict[str, dict[str, Any]] = {
             "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row (also the 2026-10-18 null-type change, see _f0_expected.py)"
         ),
         "previous_tables": {
-            "nulls": "232902afc3faf49c772ad7bd6cddaba7846f58599e9e1c5b8c7f533d229cd271",
+            "nulls": "0049feb16d5d0bcbd64050769c50fe3fcaaad68a17414b7bd53ab054a06a311b",
             "empty": "2445c1c0db89b65b0be8c6c6f88cf5befd76dd3251e7a8f9701fffe9db6872fd",
         },
     },

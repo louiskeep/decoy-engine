@@ -81,8 +81,6 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/out_of_core/_budget.py": 609,
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
     "src/decoy_engine/execution/out_of_core/_spill_estimate.py": 645,
-    # pinned-Plan generation threading through the per-generator dispatch; split the statistical/derived/formula branches.
-    "src/decoy_engine/generation/synthesize.py": 657,
     "src/decoy_engine/detection/detectors.py": 1046,
     "src/decoy_engine/generators/columns.py": 658,
     "src/decoy_engine/profiling/profiler.py": 640,
@@ -133,7 +131,7 @@ ALLOWLIST: dict[str, int] = {
     "scripts/faker-determinism/check_determinism.py": 601,
     "scripts/fk_memory_probe.py": 1056,
     "scripts/gen_proof_manifest.py": 1230,
-    "scripts/native-baseline/bench_c1_oracle.py": 766,
+    "scripts/native-baseline/bench_c1_oracle.py": 759,
     "scripts/tb3_cgroup_validation.py": 603,
     "scripts/tq_mutate.py": 822,
 }

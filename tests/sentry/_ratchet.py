@@ -3,7 +3,9 @@
 A baseline is a JSON file ``{"sentry_id", "created_in", "entries": {key: {"reason"}}}``
 under ``tests/sentry/baselines/``. ``scripts/dev/sentry_registry.toml`` binds each sentry id to
 exactly one baseline path. ``check`` compares the working tree with a base commit and returns
-findings; an empty list means the ratchet holds. Messages carry ids, paths and keys only.
+findings; an empty list means the ratchet holds. Baseline keys compare exactly, except the
+``permitted::<file>::<site>::<digest>`` keys of the sentries in ``REKEY_PER_SITE``, which
+compare by count per site (see ``growth``). Messages carry ids, paths and keys only.
 """
 
 from __future__ import annotations
@@ -23,6 +25,9 @@ REGISTRY = "scripts/dev/sentry_registry.toml"
 BASELINE_DIR = "tests/sentry/baselines"
 MIN_REASON = 15
 PLACEHOLDERS = frozenset({"todo", "tbd", "fixme", "xxx", "n/a", "none"})
+# Only sentries whose last key segment is a message digest may re-key; for any other sentry a
+# changed last segment can mean a different permitted thing, so it compares exactly.
+REKEY_PER_SITE = frozenset({"validation-name-messages"})
 
 
 @dataclass(frozen=True)
@@ -90,6 +95,47 @@ def _base_keys(root: Path, ref: str, path: str) -> frozenset[str]:
     return parse_baseline(text).keys if text is not None else frozenset()
 
 
+def _permit_site(key: str) -> str | None:
+    """``<file>::<site>`` of a ``permitted::<file>::<site>::<digest>`` key, else ``None``."""
+    kind, _, rest = key.partition("::")
+    site, sep, digest = rest.rpartition("::")
+    return site if kind == "permitted" and sep and digest and "::" in site else None
+
+
+def growth(
+    head: frozenset[str], base: frozenset[str], per_site: bool = True
+) -> tuple[frozenset[str], list[str]]:
+    """Keys that count as growth over ``base``, and permit sites that were only re-keyed.
+
+    A permitted key embeds a digest of its message, so any edit to a permitted site moves the
+    key. For those keys growth is per site: a site absent from ``base`` or holding more keys than
+    it did there is growth; the same count under new digests is a re-key, reported for review.
+    The sentry still decides what is permitted. Every other key kind, and every key when
+    ``per_site`` is false, compares exactly.
+    """
+    if not per_site:
+        return frozenset(head - base), []
+
+    def by_site(keys: frozenset[str]) -> dict[str, list[str]]:
+        sites: dict[str, list[str]] = {}
+        for key in keys:
+            site = _permit_site(key)
+            if site is not None:
+                sites.setdefault(site, []).append(key)
+        return sites
+
+    head_sites, base_sites = by_site(head), by_site(base)
+    grown = {k for k in head - base if _permit_site(k) is None}
+    rekeyed: list[str] = []
+    for site, keys in sorted(head_sites.items()):
+        old = base_sites.get(site, [])
+        if len(keys) > len(old):
+            grown |= set(keys) - base
+        elif set(keys) - base:
+            rekeyed.append(site)
+    return frozenset(grown), rekeyed
+
+
 def _fmt(keys: frozenset[str]) -> str:
     return ", ".join(sorted(keys))
 
@@ -126,6 +172,7 @@ def check(root: Path, base_ref: str) -> tuple[list[str], list[str]]:
         *(_base_keys(root, base_ref, base_reg[s]) for s in removed)
     )
     new_union: frozenset[str] = frozenset()
+    union_ids = set(removed)
     for sid, base in sorted(loaded.items()):
         path = head[sid]
         report.append(f"{sid}: {len(base.keys)} key(s) in {path}")
@@ -133,17 +180,26 @@ def check(root: Path, base_ref: str) -> tuple[list[str], list[str]]:
             if base_reg[sid] != path:
                 findings.append(f"{sid}: baseline moved from {base_reg[sid]} to {path}")
                 continue
-            grown = base.keys - _base_keys(root, base_ref, path)
+            grown, rekeyed = growth(
+                base.keys, _base_keys(root, base_ref, path), sid in REKEY_PER_SITE
+            )
+            report += [
+                f"{sid}: re-keyed permitted site {site} (review the message)" for site in rekeyed
+            ]
             if grown:
                 findings.append(
                     f"{sid}: baseline gained key(s) not in the merge base: {_fmt(grown)}"
                 )
         elif removed:
             new_union |= base.keys
+            union_ids.add(sid)
         else:
             # Newly registered in this diff: the one way a first inventory is admitted.
             report.append(f"{sid}: first inventory, {len(base.keys)} key(s), review required")
-    grown = new_union - old_union
+    grown, rekeyed = growth(new_union, old_union, union_ids <= REKEY_PER_SITE)
+    report += [
+        f"replacement: re-keyed permitted site {site} (review the message)" for site in rekeyed
+    ]
     if removed and grown:
         findings.append(
             f"replacement or split of {_fmt(frozenset(removed))} adds key(s): {_fmt(grown)}"

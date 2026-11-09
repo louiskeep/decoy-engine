@@ -32,7 +32,7 @@ import pandas as pd
 from decoy_engine.generation import _faker_pool
 from decoy_engine.generation._bounds import faker_pool_bytes
 from decoy_engine.generation._numeric_typing import sequence_affixes
-from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.generators.derivation import GenDeriveContext, column_identity, with_table
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 
 if TYPE_CHECKING:
@@ -65,7 +65,7 @@ class WindowedDateStream:
                 cfg[key] = col[key]
         self._config = WindowedDateConfig.from_dict(cfg)
         self._seed = seed.to_bytes(8, "big")
-        self._namespace = f"windowed_date/{col.get('name', 'windowed_date_col')}"
+        self._namespace = f"windowed_date/{column_identity(col)}"
 
     @property
     def anchor(self) -> str:
@@ -262,6 +262,7 @@ def make_column_stream(
     numeric: bool = False,
 ) -> ColumnStream:
     """Build one column's stream. Reservations taken here live until `stage` closes."""
+    col = with_table(col, table)
     ctx = GenDeriveContext.for_column(derive_key=derive_key, column_config=col, fallback_seed=seed)
     kind = col.get("type")
     inner: ColumnStream
@@ -310,7 +311,7 @@ def _faker_stream(
     requested_locale = col.get("locale") or instance_default_locale
     # Pool admission is the TABLE row count, fixed for the column before the first batch.
     if _faker_pool.pool_eligible(
-        faker_type, requested_locale, rows, opted_out=col.get("pooled") is False
+        faker_type, requested_locale, rows, opted_out=_faker_pool.pool_opted_out(col)
     ):
         raw_kwargs = col.get("faker_kwargs") or {}
         # Reserve before the 10_000 provider calls that build the pool allocate anything.

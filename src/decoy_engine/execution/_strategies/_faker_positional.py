@@ -18,7 +18,10 @@ import numpy as np
 import pyarrow as pa
 
 from decoy_engine import reasons
-from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._adapter import (
+    column_draw_identity,
+    context_draw_identity,
+)
 from decoy_engine.execution._positional_keys import positional_key_array
 from decoy_engine.generation.pool._sampler import (
     _compiled_index_kernel,
@@ -27,41 +30,23 @@ from decoy_engine.generation.pool._sampler import (
 )
 
 _DOMAIN_CODE = reasons.runtime.FAKER_POSITION_OUT_OF_DOMAIN
-_TABLE_UNKNOWN_CODE = reasons.runtime.FAKER_POSITIONAL_TABLE_UNKNOWN
 
 
 def faker_selection_namespace(table: str, column: str, namespace: str | None) -> str:
     """The namespace that keys the draw: the configured one, else a per-column default.
 
-    The default length-prefixes both parts. Names are unrestricted strings, so a plain
-    `table/column` join would let table `a/b` + column `c` collide with table `a` + column
-    `b/c`. `None` and `""` both mean "not configured"."""
+    The default is `column_draw_identity` under a `faker-nd/` prefix. `None` and `""` both
+    mean "not configured"."""
     if namespace:
         return namespace
-    return f"faker-nd/{len(table)}:{table}/{len(column)}:{column}"
-
-
-def selection_column(ctx: Any, column: str) -> str:
-    """The column identity for the default namespace: the outer column of a nested child."""
-    return str(getattr(ctx, "nested_outer_column", "") or column)
+    return f"faker-nd/{column_draw_identity(table, column)}"
 
 
 def resolve_selection_namespace(ctx: Any, column: str, namespace: str | None) -> str:
     """`faker_selection_namespace` from the context, failing closed on an unstamped table."""
     if namespace:
         return namespace
-    table = getattr(ctx, "current_table", "")
-    if not table:
-        raise StrategyError(
-            code=_TABLE_UNKNOWN_CODE,
-            strategy="faker",
-            message=(
-                f"column {column!r}: non-deterministic faker without a namespace keys its "
-                "draw on the table and column, but the strategy context carries no current "
-                "table. Every dispatch path stamps it; a caller that does not must set it."
-            ),
-        )
-    return faker_selection_namespace(table, selection_column(ctx, column), namespace)
+    return f"faker-nd/{context_draw_identity(ctx, column, strategy='faker')}"
 
 
 def positional_pool_indices(
@@ -95,5 +80,4 @@ __all__ = [
     "faker_selection_namespace",
     "positional_pool_indices",
     "resolve_selection_namespace",
-    "selection_column",
 ]
