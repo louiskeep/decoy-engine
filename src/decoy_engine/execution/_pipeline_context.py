@@ -30,13 +30,15 @@ module; `_pipeline` re-exports it, so its public import path is unchanged.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution import _guards, _pipeline_auto_chunk, _pipeline_routing
 from decoy_engine.execution._chunked_output_sink import OutputPublish
+from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._transforms_admission import out_of_core_declined, routing_profile
 from decoy_engine.execution._transforms_gate import reject_any_per_table_transforms
 from decoy_engine.profile._readers import LazySource
@@ -428,6 +430,29 @@ def build_run_context(
         now_iso=now_iso,
         quarantine_runtime=quarantine_runtime,
     )
+
+
+def require_quarantine_path(value: object) -> None:
+    """Strict type check for `run_pipeline(quarantine_path=)`; the message carries no value."""
+    if value is not None and not isinstance(value, str):
+        raise ExecutionError(
+            code=reasons.runtime.INVALID_EXECUTION_KNOB,
+            message=f"quarantine_path must be a str or None; got {type(value).__name__}.",
+        )
+
+
+def with_quarantine_path(ctx: PipelineRunContext, path: str | None) -> PipelineRunContext:
+    """`ctx` with `quarantine.output_path` replaced in a copy of its config.
+
+    Called after the plan, and so its config hash, was built from the caller's config: the hash
+    and the caller's dict are untouched. Every route reads `ctx.config`, so none needs its own
+    override. Without a path or a `quarantine` block the context is returned as is.
+    """
+    quarantine = ctx.config.get("quarantine")
+    if path is None or not isinstance(quarantine, dict):
+        return ctx
+    effective = {**ctx.config, "quarantine": {**quarantine, "output_path": path}}
+    return replace(ctx, config=effective)
 
 
 def decide_route(ctx: PipelineRunContext) -> RouteDecision:
