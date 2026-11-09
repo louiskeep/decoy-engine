@@ -3,66 +3,46 @@
 from __future__ import annotations
 
 import os
-import shutil
-import tempfile
-import threading
 import weakref
-from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, ExitStack
 from pathlib import Path
 from typing import BinaryIO
 
-from decoy_engine import fileaccess
-from decoy_engine.fileaccess import FileRequest, FileRole, Root, RootedFileAccess
+from decoy_engine.fileaccess import (
+    FileRequest,
+    FileRole,
+    Root,
+    RootedFileAccess,
+    open_protected_dir,
+    protected_scratch_dir,
+)
 from decoy_engine.fileaccess._rooted import lexical_ok
 
 _ISSUER = object()
-# Per-run roots `engine_scratch_root` made and has not yet removed: a temp_dir naming one of
-# these is the engine's own directory, not a caller path.
-_ENGINE_ROOTS: set[str] = set()
-_ENGINE_ROOTS_LOCK = threading.Lock()
 
 
-def scratch_root(temp_dir: Path | None) -> Path:
+def scratch_root(temp_dir: Path | None, stack: ExitStack | None = None) -> Path:
     """The private (0700) directory the runner spills into.
 
-    With no `temp_dir` the engine makes its own. A directory the caller names is a caller path,
-    which only the ambient policy follows, so any other policy is refused before any I/O. A root
-    `engine_scratch_root` issued is the engine's own and is taken under every policy."""
-    if temp_dir is not None and not _is_engine_root(temp_dir):
-        fileaccess.require_ambient("run_fk_out_of_core with a caller-named temp_dir")
-    root = Path(tempfile.mkdtemp(prefix="decoy-ooc-")) if temp_dir is None else temp_dir
-    private_dir(root)
-    os.chmod(root, 0o700)
-    return root
+    With no `temp_dir` the engine makes its own, owned by `stack` (required then) and removed
+    when the stack closes. A directory the caller names is a caller path, which only the ambient
+    policy follows, so any other policy is refused before any I/O. A root `engine_scratch_root`
+    or an earlier `scratch_root(None)` issued is the engine's own and is taken under every
+    policy."""
+    if temp_dir is not None:
+        return open_protected_dir(temp_dir, create=True, parents=True)
+    if stack is None:
+        raise TypeError("scratch_root needs an ExitStack to own an engine-made root")
+    return stack.enter_context(protected_scratch_dir(prefix="decoy-ooc-"))
 
 
-def _is_engine_root(path: Path) -> bool:
-    with _ENGINE_ROOTS_LOCK:
-        return os.path.abspath(path) in _ENGINE_ROOTS
-
-
-@contextmanager
-def engine_scratch_root(parent: Path | None) -> Iterator[Path]:
+def engine_scratch_root(parent: Path | None) -> AbstractContextManager[Path]:
     """A private per-run root the engine creates, removed on every exit.
 
     Under a caller-named `parent` (ambient policy only, as for `scratch_root`) or the system temp
     directory. While open, `scratch_root` accepts it as the run's `temp_dir` under any policy, so
     a staged copy and the route's spill share one root and one temp-disk budget."""
-    if parent is not None:
-        fileaccess.require_ambient("run_fk_out_of_core with a caller-named temp_dir")
-        private_dir(Path(parent))
-    root = Path(tempfile.mkdtemp(prefix="decoy-ooc-run-", dir=parent))
-    os.chmod(root, 0o700)  # mkdtemp's 0700 is narrowed by the umask, never widened back
-    key = os.path.abspath(root)
-    with _ENGINE_ROOTS_LOCK:
-        _ENGINE_ROOTS.add(key)
-    try:
-        yield root
-    finally:
-        with _ENGINE_ROOTS_LOCK:
-            _ENGINE_ROOTS.discard(key)
-        shutil.rmtree(root, ignore_errors=True)
+    return protected_scratch_dir(parent, prefix="decoy-ooc-run-")
 
 
 def open_private(path: Path) -> BinaryIO:
@@ -104,19 +84,7 @@ def precreate_private(path: Path) -> str:
 
 def private_dir(path: Path) -> Path:
     """``mkdir -p`` in which every level it creates is 0700, whatever the umask."""
-    missing: list[Path] = []
-    probe = path
-    while not os.path.isdir(probe):
-        missing.append(probe)
-        probe = probe.parent
-    for level in reversed(missing):
-        try:
-            os.mkdir(level, 0o700)
-        except FileExistsError:
-            if not os.path.isdir(level):
-                raise
-        os.chmod(level, 0o700)
-    return path
+    return open_protected_dir(path, create=True, parents=True)
 
 
 class ScratchAccess(RootedFileAccess):

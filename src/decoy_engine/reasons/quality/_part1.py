@@ -49,6 +49,7 @@ __all__ = [
     "DP_SCHEMA_TYPE",
     "DP_STACK_UNCERTIFIED",
     "DP_UNSCHEDULED_RELEASE",
+    "FANOUT_COLUMN_UNKNOWN",
     "HIGH_CARDINALITY_AMBIGUOUS_STRING_COERCION",
     "HIGH_CARDINALITY_COLUMNS_NOT_COLLECTION",
     "HIGH_CARDINALITY_DISTINCT_LIMIT_EXCEEDED",
@@ -88,6 +89,7 @@ DP_SCHEMA_TYPE = _d("dp_schema_type", "DP schema type.")
 
 _d = _catalog.quality("DistributionSnapshotError")
 
+FANOUT_COLUMN_UNKNOWN = _d("fanout_column_unknown", "Fan-out column unknown.", since="1.14.0")
 HIGH_CARDINALITY_AMBIGUOUS_STRING_COERCION = _d(
     "high_cardinality_ambiguous_string_coercion", "High cardinality ambiguous string coercion."
 )

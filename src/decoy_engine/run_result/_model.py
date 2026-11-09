@@ -40,6 +40,7 @@ from pydantic import (
     create_model,
 )
 
+from decoy_engine.errors import ConfigRuleError
 from decoy_engine.progress import safe_error_class
 from decoy_engine.reasons import (
     REGISTRY_VERSION_RE,
@@ -66,7 +67,7 @@ def _check(kind: str, test: Callable[[str], bool]) -> Callable[[str], str]:
 
     def validate(value: str) -> str:
         if not test(value):
-            raise ValueError(f"not a valid {kind}")
+            raise ConfigRuleError(f"not a valid {kind}")
         return value
 
     return validate
@@ -199,7 +200,7 @@ CheckStatus = Literal["passed", "warned", "failed", "error", "not_run"]
 def _check_reason(value: dict[str, Any]) -> dict[str, Any]:
     """Write side: the payload must be exactly what the local registry would emit."""
     if ReasonRecord.from_payload(value).to_payload() != value:
-        raise ValueError("reason payload does not match the registry")
+        raise ConfigRuleError("reason payload does not match the registry")
     return value
 
 

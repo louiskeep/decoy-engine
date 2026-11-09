@@ -17,7 +17,7 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="gen.faker_per_row",
         family="faker_seed_instance",
-        call_site="generation/synthesize.py:490",
+        call_site="generation/synthesize.py:441",
         entropy_root="job_seed",
         seed_derivation='faker_inst.seed_instance(gen_ctx.row_int("faker", i))',
         api_operation="Faker.seed_instance(row_int) then provider_func(**kwargs)",
@@ -39,7 +39,7 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="gen.categorical",
         family="python_mt19937",
-        call_site="generation/synthesize.py:433",
+        call_site="generation/synthesize.py:365",
         entropy_root="job_seed",
         seed_derivation=(
             'random.Random(GenDeriveContext.for_column(derive_key, col, seed).base_int("py"))'
@@ -59,11 +59,14 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="gen.reference",
         family="python_mt19937",
-        call_site="generation/synthesize.py:624",
+        call_site="generation/_synthesize_derived.py:151",
         entropy_root="job_seed",
         seed_derivation='random.Random(GenDeriveContext.for_column(...).base_int("py"))',
         api_operation="random.Random(col_seed).choice / .choices per row",
-        call_shape="per row: rng.choice(ref_vals) | rng.choices(..., k=1)  # sequential stream",
+        call_shape=(
+            "per row: rng.choice(ref_vals) | rng.choices(..., k=1)  # sequential stream; "
+            "fitted: rng.shuffle(slots) then rng.shuffle(stubs) on the same stream"
+        ),
         consumes_variable_draws=True,
         identity="column",
         null_draw_behavior="sequential distribution draws nothing (index i % len); random/weighted draw per row",
@@ -73,9 +76,16 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
         notes=(
             "One Random advanced across all rows: a partition cannot resume mid-stream. "
             "Cardinality repair (generators/columns.py:596-656) adds rng.shuffle/choices "
-            "on the same stream. V1 mirror generators/columns.py:507."
+            "on the same stream. V1 mirror generators/columns.py:507. The fitted fan-out "
+            "allocator (generation/statistical/_fanout.py:305) takes the same Random, seeded "
+            "with the pinned snapshot digest (FanoutSpec.seed_digest), and shuffles degrees "
+            "to parents, then the child row order."
         ),
-        mirror_call_sites=("generators/columns.py:507", "generators/columns.py:596"),
+        mirror_call_sites=(
+            "generators/columns.py:507",
+            "generators/columns.py:596",
+            "generation/statistical/_fanout.py:305",
+        ),
     ),
     # -- Generation: per-row reseeded formula / faker scope ------------------
     DrawSite(
@@ -101,7 +111,7 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
         ),
         mirror_call_sites=(
             "generators/_formula.py:144",
-            "generation/synthesize.py:559",
+            "generation/_synthesize_derived.py:84",
         ),
     ),
     # -- Generation: statistical sampler per-row reseed ----------------------
@@ -129,7 +139,7 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="gen.null_probability",
         family="numpy_pcg64",
-        call_site="generation/synthesize.py:521",
+        call_site="generation/synthesize.py:481",
         entropy_root="job_seed",
         seed_derivation=('np.random.default_rng(GenDeriveContext.for_column(...).base_int("np"))'),
         api_operation="numpy.random.default_rng(col_seed).random(n)",
@@ -252,8 +262,8 @@ GEN_SUBSTRATE_DRAW_SITES: tuple[DrawSite, ...] = (
         call_site="generators/derivation.py:158",
         entropy_root="job_seed",
         seed_derivation=(
-            'root = derive_key("gen:" + strategy_config_fingerprint(cfg)) | '
-            "sha256(job_seed.to_bytes(8) + fingerprint) | os.urandom(32) if fresh; "
+            'root = derive_key("gen:" + strategy_config_fingerprint(cfg) + ":" + identity) | '
+            "sha256(job_seed.to_bytes(8) + fingerprint + identity) | os.urandom(32) if fresh; "
             'family_key = HMAC(root, b"fam:"+family); '
             "row_int = HMAC(family_key, family, extra=i.to_bytes(8))"
         ),

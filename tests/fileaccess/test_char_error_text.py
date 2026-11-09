@@ -197,7 +197,7 @@ def test_r12_config_file_errors() -> None:
         "Config root must be a YAML mapping, got list"
     )
     Path("b.yaml").write_text("a: [\n")
-    assert _text(_raises(lambda: validate_config("b.yaml"))).startswith("Failed to parse YAML:")
+    assert _text(_raises(lambda: validate_config("b.yaml"))).startswith("could not parse YAML:")
 
 
 def test_r3_snapshot_read_errors() -> None:

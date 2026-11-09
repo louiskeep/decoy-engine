@@ -72,7 +72,7 @@ ALLOWLIST: dict[str, int] = {
     # no casting logic of its own lives in these routers.
     "src/decoy_engine/execution/_pipeline_route_exec.py": 612,
     # sampler start/finish and evidence threading in _spawn_and_classify; split the spawn/classify half into _isolated_spawn.py.
-    "src/decoy_engine/execution/_isolated_run.py": 654,
+    "src/decoy_engine/execution/_isolated_run.py": 652,
     # wiring of the fk-dtype hazard and D3a validator signals into the one routing call site, plus
     # the B4 source-type admission threading (_source_arrow_types + the source_types param); split
     # the probe-recovery resolver into its own module.
@@ -81,8 +81,6 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/out_of_core/_budget.py": 609,
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
     "src/decoy_engine/execution/out_of_core/_spill_estimate.py": 645,
-    # pinned-Plan generation threading through the per-generator dispatch; split the statistical/derived/formula branches.
-    "src/decoy_engine/generation/synthesize.py": 662,
     "src/decoy_engine/detection/detectors.py": 1046,
     "src/decoy_engine/generators/columns.py": 658,
     "src/decoy_engine/profiling/profiler.py": 640,

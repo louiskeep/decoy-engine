@@ -35,6 +35,9 @@ HEADERLESS_WITHOUT_NAMES = (
 )
 BOTH_NAME_SOURCES = "set one of `column_names` or `column_names_file`, not both"
 
+# `csv_dialect_problem` returns these texts as literals (the validation-site sentry pins literal
+# returns by digest and cannot classify a constant), so the constants must stay equal to them;
+# `test_dialect_problem_codes_match_returned_text` enforces it.
 # Each coded branch text and its registered reason, side by side so neither moves alone.
 # The name-list and delimiter checks stay uncoded.
 DIALECT_PROBLEM_CODES = {
@@ -67,13 +70,19 @@ def csv_dialect_problem(
         # A bare string would split into characters; a generator is consumed once.
         return "`column_names` must be a list or tuple of strings"
     if column_names is not None and column_names_file is not None:
-        return BOTH_NAME_SOURCES
+        return "set one of `column_names` or `column_names_file`, not both"
     if has_header and (column_names is not None or column_names_file is not None):
-        return NAMES_WITH_HEADER
+        return (
+            "`column_names` and `column_names_file` are forbidden when has_header=true "
+            "(the header row already names the columns)"
+        )
     if not has_header and not column_names and column_names_file is None:
         # None or an empty list: an empty list would read a zero-column frame and
         # silently drop the whole file from profiling and masking.
-        return HEADERLESS_WITHOUT_NAMES
+        return (
+            "has_header=false requires a non-empty `column_names` or a `column_names_file` "
+            "(a headerless file has no names to read)"
+        )
     if column_names is not None:
         # Names are the handle every mask rule keys on; a blank or duplicated name
         # would mislabel a column. Count-vs-file needs a read, so the reader guards that.

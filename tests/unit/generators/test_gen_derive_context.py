@@ -20,6 +20,7 @@ from decoy_engine.generators.derivation import (
     GEN_FAMILIES,
     GenDeriveContext,
     strategy_config_fingerprint,
+    with_table,
 )
 
 _MASTER = bytes(range(32))
@@ -30,7 +31,7 @@ def _resolver(label: str = "demo-pipeline"):
 
 
 def _ctx(config, *, derive_key=None, fallback_seed: int = 42) -> GenDeriveContext:
-    return GenDeriveContext.for_column(derive_key, config, fallback_seed)
+    return GenDeriveContext.for_column(derive_key, with_table(config, ""), fallback_seed)
 
 
 class TestFullWidth:
@@ -92,13 +93,14 @@ class TestReproducibilityAndFingerprint:
             b.row_int("faker", i) for i in range(5)
         ]
 
-    def test_rename_does_not_shift_output(self):
-        # name is excluded from the fingerprint (R3.10): same strategy/config
-        # under a different display name yields identical derivation.
+    def test_rename_shifts_output(self):
+        # name is excluded from the fingerprint but is part of the column
+        # identity: same strategy/config under a different name draws a
+        # different stream.
         dk = _resolver()
         a = _ctx({"name": "x", "strategy": "faker", "provider": "name"}, derive_key=dk)
         b = _ctx({"name": "y", "strategy": "faker", "provider": "name"}, derive_key=dk)
-        assert a.base_int("py") == b.base_int("py")
+        assert a.base_int("py") != b.base_int("py")
 
     def test_distinct_configs_diverge(self):
         dk = _resolver()
@@ -107,7 +109,7 @@ class TestReproducibilityAndFingerprint:
         assert a.base_int("py") != b.base_int("py")
 
     def test_keyed_root_is_fingerprint_label(self):
-        # The keyed root is exactly derive_key("gen:" + fingerprint); the
+        # The keyed root is exactly derive_key("gen:" + fingerprint + identity); the
         # family/row split is a pure extension on top of that 32-byte block.
         dk = _resolver()
         cfg = {"strategy": "faker", "provider": "name"}
@@ -141,10 +143,12 @@ class TestFreshAndUnkeyed:
         # Rolls across instances.
         assert a.base_int("py") != b.base_int("py")
 
-    def test_unkeyed_is_reproducible_and_rename_stable(self):
+    def test_unkeyed_is_reproducible_and_identity_scoped(self):
         a = _ctx({"name": "x", "strategy": "categorical", "values": ["a"]}, fallback_seed=7)
+        a2 = _ctx({"name": "x", "strategy": "categorical", "values": ["a"]}, fallback_seed=7)
         b = _ctx({"name": "y", "strategy": "categorical", "values": ["a"]}, fallback_seed=7)
-        assert a.base_int("py") == b.base_int("py")  # name excluded, seed equal
+        assert a.base_int("py") == a2.base_int("py")
+        assert a.base_int("py") != b.base_int("py")
         c = _ctx({"strategy": "categorical", "values": ["a"]}, fallback_seed=8)
         assert a.base_int("py") != c.base_int("py")  # different fallback seed
 

@@ -208,6 +208,21 @@ modules:
     pattern: contextvars (PEP 567)
     source: Python PEP 567 (contextvars), PEP 3134 exception chaining
 
+  - path: src/decoy_engine/profiling/_value_redaction.py
+    pattern: classification registry plus default-deny serializer
+    source: Google Cloud DLP InspectConfig include_quote; ydata-profiling sensitive mode (MIT); Microsoft Presidio replace operator (MIT)
+    note: Saved scan documents drop cell values of value-sensitive columns unless
+      include_values=True. The registry also classifies the distribution snapshot's stats
+      (SNAPSHOT_VALUE_STATS), applied by profiling/_snapshot_values.py. Method only; no
+      dependency taken.
+
+  - path: src/decoy_engine/profiling/_snapshot_values.py
+    pattern: statistical disclosure control global recoding; HIPAA Safe Harbor year-only dates
+    source: Hundepool et al., Statistical Disclosure Control (Wiley, 2012), sections 3.4.2 to 3.4.3; R sdcMicro globalRecode; 45 CFR 164.514(b)(2)(i)(C); Heckbert, Nice numbers for graph labels (Graphics Gems, 1990)
+    note: A fit snapshot releases a sensitive numeric column as one interval on a power-of-ten
+      grid strictly outside every cell, and a sensitive datetime column as the years around
+      its data. Method only; no dependency taken.
+
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
   # RiskFlag) was deleted under the pre-scan-reframe-C clean break
@@ -215,3 +230,7 @@ modules:
   # __pycache__/; the registry entry was orphaned and tripped the
   # sentry test. Removing both the registry entry AND the empty
   # directory ends the drift.
+
+  - path: src/decoy_engine/generation/statistical/_fanout.py
+    pattern: degree-sequence sampling with systematic resampling and largest-remainder apportionment
+    source: Newman, Networks 2nd ed. (2018) sec. 12.1; Kitagawa, JCGS (1996); Carpenter, Clifford and Fearnhead (1999); Balinski and Young, Fair Representation (2001); Patki et al., SDV HMA1, IEEE DSAA (2016); SDMetrics CardinalityShapeSimilarity

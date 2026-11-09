@@ -19,9 +19,9 @@ is an ancestor, tag `v0.19.0` exists). Handoff `p05-config-explicit-build-handof
   1 MiB `fstat` check plus a check on the bytes read. One `_record_reader` (the module's one `csv.reader`)
   and one `_is_blank_record` serve the data scan and the header file. `_refusal` is `source_refusal`.
 - `build_profile_source` is a file-access entry point; `_build_file_source` passes `table`.
-- Registry 1.10.0: `has_header_required` and `column_names_source_conflict` (validation_result block),
+- Registry 1.15.0: `has_header_required` and `column_names_source_conflict` (validation_result block),
   `column_names_file_invalid` (PipelineValidationError block), mirrored in `CODES`. Fixture
-  `reason-manifest-v1.10-config-explicit-e1.json`; `consumer-contract.json` regenerated (diff:
+  `reason-manifest-v1.15-config-explicit-e1.json`; `consumer-contract.json` regenerated (diff:
   `registry_version` only).
 - Sentry `tests/sentry/source_config/test_source_dialect_choke_point.py` (AT-E1-9), one `SENTRIES` line.
 - Codemod `scripts/dev/codemods/config_explicit.py has-header`: 95 Python and 2 YAML edits in `tests`,
@@ -82,7 +82,7 @@ an `except`, no regular-file check); AT-E1-6 names from the descriptor; AT-E1-7 
 - The codemod also matches `sources=` keywords and `sources = {...}` assignments (95 edits vs the
   measured 84 literals).
 - Registry: SCAN-ML M1 merged first (#405) and took the next minor, so after merging main
-  `registry_renumber.py` moved E1 to 1.9.0; derived visibility (#408) later moved it to 1.10.0.
+  `registry_renumber.py` moved E1 to the next minor; derived visibility (#408) later moved it again.
 - Not in the allowed files and still showing csv sources without `has_header`: `README.md`,
   `docs/quickstart.md`, `docs/recipes.md`, `examples/`. Needs an orchestrator decision.
 
@@ -116,7 +116,7 @@ T1 `scripts/dev/gates.sh --keep-going --baseline` (VM, 983-file selection agains
 - `2eeeb546`: env, ruff, format, mypy PASS; sentry 4279 passed; licenses 63 passed; tests 34738
   passed, 2 failed (baseline 34683 passed, 0 failed). Branch-only: the two STOP 4 ids above.
 
-- `e499d802` (after merging main `38951412` with SCAN-ML M1 and renumbering to 1.9.0; 997-file
+- `e499d802` (after merging main `38951412` with SCAN-ML M1 and renumbering; 997-file
   selection): env, ruff, format, mypy PASS; sentry 4296 passed; licenses 63 passed; tests 34912
   passed, 0 failed (baseline 34855 passed, 0 failed); branch-only none.
 
@@ -126,3 +126,4 @@ the registry version, plus two merge fixes after main's derived-visibility merge
 `build_profile_source`), and one #408 test declares `has_header`.
 Registry renumbered at merge from 1.8.0 to 1.9.0 by scripts/dev/registry_renumber.py; main was at 1.8.0.
 Registry renumbered at merge from 1.9.0 to 1.10.0 by scripts/dev/registry_renumber.py; main was at 1.9.0.
+Registry renumbered at merge from 1.10.0 to 1.15.0 by scripts/dev/registry_renumber.py; main was at 1.14.0.

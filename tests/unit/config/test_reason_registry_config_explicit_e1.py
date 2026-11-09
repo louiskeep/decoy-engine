@@ -14,7 +14,7 @@ FIXTURE = (
     Path(__file__).resolve().parents[2]
     / "fixtures"
     / "f29"
-    / "reason-manifest-v1.10-config-explicit-e1.json"
+    / "reason-manifest-v1.15-config-explicit-e1.json"
 )
 
 OWNED = {

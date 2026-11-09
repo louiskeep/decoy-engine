@@ -152,7 +152,7 @@ _SCOPE_FILES = (
     "docs/quality/mutation-ledgers/execution_strategies_categorical.md",
 )
 _SELF = pathlib.Path(__file__).resolve()
-# These keep the legitimately unseeded sites (shuffle, identifier) and mention
+# These keep the legitimately unseeded site (identifier) and mention
 # categorical only to say which path replaced the old behaviour.
 _NOT_CATEGORICAL_SPECIFIC = {
     "tests/unit/execution/test_categorical_seeded_nondet.py",

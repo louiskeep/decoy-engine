@@ -44,6 +44,7 @@ https://docs.pydantic.dev/latest/concepts/unions/#discriminated-unions.
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
+from urllib.parse import SplitResult, urlsplit
 
 from pydantic import (
     BaseModel,
@@ -64,6 +65,7 @@ from decoy_engine.config._csv_dialect import (
     csv_dialect_problem,
 )
 from decoy_engine.config._fixed_width import FixedWidthLayout
+from decoy_engine.errors import ConfigRuleError
 
 
 def _strip_serialization(node: Any) -> Any:
@@ -154,9 +156,11 @@ class FileSource(BaseModel):
     @model_validator(mode="after")
     def _validate_layout_matches_format(self) -> FileSource:
         if self.format == "fixed_width" and self.layout is None:
-            raise ValueError("FileSource: format='fixed_width' requires a `layout` column-spec")
+            raise ConfigRuleError(
+                "FileSource: format='fixed_width' requires a `layout` column-spec"
+            )
         if self.format != "fixed_width" and self.layout is not None:
-            raise ValueError(
+            raise ConfigRuleError(
                 "FileSource: `layout` is only valid when format='fixed_width' "
                 f"(got format={self.format!r})"
             )
@@ -190,7 +194,7 @@ class FileSource(BaseModel):
             raise PydanticCustomError(DIALECT_PROBLEM_CODES[problem], f"FileSource: {problem}")
         if problem is not None:
             # The name-list and delimiter checks stay uncoded.
-            raise ValueError(f"FileSource: {problem}")
+            raise ConfigRuleError(f"FileSource: {problem}")
         return self
 
     @model_serializer(mode="wrap")
@@ -225,6 +229,13 @@ class FileSource(BaseModel):
         if "properties" not in schema and "$ref" not in schema:
             schema = handler(_strip_serialization(core_schema))
         return schema
+
+
+def _endpoint_refused() -> PydanticCustomError:
+    """The one refusal for a bad endpoint_url. It names the field and never the submitted value."""
+    return PydanticCustomError(
+        str(reasons.config.ENDPOINT_URL_INVALID), "endpoint_url is not an acceptable URL."
+    )
 
 
 # Every `FileSource` field that names a file, read from the `x-decoy-path` marker so a new
@@ -268,6 +279,27 @@ class S3Source(BaseModel):
             "default credential chain (env vars / instance profile / etc.)."
         ),
     )
+
+    @field_validator("endpoint_url")
+    @classmethod
+    def _endpoint_is_a_host(cls, value: str | None) -> str | None:
+        """An endpoint names a service. Userinfo is a credential and a query string is a
+        request, and either would be echoed by every log line that prints the descriptor."""
+        if value is None:
+            return value
+        lowered = value.lower()
+        if any(mark in lowered for mark in ("@", "?", "#", "%40", "%3f", "%23")):
+            raise _endpoint_refused()
+        parts: SplitResult | None = None
+        try:
+            parts = urlsplit(value)
+            parts.port  # noqa: B018 - raises ValueError on a malformed port
+        except ValueError:
+            # Refuse below, outside the except: the ValueError quotes the endpoint and must not stay as __context__.
+            parts = None
+        if parts is None or parts.scheme not in ("http", "https") or not parts.hostname:
+            raise _endpoint_refused()
+        return value
 
 
 class GCSSource(BaseModel):

@@ -291,7 +291,9 @@ class TestCategoricalParityV1:
         operator sees the error at submit time, not as suspicious output
         rows downstream."""
         col = {"name": "x", "type": "categorical"}
-        with pytest.raises(ValidationError, match="categorical column 'x' requires `categories`"):
+        with pytest.raises(
+            ValidationError, match=r"generate_columns\.0\.categories\n\s+Field required"
+        ):
             _v2_run(col, 5)
 
 
@@ -775,7 +777,9 @@ class TestFormulaParityV1:
         config until they noticed an all-null output column. Post-fix
         the validator catches the empty formula up front."""
         col = {"name": "x", "type": "formula", "formula": ""}
-        with pytest.raises(ValidationError, match="formula column 'x' requires `formula`"):
+        with pytest.raises(
+            ValidationError, match=r"generate_columns\.0\.formula\n\s+Field required"
+        ):
             _v2_run(col, 5)
 
 
@@ -1466,28 +1470,16 @@ class TestInstanceDefaultLocale:
         assert with_instance == without_instance == _v1_run(col, 5, instance_default_locale="en_GB")
 
 
-class TestLegacyColumnNameSeed:
-    """M2: V1's pre-R3.10 column-name path (``_legacy_column_name_seed: true``) stays
-    V1-aligned through ``synthetic_column_seed``. Default path (R3.10) fingerprints
-    strategy/config so column renames are stable in unkeyed runs."""
+class TestColumnIdentitySeed:
+    """Default path: the draw derives from strategy/config plus (table, column), and V1
+    and v2 agree on it."""
 
-    def test_legacy_seed_opt_back_parity(self):
-        col = {
-            "name": "fn",
-            "type": "faker",
-            "faker_type": "first_name",
-            "_legacy_column_name_seed": True,
-        }
-        assert _v2_run(col, 10) == _v1_run(col, 10)
-
-    def test_default_rename_stable(self):
-        # Default R3.10 path: same strategy/config but a different `name` -> same
-        # seed -> same output (rename-stable in the unkeyed seed path).
+    def test_rename_shifts_output_and_matches_v1(self):
         col_a = {"name": "alpha", "type": "faker", "faker_type": "first_name"}
         col_b = {"name": "beta", "type": "faker", "faker_type": "first_name"}
-        assert _v2_run(col_a, 10) == _v2_run(col_b, 10)
-        # And both match V1's R3.10 output (which is also rename-stable).
+        assert _v2_run(col_a, 10) != _v2_run(col_b, 10)
         assert _v2_run(col_a, 10) == _v1_run(col_a, 10)
+        assert _v2_run(col_b, 10) == _v1_run(col_b, 10)
 
 
 class TestDeterminismFresh:
@@ -1553,8 +1545,9 @@ class TestReferenceEdgeCases:
         }
         assert _v2_run_multi(self._two_table(child)) == _v1_run_multi(self._two_table(child))
 
-    def test_unknown_distribution_falls_through_to_random(self):
-        # V1 warns + uses random; v2 silently uses random. Parity in values.
+    def test_unknown_distribution_is_refused_at_validation(self):
+        # V1 warned and used random, v2 silently used random. GEN-STRICT E1 refuses the typo
+        # up front instead of letting the run pick a distribution the operator did not ask for.
         child = {
             "name": "customer_id",
             "type": "reference",
@@ -1562,7 +1555,11 @@ class TestReferenceEdgeCases:
             "reference_column": "id",
             "distribution": "not_a_real_distribution",
         }
-        assert _v2_run_multi(self._two_table(child)) == _v1_run_multi(self._two_table(child))
+        with pytest.raises(ValidationError) as info:
+            _v2_run_multi(self._two_table(child))
+        (err,) = info.value.errors()
+        assert err["type"] == "generate_option_value_unknown"
+        assert err["loc"][-1] == "distribution"
 
 
 class TestFC1QAFindings:

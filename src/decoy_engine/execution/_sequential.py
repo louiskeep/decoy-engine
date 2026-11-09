@@ -280,11 +280,11 @@ def run_sequential(
     q_cfg: dict[str, Any] = quarantine_config or {}
     q_enabled = bool(q_cfg.get("enabled", False))
     q_triggers: list[str] = list(q_cfg.get("triggers") or [])
-    q_output_path: str = (q_cfg.get("output_path") or "").strip()
+    q_output_path: str = q_cfg.get("output_path") or ""
     # Fail-closed backstop for raw-dict callers who bypass QuarantineConfig
     # validation: if quarantine is enabled with a row-error trigger, it must name
     # an output_path, or a quarantined row would be silently dropped.
-    if q_enabled and q_triggers and not q_output_path:
+    if q_enabled and q_triggers and not q_output_path.strip():
         raise ValueError(
             "quarantine enabled with triggers but no output_path; refusing to run "
             "(would silently drop quarantined rows)."

@@ -46,7 +46,9 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
         assert protocol.draw_site_by_id(site.draw_site_id) is site
 
 
-_CATALOGUE_DIGEST = "e22d1fc92cbb7159bd3d20dd439bac991c2903b0f0cd32a6e10a6b4b969ea75a"
+# Re-pinned at the GEN-C1 main merge: carries the shuffle and derive_context re-pins plus the moved gen call sites.
+# Re-pinned 2026-11-09: gen.reference records the fitted fan-out shuffles on its stream.
+_CATALOGUE_DIGEST = "fef21ab282eadeaf130507354945b19d0a74a55efe6efebd671b4213a6b00ee1"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -86,7 +88,9 @@ _ORDERED_IDS = [
 ]
 
 _ENTRY_DIGESTS = [
-    "92bbc34889a8b120e65c01891948d52d3e61addb16ea16772ca9f945dde21fb5",
+    # mask.shuffle re-pinned 2026-11-08: the unkeyed mode draws from the mask key on the shared
+    # (table, column) draw identity.
+    "84b2887fc0363d71c893d6ad99f3d7026d891ee308091c68405db6dca943afb0",
     "8dce6622cbd27e05cc798e8b209a715c78834c056613f6adefced790bc4dfe9b",
     "33858d620973b39724613d7569dc732db3707e729236eeef8754518c1dfcf87a",
     "8ba3e20fb12b8a29cf52e18ef4d41d6c691bad77c6ac10a4651620d351f2a0c1",
@@ -100,12 +104,13 @@ _ENTRY_DIGESTS = [
     "474ab1f76ab596a309f6b3f4b6a1e4995555c6f07473a831af12862a22283a60",
     "d30d45fdcacb74a57114f50fb09d3557bfe838db4afa0b1910f59816dc18b90b",
     "f01f96cde92e4a13757bc0724ba4eda31b1178bbb420edb144e676a144444b3c",
-    "dc05e03d1c4fda601fce54688971507cd1bfc189aa10646062b315aa9f4913c9",
-    "b411c70c271961691308e0ea9318cce369107d1690f9b09d03046bb6aa436126",
-    "793bc8be484782aa773cbe6556785f5f02619893e768996dc515fa820e6881a7",
-    "0c45409c0a1dd96459b4ba69c4382899ffd0cebada23500d1b3491d13c76e4e3",
+    "ed83ddf5acc149240117e64b8054cf308f86112e5111c56ec3b75eb6066c508b",
+    "8b3d98cad9b169be0e27fddb70ac3bc5d9776dd9bf370c4c661511c70702b1e6",
+    # gen.reference re-pinned 2026-11-09: the fan-out allocator is a mirror call site.
+    "9a090ccc3985230c304646f2192066f37fbcb796fa3e5f28917a1df151410149",
+    "22ddc02bdf5fbcd992e9c621d629885b7c036e872f7f71b90f73fc3fa4f2023d",
     "d45ba5c6dc53660b4cf3baa43e2faff146d2e4f91e0acd7fd977f731f3b05fe7",
-    "d6e7cb8e9959f4ac1641affe43887f32a73edf5537d20bdf05680cdc3f4f0f01",
+    "dd5d6269da3bf5a40df6a7257d12ea39b6d752df3683aae258197accb07cdf7d",
     "fa2fd07097a3ed68edb71e46b40c43e0d697b50cf784b740b49c180bcae2e5d2",
     "451e4aa4bcb7f23e437468f4e692768c4571e4defb8a081d879be0eb428a1308",
     "648d1fb0b894493e6e8ad55de08b481dbbece29402ecb9ae3eb9cc54b995b211",
@@ -114,7 +119,7 @@ _ENTRY_DIGESTS = [
     "4448026c1f789d220610a85dbcb0c17d8ce04e4497d1cda09e0346f713f5d2ba",
     "b9489ca4978756b4e41678489ce88c9f434a61526272c9cb639bbaddd282f944",
     "73e3c42955d797409d090d70e5b1c66d05ad12bd67ee820bc0f93b00a9b48970",
-    "ca03675f3cdc12192cf9e6bb08acad38c41841b85f4b05bf36a97fd202a656d9",
+    "0e43e34c1059a22096de913327b9f7889ae6316c165037df78ec98b7c01598e1",
     "eeccee566ac297f0c47f8a3e8da4309688e3c6a307af233ad06158b3aedae08c",
     "d4a795b3273175d0c76a88f69cd8e3d97326497538694faa60b0886b0868bb02",
     "46b422be131d1e91c5ed2a6174d86f970429577b88e5da660ab3a4926171dab4",

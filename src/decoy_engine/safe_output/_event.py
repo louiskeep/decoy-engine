@@ -16,8 +16,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from decoy_engine.reasons import ReasonRef, Severity, approve_name, require_known
-from decoy_engine.reasons._record import COUNT_KEYS, MAX_COUNTS
+from decoy_engine.reasons import (
+    COUNT_KEYS,
+    MAX_COUNTS,
+    ReasonRef,
+    Severity,
+    approve_name,
+    require_known,
+)
 from decoy_engine.safe_output._exception import SafeErrorType
 
 SCHEMA = "decoy-safe-output/v1"

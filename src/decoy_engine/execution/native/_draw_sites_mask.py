@@ -16,11 +16,15 @@ MASK_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="mask.shuffle",
         family="numpy_pcg64",
-        call_site="execution/_strategies/_shuffle.py:62",
+        call_site="execution/_strategies/_shuffle.py:80",
         entropy_root="mask_key",
         seed_derivation=(
             "int.from_bytes(derive(ctx.mask_key, plan.namespace, "
-            'column.encode("utf-8"))[:8], "big")'
+            'column.encode("utf-8"))[:8], "big"); unkeyed mode: '
+            "derive(ctx.mask_key, UNKEYED_SHUFFLE_NAMESPACE, "
+            '(job_seed.hex() + "/" + context_draw_identity(ctx, column))'
+            '.encode("utf-8")), the identity being '
+            '"<len>:<current_table>/<len>:<nested_outer_column or column>"'
         ),
         api_operation="numpy.random.default_rng(seed_int).permutation",
         call_shape="permutation(len(non_na_values))  # whole-column",
@@ -28,12 +32,16 @@ MASK_DRAW_SITES: tuple[DrawSite, ...] = (
         identity="column",
         null_draw_behavior="nulls excluded before the draw; only non-null values are permuted",
         partitionable=False,
-        config_fingerprint_source="namespace_registry(plan.namespace)+column_name",
+        config_fingerprint_source=(
+            "namespace_registry(plan.namespace)+column_name; unkeyed mode: "
+            "job_seed+current_table+(nested_outer_column or column_name)"
+        ),
         provider_version=f"{_V6}; numpy NEP-19 PCG64",
         notes=(
             "Whole-column multiset permutation. A partition sees only its slice, "
             "so it cannot reproduce the global permutation order. Non-deterministic "
-            "mode uses an unseeded default_rng()."
+            "mode is unkeyed but drawn from the mask key with the job seed and the shared "
+            "(table, column) draw identity bound in."
         ),
     ),
     # -- Masking: source-keyed HMAC family (per-row, partitionable) ----------

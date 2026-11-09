@@ -11,7 +11,15 @@ import pytest
 
 from decoy_engine.config import FileSource
 from decoy_engine.config import _sources as sources_module
-from decoy_engine.config._csv_dialect import CSV_DIALECT_DEFAULTS, CsvDialect, csv_dialect_problem
+from decoy_engine.config._csv_dialect import (
+    BOTH_NAME_SOURCES,
+    CSV_DIALECT_DEFAULTS,
+    DIALECT_PROBLEM_CODES,
+    HEADERLESS_WITHOUT_NAMES,
+    NAMES_WITH_HEADER,
+    CsvDialect,
+    csv_dialect_problem,
+)
 from decoy_engine.errors import ConfigError
 
 # (has_header, column_names, delimiter)
@@ -228,6 +236,7 @@ def test_public_loader_route_carries_no_submitted_delimiter() -> None:
         validate_config(_pipeline_with_delimiter(SECRET))
     err = info.value
     assert "delimiter" in str(err)  # the real problem is still reported
+    assert "sources.s.file" in str(err)  # and located by the source name
     _assert_no_secret(err)  # str, repr, args, and no chained pydantic error carrying input
 
 
@@ -265,3 +274,18 @@ def test_non_sequence_or_non_str_column_names_are_refused(bad: Any) -> None:
         CsvDialect(False, bad)
     with pytest.raises(ConfigError):
         resolve_csv_dialect({"has_header": False, "column_names": bad})
+
+
+@pytest.mark.parametrize(
+    ("args", "kwargs", "text"),
+    [
+        ((False, ["a"], ","), {"column_names_file": "n.txt"}, BOTH_NAME_SOURCES),
+        ((True, ["a"], ","), {}, NAMES_WITH_HEADER),
+        ((False, None, ","), {}, HEADERLESS_WITHOUT_NAMES),
+    ],
+)
+def test_dialect_problem_codes_match_returned_text(
+    args: tuple[Any, ...], kwargs: dict[str, Any], text: str
+) -> None:
+    assert csv_dialect_problem(*args, **kwargs) == text
+    assert text in DIALECT_PROBLEM_CODES
