@@ -35,7 +35,7 @@ CANARY = "CANARY-9f3a71"
 def _csv(tmp_path: Path, name: str, text: str) -> dict[str, Any]:
     path = tmp_path / f"{name}.csv"
     path.write_text(text)
-    return {"type": "file", "format": "csv", "path": str(path)}
+    return {"type": "file", "format": "csv", "path": str(path), "has_header": True}
 
 
 def _table(scan: Any, name: str) -> Any:

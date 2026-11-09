@@ -35,8 +35,14 @@ def _sources(tmp_path: Path) -> dict[str, dict[str, Any]]:
     write_fixed_width(FRAME, LAYOUT, tmp_path / "d.fwf")
     file = {"type": "file"}
     return {
-        "csv": {**file, "format": "csv", "path": str(tmp_path / "d.csv")},
-        "tsv": {**file, "format": "csv", "path": str(tmp_path / "d.tsv"), "delimiter": "\t"},
+        "csv": {**file, "format": "csv", "path": str(tmp_path / "d.csv"), "has_header": True},
+        "tsv": {
+            **file,
+            "format": "csv",
+            "path": str(tmp_path / "d.tsv"),
+            "delimiter": "\t",
+            "has_header": True,
+        },
         "parquet": {**file, "format": "parquet", "path": str(tmp_path / "d.parquet")},
         "fwf": {**file, "format": "fixed_width", "path": str(tmp_path / "d.fwf"), "layout": LAYOUT},
     }

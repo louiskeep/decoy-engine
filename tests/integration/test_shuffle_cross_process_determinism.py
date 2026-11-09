@@ -25,7 +25,12 @@ def _config(out: Path, diagnosis: dict[str, Any]) -> dict[str, Any]:
         "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
-            t: {"type": "file", "path": str(out / f"{t}.src.csv"), "format": "csv"}
+            t: {
+                "type": "file",
+                "path": str(out / f"{t}.src.csv"),
+                "format": "csv",
+                "has_header": True,
+            }
             for t in ("patients", "visits")
         },
         "targets": {
