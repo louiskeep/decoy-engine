@@ -179,12 +179,20 @@ P3 = "permitted::c/a.py::K.m::cccccccccc"
 OTHER_SITE = "permitted::c/a.py::K.other::dddddddddd"
 
 
-def _set_keys(repo: Path, keys: list[str]) -> None:
-    _write(repo, A, _baseline("a", keys))
+V_ID, V = "validation-name-messages", "tests/sentry/baselines/v.json"
 
 
-def _commit_keys(repo: Path, keys: list[str]) -> None:
-    _set_keys(repo, keys)
+def _set_keys(repo: Path, keys: list[str], sid: str = V_ID) -> None:
+    """Write ``keys`` to the re-key-enabled sentry (or to ``a`` when ``sid`` is ``"a"``)."""
+    _write(repo, REG, _registry({"a": A, V_ID: V}))
+    if sid == "a":
+        _write(repo, A, _baseline("a", keys))
+    else:
+        _write(repo, V, _baseline(V_ID, keys))
+
+
+def _commit_keys(repo: Path, keys: list[str], sid: str = V_ID) -> None:
+    _set_keys(repo, keys, sid)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "permits")
 
@@ -194,7 +202,7 @@ def test_same_count_rekey_of_a_permitted_site_passes_and_reports(repo: Path) -> 
     _set_keys(repo, ["m::f", P2])
     res = _run(repo)
     assert res.returncode == 0, res.stdout + res.stderr
-    assert "a: re-keyed permitted site c/a.py::K.m (review the message)" in res.stdout
+    assert f"{V_ID}: re-keyed permitted site c/a.py::K.m (review the message)" in res.stdout
 
 
 def test_permitted_count_growth_for_a_site_fails(repo: Path) -> None:
@@ -212,7 +220,22 @@ def test_new_permitted_site_fails(repo: Path) -> None:
 def test_split_rekey_with_fewer_keys_passes(repo: Path) -> None:
     _commit_keys(repo, [P1, P2])
     _set_keys(repo, [P3])
-    assert _run(repo).returncode == 0
+    res = _run(repo)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "re-keyed permitted site c/a.py::K.m" in res.stdout
+
+
+def test_swapping_one_site_for_another_fails(repo: Path) -> None:
+    # Same total count, different site: a per-file or per-baseline count would let this through.
+    _commit_keys(repo, [P1])
+    _set_keys(repo, [OTHER_SITE])
+    _assert_red(repo, OTHER_SITE)
+
+
+def test_permitted_keys_of_a_sentry_not_opted_in_compare_exactly(repo: Path) -> None:
+    _commit_keys(repo, [P1], sid="a")
+    _set_keys(repo, [P2], sid="a")
+    _assert_red(repo, P2)
 
 
 def test_non_permitted_keys_keep_exact_comparison(repo: Path) -> None:

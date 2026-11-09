@@ -3,8 +3,9 @@
 A baseline is a JSON file ``{"sentry_id", "created_in", "entries": {key: {"reason"}}}``
 under ``tests/sentry/baselines/``. ``scripts/dev/sentry_registry.toml`` binds each sentry id to
 exactly one baseline path. ``check`` compares the working tree with a base commit and returns
-findings; an empty list means the ratchet holds. Baseline keys compare exactly, except
-``permitted::<file>::<site>::<digest>`` keys, which compare by count per site (see ``growth``). Messages carry ids, paths and keys only.
+findings; an empty list means the ratchet holds. Baseline keys compare exactly, except the
+``permitted::<file>::<site>::<digest>`` keys of the sentries in ``REKEY_PER_SITE``, which
+compare by count per site (see ``growth``). Messages carry ids, paths and keys only.
 """
 
 from __future__ import annotations
@@ -24,6 +25,9 @@ REGISTRY = "scripts/dev/sentry_registry.toml"
 BASELINE_DIR = "tests/sentry/baselines"
 MIN_REASON = 15
 PLACEHOLDERS = frozenset({"todo", "tbd", "fixme", "xxx", "n/a", "none"})
+# Only sentries whose last key segment is a message digest may re-key; for any other sentry a
+# changed last segment can mean a different permitted thing, so it compares exactly.
+REKEY_PER_SITE = frozenset({"validation-name-messages"})
 
 
 @dataclass(frozen=True)
@@ -98,18 +102,23 @@ def _permit_site(key: str) -> str | None:
     return site if kind == "permitted" and sep and digest and "::" in site else None
 
 
-def growth(head: frozenset[str], base: frozenset[str]) -> tuple[frozenset[str], list[str]]:
+def growth(
+    head: frozenset[str], base: frozenset[str], per_site: bool = True
+) -> tuple[frozenset[str], list[str]]:
     """Keys that count as growth over ``base``, and permit sites that were only re-keyed.
 
     A permitted key embeds a digest of its message, so any edit to a permitted site moves the
     key. For those keys growth is per site: a site absent from ``base`` or holding more keys than
     it did there is growth; the same count under new digests is a re-key, reported for review.
-    The sentry still decides what is permitted. Every other key kind compares exactly.
+    The sentry still decides what is permitted. Every other key kind, and every key when
+    ``per_site`` is false, compares exactly.
     """
+    if not per_site:
+        return frozenset(head - base), []
 
     def by_site(keys: frozenset[str]) -> dict[str, list[str]]:
         sites: dict[str, list[str]] = {}
-        for key in sorted(keys):
+        for key in keys:
             site = _permit_site(key)
             if site is not None:
                 sites.setdefault(site, []).append(key)
@@ -163,6 +172,7 @@ def check(root: Path, base_ref: str) -> tuple[list[str], list[str]]:
         *(_base_keys(root, base_ref, base_reg[s]) for s in removed)
     )
     new_union: frozenset[str] = frozenset()
+    union_ids = set(removed)
     for sid, base in sorted(loaded.items()):
         path = head[sid]
         report.append(f"{sid}: {len(base.keys)} key(s) in {path}")
@@ -170,7 +180,9 @@ def check(root: Path, base_ref: str) -> tuple[list[str], list[str]]:
             if base_reg[sid] != path:
                 findings.append(f"{sid}: baseline moved from {base_reg[sid]} to {path}")
                 continue
-            grown, rekeyed = growth(base.keys, _base_keys(root, base_ref, path))
+            grown, rekeyed = growth(
+                base.keys, _base_keys(root, base_ref, path), sid in REKEY_PER_SITE
+            )
             report += [
                 f"{sid}: re-keyed permitted site {site} (review the message)" for site in rekeyed
             ]
@@ -180,10 +192,11 @@ def check(root: Path, base_ref: str) -> tuple[list[str], list[str]]:
                 )
         elif removed:
             new_union |= base.keys
+            union_ids.add(sid)
         else:
             # Newly registered in this diff: the one way a first inventory is admitted.
             report.append(f"{sid}: first inventory, {len(base.keys)} key(s), review required")
-    grown, rekeyed = growth(new_union, old_union)
+    grown, rekeyed = growth(new_union, old_union, union_ids <= REKEY_PER_SITE)
     report += [
         f"replacement: re-keyed permitted site {site} (review the message)" for site in rekeyed
     ]

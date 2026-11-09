@@ -2,9 +2,9 @@
 
 Usage: ratchet_check.py [--root DIR] [--base REF]
   --base   default: merge-base of origin/main and HEAD
-A key may not be added, except that `permitted::<file>::<site>::<digest>` keys are counted per
-site: re-keying a site (same count, new digest) passes and prints a review line; a higher count or
-a new site fails.
+A key may not be added, except that for sentries in REKEY_PER_SITE the
+`permitted::<file>::<site>::<digest>` keys count per site: re-keying a site (same count, new
+digest) passes and prints a review line; a higher count or a new site fails.
 The logic lives in tests/sentry/_ratchet.py so the unit tests and this gate step share it.
 """
 
