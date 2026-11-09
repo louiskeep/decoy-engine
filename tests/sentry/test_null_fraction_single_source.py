@@ -15,7 +15,9 @@ SRC = Path(__file__).parents[2] / "src" / "decoy_engine"
 OWNER = ("quality/diagnostic.py", "snapshot_null_fraction")
 
 _COUNTS = frozenset({"null_count", "non_null_count"})
-_TOKENS = _COUNTS | {"row_count"}
+_TOKENS = _COUNTS | {"row_count", "non_null_cells"}
+# `CellFormat.non_null_cells` is the same concept as the snapshot's `non_null_count`.
+_ALIASES = {"non_null_cells": "non_null_count"}
 
 
 def _tokens(node: ast.AST) -> set[str]:
@@ -25,18 +27,18 @@ def _tokens(node: ast.AST) -> set[str]:
     found: set[str] = set()
     for sub in ast.walk(node):
         if isinstance(sub, ast.Constant) and sub.value in _TOKENS:
-            found.add(str(sub.value))
+            found.add(_ALIASES.get(str(sub.value), str(sub.value)))
         elif isinstance(sub, ast.Attribute) and sub.attr in _TOKENS:
-            found.add(sub.attr)
+            found.add(_ALIASES.get(sub.attr, sub.attr))
     return found
 
 
 def _tokens_here(node: ast.AST) -> set[str]:
     """Tokens a single node carries itself (the scope walk already visits every node)."""
     if isinstance(node, ast.Constant) and node.value in _TOKENS:
-        return {str(node.value)}
+        return {_ALIASES.get(str(node.value), str(node.value))}
     if isinstance(node, ast.Attribute) and node.attr in _TOKENS:
-        return {node.attr}
+        return {_ALIASES.get(node.attr, node.attr)}
     return set()
 
 
@@ -164,3 +166,8 @@ def test_seeded_class_level_division_is_detected() -> None:
 def test_blank_share_without_null_tokens_is_not_flagged() -> None:
     fine = "def sample_column(fmt):\n    return fmt.blank_count / fmt.non_null_cells\n"
     assert violations("generation/statistical/_sample.py", fine) == []
+
+
+def test_seeded_non_null_cells_rate_is_detected() -> None:
+    seeded = "def rate(fmt):\n    return fmt.null_count / (fmt.null_count + fmt.non_null_cells)\n"
+    assert violations("generation/statistical/_sample.py", seeded)
