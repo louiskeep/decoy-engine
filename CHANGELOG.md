@@ -9,6 +9,22 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (value redaction for saved scan documents, 2026-11-08)
+
+`decoy_engine` and `decoy_engine.profiling` export `profile_document`, `redact_profile_dict` and
+`is_value_sensitive`. `profile_document(profile)` is `ColumnProfile.to_dict()` with the cell values
+of every value-sensitive column removed: `min_value`, `max_value`, `mean_value`, `date_min`,
+`date_max`, `mode_value` and the distribution `min`, `max` and `mean` become `null`,
+`sample_invalid` and detector `sample_misses` become `[]`, and top-value text, distribution labels
+and sentinel value and note text become `"[redacted]"`, so counts, rates and array lengths are kept.
+A column is value-sensitive when any detector fired, its `pii_score` is at least 0.6, or it is
+near-unique; a loaded document with a missing or ill-typed input counts as sensitive. The document
+gains `value_policy` (`flagged-redacted/v1`, or `raw` with `include_values=True`) and
+`redacted_columns`. `redact_profile_dict` applies the same rules to a loaded document and ignores
+any marker it already carries. `to_dict()` is unchanged and still returns the raw form. Every field
+reachable from `ColumnProfile` must be classified in `profiling/_value_redaction.py`; a sentry fails
+on a new unclassified field.
+
 ### Changed (row directories use the protected allocator)
 
 The out-of-core spill root and its subdirectories, the isolated-run work root, and the Postgres
@@ -35,6 +51,17 @@ with a leading zero per column. Two new `warning` reasons (`scan_header_suspect`
 `ScanSourceError`), registry 1.10.0. `S3Source.endpoint_url` accepts only an http or https URL with a
 host and refuses userinfo, a query, a fragment and their percent-encoded forms. `read_csv_source`,
 `resolve_csv_dialect` and `CsvDialect` are also exported from `decoy_engine.profile`.
+
+### Fixed (QA row 24d: shuffle determinism, 2026-11-08)
+
+`shuffle` without `deterministic: true` drew from an unseeded generator, so two runs with the
+same config, seed and mask secret gave different output. That mode is the default, so plain
+`strategy: shuffle` (as in the GDPR template) did not repeat. It now draws from the mask key
+with the job seed and the table and column names bound in, and repeats across processes. Its
+output changes once. The multi-table split no longer holds a table whole because of it.
+Without a mask secret the mask key is the job seed, so anyone with the config and the output
+can recompute the permutation and undo it, as with every keyed strategy; set a secret
+(required at GA) when that matters.
 
 ### Changed (value-free config errors, converter, 2026-11-08)
 
