@@ -268,15 +268,15 @@ def test_fk_fanout_codes_are_registered_with_their_owner(
     spec = reasons.find(namespace, code)
     assert spec is not None
     assert spec.owner == owner
-    assert spec.since == "1.10.0"
+    assert spec.since == "1.12.0"
     assert getattr(getattr(reasons, namespace), code.upper()) == code
 
 
 def test_fk_fanout_minor_has_one_fixture_with_exactly_its_identities() -> None:
-    pinned = _load("reason-manifest-v1.10-fk-fanout.json")
+    pinned = _load("reason-manifest-v1.12-fk-fanout.json")
     got = sorted((e["namespace"], e["code"]) for e in pinned["entries"])
     assert got == sorted((ns, c) for ns, c, _ in FK_FANOUT_CODES)
-    assert pinned["registry_version"] == "1.10.0"
+    assert pinned["registry_version"] == "1.12.0"
 
 
 def test_fit_redact_code_is_a_registered_plan_error_with_a_pinned_fixture() -> None:

@@ -16,7 +16,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.10.0",
+      "since": "1.12.0",
       "summary": "DP generate fitted fan-out unsupported.",
       "symbol": "DP_GENERATE_FITTED_FANOUT_UNSUPPORTED"
     },
@@ -36,7 +36,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.10.0",
+      "since": "1.12.0",
       "summary": "Reference fan-out conflict.",
       "symbol": "REFERENCE_FANOUT_CONFLICT"
     },
@@ -56,7 +56,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.10.0",
+      "since": "1.12.0",
       "summary": "Reference fan-out invalid.",
       "symbol": "REFERENCE_FANOUT_INVALID"
     },
@@ -76,7 +76,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.10.0",
+      "since": "1.12.0",
       "summary": "Reference fan-out missing.",
       "symbol": "REFERENCE_FANOUT_MISSING"
     },
@@ -96,7 +96,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.10.0",
+      "since": "1.12.0",
       "summary": "Reference parent pool empty.",
       "symbol": "REFERENCE_PARENT_POOL_EMPTY"
     },
@@ -122,11 +122,11 @@
           "severity": "error"
         }
       ],
-      "since": "1.10.0",
+      "since": "1.12.0",
       "summary": "Fan-out column unknown.",
       "symbol": "FANOUT_COLUMN_UNKNOWN"
     }
   ],
   "reason_schema_version": 1,
-  "registry_version": "1.10.0"
+  "registry_version": "1.12.0"
 }
