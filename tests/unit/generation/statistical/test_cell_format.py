@@ -84,7 +84,9 @@ def test_the_search_never_passes_the_decoder_ceiling() -> None:
 def test_resolution_is_the_coarsest_unit_every_value_is_a_multiple_of(
     stamps: list[str], unit: str
 ) -> None:
-    assert _learn(pd.to_datetime(stamps, format="ISO8601").tolist(), "datetime") == {"resolution": unit}
+    assert _learn(pd.to_datetime(stamps, format="ISO8601").tolist(), "datetime") == {
+        "resolution": unit
+    }
 
 
 def test_a_tz_aware_local_midnight_column_learns_hour() -> None:
