@@ -70,8 +70,9 @@ def test_valid_names_pass(name: str) -> None:
 @pytest.mark.parametrize("name", INVALID)
 def test_invalid_names_fail_in_function_and_model(name: str) -> None:
     assert _is_valid()(name) is False
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError) as info:
         PipelineConfig.model_validate(_raw(name=name))
+    assert "pipeline_name_invalid" in {e["type"] for e in info.value.errors()}
 
 
 @pytest.mark.parametrize("value", [True, False, 0, 1, 1.5, ["orders"], {"a": 1}, b"orders"])
@@ -124,3 +125,20 @@ def test_json_schema_lists_name_as_an_optional_string() -> None:
     schema = PipelineConfig.model_json_schema()
     assert "name" in schema["properties"]
     assert "name" not in schema.get("required", [])
+
+
+def test_name_does_not_change_the_plan_hash(tmp_path: Path) -> None:
+    """Renaming a pipeline is data binding, not masking semantics: the plan hash must not move."""
+    from decoy_engine.plan._compile import compile_plan
+    from decoy_engine.profile._source import profile_source
+
+    (tmp_path / "p.csv").write_text("id,age,note\n1,42,a\n2,7,b\n3,13,c\n")
+
+    def _hash(**extra: Any) -> str:
+        raw = _raw(**extra)
+        raw["sources"]["p"]["path"] = str(tmp_path / "p.csv")
+        cfg = PipelineConfig.model_validate(raw).model_dump()
+        plan = compile_plan(cfg, profile_source(cfg, seed=7), decoy_engine_version="t")
+        return str(plan.pipeline_config_hash)
+
+    assert _hash() == _hash(name="orders") == _hash(name="sales")

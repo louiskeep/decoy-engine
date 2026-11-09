@@ -12,9 +12,11 @@ minimum engine version it was tested against via its
 ### Added (pipeline `name:` and `is_valid_pipeline_name`, registry 1.11.0)
 
 `PipelineConfig` accepts an optional top-level `name:`. It is a strict string: a non-string, or a
-string that fails the name rule, is refused with `config.pipeline_name_invalid` and the error never
-carries the submitted text. A config without `name:` dumps and hashes byte-for-byte as before; the
-field is left out of the dump while unset. `decoy_engine.is_valid_pipeline_name(value)` is the one
+string that fails the name rule, is refused with `config.pipeline_name_invalid`. The error message and the
+`PipelineConfigError` from `parse_pipeline_config` carry no submitted text; pydantic's own
+`errors()` list still holds it under `input`. A config without `name:` dumps and hashes byte-for-byte as before; the
+field is left out of the dump while unset. `name` is also left out of `Plan.pipeline_config_hash`,
+so renaming a pipeline does not change it. `decoy_engine.is_valid_pipeline_name(value)` is the one
 rule: 1 to 64 characters from `[A-Za-z0-9_.-]`, starting with a letter or digit, not ending in a
 dot, and not a Windows device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`, `LPT1` to `LPT9`,
 any case, any extension). `COM0` and `LPT0` are allowed. The CLI uses it for folder names and
