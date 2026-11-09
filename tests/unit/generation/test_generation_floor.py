@@ -7,6 +7,7 @@ public callers, `run_generation` and `estimate_job_capacity`, use the one functi
 
 from __future__ import annotations
 
+import ast
 import gc
 import time
 import tracemalloc
@@ -19,6 +20,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from decoy_engine import errors, reasons
+from decoy_engine.execution import capacity as capacity_mod
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._probe_scale import downscale_config
 from decoy_engine.execution.capacity import estimate_job_capacity
@@ -481,3 +483,16 @@ def test_capacity_reason_codes_are_the_three_registered_codes() -> None:
     assert "CAPACITY_REASON_CODES" in errors.__all__
     for code in errors.CAPACITY_REASON_CODES:
         assert reasons.is_registered(code), code
+
+
+def test_capacity_reaches_the_floor_only_through_the_generation_package() -> None:
+    tree = ast.parse(Path(capacity_mod.__file__).read_text(encoding="utf-8"))
+    private = [
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.module
+        and node.module.split(".")[:2] == ["decoy_engine", "generation"]
+        and any(part.startswith("_") for part in node.module.split(".")[2:])
+    ]
+    assert private == []

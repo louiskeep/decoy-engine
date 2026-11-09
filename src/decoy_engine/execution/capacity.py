@@ -98,8 +98,7 @@ from decoy_engine.execution.out_of_core._capacity_eval import (
     evaluate_capacity,
 )
 from decoy_engine.fileaccess import FileAccess, entry_point
-from decoy_engine.generation._admission import classify_plan
-from decoy_engine.generation._bounds import detected_memory_bytes, generation_floor_shortfall
+from decoy_engine.generation import detected_memory_bytes, resident_floor_shortfall
 
 __all__ = ["estimate_job_capacity"]
 
@@ -230,7 +229,7 @@ def _generation_floor_estimate(
             message="the memory ceiling could not be detected, so the generated output "
             "cannot be checked against it; pass an explicit budget_bytes.",
         )
-    shortfall = generation_floor_shortfall(config, classify_plan(config), available)
+    shortfall = resident_floor_shortfall(config, available)
     if shortfall is None:
         return None
     return CapacityEstimate(
