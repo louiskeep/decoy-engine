@@ -208,6 +208,12 @@ modules:
     pattern: contextvars (PEP 567)
     source: Python PEP 567 (contextvars), PEP 3134 exception chaining
 
+  - path: src/decoy_engine/profiling/_value_redaction.py
+    pattern: classification registry plus default-deny serializer
+    source: Google Cloud DLP InspectConfig include_quote; ydata-profiling sensitive mode (MIT); Microsoft Presidio replace operator (MIT)
+    note: Saved scan documents drop cell values of value-sensitive columns unless
+      include_values=True. Method only; no dependency taken.
+
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
   # RiskFlag) was deleted under the pre-scan-reframe-C clean break
