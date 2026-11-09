@@ -189,12 +189,17 @@ from decoy_engine.profile._fixed_width_writer import write_fixed_width
 from decoy_engine.profiling import (
     ColumnProfile,
     FieldStats,
+    ScanSet,
+    ScanSetCore,
     SentinelFlag,
+    TableScan,
     distribution_snapshot_document,
     is_value_sensitive,
     profile_columns,
     profile_document,
     redact_profile_dict,
+    scan_set_to_dict,
+    scan_sources,
 )
 from decoy_engine.profiling.model_pack import classifier_status, load_detectors
 from decoy_engine.progress import (
@@ -459,6 +464,8 @@ __all__ = [
     "RouteEvent",
     "RunResult",
     "RunResultRead",
+    "ScanSet",
+    "ScanSetCore",
     "SecretCachePolicy",
     "SecretDescriptor",
     "SecretKeyProvider",
@@ -473,6 +480,7 @@ __all__ = [
     "StrategyOption",
     "StructuredEvents",
     "StructuredEventsSink",
+    "TableScan",
     "TelemetryClient",
     "TerminalEvent",
     "TransientError",
@@ -550,6 +558,8 @@ __all__ = [
     "run_mask_chunked",
     "run_mask_pipeline_chunked",
     "run_pipeline",
+    "scan_set_to_dict",
+    "scan_sources",
     "select_execution_adapter",
     "strategy_catalog",
     "unmask_pipeline",

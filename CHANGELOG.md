@@ -66,6 +66,26 @@ caller-named `temp_dir`, `staging_dir` or spill directory that already exists mu
 directory you own with no group or other access: an empty open one is tightened to 0700, one that
 holds files, a symlink or a foreign-owned one is refused with `runtime.scratch_unsafe`. A caller-named
 `staging_dir` is created with `open_protected_dir(create=True)`, so its parent must exist.
+### Added (SCAN-MULTI S1a: `scan_sources` and `scan-set/v1`, 2026-11-08)
+
+`scan_sources(sources, *, tables=None, sample_rows=10_000, strategy="head", file_access=None)`
+scans many declared tables in one call, one table in memory at a time, and returns a `ScanSet`.
+`scan_set_to_dict(scan, detail=False)` writes the value-free `scan-set/v1` document, defined once
+by `ScanSetCore` (`ScanSetCoreRead` ignores unknown fields). The core holds counts, rates, type
+labels, detector ids and column names. Names come from the producer's header text, and a header
+the guard flags as data is written as `c0..cn`; a misdeclared header the guard cannot detect is
+the stated limit. `detail=True` adds each table's `ColumnProfile` dict and can hold cell values.
+An invalid source descriptor is a `PipelineConfigError`; a failed read is a `ScanSourceError`
+(`runtime.scan_source_failed`); coded engine errors pass through. For a CSV with
+`has_header: true` the scan flags a first row that looks like data
+(`warning.scan_header_suspect`); for a local CSV scanned with `head` or `full` it counts values
+with a leading zero per column. Two new `warning` reasons (`scan_header_suspect`,
+`scan_key_type_mismatch`), one `runtime` reason (`scan_source_failed`, the fixed identity of
+`ScanSourceError`) and one `config` reason (`endpoint_url_invalid`, the refusal of a bad S3
+`endpoint_url`), registry 1.10.0. `S3Source.endpoint_url` accepts only an http or https URL with a
+host and refuses userinfo, a query, a fragment and their percent-encoded forms. `read_csv_source`,
+`resolve_csv_dialect` and `CsvDialect` are also exported from `decoy_engine.profile`.
+
 ### Fixed (QA row 24d: shuffle determinism, 2026-11-08)
 
 `shuffle` without `deterministic: true` drew from an unseeded generator, so two runs with the
