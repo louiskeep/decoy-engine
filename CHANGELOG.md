@@ -16,7 +16,7 @@ minimum engine version it was tested against via its
 (`evidence`, `run-result`, `sample-run/v1`, `scan-set`; `publication` and `checkpoint` reserved), the
 `decoy-library-export/v1` codec and the `decoy-job-log/v1` header and reader. A record of an unknown kind or a later
 major decodes to an opaque record or `RecordNeedsNewer` instead of an error. Seven reasons join the registry at
-1.18.0: `runtime.record_invalid`, `runtime.record_corrupt`, `runtime.record_kind_reserved`,
+1.19.0: `runtime.record_invalid`, `runtime.record_corrupt`, `runtime.record_kind_reserved`,
 `warning.library_write_failed`, `warning.job_log_write_failed`, `warning.library_degraded` and
 `warning.library_delete_skipped`.
 

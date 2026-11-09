@@ -16,10 +16,10 @@ Branch `feat/lib-l1a-records`, base engine `origin/main` `a5eb66e2` (registry 1.
 - Kinds: `evidence` (`cli-local-1`), `run-result` (points at `RunResult` and `RunResultRead`), `sample-run/v1`,
   `scan-set` (points at `ScanSetCore` and `ScanSetCoreRead` since SCAN-MULTI S1a is on main; path and locator fields from the marker registry);
   `publication` and `checkpoint` are reserved.
-- Reasons at registry 1.18.0 (the next minor after main's 1.9.0; REG-RENUMBER renumbers at merge): runtime
+- Reasons at registry 1.19.0 (the next minor after main's 1.9.0; REG-RENUMBER renumbers at merge): runtime
   `record_invalid`, `record_corrupt`, `record_kind_reserved` (owner `RecordError`, one `_CODED` row in
   `reason_adapter.py`); warning `library_write_failed`, `job_log_write_failed`, `library_degraded`,
-  `library_delete_skipped` (owner `LibraryEvent`). Fixture `reason-manifest-v1.18-lib-l1a.json`,
+  `library_delete_skipped` (owner `LibraryEvent`). Fixture `reason-manifest-v1.19-lib-l1a.json`,
   `consumer-contract.json` restamped, one `docs/reasons.md` token moved.
 - Public API: four names in `decoy_engine.__all__` (`DecodedRecord`, `OpaqueRecord`, `RecordError`,
   `RecordNeedsNewer`); `RecordEnvelope` and the functions are `decoy_engine.records.*`. Deviation from the plan's
@@ -99,7 +99,7 @@ Registry renumbered at merge from 1.10.0 to 1.18.0 by scripts/dev/registry_renum
 
 ## Merge onto main (2026-11-09)
 
-- Registry renumbered to 1.18.0, the next minor after main; fixture is `reason-manifest-v1.18-lib-l1a.json`.
+- Registry renumbered to 1.19.0, the next minor after main; fixture is `reason-manifest-v1.19-lib-l1a.json`.
 - `scan-set` is now a writable kind pointing at `ScanSetCore` and `ScanSetCoreRead` (SCAN-MULTI S1a is on main).
 - `run_result/_model.py`: kept the `_value_free` split and ported main's `ConfigRuleError` validator errors into
   `_value_free.check` and `_check_reason`; the message baseline entry moved to `_value_free.py`.
@@ -114,3 +114,4 @@ Registry renumbered at merge from 1.10.0 to 1.18.0 by scripts/dev/registry_renum
   `withheld_records` in the header. `keep_paths` keeps the old copy.
 - One tag parser (`family_major`), one JSON-object parse (`json_object`) and typed header fields for the envelope,
   the export header and the job-log header; a missing, malformed or older version is refused.
+Registry renumbered at merge from 1.18.0 to 1.19.0 by scripts/dev/registry_renumber.py; main was at 1.18.0.

@@ -15,7 +15,7 @@ from decoy_engine.records._registry import KindSpec
 from decoy_engine.run_result import RunResult, RunResultRead
 
 FIXTURE = (
-    Path(__file__).resolve().parents[2] / "fixtures" / "f29" / "reason-manifest-v1.18-lib-l1a.json"
+    Path(__file__).resolve().parents[2] / "fixtures" / "f29" / "reason-manifest-v1.19-lib-l1a.json"
 )
 
 
@@ -87,7 +87,7 @@ def test_payload_tag_majors() -> None:
 def test_every_l1a_code_is_registered_and_pinned() -> None:
     """A1-codes-registered: the fixture lists the minor's identities; each one resolves."""
     fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    assert fixture["registry_version"] == "1.18.0"
+    assert fixture["registry_version"] == "1.19.0"
     ids = {(e["namespace"], e["code"]) for e in fixture["entries"]}
     assert ids
     for namespace, code in ids:
