@@ -252,8 +252,8 @@ GEN_SUBSTRATE_DRAW_SITES: tuple[DrawSite, ...] = (
         call_site="generators/derivation.py:158",
         entropy_root="job_seed",
         seed_derivation=(
-            'root = derive_key("gen:" + strategy_config_fingerprint(cfg)) | '
-            "sha256(job_seed.to_bytes(8) + fingerprint) | os.urandom(32) if fresh; "
+            'root = derive_key("gen:" + strategy_config_fingerprint(cfg) + ":" + identity) | '
+            "sha256(job_seed.to_bytes(8) + fingerprint + identity) | os.urandom(32) if fresh; "
             'family_key = HMAC(root, b"fam:"+family); '
             "row_int = HMAC(family_key, family, extra=i.to_bytes(8))"
         ),

@@ -96,6 +96,7 @@ ssn/v1  npi/v1  pan/v1  iban/v1  ein/v1  mrn/v1  ndc/v1  icd10/v1
 cusip/v1  address/v1  locality/v1  person/v1  provider/v1
 composite/v1  custom/v1   ... (every disguise spec)
 subset-manifest/v1         decoy-run-result/v1
+scan-set/v1
 ```
 
 A user runs `decoy fit`, keeps the `distribution-snapshot/v1` artifact, and
@@ -111,6 +112,15 @@ reason it cannot validate as `null`. Numbers and flags are strict on both sides 
 document of another major (`/v2`), free text or a missing key is refused, never read as v1; a reader
 that wants `/v2` support adds a new model under a new tag. Hand-authored corpus samples (the v1 sample and its cross-minor variants) are in
 `tests/integration/compat_corpus/run_result/`.
+
+`scan-set/v1` is the record of one multi-table scan (`decoy_engine.scan_sources`). The engine
+owns its shape: `ScanSetCore` to write (unknown fields refused), `ScanSetCoreRead` to read
+(unknown fields ignored). It holds counts, rates, type labels, detector ids and column names.
+Column names are the producer's header text; when the scan's header guard flags a header row
+that looks like data, the core writes positional names (`c0..cn`) instead. A misdeclared header
+the guard cannot recognise (a person name, an address) is the stated limit. The core holds no
+cell value. The optional per-table `detail` member of `scan_set_to_dict(detail=True)` is
+the nested `ColumnProfile` dict; it is additive-only within `/v1` and is not part of the core.
 
 **Rules:**
 
@@ -196,6 +206,16 @@ before any decryption attempt and raises a typed
 from the wrong-seed `vault_key_mismatch`. Cross-version unmask is not supported
 and was not supported before F13; F13 makes the failure diagnosable rather than
 opaque.
+
+**Current state (column identity, 2026-11-08, pre-GA):** the generation column
+root now mixes the column identity (table name plus column name) with the
+strategy fingerprint, so columns with identical settings no longer draw the same
+stream. Generated output changes for existing seeds and keys, and renaming a
+column or moving it to another table re-keys it. `SEED_PROTOCOL_VERSION` is
+deliberately NOT bumped: it is shared with the mask path, so a bump would re-key
+all mask output for a generation-only change. Pinned plans are guarded by the
+engine version recorded in their `runtime_identity`, so a plan pinned before this
+change is refused by a newer engine instead of silently regenerating differently.
 
 **Current state (v7, 2026-09-11, pre-GA):** `SEED_PROTOCOL_VERSION` moved 6 -> 7
 (Task 5.2, DE-01 resolution): the `fpe` strategy's cipher, and the `fpe`-branch
@@ -314,7 +334,17 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   parameters are keyword-only and additive. `CsvDialect` and `resolve_csv_dialect`
   refuse an incoherent dialect, or a `column_names` that is not a list or tuple of
   strings, with `ConfigError` whose fixed text never echoes a submitted value.
-  `nrows=0` returns the empty frame with the declared columns.
+  `nrows=0` returns the empty frame with the declared columns. The keyword-only
+  `columns` (SCAN-MULTI S1b) parses only the named columns and returns every frame
+  or chunk with exactly them in the order given; a headerless file maps the names
+  onto `column_names`; an unknown or repeated name is a `ValueError` that quotes
+  no name.
+  It also includes `scan_sources(sources, *, tables=None, sample_rows=10_000, strategy="head",
+  file_access=None)`, `ScanSet`, `TableScan`, `ScanSetCore` and `scan_set_to_dict(scan, *, detail)`
+  (SCAN-MULTI S1a, 2026-11): new keyword-only parameters are additive; errors name the table and
+  the cause's class only. SCAN-MULTI S1b adds the keyword-only `relationships`, `integrity` and
+  `spill_dir`, and `RelationshipFacts` and `ChildFacts` (counts only, in `ScanSet.relationships`
+  and the `relationships` member of `scan-set/v1`).
   It also includes `parse_pipeline_config`, `ConfigProblem` and `ConfigRuleError`
   (VALUE-FREE-ERRORS, 2026-11): `parse_pipeline_config(raw)` raises
   `PipelineConfigError` whose `problems` are `ConfigProblem(code, location, text)`

@@ -17,6 +17,7 @@ import pytest
 
 from tests.sentry.fa.classify import Roles, classify, registry_index
 from tests.sentry.fa.rules import (
+    creator_problems,
     load_modules_config,
     load_registry,
     registry_problems,
@@ -33,6 +34,7 @@ ROLES = Roles(
     adapters=frozenset(MODULES["adapter_modules"]),
     capabilities=frozenset(MODULES["capability_modules"]),
     local_constructors=frozenset(MODULES["local_constructors"]),
+    creators=frozenset(MODULES["capability_creators"]),
 )
 
 # Fixture roles by directory: the fixture tree mirrors the real module lists.
@@ -42,6 +44,9 @@ FIXTURE_ROLES = Roles(
     ),
     capabilities=frozenset(f"fx/cap/{p.name}" for p in (FIXTURES / "fx" / "cap").glob("*.py")),
     local_constructors=frozenset(),
+    creators=frozenset(
+        {"fx/cap/good_creator.py::make_it", "fx/cap/bad_creator_unvalidated.py::make_unvalidated"}
+    ),
 )
 
 
@@ -242,6 +247,8 @@ def test_sentry_bites_on_a_bad_adapter(fixture_scan, name: str) -> None:  # type
         "bad_scandir_str",
         "bad_descriptor_caller_int",
         "bad_cdll_path",
+        "bad_public_dir_fd",
+        "bad_chmod_no_dir_fd",
     ],
 )
 def test_sentry_bites_on_a_bad_capability_module(fixture_scan, name: str) -> None:  # type: ignore[no-untyped-def]
@@ -249,7 +256,9 @@ def test_sentry_bites_on_a_bad_capability_module(fixture_scan, name: str) -> Non
     assert by_file.get(f"fx/cap/{name}.py"), f"{name} was not flagged"
 
 
-@pytest.mark.parametrize("module", ["fx/adapters/good_arrow.py", "fx/cap/good_ops.py"])
+@pytest.mark.parametrize(
+    "module", ["fx/adapters/good_arrow.py", "fx/cap/good_ops.py", "fx/cap/good_creator.py"]
+)
 def test_positive_fixtures_pass(fixture_scan, module: str) -> None:  # type: ignore[no-untyped-def]
     by_file = _violations_by_file(fixture_scan, FIXTURE_ROLES)
     assert not by_file.get(module), by_file.get(module)
@@ -284,3 +293,42 @@ def test_a_registered_site_passes_and_an_unregistered_one_does_not(fixture_scan)
     ok, _ = classify(sites, FIXTURE_ROLES, registry_index([entry]))
     bad, _ = classify(sites, FIXTURE_ROLES, {})
     assert not ok and bad
+
+
+def test_capability_creators_are_current() -> None:
+    assert creator_problems(MODULES["capability_creators"], ROLES.capabilities, SRC) == []
+
+
+def test_a_stale_capability_creator_is_flagged() -> None:
+    caps = ROLES.capabilities
+    missing = ["decoy_engine/fileaccess/_output.py::no_such_creator"]
+    assert creator_problems(missing, caps, SRC)
+    assert creator_problems(["decoy_engine/connectors/sftp.py::_open_sftp"], caps, SRC)
+    assert creator_problems(["not-a-key"], caps, SRC)
+
+
+def test_an_unlisted_public_dir_fd_function_is_still_flagged(fixture_scan) -> None:  # type: ignore[no-untyped-def]
+    flagged = [
+        v
+        for v in classify(fixture_scan, FIXTURE_ROLES, {})[0]
+        if v.site.module == "fx/cap/bad_public_dir_fd.py"
+    ]
+    assert flagged and "dir_fd" in flagged[0].reason
+
+
+def test_chmod_without_dir_fd_is_still_flagged(fixture_scan) -> None:  # type: ignore[no-untyped-def]
+    flagged = [
+        v
+        for v in classify(fixture_scan, FIXTURE_ROLES, {})[0]
+        if v.site.module == "fx/cap/bad_chmod_no_dir_fd.py"
+    ]
+    assert flagged and "dir_fd" in flagged[0].reason
+
+
+def test_a_listed_creator_that_does_not_validate_its_name_is_still_flagged(fixture_scan) -> None:  # type: ignore[no-untyped-def]
+    flagged = [
+        v
+        for v in classify(fixture_scan, FIXTURE_ROLES, {})[0]
+        if v.site.module == "fx/cap/bad_creator_unvalidated.py"
+    ]
+    assert flagged and "component validator" in flagged[0].reason

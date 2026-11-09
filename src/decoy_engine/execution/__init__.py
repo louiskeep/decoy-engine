@@ -86,6 +86,7 @@ from decoy_engine.execution._governor import (
     GovernorTripRecord,
     run_job_with_governor,
 )
+from decoy_engine.execution._guards import refuse_duplicate_field_names
 from decoy_engine.execution._isolated_common import IsolatedRunResult
 from decoy_engine.execution._isolated_run import run_pipeline_isolated
 from decoy_engine.execution._job_estimate import JobEstimate, estimate_job
@@ -123,6 +124,7 @@ from decoy_engine.execution.out_of_core._capacity_eval import (
     CapacityEstimate,
     CapacityVerdict,
 )
+from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 
 __all__ = [
     "CHUNK_CONDITIONAL_STRATEGIES",
@@ -162,12 +164,14 @@ __all__ = [
     "check_out_of_core_compatibility",
     "classify_job",
     "classify_table_kinds",
+    "connect_duckdb",
     "estimate_job",
     "estimate_job_capacity",
     "get_default_executor",
     "order_work",
     "probe_fits",
     "probe_peak_bytes",
+    "refuse_duplicate_field_names",
     "run_job_with_governor",
     "run_mask_chunked",
     "run_mask_pipeline_chunked",

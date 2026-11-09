@@ -46,7 +46,8 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
         assert protocol.draw_site_by_id(site.draw_site_id) is site
 
 
-_CATALOGUE_DIGEST = "679081e19d25510d2c581d4f404e3c03dd99b5b6477d4c613131efa1ce2f4ced"
+# Re-pinned at the GEN-C1 main merge: carries the shuffle and derive_context re-pins plus the moved gen call sites.
+_CATALOGUE_DIGEST = "d9bcd02d072292ba7bf15cebb210fecc4b9c26935fe57295526effe0fa164f18"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -86,7 +87,9 @@ _ORDERED_IDS = [
 ]
 
 _ENTRY_DIGESTS = [
-    "92bbc34889a8b120e65c01891948d52d3e61addb16ea16772ca9f945dde21fb5",
+    # mask.shuffle re-pinned 2026-11-08: the unkeyed mode draws from the mask key on the shared
+    # (table, column) draw identity.
+    "84b2887fc0363d71c893d6ad99f3d7026d891ee308091c68405db6dca943afb0",
     "8dce6622cbd27e05cc798e8b209a715c78834c056613f6adefced790bc4dfe9b",
     "33858d620973b39724613d7569dc732db3707e729236eeef8754518c1dfcf87a",
     "8ba3e20fb12b8a29cf52e18ef4d41d6c691bad77c6ac10a4651620d351f2a0c1",
@@ -114,7 +117,7 @@ _ENTRY_DIGESTS = [
     "4448026c1f789d220610a85dbcb0c17d8ce04e4497d1cda09e0346f713f5d2ba",
     "b9489ca4978756b4e41678489ce88c9f434a61526272c9cb639bbaddd282f944",
     "73e3c42955d797409d090d70e5b1c66d05ad12bd67ee820bc0f93b00a9b48970",
-    "ca03675f3cdc12192cf9e6bb08acad38c41841b85f4b05bf36a97fd202a656d9",
+    "0e43e34c1059a22096de913327b9f7889ae6316c165037df78ec98b7c01598e1",
     "eeccee566ac297f0c47f8a3e8da4309688e3c6a307af233ad06158b3aedae08c",
     "d4a795b3273175d0c76a88f69cd8e3d97326497538694faa60b0886b0868bb02",
     "46b422be131d1e91c5ed2a6174d86f970429577b88e5da660ab3a4926171dab4",

@@ -251,13 +251,17 @@ whole-column vector draws and are therefore NOT partitionable. The exception is
 HMAC of the row index.
 
 ### mask.shuffle
-`execution/_strategies/_shuffle.py:62`. Whole-column, multiset-preserving
+`execution/_strategies/_shuffle.py:80`. Whole-column, multiset-preserving
 permutation. Seed:
 `int.from_bytes(derive(mask_key, plan.namespace, column.encode("utf-8"))[:8], "big")`,
 then `default_rng(seed).permutation(len(non_na_values))`. NOT partitionable: a
 partition sees only its slice and cannot reproduce the global permutation order.
-Nulls are excluded before the draw. Non-deterministic mode uses an unseeded
-`default_rng()`.
+Nulls are excluded before the draw. Non-deterministic mode is unkeyed but still
+drawn from the mask key: namespace `UNKEYED_SHUFFLE_NAMESPACE`, source
+`job_seed.hex() + "/" + context_draw_identity(ctx, column)`. The identity is
+`<len>:<current_table>/<len>:<nested_outer_column or column>`, the same one
+non-deterministic Faker's default selection namespace uses (`execution/_adapter.py`),
+and an empty `current_table` fails closed with `faker_positional_table_unknown`.
 
 ### mask.windowed_date (UNCERTAIN)
 `transforms/windowed_date.py:209`. Per-row seed:
@@ -411,7 +415,7 @@ custom-override/locale availability. Seed:
 `build_seed = GenDeriveContext.for_column(...).family_bytes("faker_pool_build")[:8]`,
 then ONE `faker.seed_instance(int.from_bytes(build_seed, "big"))` on a fresh
 instance seeds a batch of `pool_size` provider calls. Keyed off the column's OWN
-root (fingerprint-derived), so rename-invariant per R3.10 and independent of every
+root (fingerprint-derived), so identity-scoped per column and independent of every
 other column's pool. Partitionable (pool identity is a pure function of that root).
 Paired with `gen.faker_pool_selection` (`numpy_pcg64` family, above) for the REUSE
 draw.

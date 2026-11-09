@@ -19,6 +19,14 @@ capability_modules = [
   "decoy_engine/fileaccess/_openat2.py",
 ]
 
+# Public functions in a capability module that take a held descriptor. They are the named creation
+# choke points (F25 S1a-0, plan 4.2): their `dir_fd` parameter counts as held, as for a private
+# helper. Their name parameter is still traced: each must validate it itself.
+capability_creators = [
+  "decoy_engine/fileaccess/_output.py::make_stage_dir_at",
+  "decoy_engine/fileaccess/_output.py::create_output_file_at",
+]
+
 # The only module that may construct `LocalFileAccess`.
 local_constructors = [
   "decoy_engine/fileaccess/_entry.py",

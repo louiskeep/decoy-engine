@@ -40,7 +40,7 @@ from decoy_engine.generation import _faker_pool
 from decoy_engine.generation._statistical_column import statistical_generate
 from decoy_engine.generation._synthesize_derived import _derived_generate, _formula, _reference
 from decoy_engine.generation.statistical import StatisticalSpec
-from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.generators.derivation import GenDeriveContext, with_table
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 from decoy_engine.transforms.derived_aggregate import generate_derived_aggregate_column
 
@@ -172,7 +172,7 @@ def _generate_tables_from_config(
                 fill_referenced_formula_columns,
             )
 
-            fill_referenced_formula_columns(gcols, data, seed, derive_key)
+            fill_referenced_formula_columns(gcols, data, seed, derive_key, table_name=name)
         tbl = pa.table(data)
         # Generation-time fidelity warn-gate (deferred follow-up 5,
         # 2026-06-12): score statistical columns against their source
@@ -262,9 +262,9 @@ def _generate_column(
     no-per-column-locale branch of ``_faker``, mirroring V1 ``ColumnGenerator``.
     ``table_name``/``statistical_specs`` (DPS Scope B) are the pinned-spec
     lookup for the ``statistical`` branch -- no snapshot path is reopened
-    here (guide section 4.8). ``provider_snapshot`` (5a-faker) forwards to
-    the ``faker`` branch only; every other branch ignores it. ``reference_date`` is set only by
-    pinned execution: ``windowed_date`` then resolves ``now``/``today`` anchors against it."""
+    here (guide section 4.8). ``provider_snapshot`` (5a-faker) forwards to the ``faker`` branch
+    only. ``reference_date`` (pinned execution only) anchors ``windowed_date`` ``now``/``today``."""
+    col = with_table(col, table_name)
     kind = col.get("type")
     if kind == "sequence":
         values: list[Any] = _sequence(col, n)

@@ -9,6 +9,46 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (generated columns with identical settings no longer repeat each other)
+
+Generated columns with identical settings used to get identical values in every row, with or
+without a master key: two `first_name` columns, two `date_between` columns, two categoricals with
+the same categories, and statistical columns fitted from independent source columns (correlation
+near 0.9 instead of near 0). The per-column draw stream now derives from the job seed (or master
+key and label), the strategy config, and the column identity (table name plus column name).
+Adding a column or growing `row_count` still leaves the other columns unchanged.
+
+Output changes for existing seeds and keys. This is accepted before GA and there is no opt-in to
+the old seeding. Renaming a column or moving it to another table now changes its values. The
+`_legacy_column_name_seed` column option is removed. Grouped-series, windowed-date and group-key
+columns derive their namespace from the same table and column identity, so a column of the same
+name in two tables no longer shares a stream.
+
+### Changed (stage creators restore owner bits; ownership check reads the effective user)
+
+Directory and private-file stages made through `RootedFileAccess` outputs now restore the owner
+bits a restrictive umask stripped: a stage directory is 0700 and a private stage file is 0600 under
+any umask, 0777 included, where such a stage was born unusable before. Public stage modes still
+follow the umask. The protected-directory ownership check (`runtime.scratch_unsafe`) now compares
+the directory owner with the effective user id instead of the real user id; the engine does not
+run set-uid, so the two agree.
+
+### Added (value redaction for saved scan documents, 2026-11-08)
+
+`decoy_engine` and `decoy_engine.profiling` export `profile_document`, `redact_profile_dict` and
+`is_value_sensitive`. `profile_document(profile)` is `ColumnProfile.to_dict()` with the cell values
+of every value-sensitive column removed: `min_value`, `max_value`, `mean_value`, `date_min`,
+`date_max`, `mode_value` and the distribution `min`, `max` and `mean` become `null`,
+`sample_invalid` and detector `sample_misses` become `[]`, and top-value text, distribution labels
+and sentinel value and note text become `"[redacted]"`, so counts, rates and array lengths are kept.
+A column is value-sensitive when any detector fired, its `pii_score` is at least 0.6, or it is
+near-unique; a loaded document with a missing or ill-typed input counts as sensitive. The document
+gains `value_policy` (`flagged-redacted/v1`, or `raw` with `include_values=True`) and
+`redacted_columns`. `redact_profile_dict` applies the same rules to a loaded document and ignores
+any marker it already carries. `to_dict()` is unchanged and still returns the raw form. Every field
+reachable from `ColumnProfile` must be classified in `profiling/_value_redaction.py`; a sentry fails
+on a new unclassified field.
+
 ### Changed (row directories use the protected allocator)
 
 The out-of-core spill root and its subdirectories, the isolated-run work root, and the Postgres
@@ -17,6 +57,50 @@ caller-named `temp_dir`, `staging_dir` or spill directory that already exists mu
 directory you own with no group or other access: an empty open one is tightened to 0700, one that
 holds files, a symlink or a foreign-owned one is refused with `runtime.scratch_unsafe`. A caller-named
 `staging_dir` is created with `open_protected_dir(create=True)`, so its parent must exist.
+### Added (SCAN-MULTI S1a: `scan_sources` and `scan-set/v1`, 2026-11-08)
+
+`scan_sources(sources, *, tables=None, sample_rows=10_000, strategy="head", file_access=None)`
+scans many declared tables in one call, one table in memory at a time, and returns a `ScanSet`.
+`scan_set_to_dict(scan, detail=False)` writes the value-free `scan-set/v1` document, defined once
+by `ScanSetCore` (`ScanSetCoreRead` ignores unknown fields). The core holds counts, rates, type
+labels, detector ids and column names. Names come from the producer's header text, and a header
+the guard flags as data is written as `c0..cn`; a misdeclared header the guard cannot detect is
+the stated limit. `detail=True` adds each table's `ColumnProfile` dict and can hold cell values.
+An invalid source descriptor is a `PipelineConfigError`; a failed read is a `ScanSourceError`
+(`runtime.scan_source_failed`); coded engine errors pass through. For a CSV with
+`has_header: true` the scan flags a first row that looks like data
+(`warning.scan_header_suspect`); for a local CSV scanned with `head` or `full` it counts values
+with a leading zero per column. Two new `warning` reasons (`scan_header_suspect`,
+`scan_key_type_mismatch`), one `runtime` reason (`scan_source_failed`, the fixed identity of
+`ScanSourceError`) and one `config` reason (`endpoint_url_invalid`, the refusal of a bad S3
+`endpoint_url`), registry 1.10.0. `S3Source.endpoint_url` accepts only an http or https URL with a
+host and refuses userinfo, a query, a fragment and their percent-encoded forms. `read_csv_source`,
+`resolve_csv_dialect` and `CsvDialect` are also exported from `decoy_engine.profile`.
+
+### Added (SCAN-MULTI S1b: declared-relationship integrity facts, 2026-11-08)
+
+`scan_sources` takes `relationships` (declared `RelationshipConfig` dicts), `integrity=True` and
+`spill_dir=None`. For each declared relationship it returns `RelationshipFacts`: parent rows,
+parent rows with a null key part, parent duplicate excess over complete keys, and per child the
+rows, null-key rows, orphan rows and distinct orphan keys. A null child key is not an orphan.
+Only key columns are read, from local files, and the anti-join runs in DuckDB under a memory limit
+with its spill in a `protected_scratch_dir` directory removed on every exit. CSV keys are read as
+text; a parent and child key type difference gives `key_type_mismatch`, a
+`warning.scan_key_type_mismatch` and no counts; a relationship that names a cloud table is
+`skipped_cloud`. No key value is ever returned. `read_csv_source` gains the keyword-only `columns`
+projection (returned in the order given); `connect_duckdb` is exported from `decoy_engine.execution`.
+
+### Fixed (QA row 24d: shuffle determinism, 2026-11-08)
+
+`shuffle` without `deterministic: true` drew from an unseeded generator, so two runs with the
+same config, seed and mask secret gave different output. That mode is the default, so plain
+`strategy: shuffle` (as in the GDPR template) did not repeat. It now draws from the mask key
+with the job seed and the table and column names bound in, and repeats across processes. Its
+output changes once. The multi-table split no longer holds a table whole because of it.
+Without a mask secret the mask key is the job seed, so anyone with the config and the output
+can recompute the permutation and undo it, as with every keyed strategy; set a secret
+(required at GA) when that matters.
+
 ### Changed (value-free config errors, converter, 2026-11-08)
 
 - `decoy_engine.parse_pipeline_config(raw)` is the one route from a mapping to a `PipelineConfig`.
@@ -36,6 +120,15 @@ holds files, a symlink or a foreign-owned one is refused with `runtime.scratch_u
   column M` (was `Failed to parse YAML: <PyYAML text>`, which echoed the offending line).
   `decoy_engine.safe_output.yaml_error_text` holds that text.
 - New public names: `parse_pipeline_config`, `ConfigProblem`, `ConfigRuleError`.
+
+### Fixed (class sweep B1: end anchors and facade imports, 2026-11-08)
+
+Sixteen internal `re` patterns ended with `$`, which also matches before a trailing newline;
+they now end with `\Z`. This covers the Postgres snapshot identifier and type patterns, the
+secret-provider version patterns, the NPI checksum, the DuckDB memory limit, the Arrow dtype
+labels, the ISO-date sentinel and the column-name hint patterns. A value with a trailing newline
+no longer matches. `decoy_engine.reasons` also exports `COUNT_KEYS`, `MAX_COUNTS` and
+`is_count`, so progress, safe-output and telemetry code reads the public facades.
 
 ### Added (init wizard E3: keyed columns of a config, 2026-11-08)
 
