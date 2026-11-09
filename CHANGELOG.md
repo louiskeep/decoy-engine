@@ -9,6 +9,16 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (fitted cell format in snapshots, GEN-FIT-SHAPE E1, 2026-11-09)
+
+`compute_distribution_snapshot(..., cell_format=True)` adds an optional `cell_format` block to each
+column of a `distribution-snapshot/v1`: `decimal_places` for numeric columns, `resolution` for datetime
+columns and `blank_count` for freetext columns (categorical and empty columns carry `{}`). The block holds
+counts and fixed names only, never a cell, so the redacted fit writes it for sensitive columns too, after
+the redactor nulls any member it does not recognise. `distribution_snapshot_document` (`decoy fit`) now
+passes the keyword, so new fits carry the block. The keyword defaults to `False`: a call without it, and
+every snapshot written before this, is byte-identical. Generation does not read the block yet.
+
 ### Added (reason code for fitted cell format, 2026-11-09)
 
 Registry 1.16.0 adds one `plan` identity, `statistical_cell_format_invalid`, for a malformed `cell_format`
