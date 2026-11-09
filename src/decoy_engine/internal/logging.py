@@ -18,7 +18,13 @@ _LOGGER_INSTANCE = None
 _OWNED_ATTR = "_decoy_engine_owned"
 
 
-def _own(handler):
+def _new_engine_handler(kind, formatter, *args):
+    """The one place an engine-owned handler is built, so none can skip the ownership mark.
+
+    `kind` is "console" or a callable that builds the handler (the file path).
+    """
+    handler = logging.StreamHandler() if kind == "console" else kind(*args)
+    handler.setFormatter(formatter)
     setattr(handler, _OWNED_ATTR, True)
     return handler
 
@@ -113,9 +119,7 @@ def _configure_logger(logger, config: dict[str, Any]):
 
     # Default to no console output (console: False by default)
     if config.get("console", False):
-        console_handler = _own(logging.StreamHandler())
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
+        logger.addHandler(_new_engine_handler("console", formatter))
 
     # File handler - off unless the caller passes `file`, so a bare run leaves no log file in the
     # current folder.
@@ -135,11 +139,15 @@ def _configure_logger(logger, config: dict[str, Any]):
         try:
             max_size_mb = config.get("max_size_mb", 10)
             backup_count = config.get("backup_count", 5)
-            file_handler = _own(
-                ambient.log_handler(log_file, max_size_mb * 1024 * 1024, backup_count)
+            logger.addHandler(
+                _new_engine_handler(
+                    ambient.log_handler,
+                    formatter,
+                    log_file,
+                    max_size_mb * 1024 * 1024,
+                    backup_count,
+                )
             )
-            file_handler.setFormatter(formatter)
-            logger.addHandler(file_handler)
         except (OSError, PermissionError) as exc:
             # Read-only or unwritable fs (common on container deploys).
             # Promote console logging so the operator still sees output.
@@ -152,13 +160,13 @@ def _configure_logger(logger, config: dict[str, Any]):
                 for h in logger.handlers
             )
             if not has_console:
-                console_fallback = _own(logging.StreamHandler())
-                console_fallback.setFormatter(formatter)
-                logger.addHandler(console_fallback)
+                logger.addHandler(_new_engine_handler("console", formatter))
+            # Exception text can echo a path or value, and preserved caller handlers may back a
+            # user-visible log, so only the exception class name is logged.
             logger.warning(
                 "Could not open log file %s (%s); using console-only logging",
                 log_file,
-                exc,
+                type(exc).__name__,
             )
 
     # Only log this to file, not to console (unless the F3 fallback above kicked in).

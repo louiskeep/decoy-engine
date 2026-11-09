@@ -256,3 +256,53 @@ def test_repeated_reconfiguration_closes_replaced_engine_file_handlers(tmp_path)
     live = [h for h in logger.handlers if isinstance(h, stdlib_logging.FileHandler)]
     assert len(live) == 1 and live[0].stream is not None
     assert len(_null_handlers(logger)) <= 1
+
+
+def test_file_open_failure_keeps_exception_text_out_of_preserved_handlers(tmp_path):
+    sentinel = "SECRET-VALUE-9f3a"
+    records: list[stdlib_logging.LogRecord] = []
+
+    class _Collect(stdlib_logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    logger = stdlib_logging.getLogger("decoy_engine")
+    collector = _Collect(level=stdlib_logging.DEBUG)
+    logger.addHandler(collector)
+    try:
+        with mock.patch(
+            "logging.handlers.RotatingFileHandler.__init__", side_effect=OSError(sentinel)
+        ):
+            get_logger({"file": str(tmp_path / "x.log")})
+    finally:
+        logger.removeHandler(collector)
+    assert any("Could not open log file" in r.getMessage() for r in records)
+    for r in records:
+        assert sentinel not in r.getMessage()
+        assert sentinel not in repr(r.args)
+        assert r.exc_info is None
+
+
+def _every_attached_handler_is_marked(logger):
+    return all(
+        getattr(h, engine_logging._OWNED_ATTR, False)
+        for h in logger.handlers
+        if not isinstance(h, stdlib_logging.NullHandler)
+    )
+
+
+def test_every_engine_created_handler_carries_the_ownership_mark(tmp_path):
+    """Console, file and fallback paths all go through one factory; none may escape the mark."""
+    logger = get_logger({"console": True, "file": str(tmp_path / "a.log")})
+    assert _every_attached_handler_is_marked(logger)
+    logger = get_logger({"file": str(tmp_path / "b.log")})
+    assert _every_attached_handler_is_marked(logger)
+    with mock.patch(
+        "logging.handlers.RotatingFileHandler.__init__", side_effect=PermissionError("ro")
+    ):
+        logger = get_logger({"file": str(tmp_path / "c.log")})
+    assert any(isinstance(h, stdlib_logging.StreamHandler) for h in logger.handlers)
+    assert _every_attached_handler_is_marked(logger)
+    # Reconfiguring leaves no stale engine handler behind.
+    logger = get_logger({"level": "info"})
+    assert not [h for h in logger.handlers if getattr(h, engine_logging._OWNED_ATTR, False)]

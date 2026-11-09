@@ -30,7 +30,7 @@ composite column count, or an empty column list, raises `ValueError` from `Relat
 Importing `decoy_engine` attaches one `logging.NullHandler` to the `decoy_engine` logger, so engine
 warnings no longer reach stderr through Python's last-resort handler. Reconfiguring the logger keeps
 that handler (exactly one), and closes and replaces only the handlers the engine itself created from
-an earlier config. A handler the host program attached to the `decoy_engine` logger is left in place.
+an earlier config. Handlers the host program attached to the `decoy_engine` logger are left in place, except extra `NullHandler`s, which are deduplicated to one.
 
 ### Changed (no default engine log file)
 
