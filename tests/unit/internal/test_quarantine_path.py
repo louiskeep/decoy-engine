@@ -241,3 +241,19 @@ def test_without_a_quarantine_block_the_config_is_left_alone(tmp_path: Path) -> 
     before = copy.deepcopy(config)
     run_pipeline(config, sources, engine_version="0.1.0", quarantine_path=str(tmp_path / "q.jsonl"))
     assert config == before
+
+
+@pytest.mark.parametrize("route", ["full_frame", "sequential"])
+def test_a_path_with_surrounding_spaces_is_used_verbatim_on_both_routes(
+    tmp_path: Path, route: str
+) -> None:
+    folder = tmp_path / "run"
+    folder.mkdir()
+    spaced = str(folder / " spaced.jsonl ")
+    make = _single_config if route == "full_frame" else _fk_config
+    config, sources = make(tmp_path, "declared.jsonl")
+    result = run_pipeline(
+        config, sources, engine_version="0.1.0", execution_mode=route, quarantine_path=spaced
+    )
+    assert result.quality_metrics["quarantine"]["output_path"] == spaced
+    assert sorted(p.name for p in folder.iterdir()) == [" spaced.jsonl "]

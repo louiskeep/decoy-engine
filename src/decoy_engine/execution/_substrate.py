@@ -54,7 +54,7 @@ def require_optional_nonempty_str(name: str, value: object) -> None:
         raise ExecutionError(
             code=reasons.runtime.INVALID_EXECUTION_KNOB,
             message=f"{name} must be a non-empty str or None; got {shown}.",
-        )
+        ) from None
 
 
 def select_execution_adapter(*, fpe_chunk_count: int = 4) -> ExecutionAdapter:
