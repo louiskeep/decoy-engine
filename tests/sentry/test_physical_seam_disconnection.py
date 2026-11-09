@@ -86,6 +86,8 @@ GUARDED_MODULES: tuple[str, ...] = (
     # B7 (independent multi-table dispatch): another routing executor, it calls
     # `run_auto_chunk` per table and must not import `execution.physical` either.
     "execution/_pipeline_multi_table.py",
+    # RUN-STREAM E1a: the strict stream preflight is routing code and must not import the seam.
+    "execution/pipeline/_stream.py",
     # B6a (incremental output sink): the streamed lane's row-group assembly and publish
     # session sit between the dispatcher lane and the caller's sink; no physical import.
     "execution/_chunked_output_sink.py",
@@ -698,6 +700,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # `_pipeline_generate_mask.py` the split call site, `_pipeline_finalize.py` the
             # split's evidence stamp. None imports `execution.physical`.
             "src/decoy_engine/execution/_pipeline_multi_table.py",
+            # RUN-STREAM E1a: the strict `execution_mode="stream"` preflight (new sub-package
+            # `execution/pipeline/`) and its threading through the routing, lane and sink modules
+            # listed here. Routing code that reads config, the plan and source footers; it imports
+            # nothing from `execution.physical` (GUARDED_MODULES covers `_stream.py`).
+            "src/decoy_engine/execution/pipeline/__init__.py",
+            "src/decoy_engine/execution/pipeline/_stream.py",
             # B7 also corrects the module docstring of `_pipeline_chunk_route.py`, which said
             # auto-chunk routing was single-table only (a docstring-only edit).
             "src/decoy_engine/execution/_pipeline_chunk_route.py",

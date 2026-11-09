@@ -128,6 +128,7 @@ from decoy_engine.quality._distribution_gof import (
     chi_square_cramers_v,
     ks_complement_binned,
 )
+from decoy_engine.quality.diagnostic import snapshot_null_fraction
 
 QUALITY_FIDELITY_SCHEMA_VERSION = "quality-fidelity/v1"
 
@@ -164,9 +165,13 @@ def compute_fidelity(
     out_cols = output_snapshot.get("columns", {})
     shared_columns = sorted(set(src_cols.keys()) & set(out_cols.keys()))
 
+    # A DP null_count is released-rows minus noised bins, so a rate gap there is
+    # noise; report it, never score it.
+    score_missing = "dp" not in source_snapshot and "dp" not in output_snapshot
+
     column_results: list[dict[str, Any]] = []
     for col in shared_columns:
-        result = _column_similarity(src_cols[col], out_cols[col])
+        result = _column_similarity(src_cols[col], out_cols[col], score_missing=score_missing)
         column_results.append({"column": col, **result})
 
     comparable_cols = [c for c in column_results if c["comparable"]]
@@ -291,6 +296,38 @@ def _length_histogram(stats: dict[str, Any]) -> dict[str, Any]:
 
 
 def _column_similarity(
+    src_col: dict[str, Any],
+    out_col: dict[str, Any],
+    *,
+    score_missing: bool = True,
+) -> dict[str, Any]:
+    """Value similarity times the missing-value similarity (SDMetrics
+    `MissingValueSimilarity`, `1 - |p_src - p_out|`).
+
+    The factor applies only when the rates differ, so a column whose null rates
+    match keeps the exact value score. Non-comparable entries (`empty`,
+    `kind_mismatch`) still report the missing similarity but stay out of the
+    aggregate.
+    """
+    result = _value_similarity(src_col, out_col)
+    value = result["similarity"]
+    missing = _missing_value_similarity(src_col, out_col)
+    result["value_similarity"] = value
+    result["missing_value_similarity"] = missing
+    if score_missing and result["comparable"] and missing is not None and missing < 1.0:
+        result["similarity"] = round(value * missing, _SCORE_PRECISION)
+    return result
+
+
+def _missing_value_similarity(src_col: dict[str, Any], out_col: dict[str, Any]) -> float | None:
+    src_rate = snapshot_null_fraction(src_col)
+    out_rate = snapshot_null_fraction(out_col)
+    if src_rate is None or out_rate is None:
+        return None
+    return round(1.0 - abs(src_rate - out_rate), _SCORE_PRECISION)
+
+
+def _value_similarity(
     src_col: dict[str, Any],
     out_col: dict[str, Any],
 ) -> dict[str, Any]:

@@ -99,6 +99,7 @@ __all__ = [
     "SOURCE_LENGTH_MISMATCH",
     "SOURCE_REQUIRED_FOR_CARDINALITY_MODE",
     "SPLIT_SINK_NEEDS_ALL_DISPATCHED",
+    "STREAMING_UNAVAILABLE",
     "TIMEZONE_NAIVE_DATETIME",
     "TRANSFORM_SOURCE_MISSING",
     "UNDECLARED_OUTPUT_COLUMNS",
@@ -220,6 +221,9 @@ SEQUENTIAL_TEXT_REDACT_INPUT_TYPE_DRIFT = _d(
 )
 SPLIT_SINK_NEEDS_ALL_DISPATCHED = _d(
     "split_sink_needs_all_dispatched", "Split sink needs all dispatched."
+)
+STREAMING_UNAVAILABLE = _d(
+    "streaming_unavailable", "No streaming route applies to this job.", since="1.18.0"
 )
 TRANSFORM_SOURCE_MISSING = _d("transform_source_missing", "Transform source missing.")
 UNDECLARED_OUTPUT_COLUMNS = _d("undeclared_output_columns", "Undeclared output columns.")
