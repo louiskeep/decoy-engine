@@ -1853,7 +1853,6 @@ class TestMediumThreeGenerateControls:
                 {
                     "name": "amount",
                     "type": "statistical",
-                    "params": {"mean": 100.0, "std": 10.0},
                 }
             ]
         }
@@ -1863,6 +1862,8 @@ class TestMediumThreeGenerateControls:
             ColumnDistributionSpec(
                 table="t",
                 column="amount",
+                mean=100.0,
+                std=10.0,
                 distribution_class="synthetic",
                 tolerance=0.05,
             )
@@ -1892,7 +1893,6 @@ class TestMediumThreeGenerateControls:
                 {
                     "name": "amount",
                     "type": "statistical",
-                    "params": {"mean": 100.0, "std": 10.0},
                 },
             ]
         }
@@ -1906,6 +1906,8 @@ class TestMediumThreeGenerateControls:
             ColumnDistributionSpec(
                 table="t",
                 column="amount",
+                mean=100.0,
+                std=10.0,
                 distribution_class="synthetic",
                 tolerance=0.05,
             ),
@@ -3033,7 +3035,6 @@ class TestJobCGenerateControls:
                     "name": "amount",
                     "type": "formula",
                     "formula": "gauss(50.0, 15.0)",
-                    "params": {"mean": 50.0, "std": 15.0},
                 }
             ]
         }
@@ -3043,6 +3044,8 @@ class TestJobCGenerateControls:
             ColumnDistributionSpec(
                 table="synthetic_events",
                 column="amount",
+                mean=50.0,
+                std=15.0,
                 distribution_class="synthetic",
                 tolerance=0.10,
                 joints_waived=True,
@@ -3085,7 +3088,6 @@ class TestJobCGenerateControls:
                     "name": "amount",
                     "type": "formula",
                     "formula": "gauss(50.0, 15.0)",
-                    "params": {"mean": 50.0, "std": 15.0},
                 },
             ]
         }
@@ -3101,6 +3103,8 @@ class TestJobCGenerateControls:
             ColumnDistributionSpec(
                 table="synthetic_events",
                 column="amount",
+                mean=50.0,
+                std=15.0,
                 distribution_class="synthetic",
                 tolerance=0.10,
                 joints_waived=True,
