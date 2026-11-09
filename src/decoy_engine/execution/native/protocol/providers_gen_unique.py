@@ -11,11 +11,9 @@ import random
 from collections.abc import Sequence
 from typing import Any
 
+from decoy_engine.config import UNIQUE_FAKER_ATTEMPTS
 from decoy_engine.execution.native.protocol.providers_base import DrawSiteProvider
 from decoy_engine.generators.derivation import GenDeriveContext
-
-# Faker's `_UNIQUE_ATTEMPTS`; mirrors `generation/_unique.MAX_ATTEMPTS`.
-_MAX_ATTEMPTS = 1000
 
 
 class _SampleProvider(DrawSiteProvider):
@@ -73,7 +71,7 @@ class FakerUniqueRetryProvider(DrawSiteProvider):
     draw_site_id = "gen.faker_unique_retry"
 
     def retry_seed(self, gen_ctx: GenDeriveContext, i: int, attempts: int) -> int:
-        return gen_ctx.row_int("faker_unique", i * _MAX_ATTEMPTS + attempts - 1)
+        return gen_ctx.row_int("faker_unique", i * UNIQUE_FAKER_ATTEMPTS + attempts - 1)
 
 
 GEN_UNIQUE_PROVIDER_CLASSES: tuple[type[DrawSiteProvider], ...] = (

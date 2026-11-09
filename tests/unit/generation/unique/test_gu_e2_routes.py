@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 from decoy_engine import reasons
+from decoy_engine.config import UNIQUE_FAKER_ATTEMPTS
 from decoy_engine.execution import ParquetTransactionalSink
 from decoy_engine.generation import _faker_pool, _unique
 from decoy_engine.generation._admission import classify_plan
@@ -203,10 +204,17 @@ def _ctx():
 
 
 class TestAT12RetryAndMemory:
+    def test_the_attempt_limit_is_fakers_own(self):
+        # Pins the one owner constant to Faker's `_UNIQUE_ATTEMPTS`; every other site imports it.
+        assert UNIQUE_FAKER_ATTEMPTS == 1000
+
     def test_a_retry_reseeds_from_the_faker_unique_family(self):
         # M11 (retry from row_int("faker", i) again) turns this red.
         inst, ctx = _FakeInstance(), _ctx()
-        row1_first, row1_retry = ctx.row_int("faker", 1), ctx.row_int("faker_unique", 1 * 1000 + 0)
+        row1_first, row1_retry = (
+            ctx.row_int("faker", 1),
+            ctx.row_int("faker_unique", 1 * UNIQUE_FAKER_ATTEMPTS + 0),
+        )
 
         def provider(**_):
             return "dup" if inst.seeds[-1] in (ctx.row_int("faker", 0), row1_first) else "fresh"
@@ -215,12 +223,14 @@ class TestAT12RetryAndMemory:
         assert out == ["dup", "fresh"]
         assert inst.seeds == [ctx.row_int("faker", 0), row1_first, row1_retry]
 
-    def test_always_colliding_provider_refuses_after_exactly_1000_attempts(self):
+    def test_always_colliding_provider_refuses_after_exactly_the_attempt_limit(self):
         inst, ctx = _FakeInstance(), _ctx()
         with pytest.raises(GenerationError) as exc:
             _unique.unique_faker(inst, lambda **_: "same", {}, ctx, 3, table="t", column="c")
         assert exc.value.code == IMPOSSIBLE
-        assert len(inst.seeds) == 1 + 1000  # row 0 once, then 1000 attempts for row 1
+        assert (
+            len(inst.seeds) == 1 + UNIQUE_FAKER_ATTEMPTS
+        )  # row 0 once, then 1000 attempts for row 1
         assert "row 2" in exc.value.message
 
     @pytest.mark.serial
@@ -328,3 +338,4 @@ class TestAT10ValueFree:
         assert exc.value.code == IMPOSSIBLE
         self._assert_free(exc)
         assert exc.value.__cause__ is None
+        assert exc.value.__context__ is None

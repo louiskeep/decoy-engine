@@ -10,6 +10,7 @@ concatenation order there is part of the determinism contract.
 
 from __future__ import annotations
 
+from decoy_engine.config import UNIQUE_FAKER_ATTEMPTS
 from decoy_engine.execution.native._draw_site_types import _V6, DrawSite
 
 GEN_DRAW_SITES: tuple[DrawSite, ...] = (
@@ -263,11 +264,16 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="gen.faker_unique_retry",
         family="faker_seed_instance",
-        call_site="generation/_unique.py:90",
+        call_site="generation/_unique.py:94",
         entropy_root="job_seed",
-        seed_derivation='faker_inst.seed_instance(gen_ctx.row_int("faker_unique", i * 1000 + attempt - 1))',
+        seed_derivation=(
+            f'faker_inst.seed_instance(gen_ctx.row_int("faker_unique", i * {UNIQUE_FAKER_ATTEMPTS} + attempt - 1))'
+        ),
         api_operation="Faker.seed_instance(row_int) then provider_func(**kwargs), only after a repeated value",
-        call_shape="per repeated row: up to 999 retries, each seed_instance(row_int('faker_unique', i*1000+k-1)); provider_func(...)",
+        call_shape=(
+            f"per repeated row: up to {UNIQUE_FAKER_ATTEMPTS - 1} retries, each "
+            f"seed_instance(row_int('faker_unique', i*{UNIQUE_FAKER_ATTEMPTS}+k-1)); provider_func(...)"
+        ),
         consumes_variable_draws=True,
         identity="row_index",
         null_draw_behavior="a None result is emitted without retry and never enters the seen set",
@@ -279,7 +285,7 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="gen.categorical_unique",
         family="python_mt19937",
-        call_site="generation/_unique.py:106",
+        call_site="generation/_unique.py:110",
         entropy_root="job_seed",
         seed_derivation='random.Random(GenDeriveContext.for_column(derive_key, col, seed).base_int("py"))',
         api_operation="random.Random(col_seed).sample(distinct_categories, k)",
@@ -295,7 +301,7 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="gen.reference_unique",
         family="python_mt19937",
-        call_site="generation/_unique.py:125",
+        call_site="generation/_unique.py:129",
         entropy_root="job_seed",
         seed_derivation='random.Random(GenDeriveContext.for_column(...).base_int("py"))',
         api_operation="random.Random(col_seed).sample(ref_vals, n)",
@@ -311,7 +317,7 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="gen.unique_pair",
         family="python_mt19937",
-        call_site="generation/_unique.py:172",
+        call_site="generation/_unique.py:176",
         entropy_root="job_seed",
         seed_derivation='random.Random(GenDeriveContext.for_column(first_member, table, seed).base_int("unique_pair"))',
         api_operation="random.Random(pair_seed).sample(range(P_a * P_b), n)",

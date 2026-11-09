@@ -49,8 +49,8 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
 # Re-pinned at the GEN-C1 main merge: carries the shuffle and derive_context re-pins plus the moved gen call sites.
 # Re-pinned 2026-11-09: gen.reference records the fitted fan-out shuffles on its stream.
 # Re-pinned 2026-11-09: gen.statistical_per_row records the fitted cell format draws.
-# Re-pinned for GEN-UNIQUE E2: four unique-draw sites, and the moved synthesize.py call sites.
-_CATALOGUE_DIGEST = "8fe89942c6b057833cfb38319460f34085f150804994d03ebbe2df5f81a28fe7"
+# Re-pinned for GEN-UNIQUE E2: four unique-draw sites, the moved synthesize.py call sites, and the shared attempt limit.
+_CATALOGUE_DIGEST = "44b38b3ab3d012ed5cef3ce0ae36fec7ba11bdd3d80e7049bf5c76f137a33208"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -94,6 +94,8 @@ _ORDERED_IDS = [
 ]
 
 _ENTRY_DIGESTS = [
+    # mask.shuffle re-pinned 2026-11-08: the unkeyed mode draws from the mask key on the shared
+    # (table, column) draw identity.
     "84b2887fc0363d71c893d6ad99f3d7026d891ee308091c68405db6dca943afb0",
     "8dce6622cbd27e05cc798e8b209a715c78834c056613f6adefced790bc4dfe9b",
     "33858d620973b39724613d7569dc732db3707e729236eeef8754518c1dfcf87a",
@@ -110,18 +112,20 @@ _ENTRY_DIGESTS = [
     "f01f96cde92e4a13757bc0724ba4eda31b1178bbb420edb144e676a144444b3c",
     "87297d66f6e12f6f2e9d18d0d9a66d2416e85d7901edc911ad2796d4fe85210b",
     "73d56b8732a6a41baad045d754751bf6b3952c717c042d8674f22c248e289980",
+    # gen.reference re-pinned 2026-11-09: the fan-out allocator is a mirror call site.
     "ac3c610bf678df5df95d6723d19d382b3345640afddac78c71f3dfe2db3b2a97",
     "22ddc02bdf5fbcd992e9c621d629885b7c036e872f7f71b90f73fc3fa4f2023d",
     "e4ca36f5c5bfef93d57ebd502d2d24db01dac1f576643e83291f9a589c76f3c9",
+    # gen.statistical_per_row re-pinned 2026-11-09: fitted cell_format adds the blank and null draws.
     "4dc3c2fce34978f9c0bfc138b7d17d375e4c852c520f836f50f95188145dd692",
     "fa2fd07097a3ed68edb71e46b40c43e0d697b50cf784b740b49c180bcae2e5d2",
     "451e4aa4bcb7f23e437468f4e692768c4571e4defb8a081d879be0eb428a1308",
     "648d1fb0b894493e6e8ad55de08b481dbbece29402ecb9ae3eb9cc54b995b211",
     "00cc3c083188a7299b963006aa4a5981a1abc2f0aee6e91e7ef31fe69cd532d4",
-    "6092f5fd66a6c8250ec059b811f7db45e4885dfc04f60e85409cd787df828f72",
-    "99c63db9c4a9c93adc5597710036d2584584de39c3356c2f7e3dcc36162c9554",
-    "c9f8ad34e9e4fa3667abd5f2c2634b5c95da16a2c4eb70cdb2ba74977d313d05",
-    "89aed843c931ef673fb46c7c2f42a98c1f5f66b95225119c9c81186ecc558678",
+    "039d679f351c8e7d8e9e92ae0b5ee7e0cfa058cf99e1a71b409fc47327565a4a",
+    "1dc06347f9b91e1fbbfcb307edfb7f7fea1c6c88e96c892c14a95af48e19d679",
+    "b22f3004c978c61af573fd3bfaad6fb85dfddbc68e8a9a851c17173847b8e6cb",
+    "890db69a3b481dbf7dd7ba338e26342350d8f073f3a5c6373b0449b3a0c5d206",
     "8a782e44afd97fb81aa7bbcc9acbf82e446ff3ef0cc19b7d2a0d3f99091e69ed",
     "4448026c1f789d220610a85dbcb0c17d8ce04e4497d1cda09e0346f713f5d2ba",
     "b9489ca4978756b4e41678489ce88c9f434a61526272c9cb639bbaddd282f944",

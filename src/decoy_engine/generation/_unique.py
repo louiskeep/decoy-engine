@@ -23,15 +23,12 @@ import random
 import sys
 from typing import Any
 
-from decoy_engine.config._generate_unique import distinct_categories
+from decoy_engine.config import UNIQUE_FAKER_ATTEMPTS, distinct_categories, value_key
 from decoy_engine.generation._synthesize_derived import parent_keys
 from decoy_engine.generation.pool import raise_uniqueness_impossible, unique_capacity_ok
 from decoy_engine.generators.derivation import TABLE_KEY, GenDeriveContext, with_table
 
 __all__ = ["pair_hooks", "unique_categorical", "unique_faker", "unique_pair", "unique_reference"]
-
-# Faker's own `_UNIQUE_ATTEMPTS`: draws allowed for one row before the domain counts as spent.
-MAX_ATTEMPTS = 1000
 
 
 def _where(col: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -46,10 +43,10 @@ def _py_rng(col: dict[str, Any], seed: int, derive_key: Any) -> random.Random:
     return random.Random(base)
 
 
-def _is_new(value: Any, seen: set[Any]) -> bool | None:
-    """Whether `value` is unseen; None when it cannot be hashed (so cannot be tracked)."""
+def _key_or_none(value: Any) -> tuple[Any] | None:
+    """`(value_key(value),)`, or None when the value cannot be keyed (so cannot be tracked)."""
     try:
-        return value not in seen
+        return (value_key(value),)
     except TypeError:
         return None
 
@@ -67,7 +64,7 @@ def unique_faker(
     """`n` provider values, no two equal. Attempt 0 of row `i` is the plain per-row draw.
 
     A `None` is emitted without entering the seen set (SQL nulls do not collide). A row whose
-    1,000 attempts all repeat, or a value that cannot be hashed, refuses with the row index and
+    1,000 attempts all repeat, or a value that cannot be keyed, refuses with the row index and
     the distinct count so far; neither the value nor the provider output is quoted.
     """
     seen: set[Any] = set()
@@ -77,17 +74,24 @@ def unique_faker(
         value = provider(**kwargs)
         attempts = 1
         while True:
-            fresh = True if value is None else _is_new(value, seen)
-            if fresh:
-                if value is not None:
-                    seen.add(value)
+            keyed = None if value is None else _key_or_none(value)
+            if value is None or (keyed is not None and keyed[0] not in seen):
+                if keyed is not None:
+                    seen.add(keyed[0])
                 break
-            if fresh is None or attempts >= MAX_ATTEMPTS:
-                # Raised outside any `except` block, so a hash error is not chained.
+            # Raised outside any `except` block, so a key error is not chained.
+            if keyed is None or attempts >= UNIQUE_FAKER_ATTEMPTS:
                 raise_uniqueness_impossible(
-                    needed=n, available=len(seen), table=table, column=column, kind="faker", row=i
+                    needed=n,
+                    available=len(seen),
+                    table=table,
+                    column=column,
+                    kind="faker value" if keyed is None else "faker",
+                    row=i,
                 )
-            inst.seed_instance(gen_ctx.row_int("faker_unique", i * MAX_ATTEMPTS + attempts - 1))
+            inst.seed_instance(
+                gen_ctx.row_int("faker_unique", i * UNIQUE_FAKER_ATTEMPTS + attempts - 1)
+            )
             value = provider(**kwargs)
             attempts += 1
         out.append(value)
