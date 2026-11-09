@@ -9,6 +9,12 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (reason code for fitted cell format, 2026-11-09)
+
+Registry 1.16.0 adds one `plan` identity, `statistical_cell_format_invalid`, for a malformed `cell_format`
+block in a statistical column's snapshot entry. Nothing raises it yet; the decoder lands with GEN-FIT-SHAPE E2.
+Existing identities keep their numbers.
+
 ### Changed (generate-column options are validated, registry 1.13.0)
 
 A generate column now accepts only the option keys its `type` reads, and checks their static
