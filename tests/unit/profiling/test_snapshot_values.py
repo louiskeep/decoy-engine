@@ -446,7 +446,7 @@ def test_joint_output_does_not_follow_the_real_sensitive_labels(pair: tuple[str,
 def test_plain_columns_equal_the_raw_snapshot() -> None:
     df = _joint_frame(_EMAILS)
     df["amount"] = [1, 2, 3, 4, 5] * 8
-    raw = compute_distribution_snapshot(df)
+    raw = compute_distribution_snapshot(df, cell_format=True)
     doc = distribution_snapshot_document(df)
     for name in ("status", "tier", "amount"):
         assert name not in doc["redacted_columns"]
@@ -457,7 +457,7 @@ def test_plain_columns_equal_the_raw_snapshot() -> None:
 def test_include_values_is_the_raw_snapshot_plus_the_two_keys() -> None:
     df = _joint_frame(_EMAILS)
     pairs = [("email", "status")]
-    raw = compute_distribution_snapshot(df, joint_columns=pairs)
+    raw = compute_distribution_snapshot(df, joint_columns=pairs, cell_format=True)
     before = copy.deepcopy(raw)
     frame_before = df.copy()
     doc = distribution_snapshot_document(df, joint_columns=pairs, include_values=True)
