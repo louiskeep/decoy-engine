@@ -437,6 +437,8 @@ sentry); M5 off-by-one pair population
 
 ## 8. Owner questions
 
+Owner answers (Cam, 2026-11-09): "go with recommended". Every question below takes its recommended option.
+
 1. The pair key is a table field `unique_together: [[a, b]]` (Django's name, a SQL table `UNIQUE (a, b)`).
    Alternative: `primary_key: [a, b]`, SDV's composite-key spelling, which also claims "this is the row key".
    Recommended: `unique_together`, because a junction table may also have its own id column.
