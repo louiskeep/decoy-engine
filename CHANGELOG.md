@@ -27,6 +27,15 @@ minimum exactly as the run does); `UNKNOWN` when memory cannot be detected. Repe
 names are priced once, as the legacy path keeps one column per name.
 `decoy_engine.errors.CAPACITY_REASON_CODES` lists the three codes a capacity check can report.
 
+### Changed (stage creators restore owner bits; ownership check reads the effective user)
+
+Directory and private-file stages made through `RootedFileAccess` outputs now restore the owner
+bits a restrictive umask stripped: a stage directory is 0700 and a private stage file is 0600 under
+any umask, 0777 included, where such a stage was born unusable before. Public stage modes still
+follow the umask. The protected-directory ownership check (`runtime.scratch_unsafe`) now compares
+the directory owner with the effective user id instead of the real user id; the engine does not
+run set-uid, so the two agree.
+
 ### Added (value redaction for saved scan documents, 2026-11-08)
 
 `decoy_engine` and `decoy_engine.profiling` export `profile_document`, `redact_profile_dict` and
@@ -70,6 +79,19 @@ with a leading zero per column. Two new `warning` reasons (`scan_header_suspect`
 `endpoint_url`), registry 1.10.0. `S3Source.endpoint_url` accepts only an http or https URL with a
 host and refuses userinfo, a query, a fragment and their percent-encoded forms. `read_csv_source`,
 `resolve_csv_dialect` and `CsvDialect` are also exported from `decoy_engine.profile`.
+
+### Added (SCAN-MULTI S1b: declared-relationship integrity facts, 2026-11-08)
+
+`scan_sources` takes `relationships` (declared `RelationshipConfig` dicts), `integrity=True` and
+`spill_dir=None`. For each declared relationship it returns `RelationshipFacts`: parent rows,
+parent rows with a null key part, parent duplicate excess over complete keys, and per child the
+rows, null-key rows, orphan rows and distinct orphan keys. A null child key is not an orphan.
+Only key columns are read, from local files, and the anti-join runs in DuckDB under a memory limit
+with its spill in a `protected_scratch_dir` directory removed on every exit. CSV keys are read as
+text; a parent and child key type difference gives `key_type_mismatch`, a
+`warning.scan_key_type_mismatch` and no counts; a relationship that names a cloud table is
+`skipped_cloud`. No key value is ever returned. `read_csv_source` gains the keyword-only `columns`
+projection (returned in the order given); `connect_duckdb` is exported from `decoy_engine.execution`.
 
 ### Fixed (QA row 24d: shuffle determinism, 2026-11-08)
 
