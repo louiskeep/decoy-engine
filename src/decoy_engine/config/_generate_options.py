@@ -298,6 +298,8 @@ _NONE_MEANS_ABSENT = frozenset(
         "high_cardinality",
         "allow_real_categories",
         "condition_on",
+        "other_mode",
+        "source_column",
     }
 )
 

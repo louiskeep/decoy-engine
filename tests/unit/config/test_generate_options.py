@@ -214,6 +214,8 @@ NONE_OK = [
     ("statistical", "high_cardinality"),
     ("statistical", "allow_real_categories"),
     ("statistical", "condition_on"),
+    ("statistical", "source_column"),
+    ("statistical", "other_mode"),
 ]
 NONE_BAD = [
     ("sequence", "step"),
@@ -222,8 +224,6 @@ NONE_BAD = [
     ("sequence", "pad_length"),
     ("sequence", "determinism"),
     ("reference", "distribution"),
-    ("statistical", "source_column"),
-    ("statistical", "other_mode"),
     ("derived", "null_propagation"),
     ("derived_aggregate", "op"),
     ("derived_aggregate", "column"),
