@@ -22,7 +22,9 @@ runs; the message holds byte counts and the table name only. It is skipped when 
 set (the ledger refuses first), when an eligible plan streams to a bounded sink, and when memory
 cannot be detected. `estimate_job_capacity` returns `INSUFFICIENT` with the same code and integer
 `needed_bytes` and `available_bytes` for a config with generate tables, before any source is
-profiled, against its `budget_bytes` override when given; `UNKNOWN` when memory cannot be detected.
+profiled, against its `budget_bytes` override when given (validated and raised to the route
+minimum exactly as the run does); `UNKNOWN` when memory cannot be detected. Repeated generate-column
+names are priced once, as the legacy path keeps one column per name.
 `decoy_engine.errors.CAPACITY_REASON_CODES` lists the three codes a capacity check can report.
 
 ### Added (value redaction for saved scan documents, 2026-11-08)

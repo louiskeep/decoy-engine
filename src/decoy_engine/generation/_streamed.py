@@ -40,9 +40,9 @@ from decoy_engine.generation._bounds import (
     accumulator_bytes,
     batch_buffer_bytes,
     compute_payload_bounds,
+    detected_memory_bytes,
     faker_pool_bytes,
-    generation_floor_by_table,
-    generation_floor_bytes,
+    generation_floor_shortfall,
     key_pool_bytes,
     legacy_table_bytes,
     sink_buffer_bytes,
@@ -306,25 +306,13 @@ def _refuse_if_over_memory(config: dict[str, Any], admission: PlanAdmission) -> 
     Compared with the whole detected ceiling, not the 25% planning budget, so it only refuses runs
     that cannot fit. An undetectable host skips the check: it can only add a refusal.
     """
-    from decoy_engine.execution._errors import ExecutionError
-    from decoy_engine.execution.out_of_core import _budget
-
-    floor = generation_floor_bytes(config, admission)
-    try:
-        available = _budget.detect_effective_memory_bytes()
-    except ExecutionError as exc:
-        if exc.code != reasons.runtime.OUT_OF_CORE_MEMORY_DETECTION_FAILED:
-            raise
+    available = detected_memory_bytes()
+    if available is None:
         return
-    if floor > available:
-        by_table = generation_floor_by_table(config, admission)
-        largest = max(by_table, key=lambda name: by_table[name])
+    shortfall = generation_floor_shortfall(config, admission, available)
+    if shortfall is not None:
         raise GenerationBudgetExceeded(
-            code=reasons.runtime.GENERATION_BUDGET_EXCEEDED,
-            message=(
-                f"generating table {largest!r} resident needs at least {floor} bytes; "
-                f"{available} bytes of memory are available."
-            ),
+            code=reasons.runtime.GENERATION_BUDGET_EXCEEDED, message=shortfall.message
         )
 
 

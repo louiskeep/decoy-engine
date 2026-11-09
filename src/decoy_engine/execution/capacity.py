@@ -90,8 +90,7 @@ from decoy_engine.execution._pipeline_routing_signals import (
     largest_mask_table_rows_from_profile,
     out_of_core_admission,
 )
-from decoy_engine.execution.out_of_core import _budget as _ooc_budget
-from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit
+from decoy_engine.execution.out_of_core import resolve_budget, resolve_ooc_memory_limit
 from decoy_engine.execution.out_of_core._capacity_eval import (
     CapacityEstimate,
     CapacityInputs,
@@ -100,7 +99,7 @@ from decoy_engine.execution.out_of_core._capacity_eval import (
 )
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation._admission import classify_plan
-from decoy_engine.generation._bounds import generation_floor_by_table, generation_floor_bytes
+from decoy_engine.generation._bounds import detected_memory_bytes, generation_floor_shortfall
 
 __all__ = ["estimate_job_capacity"]
 
@@ -213,41 +212,34 @@ def _generation_floor_estimate(
 ) -> CapacityEstimate | None:
     """The floor verdict for a config with generate tables, or `None` when it does not refuse.
 
-    `decoy run` generates resident (no sink), so the floor always applies. It is checked against
-    the explicit override when given, else the detected ceiling; an undetectable host is UNKNOWN.
+    `decoy run` generates resident (no sink), so the floor always applies. An explicit override is
+    resolved exactly as `run_generation` resolves it (validated, raised to the route's minimum);
+    otherwise the detected ceiling is used, and an undetectable host is UNKNOWN.
     """
-    admission = classify_plan(config)
-    floor = generation_floor_bytes(config, admission)
-    available = budget_bytes
+    if budget_bytes is not None:
+        available: int | None = resolve_budget(budget_bytes).budget_bytes
+    else:
+        available = detected_memory_bytes()
     if available is None:
-        try:
-            available = _ooc_budget.detect_effective_memory_bytes()
-        except ExecutionError as exc:
-            if exc.code != _RAM_UNDETECTABLE_CODE:
-                raise
-            return CapacityEstimate(
-                verdict=CapacityVerdict.UNKNOWN,
-                code=None,
-                needed_bytes=None,
-                available_bytes=None,
-                route=_GENERATE_ROUTE,
-                message="the memory ceiling could not be detected, so the generated output "
-                "cannot be checked against it; pass an explicit budget_bytes.",
-            )
-    if floor <= available:
+        return CapacityEstimate(
+            verdict=CapacityVerdict.UNKNOWN,
+            code=None,
+            needed_bytes=None,
+            available_bytes=None,
+            route=_GENERATE_ROUTE,
+            message="the memory ceiling could not be detected, so the generated output "
+            "cannot be checked against it; pass an explicit budget_bytes.",
+        )
+    shortfall = generation_floor_shortfall(config, classify_plan(config), available)
+    if shortfall is None:
         return None
-    by_table = generation_floor_by_table(config, admission)
-    largest = max(by_table, key=lambda name: by_table[name])
     return CapacityEstimate(
         verdict=CapacityVerdict.INSUFFICIENT,
         code=reasons.runtime.GENERATION_BUDGET_EXCEEDED,
-        needed_bytes=floor,
-        available_bytes=available,
+        needed_bytes=shortfall.needed_bytes,
+        available_bytes=shortfall.available_bytes,
         route=_GENERATE_ROUTE,
-        message=(
-            f"generating table {largest!r} resident needs at least {floor} bytes; "
-            f"{available} bytes of memory are available."
-        ),
+        message=shortfall.message,
     )
 
 
