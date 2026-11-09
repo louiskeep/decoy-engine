@@ -84,14 +84,18 @@ def test_a_file_scan_exports_without_its_directory(tmp_path: Path) -> None:
     assert header.paths_stripped is True and header.unstripped == ()
 
 
-def test_an_s3_scan_exports_without_its_key_and_lists_the_locator(tmp_path: Path) -> None:
+def test_an_s3_scan_exports_without_key_bucket_or_endpoint(tmp_path: Path) -> None:
     rec = _s3_record(tmp_path)
     header, text = _export(rec)
-    assert "jane.doe" not in text and S3_KEY not in text
+    for leaked in ("jane.doe", S3_KEY, "acme-prod-bucket", "minio.internal"):
+        assert leaked not in text
     assert "ssn_export.csv" in text
-    assert len(header.unstripped) == 1
     exported = [json.loads(line) for line in text.splitlines()][1]["record"]
-    assert header.unstripped[0]["id"] == exported["id"]
+    descriptor = exported["payload"]["tables"][0]["descriptor"]
+    assert "bucket" not in descriptor and "endpoint_url" not in descriptor
+    assert [(u.id, u.source_id) for u in header.unstripped] == [(exported["id"], rec["id"])]
+    assert records.record_id(exported) == exported["id"]
+    assert exported["payload_digest"] == records.payload_digest(exported["payload"])
 
 
 def test_keep_paths_lists_nothing(tmp_path: Path) -> None:

@@ -98,26 +98,33 @@ def _newer_and_opaque() -> list[dict[str, Any]]:
     return [seal(newer), seal(opaque)]
 
 
-def test_newer_and_opaque_records_are_copied_byte_for_byte() -> None:
-    """A1-export-newer."""
+def test_newer_and_opaque_records_are_withheld_from_a_default_export() -> None:
+    """A1-export-newer: a record this version cannot strip never leaves with its paths in it."""
     recs = _newer_and_opaque()
-    header, *items = _read(_lines(recs))
+    lines = _lines(recs)
+    header, *items = _read(lines)
+    assert items == [] and header.record_count == 0
+    assert header.withheld_records == tuple(r["id"] for r in recs)
+    assert b"/home/user" not in b"".join(lines) and b"/a/b.csv" not in b"".join(lines)
+
+
+def test_newer_and_opaque_records_are_copied_byte_for_byte_with_keep_paths() -> None:
+    recs = _newer_and_opaque()
+    header, *items = _read(_lines(recs, keep_paths=True))
     for original, item in zip(recs, items, strict=True):
         assert canonical_bytes(item.record.raw) == canonical_bytes(original)
         assert item.record.id == original["id"] and item.source_id is None
-    assert [u["id"] for u in header.unstripped] == [r["id"] for r in recs]
+    assert header.unstripped == () and header.withheld_records == ()
     assert header.paths_stripped is False
 
 
-def test_opaque_record_links_are_remapped_though_its_payload_is_not() -> None:
-    chain = _chain()
-    opaque = raw_of(make(links=[{"rel": "evidence", "id": chain[0]["id"]}]))
-    opaque.update(kind="future-thing", payload_schema="future-thing/v1", payload={"p": "/a/b.csv"})
-    opaque = seal(opaque)
-    _, evidence, _, copy_ = _read(_lines([chain[0], chain[1], opaque]))
-    assert copy_.record.raw["links"][0]["id"] == evidence.record.id
-    assert copy_.record.raw["payload"] == {"p": "/a/b.csv"}
-    assert copy_.source_id == opaque["id"]
+def test_links_to_a_withheld_record_are_counted_as_external() -> None:
+    opaque = _newer_and_opaque()[1]
+    linked = raw_of(make(links=[{"rel": "evidence", "id": opaque["id"]}]))
+    header, item = _read(_lines([opaque, linked]))
+    assert header.withheld_records == (opaque["id"],)
+    assert header.external_links == 1
+    assert item.record.raw["links"][0]["id"] == opaque["id"]
 
 
 def test_a_tampered_input_is_refused() -> None:

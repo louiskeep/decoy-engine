@@ -7,7 +7,6 @@ no filesystem: callers hand it verified raw envelopes in link order and write th
 from __future__ import annotations
 
 import copy
-import json
 import re
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
@@ -18,27 +17,27 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     StrictBool,
-    StrictInt,
     StrictStr,
     TypeAdapter,
     ValidationError,
 )
 
 from decoy_engine import reasons
-from decoy_engine._value_free import InvocationId
+from decoy_engine._value_free import Count, InvocationId, UtcTimestamp
 from decoy_engine.records import _kinds  # noqa: F401  (registers the V1 kinds)
 from decoy_engine.records._canonical import canonical_bytes, payload_digest, record_id, sha256_tag
-from decoy_engine.records._codec import decode, utc_stamp, validated
+from decoy_engine.records._codec import decode, json_object, utc_stamp, validated
 from decoy_engine.records._envelope import (
     ENVELOPE_SCHEMA,
     DecodedRecord,
     OpaqueRecord,
     Producer,
+    RecordId,
     RecordNeedsNewer,
 )
 from decoy_engine.records._errors import RecordError
 from decoy_engine.records._read_model import read_model_of
-from decoy_engine.records._registry import KindSpec, kind_spec
+from decoy_engine.records._registry import KindSpec, family_major, kind_spec
 
 __all__ = [
     "EXPORT_SCHEMA",
@@ -46,6 +45,7 @@ __all__ = [
     "ExportHeader",
     "ExportedLog",
     "ExportedRecord",
+    "UnstrippedRef",
     "export_lines",
     "read_export",
 ]
@@ -54,26 +54,38 @@ EXPORT_SCHEMA = "decoy-library-export/v1"
 _SEPARATORS = re.compile(r"[\\/]+")
 
 
+class UnstrippedRef(BaseModel):
+    """A record that was exported with a remote locator removed that no path rule reduces."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    id: RecordId
+    source_id: RecordId | None
+
+
 class ExportHeader(BaseModel):
     """First line of an export.
 
-    ``unstripped`` lists records whose paths could not be reduced. ``withheld_logs`` lists the
-    invocations whose job log was left out because its lines can name paths this version cannot
-    strip.
+    A default export (no ``keep_paths``) carries no raw path or locator. ``unstripped`` lists the
+    records that had a remote locator dropped, which is a loss the reader should know about.
+    ``withheld_records`` lists the source ids of records this version cannot strip (a newer or
+    unknown kind) and so left out. ``withheld_logs`` lists the invocations whose job log was left
+    out because its lines can name paths this version cannot strip.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
 
     type: Literal["header"] = "header"
     export_schema: Literal["decoy-library-export/v1"] = "decoy-library-export/v1"
-    exported_at: StrictStr
+    exported_at: UtcTimestamp
     producer: Producer
-    record_count: StrictInt
-    refs: dict[StrictStr, StrictStr]
+    record_count: Count
+    refs: dict[StrictStr, RecordId]
     paths_stripped: StrictBool
-    unstripped: tuple[dict[str, Any], ...]
+    unstripped: tuple[UnstrippedRef, ...]
     withheld_logs: tuple[InvocationId, ...] = ()
-    external_links: StrictInt
+    withheld_records: tuple[RecordId, ...] = ()
+    external_links: Count
 
 
 ExportHeaderRead: Any = read_model_of(ExportHeader)
@@ -139,8 +151,8 @@ def _reduce(node: Any, segments: list[str]) -> bool:
     return any([_reduce(child, rest) for child in children])
 
 
-def _holds(node: Any, segments: list[str]) -> bool:
-    """Whether the pointer ``segments`` reaches a value that is set (not ``None``)."""
+def _drop(node: Any, segments: list[str]) -> bool:
+    """Remove the set values the pointer ``segments`` reaches. True when one was removed."""
     head, rest = segments[0], segments[1:]
     if head == "*":
         if isinstance(node, list):
@@ -149,18 +161,21 @@ def _holds(node: Any, segments: list[str]) -> bool:
             children = list(node.values())
         else:
             return False
-    elif isinstance(node, dict) and head in node:
-        children = [node[head]]
-    else:
+        return any([_drop(child, rest) for child in children])
+    if not isinstance(node, dict) or head not in node:
         return False
-    if not rest:
-        return any(child is not None for child in children)
-    return any([_holds(child, rest) for child in children])
+    if rest:
+        return _drop(node[head], rest)
+    if node[head] is None:
+        return False
+    del node[head]
+    return True
 
 
-def _strip(spec: KindSpec, payload: dict[str, Any]) -> tuple[dict[str, Any], bool] | None:
-    """The payload with its declared path fields reduced, or ``None`` when this version cannot
-    tell which fields are paths (a payload with fields it does not know, or another shape)."""
+def _strip(spec: KindSpec, payload: dict[str, Any]) -> tuple[dict[str, Any], bool, bool] | None:
+    """The payload with its path fields reduced and its locator fields removed, as
+    ``(payload, changed, locator_removed)``; ``None`` when this version cannot tell which fields
+    are paths (a payload with fields it does not know, or another shape)."""
     model = spec.write_model
     if model is None:
         return None
@@ -170,7 +185,8 @@ def _strip(spec: KindSpec, payload: dict[str, Any]) -> tuple[dict[str, Any], boo
         return None
     out = copy.deepcopy(payload)
     changed = any([_reduce(out, p.split("/")[2:]) for p in spec.path_fields])
-    return out, changed
+    removed = any([_drop(out, p.split("/")[2:]) for p in spec.locator_fields])
+    return out, changed or removed, removed
 
 
 def export_lines(
@@ -187,9 +203,10 @@ def export_lines(
     ``records`` are verified raw envelopes (``DecodedRecord.raw``), oldest link target first.
     Every envelope's links are rewritten through the old-to-new id map built so far and its id is
     recomputed; a record whose links and payload are both unchanged keeps its id and gets
-    ``source_id: null``. A payload this version cannot fully read is copied byte for byte and
-    listed under ``unstripped``, as is a payload that holds a remote locator (a bucket or endpoint)
-    the path rule cannot reduce. A link to a record outside the export keeps its id and is counted.
+    ``source_id: null``. Without ``keep_paths`` a record carries no raw path or
+    locator: path fields are reduced to file names, locator fields (a bucket or endpoint) are removed
+    and the record is listed under ``unstripped``, and a record this version cannot read well
+    enough to strip is left out and its id listed under ``withheld_records``. A link to a record outside the export keeps its id and is counted.
 
     Every envelope in ``records`` must be a v1 envelope: this function refuses a later major with
     ``record_corrupt`` because it cannot verify or rewrite one, so callers filter out
@@ -200,11 +217,21 @@ def export_lines(
     id_map: dict[str, str] = {}
     lines: list[dict[str, Any]] = []
     unstripped: list[dict[str, Any]] = []
+    withheld_records: list[str] = []
     stripped_any = False
     external = 0
     for raw in records:
         if raw.get("record_schema") != ENVELOPE_SCHEMA or raw.get("id") != record_id(raw):
             raise RecordError(reasons.runtime.RECORD_CORRUPT)
+        reduced: tuple[dict[str, Any], bool, bool] | None = None
+        if not keep_paths:
+            spec = kind_spec(raw["kind"])
+            if spec is not None and raw["payload_schema"] == spec.payload_schema:
+                reduced = _strip(spec, raw["payload"])
+            if reduced is None:
+                # This version cannot tell which fields are paths, so the record stays out.
+                withheld_records.append(raw["id"])
+                continue
         rec = copy.deepcopy(dict(raw))
         links = []
         for link in rec["links"]:
@@ -215,11 +242,6 @@ def export_lines(
                 links.append(link)
         changed = links != rec["links"]
         rec["links"] = links
-        reduced: tuple[dict[str, Any], bool] | None = None
-        if not keep_paths:
-            spec = kind_spec(rec["kind"])
-            if spec is not None and rec["payload_schema"] == spec.payload_schema:
-                reduced = _strip(spec, rec["payload"])
         if reduced is not None and reduced[1]:
             rec["payload"] = reduced[0]
             rec["payload_digest"] = payload_digest(reduced[0])
@@ -230,13 +252,7 @@ def export_lines(
             changed = stripped_any = True
         if changed:
             rec["id"] = record_id(rec)
-        locator = (
-            not keep_paths
-            and reduced is not None
-            and spec is not None
-            and any(_holds(rec["payload"], p.split("/")[2:]) for p in spec.locator_fields)
-        )
-        if not keep_paths and (reduced is None or locator):
+        if reduced is not None and reduced[2]:
             unstripped.append({"id": rec["id"], "source_id": raw["id"] if changed else None})
         id_map[raw["id"]] = rec["id"]
         lines.append({"type": "record", "source_id": raw["id"] if changed else None, "record": rec})
@@ -253,6 +269,7 @@ def export_lines(
             "paths_stripped": stripped_any,
             "unstripped": tuple(unstripped),
             "withheld_logs": withheld,
+            "withheld_records": tuple(withheld_records),
             "external_links": external,
         },
         ExportHeader,
@@ -279,15 +296,6 @@ def export_lines(
         yield canonical_bytes(entry) + b"\n"
 
 
-def _wrapper(line: bytes | str) -> dict[str, Any] | None:
-    try:
-        text = line.decode("utf-8") if isinstance(line, bytes) else line
-        value = json.loads(text)
-    except (ValueError, RecursionError):
-        return None
-    return value if isinstance(value, dict) else None
-
-
 def read_export(
     lines: Iterable[bytes | str],
 ) -> Iterator[Any]:
@@ -303,7 +311,7 @@ def read_export(
     for number, line in enumerate(lines, 1):
         if not line.strip():
             continue
-        wrapper = _wrapper(line)
+        wrapper = json_object(line)
         if not seen_header:
             header: Any = None
             try:
@@ -311,7 +319,13 @@ def read_export(
                     header = ExportHeaderRead.model_validate(wrapper)
             except ValueError:  # includes pydantic's ValidationError
                 header = None
-            if header is None or header.export_schema != EXPORT_SCHEMA:
+            # The tag is read from the wire: a read model keeps the writer's default for a missing
+            # one, which would let a header with no version pass as v1.
+            if (
+                header is None
+                or wrapper is None
+                or family_major(wrapper.get("export_schema"), "decoy-library-export") != 1
+            ):
                 raise RecordError(reasons.runtime.RECORD_INVALID)
             seen_header = True
             yield header

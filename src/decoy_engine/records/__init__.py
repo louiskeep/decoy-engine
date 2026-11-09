@@ -24,6 +24,7 @@ from decoy_engine.records._export import (
     ExportedLog,
     ExportedRecord,
     ExportHeader,
+    UnstrippedRef,
     export_lines,
     read_export,
 )
@@ -55,6 +56,7 @@ __all__ = [
     "RecordEnvelope",
     "RecordError",
     "RecordNeedsNewer",
+    "UnstrippedRef",
     "build",
     "canonical_bytes",
     "decode",

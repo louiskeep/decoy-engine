@@ -6,7 +6,7 @@ copied, so the library, the platform importer and the producer cannot drift apar
 
 from __future__ import annotations
 
-from decoy_engine.config._sources import SOURCE_LOCATOR_FIELDS, SOURCE_PATH_FIELDS
+from decoy_engine.config import SOURCE_LOCATOR_FIELDS, SOURCE_PATH_FIELDS
 from decoy_engine.profiling.scan_set import SCAN_SET_SCHEMA, ScanSetCore, ScanSetCoreRead
 from decoy_engine.records._payloads import EvidencePayload, SampleRunPayload
 from decoy_engine.records._read_model import read_model_of

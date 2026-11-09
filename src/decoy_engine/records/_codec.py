@@ -31,12 +31,18 @@ from decoy_engine.records._envelope import (
     RecordNeedsNewer,
 )
 from decoy_engine.records._errors import RecordError
-from decoy_engine.records._registry import KindSpec, kind_spec, major_of, require_writable
+from decoy_engine.records._registry import (
+    KindSpec,
+    family_major,
+    kind_spec,
+    major_of,
+    require_writable,
+)
 
 __all__ = ["build", "decode", "encode"]
 
 _PLACEHOLDER_ID = "sha256:" + "0" * 64
-_ENVELOPE_FAMILY = "decoy-record/v"
+_ENVELOPE_FAMILY = "decoy-record"
 _M = TypeVar("_M", bound=BaseModel)
 _ID = re.compile(r"sha256:[0-9a-f]{64}")
 _KIND = re.compile(r"[a-z][a-z0-9-]{0,63}")
@@ -163,15 +169,24 @@ def _refuse_constant(_: str) -> Any:
     raise ValueError("non-finite number")
 
 
-def _parse(data: bytes | str) -> dict[str, Any]:
+def json_object(data: bytes | str) -> dict[str, Any] | None:
+    """The one strict JSON-object parse for records, export lines and job logs.
+
+    Refuses duplicate keys, ``NaN``/``Infinity`` and anything that is not an object, returning
+    ``None`` so no decode error (it keeps the input text in its ``doc``) can leave.
+    """
     raw: Any = None
     try:
         text = data.decode("utf-8") if isinstance(data, bytes) else data
         raw = json.loads(text, object_pairs_hook=_no_duplicates, parse_constant=_refuse_constant)
     except (ValueError, RecursionError):
-        # A JSON decode error keeps the input text in its ``doc``; none of it may leave.
         raw = None
-    if not isinstance(raw, dict):
+    return raw if isinstance(raw, dict) else None
+
+
+def _parse(data: bytes | str) -> dict[str, Any]:
+    raw = json_object(data)
+    if raw is None:
         raise RecordError(reasons.runtime.RECORD_CORRUPT)
     return raw
 
@@ -191,10 +206,10 @@ def decode(data: bytes | str) -> DecodedRecord | OpaqueRecord | RecordNeedsNewer
     or the id does not match, and ``record_invalid`` when a verified payload fails its read model.
     """
     raw = _parse(data)
-    schema = _str(raw, "record_schema")
-    if not schema.startswith(_ENVELOPE_FAMILY):
+    major = family_major(raw.get("record_schema"), _ENVELOPE_FAMILY)
+    if major is None:
         raise RecordError(reasons.runtime.RECORD_CORRUPT)
-    if schema != ENVELOPE_SCHEMA:
+    if major > 1:
         # A later envelope major cannot be verified by this version's rule. Its id and kind
         # are still held to their formats, and the result is marked unverified.
         if not (_ID.fullmatch(_str(raw, "id")) and _KIND.fullmatch(_str(raw, "kind"))):

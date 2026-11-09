@@ -40,9 +40,9 @@ ENVELOPE_SCHEMA = "decoy-record/v1"
 RecordId = Annotated[StrictStr, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 # A payload tag is `family/vN` or the inherited `family-N` (`cli-local-1`).
 PayloadTag = Annotated[
-    StrictStr, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,63}(?:/v|-)\d{1,4}$")
+    StrictStr, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,63}(?:/v|-)[1-9][0-9]{0,3}$")
 ]
-TAG_PATTERN = re.compile(r"^(?P<family>[a-z][a-z0-9-]*?)(?:/v|-)(?P<major>\d+)\Z")
+TAG_PATTERN = re.compile(r"^(?P<family>[a-z][a-z0-9-]*?)(?:/v|-)(?P<major>[1-9][0-9]{0,3})\Z")
 
 
 class _Closed(BaseModel):

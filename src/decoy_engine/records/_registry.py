@@ -23,8 +23,20 @@ _registry: dict[str, KindSpec] = {}
 
 def major_of(payload_schema: str) -> tuple[str, int] | None:
     """The family and major of a payload tag (``sample-run/v1``, ``cli-local-1``), or ``None``."""
-    match = TAG_PATTERN.match(payload_schema)
+    match = TAG_PATTERN.match(payload_schema) if isinstance(payload_schema, str) else None
     return (match["family"], int(match["major"])) if match else None
+
+
+def family_major(tag: object, family: str) -> int | None:
+    """The major of a ``family/vN`` schema tag, or ``None`` for anything else.
+
+    The one reader of a wire schema tag (envelope, export header, job-log header), built on
+    ``major_of`` so a missing, malformed, zero or non-numeric version never reads as a version.
+    """
+    if not isinstance(tag, str) or not tag.startswith(f"{family}/v"):
+        return None
+    parsed = major_of(tag)
+    return parsed[1] if parsed is not None and parsed[0] == family else None
 
 
 @dataclass(frozen=True)

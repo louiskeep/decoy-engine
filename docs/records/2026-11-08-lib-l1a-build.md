@@ -106,3 +106,11 @@ Registry renumbered at merge from 1.10.0 to 1.18.0 by scripts/dev/registry_renum
 - New sentries from main applied: `\Z` end anchors in `_envelope.py` and `_registry.py`; one `validated()` choke
   point in `records/_codec.py` for caller-data model validation (the export producer and header used to raise
   a raw pydantic error).
+
+## Review round (2026-11-09)
+
+- A default export carries no raw locator: scan-set path fields are reduced, bucket and endpoint are removed and the
+  record is listed under `unstripped`; a record the exporter cannot strip is left out and listed under
+  `withheld_records` in the header. `keep_paths` keeps the old copy.
+- One tag parser (`family_major`), one JSON-object parse (`json_object`) and typed header fields for the envelope,
+  the export header and the job-log header; a missing, malformed or older version is refused.
