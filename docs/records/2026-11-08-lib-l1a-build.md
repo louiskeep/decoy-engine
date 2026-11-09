@@ -99,7 +99,7 @@ Registry renumbered at merge from 1.10.0 to 1.18.0 by scripts/dev/registry_renum
 
 ## Merge onto main (2026-11-09)
 
-- Registry renumbered 1.10.0 to 1.18.0 (main was at 1.17.0); fixture is `reason-manifest-v1.18-lib-l1a.json`.
+- Registry renumbered to 1.18.0, the next minor after main; fixture is `reason-manifest-v1.18-lib-l1a.json`.
 - `scan-set` is now a writable kind pointing at `ScanSetCore` and `ScanSetCoreRead` (SCAN-MULTI S1a is on main).
 - `run_result/_model.py`: kept the `_value_free` split and ported main's `ConfigRuleError` validator errors into
   `_value_free.check` and `_check_reason`; the message baseline entry moved to `_value_free.py`.
