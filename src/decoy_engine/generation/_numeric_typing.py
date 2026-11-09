@@ -35,6 +35,7 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine.generation._numeric_derived import derived_uses_as_numbers
+from decoy_engine.internal.pandas_compat import table_to_pandas_exact_ints
 
 _INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
 # Stock Faker providers with a bounded integer result; kwarg names and defaults per provider.
@@ -323,7 +324,5 @@ def generated_table_to_pandas(table: pa.Table) -> Any:
     ``1.0`` where the cell text was ``1``. Every integer column goes through pandas' nullable
     integer dtypes instead, so the text written from the frame matches the generated values.
     """
-    from decoy_engine.execution._fk_keys import to_pandas_fk_safe
-
     ints = {f.name for f in table.schema if pa.types.is_integer(f.type)}
-    return to_pandas_fk_safe(table, ints)
+    return table_to_pandas_exact_ints(table, ints)

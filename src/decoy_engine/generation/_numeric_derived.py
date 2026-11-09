@@ -14,7 +14,7 @@ from collections.abc import Callable
 
 import lark
 
-from decoy_engine.expressions._lark_parser import compile_expr
+from decoy_engine.expressions import compile_expr
 
 _ORDERING = {"==", "!=", "<", "<=", ">", ">="}
 _PASS_THROUGH = {
