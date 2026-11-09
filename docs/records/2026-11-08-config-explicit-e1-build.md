@@ -82,7 +82,7 @@ an `except`, no regular-file check); AT-E1-6 names from the descriptor; AT-E1-7 
 - The codemod also matches `sources=` keywords and `sources = {...}` assignments (95 edits vs the
   measured 84 literals).
 - Registry: SCAN-ML M1 merged first (#405) and took the next minor, so after merging main
-  `registry_renumber.py` moved E1 to 1.9.0; derived visibility (#408) later moved it to 1.10.0.
+  `registry_renumber.py` moved E1 to the next minor; derived visibility (#408) later moved it again.
 - Not in the allowed files and still showing csv sources without `has_header`: `README.md`,
   `docs/quickstart.md`, `docs/recipes.md`, `examples/`. Needs an orchestrator decision.
 
@@ -116,7 +116,7 @@ T1 `scripts/dev/gates.sh --keep-going --baseline` (VM, 983-file selection agains
 - `2eeeb546`: env, ruff, format, mypy PASS; sentry 4279 passed; licenses 63 passed; tests 34738
   passed, 2 failed (baseline 34683 passed, 0 failed). Branch-only: the two STOP 4 ids above.
 
-- `e499d802` (after merging main `38951412` with SCAN-ML M1 and renumbering to 1.9.0; 997-file
+- `e499d802` (after merging main `38951412` with SCAN-ML M1 and renumbering; 997-file
   selection): env, ruff, format, mypy PASS; sentry 4296 passed; licenses 63 passed; tests 34912
   passed, 0 failed (baseline 34855 passed, 0 failed); branch-only none.
 
