@@ -193,5 +193,9 @@ class ColumnProfile:
     generated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
 
     def to_dict(self) -> dict[str, Any]:
-        """JSON-ready dict. Use this when persisting or sending over the wire."""
+        """The raw JSON-ready dict, cell values included.
+
+        For a document a person saves, commits or reads, use `profile_document`, which removes
+        the values of value-sensitive columns unless `include_values=True`.
+        """
         return asdict(self)

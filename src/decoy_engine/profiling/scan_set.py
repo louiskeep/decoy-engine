@@ -40,7 +40,7 @@ from pydantic import ValidationError as _PydanticValidationError
 from decoy_engine import reason_adapter, reasons
 from decoy_engine._field_names import repeated_names
 from decoy_engine.config import PipelineConfigError, SourceDescriptor
-from decoy_engine.errors import ConfigRuleError, DecoyError, PipelineValidationError
+from decoy_engine.errors import DecoyError, PipelineValidationError
 from decoy_engine.fileaccess import (
     FileAccess,
     FileAccessDenied,
@@ -249,18 +249,18 @@ def scan_sources(
     from decoy_engine import __version__
 
     if strategy not in ("head", "random", "full"):
-        raise ConfigRuleError("strategy must be 'head', 'random' or 'full'")
+        raise PipelineConfigError("strategy must be 'head', 'random' or 'full'")
     if sample_rows is not None and (
         isinstance(sample_rows, bool) or not isinstance(sample_rows, int) or sample_rows < 1
     ):
-        raise ConfigRuleError("sample_rows must be a positive integer or None")
+        raise PipelineConfigError("sample_rows must be a positive integer or None")
     descriptors = {name: _validated(name, raw) for name, raw in sources.items()}
     selected = list(descriptors) if tables is None else list(tables)
     if repeated_names(selected):
-        raise ConfigRuleError("tables selects the same table more than once")
+        raise PipelineConfigError("tables selects the same table more than once")
     unknown = [t for t in selected if t not in descriptors]
     if unknown:
-        raise ConfigRuleError("tables names a table that is not in sources")
+        raise PipelineConfigError("tables names a table that is not in sources")
 
     declared = _scan_integrity.declare(descriptors, relationships) if integrity else ()
 
