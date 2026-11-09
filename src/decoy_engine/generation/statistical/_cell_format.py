@@ -16,8 +16,9 @@ methods, no licence. See: https://docs.sdv.dev/rdt/transformers-glossary/numeric
 
 Method notes:
   - Decimal places is the smallest `d` from 0 up at which every finite cell equals itself rounded
-    to `d` places. RDT caps the search at `sys.float_info.dig` minus the digits of the largest
-    magnitude; here the cap is also floored at 0 and never passes `MAX_DECIMAL_PLACES`, the
+    to `d` places, judged in the float width the source stored (a float32 column is rounded as
+    float32). RDT caps the search at the width's decimal precision (`sys.float_info.dig` for
+    float64) minus the digits of the largest magnitude; here the cap is also floored at 0 and never passes `MAX_DECIMAL_PLACES`, the
     decoder's own ceiling, so every block the learner writes decodes. No scheme up to the cap
     gives `None`.
   - Resolution walks the units Python `datetime` can hold, coarsest first, and keeps the first
@@ -26,7 +27,6 @@ Method notes:
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable, Mapping
 from typing import Any, Final
 
@@ -92,15 +92,29 @@ def scrub_cell_format(kind: str, block: object) -> dict[str, Any] | None:
 # ── learn ────────────────────────────────────────────────────────────────────
 
 
+def _source_float(series: pd.Series) -> np.dtype[Any]:
+    """The float width the source stored, so rounding is judged in that width.
+
+    A float32 1.1 widened to float64 reads as 1.100000023841858; judged in float64 it has no
+    short decimal form. Nullable and Arrow dtypes expose their numpy width as `numpy_dtype`.
+    """
+    try:
+        native = np.dtype(getattr(series.dtype, "numpy_dtype", series.dtype))
+    except TypeError:
+        return np.dtype(np.float64)
+    return native if native.kind == "f" else np.dtype(np.float64)
+
+
 def _decimal_places(non_null: pd.Series) -> int | None:
-    cells = finite_numeric_cells(non_null)
+    width = _source_float(non_null)
+    cells = finite_numeric_cells(non_null).astype(width)
     if cells.size == 0:
         return None
     if (cells % 1 == 0).all():
         return 0
     top = float(np.abs(cells).max())
     digits = int(np.floor(np.log10(top))) + 1 if top >= 1 else 0
-    cap = min(MAX_DECIMAL_PLACES, max(0, sys.float_info.dig - digits))
+    cap = min(MAX_DECIMAL_PLACES, max(0, np.finfo(width).precision - digits))
     for places in range(cap + 1):
         if (cells == np.round(cells, places)).all():
             return places

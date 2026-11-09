@@ -50,6 +50,14 @@ def test_integer_dtype_learns_zero() -> None:
     assert _learn([1, 2, 30], "numeric", dtype="int64") == {"decimal_places": 0}
 
 
+@pytest.mark.parametrize("dtype", ["float32", "Float32", "float16", "float32[pyarrow]"])
+def test_narrow_float_is_judged_in_its_own_width(dtype: str) -> None:
+    # Widened to float64, float32 1.1 is 1.100000023841858 and would learn no scheme.
+    if dtype.endswith("[pyarrow]"):
+        pytest.importorskip("pyarrow")
+    assert _learn([1.1, 2.2, None], "numeric", dtype=dtype) == {"decimal_places": 1}
+
+
 def test_all_non_finite_numeric_learns_no_scheme() -> None:
     assert _learn([np.inf, -np.inf], "numeric") == {"decimal_places": None}
 
