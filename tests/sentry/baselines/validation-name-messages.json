@@ -2,6 +2,9 @@
  "sentry_id": "validation-name-messages",
  "created_in": "VALUE-FREE-ERRORS-A1",
  "entries": {
+  "permitted::_value_free.py::check.validate::3b71ccc0cc": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
   "permitted::config/_fixed_width.py::FixedWidthLayout._validate_column_order::37e15ba9af": {
    "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
   },
@@ -93,9 +96,6 @@
    "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
   },
   "permitted::config/_validators.py::QuarantineConfig._fail_closed_when_enabled::ef73970c20": {
-   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
-  },
-  "permitted::run_result/_model.py::_check.validate::3b71ccc0cc": {
    "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
   },
   "permitted::run_result/_model.py::_check_reason::68da91f3a9": {

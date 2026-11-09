@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from decoy_engine import reasons, records
+from decoy_engine.profiling import scan_set
 from decoy_engine.records import _kinds, _registry
 from decoy_engine.records._errors import _CODES
 from decoy_engine.records._registry import KindSpec
@@ -32,7 +33,7 @@ def test_v1_kinds_and_reserved_flags() -> None:
         "publication": True,
         "run-result": False,
         "sample-run": False,
-        "scan-set": True,
+        "scan-set": False,
     }
     assert records.kind_spec("nope") is None
 
@@ -48,16 +49,13 @@ def test_run_result_points_at_the_engine_models() -> None:
     )
 
 
-def test_scan_set_stays_reserved_until_its_model_exists() -> None:
-    """A1-scan-model-same: once SCAN-MULTI S1a lands, the kind must point at ScanSetCore."""
+def test_scan_set_points_at_the_scan_core_model() -> None:
+    """A1-scan-model-same: the kind points at the engine's ScanSetCore, not a copy."""
     spec = records.kind_spec("scan-set")
     assert spec is not None
-    try:
-        from decoy_engine.profiling import scan_set
-    except ImportError:
-        assert spec.reserved
-        return
+    assert not spec.reserved
     assert spec.write_model is scan_set.ScanSetCore
+    assert spec.read_model is scan_set.ScanSetCoreRead
 
 
 def test_a_kind_is_registered_once() -> None:

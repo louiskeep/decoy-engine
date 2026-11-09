@@ -139,7 +139,7 @@ that wants `/v2` support adds a new model under a new tag. Hand-authored corpus 
 content-addressed `id` (SHA-256 of the canonical envelope without `id`, parsed first so a reformatted file keeps
 its id), `payload_digest`, closed `labels`, typed `links`, and the payload. The kind registry owns each kind's payload
 tag and models: `evidence` (`cli-local-1`, the CLI manifest), `run-result` (`decoy-run-result/v1`), `sample-run/v1`
-(metadata of a `--sample N` run, never rows), and the reserved `scan-set`, `publication` and `checkpoint`. A record of a
+(metadata of a `--sample N` run, never rows), `scan-set` (`scan-set/v1`, the engine's `ScanSetCore`), and the reserved `publication` and `checkpoint`. A record of a
 kind or payload major this version does not know is returned as an opaque record or as `RecordNeedsNewer`, never
 dropped, and export copies it byte for byte. `decoy-library-export/v1` is the JSON Lines export format and
 `decoy-job-log/v1` the header of a job log. Corpus samples are in `tests/integration/compat_corpus/records/`.

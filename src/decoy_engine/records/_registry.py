@@ -17,7 +17,7 @@ from decoy_engine.records._errors import RecordError
 
 __all__ = ["KindSpec", "kind_spec", "major_of", "register_kind", "registered_kinds"]
 
-_KIND = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+_KIND = re.compile(r"^[a-z][a-z0-9-]{0,63}\Z")
 _registry: dict[str, KindSpec] = {}
 
 

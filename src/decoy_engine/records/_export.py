@@ -28,7 +28,7 @@ from decoy_engine import reasons
 from decoy_engine._value_free import InvocationId
 from decoy_engine.records import _kinds  # noqa: F401  (registers the V1 kinds)
 from decoy_engine.records._canonical import canonical_bytes, payload_digest, record_id, sha256_tag
-from decoy_engine.records._codec import decode, utc_stamp
+from decoy_engine.records._codec import decode, utc_stamp, validated
 from decoy_engine.records._envelope import (
     ENVELOPE_SCHEMA,
     DecodedRecord,
@@ -218,15 +218,18 @@ def export_lines(
     if not all(_is_invocation_id(owner) for owner, _ in log_list):
         raise RecordError(reasons.runtime.RECORD_INVALID, (("logs",),))
     withheld = () if keep_paths else tuple(owner for owner, _ in log_list)
-    header = ExportHeader(
-        exported_at=utc_stamp(exported_at, "exported_at"),
-        producer=producer if isinstance(producer, Producer) else Producer.model_validate(producer),
-        record_count=len(lines),
-        refs={name: id_map.get(target, target) for name, target in (refs or {}).items()},
-        paths_stripped=stripped_any,
-        unstripped=tuple(unstripped),
-        withheld_logs=withheld,
-        external_links=external,
+    header = validated(
+        {
+            "exported_at": utc_stamp(exported_at, "exported_at"),
+            "producer": validated(producer, Producer, ("producer",)),
+            "record_count": len(lines),
+            "refs": {name: id_map.get(target, target) for name, target in (refs or {}).items()},
+            "paths_stripped": stripped_any,
+            "unstripped": tuple(unstripped),
+            "withheld_logs": withheld,
+            "external_links": external,
+        },
+        ExportHeader,
     )
     for entry in [header.model_dump(mode="json"), *lines]:
         yield canonical_bytes(entry) + b"\n"

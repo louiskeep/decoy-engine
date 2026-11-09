@@ -149,6 +149,16 @@ def test_a_naive_export_time_is_refused() -> None:
     assert caught.value.code == "record_invalid"
 
 
+def test_a_bad_producer_is_a_value_free_record_error() -> None:
+    """The producer comes from the caller; a failure names the location, never the value."""
+    secret = "SECRET-PRODUCER-VALUE"
+    with pytest.raises(RecordError) as caught:
+        list(records.export_lines([], producer={"name": 7, "version": secret}, exported_at=T0))
+    assert caught.value.code == "record_invalid"
+    assert secret not in repr(caught.value) and secret not in str(caught.value)
+    assert caught.value.__context__ is None and caught.value.__cause__ is None
+
+
 class _NoOffset(tzinfo):
     """A zone object that reports no offset: Python treats such a time as naive."""
 

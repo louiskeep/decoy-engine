@@ -11,7 +11,7 @@ import json
 import re
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
@@ -37,6 +37,7 @@ __all__ = ["build", "decode", "encode"]
 
 _PLACEHOLDER_ID = "sha256:" + "0" * 64
 _ENVELOPE_FAMILY = "decoy-record/v"
+_M = TypeVar("_M", bound=BaseModel)
 _ID = re.compile(r"sha256:[0-9a-f]{64}")
 _KIND = re.compile(r"[a-z][a-z0-9-]{0,63}")
 
@@ -49,21 +50,29 @@ def _locations(
     return tuple((*prefix, *e["loc"]) for e in errors)
 
 
+def validated(value: Any, model: type[_M], prefix: tuple[object, ...] = ()) -> _M:
+    """``value`` as ``model``, or a value-free ``RecordError`` naming only the failing locations.
+
+    The one place the record code validates a model from a caller's data: the validator's error
+    holds the offending input, so it is reduced to locations and never chained.
+    """
+    failed: tuple[tuple[object, ...], ...] | None = None
+    try:
+        return value if isinstance(value, model) else model.model_validate(value)
+    except ValidationError as exc:
+        failed = _locations(exc, prefix)
+    # Raised after the except block closes: inside it the validator error would stay reachable as
+    # __context__, and its input holds the caller's value.
+    raise RecordError(reasons.runtime.RECORD_INVALID, failed or ())
+
+
 def _dump(value: Any, model: type[BaseModel], field: str) -> dict[str, Any]:
     """The stored form of an envelope part: validated by its model, so the id covers what is kept.
 
     A caller's mapping can hold a value the model drops on write (an unset label); the id is
     computed over this result, never over the mapping the caller passed.
     """
-    failed: tuple[tuple[object, ...], ...] | None = None
-    try:
-        parsed = value if isinstance(value, model) else model.model_validate(value)
-    except ValidationError as exc:
-        failed = _locations(exc, (field,))
-    # Raised after the except block closes: inside it the validator error would stay reachable as
-    # __context__, and its input holds the caller's value.
-    if failed is not None:
-        raise RecordError(reasons.runtime.RECORD_INVALID, failed or ())
+    parsed = validated(value, model, (field,))
     return parsed.model_dump(mode="json", exclude_none=model is Labels)
 
 
@@ -71,13 +80,7 @@ def _payload_body(spec: KindSpec, payload: Any) -> dict[str, Any]:
     model = spec.write_model
     if model is None:
         raise RecordError(reasons.runtime.RECORD_KIND_RESERVED)
-    failed: tuple[tuple[object, ...], ...] | None = None
-    try:
-        parsed = payload if isinstance(payload, model) else model.model_validate(payload)
-    except ValidationError as exc:
-        failed = _locations(exc, ("payload",))
-    if failed is not None:
-        raise RecordError(reasons.runtime.RECORD_INVALID, failed or ())
+    parsed = validated(payload, model, ("payload",))
     to_payload = getattr(parsed, "to_payload", None)
     if to_payload is not None:
         return dict(to_payload())
@@ -135,13 +138,8 @@ def build(
         "payload_digest": _digest(body),
         "payload": body,
     }
-    failed: tuple[tuple[object, ...], ...] | None = None
-    try:
-        RecordEnvelope.model_validate({**parts, "id": _PLACEHOLDER_ID})
-        return RecordEnvelope.model_validate({**parts, "id": record_id(parts)})
-    except ValidationError as exc:
-        failed = _locations(exc)
-    raise RecordError(reasons.runtime.RECORD_INVALID, failed or ())
+    validated({**parts, "id": _PLACEHOLDER_ID}, RecordEnvelope)
+    return validated({**parts, "id": record_id(parts)}, RecordEnvelope)
 
 
 def encode(envelope: RecordEnvelope | Mapping[str, Any]) -> bytes:

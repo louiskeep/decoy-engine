@@ -305,7 +305,6 @@ def test_all_lists_every_public_name():
         # LIB L1a: the record envelope and its decode results (functions: decoy_engine.records).
         "DecodedRecord",
         "OpaqueRecord",
-        "RecordEnvelope",
         "RecordError",
         "RecordNeedsNewer",
         # LIB L0.1: the protected directory allocator.

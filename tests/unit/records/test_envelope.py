@@ -174,7 +174,7 @@ def test_non_finite_payload_float_is_refused() -> None:
     assert caught.value.code == "record_invalid"
 
 
-@pytest.mark.parametrize("kind", ["publication", "checkpoint", "scan-set"])
+@pytest.mark.parametrize("kind", ["publication", "checkpoint"])
 def test_reserved_kind_cannot_be_built(kind: str) -> None:
     """A1-reserved."""
     with pytest.raises(RecordError) as caught:

@@ -42,7 +42,7 @@ RecordId = Annotated[StrictStr, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}
 PayloadTag = Annotated[
     StrictStr, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,63}(?:/v|-)\d{1,4}$")
 ]
-TAG_PATTERN = re.compile(r"^(?P<family>[a-z][a-z0-9-]*?)(?:/v|-)(?P<major>\d+)$")
+TAG_PATTERN = re.compile(r"^(?P<family>[a-z][a-z0-9-]*?)(?:/v|-)(?P<major>\d+)\Z")
 
 
 class _Closed(BaseModel):

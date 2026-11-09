@@ -1,19 +1,28 @@
 """Every record kind V1 knows, registered once.
 
-A model that belongs to another package (``RunResult``, later ``ScanSetCore``) is pointed at, never
+A model that belongs to another package (``RunResult``, ``ScanSetCore``) is pointed at, never
 copied, so the library, the platform importer and the producer cannot drift apart.
 """
 
 from __future__ import annotations
 
+from decoy_engine.profiling.scan_set import SCAN_SET_SCHEMA, ScanSetCore, ScanSetCoreRead
 from decoy_engine.records._payloads import EvidencePayload, SampleRunPayload
 from decoy_engine.records._read_model import read_model_of
 from decoy_engine.records._registry import KindSpec, register_kind
 from decoy_engine.run_result import RUN_RESULT_SCHEMA, RunResult, RunResultRead
 
-# Reserved until SCAN-MULTI S1a lands ``ScanSetCore``; that merge points this entry at it.
+# The scan record is value-free by construction (counts, rates, type labels, column names), so it
+# declares no path fields.
 SCAN_SET = register_kind(
-    KindSpec(kind="scan-set", payload_schema="scan-set/v1"),
+    KindSpec(
+        kind="scan-set",
+        payload_schema=SCAN_SET_SCHEMA,
+        write_model=ScanSetCore,
+        read_model=ScanSetCoreRead,
+        diff_rule="scan-set",
+        canary_fixture="scan-set",
+    )
 )
 
 EVIDENCE = register_kind(

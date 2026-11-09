@@ -13,16 +13,17 @@ Branch `feat/lib-l1a-records`, base engine `origin/main` `a5eb66e2` (registry 1.
   `_registry.py` and `_kinds.py` (one `KindSpec` per kind), `_payloads.py` (evidence and sample-run models),
   `_read_model.py` (tolerant read models), `_errors.py`, `_export.py` (`export_lines`, `read_export`), `_joblog.py`.
   Both plan parts (L1a.1 and L1a.2) are in this branch.
-- Kinds: `evidence` (`cli-local-1`), `run-result` (points at `RunResult` and `RunResultRead`), `sample-run/v1`;
-  `scan-set`, `publication` and `checkpoint` are reserved. `scan-set` stays reserved because SCAN-MULTI S1a
-  (`ScanSetCore`) is not on main; its merge points the entry at the model.
+- Kinds: `evidence` (`cli-local-1`), `run-result` (points at `RunResult` and `RunResultRead`), `sample-run/v1`,
+  `scan-set` (points at `ScanSetCore` and `ScanSetCoreRead` since SCAN-MULTI S1a is on main; no path fields);
+  `publication` and `checkpoint` are reserved.
 - Reasons at registry 1.18.0 (the next minor after main's 1.9.0; REG-RENUMBER renumbers at merge): runtime
   `record_invalid`, `record_corrupt`, `record_kind_reserved` (owner `RecordError`, one `_CODED` row in
   `reason_adapter.py`); warning `library_write_failed`, `job_log_write_failed`, `library_degraded`,
   `library_delete_skipped` (owner `LibraryEvent`). Fixture `reason-manifest-v1.18-lib-l1a.json`,
   `consumer-contract.json` restamped, one `docs/reasons.md` token moved.
-- Public API: five names in `decoy_engine.__all__` (`DecodedRecord`, `OpaqueRecord`, `RecordEnvelope`,
-  `RecordError`, `RecordNeedsNewer`); the functions are `decoy_engine.records.*`.
+- Public API: four names in `decoy_engine.__all__` (`DecodedRecord`, `OpaqueRecord`, `RecordError`,
+  `RecordNeedsNewer`); `RecordEnvelope` and the functions are `decoy_engine.records.*`. Deviation from the plan's
+  five: `decoy_engine/__init__.py` sat at 590 lines and five names took it to 602, over the 600 goal.
 - Docs: `compatibility-contract.md` section 3.1, `CODEMAP.md`, `_MAP.md`, `CHANGELOG.md`, corpus samples in
   `tests/integration/compat_corpus/records/`.
 - No filesystem access, so no `FileAccess` entry point and no file-access sentry change (plan 4.14).
@@ -95,3 +96,13 @@ Test input changes forced by H3, not weakened assertions: the SEC-2 test builds 
 L1, L3, L4 and the remaining low findings from gate round 1 are logged here as V2-LOG items: none breaks
 function, loses data or leaks to a non-admin.
 Registry renumbered at merge from 1.10.0 to 1.18.0 by scripts/dev/registry_renumber.py; main was at 1.17.0.
+
+## Merge onto main (2026-11-09)
+
+- Registry renumbered 1.10.0 to 1.18.0 (main was at 1.17.0); fixture is `reason-manifest-v1.18-lib-l1a.json`.
+- `scan-set` is now a writable kind pointing at `ScanSetCore` and `ScanSetCoreRead` (SCAN-MULTI S1a is on main).
+- `run_result/_model.py`: kept the `_value_free` split and ported main's `ConfigRuleError` validator errors into
+  `_value_free.check` and `_check_reason`; the message baseline entry moved to `_value_free.py`.
+- New sentries from main applied: `\Z` end anchors in `_envelope.py` and `_registry.py`; one `validated()` choke
+  point in `records/_codec.py` for caller-data model validation (the export producer and header used to raise
+  a raw pydantic error).
