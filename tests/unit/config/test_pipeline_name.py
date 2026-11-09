@@ -103,7 +103,7 @@ def test_reason_is_registered_in_the_config_namespace() -> None:
     assert str(reasons.config.PIPELINE_NAME_INVALID) == "pipeline_name_invalid"
     spec = reasons.find("config", "pipeline_name_invalid")
     assert spec is not None
-    assert spec.since == "1.11.0"
+    assert spec.since == "1.12.0"
 
 
 def test_dump_without_name_is_byte_identical_to_the_baseline() -> None:

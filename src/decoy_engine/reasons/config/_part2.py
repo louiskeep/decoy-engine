@@ -17,5 +17,5 @@ PIPELINE_NAME_INVALID = _d(
     "pipeline_name_invalid",
     "Pipeline name must be 1 to 64 letters, digits, dot, dash or underscore, start with a letter or "
     "digit, not end in a dot and not be a Windows device name.",
-    since="1.11.0",
+    since="1.12.0",
 )

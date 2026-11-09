@@ -9,7 +9,7 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
-### Added (pipeline `name:` and `is_valid_pipeline_name`, registry 1.11.0)
+### Added (pipeline `name:` and `is_valid_pipeline_name`, registry 1.12.0)
 
 `PipelineConfig` accepts an optional top-level `name:`. It is a strict string: a non-string, or a
 string that fails the name rule, is refused with `config.pipeline_name_invalid`. The error message and the
