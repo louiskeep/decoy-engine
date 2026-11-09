@@ -224,7 +224,7 @@ class FakerPerRowProvider(DrawSiteProvider):
         *,
         kwargs: dict[str, Any] | None = None,
     ) -> list[Any]:
-        """Reproduce the shipped per-row loop (``synthesize.py:490``)."""
+        """Reproduce the shipped per-row loop (``synthesize.py:441``)."""
         call_kwargs = kwargs or {}
         out: list[Any] = []
         for i in range(n):
