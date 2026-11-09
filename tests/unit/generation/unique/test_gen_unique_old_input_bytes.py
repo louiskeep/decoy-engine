@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from decoy_engine import reasons
 from decoy_engine.config._pipeline import PipelineConfig
-from tests.unit.generation._gu_corpus import CORPUS, digests
+from tests.unit.generation.unique._gu_corpus import CORPUS, digests
 
 PINNED = {
     "all_basic_types": {

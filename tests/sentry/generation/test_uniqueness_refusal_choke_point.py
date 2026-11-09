@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-SRC = Path(__file__).resolve().parents[2] / "src" / "decoy_engine"
+SRC = Path(__file__).resolve().parents[3] / "src" / "decoy_engine"
 BUILDER = "raise_uniqueness_impossible"
 BUILDER_FILE = "generation/pool/_errors.py"
 CALLERS = ("generation/pool/_sampler.py",)
@@ -40,9 +40,19 @@ def _callee(call: ast.Call) -> str:
     return f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else ""
 
 
+def _error_names(tree: ast.AST) -> frozenset[str]:
+    """`GenerationError` plus every local alias from `from ... import GenerationError as GE`."""
+    names = {"GenerationError"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            names.update(a.asname for a in node.names if a.name == "GenerationError" and a.asname)
+    return frozenset(names)
+
+
 def refusal_constructions(source: str) -> list[tuple[int, str]]:
     """(line, enclosing function) of each GenerationError built with the uniqueness code."""
     tree = ast.parse(source)
+    error_names = _error_names(tree)
     owner: dict[int, str] = {}
     for fn in ast.walk(tree):
         if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -50,7 +60,7 @@ def refusal_constructions(source: str) -> list[tuple[int, str]]:
                 owner[id(child)] = fn.name
     out: list[tuple[int, str]] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and _callee(node) == "GenerationError":
+        if isinstance(node, ast.Call) and _callee(node) in error_names:
             code_args = [kw.value for kw in node.keywords if kw.arg == "code"] + list(node.args[:1])
             if any(_mentions_code(a) for a in code_args):
                 out.append((node.lineno, owner.get(id(node), "")))
@@ -100,6 +110,15 @@ def test_builder_is_exported_from_the_pool_package():
 )
 def test_scanner_catches_each_spelling(snippet):
     # M1: a bypass of the builder must be seen.
+    assert refusal_constructions(snippet)
+
+
+def test_scanner_catches_an_aliased_constructor():
+    # M2: `from ... import GenerationError as GE` must not hide a bypass.
+    snippet = (
+        "from decoy_engine.errors import GenerationError as GE\n"
+        "def f():\n    raise GE(code='uniqueness_impossible', message='x')"
+    )
     assert refusal_constructions(snippet)
 
 

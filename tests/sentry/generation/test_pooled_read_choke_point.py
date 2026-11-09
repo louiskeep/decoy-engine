@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-SRC = Path(__file__).resolve().parents[2] / "src" / "decoy_engine"
+SRC = Path(__file__).resolve().parents[3] / "src" / "decoy_engine"
 KEY = "pooled"
 READER = ("generation/_faker_pool.py", "pool_opted_out")
 READ_METHODS = frozenset({"get", "pop", "setdefault"})
@@ -50,13 +50,16 @@ def pooled_reads(source: str) -> list[tuple[int, str]]:
         elif isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Attribute) and func.attr in READ_METHODS:
+                # Bound `col.get("pooled")` or unbound `dict.get(col, "pooled")`.
                 hit = bool(node.args) and _is_key(node.args[0])
+                if not hit and isinstance(func.value, ast.Name) and func.value.id == "dict":
+                    hit = len(node.args) >= 2 and _is_key(node.args[1])
             elif isinstance(func, ast.Name) and func.id == "getattr":
                 hit = len(node.args) >= 2 and _is_key(node.args[1])
         elif isinstance(node, ast.Compare):
             hit = any(isinstance(op, (ast.In, ast.NotIn)) for op in node.ops) and _is_key(node.left)
         if hit:
-            found.append((node.lineno, owner.get(id(node), "")))
+            found.append((getattr(node, "lineno", 0), owner.get(id(node), "")))
     return found
 
 
@@ -91,6 +94,7 @@ def test_the_predicate_itself_is_found_so_the_scan_cannot_go_empty():
         'x = "pooled" in col',
         'x = "pooled" not in col',
         'x = col.get("poo" "led")',
+        'x = dict.get(col, "pooled")',
         "def f(col):\n    return col.get('pooled')",
     ],
 )
