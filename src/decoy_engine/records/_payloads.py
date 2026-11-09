@@ -23,7 +23,7 @@ from pydantic import (
 
 from decoy_engine._value_free import Count, SafeName, Sha256
 
-__all__ = ["EvidencePayload", "SampleRunPayload"]
+__all__ = ["EvidencePayload", "ExportLayout", "SampleRunPayload"]
 
 Number = StrictInt | StrictFloat
 # The `cli-local-1` manifest predates the shared value-free types, so its names and paths
@@ -45,6 +45,24 @@ class FileFingerprint(_Model):
     fingerprint: Sha256 | None
     fingerprint_method: Literal["full"] | None
     size_bytes: Count | None
+
+
+class LayoutColumn(_Model):
+    name: SafeName
+    start: Count
+    width: Annotated[StrictInt, Field(ge=1)]
+    type: Literal["str", "int", "float"] = "str"
+    pad: Annotated[StrictStr, StringConstraints(min_length=1, max_length=1)] = " "
+    align: Literal["left", "right"] = "left"
+
+
+class ExportLayout(_Model):
+    """The structural shape a fixed-width layout must have to leave in a default export: names,
+    byte offsets and enum words only. ``OutputFingerprint.layout`` is a loose dict so an older
+    manifest still reads; export proves a layout against this model instead."""
+
+    columns: Annotated[tuple[LayoutColumn, ...], Field(min_length=1)]
+    exact_record_width: StrictBool = False
 
 
 class OutputFingerprint(FileFingerprint):

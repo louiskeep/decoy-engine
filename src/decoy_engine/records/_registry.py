@@ -6,39 +6,18 @@ a kind's spec from here instead of keeping their own table.
 
 from __future__ import annotations
 
-import re
-from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
 
 from pydantic import BaseModel
 
 from decoy_engine import reasons
-from decoy_engine.records._envelope import TAG_PATTERN
 from decoy_engine.records._errors import RecordError
+from decoy_engine.records._export_rules import ExportRule
+from decoy_engine.records._grammar import family_major, is_kind, major_of
 
-__all__ = ["KindSpec", "kind_spec", "major_of", "register_kind", "registered_kinds"]
+__all__ = ["KindSpec", "family_major", "kind_spec", "major_of", "register_kind", "registered_kinds"]
 
-_KIND = re.compile(r"^[a-z][a-z0-9-]{0,63}\Z")
 _registry: dict[str, KindSpec] = {}
-
-
-def major_of(payload_schema: str) -> tuple[str, int] | None:
-    """The family and major of a payload tag (``sample-run/v1``, ``cli-local-1``), or ``None``."""
-    match = TAG_PATTERN.match(payload_schema) if isinstance(payload_schema, str) else None
-    return (match["family"], int(match["major"])) if match else None
-
-
-def family_major(tag: object, family: str) -> int | None:
-    """The major of a ``family/vN`` schema tag, or ``None`` for anything else.
-
-    The one reader of a wire schema tag (envelope, export header, job-log header), built on
-    ``major_of`` so a missing, malformed, zero or non-numeric version never reads as a version.
-    """
-    if not isinstance(tag, str) or not tag.startswith(f"{family}/v"):
-        return None
-    parsed = major_of(tag)
-    return parsed[1] if parsed is not None and parsed[0] == family else None
 
 
 @dataclass(frozen=True)
@@ -58,9 +37,9 @@ class KindSpec:
     read_model: type[BaseModel] | None = None
     path_fields: tuple[str, ...] = ()
     locator_fields: tuple[str, ...] = ()
-    # Export asks this before stripping: a payload it rejects holds values the field lists do not
-    # cover, so the record is withheld rather than exported with them.
-    strip_check: Callable[[Mapping[str, Any]], bool] | None = None
+    # How the default export proves a payload free of paths and values; required for a writable
+    # kind, so a new kind cannot ship an export that strips only what was remembered.
+    export_rule: ExportRule | None = None
     diff_rule: str | None = None
     canary_fixture: str | None = None
 
@@ -69,14 +48,14 @@ class KindSpec:
         return self.write_model is None
 
     def __post_init__(self) -> None:
-        if not _KIND.match(self.kind) or major_of(self.payload_schema) is None:
+        if not is_kind(self.kind) or major_of(self.payload_schema) is None:
             raise ValueError("invalid kind spec")
         if (self.write_model is None) != (self.read_model is None):
             raise ValueError("a kind has both models or neither")
         if self.reserved and (
             self.path_fields
             or self.locator_fields
-            or self.strip_check
+            or self.export_rule
             or self.diff_rule
             or self.canary_fixture
         ):
@@ -85,6 +64,8 @@ class KindSpec:
             raise ValueError("path fields point into the payload")
         if not self.reserved and (self.diff_rule is None or self.canary_fixture is None):
             raise ValueError("a writable kind declares a diff rule and a canary fixture")
+        if not self.reserved and self.export_rule is None:
+            raise ValueError("a writable kind declares a default-export rule")
 
 
 def register_kind(spec: KindSpec) -> KindSpec:

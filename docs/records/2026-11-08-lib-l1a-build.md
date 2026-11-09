@@ -14,7 +14,7 @@ Branch `feat/lib-l1a-records`, base engine `origin/main` `a5eb66e2` (registry 1.
   `_read_model.py` (tolerant read models), `_errors.py`, `_export.py` (`export_lines`, `read_export`), `_joblog.py`.
   Both plan parts (L1a.1 and L1a.2) are in this branch.
 - Kinds: `evidence` (`cli-local-1`), `run-result` (points at `RunResult` and `RunResultRead`), `sample-run/v1`,
-  `scan-set` (points at `ScanSetCore` and `ScanSetCoreRead` since SCAN-MULTI S1a is on main; no path fields);
+  `scan-set` (points at `ScanSetCore` and `ScanSetCoreRead` since SCAN-MULTI S1a is on main; path and locator fields from the marker registry);
   `publication` and `checkpoint` are reserved.
 - Reasons at registry 1.18.0 (the next minor after main's 1.9.0; REG-RENUMBER renumbers at merge): runtime
   `record_invalid`, `record_corrupt`, `record_kind_reserved` (owner `RecordError`, one `_CODED` row in

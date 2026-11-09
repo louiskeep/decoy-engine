@@ -8,7 +8,6 @@ envelope is returned untouched next to that view so a copy never drops a field.
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from typing import Any, TypeVar
@@ -31,21 +30,14 @@ from decoy_engine.records._envelope import (
     RecordNeedsNewer,
 )
 from decoy_engine.records._errors import RecordError
-from decoy_engine.records._registry import (
-    KindSpec,
-    family_major,
-    kind_spec,
-    major_of,
-    require_writable,
-)
+from decoy_engine.records._grammar import family_major, is_kind, is_record_id, major_of
+from decoy_engine.records._registry import KindSpec, kind_spec, require_writable
 
 __all__ = ["build", "decode", "encode"]
 
 _PLACEHOLDER_ID = "sha256:" + "0" * 64
 _ENVELOPE_FAMILY = "decoy-record"
 _M = TypeVar("_M", bound=BaseModel)
-_ID = re.compile(r"sha256:[0-9a-f]{64}")
-_KIND = re.compile(r"[a-z][a-z0-9-]{0,63}")
 
 
 def _locations(
@@ -212,7 +204,7 @@ def decode(data: bytes | str) -> DecodedRecord | OpaqueRecord | RecordNeedsNewer
     if major > 1:
         # A later envelope major cannot be verified by this version's rule. Its id and kind
         # are still held to their formats, and the result is marked unverified.
-        if not (_ID.fullmatch(_str(raw, "id")) and _KIND.fullmatch(_str(raw, "kind"))):
+        if not (is_record_id(raw.get("id")) and is_kind(raw.get("kind"))):
             raise RecordError(reasons.runtime.RECORD_CORRUPT)
         return RecordNeedsNewer(
             raw["kind"], raw["id"], _str(raw, "payload_schema"), "envelope", raw, verified=False

@@ -7,11 +7,10 @@ that carries it.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr, StringConstraints
+from pydantic import BaseModel, ConfigDict, StrictInt
 
 from decoy_engine._value_free import (
     InvocationId,
@@ -21,6 +20,7 @@ from decoy_engine._value_free import (
     UtcTimestamp,
     Version,
 )
+from decoy_engine.records._grammar import Kind, PayloadTag, RecordId
 from decoy_engine.records._read_model import read_model_of
 
 __all__ = [
@@ -36,13 +36,6 @@ __all__ = [
 ]
 
 ENVELOPE_SCHEMA = "decoy-record/v1"
-
-RecordId = Annotated[StrictStr, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
-# A payload tag is `family/vN` or the inherited `family-N` (`cli-local-1`).
-PayloadTag = Annotated[
-    StrictStr, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,63}(?:/v|-)[1-9][0-9]{0,3}$")
-]
-TAG_PATTERN = re.compile(r"^(?P<family>[a-z][a-z0-9-]*?)(?:/v|-)(?P<major>[1-9][0-9]{0,3})\Z")
 
 
 class _Closed(BaseModel):
@@ -81,7 +74,7 @@ class Link(_Closed):
 
 class RecordEnvelope(_Closed):
     record_schema: Literal["decoy-record/v1"] = "decoy-record/v1"
-    kind: Annotated[StrictStr, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,63}$")]
+    kind: Kind
     payload_schema: PayloadTag
     id: RecordId
     created_at: UtcTimestamp

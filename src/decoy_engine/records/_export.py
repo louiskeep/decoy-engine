@@ -7,7 +7,6 @@ no filesystem: callers hand it verified raw envelopes in link order and write th
 from __future__ import annotations
 
 import copy
-import re
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -32,12 +31,13 @@ from decoy_engine.records._envelope import (
     DecodedRecord,
     OpaqueRecord,
     Producer,
-    RecordId,
     RecordNeedsNewer,
 )
 from decoy_engine.records._errors import RecordError
+from decoy_engine.records._export_rules import file_name
+from decoy_engine.records._grammar import RecordId, family_major, is_record_id
 from decoy_engine.records._read_model import read_model_of
-from decoy_engine.records._registry import KindSpec, family_major, kind_spec
+from decoy_engine.records._registry import KindSpec, kind_spec
 
 __all__ = [
     "EXPORT_SCHEMA",
@@ -51,7 +51,6 @@ __all__ = [
 ]
 
 EXPORT_SCHEMA = "decoy-library-export/v1"
-_SEPARATORS = re.compile(r"[\\/]+")
 
 
 class UnstrippedRef(BaseModel):
@@ -92,17 +91,6 @@ ExportHeaderRead: Any = read_model_of(ExportHeader)
 _OWNER: TypeAdapter[str] = TypeAdapter(InvocationId)
 
 
-_RECORD_ID: TypeAdapter[str] = TypeAdapter(RecordId)
-
-
-def _is_record_id(value: object) -> bool:
-    try:
-        _RECORD_ID.validate_python(value, strict=True)
-    except ValidationError:
-        return False
-    return True
-
-
 def _is_invocation_id(value: object) -> bool:
     try:
         _OWNER.validate_python(value, strict=True)
@@ -135,71 +123,21 @@ class BadLine:
     code: str
 
 
-def _file_name(value: str) -> str:
-    parts = [p for p in _SEPARATORS.split(value) if p]
-    return parts[-1] if parts else value
-
-
-def _reduce(node: Any, segments: list[str]) -> bool:
-    """Reduce the strings the pointer ``segments`` reach to file names. True when one changed."""
-    head, rest = segments[0], segments[1:]
-    if isinstance(node, list) and head == "*":
-        children: list[Any] = list(node)
-    elif isinstance(node, dict) and head == "*":
-        children = list(node.values())
-    elif isinstance(node, dict) and head in node:
-        if not rest:
-            value = node[head]
-            if isinstance(value, str) and _file_name(value) != value:
-                node[head] = _file_name(value)
-                return True
-            return False
-        children = [node[head]]
-    else:
-        return False
-    if not rest:
-        return False
-    return any([_reduce(child, rest) for child in children])
-
-
-def _drop(node: Any, segments: list[str]) -> bool:
-    """Remove the set values the pointer ``segments`` reaches. True when one was removed."""
-    head, rest = segments[0], segments[1:]
-    if head == "*":
-        if isinstance(node, list):
-            children: list[Any] = list(node)
-        elif isinstance(node, dict):
-            children = list(node.values())
-        else:
-            return False
-        return any([_drop(child, rest) for child in children])
-    if not isinstance(node, dict) or head not in node:
-        return False
-    if rest:
-        return _drop(node[head], rest)
-    if node[head] is None:
-        return False
-    del node[head]
-    return True
-
-
 def _strip(spec: KindSpec, payload: dict[str, Any]) -> tuple[dict[str, Any], bool, bool] | None:
-    """The payload with its path fields reduced and its locator fields removed, as
-    ``(payload, changed, locator_removed)``; ``None`` when this version cannot tell which fields
-    are paths (a payload with fields it does not know, or another shape)."""
+    """The payload as ``spec``'s export rule leaves it, as ``(payload, changed, locator_removed)``;
+    ``None`` when the payload does not fit the kind's model or the rule cannot prove it safe."""
     model = spec.write_model
-    if model is None:
+    if model is None or spec.export_rule is None:
         return None
     try:
         model.model_validate(payload)
     except ValidationError:
         return None
-    if spec.strip_check is not None and not spec.strip_check(payload):
+    result = spec.export_rule(payload)
+    if result is None:
         return None
-    out = copy.deepcopy(payload)
-    changed = any([_reduce(out, p.split("/")[2:]) for p in spec.path_fields])
-    removed = any([_drop(out, p.split("/")[2:]) for p in spec.locator_fields])
-    return out, changed or removed, removed
+    out, removed = result
+    return out, out != payload, removed
 
 
 def export_lines(
@@ -260,8 +198,8 @@ def export_lines(
             rec["payload_digest"] = payload_digest(reduced[0])
             changed = stripped_any = True
         pipeline = rec["labels"].get("pipeline")
-        if not keep_paths and isinstance(pipeline, str) and _file_name(pipeline) != pipeline:
-            rec["labels"]["pipeline"] = _file_name(pipeline)
+        if not keep_paths and isinstance(pipeline, str) and file_name(pipeline) != pipeline:
+            rec["labels"]["pipeline"] = file_name(pipeline)
             changed = stripped_any = True
         if changed:
             rec["id"] = record_id(rec)
@@ -355,7 +293,7 @@ def _read_line(number: int, wrapper: dict[str, Any] | None) -> Any:
     kind = wrapper.get("type")
     if kind == "record":
         source, record = wrapper.get("source_id"), wrapper.get("record")
-        if not isinstance(record, dict) or not (source is None or _is_record_id(source)):
+        if not isinstance(record, dict) or not (source is None or is_record_id(source)):
             return BadLine(number, reasons.runtime.RECORD_INVALID)
         try:
             decoded = decode(canonical_bytes(record))
