@@ -39,7 +39,14 @@ def _config() -> dict[str, Any]:
     return {
         "version": 2,
         "global_settings": {"seed": 1},
-        "sources": {"customers_prod": {"type": "file", "format": "csv", "path": "in.csv"}},
+        "sources": {
+            "customers_prod": {
+                "type": "file",
+                "format": "csv",
+                "path": "in.csv",
+                "has_header": True,
+            }
+        },
         "tables": [{"name": "customers_prod", "columns": [{"name": "a", "strategy": "redact"}]}],
         "targets": {"out": {"type": "file", "format": "csv", "path": "out.csv"}},
     }
