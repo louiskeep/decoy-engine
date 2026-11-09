@@ -409,4 +409,46 @@ def test_signature_keyword_only_tail() -> None:
         "chunksize",
         "file_access",
         "field_key",
+        "columns",
     ]
+
+
+# -- column projection ----------------------------------------------------------------------
+
+
+def _projected(tmp_path: Any, text: str, dialect: CsvDialect, **kw: Any) -> Any:
+    path = tmp_path / "p.csv"
+    path.write_text(text)
+    return read_csv_source(path, dialect, table="t", dtype=str, **kw)
+
+
+_HEADERLESS = CsvDialect(has_header=False, column_names=["a", "b", "c"])
+
+
+@pytest.mark.parametrize(
+    ("text", "dialect"),
+    [("a,b,c\n1,2,3\n4,5,6\n", CsvDialect()), ("1,2,3\n4,5,6\n", _HEADERLESS)],
+)
+def test_projection_returns_exactly_the_requested_order(
+    tmp_path: Any, text: str, dialect: CsvDialect
+) -> None:
+    whole = _projected(tmp_path, text, dialect, columns=["c", "a"])
+    assert list(whole.columns) == ["c", "a"]
+    assert whole.to_dict("list") == {"c": ["3", "6"], "a": ["1", "4"]}
+    chunks = list(_projected(tmp_path, text, dialect, columns=["c", "a"], chunksize=1))
+    assert [list(c.columns) for c in chunks] == [["c", "a"], ["c", "a"]]
+    empty = _projected(tmp_path, text, dialect, columns=["c", "a"], nrows=0)
+    assert list(empty.columns) == ["c", "a"] and len(empty) == 0
+
+
+@pytest.mark.parametrize(
+    ("text", "dialect"),
+    [("a,b,c\n1,2,3\n", CsvDialect()), ("1,2,3\n", _HEADERLESS)],
+)
+def test_projection_refuses_unknown_and_repeated_names_without_quoting_them(
+    tmp_path: Any, text: str, dialect: CsvDialect
+) -> None:
+    for bad in (["zz_secret_name"], ["a", "a"], []):
+        with pytest.raises(ValueError) as info:
+            _projected(tmp_path, text, dialect, columns=bad)
+        assert "zz_secret_name" not in str(info.value)

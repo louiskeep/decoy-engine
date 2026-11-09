@@ -5,7 +5,7 @@
 # `dir_category` (protected_root, protected_child, output_parent, published_output, non_row) and
 # `dir_test` (an existing pytest node id; every category but protected_root) mark directory
 # creators for tests/sentry/protected_dir (G-ONE-PROTECTED-DIR).
-# Count: 187 (asserted by the sentry).
+# Count: 188 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -1331,6 +1331,16 @@ ordinal = 0
 rule = "`shipped_path(name)` for a name in the shipped-table registry"
 owner = "cam"
 reason = "package data"
+
+[[entry]]
+module = "decoy_engine/profiling/_scan_integrity.py"
+function = "_check"
+sink = "duckdb.connection.execute"
+ordinal = 0
+disposition = "read"
+rule = "statement over in-memory key tables loaded from policy-issued reads; the connection's only file path is its spill directory, a child of the `protected_scratch_dir` root the pass created"
+owner = "cam"
+reason = "drops the per-child key table so the spill holds one child at a time; no caller or config path reaches the statement"
 
 [[entry]]
 module = "decoy_engine/profiling/model_pack/classify.py"

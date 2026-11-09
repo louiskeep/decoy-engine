@@ -124,6 +124,7 @@ from decoy_engine.execution.out_of_core._capacity_eval import (
     CapacityEstimate,
     CapacityVerdict,
 )
+from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 
 __all__ = [
     "CHUNK_CONDITIONAL_STRATEGIES",
@@ -163,6 +164,7 @@ __all__ = [
     "check_out_of_core_compatibility",
     "classify_job",
     "classify_table_kinds",
+    "connect_duckdb",
     "estimate_job",
     "estimate_job_capacity",
     "get_default_executor",
