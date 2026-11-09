@@ -11,6 +11,8 @@ container fs is read-only and the configured log path is not writable.
 from __future__ import annotations
 
 import logging as stdlib_logging
+import subprocess
+import sys
 from unittest import mock
 
 import pytest
@@ -28,7 +30,8 @@ def _reset_logger_state():
     logger = stdlib_logging.getLogger("decoy_engine")
     saved_handlers = list(logger.handlers)
     saved_level = logger.level
-    logger.handlers = []
+    # The package-import NullHandler is the library fallback, not per-cell state.
+    logger.handlers = [h for h in saved_handlers if isinstance(h, stdlib_logging.NullHandler)]
     # Some logging implementations cache a `_configured` flag on the
     # module; reset it via the public surface (re-call get_logger with
     # a fresh config in each cell).
@@ -133,3 +136,54 @@ class TestQaInternalF3LoggingReadOnlyFs:
             f"Dennis D1: expected exactly one console handler when "
             f"console=True + file-fallback fires. Got {len(console_handlers)}."
         )
+
+
+def _null_handlers(logger):
+    return [h for h in logger.handlers if isinstance(h, stdlib_logging.NullHandler)]
+
+
+class TestLibraryNullHandler:
+    """E-a (CLI-QA1): the package attaches one NullHandler to `decoy_engine` and
+    reconfiguration keeps exactly one while replacing only configured handlers."""
+
+    def test_default_config_adds_no_file_handler(self):
+        logger = get_logger({})
+        assert not any(isinstance(h, stdlib_logging.FileHandler) for h in logger.handlers)
+
+    def test_reconfiguration_keeps_exactly_one_null_handler(self):
+        for _ in range(3):
+            logger = get_logger({"console": True})
+        assert len(_null_handlers(logger)) == 1
+
+    def test_configured_handlers_are_replaced_and_closed(self, tmp_path):
+        logger = get_logger({"file": str(tmp_path / "a.log")})
+        first = [h for h in logger.handlers if isinstance(h, stdlib_logging.FileHandler)]
+        assert len(first) == 1
+        logger = get_logger({"file": str(tmp_path / "b.log")})
+        files = [h for h in logger.handlers if isinstance(h, stdlib_logging.FileHandler)]
+        assert len(files) == 1
+        assert files[0] is not first[0]
+        assert first[0].stream is None  # closed
+        assert len(_null_handlers(logger)) == 1
+
+    def test_null_handler_present_after_package_import(self):
+        code = (
+            "import logging, decoy_engine;"
+            "h=[x for x in logging.getLogger('decoy_engine').handlers"
+            " if isinstance(x, logging.NullHandler)];"
+            "print(len(h))"
+        )
+        out = subprocess.run(  # noqa: S603 -- fixed argv, no user input
+            [sys.executable, "-I", "-c", code], capture_output=True, text=True, check=True
+        )
+        assert out.stdout.strip() == "1"
+
+    def test_child_warning_leaves_stderr_empty(self):
+        code = (
+            "import logging, decoy_engine;"
+            "logging.getLogger('decoy_engine.child').warning('capacity advisory')"
+        )
+        out = subprocess.run(  # noqa: S603 -- fixed argv, no user input
+            [sys.executable, "-I", "-c", code], capture_output=True, text=True, check=True
+        )
+        assert out.stderr == ""

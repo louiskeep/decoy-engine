@@ -61,6 +61,8 @@ call shape. Any external import of ``Masker`` / ``DataGenerator`` / ``run_graph`
 now fails fast.
 """
 
+import logging
+
 from decoy_engine.config import Dismissal, PipelineConfig, PreScanConfig, parse_pipeline_config
 from decoy_engine.context import (
     ExecutionContext,
@@ -353,6 +355,13 @@ _F9_KEPT_BINDINGS = (
     SsnDomain,
     SsnValidator,
 )
+
+# Library fallback: with a handler on the package logger, Python's last-resort handler does
+# not print engine warnings to stderr. `_configure_logger` keeps this one across reconfigures
+# (and may already have added it while the imports above ran).
+_package_logger = logging.getLogger(__name__)
+if not any(isinstance(_h, logging.NullHandler) for _h in _package_logger.handlers):
+    _package_logger.addHandler(logging.NullHandler())
 
 __version__ = "0.19.0"
 

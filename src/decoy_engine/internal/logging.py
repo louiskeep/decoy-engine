@@ -70,9 +70,17 @@ def _configure_logger(logger, config: dict[str, Any]):
         logger: Logger instance to configure
         config: Dictionary with logging configuration
     """
-    # Clear any existing handlers to avoid duplicates
-    if logger.handlers:
-        logger.handlers.clear()
+    # Replace configured handlers (closing them) but keep one library NullHandler, so a
+    # reconfigure neither drops the fallback nor stacks a second one.
+    kept_null = False
+    for handler in list(logger.handlers):
+        if isinstance(handler, logging.NullHandler) and not kept_null:
+            kept_null = True
+            continue
+        logger.removeHandler(handler)
+        handler.close()
+    if not kept_null:
+        logger.addHandler(logging.NullHandler())
 
     # Set default level
     level_name = config.get("level", "info").lower()
