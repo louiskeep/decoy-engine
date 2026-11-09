@@ -115,6 +115,7 @@ path in `explain yaml` (row 24e C2a, CLI #146 `cfdee4e`).
 | F11 | The generation topic drifts from the engine registry | AT-21 |
 | F12 | `init <csv>` fails after writing and leaves a snapshot or config behind | AT-23 |
 | F13 | An isolated run cannot carry `base_dir` to its child process | AT-24 |
+| F14 | The merged order walk changes the error for a reference to a non-generate table | AT-25 |
 
 ## 2. Established solutions
 
@@ -152,8 +153,9 @@ arguments that switch behavior (`base_dir=None` means "no config file", not a mo
   one call to a new `pin_and_check_snapshots(config, *, base_dir)` in `plan/_generation.py`, which also offsets
   the new keyword lines in `_compile.py` (section 10).
 - **Engine entries.** These take `base_dir` and pass it down:
-  - `run_pipeline` (`execution/_pipeline.py:116`, to `compile_plan` at `_pipeline_context.py:337` and to the
-    quarantine writer at `quarantine.py:254`);
+  - `run_pipeline` (`execution/_pipeline.py:116`), typed `base_dir: str | None = None`, to `compile_plan`
+    through `build_run_context` (`_pipeline_context.py:337`) and to `with_quarantine_path`
+    (`_pipeline_context.py:433`, section 4);
   - `run_pipeline_isolated`: `base_dir` rides in `**run_pipeline_kwargs`, which is JSON-serialized into the
     child's payload (`execution/_isolated_run.py:425`), so callers pass an absolute string. A `Path` gets the
     existing "must be JSON-serializable" `ValueError`. `_isolated_run.py` is not edited;
@@ -173,15 +175,19 @@ arguments that switch behavior (`base_dir=None` means "no config file", not a mo
   would enforce this by construction, but it breaks the platform and library callers in the same release, so
   the CLI side is a guard instead: an AST walk sentry over `src/decoy/` that resolves imports and attribute
   access (`decoy_engine.run_config_only_checks(...)` at `C:gate/_layers.py:182`) and fails on a call without
-  `base_dir=`. It runs in the merge-gate suite. The mutation that must turn it red: drop `base_dir` from
+  `base_dir=`. It accepts the keyword form only. The one positional call today,
+  `estimate_job_capacity(config_dump, config_path.parent)` at `C:preflight.py:456`, changes to
+  `base_dir=config_path.parent` in C1, so a positional argument can never hide a missing one. It runs in the merge-gate suite. The mutation that must turn it red: drop `base_dir` from
   `C:gate/_layers.py:245`. The build report shows the walk's count rising on a seeded bypass and falling on a
   removed site.
 - **`column_names_file` (CLI), by construction.** The field is read inside `resolve_csv_dialect`. The CLI's one
   call is `C:_sources.py:65` in `read_csv_frame`, which every CLI CSV read goes through (`C:_sources.py:88-161`,
   `C:init.py:192`). That call gets a descriptor copy whose `column_names_file` went through `resolve_path`, as
   `path` already does. Sources are excluded from `_hash_config`, so the copy is hash-safe; the engine does the
-  same in `capacity._resolved_config_copy`. The walk sentry also fails on a `resolve_csv_dialect` call outside
-  `read_csv_frame`.
+  same in `capacity._resolved_config_copy`. `resolve_csv_dialect` joins the `decoy_engine` watch list of the
+  existing G-ONE-CSV-READ sentry (`C:tests/sentry/test_csv_read_choke_point.py:88`, beside `read_csv_source`
+  and `read_fixed_width`), which already confines those calls to `cli/_sources.py`; no second rule in the walk
+  sentry. Its only call today is `C:_sources.py:65`, so the allowlist and baseline do not change.
 - **Warnings (engine).** `run_generation(..., on_warning=None)` (`generation/_streamed.py:319`) is the choke
   point. Every generation path reaches the gate through it: `_run_legacy` (`:507`) calls
   `_generate_tables_from_config` (`:538`), which calls `warn_on_low_fidelity` (`synthesize.py:188`). The four
@@ -217,8 +223,13 @@ through `fileaccess.shown` as today, so a strict policy still redacts.
 ### Engine (E1)
 
 - `base_dir` on the engine entries and both snapshot readers, as in section 3.
-- `quarantine.output_path`: the writer at `quarantine.py:254` resolves through the same helper, with
-  `base_dir` from `run_pipeline`.
+- `quarantine.output_path`: resolved in one place, `with_quarantine_path(ctx, path, base_dir)`
+  (`_pipeline_context.py:433`), which already replaces the path in a copy of the config after the plan and its
+  hash are built, and which every route reads through `ctx.config`. The rule: a caller's `quarantine_path`
+  wins and is used as given, like a command-line path (relative means the working directory); without one, a
+  relative `quarantine.output_path` from the YAML resolves against `base_dir` through `config_relative`; with
+  neither `base_dir` nor a relative YAML path the context is returned as is. `quarantine.py:254` and the other
+  readers of the path (`:312`, `:478`, `:545`) are not edited and read the resolved value.
 - `column_names_file`: `capacity._resolved_config_copy` (`capacity.py:167-191`) resolves every
   `FILE_SOURCE_PATH_FIELDS` field, not only `path`, so `estimate_job` and `estimate_job_capacity` read the same
   names file the run does. The other engine readers (`profiling/scan_set.py:371`,
@@ -237,7 +248,11 @@ through `fileaccess.shown` as today, so a strict policy still redacts.
   - `generation_order(config) -> tuple[tuple[str, tuple[str, ...]], ...]`: each generate table with its
     referenced parents, parents first. It is the dependency walk and `_topo_sort` that
     `generation/synthesize.py:110-137` and `generation/_streamed.py:153-163` (`_table_order`) each run today,
-    moved into one function both call.
+    moved into one function both call. The two differ on a `reference_table` that is not a generate table
+    (possible only on an unvalidated dict): `synthesize.py:126-130` raises a typed `ValueError` ("reference_table
+    'x' is not a generate table"), while `_table_order` skips it, because `_topo_sort` tolerates missing nodes,
+    and the streamed route fails later with a `KeyError`. The `ValueError` wins: `generation_order` raises it
+    for every caller (AT-25).
   - `generate_option_catalog() -> Mapping[str, GenerateTypeOptions]`: per generate type, the required and
     optional option names plus `COMMON_OPTIONS`, read from `GENERATE_OPTIONS`
     (`config/_generate_options.py:203`). Names only; row 24s adds descriptions.
@@ -378,7 +393,7 @@ YAML path fields and the rule each follows:
 | `sources[].path` | CLI `run.py:1559` `_load_sources_from_config`, `api.py:501` | config folder | unchanged |
 | `snapshot_file` | engine `plan/_generation.py:130`, `_spec.py:174` | working directory | config folder |
 | `sources[].column_names_file` | engine `profile/_csv_reader.py:95-111` via `resolve_csv_dialect`, called by CLI `_sources.py:65` and `capacity._resolved_config_copy` callers | working directory | config folder |
-| `quarantine.output_path` | engine `quarantine.py:254` | working directory | config folder |
+| `quarantine.output_path` | engine `quarantine.py:254`, path set by `_pipeline_context.with_quarantine_path` | working directory | config folder; a `quarantine_path` argument wins and is used as given |
 
 `FILE_SOURCE_PATH_FIELDS` (`config/_sources.py:241-247`) marks `path` and `column_names_file` with
 `x-decoy-path`; the build re-runs this walk on its base and adds any new field to the table.
@@ -425,7 +440,7 @@ Each test is red on the named wrong build. "Base" is engine `84f4290d` with CLI 
 | AT-2 | `pipeline_config_hash` and the evidence config hash are equal for runs from A and from B, and equal to the base build's run from A | a build that rewrites `snapshot_file` to an absolute path in the CLI |
 | AT-3 | An absolute `snapshot_file` reads the same file from A and from B | a mutant that joins `base_dir` by string concatenation |
 | AT-4 | `compile_plan` with no `base_dir` under a `RootedFileAccess` reads a root-relative snapshot exactly as on base | a mutant that calls `abspath` on the locator when `base_dir` is `None` |
-| AT-5 | Walk sentry (`C:tests/sentry/io_policy/test_engine_base_dir.py`): every call of the four entries in `src/decoy/` passes `base_dir=`. Behavioral half: `validate config`, `validate compile --explain` and `ci check` from B pass on AT-1's config | a seeded copy without `base_dir` at `gate/_layers.py:245` |
+| AT-5 | Walk sentry (`C:tests/sentry/io_policy/test_engine_base_dir.py`): every call of the section 3 engine entries in `src/decoy/` passes `base_dir=` as a keyword. Behavioral half: `validate config`, `validate compile --explain` and `ci check` from B pass on AT-1's config | a seeded copy without `base_dir` at `gate/_layers.py:245`; a seeded positional `estimate_job_capacity(d, p)` |
 | AT-6 | `snapshot_file` missing from A but present in B, run from B: exit 1, the message names `<A>/snap.json` and the rule | a build whose message shows only the declared string |
 | AT-7 | Run from B: a relative `column_names_file` is read from A by `decoy run`, `decoy validate preflight` (the capacity estimate) and `decoy report fidelity --config`; a relative `quarantine.output_path` is written in A | base |
 | AT-8 | Statistical generate config, `fidelity_warn_threshold: 0.99`, one weak column: `ExecutionResult.warnings` has one `generation_fidelity_below_threshold` with table, scores, threshold and worst columns. Parametrized over the four `_plan_entry` entries and every run route that generates (auto, sequential, full frame, mixed with a mask table). Output bytes equal the base build's. Non-vacuity: the same config at threshold 0.0 raises none; two runs in one process raise one each | base (no warning); a mutant that drops the sink on the mixed route |
@@ -433,7 +448,7 @@ Each test is red on the named wrong build. "Base" is engine `84f4290d` with CLI 
 | AT-10 | Human `run` output lists each table with rows and file | base CLI |
 | AT-11 | Generate-only config with `--fidelity`: exit 1, the target folder is empty, stderr equals the exact text in section 4 C1 | base (exit 0); a build that names a `report fidelity <config>` form |
 | AT-12 | Mixed config with `--fidelity`: the mask report prints, then the generated-tables line, exit 0 | a build that refuses any config with a generate table |
-| AT-13 | Generate-only, seed plus key: warning `seed_ignored_with_master_key`, exit 0, output equal to a key-only run. Mixed, seed plus key: the same warning text ("for generated tables"), and the masked table's bytes change when the seed changes. Mask-only, seed plus key: no warning. Seed without key: no warning | base (silent); a mutant that warns whenever a seed is set; a mutant that warns on mask-only configs |
+| AT-13 | Generate-only, seed plus key: warning `seed_ignored_with_master_key`, exit 0, output equal to a key-only run. Mixed, seed plus key: the same warning text ("for generated tables"), and the masked table, which uses `strategy: shuffle` with no mask secret (its permutation is seeded from `derive(job_seed, ...)`, `execution/_strategies/_shuffle.py:3-5`), changes bytes when the seed changes. Mask-only, seed plus key: no warning. Seed without key: no warning | base (silent); a mutant that warns whenever a seed is set; a mutant that warns on mask-only configs; a build that drops the seed from mask runs when a key is set |
 | AT-14 | `run --rows 5` on a parent of 1,000 and a child of 5,000: `--json` reports 1 and 5 rows, child FK values exist in the parent sample, no file exists under the target folder, no evidence file | a build that ignores `--rows` and writes targets |
 | AT-15 | `run --rows 5` with a mask table, with `--chunked`, with `--evidence-out`, with `--explain-plan`, with `--native`, with `--duckdb-source`, and `--rows 0` or `--rows 1001`: exit 1 before work | a build that silently drops the conflicting flag |
 | AT-16 | `init --preset generate -o -`: stdout is YAML that `decoy validate config` accepts; no file named `-` exists; `-o - --json` exits 1 | base (writes `-`) |
@@ -445,6 +460,7 @@ Each test is red on the named wrong build. "Base" is engine `84f4290d` with CLI 
 | AT-22 | `explain transforms` lists exactly the `list strategies` set, contains `strategy:`, and contains neither `masking_rule` nor "future --mask"; the engine-internal allowlist baseline is unchanged | base |
 | AT-23 | `init people.csv --preset generate` with validation forced to fail (a test seam on the validate call): exit 1, neither `people.snapshot.json` nor the config exists afterwards. An existing config without `--yes`: refused before either file is written | a build that validates after writing and keeps both files |
 | AT-24 | `run_pipeline_isolated(..., isolate=True, base_dir=str(A))` from B reads `<A>/snap.json` in the child and matches the in-process run; `base_dir=Path(A)` raises the existing JSON-serializable `ValueError` | base (no `base_dir`); a build that resolves in the parent and drops the value from the payload |
+| AT-25 | An unvalidated dict where generate table `orders` references mask table `customers`: `generate_tables`, `generate_tables_streamed` and both `_from_generation_plan` entries raise `ValueError` "table 'orders' column 'customer_id': reference_table 'customers' is not a generate table", and `generation_order` raises the same | a build where `generation_order` keeps `_table_order`'s skip (the streamed entry raises `KeyError`) |
 
 Test placement: engine AT-2 to AT-4 and AT-8 in `tests/unit/plan/` and `tests/unit/execution/` beside the existing
 snapshot and gate tests; CLI behavior tests in `tests/e2e/first_user/test_items_generate.py` (a new file in the
@@ -468,7 +484,7 @@ targets under `--rows`. C3, drop one type from the topic render. Each must turn 
 
 | # | Call | Reason |
 |---|---|---|
-| D-PATHS | `column_names_file` and `quarantine.output_path` join the path rule in E1 and C1, through the same helper | Otherwise "every YAML path" is false. Tell the CONFIG-EXPLICIT CLI half, which also touches `column_names_file` |
+| D-PATHS | `column_names_file` and `quarantine.output_path` join the path rule in E1 and C1, through the same helper; quarantine resolves only in `with_quarantine_path`, and a caller's `quarantine_path` is used as given | Otherwise "every YAML path" is false. Tell the CONFIG-EXPLICIT CLI half, which also touches `column_names_file` |
 | D-SCALE | Preview scales every table by one ratio, with the largest table at N | Flat N breaks per-parent minimums on small parents |
 | D-CAP | Preview cap is 1,000 rows | Above that, run for real; the preview prints rows to the terminal |
 | D-SCAFFOLD | The CSV generate scaffold lives in `cli/gen/_scaffold.py` (C2); row 24t's `write_pipeline_scaffold` calls it | 24o lands first and 24t depends on its path rule, so the call points one way |
@@ -493,7 +509,7 @@ targets under `--rows`. C3, drop one type from the topic render. Each must turn 
 
 | Change | File | Sits beside | CODEMAP |
 |---|---|---|---|
-| `base_dir`, `config_relative`, `pin_and_check_snapshots` | engine `plan/_generation.py`, `generation/statistical/_spec.py`, `plan/_compile.py`, `execution/_pipeline.py`, `_pipeline_context.py`, `quarantine.py` | the existing read pass | no new engine module |
+| `base_dir`, `config_relative`, `pin_and_check_snapshots` | engine `plan/_generation.py`, `generation/statistical/_spec.py`, `plan/_compile.py`, `execution/_pipeline.py`, `_pipeline_context.py` (`build_run_context`, `with_quarantine_path`) | the existing read pass | no new engine module |
 | `base_dir` on the other compile callers | engine `plan/validate/_consolidator.py`, `generation/_pinned_compile.py`, `execution/capacity.py` (`_resolved_config_copy` gains the names file), `execution/_job_estimate.py` | the existing `compile_plan` calls | none |
 | Fidelity sink | engine `generation/_fidelity_gate.py`, `synthesize.py`, `_streamed.py` (`run_generation`, `_run_legacy`), `_plan_entry.py`, the three execution callers | `warn_on_low_fidelity` | none (`generation/` has 26 entries, so no new file there) |
 | `generation_order` | engine `generation/synthesize.py`, called from `_streamed.py` | `_topo_sort` | none |
@@ -522,9 +538,20 @@ text, net about 30), `compile_explain.py` 498, `__main__.py` 264. Engine: `synth
   if it shrinks.
 - `execution/_isolated_run.py` 652 (census `:75`): not edited; `base_dir` rides in `**run_pipeline_kwargs`.
 - `execution/_pipeline.py` 351, pinned at exactly that count by `test_b6a_bookkeeping.py:29`,
-  `test_b6b_bookkeeping.py:34` and `test_auto_chunk_bookkeeping.py:31`. E1 adds the keyword without changing
-  the line count (the parameter joins an existing signature line and the forward joins the existing
-  `_pipeline_context` call), or builds on the SIZE-CEIL plan if that merges first.
+  `test_b6b_bookkeeping.py:34` and `test_auto_chunk_bookkeeping.py:31` (all lines, `wc -l` style,
+  `test_module_size.py:144`). The pins stay at 351. `run_pipeline` lists one parameter per line with a trailing
+  comma, so ruff format keeps each keyword on its own line. The edit, line by line:
+  - plus 1: `base_dir: str | None = None,` after `quarantine_path` (`:159`);
+  - plus 1: `base_dir=base_dir,` in the `build_run_context` call (after `:333`);
+  - plus 1: a docstring line after `:256`: "`base_dir` is the folder relative YAML paths resolve from
+    (snapshots, `quarantine.output_path`); `None` keeps the working directory.";
+  - 0: `:335` becomes `ctx = _ctx.with_quarantine_path(ctx, quarantine_path, base_dir)` in place;
+  - minus 3: the `_provider_snapshot` docstring paragraph (`:268-273`, six lines) is rewritten in three lines
+    under 100 characters, keeping its content (private harness hook, forwarded to `generate_tables` so the
+    shadow-parity harness pins the call to its own registry snapshot, `None` uses the live registry).
+
+  Net 0. `str | None` needs no new import (`Path` is not imported in `_pipeline.py`). The rest of the work
+  (the forward to `compile_plan`, the quarantine rule) sits in `_pipeline_context.py`, 545 lines.
 
 ## 11. Frozen contracts touched
 
