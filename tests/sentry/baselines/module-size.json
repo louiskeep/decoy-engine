@@ -32,9 +32,6 @@
   "scripts/tq_mutate.py": {
    "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
   },
-  "src/decoy_engine/__init__.py": {
-   "reason": "CONFIG-EXPLICIT E2a: the declared-columns exports take the package init to 604 lines; dense export surface, recorded in the same PR"
-  },
   "src/decoy_engine/detection/detectors.py": {
    "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
   },
