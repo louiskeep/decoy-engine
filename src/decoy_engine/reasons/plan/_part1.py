@@ -157,7 +157,7 @@ PINNED_STATISTICAL_DIGEST_MISSING = _d(
 )
 PINNED_TYPE_NOT_ALLOWLISTED = _d("pinned_type_not_allowlisted", "Pinned type not allowlisted.")
 PINNED_UNIQUE_PAIR_UNSUPPORTED = _d(
-    "pinned_unique_pair_unsupported", "Pinned unique pair unsupported.", since="1.18.0"
+    "pinned_unique_pair_unsupported", "Pinned unique pair unsupported.", since="1.17.0"
 )
 PINNED_WINDOWED_ANCHOR_NOT_ABSOLUTE = _d(
     "pinned_windowed_anchor_not_absolute", "Pinned windowed anchor not absolute."

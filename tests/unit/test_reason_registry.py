@@ -300,7 +300,7 @@ def test_cell_format_minor_has_one_fixture_with_exactly_its_identity() -> None:
     assert pinned["registry_version"] == "1.16.0"
 
 
-GEN_UNIQUE_FIXTURE = "reason-manifest-v1.18-gen-unique.json"
+GEN_UNIQUE_FIXTURE = "reason-manifest-v1.17-gen-unique.json"
 GEN_UNIQUE = [
     ("config", "generate_unique_conflict", "PipelineValidationError"),
     ("config", "generate_unique_domain_too_small", "PipelineValidationError"),
@@ -313,10 +313,10 @@ GEN_UNIQUE = [
 def test_gen_unique_codes_are_registered_configuration_repairs(
     namespace: str, code: str, owner: str
 ) -> None:
-    """E0 (GEN-UNIQUE): four additive identities, `since` 1.18.0, none raised yet."""
+    """E0 (GEN-UNIQUE): four additive identities, `since` 1.17.0, none raised yet."""
     spec = reasons.find(namespace, code)
     assert spec is not None
-    assert spec.since == "1.18.0"
+    assert spec.since == "1.17.0"
     assert spec.owner == owner
     assert spec.kind is reasons.Kind.FAILURE
     assert [r.retry for r in spec.rules] == [reasons.RetryClass.CONFIGURATION_REPAIR]
@@ -329,7 +329,7 @@ def test_gen_unique_minor_has_one_fixture_with_exactly_its_identities() -> None:
     assert [(e["namespace"], e["code"]) for e in pinned["entries"]] == sorted(
         (n, c) for n, c, _ in GEN_UNIQUE
     )
-    assert pinned["registry_version"] == "1.18.0"
+    assert pinned["registry_version"] == "1.17.0"
 
 
 GEN_STRICT_FIXTURE = "reason-manifest-v1.13-gen-strict.json"

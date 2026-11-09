@@ -61,17 +61,17 @@ GENERATE_OPTION_VALUE_UNKNOWN = _d(
 GENERATE_UNIQUE_CONFLICT = _d(
     "generate_unique_conflict",
     "Generate column unique cannot be combined with another option on the same column.",
-    since="1.18.0",
+    since="1.17.0",
 )
 GENERATE_UNIQUE_DOMAIN_TOO_SMALL = _d(
     "generate_unique_domain_too_small",
     "Generate column unique needs more distinct values than its domain holds.",
-    since="1.18.0",
+    since="1.17.0",
 )
 GENERATE_UNIQUE_UNSUPPORTED = _d(
     "generate_unique_unsupported",
     "Generate column type does not support unique.",
-    since="1.18.0",
+    since="1.17.0",
 )
 GENERATE_WEIGHTS_INVALID = _d(
     "generate_weights_invalid",

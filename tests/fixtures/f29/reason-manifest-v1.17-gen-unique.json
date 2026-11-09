@@ -16,7 +16,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.18.0",
+      "since": "1.17.0",
       "summary": "Generate column unique cannot be combined with another option on the same column.",
       "symbol": "GENERATE_UNIQUE_CONFLICT"
     },
@@ -36,7 +36,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.18.0",
+      "since": "1.17.0",
       "summary": "Generate column unique needs more distinct values than its domain holds.",
       "symbol": "GENERATE_UNIQUE_DOMAIN_TOO_SMALL"
     },
@@ -56,7 +56,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.18.0",
+      "since": "1.17.0",
       "summary": "Generate column type does not support unique.",
       "symbol": "GENERATE_UNIQUE_UNSUPPORTED"
     },
@@ -76,11 +76,11 @@
           "severity": "error"
         }
       ],
-      "since": "1.18.0",
+      "since": "1.17.0",
       "summary": "Pinned unique pair unsupported.",
       "symbol": "PINNED_UNIQUE_PAIR_UNSUPPORTED"
     }
   ],
   "reason_schema_version": 1,
-  "registry_version": "1.18.0"
+  "registry_version": "1.17.0"
 }
