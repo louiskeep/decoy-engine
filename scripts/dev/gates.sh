@@ -4,9 +4,11 @@
 #        [--write-baseline FILE [--order-from FILE]] [--full] [--steps LIST] [--shard I/N]
 #        [test paths...]
 #   --keep-going  run every step even after a failure (default: stop at the first)
-#   --baseline    rerun every step on origin/main in a temporary detached worktree, with the
-#                 SAME venv, and diff the failures of every step (test ids; mypy/ruff error
-#                 lines). Fails only on branch-only failures.
+#   --baseline    rerun on origin/main, in a temporary detached worktree with the SAME venv,
+#                 only the steps that failed on the branch, and diff their failures (test ids;
+#                 mypy/ruff error lines). The tests step reruns only the test files that hold
+#                 a failing branch test. A branch with no failing step builds no worktree and
+#                 reruns nothing. Fails only on branch-only failures.
 #   --baseline-file FILE
 #                 with --baseline (implied): do NOT rerun origin/main. Load the stored
 #                 failing-id baseline FILE, run only the branch pass, then report new
@@ -334,8 +336,13 @@ combine_rc() {  # $1 parallel-pass rc, $2 serial-pass rc
   if [ "$a" = 1 ] || [ "$b" = 1 ]; then echo 1; else echo 0; fi
 }
 
+# Baseline pass only: 0 when the branch passed or skipped step $1, so main is not rerun for it.
+branch_step_ok() {
+  awk -F'\t' -v n="$1" '$1 == n { found = 1; if ($2 == 0 || $2 == -1) ok = 1 } END { exit !(found && ok) }' "$OUT/branch.steps"
+}
+
 run_steps() {  # $1 label, $2 tree
-  local label=$1 tree=$2 name rc rc2 stop=0 p cmd cmd2 shown tests=() lic=() pyt w note
+  local label=$1 tree=$2 name rc rc2 stop=0 p cmd cmd2 shown tests=() lic=() pyt w note tpaths=()
   : >"$OUT/$label.steps"
   for name in ${STEPS//,/ }; do
     plain=0 cmd2=() note=
@@ -357,7 +364,8 @@ run_steps() {  # $1 label, $2 tree
         lic=(); for p in ${LICENSE_TESTS[@]+"${LICENSE_TESTS[@]}"}; do [ -e "$tree/$p" ] && lic+=("$p"); done
         cmd=(env DECOY_LICENSE_STRICT=1 "$BIN/python" -m pytest ${junit[@]+"${junit[@]}"} ${lic[@]+"${lic[@]}"}) ;;
       tests)
-        tests=(); for p in ${PATHS[@]+"${PATHS[@]}"}; do [ -e "$tree/${p%%::*}" ] && tests+=("$p"); done
+        if [ "$label" = baseline ]; then tpaths=(${BASE_PATHS[@]+"${BASE_PATHS[@]}"}); else tpaths=(${PATHS[@]+"${PATHS[@]}"}); fi
+        tests=(); for p in ${tpaths[@]+"${tpaths[@]}"}; do [ -e "$tree/${p%%::*}" ] && tests+=("$p"); done
         # The order map comes from this script only: an inherited one never reorders a run.
         pyt=(env -u DECOY_TEST_ORDER_FILE ${ORDER_MAP:+"DECOY_TEST_ORDER_FILE=$ORDER_MAP"} "$BIN/python" -m pytest)
         # A stored or compared baseline must come from the whole suite: ignore selections
@@ -381,7 +389,8 @@ run_steps() {  # $1 label, $2 tree
         fi ;;
       *) echo "gates: unknown step $name" >&2; exit 2 ;;
     esac
-    if [ $stop = 1 ]; then rc=-2
+    if [ "$label" = baseline ] && branch_step_ok "$name"; then rc=-1; cmd=("(passed on the branch; not rerun)")
+    elif [ $stop = 1 ]; then rc=-2
     elif [ "$name" = tests ] && [ ${#tests[@]} -eq 0 ] && [ "$label" = branch ] && [ $TESTS_REQUIRED = 1 ]; then
       plain=1; rc=1; cmd=("(FAIL: code changed but no tests were selected; pass test paths or add a test that imports the changed module)")
       echo "gates: [$label] tests FAIL: the diff touches code (any path outside NON_CODE_GLOBS) but selects no tests" >&2
@@ -440,11 +449,27 @@ if [ -n "$BASEFILE" ]; then
     fi
   } >>"$OUT/meta"
 elif [ $BASELINE = 1 ]; then
-  git -C "$ROOT" worktree add -q --detach "$WT" origin/main || exit 2
-  {
-    echo "baseline:   origin/main @ $(git -C "$WT" rev-parse HEAD) in a detached worktree, same venv and lock as branch"
-    echo "            $IMPORT_PKG imported from: $(cd "$WT" && PYTHONPATH=$(pypath "$WT") "$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --import-origin "$IMPORT_PKG" 2>&1 | tail -n 1)"
-  } >>"$OUT/meta"
+  # Rerun main only for what failed here. A fully green branch builds no worktree: run_steps
+  # records every baseline step as not rerun without touching the tree.
+  BASE_PATHS=()
+  if ! branch_step_ok tests; then
+    BASE_FILES=$("$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --failing-files "$OUT") || BASE_FILES=''
+    while IFS= read -r p; do [ -n "$p" ] && BASE_PATHS+=("$p"); done <<EOT
+$BASE_FILES
+EOT
+  fi
+  NEED_MAIN=0
+  for name in ${STEPS//,/ }; do branch_step_ok "$name" || NEED_MAIN=1; done
+  if [ $NEED_MAIN = 1 ]; then
+    git -C "$ROOT" worktree add -q --detach "$WT" origin/main || exit 2
+    {
+      echo "baseline:   origin/main @ $(git -C "$WT" rev-parse HEAD) in a detached worktree, same venv and lock as branch"
+      echo "            only the steps that failed on the branch rerun; tests rerun the files with a failing test"
+      echo "            $IMPORT_PKG imported from: $(cd "$WT" && PYTHONPATH=$(pypath "$WT") "$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --import-origin "$IMPORT_PKG" 2>&1 | tail -n 1)"
+    } >>"$OUT/meta"
+  else
+    echo "baseline:   not rerun: every branch step passed or was skipped" >>"$OUT/meta"
+  fi
   run_steps baseline "$WT"
 fi
 echo "logs:       $OUT" >>"$OUT/meta"

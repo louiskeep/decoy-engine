@@ -4,11 +4,12 @@
 # tests) on a GitHub-hosted runner. The repo is public, so those minutes are free and never wait
 # for a runner of ours.
 #
-# gate: the full merge gate, scripts/dev/gates.sh with impact-selected tests and a rerun of
-# origin/main for the baseline, on self-hosted runners labelled decoy-gate (the always-on Mac or
+# gate: the merge gate, scripts/dev/gates.sh, on self-hosted runners labelled decoy-gate (the always-on Mac or
 # the Linux GCP runner). It runs only on a push to main and on workflow_dispatch, which the
 # orchestrator fires after review with `gh workflow run gate-selfhosted.yml --ref <branch>`. A
-# dispatch run checks out the branch head, so its result shows in `gh pr checks`. Two shards
+# dispatch run checks out the branch head, so its result shows in `gh pr checks`. A push to main
+# runs the whole suite; a dispatch runs the impact-selected tests and, for anything red, reruns
+# just that step (for tests, the failing files) on origin/main. Two shards
 # split the selected test files across the two runners; shard 1 also does the lint, type,
 # sentry and licence steps. Runners are an owner ops step. The scripts stay bash 3.2 clean
 # because the Mac still runs them.
@@ -94,14 +95,19 @@ jobs:
           mkdir -p ~/.cache
           flock ~/.cache/pytest-one.lock bash scripts/dev/bootstrap.sh
       - name: Gate
-        # EVIDENCE block names the head it tested; keep-going lists every red step. --baseline reruns
-        # origin/main on this host and fails only on branch-only failures (mypy, sentry, tests), so
-        # host-only failures that main has too do not block every push. A stored baseline file
-        # cannot be used: it is a whole-suite result and the gate runs a sharded selection.
-        # Shard 1 runs every step; the others run only their slice of the tests.
+        # EVIDENCE block names the head it tested; keep-going lists every red step.
+        # Main: the FULL suite (--full), because on main HEAD equals origin/main and an impact
+        # selection is empty. No --baseline there: main compared with itself would call every
+        # failure shared, so any red on main is red. Shard 1 also runs the lint, type, sentry
+        # and licence steps; the others run only their slice of the tests.
+        # Dispatch on a branch: impact-selected tests. --baseline reruns origin/main only for the
+        # steps (and test files) that failed on the branch and fails only on branch-only
+        # failures, so host-only failures that main has too do not block. A stored baseline file
+        # cannot be used: it is a whole-suite result and this run is a sharded selection.
         run: |
           export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
           export DECOY_VENV="$HOME/.cache/decoy-gate-venv-engine"
           mkdir -p ~/.cache
           if [ "${{ matrix.shard }}" = 1 ]; then steps=env,ruff,format,mypy,sentry,licenses,tests; else steps=tests; fi
-          flock ~/.cache/pytest-one.lock scripts/dev/gates.sh --keep-going --baseline --steps "$steps" --shard "${{ matrix.shard }}/2"
+          if [ "${{ github.event_name }}" = push ]; then mode=--full; else mode=--baseline; fi
+          flock ~/.cache/pytest-one.lock scripts/dev/gates.sh --keep-going $mode --steps "$steps" --shard "${{ matrix.shard }}/2"

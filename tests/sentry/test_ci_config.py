@@ -141,8 +141,9 @@ def test_selfhosted_gate_runs_gates_under_the_shared_lock() -> None:
     assert _checkout(job)["with"]["persist-credentials"] is False
     runs = " ".join(step.get("run", "") for step in job["steps"])
     assert "flock ~/.cache/pytest-one.lock scripts/dev/gates.sh" in runs
-    # Host-only failures that main shares must not fail every Mac run.
-    assert "scripts/dev/gates.sh --keep-going --baseline" in runs
+    # Host-only failures that main shares must not fail every dispatch run.
+    assert "scripts/dev/gates.sh --keep-going $mode" in runs
+    assert "mode=--baseline" in runs
     assert _triggers(WORKFLOWS / "gate-selfhosted.yml") == {"push", "workflow_dispatch"}
 
 
@@ -157,6 +158,11 @@ def test_full_gate_runs_only_on_dispatch_and_main_in_two_shards() -> None:
     assert job["strategy"]["matrix"]["shard"] == [1, 2]
     runs = " ".join(step.get("run", "") for step in job["steps"])
     assert '--shard "${{ matrix.shard }}/2"' in runs
+    # On main HEAD equals origin/main, so an impact selection is empty: main runs the full suite,
+    # and without --baseline (main against itself would call every failure shared).
+    assert "mode=--full" in runs
+    assert "mode=--baseline" in runs
+    assert 'if [ "${{ github.event_name }}" = push ]' in runs
 
 
 def test_fast_check_is_hosted_owner_guarded_and_push_only() -> None:
