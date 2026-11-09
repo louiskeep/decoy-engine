@@ -3,13 +3,14 @@ Status: plan
 # GEN-CLI: one path rule and a generation-aware CLI (roadmap row 24o)
 
 Owner: Cam. Author: claudeworkerbee (Opus). Date: 2026-11-09. Scope: engine plus CLI, V1 (owner decision
-2026-11-08). Risk: R2 (compatibility: a path rule change and two public API additions). Revision 1.
+2026-11-08). Risk: R2 (compatibility: a path rule change and additive public APIs). Revision 3.
 
 Rules consulted: `dev-rules/README.md`, `00-universal.md`, `risk-and-exceptions.md`, `development-loop.md`
 (PLAN: choke point, Placement, Established solutions, proportion rule), `feature-dev.md`, `testing.md` (test
 depth, escalation triggers), `api-and-compatibility.md`, `cross-cutting-concerns.md` (the path rule has more
 than one call site), `architecture.md` (module size, fan-out), `reuse-first.md`, `scope-discipline.md`,
-`documentation.md`, `workspace-and-vcs.md`, `catalogs/recurring-defects.md`; the plan contract
+`code-review.md`, `verification.md`, `config-secrets-and-supply-chain.md`, `security.md`, `documentation.md`,
+`workspace-and-vcs.md`, `profiles/local-operations.md`, `catalogs/recurring-defects.md`; the plan contract
 (`30_Resources/Decoy-Plan-Contract-and-Defect-Catalog.md`); engine `CLAUDE.md` (modules aim for 600 lines,
 hard max 700); engine `docs/compatibility-contract.md:180-182` (same input plus same seed gives byte-identical
 output within a major); CLI `CODEMAP.md` "Where things go" (`cli/` is frozen, owner rule 2026-11-06; CLI file
@@ -82,6 +83,8 @@ path in `explain yaml` (row 24e C2a, CLI #146 `cfdee4e`).
 - Engine callers that pass no `base_dir` (the platform, direct library users) see exactly today's behavior
   (AT-4).
 - Generation output bytes do not depend on whether a fidelity warning was raised (AT-8).
+- A failed two-file generate scaffold leaves both destination paths byte-for-byte as they were before the
+  command (AT-23).
 - `run.py` does not grow: its line count at each CLI slice head is at most 1,748 (the base).
 
 ### Non-goals (V1)
@@ -113,9 +116,11 @@ path in `explain yaml` (row 24e C2a, CLI #146 `cfdee4e`).
 | F9 | `init` from a CSV writes `snapshot_file` relative to the working directory | AT-17, AT-18 |
 | F10 | A new top-level command ships with no help panel | AT-19 |
 | F11 | The generation topic drifts from the engine registry | AT-21 |
-| F12 | `init <csv>` fails after writing and leaves a snapshot or config behind | AT-23 |
+| F12 | `init <csv>` fails during validation or publication, or overlaps another publisher, and leaves a mixed pair, a new file or a lost overwritten file | AT-23 |
 | F13 | An isolated run cannot carry `base_dir` to its child process | AT-24 |
 | F14 | The merged order walk changes the error for a reference to a non-generate table | AT-25 |
+| F15 | A new warning code bypasses the reason registry, so identity and safe-summary consumers drift | AT-26 |
+| F16 | Physical-plan capture is the one compile route that still reads a relative snapshot from the working directory | AT-27 |
 
 ## 2. Established solutions
 
@@ -124,34 +129,51 @@ Search run: a web search for how Docker Compose resolves relative paths, plus th
 - **Config-relative paths.** Docker Compose resolves relative paths in a Compose file (build context, env
   files, bind mounts) from the project directory, which defaults to the folder of the first Compose file; when
   the file comes from stdin, from the working directory (docs.docker.com, "How Compose works" and the Build
-  Specification). dbt and Cargo follow the same rule for their project files. The engine's own precedent is
+  Specification). dbt and Cargo follow the same rule for their project files. The engine's current copy is
   `execution/capacity.py:156-191` (`_resolve_source_path(raw_path, base_dir)`, "the pipeline YAML's
-  directory"). We follow it: a caller-supplied `base_dir`, joined lexically, absolute paths unchanged.
+  directory"). E1 promotes that rule to the public `fileaccess.config_relative` choke point and removes the
+  private copy. The CLI's `resolve_path` delegates to it after the engine pin bump. The rule is a
+  caller-supplied `base_dir`, joined lexically, with absolute paths unchanged.
 - **Structured warnings over log lines.** The engine already carries `QualityWarning(code, provider, column,
   detail)` (`generation/pool/_events.py:15`) in `ExecutionResult.warnings`. The fidelity gate joins that
   channel instead of a new one.
 - **Grouped help.** Typer's `rich_help_panel` (the git and kubectl command-group pattern).
 - **Preview.** `dbt show --limit`: same pipeline, few rows, nothing written.
+- **Two-file scaffold publication.** The CLI's `_atomic.py` already stages and replaces one local target, and
+  `run.py:1592-1646` backs up and restores an existing vault around a replace. C2 adds the same rollback rule
+  once to `_atomic.py` for a batch of staged local targets, then uses it for the snapshot and config together.
+  The non-blocking `flock` discipline follows `distribution/lock.py:1-15`, but locks the pair's common parent
+  directory descriptor so it adds no loose lock file.
 
-No custom mechanism remains beyond the threading of one keyword and one sink.
+No custom path or warning channel remains. The only new file mechanism is the central multi-target extension
+of the existing atomic writer required by the scaffold's two destinations.
 
 ## 3. Design notes
 
-New structure: one CLI sub-package (`cli/gen/`, section 10) and two engine accessors. Principles: one place per
-fact (the order walk and the option list each live once in the engine and the CLI renders them); no flag
-arguments that switch behavior (`base_dir=None` means "no config file", not a mode).
+New structure: one CLI sub-package (`cli/gen/`, section 10), one small engine file-access module and two engine
+accessors. Principles: one place per fact (the path rule, the order walk and the option list each live once in
+the engine and the CLI renders or delegates to them); no flag arguments that switch behavior
+(`base_dir=None` means "no config file", not a mode).
 
 ### Choke points
 
 - **Snapshot reads (engine), by construction.** `read_and_pin_snapshots` (`plan/_generation.py:102`) is the
   one read pass for a compile; `_load_snapshot` (`generation/statistical/_spec.py:174`) is the sole open site for
-  a direct caller. Both gain `base_dir: str | Path | None = None` and resolve a relative locator through one
-  helper `config_relative(locator, base_dir)` in `plan/_generation.py`, which applies `os.path.abspath` to
-  `base_dir` once (so a relative `base_dir` means the working directory at the call). The pinned map stays keyed
-  by the declared string, so plan bytes and the hash do not see the resolved path. The read, DP verify and
+  a direct caller. Both gain `base_dir: str | Path | None = None` and resolve a relative locator through the one
+  public helper `fileaccess.config_relative(locator, base_dir)`, implemented in
+  `fileaccess/_config_path.py`. It applies `os.path.abspath` to the joined path once (so a relative `base_dir`
+  means the working directory at the call), and it returns an absolute locator unchanged. The pinned map stays
+  keyed by the declared string, so plan bytes and the hash do not see the resolved path. The read, DP verify and
   statistical check block appears twice in `plan/_compile.py` (`:184-191` and `:519-526`); E1 replaces both with
   one call to a new `pin_and_check_snapshots(config, *, base_dir)` in `plan/_generation.py`, which also offsets
-  the new keyword lines in `_compile.py` (section 10).
+  the new keyword lines in `_compile.py` (section 10). `capacity._resolved_config_copy` uses the same public
+  helper. The CLI's `resolve_path` becomes a typed wrapper: it keeps today's absolute-path pass-through and
+  today's `Path.resolve()` canonicalization for relative CLI paths, but delegates the choice of base and join
+  to the engine helper. Every consumer imports through `decoy_engine.fileaccess`; none imports the private
+  `_config_path` module. The change removes the existing private engine copy instead of adding a third resolver.
+  The direct/legacy fallback at
+  `plan/_generation.py:225` is the only call of `_load_snapshot`; `resolve_pinned_snapshot` and
+  `check_statistical_columns` gain the optional keyword and pass it through when no pinned read exists.
 - **Engine entries.** These take `base_dir` and pass it down:
   - `run_pipeline` (`execution/_pipeline.py:116`), typed `base_dir: str | None = None`, to `compile_plan`
     through `build_run_context` (`_pipeline_context.py:337`) and to `with_quarantine_path`
@@ -164,7 +186,10 @@ arguments that switch behavior (`base_dir=None` means "no config file", not a mo
     (`generation/_pinned_compile.py:255`), which call `compile_plan`;
   - `estimate_job_capacity` (`execution/capacity.py:246`, compile at `:351`) and `estimate_job`
     (`execution/_job_estimate.py:82`, compile at `:130`). Both already take `base_dir` for sources; they now pass
-    the same value to `compile_plan`, so one call never mixes two rules.
+    the same value to `compile_plan`, so one call never mixes two rules;
+  - `capture_physical_plan_inputs` (`execution/physical/_snapshot.py:49`, compile at `:152`), exported from
+    `execution.physical`. It gains the optional keyword and passes it to `compile_plan`. This was the ninth
+    compile route missed by the first two plan rounds.
 - **Engine compiles out of scope, by reason.** `execution/_chunked_oracle.py:246` compiles a per-table mask
   config: the mixed route hands the chunked lane `static.mask_configs[name]` (`_pipeline_mixed_route.py:214`)
   and the CLI refuses `--chunked` with generate tables (`C:run.py:718`), so it never reads a snapshot.
@@ -177,14 +202,17 @@ arguments that switch behavior (`base_dir=None` means "no config file", not a mo
   access (`decoy_engine.run_config_only_checks(...)` at `C:gate/_layers.py:182`) and fails on a call without
   `base_dir=`. It accepts the keyword form only. The one positional call today,
   `estimate_job_capacity(config_dump, config_path.parent)` at `C:preflight.py:456`, changes to
-  `base_dir=config_path.parent` in C1, so a positional argument can never hide a missing one. It runs in the merge-gate suite. The mutation that must turn it red: drop `base_dir` from
-  `C:gate/_layers.py:245`. The build report shows the walk's count rising on a seeded bypass and falling on a
-  removed site.
+  `base_dir=config_path.parent` in C1, so a positional argument can never hide a missing one. It runs in the
+  merge-gate suite. Seeded direct imports, module aliases, `from` aliases and `import decoy_engine.plan`
+  attribute calls must all be seen by the shared normalized scanner. The mutation that must turn it red is to
+  drop `base_dir` from `C:gate/_layers.py:245`. The build report shows the walk's count rising on each seeded
+  bypass and falling on a removed site.
 - **`column_names_file` (CLI), by construction.** The field is read inside `resolve_csv_dialect`. The CLI's one
   call is `C:_sources.py:65` in `read_csv_frame`, which every CLI CSV read goes through (`C:_sources.py:88-161`,
   `C:init.py:192`). That call gets a descriptor copy whose `column_names_file` went through `resolve_path`, as
-  `path` already does. Sources are excluded from `_hash_config`, so the copy is hash-safe; the engine does the
-  same in `capacity._resolved_config_copy`. `resolve_csv_dialect` joins the `decoy_engine` watch list of the
+  `path` already does, through the CLI wrapper over `fileaccess.config_relative`. Sources are excluded from
+  `_hash_config`, so the copy is hash-safe; the engine does the same in `capacity._resolved_config_copy`.
+  `resolve_csv_dialect` joins the `decoy_engine` watch list of the
   existing G-ONE-CSV-READ sentry (`C:tests/sentry/test_csv_read_choke_point.py:88`, beside `read_csv_source`
   and `read_fixed_width`), which already confines those calls to `cli/_sources.py`; no second rule in the walk
   sentry. Its only call today is `C:_sources.py:65`, so the allowlist and baseline do not change.
@@ -193,10 +221,31 @@ arguments that switch behavior (`base_dir=None` means "no config file", not a mo
   `_generate_tables_from_config` (`:538`), which calls `warn_on_low_fidelity` (`synthesize.py:188`). The four
   public entries in `generation/_plan_entry.py` (`generate_tables` `:147`, `generate_tables_streamed` `:216`,
   `generate_tables_from_generation_plan` `:252`, `generate_tables_streamed_from_generation_plan` `:284`) take
-  the keyword and pass it to `run_generation`. The three execution callers fold the collected warnings into
-  `ExecutionResult.warnings`.
+  the keyword and pass it to `run_generation`. The full-frame caller at
+  `execution/_pipeline_generate_mask.py:128` collects the callback records into the returned
+  `ExecutionResult.warnings`. The mixed caller at `execution/_pipeline_mixed_route.py:74` carries both generated
+  tables and generation warnings through its admitted result and its runtime-decline handoff. The handoff adds
+  `pregenerated_warnings` beside `pregenerated` in `_pipeline_full_frame.py:98-127` and
+  `_pipeline_generate_mask.py:111`, so the fallback cannot lose a warning when it correctly avoids a second
+  generation pass. `execution/physical/drivers/_synthesis.py:50` is not a warning route: its admission permits
+  only sequence, categorical and faker columns (`execution/physical/_shadow_generation.py:91`), while the
+  fidelity gate runs only for statistical columns.
+- **Warning identities.** Both new codes, `warning.generation_fidelity_below_threshold` and
+  `warning.seed_ignored_with_master_key`, are entries in the engine reason registry. The registry supplies their
+  identity and fixed safe summary; `_fidelity_gate.py` and the CLI add only typed detail. The reason sentries
+  and manifest fixture are the guard, and deleting either catalog entry is the mutation that turns AT-26 red.
 - **Warnings (CLI).** One function `warning_records(engine_warnings, cli_warnings)` builds both the card list
   and the JSON list, so the two cannot disagree.
+- **Generate scaffold publication (CLI).** `_atomic.publish_local_targets` is the one multi-target extension of
+  the existing local writer. It requires one common parent directory and holds a non-blocking exclusive lock on
+  that directory descriptor across staging, backup, replace and cleanup. It stages and fsyncs every candidate
+  before the first replace, keeps a same-folder hard-link backup for every existing destination, publishes in
+  the supplied order, and restores every old destination or removes every new one if any replace fails. Lock or
+  backup failure refuses before the first replace. A create-only target is rechecked while the lock is held, so
+  a file created after the CLI's first existence check is not overwritten. `_scaffold.py` supplies snapshot
+  then config, and no cleanup is hand-written in `init.py`. A sentry permits a multi-file scaffold publish only
+  through this function. The mutations that must turn it red are to raise on the second replace after the first
+  succeeds and to remove the parent lock while two publishers overlap.
 
 ### Why `base_dir` and not a rewrite or a contextvar
 
@@ -222,28 +271,31 @@ through `fileaccess.shown` as today, so a strict policy still redacts.
 
 ### Engine (E1)
 
-- `base_dir` on the engine entries and both snapshot readers, as in section 3.
+- Public `fileaccess.config_relative`, with the old private copy in `capacity.py` removed; `base_dir` on the
+  engine entries and both snapshot readers, as in section 3.
 - `quarantine.output_path`: resolved in one place, `with_quarantine_path(ctx, path, base_dir)`
   (`_pipeline_context.py:433`), which already replaces the path in a copy of the config after the plan and its
   hash are built, and which every route reads through `ctx.config`. The rule: a caller's `quarantine_path`
   wins and is used as given, like a command-line path (relative means the working directory); without one, a
-  relative `quarantine.output_path` from the YAML resolves against `base_dir` through `config_relative`; with
+  relative `quarantine.output_path` from the YAML resolves against `base_dir` through
+  `fileaccess.config_relative`; with
   neither `base_dir` nor a relative YAML path the context is returned as is. `quarantine.py:254` and the other
   readers of the path (`:312`, `:478`, `:545`) are not edited and read the resolved value.
-- `column_names_file`: `capacity._resolved_config_copy` (`capacity.py:167-191`) resolves every
+- `column_names_file`: `capacity._resolved_config_copy` (`capacity.py:167-195`) resolves every
   `FILE_SOURCE_PATH_FIELDS` field, not only `path`, so `estimate_job` and `estimate_job_capacity` read the same
   names file the run does. The other engine readers (`profiling/scan_set.py:371`,
   `profiling/_scan_integrity.py:211`, `profile/_lazy_csv.py:120`, `profile/_readers.py:528`) take descriptors
   from their callers: the CLI passes resolved descriptors after C1, and the platform passes rooted locators.
 - `_fidelity_gate.py`: `score_generated_fidelity` returns records instead of strings. `warn_on_low_fidelity`
-  keeps the log line and also calls `on_warning(QualityWarning(code="generation_fidelity_below_threshold",
+  keeps the log line and also calls
+  `on_warning(QualityWarning(code=reasons.warning.GENERATION_FIDELITY_BELOW_THRESHOLD,
   provider="statistical", column=None, detail={"table", "snapshot_index", "overall_score", "threshold",
-  "worst_columns"}))`. The code is the string the log line already starts with. Like the other
-  `QualityWarning` codes it is not a registered reason; the `QualityWarning` docstring list gains it.
+  "worst_columns"}))`. The code uses the new registered warning reason, and the `QualityWarning` docstring list
+  gains it.
 - `on_warning=None` on `run_generation`, `_run_legacy`, `_generate_tables_from_config` and the four public
-  entries (section 3). Execution callers: `execution/_pipeline_generate_mask.py:128` (and its `pregenerated`
-  input), `execution/_pipeline_mixed_route.py:74`, `execution/physical/drivers/_synthesis.py:50`. Each folds
-  the collected warnings into the `ExecutionResult.warnings` it builds. Output bytes are untouched.
+  entries (section 3). Execution callers: `execution/_pipeline_generate_mask.py:128` and
+  `execution/_pipeline_mixed_route.py:74`, including the mixed runtime-decline handoff described in section 3.
+  Each folds the collected warnings into the `ExecutionResult.warnings` it builds. Output bytes are untouched.
 - Two public read-only accessors, exported from `decoy_engine`:
   - `generation_order(config) -> tuple[tuple[str, tuple[str, ...]], ...]`: each generate table with its
     referenced parents, parents first. It is the dependency walk and `_topo_sort` that
@@ -255,15 +307,18 @@ through `fileaccess.shown` as today, so a strict policy still redacts.
     for every caller (AT-25).
   - `generate_option_catalog() -> Mapping[str, GenerateTypeOptions]`: per generate type, the required and
     optional option names plus `COMMON_OPTIONS`, read from `GENERATE_OPTIONS`
-    (`config/_generate_options.py:203`). Names only; row 24s adds descriptions.
+    (`config/_generate_options.py:203`). E1 adds the frozen public `GenerateTypeOptions` result record beside
+    the existing private `TypeOptions` (`:64`); it exposes names only, never the registry's validator callables.
+    Row 24s adds descriptions to the same public record.
 
 ### CLI C1 (behavior)
 
 - Engine pin bump.
 - `base_dir=` at every engine entry: `C:run.py:868` (`config.parent`), `C:gate/_layers.py:182` and `:245`,
-  `C:compile_explain.py:235`, `C:preflight.py:754`, `C:tokenize.py:343`, `C:api.py:521` (its existing
+  `C:compile_explain.py:235`, `C:preflight.py:456` and `:754`, `C:tokenize.py:343`, `C:api.py:521` (its existing
   `base_dir`: `config.parent`, or the working directory for an in-memory dict), `C:demo.py:234`. Plus the walk
-  sentry.
+  sentry. `C:_sources.py:27` delegates its existing `resolve_path` API to
+  `decoy_engine.fileaccess.config_relative`.
 - `read_csv_frame` (`C:_sources.py:43-70`) passes `resolve_csv_dialect` a descriptor copy whose
   `column_names_file` is resolved like `path`.
 - Warnings in the summary. Card fact `Warnings: N` and, under the card, one line per warning. Known codes get a
@@ -279,7 +334,7 @@ through `fileaccess.shown` as today, so a strict policy still redacts.
 - Seed and key. `--master-key` affects generation only (`C:run.py:292-300`); masking still reads
   `global_settings.seed` through `plan/_seed.py`. When the config has at least one generate table, a key is in
   effect (`--master-key` or `DECOY_MASTER_KEY`) and the YAML sets `global_settings.seed`, the run adds CLI
-  warning `seed_ignored_with_master_key`: "global_settings.seed is not used for generated tables when a master
+  warning `warning.seed_ignored_with_master_key`: "global_settings.seed is not used for generated tables when a master
   key is set; the key and --key-label decide them. Masked tables still use the seed." The `--master-key` help
   says the same.
 - `run.py` stays flat: the three report renderers (`C:run.py:1352-1455`: `_render_execution_route`,
@@ -304,10 +359,12 @@ through `fileaccess.shown` as today, so a strict policy still redacts.
   (moved out of `fit.py` into one function both call) and writes a config with one generate table:
   `row_count` equal to the CSV's rows, one `type: statistical` column per CSV column with
   `snapshot_file: <stem>.snapshot.json` (relative to the config, per guarantee 1), and target
-  `<stem>.synthetic.csv`. Both files are written with `write_local_target`, as `fit` writes its snapshot
+  `<stem>.synthetic.csv`. The snapshot uses the same serializer that `fit` passes to `write_local_target`
   (`C:fit.py:497`). Overwrite follows init's own rule for its config (`C:init.py:512`: an existing file needs
-  `--yes`), checked for both files before either is written. Order: snapshot, config, `decoy validate`. If the
-  config write or validation fails, init removes the files it created in this call and exits 1.
+  `--yes`), checked for both files before either is written. The candidate pair is validated from a temporary
+  sibling layout first. `_atomic.publish_local_targets` then publishes snapshot and config as one rollback unit.
+  A validation failure publishes neither; a failure on either replace restores the exact old bytes and modes at
+  both destinations, or removes both when they were new, then exits 1.
 
 ### CLI C3 (help and explain text, low risk)
 
@@ -346,21 +403,23 @@ Engine entries that reach a snapshot read (section 3 lists what each passes):
 - `validate_plan` (`plan/validate/_consolidator.py:88`).
 - `compile_pinned_plan_with_generation` (`generation/_pinned_compile.py:255`).
 - `estimate_job_capacity` (`execution/capacity.py:351`) and `estimate_job` (`execution/_job_estimate.py:130`).
+- `capture_physical_plan_inputs` (`execution/physical/_snapshot.py:49`, compile at `:152`).
 - Out of scope with reasons (section 3): `execution/_chunked_oracle.py:246`, `execution/native/_plan.py:163`.
 - `plan/_serialize.py:442` rebuilds from pinned bytes and never reads: N/A.
 
 CLI call sites of those entries (the sentry derives this list by walking; the list is for review):
 `C:run.py:868`, `C:gate/_layers.py:182`, `C:gate/_layers.py:245`, `C:compile_explain.py:235`,
-`C:preflight.py:754`, `C:tokenize.py:343`, `C:api.py:521`, `C:demo.py:234`.
+`C:preflight.py:456`, `C:preflight.py:754`, `C:tokenize.py:343`, `C:api.py:521`, `C:demo.py:234`.
 
 Generation routes that run the fidelity gate, all through `run_generation` (`generation/_streamed.py:319`):
 
 - Public entries in `generation/_plan_entry.py`: `generate_tables` (`:147`), `generate_tables_streamed`
   (`:216`), `generate_tables_from_generation_plan` (`:252`), `generate_tables_streamed_from_generation_plan`
   (`:284`).
-- Execution callers: `execution/_pipeline_generate_mask.py:128` (generate and mixed full frame; its
-  `pregenerated` input comes from the same entry on an earlier stage), `execution/_pipeline_mixed_route.py:74`
-  (mixed route), `execution/physical/drivers/_synthesis.py:50` (physical plan synthesis stage).
+- Execution callers: `execution/_pipeline_generate_mask.py:128` (pure generate and mixed full frame) and
+  `execution/_pipeline_mixed_route.py:74` (admitted mixed route, plus its runtime-decline handoff to the full
+  frame caller). `execution/physical/drivers/_synthesis.py:50` admits no statistical column, so it cannot reach
+  this gate.
 - The mixed route's chunked lane runs only mask tables (`_pipeline_mixed_route.py:214`): N/A.
 - Native: no generation kernel: N/A.
 
@@ -373,8 +432,9 @@ Generation routes that run the fidelity gate, all through `run_generation` (`gen
 | `init -o -` | with `--json`, or a CSV generate scaffold | n/a | 1 |
 | `run`, `validate` | relative `snapshot_file` not beside the config | 0 from the right folder, 1 elsewhere | 1 from any folder, message shows the resolved path |
 
-No exit integer is added or moved. No file, lease or temp resource is added, so no cleanup path is added;
-the `--fidelity` and `--rows` refusals run before the first engine call.
+No exit integer is added or moved. The `--fidelity` and `--rows` refusals run before the first engine call. The
+generate scaffold adds staged files and rollback, owned by `_atomic.publish_local_targets`; AT-23 covers every
+failure point and both new and overwritten destinations.
 
 ### 5.3 FK shapes
 
@@ -390,7 +450,7 @@ YAML path fields and the rule each follows:
 | Field | Read or written by | Today | After |
 |---|---|---|---|
 | `targets[].path` | CLI `io/_targets.py:423-445` | config folder | unchanged (24t changes it later) |
-| `sources[].path` | CLI `run.py:1559` `_load_sources_from_config`, `api.py:501` | config folder | unchanged |
+| `sources[].path` | CLI `run.py:1559` `_load_sources_from_config`, `api.py:501` | config folder | unchanged; resolver delegates to the engine choke point |
 | `snapshot_file` | engine `plan/_generation.py:130`, `_spec.py:174` | working directory | config folder |
 | `sources[].column_names_file` | engine `profile/_csv_reader.py:95-111` via `resolve_csv_dialect`, called by CLI `_sources.py:65` and `capacity._resolved_config_copy` callers | working directory | config folder |
 | `quarantine.output_path` | engine `quarantine.py:254`, path set by `_pipeline_context.with_quarantine_path` | working directory | config folder; a `quarantine_path` argument wins and is used as given |
@@ -399,8 +459,9 @@ YAML path fields and the rule each follows:
 `x-decoy-path`; the build re-runs this walk on its base and adds any new field to the table.
 
 New keys: no YAML key. Keyword `base_dir` on the section 3 engine entries and two readers; `on_warning` on
-`run_generation` and the four generation entries; public names `generation_order` and `generate_option_catalog`; `QualityWarning` code
-`generation_fidelity_below_threshold`; CLI warning code `seed_ignored_with_master_key`; CLI option `run --rows`;
+`run_generation` and the four generation entries; public names `fileaccess.config_relative`,
+`generation_order` and `generate_option_catalog`; registered warning codes
+`warning.generation_fidelity_below_threshold` and `warning.seed_ignored_with_master_key`; CLI option `run --rows`;
 `run --json` key `warnings`; `validate compile --explain --json` key `generation`.
 
 ### 5.5 Output surfaces
@@ -420,15 +481,16 @@ New keys: no YAML key. Keyword `base_dir` on the section 3 engine entries and tw
 | # | Class | Where it applies | Structure that closes it | Proof | Mutation that must turn it red |
 |---|---|---|---|---|---|
 | 1 | Value-bearing output | warning lines and `--json` warnings; preview rows; the unreadable-snapshot message | warnings carry table and column names and scores only; preview prints only what a real run would write (statistical categorical columns can carry snapshot categories the config already admits with `allow_real_categories`) and refuses mask tables, so no source row from a mask table prints; the message goes through `fileaccess.shown` | AT-9 (no cell values in warnings), AT-15 (mask table refused), AT-6 | M1: let `--rows` run a mixed config (AT-15 red) |
-| 2 | Cleanup missing on an exit path | `--fidelity` and `--rows` refusals; `init` scaffold failure | refusals run before any engine call; the scaffold writes through `write_local_target`, validates, and removes the files it created when the config write or validation fails | AT-11 (empty target folder), AT-15, AT-18, AT-23 (no files left) | M2: refuse `--fidelity` after the engine call (AT-11 red) |
-| 3 | State machine and concurrency | the warning sink | a list local to one `run_pipeline` call; no module state | AT-8 run twice in one process gives one warning each | M3: hoist the sink list to module scope (AT-8 second run red) |
-| 4 | Route parity and silent fallback | the four generation entries and three execution callers; the eight CLI entry calls; `resolve_csv_dialect` | one sink keyword on `run_generation`; one walk sentry over CLI calls | AT-8 route matrix; AT-5 sentry | M4: drop the sink on the mixed route (AT-8 red) |
+| 2 | Cleanup missing on an exit path | `--fidelity` and `--rows` refusals; `init` scaffold failure | refusals run before any engine call; the scaffold validates before publish and `_atomic.publish_local_targets` restores old files or removes new ones on any failed replace | AT-11 (empty target folder), AT-15, AT-18, AT-23 (old bytes and modes or no new files) | M2: fail the scaffold's second replace without rollback (AT-23 red) |
+| 3 | State machine and concurrency | the warning sink; two scaffold publishers | a list local to one `run_pipeline` call with no module state; one non-blocking parent-directory lock spans each pair publish | AT-8 run twice in one process gives one warning each; AT-23 overlap cell refuses the second publisher without mutation | M3: hoist the sink list to module scope (AT-8 second run red); remove the publish lock (AT-23 overlap red) |
+| 4 | Route parity and silent fallback | the four generation entries, the two execution callers and the mixed runtime-decline handoff; the nine CLI entry calls; `resolve_csv_dialect` | one sink keyword on `run_generation`; warnings travel beside pregenerated tables; one walk sentry over CLI calls | AT-8 route matrix; AT-5 sentry | M4: drop `pregenerated_warnings` on the mixed decline (AT-8 red) |
 | 5 | Referential integrity | `run --rows` scaling; `generation_order` | one ratio for every table; the order walk is the one `generate_tables` uses | AT-14 (child keys exist in the parent sample), AT-20 | M5: scale only the largest table (AT-14 red) |
-| 6 | Untrusted producer | YAML path strings; `--rows N`; the CSV given to `init` | lexical join only when relative; absolute kept; the file policy still authorizes the read; `N` bounded 1 to 1000; the CSV goes through `fit`'s reader | AT-3, AT-4, AT-15 | M6: accept `--rows 0` (AT-15 bound cell red) |
+| 6 | Untrusted producer | YAML path strings; `--rows N`; the CSV given to `init` | `fileaccess.config_relative` is the one lexical join; absolute kept; the file policy still authorizes the read; `N` bounded 1 to 1000; the CSV goes through `fit`'s reader | AT-3, AT-4, AT-5, AT-15 | M6: replace the snapshot read's helper call with a local join (AT-5 path-choke cell red) |
 | 7 | Check then use (TOCTOU) | the snapshot read | the one read pass pins bytes and the hash covers the bytes; resolving the locator adds no second open | AT-1, AT-2 | M7: stat the resolved path before reading it in a second open (AT-1 spy on `read_all` count red) |
 | 8 | Weak tests | AT-1 from the config folder alone would pass on base | AT-1 runs from a second folder; AT-8 runs the same config at threshold 0.0 and asserts no warning | AT-1, AT-8 non-vacuity cells | M8: always emit the warning (AT-8 threshold 0.0 cell red) |
 | 9 | Refactor drift | `generation_order` extraction; renderers moved out of `run.py` | `generate_tables` calls the accessor; moved renderers keep their text | AT-8 output bytes equal base; existing renderer tests unchanged | M9: reverse the order in the accessor (AT-8 bytes red) |
 | 10 | Frozen contract drift | `pipeline_config_hash`, output bytes, exit codes, `run --json`, public API | the config dict is never rewritten; additive keys and keywords; exit integers unchanged | AT-2, AT-8, AT-11, AT-9 | M10: rewrite `snapshot_file` to an absolute path in the CLI (AT-2 red) |
+| 11 | Parallel reason tables | the two new warning codes and their user renderers | both identities and fixed safe summaries live in the engine reason registry; render detail is derived from the `QualityWarning` record | AT-9, AT-13, AT-26 | M11: delete one registry entry while keeping its producer (AT-26 red) |
 
 ## 7. Acceptance tests (red first)
 
@@ -436,19 +498,19 @@ Each test is red on the named wrong build. "Base" is engine `84f4290d` with CLI 
 
 | # | Test | Red on |
 |---|---|---|
-| AT-1 | Config in folder A with `snapshot_file: snap.json` beside it. `decoy run` from folder B succeeds and writes the same bytes to the same absolute targets as a run from A; a spy shows one `read_all` per snapshot per compile (the run's validate gate compiles once, `C:run.py:669`, and the run compiles once) | base (B cannot read `snap.json`) |
-| AT-2 | `pipeline_config_hash` and the evidence config hash are equal for runs from A and from B, and equal to the base build's run from A | a build that rewrites `snapshot_file` to an absolute path in the CLI |
+| AT-1 | Config in folder A with `snapshot_file: snap.json` beside it. `decoy run` from folder B succeeds and writes the same bytes to the same absolute targets as a run from A; a spy shows one `read_all` per snapshot in each snapshot-read pass. A run has three passes: config-only gate (`C:gate/_layers.py:182`), compile gate (`:245`) and run compile (`C:run.py:868`) | base (B cannot read `snap.json`) |
+| AT-2 | `pipeline_config_hash` and the evidence config hash are equal for runs from A and from B, and equal the checked-in hash captured from engine `84f4290d` run from A. The fixture records its source config and capture command, not only the expected digest | a build that rewrites `snapshot_file` to an absolute path in the CLI |
 | AT-3 | An absolute `snapshot_file` reads the same file from A and from B | a mutant that joins `base_dir` by string concatenation |
 | AT-4 | `compile_plan` with no `base_dir` under a `RootedFileAccess` reads a root-relative snapshot exactly as on base | a mutant that calls `abspath` on the locator when `base_dir` is `None` |
-| AT-5 | Walk sentry (`C:tests/sentry/io_policy/test_engine_base_dir.py`): every call of the section 3 engine entries in `src/decoy/` passes `base_dir=` as a keyword. Behavioral half: `validate config`, `validate compile --explain` and `ci check` from B pass on AT-1's config | a seeded copy without `base_dir` at `gate/_layers.py:245`; a seeded positional `estimate_job_capacity(d, p)` |
+| AT-5 | Walk sentry (`C:tests/sentry/io_policy/test_engine_base_dir.py`): every call of the section 3 engine entries in `src/decoy/` passes `base_dir=` as a keyword. The shared scanner sees direct imports, module aliases, `from` aliases and imported submodule attributes, and refuses positional `base_dir`. Engine path-choke guard: the snapshot readers and every `FILE_SOURCE_PATH_FIELDS` rewrite call `fileaccess.config_relative`; the old `_resolve_source_path` is absent. Behavioral half: `validate config`, `validate compile --explain` and `ci check` from B pass on AT-1's config | a seeded copy without `base_dir` at `gate/_layers.py:245`; a seeded positional `estimate_job_capacity(d, p)`; replacing the snapshot helper call with a local join |
 | AT-6 | `snapshot_file` missing from A but present in B, run from B: exit 1, the message names `<A>/snap.json` and the rule | a build whose message shows only the declared string |
 | AT-7 | Run from B: a relative `column_names_file` is read from A by `decoy run`, `decoy validate preflight` (the capacity estimate) and `decoy report fidelity --config`; a relative `quarantine.output_path` is written in A | base |
-| AT-8 | Statistical generate config, `fidelity_warn_threshold: 0.99`, one weak column: `ExecutionResult.warnings` has one `generation_fidelity_below_threshold` with table, scores, threshold and worst columns. Parametrized over the four `_plan_entry` entries and every run route that generates (auto, sequential, full frame, mixed with a mask table). Output bytes equal the base build's. Non-vacuity: the same config at threshold 0.0 raises none; two runs in one process raise one each | base (no warning); a mutant that drops the sink on the mixed route |
+| AT-8 | Statistical generate config, `fidelity_warn_threshold: 0.99`, one weak column: the callback or `ExecutionResult.warnings` has one `warning.generation_fidelity_below_threshold` with table, scores, threshold and worst columns. Parametrized over the four `_plan_entry` entries and the actual execution routes: pure-generate full frame, forced-full-frame mixed, admitted mixed, and admitted mixed forced to runtime-decline after generation. The decline case asserts the warning appears once, not zero or twice. Output bytes equal checked-in golden bytes captured from engine `84f4290d`; the fixture records its source config and capture command. Non-vacuity: the same config at threshold 0.0 raises none; two runs in one process raise one each | base (no warning); a mutant that drops the sink on the mixed route or its decline handoff |
 | AT-9 | Same config through `decoy run`: the card shows `Warnings: 1` and the sentence; `--json` `warnings` has that code; exit 0. A clean run has `"warnings": []`. No warning line or `detail` value holds a generated or source cell value | base CLI (no key) |
 | AT-10 | Human `run` output lists each table with rows and file | base CLI |
 | AT-11 | Generate-only config with `--fidelity`: exit 1, the target folder is empty, stderr equals the exact text in section 4 C1 | base (exit 0); a build that names a `report fidelity <config>` form |
 | AT-12 | Mixed config with `--fidelity`: the mask report prints, then the generated-tables line, exit 0 | a build that refuses any config with a generate table |
-| AT-13 | Generate-only, seed plus key: warning `seed_ignored_with_master_key`, exit 0, output equal to a key-only run. Mixed, seed plus key: the same warning text ("for generated tables"), and the masked table, which uses `strategy: shuffle` with no mask secret (its permutation is seeded from `derive(job_seed, ...)`, `execution/_strategies/_shuffle.py:3-5`), changes bytes when the seed changes. Mask-only, seed plus key: no warning. Seed without key: no warning | base (silent); a mutant that warns whenever a seed is set; a mutant that warns on mask-only configs; a build that drops the seed from mask runs when a key is set |
+| AT-13 | Generate-only, seed plus key: warning `warning.seed_ignored_with_master_key`, exit 0, output equal to a key-only run. Mixed, seed plus key: the same warning text ("for generated tables"), and the masked table, which uses `strategy: shuffle` with no mask secret (its permutation is seeded from `derive(job_seed, ...)`, `execution/_strategies/_shuffle.py:3-5`), changes bytes when the seed changes. Mask-only, seed plus key: no warning. Seed without key: no warning | base (silent); a mutant that warns whenever a seed is set; a mutant that warns on mask-only configs; a build that drops the seed from mask runs when a key is set |
 | AT-14 | `run --rows 5` on a parent of 1,000 and a child of 5,000: `--json` reports 1 and 5 rows, child FK values exist in the parent sample, no file exists under the target folder, no evidence file | a build that ignores `--rows` and writes targets |
 | AT-15 | `run --rows 5` with a mask table, with `--chunked`, with `--evidence-out`, with `--explain-plan`, with `--native`, with `--duckdb-source`, and `--rows 0` or `--rows 1001`: exit 1 before work | a build that silently drops the conflicting flag |
 | AT-16 | `init --preset generate -o -`: stdout is YAML that `decoy validate config` accepts; no file named `-` exists; `-o - --json` exits 1 | base (writes `-`) |
@@ -458,17 +520,21 @@ Each test is red on the named wrong build. "Base" is engine `84f4290d` with CLI 
 | AT-20 | QA config with 3 references: `validate compile --explain` lists the generation order parents first and the 3 references, not "no FK dependencies detected"; `--json` has `generation` | base |
 | AT-21 | `explain generation` names every type in `generate_option_catalog()` and each of its options; the test reads the catalog, not a list | a topic with one type removed from rendering |
 | AT-22 | `explain transforms` lists exactly the `list strategies` set, contains `strategy:`, and contains neither `masking_rule` nor "future --mask"; the engine-internal allowlist baseline is unchanged | base |
-| AT-23 | `init people.csv --preset generate` with validation forced to fail (a test seam on the validate call): exit 1, neither `people.snapshot.json` nor the config exists afterwards. An existing config without `--yes`: refused before either file is written | a build that validates after writing and keeps both files |
+| AT-23 | `init people.csv --preset generate` with validation forced to fail: exit 1 and neither new destination exists. With both destinations pre-existing and `--yes`, inject failure on the second replace: exit 1, both old byte strings and modes remain exact, and no staging or backup file remains. Repeat with both destinations new: neither remains. An existing config or snapshot without `--yes` is refused before staging. Pause one publisher after its first replace, start a second for the same pair, and assert that the second refuses without mutation and the final pair belongs wholly to the first | a build that validates after writing; a rollback that deletes overwritten files; two independent atomic writes; a publisher without the parent lock |
 | AT-24 | `run_pipeline_isolated(..., isolate=True, base_dir=str(A))` from B reads `<A>/snap.json` in the child and matches the in-process run; `base_dir=Path(A)` raises the existing JSON-serializable `ValueError` | base (no `base_dir`); a build that resolves in the parent and drops the value from the payload |
-| AT-25 | An unvalidated dict where generate table `orders` references mask table `customers`: `generate_tables`, `generate_tables_streamed` and both `_from_generation_plan` entries raise `ValueError` "table 'orders' column 'customer_id': reference_table 'customers' is not a generate table", and `generation_order` raises the same | a build where `generation_order` keeps `_table_order`'s skip (the streamed entry raises `KeyError`) |
+| AT-25 | A raw dict, and forged-but-typed `Plan` and `GenerationPlan` fixtures whose embedded config has generate table `orders` reference mask table `customers`: `generation_order`, `generate_tables`, `generate_tables_streamed` and both `_from_generation_plan` entries raise `ValueError` "table 'orders' column 'customer_id': reference_table 'customers' is not a generate table" | a build where `generation_order` keeps `_table_order`'s skip (the streamed entry raises `KeyError`) |
+| AT-26 | The reason manifest contains both new warning codes with fixed value-free summaries; every produced warning resolves through `require_known`; deleting either catalog entry fails the reason sentries and the manifest fixture | a producer with a free string code or a parallel CLI-only code table |
+| AT-27 | `capture_physical_plan_inputs(..., base_dir=A)` from B reads `<A>/snap.json`; omitting `base_dir` keeps the base working-directory behavior | a build that adds `base_dir` to the other compile callers but misses `execution/physical/_snapshot.py:152` |
 
-Test placement: engine AT-2 to AT-4 and AT-8 in `tests/unit/plan/` and `tests/unit/execution/` beside the existing
-snapshot and gate tests; CLI behavior tests in `tests/e2e/first_user/test_items_generate.py` (a new file in the
-named folder); the sentries as named above.
+Test placement: engine AT-2 to AT-4, AT-8 and AT-27 in `tests/unit/plan/`, `tests/unit/execution/` and
+`tests/physical/` beside the existing snapshot, gate and physical-input tests; reason test AT-26 beside the
+reason manifest tests; CLI behavior tests in `tests/e2e/first_user/test_items_generate.py` (a new file in the
+named folder); atomic rollback tests beside `tests/unit/test_atomic.py`; the sentries as named above.
 
-Mutations to run on each final head: E1, drop `base_dir` in `read_and_pin_snapshots`, and drop the sink in one
-`generate_tables` caller. C1, remove `base_dir` from one call site, and warn on a seed without a key. C2, write
-targets under `--rows`. C3, drop one type from the topic render. Each must turn a test red.
+Mutations to run on each final head: E1, drop `base_dir` in `read_and_pin_snapshots`, drop the mixed-decline
+warning handoff, and remove one new reason entry. C1, remove `base_dir` from one call site, and warn on a seed
+without a key. C2, write targets under `--rows`, fail the second scaffold replace, and remove the scaffold
+publish lock. C3, drop one type from the topic render. Each must turn a test red.
 
 ## 8. Owner questions
 
@@ -492,9 +558,10 @@ targets under `--rows`. C3, drop one type from the topic render. Each must turn 
 
 ## 9. Reuse inventory
 
-- `resolve_path` (`C:_sources.py:27`) stays the CLI's one YAML path resolver for targets and sources.
-- `capacity.py:156-191` is the pattern for the engine helper.
+- `capacity.py:156-191` supplies the existing rule promoted to `fileaccess.config_relative`; `resolve_path`
+  (`C:_sources.py:27`) stays the CLI API but delegates to that public engine choke point.
 - `QualityWarning` and `ExecutionResult.warnings` carry the new warning; no new channel.
+- The reason registry carries both new warning identities and fixed summaries; no parallel code list.
 - `_topo_sort` (`synthesize.py:202`) becomes the core of `generation_order`; `synthesize.py` and
   `_streamed._table_order` both call the accessor, so one walk exists.
 - `GENERATE_OPTIONS` and `COMMON_OPTIONS` back the topic; the strategy data function in `cockpit.py` backs
@@ -503,22 +570,29 @@ targets under `--rows`. C3, drop one type from the topic render. Each must turn 
   `_csv_frame` (the Arrow-to-CSV writer in `io/_targets.py`) is not reused: init writes JSON and YAML.
 - `capacity._resolved_config_copy` gains the other `FILE_SOURCE_PATH_FIELDS` fields instead of a second
   resolver.
+- `_atomic.py`'s staged local writer and `run.py`'s vault rollback pattern become one multi-target publisher;
+  its parent-directory lock follows `distribution/lock.py`; the scaffold does not grow a private cleanup or
+  locking protocol.
 - `render_card` and `make_table` (`C:ui/`) for all new output.
 
-## 10. Placement (checked against CLI `CODEMAP.md` "Where things go", `:42-63`)
+## 10. Placement (checked against engine `CODEMAP.md:225-246` and CLI `CODEMAP.md:42-63`)
 
 | Change | File | Sits beside | CODEMAP |
 |---|---|---|---|
-| `base_dir`, `config_relative`, `pin_and_check_snapshots` | engine `plan/_generation.py`, `generation/statistical/_spec.py`, `plan/_compile.py`, `execution/_pipeline.py`, `_pipeline_context.py` (`build_run_context`, `with_quarantine_path`) | the existing read pass | no new engine module |
+| Shared config-relative rule | new engine `fileaccess/_config_path.py`, exported by `fileaccess/__init__.py` | `_component.py` and the file-access public facade | engine line 240, "Secret providers, file access"; no map change; package has 13 direct Python modules before, 14 after |
+| `base_dir`, `pin_and_check_snapshots` | engine `plan/_generation.py`, `generation/statistical/_spec.py`, `plan/_compile.py`, `execution/_pipeline.py`, `_pipeline_context.py` (`build_run_context`, `with_quarantine_path`) | the existing read pass | no new module |
 | `base_dir` on the other compile callers | engine `plan/validate/_consolidator.py`, `generation/_pinned_compile.py`, `execution/capacity.py` (`_resolved_config_copy` gains the names file), `execution/_job_estimate.py` | the existing `compile_plan` calls | none |
-| Fidelity sink | engine `generation/_fidelity_gate.py`, `synthesize.py`, `_streamed.py` (`run_generation`, `_run_legacy`), `_plan_entry.py`, the three execution callers | `warn_on_low_fidelity` | none (`generation/` has 26 entries, so no new file there) |
+| Physical snapshot `base_dir` | engine `execution/physical/_snapshot.py` | its existing `compile_plan` call | engine line 230, "Physical seam" |
+| Fidelity sink | engine `generation/_fidelity_gate.py`, `synthesize.py`, `_streamed.py` (`run_generation`, `_run_legacy`), `_plan_entry.py`, the two execution callers and full-frame handoff | `warn_on_low_fidelity` | none (`generation/` has 26 entries, so no new file there) |
+| Warning reason identities | engine `reasons/warning/` catalog and manifest fixture | existing warning reasons | engine line 238, "Reason codes" |
 | `generation_order` | engine `generation/synthesize.py`, called from `_streamed.py` | `_topo_sort` | none |
-| `generate_option_catalog` | engine `config/_generate_options.py` | `GENERATE_OPTIONS` | none |
+| `GenerateTypeOptions`, `generate_option_catalog` | engine `config/_generate_options.py` | `TypeOptions`, `GENERATE_OPTIONS` | none |
 | CLI `base_dir` call sites | the eight files in 5.1 | the existing calls | none |
-| `column_names_file` resolution | `src/decoy/_sources.py` (`read_csv_frame`) | `resolve_path` | none |
+| CLI path wrapper and `column_names_file` resolution | `src/decoy/cli/_sources.py` (`resolve_path`, `read_csv_frame`) | existing source reads | existing frozen exception at line 50; no new module |
+| Multi-target local publication | `src/decoy/_atomic.py` | `write_local_target`, `staged_local_target` | line 48, shared filesystem primitives |
 | Strategy data for `list strategies` and `explain transforms` | `src/decoy/cli/cockpit.py` | `_strategies_list` | none; the engine-internal allowlist gains no entry |
 | Walk sentry | `tests/sentry/io_policy/test_engine_base_dir.py` | `_calls.py` (the shared call scanner) | row "I/O policy sentries" |
-| Summary rendering and moved renderers | `src/decoy/ui/run_summary.py` | `card.py`, `table.py` | `ui/` is an existing package with 7 modules; no row needed |
+| Summary rendering and moved renderers | `src/decoy/ui/run_summary.py` | `card.py`, `table.py` | add row "Run summary renderers" in C1; `ui/` has 7 direct modules before, 8 after |
 | Preview, CSV generate scaffold, generation topic | new sub-package `src/decoy/cli/gen/` (`_preview.py`, `_scaffold.py`, `_topic.py`) | | new row "Generation CLI helpers" (a map change, made in C2), because `cli/` is frozen and over the fan-out limit |
 | Help panels | `src/decoy/__main__.py` | the registrations at `:242-260` | none |
 | Help sentry | `tests/sentry/cli_text/test_help_panels.py` | `test_no_traceback_escape.py` | row "User-facing CLI text" |
@@ -527,10 +601,11 @@ targets under `--rows`. C3, drop one type from the topic render. Each must turn 
 Sizes at base: `run.py` 1,748 (over the 900 cap; must not grow), `init.py` 691 (C2 adds only the call into
 `cli/gen/_scaffold.py` and the `-o -` branch, about 25 lines), `explain.py` 677 (C3 adds the render hook and
 text, net about 30), `compile_explain.py` 498, `__main__.py` 264. Engine: `synthesize.py` 500,
-`_fidelity_gate.py` 198, `_generate_options.py` 382, `plan/_generation.py` 286 (gains `config_relative` and
-`pin_and_check_snapshots`, about 50), `_spec.py` 581 (the `base_dir` keyword keeps it under 600),
+`_fidelity_gate.py` 198, `_generate_options.py` 382, `plan/_generation.py` 286 (gains
+`pin_and_check_snapshots`, about 35), `_spec.py` 581 (the `base_dir` keyword keeps it under 600),
 `_streamed.py` 557, `_plan_entry.py` 306, `capacity.py` 551, `_consolidator.py` 113, `_pinned_compile.py` 326,
-`_pipeline_context.py` 545, `_job_estimate.py` 208. Three pinned files:
+`_pipeline_context.py` 545, `_job_estimate.py` 208, `execution/physical/_snapshot.py` 261. CLI `_atomic.py`
+is 521 and gains about 70 lines, staying under 900. Three pinned files:
 
 - `plan/_compile.py` 680, census entry at exact LOC (`tests/sentry/test_module_size.py:92`). The
   `pin_and_check_snapshots` fold removes the duplicated read and check block (`:184-191`, `:519-526`), which
@@ -559,6 +634,9 @@ text, net about 30), `compile_explain.py` 498, `__main__.py` 264. Engine: `synth
   the engine CHANGELOG and API reference).
 - `pipeline_config_hash` and output bytes: unchanged, pinned by AT-2 and AT-8.
 - Evidence manifest `quality_summary`: gains the new code for low-fidelity generate runs (same shape).
+- Reason manifest: gains two warning codes. If REG-RELEASE (`plan/reg-release`) has merged, they use
+  `since=UNRELEASED` and E1 leaves `REGISTRY_VERSION` alone for the release to stamp. Otherwise E1 takes the
+  next minor at build time, as today, and renumbers at merge.
 - CLI exit codes: integers unchanged; two cases move from 0 to 1 (5.2).
 - `run --json`: additive `warnings`; the preview payload is new and marked `"preview": true`.
 
@@ -566,19 +644,20 @@ text, net about 30), `compile_explain.py` 498, `__main__.py` 264. Engine: `synth
 
 | Slice | Repo | Branch | Size (hand-written) | Content | Gate |
 |---|---|---|---|---|---|
-| E1 | engine | `feat/gen-cli-e1` | M, about 220 lines plus tests | `base_dir` and the helper on the section 3 entries (with the D-PATHS fields and `_resolved_config_copy`), `pin_and_check_snapshots`, the fidelity sink on `run_generation` and the four entries, `generation_order` for both walks, `generate_option_catalog`, docstrings; AT-2 to AT-4, AT-7, AT-8 engine halves, AT-24 | full suite: a serialized contract (manifest `quality_summary`) and the public API |
+| E1 | engine | `feat/gen-cli-e1` | M, about 300 lines plus tests | public config-path helper and guard; `base_dir` on the section 3 entries (with D-PATHS fields, `_resolved_config_copy` and physical capture); `pin_and_check_snapshots`; registered warning codes; fidelity sink and the mixed-decline handoff; `generation_order`; `GenerateTypeOptions` and `generate_option_catalog`; docstrings; AT-2 to AT-4, AT-7, AT-8 engine halves, AT-24, AT-26, AT-27 | full suite: reason and serialized result contracts plus public API |
 | R | engine | release | n/a | engine release with E1 (owner step, not a build slice) | release checks |
-| C1 | CLI | `feat/gen-cli-c1` | M, about 210 lines plus 104 moved | engine pin bump, `base_dir` at every entry and the walk sentry, the `read_csv_frame` names-file descriptor, warnings and per-table lines, `--fidelity` refusal, seed warning, renderers moved to `ui/run_summary.py`; AT-1, AT-5, AT-6, AT-9 to AT-13 | full suite (version pin) |
-| C2 | CLI | `feat/gen-cli-c2` | M, about 230 lines | `cli/gen/` with `_preview.py` and `_scaffold.py`, the CODEMAP row, `run --rows`, `init -o -`, `init <csv> --preset generate` with cleanup; AT-14 to AT-18, AT-23 | T1 plus the T2 set on the exact head |
+| C1 | CLI | `feat/gen-cli-c1` | M, about 210 lines plus 104 moved | engine pin bump, `base_dir` at every entry and the walk sentry, `resolve_path` delegation, the `read_csv_frame` names-file descriptor, warnings and per-table lines, `--fidelity` refusal, seed warning, renderers moved to `ui/run_summary.py`, CODEMAP row; AT-1, AT-5, AT-6, AT-9 to AT-13 | full suite (version pin) |
+| C2 | CLI | `feat/gen-cli-c2` | M, about 300 lines | locked `_atomic.publish_local_targets`; `cli/gen/` with `_preview.py` and `_scaffold.py`; CODEMAP row; `run --rows`; `init -o -`; `init <csv> --preset generate` with prevalidation and rollback; AT-14 to AT-18, AT-23 | T1, then reviewer T2 on the exact head |
 | C3 | CLI | `feat/gen-cli-c3` | S, about 180 lines plus docs | help panels and sentry, `validate compile --explain` for generate, `explain generation` (`cli/gen/_topic.py`), `transforms` (with the `cockpit.py` strategy data function), `pipeline`, `yaml`, README, CLI reference, CHANGELOG, roadmap status; AT-19 to AT-22 | T1 |
 
-Order: E1, R, C1, then C2 and C3 in either order. Engine collisions: row 24l E2 edits
-`generation/_fidelity_gate.py:140-143` (frame typing), so E1 builds after 24l E2 merges. Row 24m E1 and E2 edit
-the `synthesize.py` table loop (the `_unique.py` branches) that `generation_order` replaces; whichever of 24m
-and 24o E1 lands second rebases over the other, with the loop's order and the `_unique` branches both kept.
-C2 builds after row 24l C1 merges because both touch `fit.py` (C2 moves the fitting code into one function
-that `fit` and init call). C3 coordinates with row 24m C1, which adds `explain unique` to the same `_TOPICS`
-table. Row 24t builds after C1.
+Order: row 24m E2, then E1, R and C1. Row 24e's cited CLI slices are already in the base; C3 owns the remaining
+topic overlap as OQ1 states. Row 24l E2 is already in the engine base; its E3 may land before or after E1 because
+E3 changes `quality/fidelity.py`, not the warning transport. Serializing E1 after row 24m E2 avoids extracting
+`generation_order` across an in-flight rewrite of the `synthesize.py` table loop and makes the option catalog
+include `unique` on first release. C2 builds after row 24l C1 because both touch `fit.py`; C3 builds after row
+24m C1 because its generation topic points to the `explain unique` topic and both edit `_TOPICS`. Row 24s
+builds after E1 and extends the same catalog record. Row 24t P2b/P4 build after C1 for the shared run summary,
+and its P7 builds after C2 so `write_pipeline_scaffold` can call the generation scaffold.
 
 Commit subjects follow `workspace-and-vcs.md`: Conventional Commits, 72 characters at most, final line `cam`.
 
@@ -588,11 +667,11 @@ Commit subjects follow `workspace-and-vcs.md`: Conventional Commits, 72 characte
 |---|---|
 | A user's config relied on the working directory and breaks | AT-6 message names the resolved path and the rule; CHANGELOG entry; pre-GA hard change |
 | A new CLI command calls an engine entry without `base_dir` | AT-5 walk sentry in the merge-gate suite |
-| A future generate route skips the warning sink | the sink sits on `run_generation`, which every route reaches; AT-8 is parametrized over the entries and routes |
+| A future generate route skips the warning sink or loses it with pregenerated tables | the sink sits on `run_generation`; the callback is on every public entry; AT-8 covers both mixed outcomes and the handoff |
 | Warnings flood the card on large runs | one line per warning; revisit with a cap only if a real run shows it |
 | `run.py` grows past where it is | the renderer move nets about minus 60 lines in C1; the build report states the count |
 | C2 and row 24t both create an init scaffold | D-SCAFFOLD names one owner and one call direction |
-| `init <csv>` leaves half a scaffold on failure | write order plus cleanup, AT-23 |
+| `init <csv>` leaves half a scaffold, deletes an overwritten file or collides with another writer | central staged batch publication with rollback and a parent-directory lock; AT-23 failure and overlap cells |
 | A pinned engine module grows | the `_compile.py` fold, the `_pipeline.py` line budget and no `_isolated_run.py` edit (section 10) |
 | The topic and row 24s build two lists | OQ2: one accessor, extended by 24s |
 
