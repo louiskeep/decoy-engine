@@ -85,7 +85,11 @@ def _bool(value: Any, _: Mapping[str, Any]) -> list[Problem]:
 
 
 def _mapping(value: Any, _: Mapping[str, Any]) -> list[Problem]:
-    return _OK if isinstance(value, Mapping) else [((), _TYPE)]
+    # Keys become keyword names or column names, and the plan stores them as JSON, so a
+    # non-string key would fail at run or be coerced; refuse it here.
+    if not isinstance(value, Mapping) or not all(isinstance(k, str) for k in value):
+        return [((), _TYPE)]
+    return _OK
 
 
 def _int_at_least(minimum: int | None, *, nonzero: bool = False) -> Check:

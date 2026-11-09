@@ -129,6 +129,8 @@ BAD: list[tuple[str, dict[str, Any], str, tuple[Any, ...]]] = [
     ("faker", {"locale": ["en_US", 5]}, TYPE, ("locale", 1)),
     ("faker", {"faker_kwargs": [1]}, TYPE, ("faker_kwargs",)),
     ("faker", {"faker_kwargs": "x"}, TYPE, ("faker_kwargs",)),
+    ("faker", {"faker_kwargs": {1: "x"}}, TYPE, ("faker_kwargs",)),
+    ("faker", {"faker_kwargs": {(1, 2): "x"}}, TYPE, ("faker_kwargs",)),
     ("faker", {"faker_type": 5}, TYPE, ("faker_type",)),
     # sequence
     ("sequence", {"start": "1"}, TYPE, ("start",)),
@@ -172,6 +174,7 @@ BAD: list[tuple[str, dict[str, Any], str, tuple[Any, ...]]] = [
     ("statistical", {"other_mode": 3}, TYPE, ("other_mode",)),
     ("statistical", {"condition_on": ["a"]}, TYPE, ("condition_on",)),
     ("derived", {"bounds": [0, 1]}, TYPE, ("bounds",)),
+    ("derived", {"bounds": {1: 0}}, TYPE, ("bounds",)),
     ("derived", {"null_propagation": 1}, TYPE, ("null_propagation",)),
     ("derived_aggregate", {"op": 3}, TYPE, ("op",)),
     ("derived_aggregate", {"column": ["a"]}, TYPE, ("column",)),
