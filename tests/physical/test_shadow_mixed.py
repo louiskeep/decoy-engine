@@ -282,8 +282,8 @@ def test_positive_generate_to_generate_edge_with_independent_mask_graph(tmp_path
     )
     # Add a second, independent generate table declaring a generate->generate
     # relationship edge back to the first -- `relationships:` is a purely
-    # declarative metadata block (`profile/_source.py`'s `_build_relationships`
-    # reads it straight off `config`, never off actual profiled data), so this
+    # declarative metadata block (`profile/_source.py`'s
+    # `profile_relationships_from_config` reads it straight off `config`, never off actual profiled data), so this
     # is config-schema-valid without needing a `reference`-type column (which
     # is outside this slice's admitted generate-column-type set anyway). Not
     # the direction this slice's gate restricts.

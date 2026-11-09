@@ -31,6 +31,20 @@ read. The plan and its config hash are built from the config as given, then the 
 only that path replaced, so the hash and the caller's dict do not change. It has no effect when the
 config has no `quarantine` block. The call signature gains one keyword-only parameter.
 
+### Added (profile_relationships_from_config)
+
+`decoy_engine.profile.profile_relationships_from_config(relationships_config)` returns the config's
+`relationships:` block as a tuple of profile-layer `Relationship` objects, one per child, without
+profiling a source. It replaces the private `_build_relationships`, which is removed. An unequal
+composite column count, or an empty column list, raises `ValueError` from `Relationship`. `profile_source` uses it.
+
+### Changed (library NullHandler on the engine logger)
+
+Importing `decoy_engine` attaches one `logging.NullHandler` to the `decoy_engine` logger, so engine
+warnings no longer reach stderr through Python's last-resort handler. Reconfiguring the logger keeps
+that handler (exactly one), and closes and replaces only the handlers the engine itself created from
+an earlier config. Handlers the host program attached to the `decoy_engine` logger are left in place, except extra `NullHandler`s, which are deduplicated to one.
+
 ### Changed (no default engine log file)
 
 The engine logger no longer writes `logs/decoy_engine.log` into the current folder when the logging

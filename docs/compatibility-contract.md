@@ -330,6 +330,10 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   (A5a): a `format: fixed_width` `FileSource` can now be read through these
   names instead of importing the private `decoy_engine.profile._fixed_width_reader`
   module, which the additive-only rule in §4.1 does not cover.
+  It also includes `decoy_engine.profile.profile_relationships_from_config(relationships_config)
+  -> tuple[Relationship, ...]` (CLI-QA1 E-b): the config's `relationships:` block as one
+  `Relationship` per child, skipping malformed entries; an unequal composite column count, or an
+  empty column list, raises `ValueError`. It replaces the private `_build_relationships`.
   It also includes `read_csv_source`, `CsvDialect` and `resolve_csv_dialect`
   (CLI-DIALECT, 2026-11): `read_csv_source(path, dialect, *, table, dtype=None,
   nrows=None, chunksize=None, file_access=None, field_key="source.path")` reads
