@@ -16,7 +16,7 @@ from tests.unit.generation.unique._gu_e2_support import run, table
 IMPOSSIBLE = str(reasons.runtime.UNIQUENESS_IMPOSSIBLE)
 
 LISTS = [[1, 2], [3], [1, 2], None, [4, 5, 6], [3]]
-DICTS = [{"a": 1}, {"b": 2}, {"a": 1}, None, {"c": 3}, {"b": 2}]
+DICTS = [{"a": 1}, {"a": 2}, {"a": 1}, None, {"a": 3}, {"a": 2}]
 
 
 def _pools(values):
