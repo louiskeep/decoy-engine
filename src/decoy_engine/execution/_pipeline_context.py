@@ -35,10 +35,8 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from decoy_engine import reasons
 from decoy_engine.execution import _guards, _pipeline_auto_chunk, _pipeline_routing
 from decoy_engine.execution._chunked_output_sink import OutputPublish
-from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._transforms_admission import out_of_core_declined, routing_profile
 from decoy_engine.execution._transforms_gate import reject_any_per_table_transforms
 from decoy_engine.profile._readers import LazySource
@@ -430,15 +428,6 @@ def build_run_context(
         now_iso=now_iso,
         quarantine_runtime=quarantine_runtime,
     )
-
-
-def require_quarantine_path(value: object) -> None:
-    """Strict type check for `run_pipeline(quarantine_path=)`; the message carries no value."""
-    if value is not None and not isinstance(value, str):
-        raise ExecutionError(
-            code=reasons.runtime.INVALID_EXECUTION_KNOB,
-            message=f"quarantine_path must be a str or None; got {type(value).__name__}.",
-        )
 
 
 def with_quarantine_path(ctx: PipelineRunContext, path: str | None) -> PipelineRunContext:

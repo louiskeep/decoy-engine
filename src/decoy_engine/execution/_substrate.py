@@ -44,6 +44,19 @@ def require_bool(name: str, value: bool) -> None:
         )
 
 
+def require_optional_nonempty_str(name: str, value: object) -> None:
+    """Fail-fast typed validation for an optional path-like knob: `None`, or a `str` with a
+    non-blank character. The message names the knob and the type, never the value."""
+    if value is None:
+        return
+    if not isinstance(value, str) or not value.strip():
+        shown = type(value).__name__ if not isinstance(value, str) else "a blank str"
+        raise ExecutionError(
+            code=reasons.runtime.INVALID_EXECUTION_KNOB,
+            message=f"{name} must be a non-empty str or None; got {shown}.",
+        )
+
+
 def select_execution_adapter(*, fpe_chunk_count: int = 4) -> ExecutionAdapter:
     """Construct the pandas execution adapter.
 

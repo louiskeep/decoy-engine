@@ -179,11 +179,17 @@ def test_out_of_core_route_receives_the_given_path(
     assert config == before
 
 
-def test_absolute_and_relative_paths_are_passed_through_unchanged(tmp_path: Path) -> None:
-    placed = tmp_path / "abs.jsonl"
+@pytest.mark.parametrize("relative", [False, True])
+def test_absolute_and_relative_paths_are_passed_through_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: bool
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    given = "rel.jsonl" if relative else str(tmp_path / "abs.jsonl")
     config, sources = _single_config(tmp_path, "declared.jsonl")
-    result = run_pipeline(config, sources, engine_version="0.1.0", quarantine_path=str(placed))
-    assert result.quality_metrics["quarantine"]["output_path"] == str(placed)
+    result = run_pipeline(config, sources, engine_version="0.1.0", quarantine_path=given)
+    assert result.quality_metrics["quarantine"]["output_path"] == given
+    assert (tmp_path / ("rel.jsonl" if relative else "abs.jsonl")).is_file()
+    assert not (tmp_path / "declared.jsonl").exists()
 
 
 def test_the_plan_hash_comes_from_the_callers_config(
@@ -208,7 +214,7 @@ def test_the_plan_hash_comes_from_the_callers_config(
     assert _hash_config(first.config) != _hash_config(config)
 
 
-@pytest.mark.parametrize("bad", [True, False, 3, b"q.jsonl", ["q.jsonl"], {"p": "q"}])
+@pytest.mark.parametrize("bad", [True, False, 3, b"q.jsonl", ["q.jsonl"], {"p": "q"}, "", "  "])
 def test_a_non_string_is_refused_before_any_source_is_read(tmp_path: Path, bad: Any) -> None:
     config, _ = _single_config(tmp_path, "declared.jsonl")
 

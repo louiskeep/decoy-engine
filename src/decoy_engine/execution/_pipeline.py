@@ -85,6 +85,7 @@ from decoy_engine.execution._planner import (
     FULL_FRAME_REJECT_ROWS_DEFAULT,
     OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
 )
+from decoy_engine.execution._substrate import require_optional_nonempty_str
 from decoy_engine.execution._transforms_prepare import prepare_transform_sources
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.profile._readers import LazySource
@@ -252,6 +253,7 @@ def run_pipeline(
     `error_policy: quarantine`; the run returns its portable retrieval token on
     `ExecutionResult.quarantine_access`. A declared job runs on any route whose capabilities
     cover its contracts; an explicit `execution_mode` lacking one is refused before any read.
+    `quarantine_path` replaces `quarantine.output_path` after the config hash; a blank or non-`str` is refused.
 
     Under `auto`, a declared job that an admission layer kept off a route (mixed, chunked,
     unified slice, out-of-core, or the multi-table split) falls back to a capable route and says
@@ -259,8 +261,6 @@ def run_pipeline(
     `{route, namespace, code, missing}` entry per route, taken from that route's own registered
     refusal. An undeclared job has no such key, and a forced `execution_mode` still refuses
     instead of falling back.
-
-    `quarantine_path` replaces `quarantine.output_path` after the config hash; non-`str` is refused.
 
     `unified_slice_enabled` (default True since 2026-09-20; admission is the safety
     gate, pass False for legacy): see `_unified_slice.maybe_run_unified_slice`.
@@ -273,7 +273,7 @@ def run_pipeline(
     `None` (every real caller) resolves against the live registry.
     """
     refuse_unapplied_subset(config)  # `subset:` is refused first, before any source is read
-    _ctx.require_quarantine_path(quarantine_path)
+    require_optional_nonempty_str("quarantine_path", quarantine_path)
     # MG-5: the `tokenize` strategy masks per-cell through a platform-injected
     # token vault, threaded only to the FULL-FRAME adapter (bounded routes build
     # their own StrategyContext without it) and else failing closed with
