@@ -181,8 +181,8 @@ def compile_plan(
     check_non_poolable_provider_with_pool_backend(config)
     # DPS Scope B (guide 4.7/5): read-and-pin once so every check below sees the same bytes;
     # DP verification runs first, as check_statistical_columns needs its dp_verified verdicts.
+    check_dp_generate_contract(config)  # Row 31 (DPS-3): config-only, so before any snapshot read
     _pinned_snapshots, _snapshot_read_failures = read_and_pin_snapshots(config)
-    check_dp_generate_contract(config)  # Row 31 (DPS-3): anti-DP knob + condition_on reject
     _dp_verified_columns, _dp_verification = verify_dp_snapshots(config, _pinned_snapshots)
     # Row 12 (capability-gaps WS3, 2026-06-12): statistical generate columns vs their snapshot
     # artifacts; runs in both branches and in run_config_only_checks. `_snapshot_read_failures`
@@ -516,8 +516,8 @@ def run_config_only_checks(
     deterministic_namespace_completeness(config)
     check_non_poolable_provider_with_pool_backend(config)
     # DPS Scope B (guide 4.7/5): same read-verify-validate order as above.
+    check_dp_generate_contract(config)  # Row 31 (DPS-3), before any snapshot read
     _pinned_snapshots, _snapshot_read_failures = read_and_pin_snapshots(config)
-    check_dp_generate_contract(config)  # Row 31 (DPS-3)
     _dp_verified_columns, _dp_verification = verify_dp_snapshots(config, _pinned_snapshots)
     # Row 12 (WS3): consumes the config plus its referenced snapshot
     # artifact (a fitted-model JSON, not source data), so config-only

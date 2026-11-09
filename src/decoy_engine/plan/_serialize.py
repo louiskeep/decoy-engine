@@ -32,7 +32,7 @@ from decoy_engine import reasons
 from decoy_engine.expressions._when_parser import validate_envelope_when
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._checks import check_statistical_columns
-from decoy_engine.plan._checks_dp import verify_dp_snapshots
+from decoy_engine.plan._checks_dp import check_dp_generate_contract, verify_dp_snapshots
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._generation import ReadSnapshot, build_generation_plan
 from decoy_engine.plan._serialize_declared import (
@@ -421,12 +421,15 @@ def _generation_plan_from_dict(data: dict[str, Any]) -> GenerationPlan:
     config-referenced snapshot absent from the pinned set is refused
     before `check_statistical_columns`'s own compile-time fallback (a
     direct filesystem read) can ever run against this untrusted manifest."""
+    # Config-only DP refusal first: an untrusted manifest with a refused config must not reach
+    # snapshot decoding, whose own errors would mask the coded refusal.
+    config = json.loads(data["config_json"])
+    check_dp_generate_contract(config)
     decoded = [
         _pinned_snapshot_from_dict(s, i) for i, s in enumerate(data.get("snapshots", []) or [])
     ]
     pinned_by_path: dict[str, ReadSnapshot] = {read.path: read for _pinned, read in decoded}
 
-    config = json.loads(data["config_json"])
     _require_statistical_snapshots_pinned(config, pinned_by_path)
     dp_verified_columns, dp_verification = verify_dp_snapshots(config, pinned_by_path)
     # C-M1: `failures={}` (never `None`) here -- `_require_statistical_
