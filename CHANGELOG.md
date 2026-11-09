@@ -11,7 +11,7 @@ minimum engine version it was tested against via its
 
 ### Added (reason codes for reference fan-out, 2026-11-09)
 
-Registry 1.12.0 adds six reason identities for fitted reference fan-out: `plan` gets
+Registry 1.14.0 adds six reason identities for fitted reference fan-out: `plan` gets
 `dp_generate_fitted_fanout_unsupported`, `reference_fanout_conflict`, `reference_fanout_invalid`,
 `reference_fanout_missing` and `reference_parent_pool_empty`, and `quality` gets `fanout_column_unknown`.
 Existing identities keep their numbers.
@@ -21,6 +21,65 @@ with `dp_generate_fitted_fanout_unsupported`, because the exact source degree hi
 output. The check reads only the config. It runs in `compile_plan`, `run_config_only_checks` and the load
 of a serialized Plan, before any snapshot is read or decoded, so a missing, unreadable or malformed
 snapshot cannot replace it with a file, digest or JSON error. Use `distribution: random` under DP.
+
+### Added (pipeline `name:` and `is_valid_pipeline_name`, registry 1.12.0)
+
+`PipelineConfig` accepts an optional top-level `name:`. It is a strict string: a non-string, or a
+string that fails the name rule, is refused with `config.pipeline_name_invalid`. The error message and the
+`PipelineConfigError` from `parse_pipeline_config` carry no submitted text; pydantic's own
+`errors()` list still holds it under `input`. A config without `name:` dumps and hashes byte-for-byte as before; the
+field is left out of the dump while unset. `name` is also left out of `Plan.pipeline_config_hash`,
+so renaming a pipeline does not change it. `decoy_engine.is_valid_pipeline_name(value)` is the one
+rule: 1 to 64 characters from `[A-Za-z0-9_.-]`, starting with a letter or digit, not ending in a
+dot, and not a Windows device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`, `LPT1` to `LPT9`,
+any case, any extension). `COM0` and `LPT0` are allowed. The CLI uses it for folder names and
+file stems, so there is no second copy of the pattern.
+
+### Added (run_pipeline quarantine_path)
+
+`run_pipeline(..., quarantine_path=None)` takes the path the quarantine JSONL is written to and uses it
+in place of `quarantine.output_path` for that run. The value must be a `str` or `None`; anything else
+(a bool included) raises `ExecutionError` with code `invalid_execution_knob` before any source is
+read. The plan and its config hash are built from the config as given, then the routes see a copy with
+only that path replaced, so the hash and the caller's dict do not change. It has no effect when the
+config has no `quarantine` block. The call signature gains one keyword-only parameter.
+
+### Added (profile_relationships_from_config)
+
+`decoy_engine.profile.profile_relationships_from_config(relationships_config)` returns the config's
+`relationships:` block as a tuple of profile-layer `Relationship` objects, one per child, without
+profiling a source. It replaces the private `_build_relationships`, which is removed. An unequal
+composite column count, or an empty column list, raises `ValueError` from `Relationship`. `profile_source` uses it.
+
+### Changed (library NullHandler on the engine logger)
+
+Importing `decoy_engine` attaches one `logging.NullHandler` to the `decoy_engine` logger, so engine
+warnings no longer reach stderr through Python's last-resort handler. Reconfiguring the logger keeps
+that handler (exactly one), and closes and replaces only the handlers the engine itself created from
+an earlier config. Handlers the host program attached to the `decoy_engine` logger are left in place, except extra `NullHandler`s, which are deduplicated to one.
+
+### Changed (no default engine log file)
+
+The engine logger no longer writes `logs/decoy_engine.log` into the current folder when the logging
+config has no `file`. Console output is unchanged. A caller that wants a file passes `file`, as before.
+
+### Added (generation capacity floor, 2026-11-09)
+
+A generate run that keeps its output in memory is now refused when the output cannot fit, instead of
+running until the host kills it. `run_generation` and `estimate_job_capacity` share one lower bound,
+`generation_floor_bytes`: each column is priced from its declared Arrow type (fixed-width types at
+their bit width, variable-width types at one int32 offset per row), or at 8 bytes per row when the
+plan runs the legacy whole-table path. The bound is compared with the whole detected memory ceiling
+(cgroup limit, else host RAM), never the 25% planning budget, so a run that fits is not refused.
+`run_generation` raises `GenerationBudgetExceeded` (`generation_budget_exceeded`) before any provider
+runs; the message holds byte counts and the table name only. It is skipped when `budget_bytes` is
+set (the ledger refuses first), when an eligible plan streams to a bounded sink, and when memory
+cannot be detected. `estimate_job_capacity` returns `INSUFFICIENT` with the same code and integer
+`needed_bytes` and `available_bytes` for a config with generate tables, before any source is
+profiled, against its `budget_bytes` override when given (validated and raised to the route
+minimum exactly as the run does); `UNKNOWN` when memory cannot be detected. Repeated generate-column
+names are priced once, as the legacy path keeps one column per name.
+`decoy_engine.errors.CAPACITY_REASON_CODES` lists the three codes a capacity check can report.
 
 ### Added (fit snapshots withhold sensitive values, 2026-11-08)
 

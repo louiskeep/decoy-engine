@@ -89,7 +89,7 @@ DP_SCHEMA_TYPE = _d("dp_schema_type", "DP schema type.")
 
 _d = _catalog.quality("DistributionSnapshotError")
 
-FANOUT_COLUMN_UNKNOWN = _d("fanout_column_unknown", "Fan-out column unknown.", since="1.12.0")
+FANOUT_COLUMN_UNKNOWN = _d("fanout_column_unknown", "Fan-out column unknown.", since="1.14.0")
 HIGH_CARDINALITY_AMBIGUOUS_STRING_COERCION = _d(
     "high_cardinality_ambiguous_string_coercion", "High cardinality ambiguous string coercion."
 )
