@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run the local gates in CI order and print an EVIDENCE block to paste.
 # Usage: scripts/dev/gates.sh [--keep-going] [--baseline] [--baseline-file FILE]
-#        [--write-baseline FILE [--order-from FILE]] [--full] [--steps LIST] [test paths...]
+#        [--write-baseline FILE [--order-from FILE]] [--full] [--steps LIST] [--shard I/N]
+#        [test paths...]
 #   --keep-going  run every step even after a failure (default: stop at the first)
 #   --baseline    rerun every step on origin/main in a temporary detached worktree, with the
 #                 SAME venv, and diff the failures of every step (test ids; mypy/ruff error
@@ -31,6 +32,13 @@
 #                 Without it the run keeps collection order. A compare (--baseline-file) orders
 #                 by the order_seconds of the baseline it compares with, so its mode matches.
 #   --steps LIST  comma list from: env,ruff,format,mypy,sentry,licenses,tests (default: all)
+#   --shard I/N   run only shard I of N of the tests step (1 <= I <= N). The selected test
+#                 paths are expanded to files, sorted, and dealt round-robin, so each shard
+#                 takes every Nth file. Every shard runs the same --steps, so give shards after
+#                 the first --steps tests; they do the lint, type and sentry work once. A shard
+#                 with no files skips the tests step. Not combinable with --baseline-file or
+#                 --write-baseline (a stored baseline is a whole-suite result). --baseline
+#                 still works: main reruns the same shard.
 #   --full        run the whole `tests` directory (same as passing `tests`)
 # GATES_WORKERS=N|auto (default auto) sets the pytest-xdist worker count of the tests step.
 #   N > 1 runs two passes that partition the selection: a parallel pass (-n N --dist loadfile,
@@ -72,7 +80,7 @@ DOC_WALK_GUARDS=(tests/sentry/ tests/secret_providers/test_leak_sentry.py)
 ROOT=$(git rev-parse --show-toplevel) || exit 2
 VENV=${DECOY_VENV:-${UV_PROJECT_ENVIRONMENT:-$ROOT/.venv}}
 BIN=$VENV/bin
-KEEP=0 BASELINE=0 FULL=0 BASEFILE='' WRITEBASE='' ORDERFROM='' STEPS=env,ruff,format,mypy,sentry,licenses,tests PATHS=()
+KEEP=0 BASELINE=0 FULL=0 BASEFILE='' WRITEBASE='' ORDERFROM='' SHARD='' STEPS=env,ruff,format,mypy,sentry,licenses,tests PATHS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --keep-going) KEEP=1 ;;
@@ -82,6 +90,7 @@ while [ $# -gt 0 ]; do
     --write-baseline) WRITEBASE=$2; shift ;;
     --order-from) ORDERFROM=$2; shift ;;
     --steps) STEPS=$2; shift ;;
+    --shard) SHARD=$2; shift ;;
     -h|--help) awk 'NR > 1 { if (!/^#/) exit; print }' "$0"; exit 0 ;;
     -*) echo "gates: unknown flag $1" >&2; exit 2 ;;
     *) PATHS+=("$1") ;;
@@ -203,6 +212,43 @@ else
     for p in ${PATHS[@]+"${PATHS[@]}"}; do
       [ -e "$ROOT/${p%%::*}" ] || { echo "gates: FAIL: explicit test path not found: $p" >&2; exit 2; }
     done
+  fi
+fi
+
+# Shard the test selection. Expanding to files first means one shard never repeats another's
+# files; the stored-baseline modes are refused because their result is a whole-suite one.
+if [ -n "$SHARD" ]; then
+  case $SHARD in
+    [1-9]*/[1-9]*) SHARD_I=${SHARD%%/*}; SHARD_N=${SHARD##*/} ;;
+    *) echo "gates: --shard wants I/N, got $SHARD" >&2; exit 2 ;;
+  esac
+  case $SHARD_I$SHARD_N in *[!0-9]*) echo "gates: --shard wants I/N, got $SHARD" >&2; exit 2 ;; esac
+  if [ "$SHARD_I" -gt "$SHARD_N" ]; then echo "gates: --shard I must not exceed N ($SHARD)" >&2; exit 2; fi
+  if [ -n "$BASEFILE$WRITEBASE" ]; then
+    echo "gates: --shard cannot combine with --baseline-file or --write-baseline" >&2; exit 2
+  fi
+  if [ ${#PATHS[@]} -eq 0 ]; then
+    # Nothing selected: shard 1 keeps the normal verdict (not applicable, or a required-test failure).
+    if [ "$SHARD_I" -gt 1 ]; then echo "gates: shard $SHARD: no tests selected; shard 1 reports it"; exit 0; fi
+  else
+    ALL=$(for p in ${PATHS[@]+"${PATHS[@]}"}; do
+      if [ -d "$ROOT/$p" ]; then (cd "$ROOT" && git ls-files -- "$p" | grep -E '(^|/)test_[^/]*\.py$' || true); else echo "$p"; fi
+    done | sort -u)
+    PATHS=()
+    n=0
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      [ $((n % SHARD_N)) -eq $((SHARD_I - 1)) ] && PATHS+=("$p")
+      n=$((n + 1))
+    done <<EOT
+$ALL
+EOT
+    SELECTION="$SELECTION; shard $SHARD (${#PATHS[@]} of $n file(s))"
+    if [ ${#PATHS[@]} -eq 0 ]; then
+      # An empty slice is not a missing selection: drop the tests step instead of failing it.
+      STEPS=$(echo ",$STEPS," | sed 's/,tests,/,/' | sed 's/^,//; s/,$//')
+      if [ -z "$STEPS" ]; then echo "gates: shard $SHARD has no test files"; exit 0; fi
+    fi
   fi
 fi
 
