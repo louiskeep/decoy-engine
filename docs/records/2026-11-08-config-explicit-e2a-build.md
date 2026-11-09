@@ -20,7 +20,7 @@ is unchanged.
 
 ## Registry
 
-`REGISTRY_VERSION` 1.15.0 to 1.11.0. 1.11.0 was free on the base.
+`REGISTRY_VERSION` moves to 1.11.0, which was free on the base.
 
 ## Codemod
 
