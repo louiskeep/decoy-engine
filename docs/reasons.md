@@ -34,6 +34,8 @@ Codes are append-only: a code never disappears or changes meaning. A retired cod
 
 `reason-manifest-v1.16-gen-fit-shape.json` pins the one fitted-cell-format addition (`plan.statistical_cell_format_invalid`; `since` 1.16.0: a statistical column's snapshot `cell_format` block is malformed).
 
+`reason-manifest-v1.18-run-stream-e1a.json` pins the one RUN-STREAM addition (`runtime.streaming_unavailable`; `since` 1.18.0: a run that requires streaming, `execution_mode="stream"`, is refused before any source passed in `sources` is read because no streaming route applies).
+
 `reason-manifest-v1.17-gen-unique.json` pins the four GEN-UNIQUE additions (`config.generate_unique_conflict`, `config.generate_unique_domain_too_small`, `config.generate_unique_unsupported` and `plan.pinned_unique_pair_unsupported`; `since` 1.17.0: a generate column's `unique` option is combined with a conflicting option, asks for more distinct values than its domain holds or sits on a type that cannot honor it, and a pinned plan carries `unique_together`).
 `reason-manifest-v1.18-config-explicit-e2a.json` holds the two CONFIG-EXPLICIT E2a additions (`config.source_file.undeclared_column` and `config.source_file.undeclared_table`, `since` 1.18.0: a source column the config does not list, and a source with no `tables` entry). The message names a position and the table, never a column. Nothing raises them yet; later parts wire the gate into the run routes.
 

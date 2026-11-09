@@ -138,7 +138,12 @@ def score_generated_fidelity(
             )
         artifact = snapshot_artifacts[index]
         frame = pd.DataFrame(
-            {source_col: data[gen_col] for source_col, gen_col in sorted(columns.items())}
+            {
+                source_col: _frame_column(
+                    data[gen_col], statistical_specs.get((table_name, gen_col))
+                )
+                for source_col, gen_col in sorted(columns.items())
+            }
         )
         generated_snapshot = compute_distribution_snapshot(frame)
         fidelity = compute_fidelity(artifact, generated_snapshot)
@@ -158,6 +163,16 @@ def score_generated_fidelity(
             f"threshold={threshold} worst_columns=[{worst_text}]"
         )
     return warnings
+
+
+def _frame_column(values: list[Any], spec: StatisticalSpec | None) -> Any:
+    """Generated cells as a frame column. A day-resolution `date` column would otherwise reach
+    the snapshot as strings and score as a kind mismatch against its datetime source. Microsecond
+    unit, the unit generation emits: nanoseconds stop at 2262, and a source with a far-future
+    sentinel date must still generate."""
+    if spec is not None and spec.kind == "datetime":
+        return pd.Series(values, dtype="datetime64[us]")
+    return values
 
 
 def warn_on_low_fidelity(

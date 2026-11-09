@@ -12,7 +12,10 @@ Behavior is unchanged: this is a pure code move, not a rewrite.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
+
+import pyarrow as pa
 
 from decoy_engine import reasons
 from decoy_engine.generation.statistical import StatisticalSpec
@@ -80,3 +83,28 @@ def statistical_generate(
         snapshot_content_digest=digest,
     ).base_int("np")
     return sample_column(spec, n, col_seed=col_seed, parent_values=parent_values)
+
+
+def arrow_table(
+    data: Mapping[str, list[Any]],
+    *,
+    table_name: str,
+    statistical_specs: Mapping[tuple[str, str], StatisticalSpec],
+) -> pa.Table:
+    """The table for `data`, with each fitted statistical column typed by its spec.
+
+    Inference over drawn values would give `null` to a fitted column whose rows are all None
+    (a small table, a narrow window) and `int64` to the same column in a full run, so the type
+    comes from the spec. Every other column keeps Arrow's inference. Runs after the generic
+    `null_probability` post-pass, so a column nulled to the last row keeps its type too.
+    """
+    from decoy_engine.generation.statistical import cell_format_arrow_type
+
+    columns: dict[str, Any] = {}
+    for name, values in data.items():
+        spec = statistical_specs.get((table_name, name))
+        if spec is not None and spec.cell_format is not None:
+            columns[name] = pa.array(values, type=cell_format_arrow_type(spec))
+        else:
+            columns[name] = values
+    return pa.table(columns)

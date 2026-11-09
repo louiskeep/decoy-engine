@@ -33,6 +33,7 @@ from decoy_engine.declared_casting._refusals import note_declined, refusal_for, 
 if TYPE_CHECKING:
     from decoy_engine.execution._chunked_input import SourceFacts
     from decoy_engine.execution._planner import ExecutionPlan
+    from decoy_engine.execution.pipeline._stream import StreamVerdict
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
@@ -54,6 +55,7 @@ def decide_chunk_route(
     has_mask_table: bool,
     table_kinds: Mapping[str, str],
     prepared_tables: frozenset[str],
+    stream: StreamVerdict | None = None,
 ) -> tuple[ExecutionPlan | None, bool, Mapping[str, SourceFacts]]:
     """Auto-chunk go/no-go + explain surfacing.
 
@@ -68,7 +70,10 @@ def decide_chunk_route(
     Returns `(execution_plan_decision, route_chunked, keep_lazy)`; `decision` is
     `None` when neither `explain_plan` nor `auto_chunk` asked for a
     classification. `keep_lazy` is the footer snapshot of every `LazySource` that may
-    still stream (`lazy_stream_candidates`); a job with FK edges captures none.
+    still stream (`lazy_stream_candidates`); a job with FK edges captures none, unless `stream`
+    says every table already passed the complete chunked compatibility gate: then the lane
+    classifies each table without its FK graph (as base `--chunked` runs it), the size
+    threshold does not apply, and the footers are captured.
     """
     if not (explain_plan or (auto_chunk and has_mask_table)):
         return None, False, {}
@@ -81,17 +86,21 @@ def decide_chunk_route(
     from decoy_engine.execution._planner import classify_job
     from decoy_engine.execution._transforms_gate import transform_bearing_mask_tables
 
-    facts = {} if graph.edges else _chunked_input.capture_source_facts(caller_sources, table_kinds)
+    lane_config, lane_graph = (config, graph) if stream is None else stream.lane_view(config, graph)
+    facts = (
+        {} if lane_graph.edges else _chunked_input.capture_source_facts(caller_sources, table_kinds)
+    )
 
     decision = classify_job(
-        config,
+        lane_config,
         plan=plan,
         registry=registry,
-        relationship_graph=graph,
+        relationship_graph=lane_graph,
         substrate=substrate,
         source_tables=caller_sources,
         auto_chunk_threshold_rows=auto_chunk_threshold_rows,
         source_facts=facts,
+        ignore_size_threshold=stream is not None,
     )
     route_chunked = auto_chunk and decision.mode == "chunked"
     keep_lazy = _chunked_input.lazy_stream_candidates(
