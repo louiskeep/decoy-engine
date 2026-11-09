@@ -1466,28 +1466,16 @@ class TestInstanceDefaultLocale:
         assert with_instance == without_instance == _v1_run(col, 5, instance_default_locale="en_GB")
 
 
-class TestLegacyColumnNameSeed:
-    """M2: V1's pre-R3.10 column-name path (``_legacy_column_name_seed: true``) stays
-    V1-aligned through ``synthetic_column_seed``. Default path (R3.10) fingerprints
-    strategy/config so column renames are stable in unkeyed runs."""
+class TestColumnIdentitySeed:
+    """Default path: the draw derives from strategy/config plus (table, column), and V1
+    and v2 agree on it."""
 
-    def test_legacy_seed_opt_back_parity(self):
-        col = {
-            "name": "fn",
-            "type": "faker",
-            "faker_type": "first_name",
-            "_legacy_column_name_seed": True,
-        }
-        assert _v2_run(col, 10) == _v1_run(col, 10)
-
-    def test_default_rename_stable(self):
-        # Default R3.10 path: same strategy/config but a different `name` -> same
-        # seed -> same output (rename-stable in the unkeyed seed path).
+    def test_rename_shifts_output_and_matches_v1(self):
         col_a = {"name": "alpha", "type": "faker", "faker_type": "first_name"}
         col_b = {"name": "beta", "type": "faker", "faker_type": "first_name"}
-        assert _v2_run(col_a, 10) == _v2_run(col_b, 10)
-        # And both match V1's R3.10 output (which is also rename-stable).
+        assert _v2_run(col_a, 10) != _v2_run(col_b, 10)
         assert _v2_run(col_a, 10) == _v1_run(col_a, 10)
+        assert _v2_run(col_b, 10) == _v1_run(col_b, 10)
 
 
 class TestDeterminismFresh:

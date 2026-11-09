@@ -8,9 +8,6 @@
   "internal/faker_setup.py::make_faker::exc": {
    "reason": "initial X0a inventory of test_log_interpolation.py; existing entry, reviewed by its own sentry"
   },
-  "internal/logging.py::_configure_logger::exc": {
-   "reason": "initial X0a inventory of test_log_interpolation.py; existing entry, reviewed by its own sentry"
-  },
   "internal/memory.py::MemoryMonitor.monitor_memory_usage::e": {
    "reason": "initial X0a inventory of test_log_interpolation.py; existing entry, reviewed by its own sentry"
   },

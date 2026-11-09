@@ -202,6 +202,15 @@ SOURCES: tuple[Source, ...] = (
         ),
     ),
     Source(  # keys of the ratchet-schema baseline itself
+        "exception-context",
+        "tests/sentry/baselines/exception-context.json",
+        lambda: set(
+            json.loads((BASELINES / "exception-context.json").read_text(encoding="utf-8"))[
+                "entries"
+            ]
+        ),
+    ),
+    Source(  # keys of the ratchet-schema baseline itself
         "validation-name-messages",
         "tests/sentry/baselines/validation-name-messages.json",
         lambda: set(

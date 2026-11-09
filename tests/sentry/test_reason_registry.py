@@ -822,3 +822,24 @@ def test_every_helper_sink_is_discovered_or_has_a_recorded_rationale() -> None:
     assert set(NOT_POSITIONAL_SINKS) <= HELPER_IDENTITIES
     # a rationale is not a place to park a helper the scanner does see
     assert not set(NOT_POSITIONAL_SINKS) & set(discovered)
+
+
+def test_baseline_script_runs_standalone(tmp_path: Path) -> None:
+    """The documented ``python tests/sentry/_reason_baseline.py`` entry point imports cleanly.
+
+    Run from an unrelated directory so neither the repo root nor tests/sentry is on the path
+    except through the script's own setup.
+    """
+    import subprocess
+
+    script = Path(__file__).resolve().parent / "_reason_baseline.py"
+    proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [sys.executable, str(script)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert "identities" in proc.stdout

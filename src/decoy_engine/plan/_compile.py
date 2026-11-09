@@ -181,8 +181,8 @@ def compile_plan(
     check_non_poolable_provider_with_pool_backend(config)
     # DPS Scope B (guide 4.7/5): read-and-pin once so every check below sees the same bytes;
     # DP verification runs first, as check_statistical_columns needs its dp_verified verdicts.
+    check_dp_generate_contract(config)  # Row 31 (DPS-3): config-only, so before any snapshot read
     _pinned_snapshots, _snapshot_read_failures = read_and_pin_snapshots(config)
-    check_dp_generate_contract(config)  # Row 31 (DPS-3): anti-DP knob + condition_on reject
     _dp_verified_columns, _dp_verification = verify_dp_snapshots(config, _pinned_snapshots)
     # Row 12 (capability-gaps WS3, 2026-06-12): statistical generate columns vs their snapshot
     # artifacts; runs in both branches and in run_config_only_checks. `_snapshot_read_failures`
@@ -516,8 +516,8 @@ def run_config_only_checks(
     deterministic_namespace_completeness(config)
     check_non_poolable_provider_with_pool_backend(config)
     # DPS Scope B (guide 4.7/5): same read-verify-validate order as above.
+    check_dp_generate_contract(config)  # Row 31 (DPS-3), before any snapshot read
     _pinned_snapshots, _snapshot_read_failures = read_and_pin_snapshots(config)
-    check_dp_generate_contract(config)  # Row 31 (DPS-3)
     _dp_verified_columns, _dp_verification = verify_dp_snapshots(config, _pinned_snapshots)
     # Row 12 (WS3): consumes the config plus its referenced snapshot
     # artifact (a fitted-model JSON, not source data), so config-only
@@ -636,16 +636,16 @@ _NON_SEMANTIC_GLOBAL_SETTINGS = frozenset(
         "freetext_advisory_min_distinctness",
     }
 )
-_UNHASHED_BLOCKS = ("sources", "targets", "pre_scan")
+_UNHASHED_BLOCKS = ("sources", "targets", "pre_scan", "name")
 
 
 def _hash_config(config: dict[str, Any]) -> str:
     """SHA-256 over a canonical JSON serialization of the masking-semantics
     portion of the config (M1 from S1 end-of-sprint Dennis review).
 
-    The `sources`, `targets` and `pre_scan` blocks are explicitly excluded: the first two describe
-    data binding (where bytes come from, where bytes go) and `pre_scan` only suggests, so none is
-    masking semantics. A user swapping a local file source for an S3 source does not change which
+    The `sources`, `targets`, `pre_scan` and `name` keys are explicitly excluded: `sources`,
+    `targets` and `name` are data binding (where bytes come from, where they go, what the pipeline
+    is called) and `pre_scan` only suggests, so none is masking semantics. A user swapping a local file source for an S3 source does not change which
     columns mask how; the pipeline_config_hash must stay byte-identical across that swap so audit
     + reproducibility tooling can match the two runs as semantically equivalent. `post_scan`
     stays in: under `ner_findings: fail` its `dismissed` list decides what blocks.

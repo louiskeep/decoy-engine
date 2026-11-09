@@ -53,6 +53,12 @@ ROUTE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("profile/_fixed_width_reader.py", "_resolve_layout"): (
         "keeps only exc.error_count() and raises outside the handler; the layout is schema shape"
     ),
+    ("profiling/scan_set.py", "_table_core"): (
+        "builds a write-side core from the engine's own registry ReasonRef, never a submitted value"
+    ),
+    ("profiling/scan_set.py", "scan_set_to_dict"): (
+        "builds a write-side core from engine-computed relationship counts, never a submitted value"
+    ),
 }
 
 # Roots of an interpolated expression that name structure (the model, a table, a column, a

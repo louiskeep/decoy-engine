@@ -2,9 +2,6 @@
  "sentry_id": "wave-b-string-target-exempt",
  "created_in": "X0a",
  "entries": {
-  "tests/fileaccess/test_char_cli_logging.py::decoy_engine.log": {
-   "reason": "initial X0a inventory of test_engine_string_targets.py; existing entry, reviewed by its own sentry"
-  },
   "tests/sentry/test_ga_stub_exports.py::decoy_engine.license": {
    "reason": "initial X0a inventory of test_engine_string_targets.py; existing entry, reviewed by its own sentry"
   },

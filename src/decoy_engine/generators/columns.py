@@ -11,7 +11,7 @@ from faker import Faker
 
 from decoy_engine.generators._distribution import _DistributionMixin
 from decoy_engine.generators._formula import _FormulaMixin
-from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.generators.derivation import GenDeriveContext, with_table
 from decoy_engine.internal.faker_setup import (
     get_faker_providers,
     make_faker,
@@ -40,9 +40,9 @@ class ColumnGenerator(_DistributionMixin, _FormulaMixin):
             logger: Logger instance (optional)
             derive_key: Optional callable ``(info: str) -> bytes`` returning at
                 least 4 bytes of HKDF-derived material. When provided, per-
-                column seeds come from ``derive_key("col:<name>")`` instead of
-                ``seed + hash(name)`` -- same key + same column always yields
-                the same bytes across runs and across instances. When None,
+                column seeds come from ``derive_key("gen:<fingerprint>:<identity>")``
+                (identity = table + column name) -- same key + same column
+                always yields the same bytes across runs and across instances. When None,
                 generation is reproducible by ``seed`` alone but ignores any
                 pipeline / instance master key (i.e. random-by-policy).
             instance_default_locale: Optional locale code (e.g. ``en_GB``).
@@ -130,12 +130,11 @@ class ColumnGenerator(_DistributionMixin, _FormulaMixin):
     ) -> GenDeriveContext:
         """Per-column generation derivation context (v6, F2/F3).
 
-        The full-width replacement for `_column_seed`: same R3.10 keying
-        rules (fingerprint-scoped, rename-stable, fresh + legacy paths),
-        but exposes per-family (`base_int`) and per-row (`row_int`)
-        derivations that consume all 32 bytes instead of the legacy
-        4-byte int. Base-only consumers call `base_int(family)`; per-row
-        loops call `row_int(family, i)` in place of `seed + i`.
+        The full-width replacement for `_column_seed`: keyed by fingerprint
+        plus table and column identity (or fresh), exposing per-family
+        (`base_int`) and per-row (`row_int`) derivations over all 32 bytes.
+        Base-only consumers call `base_int(family)`; per-row loops call
+        `row_int(family, i)` in place of `seed + i`.
         """
         cfg = column_config or {}
         if column_name and "name" not in cfg:
@@ -165,6 +164,7 @@ class ColumnGenerator(_DistributionMixin, _FormulaMixin):
         Returns:
             pandas.Series with generated data
         """
+        column_config = with_table(column_config, table_name)
         column_name = column_config.get("name", "unnamed_column")
         data_type = column_config.get("type", "faker")
         null_probability = column_config.get("null_probability", 0.0)

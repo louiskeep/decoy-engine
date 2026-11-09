@@ -85,6 +85,7 @@ from decoy_engine.execution._planner import (
     FULL_FRAME_REJECT_ROWS_DEFAULT,
     OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
 )
+from decoy_engine.execution._substrate import require_optional_nonempty_str
 from decoy_engine.execution._transforms_prepare import prepare_transform_sources
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.profile._readers import LazySource
@@ -155,33 +156,29 @@ def run_pipeline(
     secret_cache_policy: SecretCachePolicy | None = None,
     _provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     file_access: FileAccess | None = None,
+    quarantine_path: str | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
-    `config` MUST be the validated dump from `PipelineConfig.model_validate`;
-    no re-validation here. `sources` is the caller-loaded
-    `Mapping[table_name -> pa.Table | LazySource]` for the mask-kind tables;
-    pure-generate configs may pass `None` (or an empty dict). A `LazySource`
-    entry is admitted to auto-chunk and the B7 split from its Parquet footer facts and
-    streams when the output streams (a `TransactionalSink`, `_chunked_input`); otherwise
-    it is resolved per-route -- see `_pipeline_sources`.
-    `engine_version` flows into `compile_plan`'s audit-evidence stamping.
+    `config` MUST be the validated dump from `PipelineConfig.model_validate`; no re-validation here.
+    `sources` is the caller-loaded `Mapping[table_name -> pa.Table | LazySource]` for the mask-kind
+    tables; pure-generate configs may pass `None` (or an empty dict). A `LazySource` entry is
+    admitted to auto-chunk and the B7 split from its Parquet footer facts and
+    streams when the output streams (a `TransactionalSink`, `_chunked_input`); otherwise it is
+    resolved per-route -- see `_pipeline_sources`. `engine_version` flows into `compile_plan`'s
+    audit-evidence stamping.
 
-    Returns one `ExecutionResult` whose `outputs` covers every output
-    table (generate + mask) and whose `table_kinds` field carries the
-    per-table classification for the manifest stamping.
+    Returns one `ExecutionResult` whose `outputs` covers every output table (generate + mask) and
+    whose `table_kinds` field carries the per-table classification for the manifest stamping.
 
-    BF1 (2026-06-26) distribution-fidelity surfacing. `fidelity_report`
-    is the opt-in, default-OFF switch that attaches a per-mask-table
-    `quality-report/v1` block under `ExecutionResult.quality_metrics`
-    (key `fidelity_reports`). It is REPORT-ONLY: a low score never fails
-    the job. Default-OFF leaves the hot path byte-for-byte unchanged, so
-    golden / compat-corpus fixtures do not move. `now_iso` pins the
-    report's `generated_at` for deterministic stamping (None -> wall
-    clock). SECURITY: only the assembled, aggregate-only report is
-    emitted; the intermediate snapshots (which carry category labels /
-    raw values) are never attached. First slice is mask-kind tables,
-    marginal-only (no joint_columns); generate-kind tables are skipped.
+    BF1 (2026-06-26) distribution-fidelity surfacing. `fidelity_report` is the opt-in, default-OFF
+    switch that attaches a per-mask-table `quality-report/v1` block under
+    `ExecutionResult.quality_metrics` (key `fidelity_reports`). It is REPORT-ONLY: a low score never
+    fails the job. Default-OFF leaves the hot path byte-for-byte unchanged, so golden /
+    compat-corpus fixtures do not move. `now_iso` pins the report's `generated_at` for deterministic
+    stamping (None -> wall clock). SECURITY: only the assembled, aggregate-only report is emitted;
+    the intermediate snapshots (which carry category labels / raw values) are never attached. First
+    slice is mask-kind tables, marginal-only (no joint_columns); generate-kind tables are skipped.
 
     A1 (2026-09-23) post-execution validation surfacing. `post_validation` is
     the opt-in, default-OFF switch that runs the post-execution scan suite
@@ -256,6 +253,7 @@ def run_pipeline(
     `error_policy: quarantine`; the run returns its portable retrieval token on
     `ExecutionResult.quarantine_access`. A declared job runs on any route whose capabilities
     cover its contracts; an explicit `execution_mode` lacking one is refused before any read.
+    `quarantine_path` replaces `quarantine.output_path` after the config hash; a blank or non-`str` is refused.
 
     Under `auto`, a declared job that an admission layer kept off a route (mixed, chunked,
     unified slice, out-of-core, or the multi-table split) falls back to a capable route and says
@@ -275,6 +273,7 @@ def run_pipeline(
     `None` (every real caller) resolves against the live registry.
     """
     refuse_unapplied_subset(config)  # `subset:` is refused first, before any source is read
+    require_optional_nonempty_str("quarantine_path", quarantine_path)
     # MG-5: the `tokenize` strategy masks per-cell through a platform-injected
     # token vault, threaded only to the FULL-FRAME adapter (bounded routes build
     # their own StrategyContext without it) and else failing closed with
@@ -333,6 +332,7 @@ def run_pipeline(
                 secret_registry=secret_registry,
                 secret_cache_policy=secret_cache_policy,
             )
+        ctx = _ctx.with_quarantine_path(ctx, quarantine_path)
         with collect_refusals() as refusals:
             decision = _ctx.decide_route(ctx)
             _emit_route(_progress, decision)

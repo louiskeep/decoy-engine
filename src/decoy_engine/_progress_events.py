@@ -19,7 +19,6 @@ from typing import Any, Literal
 
 from decoy_engine import reasons
 from decoy_engine.reasons import Operation, ReasonRecord, approve_name, approve_ref
-from decoy_engine.reasons._record import CleanupState, PublicationState, _is_count
 
 EVENT_SCHEMA_VERSION = reasons.EVENT_SCHEMA_VERSION
 LEGACY_SCHEMA_VERSION = 0
@@ -194,8 +193,8 @@ class PublicationInfo:
 
     operation: Operation | None = None
     storage_ref: str | None = None
-    publication_state: PublicationState | None = None
-    cleanup_state: CleanupState | None = None
+    publication_state: reasons.PublicationState | None = None
+    cleanup_state: reasons.CleanupState | None = None
 
     def __post_init__(self) -> None:
         self.validate()
@@ -205,8 +204,8 @@ class PublicationInfo:
             raise ValueError("storage_ref is not an approved identifier")
         for name, enum in (
             ("operation", Operation),
-            ("publication_state", PublicationState),
-            ("cleanup_state", CleanupState),
+            ("publication_state", reasons.PublicationState),
+            ("cleanup_state", reasons.CleanupState),
         ):
             value = getattr(self, name)
             if value is not None and not isinstance(value, enum):
@@ -478,7 +477,7 @@ _GROUPS: dict[str, Any] = {
 
 
 def _count_or_none(value: object) -> Any:
-    return value if value is None or _is_count(value) else None
+    return value if value is None or reasons.is_count(value) else None
 
 
 def _seconds_or_none(value: object) -> Any:

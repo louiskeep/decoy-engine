@@ -1,8 +1,8 @@
-"""E1-0 characterization: the default CLI log destination is unchanged.
+"""Characterization of the engine log destination.
 
-With no policy the engine logger writes a rotating file at `logs/decoy_engine.log` under the
-CWD, an explicit `file: null` opts out, and an unwritable destination degrades to console
-logging with a warning rather than killing the process.
+Since project-layout E2 the engine writes no log file unless the caller passes `file`. An
+explicit `file: null` stays off, a given path gets a rotating file, and an unwritable
+destination degrades to console logging with a warning rather than killing the process.
 """
 
 from __future__ import annotations
@@ -36,15 +36,10 @@ def _file_handlers(logger: logging.Logger) -> list[logging.Handler]:
     return [h for h in logger.handlers if isinstance(h, logging.handlers.RotatingFileHandler)]
 
 
-def test_default_log_file_is_created_under_the_cwd(tmp_path: Path) -> None:
+def test_default_attaches_no_file_handler_and_creates_no_log_folder(tmp_path: Path) -> None:
     logger = engine_logging.get_logger({})
-    (handler,) = _file_handlers(logger)
-    handler.flush()
-    path = tmp_path / "logs" / "decoy_engine.log"
-    assert path.is_file()
-    assert Path(handler.baseFilename) == path
-    assert "Logging initialized" in path.read_text()
-    assert handler.maxBytes == 10 * 1024 * 1024 and handler.backupCount == 5
+    assert _file_handlers(logger) == []
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_explicit_null_file_attaches_no_file_handler(tmp_path: Path) -> None:
@@ -56,6 +51,9 @@ def test_explicit_null_file_attaches_no_file_handler(tmp_path: Path) -> None:
 def test_custom_file_setting_is_honored(tmp_path: Path) -> None:
     logger = engine_logging.get_logger({"file": "x/y/custom.log", "max_size_mb": 2})
     (handler,) = _file_handlers(logger)
+    handler.flush()
+    assert (tmp_path / "x" / "y" / "custom.log").is_file()
+    assert "Logging initialized" in (tmp_path / "x" / "y" / "custom.log").read_text()
     assert Path(handler.baseFilename) == tmp_path / "x" / "y" / "custom.log"
     assert handler.maxBytes == 2 * 1024 * 1024
 

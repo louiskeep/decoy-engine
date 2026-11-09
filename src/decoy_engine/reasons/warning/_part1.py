@@ -17,6 +17,8 @@ __all__ = [
     "OUT_OF_CORE_CALLER_MANAGED_RESIDENCY",
     "POOL_DOMINATES_CACHE",
     "SCAN_CRASHED",
+    "SCAN_HEADER_SUSPECT",
+    "SCAN_KEY_TYPE_MISMATCH",
     "SOURCE_VALUE_LEAK",
     "TEXT_MASK_SUB_FLOOR_SPAN_HANDLED",
     "TOP_CODE_GENERALIZED",
@@ -42,6 +44,12 @@ OUT_OF_CORE_CALLER_MANAGED_RESIDENCY = _d(
 )
 POOL_DOMINATES_CACHE = _d("pool_dominates_cache", "Pool dominates cache.")
 SCAN_CRASHED = _d("scan_crashed", "Scan crashed.")
+SCAN_HEADER_SUSPECT = _d(
+    "scan_header_suspect", "First row looks like data, not a header.", since="1.10.0"
+)
+SCAN_KEY_TYPE_MISMATCH = _d(
+    "scan_key_type_mismatch", "Relationship key columns differ in type.", since="1.10.0"
+)
 SOURCE_VALUE_LEAK = _d("source_value_leak", "Source value leak.")
 TEXT_MASK_SUB_FLOOR_SPAN_HANDLED = _d(
     "text_mask_sub_floor_span_handled", "Text mask sub floor span handled."

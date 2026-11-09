@@ -44,6 +44,7 @@ https://docs.pydantic.dev/latest/concepts/unions/#discriminated-unions.
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
+from urllib.parse import SplitResult, urlsplit
 
 from pydantic import (
     BaseModel,
@@ -230,6 +231,13 @@ class FileSource(BaseModel):
         return schema
 
 
+def _endpoint_refused() -> PydanticCustomError:
+    """The one refusal for a bad endpoint_url. It names the field and never the submitted value."""
+    return PydanticCustomError(
+        str(reasons.config.ENDPOINT_URL_INVALID), "endpoint_url is not an acceptable URL."
+    )
+
+
 # Every `FileSource` field that names a file, read from the `x-decoy-path` marker so a new
 # path field joins by declaring the marker, not by editing a second list.
 FILE_SOURCE_PATH_FIELDS: tuple[str, ...] = tuple(
@@ -271,6 +279,27 @@ class S3Source(BaseModel):
             "default credential chain (env vars / instance profile / etc.)."
         ),
     )
+
+    @field_validator("endpoint_url")
+    @classmethod
+    def _endpoint_is_a_host(cls, value: str | None) -> str | None:
+        """An endpoint names a service. Userinfo is a credential and a query string is a
+        request, and either would be echoed by every log line that prints the descriptor."""
+        if value is None:
+            return value
+        lowered = value.lower()
+        if any(mark in lowered for mark in ("@", "?", "#", "%40", "%3f", "%23")):
+            raise _endpoint_refused()
+        parts: SplitResult | None = None
+        try:
+            parts = urlsplit(value)
+            parts.port  # noqa: B018 - raises ValueError on a malformed port
+        except ValueError:
+            # Refuse below, outside the except: the ValueError quotes the endpoint and must not stay as __context__.
+            parts = None
+        if parts is None or parts.scheme not in ("http", "https") or not parts.hostname:
+            raise _endpoint_refused()
+        return value
 
 
 class GCSSource(BaseModel):
