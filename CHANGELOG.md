@@ -9,6 +9,25 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (generate-column options are validated, registry 1.13.0)
+
+A generate column now accepts only the option keys its `type` reads, and checks their static
+values when the config is parsed. An unknown key (`weigths`) is refused with
+`config.generate_option_unknown` at `tables[0].generate_columns[0].weigths`; a wrong type, an out of
+range value, bad weights (negative, non-finite, zero total, or a count that differs from the
+categories), an unparsable formula, or a distribution outside `random`, `weighted` and `sequential`
+gets its own `config.generate_*` code. All problems on a column are reported together, and none of
+the messages quote a submitted value. Two generate columns with one name in a table are refused with
+`config.generate_column_duplicate`. A missing required key is now pydantic's `missing` at the key,
+and `pooled` on a non-faker column is reported as `config.generate_option_unknown`. The old
+`ConfigRuleError` texts for these are gone.
+
+Pre-GA hard change: a config that carried an unknown or malformed option, and ran because the
+generators ignored it, is now refused. A valid config dumps, hashes and generates byte for byte as
+before. The JSON schema for a generate column is closed per type, so editors and `decoy schema`
+flag a typo-shaped key. The faker locale, provider and kwargs names, category typing and sibling
+references are plan checks and land separately.
+
 ### Added (pipeline `name:` and `is_valid_pipeline_name`, registry 1.12.0)
 
 `PipelineConfig` accepts an optional top-level `name:`. It is a strict string: a non-string, or a

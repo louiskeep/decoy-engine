@@ -35,6 +35,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from pydantic import ValidationError
 
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution._strategies._redact import RedactHandler
@@ -121,7 +122,18 @@ def _mixed_config(
         raw["tables"].append({"name": name, "columns": mask_table_columns[name]})
     if relationships:
         raw["relationships"] = relationships
-    return PipelineConfig.model_validate(raw).model_dump()
+    try:
+        return PipelineConfig.model_validate(raw).model_dump()
+    except ValidationError:
+        if not generate_columns:
+            raise
+        # The config layer refuses malformed leaf knobs, but the malformed-generate tests feed
+        # them straight to the executors (a hand-built Plan can carry them), so splice them in
+        # after parsing.
+        raw["tables"][0]["generate_columns"] = _DEFAULT_GENERATE_COLUMNS
+        dumped = PipelineConfig.model_validate(raw).model_dump()
+        dumped["tables"][0]["generate_columns"] = [{"pooled": None, **c} for c in generate_columns]
+        return dumped
 
 
 def _accounts_source(n: int = 6) -> pa.Table:

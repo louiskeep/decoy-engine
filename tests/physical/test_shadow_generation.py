@@ -34,6 +34,7 @@ import pyarrow as pa
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from pydantic import ValidationError
 
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution.physical._context import SeamContext
@@ -90,7 +91,15 @@ def _generate_config(
             }
         ],
     }
-    return PipelineConfig.model_validate(raw).model_dump()
+    try:
+        return PipelineConfig.model_validate(raw).model_dump()
+    except ValidationError:
+        # The config layer refuses malformed leaf knobs, but these tests feed them straight to
+        # the executors (a hand-built Plan can carry them), so splice them in after parsing.
+        raw["tables"][0]["generate_columns"] = _DEFAULT_COLUMNS
+        dumped = PipelineConfig.model_validate(raw).model_dump()
+        dumped["tables"][0]["generate_columns"] = [{"pooled": None, **c} for c in columns or ()]
+        return dumped
 
 
 def _empty_profile() -> Profile:
