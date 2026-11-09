@@ -509,7 +509,19 @@ class FixedWidthWriteError(DecoyError):
     """
 
 
+# The refusals a capacity check reports as an INSUFFICIENT verdict. One list so a caller does not
+# keep its own copy that drifts when an engine route adds a refusal.
+CAPACITY_REASON_CODES: frozenset[str] = frozenset(
+    {
+        reasons.runtime.GENERATION_BUDGET_EXCEEDED,
+        reasons.runtime.OUT_OF_CORE_INSUFFICIENT_MEMORY,
+        reasons.runtime.OUT_OF_CORE_FANIN_EXCEEDS_BUDGET,
+    }
+)
+
+
 __all__ = [
+    "CAPACITY_REASON_CODES",
     "ConfigError",
     "ConfigRuleError",
     "ConnectorAuthError",

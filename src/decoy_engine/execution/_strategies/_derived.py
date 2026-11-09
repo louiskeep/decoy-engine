@@ -23,9 +23,10 @@ shared `duplicate_source_field_names` refusal, a reference absent from the frame
 `derived_evaluation_failed` with the value-free text of `apply_derived`. A
 cross-column ordering edge (order_work) runs a masked driver column BEFORE this
 one, so a referenced sibling is read at its MASKED value deterministically (a
-never-masked sibling reads its unchanged source value). Gen mode: generation/synthesize._derived_generate
-evaluates against already-generated sibling columns declared before this one in
-generate_columns (declared-order sequential semantics). Both modes call apply_derived
+never-masked sibling reads its unchanged source value).
+Gen mode: generation/_synthesize_derived._derived_generate evaluates against
+already-generated sibling columns declared before this one in generate_columns
+(declared-order sequential semantics). Both modes call apply_derived
 from decoy_engine.transforms.derived, which narrows the context to the compiled refs.
 
 Validation timing:
