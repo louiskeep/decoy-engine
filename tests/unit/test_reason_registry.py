@@ -247,6 +247,38 @@ def test_derived_visibility_codes_are_registered_execution_errors(code: str) -> 
     assert getattr(reasons.runtime, code.upper()) == code
 
 
+FK_FANOUT_CODES = [
+    ("quality", "fanout_column_unknown", "DistributionSnapshotError"),
+    ("plan", "reference_fanout_missing", "PlanCompileError"),
+    ("plan", "reference_fanout_invalid", "PlanCompileError"),
+    ("plan", "reference_fanout_conflict", "PlanCompileError"),
+    ("plan", "reference_parent_pool_empty", "StatisticalSpecError"),
+    ("plan", "dp_generate_fitted_fanout_unsupported", "PlanCompileError"),
+]
+
+
+@pytest.mark.parametrize(("namespace", "code", "owner"), FK_FANOUT_CODES)
+def test_fk_fanout_codes_are_registered_with_their_owner(
+    namespace: str, code: str, owner: str
+) -> None:
+    """E0 (QA-FK-FANOUT): six additive identities, each with an exported symbol whose
+    value is the wire string and `since` equal to the minor that introduced them."""
+    from decoy_engine import reasons
+
+    spec = reasons.find(namespace, code)
+    assert spec is not None
+    assert spec.owner == owner
+    assert spec.since == "1.14.0"
+    assert getattr(getattr(reasons, namespace), code.upper()) == code
+
+
+def test_fk_fanout_minor_has_one_fixture_with_exactly_its_identities() -> None:
+    pinned = _load("reason-manifest-v1.14-fk-fanout.json")
+    got = sorted((e["namespace"], e["code"]) for e in pinned["entries"])
+    assert got == sorted((ns, c) for ns, c, _ in FK_FANOUT_CODES)
+    assert pinned["registry_version"] == "1.14.0"
+
+
 GEN_STRICT_FIXTURE = "reason-manifest-v1.13-gen-strict.json"
 GEN_STRICT = [
     ("config", "generate_column_duplicate", "PipelineValidationError"),
