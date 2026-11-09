@@ -9,6 +9,19 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (reason codes for reference fan-out, 2026-11-09)
+
+Registry 1.12.0 adds six reason identities for fitted reference fan-out: `plan` gets
+`dp_generate_fitted_fanout_unsupported`, `reference_fanout_conflict`, `reference_fanout_invalid`,
+`reference_fanout_missing` and `reference_parent_pool_empty`, and `quality` gets `fanout_column_unknown`.
+Existing identities keep their numbers.
+
+A pipeline with `global_settings.dp` now refuses a `type: reference` column set to `distribution: fitted`
+with `dp_generate_fitted_fanout_unsupported`, because the exact source degree histogram must not reach DP
+output. The check reads only the config. It runs in `compile_plan`, `run_config_only_checks` and the load
+of a serialized Plan, before any snapshot is read or decoded, so a missing, unreadable or malformed
+snapshot cannot replace it with a file, digest or JSON error. Use `distribution: random` under DP.
+
 ### Added (fit snapshots withhold sensitive values, 2026-11-08)
 
 `decoy_engine` and `decoy_engine.profiling` export `distribution_snapshot_document(df, *, include_values=False,
