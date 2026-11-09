@@ -263,3 +263,12 @@ def test_sec3_newer_envelope_is_unverified_and_never_read_as_an_export_record() 
     line = json.dumps({"type": "record", "source_id": None, "record": raw}).encode()
     bad_line = _read([header, line])[1]
     assert isinstance(bad_line, BadLine)
+
+
+@pytest.mark.parametrize("source", ["not-an-id", "", 5, "sha256:" + "A" * 64])
+def test_an_export_line_with_a_bad_source_id_is_a_bad_line(source: object) -> None:
+    lines = _lines([raw_of(make())], keep_paths=True)
+    wrapper = json.loads(lines[1])
+    wrapper["source_id"] = source
+    got = _read([lines[0], json.dumps(wrapper).encode()])
+    assert isinstance(got[1], BadLine) and got[1].code == "record_invalid"

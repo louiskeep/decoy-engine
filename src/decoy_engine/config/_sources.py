@@ -272,7 +272,7 @@ class S3Source(BaseModel):
         ..., min_length=1, max_length=255, json_schema_extra={"x-decoy-locator": True}
     )
     key: str = Field(..., min_length=1, json_schema_extra={"x-decoy-path": True})
-    region: str | None = None
+    region: str | None = Field(default=None, json_schema_extra={"x-decoy-locator": True})
     endpoint_url: str | None = Field(
         default=None,
         json_schema_extra={"x-decoy-locator": True},
@@ -284,6 +284,7 @@ class S3Source(BaseModel):
     )
     credentials_ref: str | None = Field(
         default=None,
+        json_schema_extra={"x-decoy-locator": True},
         description=(
             "Opaque credentials identifier the platform resolves at run time. "
             "The engine never sees raw secrets; when None the SDK walks its "
@@ -330,6 +331,7 @@ class GCSSource(BaseModel):
     object: str = Field(..., min_length=1, json_schema_extra={"x-decoy-path": True})
     credentials_ref: str | None = Field(
         default=None,
+        json_schema_extra={"x-decoy-locator": True},
         description=(
             "Opaque credentials identifier the platform resolves at run time. "
             "The engine never sees raw secrets; when None the SDK uses GCP "
@@ -356,7 +358,8 @@ SOURCE_PATH_FIELDS: tuple[str, ...] = tuple(
     )
 )
 
-# Fields that locate remote storage (`x-decoy-locator`) but are not paths: sharing a record
+# Fields that locate or authorize remote storage (`x-decoy-locator`: bucket, endpoint, region,
+# credentials reference) but are not paths: sharing a record
 # that carries one cannot reduce it, so the export lists the record as unstripped.
 SOURCE_LOCATOR_FIELDS: tuple[str, ...] = tuple(
     dict.fromkeys((*_marked(S3Source, "x-decoy-locator"), *_marked(GCSSource, "x-decoy-locator")))

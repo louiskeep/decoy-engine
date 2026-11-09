@@ -128,7 +128,8 @@ class DecodedRecord:
 class OpaqueRecord:
     """A verified record of a kind this version has no payload model for.
 
-    It is indexed, listed and exported byte for byte; its links still protect their targets.
+    It is indexed and listed; a default export withholds it (this version cannot strip its paths) and
+    ``keep_paths`` copies it byte for byte. Its links still protect their targets.
     """
 
     kind: str

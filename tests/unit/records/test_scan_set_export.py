@@ -53,6 +53,8 @@ def _s3_record(tmp_path: Path) -> dict[str, Any]:
         "bucket": "acme-prod-bucket",
         "key": S3_KEY,
         "endpoint_url": "https://minio.internal.example:9000",
+        "region": "eu-private-1",
+        "credentials_ref": "vault/acme-prod-creds",
     }
     table = dataclasses.replace(scan.tables[0], descriptor=descriptor)
     return _record(dataclasses.replace(scan, tables=(table,)))
@@ -74,6 +76,8 @@ def test_scan_set_path_fields_come_from_the_marker_registry() -> None:
     assert set(spec.locator_fields) == {
         "/payload/tables/*/descriptor/bucket",
         "/payload/tables/*/descriptor/endpoint_url",
+        "/payload/tables/*/descriptor/region",
+        "/payload/tables/*/descriptor/credentials_ref",
     }
 
 
@@ -87,7 +91,14 @@ def test_a_file_scan_exports_without_its_directory(tmp_path: Path) -> None:
 def test_an_s3_scan_exports_without_key_bucket_or_endpoint(tmp_path: Path) -> None:
     rec = _s3_record(tmp_path)
     header, text = _export(rec)
-    for leaked in ("jane.doe", S3_KEY, "acme-prod-bucket", "minio.internal"):
+    for leaked in (
+        "jane.doe",
+        S3_KEY,
+        "acme-prod-bucket",
+        "minio.internal",
+        "eu-private-1",
+        "acme-prod-creds",
+    ):
         assert leaked not in text
     assert "ssn_export.csv" in text
     exported = [json.loads(line) for line in text.splitlines()][1]["record"]
@@ -102,3 +113,32 @@ def test_keep_paths_lists_nothing(tmp_path: Path) -> None:
     rec = _s3_record(tmp_path)
     lines = list(records.export_lines([rec], producer=PRODUCER, exported_at=T0, keep_paths=True))
     assert records.read_export(lines).__next__().unstripped == ()
+
+
+def test_a_descriptor_with_an_unknown_key_is_withheld_from_a_default_export(tmp_path: Path) -> None:
+    scan = _scan(tmp_path)
+    descriptor = {**scan.tables[0].descriptor, "future_locator": "s3://private/value.csv"}
+    table = dataclasses.replace(scan.tables[0], descriptor=descriptor)
+    rec = _record(dataclasses.replace(scan, tables=(table,)))
+    lines = list(records.export_lines([rec], producer=PRODUCER, exported_at=T0))
+    header = next(iter(records.read_export(lines)))
+    assert header.withheld_records == (rec["id"],) and header.record_count == 0
+    assert b"s3://private" not in b"".join(lines)
+    kept = list(records.export_lines([rec], producer=PRODUCER, exported_at=T0, keep_paths=True))
+    item = list(records.read_export(kept))[1]
+    assert records.canonical_bytes(item.record.raw) == records.canonical_bytes(rec)
+
+
+def test_a_gcs_scan_drops_its_credentials_ref(tmp_path: Path) -> None:
+    scan = _scan(tmp_path)
+    descriptor = {
+        "type": "gcs",
+        "format": "csv",
+        "bucket": "b",
+        "object": "x/y/z.csv",
+        "credentials_ref": "secret-ref",
+    }
+    table = dataclasses.replace(scan.tables[0], descriptor=descriptor)
+    header, text = _export(_record(dataclasses.replace(scan, tables=(table,))))
+    assert "secret-ref" not in text and "x/y" not in text and "z.csv" in text
+    assert len(header.unstripped) == 1

@@ -92,6 +92,17 @@ ExportHeaderRead: Any = read_model_of(ExportHeader)
 _OWNER: TypeAdapter[str] = TypeAdapter(InvocationId)
 
 
+_RECORD_ID: TypeAdapter[str] = TypeAdapter(RecordId)
+
+
+def _is_record_id(value: object) -> bool:
+    try:
+        _RECORD_ID.validate_python(value, strict=True)
+    except ValidationError:
+        return False
+    return True
+
+
 def _is_invocation_id(value: object) -> bool:
     try:
         _OWNER.validate_python(value, strict=True)
@@ -182,6 +193,8 @@ def _strip(spec: KindSpec, payload: dict[str, Any]) -> tuple[dict[str, Any], boo
     try:
         model.model_validate(payload)
     except ValidationError:
+        return None
+    if spec.strip_check is not None and not spec.strip_check(payload):
         return None
     out = copy.deepcopy(payload)
     changed = any([_reduce(out, p.split("/")[2:]) for p in spec.path_fields])
@@ -342,7 +355,7 @@ def _read_line(number: int, wrapper: dict[str, Any] | None) -> Any:
     kind = wrapper.get("type")
     if kind == "record":
         source, record = wrapper.get("source_id"), wrapper.get("record")
-        if not isinstance(record, dict) or not (source is None or isinstance(source, str)):
+        if not isinstance(record, dict) or not (source is None or _is_record_id(source)):
             return BadLine(number, reasons.runtime.RECORD_INVALID)
         try:
             decoded = decode(canonical_bytes(record))

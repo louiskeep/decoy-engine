@@ -7,7 +7,9 @@ a kind's spec from here instead of keeping their own table.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -56,6 +58,9 @@ class KindSpec:
     read_model: type[BaseModel] | None = None
     path_fields: tuple[str, ...] = ()
     locator_fields: tuple[str, ...] = ()
+    # Export asks this before stripping: a payload it rejects holds values the field lists do not
+    # cover, so the record is withheld rather than exported with them.
+    strip_check: Callable[[Mapping[str, Any]], bool] | None = None
     diff_rule: str | None = None
     canary_fixture: str | None = None
 
@@ -69,7 +74,11 @@ class KindSpec:
         if (self.write_model is None) != (self.read_model is None):
             raise ValueError("a kind has both models or neither")
         if self.reserved and (
-            self.path_fields or self.locator_fields or self.diff_rule or self.canary_fixture
+            self.path_fields
+            or self.locator_fields
+            or self.strip_check
+            or self.diff_rule
+            or self.canary_fixture
         ):
             raise ValueError("a reserved kind declares no paths, diff rule or canary")
         if any(not p.startswith("/payload/") for p in (*self.path_fields, *self.locator_fields)):

@@ -141,7 +141,7 @@ its id), `payload_digest`, closed `labels`, typed `links`, and the payload. The 
 tag and models: `evidence` (`cli-local-1`, the CLI manifest), `run-result` (`decoy-run-result/v1`), `sample-run/v1`
 (metadata of a `--sample N` run, never rows), `scan-set` (`scan-set/v1`, the engine's `ScanSetCore`), and the reserved `publication` and `checkpoint`. A record of a
 kind or payload major this version does not know is returned as an opaque record or as `RecordNeedsNewer`, never
-dropped, and export copies it byte for byte. `decoy-library-export/v1` is the JSON Lines export format and
+dropped. A default export withholds such a record (its id goes in the header's `withheld_records`); `keep_paths` copies it byte for byte. `decoy-library-export/v1` is the JSON Lines export format and
 `decoy-job-log/v1` the header of a job log. Corpus samples are in `tests/integration/compat_corpus/records/`.
 
 `scan-set/v1` is the record of one multi-table scan (`decoy_engine.scan_sources`). The engine
