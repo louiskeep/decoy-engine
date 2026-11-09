@@ -19,9 +19,11 @@ from pathlib import Path
 
 from _reason_sinks import CODE_ARG_NAMES, discover_families, discover_function_sinks
 
-ROOT = Path(__file__).resolve().parents[2]
-SRC = ROOT / "src" / "decoy_engine"
-PACKAGE = "decoy_engine"
+from tests.sentry.defects import _defect_scan as _defect
+
+PACKAGE = _defect.PACKAGE
+ROOT = _defect.ROOT
+SRC = _defect.SRC
 # The registry's own catalog files are where literal code definitions legitimately live.
 REGISTRY_PREFIX = "reasons/"
 
@@ -67,73 +69,23 @@ class Site:
     arg: str = field(default="", compare=False)
 
 
-def source_files(src: Path = SRC) -> Iterator[Path]:
-    yield from sorted(p for p in src.rglob("*.py"))
+source_files = _defect.source_files
+module_name = _defect.module_name
+_is_str_const = _defect.is_str_const
+_chain = _defect.attr_chain
 
 
-def module_name(path: Path, src: Path = SRC) -> str:
-    rel = path.relative_to(src.parent).with_suffix("")
-    parts = list(rel.parts)
-    if parts[-1] == "__init__":
-        parts.pop()
-    return ".".join(parts)
-
-
-def _is_str_const(node: ast.AST | None) -> bool:
-    return isinstance(node, ast.Constant) and isinstance(node.value, str)
-
-
-def _chain(node: ast.AST) -> list[str] | None:
-    parts: list[str] = []
-    while isinstance(node, ast.Attribute):
-        parts.append(node.attr)
-        node = node.value
-    if isinstance(node, ast.Name):
-        parts.append(node.id)
-        return parts[::-1]
-    return None
-
-
-class _Index:
-    """Project-wide constant and import tables, built once per scan."""
+class _Index(_defect.ModuleIndex):
+    """The shared import and constant tables plus the reason-registry views over them."""
 
     def __init__(self, src: Path = SRC) -> None:
-        self.src = src
-        self.trees: dict[Path, ast.Module] = {}
-        self.consts: dict[tuple[str, str], str] = {}  # (module, name) -> literal
-        self.const_exprs: dict[tuple[str, str], ast.expr] = {}
-        self.imports: dict[
-            tuple[str, str], tuple[str, str]
-        ] = {}  # (module, local) -> (module, name)
         self.class_consts: dict[tuple[str, str, str], ast.expr] = {}
-        self.const_defs: dict[tuple[str, str], tuple[Path, ast.AST]] = {}
         self.reasons_aliases: dict[str, set[str]] = {}  # module -> names bound to the reasons pkg
-        self.module_paths: dict[str, str] = {}  # module -> its path under src
-        for path in source_files(src):
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            self.trees[path] = tree
-            self.module_paths[module_name(path, src)] = path.relative_to(src).as_posix()
-            self._index(path, tree)
+        super().__init__(src)
 
-    def _index(self, path: Path, tree: ast.Module) -> None:
+    def index_module(self, path: Path, tree: ast.Module) -> None:
+        super().index_module(path, tree)
         mod = module_name(path, self.src)
-        is_pkg = path.name == "__init__.py"
-        aliases: set[str] = set()
-        for node in tree.body:
-            if isinstance(node, ast.Assign) and len(node.targets) == 1:
-                tgt = node.targets[0]
-                if isinstance(tgt, ast.Name):
-                    self.const_exprs[(mod, tgt.id)] = node.value
-                    if _is_str_const(node.value):
-                        self.consts[(mod, tgt.id)] = node.value.value  # type: ignore[attr-defined]
-                        self.const_defs[(mod, tgt.id)] = (path, node)
-            elif (
-                isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value
-            ):
-                self.const_exprs[(mod, node.target.id)] = node.value
-                if _is_str_const(node.value):
-                    self.consts[(mod, node.target.id)] = node.value.value  # type: ignore[attr-defined]
-                    self.const_defs[(mod, node.target.id)] = (path, node)
         for node in tree.body:
             if isinstance(node, ast.ClassDef):
                 for item in node.body:
@@ -149,12 +101,12 @@ class _Index:
                         and item.value is not None
                     ):
                         self.class_consts[(mod, node.name, item.target.id)] = item.value
+        aliases: set[str] = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
-                base = self._resolve_from(mod, is_pkg, node)
+                base = _defect.resolve_from(mod, path.name == "__init__.py", node)
                 for alias in node.names:
                     local = alias.asname or alias.name
-                    self.imports[(mod, local)] = (base, alias.name)
                     if base == f"{PACKAGE}.reasons" or base.startswith(f"{PACKAGE}.reasons."):
                         aliases.add(local)
                     if base == PACKAGE and alias.name == "reasons":
@@ -164,18 +116,6 @@ class _Index:
                     if alias.name == f"{PACKAGE}.reasons":
                         aliases.add(alias.asname or alias.name.split(".")[0])
         self.reasons_aliases[mod] = aliases
-
-    @staticmethod
-    def _resolve_from(mod: str, is_pkg: bool, node: ast.ImportFrom) -> str:
-        if node.level == 0:
-            return node.module or ""
-        parts = mod.split(".")
-        if not is_pkg:
-            parts = parts[:-1]
-        if node.level > 1:
-            parts = parts[: len(parts) - (node.level - 1)]
-        base = ".".join(parts)
-        return f"{base}.{node.module}" if node.module else base
 
     def resolve_function(self, mod: str, name: str) -> tuple[str, str]:
         """The ``(path, name)`` of the function that ``name`` refers to inside ``mod``.
@@ -202,19 +142,6 @@ class _Index:
         if key in self.imports:
             src_mod, src_name = self.imports[key]
             return self.resolve_def(src_mod, src_name, seen | {key})
-        return None
-
-    def resolve_literal(
-        self, mod: str, name: str, seen: frozenset[tuple[str, str]] = frozenset()
-    ) -> str | None:
-        key = (mod, name)
-        if key in seen:
-            return None
-        if key in self.consts:
-            return self.consts[key]
-        if key in self.imports:
-            src_mod, src_name = self.imports[key]
-            return self.resolve_literal(src_mod, src_name, seen | {key})
         return None
 
     def class_const(self, mod: str, cls: str, attr: str) -> tuple[str, str]:

@@ -13,6 +13,9 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+# Run as a script, so put both this folder (sibling helpers) and the repo root (the
+# tests.sentry.defects package that _reason_scan imports) on the path.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _reason_scan as scan
 

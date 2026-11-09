@@ -221,7 +221,7 @@ def _hint(terms: list[str]) -> re.Pattern[str]:
     Order of alternation matters only for performance, not correctness.
     """
     body = "|".join(re.escape(t) for t in terms)
-    return re.compile(rf"(?i)^(.*[._-])?({body})([._-].*)?$")
+    return re.compile(rf"(?i)^(.*[._-])?({body})([._-].*)?\Z")
 
 
 # The 26 built-in detectors' column-name hint patterns live in YAML

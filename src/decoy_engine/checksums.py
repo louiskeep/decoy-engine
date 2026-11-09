@@ -83,7 +83,7 @@ def _luhn_calc_check_digit(body: str) -> str:
 # ---------------------------------------------------------------------------
 
 _NPI_PREFIX = "80840"
-_NPI_RE = re.compile(r"^\d{10}$")
+_NPI_RE = re.compile(r"^\d{10}\Z")
 
 
 def _luhn_cd(digits: str) -> str:

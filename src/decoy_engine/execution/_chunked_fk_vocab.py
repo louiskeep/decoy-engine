@@ -34,7 +34,7 @@ _DECIMAL_UNPROVABLE_FAMILY = "decimal:unprovable"
 # may be negative) is used for the RI family; precision (group 1) is captured but
 # not folded in (see `_dtype_family`).
 _DECIMAL_PRECISION_SCALE_RE = re.compile(
-    r"^(?:decimal(?:32|64|128|256)?|numeric)\((\d+)\s*,\s*(-?\d+)\)$"
+    r"^(?:decimal(?:32|64|128|256)?|numeric)\((\d+)\s*,\s*(-?\d+)\)\Z"
 )
 
 # Value-keyed strategies that produce the same output per (seed, namespace, value)

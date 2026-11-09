@@ -89,5 +89,9 @@ id = "reason-unchecked-helpers"
 baseline = "tests/sentry/baselines/reason-unchecked-helpers.json"
 
 [[sentry]]
+id = "exception-context"
+baseline = "tests/sentry/baselines/exception-context.json"
+
+[[sentry]]
 id = "validation-name-messages"
 baseline = "tests/sentry/baselines/validation-name-messages.json"

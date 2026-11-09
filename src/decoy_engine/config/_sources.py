@@ -41,7 +41,7 @@ https://docs.pydantic.dev/latest/concepts/unions/#discriminated-unions.
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 from pydantic import (
     BaseModel,
@@ -232,13 +232,14 @@ class S3Source(BaseModel):
         lowered = value.lower()
         if any(mark in lowered for mark in ("@", "?", "#", "%40", "%3f", "%23")):
             raise _endpoint_refused()
+        parts: SplitResult | None = None
         try:
             parts = urlsplit(value)
-            has_host = bool(parts.hostname)
             parts.port  # noqa: B018 - raises ValueError on a malformed port
         except ValueError:
-            raise _endpoint_refused() from None
-        if parts.scheme not in ("http", "https") or not has_host:
+            # Refuse below, outside the except: the ValueError quotes the endpoint and must not stay as __context__.
+            parts = None
+        if parts is None or parts.scheme not in ("http", "https") or not parts.hostname:
             raise _endpoint_refused()
         return value
 

@@ -106,6 +106,15 @@ can recompute the permutation and undo it, as with every keyed strategy; set a s
   `decoy_engine.safe_output.yaml_error_text` holds that text.
 - New public names: `parse_pipeline_config`, `ConfigProblem`, `ConfigRuleError`.
 
+### Fixed (class sweep B1: end anchors and facade imports, 2026-11-08)
+
+Sixteen internal `re` patterns ended with `$`, which also matches before a trailing newline;
+they now end with `\Z`. This covers the Postgres snapshot identifier and type patterns, the
+secret-provider version patterns, the NPI checksum, the DuckDB memory limit, the Arrow dtype
+labels, the ISO-date sentinel and the column-name hint patterns. A value with a trailing newline
+no longer matches. `decoy_engine.reasons` also exports `COUNT_KEYS`, `MAX_COUNTS` and
+`is_count`, so progress, safe-output and telemetry code reads the public facades.
+
 ### Added (init wizard E3: keyed columns of a config, 2026-11-08)
 
 `decoy_engine` and `decoy_engine.secret_providers` export `keyed_columns_for_config` and
