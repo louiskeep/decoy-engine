@@ -145,7 +145,7 @@ changed_tests() {
   local base f mod
   base=$(git -C "$ROOT" merge-base origin/main HEAD) || return 1
   { git -C "$ROOT" diff --name-only --no-renames "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } |
-    sort -u | while read -r f; do
+    LC_ALL=C sort -u | while read -r f; do
       [ -f "$ROOT/$f" ] || continue
       # shellcheck disable=SC2254  # SRC_MATCH is a glob on purpose
       case $f in
@@ -158,7 +158,7 @@ changed_tests() {
           # normal here; code_changed then makes the gate fail rather than skip.
           non_code "$f" || (cd "$ROOT" && grep -rlF --include='test_*.py' "${f##*/}" tests || true) ;;
       esac
-    done | sort -u
+    done | LC_ALL=C sort -u
 }
 
 # 0 when f matches NON_CODE_GLOBS (pure documentation or repo metadata).
@@ -180,7 +180,7 @@ code_changed() {
     [ -n "$f" ] || continue
     non_code "$f" || return 0
   done <<EOT
-$({ git -C "$ROOT" diff --name-only --no-renames "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } | sort -u)
+$({ git -C "$ROOT" diff --name-only --no-renames "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } | LC_ALL=C sort -u)
 EOT
   return 1
 }
@@ -217,6 +217,19 @@ else
   fi
 fi
 
+# Expands the selected paths to test files, one per line. Fails when git ls-files fails.
+shard_expand() {
+  local p out
+  for p in ${PATHS[@]+"${PATHS[@]}"}; do
+    if [ -d "$ROOT/$p" ]; then
+      out=$(cd "$ROOT" && git ls-files -- "$p") || return 1
+      printf '%s\n' "$out" | grep -E '(^|/)test_[^/]*\.py$' || [ $? = 1 ] || return 1
+    else
+      echo "$p"
+    fi
+  done
+}
+
 # Shard the test selection. Expanding to files first means one shard never repeats another's
 # files; the stored-baseline modes are refused because their result is a whole-suite one.
 if [ -n "$SHARD" ]; then
@@ -224,6 +237,8 @@ if [ -n "$SHARD" ]; then
     [1-9]*/[1-9]*) SHARD_I=${SHARD%%/*}; SHARD_N=${SHARD##*/} ;;
     *) echo "gates: --shard wants I/N, got $SHARD" >&2; exit 2 ;;
   esac
+  # The split takes the first and last slash, so 1/2/3 must be refused by the rebuilt form.
+  [ "$SHARD" = "$SHARD_I/$SHARD_N" ] || { echo "gates: --shard wants I/N, got $SHARD" >&2; exit 2; }
   case $SHARD_I$SHARD_N in *[!0-9]*) echo "gates: --shard wants I/N, got $SHARD" >&2; exit 2 ;; esac
   if [ "$SHARD_I" -gt "$SHARD_N" ]; then echo "gates: --shard I must not exceed N ($SHARD)" >&2; exit 2; fi
   if [ -n "$BASEFILE$WRITEBASE" ]; then
@@ -233,9 +248,13 @@ if [ -n "$SHARD" ]; then
     # Nothing selected: shard 1 keeps the normal verdict (not applicable, or a required-test failure).
     if [ "$SHARD_I" -gt 1 ]; then echo "gates: shard $SHARD: no tests selected; shard 1 reports it"; exit 0; fi
   else
-    ALL=$(for p in ${PATHS[@]+"${PATHS[@]}"}; do
-      if [ -d "$ROOT/$p" ]; then (cd "$ROOT" && git ls-files -- "$p" | grep -E '(^|/)test_[^/]*\.py$' || true); else echo "$p"; fi
-    done | sort -u)
+    # A git failure is a failed gate (exit 2); only grep's "no match" (exit 1) is tolerated.
+    RAW=$(shard_expand) || { echo "gates: --shard could not list the test files (git ls-files failed)" >&2; exit 2; }
+    # C locale: every shard must deal the same file order, whatever the host's LANG.
+    ALL=$(printf '%s\n' "$RAW" | LC_ALL=C sort -u)
+    if [ -z "$ALL" ]; then
+      echo "gates: FAIL: --shard selected 0 test files; a green run with no tests is not a pass" >&2; exit 2
+    fi
     PATHS=()
     n=0
     while IFS= read -r p; do
@@ -551,6 +570,8 @@ else
   awk -F'\t' '$2 != 0 && $2 != -1 {bad = 1} END {exit !bad}' "$OUT/branch.steps" && exit 1
 fi
 # A tests step that ended rc 1 only on known baseline failures did run.
-ran_max=0; [ -n "$BASEFILE" ] && ran_max=1
+# Under --baseline the verdict above already cleared any failure shared with main, so a tests step
+# that exited 1 ran; a shard whose only failures are main's own must not exit 3.
+ran_max=0; [ $BASELINE = 1 ] && ran_max=1
 awk -F'\t' -v max="$ran_max" '$2 >= 0 && $2 <= max {ran = 1} END {exit !ran}' "$OUT/branch.steps" || { echo "gates: FAIL: no step ran (all skipped or none selected)" >&2; exit 3; }
 exit 0

@@ -153,6 +153,7 @@ def test_full_gate_runs_only_on_dispatch_and_main_in_two_shards() -> None:
     # The expensive self-hosted gate: manual dispatch or a push to main, never a feature push.
     assert "github.event_name == 'workflow_dispatch'" in guard
     assert "github.ref == 'refs/heads/main'" in guard
+    assert "github.repository_owner == 'louiskeep'" in guard
     assert "github.actor == 'louiskeep'" in guard
     assert "!github.event.repository.fork" in guard
     assert job["strategy"]["matrix"]["shard"] == [1, 2]
@@ -162,7 +163,17 @@ def test_full_gate_runs_only_on_dispatch_and_main_in_two_shards() -> None:
     # and without --baseline (main against itself would call every failure shared).
     assert "mode=--full" in runs
     assert "mode=--baseline" in runs
-    assert 'if [ "${{ github.event_name }}" = push ]' in runs
+    assert (
+        'if [ "${{ github.event_name }}" = push ]; then mode=--full; else mode=--baseline; fi'
+        in runs
+    )
+    # The exact command line: lock, keep-going, mode, step list, shard. Shard 1 owns the lint,
+    # type, sentry and licence steps; every other shard runs only its slice of the tests.
+    assert (
+        'flock ~/.cache/pytest-one.lock scripts/dev/gates.sh --keep-going $mode --steps "$steps"'
+        ' --shard "${{ matrix.shard }}/2"'
+    ) in runs
+    assert "steps=env,ruff,format,mypy,sentry,licenses,tests; else steps=tests" in runs
 
 
 def test_fast_check_is_hosted_owner_guarded_and_push_only() -> None:
