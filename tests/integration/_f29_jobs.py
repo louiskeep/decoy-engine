@@ -37,8 +37,8 @@ def fk_job(
             "version": 2,
             "global_settings": settings,
             "sources": {
-                "customers": {"type": "file", "format": "csv", "path": str(cp)},
-                "orders": {"type": "file", "format": "csv", "path": str(op)},
+                "customers": {"type": "file", "format": "csv", "has_header": True, "path": str(cp)},
+                "orders": {"type": "file", "format": "csv", "has_header": True, "path": str(op)},
             },
             "tables": [
                 {

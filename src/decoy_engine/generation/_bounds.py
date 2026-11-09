@@ -16,14 +16,20 @@ exists to prevent.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import pyarrow as pa
+
+from decoy_engine import reasons
 from decoy_engine.generation._faker_pool import POOL_ELIGIBLE_LOCALE_PAIRS
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
     from faker import Faker
+
+    from decoy_engine.generation._admission import PlanAdmission
 
 # CPython str object header + list pointer (execution._mem_estimate_dtypes).
 STR_OBJECT_OVERHEAD_BYTES = 57
@@ -232,6 +238,24 @@ def faker_pool_bytes(pool_size: int, payload: int) -> int:
     return int(pool_size * (STR_OBJECT_OVERHEAD_BYTES + payload) * _POOL_SLACK) + _POOL_FIXED_BYTES
 
 
+# A set slot (hash + pointer, at CPython's load factor) beyond the str object it holds.
+_UNIQUE_SET_PER_ENTRY_EXTRA = 72
+# The int object and set slot `random.sample` keeps per selected position of a large population.
+_SAMPLE_PER_ROW_BYTES = 32 + _UNIQUE_SET_PER_ENTRY_EXTRA
+
+
+def unique_set_bytes(rows: int, payload: int) -> int:
+    """Working set of one unique column draw: the seen set plus the `random.sample` positions.
+
+    The seen set holds one string object per row (`payload` bytes wide); `random.sample` keeps
+    one selected position per row (a large population) or a list of the population (a small
+    one, never larger than the rows). Both are priced at `rows`, conservatively.
+    """
+    return rows * (payload + STR_OBJECT_OVERHEAD_BYTES + _UNIQUE_SET_PER_ENTRY_EXTRA) + (
+        rows * _SAMPLE_PER_ROW_BYTES
+    )
+
+
 def key_pool_bytes(parent_rows: int, key_payload: int) -> int:
     return parent_rows * (key_payload + STR_OBJECT_OVERHEAD_BYTES + _KEY_POOL_PER_KEY_EXTRA)
 
@@ -240,17 +264,117 @@ def legacy_table_bytes(rows: int, payloads: list[int]) -> int:
     return rows * sum(_LEGACY_COPIES * (p + STR_OBJECT_OVERHEAD_BYTES) + 16 for p in payloads)
 
 
+# One pointer per row in the Python list the legacy whole-table path builds for every column.
+_LEGACY_SLOT_BYTES = 8
+# One int32 offset per row of a variable-width Arrow column.
+_OFFSET_BYTES = 4
+
+
+def _arrow_column_floor(arrow_type: pa.DataType, rows: int) -> int:
+    try:
+        bit_width = arrow_type.bit_width
+    except ValueError:  # variable-width types have no bit width
+        return _OFFSET_BYTES * rows
+    # Ceil division keeps a 1-bit boolean column an integer byte count.
+    return (rows * bit_width + 7) // 8
+
+
+def _floor_by_table(config: dict[str, Any], admission: PlanAdmission) -> dict[str, int]:
+    """Per generate table, the bytes its columns must hold, from the routing the run uses.
+
+    A plan with any declined column runs every column through the legacy whole-table path, so
+    each is priced as a list slot; otherwise each column is priced from its declared Arrow type
+    (the buffers `pa.array` builds: fixed-width data, or the offsets of a variable-width column).
+    """
+    rows_of = {
+        t["name"]: int(t.get("row_count") or 0)
+        for t in (config.get("tables") or [])
+        if t.get("generate_columns")
+    }
+    # Keyed by name: the legacy path stores columns in a dict, so a repeated name keeps one
+    # column alive, and counting each declaration would overstate the floor.
+    priced: dict[tuple[str, str], int] = {}
+    for col in admission.columns:
+        rows = rows_of.get(col.table, 0)
+        if not admission.eligible or col.arrow_type is None:
+            priced[(col.table, col.column)] = _LEGACY_SLOT_BYTES * rows
+        else:
+            priced[(col.table, col.column)] = _arrow_column_floor(col.arrow_type, rows)
+    floors = dict.fromkeys(rows_of, 0)
+    for (table, _), nbytes in priced.items():
+        floors[table] += nbytes
+    return floors
+
+
+def generation_floor_bytes(config: dict[str, Any], admission: PlanAdmission) -> int:
+    """A lower bound on the bytes a resident generate run must allocate; never an estimate.
+
+    Resident runs hold every table's Arrow output together, so the floors add. The legacy path
+    frees each table's list slots before the next table starts, so only the largest table's slots
+    count there. The sizing follows the Arrow columnar format: a fixed-width column is
+    `bit_width` bits per value and a variable-width column carries one int32 offset per value.
+    """
+    floors = _floor_by_table(config, admission).values()
+    return max(floors, default=0) if not admission.eligible else sum(floors)
+
+
+@dataclass(frozen=True)
+class FloorShortfall:
+    """A resident generate run that cannot fit; the message holds byte counts and a table name."""
+
+    needed_bytes: int
+    available_bytes: int
+    message: str
+
+
+def generation_floor_shortfall(
+    config: dict[str, Any], admission: PlanAdmission, available_bytes: int
+) -> FloorShortfall | None:
+    """The one floor decision `run_generation` and `estimate_job_capacity` both adapt."""
+    floor = generation_floor_bytes(config, admission)
+    if floor <= available_bytes:
+        return None
+    by_table = _floor_by_table(config, admission)
+    largest = max(by_table, key=lambda name: by_table[name])
+    return FloorShortfall(
+        needed_bytes=floor,
+        available_bytes=available_bytes,
+        message=(
+            f"resident generation needs at least {floor} bytes (largest table {largest!r}); "
+            f"{available_bytes} bytes of memory are available."
+        ),
+    )
+
+
+def detected_memory_bytes() -> int | None:
+    """The whole memory ceiling (cgroup limit, else host RAM), or `None` when it cannot be read."""
+    from decoy_engine.execution import ExecutionError
+    from decoy_engine.execution.out_of_core import _budget
+
+    try:
+        return _budget.detect_effective_memory_bytes()
+    except ExecutionError as exc:
+        if exc.code != reasons.runtime.OUT_OF_CORE_MEMORY_DETECTION_FAILED:
+            raise
+        return None
+
+
 __all__ = [
     "FAKER_VALUE_CAPS",
     "STR_OBJECT_OVERHEAD_BYTES",
+    "FloorShortfall",
     "accumulator_bytes",
     "batch_buffer_bytes",
     "categorical_payload_bound",
     "compute_payload_bounds",
+    "detected_memory_bytes",
     "faker_payload_bound",
     "faker_pool_bytes",
+    "generation_floor_bytes",
+    "generation_floor_shortfall",
     "key_pool_bytes",
     "legacy_table_bytes",
     "sequence_payload_bound",
     "sink_buffer_bytes",
+    "unique_set_bytes",
 ]

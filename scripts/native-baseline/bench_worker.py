@@ -83,7 +83,7 @@ def build_config(source_path: str) -> dict:
         "version": 2,
         "global_settings": {"seed": FIXED_SEED, "post_validation": False},
         "sources": {
-            "w2": {"type": "file", "format": "csv", "path": source_path},
+            "w2": {"type": "file", "format": "csv", "has_header": True, "path": source_path},
         },
         "targets": {
             "w2": {"type": "file", "format": "csv", "path": "/dev/null"},

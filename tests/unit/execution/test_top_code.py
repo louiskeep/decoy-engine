@@ -205,7 +205,14 @@ class TestChunkSafety:
         cfg = {
             "version": 2,
             "global_settings": {"seed": 42},
-            "sources": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
+            "sources": {
+                "t": {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": str(tmp_path / "in.csv"),
+                }
+            },
             "tables": [{"name": "t", "columns": self._CFG_COLUMNS}],
             "targets": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
         }
@@ -254,7 +261,14 @@ class TestChunkSafety:
         cfg = {
             "version": 2,
             "global_settings": {"seed": 42},
-            "sources": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
+            "sources": {
+                "t": {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": str(tmp_path / "in.csv"),
+                }
+            },
             "tables": [
                 {
                     "name": "t",

@@ -43,6 +43,7 @@ sources:
   people:
     type: file
     format: csv
+    has_header: true
     path: ./people.csv
 
 tables:

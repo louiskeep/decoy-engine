@@ -43,8 +43,18 @@ def policy(tmp_path: Path) -> Iterator[RootRelative]:
 
 
 CASES: dict[str, dict[str, Any]] = {
-    "path_object": {"type": "file", "format": "csv", "path": CANARY_DIR / "t.csv"},
-    "path_bytes": {"type": "file", "format": "csv", "path": b"/tenant-a/PROFILE-CANARY.csv"},
+    "path_object": {
+        "type": "file",
+        "format": "csv",
+        "has_header": True,
+        "path": CANARY_DIR / "t.csv",
+    },
+    "path_bytes": {
+        "type": "file",
+        "format": "csv",
+        "has_header": True,
+        "path": b"/tenant-a/PROFILE-CANARY.csv",
+    },
     "layout_string": {
         "type": "file",
         "format": "fixed_width",

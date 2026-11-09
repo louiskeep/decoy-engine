@@ -149,7 +149,14 @@ def _config(tmp_path, columns=None, seed: int = 42, mask_secret_ref=None) -> dic
         {
             "version": 2,
             "global_settings": gs,
-            "sources": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "t.csv")}},
+            "sources": {
+                "t": {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": str(tmp_path / "t.csv"),
+                }
+            },
             "tables": [{"name": "t", "columns": columns or _KEYED_COLUMNS}],
             "targets": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "o.csv")}},
         }

@@ -39,7 +39,12 @@ def _config(tmp_path) -> dict:
         "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
-            "t": {"type": "file", "format": "csv", "path": str(tmp_path / "t.csv")},
+            "t": {
+                "type": "file",
+                "format": "csv",
+                "has_header": True,
+                "path": str(tmp_path / "t.csv"),
+            },
         },
         "tables": [{"name": "t", "columns": [{"name": "c", "strategy": "passthrough"}]}],
         "targets": {

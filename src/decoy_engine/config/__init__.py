@@ -40,6 +40,7 @@ from decoy_engine.config._fixed_width import FixedWidthColumn, FixedWidthLayout
 from decoy_engine.config._global_settings import DpGenerateSettings, GlobalSettings
 from decoy_engine.config._namespaces import NamespaceConfig
 from decoy_engine.config._override import override_sources
+from decoy_engine.config._parse import parse_pipeline_config, parse_relationship_config
 from decoy_engine.config._pipeline import PipelineConfig
 from decoy_engine.config._post_scan import (
     Dismissal,
@@ -53,6 +54,7 @@ from decoy_engine.config._relationships import (
     RelationshipEnd,
 )
 from decoy_engine.config._sources import (
+    FILE_SOURCE_PATH_FIELDS,
     FileSource,
     GCSSource,
     S3Source,
@@ -82,6 +84,7 @@ from decoy_engine.config._transforms import (
 )
 
 __all__ = [
+    "FILE_SOURCE_PATH_FIELDS",
     "ColumnConfig",
     "DedupeOp",
     "DeriveOp",
@@ -117,5 +120,7 @@ __all__ = [
     "TargetDescriptor",
     "TransformOp",
     "override_sources",
+    "parse_pipeline_config",
+    "parse_relationship_config",
     "post_scan_integrity_requested",
 ]

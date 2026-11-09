@@ -60,8 +60,9 @@ __all__ = [
 _LOG = logging.getLogger(__name__)
 
 # Strategies with a mode that draws from a fresh `default_rng()` per call, so two
-# invocations differ. `nested` is checked through its child strategy.
-UNSEEDED_RANDOM_STRATEGIES = frozenset({"shuffle"})
+# invocations differ. `nested` is checked through its child strategy. Empty since unkeyed
+# shuffle draws from the mask key; the sentry in test_multi_table_gates keeps it that way.
+UNSEEDED_RANDOM_STRATEGIES: frozenset[str] = frozenset()
 
 # Non-deterministic categorical is seeded and keyed by the handler-frame ordinal, so it is
 # reproducible. A split would hand it per-table frames whose ordinals the whole-frame call

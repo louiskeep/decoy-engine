@@ -1,0 +1,128 @@
+{
+  "entries": [
+    {
+      "code": "scan_source_failed",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "ScanSourceError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.10.0",
+      "summary": "A table could not be scanned.",
+      "symbol": "SCAN_SOURCE_FAILED"
+    },
+    {
+      "code": "scan_header_suspect",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "warning",
+      "namespace": "warning",
+      "owner": "QualityWarning",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "findings",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "warning"
+        }
+      ],
+      "since": "1.10.0",
+      "summary": "First row looks like data, not a header.",
+      "symbol": "SCAN_HEADER_SUSPECT"
+    },
+    {
+      "code": "scan_key_type_mismatch",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "warning",
+      "namespace": "warning",
+      "owner": "QualityWarning",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "findings",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "warning"
+        }
+      ],
+      "since": "1.10.0",
+      "summary": "Relationship key columns differ in type.",
+      "symbol": "SCAN_KEY_TYPE_MISMATCH"
+    },
+    {
+      "code": "endpoint_url_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "config",
+      "owner": "PipelineValidationError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.10.0",
+      "summary": "Endpoint URL must be an http or https URL with a host and carry no credentials, query or fragment.",
+      "symbol": "ENDPOINT_URL_INVALID"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.10.0"
+}

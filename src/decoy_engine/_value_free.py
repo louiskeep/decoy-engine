@@ -21,6 +21,7 @@ from packaging.version import InvalidVersion
 from packaging.version import Version as PackagingVersion
 from pydantic import AfterValidator, BaseModel, Field, Strict, create_model
 
+from decoy_engine.errors import ConfigRuleError
 from decoy_engine.reasons import approve_name, approve_ref
 
 __all__ = [
@@ -54,7 +55,7 @@ def check(kind: str, test: Callable[[str], bool]) -> Callable[[str], str]:
 
     def validate(value: str) -> str:
         if not test(value):
-            raise ValueError(f"not a valid {kind}")
+            raise ConfigRuleError(f"not a valid {kind}")
         return value
 
     return validate

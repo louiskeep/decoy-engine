@@ -284,6 +284,8 @@ def _check_statistical(
         _check_datetime(table, col, spec)
     elif spec.kind == "categorical":
         _check_categorical(table, col, spec, max_cell_chars)
+    elif spec.kind == "empty":  # all-null source: every cell is None, nothing unbounded
+        return
     else:
         _refuse(
             table, col, CODE_UNBOUNDED, "kind", f"statistical kind {spec.kind!r} has no sampler"
@@ -368,7 +370,7 @@ def classify_window_table(
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> WindowAdmission:
     """Classify one generate table for a windowed read. Raises on any refusal, else A or B."""
-    from decoy_engine.generation._faker_pool import pool_eligible
+    from decoy_engine.generation._faker_pool import pool_eligible, pool_opted_out
     from decoy_engine.generation._reproducibility import reproducibility_exclusions
 
     spec_table = next(
@@ -413,7 +415,7 @@ def classify_window_table(
         elif kind == "faker":
             locale = col.get("locale") or instance_default_locale
             pooled = pool_eligible(
-                col.get("faker_type", "word"), locale, rows, opted_out=col.get("pooled") is False
+                col.get("faker_type", "word"), locale, rows, opted_out=pool_opted_out(col)
             )
             if not pooled:
                 _check_faker(table, col, max_cell_chars, provider_snapshot)
@@ -446,6 +448,8 @@ def _class_b_reason(
     instance_default_locale: str | None,
     pool_eligible: Callable[..., bool],
 ) -> str | None:
+    from decoy_engine.generation._faker_pool import pool_opted_out
+
     kind = col.get("type")
     if float(col.get("null_probability") or 0.0) > 0:
         return "null_injection"
@@ -454,7 +458,7 @@ def _class_b_reason(
     if kind == "faker":
         locale = col.get("locale") or instance_default_locale
         if pool_eligible(
-            col.get("faker_type", "word"), locale, rows, opted_out=col.get("pooled") is False
+            col.get("faker_type", "word"), locale, rows, opted_out=pool_opted_out(col)
         ):
             return "pooled_faker"
         return None

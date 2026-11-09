@@ -245,3 +245,160 @@ def test_derived_visibility_codes_are_registered_execution_errors(code: str) -> 
     assert spec is not None
     assert spec.owner == "ExecutionError"
     assert getattr(reasons.runtime, code.upper()) == code
+
+
+FK_FANOUT_CODES = [
+    ("quality", "fanout_column_unknown", "DistributionSnapshotError"),
+    ("plan", "reference_fanout_missing", "PlanCompileError"),
+    ("plan", "reference_fanout_invalid", "PlanCompileError"),
+    ("plan", "reference_fanout_conflict", "PlanCompileError"),
+    ("plan", "reference_parent_pool_empty", "StatisticalSpecError"),
+    ("plan", "dp_generate_fitted_fanout_unsupported", "PlanCompileError"),
+]
+
+
+@pytest.mark.parametrize(("namespace", "code", "owner"), FK_FANOUT_CODES)
+def test_fk_fanout_codes_are_registered_with_their_owner(
+    namespace: str, code: str, owner: str
+) -> None:
+    """E0 (QA-FK-FANOUT): six additive identities, each with an exported symbol whose
+    value is the wire string and `since` equal to the minor that introduced them."""
+    from decoy_engine import reasons
+
+    spec = reasons.find(namespace, code)
+    assert spec is not None
+    assert spec.owner == owner
+    assert spec.since == "1.14.0"
+    assert getattr(getattr(reasons, namespace), code.upper()) == code
+
+
+def test_fk_fanout_minor_has_one_fixture_with_exactly_its_identities() -> None:
+    pinned = _load("reason-manifest-v1.14-fk-fanout.json")
+    got = sorted((e["namespace"], e["code"]) for e in pinned["entries"])
+    assert got == sorted((ns, c) for ns, c, _ in FK_FANOUT_CODES)
+    assert pinned["registry_version"] == "1.14.0"
+
+
+CELL_FORMAT_FIXTURE = "reason-manifest-v1.16-gen-fit-shape.json"
+
+
+def test_cell_format_code_is_registered_with_its_owner() -> None:
+    """E0 (GEN-FIT-SHAPE): one additive identity owned by StatisticalSpecError, `since` 1.16.0."""
+    from decoy_engine import reasons
+
+    spec = reasons.find("plan", "statistical_cell_format_invalid")
+    assert spec is not None
+    assert spec.owner == "StatisticalSpecError"
+    assert spec.since == "1.16.0"
+    assert reasons.plan.STATISTICAL_CELL_FORMAT_INVALID == "statistical_cell_format_invalid"
+
+
+def test_cell_format_minor_has_one_fixture_with_exactly_its_identity() -> None:
+    pinned = _load(CELL_FORMAT_FIXTURE)
+    got = [(e["namespace"], e["code"]) for e in pinned["entries"]]
+    assert got == [("plan", "statistical_cell_format_invalid")]
+    assert pinned["registry_version"] == "1.16.0"
+
+
+GEN_UNIQUE_FIXTURE = "reason-manifest-v1.17-gen-unique.json"
+GEN_UNIQUE = [
+    ("config", "generate_unique_conflict", "PipelineValidationError"),
+    ("config", "generate_unique_domain_too_small", "PipelineValidationError"),
+    ("config", "generate_unique_unsupported", "PipelineValidationError"),
+    ("plan", "pinned_unique_pair_unsupported", "PinnedModeError"),
+]
+
+
+@pytest.mark.parametrize(("namespace", "code", "owner"), GEN_UNIQUE)
+def test_gen_unique_codes_are_registered_configuration_repairs(
+    namespace: str, code: str, owner: str
+) -> None:
+    """E0 (GEN-UNIQUE): four additive identities, `since` 1.17.0, none raised yet."""
+    spec = reasons.find(namespace, code)
+    assert spec is not None
+    assert spec.since == "1.17.0"
+    assert spec.owner == owner
+    assert spec.kind is reasons.Kind.FAILURE
+    assert [r.retry for r in spec.rules] == [reasons.RetryClass.CONFIGURATION_REPAIR]
+    assert getattr(getattr(reasons, namespace), code.upper()) == code
+    assert not re.search(r"[{}%]", spec.summary)
+
+
+def test_gen_unique_minor_has_one_fixture_with_exactly_its_identities() -> None:
+    pinned = _load(GEN_UNIQUE_FIXTURE)
+    assert [(e["namespace"], e["code"]) for e in pinned["entries"]] == sorted(
+        (n, c) for n, c, _ in GEN_UNIQUE
+    )
+    assert pinned["registry_version"] == "1.17.0"
+
+
+GEN_STRICT_FIXTURE = "reason-manifest-v1.13-gen-strict.json"
+GEN_STRICT = [
+    ("config", "generate_column_duplicate", "PipelineValidationError"),
+    ("config", "generate_formula_invalid", "PipelineValidationError"),
+    ("config", "generate_option_range", "PipelineValidationError"),
+    ("config", "generate_option_type", "PipelineValidationError"),
+    ("config", "generate_option_unknown", "PipelineValidationError"),
+    ("config", "generate_option_value_unknown", "PipelineValidationError"),
+    ("config", "generate_weights_invalid", "PipelineValidationError"),
+    ("plan", "generate_categories_mixed", "PlanCompileError"),
+    ("plan", "generate_column_forward_reference", "PlanCompileError"),
+    ("plan", "generate_faker_kwargs_unknown", "PlanCompileError"),
+    ("plan", "generate_faker_type_unknown", "PlanCompileError"),
+    ("plan", "generate_formula_name_unknown", "PlanCompileError"),
+    ("plan", "generate_formula_reference_missing", "PlanCompileError"),
+    ("plan", "generate_formula_reference_unknown", "PlanCompileError"),
+    ("plan", "generate_formula_template_syntax", "PlanCompileError"),
+    ("plan", "generate_locale_unknown", "PlanCompileError"),
+    ("plan", "generate_option_invalid", "PlanCompileError"),
+    ("plan", "grouped_series_group_by_equals_order_by", "PlanCompileError"),
+    ("plan", "reference_weights_length_mismatch", "PlanCompileError"),
+]
+
+
+@pytest.mark.parametrize(("namespace", "code", "owner"), GEN_STRICT)
+def test_gen_strict_codes_are_registered_configuration_repairs(
+    namespace: str, code: str, owner: str
+) -> None:
+    spec = reasons.find(namespace, code)
+    assert spec is not None
+    assert spec.since == "1.13.0"
+    assert spec.owner == owner
+    assert spec.kind is reasons.Kind.FAILURE
+    assert [r.retry for r in spec.rules] == [reasons.RetryClass.CONFIGURATION_REPAIR]
+    assert getattr(getattr(reasons, namespace), code.upper()) == code
+
+
+def test_gen_strict_minor_adds_exactly_these_codes_and_is_pinned() -> None:
+    version = tuple(int(p) for p in str(reasons.manifest()["registry_version"]).split("."))
+    assert version >= (1, 11, 0)
+    live = [
+        e for e in json.loads(json.dumps(reasons.manifest()))["entries"] if e["since"] == "1.13.0"
+    ]
+    assert {(e["namespace"], e["code"]) for e in live} == {(n, c) for n, c, _ in GEN_STRICT}
+    pinned = _load(GEN_STRICT_FIXTURE)
+    assert pinned["entries"] == live
+
+
+def test_gen_strict_summaries_carry_no_placeholder() -> None:
+    # The summary is the refusal text, so a format slot would invite a value into it.
+    for namespace, code, _ in GEN_STRICT:
+        spec = reasons.find(namespace, code)
+        assert spec is not None
+        assert not re.search(r"[{}%]", spec.summary), (namespace, code)
+
+
+def test_fit_redact_code_is_a_registered_plan_error_with_a_pinned_fixture() -> None:
+    """The one 1.11.0 identity: owned by `StatisticalSpecError`, exported under its wire string,
+    and the only entry of its minor fixture."""
+    from decoy_engine import reasons
+
+    spec = reasons.find("plan", "statistical_snapshot_values_redacted")
+    assert spec is not None
+    assert spec.owner == "StatisticalSpecError"
+    assert spec.code == reasons.plan.STATISTICAL_SNAPSHOT_VALUES_REDACTED
+    fixture = _load("reason-manifest-v1.11-fit-redact.json")
+    assert fixture["registry_version"] == "1.11.0"
+    assert [(e["namespace"], e["code"]) for e in fixture["entries"]] == [
+        ("plan", "statistical_snapshot_values_redacted")
+    ]
