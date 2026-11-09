@@ -67,6 +67,8 @@ MAX = 700
 # One-line rationale per entry; the per-file growth history lives in
 # docs/decisions/module-size-census-history.md.
 ALLOWLIST: dict[str, int] = {
+    # package export surface: the declared-columns boundary added the CONFIG-EXPLICIT E2a names.
+    "src/decoy_engine/__init__.py": 604,
     # F06: one declared-casting route guard per route owner (the sentry in test_f06_declared_casting
     # inventories them) and the cast_run threaded through the sequential and out-of-core executors;
     # no casting logic of its own lives in these routers.
