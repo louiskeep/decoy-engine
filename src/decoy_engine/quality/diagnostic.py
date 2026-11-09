@@ -239,9 +239,13 @@ def snapshot_null_fraction(col_snapshot: dict[str, Any]) -> float | None:
     copy). A zero-row column has no meaningful rate; None avoids a 0/0 NaN, which
     would also break JSON serialization.
     """
-    null_count = int(col_snapshot.get("null_count", 0))
-    non_null_count = int(col_snapshot.get("non_null_count", 0))
+    null_count = col_snapshot.get("null_count", 0)
+    non_null_count = col_snapshot.get("non_null_count", 0)
+    # A hand-edited or corrupt snapshot has no defined rate; bool is an int subclass.
+    for count in (null_count, non_null_count):
+        if type(count) is not int or count < 0:
+            return None
     total = null_count + non_null_count
     if total == 0:
         return None
-    return null_count / total
+    return float(null_count / total)

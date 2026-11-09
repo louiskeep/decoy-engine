@@ -96,6 +96,22 @@ def test_null_fraction_is_public_and_exact() -> None:
     assert snapshot_null_fraction({"null_count": 5, "non_null_count": 0}) == 1.0
 
 
+@pytest.mark.parametrize(
+    "col",
+    [
+        {"null_count": None, "non_null_count": 5},
+        {"null_count": "x", "non_null_count": 5},
+        {"null_count": True, "non_null_count": 5},
+        {"null_count": 1, "non_null_count": False},
+        {"null_count": -1, "non_null_count": 5},
+        {"null_count": 3, "non_null_count": -3},
+        {"null_count": 1.5, "non_null_count": 5},
+    ],
+)
+def test_null_fraction_malformed_counts_are_none(col: dict[str, Any]) -> None:
+    assert snapshot_null_fraction(col) is None
+
+
 def test_null_fraction_zero_rows_is_none() -> None:
     assert snapshot_null_fraction({"null_count": 0, "non_null_count": 0}) is None
     assert snapshot_null_fraction({}) is None
@@ -127,6 +143,20 @@ def test_matching_null_rates_keep_the_exact_value_score() -> None:
     out2 = _snap({"a": _num(10, 90, median=40.0)})
     col = _entry(compute_fidelity(src, out2), "a")
     assert col["similarity"] == col["value_similarity"]
+
+
+def test_literal_product_cell() -> None:
+    # Value similarity exactly 0.9: quantile RMSE 10 over a range of 100 is one tenth.
+    src = _snap({"x": _num(0, 1000)})
+    out = _snap({"x": _num(200, 800)})
+    out["columns"]["x"]["stats"]["quantiles"] = {k: v + 10.0 for k, v in _QUANTS.items()}
+    col = _entry(compute_fidelity(src, out), "x")
+    assert col["value_similarity"] == 0.9
+    assert col["missing_value_similarity"] == 0.8
+    assert col["similarity"] == 0.72
+
+
+_QUANTS = {"p05": 5.0, "p25": 25.0, "p50": 50.0, "p75": 75.0, "p95": 95.0}
 
 
 def test_value_times_missing_cell() -> None:

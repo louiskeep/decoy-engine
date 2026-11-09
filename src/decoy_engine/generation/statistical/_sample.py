@@ -160,7 +160,13 @@ def _null_rate(fmt: CellFormat | None) -> float:
     """Per-row null probability the sampler owns; 0 means no null draw is made at all."""
     if fmt is None or not fmt.apply_nulls or fmt.null_count == 0 or fmt.row_count == 0:
         return 0.0
-    return fmt.null_count / fmt.row_count
+    # Through the shared rule so the sampler and the fidelity report agree on the rate.
+    from decoy_engine.quality import snapshot_null_fraction
+
+    rate = snapshot_null_fraction(
+        {"null_count": fmt.null_count, "non_null_count": fmt.row_count - fmt.null_count}
+    )
+    return rate or 0.0
 
 
 def freetext_tables(spec: StatisticalSpec) -> tuple[list[float], list[float], list[float] | None]:

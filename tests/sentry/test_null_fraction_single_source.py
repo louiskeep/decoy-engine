@@ -13,17 +13,28 @@ from pathlib import Path
 SRC = Path(__file__).parents[2] / "src" / "decoy_engine"
 
 OWNER = ("quality/diagnostic.py", "snapshot_null_fraction")
-_TOKENS = frozenset({"null_count", "non_null_count"})
+
+# Exact (path, function) sites that divide beside the counts without computing a null rate.
+ALLOWED: dict[tuple[str, str], str] = {
+    ("generation/statistical/_sample.py", "sample_column"): (
+        "blank_count / non-null cells is the blank share, not the null rate"
+    ),
+}
+_COUNTS = frozenset({"null_count", "non_null_count"})
+_TOKENS = _COUNTS | {"row_count"}
 
 
 def _tokens(node: ast.AST) -> set[str]:
-    """Snapshot keys the node reads. Only string keys count: a snapshot column is a dict,
-    while profiler code that holds `null_count` as a plain local is not reading one."""
-    return {
-        str(sub.value)
-        for sub in ast.walk(node)
-        if isinstance(sub, ast.Constant) and sub.value in _TOKENS
-    }
+    """Snapshot keys the node reads, as a string key (`col["null_count"]`) or an attribute
+    (`fmt.null_count`). A bare local named `null_count` does not count: profiler code that
+    holds one is not reading a snapshot column."""
+    found: set[str] = set()
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Constant) and sub.value in _TOKENS:
+            found.add(str(sub.value))
+        elif isinstance(sub, ast.Attribute) and sub.attr in _TOKENS:
+            found.add(sub.attr)
+    return found
 
 
 def _functions(tree: ast.AST) -> list[ast.AST]:
@@ -34,22 +45,23 @@ def _functions(tree: ast.AST) -> list[ast.AST]:
 
 
 def violations(relative: str, source: str) -> list[str]:
-    """Rate arithmetic outside the owner: a sum over both counts, or a division in a
-    function that reads both counts."""
+    """Rate arithmetic outside the owner: a sum over both counts, or a division in a function
+    that reads `null_count` beside `non_null_count` or `row_count`."""
     tree = ast.parse(source)
     out: list[str] = []
     for func in _functions(tree):
         name = getattr(func, "name", "<module>")
-        if (relative, name) == OWNER:
+        if (relative, name) == OWNER or (relative, name) in ALLOWED:
             continue
-        both = _tokens(func) == _TOKENS
+        seen = _tokens(func)
+        rate_inputs = "null_count" in seen and bool(seen & {"non_null_count", "row_count"})
         for node in ast.walk(func):
             if not isinstance(node, ast.BinOp):
                 continue
-            if isinstance(node.op, ast.Add) and _tokens(node) == _TOKENS:
+            if isinstance(node.op, ast.Add) and _tokens(node) >= _COUNTS:
                 out.append(f"{relative}:{node.lineno} {name}: sum of both null counts")
-            elif isinstance(node.op, ast.Div | ast.FloorDiv) and both:
-                out.append(f"{relative}:{node.lineno} {name}: division beside both null counts")
+            elif isinstance(node.op, ast.Div | ast.FloorDiv) and rate_inputs:
+                out.append(f"{relative}:{node.lineno} {name}: null rate division")
     return out
 
 
@@ -94,3 +106,18 @@ def test_unrelated_count_arithmetic_is_not_flagged() -> None:
         "            'non_null_count': non_null_count}\n"
     )
     assert violations("quality/dp.py", fine) == []
+
+
+def test_seeded_division_by_row_count_is_detected() -> None:
+    seeded = "def rate(col, snap):\n    return col['null_count'] / snap['row_count']\n"
+    assert violations("quality/fidelity.py", seeded)
+
+
+def test_seeded_attribute_form_is_detected() -> None:
+    seeded = "def rate(c):\n    return c.null_count / (c.null_count + c.non_null_count)\n"
+    assert violations("quality/fidelity.py", seeded)
+
+
+def test_seeded_attribute_division_by_row_count_is_detected() -> None:
+    seeded = "def rate(fmt):\n    return fmt.null_count / fmt.row_count\n"
+    assert violations("generation/statistical/_sample.py", seeded)
