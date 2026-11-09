@@ -136,6 +136,7 @@ SNAPSHOT_VALUE_FREE_STATS: Final[frozenset[tuple[str, str]]] = frozenset(
         "distinct_count",
         "stats",
         "fanout",
+        "cell_format",
     )
     # Degree histogram: integer counts only, never a key value.
     | _free("fanout", "rows", "keys", "degrees")

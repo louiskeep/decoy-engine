@@ -8,6 +8,12 @@ column against the snapshot, `sample_column` draws deterministic
 synthetic values from it.
 """
 
+from decoy_engine.generation.statistical._cell_format import (
+    add_cell_format,
+    cell_format_member_ok,
+    learn_cell_format,
+    scrub_cell_format,
+)
 from decoy_engine.generation.statistical._fanout import (
     FanoutSpec,
     add_fanout,
@@ -27,11 +33,15 @@ __all__ = [
     "FanoutSpec",
     "StatisticalSpec",
     "StatisticalSpecError",
+    "add_cell_format",
     "add_fanout",
+    "cell_format_member_ok",
     "fanout_spec_from_snapshot",
     "fitted_reference_values",
+    "learn_cell_format",
     "load_spec",
     "sample_column",
+    "scrub_cell_format",
     "spec_from_dict",
     "spec_to_dict",
 ]
