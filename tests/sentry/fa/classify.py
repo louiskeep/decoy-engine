@@ -17,6 +17,7 @@ class Roles:
     adapters: frozenset[str]
     capabilities: frozenset[str]
     local_constructors: frozenset[str]
+    creators: frozenset[str] = frozenset()  # `module::function` public fd-taking choke points
 
 
 def registry_index(
@@ -50,7 +51,7 @@ def classify(
             continue
         if site.kind == "descriptor":
             if in_capability:
-                v = check_capability_site(site)
+                v = check_capability_site(site, roles.creators)
                 if v:
                     violations.append(v)
             continue
@@ -63,7 +64,7 @@ def classify(
                 violations.append(v)
             continue
         if in_capability:
-            v = check_capability_site(site)
+            v = check_capability_site(site, roles.creators)
             if v:
                 violations.append(v)
             continue

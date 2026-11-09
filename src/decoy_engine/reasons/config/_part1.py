@@ -15,6 +15,7 @@ __all__ = [
     "EDGE_UNKNOWN_FROM_NODE",
     "EDGE_UNKNOWN_PORT",
     "EDGE_UNKNOWN_TO_NODE",
+    "ENDPOINT_URL_INVALID",
     "FK_CUSTOM_PROVIDER_UNREGISTERED",
     "FK_EMPTY_PARENT_POOL",
     "FK_INELIGIBLE_CHILD_KIND",
@@ -123,6 +124,11 @@ _d = _catalog.config("PipelineValidationError")
 
 DETECTORS_INVALID = _d("detectors_invalid", "Detectors invalid.", since="1.8.0")
 DISMISSAL_INVALID = _d("dismissal_invalid", "Dismissal invalid.", since="1.8.0")
+ENDPOINT_URL_INVALID = _d(
+    "endpoint_url_invalid",
+    "Endpoint URL must be an http or https URL with a host and carry no credentials, query or fragment.",
+    since="1.10.0",
+)
 POST_SCAN_INACTIVE = _d("post_scan_inactive", "Post-scan inactive.", since="1.8.0")
 PRE_SCAN_NER_INACTIVE = _d("pre_scan_ner_inactive", "Pre-scan NER inactive.", since="1.8.0")
 SOURCE_FILE_COLUMN_COUNT_MISMATCH = _d(

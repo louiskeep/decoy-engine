@@ -277,3 +277,19 @@ def test_fk_fanout_minor_has_one_fixture_with_exactly_its_identities() -> None:
     got = sorted((e["namespace"], e["code"]) for e in pinned["entries"])
     assert got == sorted((ns, c) for ns, c, _ in FK_FANOUT_CODES)
     assert pinned["registry_version"] == "1.10.0"
+
+
+def test_fit_redact_code_is_a_registered_plan_error_with_a_pinned_fixture() -> None:
+    """The one 1.11.0 identity: owned by `StatisticalSpecError`, exported under its wire string,
+    and the only entry of its minor fixture."""
+    from decoy_engine import reasons
+
+    spec = reasons.find("plan", "statistical_snapshot_values_redacted")
+    assert spec is not None
+    assert spec.owner == "StatisticalSpecError"
+    assert spec.code == reasons.plan.STATISTICAL_SNAPSHOT_VALUES_REDACTED
+    fixture = _load("reason-manifest-v1.11-fit-redact.json")
+    assert fixture["registry_version"] == "1.11.0"
+    assert [(e["namespace"], e["code"]) for e in fixture["entries"]] == [
+        ("plan", "statistical_snapshot_values_redacted")
+    ]

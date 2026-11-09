@@ -33,8 +33,10 @@ NAME_RESOLVING = {
     "os.replace",
     "os.link",
     "os.remove",
+    "os.chmod",
 }
-ALLOWED_RAW = NAME_RESOLVING | {"os.scandir"}
+# `os.chmod` is name-resolving, so it is allowed only with a `dir_fd=` on a held descriptor.
+ALLOWED_RAW = NAME_RESOLVING | {"os.chmod", "os.scandir"}
 DIR_FD_KEYWORDS = {"dir_fd", "src_dir_fd", "dst_dir_fd"}
 HELD_FD_SOURCES = {"os.open", "os.dup", "openat2", "_open_parent", "_open_pending"}
 
@@ -174,16 +176,17 @@ def _rooted_at_held(expr: ast.AST) -> bool:
     return isinstance(expr, ast.Name) and expr.id in {"self", "state", "root"}
 
 
-def _held_fd(expr: ast.AST, info: FunctionInfo, depth: int = 0) -> bool:
+def _held_fd(expr: ast.AST, info: FunctionInfo, depth: int = 0, listed: bool = False) -> bool:
     if depth > 6:
         return False
     if isinstance(expr, ast.Attribute):
         return _rooted_at_held(expr)
     if isinstance(expr, ast.Name):
         if expr.id in info.params:
-            return info.qualname.rsplit(".", 1)[-1].startswith("_") and "fd" in expr.id
+            private = info.qualname.rsplit(".", 1)[-1].startswith("_")
+            return (private or listed) and "fd" in expr.id
         assigned = info.assigned.get(expr.id)
-        return assigned is not None and _held_fd(assigned, info, depth + 1)
+        return assigned is not None and _held_fd(assigned, info, depth + 1, listed)
     if isinstance(expr, ast.Call):
         func = expr.func
         name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
@@ -220,7 +223,8 @@ def _name_traced(expr: ast.AST, info: FunctionInfo, depth: int = 0) -> bool:
         if expr.id in info.self_loop_vars or expr.id in info.validated:
             return True
         if expr.id in info.params:
-            return expr.id in info.validated or info.qualname.rsplit(".", 1)[-1].startswith("_")
+            private = info.qualname.rsplit(".", 1)[-1].startswith("_")
+            return expr.id in info.validated or private
         assigned = info.assigned.get(expr.id)
         return assigned is not None and _name_traced(assigned, info, depth + 1)
     if isinstance(expr, ast.JoinedStr):
@@ -242,13 +246,17 @@ def _name_traced(expr: ast.AST, info: FunctionInfo, depth: int = 0) -> bool:
     return False
 
 
-def check_capability_site(site: Site) -> Violation | None:
+def check_capability_site(site: Site, creators: frozenset[str] = frozenset()) -> Violation | None:
     """Rule 2: only raw fd-relative primitives, with held descriptors and validated names."""
     info = site.scope_info
     assert info is not None
+    # A listed creator is a public choke point whose callers hold the descriptor, so its fd
+    # parameter counts as held. Its name is still traced: it must validate the name itself
+    # (modules.toml `capability_creators`).
+    listed = f"{site.module}::{info.qualname}" in creators
     if site.kind == "descriptor":
         args = site.node.args
-        if not args or not _held_fd(args[0], info):
+        if not args or not _held_fd(args[0], info, listed=listed):
             return Violation(site, "a descriptor argument that does not trace to a held fd")
         return None
     if site.kind != "sink":
@@ -274,7 +282,7 @@ def check_capability_site(site: Site) -> Violation | None:
             site, "not a raw fd-relative primitive; third-party and path APIs are forbidden here"
         )
     if sink == "os.scandir":
-        if not args or not _held_fd(args[0], info):
+        if not args or not _held_fd(args[0], info, listed=listed):
             return Violation(site, "os.scandir needs a held directory descriptor")
         return None
     if sink in NAME_RESOLVING:
@@ -283,14 +291,31 @@ def check_capability_site(site: Site) -> Violation | None:
         if sink in {"os.rename", "os.replace", "os.link"}:
             for key in ("src_dir_fd", "dst_dir_fd"):
                 kw = {k.arg: k.value for k in node.keywords}.get(key)
-                if kw is None or not _held_fd(kw, info):
+                if kw is None or not _held_fd(kw, info, listed=listed):
                     return Violation(site, f"{key} does not trace to a held descriptor")
         else:
             kw = {k.arg: k.value for k in node.keywords}.get("dir_fd")
-            if kw is None or not _held_fd(kw, info):
+            if kw is None or not _held_fd(kw, info, listed=listed):
                 return Violation(site, "dir_fd does not trace to a held descriptor")
         for arg in args[: 2 if sink in {"os.rename", "os.replace", "os.link"} else 1]:
             if not _name_traced(arg, info):
                 return Violation(site, "a name that does not trace to the component validator")
         return None
     return None
+
+
+def creator_problems(
+    creators: list[str], capability_modules: frozenset[str], src: Path
+) -> list[str]:
+    """Why a `capability_creators` entry is stale: not `module::function`, outside the capability
+    modules, or naming a module-level function that does not exist."""
+    problems: list[str] = []
+    for entry in creators:
+        module, sep, function = entry.partition("::")
+        if not sep or module not in capability_modules:
+            problems.append(f"{entry}: not `module::function` of a capability module")
+            continue
+        tree = ast.parse((src / module).read_text(encoding="utf-8"))
+        if not any(isinstance(n, ast.FunctionDef) and n.name == function for n in tree.body):
+            problems.append(f"{entry}: no such module-level function")
+    return problems
