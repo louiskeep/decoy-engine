@@ -983,5 +983,550 @@
    },
    "version": 2
   }
+ },
+ "testflight:c_hr_selfref": {
+  "dump": {
+   "global_settings": {
+    "categorical_retention_warn_threshold": 0.8,
+    "fidelity_warn_threshold": 0.8,
+    "freetext_advisory_min_avg_length": 40.0,
+    "freetext_advisory_min_distinctness": 0.5,
+    "mask_secret_ref": null,
+    "on_pool_exhaustion": "scale_up",
+    "post_validation": false,
+    "seed": 44,
+    "unconfigured_column_policy": null
+   },
+   "namespaces": {},
+   "post_scan": {
+    "integrity": false
+   },
+   "quarantine": null,
+   "relationships": [],
+   "sources": {},
+   "subset": null,
+   "tables": [
+    {
+     "columns": [],
+     "generate_columns": [
+      {
+       "name": "event_id",
+       "pad_length": 7,
+       "pooled": null,
+       "prefix": "EVT",
+       "start": 1,
+       "step": 1,
+       "type": "sequence"
+      },
+      {
+       "categories": [
+        "login",
+        "purchase",
+        "view",
+        "error"
+       ],
+       "name": "event_type",
+       "pooled": null,
+       "type": "categorical",
+       "weights": [
+        0.4,
+        0.3,
+        0.2,
+        0.1
+       ]
+      },
+      {
+       "formula": "gauss(50.0, 15.0)",
+       "name": "amount",
+       "pooled": null,
+       "type": "formula"
+      },
+      {
+       "faker_type": "name",
+       "name": "actor",
+       "pooled": null,
+       "type": "faker"
+      },
+      {
+       "expression": "case_when(amount > 60.0, \"high\", amount > 40.0, \"mid\", \"low\")",
+       "name": "derived_flag",
+       "pooled": null,
+       "type": "derived"
+      },
+      {
+       "column": "amount",
+       "name": "rolling_total",
+       "op": "sum",
+       "pooled": null,
+       "type": "derived_aggregate"
+      }
+     ],
+     "name": "synthetic_events",
+     "row_count": 10000,
+     "transforms": []
+    }
+   ],
+   "targets": {
+    "synthetic_events": {
+     "format": "parquet",
+     "layout": null,
+     "path": "/o/synthetic_events.parquet",
+     "type": "file"
+    }
+   },
+   "validators": [],
+   "version": 2
+  },
+  "fingerprints": {
+   "synthetic_events.actor": "61350ee586ad19637766cd5b7361961a5ac6903055daa10298f78c08a3892956",
+   "synthetic_events.amount": "9e26e25e1e6a48b4d02739fff31e4d8db47d1fa41d7a224c21400d6739337135",
+   "synthetic_events.derived_flag": "cdedcb482f619d6ae6c7aca63c4825e3f5369edc303789d946b96316eb33c78c",
+   "synthetic_events.event_id": "06a56230120068dd97d021d9a74b0cba714204cb395510e78f0e4f50fc84fa91",
+   "synthetic_events.event_type": "09c1f0bf9043ad6b14d03603e828217e9b7afa9574ad945a7674d2367b1ecb36",
+   "synthetic_events.rolling_total": "3646217de6347f0c2dbc41762e958ac2ca5fec88ade3c908b92e73716ba13caa"
+  },
+  "raw": {
+   "global_settings": {
+    "seed": 44
+   },
+   "sources": {},
+   "tables": [
+    {
+     "generate_columns": [
+      {
+       "name": "event_id",
+       "pad_length": 7,
+       "prefix": "EVT",
+       "start": 1,
+       "step": 1,
+       "type": "sequence"
+      },
+      {
+       "categories": [
+        "login",
+        "purchase",
+        "view",
+        "error"
+       ],
+       "name": "event_type",
+       "type": "categorical",
+       "weights": [
+        0.4,
+        0.3,
+        0.2,
+        0.1
+       ]
+      },
+      {
+       "formula": "gauss(50.0, 15.0)",
+       "name": "amount",
+       "type": "formula"
+      },
+      {
+       "faker_type": "name",
+       "name": "actor",
+       "type": "faker"
+      },
+      {
+       "expression": "case_when(amount > 60.0, \"high\", amount > 40.0, \"mid\", \"low\")",
+       "name": "derived_flag",
+       "type": "derived"
+      },
+      {
+       "column": "amount",
+       "name": "rolling_total",
+       "op": "sum",
+       "type": "derived_aggregate"
+      }
+     ],
+     "name": "synthetic_events",
+     "row_count": 10000
+    }
+   ],
+   "targets": {
+    "synthetic_events": {
+     "format": "parquet",
+     "path": "/o/synthetic_events.parquet",
+     "type": "file"
+    }
+   },
+   "version": 2
+  }
+ },
+ "testflight:d_longitudinal_visits": {
+  "dump": {
+   "global_settings": {
+    "categorical_retention_warn_threshold": 0.8,
+    "fidelity_warn_threshold": 0.8,
+    "freetext_advisory_min_avg_length": 40.0,
+    "freetext_advisory_min_distinctness": 0.5,
+    "mask_secret_ref": null,
+    "on_pool_exhaustion": "scale_up",
+    "post_validation": false,
+    "seed": 45,
+    "unconfigured_column_policy": null
+   },
+   "namespaces": {},
+   "post_scan": {
+    "integrity": false
+   },
+   "quarantine": null,
+   "relationships": [],
+   "sources": {},
+   "subset": null,
+   "tables": [
+    {
+     "columns": [],
+     "generate_columns": [
+      {
+       "name": "event_idx",
+       "pad_length": 7,
+       "pooled": null,
+       "start": 1,
+       "step": 1,
+       "type": "sequence"
+      },
+      {
+       "categories": [
+        "P000",
+        "P001",
+        "P002",
+        "P003",
+        "P004",
+        "P005",
+        "P006",
+        "P007",
+        "P008",
+        "P009",
+        "P010",
+        "P011",
+        "P012",
+        "P013",
+        "P014",
+        "P015",
+        "P016",
+        "P017",
+        "P018",
+        "P019",
+        "P020",
+        "P021",
+        "P022",
+        "P023",
+        "P024",
+        "P025",
+        "P026",
+        "P027",
+        "P028",
+        "P029"
+       ],
+       "name": "patient_ref",
+       "pooled": null,
+       "type": "categorical",
+       "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+       ]
+      },
+      {
+       "generator": "cumcount",
+       "group_by": "patient_ref",
+       "name": "visit_num",
+       "order_by": "event_idx",
+       "pooled": null,
+       "type": "grouped_series"
+      },
+      {
+       "group_by": "patient_ref",
+       "name": "episode_key",
+       "pooled": null,
+       "prefix": "EP-",
+       "type": "group_key"
+      },
+      {
+       "name": "admit_date",
+       "pooled": null,
+       "snapshot_file": "snapshot:build_charge_snapshot",
+       "source_column": "admit_ts",
+       "type": "statistical"
+      },
+      {
+       "anchor": "admit_date",
+       "max_days": 30,
+       "min_days": 1,
+       "name": "followup_date",
+       "pooled": null,
+       "type": "windowed_date"
+      },
+      {
+       "name": "charge_amount",
+       "pooled": null,
+       "snapshot_file": "snapshot:build_charge_snapshot",
+       "type": "statistical"
+      }
+     ],
+     "name": "visits",
+     "row_count": 6000,
+     "transforms": []
+    }
+   ],
+   "targets": {
+    "visits": {
+     "format": "parquet",
+     "layout": null,
+     "path": "/o/visits.parquet",
+     "type": "file"
+    }
+   },
+   "validators": [],
+   "version": 2
+  },
+  "fingerprints": {
+   "visits.admit_date": "b95d955e3406a07deb18d4b14a822c56debe418822c5cc16474778e7b5ad637c",
+   "visits.charge_amount": "495b1689ca0995dc9c15e9d289d0de9240cc32e02279d807a963f044416f5a3d",
+   "visits.episode_key": "54233bac8d8776d030d7c7e5ad7dea546f8b0f31b05e0db7011322cc1828ca3e",
+   "visits.event_idx": "b31e5096208d27c2ea6871b7a3cd2c90d87fe6146e5c9bef78414ad2eae3579b",
+   "visits.followup_date": "6b234314aabb0fd07a37ac78ad32a9b26d198476e5236985ec681cad69e4dd5f",
+   "visits.patient_ref": "d02ccd2fa1a51bbf7f3dce38caa79a53f7c0d36a1332b9f6623b209503aa7ee4",
+   "visits.visit_num": "6db09a6cf37f665b97e782f42006a38ab2a4e865b89345cede9a1293b212b857"
+  },
+  "raw": {
+   "global_settings": {
+    "seed": 45
+   },
+   "sources": {},
+   "tables": [
+    {
+     "generate_columns": [
+      {
+       "name": "event_idx",
+       "pad_length": 7,
+       "start": 1,
+       "step": 1,
+       "type": "sequence"
+      },
+      {
+       "categories": [
+        "P000",
+        "P001",
+        "P002",
+        "P003",
+        "P004",
+        "P005",
+        "P006",
+        "P007",
+        "P008",
+        "P009",
+        "P010",
+        "P011",
+        "P012",
+        "P013",
+        "P014",
+        "P015",
+        "P016",
+        "P017",
+        "P018",
+        "P019",
+        "P020",
+        "P021",
+        "P022",
+        "P023",
+        "P024",
+        "P025",
+        "P026",
+        "P027",
+        "P028",
+        "P029"
+       ],
+       "name": "patient_ref",
+       "type": "categorical",
+       "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+       ]
+      },
+      {
+       "generator": "cumcount",
+       "group_by": "patient_ref",
+       "name": "visit_num",
+       "order_by": "event_idx",
+       "type": "grouped_series"
+      },
+      {
+       "group_by": "patient_ref",
+       "name": "episode_key",
+       "prefix": "EP-",
+       "type": "group_key"
+      },
+      {
+       "name": "admit_date",
+       "snapshot_file": "snapshot:build_charge_snapshot",
+       "source_column": "admit_ts",
+       "type": "statistical"
+      },
+      {
+       "anchor": "admit_date",
+       "max_days": 30,
+       "min_days": 1,
+       "name": "followup_date",
+       "type": "windowed_date"
+      },
+      {
+       "name": "charge_amount",
+       "snapshot_file": "snapshot:build_charge_snapshot",
+       "type": "statistical"
+      }
+     ],
+     "name": "visits",
+     "row_count": 6000
+    }
+   ],
+   "targets": {
+    "visits": {
+     "format": "parquet",
+     "path": "/o/visits.parquet",
+     "type": "file"
+    }
+   },
+   "version": 2
+  }
+ },
+ "testflight:e_hostile_edge_cases": {
+  "dump": {
+   "global_settings": {
+    "categorical_retention_warn_threshold": 0.8,
+    "fidelity_warn_threshold": 0.8,
+    "freetext_advisory_min_avg_length": 40.0,
+    "freetext_advisory_min_distinctness": 0.5,
+    "mask_secret_ref": null,
+    "on_pool_exhaustion": "scale_up",
+    "post_validation": false,
+    "seed": 46,
+    "unconfigured_column_policy": null
+   },
+   "namespaces": {},
+   "post_scan": {
+    "integrity": false
+   },
+   "quarantine": null,
+   "relationships": [],
+   "sources": {},
+   "subset": null,
+   "tables": [
+    {
+     "columns": [],
+     "generate_columns": [
+      {
+       "name": "seq_id",
+       "pad_length": 4,
+       "pooled": null,
+       "start": 1,
+       "step": 1,
+       "type": "sequence"
+      }
+     ],
+     "name": "empty_table",
+     "row_count": 0,
+     "transforms": []
+    }
+   ],
+   "targets": {
+    "empty_table": {
+     "format": "parquet",
+     "layout": null,
+     "path": "/o/empty_table.parquet",
+     "type": "file"
+    }
+   },
+   "validators": [],
+   "version": 2
+  },
+  "fingerprints": {
+   "empty_table.seq_id": "7075a639413b06d4ed67adfd41c3b15b952e21361e42ba182ed0693a37cfe0ab"
+  },
+  "raw": {
+   "global_settings": {
+    "seed": 46
+   },
+   "sources": {},
+   "tables": [
+    {
+     "generate_columns": [
+      {
+       "name": "seq_id",
+       "pad_length": 4,
+       "start": 1,
+       "step": 1,
+       "type": "sequence"
+      }
+     ],
+     "name": "empty_table",
+     "row_count": 0
+    }
+   ],
+   "targets": {
+    "empty_table": {
+     "format": "parquet",
+     "path": "/o/empty_table.parquet",
+     "type": "file"
+    }
+   },
+   "version": 2
+  }
  }
 }

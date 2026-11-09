@@ -201,6 +201,65 @@ def test_bad_static_value_is_refused_with_code_and_location(
     assert [_spot(e) for e in errs] == [(code, loc)]
 
 
+# None is "not given" only where the reader treats it so; everywhere else it is a type error.
+NONE_OK = [
+    ("categorical", "weights"),
+    ("faker", "locale"),
+    ("faker", "faker_kwargs"),
+    ("sequence", "null_probability"),
+    ("formula", "references"),
+    ("reference", "min_per_parent"),
+    ("reference", "max_per_parent"),
+    ("derived", "bounds"),
+    ("statistical", "high_cardinality"),
+    ("statistical", "allow_real_categories"),
+    ("statistical", "condition_on"),
+]
+NONE_BAD = [
+    ("sequence", "step"),
+    ("sequence", "prefix"),
+    ("sequence", "suffix"),
+    ("sequence", "pad_length"),
+    ("sequence", "determinism"),
+    ("reference", "distribution"),
+    ("statistical", "source_column"),
+    ("statistical", "other_mode"),
+    ("derived", "null_propagation"),
+    ("derived_aggregate", "op"),
+    ("derived_aggregate", "column"),
+    ("grouped_series", "start"),
+    ("grouped_series", "step"),
+    ("grouped_series", "max_step"),
+    ("grouped_series", "generator"),
+    ("windowed_date", "min_days"),
+    ("windowed_date", "distribution"),
+    ("group_key", "length"),
+    ("group_key", "prefix"),
+]
+
+
+@pytest.mark.parametrize(("type_", "key"), NONE_OK)
+def test_none_means_not_given_where_the_reader_agrees(type_: str, key: str) -> None:
+    PipelineConfig.model_validate(_config(_col(type_, **{key: None})))
+
+
+@pytest.mark.parametrize(("type_", "key"), NONE_BAD)
+def test_none_elsewhere_is_a_type_error(type_: str, key: str) -> None:
+    assert [_spot(e) for e in _errors(_col(type_, **{key: None}))] == [(TYPE, (key,))]
+
+
+def test_huge_int_weight_is_a_refusal_not_an_overflow() -> None:
+    huge = 10**400
+    for extra in ({"weights": [1, huge]}, {"weights": [huge, huge]}):
+        raw = _config(_col("categorical", **extra))
+        assert {e["type"] for e in _errors(_col("categorical", **extra))} == {WEIGHTS}
+        with pytest.raises(PipelineConfigError):
+            parse_pipeline_config(raw)
+    big_sum = {"weights": [1e308, 1e308]}
+    assert [_spot(e) for e in _errors(_col("categorical", **big_sum))] == [(WEIGHTS, ("weights",))]
+    PipelineConfig.model_validate(_config(_col("categorical", weights=[10**300, 1])))
+
+
 def test_weighted_distribution_requires_weights() -> None:
     errs = _errors(_col("reference", distribution="weighted"))
     assert [_spot(e) for e in errs] == [("missing", ("weights",))]
@@ -333,6 +392,12 @@ def _raw_for(key: str) -> dict[str, Any]:
     import yaml
 
     return yaml.safe_load((ROOT / key.removeprefix("file:")).read_text())
+
+
+# The `testflight:` entries are the generate tables of the three test-flight manifests, recorded at
+# main. Jobs C and D had a `params: {mean, std}` key on two columns that only the test-flight
+# evaluator read; it moved to their distribution spec (the config refuses unread keys), so the
+# recorded configs are the post-move ones and those two jobs' golden fingerprints were re-pinned.
 
 
 @pytest.mark.parametrize("key", sorted(IDENTITY))

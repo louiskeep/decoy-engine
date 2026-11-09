@@ -23,7 +23,7 @@
 #   genuinely masked it; the mutation control TestJobCSelfFKTeeth proves both checks).
 #
 # GENERATE TABLE: synthetic_events (10000 rows)
-#   Exercises: sequence, categorical (list weights), formula (gauss; mean/std params),
+#   Exercises: sequence, categorical (list weights), formula (gauss; mean/std in the distribution block),
 #   faker, derived (case_when), derived_aggregate (sum broadcast).
 #   Distribution invariant (config-derived only; OWNER DECISION Q3: no snapshots).
 #   Computed-column invariant: derived_flag (case_when 3-branch) + rolling_total (sum).
@@ -242,14 +242,11 @@ config:
 
         # amount: formula drawing from a normal distribution.
         # gauss(mu, sigma) is available in the formula scope (added in Phase 3b).
-        # params metadata declares the distribution for check_distribution_generate.
-        # Distribution invariant checks output mean/std vs declared params (<= 0.10).
+        # the distribution block declares mean/std for check_distribution_generate.
+        # Distribution invariant checks output mean/std vs the distribution block mean/std (<= 0.10).
         - name: amount
           type: formula
           formula: "gauss(50.0, 15.0)"
-          params:
-            mean: 50.0
-            std: 15.0
 
         # actor: Faker-generated full name. Not distribution-checked (synthetic text).
         - name: actor
@@ -422,17 +419,19 @@ invariants:
         Only the single-column weight check applies.
 
     # synthetic_events.amount: synthetic (formula generate column).
-    # check_distribution_generate checks output mean/std vs params metadata.
+    # check_distribution_generate checks output mean/std vs the declared mean/std.
     - table: synthetic_events
       column: amount
       distribution_class: synthetic
+      mean: 50.0
+      std: 15.0
       tolerance: 0.10
       null_pp: 2.0
       joint_columns: []
       joints_waived: true
       joints_waived_reason: >-
         amount is formula-generated (gauss); no joint with event_type declared.
-        Mean/std verified against params metadata within 10% band.
+        Mean/std verified against the declared mean/std within 10% band.
 
   # TH-3.4 (P1-9): relabel-invariant Cramers V check for the hash-hash pair.
   # Source V(department, division_hash) = 1.0 (deterministic many-to-one

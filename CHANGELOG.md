@@ -24,8 +24,9 @@ and `pooled` on a non-faker column is reported as `config.generate_option_unknow
 
 Pre-GA hard change: a config that carried an unknown or malformed option, and ran because the
 generators ignored it, is now refused. A valid config dumps, hashes and generates byte for byte as
-before. The JSON schema for a generate column is closed per type, so editors and `decoy schema`
-flag a typo-shaped key. The faker locale, provider and kwargs names, category typing and sibling
+before. Because unknown keys were part of the column fingerprint, deleting a now-refused stray key
+from a column changes that column's seed and generated output. The JSON schema for a generate
+column is closed per type, so editors and `decoy schema` flag a typo-shaped key. The faker locale, provider and kwargs names, category typing and sibling
 references are plan checks and land separately.
 
 ### Added (pipeline `name:` and `is_valid_pipeline_name`, registry 1.12.0)

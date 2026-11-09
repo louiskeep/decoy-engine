@@ -245,17 +245,15 @@ class GenerateColumnConfig(BaseModel):
     """A synthesis (generation) column declaration (S6).
 
     Mirrors V1's generate column shape (decoy_engine.generators.columns): ``type``
-    selects the generator (``faker`` / ``sequence`` / ``categorical`` / ``formula`` --
-    the V1 ``ColumnGenerator.generators`` keys), and the per-type params
-    (``faker_type``, ``start``, ``step``, ``values``, ``expr``, ...) ride FLAT on
-    the column, exactly as V1 reads them (``column_config.get("faker_type")``).
-    ``extra="allow"`` carries those flat params so the front-end emit and the V1
-    parity oracle line up (Reading B). S6-ENG-1 ships the spine + ``sequence``;
-    S6-ENG-2 adds the remaining parity-frozen generators.
+    selects the generator, and the per-type options (``faker_type``, ``start``,
+    ``weights``, ...) ride FLAT on the column, exactly as V1 reads them
+    (``column_config.get("faker_type")``).
 
-    NOTE (Dennis S6-ENG-1 gate, Q-S6-1): ``extra="allow"`` here is the deliberate
-    mirror-V1-flat choice over a stricter nested ``config: dict`` under
-    ``extra="forbid"`` -- flagged for the gate.
+    ``extra="allow"`` carries those flat options so the front-end emit and the V1 parity
+    oracle line up, and so the dump and the seed fingerprint (which hashes every dumped key)
+    do not change. The key set is not open: ``_options_valid`` checks every extra against the
+    per-type registry in ``config/_generate_options.py`` and refuses an unknown key, a missing
+    required key or a bad static value, and the JSON schema closes each type the same way.
     """
 
     model_config = ConfigDict(

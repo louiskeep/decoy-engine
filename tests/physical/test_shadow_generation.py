@@ -34,7 +34,6 @@ import pyarrow as pa
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from pydantic import ValidationError
 
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution.physical._context import SeamContext
@@ -74,6 +73,7 @@ def _generate_config(
     seed: int = 20260916,
     columns: list[dict[str, Any]] | None = None,
     table_name: str = "people",
+    bypass_parse: bool = False,
 ) -> dict[str, Any]:
     """A minimal admitted pure-generate config: one generate table, sequence
     + categorical columns only, no sources/relationships/namespaces/subset/
@@ -87,19 +87,19 @@ def _generate_config(
             {
                 "name": table_name,
                 "row_count": row_count,
-                "generate_columns": columns if columns is not None else _DEFAULT_COLUMNS,
+                "generate_columns": _DEFAULT_COLUMNS
+                if bypass_parse or columns is None
+                else columns,
             }
         ],
     }
-    try:
-        return PipelineConfig.model_validate(raw).model_dump()
-    except ValidationError:
-        # The config layer refuses malformed leaf knobs, but these tests feed them straight to
-        # the executors (a hand-built Plan can carry them), so splice them in after parsing.
-        raw["tables"][0]["generate_columns"] = _DEFAULT_COLUMNS
-        dumped = PipelineConfig.model_validate(raw).model_dump()
+    dumped = PipelineConfig.model_validate(raw).model_dump()
+    if bypass_parse:
+        # The config layer refuses malformed leaf knobs, but the malformed and sweep tests feed
+        # them straight to the executors (a hand-built Plan can carry them), so they are spliced
+        # in after parsing. Only those callers set the flag; every other caller must parse.
         dumped["tables"][0]["generate_columns"] = [{"pooled": None, **c} for c in columns or ()]
-        return dumped
+    return dumped
 
 
 def _empty_profile() -> Profile:
@@ -434,7 +434,7 @@ def test_positive_cross_run_determinism() -> None:
     ],
 )
 def test_malformed_leaf_knob_is_identical_rejection(columns: list[dict[str, Any]]) -> None:
-    config = _generate_config(columns=columns)
+    config = _generate_config(columns=columns, bypass_parse=True)
     diff = run_generation_shadow_and_oracle(config)
     assert_generation_failures_match(diff)
 
@@ -485,7 +485,8 @@ def test_bounded_sequence_knob_sweep_is_success_or_identical_rejection(
                 "step": step,
                 "pad_length": pad_length,
             }
-        ]
+        ],
+        bypass_parse=True,
     )
     _assert_success_or_matching_failure(config)
 
@@ -504,7 +505,8 @@ def test_bounded_categorical_knob_sweep_is_success_or_identical_rejection(
                 "weights": weights,
                 "null_probability": null_probability,
             }
-        ]
+        ],
+        bypass_parse=True,
     )
     _assert_success_or_matching_failure(config)
 

@@ -145,15 +145,30 @@ def _categories(value: Any, _: Mapping[str, Any]) -> list[Problem]:
     return _OK if isinstance(value, list) else [((), _TYPE)]
 
 
+def _weight_ok(w: Any) -> bool:
+    """A non-negative weight the generators can turn into a finite float.
+
+    Ints compare directly (`math.isfinite` overflows on a huge int); an int too large for a
+    float is refused because the samplers call `float()` on it.
+    """
+    if type(w) is float:
+        return math.isfinite(w) and w >= 0
+    if type(w) is int:
+        if w < 0:
+            return False
+        try:
+            float(w)
+        except OverflowError:
+            return False
+        return True
+    return False
+
+
 def _weights(value: Any, extras: Mapping[str, Any]) -> list[Problem]:
     """A list of non-negative finite int or float with a positive sum (bool is not a number)."""
     if not isinstance(value, list):
         return [((), _TYPE)]
-    bad: list[Problem] = [
-        ((i,), _WEIGHTS)
-        for i, w in enumerate(value)
-        if not _is_number(w) or not math.isfinite(w) or w < 0
-    ]
+    bad: list[Problem] = [((i,), _WEIGHTS) for i, w in enumerate(value) if not _weight_ok(w)]
     if bad:
         return bad
     categories = extras.get("categories")
@@ -161,7 +176,11 @@ def _weights(value: Any, extras: Mapping[str, Any]) -> list[Problem]:
     if extras.get("type") == "categorical" and isinstance(categories, list):
         if len(value) != len(categories):
             return [((), _WEIGHTS)]
-    return _OK if sum(value) > 0 else [((), _WEIGHTS)]
+    try:
+        total = math.fsum(value)
+    except OverflowError:
+        return [((), _WEIGHTS)]
+    return _OK if math.isfinite(total) and total > 0 else [((), _WEIGHTS)]
 
 
 _S = OptionSpec(_str)
@@ -263,6 +282,25 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
     ),
 }
 
+# Optional keys whose readers treat None as "not given" (`col.get(k)`, `col.get(k) or default`, or
+# an explicit None test). A None on any other key reaches `int(None)`, `str(None)` or a literal
+# comparison at run time, so it gets `generate_option_type`.
+_NONE_MEANS_ABSENT = frozenset(
+    {
+        "weights",
+        "locale",
+        "faker_kwargs",
+        "null_probability",
+        "references",
+        "min_per_parent",
+        "max_per_parent",
+        "bounds",
+        "high_cardinality",
+        "allow_real_categories",
+        "condition_on",
+    }
+)
+
 # A required key counts as given when it is not None, so `start: 0` and `max_days: 0` are valid.
 _NONE_MEANS_MISSING = frozenset({"start", "max_days"})
 
@@ -274,8 +312,9 @@ def _missing(key: str, value: Any) -> bool:
 def option_problems(type_: str, extras: Mapping[str, Any]) -> list[Problem]:
     """Every problem with a column's flat options, in a stable order, as (location, code).
 
-    Reads ``extras`` and never changes it. A `None` value on an optional key means "not given",
-    as the generators treat it. Nothing here quotes a submitted value.
+    Reads ``extras`` and never changes it. A `None` value means "not given" only for the keys in
+    ``_NONE_MEANS_ABSENT`` (their readers treat None as absent); a required key with None is
+    missing, and any other key with None is a type error. Nothing here quotes a submitted value.
     """
     spec = GENERATE_OPTIONS[type_]
     found: list[Problem] = []
@@ -286,7 +325,13 @@ def option_problems(type_: str, extras: Mapping[str, Any]) -> list[Problem]:
             if key not in INTERNAL_KEYS:
                 found.append(((key,), UNKNOWN))
             continue
-        if value is None or option.check is None or (key in spec.required and _missing(key, value)):
+        if key in spec.required and _missing(key, value):
+            continue
+        if value is None:
+            if key not in _NONE_MEANS_ABSENT:
+                found.append(((key,), _TYPE))
+            continue
+        if option.check is None:
             continue
         found.extend(((key, *rel), code) for rel, code in option.check(value, check_input))
     given_missing = [k for k in spec.required if _missing(k, extras.get(k))]
