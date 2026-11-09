@@ -16,7 +16,7 @@ from typing import Any
 # pandas-3 default datetime inference resolution is 'us' where 1.5-2.x
 # always produced 'ns'. Resolution is uniform within one pandas version,
 # so cross-frame drift comparison loses nothing by pinning the label.
-_DATETIME_RES = re.compile(r"^datetime64\[(s|ms|us|ns)(, .+)?\]$")
+_DATETIME_RES = re.compile(r"^datetime64\[(s|ms|us|ns)(, .+)?\]\Z")
 
 
 def canonical_dtype_label(dtype: Any) -> str:
