@@ -40,7 +40,9 @@ from decoy_engine.generation._bounds import (
     accumulator_bytes,
     batch_buffer_bytes,
     compute_payload_bounds,
+    detected_memory_bytes,
     faker_pool_bytes,
+    generation_floor_shortfall,
     key_pool_bytes,
     legacy_table_bytes,
     sink_buffer_bytes,
@@ -298,6 +300,22 @@ def _table_batches(
         offset += size
 
 
+def _refuse_if_over_memory(config: dict[str, Any], admission: PlanAdmission) -> None:
+    """Refuse a resident run whose output alone is larger than the memory ceiling.
+
+    Compared with the whole detected ceiling, not the 25% planning budget, so it only refuses runs
+    that cannot fit. An undetectable host skips the check: it can only add a refusal.
+    """
+    available = detected_memory_bytes()
+    if available is None:
+        return
+    shortfall = generation_floor_shortfall(config, admission, available)
+    if shortfall is not None:
+        raise GenerationBudgetExceeded(
+            code=reasons.runtime.GENERATION_BUDGET_EXCEEDED, message=shortfall.message
+        )
+
+
 def run_generation(
     config: dict[str, Any],
     *,
@@ -331,6 +349,8 @@ def run_generation(
             resolved_batch = resolved_batch or resolved.batch_rows
     resolved_batch = resolved_batch or DEFAULT_BATCH_ROWS
     admission = classify_plan(config, provider_snapshot=provider_snapshot)
+    if not ledger.bounded and not (admission.eligible and is_bounded_sink(sink)):
+        _refuse_if_over_memory(config, admission)
     tables = _table_order(config)
     # Bounds are only needed (and only defensible to demand) under a bounded ceiling.
     bounds = compute_payload_bounds(config, provider_snapshot) if ledger.bounded else {}
