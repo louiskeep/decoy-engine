@@ -68,6 +68,8 @@ SENTRIES = (
     "tests/sentry/test_unified_backend_map.py",
     "tests/sentry/test_validate_no_mutation.py",
     "tests/sentry/test_wave_b_no_registry_version_literal.py",
+    "tests/sentry/defects/test_anchored_regex.py",
+    "tests/sentry/defects/test_exception_context.py",
     "tests/sentry/defects/test_validation_sites.py",
     "tests/sentry/parallel/test_serial_resources.py",
     "tests/sentry/parallel/test_stable_ids.py",

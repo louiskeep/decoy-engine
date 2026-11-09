@@ -70,7 +70,7 @@ from decoy_engine.generation.synthesize import (
     _get_default_faker,
     _reference,
 )
-from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.generators.derivation import GenDeriveContext, with_table
 from decoy_engine.internal.faker_setup import make_faker, resolve_pool_provider
 from decoy_engine.kernel._canonicalize import canonicalize_derive_source, encode_int
 from decoy_engine.kernel._scalar import hash_array
@@ -112,7 +112,9 @@ def _record(site_id: str) -> None:
 
 
 def _gen_ctx(col: dict, seed: int = _SEED_INT) -> GenDeriveContext:
-    return GenDeriveContext.for_column(derive_key=None, column_config=col, fallback_seed=seed)
+    return GenDeriveContext.for_column(
+        derive_key=None, column_config=with_table(col, ""), fallback_seed=seed
+    )
 
 
 class _Ctx:
@@ -294,7 +296,7 @@ class TestCategoricalGolden:
             "weights": [1.0, 2.0, 3.0, 4.0],
         }
         n = 60
-        shipped = _categorical(col, n, _SEED_INT)
+        shipped = _categorical(with_table(col, ""), n, _SEED_INT)
         ctx = _gen_ctx(col)
         reproduced = provider_for("gen.categorical").choices(
             ctx, col["categories"], col["weights"], n
@@ -314,7 +316,7 @@ class TestReferenceGolden:
         }
         n = 40
         pools = {"parent": pa.table({"id": [10, 20, 30, 40, 50, None, 20]})}
-        shipped = _reference(col, n, _SEED_INT, pools=pools)
+        shipped = _reference(with_table(col, ""), n, _SEED_INT, pools=pools)
 
         # Insertion-order unique + dropna, exactly as the shipped function does.
         seen: set = set()
@@ -334,7 +336,7 @@ class TestNullProbabilityGolden:
     def test_provider_reproduces_shipped_null_mask(self) -> None:
         col = {"name": "score", "type": "faker", "faker_type": "pyint", "null_probability": 0.35}
         values = list(range(50))
-        shipped = _apply_null_probability(list(values), col, _SEED_INT)
+        shipped = _apply_null_probability(list(values), with_table(col, ""), _SEED_INT)
 
         ctx = _gen_ctx(col)
         floats = provider_for("gen.null_probability").null_floats(ctx, len(values))
@@ -348,7 +350,7 @@ class TestFakerPerRowGolden:
     def test_provider_reproduces_shipped_faker_column(self) -> None:
         col = {"name": "first", "type": "faker", "faker_type": "first_name"}
         n = 25
-        shipped = _faker(col, n, _SEED_INT)
+        shipped = _faker(with_table(col, ""), n, _SEED_INT)
 
         # The no-locale path uses the shared default instance; the per-row
         # seed_instance overrides any prior state, so reusing it is exact.

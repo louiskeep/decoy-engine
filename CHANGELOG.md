@@ -42,6 +42,21 @@ same order, so a malformed request keeps its own code on an uncertified host and
 `dp_platform_uncertified` or `dp_stack_uncertified` without any data. `fit_dp_snapshot` calls the same
 private preparation, so behavior and error codes of the fit do not change.
 
+### Fixed (generated columns with identical settings no longer repeat each other)
+
+Generated columns with identical settings used to get identical values in every row, with or
+without a master key: two `first_name` columns, two `date_between` columns, two categoricals with
+the same categories, and statistical columns fitted from independent source columns (correlation
+near 0.9 instead of near 0). The per-column draw stream now derives from the job seed (or master
+key and label), the strategy config, and the column identity (table name plus column name).
+Adding a column or growing `row_count` still leaves the other columns unchanged.
+
+Output changes for existing seeds and keys. This is accepted before GA and there is no opt-in to
+the old seeding. Renaming a column or moving it to another table now changes its values. The
+`_legacy_column_name_seed` column option is removed. Grouped-series, windowed-date and group-key
+columns derive their namespace from the same table and column identity, so a column of the same
+name in two tables no longer shares a stream.
+
 ### Changed (stage creators restore owner bits; ownership check reads the effective user)
 
 Directory and private-file stages made through `RootedFileAccess` outputs now restore the owner
@@ -138,6 +153,15 @@ can recompute the permutation and undo it, as with every keyed strategy; set a s
   column M` (was `Failed to parse YAML: <PyYAML text>`, which echoed the offending line).
   `decoy_engine.safe_output.yaml_error_text` holds that text.
 - New public names: `parse_pipeline_config`, `ConfigProblem`, `ConfigRuleError`.
+
+### Fixed (class sweep B1: end anchors and facade imports, 2026-11-08)
+
+Sixteen internal `re` patterns ended with `$`, which also matches before a trailing newline;
+they now end with `\Z`. This covers the Postgres snapshot identifier and type patterns, the
+secret-provider version patterns, the NPI checksum, the DuckDB memory limit, the Arrow dtype
+labels, the ISO-date sentinel and the column-name hint patterns. A value with a trailing newline
+no longer matches. `decoy_engine.reasons` also exports `COUNT_KEYS`, `MAX_COUNTS` and
+`is_count`, so progress, safe-output and telemetry code reads the public facades.
 
 ### Added (init wizard E3: keyed columns of a config, 2026-11-08)
 

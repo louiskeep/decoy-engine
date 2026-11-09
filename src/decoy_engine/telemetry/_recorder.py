@@ -17,7 +17,7 @@ import threading
 import time
 from collections.abc import Callable
 
-from decoy_engine._progress_events import PhaseEvent, ProgressEvent, TerminalEvent, safe_error_class
+from decoy_engine.progress import PhaseEvent, ProgressEvent, TerminalEvent, safe_error_class
 from decoy_engine.reasons import ReasonRecord
 from decoy_engine.telemetry._vocab import PHASE_VALUES, SpanRecord, reason_value
 
