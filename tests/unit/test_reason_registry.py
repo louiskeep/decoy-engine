@@ -279,6 +279,27 @@ def test_fk_fanout_minor_has_one_fixture_with_exactly_its_identities() -> None:
     assert pinned["registry_version"] == "1.14.0"
 
 
+CELL_FORMAT_FIXTURE = "reason-manifest-v1.16-gen-fit-shape.json"
+
+
+def test_cell_format_code_is_registered_with_its_owner() -> None:
+    """E0 (GEN-FIT-SHAPE): one additive identity owned by StatisticalSpecError, `since` 1.16.0."""
+    from decoy_engine import reasons
+
+    spec = reasons.find("plan", "statistical_cell_format_invalid")
+    assert spec is not None
+    assert spec.owner == "StatisticalSpecError"
+    assert spec.since == "1.16.0"
+    assert reasons.plan.STATISTICAL_CELL_FORMAT_INVALID == "statistical_cell_format_invalid"
+
+
+def test_cell_format_minor_has_one_fixture_with_exactly_its_identity() -> None:
+    pinned = _load(CELL_FORMAT_FIXTURE)
+    got = [(e["namespace"], e["code"]) for e in pinned["entries"]]
+    assert got == [("plan", "statistical_cell_format_invalid")]
+    assert pinned["registry_version"] == "1.16.0"
+
+
 GEN_STRICT_FIXTURE = "reason-manifest-v1.13-gen-strict.json"
 GEN_STRICT = [
     ("config", "generate_column_duplicate", "PipelineValidationError"),

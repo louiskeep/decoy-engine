@@ -74,6 +74,7 @@ __all__ = [
     "SEED_NOT_NUMERIC",
     "SEED_OVERFLOW",
     "STATISTICAL_ALLOW_REAL_CATEGORIES_INVALID_TYPE",
+    "STATISTICAL_CELL_FORMAT_INVALID",
     "STATISTICAL_COLUMN_NOT_IN_SNAPSHOT",
     "STATISTICAL_CONDITION_COLUMN_UNAVAILABLE",
     "STATISTICAL_CONDITION_KIND_INVALID",
@@ -325,6 +326,9 @@ REFERENCE_PARENT_POOL_EMPTY = _d(
 STATISTICAL_ALLOW_REAL_CATEGORIES_INVALID_TYPE = _d(
     "statistical_allow_real_categories_invalid_type",
     "Statistical allow real categories invalid type.",
+)
+STATISTICAL_CELL_FORMAT_INVALID = _d(
+    "statistical_cell_format_invalid", "Statistical cell format invalid.", since="1.16.0"
 )
 STATISTICAL_COLUMN_NOT_IN_SNAPSHOT = _d(
     "statistical_column_not_in_snapshot", "Statistical column not in snapshot."
