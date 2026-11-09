@@ -122,6 +122,7 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("execution/physical/_shadow_mixed.py", "_as_shadow_difference"): _REWRAP,
     ("plan/_checks.py", "_check_ner_available_for_strategy"): _REWRAP,
     ("plan/_checks.py", "check_statistical_columns"): _REWRAP,
+    ("plan/_generation.py", "check_fitted_references"): _REWRAP,
     ("plan/validate/_consolidator.py", "validate_plan"): _REWRAP,
     ("subset/_api.py", "_compute"): _REWRAP,
     ("unmask.py", "unmask_pipeline"): _REWRAP,
