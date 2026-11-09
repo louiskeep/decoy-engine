@@ -245,3 +245,181 @@ def test_close_before_the_first_batch_is_safe_and_idempotent(tmp_path: Path) -> 
     opened = source(path).open_batches(2)
     opened.close()
     opened.close()
+
+
+def _count_chunked(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    calls: list[int] = []
+    real = _lazy_csv.read_csv_source
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("chunksize"):
+            calls.append(kwargs["chunksize"])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(_lazy_csv, "read_csv_source", spy)
+    return calls
+
+
+def _csv_cfg(path: Path) -> dict[str, Any]:
+    cfg = support.make_cfg([support.pass_col("id"), support.hash_col("name")], path=str(path))
+    cfg["sources"]["t"].update(format="csv", has_header=True)
+    return cfg
+
+
+@pytest.mark.parametrize("byte_estimate", [False, True])
+def test_a_run_reads_the_file_twice_only(
+    byte_estimate: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.execution import run_pipeline
+
+    path = tmp_path / "f.csv"
+    path.write_text("\n".join(["id,name"] + [f"{i},p{i}" for i in range(40)]) + "\n")
+    calls = _count_chunked(monkeypatch)
+    run_pipeline(
+        _csv_cfg(path),
+        sources={"t": source(path)},
+        sink=b6a.RecordingSink(),
+        **support.run_kwargs(use_byte_estimate_routing=byte_estimate),
+    )
+    assert len(calls) == 2
+
+
+def test_cached_facts_serve_num_rows_and_null_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "f.csv"
+    path.write_bytes(CORPUS["empty_cells"][0])
+    lazy = source(path)
+    lazy.footer_facts()
+    calls = _count_chunked(monkeypatch)
+    for _ in range(3):
+        assert lazy.num_rows == 3
+        assert lazy.column_null_counts() == {"a": 2, "b": 2}
+    assert calls == []
+
+
+def test_accessors_recount_once_when_the_file_changed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "f.csv"
+    path.write_bytes(b"a,b\n1,x\n")
+    lazy = source(path)
+    assert lazy.num_rows == 1
+    path.write_bytes(b"a,b\n1,x\n2,y\n")
+    calls = _count_chunked(monkeypatch)
+    assert lazy.num_rows == 2
+    assert lazy.num_rows == 2
+    assert len(calls) == 1
+
+
+def test_the_snapshot_is_refreshed_only_through_footer_facts(tmp_path: Path) -> None:
+    path = tmp_path / "f.csv"
+    path.write_bytes(b"a,b\n1,x\n")
+    lazy = source(path)
+    facts = lazy.footer_facts()
+    assert lazy.footer_facts() is facts and lazy._seen["facts"] is facts
+    path.write_bytes(b"a,b\n1,x\n2,y\n")
+    assert lazy.num_rows == 2
+    assert lazy._seen["facts"] is not facts and lazy._seen["facts"].num_rows == 2
+
+
+def test_the_changed_refusal_has_one_constructor_and_no_layering_cycle() -> None:
+    import subprocess
+    import sys
+
+    from decoy_engine.execution import _chunked_input
+    from decoy_engine.execution._errors import lazy_source_changed
+
+    err = lazy_source_changed("t", "x")
+    assert isinstance(err, ExecutionError) and err.code == reasons.runtime.LAZY_SOURCE_CHANGED
+    assert _chunked_input.lazy_source_changed is lazy_source_changed
+    assert _lazy_csv.lazy_source_changed is lazy_source_changed
+    subprocess.run(
+        [sys.executable, "-I", "-c", "import decoy_engine.profile._lazy_csv"], check=True
+    )
+
+
+def test_a_header_change_after_preflight_is_a_changed_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "f.csv"
+    path.write_bytes(b"a,b\n1,x\n")
+    lazy = source(path)
+    real = CsvLazySource.preflight
+
+    def rewrite_after(self: CsvLazySource) -> pa.Schema:
+        schema = real(self)
+        path.write_bytes(b"c,d,e\n1,x,y\n")
+        return schema
+
+    monkeypatch.setattr(CsvLazySource, "preflight", rewrite_after)
+    with pytest.raises(ExecutionError) as exc:
+        lazy.footer_facts()
+    assert exc.value.code == reasons.runtime.LAZY_SOURCE_CHANGED
+
+
+class _Chunks:
+    """A chunk iterator that records `close()` and can fail after its first frame."""
+
+    def __init__(self, fail: bool) -> None:
+        self.closed = False
+        self._fail = fail
+        self._n = 0
+
+    def __iter__(self) -> _Chunks:
+        return self
+
+    def __next__(self) -> pd.DataFrame:
+        self._n += 1
+        if self._n == 1:
+            return pd.DataFrame({"a": ["1"], "b": ["x"]})
+        if self._fail:
+            raise RuntimeError("boom")
+        if self._n == 2:
+            return pd.DataFrame({"a": ["2"], "b": ["y"]})
+        raise StopIteration
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _fake_reader(monkeypatch: pytest.MonkeyPatch, fail: bool) -> list[_Chunks]:
+    made: list[_Chunks] = []
+    real = _lazy_csv.read_csv_source
+
+    def fake(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("chunksize"):
+            made.append(_Chunks(fail))
+            return made[-1]
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(_lazy_csv, "read_csv_source", fake)
+    return made
+
+
+@pytest.mark.parametrize("op", ["footer_facts", "to_table", "iter_batches"])
+def test_a_failing_read_closes_the_chunk_iterator(
+    op: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "f.csv"
+    path.write_bytes(b"a,b\n1,x\n")
+    made = _fake_reader(monkeypatch, fail=True)
+    lazy = source(path)
+    with pytest.raises(RuntimeError):
+        if op == "iter_batches":
+            list(lazy.iter_batches(1))
+        else:
+            getattr(lazy, op)()
+    assert made and all(c.closed for c in made)
+
+
+def test_an_abandoned_batch_iterator_closes_the_chunk_iterator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "f.csv"
+    path.write_bytes(b"a,b\n1,x\n")
+    made = _fake_reader(monkeypatch, fail=False)
+    gen = source(path).iter_batches(1)
+    next(gen)
+    gen.close()
+    assert made[0].closed

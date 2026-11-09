@@ -32,6 +32,14 @@ class ExecutionError(DecoyError):
         super().__init__(f"[{code}] {message}" if message else f"[{code}]")
 
 
+def lazy_source_changed(table: str, detail: str) -> ExecutionError:
+    """The one constructor of the `lazy_source_changed` refusal, for every lazy source backend."""
+    return ExecutionError(
+        code=reasons.runtime.LAZY_SOURCE_CHANGED,
+        message=f"the source of table {table!r} changed between routing and the read: {detail}.",
+    )
+
+
 class StrategyError(ExecutionError):
     """A strategy-internal failure, attributed to a named strategy."""
 
