@@ -419,19 +419,82 @@ def test_plan_load_refuses_broken_embedded_fanout(tmp_path: Path) -> None:
 def test_check_statistical_columns_is_called_only_by_the_wrapper() -> None:
     import decoy_engine.plan as plan_pkg
 
+    target = "check_statistical_columns"
     callers: list[str] = []
     for src in Path(plan_pkg.__file__).parent.glob("*.py"):
         tree = ast.parse(src.read_text(encoding="utf-8"))
+        # Every local name the function is bound to, whether by `from m import f as g`,
+        # `import m as n` (then `n.f`) or plain use.
+        aliases = {target}
+        modules: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                aliases |= {a.asname for a in node.names if a.name == target and a.asname}
+            elif isinstance(node, ast.Import):
+                modules |= {a.asname for a in node.names if a.asname}
         for fn in ast.walk(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for node in ast.walk(fn):
-                if isinstance(node, ast.Call):
-                    f = node.func
-                    name = f.id if isinstance(f, ast.Name) else getattr(f, "attr", "")
-                    if name == "check_statistical_columns":
-                        callers.append(f"{src.name}:{fn.name}")
+                if not isinstance(node, ast.Call):
+                    continue
+                f = node.func
+                if (isinstance(f, ast.Name) and f.id in aliases) or (
+                    isinstance(f, ast.Attribute) and f.attr == target
+                ):
+                    callers.append(f"{src.name}:{fn.name}")
     assert callers == ["_generation.py:check_generate_snapshot_columns"]
+
+
+def test_alias_guard_sees_aliased_calls() -> None:
+    # The guard above must not be blind to `from m import f as g; g()`.
+    tree = ast.parse("from m import check_statistical_columns as g\ndef h():\n    g()\n")
+    aliases = {a.asname for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) for a in n.names}
+    assert "g" in aliases
+
+
+# Schema-version refusal is value-free for every caller and the same at load.
+
+SCHEMA_CANARY = "CANARY-SCHEMA-VALUE"
+
+
+def _bad_schema_snapshot() -> dict[str, Any]:
+    snap = _fitted_snapshot()
+    snap["schema_version"] = SCHEMA_CANARY
+    return snap
+
+
+def test_schema_mismatch_is_value_free_at_compile_and_config_only(tmp_path: Path) -> None:
+    err = _refusal(_fitted_config(_write(tmp_path, _bad_schema_snapshot())))
+    assert err.code == "statistical_snapshot_schema_mismatch"
+    assert SCHEMA_CANARY not in str(err) and SCHEMA_CANARY not in err.message
+
+
+def test_schema_mismatch_is_value_free_for_a_statistical_column(tmp_path: Path) -> None:
+    cfg = _config("random", dp=False)
+    cfg["tables"][1]["generate_columns"] = [
+        {
+            "name": "s",
+            "type": "statistical",
+            "snapshot_file": _write(tmp_path, _bad_schema_snapshot()),
+            "source_column": "k",
+        }
+    ]
+    err = _refusal(cfg)
+    assert err.code == "statistical_snapshot_schema_mismatch"
+    assert SCHEMA_CANARY not in str(err) and SCHEMA_CANARY not in err.message
+
+
+def test_plan_load_refuses_unknown_schema_version_value_free(tmp_path: Path) -> None:
+    data = _plan_yaml(tmp_path)
+    entry = data["generation"]["snapshots"][0]
+    raw = json.dumps(_bad_schema_snapshot()).encode()
+    entry["payload_b64"] = base64.b64encode(raw).decode("ascii")
+    entry["sha256"] = hashlib.sha256(raw).hexdigest()
+    with pytest.raises(PlanCompileError) as exc:
+        plan_from_yaml(yaml.safe_dump(data, sort_keys=False))
+    assert exc.value.code == "statistical_snapshot_schema_mismatch"
+    assert SCHEMA_CANARY not in str(exc.value) and SCHEMA_CANARY not in exc.value.message
 
 
 def test_fitted_check_never_reopens_an_unpinned_path(tmp_path: Path) -> None:

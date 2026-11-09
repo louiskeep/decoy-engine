@@ -38,6 +38,7 @@ from decoy_engine.plan._generation import (
     build_generation_plan,
     check_generate_snapshot_columns,
     column_pins_snapshot,
+    snapshot_schema_failure,
 )
 from decoy_engine.plan._serialize_declared import (
     declared_casting_from_dict,
@@ -350,10 +351,13 @@ def _pinned_snapshot_from_dict(
                 "valid JSON. A digest match is not proof the payload is a JSON snapshot artifact."
             ),
         )
+    mismatch = snapshot_schema_failure(parsed, position)
+    if mismatch is not None:
+        raise PlanCompileError(code=mismatch.code, path=position, message=mismatch.message)
     read_snapshot = ReadSnapshot(
         path=source_path,
         sha256=stored_sha256,
-        parsed=parsed if isinstance(parsed, dict) else {},
+        parsed=parsed,
         raw=raw,
     )
     return pinned_snapshot, read_snapshot

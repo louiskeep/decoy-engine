@@ -109,6 +109,26 @@ def _snapshot_field_keys(config: dict[str, Any]) -> dict[str, str]:
     return seen
 
 
+def snapshot_schema_failure(parsed: Any, shown: str) -> Any:
+    """The one snapshot schema-version check, for compile (`read_and_pin_snapshots`) and plan
+    load. Returns a `StatisticalSpecError` or `None`. The message names the field and the
+    expected version only: the stored text is untrusted and never echoed."""
+    from decoy_engine.generation.statistical._spec import StatisticalSpecError
+
+    if (
+        isinstance(parsed, dict)
+        and parsed.get("schema_version") == DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
+    ):
+        return None
+    return StatisticalSpecError(
+        code=reasons.plan.STATISTICAL_SNAPSHOT_SCHEMA_MISMATCH,
+        message=(
+            f"snapshot_file {shown!r} does not declare 'schema_version' "
+            f"{DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION!r}; this engine consumes only that version."
+        ),
+    )
+
+
 def read_and_pin_snapshots(
     config: dict[str, Any],
 ) -> tuple[dict[str, ReadSnapshot], dict[str, Any]]:
@@ -181,15 +201,9 @@ def read_and_pin_snapshots(
         guard = snapshot_content_guard.get()
         if guard is not None:
             guard(parsed)
-        version = parsed.get("schema_version") if isinstance(parsed, dict) else None
-        if not isinstance(parsed, dict) or version != DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION:
-            failures[path] = StatisticalSpecError(
-                code=reasons.plan.STATISTICAL_SNAPSHOT_SCHEMA_MISMATCH,
-                message=(
-                    f"snapshot_file {shown!r} declares schema {version!r}; this engine "
-                    f"consumes {DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION!r}."
-                ),
-            )
+        mismatch = snapshot_schema_failure(parsed, shown)
+        if mismatch is not None:
+            failures[path] = mismatch
             continue
         pinned[path] = ReadSnapshot(path=path, sha256=digest, parsed=parsed, raw=raw)
     return pinned, failures
