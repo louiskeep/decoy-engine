@@ -319,6 +319,7 @@ def test_run_stream_minor_has_one_fixture_with_exactly_its_identity() -> None:
     got = [(e["namespace"], e["code"]) for e in pinned["entries"]]
     assert got == [("runtime", "streaming_unavailable")]
 
+
 GEN_UNIQUE_FIXTURE = "reason-manifest-v1.17-gen-unique.json"
 GEN_UNIQUE = [
     ("config", "generate_unique_conflict", "PipelineValidationError"),

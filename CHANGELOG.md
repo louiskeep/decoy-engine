@@ -23,6 +23,14 @@ the job takes the out-of-core route only when that route accepts the job and the
 clear, and is refused otherwise. `auto` routing, its threshold and its row-group rules are unchanged.
 An empty source under `stream` writes an empty file with the source schema, as base `--chunked` does; the resident run types the empty columns differently (plan G6).
 
+### Changed (generate uniqueness groundwork, GEN-UNIQUE E1, 2026-11-09)
+
+No generated-cell changes. Groundwork for `unique` generate columns: the config-time checks (`config/_generate_unique.py`),
+`unique_set_bytes`, `parent_keys` and `pool_opted_out` land unwired, and `unique_capacity_ok` takes a
+`null_reusable` flag. The masking pool's `uniqueness_impossible` refusal now comes from the shared
+`raise_uniqueness_impossible` builder, so its message names counts only and its wording changed; the code is
+the same. A golden test pins generated cells, Plan config and seed fingerprints for configs without the new keys.
+
 ### Changed (fitted generation keeps nulls, blanks, precision and resolution, GEN-FIT-SHAPE E2, 2026-11-09)
 
 A `type: statistical` column whose snapshot carries a `cell_format` block (every `decoy fit` after E1)
