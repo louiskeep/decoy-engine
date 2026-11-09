@@ -10,6 +10,7 @@ import copy
 import io
 import json
 import signal
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -331,6 +332,30 @@ def test_datetime_bounds_are_the_years_around_the_data(force_sensitive: None) ->
     assert _leaks(doc, ["1991-01-01T00", "1991-12-31T23", "08:30:00"]) == []
     drawn = sample_column(_spec_for(doc, "admitted"), 200, col_seed=9)
     assert {d.year for d in drawn} == {1991}
+
+
+def _calendar_edge_frame(stamps: list[str]) -> pd.DataFrame:
+    return pd.DataFrame({"admitted": pd.Series(np.array(stamps, dtype="datetime64[s]"))})
+
+
+def test_datetime_bounds_at_the_first_calendar_year_stay_parseable(force_sensitive: None) -> None:
+    df = _calendar_edge_frame(["0001-03-04T05:06:07", "0001-09-10T11:12:13", "0002-06-01T00:00:00"])
+    doc = distribution_snapshot_document(df)
+    stats = _col(doc, "admitted")["stats"]
+    assert stats["min"] == "0001-01-01T00:00:00"
+    assert stats["max"] == "0003-12-31T23:59:59"
+    drawn = sample_column(_spec_for(doc, "admitted"), 100, col_seed=5)
+    assert {d.year for d in drawn} <= {1, 2}
+
+
+def test_datetime_bounds_at_the_last_calendar_year_stay_parseable(force_sensitive: None) -> None:
+    df = _calendar_edge_frame(["9998-03-04T05:06:07", "9999-09-10T11:12:13"])
+    doc = distribution_snapshot_document(df)
+    stats = _col(doc, "admitted")["stats"]
+    assert stats["min"] == "9997-01-01T00:00:00"
+    assert stats["max"] == "9999-12-31T23:59:59"
+    spec = _spec_for(doc, "admitted")
+    assert datetime.fromisoformat(str(spec.stats["max"])).year == 9999
 
 
 # AT-6
