@@ -46,7 +46,11 @@ from decoy_engine.generation.pool._cache import (
 )
 from decoy_engine.generation.pool._capacity import unique_capacity_ok
 from decoy_engine.generation.pool._cardinality import CardinalityMode
-from decoy_engine.generation.pool._errors import GenerationError, PoolCapacityError
+from decoy_engine.generation.pool._errors import (
+    GenerationError,
+    PoolCapacityError,
+    raise_uniqueness_impossible,
+)
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.generation.pool._pool_adapter import PoolAdapter
 from decoy_engine.generation.pool._sampler import PoolSampler
@@ -66,5 +70,6 @@ __all__ = [
     "ValuePool",
     "check_pool_capacity_pre_flight",
     "get_default_pool_cache",
+    "raise_uniqueness_impossible",
     "unique_capacity_ok",
 ]

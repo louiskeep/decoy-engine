@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution._chunked_input import SourceFacts
     from decoy_engine.execution._output_projection import UnconfiguredColumnPolicy
     from decoy_engine.execution._transactional_sink import TransactionalSink
+    from decoy_engine.execution.pipeline._stream import StreamVerdict
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
@@ -130,6 +131,7 @@ def _job_gates_hold(
     dispatcher_enabled: bool,
     split_enabled: bool,
     vault_writer_present: bool,
+    fk_split: bool = False,
 ) -> bool:
     mask_tables = [name for name, kind in table_kinds.items() if kind == "mask"]
     return (
@@ -138,8 +140,9 @@ def _job_gates_hold(
         and split_enabled
         and len(mask_tables) >= 2
         and len(mask_tables) == len(table_kinds)
-        and not graph.edges
-        and not config.get("relationships")
+        # `fk_split`: a run that requires streaming has already passed every mask table
+        # through the complete chunked compatibility gate, so FK edges do not veto the split.
+        and (fk_split or not (graph.edges or config.get("relationships")))
         and substrate == "pandas"
         and not (config.get("quarantine") or {}).get("enabled")
         and not vault_writer_present
@@ -194,6 +197,7 @@ def decide_multi_table_split(
     split_enabled: bool,
     vault_writer_present: bool,
     source_facts: Mapping[str, SourceFacts] | None = None,
+    stream: StreamVerdict | None = None,
 ) -> MultiTableSplit | None:
     """The per-table split of a multi-table job, or `None` when the job stays whole.
 
@@ -202,7 +206,11 @@ def decide_multi_table_split(
     A table dispatches exactly when the planner would route it chunked as a single-table
     job with its own source, so each table is classified by the planner itself on the job
     restricted to that table. Passing only that table's source keeps sibling frames out of
-    the planner's "extra loaded frames" check while every other runtime gate applies."""
+    the planner's "extra loaded frames" check while every other runtime gate applies.
+
+    `stream` (a run that requires streaming, FK edges admitted by the complete compatibility
+    gate): each table is classified on the job restricted to it without its FK graph, and the
+    size threshold does not apply."""
     if not _job_gates_hold(
         config,
         plan=plan,
@@ -213,6 +221,7 @@ def decide_multi_table_split(
         dispatcher_enabled=dispatcher_enabled,
         split_enabled=split_enabled,
         vault_writer_present=vault_writer_present,
+        fk_split=stream is not None and stream.fk_split,
     ):
         return None
     from decoy_engine.execution._planner import classify_job
@@ -222,15 +231,19 @@ def decide_multi_table_split(
     reasons: dict[str, str] = {}
     for table in (name for name, kind in table_kinds.items() if kind == "mask"):
         alone = {**config, "tables": [t for t in config["tables"] if t.get("name") == table]}
+        lane_alone, lane_graph = (
+            (alone, graph) if stream is None else stream.lane_view(alone, graph)
+        )
         decision = classify_job(
-            alone,
+            lane_alone,
             plan=plan,
             registry=registry,
-            relationship_graph=graph,
+            relationship_graph=lane_graph,
             substrate=substrate,
             source_tables={table: caller_sources[table]} if table in caller_sources else {},
             auto_chunk_threshold_rows=auto_chunk_threshold_rows,
             source_facts=source_facts,
+            ignore_size_threshold=stream is not None,
         )
         if decision.mode == "chunked":
             dispatched.append(table)
@@ -308,6 +321,7 @@ def run_multi_table_split(
     output_reason: str | None = None,
     input_facts: Mapping[str, SourceFacts] | None = None,
     input_reasons: Mapping[str, str] | None = None,
+    align_row_groups: bool = False,
 ) -> tuple[
     dict[str, pa.Table], tuple[Any, ...], float, tuple[Any, ...], dict[str, Any], tuple[Any, ...]
 ]:
@@ -348,7 +362,13 @@ def run_multi_table_split(
     lane_blocks: dict[str, Mapping[str, Any]] = {}
     for table in split.dispatched:
         lane_extra: dict[str, Any] = (
-            {} if sink is None else {"sink": sink, "expected": (input_facts or {}).get(table)}
+            {}
+            if sink is None
+            else {
+                "sink": sink,
+                "expected": (input_facts or {}).get(table),
+                "align_row_groups": align_row_groups,
+            }
         )
         out, unit_timings, unit_ms, unit_warnings, unit_metrics = (
             _pipeline_auto_chunk.run_auto_chunk(

@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution._planner import ExecutionPlan
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.execution._transforms_prepare import PreparedSources
+    from decoy_engine.execution.pipeline._stream import StreamVerdict
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
     from decoy_engine.profile._types import Profile
@@ -130,6 +131,9 @@ class PipelineRunContext:
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None
     # Knobs.
     execution_mode: str
+    # `execution_mode="stream"` was translated to "auto" at the entry; this is the one place the
+    # requirement survives (read by `decide_route` only).
+    stream_required: bool
     resolved_substrate: str
     fpe_chunk_count: int
     explain_plan: bool
@@ -169,6 +173,8 @@ class RouteDecision:
     ooc_declined: str | None
     # The statically admitted mixed job when `route == "mixed"` (`_mixed_static`).
     mixed: MixedStaticPlan | None = None
+    # Set only for a run that requires streaming and takes the chunked lane.
+    stream: StreamVerdict | None = None
 
 
 def build_run_context(
@@ -188,6 +194,7 @@ def build_run_context(
     post_validation_enforce: bool,
     now_iso: str | None,
     execution_mode: str,
+    stream_required: bool = False,
     sink: TransactionalSink | None,
     source_loader: Callable[[str], pa.Table] | None,
     fpe_chunk_count: int,
@@ -408,6 +415,7 @@ def build_run_context(
         instance_default_locale=instance_default_locale,
         provider_snapshot=provider_snapshot,
         execution_mode=execution_mode,
+        stream_required=stream_required,
         resolved_substrate=resolved_substrate,
         fpe_chunk_count=fpe_chunk_count,
         explain_plan=explain_plan,
@@ -463,6 +471,10 @@ def decide_route(ctx: PipelineRunContext) -> RouteDecision:
     surfaces it on every route, relationship jobs included. `keep_lazy` is the B6b footer
     snapshot of lazy candidates; see `_pipeline_routing`.
     """
+    if ctx.stream_required:
+        from decoy_engine.execution.pipeline import _stream
+
+        return _stream.decide_stream_route(ctx, decide_route)
     mixed = _mixed_static_plan(ctx)
     route, route_reason = _pipeline_routing.resolve_execution_route(
         routing_profile(ctx.profile, ctx.caller_sources, ctx.prepared.prepared),

@@ -32,6 +32,38 @@ budget both need now live in one module, `execution/pipeline/_cgroup.py`. The me
 cgroup directory through mountinfo like the CPU probe, so a mount that exposes only a subtree (a
 container's cgroup namespace) is read at the right directory instead of falling back to host RAM.
 
+### Added (`execution_mode="stream"`, RUN-STREAM E1a, 2026-11-09)
+
+`run_pipeline(execution_mode="stream")` means "must stream". It runs as `auto` with one extra
+requirement, and a job no streaming route can take is refused with the new
+`runtime.streaming_unavailable` (registry 1.18.0) before any source passed in `sources` is read.
+The size threshold does not apply, so a table of any size, empty included, takes the chunked lane. A
+table needs a lazy source and a streaming sink. Parquet output keeps one row group per chunk, split at
+pyarrow's 1,048,576-row writer cap, the grouping `ParquetWriter.write_table` gives each chunk of a
+`--chunked` run; the 256 MiB early cut stays an `auto` rule. A job with FK edges runs as one lane unit
+per table when every mask table passes the complete chunked compatibility gate. If the gate rejects it,
+the job takes the out-of-core route only when that route accepts the job and the FK dtype hazard is
+clear, and is refused otherwise. `auto` routing, its threshold and its row-group rules are unchanged.
+An empty source under `stream` writes an empty file with the source schema, as base `--chunked` does; the resident run types the empty columns differently (plan G6).
+
+### Changed (fidelity scores null-rate drift, GEN-FIT-SHAPE E3, 2026-11-09)
+
+Each `quality-fidelity/v1` column entry gains `value_similarity` (the score as before) and
+`missing_value_similarity` (`1 - |source null rate - output null rate|`, `null` when either side has no
+rows). `similarity` is the value score times the missing score, so a column that lost its nulls no longer
+scores 1.000; when the rates match, `similarity` is exactly the old number. `empty` and `kind_mismatch`
+entries stay out of the aggregate but report the missing score. If either snapshot carries a `dp` block the
+missing score is reported and not applied, because a DP null count is noise. The null fraction itself is now
+the public `decoy_engine.quality.snapshot_null_fraction`, the one place that count and zero-row rule live.
+
+### Changed (generate uniqueness groundwork, GEN-UNIQUE E1, 2026-11-09)
+
+No generated-cell changes. Groundwork for `unique` generate columns: the config-time checks (`config/_generate_unique.py`),
+`unique_set_bytes`, `parent_keys` and `pool_opted_out` land unwired, and `unique_capacity_ok` takes a
+`null_reusable` flag. The masking pool's `uniqueness_impossible` refusal now comes from the shared
+`raise_uniqueness_impossible` builder, so its message names counts only and its wording changed; the code is
+the same. A golden test pins generated cells, Plan config and seed fingerprints for configs without the new keys.
+
 ### Changed (fitted generation keeps nulls, blanks, precision and resolution, GEN-FIT-SHAPE E2, 2026-11-09)
 
 A `type: statistical` column whose snapshot carries a `cell_format` block (every `decoy fit` after E1)
