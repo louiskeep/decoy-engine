@@ -137,6 +137,7 @@ def test_both_fraction_and_count_rejected(tmp_path) -> None:
 def test_non_parquet_source_rejected_when_subset_configured(tmp_path) -> None:
     config = _base_config(tmp_path)
     config["sources"]["customers"]["format"] = "csv"
+    config["sources"]["customers"]["has_header"] = True
     config = _with_subset(config)
     with pytest.raises(Exception) as excinfo:
         PipelineConfig.model_validate(config)
@@ -153,6 +154,7 @@ def test_relationship_only_child_table_requires_parquet(tmp_path) -> None:
     """
     config = _base_config(tmp_path)
     config["sources"]["orders"]["format"] = "csv"
+    config["sources"]["orders"]["has_header"] = True
     config = _with_subset(config)
     with pytest.raises(Exception) as excinfo:
         PipelineConfig.model_validate(config)
@@ -162,5 +164,6 @@ def test_relationship_only_child_table_requires_parquet(tmp_path) -> None:
 def test_no_subset_block_is_unaffected(tmp_path) -> None:
     config = _base_config(tmp_path)
     config["sources"]["customers"]["format"] = "csv"
+    config["sources"]["customers"]["has_header"] = True
     validated = PipelineConfig.model_validate(config)
     assert validated.subset is None

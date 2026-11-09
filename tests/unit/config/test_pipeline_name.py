@@ -17,6 +17,11 @@ from decoy_engine.config import PipelineConfig
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 BASELINE = json.loads((FIXTURES / "f06" / "legacy-compat-baseline.json").read_text())
+# The frozen F06 config predates the required csv has_header; the old default keeps its read.
+LEGACY_RAW: dict[str, Any] = {
+    **BASELINE["raw_config"],
+    "sources": {"p": {**BASELINE["raw_config"]["sources"]["p"], "has_header": True}},
+}
 CANARY = "CANARY-5d1f92"
 
 VALID = ["orders", "a", "My-Pipeline", "x_y.z", "A" * 64, "9lives", "COM0", "LPT0", "CONX", "COM10"]
@@ -52,7 +57,7 @@ INVALID = [
 
 
 def _raw(**extra: Any) -> dict[str, Any]:
-    raw = copy.deepcopy(BASELINE["raw_config"])
+    raw = copy.deepcopy(LEGACY_RAW)
     raw.update(extra)
     return raw
 
@@ -107,8 +112,11 @@ def test_reason_is_registered_in_the_config_namespace() -> None:
 
 
 def test_dump_without_name_is_byte_identical_to_the_baseline() -> None:
-    cfg = PipelineConfig.model_validate(BASELINE["raw_config"])
-    dump = json.dumps(cfg.model_dump(), sort_keys=True)
+    cfg = PipelineConfig.model_validate(LEGACY_RAW)
+    legacy = cfg.model_dump()
+    # A csv dump now always carries has_header, so only that field moves the dump sha.
+    del legacy["sources"]["p"]["has_header"]
+    dump = json.dumps(legacy, sort_keys=True)
     assert hashlib.sha256(dump.encode()).hexdigest() == BASELINE["config_dump_sha256"]
     assert "name" not in cfg.model_dump()
     assert "name" not in json.loads(cfg.model_dump_json())

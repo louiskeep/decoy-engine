@@ -24,7 +24,7 @@ def _cfg(tmp_path, *, post_scan_integrity: bool, strategy: str = "hash"):
     raw = {
         "version": 2,
         "global_settings": {"seed": 1},
-        "sources": {"t": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"t": {"type": "file", "format": "csv", "has_header": True, "path": str(src)}},
         "tables": [
             {"name": "t", "columns": [{"name": "email", "strategy": strategy, "namespace": "e"}]}
         ],
@@ -67,8 +67,8 @@ def test_fk_job_with_post_scan_integrity_takes_the_full_frame_branch(tmp_path) -
         "global_settings": {"seed": 42},
         "post_scan": {"integrity": True},
         "sources": {
-            "customers": {"type": "file", "format": "csv", "path": str(cp)},
-            "orders": {"type": "file", "format": "csv", "path": str(op)},
+            "customers": {"type": "file", "format": "csv", "has_header": True, "path": str(cp)},
+            "orders": {"type": "file", "format": "csv", "has_header": True, "path": str(op)},
         },
         "tables": [
             {

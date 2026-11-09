@@ -72,6 +72,19 @@ on purpose; after GA any further addition is a breaking change.
 with `config.subset_run_unsupported` (registry 1.6.0). Before, the block validated and the run silently masked
 the full sources. `plan_subset` and `run_subset` are unchanged; run them first and point `sources:` at their output.
 
+**Pre-GA correction (CONFIG-EXPLICIT E1, 2026-11-08).** A csv file source must set `has_header` (registry
+1.15.0). An old config without it fails validation with `source_file.has_header_required` and the fix line
+"add `has_header: true` if the first row names the columns (the old default)". `column_names_file`, a path to a
+one-record header file for a headerless source, is additive. A csv dump now always carries `has_header`, so the
+physical `plan_hash` moves for those configs while `pipeline_config_hash` does not. Three registered codes that
+were reserved are now raised by `FileSource` (`source_file.no_header_columns`,
+`source_file.column_names_with_header`, `source_file.csv_param_on_non_csv`), alongside the new
+`source_file.has_header_required`, `source_file.column_names_source_conflict` and
+`source_file.column_names_file_invalid`. No schema version moves. `resolve_csv_dialect` and the public
+`build_profile_source` are now file-access entry points: with no installed policy under `forbid_ambient()`
+either raises `FileAccessUnavailable` before dispatch, including an inline-only descriptor for the resolver and a
+non-file descriptor for `build_profile_source`. Ambient callers are unchanged.
+
 Until GA: use this document as the design target so we don't paint ourselves
 into a corner. After GA: this document is binding.
 
@@ -345,6 +358,16 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   parameters are keyword-only and additive. `CsvDialect` and `resolve_csv_dialect`
   refuse an incoherent dialect, or a `column_names` that is not a list or tuple of
   strings, with `ConfigError` whose fixed text never echoes a submitted value.
+  A csv `FileSource` must set `has_header`. With `has_header: false` it names its
+  columns inline (`column_names`) or in `column_names_file`, never both: a
+  one-record UTF-8 header file of at most 1 MiB, read with the source's delimiter
+  and quoting, BOM and blank lines skipped, names kept unstripped, under the bound
+  file-access policy. A file that is missing, unreadable or not a regular file,
+  not UTF-8, empty, over 1 MiB, holds a NUL byte or a lone CR, has more than one
+  record, or a blank or duplicate name is refused with
+  `source_file.column_names_file_invalid` and a fixed phrase that names no value.
+  `resolve_csv_dialect(descriptor, *, table="source", file_access=None)` requires
+  `has_header` in the descriptor and raises `ConfigError` before any IO without it.
   `nrows=0` returns the empty frame with the declared columns. The keyword-only
   `columns` (SCAN-MULTI S1b) parses only the named columns and returns every frame
   or chunk with exactly them in the order given; a headerless file maps the names

@@ -33,7 +33,7 @@ LAYOUT = {"columns": [{"name": "id", "start": 0, "width": 3}]}
 def _csv(tmp_path: Path, name: str, text: str, **extra: Any) -> dict[str, Any]:
     path = tmp_path / f"{name}.csv"
     path.write_text(text)
-    return {"type": "file", "format": "csv", "path": str(path), **extra}
+    return {"type": "file", "format": "csv", "path": str(path), "has_header": True, **extra}
 
 
 def _parquet(tmp_path: Path, name: str, table: pa.Table) -> dict[str, Any]:

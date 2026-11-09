@@ -111,7 +111,7 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("generation/_pinned_compile.py", "_reject_column"): _HELPER,
     ("generation/_window_admission.py", "_refuse"): _HELPER,
     ("plan/_checks_dp.py", "_raise"): _HELPER,
-    ("profile/_csv_reader.py", "_refusal"): _HELPER,
+    ("profile/_csv_reader.py", "source_refusal"): _HELPER,
     ("plan/_checks_top_code.py", "_reject_unusable_bound"): _HELPER,
     # -- re-wraps of an already-registered exception code ------------------------------------
     ("execution/_chunked_when_guard.py", "PositionalWhenGuard.check_schema"): _REWRAP,
@@ -727,7 +727,7 @@ def test_forwarding_helper_callers_are_checked(tmp_path: Path) -> None:
 
 
 def test_the_csv_reader_refusals_are_scanned_and_registry_backed() -> None:
-    sites = [s for s in _scan() if s.file == "profile/_csv_reader.py" and s.family == "_refusal"]
+    sites = [s for s in _scan() if s.file == "profile/_csv_reader.py" and s.family == "source_refusal"]  # fmt: skip
     assert len(sites) >= 6
     assert {s.value_class for s in sites} == {"registry"}
 
@@ -809,7 +809,7 @@ def test_the_unchecked_ratchet_fails_swap_regrowth_and_collision() -> None:
 
 def test_every_forwarding_helper_is_checked_or_a_listed_follow_up() -> None:
     assert UNCHECKED_HELPERS <= HELPER_IDENTITIES, UNCHECKED_HELPERS - HELPER_IDENTITIES
-    assert ("profile/_csv_reader.py", "_refusal") in HELPER_SINKS
+    assert ("profile/_csv_reader.py", "source_refusal") in HELPER_SINKS
     assert len(UNCHECKED_HELPERS) <= 5  # in-suite floor; the registered baseline is the ratchet
 
 

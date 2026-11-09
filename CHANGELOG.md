@@ -15,6 +15,15 @@ Registry 1.16.0 adds one `plan` identity, `statistical_cell_format_invalid`, for
 block in a statistical column's snapshot entry. Nothing raises it yet; the decoder lands with GEN-FIT-SHAPE E2.
 Existing identities keep their numbers.
 
+### Breaking for consumers
+
+- A csv file source must set `has_header` (CONFIG-EXPLICIT E1). Without it validation fails with
+  `source_file.has_header_required`; add `has_header: true` to keep the old read. A headerless source can
+  name its columns in a one-record header file with `column_names_file`. A csv dump always carries
+  `has_header`, so the physical plan hash moves for those configs. `resolve_csv_dialect` and
+  `build_profile_source` are now file-access entry points. Registry 1.15.0 adds three reasons (see
+  `docs/reasons.md`).
+
 ### Changed (generate-column options are validated, registry 1.13.0)
 
 A generate column now accepts only the option keys its `type` reads, and checks their static

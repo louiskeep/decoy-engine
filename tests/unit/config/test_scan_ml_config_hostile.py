@@ -17,7 +17,7 @@ from decoy_engine.plan._checks import check_text_redact_ner_available
 BASE: dict[str, Any] = {
     "version": 2,
     "global_settings": {"seed": 7},
-    "sources": {"p": {"type": "file", "format": "csv", "path": "/data/p.csv"}},
+    "sources": {"p": {"type": "file", "format": "csv", "has_header": True, "path": "/data/p.csv"}},
     "tables": [{"name": "p", "columns": [{"name": "id", "strategy": "hash", "namespace": "ids"}]}],
     "targets": {"p": {"type": "file", "format": "csv", "path": "/data/o.csv"}},
 }

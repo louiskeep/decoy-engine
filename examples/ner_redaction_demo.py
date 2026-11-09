@@ -64,7 +64,14 @@ notes.to_csv(IN / "notes.csv", index=False)
 config = {
     "version": 2,
     "global_settings": {"seed": 1},
-    "sources": {"notes": {"type": "file", "format": "csv", "path": "examples/in/notes.csv"}},
+    "sources": {
+        "notes": {
+            "type": "file",
+            "format": "csv",
+            "has_header": True,
+            "path": "examples/in/notes.csv",
+        }
+    },
     "targets": {"notes": {"type": "file", "format": "csv", "path": "examples/out/notes.csv"}},
     "tables": [
         {

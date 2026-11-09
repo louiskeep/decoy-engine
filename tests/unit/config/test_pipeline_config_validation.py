@@ -31,10 +31,12 @@ sources:
   customers:
     type: file
     format: csv
+    has_header: true
     path: ./data/customers.csv
   orders:
     type: file
     format: csv
+    has_header: true
     path: ./data/orders.csv
 tables:
   - name: customers
@@ -238,11 +240,13 @@ class TestOverrideSources:
             "customers": {
                 "type": "file",
                 "format": "csv",
+                "has_header": True,
                 "path": "/runtime/customers_v2.csv",
             },
             "orders": {
                 "type": "file",
                 "format": "csv",
+                "has_header": True,
                 "path": "/runtime/orders_v2.csv",
             },
         }
@@ -260,8 +264,8 @@ class TestOverrideSources:
         cfg = PipelineConfig.model_validate(base_config()).model_dump()
         snapshot = copy.deepcopy(cfg)
         new_sources = {
-            "customers": {"type": "file", "format": "csv", "path": "/x.csv"},
-            "orders": {"type": "file", "format": "csv", "path": "/y.csv"},
+            "customers": {"type": "file", "format": "csv", "has_header": True, "path": "/x.csv"},
+            "orders": {"type": "file", "format": "csv", "has_header": True, "path": "/y.csv"},
         }
         override_sources(cfg, sources=new_sources)
         assert cfg == snapshot
@@ -273,7 +277,12 @@ class TestOverrideSources:
             override_sources(
                 cfg,
                 sources={
-                    "customers": {"type": "file", "format": "csv", "path": "/x.csv"},
+                    "customers": {
+                        "type": "file",
+                        "format": "csv",
+                        "has_header": True,
+                        "path": "/x.csv",
+                    },
                 },
             )
 
@@ -283,9 +292,24 @@ class TestOverrideSources:
             override_sources(
                 cfg,
                 sources={
-                    "customers": {"type": "file", "format": "csv", "path": "/x.csv"},
-                    "orders": {"type": "file", "format": "csv", "path": "/y.csv"},
-                    "ghost_table": {"type": "file", "format": "csv", "path": "/z.csv"},
+                    "customers": {
+                        "type": "file",
+                        "format": "csv",
+                        "has_header": True,
+                        "path": "/x.csv",
+                    },
+                    "orders": {
+                        "type": "file",
+                        "format": "csv",
+                        "has_header": True,
+                        "path": "/y.csv",
+                    },
+                    "ghost_table": {
+                        "type": "file",
+                        "format": "csv",
+                        "has_header": True,
+                        "path": "/z.csv",
+                    },
                 },
             )
 
@@ -296,7 +320,12 @@ class TestOverrideSources:
                 cfg,
                 sources={
                     "customers": {"type": "ftp", "format": "csv", "path": "/x.csv"},
-                    "orders": {"type": "file", "format": "csv", "path": "/y.csv"},
+                    "orders": {
+                        "type": "file",
+                        "format": "csv",
+                        "has_header": True,
+                        "path": "/y.csv",
+                    },
                 },
             )
 
@@ -306,8 +335,13 @@ class TestOverrideSources:
         result = override_sources(
             cfg,
             sources={
-                "customers": {"type": "file", "format": "csv", "path": "/x.csv"},
-                "orders": {"type": "file", "format": "csv", "path": "/y.csv"},
+                "customers": {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": "/x.csv",
+                },
+                "orders": {"type": "file", "format": "csv", "has_header": True, "path": "/y.csv"},
             },
         )
         PipelineConfig.model_validate(result)  # must not raise
@@ -340,8 +374,18 @@ def _acceptance_config(tmp_path: Path) -> dict[str, Any]:
         "version": 2,
         "global_settings": {"seed": 42, "on_pool_exhaustion": "scale_up"},
         "sources": {
-            "customers": {"type": "file", "format": "csv", "path": str(customers_csv)},
-            "orders": {"type": "file", "format": "csv", "path": str(orders_csv)},
+            "customers": {
+                "type": "file",
+                "format": "csv",
+                "has_header": True,
+                "path": str(customers_csv),
+            },
+            "orders": {
+                "type": "file",
+                "format": "csv",
+                "has_header": True,
+                "path": str(orders_csv),
+            },
         },
         "tables": [
             {
