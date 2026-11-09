@@ -21,6 +21,7 @@ pyarrow's 1,048,576-row writer cap, the grouping `ParquetWriter.write_table` giv
 per table when every mask table passes the complete chunked compatibility gate. If the gate rejects it,
 the job takes the out-of-core route only when that route accepts the job and the FK dtype hazard is
 clear, and is refused otherwise. `auto` routing, its threshold and its row-group rules are unchanged.
+An empty source under `stream` writes an empty file with the source schema, as base `--chunked` does; the resident run types the empty columns differently (plan G6).
 
 ### Added (fitted cell format in snapshots, GEN-FIT-SHAPE E1, 2026-11-09)
 
