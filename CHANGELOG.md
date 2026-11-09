@@ -9,6 +9,15 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (stage creators restore owner bits; ownership check reads the effective user)
+
+Directory and private-file stages made through `RootedFileAccess` outputs now restore the owner
+bits a restrictive umask stripped: a stage directory is 0700 and a private stage file is 0600 under
+any umask, 0777 included, where such a stage was born unusable before. Public stage modes still
+follow the umask. The protected-directory ownership check (`runtime.scratch_unsafe`) now compares
+the directory owner with the effective user id instead of the real user id; the engine does not
+run set-uid, so the two agree.
+
 ### Added (value redaction for saved scan documents, 2026-11-08)
 
 `decoy_engine` and `decoy_engine.profiling` export `profile_document`, `redact_profile_dict` and
