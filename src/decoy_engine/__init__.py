@@ -72,6 +72,7 @@ import logging
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 from decoy_engine.config import Dismissal, PipelineConfig, PreScanConfig, parse_pipeline_config
+from decoy_engine.config._pipeline import is_valid_pipeline_name
 from decoy_engine.context import (
     ExecutionContext,
     Logger,
@@ -537,6 +538,7 @@ __all__ = [
     "get_default_pool_cache",
     "get_default_registry",
     "is_pre_ga",
+    "is_valid_pipeline_name",
     "is_value_sensitive",
     "job_seed_for_config",
     "keyed_columns_for_config",
