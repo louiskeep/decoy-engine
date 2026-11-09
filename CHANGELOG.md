@@ -11,7 +11,7 @@ minimum engine version it was tested against via its
 
 ### Added (reason codes for reference fan-out, 2026-11-09)
 
-Registry 1.12.0 adds six reason identities for fitted reference fan-out: `plan` gets
+Registry 1.14.0 adds six reason identities for fitted reference fan-out: `plan` gets
 `dp_generate_fitted_fanout_unsupported`, `reference_fanout_conflict`, `reference_fanout_invalid`,
 `reference_fanout_missing` and `reference_parent_pool_empty`, and `quality` gets `fanout_column_unknown`.
 Existing identities keep their numbers.
