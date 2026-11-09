@@ -30,7 +30,7 @@ module; `_pipeline` re-exports it, so its public import path is unchanged.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -428,6 +428,20 @@ def build_run_context(
         now_iso=now_iso,
         quarantine_runtime=quarantine_runtime,
     )
+
+
+def with_quarantine_path(ctx: PipelineRunContext, path: str | None) -> PipelineRunContext:
+    """`ctx` with `quarantine.output_path` replaced in a copy of its config.
+
+    Called after the plan, and so its config hash, was built from the caller's config: the hash
+    and the caller's dict are untouched. Every route reads `ctx.config`, so none needs its own
+    override. Without a path or a `quarantine` block the context is returned as is.
+    """
+    quarantine = ctx.config.get("quarantine")
+    if path is None or not isinstance(quarantine, dict):
+        return ctx
+    effective = {**ctx.config, "quarantine": {**quarantine, "output_path": path}}
+    return replace(ctx, config=effective)
 
 
 def decide_route(ctx: PipelineRunContext) -> RouteDecision:

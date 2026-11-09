@@ -35,7 +35,11 @@ def _plan(*columns: tuple[str, str, str, bool, tuple[tuple[str, Any], ...]]) -> 
 
 
 class TestUnseededRandomNodes:
-    def test_reports_each_fresh_generator_shape_and_only_those(self) -> None:
+    def test_reports_each_fresh_generator_shape_and_only_those(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # No shipped strategy is unseeded; a stand-in set keeps the gate 9 scan covered.
+        monkeypatch.setattr(pmt, "UNSEEDED_RANDOM_STRATEGIES", frozenset({"shuffle"}))
         plan = _plan(
             ("t", "a", "categorical", False, ()),
             ("t", "b", "categorical", True, ()),
@@ -61,6 +65,13 @@ class TestUnseededRandomNodes:
 
     def test_a_plan_without_random_columns_reports_nothing(self) -> None:
         assert pmt.unseeded_random_nodes(_plan(("t", "a", "hash", False, ()))) == ()
+
+    def test_unkeyed_shuffle_is_not_reported(self) -> None:
+        plan = _plan(
+            ("t", "c", "shuffle", False, ()),
+            ("t", "f", "nested", False, (("strategy", "shuffle"),)),
+        )
+        assert pmt.unseeded_random_nodes(plan) == ()
 
 
 _KINDS = {"a": "mask", "b": "mask"}
@@ -119,7 +130,11 @@ class TestJobGates:
             "unseeded",
         ],
     )
-    def test_each_closed_gate_alone_keeps_the_job_whole(self, overrides: dict[str, Any]) -> None:
+    def test_each_closed_gate_alone_keeps_the_job_whole(
+        self, overrides: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Stand-in unseeded set for the "unseeded" case; no shipped strategy is in it.
+        monkeypatch.setattr(pmt, "UNSEEDED_RANDOM_STRATEGIES", frozenset({"shuffle"}))
         assert _gate(**overrides) is False
 
     def test_quarantine_present_but_disabled_does_not_close_the_gate(self) -> None:

@@ -166,10 +166,11 @@ def _build_streams(
         WindowedDateStream,
     )
     from decoy_engine.generation.statistical import sample_column
-    from decoy_engine.generators.derivation import GenDeriveContext
+    from decoy_engine.generators.derivation import GenDeriveContext, with_table
 
     draws: dict[str, Callable[[int, int, Mapping[str, list[Any]]], list[Any]]] = {}
     for col in cols:
+        col = with_table(col, table)
         name, kind = col["name"], col.get("type")
         if kind == "sequence":
             draws[name] = _positional(SequenceStream(col))

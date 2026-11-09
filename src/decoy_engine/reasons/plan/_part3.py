@@ -6,6 +6,18 @@ from decoy_engine.reasons import _catalog
 
 __all__ = [
     "DEDUPE_UNSUPPORTED_TYPE",
+    "GENERATE_CATEGORIES_MIXED",
+    "GENERATE_COLUMN_FORWARD_REFERENCE",
+    "GENERATE_FAKER_KWARGS_UNKNOWN",
+    "GENERATE_FAKER_TYPE_UNKNOWN",
+    "GENERATE_FORMULA_NAME_UNKNOWN",
+    "GENERATE_FORMULA_REFERENCE_MISSING",
+    "GENERATE_FORMULA_REFERENCE_UNKNOWN",
+    "GENERATE_FORMULA_TEMPLATE_SYNTAX",
+    "GENERATE_LOCALE_UNKNOWN",
+    "GENERATE_OPTION_INVALID",
+    "GROUPED_SERIES_GROUP_BY_EQUALS_ORDER_BY",
+    "REFERENCE_WEIGHTS_LENGTH_MISMATCH",
     "SORT_UNSUPPORTED_TYPE",
     "STATISTICAL_HIGH_CARDINALITY_REQUIRES_REAL_CATEGORIES",
     "STATISTICAL_HIGH_CARDINALITY_SNAPSHOT_MISMATCH",
@@ -16,6 +28,7 @@ __all__ = [
     "STATISTICAL_SNAPSHOT_INDEX_OUT_OF_RANGE",
     "STATISTICAL_SNAPSHOT_SCHEMA_MISMATCH",
     "STATISTICAL_SNAPSHOT_UNREADABLE",
+    "STATISTICAL_SNAPSHOT_VALUES_REDACTED",
     "STATISTICAL_SPEC_NOT_PINNED",
     "STATISTICAL_STATS_DEGENERATE",
     "TOP_CODE_INVALID_FLOOR",
@@ -48,6 +61,11 @@ STATISTICAL_SNAPSHOT_SCHEMA_MISMATCH = _d(
 STATISTICAL_SNAPSHOT_UNREADABLE = _d(
     "statistical_snapshot_unreadable", "Statistical snapshot unreadable."
 )
+STATISTICAL_SNAPSHOT_VALUES_REDACTED = _d(
+    "statistical_snapshot_values_redacted",
+    "Statistical snapshot values redacted.",
+    since="1.11.0",
+)
 STATISTICAL_SPEC_NOT_PINNED = _d("statistical_spec_not_pinned", "Statistical spec not pinned.")
 STATISTICAL_STATS_DEGENERATE = _d("statistical_stats_degenerate", "Statistical stats degenerate.")
 
@@ -59,3 +77,67 @@ SORT_UNSUPPORTED_TYPE = _d("sort_unsupported_type", "Sort unsupported type.")
 _d = _catalog.plan("decoy_engine.plan._checks_top_code")
 
 TOP_CODE_INVALID_FLOOR = _d("top_code_invalid_floor", "Top code invalid floor.")
+
+# Summaries double as the refusal text plan checks show, so they never name a value.
+_d = _catalog.plan("PlanCompileError")
+
+GENERATE_CATEGORIES_MIXED = _d(
+    "generate_categories_mixed",
+    "Generate column categories mix value types.",
+    since="1.13.0",
+)
+GENERATE_COLUMN_FORWARD_REFERENCE = _d(
+    "generate_column_forward_reference",
+    "Generate column reads a column that is not ready yet.",
+    since="1.13.0",
+)
+GENERATE_FAKER_KWARGS_UNKNOWN = _d(
+    "generate_faker_kwargs_unknown",
+    "Generate column passes an argument the Faker provider does not take.",
+    since="1.13.0",
+)
+GENERATE_FAKER_TYPE_UNKNOWN = _d(
+    "generate_faker_type_unknown",
+    "Generate column names a Faker provider that does not exist.",
+    since="1.13.0",
+)
+GENERATE_FORMULA_NAME_UNKNOWN = _d(
+    "generate_formula_name_unknown",
+    "Generate column formula uses a name that is not defined.",
+    since="1.13.0",
+)
+GENERATE_FORMULA_REFERENCE_MISSING = _d(
+    "generate_formula_reference_missing",
+    "Generate column formula reads a sibling column not listed in its references.",
+    since="1.13.0",
+)
+GENERATE_FORMULA_REFERENCE_UNKNOWN = _d(
+    "generate_formula_reference_unknown",
+    "Generate column formula references a column that is not a sibling generate column.",
+    since="1.13.0",
+)
+GENERATE_FORMULA_TEMPLATE_SYNTAX = _d(
+    "generate_formula_template_syntax",
+    "Generate column formula wraps a column name in braces; use the bare name.",
+    since="1.13.0",
+)
+GENERATE_LOCALE_UNKNOWN = _d(
+    "generate_locale_unknown",
+    "Generate column locale is not a known Faker locale.",
+    since="1.13.0",
+)
+GENERATE_OPTION_INVALID = _d(
+    "generate_option_invalid",
+    "Generate column option is not valid for its column type.",
+    since="1.13.0",
+)
+GROUPED_SERIES_GROUP_BY_EQUALS_ORDER_BY = _d(
+    "grouped_series_group_by_equals_order_by",
+    "Grouped series group_by and order_by name the same column.",
+    since="1.13.0",
+)
+REFERENCE_WEIGHTS_LENGTH_MISMATCH = _d(
+    "reference_weights_length_mismatch",
+    "Reference weights count does not match the parent sequence row count.",
+    since="1.13.0",
+)

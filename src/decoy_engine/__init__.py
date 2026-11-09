@@ -61,7 +61,18 @@ call shape. Any external import of ``Masker`` / ``DataGenerator`` / ``run_graph`
 now fails fast.
 """
 
+import logging
+
+# ruff: noqa: E402  (the NullHandler attach must precede every submodule import)
+
+# The one NullHandler attach site. It runs before any submodule import, because those imports
+# build objects that fetch the engine logger. With a handler on the package logger, Python's
+# last-resort handler does not print engine warnings to stderr. `_configure_logger` preserves
+# this handler and never creates one.
+logging.getLogger(__name__).addHandler(logging.NullHandler())
+
 from decoy_engine.config import Dismissal, PipelineConfig, PreScanConfig, parse_pipeline_config
+from decoy_engine.config._pipeline import is_valid_pipeline_name
 from decoy_engine.context import (
     ExecutionContext,
     Logger,
@@ -186,7 +197,21 @@ from decoy_engine.plan.validate import (
 from decoy_engine.profile._csv_reader import CsvDialect, read_csv_source, resolve_csv_dialect
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
 from decoy_engine.profile._fixed_width_writer import write_fixed_width
-from decoy_engine.profiling import ColumnProfile, FieldStats, SentinelFlag, profile_columns
+from decoy_engine.profiling import (
+    ColumnProfile,
+    FieldStats,
+    ScanSet,
+    ScanSetCore,
+    SentinelFlag,
+    TableScan,
+    distribution_snapshot_document,
+    is_value_sensitive,
+    profile_columns,
+    profile_document,
+    redact_profile_dict,
+    scan_set_to_dict,
+    scan_sources,
+)
 from decoy_engine.profiling.model_pack import classifier_status, load_detectors
 from decoy_engine.progress import (
     CallbackSink,
@@ -450,6 +475,8 @@ __all__ = [
     "RouteEvent",
     "RunResult",
     "RunResultRead",
+    "ScanSet",
+    "ScanSetCore",
     "SecretCachePolicy",
     "SecretDescriptor",
     "SecretKeyProvider",
@@ -464,6 +491,7 @@ __all__ = [
     "StrategyOption",
     "StructuredEvents",
     "StructuredEventsSink",
+    "TableScan",
     "TelemetryClient",
     "TerminalEvent",
     "TransientError",
@@ -495,6 +523,7 @@ __all__ = [
     "derive_index",
     "derive_outcome",
     "derive_value",
+    "distribution_snapshot_document",
     "emit_fidelity",
     "emit_lineage",
     "emit_quarantine",
@@ -509,6 +538,8 @@ __all__ = [
     "get_default_pool_cache",
     "get_default_registry",
     "is_pre_ga",
+    "is_valid_pipeline_name",
+    "is_value_sensitive",
     "job_seed_for_config",
     "keyed_columns_for_config",
     "list_generate_faker_providers",
@@ -522,11 +553,13 @@ __all__ = [
     "parse_pipeline_config",
     "pipeline_config_hash",
     "profile_columns",
+    "profile_document",
     "protected_scratch_dir",
     "read_csv_source",
     "read_fixed_width",
     "reason_from_exception",
     "reasons_from_report",
+    "redact_profile_dict",
     "register_faker_list_provider",
     "register_faker_provider",
     "register_faker_provider_v2",
@@ -537,6 +570,8 @@ __all__ = [
     "run_mask_chunked",
     "run_mask_pipeline_chunked",
     "run_pipeline",
+    "scan_set_to_dict",
+    "scan_sources",
     "select_execution_adapter",
     "strategy_catalog",
     "unmask_pipeline",

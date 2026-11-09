@@ -13,7 +13,7 @@ import math
 from dataclasses import dataclass
 
 from decoy_engine import reasons
-from decoy_engine._progress_events import safe_error_class
+from decoy_engine.progress import safe_error_class
 from decoy_engine.reasons import Phase
 
 TELEMETRY_SCHEMA = "decoy-telemetry/v1"

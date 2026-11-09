@@ -90,7 +90,7 @@ from decoy_engine.execution._pipeline_routing_signals import (
     largest_mask_table_rows_from_profile,
     out_of_core_admission,
 )
-from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit
+from decoy_engine.execution.out_of_core import resolve_budget, resolve_ooc_memory_limit
 from decoy_engine.execution.out_of_core._capacity_eval import (
     CapacityEstimate,
     CapacityInputs,
@@ -98,10 +98,12 @@ from decoy_engine.execution.out_of_core._capacity_eval import (
     evaluate_capacity,
 )
 from decoy_engine.fileaccess import FileAccess, entry_point
+from decoy_engine.generation import detected_memory_bytes, resident_floor_shortfall
 
 __all__ = ["estimate_job_capacity"]
 
 _OUT_OF_CORE_ROUTE = "out_of_core"
+_GENERATE_ROUTE = "generate"
 
 # The mid-run gate raises `out_of_core_parent_rows_unresolved`
 # (`_pipeline_route_exec._parent_table_row_counts`) when a parent table has no
@@ -204,6 +206,42 @@ def _not_applicable(route: str, message: str) -> CapacityEstimate:
     )
 
 
+def _generation_floor_estimate(
+    config: dict[str, Any], budget_bytes: int | None
+) -> CapacityEstimate | None:
+    """The floor verdict for a config with generate tables, or `None` when it does not refuse.
+
+    `decoy run` generates resident (no sink), so the floor always applies. An explicit override is
+    resolved exactly as `run_generation` resolves it (validated, raised to the route's minimum);
+    otherwise the detected ceiling is used, and an undetectable host is UNKNOWN.
+    """
+    if budget_bytes is not None:
+        available: int | None = resolve_budget(budget_bytes).budget_bytes
+    else:
+        available = detected_memory_bytes()
+    if available is None:
+        return CapacityEstimate(
+            verdict=CapacityVerdict.UNKNOWN,
+            code=None,
+            needed_bytes=None,
+            available_bytes=None,
+            route=_GENERATE_ROUTE,
+            message="the memory ceiling could not be detected, so the generated output "
+            "cannot be checked against it; pass an explicit budget_bytes.",
+        )
+    shortfall = resident_floor_shortfall(config, available)
+    if shortfall is None:
+        return None
+    return CapacityEstimate(
+        verdict=CapacityVerdict.INSUFFICIENT,
+        code=reasons.runtime.GENERATION_BUDGET_EXCEEDED,
+        needed_bytes=shortfall.needed_bytes,
+        available_bytes=shortfall.available_bytes,
+        route=_GENERATE_ROUTE,
+        message=shortfall.message,
+    )
+
+
 @entry_point
 def estimate_job_capacity(
     config_dump: dict[str, Any],
@@ -219,9 +257,11 @@ def estimate_job_capacity(
     `warned=True` and a recommended host size when the predicted relation-build
     floor exceeds the cap it would receive (relation-build only -- it excludes
     resident inputs, accumulated outputs, and ingestion peak), and the job is
-    NOT refused for that. `INSUFFICIENT` is returned only for a fan-in
+    NOT refused for that. `INSUFFICIENT` is returned for a fan-in
     impossibility (more co-live DuckDB joiners than the budget can seat a 1 MB
-    minimum apiece).
+    minimum apiece), and for a config with generate tables whose output alone
+    cannot fit the memory ceiling (`generation_budget_exceeded`, checked first,
+    before any source is profiled; `UNKNOWN` when the ceiling cannot be detected).
 
     `config_dump` MUST be `PipelineConfig.model_validate(raw).model_dump()`
     (the same normalized shape `run_pipeline` takes) -- no re-validation
@@ -269,6 +309,10 @@ def estimate_job_capacity(
     table_kinds = classify_table_kinds(config)
     has_mask_table = any(kind == "mask" for kind in table_kinds.values())
     has_generate_table = any(kind == "generate" for kind in table_kinds.values())
+    if has_generate_table:
+        floor_estimate = _generation_floor_estimate(config, budget_bytes)
+        if floor_estimate is not None:
+            return floor_estimate
 
     job_seed = _normalize_job_seed_int(config)
     # Bounded residency (the default): cheap row-count metadata plus a

@@ -251,13 +251,17 @@ whole-column vector draws and are therefore NOT partitionable. The exception is
 HMAC of the row index.
 
 ### mask.shuffle
-`execution/_strategies/_shuffle.py:62`. Whole-column, multiset-preserving
+`execution/_strategies/_shuffle.py:80`. Whole-column, multiset-preserving
 permutation. Seed:
 `int.from_bytes(derive(mask_key, plan.namespace, column.encode("utf-8"))[:8], "big")`,
 then `default_rng(seed).permutation(len(non_na_values))`. NOT partitionable: a
 partition sees only its slice and cannot reproduce the global permutation order.
-Nulls are excluded before the draw. Non-deterministic mode uses an unseeded
-`default_rng()`.
+Nulls are excluded before the draw. Non-deterministic mode is unkeyed but still
+drawn from the mask key: namespace `UNKEYED_SHUFFLE_NAMESPACE`, source
+`job_seed.hex() + "/" + context_draw_identity(ctx, column)`. The identity is
+`<len>:<current_table>/<len>:<nested_outer_column or column>`, the same one
+non-deterministic Faker's default selection namespace uses (`execution/_adapter.py`),
+and an empty `current_table` fails closed with `faker_positional_table_unknown`.
 
 ### mask.windowed_date (UNCERTAIN)
 `transforms/windowed_date.py:209`. Per-row seed:
@@ -272,7 +276,7 @@ derive seed, which is the proof of concept. Task 0.3 must pin `i` to a global
 row number. Flagged uncertain for that reason.
 
 ### gen.null_probability
-`generation/synthesize.py:521`.
+`generation/synthesize.py:481`.
 `np.random.default_rng(GenDeriveContext.for_column(...).base_int("np")).random(n) < null_prob`.
 This one draw IS the null decision: one float per row from a single contiguous
 stream, so row `i` depends on `n` and stream position. NOT partitionable. V1
@@ -323,12 +327,12 @@ single instance), so none is partitionable: a partition cannot resume a Python
 RNG mid-stream.
 
 ### gen.categorical
-`generation/synthesize.py:433`.
+`generation/synthesize.py:365`.
 `random.Random(GenDeriveContext.for_column(...).base_int("py")).choices(cats, weights=weights, k=n)`:
 one whole-column call. V1 mirror at `generators/columns.py:412`.
 
 ### gen.reference
-`generation/synthesize.py:624`. `random.Random(col_seed)` then per row
+`generation/_synthesize_derived.py:151`. `random.Random(col_seed)` then per row
 `choice(ref_vals)` or `choices(..., k=1)`; the `sequential` distribution draws
 nothing (`ref_vals[i % len]`). Cardinality repair
 (`generators/columns.py:596-656`) adds `shuffle`/`choices` on the same stream.
@@ -357,7 +361,7 @@ variable number of values internally (the reseed contains it).
 `local_seed = gen_ctx.row_int("py", i); row_rng.seed(local_seed); self.faker.seed_instance(gen_ctx.row_int("faker", i))`,
 then `safe_eval(formula, scope)`. The referenced-formula post-pass
 (`generators/_formula.py:144`) and the V2 delegation
-(`generation/synthesize.py:559`) mirror it.
+(`generation/_synthesize_derived.py:84`) mirror it.
 
 ### gen.statistical_per_row
 `generation/statistical/_sample.py:260`. `rng.seed(col_seed + i)` per row (the
@@ -376,7 +380,7 @@ provider, but each site reseeds from a per-row or per-span key, so output is a
 pure function of that key.
 
 ### gen.faker_per_row
-`generation/synthesize.py:490`. Per row:
+`generation/synthesize.py:441`. Per row:
 `faker_inst.seed_instance(gen_ctx.row_int("faker", i))` then `provider_func(**kwargs)`.
 `row_int` is an HMAC over the faker family key and `i`. Partitionable. V1 mirror
 at `generators/columns.py:329` is byte-identical.
@@ -411,7 +415,7 @@ custom-override/locale availability. Seed:
 `build_seed = GenDeriveContext.for_column(...).family_bytes("faker_pool_build")[:8]`,
 then ONE `faker.seed_instance(int.from_bytes(build_seed, "big"))` on a fresh
 instance seeds a batch of `pool_size` provider calls. Keyed off the column's OWN
-root (fingerprint-derived), so rename-invariant per R3.10 and independent of every
+root (fingerprint-derived), so identity-scoped per column and independent of every
 other column's pool. Partitionable (pool identity is a pure function of that root).
 Paired with `gen.faker_pool_selection` (`numpy_pcg64` family, above) for the REUSE
 draw.
