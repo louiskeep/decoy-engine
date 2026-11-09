@@ -19,6 +19,14 @@ entries stay out of the aggregate but report the missing score. If either snapsh
 missing score is reported and not applied, because a DP null count is noise. The null fraction itself is now
 the public `decoy_engine.quality.snapshot_null_fraction`, the one place that count and zero-row rule live.
 
+### Changed (generate uniqueness groundwork, GEN-UNIQUE E1, 2026-11-09)
+
+No generated-cell changes. Groundwork for `unique` generate columns: the config-time checks (`config/_generate_unique.py`),
+`unique_set_bytes`, `parent_keys` and `pool_opted_out` land unwired, and `unique_capacity_ok` takes a
+`null_reusable` flag. The masking pool's `uniqueness_impossible` refusal now comes from the shared
+`raise_uniqueness_impossible` builder, so its message names counts only and its wording changed; the code is
+the same. A golden test pins generated cells, Plan config and seed fingerprints for configs without the new keys.
+
 ### Changed (fitted generation keeps nulls, blanks, precision and resolution, GEN-FIT-SHAPE E2, 2026-11-09)
 
 A `type: statistical` column whose snapshot carries a `cell_format` block (every `decoy fit` after E1)

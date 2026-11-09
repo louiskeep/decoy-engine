@@ -71,7 +71,7 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("errors.py", "FpeUnencryptableError.__init__"): _CTOR,
     ("errors.py", "PipelineValidationError.__init__"): _CTOR,
     ("errors.py", "ValidationError.__init__"): _CTOR,
-    ("execution/_errors.py", "ExecutionError.__init__"): _CTOR,
+    ("_execution_error.py", "ExecutionError.__init__"): _CTOR,
     ("execution/_errors.py", "StrategyError.__init__"): _CTOR,
     ("execution/_mixed_admission.py", "MixedDeclineError.__init__"): _CTOR,
     ("execution/_transforms.py", "TransformError.__init__"): _CTOR,

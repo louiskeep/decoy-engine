@@ -73,6 +73,8 @@ SENTRIES = (
     "tests/sentry/defects/test_exception_context.py",
     "tests/sentry/defects/test_generate_option_reads.py",
     "tests/sentry/defects/test_validation_sites.py",
+    "tests/sentry/generation/test_pooled_read_choke_point.py",
+    "tests/sentry/generation/test_uniqueness_refusal_choke_point.py",
     "tests/sentry/parallel/test_serial_resources.py",
     "tests/sentry/parallel/test_stable_ids.py",
     "tests/sentry/profiling/test_profile_value_registry.py",

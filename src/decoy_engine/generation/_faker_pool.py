@@ -236,6 +236,16 @@ _BUILD_FAMILY = "faker_pool_build"
 _SELECTION_FAMILY = "faker_pool_selection"
 
 
+def pool_opted_out(col: Mapping[str, Any]) -> bool:
+    """Whether a column opted out of pooling: the one reader of the column's `pooled` key.
+
+    Only an explicit `pooled: false` opts out; absent, null and `true` leave admission to
+    `pool_eligible`. Every admission site passes this as `opted_out`, so a further opt-out
+    reason is added here once.
+    """
+    return col.get("pooled") is False
+
+
 def pool_eligible(faker_type: str, requested_locale: Any, n: int, *, opted_out: bool) -> bool:
     """Cheap, instance-independent gate: should `_faker` attempt pooling?
 
@@ -299,7 +309,7 @@ def try_pool(
     """
     faker_type = col.get("faker_type", "word")
     requested_locale = col.get("locale") or instance_default_locale
-    if not pool_eligible(faker_type, requested_locale, n, opted_out=col.get("pooled") is False):
+    if not pool_eligible(faker_type, requested_locale, n, opted_out=pool_opted_out(col)):
         return None
     gen_ctx = GenDeriveContext.for_column(
         derive_key=derive_key, column_config=col, fallback_seed=seed
@@ -548,5 +558,6 @@ __all__ = [
     "build_pool_values",
     "open_pooled_selector",
     "pool_eligible",
+    "pool_opted_out",
     "try_pool",
 ]
