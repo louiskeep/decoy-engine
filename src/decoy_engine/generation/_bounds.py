@@ -330,7 +330,7 @@ def generation_floor_shortfall(
 
 def detected_memory_bytes() -> int | None:
     """The whole memory ceiling (cgroup limit, else host RAM), or `None` when it cannot be read."""
-    from decoy_engine.execution._errors import ExecutionError
+    from decoy_engine.execution import ExecutionError
     from decoy_engine.execution.out_of_core import _budget
 
     try:

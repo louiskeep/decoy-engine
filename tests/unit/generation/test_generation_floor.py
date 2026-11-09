@@ -42,8 +42,12 @@ SECRET_PREFIX = "SECRET-PREFIX-"
 FORMULA = {"name": "legacy", "type": "formula", "formula": "i"}
 
 
+def _patch_detection(mp: pytest.MonkeyPatch, detect: Any) -> None:
+    mp.setattr(ooc_budget, "detect_effective_memory_bytes", detect)
+
+
 def _patch_memory(mp: pytest.MonkeyPatch, nbytes: int) -> None:
-    mp.setattr(ooc_budget, "detect_effective_memory_bytes", lambda: nbytes)
+    _patch_detection(mp, lambda: nbytes)
 
 
 def _patch_memory_undetectable(mp: pytest.MonkeyPatch) -> None:
@@ -52,7 +56,7 @@ def _patch_memory_undetectable(mp: pytest.MonkeyPatch) -> None:
             code=reasons.runtime.OUT_OF_CORE_MEMORY_DETECTION_FAILED, message="no memory source"
         )
 
-    mp.setattr(ooc_budget, "detect_effective_memory_bytes", fail)
+    _patch_detection(mp, fail)
 
 
 def _huge_config() -> dict[str, Any]:
@@ -324,7 +328,7 @@ def test_estimate_honors_an_explicit_budget_over_detected_memory(
     def must_not_detect() -> int:
         raise AssertionError("an explicit budget replaces detection")
 
-    monkeypatch.setattr(ooc_budget, "detect_effective_memory_bytes", must_not_detect)
+    _patch_detection(monkeypatch, must_not_detect)
     _profile_must_not_run(monkeypatch)
     config = fx.config([fx.table("t", 20_000_000, [{"name": "k", "type": "sequence"}])])
     est = estimate_job_capacity(config, tmp_path, budget_bytes=64 * MIB)
@@ -485,14 +489,33 @@ def test_capacity_reason_codes_are_the_three_registered_codes() -> None:
         assert reasons.is_registered(code), code
 
 
-def test_capacity_reaches_the_floor_only_through_the_generation_package() -> None:
-    tree = ast.parse(Path(capacity_mod.__file__).read_text(encoding="utf-8"))
-    private = [
-        node.module
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
-        and node.module
-        and node.module.split(".")[:2] == ["decoy_engine", "generation"]
-        and any(part.startswith("_") for part in node.module.split(".")[2:])
+def _private_imports(path: str, package: str) -> list[str]:
+    """Every import in `path` that names a private module or member under `package`."""
+    names: list[str] = []
+    for node in ast.walk(ast.parse(Path(path).read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            names += [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names += [f"{node.module}.{alias.name}" for alias in node.names]
+    prefix = package.split(".")
+    return [
+        name
+        for name in names
+        if name.split(".")[: len(prefix)] == prefix
+        and any(part.startswith("_") for part in name.split(".")[len(prefix) :])
     ]
-    assert private == []
+
+
+def test_capacity_reaches_the_floor_only_through_the_generation_package() -> None:
+    assert _private_imports(capacity_mod.__file__, "decoy_engine.generation") == []
+
+
+def test_the_import_guard_sees_every_spelling(tmp_path: Path) -> None:
+    probe = tmp_path / "probe.py"
+    for line in (
+        "from decoy_engine.generation import _bounds",
+        "import decoy_engine.generation._bounds",
+        "from decoy_engine.generation._bounds import x",
+    ):
+        probe.write_text(line + "\n", encoding="utf-8")
+        assert _private_imports(str(probe), "decoy_engine.generation") != [], line
