@@ -34,11 +34,11 @@
           "severity": "error"
         }
       ],
-      "since": "1.19.0",
+      "since": "1.18.0",
       "summary": "No streaming route applies to this job.",
       "symbol": "STREAMING_UNAVAILABLE"
     }
   ],
   "reason_schema_version": 1,
-  "registry_version": "1.19.0"
+  "registry_version": "1.18.0"
 }
