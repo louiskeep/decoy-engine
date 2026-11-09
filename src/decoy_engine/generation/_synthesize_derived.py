@@ -85,6 +85,23 @@ def _formula(col: dict[str, Any], n: int, seed: int, derive_key: Any = None) -> 
     return series.tolist()
 
 
+def parent_keys(pools: dict[str, pa.Table], table: str, column: str) -> list[Any]:
+    """Distinct non-null values of a generated parent column, in first-seen order.
+
+    Insertion-order unique + drop None, matching V1 `dropna().unique()` on a pandas Series. A
+    naive set() would lose order -> different random.choice output for the same seed. The one
+    parent key list the reference draw and the unique draws read (GEN-UNIQUE U8).
+    """
+    seen: set = set()
+    keys: list[Any] = []
+    for v in pools[table].column(column).to_pylist():
+        if v is None or v in seen:
+            continue
+        seen.add(v)
+        keys.append(v)
+    return keys
+
+
 def _reference(
     col: dict[str, Any],
     n: int,
@@ -123,18 +140,7 @@ def _reference(
     min_per = int(col.get("min_per_parent") or 0)
     max_per = int(col.get("max_per_parent") or 0)
 
-    parent_tbl = pools[ref_table]
-    raw_vals = parent_tbl.column(ref_column).to_pylist()
-    # Insertion-order unique + drop None, matching V1 `dropna().unique()` on a
-    # pandas Series. A naive set() would lose order -> different random.choice
-    # output for the same seed.
-    seen: set = set()
-    ref_vals: list[Any] = []
-    for v in raw_vals:
-        if v is None or v in seen:
-            continue
-        seen.add(v)
-        ref_vals.append(v)
+    ref_vals = parent_keys(pools, ref_table, ref_column)
 
     if not ref_vals:
         return [None] * n

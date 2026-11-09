@@ -58,7 +58,7 @@ from decoy_engine.generation._column_streams import (
     draw_batch,
     make_column_stream,
 )
-from decoy_engine.generation._faker_pool import pool_eligible
+from decoy_engine.generation._faker_pool import pool_eligible, pool_opted_out
 from decoy_engine.generation.pool._runtime_pool_size import DEFAULT_POOL_SIZE
 from decoy_engine.progress import get_active_channel
 
@@ -188,7 +188,7 @@ def _pooled_columns(
             c.get("faker_type", "word"),
             c.get("locale") or instance_default_locale,
             rows,
-            opted_out=c.get("pooled") is False,
+            opted_out=pool_opted_out(c),
         )
     ]
 

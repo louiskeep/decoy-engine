@@ -238,6 +238,24 @@ def faker_pool_bytes(pool_size: int, payload: int) -> int:
     return int(pool_size * (STR_OBJECT_OVERHEAD_BYTES + payload) * _POOL_SLACK) + _POOL_FIXED_BYTES
 
 
+# A set slot (hash + pointer, at CPython's load factor) beyond the str object it holds.
+_UNIQUE_SET_PER_ENTRY_EXTRA = 72
+# The int object and set slot `random.sample` keeps per selected position of a large population.
+_SAMPLE_PER_ROW_BYTES = 32 + _UNIQUE_SET_PER_ENTRY_EXTRA
+
+
+def unique_set_bytes(rows: int, payload: int) -> int:
+    """Working set of one unique column draw: the seen set plus the `random.sample` positions.
+
+    The seen set holds one string object per row (`payload` bytes wide); `random.sample` keeps
+    one selected position per row (a large population) or a list of the population (a small
+    one, never larger than the rows). Both are priced at `rows`, conservatively.
+    """
+    return rows * (payload + STR_OBJECT_OVERHEAD_BYTES + _UNIQUE_SET_PER_ENTRY_EXTRA) + (
+        rows * _SAMPLE_PER_ROW_BYTES
+    )
+
+
 def key_pool_bytes(parent_rows: int, key_payload: int) -> int:
     return parent_rows * (key_payload + STR_OBJECT_OVERHEAD_BYTES + _KEY_POOL_PER_KEY_EXTRA)
 
@@ -358,4 +376,5 @@ __all__ = [
     "legacy_table_bytes",
     "sequence_payload_bound",
     "sink_buffer_bytes",
+    "unique_set_bytes",
 ]
