@@ -19,6 +19,13 @@ the redactor nulls any member it does not recognise. `distribution_snapshot_docu
 passes the keyword, so new fits carry the block. The keyword defaults to `False`: a call without it, and
 every snapshot written before this, is byte-identical. Generation does not read the block yet.
 
+### Added (reason codes for generate uniqueness, 2026-11-09)
+
+Registry 1.18.0 adds four identities for GEN-UNIQUE: `config.generate_unique_conflict`,
+`config.generate_unique_domain_too_small`, `config.generate_unique_unsupported` and
+`plan.pinned_unique_pair_unsupported`. Nothing raises them yet; the checks land with GEN-UNIQUE E1 and E2.
+Existing identities keep their numbers.
+
 ### Added (reason code for fitted cell format, 2026-11-09)
 
 Registry 1.16.0 adds one `plan` identity, `statistical_cell_format_invalid`, for a malformed `cell_format`

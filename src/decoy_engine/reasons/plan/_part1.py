@@ -101,6 +101,7 @@ __all__ = [
     "PINNED_SNAPSHOT_FILE_NOT_STATISTICAL",
     "PINNED_STATISTICAL_DIGEST_MISSING",
     "PINNED_TYPE_NOT_ALLOWLISTED",
+    "PINNED_UNIQUE_PAIR_UNSUPPORTED",
     "PINNED_WINDOWED_ANCHOR_NOT_ABSOLUTE",
     "POOL_SIZE_OVERFLOW",
     "SOURCE_LENGTH_MISMATCH",
@@ -155,6 +156,9 @@ PINNED_STATISTICAL_DIGEST_MISSING = _d(
     "pinned_statistical_digest_missing", "Pinned statistical digest missing."
 )
 PINNED_TYPE_NOT_ALLOWLISTED = _d("pinned_type_not_allowlisted", "Pinned type not allowlisted.")
+PINNED_UNIQUE_PAIR_UNSUPPORTED = _d(
+    "pinned_unique_pair_unsupported", "Pinned unique pair unsupported.", since="1.18.0"
+)
 PINNED_WINDOWED_ANCHOR_NOT_ABSOLUTE = _d(
     "pinned_windowed_anchor_not_absolute", "Pinned windowed anchor not absolute."
 )

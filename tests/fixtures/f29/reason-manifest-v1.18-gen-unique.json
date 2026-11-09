@@ -1,0 +1,86 @@
+{
+  "entries": [
+    {
+      "code": "generate_unique_conflict",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "config",
+      "owner": "PipelineValidationError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.18.0",
+      "summary": "Generate column unique cannot be combined with another option on the same column.",
+      "symbol": "GENERATE_UNIQUE_CONFLICT"
+    },
+    {
+      "code": "generate_unique_domain_too_small",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "config",
+      "owner": "PipelineValidationError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.18.0",
+      "summary": "Generate column unique needs more distinct values than its domain holds.",
+      "symbol": "GENERATE_UNIQUE_DOMAIN_TOO_SMALL"
+    },
+    {
+      "code": "generate_unique_unsupported",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "config",
+      "owner": "PipelineValidationError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.18.0",
+      "summary": "Generate column type does not support unique.",
+      "symbol": "GENERATE_UNIQUE_UNSUPPORTED"
+    },
+    {
+      "code": "pinned_unique_pair_unsupported",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PinnedModeError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.18.0",
+      "summary": "Pinned unique pair unsupported.",
+      "symbol": "PINNED_UNIQUE_PAIR_UNSUPPORTED"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.18.0"
+}

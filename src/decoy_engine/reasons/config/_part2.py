@@ -11,6 +11,9 @@ __all__ = [
     "GENERATE_OPTION_TYPE",
     "GENERATE_OPTION_UNKNOWN",
     "GENERATE_OPTION_VALUE_UNKNOWN",
+    "GENERATE_UNIQUE_CONFLICT",
+    "GENERATE_UNIQUE_DOMAIN_TOO_SMALL",
+    "GENERATE_UNIQUE_UNSUPPORTED",
     "GENERATE_WEIGHTS_INVALID",
     "PIPELINE_NAME_INVALID",
     "VARIABLE_UNKNOWN_SCOPE",
@@ -54,6 +57,21 @@ GENERATE_OPTION_VALUE_UNKNOWN = _d(
     "generate_option_value_unknown",
     "Generate column option value is not one of the allowed choices.",
     since="1.13.0",
+)
+GENERATE_UNIQUE_CONFLICT = _d(
+    "generate_unique_conflict",
+    "Generate column unique cannot be combined with another option on the same column.",
+    since="1.18.0",
+)
+GENERATE_UNIQUE_DOMAIN_TOO_SMALL = _d(
+    "generate_unique_domain_too_small",
+    "Generate column unique needs more distinct values than its domain holds.",
+    since="1.18.0",
+)
+GENERATE_UNIQUE_UNSUPPORTED = _d(
+    "generate_unique_unsupported",
+    "Generate column type does not support unique.",
+    since="1.18.0",
 )
 GENERATE_WEIGHTS_INVALID = _d(
     "generate_weights_invalid",
