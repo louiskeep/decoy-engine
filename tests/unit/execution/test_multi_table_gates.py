@@ -500,7 +500,7 @@ def _random_columns(kind: str) -> tuple[list[dict[str, Any]], pa.Table]:
     return [col, base], values
 
 
-@pytest.mark.parametrize("kind", ["categorical", "shuffle", "nested"])
+@pytest.mark.parametrize("kind", ["categorical", "nested"])
 def test_split_vetoed_random_columns_keep_the_full_frame_call(
     kind: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -545,6 +545,27 @@ def test_split_vetoed_random_columns_keep_the_full_frame_call(
     got_v, off_v = got.outputs["tiny"].column("v"), off.outputs["tiny"].column("v")
     assert got_v.type == off_v.type
     assert got_v.null_count == off_v.null_count
+
+
+def test_unkeyed_shuffle_no_longer_vetoes_the_split_and_matches_the_whole_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """QA row 24d: unkeyed shuffle draws from the mask key, so the split runs and its output
+    equals the whole-job call byte for byte."""
+    random_cols, random_table = _random_columns("shuffle")
+    cfg, sources = mt.build_job(
+        tmp_path,
+        {
+            "tiny": (random_cols, random_table.slice(0, mt.SMALL)),
+            "big": (mt.std_columns("big_ns"), mt.string_table(mt.BIG, "b")),
+        },
+    )
+    calls = mt.spy_split(monkeypatch)
+    got = run_pipeline(cfg, sources=sources, **mt.kw())
+    assert calls != []
+    off = run_pipeline(cfg, sources=sources, **mt.kw(**mt.off_kw()))
+    for name in ("tiny", "big"):
+        assert got.outputs[name].equals(off.outputs[name]), name
 
 
 def _assert_same_adapter_call(a: tuple[Any, Any], b: tuple[Any, Any]) -> None:
@@ -595,9 +616,10 @@ def test_veto_sets_report_exactly_their_columns(tmp_path: Path) -> None:
     )
     cfg, _ = mt.build_job(tmp_path, {"t": (cols, src)})
     plan = compile_plan(cfg, profile_source(cfg, seed=42), decoy_engine_version="x")
-    assert sorted(pmt.unseeded_random_nodes(plan)) == [("t", "s1", "shuffle")]
+    # Unkeyed shuffle draws from the mask key, so nothing is held whole as unseeded.
+    assert pmt.unseeded_random_nodes(plan) == ()
 
-    # The seeded column is held whole by its own veto, not by the shuffle set above.
+    # The seeded column is held whole by its own veto.
     assert sorted(pmt.position_keyed_deferred_nodes(plan)) == [("t", "c1", "categorical")]
 
 
@@ -620,11 +642,11 @@ def test_unseeded_strategy_set_matches_the_strategies_that_draw_from_a_fresh_rng
     offenders = sorted(
         p.stem.lstrip("_") for p in root.glob("*.py") if unseeded.search(p.read_text())
     )
-    assert frozenset({"shuffle"}) == pmt.UNSEEDED_RANDOM_STRATEGIES
+    assert frozenset() == pmt.UNSEEDED_RANDOM_STRATEGIES
 
     # Seeded, so the scan above cannot see it; it has its own pinned veto set.
     assert frozenset({"categorical"}) == pmt.POSITION_KEYED_CATEGORICAL_SPLIT_DEFERRED
-    assert offenders == ["shuffle"], (
+    assert offenders == [], (
         "a strategy module draws from an unseeded generator; add it to job gate 9"
     )
 
@@ -701,7 +723,7 @@ def _widen(arr: pa.Array, n: int) -> pa.Array:
 def test_row_errors_still_aggregate_when_the_job_does_not_split(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A quarantine-free job with unseeded randomness is a golden no-split even with row errors."""
+    """A quarantine-free job with a split veto is a golden no-split even with row errors."""
     bad = pa.table({"d": pa.array(["2020-01-01"] * (mt.BIG - 1) + ["not-a-date"])})
     cols = [
         {
@@ -711,7 +733,7 @@ def test_row_errors_still_aggregate_when_the_job_does_not_split(
             "provider_config": {"min_days": -5, "max_days": 5, "date_format": "%Y-%m-%d"},
         }
     ]
-    random_cols, random_table = _random_columns("shuffle")
+    random_cols, random_table = _random_columns("categorical")
     cfg, sources = mt.build_job(
         tmp_path,
         {"big": (cols, bad), "tiny": (random_cols, random_table.slice(0, mt.SMALL))},

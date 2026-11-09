@@ -118,6 +118,9 @@ def test_all_lists_every_public_name():
         "ValidationMessage",
         "ValidationResult",
         "profile_columns",
+        "profile_document",
+        "redact_profile_dict",
+        "is_value_sensitive",
         "ColumnProfile",
         "FieldStats",
         "DetectorMatch",
@@ -301,6 +304,12 @@ def test_all_lists_every_public_name():
         # LIB L0.1: the protected directory allocator.
         "open_protected_dir",
         "protected_scratch_dir",
+        # SCAN-MULTI S1a: the multi-table scan and its scan-set/v1 document.
+        "ScanSet",
+        "ScanSetCore",
+        "TableScan",
+        "scan_set_to_dict",
+        "scan_sources",
     }
     assert set(decoy_engine.__all__) == expected
 
