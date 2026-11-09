@@ -84,60 +84,60 @@ _d = _catalog.plan("PlanCompileError")
 GENERATE_CATEGORIES_MIXED = _d(
     "generate_categories_mixed",
     "Generate column categories mix value types.",
-    since="1.11.0",
+    since="1.13.0",
 )
 GENERATE_COLUMN_FORWARD_REFERENCE = _d(
     "generate_column_forward_reference",
     "Generate column reads a column that is not ready yet.",
-    since="1.11.0",
+    since="1.13.0",
 )
 GENERATE_FAKER_KWARGS_UNKNOWN = _d(
     "generate_faker_kwargs_unknown",
     "Generate column passes an argument the Faker provider does not take.",
-    since="1.11.0",
+    since="1.13.0",
 )
 GENERATE_FAKER_TYPE_UNKNOWN = _d(
     "generate_faker_type_unknown",
     "Generate column names a Faker provider that does not exist.",
-    since="1.11.0",
+    since="1.13.0",
 )
 GENERATE_FORMULA_NAME_UNKNOWN = _d(
     "generate_formula_name_unknown",
     "Generate column formula uses a name that is not defined.",
-    since="1.11.0",
+    since="1.13.0",
 )
 GENERATE_FORMULA_REFERENCE_MISSING = _d(
     "generate_formula_reference_missing",
     "Generate column formula reads a sibling column not listed in its references.",
-    since="1.11.0",
+    since="1.13.0",
 )
 GENERATE_FORMULA_REFERENCE_UNKNOWN = _d(
     "generate_formula_reference_unknown",
     "Generate column formula references a column that is not a sibling generate column.",
-    since="1.11.0",
+    since="1.13.0",
 )
 GENERATE_FORMULA_TEMPLATE_SYNTAX = _d(
     "generate_formula_template_syntax",
     "Generate column formula wraps a column name in braces; use the bare name.",
-    since="1.11.0",
+    since="1.13.0",
 )
 GENERATE_LOCALE_UNKNOWN = _d(
     "generate_locale_unknown",
     "Generate column locale is not a known Faker locale.",
-    since="1.11.0",
+    since="1.13.0",
 )
 GENERATE_OPTION_INVALID = _d(
     "generate_option_invalid",
     "Generate column option is not valid for its column type.",
-    since="1.11.0",
+    since="1.13.0",
 )
 GROUPED_SERIES_GROUP_BY_EQUALS_ORDER_BY = _d(
     "grouped_series_group_by_equals_order_by",
     "Grouped series group_by and order_by name the same column.",
-    since="1.11.0",
+    since="1.13.0",
 )
 REFERENCE_WEIGHTS_LENGTH_MISMATCH = _d(
     "reference_weights_length_mismatch",
     "Reference weights count does not match the parent sequence row count.",
-    since="1.11.0",
+    since="1.13.0",
 )

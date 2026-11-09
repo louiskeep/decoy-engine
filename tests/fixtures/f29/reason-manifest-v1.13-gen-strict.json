@@ -16,7 +16,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Two generate columns in one table have the same name.",
       "symbol": "GENERATE_COLUMN_DUPLICATE"
     },
@@ -36,7 +36,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Generate column formula is not a valid expression.",
       "symbol": "GENERATE_FORMULA_INVALID"
     },
@@ -56,7 +56,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Generate column option is outside its allowed range.",
       "symbol": "GENERATE_OPTION_RANGE"
     },
@@ -76,7 +76,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Generate column option has the wrong type.",
       "symbol": "GENERATE_OPTION_TYPE"
     },
@@ -96,7 +96,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Generate column option is not known for this column type.",
       "symbol": "GENERATE_OPTION_UNKNOWN"
     },
@@ -116,7 +116,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Generate column option value is not one of the allowed choices.",
       "symbol": "GENERATE_OPTION_VALUE_UNKNOWN"
     },
@@ -136,7 +136,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Generate column weights must be non-negative numbers with a positive total.",
       "symbol": "GENERATE_WEIGHTS_INVALID"
     },
@@ -156,7 +156,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Generate column categories mix value types.",
       "symbol": "GENERATE_CATEGORIES_MIXED"
     },
@@ -176,7 +176,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Generate column reads a column that is not ready yet.",
       "symbol": "GENERATE_COLUMN_FORWARD_REFERENCE"
     },
@@ -196,7 +196,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Generate column passes an argument the Faker provider does not take.",
       "symbol": "GENERATE_FAKER_KWARGS_UNKNOWN"
     },
@@ -216,7 +216,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Generate column names a Faker provider that does not exist.",
       "symbol": "GENERATE_FAKER_TYPE_UNKNOWN"
     },
@@ -236,7 +236,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Generate column formula uses a name that is not defined.",
       "symbol": "GENERATE_FORMULA_NAME_UNKNOWN"
     },
@@ -256,7 +256,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Generate column formula reads a sibling column not listed in its references.",
       "symbol": "GENERATE_FORMULA_REFERENCE_MISSING"
     },
@@ -276,7 +276,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Generate column formula references a column that is not a sibling generate column.",
       "symbol": "GENERATE_FORMULA_REFERENCE_UNKNOWN"
     },
@@ -296,7 +296,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Generate column formula wraps a column name in braces; use the bare name.",
       "symbol": "GENERATE_FORMULA_TEMPLATE_SYNTAX"
     },
@@ -316,7 +316,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Generate column locale is not a known Faker locale.",
       "symbol": "GENERATE_LOCALE_UNKNOWN"
     },
@@ -336,7 +336,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Generate column option is not valid for its column type.",
       "symbol": "GENERATE_OPTION_INVALID"
     },
@@ -356,7 +356,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Grouped series group_by and order_by name the same column.",
       "symbol": "GROUPED_SERIES_GROUP_BY_EQUALS_ORDER_BY"
     },
@@ -376,11 +376,11 @@
           "severity": "error"
         }
       ],
-      "since": "1.11.0",
+      "since": "1.13.0",
       "summary": "Reference weights count does not match the parent sequence row count.",
       "symbol": "REFERENCE_WEIGHTS_LENGTH_MISMATCH"
     }
   ],
   "reason_schema_version": 1,
-  "registry_version": "1.11.0"
+  "registry_version": "1.13.0"
 }

@@ -247,7 +247,7 @@ def test_derived_visibility_codes_are_registered_execution_errors(code: str) -> 
     assert getattr(reasons.runtime, code.upper()) == code
 
 
-GEN_STRICT_FIXTURE = "reason-manifest-v1.11-gen-strict.json"
+GEN_STRICT_FIXTURE = "reason-manifest-v1.13-gen-strict.json"
 GEN_STRICT = [
     ("config", "generate_column_duplicate", "PipelineValidationError"),
     ("config", "generate_formula_invalid", "PipelineValidationError"),
@@ -277,7 +277,7 @@ def test_gen_strict_codes_are_registered_configuration_repairs(
 ) -> None:
     spec = reasons.find(namespace, code)
     assert spec is not None
-    assert spec.since == "1.11.0"
+    assert spec.since == "1.13.0"
     assert spec.owner == owner
     assert spec.kind is reasons.Kind.FAILURE
     assert [r.retry for r in spec.rules] == [reasons.RetryClass.CONFIGURATION_REPAIR]
@@ -288,7 +288,7 @@ def test_gen_strict_minor_adds_exactly_these_codes_and_is_pinned() -> None:
     version = tuple(int(p) for p in str(reasons.manifest()["registry_version"]).split("."))
     assert version >= (1, 11, 0)
     live = [
-        e for e in json.loads(json.dumps(reasons.manifest()))["entries"] if e["since"] == "1.11.0"
+        e for e in json.loads(json.dumps(reasons.manifest()))["entries"] if e["since"] == "1.13.0"
     ]
     assert {(e["namespace"], e["code"]) for e in live} == {(n, c) for n, c, _ in GEN_STRICT}
     pinned = _load(GEN_STRICT_FIXTURE)
