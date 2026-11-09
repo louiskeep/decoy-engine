@@ -16,6 +16,7 @@ __all__ = [
     "STATISTICAL_SNAPSHOT_INDEX_OUT_OF_RANGE",
     "STATISTICAL_SNAPSHOT_SCHEMA_MISMATCH",
     "STATISTICAL_SNAPSHOT_UNREADABLE",
+    "STATISTICAL_SNAPSHOT_VALUES_REDACTED",
     "STATISTICAL_SPEC_NOT_PINNED",
     "STATISTICAL_STATS_DEGENERATE",
     "TOP_CODE_INVALID_FLOOR",
@@ -47,6 +48,11 @@ STATISTICAL_SNAPSHOT_SCHEMA_MISMATCH = _d(
 )
 STATISTICAL_SNAPSHOT_UNREADABLE = _d(
     "statistical_snapshot_unreadable", "Statistical snapshot unreadable."
+)
+STATISTICAL_SNAPSHOT_VALUES_REDACTED = _d(
+    "statistical_snapshot_values_redacted",
+    "Statistical snapshot values redacted.",
+    since="1.11.0",
 )
 STATISTICAL_SPEC_NOT_PINNED = _d("statistical_spec_not_pinned", "Statistical spec not pinned.")
 STATISTICAL_STATS_DEGENERATE = _d("statistical_stats_degenerate", "Statistical stats degenerate.")

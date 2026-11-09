@@ -51,6 +51,12 @@ from typing import Any
 from decoy_engine import fileaccess, reasons
 from decoy_engine.errors import DecoyError
 from decoy_engine.fileaccess import FileRole
+from decoy_engine.profiling import (
+    POLICY_RAW,
+    POLICY_REDACTED,
+    REDACTED_COLUMNS_KEY,
+    VALUE_POLICY_KEY,
+)
 from decoy_engine.quality.snapshot import DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
 
 _SUPPORTED_KINDS = ("numeric", "categorical", "datetime", "freetext")
@@ -218,6 +224,62 @@ def _snapshot_declares_flag(
     return isinstance(entry, Mapping) and entry.get("carrier") == "flag"
 
 
+def _refuse_withheld_values(
+    name: Any,
+    snap: Mapping[str, Any],
+    *,
+    source_column: str,
+    kind: Any,
+    dp_verified: bool,
+    condition_on: Any,
+) -> None:
+    """Refuse a column that would sample categories a redacted fit snapshot withheld.
+
+    Only the marker is read, and only to refuse: `value_policy: "raw"` removes this refusal
+    and grants nothing, so the `allow_real_categories` opt-in still applies after it. A
+    snapshot with neither marker key is a legacy file and keeps its old behavior; the
+    placeholder string a profile uses for withheld text is never a signal, because a raw or
+    legacy snapshot can hold it as a real category. Numeric and datetime columns read
+    coarse bins and years that carry no cell value, so they never reach this refusal.
+    """
+    if VALUE_POLICY_KEY not in snap and REDACTED_COLUMNS_KEY not in snap:
+        return
+    samples_values = (kind == "categorical" and not dp_verified) or condition_on is not None
+    if not samples_values:
+        return
+    policy = snap.get(VALUE_POLICY_KEY)
+    listed = snap.get(REDACTED_COLUMNS_KEY)
+    well_formed = policy in (POLICY_REDACTED, POLICY_RAW) and (
+        isinstance(listed, (list, tuple)) and all(isinstance(c, str) for c in listed)
+    )
+    if well_formed and policy == POLICY_RAW:
+        return
+    if not well_formed:
+        why = (
+            "the snapshot's value-policy marker (`value_policy`, `redacted_columns`) is missing "
+            "or malformed, so it cannot be shown that the values of source column "
+            f"{source_column!r} were kept"
+        )
+    else:
+        named = (source_column,) if condition_on is None else (source_column, str(condition_on))
+        redacted = [c for c in named if c in (listed or ())]
+        if not redacted:
+            return
+        why = (
+            f"the snapshot withheld the real values of source column {redacted[0]!r} "
+            "(a sensitive column)"
+        )
+    raise StatisticalSpecError(
+        code=reasons.plan.STATISTICAL_SNAPSHOT_VALUES_REDACTED,
+        message=(
+            f"statistical column {name!r}: {why}, so there are no categories to sample. "
+            "Use a faker or pattern generator for this column, or re-fit with "
+            "`--include-values` and set `allow_real_categories: true` (the snapshot then "
+            "holds real values)."
+        ),
+    )
+
+
 def load_spec(
     col_cfg: dict[str, Any],
     *,
@@ -352,6 +414,15 @@ def load_spec(
                 f"bool, got {allow_real!r}."
             ),
         )
+
+    _refuse_withheld_values(
+        name,
+        snap,
+        source_column=source_column,
+        kind=kind,
+        dp_verified=dp_verified,
+        condition_on=col_cfg.get("condition_on"),
+    )
 
     if high_cardinality and col_cfg.get("allow_real_categories") is not True:
         raise StatisticalSpecError(
