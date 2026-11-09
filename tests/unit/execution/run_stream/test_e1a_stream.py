@@ -49,7 +49,12 @@ def test_stream_bypasses_threshold_and_keeps_base_row_groups(
     assert block["output"]["mode"] == "streamed"
     out = target / "t.parquet"
     got = pq.read_table(out)
-    assert got.equals(rs.reference(cfg, table).cast(got.schema))
+    if rows == 0:
+        # base `--chunked` writes the source schema; the resident run types the empty
+        # columns differently, so the empty file is compared with the source, not the resident run.
+        assert got.schema.equals(table.schema)
+    else:
+        assert got.equals(rs.reference(cfg, table).cast(got.schema))
     size = chunk or 50_000
     assert rs.row_groups(out) == (rs.expected_groups(rows, size) or [])
     assert out.read_bytes() == rs.per_chunk_file(got, size, tmp_path / "base.parquet")
@@ -321,3 +326,48 @@ def test_parent_side_key_checks_belong_to_the_same_gate(
     for name in tables:
         got = pq.read_table(target / f"{name}.parquet")
         assert got.equals(want[name].cast(got.schema)), name
+
+
+def test_forced_out_of_core_refusal_is_a_coded_streaming_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The out-of-core force fails closed: an error from the forced route becomes
+    `streaming_unavailable`, with no context chained to it and nothing written."""
+    from decoy_engine.execution import _pipeline_routing
+
+    seen: list[str] = []
+
+    def boom(*args: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs["execution_mode"])
+        raise ExecutionError(code=reasons.route.OUT_OF_CORE_INELIGIBLE, message=rs.CANARY)
+
+    monkeypatch.setattr(_pipeline_routing, "resolve_execution_route", boom)
+    cfg, lazy, _ = rs.fk_job(tmp_path, orphan_policy="preserve")
+    sink, target = rs.real_sink(tmp_path)
+    error = _refusal(cfg, lazy, sink)
+    assert seen == ["out_of_core"]
+    assert error.__context__ is None and error.__cause__ is None
+    assert rs.CANARY not in str(error)
+    assert sink.calls == [] and not target.exists()
+
+
+def test_execution_fails_closed_when_it_disagrees_with_the_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Preflight and execution each decide the output mode; if execution would run resident
+    after the preflight admitted streaming, the run is refused, never run resident."""
+    from decoy_engine.execution import _chunked_output_sink as output_sink
+
+    real = output_sink.decide_output_mode
+    calls: list[int] = []
+
+    def flaky(**kwargs: Any) -> tuple[str, str]:
+        calls.append(1)
+        return real(**kwargs) if len(calls) == 1 else ("resident", "no_sink")
+
+    monkeypatch.setattr(output_sink, "decide_output_mode", flaky)
+    cfg, lazy = rs.single_table_job(tmp_path, rs.two_column_table(10))
+    sink, target = rs.real_sink(tmp_path)
+    _refusal(cfg, {support.TABLE: lazy}, sink)
+    assert len(calls) == 2
+    assert sink.calls == [] and not target.exists()

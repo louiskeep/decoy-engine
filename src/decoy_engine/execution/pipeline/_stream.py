@@ -5,7 +5,7 @@
 decision to `decide_stream_route`. The routing code below it keeps seeing a mode it already knows.
 
 The decision is a preflight: it reads the validated config, the plan and source footers, and
-raises `runtime.streaming_unavailable` before any source data row is read when no streaming
+raises `runtime.streaming_unavailable` before any source passed in `sources` is read when no streaming
 route applies. It reuses the existing gates and adds no new admission rule of its own:
 
 - every mask table passes `check_chunked_compatibility`, the complete gate base `--chunked`
@@ -33,6 +33,7 @@ from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
     from decoy_engine.execution._pipeline_context import PipelineRunContext, RouteDecision
+    from decoy_engine.execution._pipeline_multi_table import MultiTableSplit
     from decoy_engine.relationships import RelationshipGraph
 
 __all__ = ["StreamVerdict", "decide_stream_route"]
@@ -44,6 +45,8 @@ class StreamVerdict:
     the complete chunked compatibility gate, so each table runs as its own lane unit."""
 
     fk_split: bool = False
+    # The B7 split the preflight admitted; execution reuses it rather than deciding again.
+    split: MultiTableSplit | None = None
 
     def lane_view(
         self, config: dict[str, Any], graph: RelationshipGraph
@@ -189,7 +192,7 @@ def _lane_decision(ctx: PipelineRunContext, mask_tables: list[str], fk: bool) ->
         route_chunked=route_chunked,
         keep_lazy=keep_lazy,
         ooc_declined=None,
-        stream=verdict,
+        stream=replace(verdict, split=split),
     )
 
 

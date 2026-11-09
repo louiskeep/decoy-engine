@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution import (
     _chunked_input,
     _pipeline_auto_chunk,
@@ -29,6 +30,7 @@ from decoy_engine.execution import (
 from decoy_engine.execution import _chunked_output_sink as _output_sink
 from decoy_engine.execution import _pipeline_multi_table as _multi_table
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
+from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.progress import get_active_channel
 
@@ -163,6 +165,8 @@ def run_generate_and_mask_steps(
         split = (
             None
             if route_chunked
+            else stream.split
+            if stream is not None
             else _multi_table.decide_multi_table_split(
                 config,
                 plan=plan,
@@ -179,7 +183,6 @@ def run_generate_and_mask_steps(
                 # companion rows stay aligned with its rendered output.
                 split_enabled=multi_table_dispatch_enabled and cast_run is None,
                 vault_writer_present=vault_writer is not None,
-                stream=stream,
             )
         )
         if cast_run is not None and multi_table_dispatch_enabled and not route_chunked:
@@ -208,6 +211,12 @@ def run_generate_and_mask_steps(
             )
             if out_mode == "streamed":
                 publish.open()
+        if stream is not None and out_mode != "streamed":
+            # The preflight admitted streaming; running resident now would break "must stream".
+            raise ExecutionError(
+                code=reasons.runtime.STREAMING_UNAVAILABLE,
+                message=f"execution_mode='stream': the output would stay resident ({out_reason}).",
+            )
         # B6b: a lazy table streams only when the output does and a lane takes it; every other
         # one is materialized exactly once, here, before any lane runs.
         modes = _chunked_input.input_modes(

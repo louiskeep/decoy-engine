@@ -103,11 +103,7 @@ if TYPE_CHECKING:
 
 __all__ = ["classify_table_kinds", "run_pipeline"]
 
-# The substrate/auto-chunk knob defaults live on `_pipeline_finalize` now (single source of truth
-# for this signature and the non-default-ness check `stamp_execution_metrics` computes).
-# SC2 out-of-core auto-routing thresholds (per largest mask table). Defaults target the 32 GB
-# deployment box; see `_planner` for the memory-model reasoning. Plumbed as run_pipeline kwargs so
-# the platform SC5 estimator can override them with box+schema-calibrated values.
+# Knob defaults live on `_pipeline_finalize`; the SC2 thresholds are kwargs the platform estimator overrides.
 _OUT_OF_CORE_THRESHOLD_DEFAULT = OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT
 _FULL_FRAME_REJECT_DEFAULT = FULL_FRAME_REJECT_ROWS_DEFAULT
 
@@ -217,12 +213,8 @@ def run_pipeline(
     of docs/plans/2026-10-01-dispatcher-auto-chunk.md. The SC2 size thresholds
     default to 32 GB-box-calibrated constants (see `_planner`) and are kwargs the
     platform admission estimator can override; `execution_mode` gains
-    `"out_of_core"` as an explicit fail-closed force.
-
-    `execution_mode="stream"` means "must stream" (RUN-STREAM, docs/plans/2026-11-08-run-stream.md):
-    it runs as `auto` with one extra requirement, and a job no streaming route can take is
-    refused with `runtime.streaming_unavailable` before any source data row is read. See
-    `execution.pipeline._stream`.
+    `"out_of_core"` as an explicit fail-closed force and `"stream"` means "must stream"
+    (`execution.pipeline._stream`).
 
     Sprint B2 (docs/plans/2026-07-10-oom-avoidance-routing-redesign.md
     §3.3/§11/§13): `use_probe_routing` (TB-5 default `True`; no effect without
@@ -278,11 +270,8 @@ def run_pipeline(
     `None` (every real caller) resolves against the live registry.
     """
     refuse_unapplied_subset(config)  # `subset:` is refused first, before any source is read
-    # "stream" is translated once, here: every internal mode comparison keeps seeing a mode it
-    # already knows, and only the routing choke point reads `stream_required`.
     stream_required = execution_mode == "stream"
-    if stream_required:
-        execution_mode = "auto"
+    execution_mode = "auto" if stream_required else execution_mode
     require_optional_nonempty_str("quarantine_path", quarantine_path)
     # MG-5: the `tokenize` strategy masks per-cell through a platform-injected
     # token vault, threaded only to the FULL-FRAME adapter (bounded routes build

@@ -34,7 +34,7 @@ Codes are append-only: a code never disappears or changes meaning. A retired cod
 
 `reason-manifest-v1.16-gen-fit-shape.json` pins the one fitted-cell-format addition (`plan.statistical_cell_format_invalid`; `since` 1.16.0: a statistical column's snapshot `cell_format` block is malformed).
 
-`reason-manifest-v1.17-run-stream-e1a.json` pins the one RUN-STREAM addition (`runtime.streaming_unavailable`; `since` 1.17.0: a run that requires streaming, `execution_mode="stream"`, is refused before any source row is read because no streaming route applies).
+`reason-manifest-v1.17-run-stream-e1a.json` pins the one RUN-STREAM addition (`runtime.streaming_unavailable`; `since` 1.17.0: a run that requires streaming, `execution_mode="stream"`, is refused before any source passed in `sources` is read because no streaming route applies).
 
 An older consumer that reads a record whose identity it does not know (same registry major) degrades to `decoy.unknown_reason_from_future`, keeping the original identity in an uninterpreted context field. An unsupported major becomes `decoy.unsupported_schema_version`. Neither is ever read as success or as retry advice.
 

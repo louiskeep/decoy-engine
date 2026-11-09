@@ -576,7 +576,7 @@ def stream_table(
 
     `align_row_groups` keeps one row group per chunk (see `_feed`). `empty_schema` is the
     source schema of a zero-row table: with no chunk to join, an empty table of that schema
-    is written, as the resident run writes it. Without it a table with no chunks is an error."""
+    is written, as base `--chunked` writes it. Without it a table with no chunks is an error."""
     stats = StreamStats()
     resolver = _Resolver(table, fixed_columns)
     spill = _Spill(stats, sink, table)
