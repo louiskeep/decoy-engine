@@ -437,6 +437,8 @@ guard); M16 use default `to_pandas()` in either CSV writer (AT-11 output cells a
 
 ## 8. Owner questions
 
+Owner answers (Cam, 2026-11-09): "go with recommended". Every question below takes its recommended option.
+
 1. Fitted shape applies only to snapshots written after this ships (the `cell_format` block is the switch), so
    users re-run `decoy fit` to get it. Applying fitted nulls to old snapshots too would change output for the
    same snapshot and seed, which the determinism contract forbids within a major. Re-fitting also changes the snapshot digest, which
