@@ -90,6 +90,7 @@ from decoy_engine.execution._pipeline_routing_signals import (
     largest_mask_table_rows_from_profile,
     out_of_core_admission,
 )
+from decoy_engine.execution.out_of_core import _budget as _ooc_budget
 from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit
 from decoy_engine.execution.out_of_core._capacity_eval import (
     CapacityEstimate,
@@ -98,10 +99,13 @@ from decoy_engine.execution.out_of_core._capacity_eval import (
     evaluate_capacity,
 )
 from decoy_engine.fileaccess import FileAccess, entry_point
+from decoy_engine.generation._admission import classify_plan
+from decoy_engine.generation._bounds import generation_floor_by_table, generation_floor_bytes
 
 __all__ = ["estimate_job_capacity"]
 
 _OUT_OF_CORE_ROUTE = "out_of_core"
+_GENERATE_ROUTE = "generate"
 
 # The mid-run gate raises `out_of_core_parent_rows_unresolved`
 # (`_pipeline_route_exec._parent_table_row_counts`) when a parent table has no
@@ -204,6 +208,49 @@ def _not_applicable(route: str, message: str) -> CapacityEstimate:
     )
 
 
+def _generation_floor_estimate(
+    config: dict[str, Any], budget_bytes: int | None
+) -> CapacityEstimate | None:
+    """The floor verdict for a config with generate tables, or `None` when it does not refuse.
+
+    `decoy run` generates resident (no sink), so the floor always applies. It is checked against
+    the explicit override when given, else the detected ceiling; an undetectable host is UNKNOWN.
+    """
+    admission = classify_plan(config)
+    floor = generation_floor_bytes(config, admission)
+    available = budget_bytes
+    if available is None:
+        try:
+            available = _ooc_budget.detect_effective_memory_bytes()
+        except ExecutionError as exc:
+            if exc.code != _RAM_UNDETECTABLE_CODE:
+                raise
+            return CapacityEstimate(
+                verdict=CapacityVerdict.UNKNOWN,
+                code=None,
+                needed_bytes=None,
+                available_bytes=None,
+                route=_GENERATE_ROUTE,
+                message="the memory ceiling could not be detected, so the generated output "
+                "cannot be checked against it; pass an explicit budget_bytes.",
+            )
+    if floor <= available:
+        return None
+    by_table = generation_floor_by_table(config, admission)
+    largest = max(by_table, key=lambda name: by_table[name])
+    return CapacityEstimate(
+        verdict=CapacityVerdict.INSUFFICIENT,
+        code=reasons.runtime.GENERATION_BUDGET_EXCEEDED,
+        needed_bytes=floor,
+        available_bytes=available,
+        route=_GENERATE_ROUTE,
+        message=(
+            f"generating table {largest!r} resident needs at least {floor} bytes; "
+            f"{available} bytes of memory are available."
+        ),
+    )
+
+
 @entry_point
 def estimate_job_capacity(
     config_dump: dict[str, Any],
@@ -219,9 +266,11 @@ def estimate_job_capacity(
     `warned=True` and a recommended host size when the predicted relation-build
     floor exceeds the cap it would receive (relation-build only -- it excludes
     resident inputs, accumulated outputs, and ingestion peak), and the job is
-    NOT refused for that. `INSUFFICIENT` is returned only for a fan-in
+    NOT refused for that. `INSUFFICIENT` is returned for a fan-in
     impossibility (more co-live DuckDB joiners than the budget can seat a 1 MB
-    minimum apiece).
+    minimum apiece), and for a config with generate tables whose output alone
+    cannot fit the memory ceiling (`generation_budget_exceeded`, checked first,
+    before any source is profiled; `UNKNOWN` when the ceiling cannot be detected).
 
     `config_dump` MUST be `PipelineConfig.model_validate(raw).model_dump()`
     (the same normalized shape `run_pipeline` takes) -- no re-validation
@@ -269,6 +318,10 @@ def estimate_job_capacity(
     table_kinds = classify_table_kinds(config)
     has_mask_table = any(kind == "mask" for kind in table_kinds.values())
     has_generate_table = any(kind == "generate" for kind in table_kinds.values())
+    if has_generate_table:
+        floor_estimate = _generation_floor_estimate(config, budget_bytes)
+        if floor_estimate is not None:
+            return floor_estimate
 
     job_seed = _normalize_job_seed_int(config)
     # Bounded residency (the default): cheap row-count metadata plus a

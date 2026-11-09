@@ -18,12 +18,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import pyarrow as pa
+
 from decoy_engine.generation._faker_pool import POOL_ELIGIBLE_LOCALE_PAIRS
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
     from faker import Faker
+
+    from decoy_engine.generation._admission import PlanAdmission
 
 # CPython str object header + list pointer (execution._mem_estimate_dtypes).
 STR_OBJECT_OVERHEAD_BYTES = 57
@@ -240,6 +244,55 @@ def legacy_table_bytes(rows: int, payloads: list[int]) -> int:
     return rows * sum(_LEGACY_COPIES * (p + STR_OBJECT_OVERHEAD_BYTES) + 16 for p in payloads)
 
 
+# One pointer per row in the Python list the legacy whole-table path builds for every column.
+_LEGACY_SLOT_BYTES = 8
+# One int32 offset per row of a variable-width Arrow column.
+_OFFSET_BYTES = 4
+
+
+def _arrow_column_floor(arrow_type: pa.DataType, rows: int) -> int:
+    try:
+        bit_width = arrow_type.bit_width
+    except ValueError:  # variable-width types have no bit width
+        return _OFFSET_BYTES * rows
+    # Ceil division keeps a 1-bit boolean column an integer byte count.
+    return (rows * bit_width + 7) // 8
+
+
+def generation_floor_by_table(config: dict[str, Any], admission: PlanAdmission) -> dict[str, int]:
+    """Per generate table, the bytes its columns must hold, from the routing the run uses.
+
+    A plan with any declined column runs every column through the legacy whole-table path, so
+    each is priced as a list slot; otherwise each column is priced from its declared Arrow type
+    (the buffers `pa.array` builds: fixed-width data, or the offsets of a variable-width column).
+    """
+    rows_of = {
+        t["name"]: int(t.get("row_count") or 0)
+        for t in (config.get("tables") or [])
+        if t.get("generate_columns")
+    }
+    floors = dict.fromkeys(rows_of, 0)
+    for col in admission.columns:
+        rows = rows_of.get(col.table, 0)
+        if not admission.eligible or col.arrow_type is None:
+            floors[col.table] += _LEGACY_SLOT_BYTES * rows
+        else:
+            floors[col.table] += _arrow_column_floor(col.arrow_type, rows)
+    return floors
+
+
+def generation_floor_bytes(config: dict[str, Any], admission: PlanAdmission) -> int:
+    """A lower bound on the bytes a resident generate run must allocate; never an estimate.
+
+    Resident runs hold every table's Arrow output together, so the floors add. The legacy path
+    frees each table's list slots before the next table starts, so only the largest table's slots
+    count there. The sizing follows the Arrow columnar format: a fixed-width column is
+    `bit_width` bits per value and a variable-width column carries one int32 offset per value.
+    """
+    floors = generation_floor_by_table(config, admission).values()
+    return max(floors, default=0) if not admission.eligible else sum(floors)
+
+
 __all__ = [
     "FAKER_VALUE_CAPS",
     "STR_OBJECT_OVERHEAD_BYTES",
@@ -249,6 +302,8 @@ __all__ = [
     "compute_payload_bounds",
     "faker_payload_bound",
     "faker_pool_bytes",
+    "generation_floor_by_table",
+    "generation_floor_bytes",
     "key_pool_bytes",
     "legacy_table_bytes",
     "sequence_payload_bound",

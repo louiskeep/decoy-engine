@@ -41,6 +41,8 @@ from decoy_engine.generation._bounds import (
     batch_buffer_bytes,
     compute_payload_bounds,
     faker_pool_bytes,
+    generation_floor_by_table,
+    generation_floor_bytes,
     key_pool_bytes,
     legacy_table_bytes,
     sink_buffer_bytes,
@@ -298,6 +300,34 @@ def _table_batches(
         offset += size
 
 
+def _refuse_if_over_memory(config: dict[str, Any], admission: PlanAdmission) -> None:
+    """Refuse a resident run whose output alone is larger than the memory ceiling.
+
+    Compared with the whole detected ceiling, not the 25% planning budget, so it only refuses runs
+    that cannot fit. An undetectable host skips the check: it can only add a refusal.
+    """
+    from decoy_engine.execution._errors import ExecutionError
+    from decoy_engine.execution.out_of_core import _budget
+
+    floor = generation_floor_bytes(config, admission)
+    try:
+        available = _budget.detect_effective_memory_bytes()
+    except ExecutionError as exc:
+        if exc.code != reasons.runtime.OUT_OF_CORE_MEMORY_DETECTION_FAILED:
+            raise
+        return
+    if floor > available:
+        by_table = generation_floor_by_table(config, admission)
+        largest = max(by_table, key=lambda name: by_table[name])
+        raise GenerationBudgetExceeded(
+            code=reasons.runtime.GENERATION_BUDGET_EXCEEDED,
+            message=(
+                f"generating table {largest!r} resident needs at least {floor} bytes; "
+                f"{available} bytes of memory are available."
+            ),
+        )
+
+
 def run_generation(
     config: dict[str, Any],
     *,
@@ -331,6 +361,8 @@ def run_generation(
             resolved_batch = resolved_batch or resolved.batch_rows
     resolved_batch = resolved_batch or DEFAULT_BATCH_ROWS
     admission = classify_plan(config, provider_snapshot=provider_snapshot)
+    if not ledger.bounded and not (admission.eligible and is_bounded_sink(sink)):
+        _refuse_if_over_memory(config, admission)
     tables = _table_order(config)
     # Bounds are only needed (and only defensible to demand) under a bounded ceiling.
     bounds = compute_payload_bounds(config, provider_snapshot) if ledger.bounded else {}
