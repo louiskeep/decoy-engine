@@ -243,3 +243,12 @@ def test_non_permitted_keys_keep_exact_comparison(repo: Path) -> None:
     _commit_keys(repo, ["uncertified::c/a.py::K.m::ffffffffff"])
     _set_keys(repo, [other])
     _assert_red(repo, other)
+
+
+def test_replacing_an_opted_in_sentry_with_one_not_opted_in_compares_exactly(repo: Path) -> None:
+    _commit_keys(repo, [P1])
+    n = "tests/sentry/baselines/n.json"
+    (repo / V).unlink()
+    _write(repo, n, _baseline("n", [P2]))
+    _write(repo, REG, _registry({"a": A, "n": n}))
+    _assert_red(repo, P2)

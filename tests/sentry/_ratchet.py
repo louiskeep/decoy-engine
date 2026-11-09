@@ -127,7 +127,7 @@ def growth(
     head_sites, base_sites = by_site(head), by_site(base)
     grown = {k for k in head - base if _permit_site(k) is None}
     rekeyed: list[str] = []
-    for site, keys in head_sites.items():
+    for site, keys in sorted(head_sites.items()):
         old = base_sites.get(site, [])
         if len(keys) > len(old):
             grown |= set(keys) - base
