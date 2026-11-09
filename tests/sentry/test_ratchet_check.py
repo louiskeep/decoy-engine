@@ -172,3 +172,51 @@ def test_growth_fails_even_when_the_registry_is_also_edited(repo: Path) -> None:
     _write(repo, "tests/sentry/baselines/n.json", _baseline("n", ["m::one"]))
     _write(repo, REG, _registry({"a": A, "n": "tests/sentry/baselines/n.json"}))
     _assert_red(repo, "m::new")
+
+
+P1, P2 = "permitted::c/a.py::K.m::aaaaaaaaaa", "permitted::c/a.py::K.m::bbbbbbbbbb"
+P3 = "permitted::c/a.py::K.m::cccccccccc"
+OTHER_SITE = "permitted::c/a.py::K.other::dddddddddd"
+
+
+def _set_keys(repo: Path, keys: list[str]) -> None:
+    _write(repo, A, _baseline("a", keys))
+
+
+def _commit_keys(repo: Path, keys: list[str]) -> None:
+    _set_keys(repo, keys)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "permits")
+
+
+def test_same_count_rekey_of_a_permitted_site_passes_and_reports(repo: Path) -> None:
+    _commit_keys(repo, ["m::f", P1])
+    _set_keys(repo, ["m::f", P2])
+    res = _run(repo)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "a: re-keyed permitted site c/a.py::K.m (review the message)" in res.stdout
+
+
+def test_permitted_count_growth_for_a_site_fails(repo: Path) -> None:
+    _commit_keys(repo, [P1])
+    _set_keys(repo, [P2, P3])
+    _assert_red(repo, "c/a.py::K.m")
+
+
+def test_new_permitted_site_fails(repo: Path) -> None:
+    _commit_keys(repo, [P1])
+    _set_keys(repo, [P1, OTHER_SITE])
+    _assert_red(repo, OTHER_SITE)
+
+
+def test_split_rekey_with_fewer_keys_passes(repo: Path) -> None:
+    _commit_keys(repo, [P1, P2])
+    _set_keys(repo, [P3])
+    assert _run(repo).returncode == 0
+
+
+def test_non_permitted_keys_keep_exact_comparison(repo: Path) -> None:
+    other = "uncertified::c/a.py::K.m::eeeeeeeeee"
+    _commit_keys(repo, ["uncertified::c/a.py::K.m::ffffffffff"])
+    _set_keys(repo, [other])
+    _assert_red(repo, other)
