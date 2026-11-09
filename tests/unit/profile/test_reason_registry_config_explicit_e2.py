@@ -18,7 +18,7 @@ FIXTURE = (
     Path(__file__).resolve().parents[2]
     / "fixtures"
     / "f29"
-    / "reason-manifest-v1.16-config-explicit-e2a.json"
+    / "reason-manifest-v1.18-config-explicit-e2a.json"
 )
 
 OWNED = {
@@ -33,7 +33,7 @@ def test_config_explicit_e2_reasons_registered() -> None:
         spec = reasons.find("config", code)
         assert spec is not None, name
         assert spec.owner == owner, name
-        assert spec.since == "1.16.0", name
+        assert spec.since == "1.18.0", name
         assert getattr(CODES, name) == code, name
 
 

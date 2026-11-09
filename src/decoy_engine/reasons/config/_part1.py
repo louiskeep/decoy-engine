@@ -147,12 +147,12 @@ SOURCE_FILE_COLUMN_NAMES_FILE_INVALID = _d(
 SOURCE_FILE_UNDECLARED_COLUMN = _d(
     "source_file.undeclared_column",
     "Source file undeclared column.",
-    since="1.16.0",
+    since="1.18.0",
 )
 SOURCE_FILE_UNDECLARED_TABLE = _d(
     "source_file.undeclared_table",
     "Source file undeclared table.",
-    since="1.16.0",
+    since="1.18.0",
 )
 SOURCE_FILE_LONE_CR = _d("source_file.lone_cr", "Source file lone CR.")
 SOURCE_FILE_NUL_BYTE = _d("source_file.nul_byte", "Source file NUL byte.")

@@ -16,7 +16,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.16.0",
+      "since": "1.18.0",
       "summary": "Source file undeclared column.",
       "symbol": "SOURCE_FILE_UNDECLARED_COLUMN"
     },
@@ -36,12 +36,12 @@
           "severity": "error"
         }
       ],
-      "since": "1.16.0",
+      "since": "1.18.0",
       "summary": "Source file undeclared table.",
       "symbol": "SOURCE_FILE_UNDECLARED_TABLE"
     }
   ],
   "event_schema_version": 1,
   "reason_schema_version": 1,
-  "registry_version": "1.16.0"
+  "registry_version": "1.18.0"
 }

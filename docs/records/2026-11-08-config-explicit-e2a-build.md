@@ -12,15 +12,15 @@ is unchanged.
   `check_columns_declared`, `DeclarationRequest` (four constructors), `PreparedDeclaredSources` and
   `prepare_declared_sources`. `check_columns_declared` is the one place that turns a finding into a
   `source_refusal`; the probe and the capability methods call it through the module global.
-- Registry 1.16.0: `source_file.undeclared_column`, `source_file.undeclared_table` (owner
-  `PipelineValidationError`), frozen fixture `reason-manifest-v1.16-config-explicit-e2a.json`,
+- Registry 1.18.0: `source_file.undeclared_column`, `source_file.undeclared_table` (owner
+  `PipelineValidationError`), frozen fixture `reason-manifest-v1.18-config-explicit-e2a.json`,
   regenerated consumer contract (only `registry_version` lines move).
 - Codemod modes `declare-columns` and `source-schema`, the `declare_columns_probe.py` pytest plugin and
   `tests/_declared_schema.py`.
 
 ## Registry
 
-`REGISTRY_VERSION` moves to 1.16.0, which was free on the base.
+`REGISTRY_VERSION` moves to 1.18.0, which was free on the base.
 
 ## Codemod
 
@@ -39,3 +39,4 @@ E2a). The `Literal` of `DeclarationFinding.kind` holds `table` and `column`; E2b
 
 Full suite (the orchestrator runs the T3 on the stack top). macOS arm64 run.
 Registry renumbered at merge from 1.11.0 to 1.16.0 by scripts/dev/registry_renumber.py; main was at 1.15.0.
+Registry renumbered at merge from 1.16.0 to 1.18.0 by scripts/dev/registry_renumber.py; main was at 1.17.0.
