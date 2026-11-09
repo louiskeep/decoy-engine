@@ -22,6 +22,20 @@ dot, and not a Windows device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`
 any case, any extension). `COM0` and `LPT0` are allowed. The CLI uses it for folder names and
 file stems, so there is no second copy of the pattern.
 
+### Added (run_pipeline quarantine_path)
+
+`run_pipeline(..., quarantine_path=None)` takes the path the quarantine JSONL is written to and uses it
+in place of `quarantine.output_path` for that run. The value must be a `str` or `None`; anything else
+(a bool included) raises `ExecutionError` with code `invalid_execution_knob` before any source is
+read. The plan and its config hash are built from the config as given, then the routes see a copy with
+only that path replaced, so the hash and the caller's dict do not change. It has no effect when the
+config has no `quarantine` block. The call signature gains one keyword-only parameter.
+
+### Changed (no default engine log file)
+
+The engine logger no longer writes `logs/decoy_engine.log` into the current folder when the logging
+config has no `file`. Console output is unchanged. A caller that wants a file passes `file`, as before.
+
 ### Added (generation capacity floor, 2026-11-09)
 
 A generate run that keeps its output in memory is now refused when the output cannot fit, instead of

@@ -99,16 +99,16 @@ def _configure_logger(logger, config: dict[str, Any]):
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
 
-    # File handler - default to a log file if not specified.
+    # File handler - off unless the caller passes `file`, so a bare run leaves no log file in the
+    # current folder.
     # QA-internal-synth-providers F3 (2026-06-01, HIGH reliability):
     # the whole file-handler creation now lives behind a try/except.
     # Pre-fix Docker/K8s pods with a read-only filesystem crashed at
     # logger configuration time: mkdir raised PermissionError on a
     # read-only fs, killing the whole process before any masking work
-    # ran. Honour explicit opt-out (`file: null` / empty string)
-    # AND degrade gracefully on OSError/PermissionError, falling back
+    # ran. Degrade gracefully on OSError/PermissionError, falling back
     # to console-only logging with a warning.
-    log_file = config.get("file", "logs/decoy_engine.log")
+    log_file = config.get("file")
     # A log file is a path from config, so it is only opened under the ambient CLI policy.
     # Under any other policy, or once the process forbade ambient access, the setting is
     # ignored and the platform logs through its own handlers.

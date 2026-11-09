@@ -46,13 +46,20 @@ unchanged and duck-typed providers keep working through `secret_providers.prepar
 
 **Pre-GA corrections taken with the file-access policy (A-4 merged with F13, 2026-11-01).** Additive:
 every file-reading or file-writing public entry point listed in `decoy_engine.fileaccess.ENTRY_POINTS`
-takes a keyword-only `file_access: FileAccess | None = None` (`run_pipeline` now has 40 frozen
-parameters: F13's `secret_registry` and `secret_cache_policy`, A-4's `file_access`), and
+takes a keyword-only `file_access: FileAccess | None = None` (`run_pipeline` now has 42 frozen
+parameters: F13's `secret_registry` and `secret_cache_policy`, A-4's `file_access`, and project-layout E2's `quarantine_path`), and
 `keyprovider.key_provider_from_ref(ref, *, key_version: str | None = None, file_access=None) ->
 KeyProvider` is one of them. New registered reasons: `runtime.secret_file_permissions_unsafe` and
 `decoy.file_access_denied`. Breaking, no shim: a `file:` mask secret readable by group or other is
 refused; `env:` and `file:` secrets are never cached even with a positive `SecretCachePolicy` TTL.
 `resolve_mask_secret_ref` stays deleted (F13).
+
+**Pre-GA corrections taken with the project layout (E2, 2026-11-09).** Additive: `run_pipeline(...,
+quarantine_path: str | None = None)` is keyword-only. It replaces `quarantine.output_path` for that run,
+applied after the plan and its config hash are built, so the hash and the caller's dict do not change.
+Anything but `None` or a non-blank `str` raises `ExecutionError` (`invalid_execution_knob`) before any
+source is read. Breaking, no shim: the engine logger no longer writes `logs/decoy_engine.log` when the
+logging config has no `file`; a caller that wants a log file passes `file`.
 
 **Pre-GA correction (main health, 2026-10-31).** `RESERVED_NAMES` of the `when` closed grammar gains `type`
 (additive to the list, breaking for a config whose `when:` references a column named `type`, which now fails
