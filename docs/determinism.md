@@ -238,7 +238,9 @@ correctness defects (F2 and F3 in `docs/remediation-source.md`):
 The v6 rewrite replaces `synthetic_column_seed` with
 `GenDeriveContext` (`generators/derivation.py`). One full-32-byte column
 root is resolved per column (keyed path: full `derive_key("gen:" +
-fingerprint)`, no truncation). Per-RNG-family and per-row sub-keys are
+fingerprint + ":" + identity)`, no truncation; identity is the table name plus
+the column name, so renaming a column or moving it to another table re-keys it).
+Per-RNG-family and per-row sub-keys are
 derived from that root via `_gen_hmac`, which mixes `SEED_PROTOCOL_VERSION`
 into its HMAC input (mirroring the mask-path envelope in
 `determinism/_derive.py`). The three RNG families (`py`, `np`, `faker`)
