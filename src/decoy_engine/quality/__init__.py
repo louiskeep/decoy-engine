@@ -37,6 +37,7 @@ from typing import Any
 _LAZY_EXPORTS: dict[str, str] = {
     "QUALITY_DIAGNOSTIC_SCHEMA_VERSION": "diagnostic",
     "compute_diagnostic": "diagnostic",
+    "snapshot_null_fraction": "diagnostic",
     "QUALITY_FIDELITY_SCHEMA_VERSION": "fidelity",
     "compute_fidelity": "fidelity",
     "QUALITY_POLICY_SCHEMA_VERSION": "policy",
@@ -92,4 +93,5 @@ __all__ = [
     "compute_quality_report",
     "compute_shape_fidelity",
     "score_to_grade",
+    "snapshot_null_fraction",
 ]

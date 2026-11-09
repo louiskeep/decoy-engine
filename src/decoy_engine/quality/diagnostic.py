@@ -204,10 +204,12 @@ def _check_null_drift(
 ) -> dict[str, Any]:
     drifted: list[dict[str, Any]] = []
     for col in surviving:
-        src_pct = _null_pct(source_cols[col])
-        out_pct = _null_pct(output_cols[col])
-        if src_pct is None or out_pct is None:
+        src_frac = snapshot_null_fraction(source_cols[col])
+        out_frac = snapshot_null_fraction(output_cols[col])
+        if src_frac is None or out_frac is None:
             continue
+        src_pct = src_frac * 100.0
+        out_pct = out_frac * 100.0
         delta_pp = abs(out_pct - src_pct)
         if delta_pp > threshold_pp:
             drifted.append(
@@ -229,15 +231,17 @@ def _check_null_drift(
 # ── helpers ─────────────────────────────────────────────────────────────────
 
 
-def _null_pct(col_snapshot: dict[str, Any]) -> float | None:
-    """Return null percentage in [0, 100], or None if the column has no rows.
+def snapshot_null_fraction(col_snapshot: dict[str, Any]) -> float | None:
+    """Return a snapshot column's null fraction in [0, 1], or None if it has no rows.
 
-    A zero-row column has no meaningful null rate; skip rather than
-    surface a 0/0 = NaN, which would also break JSON serialization.
+    The one place the null rate is computed: diagnostic, fidelity and the CLI fit
+    summary share this count and zero-row rule (an AST sentry rejects a second
+    copy). A zero-row column has no meaningful rate; None avoids a 0/0 NaN, which
+    would also break JSON serialization.
     """
     null_count = int(col_snapshot.get("null_count", 0))
     non_null_count = int(col_snapshot.get("non_null_count", 0))
     total = null_count + non_null_count
     if total == 0:
         return None
-    return (null_count / total) * 100.0
+    return null_count / total
