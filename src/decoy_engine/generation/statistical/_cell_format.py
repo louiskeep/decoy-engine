@@ -33,6 +33,7 @@ from typing import Any, Final
 import numpy as np
 import pandas as pd
 
+from decoy_engine.internal.pandas_compat import utc_naive_datetimes
 from decoy_engine.quality.snapshot import finite_numeric_cells
 
 MAX_DECIMAL_PLACES: Final = 15
@@ -107,10 +108,7 @@ def _decimal_places(non_null: pd.Series) -> int | None:
 
 
 def _resolution(non_null: pd.Series) -> str:
-    stamps = pd.to_datetime(non_null, errors="coerce").dropna()
-    # Same UTC convention as the snapshot's own datetime stats.
-    if getattr(stamps.dtype, "tz", None) is not None:
-        stamps = stamps.dt.tz_convert("UTC").dt.tz_localize(None)
+    stamps = utc_naive_datetimes(non_null)
     if len(stamps) == 0 or (stamps.dt.nanosecond != 0).any():
         return "microsecond"
     micros = stamps.to_numpy(dtype="datetime64[us]").astype("int64")

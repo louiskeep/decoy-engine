@@ -173,3 +173,10 @@ def test_the_descriptor_lists_exactly_the_members_the_learner_writes() -> None:
     }
     written = {kind: set(learn_cell_format(s, kind)) for kind, s in samples.items()}
     assert written == {kind: set(m) for kind, m in cf.CELL_FORMAT_MEMBERS.items()}
+
+
+def test_the_descriptor_covers_every_snapshot_kind() -> None:
+    # A new snapshot kind would otherwise get an empty, silently denied block.
+    from decoy_engine.profiling._value_redaction import SNAPSHOT_KINDS
+
+    assert set(cf.CELL_FORMAT_MEMBERS) == SNAPSHOT_KINDS

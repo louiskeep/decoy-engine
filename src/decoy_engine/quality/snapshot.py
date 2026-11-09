@@ -62,7 +62,7 @@ import pandas as pd
 
 from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
-from decoy_engine.internal.pandas_compat import canonical_dtype_label
+from decoy_engine.internal.pandas_compat import canonical_dtype_label, utc_naive_datetimes
 
 # Single source of truth for the DP schema version is the pandas-free
 # `dp_schema` module (guide section 3.8), re-exported here for the existing
@@ -485,13 +485,9 @@ def _categorical_stats(non_null: pd.Series, *, top_k: int | None) -> dict[str, A
 
 
 def _datetime_stats(non_null: pd.Series) -> dict[str, Any]:
-    coerced = pd.to_datetime(non_null, errors="coerce").dropna()
+    coerced = utc_naive_datetimes(non_null)
     if len(coerced) == 0:
         return {}
-    # Strip timezone before isoformat so two snapshots taken on machines
-    # in different zones don't diverge on the string representation.
-    if getattr(coerced.dtype, "tz", None) is not None:
-        coerced = coerced.dt.tz_convert("UTC").dt.tz_localize(None)
     by_year = coerced.dt.year.value_counts().sort_index()
     year_bins = [{"year": int(year), "count": int(cnt)} for year, cnt in by_year.items()]
     return {
