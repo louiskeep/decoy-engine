@@ -6,8 +6,11 @@ Re-keyed onto S3 (S9 spec §4 row 9 / R19): the permutation rng is seeded from
 The column name is bound into the derivation source so two shuffle columns
 sharing a namespace draw distinct permutations; otherwise they would be
 permuted in lockstep and re-link the values masking is meant to decouple.
-Non-deterministic mode uses an unseeded `default_rng`. Null positions are
-preserved; only the non-null values are permuted.
+Non-deterministic mode is unkeyed (no namespace) but still drawn from the mask
+key, with the job seed and the shared length-prefixed (table, column) identity
+(`context_draw_identity`, the one non-deterministic Faker keys on) bound in, so the
+same config, seed and secret reproduce the output. Null positions are preserved;
+only the non-null values are permuted.
 """
 
 from __future__ import annotations
@@ -17,10 +20,18 @@ import pandas as pd
 
 from decoy_engine import reasons
 from decoy_engine.determinism import derive
-from decoy_engine.execution._adapter import StrategyContext, StrategyOption, option
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    context_draw_identity,
+    option,
+)
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
+
+# Derivation namespace of the unkeyed mode, distinct from any configured namespace.
+UNKEYED_SHUFFLE_NAMESPACE = "decoy.shuffle.unkeyed/v1"
 
 
 class ShuffleStrategyHandler:
@@ -53,12 +64,18 @@ class ShuffleStrategyHandler:
                     strategy="shuffle",
                     message=f"column {column!r} uses deterministic shuffle but has no namespace.",
                 )
-            seed_int = int.from_bytes(
-                derive(ctx.mask_key, plan.namespace, column.encode("utf-8"))[:8], "big"
-            )
-            rng = np.random.default_rng(seed_int)
+            namespace, draw_source = plan.namespace, column
         else:
-            rng = np.random.default_rng()
+            # The (table, outer column) identity keeps two unkeyed shuffles out of lockstep (a
+            # nested child is always called `_nested_leaves`); the job seed makes a new seed
+            # draw a new permutation. Its hex has no `/`, so the join cannot be ambiguous.
+            identity = context_draw_identity(ctx, column, strategy="shuffle")
+            namespace = UNKEYED_SHUFFLE_NAMESPACE
+            draw_source = f"{ctx.job_seed.hex()}/{identity}"
+        seed_int = int.from_bytes(
+            derive(ctx.mask_key, namespace, draw_source.encode("utf-8"))[:8], "big"
+        )
+        rng = np.random.default_rng(seed_int)
 
         permuted = non_na_values[rng.permutation(len(non_na_values))]
         out: list[object] = [None] * len(source)
