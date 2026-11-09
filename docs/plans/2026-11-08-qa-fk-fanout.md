@@ -224,8 +224,16 @@ too), and every per-column reader already looks a column up by name.
   source_column: patient_id      # optional, defaults to name; same key statistical columns use
 ```
 
-`GenerateColumnConfig` is `extra="allow"` (`config/_tables.py:254`), so these keys pass schema validation with
-no edit. The compile check (below) gives them meaning.
+GEN-STRICT E1 (engine #430) closed the per-type key set in `config/_generate_options.py`, so today a reference
+column refuses all three: `distribution: fitted` fails `_distribution` with `config.generate_option_value_unknown`,
+and `snapshot_file` and `source_column` are registered only for `statistical`. E2b opens them in the same commit
+that wires the fitted branch, never earlier, because before E2b an accepted `fitted` would fall through to random
+(F-9). E2b adds `fitted` to the reference distribution choices and `snapshot_file`/`source_column` (both `_S`) to
+the `reference` `TypeOptions`, with cells in `tests/unit/config/test_generate_options.py`: a fitted reference config
+parses, `fitted` on `windowed_date` still refuses, and the AT-6b DP refusal fires from a config that now parses.
+The option-reads sentry compares keys only, so a reader comparing against a new value can drift from the
+registry; E2b's AT-7 config cell is the guard for `fitted`, and a value-level sentry is a V2-LOG follow-up.
+The compile check (below) gives the keys meaning.
 
 ### Allocation (pure, integer arithmetic)
 
@@ -655,7 +663,7 @@ None. Recommended options taken without asking (V1 bar):
 | E0 | engine | `reasons/quality/<part>.py`, `reasons/plan/<part>.py`, `reasons/_registry.py` (version), fixture `reason-manifest-v1.NN-fk-fanout.json`, `tests/fixtures/f29/consumer-contract.json`, `docs/reasons.md`, `plan/_checks_dp.py`, `plan/_serialize.py`, `tests/unit/plan/test_fitted_reference_checks.py`, `tests/unit/test_reason_registry.py` (10) | about 150 | registry tests, AT-6b compile and serialized-Plan cells; full engine suite (registry trigger) |
 | E1 | engine | `generation/statistical/_fanout.py`, `quality/snapshot.py`, `tests/sentry/test_module_size.py`, `tests/unit/generation/statistical/test_fanout.py`, `tests/unit/quality/test_snapshot_fanout.py`, `docs/methodology-registry.yaml` (6; plus `profiling/_value_redaction.py` if 24f E1 is on `main`, 7) | about 400 | AT-3, AT-4 (and AT-9 if 24f is on `main`) first; T1 = `tests/unit/quality`, `tests/unit/generation/statistical`, `tests/sentry`, `tests/integration/compat_corpus` |
 | E1b | engine | `generation/synthesize.py`, `generation/_synthesize_derived.py` (new), `tests/fixtures/h1/definition_owners.json`, `tests/sentry/test_module_size.py` (4) | about 180 moved, about 10 new | behavior-preserving move, no new test; T1 = `tests/unit/test_wave_b_definition_owners.py`, `tests/parity`, `tests/native/test_determinism_goldens.py`, `tests/unit/test_v2_generation.py`, `tests/sentry` |
-| E2b | engine | `generation/synthesize.py`, `generation/_synthesize_derived.py`, `generation/_plan_entry.py`, `generation/_admission.py`, `plan/_generation.py` (`column_pins_snapshot` only), `execution/native/_draw_sites_gen.py`, `tests/native/test_draw_sites_catalogue_pinned.py`, `tests/parity/_f_audit_matrix.py`, `tests/unit/generation/test_reference_fanout.py`, `CHANGELOG.md` (10) | about 400 | AT-1, AT-2, AT-5, AT-6b regression, AT-7, AT-8 first; T1 = `tests/unit/generation`, `tests/unit/plan`, `tests/parity`, `tests/native`, `tests/unit/test_v2_generation.py`, `tests/sentry` |
+| E2b | engine | `generation/synthesize.py`, `generation/_synthesize_derived.py`, `generation/_plan_entry.py`, `generation/_admission.py`, `plan/_generation.py` (`column_pins_snapshot` only), `execution/native/_draw_sites_gen.py`, `tests/native/test_draw_sites_catalogue_pinned.py`, `tests/parity/_f_audit_matrix.py`, `tests/unit/generation/test_reference_fanout.py`, `config/_generate_options.py`, `tests/unit/config/test_generate_options.py`, `CHANGELOG.md` (12) | about 400 | AT-1, AT-2, AT-5, AT-6b regression, AT-7, AT-8 first; T1 = `tests/unit/generation`, `tests/unit/plan`, `tests/parity`, `tests/native`, `tests/unit/test_v2_generation.py`, `tests/sentry` |
 | E2a | engine | `plan/_generation.py`, `plan/_compile.py`, `plan/_serialize.py`, `tests/unit/plan/test_fitted_reference_checks.py`, `CHANGELOG.md` (5) | about 250 | AT-6, AT-7b first; AT-6b stays as a regression; T1 = `tests/unit/plan`, `tests/unit/generation/test_reference_fanout.py`, `tests/sentry` |
 | D | engine | `docs/strategies.md` (reference section), `CODEMAP.md` (the fan-out module and the lazy `quality` to `generation` call) (2) | about 60 | docs link check |
 | R | engine | release request to claudeorchestrator after E0, E1, E1b, E2b, E2a and D merge | | |
