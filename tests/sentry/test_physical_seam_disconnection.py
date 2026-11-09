@@ -385,6 +385,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_transforms_table.py",
             "src/decoy_engine/execution/out_of_core/_runner.py",
             "src/decoy_engine/execution/out_of_core/_preflight.py",
+            # RUN-STREAM E1b: the host CPU probe (new sub-package `execution/pipeline/`), the
+            # conservative budget export and the run-scoped DuckDB thread cap. None imports
+            # `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/__init__.py",
+            "src/decoy_engine/execution/pipeline/__init__.py",
+            "src/decoy_engine/execution/pipeline/_host.py",
             # Dcomp-OOC (composite FK strict parity): the out-of-core joiners raise the one
             # orphan FAIL error producer (`_fk_resolve.orphan_fk_violation_error`) directly.
             # Both import nothing from `execution.physical`.

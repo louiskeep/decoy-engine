@@ -57,6 +57,8 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
     ("out_of_core_threshold_rows", "KEYWORD_ONLY", "5000000", "int"),
     ("full_frame_reject_rows", "KEYWORD_ONLY", "7500000", "int"),
     ("out_of_core_budget_bytes", "KEYWORD_ONLY", "None", "int | None"),
+    # RUN-STREAM E1b: the one additive DuckDB thread cap for the out-of-core route.
+    ("out_of_core_threads", "KEYWORD_ONLY", "None", "int | None"),
     ("use_byte_estimate_routing", "KEYWORD_ONLY", "True", "bool"),
     ("use_probe_routing", "KEYWORD_ONLY", "True", "bool"),
     ("key_provider", "KEYWORD_ONLY", "None", "KeyProvider | None"),
@@ -97,7 +99,7 @@ def test_run_pipeline_return_annotation_is_frozen() -> None:
 
 def test_the_frozen_table_covers_every_parameter_once() -> None:
     names = [row[0] for row in FROZEN_PARAMETERS]
-    assert len(names) == len(set(names)) == 42
+    assert len(names) == len(set(names)) == 43
     positional = [r[0] for r in FROZEN_PARAMETERS if r[1] == "POSITIONAL_OR_KEYWORD"]
     assert positional == ["config", "sources"]
 

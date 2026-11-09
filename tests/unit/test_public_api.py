@@ -50,6 +50,9 @@ def test_all_lists_every_public_name():
         "compile_plan",
         "generate_tables",
         "run_pipeline",
+        # RUN-STREAM E1b: host CPU probe and the conservative CLI auto memory budget.
+        "detect_usable_cpus",
+        "resolve_conservative_ooc_budget_bytes",
         # Audit H5 (2026-06-12): profile-free compile-check subset for
         # config-only callers (decoy validate).
         "run_config_only_checks",

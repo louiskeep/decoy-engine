@@ -104,21 +104,14 @@ sequential, never concurrent), so the run's ceiling is the max over every
 table. But incoming-edge fan-in is a property of the PLAN's relationship
 graph, which this module never sees -- both budget functions take only byte
 counts, by design, so neither depends on `decoy_engine.relationships` or
-`decoy_engine.plan`. No exact bound is derivable here without that dependency,
-so `max_concurrent_instances` is an explicit, documented, CONSERVATIVE default
-(`_DEFAULT_MAX_CONCURRENT_DUCKDB_INSTANCES`) rather than a computed one: real
-FK schemas rarely fan many incoming edges into one table (the 100M-row cloud
-benchmark's parent->child->grandchild chain peaks at 2 -- one joiner plus one
-relation build), so the default trades a little headroom for safety on any
-schema up to that fan-in without a caller having to know the graph. A caller
-that DOES have graph visibility (and a wider-fan-in schema) should pass
-`max_concurrent_instances` explicitly, sized from its own edge count. The
-resolved `memory_limit` is `budget_bytes // max_concurrent_instances` (floored
-at `_MIN_BUDGET_BYTES` per instance), so the SUM of every live instance's cap
-stays within `budget_bytes`, which itself already excludes the reserve above.
-`batch_rows` scales with the (undivided) budget, not `memory_limit`: it
-bounds Python/Arrow-side batch buffers, already carved out by the reserve,
-not DuckDB's own accounting, so it is not further divided by concurrency.
+`decoy_engine.plan`. So `max_concurrent_instances` is an explicit CONSERVATIVE
+default (`_DEFAULT_MAX_CONCURRENT_DUCKDB_INSTANCES`), not a computed one: real FK
+schemas rarely fan many incoming edges into one table (the 100M-row cloud
+benchmark's chain peaks at 2). A caller with graph visibility and a wider
+fan-in passes `max_concurrent_instances` from its own edge count. The
+resolved `memory_limit` is `budget_bytes // max_concurrent_instances`, so the SUM
+of every live instance's cap stays within `budget_bytes`, which already excludes
+the reserve above.
 """
 
 from __future__ import annotations
@@ -395,6 +388,11 @@ def resolve_budget(
     )
 
 
+def resolve_conservative_ooc_budget_bytes() -> int:
+    """CLI `auto` memory: `resolve_budget(None)`'s 25% of the ceiling, so two runs share a host."""
+    return resolve_budget(None).budget_bytes
+
+
 def resolve_ooc_memory_limit(
     budget_bytes: int | None = None,
     *,
@@ -604,6 +602,7 @@ __all__ = [
     "detect_effective_memory_bytes",
     "detect_host_memory_bytes",
     "resolve_budget",
+    "resolve_conservative_ooc_budget_bytes",
     "resolve_ooc_memory_limit",
     "temp_disk_bytes",
 ]

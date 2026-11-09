@@ -1,0 +1,44 @@
+{
+  "entries": [
+    {
+      "code": "cpu_detection_failed",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "ExecutionError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "environment_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.20.0",
+      "summary": "CPU limit detection failed.",
+      "symbol": "CPU_DETECTION_FAILED"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.20.0"
+}

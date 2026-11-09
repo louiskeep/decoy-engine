@@ -150,6 +150,8 @@ from decoy_engine.execution.native._companion_status import (
     NativeCompanionStatus,
     native_companion_status,
 )
+from decoy_engine.execution.out_of_core import resolve_conservative_ooc_budget_bytes
+from decoy_engine.execution.pipeline._host import detect_usable_cpus
 from decoy_engine.fileaccess import open_protected_dir, protected_scratch_dir
 from decoy_engine.generation.composite import (
     BundlePool,
@@ -530,6 +532,7 @@ __all__ = [
     "derive_index",
     "derive_outcome",
     "derive_value",
+    "detect_usable_cpus",
     "distribution_snapshot_document",
     "emit_fidelity",
     "emit_lineage",
@@ -571,6 +574,7 @@ __all__ = [
     "register_faker_provider",
     "register_faker_provider_v2",
     "register_secret_provider",
+    "resolve_conservative_ooc_budget_bytes",
     "resolve_csv_dialect",
     "run_config_only_checks",
     "run_discovery_sql",
