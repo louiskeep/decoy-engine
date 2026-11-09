@@ -284,6 +284,8 @@ def _check_statistical(
         _check_datetime(table, col, spec)
     elif spec.kind == "categorical":
         _check_categorical(table, col, spec, max_cell_chars)
+    elif spec.kind == "empty":  # all-null source: every cell is None, nothing unbounded
+        return
     else:
         _refuse(
             table, col, CODE_UNBOUNDED, "kind", f"statistical kind {spec.kind!r} has no sampler"

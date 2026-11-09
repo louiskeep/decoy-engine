@@ -36,6 +36,8 @@ Codes are append-only: a code never disappears or changes meaning. A retired cod
 
 `reason-manifest-v1.17-run-stream-e1a.json` pins the one RUN-STREAM addition (`runtime.streaming_unavailable`; `since` 1.17.0: a run that requires streaming, `execution_mode="stream"`, is refused before any source passed in `sources` is read because no streaming route applies).
 
+`reason-manifest-v1.17-gen-unique.json` pins the four GEN-UNIQUE additions (`config.generate_unique_conflict`, `config.generate_unique_domain_too_small`, `config.generate_unique_unsupported` and `plan.pinned_unique_pair_unsupported`; `since` 1.17.0: a generate column's `unique` option is combined with a conflicting option, asks for more distinct values than its domain holds or sits on a type that cannot honor it, and a pinned plan carries `unique_together`).
+
 An older consumer that reads a record whose identity it does not know (same registry major) degrades to `decoy.unknown_reason_from_future`, keeping the original identity in an uninterpreted context field. An unsupported major becomes `decoy.unsupported_schema_version`. Neither is ever read as success or as retry advice.
 
 Slices that add codes build at the next minor of their base. At merge, `scripts/dev/registry_renumber.py` moves the slice to the next free minor and `--check` holds the merge gate. `tests/sentry/test_reason_minor_fixtures.py` requires one fixture per minor above 1.5, and `scripts/release/reason_manifest_policy.py` is the one place these rules live.

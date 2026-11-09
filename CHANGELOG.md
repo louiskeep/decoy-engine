@@ -23,6 +23,20 @@ the job takes the out-of-core route only when that route accepts the job and the
 clear, and is refused otherwise. `auto` routing, its threshold and its row-group rules are unchanged.
 An empty source under `stream` writes an empty file with the source schema, as base `--chunked` does; the resident run types the empty columns differently (plan G6).
 
+### Changed (fitted generation keeps nulls, blanks, precision and resolution, GEN-FIT-SHAPE E2, 2026-11-09)
+
+A `type: statistical` column whose snapshot carries a `cell_format` block (every `decoy fit` after E1)
+now reproduces the source shape. Generated nulls follow the source null rate unless the column sets
+`null_probability`, which then owns the nulls (`0` included). A freetext column keeps its blank fraction
+and never emits an empty string otherwise. Numbers are rounded to the source decimal places, and a whole
+number column comes out as `int`. Datetimes are floored to the source resolution; day resolution emits
+`datetime.date` (Parquet `date32`). An all-null source column (kind `empty`) generates all nulls instead of
+being refused. A fitted column's Arrow type now comes from its spec, so an all-null window keeps it.
+`generate_rows` also stops failing on a column of `null` type when it meters bytes. A snapshot without
+the block, every DP snapshot included, generates byte-identical output. The malformed-block refusal is
+`plan.statistical_cell_format_invalid`. The `gen.statistical_per_row` draw-site entry is re-pinned: the
+fitted path adds a blank draw and a null draw after the value draw.
+
 ### Added (fitted cell format in snapshots, GEN-FIT-SHAPE E1, 2026-11-09)
 
 `compute_distribution_snapshot(..., cell_format=True)` adds an optional `cell_format` block to each
@@ -32,6 +46,13 @@ counts and fixed names only, never a cell, so the redacted fit writes it for sen
 the redactor nulls any member it does not recognise. `distribution_snapshot_document` (`decoy fit`) now
 passes the keyword, so new fits carry the block. The keyword defaults to `False`: a call without it, and
 every snapshot written before this, is byte-identical. Generation does not read the block yet.
+
+### Added (reason codes for generate uniqueness, 2026-11-09)
+
+Registry 1.17.0 adds four identities for GEN-UNIQUE: `config.generate_unique_conflict`,
+`config.generate_unique_domain_too_small`, `config.generate_unique_unsupported` and
+`plan.pinned_unique_pair_unsupported`. Nothing raises them yet; the checks land with GEN-UNIQUE E1 and E2.
+Existing identities keep their numbers.
 
 ### Added (reason code for fitted cell format, 2026-11-09)
 

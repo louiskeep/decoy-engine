@@ -37,7 +37,7 @@ import pyarrow as pa
 from faker import Faker
 
 from decoy_engine.generation import _faker_pool
-from decoy_engine.generation._statistical_column import statistical_generate
+from decoy_engine.generation._statistical_column import arrow_table, statistical_generate
 from decoy_engine.generation._synthesize_derived import _derived_generate, _formula, _reference
 from decoy_engine.generation.statistical import StatisticalSpec
 from decoy_engine.generators.derivation import GenDeriveContext, with_table
@@ -173,7 +173,7 @@ def _generate_tables_from_config(
             )
 
             fill_referenced_formula_columns(gcols, data, seed, derive_key, table_name=name)
-        tbl = pa.table(data)
+        tbl = arrow_table(data, table_name=name, statistical_specs=statistical_specs)
         # Generation-time fidelity warn-gate (deferred follow-up 5,
         # 2026-06-12): score statistical columns against their source
         # snapshot and warn below global_settings.fidelity_warn_threshold.

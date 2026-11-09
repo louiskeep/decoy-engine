@@ -51,6 +51,11 @@ from typing import Any
 from decoy_engine import fileaccess, reasons
 from decoy_engine.errors import DecoyError
 from decoy_engine.fileaccess import FileRole
+from decoy_engine.generation.statistical._cell_format import (
+    CellFormat,
+    cell_format_from_dict,
+    decode_cell_format,
+)
 from decoy_engine.profiling import (
     POLICY_RAW,
     POLICY_REDACTED,
@@ -60,6 +65,9 @@ from decoy_engine.profiling import (
 from decoy_engine.quality.snapshot import DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
 
 _SUPPORTED_KINDS = ("numeric", "categorical", "datetime", "freetext")
+# `empty` (an all-null source column) is sampled only when the snapshot carries a `cell_format`
+# block, which is what makes "all null" a stated fact rather than a missing histogram.
+_EMPTY_KIND = "empty"
 _OTHER_MODES = ("redistribute", "emit")
 
 # The placeholder emitted for tail mass under other_mode="emit".
@@ -107,6 +115,9 @@ class StatisticalSpec:
     # The sampler (`_sample.py`) dispatches on `carrier is None` for exactly
     # this reason, so legacy behavior stays byte-identical.
     carrier: str | None = None
+    # Fitted cell shape (`generation/statistical/_cell_format.py`); None for a snapshot without the
+    # block, which keeps the old draw sequence byte for byte.
+    cell_format: CellFormat | None = None
 
 
 def spec_to_dict(spec: StatisticalSpec) -> dict[str, Any]:
@@ -120,6 +131,8 @@ def spec_to_dict(spec: StatisticalSpec) -> dict[str, Any]:
     data = asdict(spec)
     if data.get("carrier") is None:
         del data["carrier"]
+    if data.get("cell_format") is None:
+        del data["cell_format"]
     return data
 
 
@@ -140,6 +153,9 @@ def spec_from_dict(data: Mapping[str, Any]) -> StatisticalSpec:
         parent_first=bool(data["parent_first"]),
         snapshot_digest=data.get("snapshot_digest"),
         carrier=data.get("carrier"),
+        cell_format=cell_format_from_dict(
+            data["column"], str(data["kind"]), data.get("cell_format")
+        ),
     )
 
 
@@ -381,7 +397,19 @@ def load_spec(
         )
 
     kind = col_entry.get("kind")
-    if kind not in _SUPPORTED_KINDS:
+    cell_format = (
+        decode_cell_format(
+            name,
+            str(kind),
+            col_entry,
+            snapshot=snap,
+            # `null_probability` is None-means-absent: any other value, 0 included, owns the nulls.
+            apply_nulls=col_cfg.get("null_probability") is None,
+        )
+        if kind in (*_SUPPORTED_KINDS, _EMPTY_KIND)
+        else None
+    )
+    if kind not in _SUPPORTED_KINDS and not (kind == _EMPTY_KIND and cell_format is not None):
         raise StatisticalSpecError(
             code=reasons.plan.STATISTICAL_KIND_UNSUPPORTED,
             message=(
@@ -549,4 +577,5 @@ def load_spec(
         parent_first=parent_first,
         snapshot_digest=snapshot_digest,
         carrier=carrier,
+        cell_format=cell_format,
     )
