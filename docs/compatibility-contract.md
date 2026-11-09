@@ -73,7 +73,7 @@ with `config.subset_run_unsupported` (registry 1.6.0). Before, the block validat
 the full sources. `plan_subset` and `run_subset` are unchanged; run them first and point `sources:` at their output.
 
 **Pre-GA correction (CONFIG-EXPLICIT E1, 2026-11-08).** A csv file source must set `has_header` (registry
-1.10.0). An old config without it fails validation with `source_file.has_header_required` and the fix line
+1.15.0). An old config without it fails validation with `source_file.has_header_required` and the fix line
 "add `has_header: true` if the first row names the columns (the old default)". `column_names_file`, a path to a
 one-record header file for a headerless source, is additive. A csv dump now always carries `has_header`, so the
 physical `plan_hash` moves for those configs while `pipeline_config_hash` does not. Three registered codes that

@@ -16,7 +16,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.10.0",
+      "since": "1.15.0",
       "summary": "Source file column names file invalid.",
       "symbol": "SOURCE_FILE_COLUMN_NAMES_FILE_INVALID"
     },
@@ -36,7 +36,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.10.0",
+      "since": "1.15.0",
       "summary": "Source file column names source conflict.",
       "symbol": "SOURCE_FILE_COLUMN_NAMES_SOURCE_CONFLICT"
     },
@@ -56,12 +56,12 @@
           "severity": "error"
         }
       ],
-      "since": "1.10.0",
+      "since": "1.15.0",
       "summary": "Source file has header required.",
       "symbol": "SOURCE_FILE_HAS_HEADER_REQUIRED"
     }
   ],
   "event_schema_version": 1,
   "reason_schema_version": 1,
-  "registry_version": "1.10.0"
+  "registry_version": "1.15.0"
 }

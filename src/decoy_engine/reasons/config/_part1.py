@@ -140,7 +140,7 @@ SOURCE_FILE_COLUMN_COUNT_MISMATCH = _d(
 SOURCE_FILE_COLUMN_NAMES_FILE_INVALID = _d(
     "source_file.column_names_file_invalid",
     "Source file column names file invalid.",
-    since="1.10.0",
+    since="1.15.0",
 )
 SOURCE_FILE_LONE_CR = _d("source_file.lone_cr", "Source file lone CR.")
 SOURCE_FILE_NUL_BYTE = _d("source_file.nul_byte", "Source file NUL byte.")
@@ -251,7 +251,7 @@ SOURCE_FILE_BAD_ROW_LIMIT = _d("source_file.bad_row_limit", "Source file bad row
 SOURCE_FILE_COLUMN_NAMES_SOURCE_CONFLICT = _d(
     "source_file.column_names_source_conflict",
     "Source file column names source conflict.",
-    since="1.10.0",
+    since="1.15.0",
 )
 SOURCE_FILE_COLUMN_NAMES_WITH_HEADER = _d(
     "source_file.column_names_with_header", "Source file column names with header."
@@ -261,7 +261,7 @@ SOURCE_FILE_CSV_PARAM_ON_NON_CSV = _d(
 )
 SOURCE_FILE_FILE_NOT_FOUND = _d("source_file.file_not_found", "Source file file not found.")
 SOURCE_FILE_HAS_HEADER_REQUIRED = _d(
-    "source_file.has_header_required", "Source file has header required.", since="1.10.0"
+    "source_file.has_header_required", "Source file has header required.", since="1.15.0"
 )
 SOURCE_FILE_MISSING_FW_COLUMNS = _d(
     "source_file.missing_fw_columns", "Source file missing fw columns."

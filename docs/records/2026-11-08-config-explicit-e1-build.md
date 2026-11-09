@@ -19,9 +19,9 @@ is an ancestor, tag `v0.19.0` exists). Handoff `p05-config-explicit-build-handof
   1 MiB `fstat` check plus a check on the bytes read. One `_record_reader` (the module's one `csv.reader`)
   and one `_is_blank_record` serve the data scan and the header file. `_refusal` is `source_refusal`.
 - `build_profile_source` is a file-access entry point; `_build_file_source` passes `table`.
-- Registry 1.10.0: `has_header_required` and `column_names_source_conflict` (validation_result block),
+- Registry 1.15.0: `has_header_required` and `column_names_source_conflict` (validation_result block),
   `column_names_file_invalid` (PipelineValidationError block), mirrored in `CODES`. Fixture
-  `reason-manifest-v1.10-config-explicit-e1.json`; `consumer-contract.json` regenerated (diff:
+  `reason-manifest-v1.15-config-explicit-e1.json`; `consumer-contract.json` regenerated (diff:
   `registry_version` only).
 - Sentry `tests/sentry/source_config/test_source_dialect_choke_point.py` (AT-E1-9), one `SENTRIES` line.
 - Codemod `scripts/dev/codemods/config_explicit.py has-header`: 95 Python and 2 YAML edits in `tests`,
@@ -126,3 +126,4 @@ the registry version, plus two merge fixes after main's derived-visibility merge
 `build_profile_source`), and one #408 test declares `has_header`.
 Registry renumbered at merge from 1.8.0 to 1.9.0 by scripts/dev/registry_renumber.py; main was at 1.8.0.
 Registry renumbered at merge from 1.9.0 to 1.10.0 by scripts/dev/registry_renumber.py; main was at 1.9.0.
+Registry renumbered at merge from 1.10.0 to 1.15.0 by scripts/dev/registry_renumber.py; main was at 1.14.0.
