@@ -103,9 +103,10 @@ def _year_edge(rule: Rule, stats: dict[str, Any]) -> str | None:
     years = [b["year"] for b in stats.get("year_bins", [])]
     if not years:
         return None
+    # Clamp to the calendar's ends: year 0 and year 10000 do not parse back as datetimes.
     if rule is Rule.PREVIOUS_YEAR_START:
-        return f"{min(years) - 1:04d}-01-01T00:00:00"
-    return f"{max(years) + 1:04d}-12-31T23:59:59"
+        return f"{max(min(years) - 1, 1):04d}-01-01T00:00:00"
+    return f"{min(max(years) + 1, 9999):04d}-12-31T23:59:59"
 
 
 def _collapse_counted_items(container: dict[str, Any], item_key: str) -> None:

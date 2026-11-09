@@ -17,8 +17,9 @@ joint_columns=None, profile_row_cap=None, ...)`, the snapshot to write to disk. 
 column's cell values removed, using the same sensitivity rule as `profile_document`. A sensitive
 categorical column gets an empty `top_values` and its whole count in `other_count`; a joint that
 names one gets an empty `cells`; a numeric column gets one bin whose two edges sit outside every
-source cell and no `mean`, `std` or quantiles; a datetime column keeps its `year_bins` with `min`
-and `max` moved to the year before the first and after the last. The document gains `value_policy`
+source cell (or the fixed bin `-1.5` to `1.5` when the range is too wide to pad) and no `mean`,
+`std` or quantiles; a datetime column keeps its `year_bins` with `min` and `max` moved to the year
+before the first and after the last, held within years 1 to 9999. The document gains `value_policy`
 (`flagged-redacted/v1`, or `raw` with `include_values=True`) and `redacted_columns`, two optional
 top-level keys that `distribution-snapshot/v1` readers ignore.
 
