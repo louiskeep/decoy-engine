@@ -66,9 +66,12 @@ __all__ = [
     "SOURCE_FILE_BAD_HAS_HEADER_TYPE",
     "SOURCE_FILE_BAD_ROW_LIMIT",
     "SOURCE_FILE_COLUMN_COUNT_MISMATCH",
+    "SOURCE_FILE_COLUMN_NAMES_FILE_INVALID",
+    "SOURCE_FILE_COLUMN_NAMES_SOURCE_CONFLICT",
     "SOURCE_FILE_COLUMN_NAMES_WITH_HEADER",
     "SOURCE_FILE_CSV_PARAM_ON_NON_CSV",
     "SOURCE_FILE_FILE_NOT_FOUND",
+    "SOURCE_FILE_HAS_HEADER_REQUIRED",
     "SOURCE_FILE_LONE_CR",
     "SOURCE_FILE_MISSING_FW_COLUMNS",
     "SOURCE_FILE_MISSING_PATH",
@@ -133,6 +136,11 @@ POST_SCAN_INACTIVE = _d("post_scan_inactive", "Post-scan inactive.", since="1.8.
 PRE_SCAN_NER_INACTIVE = _d("pre_scan_ner_inactive", "Pre-scan NER inactive.", since="1.8.0")
 SOURCE_FILE_COLUMN_COUNT_MISMATCH = _d(
     "source_file.column_count_mismatch", "Source file column count mismatch."
+)
+SOURCE_FILE_COLUMN_NAMES_FILE_INVALID = _d(
+    "source_file.column_names_file_invalid",
+    "Source file column names file invalid.",
+    since="1.15.0",
 )
 SOURCE_FILE_LONE_CR = _d("source_file.lone_cr", "Source file lone CR.")
 SOURCE_FILE_NUL_BYTE = _d("source_file.nul_byte", "Source file NUL byte.")
@@ -240,6 +248,11 @@ SOURCE_FILE_BAD_HAS_HEADER_TYPE = _d(
     "source_file.bad_has_header_type", "Source file bad has header type."
 )
 SOURCE_FILE_BAD_ROW_LIMIT = _d("source_file.bad_row_limit", "Source file bad row limit.")
+SOURCE_FILE_COLUMN_NAMES_SOURCE_CONFLICT = _d(
+    "source_file.column_names_source_conflict",
+    "Source file column names source conflict.",
+    since="1.15.0",
+)
 SOURCE_FILE_COLUMN_NAMES_WITH_HEADER = _d(
     "source_file.column_names_with_header", "Source file column names with header."
 )
@@ -247,6 +260,9 @@ SOURCE_FILE_CSV_PARAM_ON_NON_CSV = _d(
     "source_file.csv_param_on_non_csv", "Source file CSV param on non CSV."
 )
 SOURCE_FILE_FILE_NOT_FOUND = _d("source_file.file_not_found", "Source file file not found.")
+SOURCE_FILE_HAS_HEADER_REQUIRED = _d(
+    "source_file.has_header_required", "Source file has header required.", since="1.15.0"
+)
 SOURCE_FILE_MISSING_FW_COLUMNS = _d(
     "source_file.missing_fw_columns", "Source file missing fw columns."
 )

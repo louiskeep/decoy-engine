@@ -24,7 +24,7 @@ The scan agrees with pandas on line boundaries and quoting for every file it adm
   Because line boundaries agree, pandas pads it to a row whose only value sits in its own
   leading column. No real value is misaligned and no cell leaks.
 
-Every refusal is a `PipelineValidationError` with a registered code, built by `_refusal`:
+Every refusal is a `PipelineValidationError` with a registered code, built by `source_refusal`:
 `<code>: source <table> <detail>`. The detail names the line and the counts, never a cell
 value, a path or a file name, and the library error is never chained.
 """
@@ -35,19 +35,23 @@ import csv
 import dataclasses
 import io
 import os
+import stat
 import sys
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from typing import Any, overload
+from typing import TYPE_CHECKING, Any, TextIO, overload
 
 import pandas as pd
 
 from decoy_engine import fileaccess
 from decoy_engine._lexeme import pandas_lexeme_kwargs
-from decoy_engine.config._csv_dialect import CsvDialect
-from decoy_engine.errors import PipelineValidationError
+from decoy_engine.config._csv_dialect import CSV_DIALECT_DEFAULTS, CsvDialect, csv_dialect_problem
+from decoy_engine.errors import ConfigError, PipelineValidationError
 from decoy_engine.fileaccess import FileAccess, FileHandle, FileRequest, FileRole
 from decoy_engine.fileaccess.adapters import pandas as pandas_adapter
 from decoy_engine.validation_result import CODES
+
+if TYPE_CHECKING:
+    import _csv
 
 # The scan tokenizes with the stdlib csv parser, which caps a field at 131072 characters;
 # pandas has no such cap. Raise it to the platform maximum so a large text or JSON field is
@@ -64,22 +68,162 @@ OpenHandle = Callable[[], FileHandle]
 _PARSER_ERRORS = pandas_adapter.PARSER_ERRORS
 
 
-def resolve_csv_dialect(descriptor: Mapping[str, Any]) -> CsvDialect:
-    """The `CsvDialect` a source descriptor declares; omitted keys take the schema defaults.
+# A header file holds one record of names; anything larger is not one.
+_HEADER_FILE_MAX_BYTES = 1 << 20
 
-    The only place in the engine that reads the three dialect keys of a descriptor.
+
+@fileaccess.entry_point
+def resolve_csv_dialect(
+    descriptor: Mapping[str, Any],
+    *,
+    table: str = "source",
+    file_access: FileAccess | None = None,
+) -> CsvDialect:
+    """The `CsvDialect` a validated source descriptor declares.
+
+    The only place in the engine that reads the dialect keys of a descriptor. `has_header`
+    must be present (`PipelineConfig` requires it for csv); without it this raises
+    `ConfigError` before any IO. A `column_names_file` is read here, under the bound
+    file-access policy, and gives the same dialect as the same names written inline.
     """
-    # Only the keys present are passed, so `CsvDialect`'s field defaults are the one home of
-    # the defaults and `CsvDialect` alone validates and normalizes the values.
-    present = {
-        f.name: descriptor[f.name] for f in dataclasses.fields(CsvDialect) if f.name in descriptor
-    }
-    return CsvDialect(**present)
+    has_header = descriptor.get("has_header")
+    if not isinstance(has_header, bool):
+        raise ConfigError(
+            "resolve_csv_dialect: has_header must be true or false; "
+            "validate the descriptor with PipelineConfig first"
+        )
+    names_file = descriptor.get("column_names_file")
+    if names_file is None:
+        # Only the keys present are passed, so `CsvDialect`'s field defaults are the one home
+        # of the defaults and `CsvDialect` alone validates and normalizes the values.
+        present = {
+            f.name: descriptor[f.name]
+            for f in dataclasses.fields(CsvDialect)
+            if f.name in descriptor
+        }
+        return CsvDialect(**present)
+    delimiter = descriptor.get("delimiter", CSV_DIALECT_DEFAULTS.delimiter)
+    problem = csv_dialect_problem(
+        has_header, descriptor.get("column_names"), delimiter, column_names_file=names_file
+    )
+    if problem is not None:
+        raise ConfigError(f"CsvDialect: {problem}")
+    names = resolve_column_names_file(names_file, delimiter=delimiter, table=table)
+    return CsvDialect(has_header=False, column_names=names, delimiter=delimiter)
 
 
-def _refusal(code: str, table: str, detail: str) -> PipelineValidationError:
+def resolve_column_names_file(path: str, *, delimiter: str, table: str) -> tuple[str, ...]:
+    """The names in a one-record header file, read like a data file's header row.
+
+    Runs under the policy `resolve_csv_dialect` bound. Names are not stripped. Every refusal
+    is `column_names_file_invalid` with a fixed phrase, raised outside any `except` block.
+    """
+    failure: str | None = None
+    data = b""
+    try:
+        data = fileaccess.read_checked(
+            FileRole.SOURCE,
+            path,
+            f"sources.{table}.column_names_file",
+            check=_header_file_check(table),
+        )
+    except OSError as exc:
+        if fileaccess.keeps_class(exc):
+            raise
+        failure = "not found" if isinstance(exc, FileNotFoundError) else "not readable"
+    if failure is None and len(data) > _HEADER_FILE_MAX_BYTES:
+        failure = "too large"  # the file grew after the `fstat` check
+    if failure is not None:
+        raise _names_file_refusal(table, failure)
+    records: list[list[str]] = []
+    try:
+        text = io.TextIOWrapper(io.BytesIO(data), encoding="utf-8-sig", newline="")
+        reader = _record_reader(
+            text,
+            delimiter,
+            on_nul=lambda: _names_file_refusal(table, "NUL byte"),
+            on_lone_cr=lambda: _names_file_refusal(table, "lone carriage return"),
+        )
+        records = [record for record in reader if not _is_blank_record(record)]
+    except UnicodeDecodeError:
+        failure = "not UTF-8 text"
+    if failure is None and not records:
+        failure = "empty"
+    if failure is None and len(records) > 1:
+        failure = "more than one record"
+    if failure is not None:
+        raise _names_file_refusal(table, failure)
+    names = records[0]
+    problem = csv_dialect_problem(False, names, delimiter)
+    if problem is not None:
+        # `csv_dialect_problem` decides; the position only says where.
+        raise _names_file_refusal(table, _name_position(names) or "not readable")
+    return tuple(names)
+
+
+def _name_position(names: Sequence[str]) -> str | None:
+    for position, name in enumerate(names, 1):
+        if not name.strip():
+            return f"blank name at position {position}"
+    seen: dict[str, int] = {}
+    for position, name in enumerate(names, 1):
+        if name in seen:
+            return f"duplicate name at positions {seen[name]} and {position}"
+        seen[name] = position
+    return None
+
+
+def _header_file_check(table: str) -> Callable[[os.stat_result], None]:
+    def check(info: os.stat_result) -> None:
+        if not stat.S_ISREG(info.st_mode):
+            raise _names_file_refusal(table, "not readable")
+        if info.st_size > _HEADER_FILE_MAX_BYTES:
+            raise _names_file_refusal(table, "too large")
+
+    return check
+
+
+def _names_file_refusal(table: str, phrase: str) -> PipelineValidationError:
+    return source_refusal(
+        CODES.SOURCE_FILE_COLUMN_NAMES_FILE_INVALID,
+        table,
+        f"column_names_file is not a one-record header file ({phrase})",
+    )
+
+
+def source_refusal(code: str, table: str, detail: str) -> PipelineValidationError:
     """The one constructor of this module's refusals: coded, names the table, no value."""
     return PipelineValidationError(f"{code}: source {table} {detail}", code=code)
+
+
+def _is_blank_record(record: Sequence[str]) -> bool:
+    """A record pandas' `skip_blank_lines` skips: empty, or one whitespace-only field."""
+    return len(record) <= 1 and (not record or not record[0].strip())
+
+
+def _record_reader(
+    text: TextIO,
+    delimiter: str,
+    *,
+    on_nul: Callable[[], PipelineValidationError],
+    on_lone_cr: Callable[[], PipelineValidationError],
+) -> _csv.Reader:
+    """The module's one `csv.reader`: it refuses a NUL byte and a lone CR through the caller's
+    own refusals, raised directly so nothing is chained."""
+
+    def _reject_unreconcilable(lines: Iterable[str]) -> Iterator[str]:
+        # With newline="" the wrapper splits on CR, LF and CRLF, so a lone-CR ending
+        # leaves a trailing "\r" and CRLF a trailing "\r\n". Strip one LF or CRLF; any
+        # "\r" left is a lone CR.
+        for line in lines:
+            if "\x00" in line:
+                raise on_nul()
+            body = line[:-2] if line.endswith("\r\n") else line.rstrip("\n")
+            if "\r" in body:
+                raise on_lone_cr()
+            yield line
+
+    return csv.reader(_reject_unreconcilable(text), delimiter=delimiter)
 
 
 def _positional_lexemes(columns: tuple[str, ...], names: list[str]) -> dict[str, dict[int, type]]:
@@ -99,34 +243,25 @@ def _scan_record_widths(
     consumed = 0
     with open_handle() as handle, handle.open_binary() as raw:
         text = io.TextIOWrapper(raw, encoding="utf-8-sig", newline="")
-
-        def _reject_unreconcilable(lines: Iterable[str]) -> Iterator[str]:
-            # With newline="" the wrapper splits on CR, LF and CRLF, so a lone-CR ending
-            # leaves a trailing "\r" and CRLF a trailing "\r\n". Strip one LF or CRLF; any
-            # "\r" left is a lone CR.
-            for line in lines:
-                if "\x00" in line:
-                    raise _refusal(
-                        CODES.SOURCE_FILE_NUL_BYTE,
-                        table,
-                        "contains a NUL byte, which is not valid in a text delimited file",
-                    )
-                body = line[:-2] if line.endswith("\r\n") else line.rstrip("\n")
-                if "\r" in body:
-                    raise _refusal(
-                        CODES.SOURCE_FILE_LONE_CR,
-                        table,
-                        "contains a lone carriage return "
-                        "(only LF and CRLF line endings are supported)",
-                    )
-                yield line
-
-        reader = csv.reader(_reject_unreconcilable(text), delimiter=dialect.delimiter)
+        reader = _record_reader(
+            text,
+            dialect.delimiter,
+            on_nul=lambda: source_refusal(
+                CODES.SOURCE_FILE_NUL_BYTE,
+                table,
+                "contains a NUL byte, which is not valid in a text delimited file",
+            ),
+            on_lone_cr=lambda: source_refusal(
+                CODES.SOURCE_FILE_LONE_CR,
+                table,
+                "contains a lone carriage return (only LF and CRLF line endings are supported)",
+            ),
+        )
         for record in reader:
-            if len(record) <= 1 and (not record or not record[0].strip()):
+            if _is_blank_record(record):
                 continue
             if len(record) != expected:
-                raise _refusal(
+                raise source_refusal(
                     CODES.SOURCE_FILE_COLUMN_COUNT_MISMATCH,
                     table,
                     f"line {reader.line_num} has {len(record)} fields "
@@ -136,7 +271,7 @@ def _scan_record_widths(
             if nrows is not None and consumed >= nrows:
                 return
     if consumed == 0:
-        raise _refusal(
+        raise source_refusal(
             CODES.SOURCE_FILE_COLUMN_COUNT_MISMATCH,
             table,
             f"has no data rows to read against its {expected} declared column_names",
@@ -161,7 +296,7 @@ def _zero_rows(
 
 
 def _unreadable(table: str, expected: int) -> PipelineValidationError:
-    return _refusal(
+    return source_refusal(
         CODES.SOURCE_FILE_COLUMN_COUNT_MISMATCH,
         table,
         f"could not be read against its {expected} declared column_names",
@@ -173,7 +308,7 @@ def _named(frame: pd.DataFrame, names: list[str], table: str) -> pd.DataFrame:
 
     `names` are the names of the columns the read kept, in file order."""
     if frame.shape[1] != len(names):
-        raise _refusal(
+        raise source_refusal(
             CODES.SOURCE_FILE_COLUMN_COUNT_MISMATCH,
             table,
             f"parsed to {frame.shape[1]} columns against its {len(names)} declared column_names",

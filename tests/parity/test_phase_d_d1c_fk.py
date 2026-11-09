@@ -38,7 +38,12 @@ def _config(
         "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
-            t: {"type": "file", "format": "csv", "path": str(tmp_path / f"{t}.csv")}
+            t: {
+                "type": "file",
+                "format": "csv",
+                "has_header": True,
+                "path": str(tmp_path / f"{t}.csv"),
+            }
             for t in ("parent", "child")
         },
         "targets": {

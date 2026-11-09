@@ -88,13 +88,15 @@
      "format": "csv",
      "layout": null,
      "path": "./in/members.csv",
-     "type": "file"
+     "type": "file",
+     "has_header": true
     },
     "providers": {
      "format": "csv",
      "layout": null,
      "path": "./in/providers.csv",
-     "type": "file"
+     "type": "file",
+     "has_header": true
     }
    },
    "subset": null,

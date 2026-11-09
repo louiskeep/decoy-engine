@@ -36,6 +36,7 @@ sources:
   members:
     type: file
     format: csv
+    has_header: true
     path: ./in/members.csv
   enrollments:
     type: file
@@ -53,6 +54,7 @@ sources:
   providers:
     type: file
     format: csv
+    has_header: true
     path: ./in/providers.csv
 
 targets:

@@ -287,6 +287,8 @@ def test_a9_binary_cobol_on_a_text_source_is_rejected_at_compile(
     path = tmp_path / "t.txt"
     path.write_text("0123\n", encoding="utf-8")
     source: dict[str, Any] = {"type": "file", "format": kind, "path": str(path)}
+    if kind == "csv":
+        source["has_header"] = True
     if kind == "fixed_width":
         source["layout"] = {
             "exact_record_width": True,
@@ -449,8 +451,8 @@ def test_b3_fk_parent_042_joins_child_42_after_both_become_integer(tmp_path: Pat
         "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
-            "parent": {"type": "file", "format": "csv", "path": par},
-            "child": {"type": "file", "format": "csv", "path": chi},
+            "parent": {"type": "file", "format": "csv", "has_header": True, "path": par},
+            "child": {"type": "file", "format": "csv", "has_header": True, "path": chi},
         },
         "tables": [
             {"name": "parent", "columns": [int_col("id")]},
@@ -805,11 +807,21 @@ def test_b7_unknown_format_in_a_serialized_plan_never_executes(tmp_path: Path) -
     assert getattr(exc.value, "code", None) == "declared_cast_format_unknown"
 
 
+_B7_DUMP_SHA256_WITH_HAS_HEADER = "5e4147baae457372e80f819346b646eb6f02c9f79fb53e5b8bfc2845e24ce905"
+
+
 def test_b7_legacy_config_and_plan_match_the_baseline_fixture(tmp_path: Path) -> None:
-    """The fixture was produced by the pre-F06 engine (main 0173c05). Config dump and hash are
-    byte-identical; the plan YAML differs only by the documented version line."""
+    """The fixture was produced by the pre-F06 engine (main 0173c05) and stays frozen.
+
+    Its raw config predates the required csv `has_header`, so as written it is refused with the
+    fix line. With `has_header: true` (the old default) added here, the hash is unchanged, the
+    dump differs only by that field, and the plan YAML differs only by the documented version line.
+    """
     import hashlib
 
+    from pydantic import ValidationError
+
+    from decoy_engine import reasons
     from decoy_engine.config import PipelineConfig
     from decoy_engine.plan._compile import compile_plan
     from decoy_engine.plan._serialize import plan_to_yaml
@@ -820,9 +832,23 @@ def test_b7_legacy_config_and_plan_match_the_baseline_fixture(tmp_path: Path) ->
             Path(__file__).resolve().parents[1] / "fixtures" / "f06" / "legacy-compat-baseline.json"
         ).read_text()
     )
-    cfg = PipelineConfig.model_validate(fixture["raw_config"]).model_dump()
+    with pytest.raises(ValidationError) as refused:
+        PipelineConfig.model_validate(fixture["raw_config"])
+    [error] = refused.value.errors()
+    assert error["type"] == reasons.config.SOURCE_FILE_HAS_HEADER_REQUIRED
+    assert error["loc"][-1] == "has_header"
+    assert "has_header: true" in error["msg"]
+
+    raw = copy.deepcopy(fixture["raw_config"])
+    raw["sources"]["p"]["has_header"] = True
+    cfg = PipelineConfig.model_validate(raw).model_dump()
     dump = json.dumps(cfg, sort_keys=True)
-    assert hashlib.sha256(dump.encode()).hexdigest() == fixture["config_dump_sha256"]
+    # A csv dump now always carries has_header, so only that field moves the dump's sha.
+    assert hashlib.sha256(dump.encode()).hexdigest() == _B7_DUMP_SHA256_WITH_HAS_HEADER
+    legacy = copy.deepcopy(cfg)
+    del legacy["sources"]["p"]["has_header"]
+    legacy_dump = json.dumps(legacy, sort_keys=True)
+    assert hashlib.sha256(legacy_dump.encode()).hexdigest() == fixture["config_dump_sha256"]
     (tmp_path / "p.csv").write_text("id,age,note\n1,42,a\n2,7,b\n3,13,c\n")
     run_cfg = json.loads(dump)
     run_cfg["sources"]["p"]["path"] = str(tmp_path / "p.csv")

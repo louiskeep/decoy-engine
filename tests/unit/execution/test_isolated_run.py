@@ -153,6 +153,7 @@ def _mask_config(tmp_path, n_cols: int) -> dict:
                 "customers": {
                     "type": "file",
                     "format": "csv",
+                    "has_header": True,
                     "path": str(tmp_path / "customers.csv"),
                 },
             },
@@ -191,6 +192,7 @@ def _row_error_config(tmp_path) -> dict:
                 "customers": {
                     "type": "file",
                     "format": "csv",
+                    "has_header": True,
                     "path": str(tmp_path / "customers.csv"),
                 },
             },

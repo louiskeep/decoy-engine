@@ -252,7 +252,9 @@ def test_dtype_other_than_none_or_str_is_a_type_error(tmp_path: Path) -> None:
 def test_resolve_csv_dialect_defaults_and_explicit_keys() -> None:
     from decoy_engine.config import FileSource
 
-    plain = FileSource.model_validate({"type": "file", "format": "csv", "path": "a.csv"})
+    plain = FileSource.model_validate(
+        {"type": "file", "format": "csv", "path": "a.csv", "has_header": True}
+    )
     assert resolve_csv_dialect(plain.model_dump()) == CsvDialect(
         plain.has_header, plain.column_names, plain.delimiter
     )
@@ -288,15 +290,18 @@ def test_profile_source_resolves_the_dialect_once(
     path = tmp_path / "t.tsv"
     path.write_bytes(b"1\tAda\n2\tGrace\n")
     calls: list[dict[str, Any]] = []
+    seen_kwargs: list[dict[str, Any]] = []
     real = _readers.resolve_csv_dialect
 
-    def spy(descriptor: Any) -> CsvDialect:
+    def spy(descriptor: Any, **kwargs: Any) -> CsvDialect:
         calls.append(dict(descriptor))
-        return real(descriptor)
+        seen_kwargs.append(kwargs)
+        return real(descriptor, **kwargs)
 
     monkeypatch.setattr(_readers, "resolve_csv_dialect", spy)
     profile = profile_source(_headerless_config(path, "events", "\t"), seed=1)
     assert len(calls) == 1
+    assert seen_kwargs == [{"table": "events"}]
     assert [c.name for c in profile.tables[0].columns] == ["id", "name"]
 
 

@@ -40,7 +40,9 @@ def _mask_config() -> dict:
     return {
         "version": 2,
         "global_settings": {"seed": 0},
-        "sources": {"customers": {"type": "file", "format": "csv", "path": "in.csv"}},
+        "sources": {
+            "customers": {"type": "file", "format": "csv", "has_header": True, "path": "in.csv"}
+        },
         "tables": [
             {
                 "name": "customers",
@@ -1599,6 +1601,7 @@ class TestFC1QAFindings:
                         "customers": {
                             "type": "file",
                             "format": "csv",
+                            "has_header": True,
                             "path": "c.csv",
                         },
                     },
