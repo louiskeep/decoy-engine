@@ -47,14 +47,8 @@ no top-K collapse, so the artifact additionally exposes every distinct
 code AND rare-code presence/absence -- treat it with the same care as
 a raw extract of that column.
 
-DPS Scope B history: this module once carried `dp_mode` / `numeric_domains`
-fit-time parameters (Option A, 2026-06 through 2026-07-21) ahead of a
-since-deleted `quality.dp.apply_dp_noise`. That mechanism never satisfied
-the privacy bound it claimed (see CHANGELOG.md) and is gone. The Scope B
-rebuild (`quality.dp.fit_dp_snapshot`) does not call this function: it
-materializes exact statistics with value-dependent kind behavior (bool vs.
-object vs. numeric, the 30-distinct cardinality cliff), which a DP fit must
-never do. This module is explicitly non-DP.
+DPS Scope B history: the old `dp_mode` fit parameters are gone; see the CHANGELOG entry for DPS
+Scope B. `quality.dp.fit_dp_snapshot` does not call this function, which is explicitly non-DP.
 """
 
 from __future__ import annotations
@@ -140,12 +134,12 @@ def compute_distribution_snapshot(
     contingency_top_k: int = DEFAULT_CONTINGENCY_TOP_K,
     high_cardinality_columns: Collection[str] = (),
     fanout_columns: Collection[str] = (),
+    cell_format: bool = False,
 ) -> dict[str, Any]:
     """Compute a deterministic, JSON-serializable distribution snapshot.
 
-    Explicitly non-DP (module docstring): every kind decision here may
-    look at values. DP fits go through `quality.dp.fit_dp_snapshot`
-    instead, which never calls this function.
+    Explicitly non-DP (module docstring): every kind decision here may look at values.
+    DP fits go through `quality.dp.fit_dp_snapshot`, which never calls this function.
 
     Args:
         df: Input frame. Not mutated.
@@ -170,6 +164,8 @@ def compute_distribution_snapshot(
         fanout_columns: Column names that get an optional `fanout` block
             (degree histogram of the key column, counts only). Omitted means
             byte-identical output. A bare string or unknown name raises.
+        cell_format: Add a value-free `cell_format` block (decimal places, resolution,
+            blank count) to each column. Default False means byte-identical output.
 
     Returns:
         A dict matching schema `distribution-snapshot/v1` (module
@@ -203,6 +199,10 @@ def compute_distribution_snapshot(
         from decoy_engine.generation.statistical import add_fanout
 
         add_fanout(columns_block, df, fanout_columns)
+    if cell_format:
+        from decoy_engine.generation.statistical import add_cell_format
+
+        add_cell_format(columns_block, df)
 
     joints_block: list[dict[str, Any]] = []
     if joint_columns:

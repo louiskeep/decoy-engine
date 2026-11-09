@@ -84,7 +84,7 @@ def test_the_search_never_passes_the_decoder_ceiling() -> None:
 def test_resolution_is_the_coarsest_unit_every_value_is_a_multiple_of(
     stamps: list[str], unit: str
 ) -> None:
-    assert _learn(pd.to_datetime(stamps).tolist(), "datetime") == {"resolution": unit}
+    assert _learn(pd.to_datetime(stamps, format="ISO8601").tolist(), "datetime") == {"resolution": unit}
 
 
 def test_a_tz_aware_local_midnight_column_learns_hour() -> None:
@@ -159,3 +159,15 @@ def test_scrub_nulls_what_the_descriptor_does_not_vouch_for() -> None:
 @pytest.mark.parametrize("bad", ["31337.25", 7, [1], None])
 def test_scrub_replaces_a_non_dict_block(bad: object) -> None:
     assert scrub_cell_format("numeric", bad) is None
+
+
+def test_the_descriptor_lists_exactly_the_members_the_learner_writes() -> None:
+    samples = {
+        "numeric": pd.Series([1.5]),
+        "datetime": pd.Series(pd.to_datetime(["2021-01-01"])),
+        "freetext": pd.Series(["x"]),
+        "categorical": pd.Series(["x"]),
+        "empty": pd.Series([], dtype=object),
+    }
+    written = {kind: set(learn_cell_format(s, kind)) for kind, s in samples.items()}
+    assert written == {kind: set(m) for kind, m in cf.CELL_FORMAT_MEMBERS.items()}

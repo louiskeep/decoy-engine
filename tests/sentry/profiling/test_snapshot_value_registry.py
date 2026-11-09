@@ -52,6 +52,7 @@ def _frame() -> pd.DataFrame:
 
 def _snapshot(**kw: Any) -> dict[str, Any]:
     kw.setdefault("fanout_columns", ["status"])
+    kw.setdefault("cell_format", True)
     return compute_distribution_snapshot(_frame(), joint_columns=_PAIRS, **kw)
 
 
