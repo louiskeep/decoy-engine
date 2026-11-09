@@ -62,6 +62,7 @@ now fails fast.
 """
 
 from decoy_engine.config import Dismissal, PipelineConfig, PreScanConfig, parse_pipeline_config
+from decoy_engine.config._pipeline import is_valid_pipeline_name
 from decoy_engine.context import (
     ExecutionContext,
     Logger,
@@ -193,6 +194,7 @@ from decoy_engine.profiling import (
     ScanSetCore,
     SentinelFlag,
     TableScan,
+    distribution_snapshot_document,
     is_value_sensitive,
     profile_columns,
     profile_document,
@@ -511,6 +513,7 @@ __all__ = [
     "derive_index",
     "derive_outcome",
     "derive_value",
+    "distribution_snapshot_document",
     "emit_fidelity",
     "emit_lineage",
     "emit_quarantine",
@@ -525,6 +528,7 @@ __all__ = [
     "get_default_pool_cache",
     "get_default_registry",
     "is_pre_ga",
+    "is_valid_pipeline_name",
     "is_value_sensitive",
     "job_seed_for_config",
     "keyed_columns_for_config",

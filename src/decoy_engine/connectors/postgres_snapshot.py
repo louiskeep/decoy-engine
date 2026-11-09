@@ -71,7 +71,7 @@ _log = logging.getLogger(__name__)
 # Strict on purpose: unquoted-safe Postgres identifiers. Names needing quoted
 # oddities (spaces, quotes, unicode) are rejected rather than escaped, so the
 # validation boundary and the quoting boundary cannot disagree.
-_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]{0,62}$")
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]{0,62}\Z")
 
 # Alias for the attached database. Fixed, never caller-derived.
 _ATTACH_ALIAS = "decoy_pg_src"
@@ -109,8 +109,8 @@ _PLAIN_TYPES = frozenset(
 )
 _DATE = "date"
 _TIMESTAMPS = frozenset({"timestamp without time zone", "timestamp with time zone"})
-_NUMERIC_RE = re.compile(r"^numeric\((\d+),(\d+)\)$")
-_LEN_SUFFIX_RE = re.compile(r"\(\d+\)$")
+_NUMERIC_RE = re.compile(r"^numeric\((\d+),(\d+)\)\Z")
+_LEN_SUFFIX_RE = re.compile(r"\(\d+\)\Z")
 
 
 class PostgresSnapshotError(PermanentError):

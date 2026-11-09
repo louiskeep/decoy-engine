@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
+from pydantic_core import PydanticCustomError
 
 from decoy_engine.config import S3Source
 
@@ -50,3 +51,28 @@ def test_userinfo_and_query_are_refused_without_echoing_the_value(url: str) -> N
     with pytest.raises(ValidationError) as info:
         S3Source.model_validate(_source(url))
     assert CANARY not in str(info.value)
+
+
+def _chain(exc: BaseException) -> list[BaseException]:
+    seen: list[BaseException] = []
+    pending: list[BaseException | None] = [exc]
+    while pending:
+        cur = pending.pop()
+        if cur is None or cur in seen:
+            continue
+        seen.append(cur)
+        pending += [cur.__cause__, cur.__context__]
+    return seen
+
+
+def test_malformed_port_refusal_keeps_no_chained_value_error() -> None:
+    url = f"https://{CANARY}.example:99999x"
+    with pytest.raises(ValidationError) as info:
+        S3Source.model_validate(_source(url))
+    assert CANARY not in str(info.value)
+    # pydantic drops the chain, so also check the exception the validator itself raises.
+    with pytest.raises(PydanticCustomError) as raised:
+        S3Source._endpoint_is_a_host(url)
+    chain = _chain(raised.value)[1:]  # PydanticCustomError is itself a ValueError subclass
+    assert not [e for e in chain if isinstance(e, ValueError)]
+    assert all(CANARY not in str(e) for e in [*chain, raised.value])

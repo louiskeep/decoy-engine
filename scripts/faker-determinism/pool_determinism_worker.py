@@ -61,7 +61,7 @@ from faker import VERSION as _FAKER_VERSION  # noqa: E402
 from decoy_engine import __version__ as _engine_version  # noqa: E402
 from decoy_engine.generation import _faker_pool  # noqa: E402
 from decoy_engine.generation.pool._runtime_pool_size import DEFAULT_POOL_SIZE  # noqa: E402
-from decoy_engine.generators.derivation import GenDeriveContext  # noqa: E402
+from decoy_engine.generators.derivation import GenDeriveContext, with_table  # noqa: E402
 from decoy_engine.internal.faker_setup import make_faker  # noqa: E402
 
 ENGINE_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -72,6 +72,10 @@ ENGINE_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__
 # candidate the harness has ever certified. Not a job seed a caller can
 # override -- this harness proves determinism for ONE frozen workload.
 _FALLBACK_SEED = 20260918
+
+# Table half of the column identity the seed root mixes in. Changing it reseeds
+# every digest, so it is fixed for the life of the golden.
+FAKER_POOL_PROBE_TABLE = "faker_pool_probe"
 
 # The output-selection sample size. Independent of pool_size (which mirrors
 # production's DEFAULT_POOL_SIZE exactly, since a pool built at a different
@@ -116,7 +120,9 @@ def main() -> None:
         "faker_kwargs": kwargs,
     }
     gen_ctx = GenDeriveContext.for_column(
-        derive_key=None, column_config=col, fallback_seed=_FALLBACK_SEED
+        derive_key=None,
+        column_config=with_table(col, FAKER_POOL_PROBE_TABLE),
+        fallback_seed=_FALLBACK_SEED,
     )
     build_seed = gen_ctx.family_bytes(_faker_pool._BUILD_FAMILY)[:8]
     selection_seed = gen_ctx.family_bytes(_faker_pool._SELECTION_FAMILY)[:8]

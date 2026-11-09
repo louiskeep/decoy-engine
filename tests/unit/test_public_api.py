@@ -119,6 +119,7 @@ def test_all_lists_every_public_name():
         "ValidationResult",
         "profile_columns",
         "profile_document",
+        "distribution_snapshot_document",
         "redact_profile_dict",
         "is_value_sensitive",
         "ColumnProfile",
@@ -310,8 +311,18 @@ def test_all_lists_every_public_name():
         "TableScan",
         "scan_set_to_dict",
         "scan_sources",
+        # PROJECT-LAYOUT E1: the one pipeline-name rule the CLI shares.
+        "is_valid_pipeline_name",
     }
     assert set(decoy_engine.__all__) == expected
+
+
+def test_quality_facade_exports_the_dp_request_check():
+    from decoy_engine import quality
+    from decoy_engine.quality import dp
+
+    assert "check_dp_fit_request" in quality.__all__
+    assert quality.check_dp_fit_request is dp.check_dp_fit_request
 
 
 def test_version_attribute_exists():

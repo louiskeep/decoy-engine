@@ -12,6 +12,7 @@ __all__ = [
     "GENERATE_OPTION_UNKNOWN",
     "GENERATE_OPTION_VALUE_UNKNOWN",
     "GENERATE_WEIGHTS_INVALID",
+    "PIPELINE_NAME_INVALID",
     "VARIABLE_UNKNOWN_SCOPE",
     "VARIABLE_UNRESOLVED",
 ]
@@ -58,4 +59,10 @@ GENERATE_WEIGHTS_INVALID = _d(
     "generate_weights_invalid",
     "Generate column weights must be non-negative numbers with a positive total.",
     since="1.11.0",
+)
+PIPELINE_NAME_INVALID = _d(
+    "pipeline_name_invalid",
+    "Pipeline name must be 1 to 64 letters, digits, dot, dash or underscore, start with a letter or "
+    "digit, not end in a dot and not be a Windows device name.",
+    since="1.12.0",
 )

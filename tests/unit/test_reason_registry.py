@@ -301,3 +301,19 @@ def test_gen_strict_summaries_carry_no_placeholder() -> None:
         spec = reasons.find(namespace, code)
         assert spec is not None
         assert not re.search(r"[{}%]", spec.summary), (namespace, code)
+
+
+def test_fit_redact_code_is_a_registered_plan_error_with_a_pinned_fixture() -> None:
+    """The one 1.11.0 identity: owned by `StatisticalSpecError`, exported under its wire string,
+    and the only entry of its minor fixture."""
+    from decoy_engine import reasons
+
+    spec = reasons.find("plan", "statistical_snapshot_values_redacted")
+    assert spec is not None
+    assert spec.owner == "StatisticalSpecError"
+    assert spec.code == reasons.plan.STATISTICAL_SNAPSHOT_VALUES_REDACTED
+    fixture = _load("reason-manifest-v1.11-fit-redact.json")
+    assert fixture["registry_version"] == "1.11.0"
+    assert [(e["namespace"], e["code"]) for e in fixture["entries"]] == [
+        ("plan", "statistical_snapshot_values_redacted")
+    ]

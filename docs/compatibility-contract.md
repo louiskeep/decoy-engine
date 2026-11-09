@@ -46,13 +46,20 @@ unchanged and duck-typed providers keep working through `secret_providers.prepar
 
 **Pre-GA corrections taken with the file-access policy (A-4 merged with F13, 2026-11-01).** Additive:
 every file-reading or file-writing public entry point listed in `decoy_engine.fileaccess.ENTRY_POINTS`
-takes a keyword-only `file_access: FileAccess | None = None` (`run_pipeline` now has 40 frozen
-parameters: F13's `secret_registry` and `secret_cache_policy`, A-4's `file_access`), and
+takes a keyword-only `file_access: FileAccess | None = None` (`run_pipeline` now has 42 frozen
+parameters: F13's `secret_registry` and `secret_cache_policy`, A-4's `file_access`, and project-layout E2's `quarantine_path`), and
 `keyprovider.key_provider_from_ref(ref, *, key_version: str | None = None, file_access=None) ->
 KeyProvider` is one of them. New registered reasons: `runtime.secret_file_permissions_unsafe` and
 `decoy.file_access_denied`. Breaking, no shim: a `file:` mask secret readable by group or other is
 refused; `env:` and `file:` secrets are never cached even with a positive `SecretCachePolicy` TTL.
 `resolve_mask_secret_ref` stays deleted (F13).
+
+**Pre-GA corrections taken with the project layout (E2, 2026-11-09).** Additive: `run_pipeline(...,
+quarantine_path: str | None = None)` is keyword-only. It replaces `quarantine.output_path` for that run,
+applied after the plan and its config hash are built, so the hash and the caller's dict do not change.
+Anything but `None` or a non-blank `str` raises `ExecutionError` (`invalid_execution_knob`) before any
+source is read. Breaking, no shim: the engine logger no longer writes `logs/decoy_engine.log` when the
+logging config has no `file`; a caller that wants a log file passes `file`.
 
 **Pre-GA correction (main health, 2026-10-31).** `RESERVED_NAMES` of the `when` closed grammar gains `type`
 (additive to the list, breaking for a config whose `when:` references a column named `type`, which now fails
@@ -207,6 +214,16 @@ from the wrong-seed `vault_key_mismatch`. Cross-version unmask is not supported
 and was not supported before F13; F13 makes the failure diagnosable rather than
 opaque.
 
+**Current state (column identity, 2026-11-08, pre-GA):** the generation column
+root now mixes the column identity (table name plus column name) with the
+strategy fingerprint, so columns with identical settings no longer draw the same
+stream. Generated output changes for existing seeds and keys, and renaming a
+column or moving it to another table re-keys it. `SEED_PROTOCOL_VERSION` is
+deliberately NOT bumped: it is shared with the mask path, so a bump would re-key
+all mask output for a generation-only change. Pinned plans are guarded by the
+engine version recorded in their `runtime_identity`, so a plan pinned before this
+change is refused by a newer engine instead of silently regenerating differently.
+
 **Current state (v7, 2026-09-11, pre-GA):** `SEED_PROTOCOL_VERSION` moved 6 -> 7
 (Task 5.2, DE-01 resolution): the `fpe` strategy's cipher, and the `fpe`-branch
 text-mask spans (ZIP, SSN, phone, PAN), now run NIST SP 800-38G FF1 (AES-256)
@@ -324,11 +341,17 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   parameters are keyword-only and additive. `CsvDialect` and `resolve_csv_dialect`
   refuse an incoherent dialect, or a `column_names` that is not a list or tuple of
   strings, with `ConfigError` whose fixed text never echoes a submitted value.
-  `nrows=0` returns the empty frame with the declared columns.
+  `nrows=0` returns the empty frame with the declared columns. The keyword-only
+  `columns` (SCAN-MULTI S1b) parses only the named columns and returns every frame
+  or chunk with exactly them in the order given; a headerless file maps the names
+  onto `column_names`; an unknown or repeated name is a `ValueError` that quotes
+  no name.
   It also includes `scan_sources(sources, *, tables=None, sample_rows=10_000, strategy="head",
   file_access=None)`, `ScanSet`, `TableScan`, `ScanSetCore` and `scan_set_to_dict(scan, *, detail)`
   (SCAN-MULTI S1a, 2026-11): new keyword-only parameters are additive; errors name the table and
-  the cause's class only.
+  the cause's class only. SCAN-MULTI S1b adds the keyword-only `relationships`, `integrity` and
+  `spill_dir`, and `RelationshipFacts` and `ChildFacts` (counts only, in `ScanSet.relationships`
+  and the `relationships` member of `scan-set/v1`).
   It also includes `parse_pipeline_config`, `ConfigProblem` and `ConfigRuleError`
   (VALUE-FREE-ERRORS, 2026-11): `parse_pipeline_config(raw)` raises
   `PipelineConfigError` whose `problems` are `ConfigProblem(code, location, text)`
@@ -623,6 +646,19 @@ this list is non-empty or a relationship has a composite parent key (keyed with
 no single field, so not listed) or a missing or malformed parent, which fails
 safe. `tests/secret_providers/test_keyed_columns.py`
 pins the result with a written-out oracle and the parity rule.
+
+`decoy_engine.is_valid_pipeline_name` and `PipelineConfig.name` joined the public
+surface on 2026-11-09 (PROJECT-LAYOUT E1), additive under §4.1.
+`is_valid_pipeline_name(value)` is the one pipeline-name rule: 1 to 64
+characters from `[A-Za-z0-9_.-]`, first character a letter or digit, no trailing
+dot, not a Windows device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`,
+`LPT1` to `LPT9`, any case, any extension); a non-string is never valid.
+`PipelineConfig.name` is optional and strict: a non-string or a name that fails
+the rule is refused with `config.pipeline_name_invalid` (registry 1.12.0) and
+nothing is coerced. While `name` is unset the config dump and
+`Plan.pipeline_config_hash` are byte-identical to before, and a set `name` is
+excluded from the plan hash because it is data binding, not masking semantics.
+`tests/unit/config/test_pipeline_name.py` pins all of this.
 
 ### 3.5 Disguises
 
