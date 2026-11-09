@@ -64,11 +64,7 @@ now fails fast.
 import logging
 
 # ruff: noqa: E402  (the NullHandler attach must precede every submodule import)
-
-# The one NullHandler attach site. It runs before any submodule import, because those imports
-# build objects that fetch the engine logger. With a handler on the package logger, Python's
-# last-resort handler does not print engine warnings to stderr. `_configure_logger` preserves
-# this handler and never creates one.
+# The one NullHandler attach site; `_configure_logger` preserves it and never creates one.
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 from decoy_engine.config import (
