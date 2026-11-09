@@ -180,6 +180,10 @@ class CellFormat:
     resolution: str | None = None
     blank_count: int = 0
 
+    @property
+    def non_null_cells(self) -> int:
+        return self.row_count - self.null_count
+
 
 def _invalid(column: object, member: str, why: str) -> NoReturn:
     # Lazy: `_spec` imports this module for `CellFormat`. The message names the member, never its value.
