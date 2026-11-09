@@ -351,6 +351,43 @@ def test_forced_out_of_core_refusal_is_a_coded_streaming_refusal(
     assert sink.calls == [] and not target.exists()
 
 
+def test_declared_cast_route_decline_is_a_streaming_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A declared cast the chunked route cannot honour raises `DeclaredCastRouteError` from the
+    complete gate. It is a compatibility decline like `PlanCompileError`: the guarded out-of-core
+    evaluation still runs, and when that declines too the run is `streaming_unavailable`, not the
+    raw route code, with an empty exception chain and no source read or sink write."""
+    from decoy_engine.execution import _chunked
+    from decoy_engine.execution import _pipeline_routing_signals as signals
+    from decoy_engine.execution._errors import DeclaredCastRouteError
+
+    def decline(config: dict[str, Any], *, table: str, **kwargs: Any) -> None:
+        raise DeclaredCastRouteError(
+            code=reasons.route.DECLARED_CAST_ROUTE_UNSUPPORTED, message=rs.CANARY
+        )
+
+    evaluated: list[bool] = []
+
+    def out_of_core_declines(*args: Any, **kwargs: Any) -> tuple[bool, str]:
+        evaluated.append(True)
+        return False, "unsupported_recipe"
+
+    monkeypatch.setattr(_chunked, "check_chunked_compatibility", decline)
+    monkeypatch.setattr(signals, "out_of_core_admission", out_of_core_declines)
+    cfg, lazy, _ = rs.fk_job(tmp_path)
+    sink, target = rs.real_sink(tmp_path)
+    reads = _Reads(monkeypatch, lazy)
+    error = _refusal(cfg, lazy, sink)
+    assert evaluated == [True]
+    assert reasons.route.DECLARED_CAST_ROUTE_UNSUPPORTED in error.message
+    assert "unsupported_recipe" in error.message
+    assert rs.CANARY not in str(error)
+    assert error.__context__ is None and error.__cause__ is None
+    assert reads.calls == []
+    assert sink.calls == [] and not target.exists()
+
+
 def test_execution_fails_closed_when_it_disagrees_with_the_preflight(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

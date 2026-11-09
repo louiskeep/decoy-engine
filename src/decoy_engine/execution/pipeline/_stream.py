@@ -27,7 +27,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from decoy_engine import reasons
-from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._errors import DeclaredCastRouteError, ExecutionError
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.profile._readers import LazySource
 
@@ -79,6 +79,10 @@ def _compat_failure(ctx: PipelineRunContext, mask_tables: list[str]) -> str | No
             check_chunked_compatibility(ctx.config, table=table, registry=ctx.registry)
         except PlanCompileError as exc:
             return f"table {table!r}: {exc.code}: {exc.message}"
+        except DeclaredCastRouteError as exc:
+            # A declared cast the chunked route cannot honour is a compatibility decline like any
+            # other; only the code is kept so the refusal stays value-free.
+            return f"table {table!r}: {exc.code}"
     return None
 
 
