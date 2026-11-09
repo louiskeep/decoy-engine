@@ -235,11 +235,5 @@ def _typed(spec: KindSpec, raw: dict[str, Any], envelope: Any) -> DecodedRecord 
         raise RecordError(reasons.runtime.RECORD_CORRUPT)
     if found[1] > wanted[1]:
         return RecordNeedsNewer(spec.kind, raw["id"], raw["payload_schema"], "payload", raw)
-    failed: tuple[tuple[object, ...], ...] | None = None
-    try:
-        view = model.model_validate(raw["payload"])
-    except ValidationError as exc:
-        failed = _locations(exc, ("payload",))
-    if failed is not None:
-        raise RecordError(reasons.runtime.RECORD_INVALID, failed or ())
+    view = validated(raw["payload"], model, ("payload",))
     return DecodedRecord(raw=raw, envelope=envelope, view=view)

@@ -6,20 +6,25 @@ copied, so the library, the platform importer and the producer cannot drift apar
 
 from __future__ import annotations
 
+from decoy_engine.config._sources import SOURCE_LOCATOR_FIELDS, SOURCE_PATH_FIELDS
 from decoy_engine.profiling.scan_set import SCAN_SET_SCHEMA, ScanSetCore, ScanSetCoreRead
 from decoy_engine.records._payloads import EvidencePayload, SampleRunPayload
 from decoy_engine.records._read_model import read_model_of
 from decoy_engine.records._registry import KindSpec, register_kind
 from decoy_engine.run_result import RUN_RESULT_SCHEMA, RunResult, RunResultRead
 
-# The scan record is value-free by construction (counts, rates, type labels, column names), so it
-# declares no path fields.
+# A scan record holds counts, rates, type labels and column names, plus each table's source
+# descriptor. The descriptor names a file or object, so its path fields come from the config
+# marker registry (a new marker joins here without an edit); a bucket or endpoint cannot be
+# reduced, so they are locators and export lists the record as unstripped.
 SCAN_SET = register_kind(
     KindSpec(
         kind="scan-set",
         payload_schema=SCAN_SET_SCHEMA,
         write_model=ScanSetCore,
         read_model=ScanSetCoreRead,
+        path_fields=tuple(f"/payload/tables/*/descriptor/{f}" for f in SOURCE_PATH_FIELDS),
+        locator_fields=tuple(f"/payload/tables/*/descriptor/{f}" for f in SOURCE_LOCATOR_FIELDS),
         diff_rule="scan-set",
         canary_fixture="scan-set",
     )

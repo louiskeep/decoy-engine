@@ -139,6 +139,25 @@ def _reduce(node: Any, segments: list[str]) -> bool:
     return any([_reduce(child, rest) for child in children])
 
 
+def _holds(node: Any, segments: list[str]) -> bool:
+    """Whether the pointer ``segments`` reaches a value that is set (not ``None``)."""
+    head, rest = segments[0], segments[1:]
+    if head == "*":
+        if isinstance(node, list):
+            children: list[Any] = list(node)
+        elif isinstance(node, dict):
+            children = list(node.values())
+        else:
+            return False
+    elif isinstance(node, dict) and head in node:
+        children = [node[head]]
+    else:
+        return False
+    if not rest:
+        return any(child is not None for child in children)
+    return any([_holds(child, rest) for child in children])
+
+
 def _strip(spec: KindSpec, payload: dict[str, Any]) -> tuple[dict[str, Any], bool] | None:
     """The payload with its declared path fields reduced, or ``None`` when this version cannot
     tell which fields are paths (a payload with fields it does not know, or another shape)."""
@@ -169,7 +188,8 @@ def export_lines(
     Every envelope's links are rewritten through the old-to-new id map built so far and its id is
     recomputed; a record whose links and payload are both unchanged keeps its id and gets
     ``source_id: null``. A payload this version cannot fully read is copied byte for byte and
-    listed under ``unstripped``. A link to a record outside the export keeps its id and is counted.
+    listed under ``unstripped``, as is a payload that holds a remote locator (a bucket or endpoint)
+    the path rule cannot reduce. A link to a record outside the export keeps its id and is counted.
 
     Every envelope in ``records`` must be a v1 envelope: this function refuses a later major with
     ``record_corrupt`` because it cannot verify or rewrite one, so callers filter out
@@ -210,7 +230,13 @@ def export_lines(
             changed = stripped_any = True
         if changed:
             rec["id"] = record_id(rec)
-        if not keep_paths and reduced is None:
+        locator = (
+            not keep_paths
+            and reduced is not None
+            and spec is not None
+            and any(_holds(rec["payload"], p.split("/")[2:]) for p in spec.locator_fields)
+        )
+        if not keep_paths and (reduced is None or locator):
             unstripped.append({"id": rec["id"], "source_id": raw["id"] if changed else None})
         id_map[raw["id"]] = rec["id"]
         lines.append({"type": "record", "source_id": raw["id"] if changed else None, "record": rec})
