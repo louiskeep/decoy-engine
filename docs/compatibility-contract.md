@@ -324,11 +324,17 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   parameters are keyword-only and additive. `CsvDialect` and `resolve_csv_dialect`
   refuse an incoherent dialect, or a `column_names` that is not a list or tuple of
   strings, with `ConfigError` whose fixed text never echoes a submitted value.
-  `nrows=0` returns the empty frame with the declared columns.
+  `nrows=0` returns the empty frame with the declared columns. The keyword-only
+  `columns` (SCAN-MULTI S1b) parses only the named columns and returns every frame
+  or chunk with exactly them in the order given; a headerless file maps the names
+  onto `column_names`; an unknown or repeated name is a `ValueError` that quotes
+  no name.
   It also includes `scan_sources(sources, *, tables=None, sample_rows=10_000, strategy="head",
   file_access=None)`, `ScanSet`, `TableScan`, `ScanSetCore` and `scan_set_to_dict(scan, *, detail)`
   (SCAN-MULTI S1a, 2026-11): new keyword-only parameters are additive; errors name the table and
-  the cause's class only.
+  the cause's class only. SCAN-MULTI S1b adds the keyword-only `relationships`, `integrity` and
+  `spill_dir`, and `RelationshipFacts` and `ChildFacts` (counts only, in `ScanSet.relationships`
+  and the `relationships` member of `scan-set/v1`).
   It also includes `parse_pipeline_config`, `ConfigProblem` and `ConfigRuleError`
   (VALUE-FREE-ERRORS, 2026-11): `parse_pipeline_config(raw)` raises
   `PipelineConfigError` whose `problems` are `ConfigProblem(code, location, text)`

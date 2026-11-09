@@ -18,6 +18,7 @@ Pre-scan phase: the profiling entrypoint is `profile_columns`, returning a
 `ColumnProfile`. Depends on `decoy_engine.detection`.
 """
 
+from decoy_engine.profiling._scan_integrity import ChildFacts, RelationshipFacts
 from decoy_engine.profiling._snapshot_values import distribution_snapshot_document
 from decoy_engine.profiling._value_redaction import (
     POLICY_RAW,
@@ -60,9 +61,11 @@ __all__ = [
     "REDACTED_COLUMNS_KEY",
     "SCAN_SET_SCHEMA",
     "VALUE_POLICY_KEY",
+    "ChildFacts",
     "ColumnProfile",
     "Distribution",
     "FieldStats",
+    "RelationshipFacts",
     "ScanSet",
     "ScanSetCore",
     "ScanSetCoreRead",
