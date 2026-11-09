@@ -311,6 +311,8 @@ def test_all_lists_every_public_name():
         "TableScan",
         "scan_set_to_dict",
         "scan_sources",
+        # PROJECT-LAYOUT E1: the one pipeline-name rule the CLI shares.
+        "is_valid_pipeline_name",
     }
     assert set(decoy_engine.__all__) == expected
 

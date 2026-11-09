@@ -647,6 +647,19 @@ no single field, so not listed) or a missing or malformed parent, which fails
 safe. `tests/secret_providers/test_keyed_columns.py`
 pins the result with a written-out oracle and the parity rule.
 
+`decoy_engine.is_valid_pipeline_name` and `PipelineConfig.name` joined the public
+surface on 2026-11-09 (PROJECT-LAYOUT E1), additive under §4.1.
+`is_valid_pipeline_name(value)` is the one pipeline-name rule: 1 to 64
+characters from `[A-Za-z0-9_.-]`, first character a letter or digit, no trailing
+dot, not a Windows device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`,
+`LPT1` to `LPT9`, any case, any extension); a non-string is never valid.
+`PipelineConfig.name` is optional and strict: a non-string or a name that fails
+the rule is refused with `config.pipeline_name_invalid` (registry 1.12.0) and
+nothing is coerced. While `name` is unset the config dump and
+`Plan.pipeline_config_hash` are byte-identical to before, and a set `name` is
+excluded from the plan hash because it is data binding, not masking semantics.
+`tests/unit/config/test_pipeline_name.py` pins all of this.
+
 ### 3.5 Disguises
 
 Disguises are dated/versioned specs (`disguises/`, `disguises/loader.py`,
