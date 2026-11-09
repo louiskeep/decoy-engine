@@ -9,7 +9,9 @@ synthetic values from it.
 """
 
 from decoy_engine.generation.statistical._cell_format import (
+    CellFormat,
     add_cell_format,
+    cell_format_arrow_type,
     cell_format_member_ok,
     learn_cell_format,
     scrub_cell_format,
@@ -30,11 +32,13 @@ from decoy_engine.generation.statistical._spec import (
 )
 
 __all__ = [
+    "CellFormat",
     "FanoutSpec",
     "StatisticalSpec",
     "StatisticalSpecError",
     "add_cell_format",
     "add_fanout",
+    "cell_format_arrow_type",
     "cell_format_member_ok",
     "fanout_spec_from_snapshot",
     "fitted_reference_values",
