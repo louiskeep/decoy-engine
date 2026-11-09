@@ -151,6 +151,7 @@ def distribution_snapshot_document(
     categorical_top_k: int = DEFAULT_CATEGORICAL_TOP_K,
     contingency_top_k: int = DEFAULT_CONTINGENCY_TOP_K,
     high_cardinality_columns: Collection[str] = (),
+    fanout_columns: Collection[str] = (),
     profile_row_cap: int | None = None,
 ) -> dict[str, Any]:
     """The snapshot JSON to write for `df`: the raw snapshot with sensitive columns' values withheld.
@@ -175,6 +176,7 @@ def distribution_snapshot_document(
         categorical_top_k=categorical_top_k,
         contingency_top_k=contingency_top_k,
         high_cardinality_columns=high_cardinality_columns,
+        fanout_columns=fanout_columns,
     )
     profiled = df if profile_row_cap is None else df.head(profile_row_cap)
     profile = profile_columns(profiled, source_label)

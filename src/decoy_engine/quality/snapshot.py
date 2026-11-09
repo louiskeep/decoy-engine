@@ -198,7 +198,7 @@ def compute_distribution_snapshot(
             categorical_top_k=categorical_top_k,
             high_cardinality=str(col) in high_cardinality_set,
         )
-    if fanout_columns:
+    if isinstance(fanout_columns, (str, bytes)) or len(fanout_columns) > 0:
         # Lazy: `generation` imports `quality`, so a top-level import would cycle.
         from decoy_engine.generation.statistical import add_fanout
 

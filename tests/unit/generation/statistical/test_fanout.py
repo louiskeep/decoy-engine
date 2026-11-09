@@ -301,6 +301,15 @@ def test_decoder_refuses_malformed(block: object) -> None:
     assert exc.value.code == reasons.plan.REFERENCE_FANOUT_INVALID
 
 
+def test_decoder_refusal_carries_no_chained_exception() -> None:
+    with pytest.raises(StatisticalSpecError) as exc:
+        fanout_spec_from_snapshot(
+            _snap({"rows": "x", "keys": 8, "degrees": []}), "patient_id", digest=DIGEST
+        )
+    assert exc.value.__cause__ is None
+    assert exc.value.__context__ is None
+
+
 def test_decoder_messages_never_echo_values() -> None:
     bad = [
         {"rows": CANARY, "keys": 8, "degrees": GOOD["degrees"]},

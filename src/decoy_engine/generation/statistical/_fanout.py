@@ -113,8 +113,9 @@ def add_fanout(
                 "check the spelling against the source columns."
             ),
         )
+    labels = {str(c): c for c in df.columns}
     for name in sorted({str(n) for n in fanout_columns}):
-        columns[name][_BLOCK_KEY] = fanout_stats(df[name])
+        columns[name][_BLOCK_KEY] = fanout_stats(df[labels[name]])
 
 
 # ── reader ───────────────────────────────────────────────────────────────────

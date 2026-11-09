@@ -573,3 +573,37 @@ def test_the_profile_row_cap_matches_a_scan_of_the_head() -> None:
 def test_the_profile_row_cap_must_be_a_positive_int(cap: Any, error: type[Exception]) -> None:
     with pytest.raises(error, match="profile_row_cap"):
         distribution_snapshot_document(_qa_frame(), profile_row_cap=cap)
+
+
+# AT-9 (QA-FK-FANOUT)
+
+
+def _fanout_frame() -> pd.DataFrame:
+    """Ten patients with 1..4 child rows each, so the degree histogram has four entries."""
+    degrees = [1, 1, 2, 2, 2, 3, 3, 4, 4, 4]
+    return pd.DataFrame(
+        {
+            "patient_id": [f"PT-{80210 + 37 * i}" for i, d in enumerate(degrees) for _ in range(d)],
+        }
+    )
+
+
+def test_the_fanout_block_survives_redaction_on_a_sensitive_column_as_counts_only() -> None:
+    df = _fanout_frame()
+    raw = compute_distribution_snapshot(df, fanout_columns=["patient_id"])
+    doc = distribution_snapshot_document(df, fanout_columns=["patient_id"])
+    assert "patient_id" in doc["redacted_columns"]
+    block = _col(doc, "patient_id")["fanout"]
+    assert block == _col(raw, "patient_id")["fanout"]
+    assert block == {"rows": 26, "keys": 10, "degrees": [[1, 2], [2, 3], [3, 2], [4, 3]]}
+    assert all(type(n) is int for n in (block["rows"], block["keys"]))
+    assert all(type(n) is int for pair in block["degrees"] for n in pair)
+    assert _leaks(doc, [str(v) for v in df["patient_id"]]) == []
+
+
+def test_a_redacted_snapshot_with_fanout_still_decodes() -> None:
+    from decoy_engine.generation.statistical import fanout_spec_from_snapshot
+
+    doc = distribution_snapshot_document(_fanout_frame(), fanout_columns=["patient_id"])
+    spec = fanout_spec_from_snapshot(doc, "patient_id", digest="0" * 64)
+    assert (spec.rows, spec.keys) == (26, 10)
