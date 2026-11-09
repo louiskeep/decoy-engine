@@ -322,9 +322,9 @@ The job's `sequential_categorical` disposition says which columns ran where.
 ### shuffle
 
 Permutes the non-null values within a column, preserving the multiset and the
-null positions. Deterministic mode seeds the permutation from the namespace, so
-it is byte-stable across runs; non-deterministic mode differs. Needs a
-namespace in deterministic mode.
+null positions. Deterministic mode seeds the permutation from the namespace and
+needs one. Non-deterministic mode (the default) seeds it from the job seed and
+the table and column names. Both draw from the mask key, so both are byte-stable across runs.
 
 Use it to break the row-to-value linkage while keeping the column's exact value
 distribution.

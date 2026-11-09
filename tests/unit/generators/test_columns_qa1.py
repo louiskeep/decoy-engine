@@ -28,7 +28,7 @@ import pandas as pd
 import pytest
 
 from decoy_engine.generators.columns import ColumnGenerator
-from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.generators.derivation import GenDeriveContext, with_table
 
 
 class TestQA1H6RngIsolation:
@@ -133,7 +133,7 @@ class TestQA1M18DeriveKeyRaises:
         with pytest.raises(RuntimeError, match="derive_key failed"):
             GenDeriveContext.for_column(
                 derive_key=_boom,
-                column_config=col,
+                column_config=with_table(col, ""),
                 fallback_seed=42,
             )
 

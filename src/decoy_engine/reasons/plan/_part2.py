@@ -136,7 +136,7 @@ DP_GENERATE_ALLOW_REAL_CATEGORIES_UNSUPPORTED = _d(
 DP_GENERATE_FITTED_FANOUT_UNSUPPORTED = _d(
     "dp_generate_fitted_fanout_unsupported",
     "DP generate fitted fan-out unsupported.",
-    since="1.10.0",
+    since="1.12.0",
 )
 DP_GENERATE_HIGH_CARDINALITY_UNSUPPORTED = _d(
     "dp_generate_high_cardinality_unsupported", "DP generate high cardinality unsupported."
@@ -252,16 +252,13 @@ POOL_CAPACITY_PRE_FLIGHT_UNIQUE = _d(
 )
 POOL_SIZE_LOCATION_CONFLICT = _d("pool_size_location_conflict", "Pool size location conflict.")
 REFERENCE_FANOUT_CONFLICT = _d(
-    "reference_fanout_conflict", "Reference fan-out conflict.", since="1.10.0"
+    "reference_fanout_conflict", "Reference fan-out conflict.", since="1.12.0"
 )
 REFERENCE_FANOUT_INVALID = _d(
-    "reference_fanout_invalid", "Reference fan-out invalid.", since="1.10.0"
+    "reference_fanout_invalid", "Reference fan-out invalid.", since="1.12.0"
 )
 REFERENCE_FANOUT_MISSING = _d(
-    "reference_fanout_missing", "Reference fan-out missing.", since="1.10.0"
-)
-REFERENCE_PARENT_POOL_EMPTY = _d(
-    "reference_parent_pool_empty", "Reference parent pool empty.", since="1.10.0"
+    "reference_fanout_missing", "Reference fan-out missing.", since="1.12.0"
 )
 SEED_NOT_NUMERIC = _d("seed_not_numeric", "Seed not numeric.")
 SEED_OVERFLOW = _d("seed_overflow", "Seed overflow.")
@@ -322,6 +319,9 @@ WINDOWED_DATE_MISSING_ANCHOR_REF = _d(
 
 _d = _catalog.plan("StatisticalSpecError")
 
+REFERENCE_PARENT_POOL_EMPTY = _d(
+    "reference_parent_pool_empty", "Reference parent pool empty.", since="1.12.0"
+)
 STATISTICAL_ALLOW_REAL_CATEGORIES_INVALID_TYPE = _d(
     "statistical_allow_real_categories_invalid_type",
     "Statistical allow real categories invalid type.",

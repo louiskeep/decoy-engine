@@ -252,7 +252,7 @@ FK_FANOUT_CODES = [
     ("plan", "reference_fanout_missing", "PlanCompileError"),
     ("plan", "reference_fanout_invalid", "PlanCompileError"),
     ("plan", "reference_fanout_conflict", "PlanCompileError"),
-    ("plan", "reference_parent_pool_empty", "PlanCompileError"),
+    ("plan", "reference_parent_pool_empty", "StatisticalSpecError"),
     ("plan", "dp_generate_fitted_fanout_unsupported", "PlanCompileError"),
 ]
 
@@ -268,12 +268,28 @@ def test_fk_fanout_codes_are_registered_with_their_owner(
     spec = reasons.find(namespace, code)
     assert spec is not None
     assert spec.owner == owner
-    assert spec.since == "1.10.0"
+    assert spec.since == "1.12.0"
     assert getattr(getattr(reasons, namespace), code.upper()) == code
 
 
 def test_fk_fanout_minor_has_one_fixture_with_exactly_its_identities() -> None:
-    pinned = _load("reason-manifest-v1.10-fk-fanout.json")
+    pinned = _load("reason-manifest-v1.12-fk-fanout.json")
     got = sorted((e["namespace"], e["code"]) for e in pinned["entries"])
     assert got == sorted((ns, c) for ns, c, _ in FK_FANOUT_CODES)
-    assert pinned["registry_version"] == "1.10.0"
+    assert pinned["registry_version"] == "1.12.0"
+
+
+def test_fit_redact_code_is_a_registered_plan_error_with_a_pinned_fixture() -> None:
+    """The one 1.11.0 identity: owned by `StatisticalSpecError`, exported under its wire string,
+    and the only entry of its minor fixture."""
+    from decoy_engine import reasons
+
+    spec = reasons.find("plan", "statistical_snapshot_values_redacted")
+    assert spec is not None
+    assert spec.owner == "StatisticalSpecError"
+    assert spec.code == reasons.plan.STATISTICAL_SNAPSHOT_VALUES_REDACTED
+    fixture = _load("reason-manifest-v1.11-fit-redact.json")
+    assert fixture["registry_version"] == "1.11.0"
+    assert [(e["namespace"], e["code"]) for e in fixture["entries"]] == [
+        ("plan", "statistical_snapshot_values_redacted")
+    ]

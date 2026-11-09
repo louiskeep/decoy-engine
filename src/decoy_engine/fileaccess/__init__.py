@@ -87,6 +87,7 @@ ENTRY_POINTS: tuple[str, ...] = (
     "decoy_engine.profile._fixed_width_writer.write_fixed_width",
     "decoy_engine.profile._source.profile_source",
     "decoy_engine.profiling.profiler.profile_columns",
+    "decoy_engine.profiling.scan_set.scan_sources",
     "decoy_engine.quarantine.apply_quarantine",
     "decoy_engine.reference_tables._loader.load_table",
     "decoy_engine.subset._api.plan_subset",

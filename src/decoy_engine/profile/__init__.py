@@ -21,6 +21,7 @@ hash-scope decision (resolution of B1 in the Dennis review).
 
 from __future__ import annotations
 
+from decoy_engine.profile._csv_reader import CsvDialect, read_csv_source, resolve_csv_dialect
 from decoy_engine.profile._hash import profile_hash
 from decoy_engine.profile._readers import (
     LazySource,
@@ -41,6 +42,7 @@ from decoy_engine.profile._types import (
 
 __all__ = [
     "ColumnProfile",
+    "CsvDialect",
     "LazySource",
     "PIIClass",
     "Profile",
@@ -54,4 +56,6 @@ __all__ = [
     "profile_hash",
     "profile_source",
     "profile_to_json",
+    "read_csv_source",
+    "resolve_csv_dialect",
 ]
