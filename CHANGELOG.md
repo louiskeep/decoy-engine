@@ -9,6 +9,20 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (fitted generation keeps nulls, blanks, precision and resolution, GEN-FIT-SHAPE E2, 2026-11-09)
+
+A `type: statistical` column whose snapshot carries a `cell_format` block (every `decoy fit` after E1)
+now reproduces the source shape. Generated nulls follow the source null rate unless the column sets
+`null_probability`, which then owns the nulls (`0` included). A freetext column keeps its blank fraction
+and never emits an empty string otherwise. Numbers are rounded to the source decimal places, and a whole
+number column comes out as `int`. Datetimes are floored to the source resolution; day resolution emits
+`datetime.date` (Parquet `date32`). An all-null source column (kind `empty`) generates all nulls instead of
+being refused. A fitted column's Arrow type now comes from its spec, so an all-null window keeps it.
+`generate_rows` also stops failing on a column of `null` type when it meters bytes. A snapshot without
+the block, every DP snapshot included, generates byte-identical output. The malformed-block refusal is
+`plan.statistical_cell_format_invalid`. The `gen.statistical_per_row` draw-site entry is re-pinned: the
+fitted path adds a blank draw and a null draw after the value draw.
+
 ### Added (fitted cell format in snapshots, GEN-FIT-SHAPE E1, 2026-11-09)
 
 `compute_distribution_snapshot(..., cell_format=True)` adds an optional `cell_format` block to each

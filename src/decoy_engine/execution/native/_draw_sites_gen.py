@@ -122,10 +122,18 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
         entropy_root="job_seed",
         seed_derivation="rng.seed(col_seed + i)  # one random.Random reseeded per row",
         api_operation="random.Random reseeded per row; .random / .choices / .randrange",
-        call_shape="per row: rng.seed(col_seed + i); inverse-CDF / weighted draw",
+        call_shape=(
+            "per row: rng.seed(col_seed + i); [freetext blank draw when blank_count > 0]; "
+            "inverse-CDF / weighted draw; round or floor to the fitted cell format; "
+            "[null draw when the snapshot carries cell_format and null_probability is unset]"
+        ),
         consumes_variable_draws=True,
         identity="row_index",
-        null_draw_behavior="every row draws; sampler emits a value for each row",
+        null_draw_behavior=(
+            "with a fitted cell_format: one rng.random() after the value draw, below "
+            "null_count/row_count gives None; kind empty draws nothing and emits None. "
+            "Without cell_format every row draws and emits a value."
+        ),
         partitionable=True,
         config_fingerprint_source="StatisticalSpec (snapshot_digest-pinned) + col_seed",
         provider_version="CPython Mersenne Twister (no numpy; bit-stable inverse-CDF)",

@@ -42,6 +42,13 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from decoy_engine import reasons
+from decoy_engine.generation.statistical._cell_format import (
+    CellFormat,
+    emits_int,
+    floor_datetime,
+    format_numeric,
+    is_integer_dtype,
+)
 from decoy_engine.generation.statistical._spec import (
     OTHER_TOKEN,
     StatisticalSpec,
@@ -146,8 +153,30 @@ def _cumulative(counts: list[float]) -> list[float]:
     return out
 
 
-def _is_integer_dtype(dtype: str) -> bool:
-    return dtype.lstrip("uU").startswith("int") or dtype.startswith("Int")
+_is_integer_dtype = is_integer_dtype
+
+
+def _null_rate(fmt: CellFormat | None) -> float:
+    """Per-row null probability the sampler owns; 0 means no null draw is made at all."""
+    if fmt is None or not fmt.apply_nulls or fmt.null_count == 0 or fmt.row_count == 0:
+        return 0.0
+    return fmt.null_count / fmt.row_count
+
+
+def freetext_tables(spec: StatisticalSpec) -> tuple[list[float], list[float], list[float] | None]:
+    """Length edges, counts and cumulative counts of the NON-blank cells of a freetext column.
+
+    The blank cells sit in the first length bin; they are drawn separately, so they come off it
+    here. The one builder serves the sampler and window admission. The cumulative table is None
+    when every non-null cell was blank, which the sampler answers with "" rather than a length.
+    """
+    edges = [float(e) for e in spec.stats.get("length_bin_edges") or []]
+    counts = [float(c) for c in spec.stats.get("length_bin_counts") or []]
+    blanks = spec.cell_format.blank_count if spec.cell_format else 0
+    if blanks and counts:
+        counts[0] -= blanks
+    cum = _cumulative(counts)
+    return edges, counts, (cum if cum and cum[-1] > 0 else None)
 
 
 def _positive_weight_only(values: list[Any], weights: list[float]) -> tuple[list[Any], list[float]]:
@@ -260,7 +289,12 @@ def sample_column(
             ),
         )
 
+    if spec.kind == "empty":  # an all-null source column: nothing to seed or draw
+        return [None] * n
+
     rng = random.Random()
+    fmt = spec.cell_format
+    null_rate = _null_rate(fmt)
 
     if spec.kind == "numeric":
         edges = [float(e) for e in spec.stats.get("bin_edges") or []]
@@ -274,16 +308,19 @@ def sample_column(
                 ),
             )
         cum = _cumulative(counts)
-        as_int = _is_integer_dtype(spec.dtype)
+        as_int = emits_int(spec)
         lo_bound, hi_bound = edges[0], edges[-1]
         out: list[Any] = []
         for i in range(n):
             rng.seed(col_seed + start + i)
             x = _numeric_row(rng, edges, cum)
-            if as_int:
-                out.append(int(min(max(round(x), lo_bound), hi_bound)))
+            if fmt is not None:
+                value: Any = format_numeric(x, fmt, lo_bound, hi_bound, as_int=as_int)
+            elif as_int:
+                value = int(min(max(round(x), lo_bound), hi_bound))
             else:
-                out.append(x)
+                value = x
+            out.append(None if null_rate and rng.random() < null_rate else value)
         return out
 
     if spec.kind == "categorical":
@@ -321,7 +358,8 @@ def sample_column(
             if spec.condition_on is not None and parent_values is not None:
                 parent = parent_values[i] if i < len(parent_values) else None
                 table = conditional.get(str(parent), (values, weights))
-            out.append(rng.choices(table[0], weights=table[1], k=1)[0])
+            value = rng.choices(table[0], weights=table[1], k=1)[0]
+            out.append(None if null_rate and rng.random() < null_rate else value)
         return out
 
     if spec.kind == "datetime":
@@ -356,12 +394,13 @@ def sample_column(
             year = rng.choices(years, weights=weights, k=1)[0]
             year_start = datetime(year, 1, 1)
             year_seconds = (datetime(year + 1, 1, 1) - year_start).total_seconds()
-            ts = year_start + timedelta(seconds=rng.random() * year_seconds)
-            out.append(min(max(ts, lo), hi))
+            ts = min(max(year_start + timedelta(seconds=rng.random() * year_seconds), lo), hi)
+            value = floor_datetime(ts, fmt.resolution, lo) if fmt and fmt.resolution else ts
+            out.append(None if null_rate and rng.random() < null_rate else value)
         return out
 
     if spec.kind == "freetext":
-        edges = [float(e) for e in spec.stats.get("length_bin_edges") or []]
+        edges, _, length_cum = freetext_tables(spec)
         counts = [float(c) for c in spec.stats.get("length_bin_counts") or []]
         if len(edges) < 2 or len(counts) != len(edges) - 1 or sum(counts) <= 0:
             raise StatisticalSpecError(
@@ -372,13 +411,19 @@ def sample_column(
                     "Refit, or use a larger epsilon if the snapshot was DP-noised."
                 ),
             )
-        cum = _cumulative(counts)
         lo_len, hi_len = int(edges[0]), int(edges[-1])
+        blank_share = fmt.blank_count / (fmt.row_count - fmt.null_count) if fmt else 0.0
+        # A fitted column's non-blank cell is never empty: the blanks were drawn apart from it.
+        min_len = max(lo_len, 1) if fmt else lo_len
         out = []
         for i in range(n):
             rng.seed(col_seed + start + i)
-            target = int(min(max(round(_numeric_row(rng, edges, cum)), lo_len), hi_len))
-            out.append(_lorem_text(rng, target))
+            if (blank_share and rng.random() < blank_share) or length_cum is None:
+                value = ""
+            else:
+                target = int(min(max(round(_numeric_row(rng, edges, length_cum)), min_len), hi_len))
+                value = _lorem_text(rng, target)
+            out.append(None if null_rate and rng.random() < null_rate else value)
         return out
 
     raise StatisticalSpecError(  # load_spec already rejects; defensive only

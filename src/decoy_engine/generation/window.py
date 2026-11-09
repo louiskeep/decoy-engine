@@ -35,6 +35,7 @@ import pyarrow.compute as pc
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine.fileaccess import FileAccess
+from decoy_engine.generation._statistical_column import arrow_table
 from decoy_engine.generation._window_admission import (
     CODE_NOT_CLASS_A,
     CODE_TIMEOUT,
@@ -233,6 +234,8 @@ def _row_bytes(tbl: pa.Table) -> np.ndarray:
             sizes = pc.binary_length(column)  # type: ignore[attr-defined, unused-ignore]
             lengths = sizes.fill_null(0).to_numpy(zero_copy_only=False)
             total += lengths.astype(np.int64) + 4
+        elif pa.types.is_null(column.type):  # `bit_width` raises on the null type, so test it first
+            total += 8
         else:
             total += max(column.type.bit_width // 8, 1) if hasattr(column.type, "bit_width") else 8
     return total
@@ -308,6 +311,10 @@ def generate_rows(
         specs=specs,
     )
     names = [c["name"] for c in cols]
+
+    def typed(data: dict[str, list[Any]]) -> pa.Table:
+        return arrow_table(data, table_name=table, statistical_specs=specs)
+
     acc: dict[str, list[Any]] = {n: [] for n in names}
     emitted = used = 0
     capped = False
@@ -323,7 +330,7 @@ def generate_rows(
             window[name] = draws[name](offset + done, size, window)
         keep = size
         if budget_bytes is not None:
-            running = np.cumsum(_row_bytes(pa.table(window)))
+            running = np.cumsum(_row_bytes(typed(window)))
             keep = int(np.searchsorted(running, budget_bytes - used, side="right"))
             capped = keep < size
             used += int(running[keep - 1]) if keep else 0
@@ -337,7 +344,7 @@ def generate_rows(
         raise GenerationWindowTimeoutError(
             code=CODE_TIMEOUT, message=f"deadline of {deadline_s}s passed after {emitted} rows"
         )
-    result = pa.table(acc) if emitted else pa.table({n: pa.array([], pa.null()) for n in names})
+    result = typed(acc) if emitted else typed({n: [] for n in names})
     return GeneratedWindow(
         result,
         offset,

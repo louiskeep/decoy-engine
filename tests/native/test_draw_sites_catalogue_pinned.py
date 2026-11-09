@@ -48,7 +48,8 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
 
 # Re-pinned at the GEN-C1 main merge: carries the shuffle and derive_context re-pins plus the moved gen call sites.
 # Re-pinned 2026-11-09: gen.reference records the fitted fan-out shuffles on its stream.
-_CATALOGUE_DIGEST = "fef21ab282eadeaf130507354945b19d0a74a55efe6efebd671b4213a6b00ee1"
+# Re-pinned 2026-11-09: gen.statistical_per_row records the fitted cell format draws.
+_CATALOGUE_DIGEST = "d6dbf6aeef7bfd2351e99c2ac22b2add62b91ffe5660128d91e1855942cdccb3"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -109,7 +110,8 @@ _ENTRY_DIGESTS = [
     # gen.reference re-pinned 2026-11-09: the fan-out allocator is a mirror call site.
     "9a090ccc3985230c304646f2192066f37fbcb796fa3e5f28917a1df151410149",
     "22ddc02bdf5fbcd992e9c621d629885b7c036e872f7f71b90f73fc3fa4f2023d",
-    "d45ba5c6dc53660b4cf3baa43e2faff146d2e4f91e0acd7fd977f731f3b05fe7",
+    # gen.statistical_per_row re-pinned 2026-11-09: fitted cell_format adds the blank and null draws.
+    "e4ca36f5c5bfef93d57ebd502d2d24db01dac1f576643e83291f9a589c76f3c9",
     "dd5d6269da3bf5a40df6a7257d12ea39b6d752df3683aae258197accb07cdf7d",
     "fa2fd07097a3ed68edb71e46b40c43e0d697b50cf784b740b49c180bcae2e5d2",
     "451e4aa4bcb7f23e437468f4e692768c4571e4defb8a081d879be0eb428a1308",
