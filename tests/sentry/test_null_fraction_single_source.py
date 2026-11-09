@@ -14,12 +14,6 @@ SRC = Path(__file__).parents[2] / "src" / "decoy_engine"
 
 OWNER = ("quality/diagnostic.py", "snapshot_null_fraction")
 
-# Exact (path, function) sites that divide beside the counts without computing a null rate.
-ALLOWED: dict[tuple[str, str], str] = {
-    ("generation/statistical/_sample.py", "sample_column"): (
-        "blank_count / non-null cells is the blank share, not the null rate"
-    ),
-}
 _COUNTS = frozenset({"null_count", "non_null_count"})
 _TOKENS = _COUNTS | {"row_count"}
 
@@ -37,25 +31,50 @@ def _tokens(node: ast.AST) -> set[str]:
     return found
 
 
-def _functions(tree: ast.AST) -> list[ast.AST]:
-    funcs: list[ast.AST] = [
-        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
-    ]
-    return funcs or [tree]
+def _tokens_here(node: ast.AST) -> set[str]:
+    """Tokens a single node carries itself (the scope walk already visits every node)."""
+    if isinstance(node, ast.Constant) and node.value in _TOKENS:
+        return {str(node.value)}
+    if isinstance(node, ast.Attribute) and node.attr in _TOKENS:
+        return {node.attr}
+    return set()
+
+
+def _own_nodes(root: ast.AST) -> list[ast.AST]:
+    """Nodes of one scope: a function body, or the module/class level without the functions."""
+    out: list[ast.AST] = []
+    stack = list(ast.iter_child_nodes(root))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        out.append(node)
+        stack.extend(ast.iter_child_nodes(node))
+    return out
+
+
+def _scopes(tree: ast.Module) -> list[tuple[str, list[ast.AST]]]:
+    """Every function (nested ones too) and the module scope, each with only its own nodes,
+    so module-level arithmetic is scanned even when the file also defines functions."""
+    scopes: list[tuple[str, list[ast.AST]]] = [("<module>", _own_nodes(tree))]
+    for n in ast.walk(tree):
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef):
+            scopes.append((n.name, _own_nodes(n)))
+    return scopes
 
 
 def violations(relative: str, source: str) -> list[str]:
-    """Rate arithmetic outside the owner: a sum over both counts, or a division in a function
+    """Rate arithmetic outside the owner: a sum over both counts, or a division in a scope
     that reads `null_count` beside `non_null_count` or `row_count`."""
-    tree = ast.parse(source)
     out: list[str] = []
-    for func in _functions(tree):
-        name = getattr(func, "name", "<module>")
-        if (relative, name) == OWNER or (relative, name) in ALLOWED:
+    for name, nodes in _scopes(ast.parse(source)):
+        if (relative, name) == OWNER:
             continue
-        seen = _tokens(func)
+        seen: set[str] = set()
+        for node in nodes:
+            seen |= _tokens_here(node)
         rate_inputs = "null_count" in seen and bool(seen & {"non_null_count", "row_count"})
-        for node in ast.walk(func):
+        for node in nodes:
             if not isinstance(node, ast.BinOp):
                 continue
             if isinstance(node.op, ast.Add) and _tokens(node) >= _COUNTS:
@@ -121,3 +140,27 @@ def test_seeded_attribute_form_is_detected() -> None:
 def test_seeded_attribute_division_by_row_count_is_detected() -> None:
     seeded = "def rate(fmt):\n    return fmt.null_count / fmt.row_count\n"
     assert violations("generation/statistical/_sample.py", seeded)
+
+
+def test_seeded_division_inside_sample_column_is_detected() -> None:
+    seeded = (
+        "def sample_column(fmt):\n"
+        "    blank = fmt.blank_count / fmt.non_null_cells\n"
+        "    return fmt.null_count / fmt.row_count\n"
+    )
+    assert violations("generation/statistical/_sample.py", seeded)
+
+
+def test_seeded_module_level_division_is_detected() -> None:
+    seeded = "def other():\n    return 1\n\nRATE = FMT.null_count / FMT.row_count\n"
+    assert violations("generation/statistical/_sample.py", seeded)
+
+
+def test_seeded_class_level_division_is_detected() -> None:
+    seeded = "class K:\n    RATE = FMT.null_count / FMT.row_count\n"
+    assert violations("generation/statistical/_sample.py", seeded)
+
+
+def test_blank_share_without_null_tokens_is_not_flagged() -> None:
+    fine = "def sample_column(fmt):\n    return fmt.blank_count / fmt.non_null_cells\n"
+    assert violations("generation/statistical/_sample.py", fine) == []
