@@ -167,9 +167,11 @@ def score_generated_fidelity(
 
 def _frame_column(values: list[Any], spec: StatisticalSpec | None) -> Any:
     """Generated cells as a frame column. A day-resolution `date` column would otherwise reach
-    the snapshot as strings and score as a kind mismatch against its datetime source."""
+    the snapshot as strings and score as a kind mismatch against its datetime source. Microsecond
+    unit, the unit generation emits: nanoseconds stop at 2262, and a source with a far-future
+    sentinel date must still generate."""
     if spec is not None and spec.kind == "datetime":
-        return pd.to_datetime(pd.Series(values))
+        return pd.Series(values, dtype="datetime64[us]")
     return values
 
 

@@ -7,6 +7,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import pandas as pd
 import pyarrow as pa
 import pytest
 
@@ -195,3 +197,19 @@ def test_fidelity_gate_scores_a_day_column_as_datetime(
     assert seen
     entry = next(c for c in seen[0]["marginal"]["columns"] if c["column"] == "day")
     assert entry["comparable"], entry
+
+
+@pytest.mark.parametrize("cell_format", [False, True])
+def test_dates_past_the_nanosecond_range_still_generate(tmp_path: Path, cell_format: bool) -> None:
+    # A far-future sentinel (2500-12-31) fits at microsecond unit; the fidelity gate must not
+    # narrow it to nanoseconds, which stop at 2262. Old snapshots (no block) generated on main.
+    stamps = pd.Series(
+        np.array(
+            ["2020-01-01", "2021-06-01", "2500-12-31", "2022-02-02"] * 50, dtype="datetime64[us]"
+        )
+    )
+    days = pd.Series([date(2020, 1, 1), date(2400, 6, 1), None, date(2021, 3, 3)] * 50)
+    snap = fit(pd.DataFrame({"valid_to": stamps, "day": days}), cell_format=cell_format)
+    snap_file = write_snapshot(tmp_path / "far.json", snap)
+    table = whole(config([stat(snap_file, "valid_to"), stat(snap_file, "day")], rows=60))
+    assert table.num_rows == 60

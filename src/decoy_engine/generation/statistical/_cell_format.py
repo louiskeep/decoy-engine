@@ -239,7 +239,7 @@ def decode_cell_format(
     block = entry["cell_format"]
     if type(block) is not dict:
         _invalid(column, "block", "must be an object")
-    if isinstance(snapshot.get("dp"), Mapping):
+    if snapshot.get("dp") is not None:
         _invalid(column, "block", "not allowed on a differentially private snapshot")
     _check_members(column, kind, block)
     null_count, non_null = entry.get("null_count"), entry.get("non_null_count")

@@ -167,7 +167,7 @@ def freetext_tables(spec: StatisticalSpec) -> tuple[list[float], list[float], li
     """Length edges, counts and cumulative counts of the NON-blank cells of a freetext column.
 
     The blank cells sit in the first length bin; they are drawn separately, so they come off it
-    here. The one builder serves the sampler and window admission. The cumulative table is None
+    here. The cumulative table is None
     when every non-null cell was blank, which the sampler answers with "" rather than a length.
     """
     edges = [float(e) for e in spec.stats.get("length_bin_edges") or []]
@@ -412,7 +412,10 @@ def sample_column(
                 ),
             )
         lo_len, hi_len = int(edges[0]), int(edges[-1])
-        blank_share = fmt.blank_count / (fmt.row_count - fmt.null_count) if fmt else 0.0
+        # blank_count <= non-null cells, so a positive count also means a positive denominator.
+        blank_share = (
+            fmt.blank_count / (fmt.row_count - fmt.null_count) if fmt and fmt.blank_count else 0.0
+        )
         # A fitted column's non-blank cell is never empty: the blanks were drawn apart from it.
         min_len = max(lo_len, 1) if fmt else lo_len
         out = []

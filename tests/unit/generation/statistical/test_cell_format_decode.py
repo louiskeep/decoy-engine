@@ -11,6 +11,7 @@ import pytest
 
 from decoy_engine.generation.statistical import (
     StatisticalSpecError,
+    sample_column,
     spec_from_dict,
     spec_to_dict,
 )
@@ -153,3 +154,18 @@ def test_a_stored_spec_round_trips() -> None:
     for column in ("price", "tier", "seen", "note", "void"):
         spec = spec_of(_snap(), column)
         assert spec_from_dict(spec_to_dict(spec)) == spec
+
+
+def test_a_freetext_block_with_no_non_null_cells_samples_or_is_refused() -> None:
+    # Untrusted producer: every cell null yet the block is present. A raw ZeroDivisionError at
+    # draw time would escape the typed refusal path.
+    snap = _snap()
+    entry = snap["columns"]["note"]
+    entry.update(null_count=entry["null_count"] + entry["non_null_count"], non_null_count=0)
+    entry["cell_format"]["blank_count"] = 0
+    try:
+        spec = spec_of(snap, "note")
+    except StatisticalSpecError as exc:
+        assert exc.code == CODE
+        return
+    assert sample_column(spec, 20, col_seed=7) == [None] * 20
