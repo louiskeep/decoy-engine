@@ -323,20 +323,34 @@ def test_the_snapshot_is_refreshed_only_through_footer_facts(tmp_path: Path) -> 
     assert lazy._seen["facts"] is not facts and lazy._seen["facts"].num_rows == 2
 
 
-def test_the_changed_refusal_has_one_constructor_and_no_layering_cycle() -> None:
-    import subprocess
-    import sys
-
+def test_the_changed_refusal_has_one_constructor() -> None:
     from decoy_engine.execution import _chunked_input
+    from decoy_engine.execution._errors import ExecutionError as Reexported
     from decoy_engine.execution._errors import lazy_source_changed
 
     err = lazy_source_changed("t", "x")
-    assert isinstance(err, ExecutionError) and err.code == reasons.runtime.LAZY_SOURCE_CHANGED
+    assert isinstance(err, Reexported) and Reexported is ExecutionError
+    assert err.code == reasons.runtime.LAZY_SOURCE_CHANGED
+    assert type(err).__module__ == "decoy_engine.execution._errors"
     assert _chunked_input.lazy_source_changed is lazy_source_changed
     assert _lazy_csv.lazy_source_changed is lazy_source_changed
-    subprocess.run(
-        [sys.executable, "-I", "-c", "import decoy_engine.profile._lazy_csv"], check=True
-    )
+
+
+def test_the_lazy_csv_source_depends_on_no_execution_module() -> None:
+    """The package root loads `execution` for every import, so `sys.modules` cannot show the
+    layering; the module-level import statements do. `profile/_lazy_csv.py` and the leaf it
+    takes its error from import nothing under `decoy_engine.execution`."""
+    import ast
+
+    src = Path(__file__).resolve().parents[3] / "src" / "decoy_engine"
+    for rel in ("profile/_lazy_csv.py", "_execution_error.py"):
+        tree = ast.parse((src / rel).read_text(encoding="utf-8"))
+        names = [
+            n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.level == 0
+        ] + [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]
+        assert not [m for m in names if m.startswith("decoy_engine.execution")], rel
+    leaf = (src / "_execution_error.py").read_text(encoding="utf-8")
+    assert "from decoy_engine.execution" not in leaf
 
 
 def test_a_header_change_after_preflight_is_a_changed_refusal(
@@ -419,7 +433,7 @@ def test_an_abandoned_batch_iterator_closes_the_chunk_iterator(
     path = tmp_path / "f.csv"
     path.write_bytes(b"a,b\n1,x\n")
     made = _fake_reader(monkeypatch, fail=False)
-    gen = source(path).iter_batches(1)
+    gen: Any = source(path).iter_batches(1)
     next(gen)
     gen.close()
     assert made[0].closed

@@ -25,8 +25,8 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine._execution_error import lazy_source_changed
 from decoy_engine.config._csv_dialect import CsvDialect
-from decoy_engine.execution._errors import lazy_source_changed
 from decoy_engine.profile._csv_reader import read_csv_source, resolve_csv_dialect
 from decoy_engine.profile._readers import FooterFacts, LazySource, OpenedLazyBatches
 

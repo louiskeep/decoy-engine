@@ -18,26 +18,11 @@ from __future__ import annotations
 from typing import Any
 
 from decoy_engine import reasons
-from decoy_engine.errors import ConfigError, DecoyError
+from decoy_engine._execution_error import ExecutionError as ExecutionError
+from decoy_engine._execution_error import lazy_source_changed as lazy_source_changed
+from decoy_engine.errors import ConfigError
 from decoy_engine.reason_adapter import tag_exception
 from decoy_engine.reasons import Phase, ReasonCode
-
-
-class ExecutionError(DecoyError):
-    """Execution-boundary / runner failure. Carries a machine-readable code."""
-
-    def __init__(self, *, code: str, message: str = "") -> None:
-        self.code = code
-        self.message = message
-        super().__init__(f"[{code}] {message}" if message else f"[{code}]")
-
-
-def lazy_source_changed(table: str, detail: str) -> ExecutionError:
-    """The one constructor of the `lazy_source_changed` refusal, for every lazy source backend."""
-    return ExecutionError(
-        code=reasons.runtime.LAZY_SOURCE_CHANGED,
-        message=f"the source of table {table!r} changed between routing and the read: {detail}.",
-    )
 
 
 class StrategyError(ExecutionError):
