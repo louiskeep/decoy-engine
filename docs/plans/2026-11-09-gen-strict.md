@@ -3,7 +3,7 @@ Status: plan
 # GEN-STRICT: generate columns are checked per type at validate (roadmap row 24k)
 
 Owner: Cam. Author: claudeworkerbee (Opus). Date: 2026-11-09. Scope: engine + CLI, V1 (owner decision
-2026-11-08). Revision 6.
+2026-11-08). Revision 7.
 
 Rules consulted: `dev-rules/README.md`, `00-universal.md`, `risk-and-exceptions.md`, `development-loop.md`
 (PLAN: choke point, Placement, Design notes, Established solutions), `feature-dev.md`, `architecture.md`,
@@ -14,11 +14,11 @@ Rules consulted: `dev-rules/README.md`, `00-universal.md`, `risk-and-exceptions.
 develop-correctly-registries-and-sizing and best-practice-becomes-a-sentry; the V1 bar (function break, data
 loss or a non-admin value leak blocks; a second copy of a central mechanism, or a new module in a flat folder
 over 25, always blocks); engine `CLAUDE.md` (cite the established method; validation never mutates; land the
-assertion test first; modules aim for 600 lines, hard max 700, census above 600); engine `CODEMAP.md:218`
+assertion test first; modules aim for 600 lines, hard max 700, census above 600); engine `CODEMAP.md:219`
 (new plan checks go in `plan/checks/`, the target subpackage); engine `docs/reasons.md` (additions raise the
 registry minor, one fixture per minor); the value-free error contract (engine #412: `ConfigProblem`,
 `ConfigRuleError`, `parse_pipeline_config`, `tests/sentry/defects/test_validation_sites.py` and the
-shrink-only `scripts/dev/ratchet_check.py`). Code read at engine `main` `44d6afe2` and CLI `main` `d73328c4`.
+shrink-only `scripts/dev/ratchet_check.py`). Code read at engine `main` `046887e9` and CLI `main` `d73328c4`.
 
 Source: CLI repo `docs/records/2026-11-08-cli-qa-generation.md` High findings H3 and H4, and the roadmap row:
 
@@ -80,7 +80,7 @@ Revision 4 folds in Codex round 1 (NO-GO, 4 V1, 3 V2-LOG).
 | V1-1 a plan declined to the legacy route ignores the sink and materializes every table (`_streamed.py:339`, `:487`), so the bounded-sink exemption let it skip the floor | Accepted. The floor is skipped only when `admission.eligible and is_bounded_sink(sink)`. AT-9(e) splits into an eligible streaming cell (floor not called) and a legacy cell with a bounded sink (floor called) |
 | V1-2 the five existing ref checks interpolate invalid `op`, `distribution` and `generator` values into messages the CLI prints (`_checks_derived_aggregate.py:106`, `_checks_windowed_date.py:110`, `_checks_grouped_series.py:117`) | Accepted. Step 1 runs inside the same translation as step 3: the wrapper keeps the registered code and path and replaces the message with fixed text naming table, column and key, raised after the `except` block. Mask-column messages become value-free too; existing tests that assert the old text are updated in E2. AT-7 canaries for all three |
 | V1-3 a boolean "is a reference" flag compares a `derived.expression` such as `"a + 1"` literally with column names | Accepted. `OptionSpec.ref_kind` is one of `column`, `column_list` or `expression` (the registry stays free of heavy imports); the plan check extracts `expression` refs with `compile_expr` plus `_get_column_refs` (`expressions/_lark_parser.py:74`, `transforms/derived.py:188`), as `check_derived_column_refs` does (`plan/_checks.py:608`). AT-7 cells: earlier refs, several refs, a literal-only expression |
-| V1-4 new test modules land in flat folders over 25 (engine `tests/sentry/` 58, `tests/unit/plan/` 26; CLI `tests/e2e/` 81) | Accepted. The AT-6 sentry goes to `tests/sentry/defects/` (CODEMAP `:234`, the recurring-defect class folder) and is added to `tests/sentry/test_sentry_manifest.py`. The plan-check tests go to `tests/unit/plan/checks/`, mirroring the source subpackage. CLI tests go to a new named folder `tests/e2e/generate_config/` with a CLI CODEMAP row, as `cli_fmt/` and `private_file/` did. C1 splits into C1 and C2 to stay under ten files |
+| V1-4 new test modules land in flat folders over 25 (engine `tests/sentry/` 58, `tests/unit/plan/` 26; CLI `tests/e2e/` 81) | Accepted. The AT-6 sentry goes to `tests/sentry/defects/` (CODEMAP `:235`, the recurring-defect class folder) and is added to `tests/sentry/test_sentry_manifest.py`. The plan-check tests go to `tests/unit/plan/checks/`, mirroring the source subpackage. CLI tests go to a new named folder `tests/e2e/generate_config/` with a CLI CODEMAP row, as `cli_fmt/` and `private_file/` did. C1 splits into C1 and C2 to stay under ten files |
 | V2 AT-6 readers missing | Taken: `_grouped_windowed_generators.py`, `_referenced_formula.py`, `_faker_pool.py`, `_window_admission.py`, `_pinned_compile.py` added |
 | V2 AT-9(a) summing two independent peaks overstates | Taken: each part of the floor is compared with its own measure (legacy list slots with the `tracemalloc` peak, Arrow buffers with the `pa.total_allocated_bytes()` peak) |
 | V2 E3 changes a public capacity result | Taken: E3 runs the full engine suite (frozen contract trigger) |
@@ -99,7 +99,13 @@ Revision 6 folds in Codex round 3 (NO-GO, 1 V1; the round 2 fixes confirmed).
 
 | Finding | Disposition |
 |---|---|
-| R3-1 the post-pass fills referenced formulas in one declared-order pass (`_referenced_formula.py:30-35`), so a formula that references itself, or a later formula column that itself carries `references`, reads a `None` placeholder; "any position" let both validate | Accepted. Step 5 refuses a `references[i]` naming the column itself or a reference-bearing formula column declared at or after it, with `plan.generate_column_forward_reference` at `...references.<i>`. Any other sibling is accepted at any position (non-formula columns and formulas without `references` are final before the post-pass). AT-7 cells: self-reference, later reference-bearing formula (refused), earlier one and later plain column (accepted) |
+| R3-1 the post-pass fills referenced formulas in one declared-order pass (`_referenced_formula.py:30-35`), so a formula that references itself, or a later formula column that itself carries `references`, reads a `None` placeholder; "any position" let both validate | Accepted. Step 5 refuses an actual formula read of the column itself or of a reference-bearing formula column declared at or after it, with `plan.generate_column_forward_reference` at the matching `...references.<i>`. Any other sibling is accepted at any position (non-formula columns and formulas without `references` are final before the post-pass). Revision 7 narrows "reference" to an actual expression read so unused declarations remain compatible. AT-7 cells: used self/later dependencies (refused), unused declarations and earlier/later-final dependencies (accepted with output pinned) |
+
+Revision 7 folds in the Codex revision-6 self-review (GO-WITH-FIXES, 1 V1; R3-1 otherwise confirmed).
+
+| Finding | Disposition |
+|---|---|
+| V1 R4-1 revision 6 refused every self or later-reference-bearing entry in `references`, even when the formula never reads that name; today the post-pass evaluates such a formula correctly because the placeholder is unused, so the new rule would reject a valid config and break Guarantee 6 | Accepted. Step 5 intersects `references` with the formula's unbound `ast.Name` reads and applies the dependency-order refusal only to that intersection. Unknown sibling declarations are still refused. AT-7 accepts unused self and later-reference-bearing declarations and pins their generated output, while retaining refusals for actual self and later-reference-bearing reads |
 
 ## 1. FRAME
 
@@ -180,7 +186,7 @@ The only per-type checks are two `ConfigRuleError` validators for required keys 
 | FM6 | The faker check refuses a custom provider the run would accept | the check uses `list_generate_faker_providers(locale)` (`faker_setup.py:609-637`), the same lookup run uses, plus the provider snapshot; AT-7 custom-provider cell |
 | FM7 | The capacity floor refuses a run that would fit | the floor counts only buffers the resident output must hold, is compared with the whole effective memory, and is skipped when output streams to a bounded sink (section 3); AT-9 property: floor <= measured allocation |
 | FM10 | A translated `from_dict` error carries the original value-bearing message as `__context__` | the wrapper raises after the `except` block with a fixed message; AT-7 canary asserts `exc.__context__ is None` |
-| FM8 | A forward-reference refusal for a type whose run tolerates forward references | E2 step zero: a run-time red test per reference key; only keys that fail at run today are refused (section 3) |
+| FM8 | A forward-reference refusal for a type whose run tolerates forward references, or for an unused formula declaration that never reads the placeholder | E2 step zero: a run-time red test per reference key; only keys that fail at run today are refused; formula dependency order is checked only for names the expression actually reads (section 3) |
 | FM9 | The two removed `ConfigRuleError` validators leave stale `permitted::` keys, or a new site adds one | E1 deletes the 14 keys (shrink is allowed); new sites raise `PydanticCustomError`, never `ConfigRuleError`; the ratchet fails on growth |
 
 ## 2. Established solutions
@@ -236,7 +242,7 @@ Common options, allowed on every type: `null_probability` (number, 0 to 1, not b
 never extras, so the validator does not see them; `pooled` keeps its existing faker-only rule, moved into the
 registry pass unchanged.
 
-Per-type keys, from the run-time reads at `44d6afe2`:
+Per-type keys, from the run-time reads at `046887e9`:
 
 | Type | Options (required in bold) | Static checks |
 |---|---|---|
@@ -332,10 +338,15 @@ Then, per generate table, per column in declared order:
    name that is a sibling column but not listed in `references` gets
    `plan.generate_formula_reference_missing`; every `references[i]` must name a sibling generate column, else
    `plan.generate_formula_reference_unknown` at `...references.<i>` (today the post-pass logs and emits an
-   all-null column, `_formula.py:138`). The post-pass fills reference-bearing formulas in one declared-order
-   pass (`_referenced_formula.py:30-35`), so a reference to the column itself, or to a reference-bearing
-   formula column declared at or after it, is refused with `plan.generate_column_forward_reference` at the
-   same path; any other sibling is final before the post-pass and is accepted at any position. A one-element set display holding a bare sibling column name,
+   all-null column, `_formula.py:138`). Let `formula_reads` be the unbound `ast.Name` set already computed
+   above, including names that also happen to be in `FORMULA_SCOPE_NAMES`, `i` or `index` when they are
+   explicitly present in `references` (the run lets a declared sibling overwrite those scope bindings).
+   The post-pass fills reference-bearing formulas in one declared-order pass
+   (`_referenced_formula.py:30-35`), so for each entry that is also in `formula_reads`, a reference to the
+   column itself, or to a reference-bearing formula column declared at or after it, is refused with
+   `plan.generate_column_forward_reference` at the same path. An unused `references` entry is not a data
+   dependency and remains legal; rejecting it would refuse a config whose output is valid today. Any other
+   sibling is final before the post-pass and is accepted at any position. A one-element set display holding a bare sibling column name,
    used as an operand of an arithmetic `BinOp` or as the whole expression (the `{a} * 2` form), gets
    `plan.generate_formula_template_syntax`; `len({a, b})` and `x in {1, 2}` stay valid. `FORMULA_SCOPE_NAMES` is a new constant in
    `generators/_formula.py` beside `_formula_scope` (`:257`); a test pins it equal to the scope's keys.
@@ -406,6 +417,8 @@ Two callers, one function:
 | formula `{a} * 2` | blank column | validate exit 1, `plan.generate_formula_template_syntax` |
 | formula names a sibling with no `references` | blank column | validate exit 1, `plan.generate_formula_reference_missing` |
 | formula `references: [ghost]`, no such sibling | blank column | validate exit 1, `plan.generate_formula_reference_unknown` |
+| formula actually reads itself or a later reference-bearing formula | reads that column's `None` placeholder in the single post-pass | validate exit 1, `plan.generate_column_forward_reference` |
+| formula declares but does not read itself or a later reference-bearing formula | runs; the placeholder is unused | runs, byte-identical |
 | `statistical` `condition_on` a later column | run exit 3 | validate exit 1, `plan.generate_column_forward_reference` |
 | mixed-type categories (`["a", 1]`) | run exit 3, raw text | validate exit 1, `plan.generate_categories_mixed` |
 | `categories: [1, 2.5]` or `["a", null]` | runs | runs, unchanged |
@@ -416,7 +429,7 @@ Two callers, one function:
 | `row_count: 5000000000` | run exit 3, empty `error: ` | validate exit 5, run exit 5, `generation_budget_exceeded` |
 | any config valid today and under the registry | runs | runs, byte-identical |
 
-## 5. Enumerations (from the code at engine `44d6afe2`, CLI `d73328c4`)
+## 5. Enumerations (from the code at engine `046887e9`, CLI `d73328c4`)
 
 ### 5.1 Routes that read generate options
 
@@ -478,7 +491,7 @@ Two callers, one function:
 |---|---|---|---|---|---|
 | 1 | Value-bearing output | refusal text could echo a category, weight or formula | registered `PydanticCustomError` codes with fixed summaries; `PlanCompileError` messages built from column and key names only; `from_dict` errors translated after the `except` block | AT-1, AT-2, AT-7 canary cells (a category `"CANARY-7731"` never appears in `str(exc)` or `errors()`); `test_validation_sites.py` | M1: put `{value!r}` in the weights message (canary cell red); M1b: raise the translated `from_dict` error inside the `except` block (AT-7 `__context__` cell red) |
 | 2 | Cleanup missing on an exit path | N/A: the checks open no file or handle; the floor allocates nothing | N/A | N/A | N/A |
-| 3 | State and ordering | validator order (required keys before value checks); floor before any provider call | one validator collects all problems; floor at the top of `run_generation` | AT-2 multi-error cell; AT-9 provider spy | M3: call the floor after the pools are built (AT-9 spy red); M3b: compare the floor with `resolve_budget` (AT-9(c) red) |
+| 3 | State and ordering | validator order (required keys before value checks); referenced-formula declared-order dependencies; floor before any provider call | one validator collects all problems; actual formula reads are checked against post-pass order; floor at the top of `run_generation` | AT-2 multi-error cell; AT-7 used/unused dependency cells; AT-9 provider spy | M3: call the floor after the pools are built (AT-9 spy red); M3b: compare the floor with `resolve_budget` (AT-9(c) red); M3c: order-check every declared formula reference instead of actual reads (AT-7 unused-reference cells red) |
 | 4 | Route parity and silent fallback | validate passes what run refuses; a fallback kept silently | one wrapper at both sites; registry enums for `distribution`, `determinism` | AT-8 parity (each H4 repro raises at `run_config_only_checks` and at `compile_plan` with one code) | M4: drop the wrapper call from `run_config_only_checks` (AT-8 red) |
 | 5 | Referential integrity | forward references; weights length vs a `sequence` parent | order check from registry ref keys; `row_count` comparison | AT-7 | M5: compare against all columns instead of earlier ones (forward-ref cell red) |
 | 6 | Untrusted producer | a hand-written config with wrong types, bools for ints, NaN weights | exact-type checks (`type(v) is int`, not bool), `math.isfinite` | AT-2 type cells | M6: `isinstance(step, int)` (bool cell red) |
@@ -535,9 +548,11 @@ package mirroring the source subpackage; `tests/unit/plan/` already has 26 modul
   categories list `_categorical_type` admits is accepted; forward reference per marked key; `group_by ==
   order_by`; each translated `from_dict` rule (code, generate-column path, fixed message,
   `exc.__context__ is None`); formula unknown name; formula sibling not in `references`; a `references`
-  entry naming no sibling refused at `...references.<i>`; a self-reference and a reference to a later
-  reference-bearing formula refused with `plan.generate_column_forward_reference`; an earlier
-  reference-bearing formula and a later plain column accepted;
+  entry naming no sibling refused at `...references.<i>`; an actual self-read and an actual read of a later
+  reference-bearing formula refused with `plan.generate_column_forward_reference`; an unused self
+  declaration (`name: a`, `formula: "1"`, `references: [a]`) accepted and producing `1`; an unused later
+  declaration (an `a` formula `"1"` declaring later reference-bearing `b`) accepted and producing `1`; an earlier
+  reference-bearing formula and a later plain column accepted and producing the expected values;
   `statistical.condition_on` earlier accepted, missing and later refused; `{a} * 2` refused,
   `len({a, b})`, `x in {1, 2}` and `[v for v in range(3)]` accepted; a mask-only config with a missing
   `strategy: derived` ref still refused at both sites; a bad `derived_aggregate.op` and a bad
@@ -625,7 +640,7 @@ Taken with the recommended option (V1 rule); the owner may overrule in the resul
 |---|---|---|---|
 | option registry, `TypeOptions`, `OptionSpec`, static checks | engine `config/_generate_options.py` (new; no pyarrow or Faker import) | about 300 | the config layer owns option shape; `config/` has 20 direct modules (21 after), under the 25 limit |
 | `_options_valid`, duplicate-name validator, schema hook; two old validators removed | `config/_tables.py` | 452 to about 400 | the model the options belong to |
-| `check_generate_columns` | `plan/checks/_generate_columns.py` (new), `plan/checks/__init__.py` (new) | about 280 and 10 | CODEMAP's target for new plan checks (`CODEMAP.md:218`); `plan/` has 31 flat modules, so no new flat module there, and `plan/_checks.py` (712) is over the hard max and shrink-only |
+| `check_generate_columns` | `plan/checks/_generate_columns.py` (new), `plan/checks/__init__.py` (new) | about 280 and 10 | CODEMAP's target for new plan checks (`CODEMAP.md:219`); `plan/` has 31 flat modules, so no new flat module there, and `plan/_checks.py` (712) is over the hard max and shrink-only |
 | one wrapper call replaces five calls and their comments at each site | `plan/_compile.py` | 680 to about 655 (census entry lowered to the exact count) | `compile_plan` and `run_config_only_checks` |
 | kwargs filter extracted | `internal/faker_setup.py` | 668, net 0 or smaller (census entry unchanged or lowered) | where the filter lives |
 | `group_by != order_by` | `transforms/grouped_series.py` | +8 (293 to about 301) | the type's parse rule, shared by generation |
@@ -635,7 +650,7 @@ Taken with the recommended option (V1 rule); the owner may overrule in the resul
 | floor in the estimate | `execution/capacity.py` | +15 (507 to about 522) | the engine capacity entry the CLI already calls |
 | `CAPACITY_REASON_CODES` | `errors.py` | +8 (536 to about 544) | public errors facade |
 | reason codes | `reasons/config/_part2.py` (12 lines today, about +40), `reasons/plan/_part3.py` (61, about +40) | | the parts with room |
-| engine tests | `tests/unit/config/test_generate_options.py` (10 modules there), `tests/sentry/defects/test_generate_option_reads.py` (2), `tests/unit/plan/checks/test_generate_columns.py` (new package; `tests/unit/plan/` has 26), `tests/unit/generation/test_generation_floor.py` (23, 24 after) | about 380, 180, 340, 180 | CODEMAP `:234` puts recurring-defect sentries in `defects/`; no test lands in a flat folder over 25 |
+| engine tests | `tests/unit/config/test_generate_options.py` (10 modules there), `tests/sentry/defects/test_generate_option_reads.py` (2), `tests/unit/plan/checks/test_generate_columns.py` (new package; `tests/unit/plan/` has 26), `tests/unit/generation/test_generation_floor.py` (23, 24 after) | about 380, 180, 340, 180 | CODEMAP `:235` puts recurring-defect sentries in `defects/`; no test lands in a flat folder over 25 |
 | CLI tests | CLI `tests/e2e/generate_config/` (new named folder), CLI `CODEMAP.md` row | about 260 and 1 row | CLI `tests/e2e/` has 81 flat modules; new contract tests go in named folders (CLI CODEMAP `:59-60`) |
 | CLI preflight and run mapping | CLI `preflight.py`, `gate/_run.py`, `run.py` | about +25, -3, +15 | where capacity is decided today |
 
@@ -735,3 +750,11 @@ Order and position against other work:
 - F4: `min_per_parent > max_per_parent` and impossible minimums (QA H6) refused at validate.
 - F5: `_mem_estimate_schema._GENERATE_NUMERIC_DTYPE` (`execution/_mem_estimate_schema.py:244`) derives from
   the admission Arrow type, so generate-column widths have one source.
+- F6 (V2-LOG): AT-6's AST census recognizes a fixed list of generate-column mapping variable names. A new
+  reader or spelling must add itself to that list; deliberate or novel indirection remains outside the V1
+  completeness claim.
+- F7 (V2-LOG): if the conditional E2p prep slice is needed, enumerate its exact existing-test files before
+  build. This is slice bookkeeping only and does not change the E2 behavior or verdict.
+- F8 (V2-LOG): engine `origin/main` advanced from the plan's `44d6afe2` snapshot to `046887e9` with the
+  scan-set slice, moving CODEMAP lines and registry version 1.10.0 but not the GEN-STRICT readers. Citations
+  are refreshed here; E0 still re-reads and renumbers the reason registry on its final merge base.
