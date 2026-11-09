@@ -279,6 +279,59 @@ def test_fk_fanout_minor_has_one_fixture_with_exactly_its_identities() -> None:
     assert pinned["registry_version"] == "1.14.0"
 
 
+CELL_FORMAT_FIXTURE = "reason-manifest-v1.16-gen-fit-shape.json"
+
+
+def test_cell_format_code_is_registered_with_its_owner() -> None:
+    """E0 (GEN-FIT-SHAPE): one additive identity owned by StatisticalSpecError, `since` 1.16.0."""
+    from decoy_engine import reasons
+
+    spec = reasons.find("plan", "statistical_cell_format_invalid")
+    assert spec is not None
+    assert spec.owner == "StatisticalSpecError"
+    assert spec.since == "1.16.0"
+    assert reasons.plan.STATISTICAL_CELL_FORMAT_INVALID == "statistical_cell_format_invalid"
+
+
+def test_cell_format_minor_has_one_fixture_with_exactly_its_identity() -> None:
+    pinned = _load(CELL_FORMAT_FIXTURE)
+    got = [(e["namespace"], e["code"]) for e in pinned["entries"]]
+    assert got == [("plan", "statistical_cell_format_invalid")]
+    assert pinned["registry_version"] == "1.16.0"
+
+
+GEN_UNIQUE_FIXTURE = "reason-manifest-v1.17-gen-unique.json"
+GEN_UNIQUE = [
+    ("config", "generate_unique_conflict", "PipelineValidationError"),
+    ("config", "generate_unique_domain_too_small", "PipelineValidationError"),
+    ("config", "generate_unique_unsupported", "PipelineValidationError"),
+    ("plan", "pinned_unique_pair_unsupported", "PinnedModeError"),
+]
+
+
+@pytest.mark.parametrize(("namespace", "code", "owner"), GEN_UNIQUE)
+def test_gen_unique_codes_are_registered_configuration_repairs(
+    namespace: str, code: str, owner: str
+) -> None:
+    """E0 (GEN-UNIQUE): four additive identities, `since` 1.17.0, none raised yet."""
+    spec = reasons.find(namespace, code)
+    assert spec is not None
+    assert spec.since == "1.17.0"
+    assert spec.owner == owner
+    assert spec.kind is reasons.Kind.FAILURE
+    assert [r.retry for r in spec.rules] == [reasons.RetryClass.CONFIGURATION_REPAIR]
+    assert getattr(getattr(reasons, namespace), code.upper()) == code
+    assert not re.search(r"[{}%]", spec.summary)
+
+
+def test_gen_unique_minor_has_one_fixture_with_exactly_its_identities() -> None:
+    pinned = _load(GEN_UNIQUE_FIXTURE)
+    assert [(e["namespace"], e["code"]) for e in pinned["entries"]] == sorted(
+        (n, c) for n, c, _ in GEN_UNIQUE
+    )
+    assert pinned["registry_version"] == "1.17.0"
+
+
 GEN_STRICT_FIXTURE = "reason-manifest-v1.13-gen-strict.json"
 GEN_STRICT = [
     ("config", "generate_column_duplicate", "PipelineValidationError"),

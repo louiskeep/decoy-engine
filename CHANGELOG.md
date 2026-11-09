@@ -16,6 +16,29 @@ minimum engine version it was tested against via its
 boundary that checks every source column is listed in the config. Registry 1.16.0 adds
 `source_file.undeclared_column` and `source_file.undeclared_table`. No route calls the boundary
 yet, so run behavior is unchanged.
+### Added (fitted cell format in snapshots, GEN-FIT-SHAPE E1, 2026-11-09)
+
+`compute_distribution_snapshot(..., cell_format=True)` adds an optional `cell_format` block to each
+column of a `distribution-snapshot/v1`: `decimal_places` for numeric columns, `resolution` for datetime
+columns and `blank_count` for freetext columns (categorical and empty columns carry `{}`). The block holds
+counts and fixed names only, never a cell, so the redacted fit writes it for sensitive columns too, after
+the redactor nulls any member it does not recognise. `distribution_snapshot_document` (`decoy fit`) now
+passes the keyword, so new fits carry the block. The keyword defaults to `False`: a call without it, and
+every snapshot written before this, is byte-identical. Generation does not read the block yet.
+
+### Added (reason codes for generate uniqueness, 2026-11-09)
+
+Registry 1.17.0 adds four identities for GEN-UNIQUE: `config.generate_unique_conflict`,
+`config.generate_unique_domain_too_small`, `config.generate_unique_unsupported` and
+`plan.pinned_unique_pair_unsupported`. Nothing raises them yet; the checks land with GEN-UNIQUE E1 and E2.
+Existing identities keep their numbers.
+
+### Added (reason code for fitted cell format, 2026-11-09)
+
+Registry 1.16.0 adds one `plan` identity, `statistical_cell_format_invalid`, for a malformed `cell_format`
+block in a statistical column's snapshot entry. Nothing raises it yet; the decoder lands with GEN-FIT-SHAPE E2.
+Existing identities keep their numbers.
+
 ### Breaking for consumers
 
 - A csv file source must set `has_header` (CONFIG-EXPLICIT E1). Without it validation fails with

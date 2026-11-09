@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import pandas as pd
+
 # pandas-3 default datetime inference resolution is 'us' where 1.5-2.x
 # always produced 'ns'. Resolution is uniform within one pandas version,
 # so cross-frame drift comparison loses nothing by pinning the label.
@@ -37,3 +39,15 @@ def canonical_dtype_label(dtype: Any) -> str:
     if m:
         return f"datetime64[ns{m.group(2) or ''}]"
     return label
+
+
+def utc_naive_datetimes(series: pd.Series) -> pd.Series:
+    """Coerce to datetimes, drop what does not parse, and express tz-aware values as naive UTC.
+
+    Snapshot datetime stats and the fitted resolution must read values in the same time
+    frame, and two machines in different zones must not diverge, so both call this one rule.
+    """
+    stamps = pd.to_datetime(series, errors="coerce").dropna()
+    if getattr(stamps.dtype, "tz", None) is not None:
+        stamps = stamps.dt.tz_convert("UTC").dt.tz_localize(None)
+    return stamps

@@ -131,6 +131,11 @@ def _withhold(container: dict[str, Any], scope: str) -> None:
 def _redact_column(non_null: pd.Series, col: dict[str, Any]) -> None:
     _apply(col, {}, snapshot_keeper("column"), denied_value=None)
     kind, stats = col["kind"], col["stats"]
+    if "cell_format" in col:
+        # Lazy, as in `quality/snapshot.py`: `generation` imports `quality` and `profiling`.
+        from decoy_engine.generation.statistical import scrub_cell_format
+
+        col["cell_format"] = scrub_cell_format(kind, col["cell_format"])
     data_keys = {k: r for k, r in snapshot_rules(kind).items() if r in DATA_RULES}
     coarse = [k for k, r in data_keys.items() if r is Rule.COARSE_RANGE]
     if coarse:
@@ -177,6 +182,7 @@ def distribution_snapshot_document(
         contingency_top_k=contingency_top_k,
         high_cardinality_columns=high_cardinality_columns,
         fanout_columns=fanout_columns,
+        cell_format=True,
     )
     profiled = df if profile_row_cap is None else df.head(profile_row_cap)
     profile = profile_columns(profiled, source_label)
