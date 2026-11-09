@@ -7,6 +7,7 @@ Self-contained; imported back into profiler.py via _build_distribution.
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from decoy_engine.detection.types import DetectorMatch
@@ -24,6 +25,7 @@ _PROFILE_CATEGORICAL_DISTINCT_CAP = 30
 def _distribution_numeric(non_null: pd.Series) -> Distribution | None:
     """10 equal-width bins between min and max, with counts + min/max/mean."""
     series = pd.to_numeric(non_null, errors="coerce").dropna()
+    series = series[np.isfinite(series.to_numpy(dtype=float))]  # pd.cut rejects inf
     if len(series) == 0:
         return None
     # When all values are identical pd.cut errors on zero range - fall back to

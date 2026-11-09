@@ -8,6 +8,7 @@ decoy_engine.profiling.profiler._detect_casing / _classify_* paths are unchanged
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 # Plan B-2 - column-shape signals.
@@ -134,6 +135,8 @@ def _classify_numeric_range(
         numeric = pd.to_numeric(non_null, errors="coerce").dropna()
     except Exception:
         return None
+    # inf makes round() raise OverflowError and carries no magnitude.
+    numeric = numeric[np.isfinite(numeric.to_numpy(dtype=float))]
     if len(numeric) == 0:
         return None
     abs_max = float(numeric.abs().max())
