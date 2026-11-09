@@ -22,6 +22,9 @@ aggregate input, group labels, window anchors, statistical conditioning, a `deri
 that uses it with `+`, `==` or `in` against strings, or a relationship whose paired column is not
 generated with the same type.
 
+An engine release containing this change must ship together with the CLI switch from
+`table.to_pandas()` to `generated_table_to_pandas`, or nullable integer columns print as `1.0`.
+
 ### Added (`generated_table_to_pandas`)
 
 `decoy_engine.generated_table_to_pandas(table)` converts a generated Arrow table to pandas with

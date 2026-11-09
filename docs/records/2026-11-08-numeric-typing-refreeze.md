@@ -61,6 +61,9 @@ prints `1`.
 
 ## CLI repin
 
+An engine release containing this change must ship together with the CLI switch to
+`generated_table_to_pandas`; releasing the engine alone makes the CLI print nullable ints as `1.0`.
+
 The engine exports `decoy_engine.generated_table_to_pandas(table)` (also in
 `decoy_engine.generation`). At repin the CLI replaces `table.to_pandas()` with it wherever a
 generated or masked output table becomes a frame that is written as text. A plain `to_pandas()`

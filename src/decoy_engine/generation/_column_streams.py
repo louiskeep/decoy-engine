@@ -31,6 +31,7 @@ import pandas as pd
 
 from decoy_engine.generation import _faker_pool
 from decoy_engine.generation._bounds import faker_pool_bytes
+from decoy_engine.generation._numeric_typing import sequence_affixes
 from decoy_engine.generators.derivation import GenDeriveContext
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 
@@ -115,8 +116,7 @@ class SequenceStream:
     def __init__(self, col: dict[str, Any], *, numeric: bool = False) -> None:
         self._start = int(col.get("start", 1))
         self._step = int(col.get("step", 1))
-        self._prefix = str(col.get("prefix", ""))
-        self._suffix = str(col.get("suffix", ""))
+        self._prefix, self._suffix = sequence_affixes(col)
         self._pad = int(col.get("pad_length", 0))
         self._numeric = numeric
 

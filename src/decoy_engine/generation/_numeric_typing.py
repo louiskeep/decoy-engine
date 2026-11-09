@@ -48,8 +48,17 @@ _INT_PROVIDERS: dict[str, tuple[str, str, int, int]] = {
 _MAX_RANDOM_NUMBER_DIGITS = 18  # 10**18 - 1 is the largest 18-digit value, inside int64
 
 
+def sequence_affixes(col: Mapping[str, Any]) -> tuple[str, str]:
+    """The prefix and suffix text a sequence renders; the one reading shared with its formatter.
+
+    The config allows extra values, so ``0``, ``false`` and ``null`` render as ``"0"``,
+    ``"False"`` and ``"None"``. Plainness must be decided on this rendered text, not on truthiness.
+    """
+    return str(col.get("prefix", "")), str(col.get("suffix", ""))
+
+
 def sequence_is_plain(col: Mapping[str, Any]) -> bool:
-    return not col.get("prefix") and not col.get("suffix") and int(col.get("pad_length", 0)) <= 0
+    return sequence_affixes(col) == ("", "") and int(col.get("pad_length", 0)) <= 0
 
 
 def _fits(*values: int) -> bool:

@@ -250,3 +250,31 @@ def test_removal_propagates_along_a_chain_of_relationships() -> None:
 
     raw["relationships"] = [rel("t1", "a", "t2", "b"), rel("t2", "b", "t3", "c")]
     assert numeric_plan(raw) == {}
+
+
+@pytest.mark.parametrize(
+    ("extra", "want"),
+    [
+        ({"prefix": 0}, [f"0{i}" for i in range(1, 7)]),
+        ({"prefix": False}, [f"False{i}" for i in range(1, 7)]),
+        ({"suffix": 0}, [f"{i}0" for i in range(1, 7)]),
+        ({"prefix": None}, [f"None{i}" for i in range(1, 7)]),
+        ({"suffix": False}, [f"{i}False" for i in range(1, 7)]),
+        ({"prefix": "", "suffix": ""}, None),
+    ],
+)
+def test_falsey_affix_values_still_format_the_sequence(
+    extra: dict[str, Any],
+    want: list[Any] | None,
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The formatter renders affixes with str(); plainness must follow the same rendering."""
+    cfg = _cfg([{**SEQ, **extra}])
+    for t in _outputs(cfg, tmp_path, monkeypatch):
+        if want is None:
+            assert pa.types.is_integer(t["id"].type)
+            assert t["id"].to_pylist() == list(range(1, 7))
+        else:
+            assert pa.types.is_string(t["id"].type)
+            assert t["id"].to_pylist() == want
