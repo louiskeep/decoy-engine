@@ -171,3 +171,11 @@ def test_derived_kinds_with_same_name_in_two_tables_differ(col: dict[str, Any]) 
     out = _two_tables(col)
     assert out["t1"] != out["t2"]
     assert out == _two_tables(col)
+
+
+def test_context_without_a_table_raises() -> None:
+    cfg = {"name": "x", "type": "categorical", "categories": ["a", "b"]}
+    with pytest.raises(ValueError, match="no table"):
+        GenDeriveContext.for_column(None, cfg, 5)
+    with pytest.raises(ValueError, match="no table"):
+        GenDeriveContext.for_column(make_key_resolver(_MASTER, "l"), cfg, 5)

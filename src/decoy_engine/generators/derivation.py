@@ -18,8 +18,8 @@ This module exposes:
 
     GenDeriveContext.for_column(derive_key, column_config, fallback_seed)
         Per-column generation derivation (F2/F3, v6). Resolves one 32-byte
-        column root (keyed path: full derive_key("gen:" + fingerprint), no
-        longer truncated to 4 bytes), then exposes disjoint per-RNG-family
+        column root (keyed path: full derive_key("gen:" + fingerprint + ":" +
+        identity), no longer truncated to 4 bytes), then exposes disjoint per-RNG-family
         and per-row sub-derivations. Honors ``determinism: fresh`` via
         os.urandom.
 """
@@ -74,10 +74,17 @@ def column_identity(column_config: dict[str, Any]) -> str:
     """Canonical `(table, column)` identity string mixed into the column root.
 
     JSON-encoded so a name containing a separator cannot collide with a
-    different (table, column) pair.
+    different (table, column) pair. Raises when the table is missing: a
+    route that skipped `with_table` would otherwise share streams across
+    tables without any signal.
     """
+    if TABLE_KEY not in column_config:
+        raise ValueError(
+            "column_identity: column config carries no table; build it with with_table() "
+            f"(column={column_config.get('name', 'unnamed_column')!r})"
+        )
     return json.dumps(
-        [column_config.get(TABLE_KEY, ""), column_config.get("name", "unnamed_column")],
+        [column_config[TABLE_KEY], column_config.get("name", "unnamed_column")],
         separators=(",", ":"),
     )
 

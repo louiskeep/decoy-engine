@@ -15,7 +15,7 @@ build, not two).
 from __future__ import annotations
 
 from decoy_engine.generation import _faker_pool
-from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.generators.derivation import GenDeriveContext, with_table
 
 
 def _gen_ctx(faker_type: str, locale: str | None, kwargs: dict, seed: int) -> GenDeriveContext:
@@ -26,7 +26,9 @@ def _gen_ctx(faker_type: str, locale: str | None, kwargs: dict, seed: int) -> Ge
         "locale": locale,
         "faker_kwargs": kwargs,
     }
-    return GenDeriveContext.for_column(derive_key=None, column_config=col, fallback_seed=seed)
+    return GenDeriveContext.for_column(
+        derive_key=None, column_config=with_table(col, ""), fallback_seed=seed
+    )
 
 
 def test_pool_values_deterministic_and_full_length_default_kwargs() -> None:

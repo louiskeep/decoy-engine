@@ -36,7 +36,7 @@ from decoy_engine.execution.native._draw_site_providers import (
     _hole_resolve,
     _span_key,
 )
-from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.generators.derivation import GenDeriveContext, with_table
 
 _MASK_KEY = bytes.fromhex("0102030405060708")
 _JOB_SEED = bytes.fromhex("1122334455667788")
@@ -45,7 +45,9 @@ _NS = "col/demo"
 
 def _gen_ctx(name: str = "c", seed: int = 42, **extra: object) -> GenDeriveContext:
     cfg = {"name": name, "type": "faker", **extra}
-    return GenDeriveContext.for_column(derive_key=None, column_config=cfg, fallback_seed=seed)
+    return GenDeriveContext.for_column(
+        derive_key=None, column_config=with_table(cfg, ""), fallback_seed=seed
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -453,14 +455,14 @@ import sys
 import numpy as np
 from decoy_engine.determinism import derive
 from decoy_engine.execution.native._determinism_protocol import provider_for
-from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.generators.derivation import GenDeriveContext, with_table
 
 mask_key = bytes.fromhex(sys.argv[1])
 lo, hi = int(sys.argv[2]), int(sys.argv[3])
 
 perm = provider_for("mask.shuffle").permutation(mask_key, "col/demo", "email", 17)
 ctx = GenDeriveContext.for_column(
-    derive_key=None, column_config={"name": "c", "type": "faker"}, fallback_seed=42
+    derive_key=None, column_config=with_table({"name": "c", "type": "faker"}, ""), fallback_seed=42
 )
 faker_seeds = [provider_for("gen.faker_per_row").row_seed(ctx, i) for i in range(lo, hi)]
 digest = provider_for("mask.hash").draw(mask_key, "col/demo", b"alice").hex()

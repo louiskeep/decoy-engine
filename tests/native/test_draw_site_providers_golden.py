@@ -23,7 +23,7 @@ from decoy_engine.execution.native._determinism_protocol import (
     provider_for,
     unit_float_from_bits53,
 )
-from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.generators.derivation import GenDeriveContext, with_table
 
 _MK = bytes.fromhex("0102030405060708")
 _JOB = bytes.fromhex("1122334455667788")
@@ -32,7 +32,9 @@ _NS = "col/demo"
 
 def _ctx() -> GenDeriveContext:
     cfg = {"name": "c", "type": "faker"}
-    return GenDeriveContext.for_column(derive_key=None, column_config=cfg, fallback_seed=42)
+    return GenDeriveContext.for_column(
+        derive_key=None, column_config=with_table(cfg, ""), fallback_seed=42
+    )
 
 
 class _FakeFaker:

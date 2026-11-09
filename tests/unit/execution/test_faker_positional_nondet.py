@@ -545,7 +545,7 @@ class TestGenerationUnchanged:
 
     def test_generation_build_and_sample_is_the_numpy_stream_over_its_own_pool(self) -> None:
         from decoy_engine.generation import _faker_pool
-        from decoy_engine.generators.derivation import GenDeriveContext
+        from decoy_engine.generators.derivation import GenDeriveContext, with_table
 
         col = {
             "name": "v",
@@ -554,7 +554,9 @@ class TestGenerationUnchanged:
             "locale": "en_US",
             "faker_kwargs": {},
         }
-        gen_ctx = GenDeriveContext.for_column(derive_key=None, column_config=col, fallback_seed=7)
+        gen_ctx = GenDeriveContext.for_column(
+            derive_key=None, column_config=with_table(col, ""), fallback_seed=7
+        )
         got = _faker_pool.build_and_sample(
             faker_type="city",
             faker_kwargs={},

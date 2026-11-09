@@ -69,7 +69,7 @@ from decoy_engine.generation.synthesize import (
     _get_default_faker,
     _reference,
 )
-from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.generators.derivation import GenDeriveContext, with_table
 from decoy_engine.internal.faker_setup import make_faker, resolve_pool_provider
 from decoy_engine.kernel._canonicalize import canonicalize_derive_source, encode_int
 from decoy_engine.kernel._scalar import hash_array
@@ -111,7 +111,9 @@ def _record(site_id: str) -> None:
 
 
 def _gen_ctx(col: dict, seed: int = _SEED_INT) -> GenDeriveContext:
-    return GenDeriveContext.for_column(derive_key=None, column_config=col, fallback_seed=seed)
+    return GenDeriveContext.for_column(
+        derive_key=None, column_config=with_table(col, ""), fallback_seed=seed
+    )
 
 
 class _Ctx:

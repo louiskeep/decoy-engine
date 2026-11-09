@@ -20,6 +20,7 @@ import pandas as pd
 import pytest
 
 from decoy_engine.generators.columns import ColumnGenerator
+from decoy_engine.generators.derivation import with_table
 
 SEED = 20260728
 
@@ -34,20 +35,20 @@ def cg() -> ColumnGenerator:
 # --------------------------------------------------------------------------
 class TestDispatch:
     def test_missing_snapshot_dict_emits_nulls(self, cg):
-        out = cg._generate_distribution_column(7, {"name": "x"}, "t", {})
+        out = cg._generate_distribution_column(7, with_table({"name": "x"}, "t"), "t", {})
         assert len(out) == 7
         assert out.isna().all()
 
     def test_non_dict_snapshot_emits_nulls(self, cg):
         out = cg._generate_distribution_column(
-            5, {"name": "x", "snapshot": ["not", "a", "dict"]}, "t", {}
+            5, with_table({"name": "x", "snapshot": ["not", "a", "dict"]}, "t"), "t", {}
         )
         assert len(out) == 5
         assert out.isna().all()
 
     def test_unsupported_kind_emits_nulls(self, cg):
         out = cg._generate_distribution_column(
-            4, {"name": "x", "snapshot": {"kind": "freetext"}}, "t", {}
+            4, with_table({"name": "x", "snapshot": {"kind": "freetext"}}, "t"), "t", {}
         )
         assert len(out) == 4
         assert out.isna().all()
@@ -55,20 +56,27 @@ class TestDispatch:
     def test_missing_kind_emits_nulls(self, cg):
         # kind absent -> "" -> unsupported branch.
         out = cg._generate_distribution_column(
-            3, {"name": "x", "snapshot": {"bin_edges": [0, 1], "bin_counts": [5]}}, "t", {}
+            3,
+            with_table({"name": "x", "snapshot": {"bin_edges": [0, 1], "bin_counts": [5]}}, "t"),
+            "t",
+            {},
         )
         assert len(out) == 3
         assert out.isna().all()
 
     def test_dispatch_numeric(self, cg):
         snap = {"kind": "numeric", "bin_edges": [0.0, 10.0], "bin_counts": [5]}
-        out = cg._generate_distribution_column(20, {"name": "n", "snapshot": snap}, "t", {})
+        out = cg._generate_distribution_column(
+            20, with_table({"name": "n", "snapshot": snap}, "t"), "t", {}
+        )
         assert len(out) == 20
         assert out.between(0.0, 10.0).all()
 
     def test_dispatch_categorical(self, cg):
         snap = {"kind": "categorical", "top_values": [{"value": "A", "count": 1}]}
-        out = cg._generate_distribution_column(6, {"name": "c", "snapshot": snap}, "t", {})
+        out = cg._generate_distribution_column(
+            6, with_table({"name": "c", "snapshot": snap}, "t"), "t", {}
+        )
         assert set(out) == {"A"}
 
     def test_dispatch_datetime(self, cg):
@@ -78,12 +86,16 @@ class TestDispatch:
             "max": "2021-12-31T00:00:00",
             "year_bins": [{"year": 2020, "count": 1}, {"year": 2021, "count": 1}],
         }
-        out = cg._generate_distribution_column(8, {"name": "d", "snapshot": snap}, "t", {})
+        out = cg._generate_distribution_column(
+            8, with_table({"name": "d", "snapshot": snap}, "t"), "t", {}
+        )
         assert str(out.dtype).startswith("datetime64")
 
     def test_kind_dispatch_is_case_insensitive(self, cg):
         snap = {"kind": "NUMERIC", "bin_edges": [0.0, 1.0], "bin_counts": [5]}
-        out = cg._generate_distribution_column(5, {"name": "n", "snapshot": snap}, "t", {})
+        out = cg._generate_distribution_column(
+            5, with_table({"name": "n", "snapshot": snap}, "t"), "t", {}
+        )
         assert out.between(0.0, 1.0).all()
 
 

@@ -416,9 +416,9 @@ def test_reversed_postpass_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_referenced_formula, "fill_referenced_formula_columns", reversed_order)
     _trips(
         lambda: _check_postpass_contract(fx.run_generate_tables(fx.cfg_referenced_formula())),
-        # Reversed order breaks both halves of the contract; which assertion fires first depends
-        # on which rows the null mask happens to leave in rf_b.
-        match="rf_b did not read|a forward reference must see the placeholder",
+        # Reversed order lets rf_c read the finished rf_d, which breaks the forward-reference
+        # check on every row; rf_b's own check depends on the null mask, so it is not matched.
+        match="a forward reference must see the placeholder",
     )
 
 

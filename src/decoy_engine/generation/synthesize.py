@@ -261,9 +261,8 @@ def _generate_column(
     no-per-column-locale branch of ``_faker``, mirroring V1 ``ColumnGenerator``.
     ``table_name``/``statistical_specs`` (DPS Scope B) are the pinned-spec
     lookup for the ``statistical`` branch -- no snapshot path is reopened
-    here (guide section 4.8). ``provider_snapshot`` (5a-faker) forwards to
-    the ``faker`` branch only; every other branch ignores it. ``reference_date`` is set only by
-    pinned execution: ``windowed_date`` then resolves ``now``/``today`` anchors against it."""
+    here (guide section 4.8). ``provider_snapshot`` (5a-faker) forwards to the ``faker`` branch
+    only. ``reference_date`` (pinned execution only) anchors ``windowed_date`` ``now``/``today``."""
     col = with_table(col, table_name)
     kind = col.get("type")
     if kind == "sequence":

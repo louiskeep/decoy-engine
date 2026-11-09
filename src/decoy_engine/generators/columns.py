@@ -40,9 +40,9 @@ class ColumnGenerator(_DistributionMixin, _FormulaMixin):
             logger: Logger instance (optional)
             derive_key: Optional callable ``(info: str) -> bytes`` returning at
                 least 4 bytes of HKDF-derived material. When provided, per-
-                column seeds come from ``derive_key("col:<name>")`` instead of
-                ``seed + hash(name)`` -- same key + same column always yields
-                the same bytes across runs and across instances. When None,
+                column seeds come from ``derive_key("gen:<fingerprint>:<identity>")``
+                (identity = table + column name) -- same key + same column
+                always yields the same bytes across runs and across instances. When None,
                 generation is reproducible by ``seed`` alone but ignores any
                 pipeline / instance master key (i.e. random-by-policy).
             instance_default_locale: Optional locale code (e.g. ``en_GB``).
@@ -130,12 +130,11 @@ class ColumnGenerator(_DistributionMixin, _FormulaMixin):
     ) -> GenDeriveContext:
         """Per-column generation derivation context (v6, F2/F3).
 
-        The full-width replacement for `_column_seed`: same R3.10 keying
-        rules (fingerprint plus table and column identity, fresh path),
-        but exposes per-family (`base_int`) and per-row (`row_int`)
-        derivations that consume all 32 bytes instead of the legacy
-        4-byte int. Base-only consumers call `base_int(family)`; per-row
-        loops call `row_int(family, i)` in place of `seed + i`.
+        The full-width replacement for `_column_seed`: keyed by fingerprint
+        plus table and column identity (or fresh), exposing per-family
+        (`base_int`) and per-row (`row_int`) derivations over all 32 bytes.
+        Base-only consumers call `base_int(family)`; per-row loops call
+        `row_int(family, i)` in place of `seed + i`.
         """
         cfg = column_config or {}
         if column_name and "name" not in cfg:

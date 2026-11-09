@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from decoy_engine.generation import _faker_pool
-from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.generators.derivation import GenDeriveContext, with_table
 
 ENGINE_ROOT = Path(__file__).resolve().parents[3]
 CERTIFIED_PAIRS_PATH = ENGINE_ROOT / "scripts" / "faker-determinism" / "certified_pairs.json"
@@ -156,7 +156,9 @@ def test_none_and_en_us_build_the_same_pool_under_the_same_seeds() -> None:
     must behave identically given the same seed_instance call."""
     gen_ctx = GenDeriveContext.for_column(
         derive_key=None,
-        column_config={"name": "v", "type": "faker", "faker_type": "first_name_female"},
+        column_config=with_table(
+            {"name": "v", "type": "faker", "faker_type": "first_name_female"}, ""
+        ),
         fallback_seed=1,
     )
     build_seed = gen_ctx.family_bytes(_faker_pool._BUILD_FAMILY)[:8]

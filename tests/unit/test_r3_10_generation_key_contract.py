@@ -99,6 +99,17 @@ def test_rename_changes_unkeyed_output():
     assert _gen(base) != _gen(renamed)
 
 
+def test_rename_for_categorical_changes_output():
+    base = {
+        "name": "status",
+        "type": "categorical",
+        "categories": ["new", "shipped", "delivered"],
+    }
+    renamed = {**base, "name": "order_status"}
+    resolver = _resolver()
+    assert _gen(base, derive_key=resolver) != _gen(renamed, derive_key=resolver)
+
+
 def test_same_name_other_table_changes_output():
     config = {"name": "x", "type": "faker", "faker_type": "first_name"}
     assert _gen(config, table="t1") != _gen(config, table="t2")
@@ -153,6 +164,12 @@ def test_pooled_rename_changes_output():
     base = {"name": "hometown", "type": "faker", "faker_type": "city"}
     renamed = {**base, "name": "birth_city"}
     assert _gen_v2_pooled(base, derive_key=resolver) != _gen_v2_pooled(renamed, derive_key=resolver)
+
+
+def test_pooled_rename_changes_unkeyed_output():
+    base = {"name": "hometown", "type": "faker", "faker_type": "city"}
+    renamed = {**base, "name": "birth_city"}
+    assert _gen_v2_pooled(base) != _gen_v2_pooled(renamed)
 
 
 def test_pooled_two_columns_same_config_produce_different_output():
@@ -230,4 +247,6 @@ def test_pooled_field_via_validated_config_does_not_shift_fingerprint_or_root():
         assert dumped["pooled"] is pre_gp2_shape.get("pooled")  # model_dump() always stamps the key
         assert strategy_config_fingerprint(dumped) == strategy_config_fingerprint(pre_gp2_shape)
         n = _faker_pool.N_THRESHOLD
-        assert _faker(dumped, n, 42, None, None) == _faker(pre_gp2_shape, n, 42, None, None)
+        assert _faker(with_table(dumped, "t"), n, 42, None, None) == _faker(
+            with_table(pre_gp2_shape, "t"), n, 42, None, None
+        )

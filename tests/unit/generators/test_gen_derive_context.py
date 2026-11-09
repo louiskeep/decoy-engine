@@ -20,6 +20,7 @@ from decoy_engine.generators.derivation import (
     GEN_FAMILIES,
     GenDeriveContext,
     strategy_config_fingerprint,
+    with_table,
 )
 
 _MASTER = bytes(range(32))
@@ -30,7 +31,7 @@ def _resolver(label: str = "demo-pipeline"):
 
 
 def _ctx(config, *, derive_key=None, fallback_seed: int = 42) -> GenDeriveContext:
-    return GenDeriveContext.for_column(derive_key, config, fallback_seed)
+    return GenDeriveContext.for_column(derive_key, with_table(config, ""), fallback_seed)
 
 
 class TestFullWidth:
