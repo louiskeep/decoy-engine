@@ -14,8 +14,16 @@ A column is numeric only when all of these hold, otherwise it stays string as be
   inside int64, `random_number` needs `digits` of 18 or fewer, `random_digit` and
   `random_digit_not_null` are always in range. Faker float providers are float64.
 - It is not a stock-provider name overridden by a custom provider.
-- It is not the parent key of a relationship that has a child table that is not generated. A
-  masked or source child reads the key as text, so a typed parent would stop matching it.
+- Every reader of it is numeric-safe, per the closed registry `READERS` in
+  `generation/_numeric_typing.py`. Formula references, aggregate input, group labels, window
+  anchors and statistical conditioning keep the column text. A `derived` expression is judged per
+  use: arithmetic and numeric comparisons are safe; `+`, `==` and `in` against strings are not.
+  A `reference` column is checked together with its parent.
+- A relationship is safe only when every paired column is generated and has the same planned
+  type. A masked or source end, or a text-typed generated end, keeps both sides text.
+- The check repeats until nothing changes, because removing one column can make a reader of
+  another unsafe. A reader or column type missing from the registry keeps the column text, and
+  `tests/sentry/test_numeric_reader_registry.py` fails when one appears.
 
 The pinned-plan path (`_pinned_execute`) passes no numeric type and keeps text, as before.
 

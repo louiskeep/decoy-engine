@@ -5,12 +5,20 @@ provider layer str-coerces every return (it is shared with masking, which needs 
 Left alone, a plain counter or a ``pyfloat`` column reaches ``derived`` arithmetic, ordered
 ``grouped_series`` and the Arrow table as text. :func:`numeric_plan` decides once, from the
 configuration, which columns are numeric; the admission schema and every emitter read that one
-answer. A column is numeric only when it is provably safe:
+answer. A column is a candidate when its values provably fit (a sequence's first and last value,
+a faker int provider's declared bounds) and no custom provider overrides its name. It then stays
+numeric only while every reader of it is numeric-safe, per the closed ``READERS`` registry:
 
-* the values fit int64 (a sequence's first and last value; a faker int provider's declared
-  bounds), so a numeric column can never overflow where the text column would not;
-* the column is not the parent key of a relationship with a child that is not generated, because
-  a masked or source child reads the key as text and a typed parent would stop matching it.
+* formula references, aggregate input, group labels, window anchors and statistical conditioning
+  read the cell as text, so they keep it text;
+* a ``derived`` expression is judged per use (see ``_numeric_derived``): arithmetic and numeric
+  comparisons are safe, ``+``, ``==`` or ``in`` against strings are not;
+* a relationship is safe only when every paired column is generated and has the same planned
+  type, so a masked, source or text-typed end keeps both sides text;
+* a ``reference`` column copies its parent, so the two are checked together.
+
+Removing one column can make a reader of another unsafe, so the check repeats until nothing
+changes. A reader or column type missing from the registry keeps the column text.
 
 Anything else stays text exactly as before. Rendered text is unchanged for numeric columns:
 ``str(int)`` and ``str(float)`` give back the cell text the coercion produced.
