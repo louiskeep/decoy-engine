@@ -490,7 +490,7 @@ Owner answers (Cam, 2026-11-09): "go with recommended". Every question below tak
 | Domain-size validator hook | `config/_pipeline.py` (378 to about 386) | unchanged |
 | Fingerprint exclusion, seed families | `generators/derivation.py` | line 127 row unchanged |
 | Secret-material census | `scripts/secret_material_census.py` data, rewritten with `--write` after `_faker_pool.py` lines move (`:448-458`) | n/a |
-| Reason codes | `reasons/config/`, `reasons/plan/_part2.py`, registry fixture | n/a |
+| Reason codes | `reasons/config/`, `reasons/plan/_part1.py` (the `PinnedModeError` block, beside the other `pinned_*` codes), registry fixture | n/a |
 | Catalogue entries | `execution/native/_draw_sites_gen.py` (285 to about 345) plus pinned digests | n/a |
 | Methodology entry | `docs/methodology-registry.yaml` | n/a |
 | Reference doc | `docs/guides/generate-uniqueness.md` (unique, `unique_together`, `pooled`) | docs index |
