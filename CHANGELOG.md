@@ -9,6 +9,39 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (fit snapshots withhold sensitive values, 2026-11-08)
+
+`decoy_engine` and `decoy_engine.profiling` export `distribution_snapshot_document(df, *, include_values=False,
+joint_columns=None, profile_row_cap=None, ...)`, the snapshot to write to disk. It is
+`compute_distribution_snapshot` (which stays raw for in-memory callers) with every value-sensitive
+column's cell values removed, using the same sensitivity rule as `profile_document`. A sensitive
+categorical column gets an empty `top_values` and its whole count in `other_count`; a joint that
+names one gets an empty `cells`; a numeric column gets one bin whose two edges sit outside every
+source cell (or the fixed bin `-1.5` to `1.5` when the range is too wide to pad) and no `mean`,
+`std` or quantiles; a datetime column keeps its `year_bins` with `min` and `max` moved to the year
+before the first and after the last, held within years 1 to 9999. The document gains `value_policy`
+(`flagged-redacted/v1`, or `raw` with `include_values=True`) and `redacted_columns`, two optional
+top-level keys that `distribution-snapshot/v1` readers ignore.
+
+Generation reads that marker. A `type: statistical` column that would sample categories from a
+redacted source column, or use one as `condition_on`, now fails at validate and at load with the new
+`plan` reason `statistical_snapshot_values_redacted` (registry 1.11.0). The message says to use a
+faker or pattern generator, or to re-fit with `--include-values` and set `allow_real_categories:
+true`. A `raw` snapshot is not refused here but still needs that opt-in, a snapshot with a missing,
+unknown or ill-typed marker is refused for categorical and conditional columns, and a snapshot with
+no marker (written before this change) loads as before. Numeric and datetime columns of a redacted
+snapshot still generate; the fidelity gate reports a redacted numeric column as not comparable
+(`no_quantiles`).
+
+### Added (check a DP fit request without data, 2026-11-08)
+
+`decoy_engine.quality.check_dp_fit_request(column_schema, *, epsilon, delta, numeric_bins=10)` runs the
+checks `fit_dp_snapshot` makes before it reads a row: the epsilon, delta and bin count, the column schema,
+the derived bin edges, then the proof-stack gate. It raises the same typed error the fit would, in the
+same order, so a malformed request keeps its own code on an uncertified host and a valid one raises
+`dp_platform_uncertified` or `dp_stack_uncertified` without any data. `fit_dp_snapshot` calls the same
+private preparation, so behavior and error codes of the fit do not change.
+
 ### Fixed (generated columns with identical settings no longer repeat each other)
 
 Generated columns with identical settings used to get identical values in every row, with or
