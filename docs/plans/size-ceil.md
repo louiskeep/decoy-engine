@@ -8,7 +8,7 @@ catalogs/recurring-defects (item 11, owner 2026-11-10)
 Base: engine main `84f4290d`. One slice, engine only. Test-only change; no `src/` file moves.
 
 **Guarantee.** A dense module's census entry and the three exact `_pipeline.py` pins become ceilings
-with at most 20 lines of headroom, never above `MAX`. `GOAL`, `MAX` and legacy entries do not move.
+with 20 lines of initial headroom (effective stale slack is bounded at 40), never above `MAX`. `GOAL`, `MAX` and legacy entries do not move.
 **Non-goals:** splitting any module; changing the fan-out or other ratchets; the CLI sentry.
 **Design notes:** none, no new structure.
 
@@ -40,6 +40,7 @@ ratchet counts never rise.
 - **Bookkeeping pins.** `_loc(EXEC / "_pipeline.py") == 351` in `test_b6a_bookkeeping.py`,
   `test_b6b_bookkeeping.py` and `test_auto_chunk_bookkeeping.py` becomes
   `<= size_sentry.ceiling_for(351)`.
+- **Rise rule.** A ceiling may rise only by the PR's own LOC growth (`new_ceiling - old_ceiling <= max(0, new_loc - old_loc)`); `ceiling_for` is for conversion or a required shrink. The sentry reads one head, so this is review-enforced and stated in the policy docstring.
 - **Docs.** The module docstring, the `CLAUDE.md` size bullet and the policy line in
   `docs/decisions/module-size-census-history.md` say "ceiling with up to 20 lines of headroom"
   instead of "exact LOC".
@@ -113,7 +114,7 @@ No new file. No `src/` change.
 
 | Slice | Repo | Branch | Size | Gate |
 |---|---|---|---|---|
-| E1 | engine | `feat/size-ceil-e1` | S (about 60 hand-written lines plus the census re-pin) | T1: `tests/sentry/` and the three bookkeeping files. The sentry is test tooling, so the full suite runs per `testing.md` |
+| E1 | engine | `feat/size-ceil-e1` | S (about 60 hand-written lines plus the census re-pin) | T1: `tests/sentry/` and the three bookkeeping files |
 
 Out of scope: the CLI's own module-size sentry (layout plan, `C:tests/sentry/layout/`). It should
 take the same rule in a CLI slice once that sentry exists.
