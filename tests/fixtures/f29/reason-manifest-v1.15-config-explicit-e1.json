@@ -1,0 +1,67 @@
+{
+  "entries": [
+    {
+      "code": "source_file.column_names_file_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "config",
+      "owner": "PipelineValidationError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.15.0",
+      "summary": "Source file column names file invalid.",
+      "symbol": "SOURCE_FILE_COLUMN_NAMES_FILE_INVALID"
+    },
+    {
+      "code": "source_file.column_names_source_conflict",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "config",
+      "owner": "decoy_engine.validation_result",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.15.0",
+      "summary": "Source file column names source conflict.",
+      "symbol": "SOURCE_FILE_COLUMN_NAMES_SOURCE_CONFLICT"
+    },
+    {
+      "code": "source_file.has_header_required",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "config",
+      "owner": "decoy_engine.validation_result",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.15.0",
+      "summary": "Source file has header required.",
+      "symbol": "SOURCE_FILE_HAS_HEADER_REQUIRED"
+    }
+  ],
+  "event_schema_version": 1,
+  "reason_schema_version": 1,
+  "registry_version": "1.15.0"
+}

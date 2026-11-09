@@ -55,6 +55,7 @@ def _config(tmp_path, columns: list[dict], seed: int = 42) -> dict:
                 "accounts": {
                     "type": "file",
                     "format": "csv",
+                    "has_header": True,
                     "path": str(tmp_path / "accounts.csv"),
                 },
             },

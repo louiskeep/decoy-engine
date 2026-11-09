@@ -30,6 +30,8 @@ Codes are append-only: a code never disappears or changes meaning. A retired cod
 
 `reason-manifest-v1.14-fk-fanout.json` pins the six fitted fan-out additions (`quality.fanout_column_unknown`, `plan.reference_fanout_missing`, `plan.reference_fanout_invalid`, `plan.reference_fanout_conflict`, `plan.reference_parent_pool_empty` and `plan.dp_generate_fitted_fanout_unsupported`; `since` 1.14.0).
 
+`reason-manifest-v1.15-config-explicit-e1.json` holds the three CONFIG-EXPLICIT E1 additions (`config.source_file.has_header_required`, `config.source_file.column_names_source_conflict` and `config.source_file.column_names_file_invalid`, `since` 1.15.0: a csv source must say whether row one is a header, may name its columns inline or in a header file but not both, and a header file that is not one UTF-8 record is refused).
+
 `reason-manifest-v1.16-gen-fit-shape.json` pins the one fitted-cell-format addition (`plan.statistical_cell_format_invalid`; `since` 1.16.0: a statistical column's snapshot `cell_format` block is malformed).
 
 An older consumer that reads a record whose identity it does not know (same registry major) degrades to `decoy.unknown_reason_from_future`, keeping the original identity in an uninterpreted context field. An unsupported major becomes `decoy.unsupported_schema_version`. Neither is ever read as success or as retry advice.

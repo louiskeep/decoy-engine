@@ -349,13 +349,13 @@ def _base_config(
     source_entry: dict[str, Any] = {"type": "file", "format": source_format, "path": source_path}
     if source_format == "fixed_width":
         source_entry["layout"] = {"columns": layout_columns}
+    source_entry.update({"has_header": True} if source_format == "csv" else {})
+    target = {"type": "file", "format": "parquet", "path": f"{source_path}.out.parquet"}
     return {
         "version": 2,
         "global_settings": {"seed": seed},
         "sources": {table: source_entry},
-        "targets": {
-            table: {"type": "file", "format": "parquet", "path": f"{source_path}.out.parquet"}
-        },
+        "targets": {table: target},
         "tables": [{"name": table, "columns": columns}],
     }
 

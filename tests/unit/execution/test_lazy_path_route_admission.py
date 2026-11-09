@@ -51,6 +51,11 @@ def _write_parquet(tmp_path: Path, table: pa.Table, name: str) -> str:
     return str(p)
 
 
+def _header(fmt: str) -> dict[str, bool]:
+    # csv sources must say whether the first row is a header; other formats must not.
+    return {"has_header": True} if fmt == "csv" else {}
+
+
 def _write_csv(tmp_path: Path, df: pd.DataFrame, name: str) -> str:
     p = tmp_path / f"{name}.csv"
     df.to_csv(p, index=False)
@@ -123,8 +128,8 @@ def _ooc_eligible_config(
         "version": 2,
         "global_settings": {"job_name": "sc7b-ooc-fk", "seed": 7},
         "sources": {
-            "parent": {"type": "file", "path": parent_src, "format": src_fmt},
-            "child": {"type": "file", "path": child_src, "format": src_fmt},
+            "parent": {"type": "file", "path": parent_src, "format": src_fmt, **_header(src_fmt)},
+            "child": {"type": "file", "path": child_src, "format": src_fmt, **_header(src_fmt)},
         },
         "targets": {
             "parent": {
@@ -166,8 +171,8 @@ def _ineligible_config(
         "version": 2,
         "global_settings": {"job_name": "sc7b-reject-genmask", "seed": 7},
         "sources": {
-            "parent": {"type": "file", "path": parent_src, "format": src_fmt},
-            "child": {"type": "file", "path": child_src, "format": src_fmt},
+            "parent": {"type": "file", "path": parent_src, "format": src_fmt, **_header(src_fmt)},
+            "child": {"type": "file", "path": child_src, "format": src_fmt, **_header(src_fmt)},
         },
         "targets": {
             "parent": {

@@ -54,7 +54,14 @@ def _config(columns: list[dict], tmp_path, *, seed: int = 42) -> dict:
     cfg = {
         "version": 2,
         "global_settings": {"seed": seed},
-        "sources": {_TABLE: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
+        "sources": {
+            _TABLE: {
+                "type": "file",
+                "format": "csv",
+                "has_header": True,
+                "path": str(tmp_path / "in.csv"),
+            }
+        },
         "tables": [{"name": _TABLE, "columns": columns}],
         "targets": {_TABLE: {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
     }

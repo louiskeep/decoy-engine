@@ -188,7 +188,10 @@ class TestCsvBounded:
         path = tmp_path / "data.csv"
         path.write_text("email\na@x.com\nb@y.com\nc@z.com\n", encoding="utf-8")
         profile = profile_source(
-            _config({"t": {"type": "file", "format": "csv", "path": str(path)}}), seed=0
+            _config(
+                {"t": {"type": "file", "format": "csv", "has_header": True, "path": str(path)}}
+            ),
+            seed=0,
         )
         table = profile.tables[0]
         assert table.row_count_exact is False
@@ -210,7 +213,9 @@ class TestResidencyModes:
         path = tmp_path / "data.csv"
         pd.DataFrame({"a": range(120), "b": list("xy") * 60}).to_csv(path, index=False)
         profile = profile_source(
-            _config({"t": {"type": "file", "format": "csv", "path": str(path)}}),
+            _config(
+                {"t": {"type": "file", "format": "csv", "has_header": True, "path": str(path)}}
+            ),
             sample_rows=None,
             residency="full",
             seed=0,

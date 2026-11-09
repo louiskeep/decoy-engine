@@ -71,7 +71,13 @@ import logging
 # this handler and never creates one.
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
-from decoy_engine.config import Dismissal, PipelineConfig, PreScanConfig, parse_pipeline_config
+from decoy_engine.config import (
+    FILE_SOURCE_PATH_FIELDS,
+    Dismissal,
+    PipelineConfig,
+    PreScanConfig,
+    parse_pipeline_config,
+)
 from decoy_engine.config._pipeline import is_valid_pipeline_name
 from decoy_engine.context import (
     ExecutionContext,
@@ -374,6 +380,7 @@ __all__ = [
     "CAP_RESUMABLE",
     "CAP_SIGNED_URL",
     "CAP_STREAMING",
+    "FILE_SOURCE_PATH_FIELDS",
     "RELEASE_PHASE",
     "RUN_RESULT_SCHEMA",
     "SDK_VERSION",
