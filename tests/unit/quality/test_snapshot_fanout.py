@@ -83,6 +83,15 @@ def test_bare_string_and_unknown_name_raise(bad: object) -> None:
     assert exc.value.code == reasons.quality.FANOUT_COLUMN_UNKNOWN
 
 
+def test_bare_string_of_real_column_names_still_raises() -> None:
+    df = pd.DataFrame({"a": [1, 1, 2], "b": [3, 4, 4], "ab": [5, 5, 5]})
+    # Every character of "ab" is a real column, so only the str guard can refuse it.
+    with pytest.raises(DistributionSnapshotError) as exc:
+        compute_distribution_snapshot(df, fanout_columns="ab")  # type: ignore[arg-type]
+    assert exc.value.code == reasons.quality.FANOUT_COLUMN_UNKNOWN
+    assert "bare string" in str(exc.value)
+
+
 def test_existing_readers_accept_a_snapshot_with_fanout() -> None:
     src = compute_distribution_snapshot(_visits(), fanout_columns=["patient_id", "amount"])
     spec = load_spec(
@@ -104,10 +113,16 @@ def test_compat_corpus_snapshot_loads_with_fanout_added() -> None:
     snap = json.loads(path.read_text(encoding="utf-8"))
     for col in snap["columns"].values():
         col["fanout"] = {"rows": 2, "keys": 1, "degrees": [[2, 1]]}
-    for name, col in snap["columns"].items():
+    for name in snap["columns"]:
         spec = fanout_spec_from_snapshot(snap, name, digest="00" * 32)
         assert spec.rows == 2
-        assert col["kind"]
+    # The older readers must still take the very same snapshot, fan-out included.
+    for name, col in snap["columns"].items():
+        cfg = {"name": name, "type": "statistical", "source_column": name}
+        if col["kind"] == "categorical":
+            cfg["allow_real_categories"] = True
+        loaded = load_spec(cfg, snapshot=snap)
+        assert len(sample_column(loaded, 4, col_seed=1)) == 4
 
 
 def test_writer_then_decoder_roundtrip() -> None:

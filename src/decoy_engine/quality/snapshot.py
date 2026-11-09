@@ -206,7 +206,7 @@ def compute_distribution_snapshot(
         # Lazy: `generation` imports `quality`, so a top-level import would cycle.
         from decoy_engine.generation.statistical import add_fanout
 
-        add_fanout(columns_block, df, list(fanout_columns))
+        add_fanout(columns_block, df, fanout_columns)
 
     joints_block: list[dict[str, Any]] = []
     if joint_columns:

@@ -31,7 +31,8 @@ from __future__ import annotations
 
 import heapq
 import random
-from collections.abc import Mapping, Sequence
+import re
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -42,6 +43,7 @@ from decoy_engine.generation.statistical._spec import StatisticalSpecError
 from decoy_engine.quality.snapshot import DistributionSnapshotError
 
 _BLOCK_KEY = "fanout"
+_DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,12 @@ class FanoutSpec:
     keys: int
     degrees: tuple[tuple[int, int], ...]
     digest: str
+
+    def __post_init__(self) -> None:
+        # Seed derivation hashes this string, so a malformed one would silently
+        # change every generated value instead of failing.
+        if not isinstance(self.digest, str) or not _DIGEST_RE.fullmatch(self.digest):
+            raise ValueError("digest must be 64 lowercase hex characters (a bare sha256)")
 
     @property
     def seed_digest(self) -> str:
@@ -80,7 +88,7 @@ def fanout_stats(series: pd.Series) -> dict[str, Any]:
 def add_fanout(
     columns: dict[str, dict[str, Any]],
     df: pd.DataFrame,
-    fanout_columns: Sequence[str],
+    fanout_columns: Collection[str],
 ) -> None:
     """Attach a `fanout` block to each named column entry of a snapshot.
 
@@ -170,7 +178,14 @@ def fanout_spec_from_snapshot(
     if sum(d * p for d, p in pairs) != rows:
         raise _invalid(column, "degree times parents does not sum to 'rows'")
     if keys == 0:
-        raise _invalid(column, "'keys' is zero, so there is no fan-out to reproduce")
+        raise StatisticalSpecError(
+            code=reasons.plan.REFERENCE_FANOUT_INVALID,
+            message=(
+                f"fan-out block of column {column!r} is invalid: the source column "
+                "has no non-null keys, so there is no fan-out to reproduce. "
+                "Use distribution: random for this column."
+            ),
+        )
     return FanoutSpec(rows=rows, keys=keys, degrees=tuple(pairs), digest=digest)
 
 
@@ -245,11 +260,13 @@ def allocate_degrees(spec: FanoutSpec, parents: int, n: int) -> list[int]:
     count. The list has `K` entries, every one at least 1, summing to `n`
     exactly, where `K` is the active parent count scaled from the source and
     clamped to `[1, min(parents, n)]`. No entry exceeds the source maximum
-    degree whenever `n <= K * dmax`. Returns `[]` when there is nothing to
-    place (`n == 0` or no parents).
+    degree whenever `n <= K * dmax`. Returns `[]` when `n == 0`; `n > 0` with
+    no parents has no valid answer and raises `ValueError`.
     """
-    if n == 0 or parents == 0:
+    if n == 0:
         return []
+    if parents == 0:
+        raise ValueError("cannot place child rows without a parent pool")
     k = max(1, min(_half_even_div(n * spec.keys, spec.rows), parents, n))
     base = _quantile_degrees(spec, k)
     out = _largest_remainder(base, n)

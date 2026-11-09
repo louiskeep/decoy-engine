@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import random
+import types
 from collections import Counter
 from fractions import Fraction
+from itertools import pairwise
 
 import pytest
 from hypothesis import given, settings
@@ -49,9 +51,13 @@ def _expected_k(spec: FanoutSpec, p: int, n: int) -> int:
 @settings(max_examples=300, deadline=None)
 @given(spec=_specs(), p=st.integers(0, 5000), n=st.integers(0, 50_000))
 def test_allocation_properties(spec: FanoutSpec, p: int, n: int) -> None:
+    if p == 0 and n > 0:
+        with pytest.raises(ValueError):
+            allocate_degrees(spec, p, n)
+        return
     out = allocate_degrees(spec, p, n)
     assert out == allocate_degrees(spec, p, n)
-    if p == 0 or n == 0:
+    if n == 0:
         assert out == []
         return
     k = _expected_k(spec, p, n)
@@ -85,6 +91,8 @@ def test_fixed_rows() -> None:
     spec = _spec()
     assert allocate_degrees(spec, 10, 0) == []
     assert allocate_degrees(spec, 0, 0) == []
+    with pytest.raises(ValueError):  # no parent can take the rows: caller bug, not an empty answer
+        allocate_degrees(spec, 0, 5)
     out = allocate_degrees(spec, 10, 3)  # fewer child rows than source keys
     assert len(out) <= 3 and sum(out) == 3 and min(out) >= 1
     out = allocate_degrees(spec, 4, 1000)  # K clamped to P
@@ -140,6 +148,79 @@ def test_seed_digest_has_prefix() -> None:
     assert _spec().seed_digest == f"sha256:{DIGEST}"
 
 
+@pytest.mark.parametrize(
+    "digest",
+    ["", "ab" * 31, "ab" * 33, "AB" * 32, "zz" * 32, f"sha256:{DIGEST}", ("ab" * 32) + "\n", 5],
+)
+def test_digest_must_be_64_lowercase_hex(digest: object) -> None:
+    with pytest.raises(ValueError):
+        FanoutSpec(rows=2, keys=1, degrees=((2, 1),), digest=digest)  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        fanout_spec_from_snapshot(
+            {"columns": {"c": {"fanout": {"rows": 2, "keys": 1, "degrees": [[2, 1]]}}}},
+            "c",
+            digest=digest,  # type: ignore[arg-type]
+        )
+
+
+# ── pinned tie rules and shuffles ────────────────────────────────────────────
+# Each expected list below is the output of the documented tie rule, worked by hand
+# in the comment above it; a reversed tie order gives a different list.
+
+
+def test_pin_remainder_tie_goes_to_larger_base() -> None:
+    # K=2, base=[2, 6], shares 20 and 60 over S=8: floors 2 and 7, one unit left,
+    # both remainders are 4, so the larger base takes it.
+    spec = _spec(((2, 8), (6, 20), (22, 1)))
+    assert allocate_degrees(spec, 2, 10) == [2, 8]
+
+
+def test_pin_remainder_tie_on_base_goes_to_higher_index() -> None:
+    # K=4, base=[1, 1, 2, 3]: two leftover units, entries 0 and 1 tie on remainder and
+    # base, the higher index wins, then the cap hands the shaved unit to index 1 again.
+    spec = _spec(((1, 3), (2, 2), (3, 1)))
+    assert allocate_degrees(spec, 4, 10) == [1, 3, 3, 3]
+
+
+def test_pin_shave_takes_from_the_largest_entries() -> None:
+    # K=12, base is ten 1s and two 20s; floors of 1 overshoot N=40 by 2, and the
+    # shave comes off the two big entries (16 -> 15 each), never the 1s.
+    spec = _spec(((1, 20), (20, 3)))
+    assert allocate_degrees(spec, 12, 40) == [1] * 10 + [15, 15]
+
+
+def test_pin_cap_gives_removed_units_to_largest_base() -> None:
+    # K clamped to P=4, base=[1, 1, 2, 3]; largest remainder gives [1, 1, 2, 4], the cap
+    # lowers 4 to 3 and the unit goes to the entry with the largest base (index 2).
+    spec = _spec(((1, 3), (2, 2), (3, 1)))
+    assert allocate_degrees(spec, 4, 8) == [1, 1, 3, 3]
+
+
+def test_pin_cap_applies_when_n_equals_k_times_dmax() -> None:
+    # K=2, dmax=3, N=6=K*dmax: the cap must run and every parent holds exactly dmax.
+    spec = _spec(((1, 3), (2, 2), (3, 1)))
+    assert allocate_degrees(spec, 2, 6) == [3, 3]
+    assert allocate_degrees(spec, 4, 12) == [3, 3, 3, 3]
+
+
+def test_shuffle_of_slots_spreads_degrees_over_the_pool() -> None:
+    pool = [f"k{i}" for i in range(30)]
+    out = fitted_reference_values(pool, _spec(), 60, random.Random(7))
+    counts = Counter(out)
+    per_position = [counts.get(k, 0) for k in pool]
+    # Unshuffled, the 24 active parents are the pool prefix and degrees ascend by position.
+    assert set(counts) != set(pool[:24])
+    assert per_position != sorted(per_position)
+
+
+def test_shuffle_of_stubs_interleaves_children() -> None:
+    pool = [f"k{i}" for i in range(30)]
+    out = fitted_reference_values(pool, _spec(), 60, random.Random(7))
+    runs = 1 + sum(1 for a, b in pairwise(out) if a != b)
+    # Unshuffled, each parent's children are one block: runs == number of parents.
+    assert runs > len(set(out)) + 10
+
+
 # ── decoder ──────────────────────────────────────────────────────────────────
 
 
@@ -159,6 +240,17 @@ def test_decoder_roundtrip_from_writer() -> None:
     spec = fanout_spec_from_snapshot(_snap(block), "patient_id", digest=DIGEST)
     assert (spec.rows, spec.keys, spec.degrees) == (6, 3, ((1, 1), (2, 1), (3, 1)))
     assert spec.digest == DIGEST
+
+
+def test_decoder_keys_zero_message_is_not_a_refit_hint() -> None:
+    with pytest.raises(StatisticalSpecError) as exc:
+        fanout_spec_from_snapshot(
+            _snap({"rows": 0, "keys": 0, "degrees": []}), "patient_id", digest=DIGEST
+        )
+    assert exc.value.code == reasons.plan.REFERENCE_FANOUT_INVALID
+    text = str(exc.value)
+    assert "no non-null keys" in text and "distribution: random" in text
+    assert "--fanout" not in text
 
 
 def test_decoder_missing() -> None:
@@ -186,6 +278,11 @@ CANARY = 987654321
         {"rows": 20, "keys": 8, "degrees": [[1, 0], [2, 6], [5, 1], [8, 1]]},
         {"rows": 20, "keys": 8, "degrees": [[2, 1], [1, 5], [5, 1], [8, 1]]},  # unsorted
         {"rows": 20, "keys": 8, "degrees": [[1, 5], [1, 1], [5, 1], [8, 1]]},  # duplicate
+        # balanced totals, so only the shape rules can refuse these
+        {"rows": 20, "keys": 9, "degrees": [[0, 1], [1, 5], [2, 1], [5, 1], [8, 1]]},
+        {"rows": 20, "keys": 8, "degrees": [[1, 3], [1, 2], [2, 1], [5, 1], [8, 1]]},
+        {"rows": 20, "keys": 8, "degrees": [[5, 1], [8, 1], [1, 5], [2, 1]]},
+        types.MappingProxyType({"rows": 20, "keys": 8, "degrees": GOOD["degrees"]}),
         {"rows": 20, "keys": 8, "degrees": [[1, 5], [2, 1], [5, 1], [8]]},
         {"rows": 20, "keys": 8, "degrees": [[1, 5], [2, 1], [5, 1], [8, 1, 1]]},
         {"rows": 0, "keys": 0, "degrees": []},
@@ -216,3 +313,10 @@ def test_decoder_messages_never_echo_values() -> None:
             fanout_spec_from_snapshot(_snap(block), "patient_id", digest=DIGEST)
         text = str(exc.value)
         assert str(CANARY) not in text and "canary-text" not in text
+
+
+def test_fitted_reference_values_is_public() -> None:
+    import decoy_engine.generation.statistical as pkg
+
+    assert pkg.fitted_reference_values is fitted_reference_values
+    assert "fitted_reference_values" in pkg.__all__
