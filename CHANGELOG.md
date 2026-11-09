@@ -9,6 +9,17 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (pipeline `name:` and `is_valid_pipeline_name`, registry 1.11.0)
+
+`PipelineConfig` accepts an optional top-level `name:`. It is a strict string: a non-string, or a
+string that fails the name rule, is refused with `config.pipeline_name_invalid` and the error never
+carries the submitted text. A config without `name:` dumps and hashes byte-for-byte as before; the
+field is left out of the dump while unset. `decoy_engine.is_valid_pipeline_name(value)` is the one
+rule: 1 to 64 characters from `[A-Za-z0-9_.-]`, starting with a letter or digit, not ending in a
+dot, and not a Windows device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`, `LPT1` to `LPT9`,
+any case, any extension). `COM0` and `LPT0` are allowed. The CLI uses it for folder names and
+file stems, so there is no second copy of the pattern.
+
 ### Changed (stage creators restore owner bits; ownership check reads the effective user)
 
 Directory and private-file stages made through `RootedFileAccess` outputs now restore the owner
