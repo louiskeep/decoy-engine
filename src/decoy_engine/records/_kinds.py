@@ -6,7 +6,7 @@ copied, so the library, the platform importer and the producer cannot drift apar
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import json
 from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
@@ -32,6 +32,17 @@ _RUN_RESULT_PATHS = ("/payload/tables/*/delivery/output", "/payload/links/log/pa
 _SAMPLE_PATHS = ("/payload/scratch_dir", "/payload/outputs/*/path")
 
 
+def _strict_dump(adapter: TypeAdapter[Any], value: Any) -> dict[str, Any] | None:
+    """``value`` as the strict model's JSON dump, or ``None``. Strict means no coercion (a width
+    given as text, a bool given as "true" fail), and the dump is what leaves, never the input."""
+    try:
+        model = adapter.validate_json(json.dumps(value), strict=True)
+    except (ValidationError, TypeError, ValueError):
+        return None
+    dumped: dict[str, Any] = model.model_dump(mode="json")
+    return dumped
+
+
 def _evidence_scrub(payload: dict[str, Any]) -> bool:
     """Free text leaves the evidence payload in a default export. A bare warning is a message
     and a warning's ``detail`` carries engine text, so neither is kept (the code, provider and
@@ -43,16 +54,17 @@ def _evidence_scrub(payload: dict[str, Any]) -> bool:
         layout = output.get("layout")
         if layout is None:
             continue
-        try:
-            _LAYOUT.validate_python(layout)
-        except ValidationError:
+        projected = _strict_dump(_LAYOUT, layout)
+        if projected is None:
             return False
+        output["layout"] = projected
     return True
 
 
-def _scan_set_strippable(payload: Mapping[str, Any]) -> bool:
-    """Whether every table descriptor is a public source descriptor, so the marker registry
-    names all of its path and locator fields. A descriptor with an unknown key is not."""
+def _scan_set_scrub(payload: dict[str, Any]) -> bool:
+    """Each table descriptor becomes the dump of a strict public ``SourceDescriptor``, so the
+    marker registry names all of its path and locator fields. A descriptor with an unknown key or
+    a value that needed coercion (a width given as text) is not one, and the record is withheld."""
     tables = payload.get("tables")
     if not isinstance(tables, list):
         return False
@@ -60,10 +72,10 @@ def _scan_set_strippable(payload: Mapping[str, Any]) -> bool:
         descriptor = table.get("descriptor") if isinstance(table, dict) else None
         if not isinstance(descriptor, dict):
             return False
-        try:
-            _DESCRIPTOR.validate_python(descriptor)
-        except ValidationError:
+        projected = _strict_dump(_DESCRIPTOR, descriptor)
+        if projected is None:
             return False
+        table["descriptor"] = projected
     return True
 
 
@@ -81,7 +93,7 @@ SCAN_SET = register_kind(
         read_model=ScanSetCoreRead,
         path_fields=_SCAN_PATHS,
         locator_fields=_SCAN_LOCATORS,
-        export_rule=pointer_rule(_SCAN_PATHS, _SCAN_LOCATORS, check=_scan_set_strippable),
+        export_rule=pointer_rule(_SCAN_PATHS, _SCAN_LOCATORS, scrub=_scan_set_scrub),
         diff_rule="scan-set",
         canary_fixture="scan-set",
     )

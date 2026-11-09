@@ -28,12 +28,15 @@ __all__ = [
 _ID = r"sha256:[0-9a-f]{64}"
 _KIND = r"[a-z][a-z0-9-]{0,63}"
 # A payload tag is `family/vN` or the inherited `family-N` (`cli-local-1`); a major has no
-# leading zero and at most four digits.
-_TAG = r"[a-z][a-z0-9-]{0,63}(?:/v|-)[1-9][0-9]{0,3}"
+# leading zero and at most four digits. One spelling: the model pattern and the parser share it.
+_FAMILY = _KIND
+_SEP = r"(?:/v|-)"
+_MAJOR = r"[1-9][0-9]{0,3}"
+_TAG = f"{_FAMILY}{_SEP}{_MAJOR}"
 
 RECORD_ID_RE = re.compile(_ID)
 KIND_RE = re.compile(_KIND)
-TAG_PATTERN = re.compile(r"(?P<family>[a-z][a-z0-9-]*?)(?:/v|-)(?P<major>[1-9][0-9]{0,3})")
+TAG_PATTERN = re.compile(f"(?P<family>{_FAMILY}?){_SEP}(?P<major>{_MAJOR})")
 
 RecordId = Annotated[StrictStr, StringConstraints(pattern=f"^{_ID}$")]
 Kind = Annotated[StrictStr, StringConstraints(pattern=f"^{_KIND}$")]

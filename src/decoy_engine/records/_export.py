@@ -25,7 +25,7 @@ from decoy_engine import reasons
 from decoy_engine._value_free import Count, InvocationId, UtcTimestamp
 from decoy_engine.records import _kinds  # noqa: F401  (registers the V1 kinds)
 from decoy_engine.records._canonical import canonical_bytes, payload_digest, record_id, sha256_tag
-from decoy_engine.records._codec import decode, json_object, utc_stamp, validated
+from decoy_engine.records._codec import decode, json_object, project, utc_stamp, validated
 from decoy_engine.records._envelope import (
     ENVELOPE_SCHEMA,
     DecodedRecord,
@@ -130,10 +130,10 @@ def _strip(spec: KindSpec, payload: dict[str, Any]) -> tuple[dict[str, Any], boo
     if model is None or spec.export_rule is None:
         return None
     try:
-        model.model_validate(payload)
-    except ValidationError:
+        projected = project(validated(payload, model, ("payload",)))
+    except RecordError:
         return None
-    result = spec.export_rule(payload)
+    result = spec.export_rule(projected)
     if result is None:
         return None
     out, removed = result

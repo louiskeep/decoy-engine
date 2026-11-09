@@ -142,3 +142,39 @@ def test_a_gcs_scan_drops_its_credentials_ref(tmp_path: Path) -> None:
     header, text = _export(_record(dataclasses.replace(scan, tables=(table,))))
     assert "secret-ref" not in text and "x/y" not in text and "z.csv" in text
     assert len(header.unstripped) == 1
+
+
+def _with_descriptor(tmp_path: Path, descriptor: dict[str, Any]) -> dict[str, Any]:
+    scan = _scan(tmp_path)
+    table = dataclasses.replace(scan.tables[0], descriptor=descriptor)
+    return _record(dataclasses.replace(scan, tables=(table,)))
+
+
+def _fixed_width(width: Any) -> dict[str, Any]:
+    return {
+        "type": "file",
+        "format": "fixed_width",
+        "path": "/data/in.txt",
+        "layout": {"columns": [{"name": "id", "start": 0, "width": width}]},
+    }
+
+
+def test_a_valid_fixed_width_descriptor_exports_its_projection(tmp_path: Path) -> None:
+    header, text = _export(_with_descriptor(tmp_path, _fixed_width(4)))
+    assert header.withheld_records == () and header.record_count == 1
+    assert '"width":4' in text and "/data/in.txt" not in text
+
+
+def test_a_coerced_descriptor_value_withholds_the_record(tmp_path: Path) -> None:
+    """A width given as text validates in lax mode; export must not emit that text."""
+    rec = _with_descriptor(tmp_path, _fixed_width("4111111111111111"))
+    header, text = _export(rec)
+    assert header.withheld_records == (rec["id"],) and header.record_count == 0
+    assert "4111111111111111" not in text
+
+
+def test_a_bool_given_as_text_withholds_the_record(tmp_path: Path) -> None:
+    csv = {"type": "file", "format": "csv", "path": "/data/in.csv", "has_header": "true"}
+    rec = _with_descriptor(tmp_path, csv)
+    header, _ = _export(rec)
+    assert header.withheld_records == (rec["id"],)

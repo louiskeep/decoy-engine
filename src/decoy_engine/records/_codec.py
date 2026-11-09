@@ -78,11 +78,19 @@ def _payload_body(spec: KindSpec, payload: Any) -> dict[str, Any]:
     model = spec.write_model
     if model is None:
         raise RecordError(reasons.runtime.RECORD_KIND_RESERVED)
-    parsed = validated(payload, model, ("payload",))
+    return project(validated(payload, model, ("payload",)))
+
+
+def project(parsed: BaseModel) -> dict[str, Any]:
+    """The stored form of a validated payload model: what it kept, never what was handed over.
+
+    Fields the producer left unset stay absent, so the stored payload is the one it handed over
+    minus anything the model coerced or dropped. Export reads it too, so it only ever emits what a
+    model accepted.
+    """
     to_payload = getattr(parsed, "to_payload", None)
     if to_payload is not None:
         return dict(to_payload())
-    # Fields the producer left unset stay absent, so the stored payload is the one it handed over.
     return parsed.model_dump(mode="json", by_alias=True, exclude_unset=True)
 
 

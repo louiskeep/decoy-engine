@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import copy
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from typing import Any
 
 __all__ = ["ExportRule", "file_name", "pointer_rule"]
@@ -72,17 +72,14 @@ def pointer_rule(
     path_fields: tuple[str, ...],
     locator_fields: tuple[str, ...] = (),
     *,
-    check: Callable[[Mapping[str, Any]], bool] | None = None,
     scrub: Callable[[dict[str, Any]], bool] | None = None,
 ) -> ExportRule:
     """A rule from JSON-pointer lists: path fields are reduced to file names and locator fields
-    removed. ``check`` must hold for the payload as stored. ``scrub`` edits a copy in place for
+    removed. ``scrub`` edits a copy in place for
     what the pointers cannot say (free text, loose structures) and returns False when what is left
     cannot be proven value-free."""
 
     def rule(payload: dict[str, Any]) -> tuple[dict[str, Any], bool] | None:
-        if check is not None and not check(payload):
-            return None
         out = copy.deepcopy(payload)
         if scrub is not None and not scrub(out):
             return None

@@ -39,9 +39,19 @@ def test_a_reserved_kind_declares_no_rule() -> None:
         KindSpec(kind="x", payload_schema="x/v1", export_rule=lambda p: (p, False))
 
 
-@pytest.mark.parametrize("grammar", [r"sha256:\[0-9a-f\]\{64\}", r"\[a-z\]\[a-z0-9-\]\{0,63\}"])
+@pytest.mark.parametrize(
+    "grammar",
+    [
+        r"sha256:\[0-9a-f\]\{64\}",
+        r"\[a-z\]\[a-z0-9-\]\{0,63\}",
+        r"\[1-9\]\[0-9\]\{0,3\}",
+        r"\(\?:/v\|-\)",
+    ],
+)
 def test_each_wire_grammar_is_spelled_once(grammar: str) -> None:
     holders = sorted(
         p.name for p in RECORDS.glob("*.py") if re.search(grammar, p.read_text(encoding="utf-8"))
     )
     assert holders == ["_grammar.py"]
+    text = (RECORDS / "_grammar.py").read_text(encoding="utf-8")
+    assert len(re.findall(grammar, text)) == 1, "spelled twice inside the grammar module"
