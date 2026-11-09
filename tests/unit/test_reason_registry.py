@@ -300,17 +300,17 @@ def test_cell_format_minor_has_one_fixture_with_exactly_its_identity() -> None:
     assert pinned["registry_version"] == "1.16.0"
 
 
-RUN_STREAM_FIXTURE = "reason-manifest-v1.17-run-stream-e1a.json"
+RUN_STREAM_FIXTURE = "reason-manifest-v1.19-run-stream-e1a.json"
 
 
 def test_streaming_unavailable_is_registered_with_its_owner() -> None:
-    """RUN-STREAM E1a: one additive identity owned by ExecutionError, `since` 1.17.0."""
+    """RUN-STREAM E1a: one additive identity owned by ExecutionError, `since` 1.19.0."""
     from decoy_engine import reasons
 
     spec = reasons.find("runtime", "streaming_unavailable")
     assert spec is not None
     assert spec.owner == "ExecutionError"
-    assert spec.since == "1.17.0"
+    assert spec.since == "1.19.0"
     assert reasons.runtime.STREAMING_UNAVAILABLE == "streaming_unavailable"
 
 

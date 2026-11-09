@@ -223,7 +223,7 @@ SPLIT_SINK_NEEDS_ALL_DISPATCHED = _d(
     "split_sink_needs_all_dispatched", "Split sink needs all dispatched."
 )
 STREAMING_UNAVAILABLE = _d(
-    "streaming_unavailable", "No streaming route applies to this job.", since="1.17.0"
+    "streaming_unavailable", "No streaming route applies to this job.", since="1.19.0"
 )
 TRANSFORM_SOURCE_MISSING = _d("transform_source_missing", "Transform source missing.")
 UNDECLARED_OUTPUT_COLUMNS = _d("undeclared_output_columns", "Undeclared output columns.")

@@ -13,7 +13,7 @@ minimum engine version it was tested against via its
 
 `run_pipeline(execution_mode="stream")` means "must stream". It runs as `auto` with one extra
 requirement, and a job no streaming route can take is refused with the new
-`runtime.streaming_unavailable` (registry 1.17.0) before any source passed in `sources` is read.
+`runtime.streaming_unavailable` (registry 1.19.0) before any source passed in `sources` is read.
 The size threshold does not apply, so a table of any size, empty included, takes the chunked lane. A
 table needs a lazy source and a streaming sink. Parquet output keeps one row group per chunk, split at
 pyarrow's 1,048,576-row writer cap, the grouping `ParquetWriter.write_table` gives each chunk of a
