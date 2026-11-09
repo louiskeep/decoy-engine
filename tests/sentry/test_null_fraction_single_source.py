@@ -15,9 +15,10 @@ SRC = Path(__file__).parents[2] / "src" / "decoy_engine"
 OWNER = ("quality/diagnostic.py", "snapshot_null_fraction")
 
 _COUNTS = frozenset({"null_count", "non_null_count"})
-_TOKENS = _COUNTS | {"row_count", "non_null_cells"}
-# `CellFormat.non_null_cells` is the same concept as the snapshot's `non_null_count`.
+# Other spellings of a count concept. `CellFormat.non_null_cells` is the snapshot's
+# `non_null_count`. Add an alias here only: _TOKENS derives from this map.
 _ALIASES = {"non_null_cells": "non_null_count"}
+_TOKENS = _COUNTS | {"row_count"} | _ALIASES.keys()
 
 
 def _tokens(node: ast.AST) -> set[str]:
