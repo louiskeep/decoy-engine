@@ -22,7 +22,8 @@ for every other caller.
 `run_pipeline(out_of_core_threads=...)` caps the DuckDB threads of the out-of-core route. The cap is bound
 per run and read where each connection opens, so every nested connection gets
 `max(1, min(cap or usable CPUs, memory_limit // 2 GiB))` threads. DuckDB thread sizing now uses usable
-CPUs instead of `os.cpu_count()`. The connection settings actually applied are returned in
+CPUs instead of `os.cpu_count()`. If the CPU limit cannot be read, a given cap is used in place of the CPU
+term (so `out_of_core_threads` works around the failure); without a cap the error is raised. The connection settings actually applied are returned in
 `quality_metrics["resources"]["out_of_core"]` (`thread_cap`, `applied`). The auto-chunk lane stamp gains
 `native_thread_clamp` (`requested`, `usable_cpus`, `knee`, `applied`), the same arithmetic the native
 kernel applies to a `native_threads` request.

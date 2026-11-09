@@ -131,11 +131,20 @@ def _threads_for_memory_limit(
     `memory_limit` that is missing or not that shape has no memory term: with a cap the result is
     ``max(1, min(cap, usable CPUs))``, and without one it is None, leaving DuckDB's own default
     (the CPU count) in place rather than mis-deriving a figure.
+
+    When a cap is given and CPU detection raises, the cap stands in for the CPU term, so the
+    documented `out_of_core_threads` workaround for an unreadable cgroup works. Without a cap the
+    detection error is not swallowed.
     """
     memory_limit_bytes = _memory_limit_bytes(memory_limit)
     if memory_limit_bytes is None and thread_cap is None:
         return None
-    ceilings = [detect_usable_cpus()]
+    ceilings: list[int] = []
+    try:
+        ceilings.append(detect_usable_cpus())
+    except ExecutionError:
+        if thread_cap is None:
+            raise
     if thread_cap is not None:
         ceilings.append(thread_cap)
     if memory_limit_bytes is not None:

@@ -306,3 +306,23 @@ def test_duckdb_thread_sizing_uses_the_detector(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(_duckdb, "detect_usable_cpus", lambda: 3)
     assert _duckdb._threads_for_memory_limit("1048576MB") == 3  # 1 TiB: the CPU ceiling binds
     assert _duckdb._threads_for_memory_limit("4096MB") == 2  # 2 GiB per thread binds
+
+
+def _detection_fails() -> int:
+    raise ExecutionError(code=reasons.runtime.CPU_DETECTION_FAILED, message="cpu_limit_unreadable")
+
+
+def test_thread_cap_survives_failed_cpu_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The documented `out_of_core_threads` workaround for an unreadable cgroup must not need the
+    # detector at all.
+    monkeypatch.setattr(_duckdb, "detect_usable_cpus", _detection_fails)
+    assert _duckdb._threads_for_memory_limit(None, thread_cap=4) == 4
+    assert _duckdb._threads_for_memory_limit("4096MB", thread_cap=4) == 2  # memory term still binds
+
+
+def test_failed_cpu_detection_surfaces_without_a_thread_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(_duckdb, "detect_usable_cpus", _detection_fails)
+    with pytest.raises(ExecutionError, match="cpu_limit_unreadable"):
+        _duckdb._threads_for_memory_limit("4096MB")
