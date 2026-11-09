@@ -468,6 +468,17 @@ def test_the_csv_repro_with_inf_produces_a_document() -> None:
     assert "x" in distribution_snapshot_document(df)["columns"]
 
 
+@pytest.mark.parametrize("include_values", [False, True])
+@pytest.mark.parametrize("values", [[1e308, 1.0, 2.0], [1.79e308, 1.7e308, 1.5]])
+def test_a_range_wider_than_the_profile_chart_can_bin_produces_a_document(
+    values: list[float], include_values: bool
+) -> None:
+    doc = distribution_snapshot_document(
+        pd.DataFrame({"v": values, "w": range(len(values))}), include_values=include_values
+    )
+    assert "v" in doc["columns"]
+
+
 def test_include_values_must_be_a_bool() -> None:
     with pytest.raises(TypeError, match="include_values"):
         distribution_snapshot_document(_qa_frame(), include_values=1)  # type: ignore[arg-type]
