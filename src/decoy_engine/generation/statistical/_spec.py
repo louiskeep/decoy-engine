@@ -51,7 +51,7 @@ from typing import Any
 from decoy_engine import fileaccess, reasons
 from decoy_engine.errors import DecoyError
 from decoy_engine.fileaccess import FileRole
-from decoy_engine.profiling._value_redaction import (
+from decoy_engine.profiling import (
     POLICY_RAW,
     POLICY_REDACTED,
     REDACTED_COLUMNS_KEY,
@@ -261,7 +261,7 @@ def _refuse_withheld_values(
             f"{source_column!r} were kept"
         )
     else:
-        named = (source_column,) if condition_on is None else (source_column, condition_on)
+        named = (source_column,) if condition_on is None else (source_column, str(condition_on))
         redacted = [c for c in named if c in (listed or ())]
         if not redacted:
             return

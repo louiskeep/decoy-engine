@@ -20,6 +20,10 @@ Pre-scan phase: the profiling entrypoint is `profile_columns`, returning a
 
 from decoy_engine.profiling._snapshot_values import distribution_snapshot_document
 from decoy_engine.profiling._value_redaction import (
+    POLICY_RAW,
+    POLICY_REDACTED,
+    REDACTED_COLUMNS_KEY,
+    VALUE_POLICY_KEY,
     is_value_sensitive,
     profile_document,
     redact_profile_dict,
@@ -41,6 +45,10 @@ from decoy_engine.profiling.types import (
 
 __all__ = [
     "DEFAULT_STRATEGY_BY_DETECTOR",
+    "POLICY_RAW",
+    "POLICY_REDACTED",
+    "REDACTED_COLUMNS_KEY",
+    "VALUE_POLICY_KEY",
     "ColumnProfile",
     "Distribution",
     "FieldStats",
