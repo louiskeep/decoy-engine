@@ -13,6 +13,15 @@ from decoy_engine.fileaccess import FileAccessUnavailable, LocalFileAccess
 # Create a module-level logger instance
 _LOGGER_INSTANCE = None
 
+# Marker set on each handler `_configure_logger` creates, so a reconfigure removes and closes
+# only its own handlers and never one a host program attached to the same logger.
+_OWNED_ATTR = "_decoy_engine_owned"
+
+
+def _own(handler):
+    setattr(handler, _OWNED_ATTR, True)
+    return handler
+
 
 def get_logger(config: dict[str, Any] | None = None):
     """
@@ -70,17 +79,18 @@ def _configure_logger(logger, config: dict[str, Any]):
         logger: Logger instance to configure
         config: Dictionary with logging configuration
     """
-    # Replace configured handlers (closing them) but keep one library NullHandler, so a
-    # reconfigure neither drops the fallback nor stacks a second one.
+    # Replace only the handlers this module created from an earlier config (closing them). The
+    # package NullHandler is kept (one only, extras dropped; the package __init__ is the sole
+    # place that creates it), and handlers a host program attached are left alone.
     kept_null = False
     for handler in list(logger.handlers):
-        if isinstance(handler, logging.NullHandler) and not kept_null:
+        if isinstance(handler, logging.NullHandler):
+            if kept_null:
+                logger.removeHandler(handler)
             kept_null = True
-            continue
-        logger.removeHandler(handler)
-        handler.close()
-    if not kept_null:
-        logger.addHandler(logging.NullHandler())
+        elif getattr(handler, _OWNED_ATTR, False):
+            logger.removeHandler(handler)
+            handler.close()
 
     # Set default level
     level_name = config.get("level", "info").lower()
@@ -103,7 +113,7 @@ def _configure_logger(logger, config: dict[str, Any]):
 
     # Default to no console output (console: False by default)
     if config.get("console", False):
-        console_handler = logging.StreamHandler()
+        console_handler = _own(logging.StreamHandler())
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
 
@@ -125,7 +135,9 @@ def _configure_logger(logger, config: dict[str, Any]):
         try:
             max_size_mb = config.get("max_size_mb", 10)
             backup_count = config.get("backup_count", 5)
-            file_handler = ambient.log_handler(log_file, max_size_mb * 1024 * 1024, backup_count)
+            file_handler = _own(
+                ambient.log_handler(log_file, max_size_mb * 1024 * 1024, backup_count)
+            )
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
         except (OSError, PermissionError) as exc:
@@ -140,7 +152,7 @@ def _configure_logger(logger, config: dict[str, Any]):
                 for h in logger.handlers
             )
             if not has_console:
-                console_fallback = logging.StreamHandler()
+                console_fallback = _own(logging.StreamHandler())
                 console_fallback.setFormatter(formatter)
                 logger.addHandler(console_fallback)
             logger.warning(

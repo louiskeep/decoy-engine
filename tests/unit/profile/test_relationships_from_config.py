@@ -22,6 +22,15 @@ def test_exported_and_private_name_gone():
 
     assert "profile_relationships_from_config" in profile_pkg.__all__
     assert not hasattr(_source, "_build_relationships")
+    import decoy_engine
+    import decoy_engine.profiling
+    import decoy_engine.sdk
+
+    for mod in (decoy_engine, decoy_engine.sdk, decoy_engine.profiling):
+        assert not hasattr(mod, "profile_relationships_from_config")
+    assert (
+        profile_pkg.profile_relationships_from_config is _source.profile_relationships_from_config
+    )
 
 
 def test_empty_returns_empty_tuple():
@@ -60,6 +69,15 @@ def test_unequal_composite_columns_raise_value_error():
     bad = _rel(
         parent={"table": "patients", "columns": ["a", "b"]},
         children=[{"table": "visits", "columns": ["a"]}],
+    )
+    with pytest.raises(ValueError):
+        profile_relationships_from_config([bad])
+
+
+def test_empty_column_lists_raise_value_error():
+    bad = _rel(
+        parent={"table": "patients", "columns": []},
+        children=[{"table": "visits", "columns": []}],
     )
     with pytest.raises(ValueError):
         profile_relationships_from_config([bad])
