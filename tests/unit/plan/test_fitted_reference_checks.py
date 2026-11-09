@@ -432,3 +432,12 @@ def test_check_statistical_columns_is_called_only_by_the_wrapper() -> None:
                     if name == "check_statistical_columns":
                         callers.append(f"{src.name}:{fn.name}")
     assert callers == ["_generation.py:check_generate_snapshot_columns"]
+
+
+def test_fitted_check_never_reopens_an_unpinned_path(tmp_path: Path) -> None:
+    from decoy_engine.plan._generation import check_generate_snapshot_columns
+
+    cfg = _fitted_config(_write(tmp_path, _fitted_snapshot()))
+    with pytest.raises(PlanCompileError) as exc:
+        check_generate_snapshot_columns(cfg, {}, frozenset(), None)
+    assert exc.value.code == "statistical_snapshot_unreadable"
