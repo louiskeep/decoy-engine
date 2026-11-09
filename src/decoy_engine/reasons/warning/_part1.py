@@ -66,7 +66,7 @@ VALUE_REUSE_FIXED_POINT = _d("value_reuse_fixed_point", "Value reuse fixed point
 # unregistered code reaches the wire as `unregistered_reason`.
 _d = _catalog.warning("LibraryEvent")
 
-JOB_LOG_WRITE_FAILED = _d("job_log_write_failed", "Job log write failed.", since="1.10.0")
-LIBRARY_DEGRADED = _d("library_degraded", "Library degraded.", since="1.10.0")
-LIBRARY_DELETE_SKIPPED = _d("library_delete_skipped", "Library delete skipped.", since="1.10.0")
-LIBRARY_WRITE_FAILED = _d("library_write_failed", "Library write failed.", since="1.10.0")
+JOB_LOG_WRITE_FAILED = _d("job_log_write_failed", "Job log write failed.", since="1.18.0")
+LIBRARY_DEGRADED = _d("library_degraded", "Library degraded.", since="1.18.0")
+LIBRARY_DELETE_SKIPPED = _d("library_delete_skipped", "Library delete skipped.", since="1.18.0")
+LIBRARY_WRITE_FAILED = _d("library_write_failed", "Library write failed.", since="1.18.0")

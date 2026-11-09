@@ -16,10 +16,10 @@ Branch `feat/lib-l1a-records`, base engine `origin/main` `a5eb66e2` (registry 1.
 - Kinds: `evidence` (`cli-local-1`), `run-result` (points at `RunResult` and `RunResultRead`), `sample-run/v1`;
   `scan-set`, `publication` and `checkpoint` are reserved. `scan-set` stays reserved because SCAN-MULTI S1a
   (`ScanSetCore`) is not on main; its merge points the entry at the model.
-- Reasons at registry 1.10.0 (the next minor after main's 1.9.0; REG-RENUMBER renumbers at merge): runtime
+- Reasons at registry 1.18.0 (the next minor after main's 1.9.0; REG-RENUMBER renumbers at merge): runtime
   `record_invalid`, `record_corrupt`, `record_kind_reserved` (owner `RecordError`, one `_CODED` row in
   `reason_adapter.py`); warning `library_write_failed`, `job_log_write_failed`, `library_degraded`,
-  `library_delete_skipped` (owner `LibraryEvent`). Fixture `reason-manifest-v1.10-lib-l1a.json`,
+  `library_delete_skipped` (owner `LibraryEvent`). Fixture `reason-manifest-v1.18-lib-l1a.json`,
   `consumer-contract.json` restamped, one `docs/reasons.md` token moved.
 - Public API: five names in `decoy_engine.__all__` (`DecodedRecord`, `OpaqueRecord`, `RecordEnvelope`,
   `RecordError`, `RecordNeedsNewer`); the functions are `decoy_engine.records.*`.
@@ -94,3 +94,4 @@ Test input changes forced by H3, not weakened assertions: the SEC-2 test builds 
 
 L1, L3, L4 and the remaining low findings from gate round 1 are logged here as V2-LOG items: none breaks
 function, loses data or leaks to a non-admin.
+Registry renumbered at merge from 1.10.0 to 1.18.0 by scripts/dev/registry_renumber.py; main was at 1.17.0.
