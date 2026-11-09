@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine.generators.derivation import column_identity
+
 
 def _grouped_series_generate(
     col: dict[str, Any],
@@ -31,7 +33,7 @@ def _grouped_series_generate(
 
     Methodology: pandas groupby cumcount / SDV per-group sequencing. Per-group
     step RNG uses derive(seed, namespace, group_label) (HKDF-SHA256 + HMAC-
-    SHA256); namespace = "grouped_series/<col_name>".
+    SHA256); namespace = "grouped_series/<table, column identity>".
     See transforms/grouped_series.py for full citations.
 
     Deterministic: same seed + same generated snapshot -> same output.
@@ -58,8 +60,7 @@ def _grouped_series_generate(
     # Convert seed int -> 8 bytes for the transform layer. The seed int from
     # _normalize_job_seed_int fits in 8 bytes (same as _normalize_job_seed).
     seed_bytes = seed.to_bytes(8, "big")
-    col_name = col.get("name", "grouped_series_col")
-    namespace = f"grouped_series/{col_name}"
+    namespace = f"grouped_series/{column_identity(col)}"
     return list(apply_grouped_series(config, df, seed=seed_bytes, namespace=namespace))
 
 
@@ -79,7 +80,7 @@ def _windowed_date_generate(
 
     Methodology: derive()-per-column namespace (HKDF-SHA256 + HMAC-SHA256)
     for per-row seed isolation; pandas Timestamp + Timedelta for date
-    arithmetic. Namespace = "windowed_date/<col_name>".
+    arithmetic. Namespace = "windowed_date/<table, column identity>".
     See transforms/windowed_date.py for full citations.
 
     Deterministic: same seed + same anchor values -> byte-identical output.
@@ -106,8 +107,7 @@ def _windowed_date_generate(
         anchor_vals = resolve_anchor_cells(anchor_vals, reference_date)
     df = pd.DataFrame({config.anchor: anchor_vals})
     seed_bytes = seed.to_bytes(8, "big")
-    col_name = col.get("name", "windowed_date_col")
-    namespace = f"windowed_date/{col_name}"
+    namespace = f"windowed_date/{column_identity(col)}"
     return apply_windowed_date(config, df, seed=seed_bytes, namespace=namespace)
 
 
@@ -123,7 +123,7 @@ def _group_key_generate(
     then applies apply_group_key. The group_by column must be declared before
     this column in generate_columns (declared-order sequential semantics).
 
-    The namespace "group_key/<column_name>" isolates this column's HKDF-SHA256
+    The namespace "group_key/<table, column identity>" isolates this column's HKDF-SHA256
     derivation from other group_key columns in the same job.
 
     Methodology: HKDF-SHA256 + HMAC-SHA256 keyed per-group identifier via
@@ -147,8 +147,7 @@ def _group_key_generate(
     group_vals = generated.get(config.group_by, [None] * n)
     df = pd.DataFrame({config.group_by: group_vals})
     # Namespace isolates this column's derivation from other group_key columns.
-    col_name = col.get("name", "group_key_col")
-    namespace = f"group_key/{col_name}"
+    namespace = f"group_key/{column_identity(col)}"
     # derive() requires exactly 8 bytes as the seed. The seed int from
     # _normalize_job_seed_int fits in 8 bytes (same as _normalize_job_seed).
     seed_bytes = seed.to_bytes(8, "big")

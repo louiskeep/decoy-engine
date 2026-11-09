@@ -415,7 +415,7 @@ custom-override/locale availability. Seed:
 `build_seed = GenDeriveContext.for_column(...).family_bytes("faker_pool_build")[:8]`,
 then ONE `faker.seed_instance(int.from_bytes(build_seed, "big"))` on a fresh
 instance seeds a batch of `pool_size` provider calls. Keyed off the column's OWN
-root (fingerprint-derived), so rename-invariant per R3.10 and independent of every
+root (fingerprint-derived), so identity-scoped per column and independent of every
 other column's pool. Partitionable (pool identity is a pure function of that root).
 Paired with `gen.faker_pool_selection` (`numpy_pcg64` family, above) for the REUSE
 draw.

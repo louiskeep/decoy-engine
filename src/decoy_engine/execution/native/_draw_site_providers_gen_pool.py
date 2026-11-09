@@ -36,7 +36,7 @@ class FakerPoolBuildLocalProvider(DrawSiteProvider):
     ``FakerPoolBuildProvider`` (``gen.pool_build_faker``): that site keys off
     ``derive(job_seed, "pool/{provider}/{locale}/{namespace}", config_hash)``,
     the V2 PoolBuilder identity shape; this one keys off the column's OWN
-    ``GenDeriveContext`` root, so it is rename-invariant per R3.10 and
+    ``GenDeriveContext`` root, so it is identity-scoped per column and
     independent of every other column's pool the same way gen.faker_per_row's
     row_int is. Pool identity is a pure function of that root, so partitionable.
     """

@@ -29,7 +29,7 @@ from typing import Any
 import pytest
 
 from decoy_engine.generation import _faker_pool
-from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.generators.derivation import GenDeriveContext, with_table
 
 FIXTURE_PATH = (
     Path(__file__).resolve().parents[3]
@@ -59,7 +59,7 @@ def test_build_and_sample_output_matches_pre_extraction_baseline(case: dict[str,
         "faker_kwargs": case["kwargs"],
     }
     gen_ctx = GenDeriveContext.for_column(
-        derive_key=None, column_config=col, fallback_seed=case["seed"]
+        derive_key=None, column_config=with_table(col, ""), fallback_seed=case["seed"]
     )
     result = _faker_pool.build_and_sample(
         faker_type=case["faker_type"],

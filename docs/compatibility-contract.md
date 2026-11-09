@@ -207,6 +207,16 @@ from the wrong-seed `vault_key_mismatch`. Cross-version unmask is not supported
 and was not supported before F13; F13 makes the failure diagnosable rather than
 opaque.
 
+**Current state (column identity, 2026-11-08, pre-GA):** the generation column
+root now mixes the column identity (table name plus column name) with the
+strategy fingerprint, so columns with identical settings no longer draw the same
+stream. Generated output changes for existing seeds and keys, and renaming a
+column or moving it to another table re-keys it. `SEED_PROTOCOL_VERSION` is
+deliberately NOT bumped: it is shared with the mask path, so a bump would re-key
+all mask output for a generation-only change. Pinned plans are guarded by the
+engine version recorded in their `runtime_identity`, so a plan pinned before this
+change is refused by a newer engine instead of silently regenerating differently.
+
 **Current state (v7, 2026-09-11, pre-GA):** `SEED_PROTOCOL_VERSION` moved 6 -> 7
 (Task 5.2, DE-01 resolution): the `fpe` strategy's cipher, and the `fpe`-branch
 text-mask spans (ZIP, SSN, phone, PAN), now run NIST SP 800-38G FF1 (AES-256)

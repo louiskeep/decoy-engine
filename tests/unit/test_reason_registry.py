@@ -245,3 +245,19 @@ def test_derived_visibility_codes_are_registered_execution_errors(code: str) -> 
     assert spec is not None
     assert spec.owner == "ExecutionError"
     assert getattr(reasons.runtime, code.upper()) == code
+
+
+def test_fit_redact_code_is_a_registered_plan_error_with_a_pinned_fixture() -> None:
+    """The one 1.11.0 identity: owned by `StatisticalSpecError`, exported under its wire string,
+    and the only entry of its minor fixture."""
+    from decoy_engine import reasons
+
+    spec = reasons.find("plan", "statistical_snapshot_values_redacted")
+    assert spec is not None
+    assert spec.owner == "StatisticalSpecError"
+    assert spec.code == reasons.plan.STATISTICAL_SNAPSHOT_VALUES_REDACTED
+    fixture = _load("reason-manifest-v1.11-fit-redact.json")
+    assert fixture["registry_version"] == "1.11.0"
+    assert [(e["namespace"], e["code"]) for e in fixture["entries"]] == [
+        ("plan", "statistical_snapshot_values_redacted")
+    ]

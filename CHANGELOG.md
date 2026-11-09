@@ -22,6 +22,54 @@ dot, and not a Windows device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`
 any case, any extension). `COM0` and `LPT0` are allowed. The CLI uses it for folder names and
 file stems, so there is no second copy of the pattern.
 
+### Added (fit snapshots withhold sensitive values, 2026-11-08)
+
+`decoy_engine` and `decoy_engine.profiling` export `distribution_snapshot_document(df, *, include_values=False,
+joint_columns=None, profile_row_cap=None, ...)`, the snapshot to write to disk. It is
+`compute_distribution_snapshot` (which stays raw for in-memory callers) with every value-sensitive
+column's cell values removed, using the same sensitivity rule as `profile_document`. A sensitive
+categorical column gets an empty `top_values` and its whole count in `other_count`; a joint that
+names one gets an empty `cells`; a numeric column gets one bin whose two edges sit outside every
+source cell (or the fixed bin `-1.5` to `1.5` when the range is too wide to pad) and no `mean`,
+`std` or quantiles; a datetime column keeps its `year_bins` with `min` and `max` moved to the year
+before the first and after the last, held within years 1 to 9999. The document gains `value_policy`
+(`flagged-redacted/v1`, or `raw` with `include_values=True`) and `redacted_columns`, two optional
+top-level keys that `distribution-snapshot/v1` readers ignore.
+
+Generation reads that marker. A `type: statistical` column that would sample categories from a
+redacted source column, or use one as `condition_on`, now fails at validate and at load with the new
+`plan` reason `statistical_snapshot_values_redacted` (registry 1.11.0). The message says to use a
+faker or pattern generator, or to re-fit with `--include-values` and set `allow_real_categories:
+true`. A `raw` snapshot is not refused here but still needs that opt-in, a snapshot with a missing,
+unknown or ill-typed marker is refused for categorical and conditional columns, and a snapshot with
+no marker (written before this change) loads as before. Numeric and datetime columns of a redacted
+snapshot still generate; the fidelity gate reports a redacted numeric column as not comparable
+(`no_quantiles`).
+
+### Added (check a DP fit request without data, 2026-11-08)
+
+`decoy_engine.quality.check_dp_fit_request(column_schema, *, epsilon, delta, numeric_bins=10)` runs the
+checks `fit_dp_snapshot` makes before it reads a row: the epsilon, delta and bin count, the column schema,
+the derived bin edges, then the proof-stack gate. It raises the same typed error the fit would, in the
+same order, so a malformed request keeps its own code on an uncertified host and a valid one raises
+`dp_platform_uncertified` or `dp_stack_uncertified` without any data. `fit_dp_snapshot` calls the same
+private preparation, so behavior and error codes of the fit do not change.
+
+### Fixed (generated columns with identical settings no longer repeat each other)
+
+Generated columns with identical settings used to get identical values in every row, with or
+without a master key: two `first_name` columns, two `date_between` columns, two categoricals with
+the same categories, and statistical columns fitted from independent source columns (correlation
+near 0.9 instead of near 0). The per-column draw stream now derives from the job seed (or master
+key and label), the strategy config, and the column identity (table name plus column name).
+Adding a column or growing `row_count` still leaves the other columns unchanged.
+
+Output changes for existing seeds and keys. This is accepted before GA and there is no opt-in to
+the old seeding. Renaming a column or moving it to another table now changes its values. The
+`_legacy_column_name_seed` column option is removed. Grouped-series, windowed-date and group-key
+columns derive their namespace from the same table and column identity, so a column of the same
+name in two tables no longer shares a stream.
+
 ### Changed (stage creators restore owner bits; ownership check reads the effective user)
 
 Directory and private-file stages made through `RootedFileAccess` outputs now restore the owner
@@ -118,6 +166,15 @@ can recompute the permutation and undo it, as with every keyed strategy; set a s
   column M` (was `Failed to parse YAML: <PyYAML text>`, which echoed the offending line).
   `decoy_engine.safe_output.yaml_error_text` holds that text.
 - New public names: `parse_pipeline_config`, `ConfigProblem`, `ConfigRuleError`.
+
+### Fixed (class sweep B1: end anchors and facade imports, 2026-11-08)
+
+Sixteen internal `re` patterns ended with `$`, which also matches before a trailing newline;
+they now end with `\Z`. This covers the Postgres snapshot identifier and type patterns, the
+secret-provider version patterns, the NPI checksum, the DuckDB memory limit, the Arrow dtype
+labels, the ISO-date sentinel and the column-name hint patterns. A value with a trailing newline
+no longer matches. `decoy_engine.reasons` also exports `COUNT_KEYS`, `MAX_COUNTS` and
+`is_count`, so progress, safe-output and telemetry code reads the public facades.
 
 ### Added (init wizard E3: keyed columns of a config, 2026-11-08)
 
