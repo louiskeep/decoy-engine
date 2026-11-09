@@ -86,7 +86,7 @@
       "deprecated_in": null,
       "kind": "failure",
       "namespace": "plan",
-      "owner": "PlanCompileError",
+      "owner": "StatisticalSpecError",
       "replaced_by": null,
       "rules": [
         {

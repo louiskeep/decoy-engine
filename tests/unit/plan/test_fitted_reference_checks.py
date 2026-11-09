@@ -2,7 +2,7 @@
 
 The exact source degree histogram must not reach DP output. The one decision point is
 `check_dp_generate_contract`; compile, the config-only checks and the load of a serialized Plan
-all go through it, before any snapshot is read or verified.
+all go through it, before verification.
 """
 
 from __future__ import annotations

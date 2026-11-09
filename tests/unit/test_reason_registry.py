@@ -252,7 +252,7 @@ FK_FANOUT_CODES = [
     ("plan", "reference_fanout_missing", "PlanCompileError"),
     ("plan", "reference_fanout_invalid", "PlanCompileError"),
     ("plan", "reference_fanout_conflict", "PlanCompileError"),
-    ("plan", "reference_parent_pool_empty", "PlanCompileError"),
+    ("plan", "reference_parent_pool_empty", "StatisticalSpecError"),
     ("plan", "dp_generate_fitted_fanout_unsupported", "PlanCompileError"),
 ]
 

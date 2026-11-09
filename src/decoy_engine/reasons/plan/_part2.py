@@ -260,9 +260,6 @@ REFERENCE_FANOUT_INVALID = _d(
 REFERENCE_FANOUT_MISSING = _d(
     "reference_fanout_missing", "Reference fan-out missing.", since="1.12.0"
 )
-REFERENCE_PARENT_POOL_EMPTY = _d(
-    "reference_parent_pool_empty", "Reference parent pool empty.", since="1.12.0"
-)
 SEED_NOT_NUMERIC = _d("seed_not_numeric", "Seed not numeric.")
 SEED_OVERFLOW = _d("seed_overflow", "Seed overflow.")
 STATISTICAL_CONDITION_COLUMN_UNAVAILABLE = _d(
@@ -322,6 +319,9 @@ WINDOWED_DATE_MISSING_ANCHOR_REF = _d(
 
 _d = _catalog.plan("StatisticalSpecError")
 
+REFERENCE_PARENT_POOL_EMPTY = _d(
+    "reference_parent_pool_empty", "Reference parent pool empty.", since="1.12.0"
+)
 STATISTICAL_ALLOW_REAL_CATEGORIES_INVALID_TYPE = _d(
     "statistical_allow_real_categories_invalid_type",
     "Statistical allow real categories invalid type.",
