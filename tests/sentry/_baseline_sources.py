@@ -202,6 +202,15 @@ SOURCES: tuple[Source, ...] = (
         ),
     ),
     Source(  # keys of the ratchet-schema baseline itself
+        "validation-name-messages",
+        "tests/sentry/baselines/validation-name-messages.json",
+        lambda: set(
+            json.loads((BASELINES / "validation-name-messages.json").read_text(encoding="utf-8"))[
+                "entries"
+            ]
+        ),
+    ),
+    Source(  # keys of the ratchet-schema baseline itself
         "gcs-call-kwargs",
         "tests/sentry/baselines/gcs-call-kwargs.json",
         lambda: set(

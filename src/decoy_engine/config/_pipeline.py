@@ -50,6 +50,7 @@ from decoy_engine.config._tables import TableConfig
 from decoy_engine.config._targets import FileTarget, TargetDescriptor
 from decoy_engine.config._validators import QuarantineConfig, ValidatorEntry
 from decoy_engine.contracts.declared_casting import ProtectedQuarantineConfig
+from decoy_engine.errors import ConfigRuleError
 
 
 class PipelineConfig(BaseModel):
@@ -157,14 +158,14 @@ class PipelineConfig(BaseModel):
         mask_table_names = [t.name for t in self.tables if t.columns]
         generate_tables = [t for t in self.tables if t.generate_columns]
         if mask_table_names and not self.sources:
-            raise ValueError(
+            raise ConfigRuleError(
                 "config has at least one mask-kind table "
                 f"({mask_table_names[0]!r}) but no `sources:` block; "
                 "mask tables require a declared source"
             )
         for table in generate_tables:
             if not isinstance(table.row_count, int) or table.row_count < 0:
-                raise ValueError(
+                raise ConfigRuleError(
                     f"generate table {table.name!r} must declare a non-negative integer `row_count`"
                 )
         return self
@@ -197,7 +198,7 @@ class PipelineConfig(BaseModel):
                 ref_table = extras.get("reference_table")
                 ref_column = extras.get("reference_column")
                 if ref_table not in by_name:
-                    raise ValueError(
+                    raise ConfigRuleError(
                         f"table {table.name!r}: reference column {col.name!r} "
                         f"points to unknown table {ref_table!r}"
                     )
@@ -219,20 +220,20 @@ class PipelineConfig(BaseModel):
                     # catch -- the job hangs in `running`. Reject here
                     # at validation time so the operator sees a clear
                     # error at submit, not a hung job.
-                    raise ValueError(
+                    raise ConfigRuleError(
                         f"table {table.name!r}: reference column {col.name!r} "
                         f"points to mask-kind table {ref_table!r}; generate-to-mask "
                         "FK is deferred to V2.1. Use a generate parent, or wait "
                         "for V2.1."
                     )
                 else:
-                    raise ValueError(
+                    raise ConfigRuleError(
                         f"table {table.name!r}: reference column {col.name!r} "
                         f"points to {ref_table!r} which has no columns OR "
                         "generate_columns; parent must declare at least one"
                     )
                 if ref_column not in parent_cols:
-                    raise ValueError(
+                    raise ConfigRuleError(
                         f"table {table.name!r}: reference column {col.name!r} "
                         f"points to {ref_table}.{ref_column!r}, but "
                         f"{ref_table!r} declares no such column"
@@ -272,9 +273,8 @@ class PipelineConfig(BaseModel):
                     continue
                 ps = state.get(parent_name, WHITE)
                 if ps == GRAY:
-                    idx = path.index(parent_name)
-                    cycle = [*path[idx:], parent_name]
-                    raise ValueError(f"reference cycle in generate config: {' -> '.join(cycle)}")
+                    cycle = " -> ".join([*path[path.index(parent_name) :], parent_name])
+                    raise ConfigRuleError(f"reference cycle in generate config: {cycle}")
                 if ps == WHITE:
                     state[parent_name] = GRAY
                     path.append(parent_name)
@@ -304,7 +304,7 @@ class PipelineConfig(BaseModel):
         mask_table_names = {t.name for t in self.tables if t.columns}
         for seed in self.subset.seeds:
             if seed.table not in mask_table_names:
-                raise ValueError(
+                raise ConfigRuleError(
                     f"subset seed names table {seed.table!r}, which is not a declared "
                     "mask-kind table with a source in this config"
                 )
@@ -313,11 +313,11 @@ class PipelineConfig(BaseModel):
         for rel in self.relationships:
             tables_needing_parquet.add(rel.parent.table)
             tables_needing_parquet.update(c.table for c in rel.children)
-        for name in tables_needing_parquet:
-            src = self.sources.get(name)
+        for source_name in tables_needing_parquet:
+            src = self.sources.get(source_name)
             if src is not None and src.format != "parquet":
-                raise ValueError(
-                    f"subsetting is configured but source {name!r} is "
+                raise ConfigRuleError(
+                    f"subsetting is configured but source {source_name!r} is "
                     f"{src.format!r}; convert to Parquet for subsetting"
                 )
 
@@ -328,7 +328,7 @@ class PipelineConfig(BaseModel):
             if not isinstance(src, FileSource):
                 continue
             if os.path.normpath(src.path) in target_paths:
-                raise ValueError(
+                raise ConfigRuleError(
                     f"subset input {src.path!r} is also a mask target of this pipeline; "
                     "subsetting runs BEFORE masking (subset-then-mask), it cannot consume "
                     "masked output"
