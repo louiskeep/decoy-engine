@@ -183,3 +183,70 @@ def test_each_reader_kind_decides_whether_the_sequence_is_numeric(
     other = {"name": "other", "type": "categorical", "categories": ["a", "b"]}
     cols = [SEQ, other, {"name": "r", **reader}]
     assert (("t", "id") in numeric_plan(config([table("t", 6, cols)]))) is numeric
+
+
+@pytest.mark.parametrize(
+    ("expression", "want"),
+    [
+        ('id + "-x"', [f"{i}-x" for i in range(1, 7)]),
+        ('id == "1"', [True, False, False, False, False, False]),
+        ('id in ["1", "2"]', [True, True, False, False, False, False]),
+        ('"x" if id == "1" else "y"', ["x", "y", "y", "y", "y", "y"]),
+    ],
+)
+def test_derived_that_uses_the_column_as_text_gives_the_text_result(
+    expression: str, want: list[Any], tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cols = [SEQ, {"name": "d", "type": "derived", "expression": expression}]
+    for t in _outputs(_cfg(cols), tmp_path, monkeypatch):
+        assert t["id"].type == pa.string()
+        assert t["d"].to_pylist() == want
+
+
+def test_derived_arithmetic_and_numeric_comparison_use_the_numeric_column(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cols = [
+        {"name": "a", "type": "sequence", "start": 15, "step": 1},
+        {"name": "dbl", "type": "derived", "expression": "a * 2"},
+        {"name": "adult", "type": "derived", "expression": "a >= 18"},
+        {"name": "tag", "type": "derived", "expression": 'concat(a, "-x")'},
+    ]
+    for t in _outputs(_cfg(cols), tmp_path, monkeypatch):
+        assert t["a"].type == pa.int64()
+        assert t["dbl"].to_pylist() == [30, 32, 34, 36, 38, 40]
+        assert t["adult"].to_pylist() == [False, False, False, True, True, True]
+        assert t["tag"].to_pylist() == [f"{15 + i}-x" for i in range(6)]
+
+
+def test_removal_propagates_along_a_chain_of_relationships() -> None:
+    """a~b~c are paired through relationships; c is read as text, so b and then a must follow.
+
+    Candidates are visited in name order, so a one-pass loop removes only c and leaves a, b typed.
+    """
+    seq = {"type": "sequence", "start": 1}
+    raw = config(
+        [
+            table("t1", 4, [{"name": "a", **seq}]),
+            table("t2", 4, [{"name": "b", **seq}]),
+            table(
+                "t3",
+                4,
+                [
+                    {"name": "c", **seq},
+                    {"name": "f", "type": "formula", "formula": "c", "references": ["c"]},
+                ],
+            ),
+        ]
+    )
+
+    def rel(pt: str, pc: str, ct: str, cc: str) -> dict[str, Any]:
+        return {
+            "parent": {"table": pt, "columns": [pc]},
+            "children": [{"table": ct, "columns": [cc]}],
+            "orphan_policy": "preserve",
+            "namespace": f"ns_{pt}",
+        }
+
+    raw["relationships"] = [rel("t1", "a", "t2", "b"), rel("t2", "b", "t3", "c")]
+    assert numeric_plan(raw) == {}

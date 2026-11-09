@@ -26,6 +26,8 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.generation._numeric_derived import derived_uses_as_numbers
+
 _INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
 # Stock Faker providers with a bounded integer result; kwarg names and defaults per provider.
 # Anything not listed here stays text, because its range cannot be proven from the config.
@@ -100,7 +102,7 @@ READERS: dict[str, Reader] = {
         False, "formula locals are the cell text; str methods and + need text"
     ),
     "derived.expression": Reader(
-        True, "closed-grammar arithmetic is the consumer numeric typing serves"
+        True, "decided per expression by derived_uses_as_numbers, not per kind"
     ),
     "derived_aggregate.column": Reader(
         False, "aggregate input coercion is not verified for typed input"
@@ -237,6 +239,10 @@ def numeric_plan(
             return _categorical_type(dict(col))[0]
         return None
 
+    def is_number(key: Key) -> bool:
+        dtype = planned(key) if key in cols else None
+        return dtype is not None and (pa.types.is_integer(dtype) or pa.types.is_floating(dtype))
+
     def reader_ok(m: Key) -> bool:
         tn, cn = m
         for other in tables[tn]["generate_columns"]:
@@ -246,7 +252,14 @@ def numeric_plan(
             if spec is None:
                 return False  # unknown column type: it may read anything
             for key, rid in spec:
-                if cn in _names_read(other, key) and not READERS[rid].safe:
+                if cn not in _names_read(other, key):
+                    continue
+                if rid == "derived.expression":
+                    if not derived_uses_as_numbers(
+                        str(other.get(key)), cn, lambda name: is_number((tn, name))
+                    ):
+                        return False
+                elif not READERS[rid].safe:
                     return False
         if m in in_pairs:
             for row in pairs:
@@ -264,7 +277,7 @@ def numeric_plan(
     changed = True
     while changed:
         changed = False
-        for root in list(candidates):
+        for root in sorted(candidates):
             if not all(reader_ok(m) for m in members.get(root, [root])):
                 candidates.discard(root)
                 changed = True
