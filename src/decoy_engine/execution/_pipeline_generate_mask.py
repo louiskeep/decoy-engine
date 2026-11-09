@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionAdapter
     from decoy_engine.execution._output_projection import UnconfiguredColumnPolicy
     from decoy_engine.execution._planner import ExecutionPlan
+    from decoy_engine.execution.pipeline._stream import StreamVerdict
     from decoy_engine.generation.pool import PoolCache
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
@@ -110,6 +111,7 @@ def run_generate_and_mask_steps(
     publish: _output_sink.OutputPublish,
     pregenerated: dict[str, pa.Table] | None = None,
     cast_run: Any = None,
+    stream: StreamVerdict | None = None,
 ) -> GenerateMaskStepResult:
     """Run generate-kind tables then mask-kind tables (`_pipeline.py`
     Steps 1-2), returning everything the stitch + finalize stages need.
@@ -177,6 +179,7 @@ def run_generate_and_mask_steps(
                 # companion rows stay aligned with its rendered output.
                 split_enabled=multi_table_dispatch_enabled and cast_run is None,
                 vault_writer_present=vault_writer is not None,
+                stream=stream,
             )
         )
         if cast_run is not None and multi_table_dispatch_enabled and not route_chunked:
@@ -248,6 +251,7 @@ def run_generate_and_mask_steps(
                 generate_output_tables=generate_output_tables,
                 sink=publish.active_sink,
                 output_reason=out_reason if out_mode == "resident" else None,
+                align_row_groups=stream is not None,
             )
         elif route_chunked:
             # The eligible shape is exactly one mask table with no generate
@@ -276,7 +280,11 @@ def run_generate_and_mask_steps(
                     dispatcher_enabled=chunked_dispatcher_enabled,
                     cast_run=cast_run,
                     **(
-                        {"sink": publish.active_sink, "expected": keep_lazy.get(mask_table_name)}
+                        {
+                            "sink": publish.active_sink,
+                            "expected": keep_lazy.get(mask_table_name),
+                            "align_row_groups": stream is not None,
+                        }
                         if out_mode == "streamed"
                         else {}
                     ),

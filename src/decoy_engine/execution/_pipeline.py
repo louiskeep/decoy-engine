@@ -129,7 +129,7 @@ def run_pipeline(
     post_validation_sample_size: int = 100,
     post_validation_enforce: bool = False,
     now_iso: str | None = None,
-    execution_mode: Literal["auto", "sequential", "full_frame", "out_of_core"] = "auto",
+    execution_mode: Literal["auto", "stream", "sequential", "full_frame", "out_of_core"] = "auto",
     sink: TransactionalSink | None = None,
     source_loader: Callable[[str], pa.Table] | None = None,
     fpe_chunk_count: int = _pipeline_finalize.FPE_CHUNK_COUNT_DEFAULT,
@@ -219,6 +219,11 @@ def run_pipeline(
     platform admission estimator can override; `execution_mode` gains
     `"out_of_core"` as an explicit fail-closed force.
 
+    `execution_mode="stream"` means "must stream" (RUN-STREAM, docs/plans/2026-11-08-run-stream.md):
+    it runs as `auto` with one extra requirement, and a job no streaming route can take is
+    refused with `runtime.streaming_unavailable` before any source data row is read. See
+    `execution.pipeline._stream`.
+
     Sprint B2 (docs/plans/2026-07-10-oom-avoidance-routing-redesign.md
     §3.3/§11/§13): `use_probe_routing` (TB-5 default `True`; no effect without
     `use_byte_estimate_routing=True`, also default `True`; force either `False`
@@ -273,6 +278,11 @@ def run_pipeline(
     `None` (every real caller) resolves against the live registry.
     """
     refuse_unapplied_subset(config)  # `subset:` is refused first, before any source is read
+    # "stream" is translated once, here: every internal mode comparison keeps seeing a mode it
+    # already knows, and only the routing choke point reads `stream_required`.
+    stream_required = execution_mode == "stream"
+    if stream_required:
+        execution_mode = "auto"
     require_optional_nonempty_str("quarantine_path", quarantine_path)
     # MG-5: the `tokenize` strategy masks per-cell through a platform-injected
     # token vault, threaded only to the FULL-FRAME adapter (bounded routes build
@@ -306,6 +316,7 @@ def run_pipeline(
                 post_validation_enforce=post_validation_enforce,
                 now_iso=now_iso,
                 execution_mode=execution_mode,
+                stream_required=stream_required,
                 sink=sink,
                 source_loader=source_loader,
                 fpe_chunk_count=fpe_chunk_count,
