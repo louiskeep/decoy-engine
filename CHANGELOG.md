@@ -9,6 +9,24 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (generation capacity floor, 2026-11-09)
+
+A generate run that keeps its output in memory is now refused when the output cannot fit, instead of
+running until the host kills it. `run_generation` and `estimate_job_capacity` share one lower bound,
+`generation_floor_bytes`: each column is priced from its declared Arrow type (fixed-width types at
+their bit width, variable-width types at one int32 offset per row), or at 8 bytes per row when the
+plan runs the legacy whole-table path. The bound is compared with the whole detected memory ceiling
+(cgroup limit, else host RAM), never the 25% planning budget, so a run that fits is not refused.
+`run_generation` raises `GenerationBudgetExceeded` (`generation_budget_exceeded`) before any provider
+runs; the message holds byte counts and the table name only. It is skipped when `budget_bytes` is
+set (the ledger refuses first), when an eligible plan streams to a bounded sink, and when memory
+cannot be detected. `estimate_job_capacity` returns `INSUFFICIENT` with the same code and integer
+`needed_bytes` and `available_bytes` for a config with generate tables, before any source is
+profiled, against its `budget_bytes` override when given (validated and raised to the route
+minimum exactly as the run does); `UNKNOWN` when memory cannot be detected. Repeated generate-column
+names are priced once, as the legacy path keeps one column per name.
+`decoy_engine.errors.CAPACITY_REASON_CODES` lists the three codes a capacity check can report.
+
 ### Added (fit snapshots withhold sensitive values, 2026-11-08)
 
 `decoy_engine` and `decoy_engine.profiling` export `distribution_snapshot_document(df, *, include_values=False,
