@@ -154,6 +154,17 @@ def test_condition_on_a_redacted_side_is_refused(build: Build) -> None:
     assert "'full_name'" in err.message
 
 
+class _Name:
+    def __str__(self) -> str:
+        return "full_name"
+
+
+def test_a_non_string_condition_on_that_names_a_redacted_column_is_refused(build: Build) -> None:
+    snap = build()
+    err = _refused(snap, _cfg("status", condition_on=_Name(), allow_real_categories=True))
+    assert "'full_name'" in err.message
+
+
 def test_a_redacted_hc5_column_gets_this_code_not_the_hc5_one(build: Build) -> None:
     snap = build(high_cardinality_columns=["full_name"])
     assert snap["columns"]["full_name"]["stats"]["high_cardinality"] is True

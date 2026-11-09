@@ -7,6 +7,7 @@ exact values the profiler's predicate would not necessarily flag.
 from __future__ import annotations
 
 import copy
+import io
 import json
 import signal
 from decimal import Decimal
@@ -236,24 +237,35 @@ def test_full_span_floats_use_the_finite_fallback_and_terminate() -> None:
     assert sv._coarse_domain(-1e308, 1e308, cells) == domain
 
 
-def test_the_fallback_takes_the_first_half_integer_no_cell_uses() -> None:
-    assert sv._fallback_edge(np.array([1.5, -2.5, 3.5])) == 4.5
-    assert sv._fallback_edge(np.array([7.0])) == 1.5
+@pytest.mark.parametrize(
+    "cells",
+    [
+        [1.79e308, -1.79e308],
+        [1.5, 2.5, 1.79e308, -1.79e308],
+        [-1.5, 1.5, -2.5, 2.5, 3.5, 1e308, -1e308],
+        [1e308, -1e308, 0.5],
+    ],
+)
+def test_the_fallback_domain_is_fixed_whatever_the_cells(cells: list[float]) -> None:
+    arr = np.array(cells)
+    assert sv._coarse_domain(float(arr.min()), float(arr.max()), arr) == (-1.5, 1.5)
 
 
 @settings(max_examples=150, deadline=None)
 @given(cells=st.lists(st.floats(allow_nan=False, allow_infinity=False), min_size=1, max_size=25))
-def test_the_domain_is_finite_and_never_a_cell(cells: list[float]) -> None:
+def test_the_domain_is_finite_and_outside_the_cells_unless_it_is_the_fixed_fallback(
+    cells: list[float],
+) -> None:
     arr = np.array(cells)
     lo, hi = float(arr.min()), float(arr.max())
     lower, upper = sv._coarse_domain(lo, hi, arr)
     assert np.isfinite(lower) and np.isfinite(upper)
     assert lower < upper
-    assert lower not in cells
-    assert upper not in cells
-    if upper != sv._fallback_edge(arr):  # the ordinary path encloses the data
+    if (lower, upper) != (-1.5, 1.5):  # the ordinary path encloses the data
         assert lower < lo
         assert upper > hi
+        assert lower not in cells
+        assert upper not in cells
 
 
 _DECIMALS = st.integers(0, 4).flatmap(
@@ -430,6 +442,32 @@ def test_include_values_is_the_raw_snapshot_plus_the_two_keys() -> None:
     pd.testing.assert_frame_equal(df, frame_before)
 
 
+_NON_FINITE = [
+    ("mixed", [1.5, np.inf, -np.inf, np.nan, 2.5, 7.25, 3.0, 9.5]),
+    ("all-inf", [np.inf, -np.inf, np.inf, np.inf]),
+]
+
+
+@pytest.mark.parametrize("include_values", [False, True])
+@pytest.mark.parametrize(("label", "values"), _NON_FINITE, ids=[n for n, _ in _NON_FINITE])
+def test_inf_cells_do_not_break_the_document(
+    force_sensitive: None, label: str, values: list[float], include_values: bool
+) -> None:
+    doc = distribution_snapshot_document(
+        pd.DataFrame({"v": values, "w": range(len(values))}), include_values=include_values
+    )
+    assert "v" in doc["columns"]
+    if not include_values and label == "mixed":
+        stats = _col(doc, "v")["stats"]
+        assert all(np.isfinite(e) for e in stats["bin_edges"])
+        assert stats["bin_counts"] == [sum(np.isfinite(values))]
+
+
+def test_the_csv_repro_with_inf_produces_a_document() -> None:
+    df = pd.read_csv(io.StringIO("x,y\n1.5,a\ninf,b\n2.5,c\n"))
+    assert "x" in distribution_snapshot_document(df)["columns"]
+
+
 def test_include_values_must_be_a_bool() -> None:
     with pytest.raises(TypeError, match="include_values"):
         distribution_snapshot_document(_qa_frame(), include_values=1)  # type: ignore[arg-type]
@@ -489,3 +527,13 @@ def test_the_profile_row_cap_matches_a_scan_of_the_head() -> None:
     assert head != full
     capped = distribution_snapshot_document(df, source_label="x.csv", profile_row_cap=3)
     assert capped["redacted_columns"] == head
+
+
+@pytest.mark.parametrize(
+    ("cap", "error"),
+    [(-3, ValueError), (0, ValueError), (True, TypeError), (2.5, TypeError)],
+    ids=["negative", "zero", "bool", "float"],
+)
+def test_the_profile_row_cap_must_be_a_positive_int(cap: Any, error: type[Exception]) -> None:
+    with pytest.raises(error, match="profile_row_cap"):
+        distribution_snapshot_document(_qa_frame(), profile_row_cap=cap)
