@@ -46,8 +46,8 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
         assert protocol.draw_site_by_id(site.draw_site_id) is site
 
 
-# Re-pinned at the GEN-C1 main merge: carries both the shuffle and the derive_context re-pins.
-_CATALOGUE_DIGEST = "e4b914b9d75226d927e91b27960370c88fb99b1fe700813a33fdbb0849e3f304"
+# Re-pinned at the GEN-C1 main merge: carries the shuffle and derive_context re-pins plus the moved gen call sites.
+_CATALOGUE_DIGEST = "d9bcd02d072292ba7bf15cebb210fecc4b9c26935fe57295526effe0fa164f18"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -103,12 +103,12 @@ _ENTRY_DIGESTS = [
     "474ab1f76ab596a309f6b3f4b6a1e4995555c6f07473a831af12862a22283a60",
     "d30d45fdcacb74a57114f50fb09d3557bfe838db4afa0b1910f59816dc18b90b",
     "f01f96cde92e4a13757bc0724ba4eda31b1178bbb420edb144e676a144444b3c",
-    "dc05e03d1c4fda601fce54688971507cd1bfc189aa10646062b315aa9f4913c9",
-    "b411c70c271961691308e0ea9318cce369107d1690f9b09d03046bb6aa436126",
-    "793bc8be484782aa773cbe6556785f5f02619893e768996dc515fa820e6881a7",
-    "0c45409c0a1dd96459b4ba69c4382899ffd0cebada23500d1b3491d13c76e4e3",
+    "ed83ddf5acc149240117e64b8054cf308f86112e5111c56ec3b75eb6066c508b",
+    "8b3d98cad9b169be0e27fddb70ac3bc5d9776dd9bf370c4c661511c70702b1e6",
+    "27b1f238d9e803c1c44246e9af55ece7b8d66f46fd779aabd2ea475f67e908c0",
+    "22ddc02bdf5fbcd992e9c621d629885b7c036e872f7f71b90f73fc3fa4f2023d",
     "d45ba5c6dc53660b4cf3baa43e2faff146d2e4f91e0acd7fd977f731f3b05fe7",
-    "d6e7cb8e9959f4ac1641affe43887f32a73edf5537d20bdf05680cdc3f4f0f01",
+    "dd5d6269da3bf5a40df6a7257d12ea39b6d752df3683aae258197accb07cdf7d",
     "fa2fd07097a3ed68edb71e46b40c43e0d697b50cf784b740b49c180bcae2e5d2",
     "451e4aa4bcb7f23e437468f4e692768c4571e4defb8a081d879be0eb428a1308",
     "648d1fb0b894493e6e8ad55de08b481dbbece29402ecb9ae3eb9cc54b995b211",
