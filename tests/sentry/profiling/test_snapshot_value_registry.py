@@ -51,6 +51,7 @@ def _frame() -> pd.DataFrame:
 
 
 def _snapshot(**kw: Any) -> dict[str, Any]:
+    kw.setdefault("fanout_columns", ["status"])
     return compute_distribution_snapshot(_frame(), joint_columns=_PAIRS, **kw)
 
 
@@ -64,6 +65,8 @@ def _visited(snap: dict[str, Any]) -> set[tuple[str, str]]:
     see("document", snap)
     for col in snap["columns"].values():
         see("column", col)
+        if "fanout" in col:
+            see("fanout", col["fanout"])
         stats = see(col["kind"], col["stats"])
         for item in stats.get("year_bins", []):
             see("year_bin", item)

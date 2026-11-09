@@ -63,7 +63,10 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
         entropy_root="job_seed",
         seed_derivation='random.Random(GenDeriveContext.for_column(...).base_int("py"))',
         api_operation="random.Random(col_seed).choice / .choices per row",
-        call_shape="per row: rng.choice(ref_vals) | rng.choices(..., k=1)  # sequential stream",
+        call_shape=(
+            "per row: rng.choice(ref_vals) | rng.choices(..., k=1)  # sequential stream; "
+            "fitted: rng.shuffle(slots) then rng.shuffle(stubs) on the same stream"
+        ),
         consumes_variable_draws=True,
         identity="column",
         null_draw_behavior="sequential distribution draws nothing (index i % len); random/weighted draw per row",
@@ -73,9 +76,16 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
         notes=(
             "One Random advanced across all rows: a partition cannot resume mid-stream. "
             "Cardinality repair (generators/columns.py:596-656) adds rng.shuffle/choices "
-            "on the same stream. V1 mirror generators/columns.py:507."
+            "on the same stream. V1 mirror generators/columns.py:507. The fitted fan-out "
+            "allocator (generation/statistical/_fanout.py:305) takes the same Random, seeded "
+            "with the pinned snapshot digest (FanoutSpec.seed_digest), and shuffles degrees "
+            "to parents, then the child row order."
         ),
-        mirror_call_sites=("generators/columns.py:507", "generators/columns.py:596"),
+        mirror_call_sites=(
+            "generators/columns.py:507",
+            "generators/columns.py:596",
+            "generation/statistical/_fanout.py:305",
+        ),
     ),
     # -- Generation: per-row reseeded formula / faker scope ------------------
     DrawSite(

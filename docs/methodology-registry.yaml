@@ -230,3 +230,7 @@ modules:
   # __pycache__/; the registry entry was orphaned and tripped the
   # sentry test. Removing both the registry entry AND the empty
   # directory ends the drift.
+
+  - path: src/decoy_engine/generation/statistical/_fanout.py
+    pattern: degree-sequence sampling with systematic resampling and largest-remainder apportionment
+    source: Newman, Networks 2nd ed. (2018) sec. 12.1; Kitagawa, JCGS (1996); Carpenter, Clifford and Fearnhead (1999); Balinski and Young, Fair Representation (2001); Patki et al., SDV HMA1, IEEE DSAA (2016); SDMetrics CardinalityShapeSimilarity

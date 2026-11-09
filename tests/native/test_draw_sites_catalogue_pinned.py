@@ -47,7 +47,8 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
 
 
 # Re-pinned at the GEN-C1 main merge: carries the shuffle and derive_context re-pins plus the moved gen call sites.
-_CATALOGUE_DIGEST = "d9bcd02d072292ba7bf15cebb210fecc4b9c26935fe57295526effe0fa164f18"
+# Re-pinned 2026-11-09: gen.reference records the fitted fan-out shuffles on its stream.
+_CATALOGUE_DIGEST = "fef21ab282eadeaf130507354945b19d0a74a55efe6efebd671b4213a6b00ee1"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -105,7 +106,8 @@ _ENTRY_DIGESTS = [
     "f01f96cde92e4a13757bc0724ba4eda31b1178bbb420edb144e676a144444b3c",
     "ed83ddf5acc149240117e64b8054cf308f86112e5111c56ec3b75eb6066c508b",
     "8b3d98cad9b169be0e27fddb70ac3bc5d9776dd9bf370c4c661511c70702b1e6",
-    "27b1f238d9e803c1c44246e9af55ece7b8d66f46fd779aabd2ea475f67e908c0",
+    # gen.reference re-pinned 2026-11-09: the fan-out allocator is a mirror call site.
+    "9a090ccc3985230c304646f2192066f37fbcb796fa3e5f28917a1df151410149",
     "22ddc02bdf5fbcd992e9c621d629885b7c036e872f7f71b90f73fc3fa4f2023d",
     "d45ba5c6dc53660b4cf3baa43e2faff146d2e4f91e0acd7fd977f731f3b05fe7",
     "dd5d6269da3bf5a40df6a7257d12ea39b6d752df3683aae258197accb07cdf7d",

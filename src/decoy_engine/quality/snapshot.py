@@ -47,19 +47,14 @@ no top-K collapse, so the artifact additionally exposes every distinct
 code AND rare-code presence/absence -- treat it with the same care as
 a raw extract of that column.
 
-DPS Scope B history: this module previously carried its own `dp_mode` /
-`numeric_domains` fit-time parameters (Option A, 2026-06 through
-2026-07-21) that widened categorical candidacy and fixed numeric bin
-ranges in place, ahead of a since-deleted `quality.dp.apply_dp_noise`.
-That mechanism never satisfied the privacy bound it claimed (see
-CHANGELOG.md) and is gone. The Scope B rebuild
-(`quality.dp.fit_dp_snapshot`) does not call this function at all --
-"Do not route the DP fit through compute_distribution_snapshot. That
-function materializes exact statistics and has value-dependent kind
-behavior unsuitable for DP" is the design rule going forward. This
-module is explicitly non-DP: every kind decision here may look at
-values (bool vs. object vs. numeric, the 30-distinct cardinality cliff,
-etc.), which is exactly what a DP fit must never do.
+DPS Scope B history: this module once carried `dp_mode` / `numeric_domains`
+fit-time parameters (Option A, 2026-06 through 2026-07-21) ahead of a
+since-deleted `quality.dp.apply_dp_noise`. That mechanism never satisfied
+the privacy bound it claimed (see CHANGELOG.md) and is gone. The Scope B
+rebuild (`quality.dp.fit_dp_snapshot`) does not call this function: it
+materializes exact statistics with value-dependent kind behavior (bool vs.
+object vs. numeric, the 30-distinct cardinality cliff), which a DP fit must
+never do. This module is explicitly non-DP.
 """
 
 from __future__ import annotations
@@ -144,6 +139,7 @@ def compute_distribution_snapshot(
     categorical_top_k: int = DEFAULT_CATEGORICAL_TOP_K,
     contingency_top_k: int = DEFAULT_CONTINGENCY_TOP_K,
     high_cardinality_columns: Collection[str] = (),
+    fanout_columns: Collection[str] = (),
 ) -> dict[str, Any]:
     """Compute a deterministic, JSON-serializable distribution snapshot.
 
@@ -167,25 +163,24 @@ def compute_distribution_snapshot(
             `kind: categorical` and keeps every observed category
             (`other_count` stays 0). Opt-in only -- omitted (the default)
             means byte-identical output to every prior engine version.
-            Restricted to string/object/category source dtype and to
-            <=100,000 distinct values / <=16 MiB combined UTF-8 label
-            bytes; violating either raises `DistributionSnapshotError`
-            rather than silently degrading. Unknown column names are
-            silently skipped (matching `joint_columns`, not a validator).
+            Restricted to string/object/category dtype, <=100,000 distinct
+            values and <=16 MiB of label bytes; a violation raises
+            `DistributionSnapshotError`. Unknown names are silently skipped
+            (matching `joint_columns`, not a validator).
+        fanout_columns: Column names that get an optional `fanout` block
+            (degree histogram of the key column, counts only). Omitted means
+            byte-identical output. A bare string or unknown name raises.
 
     Returns:
         A dict matching schema `distribution-snapshot/v1` (module
         docstring).
 
     Raises:
-        DistributionSnapshotError: bad `high_cardinality_columns` shape or
-            safety-limit violation (see that arg's docs above).
+        DistributionSnapshotError: bad `high_cardinality_columns` or
+            `fanout_columns`, or a safety-limit violation (see above).
     """
-    # MED-3: a bare str satisfies `Collection[str]` structurally, so
-    # `high_cardinality_columns="code"` would silently iterate characters
-    # ({"c","o","d","e"}) instead of naming the "code" column -- the real
-    # column then stays freetext with no error. Reject the shape explicitly
-    # before it can silently disable the feature.
+    # MED-3: a bare str satisfies `Collection[str]` but would iterate characters
+    # and silently disable the feature; reject the shape explicitly.
     if isinstance(high_cardinality_columns, (str, bytes)):
         raise DistributionSnapshotError(
             code=reasons.quality.HIGH_CARDINALITY_COLUMNS_NOT_COLLECTION,
@@ -203,6 +198,11 @@ def compute_distribution_snapshot(
             categorical_top_k=categorical_top_k,
             high_cardinality=str(col) in high_cardinality_set,
         )
+    if isinstance(fanout_columns, (str, bytes)) or len(fanout_columns) > 0:
+        # Lazy: `generation` imports `quality`, so a top-level import would cycle.
+        from decoy_engine.generation.statistical import add_fanout
+
+        add_fanout(columns_block, df, fanout_columns)
 
     joints_block: list[dict[str, Any]] = []
     if joint_columns:

@@ -127,7 +127,18 @@ SNAPSHOT_VALUE_STATS: Final[Mapping[tuple[str, str], Rule]] = types.MappingProxy
 )
 SNAPSHOT_VALUE_FREE_STATS: Final[frozenset[tuple[str, str]]] = frozenset(
     _free("document", "schema_version", "row_count", "columns", "joints")
-    | _free("column", "dtype", "kind", "null_count", "non_null_count", "distinct_count", "stats")
+    | _free(
+        "column",
+        "dtype",
+        "kind",
+        "null_count",
+        "non_null_count",
+        "distinct_count",
+        "stats",
+        "fanout",
+    )
+    # Degree histogram: integer counts only, never a key value.
+    | _free("fanout", "rows", "keys", "degrees")
     | _free("categorical", "other_count", "high_cardinality")
     | _free("datetime", "year_bins")
     | _free("year_bin", "year", "count")
