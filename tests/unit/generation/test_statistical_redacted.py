@@ -87,7 +87,7 @@ def test_the_code_is_a_registered_plan_reason() -> None:
     assert spec is not None
     assert spec.owner == "StatisticalSpecError"
     assert reasons.plan.STATISTICAL_SNAPSHOT_VALUES_REDACTED == CODE
-    assert spec.since == "1.10.0"
+    assert spec.since == "1.11.0"
 
 
 # AT-12 refusals

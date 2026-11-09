@@ -52,7 +52,7 @@ STATISTICAL_SNAPSHOT_UNREADABLE = _d(
 STATISTICAL_SNAPSHOT_VALUES_REDACTED = _d(
     "statistical_snapshot_values_redacted",
     "Statistical snapshot values redacted.",
-    since="1.10.0",
+    since="1.11.0",
 )
 STATISTICAL_SPEC_NOT_PINNED = _d("statistical_spec_not_pinned", "Statistical spec not pinned.")
 STATISTICAL_STATS_DEGENERATE = _d("statistical_stats_degenerate", "Statistical stats degenerate.")

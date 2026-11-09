@@ -16,11 +16,11 @@
           "severity": "error"
         }
       ],
-      "since": "1.10.0",
+      "since": "1.11.0",
       "summary": "Statistical snapshot values redacted.",
       "symbol": "STATISTICAL_SNAPSHOT_VALUES_REDACTED"
     }
   ],
   "reason_schema_version": 1,
-  "registry_version": "1.10.0"
+  "registry_version": "1.11.0"
 }

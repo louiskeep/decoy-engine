@@ -25,7 +25,7 @@ top-level keys that `distribution-snapshot/v1` readers ignore.
 
 Generation reads that marker. A `type: statistical` column that would sample categories from a
 redacted source column, or use one as `condition_on`, now fails at validate and at load with the new
-`plan` reason `statistical_snapshot_values_redacted` (registry 1.10.0). The message says to use a
+`plan` reason `statistical_snapshot_values_redacted` (registry 1.11.0). The message says to use a
 faker or pattern generator, or to re-fit with `--include-values` and set `allow_real_categories:
 true`. A `raw` snapshot is not refused here but still needs that opt-in, a snapshot with a missing,
 unknown or ill-typed marker is refused for categorical and conditional columns, and a snapshot with
