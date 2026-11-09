@@ -142,6 +142,11 @@ def _reference(
 
     ref_vals = parent_keys(pools, ref_table, ref_column)
 
+    if col.get("unique") is True:
+        from decoy_engine.generation._unique import unique_reference
+
+        return unique_reference(col, ref_vals, n, seed, derive_key)
+
     if not ref_vals:
         return [None] * n
 

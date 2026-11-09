@@ -117,6 +117,20 @@ _SCENARIOS: dict[str, Callable[[], Any]] = {
     "gen.null_probability": lambda: [
         round(float(x), 12) for x in provider_for("gen.null_probability").null_floats(_ctx(), 4)
     ],
+    "gen.categorical_unique": lambda: provider_for("gen.categorical_unique").sample(
+        _ctx(), ["a", "b", "c", "d"], 6
+    ),
+    "gen.reference_unique": lambda: (
+        provider_for("gen.reference_unique").sample(_ctx(), [10, 20, 30, 40, 50], 4),
+        provider_for("gen.reference_unique").sample(
+            _ctx(), [10, 20, 30, 40, 50], 4, distribution="sequential"
+        ),
+    ),
+    "gen.unique_pair": lambda: provider_for("gen.unique_pair").picks(_ctx(), 12, 5),
+    "gen.faker_unique_retry": lambda: (
+        provider_for("gen.faker_unique_retry").retry_seed(_ctx(), 3, 1),
+        provider_for("gen.faker_unique_retry").retry_seed(_ctx(), 3, 2),
+    ),
     "gen.distribution_snapshot": lambda: _np(
         provider_for("gen.distribution_snapshot").col_generator(_ctx())
     ),
@@ -199,6 +213,10 @@ def test_unit_float_known_answers() -> None:
 
 _GOLDEN_OUTPUT: dict[str, str] = {
     "gen.categorical": "1dd8bbdc10126eeb340ce6d6442b7874d88f62dd14827ddde84919610b3b3090",
+    "gen.categorical_unique": "2a6e1e385403950a3b2b1095120ff03996eb120a7a43d88835eadbf24c6f862f",
+    "gen.faker_unique_retry": "8120cf533ae61ba59a34796b5c426152a987f73e197cff99377ccd35f59da88c",
+    "gen.reference_unique": "91d4682e727cac0aea21c39e8e18839ce8337cbc9c5d8c9083417350b7ee5bd3",
+    "gen.unique_pair": "12bb5d6bf1cb5f88bf02cc27f901d636257733275fb353619fded1fd5c50a559",
     "gen.composite_build_pool": "e804c947fbca8cbce1e13b3f6c5860e7050f6434e2b1c37f4a0278d080f521ce",
     "gen.derive_context": "7846c03077346d8ac4b081666ff721c8a7a0c74cbfb6f92e5bf8e5cabd8249dc",
     "gen.distribution_snapshot": "b73024fefa1fe793af5aee4905dc07f9d8d48930cb3f3854f04531e6579b20ad",
@@ -234,4 +252,4 @@ _GOLDEN_OUTPUT: dict[str, str] = {
     "mask.windowed_date": "e7155d227e2e065ea4ad6de21ddd5f12c08f5d6a9654351f208c5f6f7b2b612a",
 }
 
-_GOLDEN_REGISTRY = "84d747bd4d004f73a8035c620f3d83d392560bb4f2a8ecdaf4f8b826ce9817ff"
+_GOLDEN_REGISTRY = "7149067810ae54068bf85aa49a675cddebe914f660dc504ca8320c4731040b4a"

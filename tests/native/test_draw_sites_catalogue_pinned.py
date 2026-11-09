@@ -19,7 +19,7 @@ def _digest(value: object) -> str:
 
 
 def test_catalogue_length_and_order_are_unchanged() -> None:
-    assert len(protocol.DRAW_SITES) == len(_ORDERED_IDS) == 34
+    assert len(protocol.DRAW_SITES) == len(_ORDERED_IDS) == 38
     assert [site.draw_site_id for site in protocol.DRAW_SITES] == _ORDERED_IDS
 
 
@@ -49,7 +49,8 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
 # Re-pinned at the GEN-C1 main merge: carries the shuffle and derive_context re-pins plus the moved gen call sites.
 # Re-pinned 2026-11-09: gen.reference records the fitted fan-out shuffles on its stream.
 # Re-pinned 2026-11-09: gen.statistical_per_row records the fitted cell format draws.
-_CATALOGUE_DIGEST = "d6dbf6aeef7bfd2351e99c2ac22b2add62b91ffe5660128d91e1855942cdccb3"
+# Re-pinned for GEN-UNIQUE E2: four unique-draw sites, and the moved synthesize.py call sites.
+_CATALOGUE_DIGEST = "8fe89942c6b057833cfb38319460f34085f150804994d03ebbe2df5f81a28fe7"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -76,6 +77,10 @@ _ORDERED_IDS = [
     "gen.pool_deterministic",
     "gen.pool_nondeterministic",
     "gen.composite_build_pool",
+    "gen.faker_unique_retry",
+    "gen.categorical_unique",
+    "gen.reference_unique",
+    "gen.unique_pair",
     "mask.faker",
     "gen.pool_build_faker",
     "gen.identifier_deterministic",
@@ -89,8 +94,6 @@ _ORDERED_IDS = [
 ]
 
 _ENTRY_DIGESTS = [
-    # mask.shuffle re-pinned 2026-11-08: the unkeyed mode draws from the mask key on the shared
-    # (table, column) draw identity.
     "84b2887fc0363d71c893d6ad99f3d7026d891ee308091c68405db6dca943afb0",
     "8dce6622cbd27e05cc798e8b209a715c78834c056613f6adefced790bc4dfe9b",
     "33858d620973b39724613d7569dc732db3707e729236eeef8754518c1dfcf87a",
@@ -105,18 +108,20 @@ _ENTRY_DIGESTS = [
     "474ab1f76ab596a309f6b3f4b6a1e4995555c6f07473a831af12862a22283a60",
     "d30d45fdcacb74a57114f50fb09d3557bfe838db4afa0b1910f59816dc18b90b",
     "f01f96cde92e4a13757bc0724ba4eda31b1178bbb420edb144e676a144444b3c",
-    "ed83ddf5acc149240117e64b8054cf308f86112e5111c56ec3b75eb6066c508b",
-    "8b3d98cad9b169be0e27fddb70ac3bc5d9776dd9bf370c4c661511c70702b1e6",
-    # gen.reference re-pinned 2026-11-09: the fan-out allocator is a mirror call site.
-    "9a090ccc3985230c304646f2192066f37fbcb796fa3e5f28917a1df151410149",
+    "87297d66f6e12f6f2e9d18d0d9a66d2416e85d7901edc911ad2796d4fe85210b",
+    "73d56b8732a6a41baad045d754751bf6b3952c717c042d8674f22c248e289980",
+    "ac3c610bf678df5df95d6723d19d382b3345640afddac78c71f3dfe2db3b2a97",
     "22ddc02bdf5fbcd992e9c621d629885b7c036e872f7f71b90f73fc3fa4f2023d",
-    # gen.statistical_per_row re-pinned 2026-11-09: fitted cell_format adds the blank and null draws.
     "e4ca36f5c5bfef93d57ebd502d2d24db01dac1f576643e83291f9a589c76f3c9",
-    "dd5d6269da3bf5a40df6a7257d12ea39b6d752df3683aae258197accb07cdf7d",
+    "4dc3c2fce34978f9c0bfc138b7d17d375e4c852c520f836f50f95188145dd692",
     "fa2fd07097a3ed68edb71e46b40c43e0d697b50cf784b740b49c180bcae2e5d2",
     "451e4aa4bcb7f23e437468f4e692768c4571e4defb8a081d879be0eb428a1308",
     "648d1fb0b894493e6e8ad55de08b481dbbece29402ecb9ae3eb9cc54b995b211",
     "00cc3c083188a7299b963006aa4a5981a1abc2f0aee6e91e7ef31fe69cd532d4",
+    "6092f5fd66a6c8250ec059b811f7db45e4885dfc04f60e85409cd787df828f72",
+    "99c63db9c4a9c93adc5597710036d2584584de39c3356c2f7e3dcc36162c9554",
+    "c9f8ad34e9e4fa3667abd5f2c2634b5c95da16a2c4eb70cdb2ba74977d313d05",
+    "89aed843c931ef673fb46c7c2f42a98c1f5f66b95225119c9c81186ecc558678",
     "8a782e44afd97fb81aa7bbcc9acbf82e446ff3ef0cc19b7d2a0d3f99091e69ed",
     "4448026c1f789d220610a85dbcb0c17d8ce04e4497d1cda09e0346f713f5d2ba",
     "b9489ca4978756b4e41678489ce88c9f434a61526272c9cb639bbaddd282f944",

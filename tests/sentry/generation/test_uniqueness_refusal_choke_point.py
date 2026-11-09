@@ -20,7 +20,7 @@ import pytest
 SRC = Path(__file__).resolve().parents[3] / "src" / "decoy_engine"
 BUILDER = "raise_uniqueness_impossible"
 BUILDER_FILE = "generation/pool/_errors.py"
-CALLERS = ("generation/pool/_sampler.py",)
+CALLERS = ("generation/pool/_sampler.py", "generation/_unique.py")
 CODE_NAMES = ("UNIQUENESS_IMPOSSIBLE", "uniqueness_impossible")
 
 
