@@ -164,7 +164,7 @@ def test_recorded_clamp_is_the_count_the_kernel_resolves() -> None:
     """Cross-boundary: the stamp's `applied` comes from the compiled resolver, not a Python copy."""
     from decoy_engine_native import _kernel
 
-    from decoy_engine.execution.pipeline._host import native_thread_clamp
+    from decoy_engine.execution.pipeline import native_thread_clamp
 
     for requested in (1, 2, 6, 64):
         assert native_thread_clamp(requested) == {

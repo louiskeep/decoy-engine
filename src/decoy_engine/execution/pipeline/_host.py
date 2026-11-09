@@ -118,15 +118,6 @@ def _v1_ratio(directory: Path) -> float | None:
 def cpu_quota_cores(fs_root: Path = Path("/")) -> float | None:
     """The tightest CPU quota (in cores) on the process's cgroup path, or None
     when no level limits it."""
-    try:
-        return _cpu_quota_cores(fs_root)
-    except CgroupMappingError as mapping:
-        detail = str(mapping)
-    # Outside the handler so the error carries no cause or context.
-    raise _unreadable(detail)
-
-
-def _cpu_quota_cores(fs_root: Path) -> float | None:
     proc = Path(str(fs_root)) / "proc" / "self"
     cgroup_text = _read(proc / "cgroup")
     mountinfo_text = _read(proc / "mountinfo")

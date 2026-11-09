@@ -78,7 +78,7 @@ ALLOWLIST: dict[str, int] = {
     # the probe-recovery resolver into its own module.
     "src/decoy_engine/execution/_pipeline_routing_signals.py": 613,
     # fan-in guard on the budget resolver; split the disk-preflight helpers into _disk_budget.py.
-    "src/decoy_engine/execution/out_of_core/_budget.py": 608,
+    "src/decoy_engine/execution/out_of_core/_budget.py": 622,
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
     "src/decoy_engine/execution/out_of_core/_spill_estimate.py": 645,
     "src/decoy_engine/detection/detectors.py": 1046,

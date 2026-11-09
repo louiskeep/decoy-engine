@@ -390,6 +390,7 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # `execution.physical`.
             "src/decoy_engine/execution/out_of_core/__init__.py",
             "src/decoy_engine/execution/pipeline/__init__.py",
+            "src/decoy_engine/execution/pipeline/_cgroup.py",
             "src/decoy_engine/execution/pipeline/_host.py",
             # Dcomp-OOC (composite FK strict parity): the out-of-core joiners raise the one
             # orphan FAIL error producer (`_fk_resolve.orphan_fk_violation_error`) directly.

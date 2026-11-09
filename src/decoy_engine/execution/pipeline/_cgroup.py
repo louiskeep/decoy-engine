@@ -13,6 +13,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
+from decoy_engine import reasons
+from decoy_engine.execution._errors import ExecutionError
+
 __all__ = [
     "CgroupMappingError",
     "Mount",
@@ -23,8 +26,17 @@ __all__ = [
 ]
 
 
-class CgroupMappingError(Exception):
-    """A membership path or mount mapping that cannot be resolved; the message is value-free."""
+class CgroupMappingError(ExecutionError):
+    """A membership path or mount mapping that cannot be resolved.
+
+    The detail is value-free. The code is the CPU probe's; the memory budget catches this error and
+    degrades to "no cgroup limit", so it never reaches a caller as a memory failure.
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(
+            code=reasons.runtime.CPU_DETECTION_FAILED, message=f"cpu_limit_unreadable ({detail})"
+        )
 
 
 @dataclass(frozen=True)
@@ -99,13 +111,15 @@ def relative_to_root(membership: str, root: PurePosixPath) -> PurePosixPath | No
         return None
 
 
-def select_mount(mounts: list[Mount], membership: str, *, v2: bool) -> Mount | None:
+def select_mount(
+    mounts: list[Mount], membership: str, *, v2: bool, v1_controller: str = "cpu"
+) -> Mount | None:
     matching: list[Mount] = []
     for mount in mounts:
         if v2:
             if mount.fstype != "cgroup2":
                 continue
-        elif mount.fstype != "cgroup" or "cpu" not in mount.super_options:
+        elif mount.fstype != "cgroup" or v1_controller not in mount.super_options:
             continue
         if relative_to_root(membership, mount.root) is not None:
             matching.append(mount)
@@ -117,7 +131,9 @@ def select_mount(mounts: list[Mount], membership: str, *, v2: bool) -> Mount | N
             m
             for m in mounts
             if (
-                m.fstype == "cgroup2" if v2 else (m.fstype == "cgroup" and "cpu" in m.super_options)
+                m.fstype == "cgroup2"
+                if v2
+                else (m.fstype == "cgroup" and v1_controller in m.super_options)
             )
         ]
         if same_kind:

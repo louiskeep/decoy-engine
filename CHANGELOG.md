@@ -27,8 +27,10 @@ term (so `out_of_core_threads` works around the failure); without a cap the erro
 `quality_metrics["resources"]["out_of_core"]` (`thread_cap`, `applied`). The auto-chunk lane stamp gains
 `native_thread_clamp` (`requested`, `applied`). `applied` is the native companion's own answer
 (new `resolve_native_threads`, the resolver every kernel call uses), or None when the companion
-or that symbol is absent. The cgroup membership and mount parsing the CPU probe and the memory budget
-need now lives in one module, `execution/pipeline/_cgroup.py`.
+or that symbol is absent. The cgroup membership, mountinfo parsing and mount-root translation the CPU probe and the memory
+budget both need now live in one module, `execution/pipeline/_cgroup.py`. The memory budget finds its
+cgroup directory through mountinfo like the CPU probe, so a mount that exposes only a subtree (a
+container's cgroup namespace) is read at the right directory instead of falling back to host RAM.
 
 ### Changed (fitted generation keeps nulls, blanks, precision and resolution, GEN-FIT-SHAPE E2, 2026-11-09)
 

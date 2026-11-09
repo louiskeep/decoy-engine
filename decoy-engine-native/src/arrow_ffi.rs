@@ -26,7 +26,6 @@ use pyo3::types::{PyCapsule, PyCapsuleMethods, PyInt, PyList, PyTuple};
 use crate::batch::PoolSize;
 use crate::ffi_import::{import_ffi, KernelError};
 use crate::fpe::FpeKernelError;
-use crate::threads::NativeThreadBudget;
 
 const ARROW_SCHEMA_CAPSULE_NAME: &CStr = c"arrow_schema";
 const ARROW_ARRAY_CAPSULE_NAME: &CStr = c"arrow_array";

@@ -14,7 +14,7 @@ from pathlib import Path
 from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core._scratch import private_dir
-from decoy_engine.execution.pipeline._host import detect_usable_cpus
+from decoy_engine.execution.pipeline import detect_usable_cpus
 
 # `_budget.py` (`resolve_budget` / `resolve_ooc_memory_limit`) is the only
 # producer of the `memory_limit` string this module consumes, and it always

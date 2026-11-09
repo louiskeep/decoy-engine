@@ -31,7 +31,7 @@ from decoy_engine.execution import _chunked_output_sink as _output_sink
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import DeclaredCastRouteError, ExecutionError
 from decoy_engine.execution._substrate import require_bool, require_positive_int
-from decoy_engine.execution.pipeline._host import native_thread_clamp
+from decoy_engine.execution.pipeline import native_thread_clamp
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:

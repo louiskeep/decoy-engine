@@ -151,7 +151,7 @@ from decoy_engine.execution.native._companion_status import (
     native_companion_status,
 )
 from decoy_engine.execution.out_of_core import resolve_conservative_ooc_budget_bytes
-from decoy_engine.execution.pipeline._host import detect_usable_cpus
+from decoy_engine.execution.pipeline import detect_usable_cpus
 from decoy_engine.fileaccess import open_protected_dir, protected_scratch_dir
 from decoy_engine.generation.composite import (
     BundlePool,
