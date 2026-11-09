@@ -307,7 +307,7 @@ def _faker_stream(
     requested_locale = col.get("locale") or instance_default_locale
     # Pool admission is the TABLE row count, fixed for the column before the first batch.
     if _faker_pool.pool_eligible(
-        faker_type, requested_locale, rows, opted_out=col.get("pooled") is False
+        faker_type, requested_locale, rows, opted_out=_faker_pool.pool_opted_out(col)
     ):
         raw_kwargs = col.get("faker_kwargs") or {}
         # Reserve before the 10_000 provider calls that build the pool allocate anything.
