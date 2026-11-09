@@ -212,10 +212,7 @@ fn derive_batch_checked(
     // Resolve and validate the caller's native thread budget on the same coded-error path as
     // every other kernel error (`DeriveError` -> `KernelError` via `From`). A bad value
     // (0 / negative / excessive) fails here before any row is touched.
-    let host_available = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1);
-    let budget = crate::threads::NativeThreadBudget::resolve(native_threads, host_available)?;
+    let budget = crate::threads::NativeThreadBudget::resolve_on_host(native_threads)?;
     let threads = budget.threads();
     // `threads` bounds the number of row ranges (and thus the parallelism). A single range runs
     // serially off the shared pool; two or more ranges run on the one shared host-sized
@@ -331,10 +328,7 @@ fn derive_index_batch_checked(
     if mask_key.map(|k| k.is_empty()).unwrap_or(true) {
         return Err(KernelError::MaskKeyRequired);
     }
-    let host_available = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1);
-    let budget = crate::threads::NativeThreadBudget::resolve(native_threads, host_available)?;
+    let budget = crate::threads::NativeThreadBudget::resolve_on_host(native_threads)?;
     let threads = budget.threads();
 
     // Import + validate the Arrow array with the GIL HELD, then run the PyO3-free index kernel with
@@ -416,10 +410,7 @@ fn derive_hex_raw_batch_checked(
     if mask_key.map(|k| k.is_empty()).unwrap_or(true) {
         return Err(KernelError::MaskKeyRequired);
     }
-    let host_available = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1);
-    let budget = crate::threads::NativeThreadBudget::resolve(native_threads, host_available)?;
+    let budget = crate::threads::NativeThreadBudget::resolve_on_host(native_threads)?;
     let threads = budget.threads();
 
     let array = import_array(values)?;
@@ -513,10 +504,7 @@ fn fpe_transform_batch_checked(
     if mask_key.map(|k| k.is_empty()).unwrap_or(true) {
         return Err(fpe_to_py_err(FpeKernelError::MaskKeyRequired));
     }
-    let host_available = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1);
-    let budget = NativeThreadBudget::resolve(native_threads, host_available)
+    let budget = crate::threads::NativeThreadBudget::resolve_on_host(native_threads)
         .map_err(|e| PyValueError::new_err(format!("{}: {}", e.code, e.detail)))?;
     let threads = budget.threads();
 
@@ -606,7 +594,20 @@ fn fpe_transform_batch(
     }
 }
 
+/// The thread count the kernels would run a `native_threads` request on, for run telemetry.
+///
+/// Same resolver and same host read as every kernel call, so the figure is the kernel's own
+/// (a bad request or knee override raises the same coded `ValueError`).
+#[pyfunction]
+#[pyo3(signature = (native_threads=None))]
+fn resolve_native_threads(native_threads: Option<i64>) -> PyResult<usize> {
+    crate::threads::NativeThreadBudget::resolve_on_host(native_threads)
+        .map(|b| b.threads())
+        .map_err(|e| PyValueError::new_err(format!("{}: {}", e.code, e.detail)))
+}
+
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(resolve_native_threads, m)?)?;
     m.add_function(wrap_pyfunction!(derive_batch, m)?)?;
     m.add_function(wrap_pyfunction!(derive_index_batch, m)?)?;
     m.add_function(wrap_pyfunction!(derive_hex_raw_batch, m)?)?;

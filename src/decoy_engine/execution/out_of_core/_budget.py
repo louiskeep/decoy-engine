@@ -124,6 +124,7 @@ from pathlib import Path
 from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core._join import _JOIN_BATCH_ROWS
+from decoy_engine.execution.pipeline._cgroup import parse_membership
 
 # Conservative auto-detect fraction of the effective memory ceiling (JVM
 # default heap fraction).
@@ -297,17 +298,12 @@ def _cgroup_leaf_dir(mount: Path, proc_self_cgroup: Path, *, controller: str | N
         text = proc_self_cgroup.read_text()
     except OSError:
         return mount
-    for line in text.splitlines():
-        parts = line.split(":", 2)
-        if len(parts) != 3:
-            continue
-        hierarchy_id, controllers, cgroup_path = parts
-        is_v2_line = hierarchy_id == "0" and controllers == ""
-        matches = is_v2_line if controller is None else controller in controllers.split(",")
-        if matches:
-            rel = cgroup_path.strip().lstrip("/")
-            return (mount / rel) if rel else mount
-    return mount
+    v2_path, v1_path = parse_membership(text, v1_controller=controller or "")
+    path = v2_path if controller is None else v1_path
+    if path is None:
+        return mount
+    rel = path.strip().lstrip("/")
+    return (mount / rel) if rel else mount
 
 
 def detect_cgroup_memory_limit_bytes() -> int | None:

@@ -326,3 +326,12 @@ def test_failed_cpu_detection_surfaces_without_a_thread_cap(
     monkeypatch.setattr(_duckdb, "detect_usable_cpus", _detection_fails)
     with pytest.raises(ExecutionError, match="cpu_limit_unreadable"):
         _duckdb._threads_for_memory_limit("4096MB")
+
+
+def test_cgroup_membership_parsing_has_one_owner() -> None:
+    from decoy_engine.execution.out_of_core import _budget
+    from decoy_engine.execution.pipeline import _cgroup, _host
+
+    assert _budget.parse_membership is _cgroup.parse_membership
+    assert _host.parse_membership is _cgroup.parse_membership
+    assert not hasattr(_host, "_parse_mountinfo") and not hasattr(_host, "_Mount")

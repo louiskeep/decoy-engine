@@ -25,8 +25,10 @@ per run and read where each connection opens, so every nested connection gets
 CPUs instead of `os.cpu_count()`. If the CPU limit cannot be read, a given cap is used in place of the CPU
 term (so `out_of_core_threads` works around the failure); without a cap the error is raised. The connection settings actually applied are returned in
 `quality_metrics["resources"]["out_of_core"]` (`thread_cap`, `applied`). The auto-chunk lane stamp gains
-`native_thread_clamp` (`requested`, `usable_cpus`, `knee`, `applied`), the same arithmetic the native
-kernel applies to a `native_threads` request.
+`native_thread_clamp` (`requested`, `applied`). `applied` is the native companion's own answer
+(new `resolve_native_threads`, the resolver every kernel call uses), or None when the companion
+or that symbol is absent. The cgroup membership and mount parsing the CPU probe and the memory budget
+need now lives in one module, `execution/pipeline/_cgroup.py`.
 
 ### Changed (fitted generation keeps nulls, blanks, precision and resolution, GEN-FIT-SHAPE E2, 2026-11-09)
 

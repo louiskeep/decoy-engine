@@ -1,12 +1,14 @@
 """RUN-STREAM E1b: `native_threads` reaches the auto-chunk lane and the clamp is recorded.
 
-The Rust resolver lowers a request to `min(requested, host_available, knee)` and exposes no
-accessor for the result, so the engine records the same arithmetic beside the lane stamp. The
-record states the request, the usable CPUs, the knee and the applied value.
+The Rust resolver lowers a request to `min(requested, host_available, knee)`. The engine asks the
+companion for that figure (`resolve_native_threads`) and records it beside the lane stamp, so the
+record is the kernel's own answer and the clamp rule has one owner.
 """
 
 from __future__ import annotations
 
+import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -17,57 +19,41 @@ from decoy_engine.execution.pipeline import _host
 from tests.unit.execution import _auto_chunk_support as support
 from tests.unit.execution.test_auto_chunk_dispatcher import _hash_redact_job
 
-_KNEE_ENV = "DECOY_NATIVE_MASK_THREAD_KNEE"
+
+def _fake_kernel(monkeypatch: pytest.MonkeyPatch, resolver: Any) -> None:
+    kernel = types.SimpleNamespace(resolve_native_threads=resolver)
+    package = types.ModuleType("decoy_engine_native")
+    package._kernel = kernel  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "decoy_engine_native", package)
+    monkeypatch.setitem(sys.modules, "decoy_engine_native._kernel", kernel)
 
 
-def _clamp(
-    requested: int, *, cpus: int, knee: str | None, mp: pytest.MonkeyPatch
-) -> dict[str, Any]:
-    mp.setattr(_host, "detect_usable_cpus", lambda **_: cpus)
-    if knee is None:
-        mp.delenv(_KNEE_ENV, raising=False)
-    else:
-        mp.setenv(_KNEE_ENV, knee)
-    return _host.native_thread_clamp(requested)
+def test_applied_is_the_kernels_own_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Whatever the kernel resolves is recorded as is; Python repeats no clamp arithmetic.
+    _fake_kernel(monkeypatch, lambda requested: 3)
+    assert _host.native_thread_clamp(6) == {"requested": 6, "applied": 3}
 
 
-def test_request_above_the_default_knee_is_clamped_and_recorded(
+def test_a_kernel_refusal_records_no_applied_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(_requested: int) -> int:
+        raise ValueError("native_mask_thread_knee_invalid: bad override")
+
+    _fake_kernel(monkeypatch, refuse)
+    assert _host.native_thread_clamp(6) == {"requested": 6, "applied": None}
+
+
+def test_a_companion_without_the_resolver_records_no_applied_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    got = _clamp(6, cpus=8, knee=None, mp=monkeypatch)
-    assert got == {"requested": 6, "usable_cpus": 8, "knee": 4, "applied": 4}
-
-
-def test_usable_cpus_below_the_knee_bind(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert _clamp(6, cpus=2, knee=None, mp=monkeypatch)["applied"] == 2
-
-
-def test_request_below_both_ceilings_is_kept(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert _clamp(3, cpus=8, knee="16", mp=monkeypatch)["applied"] == 3
-
-
-@pytest.mark.parametrize("raw", ["16", " 16 ", "+16"])
-def test_knee_override_follows_the_rust_grammar(raw: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    got = _clamp(12, cpus=32, knee=raw, mp=monkeypatch)
-    assert (got["knee"], got["applied"]) == (16, 12)
-
-
-@pytest.mark.parametrize(
-    "raw", ["0", "1025", "-2", "four", "", "1_0", "\N{ARABIC-INDIC DIGIT ONE}"]
-)
-def test_invalid_knee_override_records_no_applied_value(
-    raw: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The kernel fails closed on such an override, so no figure is claimed.
-    got = _clamp(6, cpus=8, knee=raw, mp=monkeypatch)
-    assert (got["knee"], got["applied"]) == (None, None)
+    _fake_kernel(monkeypatch, None)
+    monkeypatch.delattr(sys.modules["decoy_engine_native._kernel"], "resolve_native_threads")
+    assert _host.native_thread_clamp(6)["applied"] is None
 
 
 def test_native_threads_reaches_the_lane_and_the_clamp_is_in_the_stamp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(_host, "detect_usable_cpus", lambda **_: 8)
-    monkeypatch.delenv(_KNEE_ENV, raising=False)
+    _fake_kernel(monkeypatch, lambda requested: 4)
     cfg, src = _hash_redact_job(tmp_path)
     spies = support.spy_lanes(monkeypatch)
     result = support.run_default(cfg, src, native_threads=6)
@@ -76,12 +62,7 @@ def test_native_threads_reaches_the_lane_and_the_clamp_is_in_the_stamp(
     block = result.quality_metrics["auto_chunk"]
     assert block["lane"] == "dispatcher"
     assert block["native_threads"] == 6
-    assert block["native_thread_clamp"] == {
-        "requested": 6,
-        "usable_cpus": 8,
-        "knee": 4,
-        "applied": 4,
-    }
+    assert block["native_thread_clamp"] == {"requested": 6, "applied": 4}
 
 
 def test_the_clamp_is_computed_by_the_one_helper() -> None:
