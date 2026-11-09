@@ -71,7 +71,6 @@ _COUNT_METHODS = frozenset({"count", "nunique", "sum", "size", "__len__"})
 ALLOWLIST: dict[tuple[str, str, str], tuple[int, str]] = {
     # System errors whose text names a path or an OS condition, not data.
     ("disguises/loader.py", "_load_from", "exc"): (1, "OSError reading a packaged file"),
-    ("internal/logging.py", "_configure_logger", "exc"): (1, "OSError opening the log file"),
     ("internal/memory.py", "MemoryMonitor.monitor_memory_usage", "e"): (1, "psutil failure"),
     # Package or environment configuration text, no customer data.
     ("profiling/model_pack/loader.py", "ModelPackLoader.load_with_fallback", "exc"): (

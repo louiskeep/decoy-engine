@@ -31,7 +31,7 @@ from decoy_engine.profile._readers import (
     build_profile_source,
 )
 from decoy_engine.profile._serialize import profile_from_json, profile_to_json
-from decoy_engine.profile._source import profile_source
+from decoy_engine.profile._source import profile_relationships_from_config, profile_source
 from decoy_engine.profile._types import (
     ColumnProfile,
     PIIClass,
@@ -54,6 +54,7 @@ __all__ = [
     "build_profile_source",
     "profile_from_json",
     "profile_hash",
+    "profile_relationships_from_config",
     "profile_source",
     "profile_to_json",
     "read_csv_source",
