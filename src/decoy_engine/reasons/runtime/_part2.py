@@ -224,7 +224,7 @@ CPU_DETECTION_FAILED = _d(
     "cpu_detection_failed",
     "CPU limit detection failed.",
     retry=RetryClass.ENVIRONMENT_REPAIR,
-    since="1.20.0",
+    since="1.19.0",
 )
 SPLIT_SINK_NEEDS_ALL_DISPATCHED = _d(
     "split_sink_needs_all_dispatched", "Split sink needs all dispatched."

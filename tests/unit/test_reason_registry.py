@@ -424,15 +424,15 @@ def test_fit_redact_code_is_a_registered_plan_error_with_a_pinned_fixture() -> N
     ]
 
 
-CPU_DETECTION_FIXTURE = "reason-manifest-v1.20-run-stream-e1b.json"
+CPU_DETECTION_FIXTURE = "reason-manifest-v1.19-run-stream-e1b.json"
 
 
 def test_cpu_detection_failed_is_registered_as_an_environment_repair() -> None:
-    """RUN-STREAM E1b: one additive identity owned by ExecutionError, `since` 1.20.0."""
+    """RUN-STREAM E1b: one additive identity owned by ExecutionError, `since` 1.19.0."""
     spec = reasons.find("runtime", "cpu_detection_failed")
     assert spec is not None
     assert spec.owner == "ExecutionError"
-    assert spec.since == "1.20.0"
+    assert spec.since == "1.19.0"
     assert spec.kind is reasons.Kind.FAILURE
     assert {r.retry for r in spec.rules} == {reasons.RetryClass.ENVIRONMENT_REPAIR}
     assert reasons.runtime.CPU_DETECTION_FAILED == "cpu_detection_failed"
@@ -444,4 +444,4 @@ def test_cpu_detection_minor_has_one_fixture_with_exactly_its_identity() -> None
     assert [(e["namespace"], e["code"]) for e in pinned["entries"]] == [
         ("runtime", "cpu_detection_failed")
     ]
-    assert pinned["registry_version"] == "1.20.0"
+    assert pinned["registry_version"] == "1.19.0"

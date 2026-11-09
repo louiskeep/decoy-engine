@@ -14,7 +14,7 @@ minimum engine version it was tested against via its
 `decoy_engine.detect_usable_cpus(*, fs_root=None, affinity=None)` is the platform's cgroup-aware core
 count moved into the engine: the tightest quota on the cgroup path (v1 or v2), capped by CPU affinity,
 or `os.cpu_count()` where the OS has no affinity call (macOS). A limit file that is present but
-unreadable raises `ExecutionError` with the new `runtime.cpu_detection_failed` (registry 1.20.0).
+unreadable raises `ExecutionError` with the new `runtime.cpu_detection_failed` (registry 1.19.0).
 `decoy_engine.resolve_conservative_ooc_budget_bytes()` returns 25% of the effective memory ceiling
 through `resolve_budget(None)`; `resolve_ooc_memory_limit(None)` keeps its ceiling-minus-reserve default
 for every other caller.
