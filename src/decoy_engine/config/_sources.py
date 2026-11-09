@@ -52,7 +52,9 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+from pydantic_core import PydanticCustomError
 
+from decoy_engine import reasons
 from decoy_engine.config._csv_dialect import CSV_DIALECT_DEFAULTS, csv_dialect_problem
 from decoy_engine.config._fixed_width import FixedWidthLayout
 from decoy_engine.errors import ConfigRuleError
@@ -180,6 +182,13 @@ class FileSource(BaseModel):
         return schema
 
 
+def _endpoint_refused() -> PydanticCustomError:
+    """The one refusal for a bad endpoint_url. It names the field and never the submitted value."""
+    return PydanticCustomError(
+        str(reasons.config.ENDPOINT_URL_INVALID), "endpoint_url is not an acceptable URL."
+    )
+
+
 class S3Source(BaseModel):
     """An S3 (or S3-compatible) CSV / Parquet source.
 
@@ -222,15 +231,15 @@ class S3Source(BaseModel):
             return value
         lowered = value.lower()
         if any(mark in lowered for mark in ("@", "?", "#", "%40", "%3f", "%23")):
-            raise ConfigRuleError("endpoint_url must not carry credentials, a query or a fragment")
+            raise _endpoint_refused()
         try:
             parts = urlsplit(value)
             has_host = bool(parts.hostname)
             parts.port  # noqa: B018 - raises ValueError on a malformed port
         except ValueError:
-            raise ConfigRuleError("endpoint_url is not a valid URL") from None
+            raise _endpoint_refused() from None
         if parts.scheme not in ("http", "https") or not has_host:
-            raise ConfigRuleError("endpoint_url must be an http or https URL with a host")
+            raise _endpoint_refused()
         return value
 
 

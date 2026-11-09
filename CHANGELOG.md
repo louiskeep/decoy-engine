@@ -47,8 +47,9 @@ An invalid source descriptor is a `PipelineConfigError`; a failed read is a `Sca
 `has_header: true` the scan flags a first row that looks like data
 (`warning.scan_header_suspect`); for a local CSV scanned with `head` or `full` it counts values
 with a leading zero per column. Two new `warning` reasons (`scan_header_suspect`,
-`scan_key_type_mismatch`) and one `runtime` reason (`scan_source_failed`, the fixed identity of
-`ScanSourceError`), registry 1.10.0. `S3Source.endpoint_url` accepts only an http or https URL with a
+`scan_key_type_mismatch`), one `runtime` reason (`scan_source_failed`, the fixed identity of
+`ScanSourceError`) and one `config` reason (`endpoint_url_invalid`, the refusal of a bad S3
+`endpoint_url`), registry 1.10.0. `S3Source.endpoint_url` accepts only an http or https URL with a
 host and refuses userinfo, a query, a fragment and their percent-encoded forms. `read_csv_source`,
 `resolve_csv_dialect` and `CsvDialect` are also exported from `decoy_engine.profile`.
 
