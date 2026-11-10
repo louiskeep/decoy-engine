@@ -88,6 +88,8 @@ GUARDED_MODULES: tuple[str, ...] = (
     "execution/_pipeline_multi_table.py",
     # RUN-STREAM E1a: the strict stream preflight is routing code and must not import the seam.
     "execution/pipeline/_stream.py",
+    # RUN-STREAM E3: the route summary only reads recorded metrics; no physical import.
+    "execution/pipeline/_route_summary.py",
     # B6a (incremental output sink): the streamed lane's row-group assembly and publish
     # session sit between the dispatcher lane and the caller's sink; no physical import.
     "execution/_chunked_output_sink.py",
@@ -393,6 +395,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/out_of_core/__init__.py",
             "src/decoy_engine/execution/pipeline/_cgroup.py",
             "src/decoy_engine/execution/pipeline/_host.py",
+            # RUN-STREAM E3: `route_summary` reads recorded quality_metrics blocks and imports
+            # nothing from `execution.physical`.
+            "src/decoy_engine/execution/pipeline/_route_summary.py",
             # Dcomp-OOC (composite FK strict parity): the out-of-core joiners raise the one
             # orphan FAIL error producer (`_fk_resolve.orphan_fk_violation_error`) directly.
             # Both import nothing from `execution.physical`.

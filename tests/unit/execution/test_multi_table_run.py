@@ -107,6 +107,8 @@ def _check_evidence(result: Any, *, chunk: int, threshold: int, threads: int, ro
             "native_threads",
             "output",
             "input",
+            # E3: a request above one thread also carries the lane's native clamp record.
+            *(["native_thread_clamp"] if threads > 1 else []),
         }
         assert entry["dispatched"] is True and entry["source_rows"] == size
         assert entry["chunk_count"] == -(-size // chunk)

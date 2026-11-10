@@ -49,6 +49,9 @@ _DECISION_REASON = "forwards the rejection ReasonCode of the central route decis
 ADAPTERS: dict[tuple[str, str], str] = {
     # -- F06 declared casting ----------------------------------------------------------------
     ("contracts/_declared_base.py", "DeclaredCastContractError.__init__"): _CTOR,
+    ("execution/pipeline/_route_summary.py", "route_summary"): (
+        "copies the route reason code the engine recorded in quality_metrics into the summary record"
+    ),
     ("execution/_errors.py", "DeclaredCastValueError.__init__"): _CTOR,
     ("execution/_errors.py", "QuarantineError.__init__"): _CTOR,
     ("contracts/_declared_formats.py", "validate_format_spec"): _FIRST_CODE,
