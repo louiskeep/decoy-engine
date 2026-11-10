@@ -2,12 +2,14 @@ Status: plan
 
 # GEN-NUM-SHAPE: fitted number columns survive outliers, skew and few distinct values (roadmap row 24u)
 
-Owner: Cam. Author: Opus plan agent. Date: 2026-11-10. Revision 2. Scope: engine only, V1, blocks V1.
+Owner: Cam. Author: Opus plan agent. Date: 2026-11-10. Revision 3. Scope: engine only, V1, blocks V1.
 
 Rules consulted: `dev-rules/README.md` (routing), `00-universal.md`, `risk-and-exceptions.md`,
 `development-loop.md` (Proportion; PLAN: guarantee, design notes, choke point, Placement,
-Established solutions), `testing.md` (Test depth, full-suite triggers), `api-and-compatibility.md`
-(snapshot format consumers), `workspace-and-vcs.md` (Commit messages); engine `CLAUDE.md` (cite the
+Established solutions), `code-review.md`, `testing.md` (Test depth, full-suite triggers),
+`architecture.md`, `security.md`, `documentation.md`, `catalogs/recurring-defects.md`,
+`api-and-compatibility.md` (snapshot format consumers), `workspace-and-vcs.md` (Commit messages);
+engine `CLAUDE.md` (cite the
 method; modules aim for 600 lines, hard max 700, census above 600); engine
 `docs/compatibility-contract.md:124-166` (a `distribution-snapshot/v1` artifact is a contract; new
 fields are additive and optional, old readers ignore them) and `:204` (same input plus same seed
@@ -22,27 +24,49 @@ of 1,000,000 moved the generated mean from 150 to 50,084; a lognormal median wen
 92.1; four prices became 3,585 distinct values with 0.08% of rows on a real price.
 
 Terms. A column's **finite cells** are its non-null cells with `nan` and `+-inf` dropped
-(`quality/snapshot.py::finite_numeric_cells`), count `n`. The **release floor** `K` is the fewest
-source rows that must stand behind any value this plan writes into a snapshot. A **quantile grid**
-is a list of probabilities and the matching empirical quantiles. A **low-distinct** column has at
-most 30 distinct finite cells.
+(`quality/snapshot.py::finite_numeric_cells`), count `n`. The **release floor** `K` is the minimum
+source-row mass. In grid mode it applies to every interval and tail, not to each interior knot. In
+exact mode it applies to every emitted value. A **quantile grid** is a list of probabilities and
+the matching empirical quantiles. A **low-distinct** column has at most
+`CATEGORICAL_DISTINCT_CAP = 30` distinct finite cells.
 
-## 0. Revision 2 (Dennis r1: NO-GO, 3 HIGH, 5 MEDIUM, 5 LOW)
+## 0. Findings map
 
-| Finding | Resolution |
-|---|---|
-| H1 grid rounding to 12 significant digits can leave `bin_edges` or the K-th extreme; int64 above 2**53 | Grid values stored unrounded (JSON `repr` round-trips a float exactly), then clamped at fit into `[bin_edges[0], bin_edges[-1]]`. The `exact_values` bounds check compares `float(v)` with a stated tolerance. New AT-21, AT-22, AT-23 (section 8) |
-| H2 consent on `exact_values` protects nothing: grid plateaus and int rounding already emit real values held by `K` or more rows | `K` is the disclosure control. `exact_values` needs no consent and the change is not Breaking (section 4.2, Q1, accepted by Dennis). The two slices fold into one M slice (section 13) |
-| H3 the snapshot registry sentry goes red | `tests/sentry/profiling/test_snapshot_value_registry.py` and its fixture are in sections 10 and 12; the one slice registers both keys and the fixture fills both |
-| M1 `quality/snapshot.py` is at 599 after #456 | Re-budgeted from 599 with two named trims; `MIN_RELEASE_COUNT` moves to `profiling/_value_redaction.py`; the decoder and all checks live in `_numeric_shape.py`, so `_spec.py` gains call lines only (section 12) |
-| M2 wrong 24f reference | 24f is QA-FIT-REDACT (`2026-11-08-qa-fit-redact.md`, engine half merged in #420) and has no count floor. Section 4.4, Q2 and Q4 rewritten. Row 24w (#456, `2026-11-10-gen-cond-cap.md`) is named only for the line budget |
-| M3 dp clause in AT-3b | AT-3b is gone with the consent gate; the carrier rule is AT-15a/b only |
-| M4 review order | Dennis, then Codex |
-| M5 tests that do not bite | `assert "quantile_grid" in stats` precondition in AT-10, AT-11a, AT-15a, AT-16; AT-12 asserts the key is present and `None` |
-| L1 ladder and point count | Ladder written out as a list; `n = 100` gives 9 points (measured) |
-| L2 ascending vs non-decreasing | Grid values are non-decreasing; the decoder accepts equal neighbours; AT-14a refuses only a decrease; the withheld check counts non-null keys only |
-| L3 exception chaining | Decoder errors raise `from None`; AT-14a/b assert no cause and no shown context |
-| L4 wording | "Every interval between grid points holds at least `K` rows" |
+### Revision 2 (Dennis r1: NO-GO, 3 HIGH, 5 MEDIUM, 5 LOW)
+
+| Finding | Bar | Design | Resolution |
+|---|---|---|---|
+| H1 grid rounding to 12 decimal places can move a knot or leave it outside rounded `bin_edges`; int64 above 2**53 needs separate coverage | V1 | none | Grid values stored unrounded (JSON `repr` round-trips a float exactly), then clamped at fit into `[bin_edges[0], bin_edges[-1]]`. The `exact_values` bounds check compares `float(v)` with a stated tolerance. New AT-21, AT-22, AT-23 (section 8) |
+| H2 consent on `exact_values` protects nothing beyond the already value-bearing plain snapshot | V1 | none | Exact mode's per-value `K` floor needs no consent and the change is not Breaking. Grid mode has the narrower interval and tail guarantee described in section 1. The two slices fold into one M slice (section 13) |
+| H3 the snapshot registry sentry goes red | V2-LOG | none | `tests/sentry/profiling/test_snapshot_value_registry.py` and its fixture are in sections 10 and 12; the one slice registers both keys and the fixture fills both |
+| M1 `quality/snapshot.py` is at 599 after #456 | V2-LOG | DESIGN (change-created) | Re-budgeted from 599 with two named trims; `MIN_RELEASE_COUNT` moves to `profiling/_value_redaction.py`; the decoder and all checks live in `_numeric_shape.py`, so `_spec.py` gains call lines only (section 12) |
+| M2 wrong 24f reference | V2-LOG | none | 24f is QA-FIT-REDACT (`2026-11-08-qa-fit-redact.md`, engine half merged in #420) and has no count floor. Section 4.4, Q2 and Q4 rewritten. Row 24w (#456, `2026-11-10-gen-cond-cap.md`) is named only for the line budget |
+| M3 dp clause in AT-3b | V2-LOG | none | AT-3b is gone with the consent gate; the carrier rule is AT-15a/b only |
+| M4 review order | V2-LOG | none | Dennis, then Codex |
+| M5 tests that do not bite | V2-LOG | none | `assert "quantile_grid" in stats` precondition in AT-10, AT-11a, AT-15a, AT-16; AT-12 asserts the key is present and `None` |
+| L1 ladder and point count | V1 | none | Ladder written out as a list; `n = 100` gives 9 points (measured) |
+| L2 ascending vs non-decreasing | V1 | none | Grid values are non-decreasing; the decoder accepts equal neighbours; AT-14a refuses only a decrease; the withheld check counts non-null keys only |
+| L3 exception chaining | V2-LOG | none | Decoder translations raise only after the `except` block closes; AT-14a/b assert both cause and context are `None` |
+| L4 wording | V2-LOG | none | "Every interval between grid points holds at least `K` rows" |
+
+### Codex r1 (NO-GO, 2 HIGH, 4 LOW)
+
+| Finding | Bar | Design | Resolution |
+|---|---|---|---|
+| H1 singleton quantile knots | V1 | none | Narrowed the grid guarantee: intervals and tails each hold at least `K` rows, but an interior knot may be a source value held by fewer than `K` rows. Plain snapshots are already value-bearing; redacted fits null the grid. Removed the false subset claim, added Q7 and AT-24 |
+| H2 duplicated distinct cap | V2-LOG | DESIGN (change-created) | Rename the owner in `quality/snapshot.py` to public `CATEGORICAL_DISTINCT_CAP`, export it through `decoy_engine.quality`, and consume it from both classification and numeric-shape admission. Placement, choke-point guard and one controlling mutation are in sections 6, 8 and 12 |
+| L3 window parity incomplete | V2-LOG | none | AT-10 now covers both grid and exact modes |
+| L4 exception context retained | V2-LOG | none | Decoder translation raises the safe error only after the `except` block; AT-14a/b require both `__cause__` and `__context__` to be `None` |
+| L5 AT-18 missed the low-distinct rare-share branch | V2-LOG | none | The rare-share case now has 30 total distinct values: 25 values repeated 10 times plus five singletons |
+| L6 rounding evidence incorrect | V2-LOG | none | All evidence now says `_round` uses 12 decimal places. AT-22 is only an integer-formatting and floor test |
+
+### Codex self-review r2 (GO)
+
+| Finding | Bar | Design | Resolution |
+|---|---|---|---|
+| Old-snapshot parity omitted the low-distinct exact candidate | V1 | none | AT-9 now records and compares the base digest for an AT-3 low-distinct snapshot with both new keys absent |
+
+No V1 or change-created DESIGN finding remains. No unresolved V2-LOG finding affects the verdict.
 
 ## 1. Goal
 
@@ -55,10 +79,13 @@ A number column fitted by `decoy fit` (or `compute_distribution_snapshot`) and g
 - A column with few distinct values emits exactly those values that at least `K` rows hold, at
   their source shares.
 
-Guarantee: every exact value this row adds to a snapshot is held by at least `K = 10` source rows,
-every interval between grid points holds at least `K` rows (and so does each tail beyond the grid
-ends), and generation never emits a number outside the `K`-th extremes of a
-column that has a grid or exact values. Old snapshots generate byte-identical output.
+Guarantee: every interval between adjacent grid points and each tail beyond the grid ends holds at
+least `K = 10` source rows, and no value outside `[K-th smallest, K-th largest]` is emitted.
+An interior grid point may coincide with a source value held by fewer than `K` rows, the same
+exposure today's plain snapshot already has through its stored quantiles (`p05`/`p50`/`p95`) and
+`min`/`max` `bin_edges`. Plain snapshots are therefore value-bearing artifacts, and redacted fits
+null the grid through `SNAPSHOT_VALUE_STATS`. Exact mode keeps its true per-value `K` floor and
+needs no consent. Old snapshots generate byte-identical output.
 
 Non-goals: the categorical, datetime and freetext samplers (categorical consent is unchanged);
 joints and `condition_on` for numbers; the DP fit and DP sampler path; the operator-authored
@@ -83,7 +110,8 @@ sensitive columns); the CLI (no CLI change needed, section 9); the platform (par
   same at a smaller scale. A four-price column has its mass in two or three bins and is drawn
   uniformly between prices.
 - Low-distinct numbers. A numeric dtype never becomes `categorical`: the 30-distinct cap
-  (`_CATEGORICAL_DISTINCT_CAP`, `snapshot.py:118`) applies to object columns only (`:283-287`).
+  (`_CATEGORICAL_DISTINCT_CAP`, `snapshot.py:118`, renamed by this row to public
+  `CATEGORICAL_DISTINCT_CAP`) applies to object columns only (`:283-287`).
 - Disclosure today. `load_spec` (`_spec.py:299-581`) asks for `allow_real_categories: true` only on
   categorical columns (`:466-479`); numbers need no consent, and an int64 column already emits real
   integers through `round()`. A redacted fit (row 24f, `profiling/_snapshot_values.py:131-146`,
@@ -129,8 +157,9 @@ the engine (`quality/`, `generation/statistical/`, `profiling/`).
   threshold rule (Hundepool et al., Statistical Disclosure Control, Wiley 2012, sections 3.4.3
   and 4.2; R sdcMicro `topBotCoding`), already cited in `profiling/_value_redaction.py`. Agencies
   use thresholds from 3 to 11 (the CMS cell-size suppression policy suppresses cells under 11).
-  A value released only when at least `K` rows hold it is this rule; it is the control for both
-  the grid and exact values.
+  Exact mode applies the minimum-frequency rule per value. Grid mode applies the same `K` as a
+  minimum source-row mass for every adjacent interval and tail, while plain snapshot knots remain
+  value-bearing as they are today.
 - Rejected: parametric marginals (SDV `GaussianCopulaSynthesizer` `numerical_distributions`, the
   `copulas` univariate fits). They mis-fit point masses and mixtures (the zero-inflated and
   four-price cases), and need an optimizer whose result can vary by platform.
@@ -177,9 +206,10 @@ than 30 distinct finite cells (or a low-distinct column that fails the exact-mod
 Measured point counts: `n = 100` gives 9 points (0.1 to 0.9 by 0.1); `n = 150` gives 13;
 `n = 1,000` gives 99; `n >= 10,000` keeps all 103 (about 2.4 KB of JSON per column).
 
-Why 12-digit rounding was dropped (H1). On the AT-21 and AT-22 inputs, rounding to 12 significant
-digits put the top grid value of a tied `20/3` maximum at `6.66666666667` and the bottom value of a
-13-digit integer column at `1234567890130`, below its 10th smallest value `1234567890132`.
+Why 12-decimal-place rounding was dropped (H1). On the AT-21a input, `_round` would change the top
+grid value of a tied `20/3` maximum from `6.666666666666667` to `6.666666666667`. Grid values remain
+unrounded. AT-22 separately proves that integer formatting and its clamp preserve the release
+floor; it is not rounding evidence for `_round`.
 
 Sample. When a numeric spec carries a grid (and `carrier is None`):
 
@@ -206,8 +236,8 @@ of the distribution.
 
 ### 4.2 (b) Low-distinct numbers: exact values
 
-Fit, for a numeric column with at most 30 distinct finite cells (`_CATEGORICAL_DISTINCT_CAP`, the
-same cap that makes an object column categorical):
+Fit, for a numeric column with at most `CATEGORICAL_DISTINCT_CAP` distinct finite cells, using the
+same public symbol that makes an object column categorical:
 
 - The distinct count and the per-value counts run on the original series (an integer dtype stays
   integer, so two int64 values that share a float64 never merge), not on the float finite cells.
@@ -226,16 +256,16 @@ Sample: `rng.choices(values, weights=counts)`, the categorical draw; dropped mas
 the way categorical `other_mode: redistribute` does. Output is `int(v)` when `emits_int(spec)`,
 else `float(v)`; no `format_numeric` (the values are source cells already).
 
-Disclosure (H2). Exact values need no consent. The release floor `K` is the control, the same one
-the grid relies on:
+Disclosure (H2). Exact values need no consent. Exact mode has a true per-value `K` floor. Grid
+mode instead guarantees `K` source rows in each adjacent interval and tail:
 
-- Without exact values, a grid already emits real source values: an interval whose two ends are
-  equal (a plateau of at least `K` rows) draws that value exactly, which is how AT-6 keeps its 60%
-  zeros, and an int64 column emits real integers through `round()`. A consent flag on
-  `exact_values` would therefore block nothing a grid does not already release, while making
-  every re-fitted low-distinct column fail validation.
-- What `exact_values` stores is a subset of what a grid of the same column would store: values held
-  by at least `K` rows. A value held by fewer than `K` rows is in neither.
+- A grid can expose a singleton interior knot because an empirical quantile may coincide with a
+  source value held by fewer than `K` rows. That is the same class of exposure already present in
+  a plain snapshot's stored `p05`/`p50`/`p95` quantiles and `min`/`max` `bin_edges`. Plain
+  snapshots are value-bearing artifacts; redacted fits withhold the grid through
+  `SNAPSHOT_VALUE_STATS` (AT-12 and AT-24).
+- Exact mode is stronger per value: every stored and emitted exact value is held by at least `K`
+  rows. A value held by fewer than `K` rows is omitted from `exact_values`.
 - Categorical columns keep `allow_real_categories` unchanged (their `top_values` have no count
   floor). Whether categories move to the same floor is a recorded follow-up, not this row.
 
@@ -306,7 +336,8 @@ Row 24w (GEN-COND-CAP, #456, `2026-11-10-gen-cond-cap.md`) is named only because
   keep it small.
 - F4 Rounding or edge drift puts a grid value outside `bin_edges` and the decoder refuses a
   snapshot the engine wrote itself. Closed by storing values unrounded and clamping at fit
-  (AT-21, AT-22); the clamp is the one place that reconciles the two precisions.
+  (AT-21); the clamp is the one place that reconciles the two precisions. AT-22 separately checks
+  the integer output clamp against the floor.
 - F5 Rare values in an exact column are never emitted (AT-4). That is the floor.
 - F6 A hand-written or corrupted block (decreasing probabilities or values, values outside
   `bin_edges`, both keys present, bad counts) is refused with `plan.statistical_stats_degenerate`
@@ -327,6 +358,10 @@ Row 24w (GEN-COND-CAP, #456, `2026-11-10-gen-cond-cap.md`) is named only because
   paths (CLI default call and `distribution_snapshot_document`) go through it. It skips
   `high_cardinality` columns (they are categorical) and non-numeric kinds. Guard: AT-12 and the
   `numeric_only` golden fail if a fit path bypasses it; mutation: drop the call, both go red.
+- One distinct-cap owner: public `CATEGORICAL_DISTINCT_CAP` in `quality/snapshot.py`, exported by
+  `decoy_engine.quality`. Object classification and `add_numeric_shape` both consume that symbol.
+  Guard: AT-18 exercises the boundary through both paths. Mutation: change the constant from 30
+  to 29 and both the 30-distinct object case and the 30-distinct numeric case turn red.
 - One read choke point: `decode_numeric_shape(column, stats, carrier) -> NumericShape | None`,
   called by `load_spec` (so compile and validate see the errors) and by `sample_column` (to build
   the tables). Every check (types, order, bounds, both keys, counts) and the withheld-key test
@@ -336,8 +371,10 @@ Row 24w (GEN-COND-CAP, #456, `2026-11-10-gen-cond-cap.md`) is named only because
 - Design notes: one module owns both halves, as `_cell_format.py` does
   (`generation/statistical/_numeric_shape.py`); a frozen `NumericShape` dataclass is the typed
   context the sampler receives instead of loose lists; no flag argument (the sampler dispatches on
-  which table the decoder returned). Decoder errors raise `StatisticalSpecError(...) from None`.
-  No other new structure.
+  which table the decoder returned). When validation catches a library exception, it records only
+  a value-free failure token, exits the `except` block, and then raises `StatisticalSpecError(...)`
+  from the no-active-exception path. This makes both `__cause__` and `__context__` `None`. No other
+  new structure.
 - The class this fixes: "a sampler reads a summary that one row can stretch". The construction
   fix is the floor in the grid; the guard is the property test AT-17. No new sentry.
 
@@ -351,13 +388,14 @@ Row 24w (GEN-COND-CAP, #456, `2026-11-10-gen-cond-cap.md`) is named only because
   calls `load_spec`, which runs the same decoder (`generation/statistical/_spec.py:466` area).
 - Windowed route: window admission checks the `bin_edges` span (`generation/_window_admission.py:244`);
   grid and exact values sit inside `bin_edges` (clamp and tolerance), so admission is unchanged,
-  and each window reseeds per row.
+  and each window reseeds per row. AT-10 proves full-run parity for both modes.
 - DP carrier route: `carrier` set means the histogram path; both keys are ignored (AT-15a/b).
 
 ### Exit paths
 
-- `load_spec` refusal for a malformed block: `plan.statistical_stats_degenerate`, raised
-  `from None` (AT-14a/b).
+- `load_spec` refusal for a malformed block: `plan.statistical_stats_degenerate`, raised after any
+  translating `except` block has closed, with `__cause__ is None` and `__context__ is None`
+  (AT-14a/b).
 - `_refuse_withheld_values` refusal for a restored non-null key on a redacted column:
   `plan.statistical_snapshot_values_redacted` (`_spec.py:243`, AT-13a/b).
 - Normal return: values drawn; no new exception type, no partial output (pure functions).
@@ -418,8 +456,11 @@ Shared harness, unless stated: `src` built as named;
 `compute_fidelity(snap, compute_distribution_snapshot(pd.DataFrame({"x": out})))["marginal"]["columns"][0]["value_similarity"]`
 (the FID-RANGE IQR scale). Each `default_rng(seed)` is fresh with exactly the calls named.
 "Proto" is a prototype of this design run on `c15f1c37` with the same seeds; bounds have margin
-over it. "Clean chaining" means `err.__cause__ is None` and
-(`err.__context__ is None` or `err.__suppress_context__`).
+over it. "Clean chaining" means `err.__cause__ is None and err.__context__ is None`.
+
+Regression controls expected to pass on the base before implementation: AT-7, AT-9 and AT-15a/b.
+All other ATs are fail-before feature or validation proofs, or require a new helper that does not
+exist on the base.
 
 Grid, new file `tests/unit/generation/statistical/test_numeric_grid.py` unless noted:
 
@@ -431,8 +472,8 @@ Grid, new file `tests/unit/generation/statistical/test_numeric_grid.py` unless n
 | AT-6 | `test_zero_inflated_keeps_its_zeros` | `np.append(np.zeros(12_000), default_rng(506).gamma(2.0, 30.0, 8_000))` | share of exact `0.0` within 0.01 of 0.60; median 0; similarity `>= 0.90` | 0% zeros, sim 0.697 / 59.8%, sim 0.959 |
 | AT-7 | `test_a_normal_column_stays_good` | `default_rng(504).normal(50.0, 5.0, 20_000)` | similarity `>= 0.95` | 0.965 / 0.976 |
 | AT-8 | `test_grid_needs_one_hundred_rows` | `default_rng(507).normal(100, 10, 100)` and its first 99 | 100 rows: grid present with 9 points, probs `0.1` to `0.9`; `min(out) >= sorted(src)[9]`, `max(out) <= sorted(src)[-10]`; 99 rows: no `quantile_grid` key | 9 points (measured) |
-| AT-9 | `test_old_snapshot_is_byte_identical` | three snapshots (AT-7 source; an int64 column with a `cell_format`; AT-1 source) with `quantile_grid` deleted | `sample_column` output digest equals the digest recorded on `main` before the change (record it in the red commit) | must be equal |
-| AT-10 | `test_grid_windows_equal_a_full_run` | AT-2 snapshot; precondition `assert "quantile_grid" in stats` | `sample_column(..., start=k)` for `k` in 0, 1, 4,999 equals the full run's slice; two runs are equal | |
+| AT-9 | `test_old_snapshot_is_byte_identical` | four snapshots (AT-7 source; an int64 column with a `cell_format`; AT-1 source; AT-3 low-distinct source) with both new keys deleted if present | for every grid and exact candidate, `sample_column` output digest equals the digest recorded on `main` before the change (record it in the red commit) | must be equal |
+| AT-10 | `test_numeric_shape_windows_equal_a_full_run` (parametrized over grid and exact) | AT-2 grid snapshot and AT-3 exact snapshot; preconditions assert the selected non-null key is present | for each mode, `sample_column(..., start=k)` for `k` in 0, 1, 4,999 equals the full run's slice; two full runs are equal | |
 | AT-11a | `test_grid_typing_follows_445` | int64 source `default_rng(508).integers(0, 1_000, 5_000)`; float source as AT-7; precondition `assert "quantile_grid" in stats` for both | int64: every value is `int` and `cell_format_arrow_type` is `int64`; float: every value is `float` | |
 | AT-12 | `tests/unit/profiling/test_snapshot_values_numeric_shape.py::test_sensitive_number_column_drops_the_grid` | the existing `force_sensitive` fixture on an AT-7-shaped column, and on an AT-3-shaped column | in the document, `"quantile_grid" in stats and stats["quantile_grid"] is None` (and the same for `exact_values` on the AT-3 column); generation stays inside the coarse bounds; `include_values=True` keeps both keys non-null | |
 | AT-13a | `test_restored_grid_on_a_redacted_column_is_refused` (same new profiling file) | redacted document, grid copied back from the raw snapshot | `plan.statistical_snapshot_values_redacted`; a redacted document with the key left `None` loads | |
@@ -441,8 +482,9 @@ Grid, new file `tests/unit/generation/statistical/test_numeric_grid.py` unless n
 | AT-16 | `test_grid_is_small` | AT-1 snapshot; precondition `assert "quantile_grid" in stats` | `len(json.dumps(stats["quantile_grid"])) <= 3_000`; `len(probs) <= 103` | 2,422 bytes |
 | AT-17 | `test_grid_floor_properties` (hypothesis, `max_examples=200`, derandomized) | float arrays, `n` 100 to 2,000, with up to 5 values at `+-1e12` | probs strictly increasing; values non-decreasing; every `(p[i+1] - p[i]) * n >= K - 1e-9`; `v[0] >= sorted(src)[K-1]`; `v[-1] <= sorted(src)[-K]`; `bin_edges[0] <= v[0]` and `v[-1] <= bin_edges[-1]`; `load_spec` accepts; 1,000 drawn values inside `[v[0], v[-1]]` | |
 | AT-19 | `test_grid_value_math` | `probs [0.1, 0.5, 0.9]`, `values [0, 10, 20]` through the pure draw function | `u=0.0 -> 0`; `u=0.25 -> 5`; `u=0.5 -> 10`; `u=0.75 -> 15` (ends treated as 0 and 1) | |
-| AT-21 | `test_grid_values_stay_inside_the_edges` (parametrized) | (a) `np.append(1.0 + 0.01 * np.arange(200), np.full(20, 20 / 3))`; (b) `np.append(0.5 + 0.002 * np.arange(200), np.full(20, 1.0000000000004))` | (a) `v[-1] == 20 / 3` exactly; (b) `v[-1] == bin_edges[-1] == 1.0` (clamped); both: `v[0] >= sorted(src)[9]`, every value inside `bin_edges`, `load_spec` accepts | 12-digit rounding gave `6.66666666667`; unclamped (b) gives `1.0000000000004 > 1.0` |
-| AT-22 | `test_thirteen_digit_integers_keep_the_floor` | `1_234_567_890_123 + np.arange(500)` (int64) | `v[0] >= 1_234_567_890_132` (the 10th smallest); `load_spec` accepts; every output `int` inside `[sorted(src)[9], sorted(src)[-10]]` | 12-digit rounding gave `1234567890130`; unrounded `1234567890132.98` |
+| AT-21 | `test_grid_values_stay_inside_the_edges` (parametrized) | (a) `np.append(1.0 + 0.01 * np.arange(200), np.full(20, 20 / 3))`; (b) `np.append(0.5 + 0.002 * np.arange(200), np.full(20, 1.0000000000004))` | (a) `v[-1] == 20 / 3` exactly; (b) `v[-1] == bin_edges[-1] == 1.0` (clamped); both: `v[0] >= sorted(src)[9]`, every value inside `bin_edges`, `load_spec` accepts | 12-decimal-place rounding gives `6.666666666667`; unclamped (b) gives `1.0000000000004 > 1.0` |
+| AT-22 | `test_thirteen_digit_integers_keep_the_floor_after_integer_formatting` | `1_234_567_890_123 + np.arange(500)` (int64) | unrounded `v[0] == 1_234_567_890_132.98`; `load_spec` accepts; every output is an `int` inside `[sorted(src)[9], sorted(src)[-10]]` | integer-formatting and floor test only |
+| AT-24 | `test_all_distinct_grid_has_interval_mass_and_redacts` | `range(101)` | plain fit has a grid; every adjacent probability interval and each tail has mass at least `K / 101`; every draw is in `[sorted(src)[9], sorted(src)[-10]]`; the existing `force_sensitive` redacted fit with `include_values=False` has `"quantile_grid" in stats and stats["quantile_grid"] is None` | singleton interior knots are accepted only in the plain value-bearing artifact |
 | AT-23 | `test_int64_above_two_to_the_53` (parametrized) | (a) `[2**53 + 1, 2**53 + 3, 2**53 + 5] * 40` (int64); (b) `2**53 + 2 * np.arange(500)` (int64) | (a) `exact_values.values == [2**53 + 1, 2**53 + 3, 2**53 + 5]` as Python `int`, `load_spec` accepts, `set(out)` equals those three ints exactly; (b) `load_spec` accepts, every output `int`, `float(min(out)) >= float(sorted(src)[9])`, `float(max(out)) <= float(sorted(src)[-10])` | |
 
 Exact values, new file `tests/unit/generation/statistical/test_numeric_exact.py`:
@@ -455,16 +497,18 @@ Exact values, new file `tests/unit/generation/statistical/test_numeric_exact.py`
 | AT-13b | `test_restored_exact_values_on_a_redacted_column_are_refused` | as AT-13a with `exact_values` | `plan.statistical_snapshot_values_redacted` | |
 | AT-14b | `test_malformed_exact_values_are_refused` (parametrized) | values not strictly increasing; a count of `0` or a `bool`; `dropped_count < 0`; lengths differ; empty; both keys present; a value outside `bin_edges` plus `tol` | `plan.statistical_stats_degenerate`; no value in the message; clean chaining. In-tolerance row: values `[0.5, 1.0000000000004]` with `bin_edges[-1] == 1.0` loads | |
 | AT-15b | `test_dp_carrier_ignores_exact_values` | DP-verified fixture with `exact_values` added | output equals the fixture without it | |
-| AT-18 | `test_exact_mode_threshold` | 30 distinct values x 20 rows; 31 distinct x 20 rows; 25 values x 40 rows plus 30 singleton values (3% rare) | 30: exact, no grid; 31: grid, no exact; 3% rare: grid, no `exact_values` | |
+| AT-18 | `test_exact_mode_threshold` | numeric: 30 distinct values x 20 rows; 31 distinct x 20 rows; 25 values x 10 rows plus five singleton values (30 distinct, 5/255 rare); object: 30 and 31 distinct values | numeric 30: exact, no grid; numeric 31: grid, no exact; numeric 30 with 5/255 rare: grid, no `exact_values`; object 30 is categorical and object 31 is freetext | |
 | AT-20 | golden fixture `numeric_low_distinct` in `tests/snapshots/test_distribution_snapshot_baseline.py` | `[10, 20, 30] * 40` int64 | new golden file | |
 
 Mutation per mechanism (each must turn a named test red; record it in the PR): tail floor `t`
 replaced by 0 (AT-1, AT-17); thinning removed (AT-17); ends kept at `t`/`1-t` instead of 0/1
-(AT-19); 12-significant-digit rounding put back (AT-21a, AT-22); fit clamp removed (AT-21b);
+(AT-19); 12-decimal-place rounding put back (AT-21a); fit clamp removed (AT-21b); remove the
+integer output clamp (AT-22);
 exact bounds check without `tol` (AT-14b in-tolerance row); grid written for a low-distinct column (AT-18); rare
 values kept (AT-4); registry rule removed (AT-12, registry sentry); carrier check removed
-(AT-15a/b); `add_numeric_shape` call dropped (AT-12, `numeric_only` golden); `from None` removed
-(AT-14a).
+(AT-15a/b); `add_numeric_shape` call dropped (AT-12, `numeric_only` golden); move a translated
+raise back inside its `except` block (AT-14a/b); change `CATEGORICAL_DISTINCT_CAP` from 30 to 29
+(both 30-distinct object and numeric cells in AT-18).
 
 Must pass unchanged: `tests/unit/generation/test_statistical.py` (including
 `test_distribution_shape_matches_source`), `test_statistical_redacted.py`,
@@ -539,8 +583,10 @@ output, no new required flag, old snapshots unchanged.
 A fit now stores a quantile grid (`stats.quantile_grid`) for each number column with at least
 100 values and more than 30 distinct values, and statistical generation samples from it instead
 of ten equal-width bins. One extreme value no longer spreads generated rows across the whole
-range, and skewed columns keep their median. The grid leaves out the 10 smallest and 10 largest
-values, so generated numbers stay between the 10th smallest and 10th largest source value.
+range, and skewed columns keep their median. Every interval and tail has at least 10 source rows,
+and generated numbers stay between the 10th smallest and 10th largest source value. An interior
+grid knot can equal a source value held by fewer than 10 rows, as today's plain value-bearing
+snapshot quantiles and bin edges already can. A redacted fit withholds the grid.
 
 A number column with 30 or fewer distinct values stores those values (`stats.exact_values`),
 leaving out any value held by fewer than 10 rows, and generation emits them at their source
@@ -554,8 +600,9 @@ get the new shape. A redacted fit drops both keys for sensitive columns.
 
 | File | Change | CODEMAP row | Size |
 |---|---|---|---|
-| `src/decoy_engine/quality/snapshot.py` | lazy `add_numeric_shape(columns_block, df)` call after the column pass (+3 lines); docstring numeric row | quality (`CODEMAP.md:44`) | Budget from 599 (after #456): 599 + 3 = 602, so trim 1 is required: condense the docstring's "What this module does NOT do" list (`:35-40`, six lines) to two lines (-4), ending at 598. Trim 2 if a rebase adds lines: hoist the three lazy imports (`add_fanout`, `add_cell_format`, `add_numeric_shape`, `:198-205`) into one import line with one cycle comment before the post-pass block (-4). Must end at or under 600; no census entry |
-| `src/decoy_engine/generation/statistical/_numeric_shape.py` | new: fit half (`add_numeric_shape`, grid, exact values, clamp) and read half (`NumericShape`, `decode_numeric_shape`, every check, `numeric_shape_withheld`, `grid_value`); sits beside `_cell_format.py`, which has the same two halves | `CODEMAP.md:58` (statistical generation) and the "Generation" row of "Where Things Go" | about 330 |
+| `src/decoy_engine/quality/snapshot.py` | rename `_CATEGORICAL_DISTINCT_CAP` to public `CATEGORICAL_DISTINCT_CAP` with no line growth; object classification consumes it; lazy `add_numeric_shape(columns_block, df)` call after the column pass (+3 lines); docstring numeric row | quality (`CODEMAP.md:44`) | Budget from 599 (after #456): 599 + 3 = 602, so trim 1 is required: condense the docstring's "What this module does NOT do" list (`:35-40`, six lines) to two lines (-4), ending at 598. Trim 2 if a rebase adds lines: hoist the three lazy imports (`add_fanout`, `add_cell_format`, `add_numeric_shape`, `:198-205`) into one import line with one cycle comment before the post-pass block (-4). Must end at or under 600; no census entry |
+| `src/decoy_engine/quality/__init__.py` | add lazy public export for `CATEGORICAL_DISTINCT_CAP`; numeric-shape admission imports it through this package API | quality (`CODEMAP.md:44`) | +2 |
+| `src/decoy_engine/generation/statistical/_numeric_shape.py` | new: fit half (`add_numeric_shape`, grid, exact values, clamp) and read half (`NumericShape`, `decode_numeric_shape`, every check, `numeric_shape_withheld`, `grid_value`); imports public `CATEGORICAL_DISTINCT_CAP` from `decoy_engine.quality`; sits beside `_cell_format.py`, which has the same two halves | `CODEMAP.md:58` (statistical generation) and the "Generation" row of "Where Things Go" | about 330 |
 | `src/decoy_engine/generation/statistical/_sample.py` | numeric branch dispatches grid, exact or histogram; docstring methodology | `:58` | 439 to about 470 |
 | `src/decoy_engine/generation/statistical/_spec.py` | call lines only: `load_spec` calls `decode_numeric_shape` (carrier None only); `_refuse_withheld_values` calls `numeric_shape_withheld` | `:58` | 581 to about 585, must end at or under 600 |
 | `src/decoy_engine/generation/statistical/__init__.py` | export `add_numeric_shape` | `:58` | 51 to 52; the engine root `__init__.py` is not touched |
@@ -571,8 +618,9 @@ get the new shape. A redacted fit drops both keys for sensitive columns.
 | `changelog.d/gen-num-shape.md` | fragment | "Changelog fragments" row | |
 
 One new source module, in `generation/statistical/` (6 files to 7); none in `quality/` (25 files,
-at the flat-folder limit). `generation` already imports `profiling` (`_spec.py:59`), so reading
-`MIN_RELEASE_COUNT` adds no new layer edge. `_numeric_shape.py` imports it as
+at the flat-folder limit). The cap remains owned by `quality/snapshot.py`; the quality package's
+lazy facade makes it public without adding a module. `generation` already imports `profiling`
+(`_spec.py:59`), so reading `MIN_RELEASE_COUNT` adds no new layer edge. `_numeric_shape.py` imports it as
 `from decoy_engine.profiling import MIN_RELEASE_COUNT`, exported through `profiling/__init__.py`
 the same way as `POLICY_RAW`. No census entry,
 no new reason code (refusals reuse existing codes), no new sentry.
@@ -584,7 +632,7 @@ no new reason code (refusals reuse existing codes), no new sentry.
 | Quantile computation | `numpy.quantile(method="linear")` (Hyndman-Fan type 7) | a hand-rolled quantile |
 | Inverse-CDF draw | the existing per-row `random.Random` reseed in `_sample.py` | a new RNG or stream |
 | Exact draw | `rng.choices(values, weights=counts)`, the categorical draw | a new weighted sampler |
-| Distinct cap | `_CATEGORICAL_DISTINCT_CAP` (30) | a second threshold |
+| Distinct cap | public `decoy_engine.quality.CATEGORICAL_DISTINCT_CAP` (30), consumed by object classification and numeric-shape admission | a second threshold |
 | Redaction | the 24f `SNAPSHOT_VALUE_STATS` registry and its default deny | a per-key redaction branch |
 | Withheld-value refusal | `_refuse_withheld_values` and `plan.statistical_snapshot_values_redacted` | a new code |
 | Typing | `emits_int`, `format_numeric`, `cell_format_arrow_type` (#445) | new typing rules |
@@ -609,7 +657,7 @@ and the whole row stays M.
 
 | Slice | Branch | Size | Content | Tests and gate |
 |---|---|---|---|---|
-| GEN-NUM-SHAPE | `feat/gen-num-shape` | M | `MIN_RELEASE_COUNT`, both registry entries, `_numeric_shape.py` (grid and exact fit, clamp, decoder, withheld check), sampler branches, `_spec.py` call lines, `snapshot.py` call and trim, draw-site text and re-pin, registry sentry fixture, `numeric_only` re-pin and `numeric_low_distinct` golden, docs, CODEMAP, fragment. All ATs in section 8. | T0 per edit; T1 `tests/unit/generation`, `tests/unit/quality`, `tests/unit/profiling`, `tests/unit/plan`, `tests/sentry/profiling`, `tests/snapshots`, `tests/native/test_draw_sites_catalogue_pinned.py`, `tests/integration/compat_corpus`. Full suite on the merge head (triggers: serialization of a frozen artifact, a shared test fixture), Mac first, diffed against the saved main baseline. Review: Dennis, then Codex. |
+| GEN-NUM-SHAPE | `feat/gen-num-shape` | M | public `CATEGORICAL_DISTINCT_CAP`, `MIN_RELEASE_COUNT`, both registry entries, `_numeric_shape.py` (grid and exact fit, clamp, decoder, withheld check), sampler branches, `_spec.py` call lines, `snapshot.py` call and trim, draw-site text and re-pin, registry sentry fixture, `numeric_only` re-pin and `numeric_low_distinct` golden, docs, CODEMAP, fragment. All ATs in section 8. | T0 per edit; T1 `tests/unit/generation`, `tests/unit/quality`, `tests/unit/profiling`, `tests/unit/plan`, `tests/sentry/profiling`, `tests/snapshots`, `tests/native/test_draw_sites_catalogue_pinned.py`, `tests/integration/compat_corpus`. Full suite on the merge head (triggers: serialization of a frozen artifact, a shared test fixture), Mac first, diffed against the saved main baseline. Review: Dennis, then Codex. |
 
 Risk: R2 (artifact format and generated output change; value-bearing keys in a snapshot). Not
 Breaking.
@@ -621,9 +669,11 @@ red.
 
 ## 14. Owner questions (recommended answer first)
 
-1. Q1 Consent for exact values. Recommend: none. `K` is the disclosure control; a grid already
-   emits real values held by `K` or more rows (plateaus, int rounding), so a consent flag on
-   `exact_values` blocks nothing and would make the change Breaking. Recommended by Dennis r1; owner accepted the recommendation (proceeding on
+1. Q1 Consent for exact values. Recommend: none. Exact mode has a true per-value `K` floor. A
+   plain grid can already expose a singleton interior knot, just as today's plain snapshot
+   quantiles and bin edges can, while a redacted fit nulls both new value-bearing keys. A consent
+   flag on `exact_values` would not change that artifact boundary and would make the change
+   Breaking. Recommended by Dennis r1; owner accepted the recommendation (proceeding on
    go-recommended).
    Alternative: reuse `allow_real_categories` (blocks every re-fitted low-distinct column, for no
    added protection).
@@ -639,6 +689,7 @@ red.
    keeps equal-width bins. Recommend V2-LOG: its snapshot is typed by hand, not fitted.
 6. Q6 Old snapshots keep the defect until re-fit. Recommend the changelog note only, no runtime
    warning (pre-release, few old snapshots in use).
+7. Q7 Accept singleton interior grid knots in plain (value-bearing) snapshots; redacted fits withhold the grid. Recommended: yes (owner proceeding on go-recommended).
 
 ## 15. Pre-mortem
 
@@ -660,3 +711,5 @@ red.
 - Categorical `top_values` have consent but no count floor; whether they move to the same `K`
   floor is an owner decision for a later row.
 - Coarsening the raw `min`/`max`/`bin_edges`/`quantiles` of a plain (non-redacted) snapshot.
+
+Verdict: GO
