@@ -321,11 +321,17 @@ def compile_pinned_plan_with_generation(
             )
         )
 
+    # The whole-table route's own call on the full resolved config, relationships included, so
+    # every route types a number the same way. Decided here because the plan keeps no relationships.
+    from decoy_engine.generation._numeric_typing import numeric_plan
+
+    numeric = tuple(sorted((t, c, str(dt)) for (t, c), dt in numeric_plan(resolved).items()))
     pinned = PinnedPlan(
         schema_version=PINNED_PLAN_SCHEMA,
         reference_date=reference,
         runtime_identity=runtime_identity(),
         tables=tuple(tables),
         statistical=tuple(sorted(statistical, key=lambda s: (s.table, s.column))),
+        numeric_types=numeric,
     )
     return PinnedCompilation(pinned=pinned, generation=gen)

@@ -64,9 +64,14 @@ class PinnedPlan:
     runtime_identity: tuple[tuple[str, str], ...]
     tables: tuple[PinnedTable, ...]
     statistical: tuple[PinnedStatistical, ...]
+    # ``(table, column, "int64" | "float64")`` for each column the whole-table route would keep
+    # numeric, decided once at compile time from the full config (relationships included). Empty
+    # means "no numeric columns", and also what a plan written before this field loads as; an
+    # empty value is left out of ``to_dict`` and the fingerprint so those plans keep their bytes.
+    numeric_types: tuple[tuple[str, str, str], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "schema_version": self.schema_version,
             "reference_date": self.reference_date,
             "runtime_identity": dict(self.runtime_identity),
@@ -89,6 +94,9 @@ class PinnedPlan:
                 for s in self.statistical
             ],
         }
+        if self.numeric_types:
+            out["numeric_types"] = [list(n) for n in self.numeric_types]
+        return out
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PinnedPlan:
@@ -120,12 +128,23 @@ class PinnedPlan:
                     )
                     for s in data["statistical"]
                 ),
+                numeric_types=tuple(_numeric_entry(n) for n in data.get("numeric_types") or []),
             )
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
             raise PinnedModeError(
                 code=reasons.plan.PINNED_PLAN_MALFORMED,
                 message=f"serialized pinned plan is malformed ({type(exc).__name__})",
             ) from None
+
+
+NUMERIC_TYPE_NAMES = frozenset({"int64", "float64"})
+
+
+def _numeric_entry(n: Any) -> tuple[str, str, str]:
+    table, column, dtype = n
+    if str(dtype) not in NUMERIC_TYPE_NAMES:
+        raise ValueError("unknown numeric type")
+    return (str(table), str(column), str(dtype))
 
 
 def runtime_identity() -> tuple[tuple[str, str], ...]:
@@ -201,4 +220,6 @@ def fingerprint(plan: PinnedPlan) -> str:
             for s in plan.statistical
         ],
     }
+    if plan.numeric_types:
+        payload["numeric_types"] = [list(n) for n in plan.numeric_types]
     return hashlib.sha256(_canonical(payload)).hexdigest()
