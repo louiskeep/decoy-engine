@@ -596,3 +596,11 @@ class TestV2BehaviorRegressionPinsS11:
         assert "mask" not in hash_namespaces and "mask" not in ds_namespaces, (
             "V2 strategies must NOT derive with a shared 'mask' label; Q9 regression."
         )
+
+
+def test_quality_facade_exports_the_joint_cell_cap():
+    from decoy_engine import quality
+    from decoy_engine.quality import snapshot
+
+    assert "MAX_CONTINGENCY_TOP_K" in quality.__all__
+    assert quality.MAX_CONTINGENCY_TOP_K == snapshot.MAX_CONTINGENCY_TOP_K == 1000
