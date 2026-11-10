@@ -55,6 +55,18 @@ from decoy_engine.detection._patterns import (
     _US_ZIP_RE,
     _VEHICLE_ID_RE,
 )
+from decoy_engine.detection._scoring import (  # noqa: F401  re-exported constants
+    DEFAULT_MIN_MATCH_RATE,
+    HIGH_CONFIDENCE_NO_HINT_FLOOR,
+    HIGH_CONFIDENCE_WITH_HINT_FLOOR,
+    LOW_CONFIDENCE_NO_HINT_FLOOR,
+    NAME_HINT_MIN_RATE,
+    SAMPLE_MISS_LIMIT,
+    PreparedValues,
+    _evaluate,
+    _series_str,
+    prepared_scope,
+)
 from decoy_engine.detection._validators import (
     _IBAN_COUNTRIES,  # noqa: F401  re-exported; external importers use this path
     _ICD10_CHAPTERS,  # noqa: F401  re-exported; external importers use this path
@@ -65,152 +77,13 @@ from decoy_engine.detection._validators import (
     _luhn_valid,
     _npi_valid,
 )
-from decoy_engine.detection.domains import domain_for
 from decoy_engine.detection.types import CustomDetectorSpec, DetectorMatch
-
-# ── thresholds ──────────────────────────────────────────────────────────────────────────────
-#
-# Detection sprint (V1) lowered the no-hint firing floor from 0.7 to 0.5 so
-# medium-confidence finds reach the 3-bucket UI ("needs review") instead of
-# being silently dropped. Per-bucket bounds:
-#   high   = (name_hint AND rate >= 0.45) OR (rate >= 0.75)
-#   medium = no_hint AND rate in [0.50, 0.75), or name_hint AND rate in [0.40, 0.45)
-#   low    = no_hint AND rate in [0.30, 0.50)   (opt-in; not fired by default)
-#
-# The low floor is exposed as a constant so the platform can lower the
-# firing threshold behind a "weak signals" flag in V1.5 without re-deriving
-# the bucket math.
-
-DEFAULT_MIN_MATCH_RATE = 0.5  # 50% of non-null values must match (no hint)
-NAME_HINT_MIN_RATE = 0.4  # 40% if the column name strongly hints
-LOW_CONFIDENCE_NO_HINT_FLOOR = 0.3  # opt-in floor for surfacing low-confidence finds
-HIGH_CONFIDENCE_NO_HINT_FLOOR = 0.75  # content alone, name hint absent
-HIGH_CONFIDENCE_WITH_HINT_FLOOR = 0.45  # content alongside a confirming name hint
-SAMPLE_MISS_LIMIT = 3
-
-
-# ── helpers ───────────────────────────────────────────────────────────────────────────────
-
-
-def _series_str(series: pd.Series) -> pd.Series:
-    """Drop nulls and coerce to string - every detector needs this prelude."""
-    return series.dropna().astype(str).str.strip()
-
-
-def _evaluate(
-    detector_id: str,
-    values: pd.Series,
-    pattern: re.Pattern[str],
-    *,
-    name_hint: bool,
-    min_rate: float,
-    validator: Callable[[str], bool] | None = None,
-    format_variants: list[tuple[str, re.Pattern[str]]] | None = None,
-) -> DetectorMatch | None:
-    """Apply a regex to non-null values and decide whether the detector fires.
-
-    Optional `validator` runs per-value AFTER regex match - used for
-    structurally-valid PAN (Luhn checksum), IBAN (mod-97), IPv4
-    (octet range 0-255), NPI (CMS check digit), and ICD-10 (structure check).
-    When set, a value counts as a match only if the regex matches AND
-    validator(value) returns True. Avoids the false-positive case where any
-    13-digit string looks like a credit card to the regex.
-
-    ``format_variants`` (Item 65) is an ordered list of
-    ``(label, sub_pattern)`` pairs that the detector knows about.
-    When supplied, the dominant matching variant's label is written to
-    ``DetectorMatch.format_pattern`` so the mask post-pass can splice
-    separators back at the right positions. Detectors with no variants
-    (email, person_name, etc.) pass ``None`` and the field stays ``None``.
-    """
-    if len(values) == 0:
-        return None
-    pattern_matches = values.str.fullmatch(pattern)
-    if validator is not None:
-        # Only run the validator on regex-passers - far cheaper than
-        # iterating every value, and a non-matching string can't pass a
-        # checksum either.
-        validator_results = pd.Series(False, index=values.index)
-        candidates = values[pattern_matches]
-        for idx, val in candidates.items():
-            try:
-                if validator(val):
-                    validator_results.at[idx] = True
-            except (TypeError, ValueError):
-                continue
-        matches = validator_results
-    else:
-        matches = pattern_matches
-    rate = float(matches.mean())
-    threshold = NAME_HINT_MIN_RATE if name_hint else min_rate
-    if rate < threshold:
-        return None
-    misses = values[~matches].head(SAMPLE_MISS_LIMIT).tolist()
-    # Variant bucketing - count which sub-pattern won among the matches.
-    format_pattern: str | None = None
-    if format_variants:
-        matched_values = values[matches]
-        format_pattern = _dominant_variant(matched_values, format_variants)
-    confidence = _confidence_bucket(rate, name_hint=name_hint)
-    return DetectorMatch(
-        detector_id=detector_id,
-        match_rate=round(rate, 4),
-        sample_misses=[str(m) for m in misses],
-        format_pattern=format_pattern,
-        confidence=confidence,
-        domain=domain_for(detector_id).value,
-    )
-
-
-def _confidence_bucket(rate: float, *, name_hint: bool) -> str:
-    """Classify a firing detector's confidence into the 3-bucket model.
-
-    Detection sprint (V1). The UI keys off this label, not match_rate, so
-    the bucket boundaries live in one place. See module-level thresholds
-    block for the source-of-truth bounds.
-    """
-    if (
-        name_hint and rate >= HIGH_CONFIDENCE_WITH_HINT_FLOOR
-    ) or rate >= HIGH_CONFIDENCE_NO_HINT_FLOOR:
-        return "high"
-    if (not name_hint and rate >= 0.50) or (name_hint and rate >= NAME_HINT_MIN_RATE):
-        return "medium"
-    return "low"
-
-
-def _dominant_variant(
-    values: pd.Series,
-    variants: list[tuple[str, re.Pattern[str]]],
-) -> str | None:
-    """Return the label of the variant that matches the most values.
-
-    Variants are tested in order; each value is counted under the first
-    variant that fullmatches it. Returns the highest-count label, or
-    None when no variant matched any value.
-    """
-    if len(values) == 0:
-        return None
-    remaining = values
-    counts: dict[str, int] = {}
-    for label, pat in variants:
-        if len(remaining) == 0:
-            break
-        hit = remaining.str.fullmatch(pat)
-        n = int(hit.sum())
-        if n > 0:
-            counts[label] = counts.get(label, 0) + n
-            remaining = remaining[~hit]
-    if not counts:
-        return None
-    return max(counts.items(), key=lambda kv: kv[1])[0]
-
 
 # ── name-hint patterns (case-insensitive, matched against the column name) ──
 #
 # Detection sprint (V1): expanded with US English abbreviation forms drawn
-# from real-world health, fintech, and payroll headers. Cross-cultural
-# variants (Spanish / French / German / etc.) are V1.5; keeping V1 to a
-# single locale keeps the false-positive surface predictable.
+# from real-world health, fintech, and payroll headers. Cross-cultural variants
+# (Spanish / French / German / etc.) are V1.5; one locale keeps false positives predictable.
 
 
 def _hint(terms: list[str]) -> re.Pattern[str]:
@@ -787,20 +660,21 @@ def run_all_detectors(
     misconfigured admin entry shouldn't kill the whole scan.
     """
     matches: list[DetectorMatch] = []
-    for fn in REGISTERED_DETECTORS:
-        m = fn(series, col_name)
-        if m is not None:
-            matches.append(m)
-    if custom:
-        for spec in custom:
-            try:
-                m = _run_custom_detector(series, col_name, spec)
-            except re.error:
-                # Bad regex - skip silently. The platform validates patterns
-                # at create-time so we should rarely hit this in practice.
-                continue
+    with prepared_scope(series):
+        for fn in REGISTERED_DETECTORS:
+            m = fn(series, col_name)
             if m is not None:
                 matches.append(m)
+        if custom:
+            for spec in custom:
+                try:
+                    m = _run_custom_detector(series, col_name, spec)
+                except re.error:
+                    # Bad regex - skip silently. The platform validates patterns
+                    # at create-time so we should rarely hit this in practice.
+                    continue
+                if m is not None:
+                    matches.append(m)
     matches.sort(key=lambda m: m.match_rate, reverse=True)
     return matches
 
