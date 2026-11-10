@@ -275,3 +275,95 @@ def test_refusals_carry_no_exception_context(tmp_path: Path) -> None:
         with pytest.raises(sr.FragmentError) as info:
             sr.compile_fragments(r.path, version, date)
         assert info.value.__context__ is None
+
+
+def _fail_after_changelog_write(tmp_path: Path, monkeypatch) -> ScratchRepo:
+    """Fail on the first fragment delete: the section is written, every fragment still exists."""
+    r = _seed(tmp_path)
+    _add_three(r)
+    real_remove = sr._remove
+
+    def boom(path: Path) -> None:
+        raise OSError("injected")
+
+    monkeypatch.setattr(sr, "_remove", boom)
+    with pytest.raises(OSError, match="injected"):
+        sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
+    monkeypatch.setattr(sr, "_remove", real_remove)
+    return r
+
+
+def _rewrite_z(r: ScratchRepo, text: str) -> None:
+    (r.path / "changelog.d" / "z.md").write_text(text, encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "amended",
+    [
+        pytest.param(fragment("Zed", name="z-title"), id="shortened-body"),
+        pytest.param(fragment("Zed text. More added.", name="z-title"), id="lengthened-body"),
+        pytest.param(fragment("Zed text.", name="z-retitled"), id="edited-title"),
+        pytest.param(
+            fragment("Zed text.\n\nSecond paragraph.", name="z-title"), id="added-paragraph"
+        ),
+        pytest.param(
+            fragment("Zed text.", name="z-title", breaking="zed now breaks"), id="added-breaking"
+        ),
+    ],
+)
+def test_rerun_refuses_an_amended_fragment_and_touches_nothing(
+    tmp_path: Path, monkeypatch, amended: str
+) -> None:
+    r = _fail_after_changelog_write(tmp_path, monkeypatch)
+    _rewrite_z(r, amended)
+    changelog = (r.path / "CHANGELOG.md").read_text(encoding="utf-8")
+    pin = (r.path / "tests/fixtures/changelog_released_sections.json").read_text()
+    with pytest.raises(sr.FragmentError, match="different section"):
+        sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
+    assert (r.path / "changelog.d" / "z.md").read_text(encoding="utf-8") == amended
+    assert len(list((r.path / "changelog.d").glob("[!R]*.md"))) == 3
+    assert (r.path / "CHANGELOG.md").read_text(encoding="utf-8") == changelog
+    assert (r.path / "tests/fixtures/changelog_released_sections.json").read_text() == pin
+
+
+def test_rerun_refuses_a_shortened_second_paragraph(tmp_path: Path, monkeypatch) -> None:
+    r = _seed(tmp_path)
+    r.commit({"changelog.d/z.md": fragment("Zed one.\n\nZed two.", name="z-title")}, "feat: z")
+    monkeypatch.setattr(sr, "_remove", lambda p: (_ for _ in ()).throw(OSError("injected")))
+    with pytest.raises(OSError, match="injected"):
+        sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
+    monkeypatch.undo()
+    _rewrite_z(r, fragment("Zed one.", name="z-title"))
+    with pytest.raises(sr.FragmentError, match="different section"):
+        sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
+
+
+def test_rerun_refuses_a_shortened_breaking_line(tmp_path: Path, monkeypatch) -> None:
+    r = _fail_after_changelog_write(tmp_path, monkeypatch)
+    (r.path / "changelog.d" / "a.md").write_text(
+        fragment("Alpha text.", name="a-title", breaking="alpha now"), encoding="utf-8"
+    )
+    with pytest.raises(sr.FragmentError, match="different section"):
+        sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
+
+
+def test_rerun_with_an_unchanged_fragment_after_a_partial_delete_completes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    r = _seed(tmp_path)
+    _add_three(r)
+    calls = {"n": 0}
+    real_remove = sr._remove
+
+    def second_delete_fails(path: Path) -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("injected")
+        real_remove(path)
+
+    monkeypatch.setattr(sr, "_remove", second_delete_fails)
+    with pytest.raises(OSError, match="injected"):
+        sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
+    monkeypatch.undo()
+    sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
+    assert not list((r.path / "changelog.d").glob("[!R]*.md"))

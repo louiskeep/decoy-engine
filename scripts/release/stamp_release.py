@@ -237,13 +237,33 @@ def _parse_all(root: Path, ordered: list[str]) -> tuple[list[Fragment], str | No
     return fragments, None
 
 
+def _entries(section: str) -> list[str]:
+    """The section's `###` entries, each stripped. A fragment block holds exactly one `###` line
+    (`parse_fragment` enforces it), so entry boundaries and fragment blocks coincide."""
+    return [e.strip() for e in re.split(r"(?m)^(?=### )", section)[1:]]
+
+
 def _compiled_into(section: str, date: str, version: str, fragments: list[Fragment]) -> bool:
-    """True when `section` is this release's section and already holds every fragment."""
+    """True when `section` is this release's section and holds every remaining fragment exactly.
+
+    Each remaining fragment's block must equal one entry, and the blocks must sit as one run in
+    fragment order (the deletions go newest first, so what remains is a suffix of the order). Each
+    `Breaking:` line must be a whole bullet of the Breaking list. Equality, never containment: a
+    fragment amended after a partial failure must not match its old text."""
     if not section.startswith(f"## [{version}] - {date}\n"):
         return False
-    return all(
-        f.block in section and (f.breaking is None or f"- {f.breaking}" in section)
-        for f in fragments
+    entries = _entries(section)
+    bullets: set[str] = set()
+    for entry in entries:
+        if entry.startswith(BREAKING_HEADING):
+            bullets.update(entry.split("\n")[1:])
+    if any(f.breaking is not None and f"- {f.breaking}" not in bullets for f in fragments):
+        return False
+    blocks = [f.block for f in fragments]
+    if not blocks:
+        return True
+    return any(
+        entries[i : i + len(blocks)] == blocks for i in range(len(entries) - len(blocks) + 1)
     )
 
 

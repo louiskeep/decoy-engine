@@ -125,6 +125,7 @@ def test_renamed_fragment_passes_the_check_and_compiles(repo, capsys, tmp_path) 
     from scripts.release import stamp_release as sr
 
     repo.commit({"changelog.d/old-name.md": fragment("Renamed text.")}, "feat: add fragment")
+    repo.commit({"changelog.d/other.md": fragment("Other text.", name="other")}, "feat: other")
     repo.git("mv", "changelog.d/old-name.md", "changelog.d/new-name.md")
     repo.git("commit", "-q", "-m", "docs: rename fragment")
     repo.commit({SRC: "x = 2\n"}, "feat: change src")
@@ -138,5 +139,7 @@ def test_renamed_fragment_passes_the_check_and_compiles(repo, capsys, tmp_path) 
         "chore: seed changelog",
     )
     sr.compile_fragments(repo.path, "0.2.0", "2026-11-10")
-    assert "Renamed text." in (repo.path / "CHANGELOG.md").read_text(encoding="utf-8")
+    text = (repo.path / "CHANGELOG.md").read_text(encoding="utf-8")
+    # Ordered by the commit that created each path: the rename commit is newer than `other`.
+    assert text.index("Renamed text.") < text.index("Other text.")
     assert not (repo.path / "changelog.d" / "new-name.md").exists()
