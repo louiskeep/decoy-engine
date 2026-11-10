@@ -50,8 +50,10 @@
 #   min(cpus, 4), at most 2 on a host under 14 GB (1 when under 4 GB is free). The workers: line
 #   of the EVIDENCE header names the choice. A stored baseline records it and refuses a run with
 #   another count (exit 2); pin GATES_WORKERS for any baseline write or compare.
-#   test paths    default: tests touching files changed against origin/main. That is a
-#                 SELECTION, not the full suite; the header says so. Use --full (or `tests`).
+#   test paths    default: tests touching files changed against origin/main, plus the always-on
+#                 output pins listed in scripts/dev/gate_pins.txt (route baselines, golden and
+#                 digest pins, the H-1 owner test). That is a SELECTION, not the full suite; the
+#                 header says so. Use --full (or `tests`).
 set -uo pipefail
 
 # Repo config. Mirrors .github/workflows/ci.yml (ruff, mypy, regression-gate jobs).
@@ -67,6 +69,11 @@ PYTEST_MARK=${PYTEST_ARGS[1]}  # the same expression; the parallel and serial pa
 # `*` crosses `/`, so 'docs/*' also covers docs/records.
 NON_CODE_GLOBS=('docs/*' 'docs/records/*' '*.md' 'LICENSE*' 'NOTICE*' 'CHANGELOG*'
   '.gitignore' '.gitattributes' '.aiignore' '.claude/*' '.tours/*')
+# Tests every selected PR gate runs whatever changed: one path per line, `#` comments. Name-based
+# selection misses tests that reach code only through a function-local import or that check a
+# definition, so the output-pinning tests ride along (tests/sentry/test_gate_pins.py keeps the
+# list true).
+PINS_FILE=scripts/dev/gate_pins.txt
 SRC_MATCH='src/*.py'   # changed files that map to a dotted module
 SRC_STRIP='src/'       # prefix removed before turning a path into a module
 PYPATH_DIRS=(src scripts)
@@ -141,24 +148,30 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Tags one changed path for changed_tests: t = a test file, s = a src module, o = other code, or
+# nothing for a deleted path or pure documentation. A function, not an inline case: bash 3.2 (the
+# Mac runner) cannot parse case patterns inside $( ).
+tag_changed() {
+  [ -f "$ROOT/$1" ] || return 0
+  # shellcheck disable=SC2254  # SRC_MATCH is a glob on purpose
+  case $1 in
+    tests/*test_*.py) echo "t $1" ;;
+    $SRC_MATCH) echo "s $1" ;;
+    *) non_code "$1" || echo "o $1" ;;
+  esac
+}
+
 changed_tests() {
-  local base f mod
+  local base lines f deps scanned
   base=$(git -C "$ROOT" merge-base origin/main HEAD) || return 1
-  { git -C "$ROOT" diff --name-only --no-renames "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } |
-    LC_ALL=C sort -u | while read -r f; do
-      [ -f "$ROOT/$f" ] || continue
-      # shellcheck disable=SC2254  # SRC_MATCH is a glob on purpose
-      case $f in
-        tests/*test_*.py) echo "$f" ;;
-        $SRC_MATCH)
-          mod=${f#"$SRC_STRIP"}; mod=${mod%.py}; mod=${mod%/__init__}; mod=${mod//\//.}
-          (cd "$ROOT" && grep -rlE --include='test_*.py' "${mod//./\\.}([^A-Za-z0-9_]|\$)" tests || true) ;;  # no match is normal, not a failed selection
-        *)
-          # Other code (scripts, native, fixtures): select tests that name the file. No match is
-          # normal here; code_changed then makes the gate fail rather than skip.
-          non_code "$f" || (cd "$ROOT" && grep -rlF --include='test_*.py' "${f##*/}" tests || true) ;;
-      esac
-    done | LC_ALL=C sort -u
+  # Test files in the diff select themselves. Every other code file goes to the import-aware
+  # scanner (_select_tests.py), which owns all dependency matching: no grep of import spellings.
+  lines=$({ git -C "$ROOT" diff --name-only --no-renames "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } |
+    LC_ALL=C sort -u | while read -r f; do tag_changed "$f"; done) || return 1
+  deps=$(printf '%s\n' "$lines" | grep -E '^[so] ' || true)  # none is normal
+  scanned=$(printf '%s\n' "$deps" |
+    "$BIN/python" "$ROOT/scripts/dev/_select_tests.py" --root "$ROOT" --src-strip "$SRC_STRIP") || return 1
+  { printf '%s\n' "$lines" | sed -n 's/^t //p'; printf '%s\n' "$scanned"; } | grep -v '^$' | LC_ALL=C sort -u || true
 }
 
 # 0 when f matches NON_CODE_GLOBS (pure documentation or repo metadata).
@@ -201,11 +214,31 @@ elif [ ${#PATHS[@]} -eq 0 ]; then
   while IFS= read -r p; do [ -n "$p" ] && PATHS+=("$p"); done <<EOT
 $SELECTED
 EOT
-  SELECTION="SELECTION ONLY (changed vs origin/main, ${#PATHS[@]} file(s)); this is NOT the full suite, use --full"
+  NSEL=${#PATHS[@]}
   if [ ${#PATHS[@]} -eq 0 ]; then
     code_changed; crc=$?
     [ $crc = 2 ] && { echo "gates: could not diff against the merge base with origin/main" >&2; exit 2; }
     [ $crc = 0 ] && TESTS_REQUIRED=1
+  else
+    # A diff that selected tests also runs the pins. An empty selection stays empty: a code diff
+    # that selects nothing fails below, and a docs-only diff has nothing to pin.
+    [ -f "$ROOT/$PINS_FILE" ] || { echo "gates: FAIL: pin list missing: $PINS_FILE" >&2; exit 2; }
+    while IFS= read -r p; do
+      p=${p%%#*}; p=${p#"${p%%[![:space:]]*}"}; p=${p%"${p##*[![:space:]]}"}
+      [ -n "$p" ] || continue
+      [ -e "$ROOT/$p" ] || { echo "gates: FAIL: pinned test path not found: $p ($PINS_FILE)" >&2; exit 2; }
+      PATHS+=("$p")
+    done < "$ROOT/$PINS_FILE"
+    PINNED=$(printf '%s\n' ${PATHS[@]+"${PATHS[@]}"} | LC_ALL=C sort -u)
+    PATHS=()
+    while IFS= read -r p; do [ -n "$p" ] && PATHS+=("$p"); done <<EOT
+$PINNED
+EOT
+  fi
+  if [ $NSEL -gt 0 ]; then
+    SELECTION="SELECTION ONLY (changed vs origin/main, $NSEL file(s) + always-on pins, ${#PATHS[@]} in all); this is NOT the full suite, use --full"
+  else
+    SELECTION="SELECTION ONLY (changed vs origin/main, 0 file(s)); this is NOT the full suite, use --full"
   fi
 else
   SELECTION="explicit: ${PATHS[*]+${PATHS[*]}}"

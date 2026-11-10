@@ -9,12 +9,12 @@ pool's UNIQUE mode already uses. This module only draws. Draws copy two establis
   instance's state, so row `i` would depend on how many retries earlier rows took. Here attempt
   `k` of row `i` reseeds from its own HMAC (`faker_unique` family), so a row is a function of
   its own history only.
-- Sampling without replacement, CPython `random.Random.sample` (a partial Fisher-Yates over a
-  small population, rejection against a selected set over a large one), as the masking sampler
-  does for UNIQUE (`rng.permutation(...)[:k]`). `categorical`, `reference` and pairs sample, so
-  they never retry and cost one draw per row.
+- Sampling without replacement uses CPython `random.Random.sample` (partial Fisher-Yates or a
+  selected set), while the masking sampler's UNIQUE mode uses NumPy permutation. `categorical`,
+  `reference` and pair draws have no engine-level per-value retry loop.
 
 State is function-local: the seen set and counters live and die inside one call.
+Pattern: Faker unique proxy and sampling without replacement (Faker, MIT; CPython, PSF).
 """
 
 from __future__ import annotations

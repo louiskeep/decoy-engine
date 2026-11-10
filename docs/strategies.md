@@ -1242,6 +1242,10 @@ are not affected.
 
 In `mode: generate`, each column declares a `type` instead of a `strategy`.
 
+`sequence`, `categorical`, `faker` and `reference` columns accept `unique: true`, and a table
+accepts `unique_together` for pairs of `reference` columns. See
+[Unique generated columns](guides/generate-uniqueness.md).
+
 ### sequence
 
 Monotonic counter.
