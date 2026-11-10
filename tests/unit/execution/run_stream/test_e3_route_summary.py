@@ -7,14 +7,17 @@ as applied (M-E3a), unknown keys are ignored, and missing blocks give `route="un
 from __future__ import annotations
 
 import dataclasses
+import re
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
 import pytest
 
 from decoy_engine import reasons
 from decoy_engine.execution import run_pipeline
 from decoy_engine.execution.pipeline import RouteSummary, route_summary
+from decoy_engine.execution.pipeline._route_summary import is_native_not_installed
 from tests.unit.execution.run_stream import _support as rs
 from tests.unit.execution.run_stream.test_e1c_duckdb_threads import _run as _run_ooc
 
@@ -138,3 +141,122 @@ def test_real_lane_run_reports_modes_and_never_a_value(tmp_path: Path) -> None:
     assert got.out_of_core_memory_limits_applied_bytes == ()
     assert got.duckdb_threads_applied == ()
     assert rs.CANARY not in repr(got)
+
+
+def test_a_clamp_recorded_for_a_declined_table_is_not_applied() -> None:
+    # The lane stamps a clamp for every request above one thread; only an admitted table ran it.
+    metrics = {
+        "auto_chunk": {
+            "lane": "dispatcher",
+            "native_threads": 4,
+            "native_thread_clamp": {"requested": 4, "applied": 4},
+        },
+        "chunked_route": {"native_admitted": False, "reroute_reason": "adapter_requested"},
+    }
+    got = route_summary(metrics)
+    assert got.native == "declined: adapter_requested"
+    assert got.native_threads_applied is None
+
+
+def test_budget_only_out_of_core_run_reports_its_memory_evidence(tmp_path: Path) -> None:
+    result = _run_ooc(tmp_path)  # a budget, default threads
+    got = route_summary(result.quality_metrics)
+    assert got.route == "out_of_core"
+    assert got.out_of_core_memory_cap_bytes == 64 * 1024**3
+    assert got.out_of_core_memory_limits_applied_bytes
+    assert got.duckdb_threads_applied
+
+
+def test_multi_table_run_reports_native_evidence_per_table(tmp_path: Path) -> None:
+    from tests.unit.execution import _auto_chunk_support as support
+    from tests.unit.execution import _multi_table_support as mt
+
+    def spec(tag: str, n: int) -> mt.TableSpec:
+        return [support.redact_col("r")], pa.table({"r": pa.array([f"{tag}{i}" for i in range(n)])})
+
+    cfg, sources = mt.build_job(tmp_path, {"z": spec("z", mt.BIG), "a": spec("a", mt.BIG + 5)})
+    result = run_pipeline(cfg, sources=sources, **mt.kw(native_threads=2))
+    assert "chunked_route_by_table" in result.quality_metrics
+    got = route_summary(result.quality_metrics)
+    assert got.route == "auto_chunk"
+    assert got.thread_cap == 2
+    admitted = [
+        r["native_admitted"] for r in result.quality_metrics["chunked_route_by_table"].values()
+    ]
+    assert got.native == ("admitted" if all(admitted) else got.native)
+    if all(admitted):
+        clamps = {
+            t["native_thread_clamp"]["applied"]
+            for t in result.quality_metrics["auto_chunk"]["tables"]
+            if "native_thread_clamp" in t
+        }
+        assert got.native_threads_applied == max((c for c in clamps if c), default=None)
+    else:
+        assert got.native_threads_applied is None
+
+
+def test_mixed_route_reports_its_tables_evidence(tmp_path: Path) -> None:
+    from decoy_engine.config import PipelineConfig
+
+    csv = tmp_path / "in.csv"
+    csv.write_text("val\n" + "\n".join(f"v{i}" for i in range(60)) + "\n")
+    cfg = PipelineConfig.model_validate(
+        {
+            "version": 2,
+            "global_settings": {"seed": 42},
+            "sources": {
+                "accounts": {"type": "file", "format": "csv", "has_header": True, "path": str(csv)}
+            },
+            "tables": [
+                {
+                    "name": "accounts",
+                    "columns": [{"name": "val", "strategy": "hash", "namespace": "ns"}],
+                },
+                {
+                    "name": "gen",
+                    "row_count": 5,
+                    "generate_columns": [{"name": "id", "type": "sequence", "start": 1}],
+                },
+            ],
+            "targets": {
+                "accounts": {"type": "file", "format": "csv", "path": str(tmp_path / "o.csv")},
+                "gen": {"type": "file", "format": "csv", "path": str(tmp_path / "g.csv")},
+            },
+        }
+    ).model_dump()
+    table = pa.table({"val": pa.array([f"v{i}" for i in range(60)])})
+    result = run_pipeline(
+        cfg,
+        sources={"accounts": table},
+        engine_version=rs.ENGINE_VERSION,
+        auto_chunk_threshold_rows=10,
+        native_threads=2,
+    )
+    assert result.quality_metrics["execution"]["execution_mode"] == "mixed"
+    got = route_summary(result.quality_metrics)
+    per_table = result.quality_metrics["mixed_route"]["mask_tables"]["accounts"]
+    assert got.route == "mixed"
+    assert got.output_mode == result.quality_metrics["mixed_route"]["output"]["mode"]
+    assert got.native is not None
+    if per_table["chunked_route"]["native_admitted"]:
+        assert got.native == "admitted"
+        assert got.native_threads_applied == (
+            per_table["auto_chunk"].get("native_thread_clamp", {}).get("applied")
+        )
+    else:
+        assert got.native_threads_applied is None
+
+
+def test_every_native_unavailable_identity_is_not_installed() -> None:
+    marked = [
+        s.code
+        for s in reasons.specs()
+        if s.deprecated_in is None
+        and s.namespace in {"route", "physical"}
+        and re.search(r"(extension|ext|companion)_unavailable$", s.code)
+    ]
+    assert "crypto_extension_unavailable" in marked
+    assert str(reasons.physical.NATIVE_COMPANION_UNAVAILABLE) in marked
+    assert all(is_native_not_installed(code) for code in marked)
+    assert is_native_not_installed("raw_hex_extension_unavailable")
+    assert not is_native_not_installed("adapter_requested")

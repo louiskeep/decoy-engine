@@ -295,7 +295,7 @@ def _table_entry(
     }
     if lane_block is not None:
         entry.update({k: lane_block[k] for k in ("lane", "lane_reason", "native_threads")})
-        for key in ("output", "input"):
+        for key in ("output", "input", "native_thread_clamp"):
             if key in lane_block:
                 entry[key] = lane_block[key]
     return entry

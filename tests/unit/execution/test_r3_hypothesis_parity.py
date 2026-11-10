@@ -468,7 +468,7 @@ def _default_fk(tmp: Path) -> Any:
     [
         (_default_single, "full_frame", {"unified_slice_activation"}),
         # A fitting bounded-eligible FK job takes its bounded route, which stamps its own evidence.
-        (_default_fk, "out_of_core", {"residency", "out_of_core_hash"}),
+        (_default_fk, "out_of_core", {"residency", "out_of_core_hash", "resources"}),
     ],
     ids=["single", "bounded_fk"],
 )
