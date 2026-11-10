@@ -49,8 +49,7 @@ from typing import Any
 import pandas as pd
 
 from decoy_engine import reasons
-from decoy_engine.generation._emit import emit_generation_warning
-from decoy_engine.generation.pool import QualityWarning
+from decoy_engine.generation.pool import QualityWarning, emit_generation_warning
 from decoy_engine.generation.statistical import StatisticalSpec
 from decoy_engine.generation.statistical._spec import StatisticalSpecError
 from decoy_engine.quality.fidelity import compute_fidelity

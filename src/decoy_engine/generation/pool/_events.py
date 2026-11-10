@@ -7,6 +7,8 @@ manifest field. No double-definition.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -45,3 +47,18 @@ class QualityWarning:
     provider: str
     column: str | None = None
     detail: dict[str, Any] = field(default_factory=dict)
+
+
+def emit_generation_warning(
+    record: QualityWarning,
+    log: logging.Logger,
+    summary: str,
+    on_warning: Callable[[QualityWarning], None] | None,
+) -> None:
+    """The one emitter for value-free generation warnings: log the summary, then hand the record on.
+
+    `summary` carries names and counts only; the callback sees the structured record.
+    """
+    log.warning("%s", summary)
+    if on_warning is not None:
+        on_warning(record)
