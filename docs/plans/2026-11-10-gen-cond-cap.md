@@ -2,7 +2,7 @@ Status: plan
 
 # GEN-COND-CAP: a raisable `condition_on` joint cap and two warnings (roadmap row 24w)
 
-Owner: Cam. Date: 2026-11-10. Revision 2 (Dennis round 1: 1 HIGH, 5 MEDIUM, 5 LOW addressed).
+Owner: Cam. Date: 2026-11-10. Revision 3 (Dennis round 1, then Codex round 1: 2 HIGH, 1 MEDIUM, 4 V2-LOG items folded in).
 Scope: engine plus CLI, V1, blocks V1. Source: DI models QA 2026-11-10 item H1 (CLI
 `docs/records/2026-11-10-cli-qa-generation-distribution-models.md`). Base: engine `1a5b36e5`
 (includes #442 and #445), CLI `8c5a1a1`. Risk: E1, E1b and C1 are all R2 (a disclosure refusal,
@@ -11,7 +11,9 @@ M2 (hand-written unseen parent) stay in V2-LOG. M2 gets the warning anyway, beca
 through the same fallback.
 
 Rules consulted: `README.md` (routing), `00-universal.md`, `risk-and-exceptions.md`,
-`development-loop.md` (Proportion, PLAN), `feature-dev.md`, `api-and-compatibility.md`.
+`development-loop.md` (Proportion, PLAN), `feature-dev.md`, `api-and-compatibility.md`,
+`cross-cutting-concerns.md` (choke points), `testing.md` (test depth, mutations on core logic),
+`documentation.md` (plan lifecycle).
 
 ## 1. Goal and guarantee
 
@@ -113,20 +115,35 @@ never a CLI flag name (L1). The CLI builds its own text from `code` and `detail`
 
 | Code | Slice | Raised by | `detail` | CLI text built from detail |
 |---|---|---|---|---|
-| `warning.fit_joint_cells_truncated` | E1 | `snapshot_joint_warnings(doc, *, contingency_top_k)` in `profiling/_snapshot_values.py`, exported from `decoy_engine`. One record per joint with `cell_count > contingency_top_k`, skipping withheld joints | `columns`, `cell_count`, `cells_kept` = `min(contingency_top_k, cell_count)`, `other_count` | "joint parent x kid: 36 combinations, 25 kept; 366 rows fall in the dropped ones. A parent value with no kept combination is generated from the child's overall counts. Raise --joint-max-cells (at most 1000)." |
-| `warning.generation_condition_parent_unseen` | E1b | `_generate_tables_from_config` (`synthesize.py`), right after a conditional statistical column is drawn, through the GEN-CLI `on_warning` sink. One record per conditional column per run, only when `rows > 0` | `table`, `column`, `condition_on`, `rows`, `rows_total`, `parent_values` | "table t, column kid (condition_on parent): 61 of 6000 rows had one of 1 parent values with no fitted combination and drew from the column's overall counts." |
+| `warning.fit_joint_cells_truncated` | E1 | `snapshot_joint_warnings(doc, *, contingency_top_k)` in `profiling/_snapshot_values.py`, exported from `decoy_engine`. One record per joint with `cap_dropped > 0`, skipping withheld joints | `columns`, `cell_count`, `cells_kept` = `len(joint["cells"])` (what the file holds), `cap_dropped` = `max(0, cell_count - contingency_top_k)`, `policy_dropped` = `min(contingency_top_k, cell_count) - cells_kept`, `other_count` | "joint parent x kid: 36 combinations, 25 kept; 11 dropped by the cell cap, 366 rows in all fall outside the kept ones. A parent value with no kept combination is generated from the child's overall counts. Raise --joint-max-cells (at most 1000) to keep the 11." When `policy_dropped > 0` the CLI adds "N more were left out by the value policy", with no advice to raise the cap for those. |
+| `warning.generation_condition_parent_unseen` | E1b | `_generate_tables_from_config` (`synthesize.py`), right after a conditional statistical column is drawn, through the GEN-CLI `on_warning` sink. One record per conditional column per run, only when `rows > 0` | `table`, `column`, `condition_on`, `rows`, `rows_null_parent`, `rows_total`, `parent_values` | "table t, column kid (condition_on parent): 61 of 6000 rows (0 of them with an empty parent) had one of 1 parent values with no fitted combination and drew from the column's overall counts." |
 
 - Withheld joint (M2): a joint is withheld when `doc["value_policy"] == "flagged-redacted/v1"` and
   `set(doc["redacted_columns"]) & set(joint["columns"])` is non-empty. Such a joint gets no
   truncation record; #420 already governs it.
-- Counter (M3, M4): `conditional_fallback_counts(spec, parent_values, n) -> (rows, distinct)` lives
-  in `_sample.py` beside the sampler. It builds its key set from `_conditional_tables(spec)` after
-  `_positive_weight_only`, exactly as `sample_column` does (`:355-359`). It reads the first `n`
-  parents, with the same rule as `:365` (index past the list gives None). A helper `_parent_key`
-  returns exactly `str(parent)` and is used by both the sampler lookup (`:366`) and the counter.
-  The counter alone skips None parents: a joint drops null pairs, so a null parent always falls
-  back, and counting it would warn on every nullable parent. A parent equal to the
-  `other_mode: emit` token is counted. The counter never draws and never touches the RNG.
+- Cap versus policy (Codex H2): `cell_count` counts every nonzero cell, and `_joint_snapshot` picks
+  its head before the writer applies any redaction, so `cap_dropped` is exactly what the cap cut.
+  `cells_kept` reads the file, so it stays true when row 24f folds singleton cells into
+  `other_count` after the head is chosen; that difference is reported as `policy_dropped` and never
+  as a reason to raise the cap.
+- One table selection (Codex H1): today the sampler picks each row's table inline
+  (`_sample.py:364-366`): `parent_values[i]`, or None past the end of the list, then
+  `conditional.get(str(parent), marginal)`. E1b moves exactly that into one helper,
+  `_select_table(conditional, marginal, parent_values, i) -> (values, weights, fell_back)`, and
+  both `sample_column` and the counter call it. `conditional` is built once by one helper,
+  `_conditional_lookup(spec)` (`_conditional_tables` then `_positive_weight_only`, as at
+  `:355-359`), also shared. The lookup key stays `str(parent)` for every parent, None included, so
+  generated bytes do not change (AT-14).
+- Counter: `conditional_fallback_counts(spec, parent_values, n) -> FallbackCounts(rows,
+  rows_null_parent, parent_values)` in `_sample.py` loops `i` over `range(n)` and counts every row
+  where `_select_table` reports `fell_back`. That includes a None parent and a row past the end of
+  a short parent list, since the sampler draws those from the overall counts too.
+  `rows_null_parent` is the subset whose parent was None or missing, so a reader can tell a
+  nullable parent from an unfitted value. `parent_values` is the number of distinct `str(parent)`
+  keys that fell back. A literal string "None" and a real None share the key "None", exactly as in
+  the sampler: if the joint has a cell for the label "None", neither falls back and neither is
+  counted. A parent equal to the `other_mode: emit` token is counted. The counter never draws and
+  never touches the RNG.
 - Emission point (M3): `_generate_tables_from_config` already holds `data`, the spec map and (after
   GEN-CLI E1) `on_warning`. After `data[cname] = _generate_column(...)` (`synthesize.py:174`), for a
   `statistical` column whose spec has `condition_on`, it calls the counter on `data[condition_on]`,
@@ -148,8 +165,9 @@ lookup key and the key set in `_sample.py`, the codes in the registry.
 
 Choke points: every fit goes through `compute_distribution_snapshot` (bound) and every plain
 snapshot write through `distribution_snapshot_document` (kind refusal). Guard: AT-4 and AT-13.
-Mutations: drop the bound check; drop the kind check. The counter shares `_parent_key` and the
-filtered key set with the sampler. Guard: AT-3. Mutation: count with the raw parent.
+Mutations: drop the bound check; drop the kind check. The counter and the sampler share
+`_conditional_lookup` and `_select_table`. Guard: AT-3b, AT-3s, AT-3n. Mutation: have the counter
+look up the raw parent instead of calling `_select_table`.
 
 ## 6. Failure modes
 
@@ -158,14 +176,15 @@ filtered key set with the sampler. Guard: AT-3. Mutation: count with the raw par
 | F1 | Default fit bytes change and pinned snapshot digests break | AT-1 golden digest at the default |
 | F2 | Default generated bytes change | AT-14 golden digest of the AT-2/AT-3 outputs, captured at the base |
 | F3 | A warning or error carries a cell value or label | AT-6 scan for `SENTP` and `SENTK` |
-| F4 | The warning count disagrees with the rows that fell back | shared `_parent_key` and key set; AT-3 |
+| F4 | The warning count disagrees with the rows that fell back (null parents, a short parent list, a "None" label) | shared `_select_table`; AT-3b, AT-3s, AT-3n |
 | F5 | Counting changes output bytes or RNG use | AT-7 and AT-14 |
 | F6 | The warning repeats per chunk or route, or a route loses it | emission once per column in the table loop; GEN-CLI E1 transport; AT-8 |
 | F7 | A bad cap (0, negative, bool, float, 1001) is accepted or crashes | AT-4 |
 | F8 | A raised cap keeps raw numbers, dates or free text in a plain snapshot | AT-13 kind refusal |
 | F9 | `--joint-max-cells` silently ignored (DP mode, no `--joint`) | AT-10 |
 | F10 | A withheld joint gets a misleading truncation warning | AT-5, AT-15 |
-| F11 | Null parents set off the warning on every nullable parent | AT-3b |
+| F11 | A nullable parent's warning is mistaken for unfitted values | `rows_null_parent` in detail; AT-3n |
+| F13 | Row 24f's singleton folding makes `cells_kept` false or blames the cap | `cells_kept` read from the file, `cap_dropped` and `policy_dropped` apart; AT-16 |
 | F12 | Pinned execution crashes on the new hook | AT-12 |
 
 ## 7. Acceptance tests (red first)
@@ -181,13 +200,14 @@ E1 (fit side):
 - AT-2a Cap raised: `contingency_top_k=36` keeps 36 cells, `other_count` 0, and
   `snapshot_joint_warnings(doc, contingency_top_k=36)` returns nothing.
 - AT-3a At the default, `snapshot_joint_warnings` returns one record: `cell_count` 36,
-  `cells_kept` 25, `other_count` 366.
+  `cells_kept` 25, `cap_dropped` 11, `policy_dropped` 0, `other_count` 366.
 - AT-4 Bounds: 0, -1, 1001, `True` and 2.5 raise `contingency_top_k_invalid`; 1 and 1000 work.
 - AT-5 A pair with a profiler-flagged column under `distribution_snapshot_document` gives no
   truncation record at cap 25 or 1000.
 - AT-13 Kind refusal: a numeric parent paired with `kid` is refused with
   `contingency_top_k_kind_unsupported` at cap 26 and fits at the default; a datetime column and a
-  `high_cardinality` column are refused the same way; with `include_values=True` cap 26 fits.
+  `high_cardinality` column, a freetext column (more than 30 distinct strings) and an all-null
+  (`empty`) column are refused the same way; with `include_values=True` cap 26 fits.
 - AT-6 (E1 part) No message from AT-1 to AT-13 contains `SENTP` or `SENTK`.
 
 E1b (generation side):
@@ -198,12 +218,18 @@ E1b (generation side):
   parent `SENTP12`, counted by the test, and `parent_values` is 1.
 - AT-3s The same fixture with integer parent labels 1 to 12 (a parent column the sampler sees as
   ints) gives the same `rows` as AT-3b's independent count.
-- AT-3n Separate fixture `cond_null.csv`: the same pairs plus a 10% null parent through
-  `cell_format`. `rows` counts only non-null parents that fell back.
+- AT-3n Separate unit fixtures on `conditional_fallback_counts` and `sample_column` together, each
+  checked against a per-row replay of the sampler's choice: (1) parents with 10% None: `rows`
+  includes them and `rows_null_parent` equals the None count; (2) a parent list shorter than `n`:
+  the missing rows count as fallbacks and as `rows_null_parent`; (3) a joint with a cell for the
+  label "None": a "None" string and a real None parent both use that cell and neither is counted.
 - AT-6 (E1b part) No warning text, detail or captured log line contains `SENTP` or `SENTK`.
 - AT-7 The output bytes of AT-3b are the same with and without an `on_warning` sink.
 - AT-8 Route matrix (the GEN-CLI AT-8 cells): resident, full-frame and mixed, including the
   runtime-decline handoff, each carry exactly one record in `ExecutionResult.warnings`.
+- AT-16 (row 24f integration; owned by whichever of this row's E1 and 24f's singleton-fold slice
+  lands second): a pair with 30 combinations where two singleton cells sit inside the top 25.
+  With the fold active, `cells_kept` is 23, `cap_dropped` 5, `policy_dropped` 2.
 - AT-12 Pinned execution of the AT-3b config does not crash and its bytes equal a base digest.
 - AT-14 Generated output of AT-2b and AT-3b equals digests captured at the base commit.
 
@@ -219,30 +245,33 @@ C1 (CLI):
   (empty `cells`) and prints no truncation warning.
 
 Mutations (core logic only): drop the bound check (AT-4 red); drop the kind check (AT-13 red);
-`>` to `>=` in the truncation test (AT-2a red at cap 36); remove the null skip in the counter
-(AT-3n red); count with the raw parent in place of `_parent_key` (AT-3s red).
+`>` to `>=` in the `cap_dropped` test (AT-2a red at cap 36); have the counter skip None parents
+(AT-3n red); have the counter look up the raw parent instead of `_select_table` (AT-3s red).
 
 ## 8. Slices
 
 | Slice | Repo | Content | Size | Gate |
 |---|---|---|---|---|
 | E1 | engine `feat/gen-cond-cap-e1` | `MAX_CONTINGENCY_TOP_K` and the bound check (docstring trimmed to keep `snapshot.py` at or under 600); the kind refusal; `snapshot_joint_warnings` and its export; codes `quality.contingency_top_k_invalid`, `quality.contingency_top_k_kind_unsupported`, `warning.fit_joint_cells_truncated`; fragment; AT-1, AT-2a, AT-3a, AT-4, AT-5, AT-6, AT-13 | S, about 90 lines plus tests | Dennis then Codex; full suite (registry, public API) |
-| E1b | engine `feat/gen-cond-cap-e1b` | `_parent_key`, `conditional_fallback_counts`, the emission in `_generate_tables_from_config`; code `warning.generation_condition_parent_unseen` and the `QualityWarning` docstring list; fragment; AT-2b, AT-3b, AT-3s, AT-3n, AT-6, AT-7, AT-8, AT-12, AT-14 | S, about 60 lines plus tests | Dennis then Codex; full suite (registry) |
+| E1b | engine `feat/gen-cond-cap-e1b` | `_conditional_lookup` and `_select_table` (the sampler's own selection moved, bytes unchanged), `conditional_fallback_counts`, the emission in `_generate_tables_from_config`; code `warning.generation_condition_parent_unseen` and the `QualityWarning` docstring list; fragment; AT-2b, AT-3b, AT-3s, AT-3n, AT-6, AT-7, AT-8, AT-12, AT-14 | S, about 60 lines plus tests | Dennis then Codex; full suite (registry) |
 | R | engine | one release carrying E1 and E1b (owner release train) | n/a | release checks |
 | C1 | CLI `feat/gen-cond-cap-c1` | engine pin bump; `--joint-max-cells` and its usage order; fit warnings on stderr and in `--json`; run-summary text for the generation code; `cli-reference.md`; guide `03-fit-and-generate.md` (a flag row; line 170 now says the run warns; the categorical-only rule for a raised cap); CHANGELOG; AT-9, AT-10, AT-11, AT-15 | S, about 90 lines plus tests | Dennis then Codex; full suite (version pin) |
 
 Order and hard gates:
 - E1 has no dependency and can build now.
 - E1b builds after GEN-CLI E1 merges (it needs `on_warning` in `_generate_tables_from_config`).
-- R waits for both E1 and E1b.
+- R waits for both E1 and E1b. `snapshot_joint_warnings` ships in R with no production caller
+  until C1 wires it into `decoy fit`. That is intentional cross-repo staging, not dead code: the
+  engine releases the function and its tests first, and the CLI consumes the pinned release.
 - C1 builds only after R, after row 24f's CLI half has merged (hard gate: both edit `fit.py`, and
   C1 passes the cap to the `distribution_snapshot_document` call that 24f adds, so the kind
   refusal and withholding apply), and after GEN-CLI C1 (run-summary renderer).
 
-Changelog: not Breaking. E1 fragment `### Added (condition_on joint cap bounds and fit warning,
-GEN-COND-CAP E1, <date>)` states that `contingency_top_k` now refuses values outside 1 to 1000,
-including `True`, which was accepted as 1 before (L3), and that a raised cap refuses non-categorical
-joints in a plain snapshot. E1b fragment `### Added (condition_on fallback warning, GEN-COND-CAP
+Changelog: not Breaking for any known caller (none passes the keyword). E1 fragment
+`### Changed (condition_on joint cap bounds and fit warning, GEN-COND-CAP E1, <date>)` states that
+`contingency_top_k` now refuses values outside 1 to 1000, that `True` was accepted as 1 before and
+callers passing it must pass 1, that a raised cap refuses non-categorical joints in a plain
+snapshot, and that `snapshot_joint_warnings` is new. E1b fragment `### Added (condition_on fallback warning, GEN-COND-CAP
 E1b, <date>)`. C1 adds an `Added` entry to the CLI CHANGELOG.
 
 ## 9. Placement (engine `CODEMAP.md` "Where Things Go", CLI `CODEMAP.md` "Where things go")
@@ -251,13 +280,14 @@ E1b, <date>)`. C1 adds an `Added` entry to the CLI CHANGELOG.
 |---|---|---|
 | `MAX_CONTINGENCY_TOP_K`, bound check | `src/decoy_engine/quality/snapshot.py` (596 lines; net 0, docstring trimmed) | snapshot computation stays in `quality/` |
 | Kind refusal, `snapshot_joint_warnings` | `src/decoy_engine/profiling/_snapshot_values.py` (199 lines, +45); export in `src/decoy_engine/__init__.py` | Detectors, profiling row (the fit snapshot writer); Public API row |
-| `_parent_key`, `conditional_fallback_counts` | `src/decoy_engine/generation/statistical/_sample.py` (439 lines, +25) | Generation row; `_sample.py` is "the one sampler" |
+| `_conditional_lookup`, `_select_table`, `conditional_fallback_counts` | `src/decoy_engine/generation/statistical/_sample.py` (439 lines, +25) | Generation row; `_sample.py` is "the one sampler" |
 | Emission | `src/decoy_engine/generation/synthesize.py` (+12) | Generation row |
 | Codes | `src/decoy_engine/reasons/quality/_part1.py`, `src/decoy_engine/reasons/warning/_part1.py` | Reason codes row |
 | Engine tests | `tests/unit/quality/test_snapshot_joint_cap.py` (E1), `tests/unit/generation/statistical/test_condition_fallback.py` (E1b) | Unit tests row |
 | Fragments | `changelog.d/gen-cond-cap-e1.md`, `changelog.d/gen-cond-cap-e1b.md` | Changelog fragments row |
 | CLI flag and output | `src/decoy/cli/fit.py` (534 lines, +45) | existing command module; no new reader or writer, so `cli/io/` does not apply |
 | CLI tests | `tests/e2e/first_user/test_items_fit_joint_cap.py` | first-user QA item tests row |
+| This plan | `docs/plans/2026-11-10-gen-cond-cap.md` | Plans, decisions, records row (`docs/plans/YYYY-MM-DD-<slug>.md`) |
 
 If a top-level import of `QualityWarning` in `_snapshot_values.py` makes an import cycle, it uses a
 lazy import, as the file already does for `scrub_cell_format`.
