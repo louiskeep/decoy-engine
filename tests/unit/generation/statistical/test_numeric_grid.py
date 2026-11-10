@@ -196,6 +196,31 @@ def test_malformed_grid_is_refused(label: str, mutate: Any) -> None:
     assert err.__context__ is None
 
 
+@pytest.mark.parametrize(
+    ("label", "probs"),
+    [
+        ("undersized interval", [0.1, 0.12, 0.9]),
+        ("undersized low tail", [0.001, 0.5, 0.9]),
+        ("undersized high tail", [0.1, 0.5, 0.999]),
+    ],
+)
+def test_undersized_grid_interval_or_tail_is_refused(label: str, probs: list[float]) -> None:
+    snap, stats = _fit(np.random.default_rng(504).normal(50.0, 5.0, 100))
+    stats["quantile_grid"] = {"probs": probs, "values": [40.0, 45.0, 55.0][: len(probs)]}
+    with pytest.raises(StatisticalSpecError) as caught:
+        load_spec({"name": "x"}, snapshot=snap)
+    assert caught.value.code == _REASON_DEGENERATE
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_undersized_tail_on_a_hundred_rows_is_refused() -> None:
+    snap, stats = _fit(np.random.default_rng(504).normal(50.0, 5.0, 100))
+    stats["quantile_grid"] = {"probs": [0.001, 0.999], "values": [40.0, 60.0]}
+    with pytest.raises(StatisticalSpecError):
+        load_spec({"name": "x"}, snapshot=snap)
+
+
 def test_equal_neighbouring_grid_values_load() -> None:
     snap, stats = _fit(np.random.default_rng(504).normal(50.0, 5.0, 500))
     grid = stats["quantile_grid"]

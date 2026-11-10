@@ -59,6 +59,7 @@ from decoy_engine.generation.statistical._cell_format import (
 from decoy_engine.generation.statistical._numeric_shape import (
     decode_numeric_shape,
     numeric_shape_withheld,
+    redacted_fix_hint,
 )
 from decoy_engine.profiling import (
     POLICY_RAW,
@@ -299,9 +300,7 @@ def _refuse_withheld_values(
         code=reasons.plan.STATISTICAL_SNAPSHOT_VALUES_REDACTED,
         message=(
             f"statistical column {name!r}: {why}, so there are no values to sample. "
-            "Use a faker or pattern generator for this column, or re-fit with "
-            "`--include-values` and set `allow_real_categories: true` (the snapshot then "
-            "holds real values)."
+            + redacted_fix_hint(numeric=kind == "numeric" and condition_on is None)
         ),
     )
 

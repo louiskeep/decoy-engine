@@ -112,6 +112,52 @@ def test_malformed_exact_values_are_refused(label: str, block: Any) -> None:
     assert err.__context__ is None
 
 
+def _refused_exact(block: dict[str, Any], **stats_over: Any) -> None:
+    snap, stats = _fit(_prices(2_000))
+    stats["exact_values"] = block
+    stats.update(stats_over)
+    with pytest.raises(StatisticalSpecError) as caught:
+        load_spec({"name": "x"}, snapshot=snap)
+    err = caught.value
+    assert err.code == "statistical_stats_degenerate"
+    assert "999999" not in str(err)
+    assert err.__cause__ is None
+    assert err.__context__ is None
+
+
+def test_exact_count_below_the_floor_is_refused() -> None:
+    _refused_exact({"values": [4.99, 9.99], "counts": [1_991, 9], "dropped_count": 0})
+
+
+def test_exact_giant_count_is_refused() -> None:
+    _refused_exact({"values": [4.99, 9.99], "counts": [10**400, 1_000], "dropped_count": 0})
+
+
+def test_exact_mass_mismatch_is_refused() -> None:
+    _refused_exact({"values": [4.99, 9.99], "counts": [1_000, 900], "dropped_count": 0})
+    _refused_exact({"values": [4.99, 9.99], "counts": [1_000, 1_000], "dropped_count": 5})
+
+
+def test_exact_bool_counts_are_refused() -> None:
+    _refused_exact({"values": [4.99, 9.99], "counts": [1_999, True], "dropped_count": 0})
+    _refused_exact({"values": [4.99, 9.99], "counts": [1_000, 1_000], "dropped_count": False})
+
+
+def test_exact_bad_bin_counts_are_refused() -> None:
+    block = {"values": [4.99, 9.99], "counts": [1_000, 1_000], "dropped_count": 0}
+    _refused_exact(block, bin_counts=[1_000, True, 999])
+    _refused_exact(block, bin_counts=[2_001, -1])
+    _refused_exact(block, bin_counts=[])
+
+
+def test_a_valid_fit_round_trips_through_the_floor_checks() -> None:
+    snap, stats = _fit(_prices())
+    load_spec({"name": "x"}, snapshot=snap)
+    grid_snap, grid_stats = _fit(np.random.default_rng(1).normal(0, 1, 120))
+    assert "quantile_grid" in grid_stats
+    load_spec({"name": "x"}, snapshot=grid_snap)
+
+
 def test_both_keys_present_are_refused() -> None:
     snap, stats = _fit(_prices(2_000))
     stats["quantile_grid"] = {"probs": [0.1, 0.9], "values": [5.0, 40.0]}
@@ -126,7 +172,7 @@ def test_a_value_within_rounding_of_the_edge_loads() -> None:
     stats["bin_edges"] = [0.5, 1.0]
     stats["exact_values"] = {
         "values": [0.5, 1.0000000000004],
-        "counts": [10, 10],
+        "counts": [1_000, 1_000],
         "dropped_count": 0,
     }
     load_spec({"name": "x"}, snapshot=snap)

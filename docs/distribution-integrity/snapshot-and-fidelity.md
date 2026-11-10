@@ -74,7 +74,7 @@ Design points:
   count is predictable. Bin edges still differ between two snapshots because
   each uses its own min and max. That is why the primary numeric comparison
   uses quantiles, not bins.
-- **The 30-distinct cutoff** (`_CATEGORICAL_DISTINCT_CAP`) is the single fit-time
+- **The 30-distinct cutoff** (`CATEGORICAL_DISTINCT_CAP`) is the single fit-time
   source of truth for categorical versus freetext.
 - **`high_cardinality_columns`** forces `categorical` and keeps every value. It
   is limited to 100,000 distinct values and 16 MiB of label bytes and raises a

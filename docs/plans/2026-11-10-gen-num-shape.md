@@ -79,6 +79,12 @@ A number column fitted by `decoy fit` (or `compute_distribution_snapshot`) and g
 - A column with few distinct values emits exactly those values that at least `K` rows hold, at
   their source shares.
 
+Scope of the guarantee: it applies to columns that get a grid (100 or more finite rows and more
+than 30 distinct values) or exact values. A column under 100 rows keeps today's histogram path,
+unchanged by this row, which can emit values anywhere in the source `[min, max]`. The loader
+refuses a stored block that breaks the floor (exact counts under `K`, counts that do not sum to
+the column's row count, or a grid interval or tail under `K` rows).
+
 Guarantee: every interval between adjacent grid points and each tail beyond the grid ends holds at
 least `K = 10` source rows, and no value outside `[K-th smallest, K-th largest]` is emitted.
 An interior grid point may coincide with a source value held by fewer than `K` rows, the same
