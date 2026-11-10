@@ -28,6 +28,7 @@ import pytest
 
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pipeline import run_pipeline
+from tests._declared_schema import declare_rest
 
 _N = 40
 
@@ -39,6 +40,10 @@ def _src(tmp_path: Path, table: pa.Table, name: str) -> str:
 
 
 def _supported_fk_config(tmp_path: Path, *, orphans: bool) -> dict[str, Any]:
+    return declare_rest(_fk_config(tmp_path, orphans=orphans))
+
+
+def _fk_config(tmp_path: Path, *, orphans: bool) -> dict[str, Any]:
     """Pure-mask FK chain (parent -> child -> grandchild) whose every strategy
     is out-of-core-supported (hash keys, redact/truncate payloads). With
     `orphans=True` some child keys reference no parent, exercising the
