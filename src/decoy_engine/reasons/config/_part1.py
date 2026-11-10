@@ -77,6 +77,8 @@ __all__ = [
     "SOURCE_FILE_MISSING_PATH",
     "SOURCE_FILE_NO_HEADER_COLUMNS",
     "SOURCE_FILE_NUL_BYTE",
+    "SOURCE_FILE_UNDECLARED_COLUMN",
+    "SOURCE_FILE_UNDECLARED_TABLE",
     "SOURCE_FILE_UNSUPPORTED_FORMAT",
     "SOURCE_GCS_MISSING_BUCKET",
     "SOURCE_GCS_MISSING_CREDENTIALS",
@@ -141,6 +143,16 @@ SOURCE_FILE_COLUMN_NAMES_FILE_INVALID = _d(
     "source_file.column_names_file_invalid",
     "Source file column names file invalid.",
     since="1.15.0",
+)
+SOURCE_FILE_UNDECLARED_COLUMN = _d(
+    "source_file.undeclared_column",
+    "Source file undeclared column.",
+    since="1.19.0",
+)
+SOURCE_FILE_UNDECLARED_TABLE = _d(
+    "source_file.undeclared_table",
+    "Source file undeclared table.",
+    since="1.19.0",
 )
 SOURCE_FILE_LONE_CR = _d("source_file.lone_cr", "Source file lone CR.")
 SOURCE_FILE_NUL_BYTE = _d("source_file.nul_byte", "Source file NUL byte.")

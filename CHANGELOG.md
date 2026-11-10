@@ -9,14 +9,13 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
-### Added (fitted reference fan-out execution, FK-FANOUT E2b, 2026-11-10)
+### Added (CONFIG-EXPLICIT E2a: declared-columns module, registry 1.19.0, 2026-11-08)
 
-A `reference` generate column with `distribution: fitted` and a `snapshot_file` made with a fan-out block gives
-each parent a child count drawn from the fitted degree histogram, instead of independent uniform picks. The
-snapshot is read once at compile and pinned, so deleting or editing the file after compile changes nothing, and
-seed derivation and the null mask never reopen it. The column takes the whole-table route. A `fitted` column
-with no pinned fan-out stops with `reference_fanout_missing`, and child rows against an empty parent pool stop
-with `reference_parent_pool_empty`. Other distributions generate the same cells as before.
+`decoy_engine` exports `source_columns`, `declared_columns`, `check_columns_declared`,
+`DeclarationRequest`, `PreparedDeclaredSources` and `prepare_declared_sources`: the pre-read
+boundary that checks every source column is listed in the config. Registry 1.19.0 adds
+`source_file.undeclared_column` and `source_file.undeclared_table`. No route calls the boundary
+yet, so run behavior is unchanged.
 
 ### Added (`unique` and `unique_together` generate options, GEN-UNIQUE E2, 2026-11-09)
 
