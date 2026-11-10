@@ -4,10 +4,16 @@ Status: plan
 
 Rules consulted: 00-universal, risk-and-exceptions, development-loop, code-review, testing,
 architecture, feature-dev, cross-cutting-concerns, api-and-compatibility, exploration, reuse-first,
-security, documentation, verification, profiles/local-operations, catalogs/recurring-defects
+security, observability-and-resilience, documentation, verification, profiles/local-operations,
+catalogs/recurring-defects
 
 Base: engine main `1155b20c` (includes GEN-COND-CAP E1b, #461). Roadmap row 24r. Engine only; CLI help picks the new type and keys up
 from `generate_option_catalog()` (GEN-CLI, row 24o).
+
+Risk: R2. The work adds config and reason contracts and changes cross-table generated data.
+Required evidence is the reviewed plan, slice T0 and T1, independent T2 with the named mutations,
+and the one trigger-bound full-suite run per slice. The owner is the approver; Dennis and Codex are
+the independent plan gates.
 
 **Prerequisites.**
 - E1 (`inherit`) needs GEN-REL E3a (row 24n, plan `docs/plans/gen-rel.md` on `plan/gen-rel`):
@@ -26,7 +32,10 @@ from `generate_option_catalog()` (GEN-CLI, row 24o).
   raised; the only forward check is statistical's own (`plan/_checks.py:390`). GEN-STRICT E2 adds
   the one registry-driven forward check for every key with a `ref_kind`, and the one mixed-category
   check (`plan.generate_categories_mixed`, its step 2b). E2 registers its keys there and adds no
-  check of either kind. E2 does not need GEN-REL.
+  check of either kind. At E2 build start, the builder confirms from the merged source and
+  GEN-STRICT's seeded guard that the forward-reference step iterates the option registry for every
+  `OptionSpec.ref_kind`; a hard-coded key list does not satisfy this entry condition, and E2 does
+  not start until it is corrected in GEN-STRICT. E2 does not need GEN-REL.
 - Line numbers are from `1155b20c` and will move.
 
 **Guarantee.** A child column can carry its parent row's value through the FK the child already
@@ -132,10 +141,12 @@ tables:
   never a member of the parent's group, and a child `formula.references`, `group_by` or
   `windowed_date.anchor` reading it would never be checked: a parent `sequence` planned `int64`
   would reach a child formula that expects text. E1 makes `_reference_root` also follow `inherit`:
-  from the `inherit` column to `(via column's reference_table, column)`, looked up in the same
-  `tables` mapping, so chains of `inherit` and `reference` hops resolve to one root and the loop's
-  cycle stop still holds. The `inherit` column then takes the parent's planned type through
-  `planned()` (`:246-258`) and its readers vote on the parent's type (AT-14).
+  it first looks up `via` in the same table. If `via` is absent or that column is not
+  `type: reference`, the function returns the incoming key unchanged, just as it already does when
+  the current column is absent. Otherwise it hops to `(via.reference_table, inherit.column)`.
+  Chains of `inherit` and `reference` hops resolve to one root and the loop's cycle stop still
+  holds. The `inherit` column then takes the parent's planned type through `planned()` (`:246-258`)
+  and its readers vote on the parent's type (AT-14).
 
 ### E2: conditional `categorical` in YAML
 
@@ -212,9 +223,17 @@ tables:
   `condition_on` (`(False, "reads a sibling; no sibling-input seam yet")`, the `derived` reason),
   from the categorical branch of the admission classifier (`generation/_admission.py:247`), before
   `_categorical_type` runs.
+- Run-time missing parent: before any selection or fallback, conditional `_categorical` checks
+  membership of `condition_on` in `generated`. If the key is absent, both resident and pinned
+  raise `GenerationError` with `runtime.categorical_condition_column_unavailable` and a fixed
+  value-free message that may name only the table, column and config key. It never substitutes an
+  empty list and never silently sends every row to the top-level mix. This is one new code in the
+  central reason registry. The existing `plan.statistical_condition_column_unavailable` code is
+  not reused because its frozen symbol and summary explicitly describe a statistical column.
 - Forward reference: `categorical.condition_on` registers `ref_kind="column"`, so GEN-STRICT E2's
-  check refuses a later or missing parent with `plan.generate_column_forward_reference`. E2 adds the
-  run-time red test GEN-STRICT's step zero requires for each marked key (FM8 there).
+  registry walk refuses a later or missing parent with `plan.generate_column_forward_reference`.
+  E2 adds the FM8 run-time red test for a direct call whose generated-data mapping lacks that key;
+  the exact outcome is the value-free runtime refusal above, not all-fallback output.
 - `condition_on` is already in `_SIBLING_KEYS` (`generation/_reproducibility.py:58`).
   `READER_KEYS["categorical"]` is empty today (`generation/_numeric_typing.py:145`); E2 adds
   `("condition_on", "categorical.condition_on")` and registers `Reader(False, "matched against
@@ -237,6 +256,7 @@ tables:
 | P10 | GEN-REL E3a lands with `anchor_via`-specific code names | `inherit` refusals say "anchor_via" | ask GEN-REL to name them for the lookup (Coordination); AT-3 checks the code text |
 | P11 | Readers of an `inherit` column are left out of numeric typing | a parent `sequence` planned `int64` reaches a child formula that expects text: wrong output or a raise | `_reference_root` follows `inherit` to the parent root; AT-14 |
 | P12 | Pinned fallback rows expected to warn | a pinned user sees no fallback warning | stated as the pinned behavior (same as fitted statistical today), V2-LOG; AT-8 is resident-only for the warning |
+| P13 | Missing `condition_on` data becomes an empty parent list | every row silently draws from the fallback mix after a compile bypass | membership check and value-free runtime refusal before `_select_table`; AT-15 |
 
 ## Acceptance tests
 
@@ -252,10 +272,11 @@ tables:
 | AT-8 | Resident route, unseen parent values: rows fall back to the top-level mix, one `warning.generation_condition_parent_unseen` with `provider: categorical`, counts right, a sentinel parent value absent from record, log line and exception chain. A bool `by` key refuses with a message that says to write `"True"` | red on base; mutant: drop the call |
 | AT-9 | Conditional categorical whose every entry equals the top-level mix: for 10 seeds its output equals `random.Random(s).choices(cats, weights, k=n)`, where `s` is the conditional column's own `base_int("py")` (from its own config, `condition_on` and `by` included). Plain categorical and fitted statistical `condition_on` goldens unchanged | mutants: draw `k=n` once per parent value; add `condition_on` and `by` to `_EXCLUDED_FROM_FINGERPRINT` (statistical golden red) |
 | AT-10 | Int, bool and null parents match `"1"`, `"True"` and `"None"` the same way a fitted `condition_on` does | mutant: key by `repr` |
-| AT-11 | A sequence parent read by a conditional categorical gets the same planned type as under a fitted `condition_on`, and rows still match `"1"` keys | red on base; mutant: register the reader as safe |
+| AT-11 | A sequence parent read by a conditional categorical gets the same planned type as under a fitted `condition_on`, and rows still match `"1"` keys. Baseline cells also pin `planned()` for plain categorical columns with numeric and text categories, proving E2 leaves their planned types unchanged | red on base; mutants: register the reader as safe; route every categorical through the conditional union |
 | AT-12 | Sentry, added to GEN-REL's `tests/sentry/defects/test_reference_pool_choke_point.py` rather than a new module: only `generation/relational/_parent_lookup.py` maps FK values to parent rows (AST scan: no other module under `generation/` builds a key-to-row dict or index over a `pools[...]` table). Scoped to dict or index construction keyed by a pool column, so GEN-REL E3b's per-parent `groupby` and `reindex` in its aggregate post-pass do not trip it | mutant: inline a dict lookup in the `inherit` generator; E3b's aggregate module stays green |
 | AT-13 | E1 plus E2: `tier` conditioned on an inherited `region` follows each member's region's mix within 4 standard errors at 50k rows | red on base |
-| AT-14 | Numeric typing through `inherit`: parent `members.member_id` is a `sequence` (a numeric candidate); `claims.member_code` inherits it; a child `formula` lists `member_code` in `references` and treats it as text. `numeric_plan` keeps `members.member_id` text, so both tables emit text, and the formula output matches the text oracle. Without the child formula, `member_id` stays `int64` and `member_code` copies `int64` | red on base; mutant: `_reference_root` stops at `inherit` |
+| AT-14 | Numeric typing through `inherit`: parent `members.member_id` is a `sequence` (a numeric candidate); `claims.member_code` inherits it; a child `formula` lists `member_code` in `references` and treats it as text. `numeric_plan` keeps `members.member_id` text, so both tables emit text, and the formula output matches the text oracle. Without the child formula, `member_id` stays `int64` and `member_code` copies `int64`. Direct malformed-config cells prove `_reference_root` returns the incoming key unchanged when `via` is absent or names a non-`reference` column | red on base; mutants: `_reference_root` stops at `inherit`; dereference a missing or non-reference `via` |
+| AT-15 | FM8 run-time guard: call resident and pinned conditional categorical generation with `condition_on` absent from generated data. Both refuse with `runtime.categorical_condition_column_unavailable`; no rows are returned, `str(exc)` contains no sentinel data value, and `__cause__` and `__context__` are `None` | red on base; mutant: use `generated.get(condition_on, [])` and fall back every row |
 
 ## Class table
 
@@ -264,20 +285,20 @@ tables:
 | 1 | Wrong value | Inherited value from the wrong parent row; wrong mix for a parent value | One parent lookup; one keyed selector | AT-4, AT-5, AT-13 | random parent row; key by `repr` |
 | 2 | Cleanup | none: no files, handles or temp state | N/A, both features are pure over in-memory lists and pools | AT-4 shows no new artifact | none needed |
 | 3 | State | Conditional tables rebuilt per row, or a shared RNG across columns | Tables and `cum_weights` built once per column; one `random.Random` per column | AT-9 draw identity | reseed per parent value |
-| 4 | Route divergence | Pinned and resident differ; streamed half-supports a feature; typing differs from the parent | Both routes call `_generate_column` with `data`; explicit streamed declines; explicit pinned refusal for `inherit`; pinned has no warning, stated; `_reference_root` follows `inherit` | AT-7 parity, AT-14 | drop `data` on the pinned call; stop `_reference_root` at `inherit` |
+| 4 | Route divergence | Pinned and resident differ; streamed half-supports a feature; typing differs from the parent; one route accepts missing condition data | Both routes call `_generate_column` with `data` and share the missing-key refusal; explicit streamed declines; explicit pinned refusal for `inherit`; pinned has no warning, stated; `_reference_root` follows `inherit` | AT-7 parity, AT-14, AT-15 | drop `data` on the pinned call; stop `_reference_root` at `inherit`; default a missing parent to `[]` |
 | 5 | Referential integrity | Child value not the parent row's value; non-unique parent key | GEN-REL uniqueness rule and lookup | AT-3, AT-4 | allow a non-unique key |
 | 6 | Untrusted input | Nested `by` entries from YAML; parent values in warnings | Registry checks nested keys and weights; warning carries counts only | AT-2, AT-8 | quote the parent value in the log line |
 | 7 | TOCTOU / check-then-use | Parent column checked at compile, read at run from a different table | The edge registry resolves the parent table once; the run reads `pools` by that name | AT-6 | resolve the table again at run from `column` |
 | 8 | Weak test | Agreement asserted on a few rows | AT-4 checks every row; AT-13 at 50k rows within 4 standard errors | the mutation column | each listed mutation |
 | 9 | Refactor drift | Generalizing #461's helpers from `StatisticalSpec` to plain tables changes statistical output | The generalization lands as its own commit with #461's tests and statistical goldens unchanged | `test_condition_fallback.py`, AT-10 | change `_select_table`'s keying |
-| 10 | Frozen contract | Type Literal, catalog, warning detail shape, reason registry | Additive type and keys; warning code reused with its detail keys unchanged; one new plan code | AT-1, AT-8, registry sentries | rename a detail key |
+| 10 | Frozen contract | Type Literal, catalog, warning detail shape, reason registry | Additive type and keys; warning code reused with its detail keys unchanged; one new plan code and one new runtime code | AT-1, AT-8, AT-15, registry sentries | rename a detail key; omit the runtime code from the manifest |
 
 Recurring-defect catalog check: "second registry" (no new list; GEN-REL edges and GEN-STRICT
 options are extended), "second mechanism" (AT-12 lookup sentry; the warning goes through
-`emit_generation_warning`), "value in error text" (AT-8), "same-named sibling" (AT-6), "route
-forgot the new branch" (AT-7).
+`emit_generation_warning`), "value in error text" and "no exception context" (AT-8, AT-15),
+"same-named sibling" (AT-6), "route forgot the new branch" (AT-7).
 
-## Reuse inventory
+## Established solutions and reuse inventory
 
 | Need | Reused | Source |
 |---|---|---|
@@ -290,6 +311,7 @@ forgot the new branch" (AT-7).
 | fallback counting, cap | `conditional_fallback_counts`, `DISTINCT_PARENT_CAP`, `FallbackCounts` | same |
 | warning | `warn_on_unseen_parents`, `emit_generation_warning`, `warning.generation_condition_parent_unseen` | `generation/_statistical_column.py:117`, `generation/pool/_events.py:52` |
 | forward-reference and mixed-category checks | GEN-STRICT E2's registry-driven `ref_kind` check and `plan.generate_categories_mixed` | `docs/plans/2026-11-09-gen-strict.md` steps 2b and 4, on `plan/gen-strict` |
+| run-time coded generation refusal | `GenerationError` and the runtime reason registry | `generation/pool/_errors.py`; `reasons/runtime/_part2.py` |
 | numeric typing groups | `_reference_root`, `numeric_plan` | `generation/_numeric_typing.py:169`, `:184` |
 | option checks, weights rule, catalog | `GENERATE_OPTIONS`, `_weights`, `generate_option_catalog` | `config/_generate_options.py:230`, `:195`, `:415` |
 | categorical draw | `random.Random(base_int("py")).choices` | `generation/synthesize.py:424` |
@@ -306,8 +328,11 @@ forgot the new branch" (AT-7).
   `inherit`, through the edge registry.
 - Compile refusal `plan.generate_inherit_column_missing` (new); pinned compile
   `plan.pinned_relational_option_unsupported` (`generation/_pinned_compile.py:52` `REJECTED_TYPES`).
+- Resident and pinned run-time refusal `runtime.categorical_condition_column_unavailable` when a
+  compile bypass leaves `condition_on` absent from generated data.
 - Streamed admission declines (fall back to resident).
-- Warning `warning.generation_condition_parent_unseen` (reused); no run failure is added.
+- Warning `warning.generation_condition_parent_unseen` (reused) for present but undeclared parent
+  values; this fallback is distinct from the missing-column run failure.
 
 ### Routes
 
@@ -327,7 +352,8 @@ forgot the new branch" (AT-7).
 
 - `inherit`: `via`, `column`; common `null_probability`, `determinism` (ignored, no draw).
 - `categorical`: `condition_on`, `by` (entries: `categories`, `weights`).
-- New plan code `generate_inherit_column_missing`; reused warning code and detail keys.
+- New plan code `generate_inherit_column_missing`; new runtime code
+  `categorical_condition_column_unavailable`; reused warning code and detail keys.
 
 ### Output surfaces
 
@@ -335,6 +361,9 @@ forgot the new branch" (AT-7).
   type; conditional categorical values.
 - `ExecutionResult.warnings` and `on_warning`: the reused fallback warning with
   `provider: "categorical"`.
+- Resident and pinned failures: value-free `GenerationError` with
+  `runtime.categorical_condition_column_unavailable` when generated data lacks the configured
+  conditioning column.
 - Generation log: the reused value-free summary line.
 - `generate_option_catalog()` and the JSON schema: the new type and keys.
 - Reproducibility report and `docs/capability-matrix.md` (regenerated).
@@ -346,9 +375,10 @@ forgot the new branch" (AT-7).
 | `GenerateColumnConfig.type` Literal (`config/_tables.py:277`) | + `inherit` | additive |
 | Option registry and catalog | + `inherit` entry; + `condition_on`, `by` on `categorical` | additive |
 | `warning.generation_condition_parent_unseen` detail | unchanged keys; new `provider` value `categorical` | additive value |
-| Reason registry | + `plan.generate_inherit_column_missing`; next minor at merge | additive |
+| Reason registry | + `plan.generate_inherit_column_missing`; + `runtime.categorical_condition_column_unavailable`; next minor for each slice at merge | additive |
 | Draw-site catalogue | `inherit` maps to `DETERMINISTIC_NO_DRAW`; no new site | additive |
 | Plain `categorical` output | unchanged bytes (AT-9) | none |
+| Plain `categorical` planned type | unchanged for numeric and text categories (AT-11) | none |
 
 ## Placement
 
@@ -369,7 +399,8 @@ codes, Sentry test, Unit tests, Plans, Changelog fragments.
 | warning for categorical | `generation/_statistical_column.py` `warn_on_unseen_parents` (accept categorical) | Generation | the statistical branch |
 | registries | `_admission.py`, `_pinned_compile.py`, `_bounds.py`, `execution/native/_determinism_protocol.py`, `execution/native/_capabilities.py` | Generation; Native companion bridge | one entry each |
 | compile check | `plan/_checks_windowed_date.py` neighbor in the same module family; no new plan module | Plan compile and checks | GEN-REL's branch-aware `anchor` check |
-| reason code | `reasons/plan/_part3.py` | Reason codes | GEN-REL's plan codes |
+| plan reason code | `reasons/plan/_part3.py` | Reason codes | GEN-REL's plan codes |
+| runtime reason code | `reasons/runtime/_part2.py` | Reason codes | existing `GenerationError` codes |
 | lookup sentry | GEN-REL's `tests/sentry/defects/test_reference_pool_choke_point.py` (one more case; no new module) | Sentry test | GEN-REL's pool choke-point cases |
 | tests | `tests/unit/generation/relational/test_inherit.py`, `tests/unit/generation/test_conditional_categorical.py`, `tests/unit/config/test_generate_options.py` | Unit tests | GEN-REL tests, `test_condition_fallback.py` |
 
@@ -383,11 +414,12 @@ raising a census entry.
 
 | Slice | Branch | Size | Content | Gate |
 |---|---|---|---|---|
-| E2 | `feat/gen-inherit-e2` | S/M (about 200 lines plus tests) | conditional categorical: registry keys and nested checks, #461 helper generalization (own commit), draw with precomputed `cum_weights`, resident warning, admission decline, typing, `ref_kind` registration and the union input to GEN-STRICT's mixed-category check; AT-2 (E2 part), AT-7 (categorical), AT-8 to AT-11 | T1 impact set on the Mac; T2 on the exact head; reason or warning detail change is a frozen-contract trigger only if keys change (they do not), so no full suite unless the census moves |
+| E2 | `feat/gen-inherit-e2` | S/M (about 200 lines plus tests) | conditional categorical: registry keys and nested checks, #461 helper generalization (own commit), draw with precomputed `cum_weights`, missing-parent runtime refusal, resident warning, admission decline, typing, `ref_kind` registration and the union input to GEN-STRICT's mixed-category check; AT-2 (E2 part), AT-7 (categorical), AT-8 to AT-11, AT-15 | full suite: new runtime reason code changes the reason manifest; T1 impact set and T2 run on the exact head |
 | E1 | `feat/gen-inherit-e1` | M (about 250 lines plus tests) | `inherit`: type, registry, edge registry entry, `_inherit.py` over `_parent_lookup`, explicit `arrow_table` type, `_reference_root` hop, compile check, registries, capability matrix regen, lookup sentry case; AT-1 to AT-7, AT-12 to AT-14 | full suite: new reason code (registry manifest) and a sentry change |
 
 Order: E2 first, after GEN-STRICT E2 merges (#461 is already on main; E2 does not wait for
-GEN-REL). E1 after GEN-REL E3a merges, and after E3b if AT-12 is to be checked against E3b's
+GEN-REL), subject to the registry-walk entry condition in Prerequisites. E1 after GEN-REL E3a
+merges, and after E3b if AT-12 is to be checked against E3b's
 aggregate module (otherwise the AT-12 scope note is checked when E3b lands). Each slice takes the next registry minor at merge and adds `changelog.d/gen-inherit-e<N>.md`
 (`### Added`).
 
@@ -399,6 +431,8 @@ aggregate module (otherwise the AT-12 scope note is checked when E3b lands). Eac
 - GEN-REL refusal codes and the uniqueness rule: see Coordination with GEN-REL below.
 - Conditional categorical keys by `str(parent)` through `_select_table`, the fitted case's rule,
   so YAML and fitted conditioning behave the same.
+- A missing generated `condition_on` key is not an unseen parent value. It refuses before fallback
+  with the central runtime reason code and a value-free `GenerationError`.
 - Unseen parent values fall back to the top-level mix with the shared warning on the resident
   route, the same as the fitted case (Owner question 2, decided).
 - `by` keys must be strings; YAML number and bool keys are refused with a hint to quote them
@@ -479,3 +513,31 @@ blocking, two MEDIUM, six V2-LOG. Each claim was checked against `1155b20c`.
   typing root; it is not a validity check, though, so the cross-entry type check moved to
   GEN-STRICT E2's `plan.generate_categories_mixed`, and `_categorical_type` reads the same union so
   typing matches. The GEN-REL one-function request is under Coordination with GEN-REL.
+
+## Codex plan gate
+
+Reviewed the whole plan against engine `origin/main` `1155b20c`, GEN-STRICT
+`origin/plan/gen-strict` `5fa3008d`, GEN-REL `origin/plan/gen-rel` `5c04393a`, the CODEMAP placement
+rules, the recurring-defect catalog and the owner-set V1 and DESIGN bars. Dennis round 2 was GO;
+this gate folds in all four of his closing notes.
+
+- **V1 fixed:** E2 now has a build-start entry condition that inspects the merged GEN-STRICT code
+  and seeded guard to prove forward references are discovered by iterating `OptionSpec.ref_kind` in
+  the option registry, not by a hard-coded key list.
+- **V1 fixed:** FM8 now has a named resident and pinned run-time outcome when generated data lacks
+  `condition_on`: value-free `GenerationError` with the one new central reason
+  `runtime.categorical_condition_column_unavailable`. AT-15 proves it never becomes silent
+  all-fallback output and that the exception has no value-bearing context chain.
+- **V1 fixed:** the `_reference_root` `inherit` hop is total. A missing `via` or a `via` that is not
+  a `reference` column returns the incoming key unchanged; AT-14 pins both cells.
+- **V1 fixed:** AT-11 now pins the planned types of ordinary numeric and text categorical columns,
+  so extending `_categorical_type` for `by` cannot alter plain categorical typing.
+- **DESIGN checked:** the plan extends the GEN-STRICT option registry, GEN-REL input-edge registry,
+  GEN-REL parent lookup, #461 selector and warning emitter, numeric typing root walk and central
+  reason registry. It adds no second validator, lookup, warning path, edge registry or flat module
+  to an overfull package. AT-12 remains the lookup choke-point guard.
+- **V2-LOG:** pinned fallback warnings remain absent for both fitted statistical and YAML
+  categorical providers, as recorded in round 1. Completeness beyond AT-12's realistic lookup
+  shapes remains non-blocking under the standing sentry rule.
+
+**Codex verdict: GO.** No unresolved V1 or change-created DESIGN finding remains in the plan.
