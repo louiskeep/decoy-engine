@@ -302,6 +302,11 @@ def test_all_lists_every_public_name():
         "CsvDialect",
         "read_csv_source",
         "resolve_csv_dialect",
+        # LIB L1a: the record envelope and its decode results (functions: decoy_engine.records).
+        "DecodedRecord",
+        "OpaqueRecord",
+        "RecordError",
+        "RecordNeedsNewer",
         # LIB L0.1: the protected directory allocator.
         "open_protected_dir",
         "protected_scratch_dir",

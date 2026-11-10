@@ -10,6 +10,10 @@ __all__ = [
     "FPE_JOIN_GROUP_ACTIVE",
     "FPE_PARTIAL_PLAINTEXT_DISCLOSURE",
     "GEO_GENERALIZE_CASCADE",
+    "JOB_LOG_WRITE_FAILED",
+    "LIBRARY_DEGRADED",
+    "LIBRARY_DELETE_SKIPPED",
+    "LIBRARY_WRITE_FAILED",
     "MIMESIS_LOCALE_FALLBACK",
     "NESTED_CELL_JSON_PARSE_ERROR",
     "NESTED_JSONPATH_PATH_OVERLAP",
@@ -57,3 +61,12 @@ TEXT_MASK_SUB_FLOOR_SPAN_HANDLED = _d(
 TOP_CODE_GENERALIZED = _d("top_code_generalized", "Top code generalized.")
 UNDECLARED_OUTPUT_COLUMNS = _d("undeclared_output_columns", "Undeclared output columns.")
 VALUE_REUSE_FIXED_POINT = _d("value_reuse_fixed_point", "Value reuse fixed point.")
+
+# Events the CLI builds around the local record library; they are registered here because an
+# unregistered code reaches the wire as `unregistered_reason`.
+_d = _catalog.warning("LibraryEvent")
+
+JOB_LOG_WRITE_FAILED = _d("job_log_write_failed", "Job log write failed.", since="1.20.0")
+LIBRARY_DEGRADED = _d("library_degraded", "Library degraded.", since="1.20.0")
+LIBRARY_DELETE_SKIPPED = _d("library_delete_skipped", "Library delete skipped.", since="1.20.0")
+LIBRARY_WRITE_FAILED = _d("library_write_failed", "Library write failed.", since="1.20.0")

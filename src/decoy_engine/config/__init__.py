@@ -60,6 +60,8 @@ from decoy_engine.config._relationships import (
 )
 from decoy_engine.config._sources import (
     FILE_SOURCE_PATH_FIELDS,
+    SOURCE_LOCATOR_FIELDS,
+    SOURCE_PATH_FIELDS,
     FileSource,
     GCSSource,
     S3Source,
@@ -90,6 +92,8 @@ from decoy_engine.config._transforms import (
 
 __all__ = [
     "FILE_SOURCE_PATH_FIELDS",
+    "SOURCE_LOCATOR_FIELDS",
+    "SOURCE_PATH_FIELDS",
     "UNIQUE_FAKER_ATTEMPTS",
     "ColumnConfig",
     "DedupeOp",

@@ -247,6 +247,14 @@ FILE_SOURCE_PATH_FIELDS: tuple[str, ...] = tuple(
 )
 
 
+def _marked(model: type[BaseModel], marker: str) -> tuple[str, ...]:
+    return tuple(
+        name
+        for name, field in model.model_fields.items()
+        if isinstance(field.json_schema_extra, dict) and field.json_schema_extra.get(marker)
+    )
+
+
 class S3Source(BaseModel):
     """An S3 (or S3-compatible) CSV / Parquet source.
 
@@ -260,11 +268,14 @@ class S3Source(BaseModel):
 
     type: Literal["s3"]
     format: Literal["csv", "parquet"]
-    bucket: str = Field(..., min_length=1, max_length=255)
-    key: str = Field(..., min_length=1)
-    region: str | None = None
+    bucket: str = Field(
+        ..., min_length=1, max_length=255, json_schema_extra={"x-decoy-locator": True}
+    )
+    key: str = Field(..., min_length=1, json_schema_extra={"x-decoy-path": True})
+    region: str | None = Field(default=None, json_schema_extra={"x-decoy-locator": True})
     endpoint_url: str | None = Field(
         default=None,
+        json_schema_extra={"x-decoy-locator": True},
         description=(
             "Override the AWS endpoint (e.g. http://localhost:9000 for MinIO, "
             "https://<account>.r2.cloudflarestorage.com for Cloudflare R2). "
@@ -273,6 +284,7 @@ class S3Source(BaseModel):
     )
     credentials_ref: str | None = Field(
         default=None,
+        json_schema_extra={"x-decoy-locator": True},
         description=(
             "Opaque credentials identifier the platform resolves at run time. "
             "The engine never sees raw secrets; when None the SDK walks its "
@@ -313,10 +325,13 @@ class GCSSource(BaseModel):
 
     type: Literal["gcs"]
     format: Literal["csv", "parquet"]
-    bucket: str = Field(..., min_length=1, max_length=255)
-    object: str = Field(..., min_length=1)
+    bucket: str = Field(
+        ..., min_length=1, max_length=255, json_schema_extra={"x-decoy-locator": True}
+    )
+    object: str = Field(..., min_length=1, json_schema_extra={"x-decoy-path": True})
     credentials_ref: str | None = Field(
         default=None,
+        json_schema_extra={"x-decoy-locator": True},
         description=(
             "Opaque credentials identifier the platform resolves at run time. "
             "The engine never sees raw secrets; when None the SDK uses GCP "
@@ -329,3 +344,23 @@ SourceDescriptor = Annotated[
     FileSource | S3Source | GCSSource,
     Field(discriminator="type"),
 ]
+
+
+# Every source field that names a file or an object, across all source types (`x-decoy-path`):
+# a record that stores a descriptor reduces these to their last segment when it is shared.
+SOURCE_PATH_FIELDS: tuple[str, ...] = tuple(
+    dict.fromkeys(
+        (
+            *FILE_SOURCE_PATH_FIELDS,
+            *_marked(S3Source, "x-decoy-path"),
+            *_marked(GCSSource, "x-decoy-path"),
+        )
+    )
+)
+
+# Fields that locate or authorize remote storage (`x-decoy-locator`: bucket, endpoint, region,
+# credentials reference) but are not paths: sharing a record
+# that carries one cannot reduce it, so the export lists the record as unstripped.
+SOURCE_LOCATOR_FIELDS: tuple[str, ...] = tuple(
+    dict.fromkeys((*_marked(S3Source, "x-decoy-locator"), *_marked(GCSSource, "x-decoy-locator")))
+)
