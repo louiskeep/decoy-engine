@@ -34,7 +34,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.19.0",
+      "since": "1.20.0",
       "summary": "Record corrupt.",
       "symbol": "RECORD_CORRUPT"
     },
@@ -72,7 +72,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.19.0",
+      "since": "1.20.0",
       "summary": "Record invalid.",
       "symbol": "RECORD_INVALID"
     },
@@ -110,7 +110,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.19.0",
+      "since": "1.20.0",
       "summary": "Record kind reserved.",
       "symbol": "RECORD_KIND_RESERVED"
     },
@@ -142,7 +142,7 @@
           "severity": "warning"
         }
       ],
-      "since": "1.19.0",
+      "since": "1.20.0",
       "summary": "Job log write failed.",
       "symbol": "JOB_LOG_WRITE_FAILED"
     },
@@ -174,7 +174,7 @@
           "severity": "warning"
         }
       ],
-      "since": "1.19.0",
+      "since": "1.20.0",
       "summary": "Library degraded.",
       "symbol": "LIBRARY_DEGRADED"
     },
@@ -206,7 +206,7 @@
           "severity": "warning"
         }
       ],
-      "since": "1.19.0",
+      "since": "1.20.0",
       "summary": "Library delete skipped.",
       "symbol": "LIBRARY_DELETE_SKIPPED"
     },
@@ -238,11 +238,11 @@
           "severity": "warning"
         }
       ],
-      "since": "1.19.0",
+      "since": "1.20.0",
       "summary": "Library write failed.",
       "symbol": "LIBRARY_WRITE_FAILED"
     }
   ],
   "reason_schema_version": 1,
-  "registry_version": "1.19.0"
+  "registry_version": "1.20.0"
 }
