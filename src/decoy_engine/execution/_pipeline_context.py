@@ -181,22 +181,6 @@ class RouteDecision:
     stream: StreamVerdict | None = None
 
 
-def _run_schemas(
-    caller_sources: Mapping[str, pa.Table | LazySource],
-    source_loader: Callable[[str], pa.Table] | None,
-    loader_schemas: Mapping[str, pa.Schema] | None,
-) -> dict[str, pa.Schema]:
-    """Every table's schema before any row: supplied tables by their own, loader tables declared."""
-    if (source_loader is None) != (loader_schemas is None):
-        raise ValueError("run_pipeline: source_loader and source_loader_schemas go together.")
-    schemas = {n: s.schema for n, s in caller_sources.items()}
-    for n, schema in (loader_schemas or {}).items():
-        if n in schemas and not schemas[n].equals(schema):
-            raise ValueError("run_pipeline: a table has two different declared schemas.")
-        schemas[n] = schema
-    return schemas
-
-
 def build_run_context(
     config: dict[str, Any],
     sources: Mapping[str, pa.Table | LazySource] | None,
@@ -360,8 +344,11 @@ def build_run_context(
     )
 
     # Every source column must be declared, checked from headers, footers and schemas first.
-    schemas = _run_schemas(caller_sources, source_loader, source_loader_schemas)
-    declared = prepare_declared_sources(DeclarationRequest.for_run(config, schemas))
+    if (source_loader is None) != (source_loader_schemas is None):
+        raise ValueError("run_pipeline: source_loader and source_loader_schemas go together.")
+    schemas = {n: s.schema for n, s in caller_sources.items()}
+    request = DeclarationRequest.for_run(config, schemas, source_loader_schemas)
+    declared = prepare_declared_sources(request)
     source_loader = declared.checked_loader(source_loader) if source_loader else None
 
     # Duplicate field names are refused after the config-only admission and before profiling,

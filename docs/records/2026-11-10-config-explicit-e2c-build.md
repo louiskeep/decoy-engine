@@ -5,7 +5,7 @@ Status: record
 Slice: roadmap row 22. `profile_source`, `run_pipeline` and `run_pipeline_isolated` refuse an
 undeclared source column (`source_file.undeclared_column`) and a source with no `tables` entry
 (`source_file.undeclared_table`) before any row is read. Branch `feat/config-explicit-e2c-run`,
-merged with main `b63c0fb9`. Source change is about 55 added lines in 4 files; tests carry the rest
+merged with main `b63c0fb9`. Source change is 8 source and docs files; tests carry the rest
 of the diff (76 test files).
 
 ## What changed in code
@@ -13,13 +13,13 @@ of the diff (76 test files).
 - `profile/_source.py`: `profile_source` takes a keyword-only `declared`; the gate is its first
   statement.
 - `execution/_pipeline_context.py`: `_run_schemas` plus the gate, after the F06 preflight and F13
-  admission and before the first reader and `refuse_duplicate_run_sources`. File is exactly 600 lines.
+  admission and before the first reader and `refuse_duplicate_run_sources`. The loader-schema merge lives in `DeclarationRequest.for_run` (profile package), which keeps the file under 600 lines.
 - `execution/_pipeline.py`: `run_pipeline(source_loader_schemas=...)`; a loader and its schemas go
   together, otherwise `ValueError`.
 - `execution/_isolated_run.py`: parent gate after `_require_ambient_for_paths` (659 lines, pin 672).
 - Tests: `tests/unit/profile/test_declaration_gate.py`, `tests/sentry/source_config/test_declaration_gate.py`
   (AST ordering check, READERS allowlist, seeded mutation).
-- Docs: `docs/compatibility-contract.md`, `CHANGELOG.md` (Breaking for consumers), `CODEMAP.md`.
+- Docs: `docs/compatibility-contract.md`, `changelog.d/config-explicit-e2c.md` (Breaking for consumers), `CODEMAP.md`.
 
 ## Fixture churn
 

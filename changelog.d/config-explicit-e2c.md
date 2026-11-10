@@ -8,4 +8,5 @@ before any data row is read, staged, profiled or masked. The check reads headers
 covers supplied tables and loader tables. `run_pipeline` gains `source_loader_schemas`, required with a
 `source_loader` and refused without one. `profile_source` gains the keyword-only `declared`. A config that
 relied on the unconfigured-column `warn` pass-through now lists those columns as `passthrough`. No registry
-code is added.
+code is added. `estimate_job`, `estimate_job_capacity` and the physical snapshot profile through
+`profile_source`, so they refuse the same undeclared columns.

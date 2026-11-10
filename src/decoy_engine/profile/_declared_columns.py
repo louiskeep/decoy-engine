@@ -176,6 +176,22 @@ def _supplied(schemas: Mapping[str, pa.Schema]) -> tuple[DeclarationInput, ...]:
     )
 
 
+def _run_schemas(
+    schemas: Mapping[str, pa.Schema], loader_schemas: Mapping[str, pa.Schema]
+) -> dict[str, pa.Schema]:
+    """Supplied tables by their own schema, loader tables as declared; one schema per table."""
+    import pyarrow as pa
+
+    merged = dict(schemas)
+    for name, schema in loader_schemas.items():
+        if not isinstance(schema, pa.Schema):
+            raise TypeError("run_pipeline: each source_loader_schemas value must be a pa.Schema.")
+        if name in merged and not merged[name].equals(schema):
+            raise ValueError("run_pipeline: a table has two different declared schemas.")
+        merged[name] = schema
+    return merged
+
+
 @dataclasses.dataclass(frozen=True)
 class DeclarationRequest:
     """What a route will read, as the catalogs `prepare_declared_sources` resolves and checks.
@@ -197,9 +213,14 @@ class DeclarationRequest:
 
     @classmethod
     def for_run(
-        cls, config: Mapping[str, Any], schemas: Mapping[str, pa.Schema]
+        cls,
+        config: Mapping[str, Any],
+        schemas: Mapping[str, pa.Schema],
+        loader_schemas: Mapping[str, pa.Schema] | None = None,
     ) -> DeclarationRequest:
-        return cls(config, _config_sources(config), _supplied(schemas))
+        """`loader_schemas` declares the tables a source loader serves, checked before it runs."""
+        merged = _run_schemas(schemas, loader_schemas or {})
+        return cls(config, _config_sources(config), _supplied(merged))
 
     @classmethod
     def for_chunks(

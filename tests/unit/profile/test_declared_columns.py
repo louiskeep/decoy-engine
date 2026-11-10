@@ -283,6 +283,15 @@ def test_prepared_capability(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     with pytest.raises(PipelineValidationError):
         prepare_declared_sources(DeclarationRequest.for_run(wide, {"t": only_id}))
 
+    # Loader schemas join the supplied ones; one table may not carry two schemas or a non-schema.
+    DeclarationRequest.for_run(config, {"t": ok}, {"t": ok})
+    with pytest.raises(ValueError, match="two different declared schemas"):
+        DeclarationRequest.for_run(config, {"t": ok}, {"t": extra})
+    with pytest.raises(TypeError, match="must be a pa.Schema"):
+        DeclarationRequest.for_run(config, {}, {"t": object()})  # type: ignore[dict-item]
+    with pytest.raises(PipelineValidationError):
+        prepare_declared_sources(DeclarationRequest.for_run(config, {}, {"t": extra}))
+
     calls: list[int] = []
     real = _declared_columns.check_columns_declared
 
