@@ -18,7 +18,6 @@ import pytest
 from decoy_engine.generation import kinds
 from decoy_engine.generation._admission import classify_plan
 from decoy_engine.generation._plan_entry import generate_tables
-from decoy_engine.generation.kinds import _parametric
 from decoy_engine.generation.pinned import compile_pinned_plan, execute_pinned
 from decoy_engine.generators.derivation import GEN_FAMILIES, GenDeriveContext, with_table
 from tests.parity._fr0_support import (
@@ -30,7 +29,6 @@ from tests.parity._fr0_support import (
 )
 from tests.unit.generation.kinds._support import (
     FAMILY_COLS,
-    INT_FAMILIES,
     SEED,
     cfg,
     dist_col,
@@ -86,26 +84,10 @@ def test_an_irregular_partition_gives_the_same_table(family: str) -> None:
     assert cut["t"].equals(whole["t"])
 
 
-def test_the_zipf_cdf_is_built_once_per_stream(monkeypatch: pytest.MonkeyPatch) -> None:
-    real = _parametric.zipf_cdf
-    calls: list[tuple[float, int]] = []
-
-    def counting(s: float, n: int) -> Any:
-        calls.append((s, n))
-        return real(s, n)
-
-    monkeypatch.setattr(_parametric, "zipf_cdf", counting)
-    stream = _stream(dist_col("zipf"))
-    for i in range(50):
-        stream.next_batch(i * 10, 10)
-    assert len(calls) == 1
-
-
 # AT-4 ---------------------------------------------------------------------------------
 
 # Seed 7, 20 rows, column `x` of table `t`, under the locked numpy (a band whose stream disagrees re-pins here).
 GOLDEN: dict[str, list[float | int]] = {
-    "poisson": [10, 4, 6, 7, 5, 6, 1, 8, 4, 8, 7, 5, 12, 6, 6, 5, 6, 7, 11, 5],
     "uniform": [
         8.264155134401758,
         4.333485997108449,
@@ -128,7 +110,6 @@ GOLDEN: dict[str, list[float | int]] = {
         3.4552381675783264,
         4.754355976289915,
     ],
-    "zipf": [2, 1, 6, 5, 2, 1, 1, 3, 1, 2, 2, 9, 32, 11, 1, 14, 1, 1, 1, 24],
 }
 
 
@@ -140,10 +121,7 @@ def _golden_family(family: str) -> list[Any]:
 def test_goldens(family: str) -> None:
     got = _golden_family(family)
     want = GOLDEN[family]
-    if family in INT_FAMILIES:
-        assert got == want
-    else:
-        assert got == pytest.approx(want, rel=1e-9, abs=1e-12)
+    assert got == pytest.approx(want, rel=1e-9, abs=1e-12)
 
 
 def test_constant_golden_and_types() -> None:
@@ -163,8 +141,6 @@ def test_constant_golden_and_types() -> None:
 def test_distribution_arrow_types() -> None:
     out = generate(one(dist_col("uniform", name="a"), rows=4))["t"]
     assert out.schema.field("a").type == pa.float64()
-    out = generate(cfg([table("t", 4, [dist_col("poisson", name="p")])]))["t"]
-    assert out.schema.field("p").type == pa.int64()
     # An all-null column keeps its declared type rather than inferring `null`.
     out = generate(one(dist_col("uniform", null_probability=1.0), rows=4))["t"]
     assert out.schema.field("x").type == pa.float64()
@@ -250,21 +226,10 @@ def test_the_parquet_sink_route_agrees(family: str, tmp_path: Path) -> None:
 ROWS = 200_000
 
 
-def _zipf_pmf(s: float, n: int) -> np.ndarray:
-    w = 1.0 / np.arange(1, n + 1, dtype=float) ** s
-    return w / w.sum()
-
-
 def _analytic(family: str) -> tuple[float, float]:
     c = FAMILY_COLS[family]
-    if family == "uniform":
-        return (c["low"] + c["high"]) / 2, (c["high"] - c["low"]) ** 2 / 12
-    if family == "poisson":
-        return c["mean"], c["mean"]
-    pmf = _zipf_pmf(c["s"], c["n"])
-    k = np.arange(1, c["n"] + 1)
-    mean = float((k * pmf).sum())
-    return mean, float((((k - mean) ** 2) * pmf).sum())
+    assert family == "uniform"
+    return (c["low"] + c["high"]) / 2, (c["high"] - c["low"]) ** 2 / 12
 
 
 @pytest.mark.parametrize("family", FAMILIES)
@@ -284,14 +249,11 @@ def test_clip_holds_min_and_max_exactly(family: str) -> None:
     mean, var = _analytic(family)
     sd = math.sqrt(var)
     lo, hi = mean - 0.3 * sd, mean + 0.3 * sd
-    if family in INT_FAMILIES:
-        lo, hi = math.floor(lo), math.ceil(hi)
     draws = _stream(dist_col(family, min=lo, max=hi)).next_batch(0, 20_000)
     assert min(draws) == lo
     assert max(draws) == hi
     assert all(lo <= v <= hi for v in draws)
-    kinds_ = {type(v) for v in draws}
-    assert kinds_ == ({int} if family in INT_FAMILIES else {float})
+    assert {type(v) for v in draws} == {float}
 
 
 def test_clip_with_one_bound() -> None:
@@ -329,21 +291,13 @@ def test_generate_tables_is_the_public_entry() -> None:
 # Digest of the raw float64 bits of 2,000,000 draws, observed identical on arm64 (macOS) and x86
 # (Linux) under numpy 2.2.6. The count matters: numpy's normal and exponential tails call platform
 # libm and differ by one ulp only at rare rows (the first around row 267,000 of 2M), so a small pin
-# looks stable and is not. Those families are deferred (plan: Deferred to E1b). uniform is built
+# looks stable and is not. Those families, and poisson and zipf, are deferred (plan: Deferred to E1b). uniform is built
 # from random() with separate multiply and add ufuncs because arm64 fuses `low + width * x` into
 # an FMA. A change that moves a digest on one architecture breaks docs/determinism.md.
 
 _BIT_ROWS = 2_000_000
 _BIT_DIGESTS = {
-    "poisson": "1d6becbcdc7420dcaf4fd0338cfedcd212b9cc52f976501933549e30075961e7",
     "uniform": "004f9f6941cbc6d91ce04f96f5714435a369fbbb12cf64e72bb6cf1d7590a085",
-    "zipf": "125ecd7e0c7a032edf7023d52391c6cece3778511542ef795fe51d158d60486c",
-}
-_CDF_DIGESTS = {
-    (1.2, 50): "6288863be0e8f1524f24f00ced55ec7bea3fb63ad8ac740bcaaa8552e81196cd",
-    (1.05, 1_000_000): "c8ba8bcb467251b22f6704a70ccf396ccd12eb2d424c040d2d43a67b0e287a2b",
-    (0.5, 1_000_000): "62754c9b036ab9057d60e24bd275d781660fb3548801569b7ad279b7b47eea18",
-    (3.0, 1000): "74ffa0d381763cd4ddb61dd269013c3017b4b782188941f25febc9b909810489",
 }
 
 
@@ -358,10 +312,3 @@ def test_draw_bits_are_identical_on_every_architecture(family: str) -> None:
     draws = _stream(dist_col(family)).next_batch(0, _BIT_ROWS)
     bits = np.asarray(draws, dtype=np.float64).tobytes()
     assert hashlib.sha256(bits).hexdigest() == _BIT_DIGESTS[family]
-
-
-@pytest.mark.parametrize(("s", "n"), sorted(_CDF_DIGESTS))
-def test_zipf_cdf_bits_are_identical_on_every_architecture(s: float, n: int) -> None:
-    import hashlib
-
-    assert hashlib.sha256(_parametric.zipf_cdf(s, n).tobytes()).hexdigest() == _CDF_DIGESTS[(s, n)]

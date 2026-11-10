@@ -53,7 +53,7 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
 # Re-pinned for GEN-NUM-SHAPE: gen.statistical_per_row call shape text.
 # Re-pinned for GEN-UNIQUE E2: four unique-draw sites, the moved synthesize.py call sites, and the shared attempt limit.
 # Re-pinned for GEN-TYPES E1: gen.distribution appended at the end of the catalogue.
-_CATALOGUE_DIGEST = "d6cfa394c71a28f318edbd1bdb5a9cee635ce017b0089dea1848f13542ac3731"
+_CATALOGUE_DIGEST = "540cf86c22a0408253e32bb936d7c1d009f07415e3ea3919afbb3fb5c70cc4bc"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -142,7 +142,7 @@ _ENTRY_DIGESTS = [
     "46b422be131d1e91c5ed2a6174d86f970429577b88e5da660ab3a4926171dab4",
     "f698d376bd1e62f5e3f17bde97a7e4da236bf76ad09baf49d95a8c6445614c2c",
     "c8ae317b9397f7faf9152ddc3c0e4e0d0fd55de2f87148512d76b9e28a343324",
-    "f360fe3265abbf1905cd501210431338e1bceb7705e578843fe5e3ac60a940d9",
+    "abcb0cebb1fd2d748a5eb67d3ee5e473fbe222e0cda0e6bd177a343f3a3f8a70",
 ]
 
 _MAP_DIGESTS = {

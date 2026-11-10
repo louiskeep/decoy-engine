@@ -30,7 +30,7 @@ VALID = {
     "windowed_date": {"anchor": "a", "max_days": 5},
     "group_key": {"group_by": "a"},
     "constant": {"value": 1},
-    "distribution": {"family": "poisson", "mean": 3},
+    "distribution": {"family": "uniform", "low": 0, "high": 3},
 }
 OTHER_NINE = sorted(VALID)
 

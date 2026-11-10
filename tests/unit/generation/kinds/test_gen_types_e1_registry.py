@@ -21,7 +21,14 @@ from decoy_engine.execution.native._capabilities import _GEN_ONLY
 from decoy_engine.generation._admission import ADMISSION_MATRIX
 from decoy_engine.generation._numeric_typing import READER_KEYS
 from decoy_engine.generation._pinned_compile import PINNABLE_TYPES, REJECTED_TYPES
-from tests.unit.generation.kinds._support import FAMILY_COLS, cfg, dist_col, table
+from tests.unit.generation.kinds._support import (
+    DEFERRED_FAMILIES,
+    FAMILY_COLS,
+    FOREIGN_KEYS,
+    cfg,
+    dist_col,
+    table,
+)
 
 NEW_TYPES = ("constant", "distribution")
 UNKNOWN = str(reasons.config.GENERATE_OPTION_UNKNOWN)
@@ -29,7 +36,9 @@ TYPE = str(reasons.config.GENERATE_OPTION_TYPE)
 RANGE = str(reasons.config.GENERATE_OPTION_RANGE)
 VALUE = str(reasons.config.GENERATE_OPTION_VALUE_UNKNOWN)
 
-ALL_FAMILY_KEYS = {k for cols in FAMILY_COLS.values() for k in cols if k != "family"}
+ALL_FAMILY_KEYS = {k for cols in FAMILY_COLS.values() for k in cols if k != "family"} | set(
+    FOREIGN_KEYS
+)
 
 
 def _problems(family: str | None, **extra: Any) -> list[tuple[tuple[Any, ...], str]]:
@@ -97,8 +106,8 @@ def test_a_missing_family_key_is_missing(family: str) -> None:
 def test_family_is_required_and_a_bad_family_is_a_value_error() -> None:
     assert _problems(None) == [(("family",), "missing")]
     assert _problems("weibull") == [(("family",), VALUE)]
-    # Removed from E1 (numpy's libm calls are not bit-portable across arm64 and x86): E1b.
-    for name in ("lognormal", "beta", "normal", "exponential"):
+    # Deferred to E1b (numpy's libm calls are not bit-portable across arm64 and x86).
+    for name in DEFERRED_FAMILIES:
         assert _problems(name) == [(("family",), VALUE)]
     assert _problems("uniform ", low=0, high=1) == [(("family",), VALUE)]
     assert _problems(3) == [(("family",), TYPE)]  # type: ignore[arg-type]
@@ -108,14 +117,7 @@ BAD_RANGE: list[tuple[str, dict[str, Any], str]] = [
     ("uniform", {"low": 3, "high": 3}, RANGE),
     ("uniform", {"low": -1e308, "high": 1e308}, RANGE),
     ("uniform", {"low": 5, "high": 3}, RANGE),
-    ("poisson", {"mean": 0}, RANGE),
-    ("poisson", {"mean": 1_000_000_001}, RANGE),
-    ("zipf", {"s": 0, "n": 10}, RANGE),
-    ("zipf", {"s": 1, "n": 0}, RANGE),
-    ("zipf", {"s": 1, "n": 1_000_001}, RANGE),
-    ("zipf", {"s": 1, "n": 2.5}, TYPE),
-    ("poisson", {"mean": 3, "min": 0.5}, TYPE),
-    ("zipf", {"s": 1, "n": 9, "max": 4.0}, TYPE),
+    ("uniform", {"low": 0, "high": 1, "min": "a"}, TYPE),
 ]
 
 
@@ -126,8 +128,6 @@ def test_range_and_type_rules(family: str, extras: dict[str, Any], code: str) ->
 
 
 def test_boundary_values_pass() -> None:
-    assert _problems("poisson", mean=1_000_000_000) == []
-    assert _problems("zipf", s=0.01, n=1_000_000) == []
     assert _problems("uniform", low=-5, high=5, min=2, max=2) == []
     assert _problems("uniform", low=-1, high=1.0, min=0, max=0.5) == []
 
@@ -155,9 +155,8 @@ def test_the_reference_weighted_rule_keeps_its_code_and_location() -> None:
 def test_the_catalog_shows_the_family_requirements() -> None:
     entry = opts.generate_option_catalog()["distribution"]
     assert entry.required == ("family",)
-    assert entry.required_when["family"]["poisson"] == ("mean",)
-    assert entry.required_when["family"]["zipf"] == ("s", "n")
-    assert set(entry.optional) >= ALL_FAMILY_KEYS | {"min", "max"}
+    assert entry.required_when["family"] == {"uniform": ("low", "high")}
+    assert set(entry.optional) == {"low", "high", "min", "max"}
     ref = opts.generate_option_catalog()["reference"]
     assert ref.required_when == {"distribution": {"weighted": ("weights",)}}
     assert opts.generate_option_catalog()["sequence"].required_when == {}
@@ -166,17 +165,17 @@ def test_the_catalog_shows_the_family_requirements() -> None:
 def test_the_mutant_one_table_drives_missing_and_foreign_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    missing_case = ("poisson", {})
-    foreign_case = ("poisson", {"mean": 3, "low": 1})
-    assert _problems(missing_case[0], **missing_case[1]) == [(("mean",), "missing")]
-    assert _problems(foreign_case[0], **foreign_case[1]) == [(("low",), UNKNOWN)]
+    missing_case = ("uniform", {"low": 0})
+    foreign_case = ("uniform", {"low": 0, "high": 1, "mean": 3})
+    assert _problems(missing_case[0], **missing_case[1]) == [(("high",), "missing")]
+    assert _problems(foreign_case[0], **foreign_case[1]) == [(("mean",), UNKNOWN)]
     mutated = {
-        t: {sel: {v: k for v, k in by.items() if v != "poisson"} for sel, by in rules.items()}
+        t: {sel: {v: k for v, k in by.items() if v != "uniform"} for sel, by in rules.items()}
         for t, rules in opts.CONDITIONAL_REQUIRED.items()
     }
     monkeypatch.setattr(opts, "CONDITIONAL_REQUIRED", mutated)
-    assert _problems(missing_case[0], **missing_case[1]) != [(("mean",), "missing")]
-    assert _problems(foreign_case[0], **foreign_case[1]) != [(("low",), UNKNOWN)]
+    assert _problems(missing_case[0], **missing_case[1]) != [(("high",), "missing")]
+    assert _problems(foreign_case[0], **foreign_case[1]) != [(("mean",), UNKNOWN)]
 
 
 # the same rules through the config model and the JSON schema ----------------------------
@@ -196,10 +195,10 @@ def test_pipeline_validation_refuses_a_foreign_key_at_its_name() -> None:
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError) as info:
-        PipelineConfig.model_validate(_config(dist_col("poisson", low=2)))
+        PipelineConfig.model_validate(_config(dist_col("uniform", mean=2)))
     (err,) = info.value.errors(include_url=False)
     assert err["type"] == UNKNOWN
-    assert tuple(err["loc"]) == ("tables", 0, "generate_columns", 0, "low")
+    assert tuple(err["loc"]) == ("tables", 0, "generate_columns", 0, "mean")
 
 
 def test_constant_values() -> None:
@@ -266,10 +265,52 @@ def test_schema_takes_min_and_max_on_every_family() -> None:
 
 
 def test_the_family_tables_agree() -> None:
-    """The config table, the draw builders and the integer set name the same families."""
-    from decoy_engine.config._generate_type_checks import INT_FAMILIES
+    """The config table, the draw builders and the fixtures name the same families."""
     from decoy_engine.generation.kinds import _parametric
 
     table = set(opts.CONDITIONAL_REQUIRED["distribution"]["family"])
-    assert table == set(_parametric._FAMILIES) == set(FAMILY_COLS)
-    assert table >= INT_FAMILIES
+    assert table == set(_parametric._FAMILIES) == set(FAMILY_COLS) == {"uniform"}
+
+
+# Compile-time refusal ---------------------------------------------------------------------
+# The validator, `compile_plan` and `run_config_only_checks` share `generate_family_problems`.
+
+
+def _raw(family: str) -> dict[str, Any]:
+    """A config the model validator cannot see (it never went through `PipelineConfig`)."""
+    return cfg([table("t", 5, [{"name": "x", "type": "distribution", "family": family}])])
+
+
+@pytest.mark.parametrize("family", DEFERRED_FAMILIES)
+def test_compile_plan_refuses_each_deferred_family(family: str) -> None:
+    from decoy_engine.errors import PipelineValidationError
+    from decoy_engine.plan import compile_plan
+    from tests.unit._dps_helpers import empty_profile
+
+    with pytest.raises(PipelineValidationError) as info:
+        compile_plan(_raw(family), empty_profile(), decoy_engine_version="test")
+    err = info.value
+    assert err.code == VALUE
+    assert err.path == "tables.t.generate_columns.x.family"
+    assert err.__cause__ is None
+    assert err.__context__ is None
+    assert family not in str(err)
+
+
+@pytest.mark.parametrize("family", DEFERRED_FAMILIES)
+def test_config_only_checks_and_the_validator_refuse_the_same_family(family: str) -> None:
+    from pydantic import ValidationError
+
+    from decoy_engine.errors import PipelineValidationError
+    from decoy_engine.plan._compile import run_config_only_checks
+
+    with pytest.raises(PipelineValidationError) as info:
+        run_config_only_checks(_raw(family))
+    assert info.value.code == VALUE
+    assert info.value.__cause__ is None
+    with pytest.raises(ValidationError) as verr:
+        PipelineConfig.model_validate(_raw(family))
+    assert {e["type"] for e in verr.value.errors(include_url=False)} == {VALUE}
+    assert opts.generate_family_problems(_raw(family)) == [
+        ("tables.t.generate_columns.x.family", VALUE)
+    ]

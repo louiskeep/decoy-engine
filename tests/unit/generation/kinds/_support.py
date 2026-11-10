@@ -15,10 +15,11 @@ SEED = 7
 # One valid column per family: the parameters the plan's table gives, plus a name and a type.
 FAMILY_COLS: dict[str, dict[str, Any]] = {
     "uniform": {"family": "uniform", "low": 2, "high": 9.5},
-    "poisson": {"family": "poisson", "mean": 6},
-    "zipf": {"family": "zipf", "s": 1.2, "n": 50},
 }
-INT_FAMILIES = ("poisson", "zipf")
+# Families the registry refuses until E1b brings a portable sampler (plan: Deferred to E1b).
+DEFERRED_FAMILIES = ("normal", "exponential", "lognormal", "beta", "poisson", "zipf")
+# Keys those families would have taken; uniform must refuse every one as foreign.
+FOREIGN_KEYS = ("mean", "std", "rate", "scale", "sigma", "alpha", "beta", "s", "n")
 
 
 def dist_col(family: str, name: str = "x", **extra: Any) -> dict[str, Any]:

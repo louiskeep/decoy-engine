@@ -29,11 +29,9 @@ from decoy_engine.config._generate_type_checks import (
     constant_value,
     finite,
     high_bound,
-    mean_value,
-    positive,
-    zipf_support,
 )
 from decoy_engine.config._generate_unique import unique_flag
+from decoy_engine.errors import PipelineValidationError
 
 __all__ = [
     "COMMON_OPTIONS",
@@ -44,9 +42,11 @@ __all__ = [
     "OptionSpec",
     "TypeOptions",
     "closed_key_schema",
+    "generate_family_problems",
     "generate_option_catalog",
     "option_problems",
     "problem_details",
+    "refuse_unlisted_generate_families",
 ]
 
 _TYPE = str(reasons.config.GENERATE_OPTION_TYPE)
@@ -99,7 +99,7 @@ class GenerateTypeOptions:
     optional: tuple[str, ...]
     common: tuple[str, ...]
     # selector key -> selector value -> keys that value requires, e.g.
-    # {"family": {"poisson": ("mean",)}}. Empty for a type with no conditional rule.
+    # {"family": {"uniform": ("low", "high")}}. Empty for a type with no conditional rule.
     required_when: Mapping[str, Mapping[str, tuple[str, ...]]] = field(default_factory=dict)
 
 
@@ -197,6 +197,27 @@ def _family(value: Any, _: Mapping[str, Any]) -> list[Problem]:
     return _OK if value in CONDITIONAL_REQUIRED["distribution"]["family"] else [((), _VALUE)]
 
 
+def generate_family_problems(config: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """``(dotted path, reason code)`` for each `distribution` column of a raw config dict whose
+    `family` is missing from the table.
+
+    The one family gate for a raw dict: `compile_plan` and `run_config_only_checks` call it, so a
+    family the validator refuses (a deferred one) cannot reach a run by skipping validation. It
+    reads the same `_family` check `option_problems` runs, quotes nothing, and never raises.
+    """
+    found: list[tuple[str, str]] = []
+    tables = config.get("tables")
+    for table in tables if isinstance(tables, list) else []:
+        columns = table.get("generate_columns") if isinstance(table, dict) else None
+        for col in columns if isinstance(columns, list) else []:
+            if not isinstance(col, dict) or col.get("type") != "distribution":
+                continue
+            for _, code in _family(col.get("family"), col):
+                path = f"tables.{table.get('name', '?')}.generate_columns.{col.get('name', '?')}.family"
+                found.append((path, code))
+    return found
+
+
 def _weight_ok(w: Any) -> bool:
     """A non-negative weight the generators can turn into a finite float.
 
@@ -260,14 +281,11 @@ CONDITIONAL_REQUIRED: Mapping[str, Mapping[str, Mapping[str, tuple[str, ...]]]] 
     "distribution": {
         "family": {
             "uniform": ("low", "high"),
-            "poisson": ("mean",),
-            "zipf": ("s", "n"),
         }
     },
 }
 
 _N = OptionSpec(finite)
-_P = OptionSpec(positive)
 
 GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
     "faker": TypeOptions(
@@ -359,11 +377,8 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
     "distribution": TypeOptions(
         {
             "family": OptionSpec(_family),
-            "mean": OptionSpec(mean_value),
             "low": _N,
             "high": OptionSpec(high_bound),
-            "s": _P,
-            "n": OptionSpec(zipf_support),
             "min": OptionSpec(clip_bound("min")),
             "max": OptionSpec(clip_bound("max")),
         },
@@ -531,3 +546,22 @@ def generate_option_catalog() -> Mapping[str, GenerateTypeOptions]:
         )
         for type_, spec in GENERATE_OPTIONS.items()
     }
+
+
+def refuse_unlisted_generate_families(config: Mapping[str, Any]) -> None:
+    """Raise `PipelineValidationError` for the first `distribution` column with a listed-out family.
+
+    `compile_plan` and `run_config_only_checks` call this beside their other config-only checks, so
+    a raw dict that never went through `PipelineConfig` cannot reach a draw with a deferred family.
+    It reads `generate_family_problems`, the function the validator's checker also backs. The
+    message is the registry's fixed summary (no config value is quoted) and nothing is chained.
+    """
+    for path, code in generate_family_problems(config):
+        summary = reasons.lookup(code)[0].summary
+        if code == str(reasons.config.GENERATE_OPTION_TYPE):
+            raise PipelineValidationError(
+                summary, path=path, code=reasons.config.GENERATE_OPTION_TYPE
+            )
+        raise PipelineValidationError(
+            summary, path=path, code=reasons.config.GENERATE_OPTION_VALUE_UNKNOWN
+        )

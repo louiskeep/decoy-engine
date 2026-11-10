@@ -129,8 +129,9 @@ def cfg_distribution() -> dict[str, Any]:
                     {
                         "name": "x_m",
                         "type": "distribution",
-                        "family": "poisson",
-                        "mean": 4,
+                        "family": "uniform",
+                        "low": 0,
+                        "high": 8,
                         "null_probability": 0.3,
                     },
                 ],

@@ -24,7 +24,7 @@ because a column's stream now derives from (table, column) as well as its strate
 derived and other draw-free tables are unchanged. Captured with `python -m tests.parity._f0_capture`.
 
 Added 2026-11-10 (GEN-TYPES E1): the `source_free` fixture (constant and distribution columns).
-Captured once under numpy 2.2.6 (identical on arm64 and x86); no existing entry moved.
+Captured under numpy 2.2.6 (identical on arm64 and x86); uniform and constant only; no existing entry moved.
 
 Re-baselined 2026-11-08 (generated numeric typing): an unformatted `sequence` and a numeric faker
 provider (annotated int or float) now declare and emit int64/float64 instead of string. Each affected
@@ -244,16 +244,16 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
     },
     "source_free": {
         "source_free": {
-            "schema": "48111c9dfcfdc276b065341e1c9ac03122348d8890d2ef4579fccfffbd11437b",
+            "schema": "5a37a07095f05539f97bfbcb3138805312b385dae4d18e116c2ede55ad6ccbd9",
             "rows": 40,
             "columns": [
                 ("country", "fd7fcb94ae747840f9cdb66640f13400b759dc453490a836f13f23f2e6aad91e"),
                 ("age", "6684419c1cfb7568b630f9b083e345a9f8f86ac215e48f9ad728cf36b02521c9"),
                 ("score", "a5020b86563aacb7505087a05ee2daf3226e4ac3b0e042b0f9eb2dbdb0194053"),
-                ("visits", "d726639941f9d983f2f7da1bd5d772d3d019ccb425f038ea38f788774092ddad"),
-                ("rank", "880624c3ece553eac098fc67c4c9c7c852e68aa17295da9b10b17770c085643c"),
+                ("visits", "460a780d357a0711da7bd1c3bfaf28107637fcf18f68aa5a05322527be7c0309"),
+                ("rank", "6cf7b6d4ef29fb42b4bc4e94d3d6d2e1402a34cc7b1c8f5ee4a8ed2789313439"),
             ],
-            "table": "69ff8f39c02ee733acf8d93185e336e3a3ac6595c4d753ef513c39a4a2a4eea7",
+            "table": "62e95273151b5286452a137c75186489eb772ac07c2548f0e173ef75951e88b1",
         }
     },
     "nulls": {

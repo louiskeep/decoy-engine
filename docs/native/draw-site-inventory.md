@@ -289,10 +289,9 @@ Numeric, categorical, and datetime samplers all draw whole-column vectors
 (`:141`, `:266`, `:386`). NOT partitionable.
 
 ### gen.distribution
-`generation/kinds/_parametric.py:93`. `default_rng(base_int("dist"))` then, per batch,
-`random` (uniform, scaled and shifted by separate ufuncs so there is no fused multiply-add),
-`poisson` or (zipf) `random(size)`
-mapped by inverse CDF, with an optional `np.clip` to `min`/`max`. The `dist` family is separate
+`generation/kinds/_parametric.py:67`. `default_rng(base_int("dist"))` then, per batch,
+`random(size)` (uniform), scaled and shifted by separate ufuncs so there is no fused multiply-add,
+with an optional `np.clip` to `min`/`max`. The `dist` family is separate
 from `np` so the value stream never shares uniforms with `gen.null_probability`. Draws of sizes
 k and n-k concatenate to one draw of n, so batching does not change values. NOT partitionable.
 

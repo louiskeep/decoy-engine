@@ -34,7 +34,7 @@ MINIMAL: dict[str, dict[str, Any]] = {
     "windowed_date": {"anchor": "a", "max_days": 5},
     "group_key": {"group_by": "g"},
     "constant": {"value": "US"},
-    "distribution": {"family": "poisson", "mean": 3},
+    "distribution": {"family": "uniform", "low": 0, "high": 3},
 }
 
 
