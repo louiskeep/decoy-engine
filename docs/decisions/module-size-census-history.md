@@ -2,7 +2,7 @@
 
 Status: record
 
-Per-file growth notes moved out of `tests/sentry/test_module_size.py` (R0 item 5, 2026-10-06). The census keeps a one-line rationale per entry and points here. Text is verbatim from the census comments; LOC figures are as of each note's date, not current. The policy itself (goal 600, max 700, exact-count ratchet, shrink-only legacy) is unchanged and documented in the test's module docstring and ADR-0005 (platform repo).
+Per-file growth notes moved out of `tests/sentry/test_module_size.py` (R0 item 5, 2026-10-06). The census keeps a one-line rationale per entry and points here. Text is verbatim from the census comments; LOC figures are as of each note's date, not current. The policy itself (goal 600, max 700, dense entries are ceilings with 20 lines of initial headroom and stale slack bounded at 40, shrink-only exact legacy entries) is documented in the test's module docstring and ADR-0005 (platform repo).
 
 ## `src/decoy_engine/execution/out_of_core/_budget.py` (census 608 at move time)
 
