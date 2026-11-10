@@ -47,18 +47,11 @@ Public exceptions (also in decoy_engine.errors):
 Anything not listed in __all__ -- and anything under decoy_engine.internal --
 is private and may change without a version bump.
 
-V2 NOTE: the V1 public surface (``Masker``, ``DataGenerator``, ``run_graph`` /
-``preview_graph`` / ``validate_graph*``) and the V1 graph runner were removed
-under the ``decoy_v2_clean_break`` PO directive (the final V1 graph-runner and
-V1-only transform deletion landed in S22, 2026-05-30). The engine is now
-plan-first: a caller validates a ``PipelineConfig`` at the choke-point, profiles
-the source, calls ``compile_plan`` to produce a frozen ``Plan``, and hands the
-plan to an ``ExecutionAdapter`` (pandas by default) for a MASK job, or to
-``generation.synthesize.generate_tables`` for a GENERATE job. See
-``api/jobs/v2_runner.py`` for the platform-side spine and
-``tests/integration/golden/test_execution_e2e.py`` for the canonical end-to-end
-call shape. Any external import of ``Masker`` / ``DataGenerator`` / ``run_graph``
-now fails fast.
+V2 NOTE: the V1 surface (``Masker``, ``DataGenerator``, ``run_graph``) was removed
+in S22 (2026-05-30). The engine is plan-first: validate a ``PipelineConfig``, profile
+the source, ``compile_plan``, then run the plan through an ``ExecutionAdapter`` (MASK)
+or ``generation.synthesize.generate_tables`` (GENERATE). See
+``tests/integration/golden/test_execution_e2e.py`` for the end-to-end call shape.
 """
 
 import logging
