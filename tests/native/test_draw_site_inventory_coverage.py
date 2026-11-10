@@ -257,6 +257,7 @@ _ALLOWLIST = frozenset(
         # protocol package; same non-output-draw rationale as that module's entry.
         "execution/native/protocol/providers_base.py",
         "execution/native/protocol/providers_gen.py",
+        "execution/native/protocol/providers_gen_unique.py",
         "execution/native/protocol/providers_mask.py",
         # GP2 (2026-09-17): DrawSiteProvider siblings split out of
         # _draw_site_providers.py's own recorded LOC ceiling; same non-output-draw

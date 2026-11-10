@@ -37,6 +37,11 @@ from __future__ import annotations
 
 from decoy_engine.config._errors import PipelineConfigError
 from decoy_engine.config._fixed_width import FixedWidthColumn, FixedWidthLayout
+from decoy_engine.config._generate_unique import (
+    UNIQUE_FAKER_ATTEMPTS,
+    distinct_categories,
+    value_key,
+)
 from decoy_engine.config._global_settings import DpGenerateSettings, GlobalSettings
 from decoy_engine.config._namespaces import NamespaceConfig
 from decoy_engine.config._override import override_sources
@@ -89,6 +94,7 @@ __all__ = [
     "FILE_SOURCE_PATH_FIELDS",
     "SOURCE_LOCATOR_FIELDS",
     "SOURCE_PATH_FIELDS",
+    "UNIQUE_FAKER_ATTEMPTS",
     "ColumnConfig",
     "DedupeOp",
     "DeriveOp",
@@ -123,8 +129,10 @@ __all__ = [
     "TableConfig",
     "TargetDescriptor",
     "TransformOp",
+    "distinct_categories",
     "override_sources",
     "parse_pipeline_config",
     "parse_relationship_config",
     "post_scan_integrity_requested",
+    "value_key",
 ]

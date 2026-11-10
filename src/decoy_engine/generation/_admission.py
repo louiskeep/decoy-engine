@@ -164,6 +164,12 @@ def classify_plan(
         if has_windowed
         else {}
     )
+    pair_members = {
+        (name, member)
+        for name, t in tables.items()
+        for pair in t.get("unique_together") or []
+        for member in pair
+    }
     memo: dict[tuple[str, str], ColumnAdmission] = {}
     in_progress: set[tuple[str, str]] = set()
 
@@ -224,6 +230,11 @@ def classify_plan(
         kind = col.get("type")
         if col.get("determinism") == "fresh":
             result = decline(table, col, "determinism_fresh")
+        elif col.get("unique") is True and kind != "sequence":
+            # A sequence is distinct by construction, so it stays on the streamed core.
+            result = decline(table, col, "unique")
+        elif (table, col["name"]) in pair_members:
+            result = decline(table, col, "unique_pair")
         elif not ADMISSION_MATRIX.get(str(kind), (False, ""))[0]:
             result = decline(table, col, f"family_declined:{kind}")
         elif kind == "sequence":
