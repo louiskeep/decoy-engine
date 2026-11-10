@@ -146,14 +146,14 @@ def test_matching_null_rates_keep_the_exact_value_score() -> None:
 
 
 def test_literal_product_cell() -> None:
-    # Value similarity exactly 0.9: quantile RMSE 10 over a range of 100 is one tenth.
+    # Value similarity exactly 0.8: quantile RMSE 10 over the IQR of 50 is one fifth.
     src = _snap({"x": _num(0, 1000)})
     out = _snap({"x": _num(200, 800)})
     out["columns"]["x"]["stats"]["quantiles"] = {k: v + 10.0 for k, v in _QUANTS.items()}
     col = _entry(compute_fidelity(src, out), "x")
-    assert col["value_similarity"] == 0.9
+    assert col["value_similarity"] == 0.8
     assert col["missing_value_similarity"] == 0.8
-    assert col["similarity"] == 0.72
+    assert col["similarity"] == 0.64
 
 
 _QUANTS = {"p05": 5.0, "p25": 25.0, "p50": 50.0, "p75": 75.0, "p95": 95.0}
