@@ -23,6 +23,7 @@ from decoy_engine.execution import run_job_with_governor, run_pipeline_isolated
 from decoy_engine.plan import compile_plan
 from decoy_engine.profile import profile_source
 from decoy_engine.subset import plan_subset, run_subset, subset_inputs_from_config
+from tests._declared_schema import declare_rest
 
 _VAR = "SUB_STOP_TEST_SECRET"
 _CODE = "subset_run_unsupported"
@@ -93,7 +94,7 @@ def _raw(tmp_path: Path, *, subset: bool) -> dict[str, Any]:
 
 
 def _dump(tmp_path: Path, *, subset: bool) -> dict[str, Any]:
-    return PipelineConfig.model_validate(_raw(tmp_path, subset=subset)).model_dump()
+    return PipelineConfig.model_validate(declare_rest(_raw(tmp_path, subset=subset))).model_dump()
 
 
 def _tables(tmp_path: Path) -> dict[str, pa.Table]:

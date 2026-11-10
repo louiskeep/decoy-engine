@@ -24,6 +24,7 @@ from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import run_pipeline
 from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
 from decoy_engine.profile._readers import LazySource
+from tests._declared_schema import declare_rest
 from tests.unit.execution import _auto_chunk_support as support
 from tests.unit.execution import _multi_table_support as mt
 from tests.unit.execution._transform_testkit import (
@@ -171,7 +172,7 @@ def native_when(tmp: Path, mp: pytest.MonkeyPatch, ctx: dict[str, Any]) -> dict[
         for column in t["columns"]:
             if column["name"] == "val":
                 column["when"] = "amount > 10"
-    cfg = PipelineConfig.model_validate(cfg).model_dump()
+    cfg = PipelineConfig.model_validate(declare_rest(cfg)).model_dump()
     res = run_pipeline(
         cfg,
         sources={"tbl": table},

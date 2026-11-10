@@ -35,6 +35,7 @@ import pytest
 
 from decoy_engine import release, run_pipeline
 from decoy_engine.config import PipelineConfig
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution import ExecutionError, PandasExecutionAdapter
 from decoy_engine.execution._output_projection import (
     known_output_columns,
@@ -98,6 +99,15 @@ def _run(cfg: dict, df: pd.DataFrame, table: str = "people"):
     )
 
 
+def _assert_gate_refusal(cfg: dict, df: pd.DataFrame, position: str) -> None:
+    """The run is refused at the declaration gate: coded, positional, no column name."""
+    with pytest.raises(PipelineValidationError) as exc:
+        _run(cfg, df)
+    assert exc.value.code == "source_file.undeclared_column"
+    assert position in str(exc.value)
+    assert "secret" not in str(exc.value) and "drift_col" not in str(exc.value)
+
+
 # A source whose `secret` column is never declared in `columns:` -- known at
 # profile time (it is in the CSV), unstrategied in the config.
 def _known_unstrategied(tmp_path, policy: str | None):
@@ -114,23 +124,17 @@ def _known_unstrategied(tmp_path, policy: str | None):
 
 class TestErrorPolicyFullFrame:
     def test_known_but_unstrategied_column_raises(self, tmp_path) -> None:
+        # The declaration gate (CONFIG-EXPLICIT E2c) refuses it before any adapter run.
         cfg, df = _known_unstrategied(tmp_path, policy="error")
-        with pytest.raises(ExecutionError) as exc:
-            _run(cfg, df)
-        assert exc.value.code == _UNDECLARED_CODE
-        assert "secret" in exc.value.message
-        assert "people" in exc.value.message
+        _assert_gate_refusal(cfg, df, "column 2 of 2")
 
     def test_runtime_schema_drift_raises(self, tmp_path) -> None:
-        # (d): the profiled CSV has only [id]; the masked Arrow frame carries an
-        # extra `drift_col` the plan was never built against.
+        # (d): the profiled CSV has only [id]; the supplied Arrow frame carries an extra
+        # `drift_col`, which the gate now refuses on the supplied table.
         _write(tmp_path, pd.DataFrame({"id": ["a", "b"]}))
         cfg = _config(tmp_path, [{"name": "id", "strategy": "passthrough"}], policy="error")
         drifted = pd.DataFrame({"id": ["a", "b"], "drift_col": ["x", "y"]})
-        with pytest.raises(ExecutionError) as exc:
-            _run(cfg, drifted)
-        assert exc.value.code == _UNDECLARED_CODE
-        assert "drift_col" in exc.value.message
+        _assert_gate_refusal(cfg, drifted, "column 2 of 2")
 
 
 # ---------------------------------------------------------------------------
@@ -139,41 +143,26 @@ class TestErrorPolicyFullFrame:
 
 
 class TestWarnPolicyFullFrame:
+    """Under every policy the gate now refuses an undeclared column first, so the warn
+    pass-through is reachable only below it (see `TestDriftBelowTheGate`)."""
+
     def test_warn_emits_structured_warning_and_passes_through(self, tmp_path) -> None:
         cfg, df = _known_unstrategied(tmp_path, policy="warn")
-        result = _run(cfg, df)
-        # Column still emitted (the passthrough the warn window preserves)...
-        out = result.outputs["people"]
-        assert "secret" in out.column_names
-        assert out.column("secret").to_pylist() == ["s1", "s2", "s3"]
-        # ...and a structured warning names it via the QualityWarning channel.
-        codes = [w.code for w in result.warnings]
-        assert _UNDECLARED_CODE in codes
-        w = next(w for w in result.warnings if w.code == _UNDECLARED_CODE)
-        assert w.detail["table"] == "people"
-        assert "secret" in w.detail["undeclared_columns"]
+        _assert_gate_refusal(cfg, df, "column 2 of 2")
+        assert not (tmp_path / "out.csv").exists()
 
     def test_warn_is_the_pre_ga_default(self, tmp_path) -> None:
-        # No explicit policy set -> pre-GA default is warn -> passthrough + warn.
+        # No explicit policy set: the gate refuses before the warn default is consulted.
         cfg, df = _known_unstrategied(tmp_path, policy=None)
-        result = _run(cfg, df)
-        assert "secret" in result.outputs["people"].column_names
-        assert _UNDECLARED_CODE in [w.code for w in result.warnings]
+        _assert_gate_refusal(cfg, df, "column 2 of 2")
 
     def test_warn_passthrough_is_the_documented_leak(self, tmp_path) -> None:
-        # Fail-pre / pass-post evidence, in one place: under warn the RAW
-        # undeclared value reaches output (this IS the DE-03 leak -- pre-fix
-        # `main` produced exactly this output with NO warning and no error), and
-        # post-fix the SAME run now also carries a structured warning. Flipping
-        # the policy to error turns the identical shape into a hard failure.
-        cfg_warn, df = _known_unstrategied(tmp_path, policy="warn")
-        warned = _run(cfg_warn, df)
-        assert warned.outputs["people"].column("secret").to_pylist() == ["s1", "s2", "s3"]
-        assert _UNDECLARED_CODE in [w.code for w in warned.warnings]  # NEW post-fix
-
-        cfg_err, df2 = _known_unstrategied(tmp_path, policy="error")
-        with pytest.raises(ExecutionError):
-            _run(cfg_err, df2)
+        # The raw undeclared value used to reach output under warn; now no output is written
+        # under either policy.
+        for policy in ("warn", "error"):
+            cfg, df = _known_unstrategied(tmp_path, policy=policy)
+            _assert_gate_refusal(cfg, df, "column 2 of 2")
+        assert not (tmp_path / "out.csv").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +341,39 @@ class TestSequentialRoute:
             unconfigured_column_policy="warn",
         )
         assert "payload_leak" in result.outputs["child"].column_names
+        assert _UNDECLARED_CODE in [w.code for w in result.warnings]
+
+
+class TestDriftBelowTheGate:
+    """DE-03 stays as defense in depth for a source that gains a column after the gate."""
+
+    def _run(self, policy: str):
+        plan = SimpleNamespace(
+            seed_envelope=SeedEnvelope(
+                job_seed=_JOB_SEED,
+                per_table=(
+                    ("t", TableSeed(per_column=(("id", _hash_seed("ns_t")),), per_group=())),
+                ),
+            )
+        )
+        return PandasExecutionAdapter().run(
+            plan,
+            {"t": pa.table({"id": ["a"], "drift_col": ["x"]})},
+            registry=_REG,
+            relationship_graph=RelationshipGraph(edges=(), ordering=()),
+            namespace_registry=_NS_REG,
+            unconfigured_column_policy=policy,
+        )
+
+    def test_drift_after_the_gate_raises_under_error(self) -> None:
+        with pytest.raises(ExecutionError) as exc:
+            self._run("error")
+        assert exc.value.code == _UNDECLARED_CODE
+        assert "drift_col" in exc.value.message
+
+    def test_drift_after_the_gate_warns_under_warn(self) -> None:
+        result = self._run("warn")
+        assert result.outputs["t"].column("drift_col").to_pylist() == ["x"]
         assert _UNDECLARED_CODE in [w.code for w in result.warnings]
 
 

@@ -24,6 +24,7 @@ from decoy_engine.config import PipelineConfig
 from decoy_engine.config._fixed_width import FixedWidthLayout
 from decoy_engine.errors import ConfigError, FixedWidthParseError
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
+from tests._declared_schema import declare_rest
 
 
 class _ReadlineCountingFile:
@@ -60,30 +61,34 @@ class _ReadlineCountingFile:
 
 def _base_config() -> dict[str, Any]:
     """A minimum PipelineConfig the schema accepts; tests mutate `sources`."""
-    return {
-        "version": 2,
-        "global_settings": {"seed": 0},
-        "sources": {},
-        "tables": [
-            {
-                "name": "t",
-                "columns": [
-                    {
-                        "name": "name",
-                        "strategy": "faker",
-                        "provider": "person_name",
-                        "namespace": "t_name",
-                        "deterministic": True,
-                    },
-                ],
+    return declare_rest(
+        {
+            "version": 2,
+            "global_settings": {"seed": 0},
+            "sources": {},
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {
+                            "name": "name",
+                            "strategy": "faker",
+                            "provider": "person_name",
+                            "namespace": "t_name",
+                            "deterministic": True,
+                        },
+                        {"name": "age", "strategy": "passthrough"},
+                        {"name": "score", "strategy": "passthrough"},
+                    ],
+                },
+            ],
+            "targets": {
+                "t": {"type": "file", "format": "csv", "path": "/tmp/out.csv"},
             },
-        ],
-        "targets": {
-            "t": {"type": "file", "format": "csv", "path": "/tmp/out.csv"},
-        },
-        "relationships": [],
-        "namespaces": {"t_name": {"declared_by": ["t.name"]}},
-    }
+            "relationships": [],
+            "namespaces": {"t_name": {"declared_by": ["t.name"]}},
+        }
+    )
 
 
 def _simple_layout() -> dict[str, Any]:

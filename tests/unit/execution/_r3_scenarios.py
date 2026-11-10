@@ -28,6 +28,7 @@ from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import ParquetTransactionalSink, run_pipeline
 from decoy_engine.keyprovider import SecretKeyProvider
 from decoy_engine.profile._readers import LazySource
+from tests._declared_schema import declare_rest
 from tests.unit.execution._r3_project import canon, project, project_table
 
 ENGINE_VERSION = "r3-baseline"
@@ -100,15 +101,17 @@ def single_table(tmp: Path, *, hash_column: bool = True) -> tuple[dict[str, Any]
         columns.append(_hash("h", "ns_h"))
     table = pa.table(data)
     cfg = PipelineConfig.model_validate(
-        {
-            "version": 2,
-            "global_settings": {"seed": 42},
-            "sources": {
-                "t": {"type": "file", "format": "parquet", "path": _write(tmp, table, "t")}
-            },
-            "tables": [{"name": "t", "columns": columns}],
-            "targets": {"t": _target(tmp, "t")},
-        }
+        declare_rest(
+            {
+                "version": 2,
+                "global_settings": {"seed": 42},
+                "sources": {
+                    "t": {"type": "file", "format": "parquet", "path": _write(tmp, table, "t")}
+                },
+                "tables": [{"name": "t", "columns": columns}],
+                "targets": {"t": _target(tmp, "t")},
+            }
+        )
     ).model_dump()
     return cfg, table
 
@@ -119,28 +122,30 @@ def two_tables(tmp: Path) -> tuple[dict[str, Any], dict[str, pa.Table]]:
         "b": pa.table({"k": pa.array([f"b{i}" for i in range(N)]), "w": pa.array(range(N))}),
     }
     cfg = PipelineConfig.model_validate(
-        {
-            "version": 2,
-            "global_settings": {"seed": 42},
-            "sources": {
-                n: {"type": "file", "format": "parquet", "path": _write(tmp, t, n)}
-                for n, t in tables.items()
-            },
-            "tables": [
-                {
-                    "name": "a",
-                    "columns": [_hash("k", "ns_a"), {"name": "v", "strategy": "passthrough"}],
+        declare_rest(
+            {
+                "version": 2,
+                "global_settings": {"seed": 42},
+                "sources": {
+                    n: {"type": "file", "format": "parquet", "path": _write(tmp, t, n)}
+                    for n, t in tables.items()
                 },
-                {
-                    "name": "b",
-                    "columns": [
-                        {"name": "k", "strategy": "redact"},
-                        {"name": "w", "strategy": "passthrough"},
-                    ],
-                },
-            ],
-            "targets": {n: _target(tmp, n) for n in tables},
-        }
+                "tables": [
+                    {
+                        "name": "a",
+                        "columns": [_hash("k", "ns_a"), {"name": "v", "strategy": "passthrough"}],
+                    },
+                    {
+                        "name": "b",
+                        "columns": [
+                            {"name": "k", "strategy": "redact"},
+                            {"name": "w", "strategy": "passthrough"},
+                        ],
+                    },
+                ],
+                "targets": {n: _target(tmp, n) for n in tables},
+            }
+        )
     ).model_dump()
     return cfg, tables
 
@@ -228,6 +233,7 @@ def fk_job(
             }
         ],
     }
+    declare_rest(cfg)
     if parent_transforms:
         # A no-op dedupe still marks the table transform-bearing, which declines out-of-core.
         cfg["tables"][0]["transforms"] = [{"op": "dedupe", "columns": ["id"]}]
@@ -248,6 +254,7 @@ def generate_plus_mask(tmp: Path) -> tuple[dict[str, Any], dict[str, pa.Table]]:
         },
     ]
     cfg["targets"]["extra"] = _target(tmp, "extra")
+    declare_rest(cfg)
     return cfg, tables
 
 
@@ -427,6 +434,7 @@ def seq_fk_loader(tmp: Path) -> Run:
             cfg,
             {},
             source_loader=lambda name: tables[name],
+            source_loader_schemas={n: t.schema for n, t in tables.items()},
             out_of_core_threshold_rows=1_000,
             **_ROW_ROUTING,
         )
@@ -462,7 +470,16 @@ def ff_fk_transforms_declined_fidelity_byte_routing(tmp: Path) -> Run:
 
 def ooc_fk_forced_loader(tmp: Path) -> Run:
     cfg, tables = fk_job(tmp)
-    return Run(_go(cfg, {}, source_loader=lambda name: tables[name], execution_mode="out_of_core"))
+    schemas = {n: t.schema for n, t in tables.items()}
+    return Run(
+        _go(
+            cfg,
+            {},
+            source_loader=lambda name: tables[name],
+            source_loader_schemas=schemas,
+            execution_mode="out_of_core",
+        )
+    )
 
 
 def ooc_fk_forced(tmp: Path) -> Run:
@@ -664,8 +681,16 @@ def f_reject_before_read(tmp: Path) -> dict[str, Any]:
         return tables[name]
 
     with _traced(tmp) as (sink, out):
+        schemas = {n: t.schema for n, t in tables.items()}
         _, exc = _attempt(
-            lambda: _go(cfg, {}, source_loader=loader, sink=sink, full_frame_reject_rows=10)
+            lambda: _go(
+                cfg,
+                {},
+                source_loader=loader,
+                source_loader_schemas=schemas,
+                sink=sink,
+                full_frame_reject_rows=10,
+            )
         )
         return _trace(exc, sink, out, calls)
 

@@ -37,6 +37,7 @@ import pytest
 
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pipeline import run_pipeline
+from tests._declared_schema import declare_rest, file_schemas
 
 _N = 40
 
@@ -124,34 +125,44 @@ def _ooc_eligible_config(
     else:
         parent_src = _write_csv(tmp_path, parent.to_pandas(), "parent")
         child_src = _write_csv(tmp_path, child.to_pandas(), "child")
-    return {
-        "version": 2,
-        "global_settings": {"job_name": "sc7b-ooc-fk", "seed": 7},
-        "sources": {
-            "parent": {"type": "file", "path": parent_src, "format": src_fmt, **_header(src_fmt)},
-            "child": {"type": "file", "path": child_src, "format": src_fmt, **_header(src_fmt)},
-        },
-        "targets": {
-            "parent": {
-                "type": "file",
-                "path": str(tmp_path / "parent.out.parquet"),
-                "format": "parquet",
+    return declare_rest(
+        {
+            "version": 2,
+            "global_settings": {"job_name": "sc7b-ooc-fk", "seed": 7},
+            "sources": {
+                "parent": {
+                    "type": "file",
+                    "path": parent_src,
+                    "format": src_fmt,
+                    **_header(src_fmt),
+                },
+                "child": {"type": "file", "path": child_src, "format": src_fmt, **_header(src_fmt)},
             },
-            "child": {
-                "type": "file",
-                "path": str(tmp_path / "child.out.parquet"),
-                "format": "parquet",
+            "targets": {
+                "parent": {
+                    "type": "file",
+                    "path": str(tmp_path / "parent.out.parquet"),
+                    "format": "parquet",
+                },
+                "child": {
+                    "type": "file",
+                    "path": str(tmp_path / "child.out.parquet"),
+                    "format": "parquet",
+                },
             },
-        },
-        "tables": [
-            {
-                "name": "parent",
-                "columns": [_hash_col("id", "ns"), {"name": "note", "strategy": "redact"}],
-            },
-            {"name": "child", "columns": [_hash_col("cid", "cns"), _hash_col("parent_id", "ns")]},
-        ],
-        "relationships": _fk_relationships(),
-    }
+            "tables": [
+                {
+                    "name": "parent",
+                    "columns": [_hash_col("id", "ns"), {"name": "note", "strategy": "redact"}],
+                },
+                {
+                    "name": "child",
+                    "columns": [_hash_col("cid", "cns"), _hash_col("parent_id", "ns")],
+                },
+            ],
+            "relationships": _fk_relationships(),
+        }
+    )
 
 
 def _ineligible_config(
@@ -167,44 +178,56 @@ def _ineligible_config(
     else:
         parent_src = _write_csv(tmp_path, parent.to_pandas(), "parent")
         child_src = _write_csv(tmp_path, child.to_pandas(), "child")
-    return {
-        "version": 2,
-        "global_settings": {"job_name": "sc7b-reject-genmask", "seed": 7},
-        "sources": {
-            "parent": {"type": "file", "path": parent_src, "format": src_fmt, **_header(src_fmt)},
-            "child": {"type": "file", "path": child_src, "format": src_fmt, **_header(src_fmt)},
-        },
-        "targets": {
-            "parent": {
-                "type": "file",
-                "path": str(tmp_path / "parent.out.parquet"),
-                "format": "parquet",
+    return declare_rest(
+        {
+            "version": 2,
+            "global_settings": {"job_name": "sc7b-reject-genmask", "seed": 7},
+            "sources": {
+                "parent": {
+                    "type": "file",
+                    "path": parent_src,
+                    "format": src_fmt,
+                    **_header(src_fmt),
+                },
+                "child": {"type": "file", "path": child_src, "format": src_fmt, **_header(src_fmt)},
             },
-            "child": {
-                "type": "file",
-                "path": str(tmp_path / "child.out.parquet"),
-                "format": "parquet",
+            "targets": {
+                "parent": {
+                    "type": "file",
+                    "path": str(tmp_path / "parent.out.parquet"),
+                    "format": "parquet",
+                },
+                "child": {
+                    "type": "file",
+                    "path": str(tmp_path / "child.out.parquet"),
+                    "format": "parquet",
+                },
+                "extra": {
+                    "type": "file",
+                    "path": str(tmp_path / "extra.out.parquet"),
+                    "format": "parquet",
+                },
             },
-            "extra": {
-                "type": "file",
-                "path": str(tmp_path / "extra.out.parquet"),
-                "format": "parquet",
-            },
-        },
-        "tables": [
-            {
-                "name": "parent",
-                "columns": [_hash_col("id", "ns"), {"name": "note", "strategy": "redact"}],
-            },
-            {"name": "child", "columns": [_hash_col("cid", "cns"), _hash_col("parent_id", "ns")]},
-            {
-                "name": "extra",
-                "row_count": 3,
-                "generate_columns": [{"name": "seq", "type": "sequence", "start": 1, "step": 1}],
-            },
-        ],
-        "relationships": _fk_relationships(),
-    }
+            "tables": [
+                {
+                    "name": "parent",
+                    "columns": [_hash_col("id", "ns"), {"name": "note", "strategy": "redact"}],
+                },
+                {
+                    "name": "child",
+                    "columns": [_hash_col("cid", "cns"), _hash_col("parent_id", "ns")],
+                },
+                {
+                    "name": "extra",
+                    "row_count": 3,
+                    "generate_columns": [
+                        {"name": "seq", "type": "sequence", "start": 1, "step": 1}
+                    ],
+                },
+            ],
+            "relationships": _fk_relationships(),
+        }
+    )
 
 
 def _file_loader(config: dict[str, Any]) -> Any:
@@ -235,6 +258,7 @@ def test_lazy_parquet_ineligible_rejects_before_loader_is_called(tmp_path: Path)
             sources={},  # lazy path: no resident Arrow sources
             engine_version="0.1.0",
             source_loader=loader,
+            source_loader_schemas=file_schemas(config),
             full_frame_reject_rows=10,  # 40-row fixture stands in for a huge FK job
         )
     assert exc.value.code == "fk_full_frame_oom_risk_rejected"
@@ -256,6 +280,7 @@ def test_lazy_parquet_ooc_eligible_reroutes_to_out_of_core(tmp_path: Path) -> No
         sources={},  # lazy path
         engine_version="0.1.0",
         source_loader=_file_loader(config),
+        source_loader_schemas=file_schemas(config),
         out_of_core_threshold_rows=10,  # 40-row fixture is "large"
         full_frame_reject_rows=10,  # would reject if it were full-frame-bound
         use_byte_estimate_routing=False,  # rollback path: exercise the size gate
@@ -280,6 +305,7 @@ def test_lazy_csv_ineligible_rejects_with_estimated_code(tmp_path: Path) -> None
             sources={},
             engine_version="0.1.0",
             source_loader=loader,
+            source_loader_schemas=file_schemas(config),
             full_frame_reject_rows=5,  # CSV byte-estimate (~40) lands above this
         )
     assert exc.value.code == "fk_full_frame_oom_risk_rejected_estimated"
@@ -298,6 +324,7 @@ def test_lazy_csv_ooc_eligible_still_reroutes_on_estimate(tmp_path: Path) -> Non
         sources={},
         engine_version="0.1.0",
         source_loader=_file_loader(config),
+        source_loader_schemas=file_schemas(config),
         out_of_core_threshold_rows=10,
         full_frame_reject_rows=10,
         use_byte_estimate_routing=False,  # rollback path: exercise the size gate
@@ -384,6 +411,7 @@ def test_h1_mixed_residency_large_lazy_child_not_hidden_by_small_resident_parent
             sources={"parent": parent},  # MIXED: parent resident, child lazy
             engine_version="0.1.0",
             source_loader=loader,
+            source_loader_schemas=file_schemas(config),
             full_frame_reject_rows=50,  # 40 (parent) < 50 <= 100 (child)
         )
     assert exc.value.code == "fk_full_frame_oom_risk_rejected"
@@ -404,6 +432,7 @@ def test_h1_mixed_residency_large_lazy_child_reroutes_to_out_of_core(tmp_path: P
         sources={"parent": parent},  # MIXED: parent resident, child lazy
         engine_version="0.1.0",
         source_loader=_file_loader(config),
+        source_loader_schemas=file_schemas(config),
         out_of_core_threshold_rows=50,  # 40 (parent) < 50 <= 100 (child)
         full_frame_reject_rows=1_000,  # well above 100: nothing rejects here
         use_byte_estimate_routing=False,  # rollback path: exercise the size gate

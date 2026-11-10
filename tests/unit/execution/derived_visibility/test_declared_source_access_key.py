@@ -18,16 +18,19 @@ import pytest
 from decoy_engine import fileaccess, run_pipeline
 from decoy_engine.execution._transforms import TransformError
 from decoy_engine.fileaccess import FileRole
+from tests._declared_schema import declare_rest
 from tests.unit.execution._transform_testkit import ENGINE_VERSION
 
 
 def _config(path: Path) -> dict[str, object]:
-    return {
-        "version": 1,
-        "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
-        "tables": {},
-        "targets": {"t": {"type": "file", "format": "parquet", "path": f"{path}.out"}},
-    }
+    return declare_rest(
+        {
+            "version": 1,
+            "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
+            "tables": [],
+            "targets": {"t": {"type": "file", "format": "parquet", "path": f"{path}.out"}},
+        }
+    )
 
 
 @pytest.fixture

@@ -31,6 +31,7 @@ from decoy_engine.execution._mem_estimate import (
 from decoy_engine.keyprovider import SecretKeyProvider
 from decoy_engine.profile import profile_source
 from decoy_engine.profile._readers import LazySource
+from tests._declared_schema import declare_rest
 from tests.native._rev9_type_catalogue import CATALOGUE
 from tests.unit.execution._transform_testkit import fk_config, fk_tables
 
@@ -44,7 +45,7 @@ def _kp() -> SecretKeyProvider:
 
 
 def _validated(raw: dict[str, Any]) -> dict[str, Any]:
-    return PipelineConfig.model_validate(raw).model_dump()
+    return PipelineConfig.model_validate(declare_rest(raw)).model_dump()
 
 
 def _run(config: dict[str, Any], sources: dict[str, Any], **kwargs: Any) -> ExecutionResult:

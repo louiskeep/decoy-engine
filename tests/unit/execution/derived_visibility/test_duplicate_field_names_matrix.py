@@ -31,6 +31,7 @@ from decoy_engine.execution import _guards
 from decoy_engine.execution._transforms import TransformError
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.reason_adapter import reason_from_exception
+from tests._declared_schema import declare_rest
 from tests._keyed_secret import THROWAWAY_SECRET
 from tests.unit.execution._transform_testkit import ENGINE_VERSION, fk_config
 
@@ -85,7 +86,7 @@ def _config(tmp_path: Path, work: str, descriptor_child: pa.Table) -> dict[str, 
     cfg = fk_config(tmp_path, _parent(), descriptor_child, child_transforms=transforms)
     cfg["tables"][1]["columns"].extend(_WORK_COLUMNS[work])
     cfg["global_settings"]["mask_secret_ref"] = f"env:{SECRET_ENV}"
-    return cfg
+    return declare_rest(cfg)
 
 
 @pytest.fixture(autouse=True)
@@ -240,12 +241,16 @@ def _e1(tmp_path: Path, route: str, kind: str, work: str, *, dup: str | None) ->
         descriptor, runtime = clean, _child(dup=dup)
     cfg = _config(tmp_path, work, descriptor)
     sources, loader = _sources(kind, tmp_path, runtime)
+    declare_rest(cfg, sources or {"child": runtime, "parent": _parent()})
     return run_pipeline(
         cfg,
         sources,
         engine_version=ENGINE_VERSION,
         execution_mode=route,
         source_loader=loader,
+        source_loader_schemas=None
+        if loader is None
+        else {n: loader(n).schema for n in cfg["sources"]},
     )
 
 
@@ -483,10 +488,12 @@ def _isolated(
     else:
         descriptor, runtime = clean, (child if child is not None else _child(dup=dup))
     cfg = _config(tmp_path, cell.work, descriptor)
+    tables = {"parent": _parent(), "child": runtime}
+    declare_rest(cfg, tables)
     spawned: list[int] = []
     result = run_pipeline_isolated(
         cfg,
-        {"parent": _parent(), "child": runtime},
+        tables,
         engine_version=ENGINE_VERSION,
         execution_mode=cell.route,
         isolate=isolate,

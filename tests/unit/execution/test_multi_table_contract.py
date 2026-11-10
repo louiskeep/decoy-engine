@@ -18,6 +18,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pytest
 
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution import run_pipeline
 from tests.unit.execution import _auto_chunk_matrix as matrix
 from tests.unit.execution import _auto_chunk_support as support
@@ -249,6 +250,13 @@ def test_split_job_output_contract(
     _companion_state(companion, monkeypatch)
     job = CASES[case]()
     cfg, sources = _run_job(job, tmp_path)
+    if job.extra_sources:
+        # The declaration gate (CONFIG-EXPLICIT E2c) refuses a supplied table the config does
+        # not declare, whatever the route, so there is no output contract to compare.
+        with pytest.raises(PipelineValidationError) as refused:
+            run_pipeline(cfg, sources=sources, **mt.kw(native_threads=threads))
+        assert refused.value.code == "source_file.undeclared_table"
+        return
     off = run_pipeline(cfg, sources=sources, **mt.kw(**mt.off_kw(), native_threads=threads))
     got = run_pipeline(cfg, sources=sources, **mt.kw(native_threads=threads))
 

@@ -35,6 +35,7 @@ from decoy_engine.profile._csv_reader import CsvDialect, read_csv_source, resolv
 from decoy_engine.profile._readers import CsvFileSource, build_profile_source
 from decoy_engine.profile._source import profile_source
 from decoy_engine.validation_result import CODES
+from tests._declared_schema import declare_rest
 
 BASE_FRAMES = Path(__file__).parent / "fixtures" / "csv_reader_base_frames.json"
 
@@ -279,7 +280,7 @@ def _headerless_config(path: Path, table: str, delimiter: str = ",") -> dict[str
     }
     if delimiter != ",":
         source["delimiter"] = delimiter
-    return {"sources": {table: source}}
+    return declare_rest({"sources": {table: source}})
 
 
 def test_profile_source_resolves_the_dialect_once(

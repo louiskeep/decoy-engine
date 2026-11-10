@@ -89,6 +89,15 @@ were reserved are now raised by `FileSource` (`source_file.no_header_columns`,
 either raises `FileAccessUnavailable` before dispatch, including an inline-only descriptor for the resolver and a
 non-file descriptor for `build_profile_source`. Ambient callers are unchanged.
 
+**Pre-GA correction (CONFIG-EXPLICIT E2c, 2026-11-10).** Every source column must be declared in the config,
+supplied tables included. `profile_source`, `run_pipeline` and `run_pipeline_isolated` refuse an undeclared column
+(`source_file.undeclared_column`) or a source with no `tables` entry (`source_file.undeclared_table`) from headers,
+footers and schemas, before any data row is read, staged, profiled or masked. Fixtures that relied on the DE-03
+`warn` pass-through now declare the column as `passthrough`; that path is reached only by drift after the gate.
+`run_pipeline` gains `source_loader_schemas`, required with a `source_loader` and refused without one, and
+`profile_source` gains the keyword-only `declared` capability. No registry code is added. The chunked entries are
+unchanged here.
+
 Until GA: use this document as the design target so we don't paint ourselves
 into a corner. After GA: this document is binding.
 
@@ -704,6 +713,15 @@ nothing is coerced. While `name` is unset the config dump and
 `Plan.pipeline_config_hash` are byte-identical to before, and a set `name` is
 excluded from the plan hash because it is data binding, not masking semantics.
 `tests/unit/config/test_pipeline_name.py` pins all of this.
+
+**Declaration gate on the run, isolated and profile routes (CONFIG-EXPLICIT E2c).** `prepare_declared_sources`
+(`DeclarationRequest.for_run`, `for_descriptors`) is the one boundary. `profile_source` calls it first, or accepts the
+`PreparedDeclaredSources` that `build_run_context` already made for the same config object (`declared=`; a capability
+for another config raises `ValueError`). `build_run_context` checks the config descriptors, the supplied tables and
+`source_loader_schemas` together, then wraps the loader with `checked_loader` so a table that materializes with other
+columns is refused before it is profiled or masked. `run_pipeline_isolated` runs the same check in the parent before
+staging or spawn, and the child `run_pipeline` rechecks. The refusals are `source_file.undeclared_column` (names a
+position and a count, never a column) and `source_file.undeclared_table`.
 
 ### 3.5 Disguises
 

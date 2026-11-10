@@ -62,6 +62,7 @@ import pytest
 from decoy_engine import quarantine as _quarantine
 from decoy_engine.execution import ParquetTransactionalSink
 from decoy_engine.execution._pipeline import run_pipeline
+from tests._declared_schema import declare_rest
 
 _AGE = ["10", "20", "30", "40", "50", "badX"]
 _IDS = ["p0", "p1", "p2", "p3", "p4", "p5"]
@@ -120,45 +121,47 @@ def _config(tmp_path: Path, qpath: str) -> dict[str, Any]:
     parent_src = _write_source(tmp_path, parent, "parent")
     child_src = _write_source(tmp_path, child, "child")
 
-    return {
-        "version": 2,
-        "global_settings": {"job_name": "de08-quarantine-commit-fate", "seed": 42},
-        "sources": {
-            "parent": {"type": "file", "path": parent_src, "format": "parquet"},
-            "child": {"type": "file", "path": child_src, "format": "parquet"},
-        },
-        "targets": {
-            "parent": {
-                "type": "file",
-                "path": str(tmp_path / "parent.out.parquet"),
-                "format": "parquet",
+    return declare_rest(
+        {
+            "version": 2,
+            "global_settings": {"job_name": "de08-quarantine-commit-fate", "seed": 42},
+            "sources": {
+                "parent": {"type": "file", "path": parent_src, "format": "parquet"},
+                "child": {"type": "file", "path": child_src, "format": "parquet"},
             },
-            "child": {
-                "type": "file",
-                "path": str(tmp_path / "child.out.parquet"),
-                "format": "parquet",
+            "targets": {
+                "parent": {
+                    "type": "file",
+                    "path": str(tmp_path / "parent.out.parquet"),
+                    "format": "parquet",
+                },
+                "child": {
+                    "type": "file",
+                    "path": str(tmp_path / "child.out.parquet"),
+                    "format": "parquet",
+                },
             },
-        },
-        "tables": [
-            {
-                "name": "parent",
-                "columns": [
-                    _faker_col("id", "parent_ns"),
-                    {"name": "age", "strategy": "bucketize", "provider_config": {"width": 10}},
-                ],
-            },
-            {"name": "child", "columns": [_faker_col("parent_id", "parent_ns")]},
-        ],
-        "relationships": [
-            {
-                "parent": {"table": "parent", "columns": ["id"]},
-                "children": [{"table": "child", "columns": ["parent_id"]}],
-                "orphan_policy": "preserve",
-                "namespace": "parent_ns",
-            }
-        ],
-        "quarantine": {"enabled": True, "output_path": qpath, "triggers": ["format_error"]},
-    }
+            "tables": [
+                {
+                    "name": "parent",
+                    "columns": [
+                        _faker_col("id", "parent_ns"),
+                        {"name": "age", "strategy": "bucketize", "provider_config": {"width": 10}},
+                    ],
+                },
+                {"name": "child", "columns": [_faker_col("parent_id", "parent_ns")]},
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "parent", "columns": ["id"]},
+                    "children": [{"table": "child", "columns": ["parent_id"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "parent_ns",
+                }
+            ],
+            "quarantine": {"enabled": True, "output_path": qpath, "triggers": ["format_error"]},
+        }
+    )
 
 
 def _sources(config: dict[str, Any]) -> dict[str, pa.Table]:
