@@ -49,7 +49,8 @@ from typing import Any
 import pandas as pd
 
 from decoy_engine import reasons
-from decoy_engine.generation.pool._events import QualityWarning
+from decoy_engine.generation._emit import emit_generation_warning
+from decoy_engine.generation.pool import QualityWarning
 from decoy_engine.generation.statistical import StatisticalSpec
 from decoy_engine.generation.statistical._spec import StatisticalSpecError
 from decoy_engine.quality.fidelity import compute_fidelity
@@ -230,6 +231,4 @@ def warn_on_low_fidelity(
         snapshot_index_for_column=snapshot_index_for_column,
         snapshot_artifacts=snapshot_artifacts,
     ):
-        _log.warning(_log_line(record))
-        if on_warning is not None:
-            on_warning(record)
+        emit_generation_warning(record, _log, _log_line(record), on_warning)

@@ -19,8 +19,9 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import reasons
-from decoy_engine.generation.pool._events import QualityWarning
-from decoy_engine.generation.statistical import StatisticalSpec
+from decoy_engine.generation._emit import emit_generation_warning
+from decoy_engine.generation.pool import QualityWarning
+from decoy_engine.generation.statistical import StatisticalSpec, conditional_fallback_counts
 from decoy_engine.generators.derivation import GenDeriveContext
 
 _log = logging.getLogger(__name__)
@@ -131,8 +132,6 @@ def warn_on_unseen_parents(
     spec = statistical_specs.get((table_name, str(col.get("name"))))
     if spec is None or spec.condition_on is None or n <= 0:
         return
-    from decoy_engine.generation.statistical._sample import conditional_fallback_counts
-
     counts = conditional_fallback_counts(spec, data.get(spec.condition_on) or [], n)
     if counts.rows == 0:
         return
@@ -144,24 +143,18 @@ def warn_on_unseen_parents(
         "rows_null_parent": counts.rows_null_parent,
         "rows_total": n,
         "parent_values": counts.parent_values,
+        "parent_values_capped": counts.parent_values_capped,
     }
-    _log.warning(
-        "generation_condition_parent_unseen: table=%s column=%s condition_on=%s rows=%d "
-        "rows_null_parent=%d rows_total=%d parent_values=%d",
-        table_name,
-        spec.column,
-        spec.condition_on,
-        counts.rows,
-        counts.rows_null_parent,
-        n,
-        counts.parent_values,
+    line = (
+        f"generation_condition_parent_unseen: table={table_name} column={spec.column} "
+        f"condition_on={spec.condition_on} rows={counts.rows} "
+        f"rows_null_parent={counts.rows_null_parent} rows_total={n} "
+        f"parent_values={counts.parent_values} capped={counts.parent_values_capped}"
     )
-    if on_warning is not None:
-        on_warning(
-            QualityWarning(
-                code=reasons.warning.GENERATION_CONDITION_PARENT_UNSEEN,
-                provider="statistical",
-                column=spec.column,
-                detail=detail,
-            )
-        )
+    record = QualityWarning(
+        code=reasons.warning.GENERATION_CONDITION_PARENT_UNSEEN,
+        provider="statistical",
+        column=spec.column,
+        detail=detail,
+    )
+    emit_generation_warning(record, _log, line, on_warning)

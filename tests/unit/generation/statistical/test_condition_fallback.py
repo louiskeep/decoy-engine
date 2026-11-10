@@ -40,6 +40,7 @@ _DETAIL_KEYS = {
     "rows_null_parent",
     "rows_total",
     "parent_values",
+    "parent_values_capped",
 }
 
 
@@ -138,6 +139,7 @@ def test_at3b_default_snapshot_warns_once_with_the_independent_count(default: st
         "rows_null_parent": 0,
         "rows_total": 6000,
         "parent_values": 1,
+        "parent_values_capped": False,
     }
     assert (record.provider, record.column) == ("statistical", "kid")
     assert set(record.detail) == _DETAIL_KEYS
@@ -157,7 +159,7 @@ def test_at3s_integer_parent_labels_count_the_same(tmp_path: Path) -> None:
 
     ints = [(i % 12) + 1 for i in range(1200)]
     counts = conditional_fallback_counts(spec, ints, len(ints))
-    assert (counts.rows, counts.rows_null_parent, counts.parent_values) == (100, 0, 1)
+    assert tuple(counts)[:3] == (100, 0, 1)
 
 
 def _load(snap: str) -> Any:
@@ -203,7 +205,7 @@ def test_at3n_null_parents_count_as_fallbacks(tmp_path: Path) -> None:
     n = 300
     parents = [None if i % 10 == 0 else ("SENTPA", "SENTPB", "SENTPZ")[i % 3] for i in range(n)]
     got = conditional_fallback_counts(spec, parents, n)
-    assert tuple(got) == _replay(spec, parents, n)
+    assert tuple(got)[:3] == _replay(spec, parents, n)
     assert got.rows_null_parent == 30
     assert got.parent_values == 3  # SENTPB, SENTPZ and the None key
     assert len(sample_column(spec, n, col_seed=3, parent_values=parents)) == n
@@ -215,7 +217,7 @@ def test_at3n_short_parent_list_counts_missing_rows_as_null(tmp_path: Path) -> N
     spec = _spec_for(tmp_path, _small_frame(), contingency_top_k=1)
     parents = ["SENTPA"] * 20
     got = conditional_fallback_counts(spec, parents, 30)
-    assert tuple(got) == _replay(spec, parents, 30) == (10, 10, 1)
+    assert tuple(got)[:3] == _replay(spec, parents, 30) == (10, 10, 1)
     assert len(sample_column(spec, 30, col_seed=3, parent_values=parents)) == 30
 
 
@@ -226,9 +228,24 @@ def test_at3n_the_label_none_shares_the_key_with_a_real_none(tmp_path: Path) -> 
     assert "None" in _parent_keys(spec)
     parents = ["None", None, "SENTPA", "SENTPZ"]
     got = conditional_fallback_counts(spec, parents, 4)
-    assert tuple(got) == _replay(spec, parents, 4) == (1, 0, 1)
+    assert tuple(got)[:3] == _replay(spec, parents, 4) == (1, 0, 1)
     drawn = sample_column(spec, 4, col_seed=5, parent_values=parents)
     assert drawn[0] == drawn[1] == "SENTK3"
+
+
+def test_distinct_parents_are_capped_and_the_row_count_stays_exact(tmp_path: Path) -> None:
+    from decoy_engine.generation.statistical import conditional_fallback_counts
+    from decoy_engine.generation.statistical._sample import DISTINCT_PARENT_CAP
+
+    spec = _spec_for(tmp_path, _small_frame(), contingency_top_k=1)
+    n = DISTINCT_PARENT_CAP * 3 + 7
+    parents = [f"SENTPX{i}" for i in range(n)]
+    got = conditional_fallback_counts(spec, parents, n)
+    assert (got.rows, got.rows_null_parent) == (n, 0)
+    assert got.parent_values == DISTINCT_PARENT_CAP
+    assert got.parent_values_capped is True
+    few = conditional_fallback_counts(spec, ["SENTPB"] * 5, 5)
+    assert (few.parent_values, few.parent_values_capped) == (1, False)
 
 
 def test_at3n_a_counter_never_draws(tmp_path: Path) -> None:

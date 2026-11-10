@@ -38,7 +38,7 @@ class QualityWarning:
     - `generation_condition_parent_unseen` (conditional statistical column): some rows had a
       `condition_on` parent with no fitted combination and drew from the column's overall counts.
       `detail` carries `table`, `column`, `condition_on`, `rows`, `rows_null_parent`,
-      `rows_total` and `parent_values` (a count of distinct parent keys); names and counts only.
+      `rows_total`, `parent_values` (a capped count of distinct parent keys) and `parent_values_capped`; names and counts only.
     """
 
     code: str

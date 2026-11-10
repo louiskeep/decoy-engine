@@ -305,13 +305,19 @@ def _select_table(
     return table[0], table[1], False
 
 
+# Memory bound: the row counts are exact, the distinct-key set never grows past this.
+DISTINCT_PARENT_CAP = 1000
+
+
 class FallbackCounts(NamedTuple):
     """Rows that drew from the overall counts, rows among them with a None or missing parent,
-    and the number of distinct parent keys that had no fitted combination."""
+    and the number of distinct parent keys that had no fitted combination, counted only up to
+    `DISTINCT_PARENT_CAP` (`parent_values_capped` says it stopped there)."""
 
     rows: int
     rows_null_parent: int
     parent_values: int
+    parent_values_capped: bool = False
 
 
 def conditional_fallback_counts(
@@ -323,14 +329,18 @@ def conditional_fallback_counts(
         return FallbackCounts(0, 0, 0)
     conditional = _conditional_lookup(spec)
     rows = rows_null = 0
+    capped = False
     keys: set[str] = set()
     for i in range(n):
         if _select_table(conditional, ([], []), parent_values, i)[2]:
             parent = parent_values[i] if i < len(parent_values) else None
             rows += 1
             rows_null += parent is None
-            keys.add(str(parent))
-    return FallbackCounts(rows, rows_null, len(keys))
+            if len(keys) < DISTINCT_PARENT_CAP:
+                keys.add(str(parent))
+            else:
+                capped = capped or str(parent) not in keys
+    return FallbackCounts(rows, rows_null, len(keys), capped)
 
 
 def _sample_shape(
