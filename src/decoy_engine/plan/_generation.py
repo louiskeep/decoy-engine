@@ -25,10 +25,12 @@ import json
 from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine.fileaccess import FileRole
+from decoy_engine.plan._checks_dp import verify_dp_snapshots
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import (
     DpVerification,
@@ -129,8 +131,24 @@ def snapshot_schema_failure(parsed: Any, shown: str) -> Any:
     )
 
 
+def _unreadable_message(
+    shown: str, locator: str, declared: str, base_dir: str | Path | None, cause: str
+) -> str:
+    """The unreadable-snapshot text. With a `base_dir` and a relative value it names where the
+    read went and the rule; the resolved path is displayed through `fileaccess.shown`."""
+    if locator == declared:
+        return f"snapshot_file {shown!r} could not be read: {cause}"
+    where = fileaccess.shown(locator, "snapshot_file")
+    return (
+        f"snapshot_file {shown!r} could not be read at {where!r} "
+        f"(a relative path is read from the config file's folder): {cause}"
+    )
+
+
 def read_and_pin_snapshots(
     config: dict[str, Any],
+    *,
+    base_dir: str | Path | None = None,
 ) -> tuple[dict[str, ReadSnapshot], dict[str, Any]]:
     """The single read pass (guide section 4.7 item 1): open every distinct
     referenced snapshot path exactly once, hash it, parse it, and return
@@ -148,6 +166,10 @@ def read_and_pin_snapshots(
     claims. Classifying the failure HERE, during the one read this pass
     ever performs, and handing the classification (not the path) to the
     caller closes that reopen structurally rather than by convention.
+
+    `base_dir` is the folder holding the config file: a relative `snapshot_file` is read from
+    there (`fileaccess.config_relative`). Both result maps stay keyed by the declared string,
+    so the plan bytes and the config hash never see the resolved path.
     """
     from decoy_engine.generation.statistical._spec import StatisticalSpecError
 
@@ -155,25 +177,26 @@ def read_and_pin_snapshots(
     failures: dict[str, Any] = {}
     for path, field_key in _snapshot_field_keys(config).items():
         shown = fileaccess.shown(path, field_key)
+        locator = fileaccess.config_relative(path, base_dir)
         failure: str | None = None
         try:
-            raw = fileaccess.read_all(FileRole.SNAPSHOT, path, field_key)
+            raw = fileaccess.read_all(FileRole.SNAPSHOT, locator, field_key)
         except OSError as exc:
             if fileaccess.keeps_class(exc):
                 raise
             if fileaccess.is_ambient():
                 failures[path] = StatisticalSpecError(
                     code=reasons.plan.STATISTICAL_SNAPSHOT_UNREADABLE,
-                    message=f"snapshot_file {shown!r} could not be read: {exc}",
+                    message=_unreadable_message(shown, locator, path, base_dir, str(exc)),
                 )
                 continue
-            failure = fileaccess.redact_locators(str(exc), [(path, shown)])
+            failure = fileaccess.redact_locators(str(exc), [(path, shown), (locator, shown)])
         if failure is not None:
             # Strict: the failure is recorded after the handler closes, with no library error
             # attached (its text can name the file).
             failures[path] = StatisticalSpecError(
                 code=reasons.plan.STATISTICAL_SNAPSHOT_UNREADABLE,
-                message=f"snapshot_file {shown!r} could not be read: {failure}",
+                message=_unreadable_message(shown, locator, path, base_dir, failure),
             )
             continue
         if len(raw) > EMBEDDED_SNAPSHOT_MAX_BYTES:
@@ -386,3 +409,29 @@ def check_generate_snapshot_columns(
     specs = check_statistical_columns(config, pinned, dp_verified_columns, failures=failures)
     check_fitted_references(config, pinned or {}, failures)
     return specs
+
+
+@dataclass(frozen=True)
+class SnapshotPass:
+    """What one compile's snapshot pass produced: the pins, the classified read failures, the
+    DP verification verdicts and receipt, and the statistical column specs."""
+
+    pinned: dict[str, ReadSnapshot]
+    failures: dict[str, Any]
+    dp_verified_columns: frozenset[tuple[str, str]]
+    dp_verification: DpVerification | None
+    column_specs: list[tuple[str, str, str, dict[str, Any]]]
+
+
+def pin_and_check_snapshots(
+    config: dict[str, Any], *, base_dir: str | Path | None = None
+) -> SnapshotPass:
+    """The one snapshot pass for a compile: read and pin every snapshot once, verify DP
+    snapshots, then run the statistical and fitted-reference checks against the pinned bytes.
+    `compile_plan` and `run_config_only_checks` both call it, so the two cannot drift."""
+    pinned, failures = read_and_pin_snapshots(config, base_dir=base_dir)
+    dp_verified_columns, dp_verification = verify_dp_snapshots(config, pinned)
+    column_specs = check_generate_snapshot_columns(
+        config, pinned, dp_verified_columns, failures=failures
+    )
+    return SnapshotPass(pinned, failures, dp_verified_columns, dp_verification, column_specs)

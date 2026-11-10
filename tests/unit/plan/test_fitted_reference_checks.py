@@ -21,7 +21,14 @@ import pytest
 import yaml
 
 from decoy_engine import run_config_only_checks
-from decoy_engine.plan import PlanCompileError, _checks_dp, _compile, _serialize, compile_plan
+from decoy_engine.plan import (
+    PlanCompileError,
+    _checks_dp,
+    _compile,
+    _generation,
+    _serialize,
+    compile_plan,
+)
 from decoy_engine.plan._checks_dp import check_dp_generate_contract
 from decoy_engine.plan._serialize import plan_from_yaml, plan_to_yaml
 from decoy_engine.profile import Profile
@@ -110,7 +117,7 @@ def test_compile_plan_refuses_before_snapshot_verification(monkeypatch: pytest.M
         raise AssertionError("snapshot verification ran before the DP contract")
 
     monkeypatch.setattr(_compile, "check_dp_generate_contract", spy)
-    monkeypatch.setattr(_compile, "verify_dp_snapshots", no_verify)
+    monkeypatch.setattr(_generation, "verify_dp_snapshots", no_verify)
     with pytest.raises(PlanCompileError) as exc:
         compile_plan(_config("fitted"), _profile(), decoy_engine_version="test")
     assert exc.value.code == CODE
@@ -214,7 +221,7 @@ def _forbid_read(monkeypatch: pytest.MonkeyPatch) -> None:
     def no_read(*_a: Any, **_k: Any) -> None:
         raise AssertionError("snapshot read ran before the DP contract")
 
-    monkeypatch.setattr(_compile, "read_and_pin_snapshots", no_read)
+    monkeypatch.setattr(_generation, "read_and_pin_snapshots", no_read)
 
 
 @pytest.mark.parametrize("kind", ["missing", "unreadable", "malformed"])

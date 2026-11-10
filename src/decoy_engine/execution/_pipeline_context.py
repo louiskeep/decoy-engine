@@ -39,9 +39,12 @@ from decoy_engine.execution import _guards, _pipeline_auto_chunk, _pipeline_rout
 from decoy_engine.execution._chunked_output_sink import OutputPublish
 from decoy_engine.execution._transforms_admission import out_of_core_declined, routing_profile
 from decoy_engine.execution._transforms_gate import reject_any_per_table_transforms
+from decoy_engine.fileaccess import config_relative
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from faker import Faker
 
     from decoy_engine.execution._adapter import ExecutionAdapter
@@ -221,6 +224,7 @@ def build_run_context(
     secret_cache_policy: SecretCachePolicy | None = None,
     quarantine_runtime: Any = None,
     out_of_core_threads: int | None = None,
+    base_dir: str | Path | None = None,
 ) -> PipelineRunContext:
     """Resolve and validate every run input, in the order the inline code did.
 
@@ -345,7 +349,7 @@ def build_run_context(
 
     profile = profile_source(config, seed=job_seed)
 
-    plan = compile_plan(config, profile, decoy_engine_version=engine_version)
+    plan = compile_plan(config, profile, decoy_engine_version=engine_version, base_dir=base_dir)
 
     # Late defense in depth: the compiled plan may not need more than admission covered.
     assert_plan_requirements_admitted(plan, admitted)
@@ -443,16 +447,28 @@ def build_run_context(
     )
 
 
-def with_quarantine_path(ctx: PipelineRunContext, path: str | None) -> PipelineRunContext:
+def with_quarantine_path(
+    ctx: PipelineRunContext, path: str | None, base_dir: str | Path | None = None
+) -> PipelineRunContext:
     """`ctx` with `quarantine.output_path` replaced in a copy of its config.
+
+    A caller's `path` wins and is used as given. Without one, a relative YAML path resolves
+    against `base_dir` (`fileaccess.config_relative`); with neither, the context is unchanged.
 
     Called after the plan, and so its config hash, was built from the caller's config: the hash
     and the caller's dict are untouched. Every route reads `ctx.config`, so none needs its own
     override. Without a path or a `quarantine` block the context is returned as is.
     """
     quarantine = ctx.config.get("quarantine")
-    if path is None or not isinstance(quarantine, dict):
+    if not isinstance(quarantine, dict):
         return ctx
+    if path is None:
+        declared = quarantine.get("output_path")
+        if base_dir is None or not isinstance(declared, str) or not declared:
+            return ctx
+        path = config_relative(declared, base_dir)
+        if path == declared:
+            return ctx
     effective = {**ctx.config, "quarantine": {**quarantine, "output_path": path}}
     return replace(ctx, config=effective)
 

@@ -127,7 +127,9 @@ def _estimate(config_dump: dict[str, Any], base_dir: Path | str) -> JobEstimate:
 
     profile = profile_source(config, seed=_normalize_job_seed_int(config))
     registry = get_default_registry()
-    plan = compile_plan(config, profile, decoy_engine_version=engine_version)
+    plan = compile_plan(
+        config, profile, decoy_engine_version=engine_version, base_dir=Path(base_dir)
+    )
     ns_registry = build_namespace_registry(config, profile)
     orphan_lookup = check_orphan_fk_policy_completeness(config, profile.relationships)
     graph = build_relationship_graph(

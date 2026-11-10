@@ -14,7 +14,12 @@ from decoy_engine.generation._numeric_typing import generated_table_to_pandas
 if TYPE_CHECKING:
     from decoy_engine.generation._bounds import FloorShortfall
 
-__all__ = ["detected_memory_bytes", "generated_table_to_pandas", "resident_floor_shortfall"]
+__all__ = [
+    "detected_memory_bytes",
+    "generated_table_to_pandas",
+    "generation_order",
+    "resident_floor_shortfall",
+]
 
 
 # Both import lazily: every generation submodule imports this package, and the floor pulls in
@@ -25,6 +30,14 @@ def resident_floor_shortfall(config: dict[str, Any], available_bytes: int) -> Fl
     from decoy_engine.generation._bounds import generation_floor_shortfall
 
     return generation_floor_shortfall(config, classify_plan(config), available_bytes)
+
+
+def generation_order(config: dict[str, Any]) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Each generate table with its referenced parents in first-reference order, parents first.
+    A function of the config alone, so every route builds tables in this order."""
+    from decoy_engine.generation.synthesize import generation_order as _generation_order
+
+    return _generation_order(config)
 
 
 def detected_memory_bytes() -> int | None:

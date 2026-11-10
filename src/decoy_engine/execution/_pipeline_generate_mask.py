@@ -72,6 +72,8 @@ class GenerateMaskStepResult:
     # the whole sources exists (`decide_output_mode`).
     sources: dict[str, pa.Table]
     inputs_streamed: bool
+    # Generation-side `QualityWarning`s (the fidelity gate), ahead of `mask_warnings` in the result.
+    generate_warnings: tuple[Any, ...] = ()
 
 
 def run_generate_and_mask_steps(
@@ -112,19 +114,22 @@ def run_generate_and_mask_steps(
     now_iso: str | None,
     publish: _output_sink.OutputPublish,
     pregenerated: dict[str, pa.Table] | None = None,
+    pregenerated_warnings: tuple[Any, ...] = (),
     cast_run: Any = None,
     stream: StreamVerdict | None = None,
 ) -> GenerateMaskStepResult:
     """Run generate-kind tables then mask-kind tables (`_pipeline.py`
     Steps 1-2), returning everything the stitch + finalize stages need.
     See the module docstring for why this is a separate function. `pregenerated` skips
-    Step 1 with outputs a declined mixed route already built."""
+    Step 1 with outputs a declined mixed route already built; `pregenerated_warnings` carries the
+    warnings that generation raised, so the fallback never loses one."""
     from decoy_engine.generation.synthesize import generate_tables
 
     # Step 1: generate-kind tables. Plan-only (guide 4.8/9): passing the
     # whole Plan is safe even with mask tables present, since synthesize
     # filters by `generate_columns` presence internally.
     generate_outputs: dict[str, pa.Table] = {}
+    generate_warnings: list[Any] = list(pregenerated_warnings)
     if has_generate_table:
         generate_outputs = (
             pregenerated
@@ -134,6 +139,7 @@ def run_generate_and_mask_steps(
                 derive_key=derive_key,
                 instance_default_locale=instance_default_locale,
                 provider_snapshot=provider_snapshot,
+                on_warning=generate_warnings.append,
             )
         )
 
@@ -384,4 +390,5 @@ def run_generate_and_mask_steps(
         fidelity_reports=fidelity_reports,
         sources=sources,
         inputs_streamed=bool(sources) and all(isinstance(v, LazySource) for v in sources.values()),
+        generate_warnings=tuple(generate_warnings),
     )

@@ -100,9 +100,11 @@ def run_full_frame_route(
     decision: RouteDecision,
     *,
     pregenerated: dict[str, pa.Table] | None = None,
+    pregenerated_warnings: tuple[Any, ...] = (),
 ) -> ExecutionResult:
     """`pregenerated` hands over generate outputs a prior route already built (the mixed
-    route's runtime decline), so generation is never run twice.
+    route's runtime decline), so generation is never run twice; `pregenerated_warnings` hands
+    over the warnings that generation raised.
 
     A job with declared columns applies the F06 boundary here (pre-mask cast, post-mask format);
     any failure aborts the protected-quarantine session so no partial artifact survives."""
@@ -112,7 +114,13 @@ def run_full_frame_route(
     declared_route_guard("full_frame", plan=ctx.plan, raise_on_decline=False)
     cast_run = open_cast_run(ctx.plan, ctx.quarantine_runtime)
     try:
-        return _run_full_frame(ctx, decision, pregenerated=pregenerated, cast_run=cast_run)
+        return _run_full_frame(
+            ctx,
+            decision,
+            pregenerated=pregenerated,
+            pregenerated_warnings=pregenerated_warnings,
+            cast_run=cast_run,
+        )
     except BaseException as failure:
         if cast_run is not None:
             cast_run.abort(failure)
@@ -124,6 +132,7 @@ def _run_full_frame(
     decision: RouteDecision,
     *,
     pregenerated: dict[str, pa.Table] | None,
+    pregenerated_warnings: tuple[Any, ...],
     cast_run: Any,
 ) -> ExecutionResult:
     # TB-1: only full_frame / auto-chunk below needs every source resident, and a loader-backed
@@ -198,6 +207,7 @@ def _run_full_frame(
                 now_iso=ctx.now_iso,
                 publish=publish,
                 pregenerated=pregenerated,
+                pregenerated_warnings=pregenerated_warnings,
                 cast_run=cast_run,
                 stream=decision.stream,
             )
@@ -271,7 +281,7 @@ def _run_full_frame(
             outputs=outputs,
             timings=step.mask_timings,
             boundary_conversion_ms=step.mask_conversion_ms,
-            warnings=step.mask_warnings,
+            warnings=(*step.generate_warnings, *step.mask_warnings),
             quality_metrics=quality_metrics,
             table_kinds=ctx.table_kinds,
             row_errors=step.mask_row_errors,
