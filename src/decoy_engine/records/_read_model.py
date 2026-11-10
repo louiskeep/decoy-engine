@@ -11,7 +11,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict
 
 from decoy_engine._value_free import derive_read
-from decoy_engine.run_result._model import Token
+from decoy_engine.run_result import Token
 
 __all__ = ["read_model_of"]
 

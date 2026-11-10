@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, StrictInt
 
 from decoy_engine.records._grammar import Kind, PayloadTag, RecordId
 from decoy_engine.records._read_model import read_model_of
-from decoy_engine.run_result._model import (
+from decoy_engine.run_result import (
     InvocationId,
     RelPath,
     SafeName,

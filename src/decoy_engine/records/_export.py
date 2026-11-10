@@ -38,7 +38,7 @@ from decoy_engine.records._export_rules import file_name
 from decoy_engine.records._grammar import RecordId, family_major, is_record_id
 from decoy_engine.records._read_model import read_model_of
 from decoy_engine.records._registry import KindSpec, kind_spec
-from decoy_engine.run_result._model import InvocationId, UtcTimestamp
+from decoy_engine.run_result import InvocationId, UtcTimestamp
 
 __all__ = [
     "EXPORT_SCHEMA",

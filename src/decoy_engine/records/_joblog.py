@@ -20,7 +20,7 @@ from decoy_engine.records._envelope import Producer
 from decoy_engine.records._errors import RecordError
 from decoy_engine.records._read_model import read_model_of
 from decoy_engine.records._registry import family_major
-from decoy_engine.run_result._model import InvocationId, RelPath, UtcTimestamp
+from decoy_engine.run_result import InvocationId, RelPath, UtcTimestamp
 
 __all__ = ["JOB_LOG_SCHEMA", "JobLog", "JobLogHeader", "header_line", "read_job_log"]
 
