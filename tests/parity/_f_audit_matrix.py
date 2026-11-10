@@ -87,7 +87,7 @@ def standalone_admitted(p: Probe) -> bool:
     if p.fresh or p.kind not in ADMITTED_KINDS:
         return False
     if p.kind == "reference":
-        return not p.repair
+        return not p.repair and p.distribution != "fitted"
     if p.kind == "faker":
         return p.faker != "custom"
     if p.kind == "windowed_date":
@@ -103,6 +103,8 @@ def reason_of(p: Probe) -> str:
         return f"family_declined:{p.kind}"
     if p.kind == "reference" and p.repair:
         return "reference_cardinality_repair"
+    if p.kind == "reference" and p.distribution == "fitted":
+        return "reference_fitted_fanout"
     if p.kind == "faker" and p.faker == "custom":
         return "faker_custom_or_unresolved_provider"
     if p.kind == "windowed_date" and not p.anchor_ok:
@@ -163,6 +165,8 @@ def witness_of(p: Probe) -> tuple[str, str]:
         return EXCLUDED, "legacy windowed_date is unobserved; proven by route and reason"
     if p.kind == "reference" and p.repair:
         return EXCLUDED, "whole-table cardinality repair rewrites the drawn keys"
+    if p.kind == "reference" and p.distribution == "fitted":
+        return EXCLUDED, "fitted fan-out is legacy-only; proven by route, reason and its own tests"
     if p.kind == "reference" and p.parent_empty:
         return EXCLUDED, "every position is an intrinsic null; the vacuity fence refuses a label"
     return VALUE_EQUALITY, ""
@@ -253,8 +257,22 @@ ROWS: Final[tuple[AuditRow, ...]] = (
     _row(
         "reference-empty-parent",
         Probe("reference", parent_empty=True),
-        lambda p: p.kind == "reference" and _clean(p) and not p.repair and p.parent_empty,
+        lambda p: (
+            p.kind == "reference"
+            and _clean(p)
+            and not p.repair
+            and p.distribution != "fitted"
+            and p.parent_empty
+        ),
         "intrinsic None, no draw",
+    ),
+    _row(
+        "reference-fitted-fanout",
+        Probe("reference", distribution="fitted"),
+        lambda p: (
+            p.kind == "reference" and not p.fresh and not p.repair and p.distribution == "fitted"
+        ),
+        "declines to the whole-table generator",
     ),
     _row(
         "reference-cardinality-repair",
@@ -388,7 +406,7 @@ def probe_grid() -> list[Probe]:
         grid.append(Probe(kind))
     grid.append(Probe("categorical", fresh=True))
     grid.append(Probe("categorical", plan_decliner=True))
-    for dist in ("random", "sequential", "weighted"):
+    for dist in ("random", "sequential", "weighted", "fitted"):
         for empty in (False, True):
             for repair in (False, True):
                 grid.append(

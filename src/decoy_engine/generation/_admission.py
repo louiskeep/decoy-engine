@@ -184,6 +184,8 @@ def classify_plan(
     def classify_reference(table: str, col: dict[str, Any]) -> ColumnAdmission:
         if int(col.get("min_per_parent") or 0) > 0 or int(col.get("max_per_parent") or 0) > 0:
             return decline(table, col, "reference_cardinality_repair")
+        if col.get("distribution") == "fitted":
+            return decline(table, col, "reference_fitted_fanout")
         parent_name = col.get("reference_table")
         parent = tables.get(parent_name) if isinstance(parent_name, str) else None
         parent_col = next(

@@ -60,7 +60,7 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="gen.reference",
         family="python_mt19937",
-        call_site="generation/_synthesize_derived.py:156",
+        call_site="generation/_synthesize_derived.py:203",
         entropy_root="job_seed",
         seed_derivation='random.Random(GenDeriveContext.for_column(...).base_int("py"))',
         api_operation="random.Random(col_seed).choice / .choices per row",
@@ -72,7 +72,10 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
         identity="column",
         null_draw_behavior="sequential distribution draws nothing (index i % len); random/weighted draw per row",
         partitionable=False,
-        config_fingerprint_source="strategy_config_fingerprint(column_config)+sorted parent pool",
+        config_fingerprint_source=(
+            "strategy_config_fingerprint(column_config)+insertion-order parent pool; "
+            "fitted: the pinned snapshot digest (no snapshot_file read)"
+        ),
         provider_version=f"{_V6} (GenDeriveContext); CPython Mersenne Twister",
         notes=(
             "One Random advanced across all rows: a partition cannot resume mid-stream. "

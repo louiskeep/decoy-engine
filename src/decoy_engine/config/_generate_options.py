@@ -133,7 +133,7 @@ def _determinism(value: Any, _: Mapping[str, Any]) -> list[Problem]:
 def _distribution(value: Any, _: Mapping[str, Any]) -> list[Problem]:
     if not isinstance(value, str):
         return [((), _TYPE)]
-    return _OK if value in ("random", "weighted", "sequential") else [((), _VALUE)]
+    return _OK if value in ("random", "weighted", "sequential", "fitted") else [((), _VALUE)]
 
 
 def _formula(value: Any, _: Mapping[str, Any]) -> list[Problem]:
@@ -239,6 +239,8 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
             "weights": OptionSpec(_weights),
             "min_per_parent": OptionSpec(_int_at_least(0)),
             "max_per_parent": OptionSpec(_int_at_least(0)),
+            "snapshot_file": _S,
+            "source_column": _S,
         },
         required=("reference_table", "reference_column"),
     ),

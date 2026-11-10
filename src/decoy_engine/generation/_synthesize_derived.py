@@ -10,7 +10,13 @@ from __future__ import annotations
 import random
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine import reasons
 from decoy_engine.config import value_key
+from decoy_engine.generation.statistical import (
+    FanoutSpec,
+    StatisticalSpecError,
+    fitted_reference_values,
+)
 from decoy_engine.generators.derivation import GenDeriveContext
 
 if TYPE_CHECKING:
@@ -108,12 +114,46 @@ def parent_keys(pools: dict[str, pa.Table], table: str, column: str) -> list[Any
     return keys
 
 
+def _fitted_reference(
+    col: dict[str, Any],
+    ref_vals: list[Any],
+    n: int,
+    seed: int,
+    derive_key: Any,
+    fanout: FanoutSpec | None,
+) -> list[Any]:
+    """The `fitted` branch of `_reference`: parent degrees come from the pinned fan-out.
+
+    The seed derives from the snapshot digest the plan pinned at compile time, so the
+    `snapshot_file` path is never opened here. A missing spec refuses; it never falls
+    back to uniform draws.
+    """
+    if fanout is None:
+        raise StatisticalSpecError(
+            code=reasons.plan.REFERENCE_FANOUT_MISSING,
+            message=(
+                f"reference column {str(col.get('name'))!r} asks for distribution "
+                "'fitted' but no pinned fan-out reached generation. Compile the "
+                "config into a Plan with a snapshot made by `decoy fit --fanout`, "
+                "or use distribution: random."
+            ),
+        )
+    col_seed = GenDeriveContext.for_column(
+        derive_key=derive_key,
+        column_config=col,
+        fallback_seed=seed,
+        snapshot_content_digest=fanout.seed_digest,
+    ).base_int("py")
+    return fitted_reference_values(ref_vals, fanout, n, random.Random(col_seed))
+
+
 def _reference(
     col: dict[str, Any],
     n: int,
     seed: int,
     derive_key: Any = None,
     pools: dict[str, pa.Table] | None = None,
+    fanout: FanoutSpec | None = None,
 ) -> list[Any]:
     """FK / mint-a-pool: sample values from a parent table's already-generated key
     column. Parity-frozen vs V1 ``_generate_reference_column`` (``columns.py:758-865``).
@@ -127,7 +167,8 @@ def _reference(
         ``categorical`` generator does the same).
       - Dispatch by ``distribution``: ``random`` (random.choice), ``sequential``
         (parent_vals[i % len]), ``weighted`` (random.choices with weights;
-        size-mismatch falls back to None for uniform). Unknown -> random
+        size-mismatch falls back to None for uniform), ``fitted`` (parent degrees from a
+        pinned fan-out, see ``_fitted_reference``). Unknown -> random
         (V1 warns; the v2 falls through silently, values match).
       - Optional cardinality repair via V1 ``_apply_cardinality_bounds`` (~150 LoC
         repair algorithm) -- DELEGATED to V1 the same way ``_formula`` delegates
@@ -152,6 +193,9 @@ def _reference(
         from decoy_engine.generation._unique import unique_reference
 
         return unique_reference(col, ref_vals, n, seed, derive_key)
+
+    if distribution == "fitted":
+        return _fitted_reference(col, ref_vals, n, seed, derive_key, fanout)
 
     if not ref_vals:
         return [None] * n

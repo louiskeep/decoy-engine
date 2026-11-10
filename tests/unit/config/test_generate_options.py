@@ -263,6 +263,14 @@ def test_huge_int_weight_is_a_refusal_not_an_overflow() -> None:
     PipelineConfig.model_validate(_config(_col("categorical", weights=[10**300, 1])))
 
 
+def test_fitted_reference_parses_and_other_values_still_refuse() -> None:
+    PipelineConfig.model_validate(
+        _config(_col("reference", distribution="fitted", snapshot_file="s.json"))
+    )
+    errs = _errors(_col("reference", distribution="fitted-ish"))
+    assert [_spot(e) for e in errs] == [(VALUE, ("distribution",))]
+
+
 def test_weighted_distribution_requires_weights() -> None:
     errs = _errors(_col("reference", distribution="weighted"))
     assert [_spot(e) for e in errs] == [("missing", ("weights",))]
@@ -364,6 +372,11 @@ def test_templates_are_fixed_text() -> None:
         ("faker", {"locale": None, "faker_kwargs": None}),
         ("reference", {"distribution": "weighted", "weights": [1, 2]}),
         ("reference", {"distribution": "sequential", "min_per_parent": 0, "max_per_parent": 4}),
+        ("reference", {"distribution": "fitted", "snapshot_file": "v.snap.json"}),
+        (
+            "reference",
+            {"distribution": "fitted", "snapshot_file": "v.json", "source_column": "pid"},
+        ),
         ("formula", {"formula": "a * 2", "references": ["a"]}),
         ("formula", {"formula": "  1 + 1  "}),
         ("windowed_date", {"min_days": -3, "distribution": "uniform"}),

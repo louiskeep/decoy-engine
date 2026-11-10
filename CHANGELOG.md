@@ -9,6 +9,15 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (fitted reference fan-out execution, FK-FANOUT E2b, 2026-11-10)
+
+A `reference` generate column with `distribution: fitted` and a `snapshot_file` made with a fan-out block gives
+each parent a child count drawn from the fitted degree histogram, instead of independent uniform picks. The
+snapshot is read once at compile and pinned, so deleting or editing the file after compile changes nothing, and
+seed derivation and the null mask never reopen it. The column takes the whole-table route. A `fitted` column
+with no pinned fan-out stops with `reference_fanout_missing`, and child rows against an empty parent pool stop
+with `reference_parent_pool_empty`. Other distributions generate the same cells as before.
+
 ### Added (`unique` and `unique_together` generate options, GEN-UNIQUE E2, 2026-11-09)
 
 `unique: true` on a `sequence`, `categorical`, `faker` or `reference` generate column draws values with no

@@ -49,8 +49,9 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
 # Re-pinned at the GEN-C1 main merge: carries the shuffle and derive_context re-pins plus the moved gen call sites.
 # Re-pinned 2026-11-09: gen.reference records the fitted fan-out shuffles on its stream.
 # Re-pinned 2026-11-09: gen.statistical_per_row records the fitted cell format draws.
+# Re-pinned for FK-FANOUT E2b: gen.reference call site and fingerprint source.
 # Re-pinned for GEN-UNIQUE E2: four unique-draw sites, the moved synthesize.py call sites, and the shared attempt limit.
-_CATALOGUE_DIGEST = "44b38b3ab3d012ed5cef3ce0ae36fec7ba11bdd3d80e7049bf5c76f137a33208"
+_CATALOGUE_DIGEST = "a238b91980439d8df74367d3deb47c000f70f18c2e5b58d3fd3a8403589bfce2"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -113,7 +114,8 @@ _ENTRY_DIGESTS = [
     "87297d66f6e12f6f2e9d18d0d9a66d2416e85d7901edc911ad2796d4fe85210b",
     "73d56b8732a6a41baad045d754751bf6b3952c717c042d8674f22c248e289980",
     # gen.reference re-pinned 2026-11-09: the fan-out allocator is a mirror call site.
-    "ac3c610bf678df5df95d6723d19d382b3345640afddac78c71f3dfe2db3b2a97",
+    # gen.reference re-pinned for FK-FANOUT E2b: call site moved, fitted seeds from the pinned snapshot digest.
+    "7d9bce3693d567778b4149b7bc631a4aef99431cd732f5ecf190fb5c47fee918",
     "22ddc02bdf5fbcd992e9c621d629885b7c036e872f7f71b90f73fc3fa4f2023d",
     "e4ca36f5c5bfef93d57ebd502d2d24db01dac1f576643e83291f9a589c76f3c9",
     # gen.statistical_per_row re-pinned 2026-11-09: fitted cell_format adds the blank and null draws.
