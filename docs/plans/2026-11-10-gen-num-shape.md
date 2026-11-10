@@ -55,8 +55,9 @@ A number column fitted by `decoy fit` (or `compute_distribution_snapshot`) and g
 - A column with few distinct values emits exactly those values that at least `K` rows hold, at
   their source shares.
 
-Guarantee: every value this row adds to a snapshot (a grid point or an exact value) stands for at
-least `K = 10` source rows, and generation never emits a number outside the `K`-th extremes of a
+Guarantee: every exact value this row adds to a snapshot is held by at least `K = 10` source rows,
+every interval between grid points holds at least `K` rows (and so does each tail beyond the grid
+ends), and generation never emits a number outside the `K`-th extremes of a
 column that has a grid or exact values. Old snapshots generate byte-identical output.
 
 Non-goals: the categorical, datetime and freetext samplers (categorical consent is unchanged);
@@ -208,6 +209,8 @@ of the distribution.
 Fit, for a numeric column with at most 30 distinct finite cells (`_CATEGORICAL_DISTINCT_CAP`, the
 same cap that makes an object column categorical):
 
+- The distinct count and the per-value counts run on the original series (an integer dtype stays
+  integer, so two int64 values that share a float64 never merge), not on the float finite cells.
 - Values with at least `K` rows are kept with their counts; values with fewer than `K` rows are
   dropped, and their row total is written as `dropped_count` (a count, value-free).
 - Exact mode applies when the dropped rows are at most 1% of finite cells. Stored:
@@ -504,7 +507,14 @@ Each move is intentional and written in the diff:
   distinct values and gains a grid), and add a sensitive low-distinct number column whose three
   values each sit on 40 rows (it gains `exact_values`). The builder picks a column name the
   existing sensitivity rule flags and asserts it is in `redacted_columns`. Every other assertion
-  in the file must pass unchanged; any that moves with `_N` is a stop and a report.
+  in the file must pass unchanged except one: `:203` asserts `after == [[_N]]` for `bin_counts`,
+  which a second sensitive number column turns into `[[_N], [_N]]`; change it to
+  `assert after and all(a == [_N] for a in after)`. (Alternative if the builder prefers: keep
+  `_frame()` as is and give the `exact_values` cases their own fixture frame.) Note for the
+  `COARSE_RANGE` branch (`:199-208`): `raw_numbers` now also holds grid values and exact counts
+  (40 and 120 here), so the new column's values (for example `31000.5`, `52000.5`, `73000.5`) must
+  be chosen so the coarse bounds written at `:205-208` share no number with `raw_numbers`; the
+  builder checks this on the first run rather than editing the assertion.
 - A test that compares a redacted numeric entry against an exact key set
   (`test_snapshot_values.py::test_a_numeric_canary_column_keeps_a_coarse_unit_range_only`, if it
   lists keys) gains `quantile_grid: None` and `exact_values: None` where they apply.
@@ -550,10 +560,11 @@ get the new shape. A redacted fit drops both keys for sensitive columns.
 | `src/decoy_engine/generation/statistical/_spec.py` | call lines only: `load_spec` calls `decode_numeric_shape` (carrier None only); `_refuse_withheld_values` calls `numeric_shape_withheld` | `:58` | 581 to about 585, must end at or under 600 |
 | `src/decoy_engine/generation/statistical/__init__.py` | export `add_numeric_shape` | `:58` | 51 to 52; the engine root `__init__.py` is not touched |
 | `src/decoy_engine/profiling/_value_redaction.py` | `MIN_RELEASE_COUNT = 10` with its SDC citation; two `SNAPSHOT_VALUE_STATS` entries | `:106` | 469 to about 475 |
+| `src/decoy_engine/profiling/__init__.py` | export `MIN_RELEASE_COUNT` beside `POLICY_RAW` | `:106` | +2 |
 | `src/decoy_engine/execution/native/_draw_sites_gen.py` | `call_shape` text | native bridge row | same |
 | `tests/unit/generation/statistical/test_numeric_grid.py`, `test_numeric_exact.py` | new | "Unit tests" row | folder 6 to 8 files |
 | `tests/unit/profiling/test_snapshot_values_numeric_shape.py` | new (AT-12, AT-13) | "Unit tests" row | |
-| `tests/sentry/profiling/test_snapshot_value_registry.py` | fixture `_N` 40 to 120 and one new sensitive low-distinct number column (section 10) | sentry row | about +3 |
+| `tests/sentry/profiling/test_snapshot_value_registry.py` | fixture `_N` 40 to 120, one new sensitive low-distinct number column, `:203` assertion widened (section 10) | sentry row | about +3 |
 | `tests/snapshots/test_distribution_snapshot_baseline.py` and goldens | `numeric_only` re-pin; `numeric_low_distinct` fixture | snapshot harness | |
 | `docs/distribution-integrity/snapshot-and-fidelity.md:65`, `statistical-generation.md:70,129,138`, `extending.md:113-114`, `index.md:86` | numeric stats row, sampler text, limits, C2 and H3 rows marked fixed | doc index | |
 | `CODEMAP.md:58` | add `_numeric_shape.py` and the allowed lazy edge "`quality/snapshot.py` calls `add_numeric_shape`" | | |
@@ -561,7 +572,9 @@ get the new shape. A redacted fit drops both keys for sensitive columns.
 
 One new source module, in `generation/statistical/` (6 files to 7); none in `quality/` (25 files,
 at the flat-folder limit). `generation` already imports `profiling` (`_spec.py:59`), so reading
-`MIN_RELEASE_COUNT` from `profiling/_value_redaction.py` adds no new layer edge. No census entry,
+`MIN_RELEASE_COUNT` adds no new layer edge. `_numeric_shape.py` imports it as
+`from decoy_engine.profiling import MIN_RELEASE_COUNT`, exported through `profiling/__init__.py`
+the same way as `POLICY_RAW`. No census entry,
 no new reason code (refusals reuse existing codes), no new sentry.
 
 ## 12a. Reuse inventory
@@ -610,7 +623,8 @@ red.
 
 1. Q1 Consent for exact values. Recommend: none. `K` is the disclosure control; a grid already
    emits real values held by `K` or more rows (plateaus, int rounding), so a consent flag on
-   `exact_values` blocks nothing and would make the change Breaking. Accepted by Dennis on r1.
+   `exact_values` blocks nothing and would make the change Breaking. Recommended by Dennis r1; owner accepted the recommendation (proceeding on
+   go-recommended).
    Alternative: reuse `allow_real_categories` (blocks every re-fitted low-distinct column, for no
    added protection).
 2. Q2 Release floor `K`. Recommend 10, this row's own constant (`MIN_RELEASE_COUNT`). Lower (5)
@@ -633,6 +647,10 @@ red.
 - `snapshot.py` crosses 600 lines: section 12 names two trims; a census entry is not an allowed
   fix.
 - A re-pinned golden hides a regression: section 10 is the whole list.
+- Unrounded grid values depend on numpy's `quantile(method="linear")` interpolation, stable since
+  numpy 1.22. Across numpy majors the last bits can differ, so the `numeric_only` golden could
+  differ between environments with different numpy majors; the golden is pinned under the locked
+  numpy, and a numpy major bump re-checks it.
 - The registry sentry fixture change moves another assertion: stop and report rather than edit
   the assertion.
 - #456 merges first or after: either way rebase, re-count `snapshot.py`, apply the trims.
