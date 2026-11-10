@@ -86,7 +86,7 @@ def test_default_selection_is_labelled_not_the_full_suite(tmp_path: Path) -> Non
     clone = seeded_clone(tmp_path)
     venv, _log = recording_venv(tmp_path)
     _rc, out = run_gates(clone, venv, "--steps", "tests")
-    assert "SELECTION ONLY (changed vs origin/main, 1 file(s)); this is NOT the full suite" in out
+    assert "SELECTION ONLY (changed vs origin/main, 1 file(s) + always-on pins," in out
 
 
 @pytest.mark.parametrize(

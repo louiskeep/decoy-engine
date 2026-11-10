@@ -50,8 +50,10 @@
 #   min(cpus, 4), at most 2 on a host under 14 GB (1 when under 4 GB is free). The workers: line
 #   of the EVIDENCE header names the choice. A stored baseline records it and refuses a run with
 #   another count (exit 2); pin GATES_WORKERS for any baseline write or compare.
-#   test paths    default: tests touching files changed against origin/main. That is a
-#                 SELECTION, not the full suite; the header says so. Use --full (or `tests`).
+#   test paths    default: tests touching files changed against origin/main, plus the always-on
+#                 output pins listed in scripts/dev/gate_pins.txt (route baselines, golden and
+#                 digest pins, the H-1 owner test). That is a SELECTION, not the full suite; the
+#                 header says so. Use --full (or `tests`).
 set -uo pipefail
 
 # Repo config. Mirrors .github/workflows/ci.yml (ruff, mypy, regression-gate jobs).
@@ -67,6 +69,11 @@ PYTEST_MARK=${PYTEST_ARGS[1]}  # the same expression; the parallel and serial pa
 # `*` crosses `/`, so 'docs/*' also covers docs/records.
 NON_CODE_GLOBS=('docs/*' 'docs/records/*' '*.md' 'LICENSE*' 'NOTICE*' 'CHANGELOG*'
   '.gitignore' '.gitattributes' '.aiignore' '.claude/*' '.tours/*')
+# Tests every selected PR gate runs whatever changed: one path per line, `#` comments. Name-based
+# selection misses tests that reach code only through a function-local import or that check a
+# definition, so the output-pinning tests ride along (tests/sentry/test_gate_pins.py keeps the
+# list true).
+PINS_FILE=scripts/dev/gate_pins.txt
 SRC_MATCH='src/*.py'   # changed files that map to a dotted module
 SRC_STRIP='src/'       # prefix removed before turning a path into a module
 PYPATH_DIRS=(src scripts)
@@ -201,11 +208,31 @@ elif [ ${#PATHS[@]} -eq 0 ]; then
   while IFS= read -r p; do [ -n "$p" ] && PATHS+=("$p"); done <<EOT
 $SELECTED
 EOT
-  SELECTION="SELECTION ONLY (changed vs origin/main, ${#PATHS[@]} file(s)); this is NOT the full suite, use --full"
+  NSEL=${#PATHS[@]}
   if [ ${#PATHS[@]} -eq 0 ]; then
     code_changed; crc=$?
     [ $crc = 2 ] && { echo "gates: could not diff against the merge base with origin/main" >&2; exit 2; }
     [ $crc = 0 ] && TESTS_REQUIRED=1
+  else
+    # A diff that selected tests also runs the pins. An empty selection stays empty: a code diff
+    # that selects nothing fails below, and a docs-only diff has nothing to pin.
+    [ -f "$ROOT/$PINS_FILE" ] || { echo "gates: FAIL: pin list missing: $PINS_FILE" >&2; exit 2; }
+    while IFS= read -r p; do
+      p=${p%%#*}; p=${p//[[:space:]]/}
+      [ -n "$p" ] || continue
+      [ -e "$ROOT/$p" ] || { echo "gates: FAIL: pinned test path not found: $p ($PINS_FILE)" >&2; exit 2; }
+      PATHS+=("$p")
+    done < "$ROOT/$PINS_FILE"
+    PINNED=$(printf '%s\n' ${PATHS[@]+"${PATHS[@]}"} | LC_ALL=C sort -u)
+    PATHS=()
+    while IFS= read -r p; do [ -n "$p" ] && PATHS+=("$p"); done <<EOT
+$PINNED
+EOT
+  fi
+  if [ $NSEL -gt 0 ]; then
+    SELECTION="SELECTION ONLY (changed vs origin/main, $NSEL file(s) + always-on pins, ${#PATHS[@]} in all); this is NOT the full suite, use --full"
+  else
+    SELECTION="SELECTION ONLY (changed vs origin/main, 0 file(s)); this is NOT the full suite, use --full"
   fi
 else
   SELECTION="explicit: ${PATHS[*]+${PATHS[*]}}"
