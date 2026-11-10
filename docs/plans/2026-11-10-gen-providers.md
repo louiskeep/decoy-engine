@@ -78,7 +78,8 @@ Recurring-defect catalog check:
 - "second registry": no provider list; the four composite name lists fold into one (AT-2, AT-13).
 - "copied kernel": the generation modules call adapters and composite generators only (AT-4).
 - "value in error text" and "no exception context": every refusal uses fixed text. Adapter errors
-  are translated with `from None` (AT-5, AT-16).
+  are translated by a raise placed after the `except` block closes, so the new error has no
+  `__cause__` or `__context__` (AT-5, AT-16).
 - "route forgot the new branch": pinned refuses and streamed declines, both explicit (AT-9).
 - "shared RNG stream": the null mask keeps its own `np` stream (AT-8).
 - "option read outside the registry": `READER_FILES` gains the new modules (AT-17).
@@ -172,13 +173,27 @@ generate:
 6. **Locale.** The `locale` key, else the instance default locale passed to `_generate_column`,
    else `en_US`. A default locale that the provider does not declare refuses at run with
    `runtime.generation_provider_failed`, because compile cannot see the instance default.
-7. **Run-time errors.** `ProviderError` and `CompositeError` raised inside the draw are caught at
-   one site in `provider_generate` and re-raised as `GenerationError(code=
-   runtime.generation_provider_failed)` with fixed text naming the table and column, `from None`.
-   Adapter messages can quote the provider name or a value, so they are never forwarded.
+7. **Run-time errors.** `ProviderError`, `CompositeError`, `IdentifierError`
+   (`providers_v2/identifiers/_errors.py:17`) and `DeterminismError`
+   (`determinism/_derive.py:148`) raised inside the draw are caught at one site in
+   `provider_generate`. The `except` block only records a flag. The new
+   `GenerationError(code=runtime.generation_provider_failed)`, with fixed text naming the table and
+   column, is raised after the block closes. `raise ... from None` is not enough: it clears
+   `__cause__` but keeps `__context__`, and AT-5 and AT-16 require both to be `None`. Adapter
+   messages can quote the provider name or a value, so they are never forwarded.
+   Every draw path here is integer-only: HMAC-SHA256, integer modulo, and Faker's or numpy's
+   integer index draws. None uses libm or floating point, so the bytes match across x86 and
+   arm64. A later change that adds a float step to a provider draw breaks AT-3's committed
+   digests.
 8. **Dispatch.** `_generate_column` (`generation/synthesize.py:292`) gains one
    `elif kind == "provider":` branch (about 4 lines) that calls `provider_generate`.
    `restore_declared` and `_apply_null_probability` then run on the result as for every type.
+   `ProviderSpec` is always built with `deterministic` and `namespace` set explicitly on the
+   keyed and composite paths, and with `seed` set on every path, so no adapter falls back to an
+   unseeded draw.
+   Memory: a table with a provider column runs on the legacy resident route (streamed declines,
+   pinned refuses). Its memory grows with `n` and is bounded only by the run's row count and the
+   existing generation budget, the same as `faker` today.
 9. **Registries.**
    - `ADMISSION_MATRIX["provider"] = (False, ...)` (`generation/_admission.py:40`): streamed
      declines and the run falls back to resident.
@@ -224,18 +239,40 @@ columns:
   - {name: zip,   type: provider, provider: composite_city_state_zip, field: zip}
 ```
 
-1. **Factory table (behavior-preserving masking refactor, its own commit).** A new
-   `generation/composite/_factory.py` holds `COMPOSITES: Mapping[str, CompositeDescriptor]`. Each
-   descriptor has a factory, the canonical output columns and the optional output columns (empty
-   until E3). These derive from it:
+1. **Factory table (behavior-preserving masking refactor).** The refactor is two commits.
+   - Commit 1 adds `tests/unit/execution/test_composite_handler_digests.py` and nothing else. It
+     runs each of the six masking composites through `CompositeHandler` on a fixed frame, in
+     deterministic mode (a fixed `mask_key`) and in non-deterministic mode (a fixed seed), and
+     asserts a SHA-256 digest of every output column. The digests are captured on the base commit
+     and committed as constants. No byte golden for these composites exists today:
+     `tests/integration/golden/test_execution_e2e.py` checks coherence, not bytes.
+   - Commit 2 is the refactor. The digest test must pass unchanged.
+   A new `generation/composite/_factory.py` holds `COMPOSITES: Mapping[str, CompositeDescriptor]`,
+   exported from `generation/composite/__init__.py`. Callers import it from
+   `decoy_engine.generation.composite`, never from `_factory`. Each descriptor has a factory, the
+   canonical output columns and the optional output columns (empty until E3). Every factory has
+   the one signature `(coherent_namespace, registry, provider_config) -> CompositeGenerator`.
+   Factories that do not need an argument ignore it (`composite_city_state_zip` takes no
+   registry today). The `composite_custom` factory reads `provider_config["bundle"]`. The bundle
+   shape check and its `ExecutionError(COMPOSITE_CUSTOM_BUNDLE_SHAPE)` stay in the handler
+   (`execution/_strategies/_composite.py:87-110`), before the factory call, because `generation/`
+   must not raise execution errors. These derive from the table:
    - `_COMPOSITE_NAMES` (`generation/composite/_generator.py:31`);
    - `_COMPOSITE_OUTPUT_COLUMNS` and `_VARIABLE_OUTPUT_COMPOSITES`
      (`generation/composite/_validate.py:47`, `:58`);
    - the registry's composite loop (`providers_v2/_registry.py:245`);
    - the `CompositeHandler` if/elif chain (`execution/_strategies/_composite.py:63`).
+   - the masking-side name lists `execution/_column_access.py:279`, `validators/_leak_check.py:95`
+     and the name constants in `validation/post/_checks/_composite_coherence.py:30`.
+   One registry per concern: `_column_access.py` and `_leak_check.py` read their name sets from
+   `COMPOSITES` where the import-linter layer contract allows it. Where it does not, they keep
+   their literal and the set guard below pins it. The coherence check keeps its per-composite
+   checker functions, because each composite's rule differs. The guard asserts that every
+   `COMPOSITES` key other than `composite_custom` has a checker.
    The per-composite constructor arguments the handler passes today move into each descriptor's
-   factory, so the generators masking builds are unchanged. A guard test asserts that the
-   registry's composite names equal the factory keys. Masking goldens stay byte-identical.
+   factory, so the generators masking builds are unchanged. The set guard asserts that the
+   registry's composite names, the `COMPOSITES` keys and every list above are one set. The commit 1
+   digest test stays byte-identical.
 2. **Fields.** On a composite provider, `field` is required. It must be one of that descriptor's
    output columns, or else `plan.generate_provider_field_unknown`. On a scalar provider, `field`
    refuses with `plan.generate_provider_field_unexpected`. `group` defaults to the provider name.
@@ -264,7 +301,8 @@ columns:
    member computes it. Each member takes its column from the bundle, then runs `restore_declared`
    and its own `_apply_null_probability`. So a member's nulls are independent of other members,
    as in masking.
-6. **Run-time errors.** `CompositeError` follows E1 step 7.
+6. **Run-time errors.** `CompositeError` follows E1 step 7. The `composite_custom` bundle-shape
+   check is unreachable from generation, because generation refuses `composite_custom` at compile.
 7. **Dispatch.** The `provider` branch passes `bundle_cache` when `field` is present (about 3
    more lines). The table loop in `_generate_tables_from_config` creates one dict per table (about
    2 lines). The pinned route never reaches here.
@@ -283,7 +321,15 @@ columns:
    `first_name_female` and `first_name_male` in `_FAKER_METHOD_MAP`
    (`providers_v2/_faker_adapter.py:43`) and `_CATALOG` (`providers_v2/_real_registry.py:67`).
    The registry grows from 34 to 36 names. The change is additive, and masking can use the new
-   names too. Faker 40.23.0 en_US has 13 names in both lists (for example Jordan, Taylor), so the
+   names too. The count pins that move in E3:
+   - `tests/sentry/test_proof_manifest.py:67`;
+   - `tests/unit/providers_v2/test_registry.py:43`;
+   - `tests/unit/providers_v2/test_capability_matrix.py:19` (Faker-bound 19 to 21) and `:29`;
+   - `tests/unit/providers_v2/mimesis/test_optional_dep.py:28` and `:92`;
+   - the count docstrings in `providers_v2/_registry.py` and `faker_providers()`;
+   - `docs/decisions/mimesis-adoption.md:51`.
+   These are counts, not ceilings. The platform's provider picker reads `faker_providers()`, so it
+   gains two entries. Faker 40.23.0 en_US has 13 names in both lists (for example Jordan, Taylor), so the
    name alone cannot fix the sex. Drawing sex first is the only coherent order.
 3. **age.** When `age` is requested, it is computed per row from that row's `dob` to `DOB_ANCHOR`
    (`generation/_dob_anchor.py:28`), in whole years with the birthday rule. It is a pure function
@@ -302,13 +348,14 @@ columns:
 | P6 | The null mask draws from the provider stream, or the provider path advances `np` | null positions or values move when the other setting changes | K comes from `faker`, nulls from `np` base_int; AT-8 |
 | P7 | Each composite member computes its own bundle | email does not match the name on the same row | one bundle per (table, group) via `bundle_cache`; AT-10 mutant |
 | P8 | The group seed depends on the first member's config or order | reordering columns changes people | group root from `group_cfg` with no `field` or member name; AT-11 reorder cell |
-| P9 | The factory refactor changes a masking constructor argument | masking output bytes change | the refactor is its own commit with masking composite goldens unchanged; AT-13 |
+| P9 | The factory refactor changes a masking constructor argument | masking output bytes change | commit 1 adds per-composite value digests through `CompositeHandler`, captured on base, for both modes; commit 2 refactors with them unchanged; AT-13 |
 | P10 | `sex` is added to masking's canonical columns | masking wiring check refuses existing configs, or bytes change | optional columns are separate from canonical ones and masking never requests them; AT-14 masking golden cell |
 | P11 | `age` reads `date.today()` | output changes daily | `DOB_ANCHOR` only; AT-15 mutant |
 | P12 | Pinned or streamed silently half-supports `provider` | route divergence | explicit `REJECTED_TYPES` and `ADMISSION_MATRIX` entries; AT-9 |
 | P13 | The new module reads a key not in the registry (for example `provider_options`) | silently ignored key | `READER_FILES` entry; AT-17 |
 | P14 | `synthesize.py` crosses 600 lines after GEN-TYPES and GEN-INHERIT also land | module size census entry | dispatch is at most 10 lines; the bundle-cache plumbing moves into `kinds/_provider_group.py` if needed; Placement rule |
-| P15 | The identifier draw is too slow | large tables stall | per-row `derive_value` is a plain HMAC, expected well above faker's 9k to 18k rows/s; T2 measures 100k rows; V2-LOG for a batch keyed path if it is slower than per-row faker |
+| P15 | The identifier draw is too slow | large tables stall | floor of 20k rows/s per column at 100k rows, measured at T2; Dennis measured NPI 59k, IBAN 53k, MRN 70k and `composite_person` 26k rows/s per group on x86; below the floor blocks the slice |
+| P16 | A float or libm step enters a draw path | bytes differ between x86 and arm64 | integer-only paths stated in E1 step 7; AT-3 committed digests run on the Mac (arm64) and a Linux VM at T2 |
 
 ## Acceptance tests
 
@@ -316,7 +363,7 @@ columns:
 |---|---|---|
 | AT-1 | `provider` is in `GENERATE_TYPES`, the option catalog, `ADMISSION_MATRIX` (declined), `REJECTED_TYPES`, `READER_KEYS`, `GEN_KIND_TO_SITE`, `_GEN_ONLY`, the capability matrix and the proof manifest | red on base |
 | AT-2 | For every name in the live `known_providers()` except composites, a 1,000-row column generates with no nulls. Each value passes that provider's `format_regex` and `blocklist_validators` from its `CapabilityMatrix` (NPI and PAN Luhn, IBAN mod 97, CUSIP check digit, SSN blocklist) | red on base; mutants: skip `decoy_native` in the branch choice; replace the registry read with a fixed tuple missing one name |
-| AT-3 | Determinism: the same config and seed in two runs, and in two subprocesses with different `PYTHONHASHSEED`, give identical bytes for each backend path. A different seed changes the output. Adding an unrelated column does not change it | red on base; mutant: identifier path calls `generate_batch` |
+| AT-3 | Determinism: the same config and seed in two runs, and in two subprocesses with different `PYTHONHASHSEED`, give identical bytes for each backend path. A different seed changes the output. Adding an unrelated column does not change it. Committed SHA-256 digest constants pin one column per backend path: keyed identifier (`synthetic_npi`), Faker pool REUSE (`person_email`), seeded `generate_batch` (`uuid`), and `composite_person` deterministic (E2 adds that cell). T2 runs the digest cells on the Mac (arm64) and on a Linux VM, as a cross-arch check | red on base; mutants: identifier path calls `generate_batch`; add a float step to the identifier source value |
 | AT-4 | Reuse sentry: `generation/kinds/_provider.py` and `_provider_group.py` contain none of `derive(`, `derive_value(`, `default_rng(`, `Faker(`, `seed_instance(`, and import nothing from `providers_v2.identifiers` or private composite modules. Adapters come only from `get_default_registry()` and generators only from `COMPOSITES`. The existing static draw scan stays green with an unchanged allowlist | mutants: inline a Luhn digit helper; construct `NpiAdapter()` directly |
 | AT-5 | `provider: not_a_provider` refuses at `run_config_only_checks` and at `compile_plan` with `plan.generate_provider_unknown`, located by table, column and key. A sentinel provider name is absent from `str(exc)`, the log and the exception chain; `__cause__` and `__context__` are `None` | red on base; mutant: let the registry `ProviderError` propagate |
 | AT-6 | `type: faker, faker_type: synthetic_npi` refuses with `plan.generate_faker_type_is_domain_provider`; `faker_type: not_real` still gives `plan.generate_faker_type_unknown` | red on base; mutant: drop the membership test |
@@ -326,10 +373,10 @@ columns:
 | AT-10 | E2 coherence at 10,000 rows. `composite_person`: every email's local part is built from that row's first and last name under the default format. `composite_city_state_zip` and `composite_address`: every (city, state, zip) is a row of the locality table. `composite_provider`: every `npi` passes Luhn | red on base; mutant: compute a separate bundle per member |
 | AT-11 | Two `composite_person` groups in one table give different people. Members of one group agree row for row. Reordering the members, renaming a member, or adding an unrelated column does not change any value. Two tables with the same group name do not share a bundle | mutants: derive the group root from the first member's config; create the cache once per run |
 | AT-12 | E2 refusals, each with its code, location and no value text: composite without `field`; `field` on a scalar; unknown `field`; duplicate `field` in a group; locale mismatch in a group; `composite_custom` | red on base for the E2 codes |
-| AT-13 | After the factory refactor, the masking composite goldens and `CompositeHandler` tests are byte-identical. Guard test: the registry's composite names, `COMPOSITES` keys, `_COMPOSITE_NAMES` and `_COMPOSITE_OUTPUT_COLUMNS` keys are one set | mutants: add a descriptor without a registry binding; change one constructor argument in the factory |
+| AT-13 | Commit 1's `CompositeHandler` digest test (six composites, deterministic and non-deterministic, digests captured on base) passes unchanged after commit 2. The `composite_custom` malformed-bundle cell still raises `ExecutionError(COMPOSITE_CUSTOM_BUNDLE_SHAPE)` from the handler. Set guard: the registry's composite names, `COMPOSITES` keys, `_COMPOSITE_NAMES`, `_COMPOSITE_OUTPUT_COLUMNS` keys, and the lists at `execution/_column_access.py:279` and `validators/_leak_check.py:95` are one set; every `COMPOSITES` key except `composite_custom` has a coherence checker | mutants: change one constructor argument in the factory (digest red); add a descriptor without a registry binding (set guard red); move the bundle-shape check into the factory |
 | AT-14 | E3 at 20,000 rows: every `F` row's first name is in Faker's `first_names_female`, every `M` row's in `first_names_male`. Each sex is between 45% and 55% of rows. With no optional field requested, masking and E2 person bundles are byte-identical | red on base; mutants: draw the first name from the unisex pool; put `sex` in the canonical columns |
 | AT-15 | E3 `age` equals whole years from `dob` to `DOB_ANCHOR` on every row. Direct cells cover a birthday on the anchor day, the day after, and 29 February | red on base; mutants: use `date.today()`; drop the birthday rule |
-| AT-16 | A monkeypatched adapter that raises `ProviderError` with a sentinel message gives `GenerationError` with `runtime.generation_provider_failed`. The sentinel is absent from `str(exc)` and the log, and the exception chain is empty. A registry `override` that removes a name between compile and run gives the same code | red on base; mutants: `raise ... from exc`; skip the run-time catch |
+| AT-16 | A monkeypatched adapter that raises `ProviderError`, `IdentifierError` or `DeterminismError` with a sentinel message gives `GenerationError` with `runtime.generation_provider_failed`. The sentinel is absent from `str(exc)` and the log, and the exception chain is empty. A registry `override` that removes a name between compile and run gives the same code | red on base; mutants: `raise ... from exc`; `raise ... from None` inside the `except` block (keeps `__context__`); skip the run-time catch |
 | AT-17 | `tests/sentry/defects/test_generate_option_reads.py` `READER_FILES` lists the new modules and passes | mutant: read `provider_options` in `_provider.py`; the sentry goes red |
 | AT-18 | `tests/native/test_draw_site_inventory_coverage.py` passes with `provider` mapped, and the providers golden lists the new `DrawSiteProvider` | mutant: drop the `GEN_KIND_TO_SITE` entry |
 
@@ -342,7 +389,7 @@ columns:
 | 3 | State | Shared mutable state: the singleton registry, the person pool cache, the RNG streams | The registry is read-only here; each group builds a fresh generator; K and the null `np` stream are separate HMAC families | AT-3, AT-8 | seed nulls from K; reuse one generator across groups |
 | 4 | Route divergence | Pinned or streamed half-supports the type; validate and compile check differently | Explicit pinned refusal and streamed decline; one check module that validate and compile both call | AT-5, AT-9 | admit streamed; check only at compile |
 | 5 | Referential integrity | A `reference` to a provider column assumes unique parent values | `unique` stays refused on `provider`; a reference child draws from parent values as for any parent; GEN-REL's uniqueness rule still applies where it is required | AT-9 reference-child cell | allow `unique: true` without a unique draw |
-| 6 | Untrusted input | Provider names and adapter messages reach refusal text or logs | Fixed-text `_refusal`; one `from None` translation site | AT-5, AT-16 | forward the adapter message |
+| 6 | Untrusted input | Provider names and adapter messages reach refusal text or logs | Fixed-text `_refusal`; one translation site that raises after the `except` block | AT-5, AT-16 | forward the adapter message; `raise ... from None` inside the block |
 | 7 | TOCTOU / check-then-use | Registry checked at compile, changed by `override` or a custom provider before the run | The run reads the same singleton; a missing name at run is caught and translated, not trusted from compile | AT-16 override cell | skip the run-time catch |
 | 8 | Weak test | Coherence or format checked on a few rows | AT-2 runs every provider at 1,000 rows; AT-10 and AT-14 check every row at 10,000 and 20,000 | the mutation column | each listed mutation |
 | 9 | Refactor drift | The composite factory refactor changes masking generators | Own commit; masking goldens unchanged; guard test on the name sets | AT-13 | change one constructor argument in the factory |
@@ -411,7 +458,9 @@ needed. The only new code is wiring and one pure age function.
 
 - `provider` (required string, a registry name), `locale` (optional string), `field` (E2, a slot
   of the composite), `group` (E2, default the provider name).
-- Common options: `null_probability`, `determinism` (no effect; excluded from the fingerprint).
+- Common options: `null_probability`, `determinism`. `determinism` is excluded from the
+  fingerprint but still acts: `determinism: fresh` gives the column an `os.urandom` root
+  (`generators/derivation.py:265`), so that column is not reproducible, as for every type.
 - Composite slots: `composite_person` `dob, email, first_name, last_name`, plus E3 `age, sex`;
   `composite_name_email` `email, first_name, last_name`; `composite_city_state_zip`
   `city, state, zip`; `composite_address` `city, state, street_address, zip`;
@@ -433,9 +482,9 @@ needed. The only new code is wiring and one pure age function.
 | `GenerateColumnConfig.type` Literal and `GENERATE_TYPES` | + `provider` | additive |
 | Option registry and catalog | + `provider` entry with four keys | additive |
 | Reason registry | E1: 7 plan codes and 1 runtime code; E2: 3 plan codes; E3: none. Next minor per slice at merge | additive |
-| Provider registry names | E3: + `person_first_name_female`, `person_first_name_male` (34 to 36) | additive |
+| Provider registry names | E3: + `person_first_name_female`, `person_first_name_male` (34 to 36; the count pins listed in E3 step 2 move; the platform picker gains two entries) | additive |
 | Draw-site catalogue | + `gen.provider_row_keyed`; `PROVIDER_IDENTIFIER_SITES` unchanged | additive |
-| Masking composite output | unchanged bytes (AT-13, AT-14) | none |
+| Masking composite output | unchanged bytes, pinned by the new digest test (AT-13, AT-14) | none |
 | `composite_person` canonical columns and masking wiring | unchanged; `age` and `sex` are optional columns only | none |
 | Root `decoy_engine/__init__.py` (600 lines) | no new export | none |
 
@@ -455,7 +504,8 @@ Masking strategy handler, Reason codes, Sentry test, Unit tests, Plans, Changelo
 | scalar draw | new `generation/kinds/_provider.py` | Generation (kinds sub-package) | GEN-TYPES' `_constant.py`, `_parametric.py` |
 | group draw and bundle cache | new `generation/kinds/_provider_group.py` (E2) | Generation (kinds sub-package) | `_provider.py` |
 | dispatch | `generation/synthesize.py` (at most 10 lines) | Generation | the `faker` branch |
-| composite factory | new `generation/composite/_factory.py` (E2) | Generation (composite sub-package) | `_generator.py`, `_validate.py` |
+| composite factory | new `generation/composite/_factory.py`, exported as `COMPOSITES` from `generation/composite/__init__.py` (E2) | Generation (composite sub-package) | `_generator.py`, `_validate.py` |
+| composite digest test | new `tests/unit/execution/test_composite_handler_digests.py` (E2 commit 1) | Unit tests | `CompositeHandler` tests |
 | optional person fields | `generation/composite/_person.py` (E3) | Generation (composite sub-package) | `_generate_deterministic` |
 | two registry names | `providers_v2/_faker_adapter.py`, `providers_v2/_real_registry.py` (E3) | Providers | `person_first_name` |
 | masking handler reads the factory | `execution/_strategies/_composite.py` (E2) | Masking strategy handler | the if/elif chain it replaces |
@@ -475,7 +525,7 @@ have pushed `synthesize.py` near 600 lines, the E2 bundle-cache creation moves i
 | Slice | Branch | Size | Content | Gate |
 |---|---|---|---|---|
 | E1 | `feat/gen-providers-e1` | M (about 330 lines plus tests) | type, option entry, `plan/checks/_generate_providers.py` scalar checks, faker hint, `kinds/_provider.py` with the three backend paths and the error translation, dispatch, registries, draw site and golden, 8 reason codes, capability matrix and proof manifest regeneration; AT-1 to AT-9, AT-16 to AT-18 | full suite: the reason manifest changes; T1 impact set and T2 on the exact head |
-| E2 | `feat/gen-providers-e2` | M (about 300 lines plus tests) | composite factory refactor (own commit), `field` and `group`, group checks, `kinds/_provider_group.py`, bundle cache, 3 reason codes; AT-10 to AT-13 | full suite: reason manifest change and the masking handler refactor |
+| E2 | `feat/gen-providers-e2` | M (about 320 lines plus tests) | commit 1: `CompositeHandler` digest test captured on base; commit 2: composite factory refactor; then `field` and `group`, group checks, `kinds/_provider_group.py`, bundle cache, 3 reason codes; AT-10 to AT-13 | full suite: reason manifest change and the masking handler refactor |
 | E3 | `feat/gen-providers-e3` | S (about 150 lines plus tests) | `optional_fields` on `CompositePerson`, `sex` and `age`, two registry names; AT-14, AT-15 | full suite: the shared provider registry that masking reads changes; T1 impact set and T2 on the exact head |
 
 Order: E1 after GEN-STRICT E2 (#465) merges, then E2, then E3. Each slice takes the next registry
@@ -532,4 +582,30 @@ minor at merge and adds `changelog.d/gen-providers-e<N>.md` (`### Added`).
   non-deterministic path needs exactly 8 bytes (`generation/pool/_sampler.py:180`), which is why
   the poolable path uses the `[:8]` labels.
 - The final shape of GEN-STRICT E2 after review (#465 is open at `4b1d1efb`).
-- The exact docstrings and count tests that pin the registry at 34 names.
+- The exact docstrings and count tests that pin the registry at 34 names. Dennis r1 listed them
+  (E3 step 2); the builder confirms the list at E3 start.
+- Whether the import-linter layer contract lets `validators/` import `generation.composite`.
+
+## Review round 1 resolution
+
+Dennis round 1 on `d782ffc4`: NO-GO, one blocker, three required edits, six fold-ins.
+
+- B1 (no byte golden for the masking composites). Accepted. E2 step 1 now splits the refactor into
+  two commits. Commit 1 adds a `CompositeHandler` digest test for all six composites, in
+  deterministic and non-deterministic mode, captured on base. The factory signature is fixed at
+  `(coherent_namespace, registry, provider_config)`. The `composite_custom` bundle-shape check
+  and its `ExecutionError` stay in the handler. `COMPOSITES` is exported from
+  `generation.composite`. AT-13 and P9 updated.
+- M1 (cross-arch digests). Accepted. AT-3 commits digest constants for the four backend paths and
+  runs them on the Mac and a Linux VM at T2. E1 step 7 states that every draw path is
+  integer-only. New P16.
+- M2 (count pins). Accepted. E3 step 2 lists the pins that move from 34 to 36 and notes the
+  platform picker's two new entries.
+- M3 (`from None` keeps `__context__`). Accepted. The translation now raises after the `except`
+  block closes. Design notes, E1 step 7, class 6 and the AT-16 mutant updated.
+- Fold-ins: P15 now sets a 20k rows/s floor with Dennis's measurements. The catch set adds
+  `IdentifierError` and `DeterminismError`. The Fields line now says `determinism: fresh` uses an
+  `os.urandom` root. `ProviderSpec` sets `deterministic`, `namespace` and `seed` explicitly. The
+  three extra composite name lists join the set guard, and the two plain lists read `COMPOSITES`
+  where the layer contract allows it. The legacy resident route and its memory bound are stated
+  in E1 step 8.
