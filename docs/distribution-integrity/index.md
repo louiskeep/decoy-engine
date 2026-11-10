@@ -120,7 +120,8 @@ These hold across the subsystem. Tests enforce most of them.
    counts, never a cell value or a category label. Snapshots do contain
    labels and stay inside `compute_quality_report`.
 2. **Snapshots are deterministic.** Same frame and arguments give byte-identical
-   JSON. Floats are rounded to 12 places. No NaN, no numpy scalars.
+   JSON. DP snapshots are the exception: each fit gets a fresh release id and
+   randomized releases. Floats are rounded to 12 places. No NaN, no numpy scalars.
 3. **Comparison is snapshot-to-snapshot.** `diagnostic`, `fidelity`,
    `_distribution_gof` and `shape_fidelity` take dicts and never see a frame.
 4. **Measurement never fails a job.** Reports, the inline fidelity option and

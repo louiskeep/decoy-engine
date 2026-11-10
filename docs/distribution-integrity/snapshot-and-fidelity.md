@@ -182,11 +182,12 @@ The report is label-free. Joint entries name the column pair, not cell keys.
 
 ## Policy (`quality/policy.py`)
 
-`apply_quality_policy(report, policy_config, strategy_map=None)` returns
-`quality-policy/v1`: `verdict`, `mode`, `violations`. It never raises.
+`apply_quality_policy(report, policy_config, *, strategy_map=None)` returns
+`quality-policy/v1`: `verdict`, `mode`, `violations`. `strategy_map` is
+keyword-only.
 
 ```yaml
-mode: report | warn | fail
+mode: warn
 thresholds:
   diagnostic: {required: true}
   overall:    {min: 0.90}
@@ -202,6 +203,9 @@ strategy_expectations:       {shuffle: 0.90}
 shape_strategy_expectations: {hash: 0.95}
 ```
 
+`mode` is one of `report`, `warn` or `fail`. An unknown mode falls back to
+`report`, which never fails.
+
 Per-column threshold resolution: explicit column override, then the column's
 strategy expectation from `strategy_map`, then no check.
 
@@ -212,7 +216,8 @@ actually reports for each strategy: identity 1.00, shuffle 0.85, date_shift
 Two behaviors to know:
 
 - In `report` mode violations are recorded and the verdict is still `pass`.
-- Malformed or unknown config keys are ignored. A mistyped policy passes.
+- Unknown top-level keys are ignored, so a mistyped key silently disables that
+  check. A `thresholds` value that is not a mapping raises (`AttributeError`).
 
 ## Where the report is produced
 
