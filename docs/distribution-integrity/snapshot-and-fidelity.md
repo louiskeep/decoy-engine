@@ -104,11 +104,11 @@ A failed diagnostic does not stop scoring. It surfaces as report warnings.
 ## Value-identity fidelity (`quality/fidelity.py`)
 
 `compute_fidelity(source_snapshot, output_snapshot)` returns a similarity in
-[0, 1] per column and per joint. Scores are symmetric.
+[0, 1] per column and per joint. Scores are symmetric except numeric, whose scale comes from the source only.
 
 | Kind | Method tag | Formula |
 |---|---|---|
-| numeric | `quantile_rmse` | `1 - min(1, RMSE(quantile grid) / source_range)` |
+| numeric | `quantile_rmse` | `1 - min(1, RMSE(quantile grid) / scale)`. Scale is the source IQR (p75 - p25); if 0, p95 - p05; then max - min. A constant source scores 1 when the output quantiles equal it, else 0. |
 | categorical | `tvd` | `1 - TVD` over top-K proportions plus the other lump |
 | datetime | `tvd` | `1 - TVD` over `year_bins` proportions |
 | freetext | `length_mean_diff` | 1 minus the absolute difference in mean length, over the larger max length |
