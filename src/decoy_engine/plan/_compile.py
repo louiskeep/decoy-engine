@@ -54,7 +54,6 @@ from decoy_engine.plan._checks import (
     check_fpe_checksum_scheme,
     check_non_poolable_provider_with_pool_backend,
     check_null_bearing_int_unsupported,
-    check_statistical_columns,
     check_text_mask_ner_available,
     check_text_redact_ner_available,
     check_unknown_provider,
@@ -89,7 +88,11 @@ from decoy_engine.plan._checks_top_code import check_top_code_config
 from decoy_engine.plan._checks_truncate import check_truncate_config
 from decoy_engine.plan._checks_when import check_when_grammar, check_when_with_coherent_with
 from decoy_engine.plan._checks_windowed_date import check_windowed_date_refs
-from decoy_engine.plan._generation import build_generation_plan, read_and_pin_snapshots
+from decoy_engine.plan._generation import (
+    build_generation_plan,
+    check_generate_snapshot_columns,
+    read_and_pin_snapshots,
+)
 from decoy_engine.plan._graph import _build_namespaces, _build_relationships
 
 # Seed normalization lives in `plan/_seed.py` (single shared validator, F5).
@@ -184,10 +187,9 @@ def compile_plan(
     check_dp_generate_contract(config)  # Row 31 (DPS-3): config-only, so before any snapshot read
     _pinned_snapshots, _snapshot_read_failures = read_and_pin_snapshots(config)
     _dp_verified_columns, _dp_verification = verify_dp_snapshots(config, _pinned_snapshots)
-    # Row 12 (capability-gaps WS3, 2026-06-12): statistical generate columns vs their snapshot
-    # artifacts; runs in both branches and in run_config_only_checks. `_snapshot_read_failures`
-    # (C-M1) lets a path the read-once pass attempted raise its classified verdict, not reopen it.
-    _column_specs = check_statistical_columns(
+    # Row 12 (WS3): statistical and fitted-reference columns vs their snapshots. The C-M1
+    # `_snapshot_read_failures` raise a classified verdict instead of reopening the path.
+    _column_specs = check_generate_snapshot_columns(
         config, _pinned_snapshots, _dp_verified_columns, failures=_snapshot_read_failures
     )
     # Row 13 (capability-gaps WS2, 2026-06-12): text_redact `ner` opt-in requires the spacy
@@ -519,10 +521,8 @@ def run_config_only_checks(
     check_dp_generate_contract(config)  # Row 31 (DPS-3), before any snapshot read
     _pinned_snapshots, _snapshot_read_failures = read_and_pin_snapshots(config)
     _dp_verified_columns, _dp_verification = verify_dp_snapshots(config, _pinned_snapshots)
-    # Row 12 (WS3): consumes the config plus its referenced snapshot
-    # artifact (a fitted-model JSON, not source data), so config-only
-    # callers catch a missing/incompatible artifact before a long run.
-    check_statistical_columns(
+    # Row 12 (WS3): config plus its snapshot artifacts, so config-only callers catch a bad one.
+    check_generate_snapshot_columns(
         config, _pinned_snapshots, _dp_verified_columns, failures=_snapshot_read_failures
     )
     # Row 13 (WS2): text_redact `ner` opt-in needs spacy + model here.

@@ -75,16 +75,18 @@ class ReadSnapshot:
 
 
 def column_pins_snapshot(col: dict[str, Any]) -> bool:
-    """True when the compile's read-once pass must pin this generate column's `snapshot_file`:
-    a `statistical` column, or a `reference` column with `distribution: fitted`."""
-    return col.get("type") == "statistical" or (
-        col.get("type") == "reference" and col.get("distribution") == "fitted"
+    """True when a generate column's `snapshot_file` is read once and pinned into the Plan:
+    a `statistical` column, or a `reference` column with `distribution: fitted`. The one
+    predicate for the read-once pass and the load-time pin check."""
+    col_type = col.get("type")
+    return col_type == "statistical" or (
+        col_type == "reference" and col.get("distribution") == "fitted"
     )
 
 
 def _iter_statistical_snapshot_paths(config: dict[str, Any]) -> list[str]:
-    """Every distinct `snapshot_file` path referenced by a `type:
-    statistical` generate column, in declared order (tables then columns),
+    """Every distinct `snapshot_file` path referenced by a pinning generate
+    column (`column_pins_snapshot`), in declared order (tables then columns),
     de-duplicated by path string while preserving first-seen order."""
     return list(_snapshot_field_keys(config))
 
@@ -105,6 +107,26 @@ def _snapshot_field_keys(config: dict[str, Any]) -> dict[str, str]:
                 key = f"tables.{table_entry.get('name')}.generate_columns.{col_entry.get('name')}.snapshot_file"
                 seen.setdefault(str(path), key)
     return seen
+
+
+def snapshot_schema_failure(parsed: Any, shown: str) -> Any:
+    """The one snapshot schema-version check, for compile (`read_and_pin_snapshots`) and plan
+    load. Returns a `StatisticalSpecError` or `None`. The message names the field and the
+    expected version only: the stored text is untrusted and never echoed."""
+    from decoy_engine.generation.statistical._spec import StatisticalSpecError
+
+    if (
+        isinstance(parsed, dict)
+        and parsed.get("schema_version") == DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
+    ):
+        return None
+    return StatisticalSpecError(
+        code=reasons.plan.STATISTICAL_SNAPSHOT_SCHEMA_MISMATCH,
+        message=(
+            f"snapshot_file {shown!r} does not declare 'schema_version' "
+            f"{DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION!r}; this engine consumes only that version."
+        ),
+    )
 
 
 def read_and_pin_snapshots(
@@ -179,15 +201,9 @@ def read_and_pin_snapshots(
         guard = snapshot_content_guard.get()
         if guard is not None:
             guard(parsed)
-        version = parsed.get("schema_version") if isinstance(parsed, dict) else None
-        if not isinstance(parsed, dict) or version != DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION:
-            failures[path] = StatisticalSpecError(
-                code=reasons.plan.STATISTICAL_SNAPSHOT_SCHEMA_MISMATCH,
-                message=(
-                    f"snapshot_file {shown!r} declares schema {version!r}; this engine "
-                    f"consumes {DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION!r}."
-                ),
-            )
+        mismatch = snapshot_schema_failure(parsed, shown)
+        if mismatch is not None:
+            failures[path] = mismatch
             continue
         pinned[path] = ReadSnapshot(path=path, sha256=digest, parsed=parsed, raw=raw)
     return pinned, failures
@@ -292,3 +308,81 @@ def build_generation_plan(
         statistical_specs=statistical_specs,
         dp_verification=dp_verification,
     )
+
+
+_FITTED_CONFLICT_KEYS = ("weights", "min_per_parent", "max_per_parent")
+
+
+def check_fitted_references(
+    config: dict[str, Any],
+    pinned: dict[str, ReadSnapshot],
+    failures: dict[str, Any] | None,
+) -> None:
+    """Refuse a `reference` column with `distribution: fitted` whose pinned snapshot cannot
+    drive it: no `snapshot_file`, a failed read, a conflicting knob, or a missing or invalid
+    fan-out block. Reads only the read-once pass's bytes (`resolve_pinned_snapshot`, never
+    the path) and decodes with the same reader generation uses. Messages carry structure
+    names only, and the decoder error is not chained."""
+    from decoy_engine.generation.statistical import StatisticalSpecError, fanout_spec_from_snapshot
+
+    tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
+    for table_entry in tables:
+        if not isinstance(table_entry, dict):
+            continue
+        table_name = table_entry.get("name", "?")
+        for col in table_entry.get("generate_columns", []) or []:
+            if not isinstance(col, dict) or col.get("type") != "reference":
+                continue
+            if col.get("distribution") != "fitted":
+                continue
+            name = col.get("name", "?")
+            where = f"tables.{table_name}.generate_columns.{name}"
+            snapshot_file = col.get("snapshot_file")
+            if not snapshot_file:
+                raise PlanCompileError(
+                    code=reasons.plan.REFERENCE_FANOUT_MISSING,
+                    path=f"{where}.snapshot_file",
+                    message=(
+                        f"reference column {name!r} uses distribution: fitted and needs "
+                        "`snapshot_file`. Run `decoy fit <source> --fanout <column>`, or use "
+                        "distribution: random."
+                    ),
+                )
+            snapshot_file = str(snapshot_file)
+            outcome: tuple[str, str] | None = None
+            try:
+                # `{}` rather than None: a fitted check never falls back to reading the path.
+                snap = resolve_pinned_snapshot(
+                    snapshot_file, pinned, failures if failures is not None else {}
+                )
+                conflict = [k for k in _FITTED_CONFLICT_KEYS if col.get(k) is not None]
+                if conflict:
+                    outcome = (
+                        reasons.plan.REFERENCE_FANOUT_CONFLICT,
+                        f"reference column {name!r} sets {conflict[0]!r} with distribution: "
+                        "fitted, which already fixes the per-parent counts. Remove it, or use "
+                        "another distribution.",
+                    )
+                else:
+                    source = str(col.get("source_column") or name)
+                    fanout_spec_from_snapshot(snap, source, digest=pinned[snapshot_file].sha256)
+            except StatisticalSpecError as exc:
+                outcome = (exc.code, exc.message)
+            if outcome is not None:
+                raise PlanCompileError(code=outcome[0], path=where, message=outcome[1])
+
+
+def check_generate_snapshot_columns(
+    config: dict[str, Any],
+    pinned: dict[str, ReadSnapshot] | None,
+    dp_verified_columns: frozenset[tuple[str, str]],
+    failures: dict[str, Any] | None = None,
+) -> list[tuple[str, str, str, dict[str, Any]]]:
+    """The one snapshot-column check for compile, config-only checks and plan load: the
+    statistical checks, then the fitted-reference checks. Returns the statistical
+    column-spec list unchanged for `build_generation_plan`."""
+    from decoy_engine.plan._checks import check_statistical_columns
+
+    specs = check_statistical_columns(config, pinned, dp_verified_columns, failures=failures)
+    check_fitted_references(config, pinned or {}, failures)
+    return specs
