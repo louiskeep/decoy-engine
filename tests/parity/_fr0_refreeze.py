@@ -18,6 +18,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from typing import Any
+from unittest import mock
 
 import pyarrow as pa
 
@@ -323,4 +324,10 @@ def build_manifest() -> dict[str, Any]:
 
 
 if __name__ == "__main__":
-    print(json.dumps(build_manifest(), indent=2, sort_keys=True))
+    # The goldens pin runtime output for fixtures the strict plan check refuses (`formula`,
+    # `referenced_formula`), so lift the same two checks tests/parity/conftest.py lifts.
+    with (
+        mock.patch("decoy_engine.plan._compile.check_generate_columns", return_value=None),
+        mock.patch("decoy_engine.plan.checks.check_faker_default_locale", return_value=None),
+    ):
+        print(json.dumps(build_manifest(), indent=2, sort_keys=True))
