@@ -67,8 +67,16 @@ or `flag` for a verified DP column. The sampler branches on it only to decode
 | freetext | Length from the length histogram, filled with lorem tokens. No source tokens exist in the snapshot. | |
 | conditional | Draw from the joint row for the parent value; fall back to the marginal when the parent value has no cells. | Sequential conditional sampling (synthpop) |
 
-The numeric sampler uses only `bin_edges` and `bin_counts`. `quantiles`, `mean`
-and `std` are not used for sampling.
+The numeric sampler draws from `exact_values` when the column has one (a weighted pick
+of observed values), else from `quantile_grid` (inverse CDF over the piecewise-linear
+empirical quantile function, one random draw per value), else from `bin_edges` and
+`bin_counts`. The 10-row guarantee applies to columns that get a grid (100 or more
+rows and more than 30 distinct values) or exact values: every grid interval and tail
+holds at least 10 source rows, and each exact value is held by at least 10 rows, so one
+extreme row is never emitted. A column under 100 rows keeps the histogram behavior of
+earlier versions, which can emit values anywhere in the source `[min, max]`. A
+snapshot without either block, a redacted fit and a DP-verified column use the
+histogram. `quantiles`, `mean` and `std` are not used for sampling.
 
 When a column entry carries `cell_format` (`statistical/_cell_format.py`, engine
 #434 and #436), the sampler also draws a null with probability
@@ -126,7 +134,7 @@ The CLI does not currently surface this warning in its run summary.
 
 | Limit | Reason |
 |---|---|
-| Sub-bin numeric detail | Uniform draw within 10 equal-width bins. Decimal places are kept only with a `cell_format` block. |
+| Sub-bin numeric detail | A snapshot without `quantile_grid` or `exact_values` (an older fit, under 100 values, a redacted fit) draws uniformly within 10 equal-width bins. Under 100 values the 10-row floor does not apply, so a lone extreme value can be reproduced (the bins span the source min to max). Decimal places are kept only with a `cell_format` block. |
 | Month, weekday or time-of-day patterns | Only `year_bins` are fitted. A `cell_format` block keeps the resolution, not the pattern. |
 | Null rates without `cell_format` | A snapshot without the block emits no fitted nulls; only `null_probability` does. |
 | Categories beyond top-K | Collapsed into `other_count`. |
@@ -135,8 +143,7 @@ The CLI does not currently surface this warning in its run summary.
 
 Measured consequences of these limits, with the numbers, are in
 [Extending](extending.md#open-defects) and in the QA record it cites. The
-largest: a single outlier stretches the equal-width bins and ruins a numeric
-column, and joint tables are capped at 25 cells with a silent fallback.
+largest: joint tables are capped at 25 cells with a silent fallback.
 
 ## Tests
 

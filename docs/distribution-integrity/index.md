@@ -84,6 +84,7 @@ All paths are under `src/decoy_engine/`.
 | Module | Role |
 |---|---|
 | `statistical/_spec.py` | Validates one statistical column against a snapshot. Owns the `allow_real_categories` gate. |
+| `statistical/_numeric_shape.py` | Fits and decodes the numeric `quantile_grid` and `exact_values` blocks. |
 | `statistical/_sample.py` | Deterministic samplers per kind. |
 | `_statistical_column.py` | Dispatch for `type: statistical` inside `synthesize.py`. |
 | `_fidelity_gate.py` | After generation, scores statistical columns against their snapshot and logs a warning below `fidelity_warn_threshold`. |

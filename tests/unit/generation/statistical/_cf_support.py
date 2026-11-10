@@ -59,3 +59,19 @@ def none_rate(values: list[Any]) -> float:
 def band(rate: float, n: int, sigmas: float = 4.0) -> tuple[float, float]:
     half = sigmas * (rate * (1 - rate) / n) ** 0.5
     return rate - half, rate + half
+
+
+def similarity(snap: dict[str, Any], out: list[Any], name: str = "x") -> float:
+    """Value similarity (the IQR-scaled marginal score) of generated `out` against `snap`."""
+    from decoy_engine.quality import compute_fidelity
+
+    fitted = compute_distribution_snapshot(pd.DataFrame({name: out}))
+    columns = compute_fidelity(snap, fitted)["marginal"]["columns"]
+    return float(columns[0]["value_similarity"])
+
+
+def draw(snap: dict[str, Any], n: int = 20_000, *, name: str = "x", **extra: Any) -> list[Any]:
+    """`n` values from the statistical sampler for column `name` of `snap`, seed 7."""
+    from decoy_engine.generation.statistical import sample_column
+
+    return sample_column(spec_of(snap, name, **extra), n, col_seed=7)

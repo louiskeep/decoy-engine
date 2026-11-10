@@ -56,6 +56,11 @@ from decoy_engine.generation.statistical._cell_format import (
     cell_format_from_dict,
     decode_cell_format,
 )
+from decoy_engine.generation.statistical._numeric_shape import (
+    decode_numeric_shape,
+    numeric_shape_withheld,
+    redacted_fix_hint,
+)
 from decoy_engine.profiling import (
     POLICY_RAW,
     POLICY_REDACTED,
@@ -248,6 +253,7 @@ def _refuse_withheld_values(
     kind: Any,
     dp_verified: bool,
     condition_on: Any,
+    holds_numeric_shape: bool = False,
 ) -> None:
     """Refuse a column that would sample categories a redacted fit snapshot withheld.
 
@@ -256,11 +262,16 @@ def _refuse_withheld_values(
     snapshot with neither marker key is a legacy file and keeps its old behavior; the
     placeholder string a profile uses for withheld text is never a signal, because a raw or
     legacy snapshot can hold it as a real category. Numeric and datetime columns read
-    coarse bins and years that carry no cell value, so they never reach this refusal.
+    coarse bins and years that carry no cell value, so they reach it only through a restored
+    `quantile_grid` or `exact_values` block (`holds_numeric_shape`).
     """
     if VALUE_POLICY_KEY not in snap and REDACTED_COLUMNS_KEY not in snap:
         return
-    samples_values = (kind == "categorical" and not dp_verified) or condition_on is not None
+    samples_values = (
+        (kind == "categorical" and not dp_verified)
+        or condition_on is not None
+        or holds_numeric_shape
+    )
     if not samples_values:
         return
     policy = snap.get(VALUE_POLICY_KEY)
@@ -288,10 +299,8 @@ def _refuse_withheld_values(
     raise StatisticalSpecError(
         code=reasons.plan.STATISTICAL_SNAPSHOT_VALUES_REDACTED,
         message=(
-            f"statistical column {name!r}: {why}, so there are no categories to sample. "
-            "Use a faker or pattern generator for this column, or re-fit with "
-            "`--include-values` and set `allow_real_categories: true` (the snapshot then "
-            "holds real values)."
+            f"statistical column {name!r}: {why}, so there are no values to sample. "
+            + redacted_fix_hint(numeric=kind == "numeric" and condition_on is None)
         ),
     )
 
@@ -443,6 +452,7 @@ def load_spec(
             ),
         )
 
+    col_stats = col_entry.get("stats") if isinstance(col_entry.get("stats"), dict) else {}
     _refuse_withheld_values(
         name,
         snap,
@@ -450,6 +460,9 @@ def load_spec(
         kind=kind,
         dp_verified=dp_verified,
         condition_on=col_cfg.get("condition_on"),
+        holds_numeric_shape=kind == "numeric"
+        and not dp_verified
+        and numeric_shape_withheld(col_stats),
     )
 
     if high_cardinality and col_cfg.get("allow_real_categories") is not True:
@@ -498,7 +511,6 @@ def load_spec(
     # tail is already gone from the artifact, so redistribution would
     # permanently drop it. Provenance marker, not `other_count`, is the
     # source of truth (DP snapshots deep-copy the marker through noising).
-    col_stats = col_entry.get("stats") if isinstance(col_entry.get("stats"), dict) else {}
     if high_cardinality and col_stats.get("high_cardinality") is not True:
         raise StatisticalSpecError(
             code=reasons.plan.STATISTICAL_HIGH_CARDINALITY_SNAPSHOT_MISMATCH,
@@ -511,6 +523,9 @@ def load_spec(
                 f"before setting high_cardinality: true here."
             ),
         )
+
+    if kind == "numeric":
+        decode_numeric_shape(name, col_stats, carrier)  # refuse a malformed block at load
 
     other_mode = str(col_cfg.get("other_mode") or "redistribute")
     if other_mode not in _OTHER_MODES:

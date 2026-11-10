@@ -22,6 +22,7 @@ from decoy_engine.generation.statistical._fanout import (
     fanout_spec_from_snapshot,
     fitted_reference_values,
 )
+from decoy_engine.generation.statistical._numeric_shape import add_numeric_shape
 from decoy_engine.generation.statistical._sample import sample_column
 from decoy_engine.generation.statistical._spec import (
     StatisticalSpec,
@@ -38,6 +39,7 @@ __all__ = [
     "StatisticalSpecError",
     "add_cell_format",
     "add_fanout",
+    "add_numeric_shape",
     "cell_format_arrow_type",
     "cell_format_member_ok",
     "fanout_spec_from_snapshot",

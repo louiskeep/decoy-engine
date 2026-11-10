@@ -48,6 +48,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "score_to_grade": "report",
     "QUALITY_SHAPE_FIDELITY_SCHEMA_VERSION": "shape_fidelity",
     "compute_shape_fidelity": "shape_fidelity",
+    "CATEGORICAL_DISTINCT_CAP": "snapshot",
     "DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION": "snapshot",
     "compute_distribution_snapshot": "snapshot",
     "check_dp_fit_request": "dp",
@@ -73,6 +74,7 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "CATEGORICAL_DISTINCT_CAP",
     "DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION",
     "QUALITY_DIAGNOSTIC_SCHEMA_VERSION",
     "QUALITY_FIDELITY_SCHEMA_VERSION",

@@ -24,6 +24,7 @@ from decoy_engine.profiling._snapshot_values import (
     snapshot_joint_warnings,
 )
 from decoy_engine.profiling._value_redaction import (
+    MIN_RELEASE_COUNT,
     POLICY_RAW,
     POLICY_REDACTED,
     REDACTED_COLUMNS_KEY,
@@ -59,6 +60,7 @@ from decoy_engine.profiling.types import (
 
 __all__ = [
     "DEFAULT_STRATEGY_BY_DETECTOR",
+    "MIN_RELEASE_COUNT",
     "POLICY_RAW",
     "POLICY_REDACTED",
     "REDACTED_COLUMNS_KEY",

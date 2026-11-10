@@ -128,7 +128,8 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
         api_operation="random.Random reseeded per row; .random / .choices / .randrange",
         call_shape=(
             "per row: rng.seed(col_seed + i); [freetext blank draw when blank_count > 0]; "
-            "inverse-CDF / weighted draw; round or floor to the fitted cell format; "
+            "histogram, quantile-grid (one draw) or exact-value draw; inverse-CDF / weighted draw; "
+            "round or floor to the fitted cell format; "
             "[null draw when the snapshot carries cell_format and null_probability is unset]"
         ),
         consumes_variable_draws=True,
