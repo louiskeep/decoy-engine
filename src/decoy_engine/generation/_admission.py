@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.generation._numeric_typing import numeric_plan
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
@@ -164,6 +166,7 @@ def classify_plan(
         if has_windowed
         else {}
     )
+    numeric = numeric_plan(config, provider_snapshot=provider_snapshot)
     pair_members = {
         (name, member)
         for name, t in tables.items()
@@ -240,7 +243,7 @@ def classify_plan(
         elif not ADMISSION_MATRIX.get(str(kind), (False, ""))[0]:
             result = decline(table, col, f"family_declined:{kind}")
         elif kind == "sequence":
-            result = admit(table, col, pa.string())
+            result = admit(table, col, numeric.get((table, col["name"])) or pa.string())
         elif kind == "categorical":
             arrow_type, reason = _categorical_type(col)
             result = admit(table, col, arrow_type) if arrow_type else decline(table, col, reason)
@@ -249,7 +252,7 @@ def classify_plan(
         elif kind == "faker":
             faker_type = col.get("faker_type", "word")
             if isinstance(faker_type, str) and faker_is_built_in(faker_type, provider_snapshot):
-                result = admit(table, col, pa.string())
+                result = admit(table, col, numeric.get((table, col["name"])) or pa.string())
             else:
                 result = decline(table, col, "faker_custom_or_unresolved_provider")
         else:

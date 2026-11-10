@@ -212,7 +212,7 @@ def test_over_memory_run_is_refused_fast_before_any_provider(
 def test_a_table_needing_sixty_percent_of_memory_runs(monkeypatch: pytest.MonkeyPatch) -> None:
     config = fx.config([fx.table("t", 10_000, [{"name": "k", "type": "sequence"}])])
     floor = generation_floor_bytes(config, classify_plan(config))
-    assert floor == 4 * 10_000
+    assert floor == 8 * 10_000
     _patch_memory(monkeypatch, int(floor / 0.6))
     result = run_generation(config)
     assert result.tables is not None and result.tables["t"].num_rows == 10_000
@@ -334,7 +334,7 @@ def test_estimate_honors_an_explicit_budget_over_detected_memory(
     est = estimate_job_capacity(config, tmp_path, budget_bytes=64 * MIB)
     assert est.verdict is CapacityVerdict.INSUFFICIENT
     assert est.code == "generation_budget_exceeded"
-    assert est.available_bytes == 64 * MIB and est.needed_bytes == 80_000_000
+    assert est.available_bytes == 64 * MIB and est.needed_bytes == 160_000_000
 
 
 def test_estimate_resolves_a_small_budget_the_way_the_run_does(tmp_path: Path) -> None:
@@ -413,7 +413,7 @@ def test_boolean_column_floor_is_an_integer_ceil_division(
         {"name": "id", "type": "sequence"},
     ]
     config = fx.config([fx.table("t", rows, cols)])
-    expected = -(-rows // 8) + 4 * rows
+    expected = -(-rows // 8) + 8 * rows
     assert generation_floor_bytes(config, classify_plan(config)) == expected
     _patch_memory(monkeypatch, GIB)
     est = estimate_job_capacity(config, tmp_path)
@@ -432,7 +432,7 @@ def test_floor_by_column_type() -> None:
         {"name": "f", "type": "categorical", "categories": [1.5]},
     ]
     config = fx.config([fx.table("t", 1000, cols)])
-    assert generation_floor_bytes(config, classify_plan(config)) == 4 * 1000 + 8 * 1000 + 8 * 1000
+    assert generation_floor_bytes(config, classify_plan(config)) == 8 * 1000 + 8 * 1000 + 8 * 1000
 
 
 def test_floor_counts_eight_bytes_per_cell_when_the_plan_runs_the_legacy_route() -> None:
@@ -466,7 +466,7 @@ def test_eligible_floor_sums_every_resident_table() -> None:
             fx.table("b", 1000, [{"name": "s", "type": "sequence"}]),
         ]
     )
-    assert generation_floor_bytes(config, classify_plan(config)) == 4 * 1100
+    assert generation_floor_bytes(config, classify_plan(config)) == 8 * 1100
 
 
 def test_mask_tables_and_empty_plans_have_no_floor() -> None:

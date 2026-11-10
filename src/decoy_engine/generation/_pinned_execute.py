@@ -115,6 +115,11 @@ def _check_plan(plan: PinnedPlan) -> dict[tuple[str, str], StatisticalSpec]:
                     code=reasons.plan.PINNED_PLAN_MALFORMED,
                     message=f"table #{ti} column #{ci}: name differs from its config",
                 )
+    if any(n[2] not in _NUMERIC_ARROW for n in plan.numeric_types):
+        raise PinnedModeError(
+            code=reasons.plan.PINNED_PLAN_MALFORMED,
+            message="a recorded numeric type is not int64 or float64",
+        )
     specs: dict[tuple[str, str], StatisticalSpec] = {}
     for s in plan.statistical:
         if not s.snapshot_digest:
@@ -140,6 +145,9 @@ def _check_plan(plan: PinnedPlan) -> dict[tuple[str, str], StatisticalSpec]:
                 )
     return specs
 
+
+# Arrow type per recorded numeric type name; the names are checked when the plan loads.
+_NUMERIC_ARROW = {"int64": pa.int64(), "float64": pa.float64()}
 
 # Process-global pandas options that can change generated values (inf handling in count(),
 # float reductions via bottleneck/numexpr, string and downcast behaviour). Pinned to the pandas
@@ -187,6 +195,8 @@ def _run(
     from decoy_engine.generation.synthesize import _generate_column
 
     by_name = {t.name: t for t in plan.tables}
+    # Decided at compile time from the full config; a plan from before the field carries none.
+    numeric = {(t, c): _NUMERIC_ARROW[dt] for t, c, dt in plan.numeric_types}
     pools: dict[str, pa.Table] = {}
     for name in _order_tables(plan):
         table = by_name[name]
@@ -205,6 +215,7 @@ def _run(
                 statistical_specs=specs,
                 reference_date=plan.reference_date,
                 pinned=True,
+                numeric_type=numeric.get((name, pcol.name)),
             )
         pools[name] = arrow_table(data, table_name=name, statistical_specs=specs)
     return {name: pools[name] for name in sorted(pools)}

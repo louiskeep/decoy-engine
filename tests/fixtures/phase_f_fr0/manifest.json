@@ -60,9 +60,9 @@
     "live_faker": {
       "envelope_digest": "2a7315a07dba2f65fb7e01aff69afa337c6660e33bcac1adf9149113f70e547b",
       "excluded_columns": [],
-      "status": "unchanged",
+      "status": "refrozen",
       "tables": {
-        "live": "8aba04ab3f97f3d163a41609c45e4cad07b93e724a9fddf4b5d199240a2e83b7"
+        "live": "61de7a2800710c2f26ffc95d8dd245aed4eeada6c25cc4303dd0160af254dd0d"
       }
     },
     "live_faker_default_locale": {
@@ -78,8 +78,8 @@
       "excluded_columns": [],
       "status": "refrozen",
       "tables": {
-        "empty": "2445c1c0db89b65b0be8c6c6f88cf5befd76dd3251e7a8f9701fffe9db6872fd",
-        "nulls": "0049feb16d5d0bcbd64050769c50fe3fcaaad68a17414b7bd53ab054a06a311b"
+        "empty": "ce940f92e39e5478efccdb62a91b30ed86cc61e167838bc2ceda3539859a3626",
+        "nulls": "b50fc72af868f3b4939885213bdabc243221ba63dda6df3b3be46e9e46edebc8"
       }
     },
     "pooled_faker": {
@@ -93,9 +93,9 @@
     "reference": {
       "envelope_digest": "679b84083b6c4c193a406ec70b38a581d52f97dc0c1c0c0f0618534e0a7f0cf5",
       "excluded_columns": [],
-      "status": "unchanged",
+      "status": "refrozen",
       "tables": {
-        "ref_child": "adf4fc4788230dd109a649b6278057e5438d272a84f7720b6ae616d9526d0790",
+        "ref_child": "da6831948c5b95121f50ada166d22ccb7188661de0c811fa435e6c0a0ea75d2f",
         "ref_parent": "e61822720e498b0467325d7ecc3bbe360ddc05f0fb7fd0c81c63f3591c1a0f12"
       }
     },
@@ -110,9 +110,9 @@
     "sequence": {
       "envelope_digest": "1f97850f74fcbdf50560db0f50daf950748c386e40d336e153f07767b33cd8a0",
       "excluded_columns": [],
-      "status": "unchanged",
+      "status": "refrozen",
       "tables": {
-        "seq": "3df0c6047f7783128b54df894c8f737792708e97a3fb318223c710a621d3698b"
+        "seq": "60c7d93fd8cea3692dc4b842110a50054bd993a02ee6c55eddd5caabacf69e82"
       }
     },
     "statistical": {
@@ -124,14 +124,32 @@
       }
     }
   },
-  "re_frozen_on": "2026-10-18",
+  "re_frozen_on": "2026-11-08",
   "refrozen": {
+    "live_faker": {
+      "previous_tables": {
+        "live": "8aba04ab3f97f3d163a41609c45e4cad07b93e724a9fddf4b5d199240a2e83b7"
+      },
+      "reason": "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row"
+    },
     "nulls": {
       "previous_tables": {
-        "empty": "6fb55c2d1210f8fb8e4ac79c3ff6fca06158df62f07e768834f439eaec685322",
-        "nulls": "85588c66a32d807e060337af1abc3c12a9369902c91a6528943b81c02ceb0855"
+        "empty": "2445c1c0db89b65b0be8c6c6f88cf5befd76dd3251e7a8f9701fffe9db6872fd",
+        "nulls": "0049feb16d5d0bcbd64050769c50fe3fcaaad68a17414b7bd53ab054a06a311b"
       },
-      "reason": "schema only: the all-null categorical column and the zero-row table now carry their declared string type instead of Arrow's inferred null type; every value digest is unchanged"
+      "reason": "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row (also the 2026-10-18 null-type change, see _f0_expected.py)"
+    },
+    "reference": {
+      "previous_tables": {
+        "ref_child": "adf4fc4788230dd109a649b6278057e5438d272a84f7720b6ae616d9526d0790"
+      },
+      "reason": "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row"
+    },
+    "sequence": {
+      "previous_tables": {
+        "seq": "3df0c6047f7783128b54df894c8f737792708e97a3fb318223c710a621d3698b"
+      },
+      "reason": "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row"
     }
   }
 }

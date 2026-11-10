@@ -2064,8 +2064,8 @@
         "field_name": "seq",
         "metadata": null,
         "name": "seq",
-        "numpy_type": "object",
-        "pandas_type": "unicode"
+        "numpy_type": "int64",
+        "pandas_type": "int64"
        }
       ],
       "index_columns": []
@@ -2073,15 +2073,15 @@
     },
     "rows": {
      "seq": [
-      "1",
-      "2",
-      "3"
+      1,
+      2,
+      3
      ]
     },
     "schema": [
      [
       "seq",
-      "string",
+      "int64",
       true
      ]
     ]

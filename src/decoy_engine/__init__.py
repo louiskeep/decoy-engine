@@ -18,11 +18,11 @@ Public API (the contract CLI and platform code depend on):
                       `select_execution_adapter().run(plan, source) -> ExecutionResult`.
     generate_tables   (decoy_engine.generation.synthesize) table-from-schema
                       synthesis for generate-mode configs.
-    read_fixed_width  (decoy_engine.profile._fixed_width_reader) parse a
-                      newline-delimited fixed-width file into a DataFrame per
-                      a FixedWidthLayout, or the equivalent validated-config
-                      dict (`FileSource.layout`); raises FixedWidthParseError
-                      or ConfigError. Exported so a `format: fixed_width` FileSource reads.
+    generated_table_to_pandas  (decoy_engine.generation) Arrow table to pandas,
+                      nullable integers stay integer (a CSV prints `1`, not `1.0`).
+    read_fixed_width  (decoy_engine.profile._fixed_width_reader) parse a fixed-width
+                      file into a DataFrame per a FixedWidthLayout or `FileSource.layout`
+                      dict; raises FixedWidthParseError or ConfigError.
     read_csv_source / CsvDialect / resolve_csv_dialect:
                       (decoy_engine.profile._csv_reader) the one CSV source
                       reader: a file read under its declared dialect (header or
@@ -32,9 +32,8 @@ Public API (the contract CLI and platform code depend on):
     RELEASE_PHASE / ReleasePhase / is_pre_ga:
                       (decoy_engine.release) the single pre-GA/GA switch the rule
                       inversions and CI gates read. Pre-GA: hard-delete is allowed
-                      and the compatibility contract is advisory. The platform
-                      reads RELEASE_PHASE across the in-process boundary; there is
-                      no separate platform constant.
+                      and the compatibility contract is advisory. The platform reads
+                      RELEASE_PHASE in process (no separate platform constant).
 
 Public exceptions (also in decoy_engine.errors):
     DecoyError, ConfigError, PipelineValidationError,
@@ -42,8 +41,7 @@ Public exceptions (also in decoy_engine.errors):
     LicenseError, LicenseExpiredError,
     FlagPauseSignal, FixedWidthParseError
 
-Anything not listed in __all__ -- and anything under decoy_engine.internal --
-is private and may change without a version bump.
+Anything not in __all__, and anything under decoy_engine.internal, is private.
 
 V2 NOTE: the V1 surface (``Masker``, ``DataGenerator``, ``run_graph``) was removed
 in S22 (2026-05-30). The engine is plan-first: validate a ``PipelineConfig``, profile
@@ -140,6 +138,7 @@ from decoy_engine.execution.native._companion_status import (
 from decoy_engine.execution.out_of_core import resolve_conservative_ooc_budget_bytes
 from decoy_engine.execution.pipeline import detect_usable_cpus
 from decoy_engine.fileaccess import open_protected_dir, protected_scratch_dir
+from decoy_engine.generation import generated_table_to_pandas
 from decoy_engine.generation.composite import (
     BundlePool,
     CompositeAdapter,
@@ -548,6 +547,7 @@ __all__ = [
     "event_to_dict",
     "event_to_legacy_dict",
     "generate_tables",
+    "generated_table_to_pandas",
     "get_default_executor",
     "get_default_pool_cache",
     "get_default_registry",

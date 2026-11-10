@@ -37,6 +37,7 @@ import pyarrow as pa
 from faker import Faker
 
 from decoy_engine.generation import _faker_pool
+from decoy_engine.generation._numeric_typing import numeric_plan, restore_declared
 from decoy_engine.generation._statistical_column import arrow_table, statistical_generate
 from decoy_engine.generation._synthesize_derived import _derived_generate, _formula, _reference
 from decoy_engine.generation.statistical import FanoutSpec, StatisticalSpec
@@ -138,6 +139,7 @@ def _generate_tables_from_config(
     # table). V1 iterates in declared order + warns on missing deps; v2 is
     # stricter without breaking parity for already-orderable configs.
     ordered = _topo_sort(deps)
+    numeric = numeric_plan(config, provider_snapshot=provider_snapshot)
     pools: dict[str, pa.Table] = {}
     out: dict[str, pa.Table] = {}
     for name in ordered:
@@ -180,6 +182,7 @@ def _generate_tables_from_config(
                     table_name=name,
                     statistical_specs=statistical_specs,
                     provider_snapshot=provider_snapshot,
+                    numeric_type=numeric.get((name, col["name"])),
                     reference_fanouts=reference_fanouts,
                 )
         # Cross-column formula post-pass: a `formula` column carrying
@@ -274,6 +277,7 @@ def _generate_column(
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     reference_date: str | None = None,
     pinned: bool = False,
+    numeric_type: pa.DataType | None = None,
     reference_fanouts: dict[tuple[str, str], FanoutSpec] | None = None,
 ) -> list[Any]:
     """Dispatch a generate column to its generator by ``type`` (mirrors V1
@@ -291,7 +295,7 @@ def _generate_column(
     col = with_table(col, table_name)
     kind = col.get("type")
     if kind == "sequence":
-        values: list[Any] = _sequence(col, n)
+        values: list[Any] = _sequence(col, n, numeric_type is not None)
     elif kind == "categorical":
         values = _categorical(col, n, seed, derive_key)
     elif kind == "faker":
@@ -335,6 +339,7 @@ def _generate_column(
         # at validation; this branch is the defensive fallback for callers that
         # bypass validation (e.g. an unvalidated dict).
         raise ValueError(f"generate column {col.get('name')!r}: unexpected generator type {kind!r}")
+    values = restore_declared(col, values, numeric_type)
     # Pinned plans store `snapshot_file` as `sha256:<digest>`, not a path. Passing the digest keeps
     # for_column from trying to open that string as a file. The ordinary path passes None and
     # derives the null seed exactly as before.
@@ -355,26 +360,16 @@ def _generate_column(
     return _apply_null_probability(values, col, seed, derive_key, snapshot_content_digest=digest)
 
 
-def _sequence(col: dict[str, Any], n: int) -> list[str]:
-    """Sequential string values, parity-frozen vs V1 ``_generate_sequence_column``
-    (``columns.py:305-319``).
+def _sequence(col: dict[str, Any], n: int, numeric: bool = False) -> list[Any]:
+    """Sequential values, parity-frozen vs V1 ``_generate_sequence_column``
+    (``columns.py:305-319``): the streamed generator's own batch, so both routes agree.
 
-    V1 ALWAYS wraps every value through ``f"{prefix}{value_str}{suffix}"`` (S6-ENG-1
-    gate finding M1: the ENG-1 spine returned ints when unformatted; corrected here).
-    Returns strings in every configuration. ``pad_length`` zero-fills the numeric
-    body; ``prefix`` / ``suffix`` wrap it.
+    A bare counter is ints; a ``prefix`` / ``suffix`` / ``pad_length`` renders every value through
+    ``f"{prefix}{value_str}{suffix}"`` as text.
     """
-    start = int(col.get("start", 1))
-    step = int(col.get("step", 1))
-    prefix = str(col.get("prefix", ""))
-    suffix = str(col.get("suffix", ""))
-    pad = int(col.get("pad_length", 0))
-    out: list[str] = []
-    for i in range(n):
-        value = start + i * step
-        value_str = str(value).zfill(pad) if pad > 0 else str(value)
-        out.append(f"{prefix}{value_str}{suffix}")
-    return out
+    from decoy_engine.generation._column_streams import SequenceStream
+
+    return SequenceStream(col, numeric=numeric).next_batch(0, n)
 
 
 def _categorical(col: dict[str, Any], n: int, seed: int, derive_key: Any = None) -> list[Any]:

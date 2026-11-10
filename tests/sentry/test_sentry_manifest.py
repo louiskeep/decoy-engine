@@ -41,6 +41,7 @@ SENTRIES = (
     "tests/sentry/test_methodology_citations.py",
     "tests/sentry/test_module_size.py",
     "tests/sentry/test_mypy_override_targets.py",
+    "tests/sentry/test_numeric_reader_registry.py",
     "tests/sentry/test_native_release_workflow.py",
     "tests/sentry/test_no_residual_removed_surface.py",
     "tests/sentry/test_null_fraction_single_source.py",

@@ -49,6 +49,7 @@ def test_all_lists_every_public_name():
         # surface; submodule-only import was an unintentional gap.
         "compile_plan",
         "generate_tables",
+        "generated_table_to_pandas",
         "run_pipeline",
         # RUN-STREAM E1b: host CPU probe and the conservative CLI auto memory budget.
         "detect_usable_cpus",

@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine.generation._numeric_typing import generated_table_to_pandas
+
 if TYPE_CHECKING:
     from decoy_engine.generation._bounds import FloorShortfall
 
-__all__ = ["detected_memory_bytes", "resident_floor_shortfall"]
+__all__ = ["detected_memory_bytes", "generated_table_to_pandas", "resident_floor_shortfall"]
 
 
 # Both import lazily: every generation submodule imports this package, and the floor pulls in
