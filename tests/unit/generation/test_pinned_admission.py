@@ -78,6 +78,7 @@ def test_pinned_entry_is_byte_identical_to_the_full_plan_entry(cfg_fn: Any) -> N
         assert pinned[name].equals(table)  # values and row order
 
 
+@pytest.mark.usefixtures("lenient_generate_checks")
 def test_pinned_entry_honours_provider_snapshot() -> None:
     from decoy_engine.internal.faker_setup import snapshot_custom_faker_providers
 

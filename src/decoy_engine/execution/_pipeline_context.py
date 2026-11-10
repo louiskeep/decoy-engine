@@ -349,7 +349,13 @@ def build_run_context(
 
     profile = profile_source(config, seed=job_seed)
 
-    plan = compile_plan(config, profile, decoy_engine_version=engine_version, base_dir=base_dir)
+    plan = compile_plan(
+        config,
+        profile,
+        decoy_engine_version=engine_version,
+        base_dir=base_dir,
+        instance_default_locale=instance_default_locale,
+    )
 
     # Late defense in depth: the compiled plan may not need more than admission covered.
     assert_plan_requirements_admitted(plan, admitted)

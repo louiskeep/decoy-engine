@@ -234,3 +234,10 @@ modules:
   - path: src/decoy_engine/generation/statistical/_fanout.py
     pattern: degree-sequence sampling with systematic resampling and largest-remainder apportionment
     source: Newman, Networks 2nd ed. (2018) sec. 12.1; Kitagawa, JCGS (1996); Carpenter, Clifford and Fearnhead (1999); Balinski and Young, Fair Representation (2001); Patki et al., SDV HMA1, IEEE DSAA (2016); SDMetrics CardinalityShapeSimilarity
+
+  - path: src/decoy_engine/generation/_unique.py
+    pattern: Faker unique proxy and sampling without replacement
+    source: Faker fake.unique proxy, _UNIQUE_ATTEMPTS (MIT); CPython random.Random.sample (PSF); SQL UNIQUE (a, b) and Django unique_together for junction pairs
+    note: Unique generate columns keep a seen set with 1,000 attempts per faker row, each retry
+      on its own derived seed, and sample categorical, reference and junction-pair domains
+      without replacement. Method only for the proxy; the engine does not call fake.unique.

@@ -61,6 +61,39 @@ def _undefined_name(exc: Exception) -> str | None:
     return None
 
 
+# Names `_formula_scope` binds; the plan check reads them as defined. A test pins this to the scope.
+FORMULA_SCOPE_NAMES = frozenset(
+    [
+        "random",
+        "randint",
+        "choice",
+        "gauss",
+        "round",
+        "min",
+        "max",
+        "len",
+        "str",
+        "int",
+        "float",
+        "hash",
+        "date_between",
+        "date_this_decade",
+        "date_this_year",
+        "date_this_month",
+        "future_date",
+        "past_date",
+        "date_of_birth",
+        "time",
+        "now",
+        "today",
+        "days_from_now",
+        "months_from_now",
+        "years_from_now",
+        "format_date",
+    ]
+)
+
+
 class _FormulaMixin:
     """Per-row formula evaluation for :class:`ColumnGenerator`."""
 

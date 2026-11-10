@@ -11,15 +11,16 @@ analysis offline and from the CLI without depending on the platform.
 
 from __future__ import annotations
 
-import warnings
 from typing import Any
 
 import pandas as pd
 
 from decoy_engine.context import ExecutionContext, emit_lineage, emit_step
 from decoy_engine.detection.detectors import (
+    _series_str,
     hits_custom_name_hint,
     hits_name_hint,
+    prepared_scope,
     run_all_detectors,
 )
 from decoy_engine.detection.types import (
@@ -35,7 +36,9 @@ from decoy_engine.profiling._classification import (
     _compute_mode,
     _detect_casing,
 )
+from decoy_engine.profiling._date_sniff import sniff_dates
 from decoy_engine.profiling._distributions import _build_distribution
+from decoy_engine.profiling._k_anonymity import _compute_k_anonymity
 from decoy_engine.profiling.sentinels import detect_sentinels
 from decoy_engine.profiling.types import (
     ColumnProfile,
@@ -65,144 +68,6 @@ def _score_pii(detector_matches: list[DetectorMatch], unique_rate: float) -> flo
     # Boost when the column is also highly unique (more identifying in practice).
     boost = min(0.15, unique_rate * 0.15) if unique_rate > 0.5 else 0.0
     return round(min(1.0, base + boost), 3)
-
-
-# ── quasi-identifier co-occurrence + k-anonymity ──────────────────────────────
-#
-# Plan B-1: the HIPAA trio (DOB + 5-digit ZIP + gender) is the canonical
-# example of a quasi-identifier combo, but treating it as the only
-# possibility misses every dataset where the high-risk combo is
-# something else (e.g. medication + admission_year + diagnosis_code).
-# Instead, we sweep all 2- and 3-column combos of low-cardinality
-# categorical candidates and report k-anonymity from the actual data.
-# The HIPAA trio still emerges naturally when those columns happen to
-# have the right cardinality + joint uniqueness.
-
-
-# Upper bound on candidate columns to consider. C(10,2) + C(10,3) = 165
-# groupbys per scan, which is well under a second on a 100k-row sample.
-# Past 10 candidates the combinatorics start to bite and the lowest-k
-# combo is overwhelmingly likely to be among the top-10 by distinct_count
-# anyway (a column that contributes meaningful identifiability needs
-# enough cardinality to discriminate, which is what the ranking proxies).
-_K_ANON_MAX_CANDIDATES = 10
-
-# Cardinality band for quasi-id candidates. Exclude high-cardinality
-# columns (likely PKs / direct identifiers - those don't need a combo
-# to identify rows) and near-constant ones (don't discriminate at all).
-_K_ANON_MIN_UNIQUE_RATE = 0.005
-_K_ANON_MAX_UNIQUE_RATE = 0.95
-_K_ANON_MAX_DISTINCT_FRACTION = 0.25  # < 25% of rows distinct = categorical-like
-# Absolute floor so the fraction doesn't over-filter on tiny datasets.
-# A column with <=20 distinct values is categorical-like in practice
-# regardless of row count.
-_K_ANON_MAX_DISTINCT_ABSOLUTE = 20
-
-# Types we'll consider for k-anonymity. Float columns with measurement
-# noise rarely participate in linkage attacks because the values are
-# already too granular to share across rows; the cardinality filter
-# above also catches them, but being explicit keeps the groupby fast.
-# "mixed" is included because Pre-scan infers it for short-string
-# categorical columns (gender, city, state) whose values don't match
-# a single narrow type pattern - these are valid quasi-id candidates.
-_K_ANON_TYPES = {"integer", "string", "boolean", "date", "mixed"}
-
-
-def _compute_k_anonymity(
-    df: pd.DataFrame,
-    fields: list[FieldStats],
-) -> tuple[int | None, list[list[str]]]:
-    """Compute k-anonymity from low-cardinality categorical combos.
-
-    Returns ``(k, groups)`` where:
-
-      - ``k`` is the minimum group size produced by any 2- or 3-column
-        combo of quasi-identifier candidates. ``k == 1`` means at least
-        one combo uniquely identifies at least one row (high linkage
-        risk). ``k == None`` means no candidates were eligible (the
-        dataset is either too small, or every column is unique /
-        constant - direct-identifier territory is captured separately
-        by per-field ``pii_score`` and detector hits, not here).
-
-      - ``groups`` is every combo that ties at that minimum ``k``.
-        Multiple combos can produce the same k; listing all of them
-        keeps the result honest and lets FORECAST see which fields
-        contribute to the risk.
-
-    Candidate selection: columns whose ``unique_rate`` lies in
-    (0.005, 0.95) and ``distinct_count`` is under 25% of ``row_count``.
-    Capped at ``_K_ANON_MAX_CANDIDATES`` by descending ``distinct_count``
-    so the most discriminating candidates are kept when the cap binds.
-    """
-    row_count = len(df)
-    if row_count < 2:
-        return None, []
-
-    candidates: list[FieldStats] = []
-    for f in fields:
-        if f.inferred_type not in _K_ANON_TYPES:
-            continue
-        if f.distinct_count <= 1:
-            continue
-        if f.unique_rate <= _K_ANON_MIN_UNIQUE_RATE:
-            continue
-        if f.unique_rate >= _K_ANON_MAX_UNIQUE_RATE:
-            continue
-        # Column qualifies if EITHER its distinct_count is small in
-        # absolute terms OR a small fraction of total rows. The
-        # absolute cap keeps small fixtures + small natural
-        # categoricals (gender, state, status) from being over-
-        # filtered when row_count * fraction lands below 1.
-        max_distinct = max(
-            _K_ANON_MAX_DISTINCT_ABSOLUTE,
-            int(row_count * _K_ANON_MAX_DISTINCT_FRACTION),
-        )
-        if f.distinct_count > max_distinct:
-            continue
-        candidates.append(f)
-
-    if not candidates:
-        return None, []
-
-    # Rank by distinct_count descending - high-cardinality candidates
-    # are the most identifying. Tie-break alphabetically for determinism.
-    candidates.sort(key=lambda f: (-f.distinct_count, f.name))
-    candidate_names = [f.name for f in candidates[:_K_ANON_MAX_CANDIDATES]]
-
-    # Defensive: drop names not actually present in the dataframe
-    # (shouldn't happen given fields come from df.columns, but the
-    # groupby would raise rather than skip).
-    candidate_names = [n for n in candidate_names if n in df.columns]
-    if len(candidate_names) < 2:
-        return None, []
-
-    from itertools import combinations
-
-    best_k: int | None = None
-    best_groups: list[list[str]] = []
-    for size in (2, 3):
-        if size > len(candidate_names):
-            break
-        for combo in combinations(candidate_names, size):
-            try:
-                sub = df.loc[:, list(combo)].dropna()
-                if len(sub) == 0:
-                    continue
-                k = int(sub.groupby(list(combo), dropna=False).size().min())
-            except (TypeError, ValueError):
-                # F-6 fix: narrow to the known-safe categories. Unhashable
-                # column value (dict / list cells from JSON-typed sources)
-                # raises TypeError; pandas internal coercion edge cases
-                # raise ValueError. Skip silently. MemoryError + other
-                # exceptions propagate so they are not silently swallowed.
-                continue
-            if best_k is None or k < best_k:
-                best_k = k
-                best_groups = [list(combo)]
-            elif k == best_k:
-                best_groups.append(list(combo))
-
-    return best_k, best_groups
 
 
 # ── per-column profiler ───────────────────────────────────────────────────────
@@ -318,6 +183,17 @@ def _profile_column(
     total_rows: int,
     custom_detectors: list[CustomDetectorSpec] | None = None,
 ) -> FieldStats:
+    # One stringify + factorize per column, shared by the length stats, the
+    # detectors and the sentinel scan.
+    with prepared_scope(series):
+        return _profile_column_stats(series, total_rows, custom_detectors)
+
+
+def _profile_column_stats(
+    series: pd.Series,
+    total_rows: int,
+    custom_detectors: list[CustomDetectorSpec] | None,
+) -> FieldStats:
     name = str(series.name)
     dtype_raw = str(series.dtype)
     null_count = int(series.isna().sum())
@@ -368,38 +244,10 @@ def _profile_column(
 
     # String length + date sniffing on string-typed columns (object or native str dtype).
     if pd.api.types.is_string_dtype(series) and non_null_count > 0:
-        str_lens = non_null.astype(str).str.len()
-        fs.min_length = int(str_lens.min())
-        fs.max_length = int(str_lens.max())
-        fs.avg_length = round(float(str_lens.mean()), 1)
+        fs.min_length, fs.max_length, avg = _series_str(series).length_stats()
+        fs.avg_length = round(avg, 1)
 
-        sample_size = min(200, non_null_count)
-        # Format inference is the whole point here - pandas 2.x emits a chatty
-        # UserWarning when it falls back to dateutil. Suppress it; we are
-        # deliberately probing for a date-shaped column without specifying
-        # a format up front.
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message=".*Could not infer format.*",
-                category=UserWarning,
-            )
-            # F-9 fix: coerce the full series once and slice the head for
-            # parse_rate. Previously the sample was discarded and the full
-            # series re-coerced when parse_rate >= 0.7 (2x dateutil work).
-            all_coerced = pd.to_datetime(non_null, errors="coerce")
-            parse_rate = (
-                all_coerced.head(sample_size).notna().sum() / sample_size if sample_size else 0
-            )
-            if parse_rate >= 0.7:
-                valid = all_coerced.dropna()
-                invalid_mask = all_coerced.isna()
-                if len(valid) > 0:
-                    fs.date_min = valid.min().isoformat()
-                    fs.date_max = valid.max().isoformat()
-                fs.invalid_count = int(invalid_mask.sum())
-                if fs.invalid_count > 0:
-                    fs.sample_invalid = non_null[invalid_mask].head(3).astype(str).tolist()
+        sniff_dates(non_null, fs)
 
     # Detectors.
     fs.detector_matches = run_all_detectors(series, name, custom=custom_detectors)

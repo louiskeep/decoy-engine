@@ -10,6 +10,7 @@ New to Decoy? Start with the quickstart, then the recipes.
 - [Recipes](recipes.md): five runnable recipes (CSV, folder + FKs, generate, detect PII, CI).
 - [Strategy catalog](strategies.md): every mask and generation strategy.
 - [Free-text NER](guides/free-text-ner.md): activating spaCy person-name/location detection on `text_redact`.
+- [Unique generated columns](guides/generate-uniqueness.md): `unique`, `unique_together` and `pooled` on generate columns; the domain checks and refusal codes.
 - [Relationships](relationships.md): foreign-key and referential-integrity preservation.
 - [Declared parsing, casting and quarantine](declared-casting.md): per-column parse formats, sentinels, error policies and output formats.
 - [Determinism](determinism.md): the seed and key protocol; what is and is not deterministic.
@@ -80,6 +81,7 @@ quickstart
 recipes
 strategies
 guides/free-text-ner
+guides/generate-uniqueness
 relationships
 determinism
 cli
