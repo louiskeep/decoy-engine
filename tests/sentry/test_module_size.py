@@ -101,9 +101,8 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/out_of_core/_budget.py": 622,
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
     "src/decoy_engine/execution/out_of_core/_spill_estimate.py": 665,
-    "src/decoy_engine/detection/detectors.py": 1046,
+    "src/decoy_engine/detection/detectors.py": 920,
     "src/decoy_engine/generators/columns.py": 678,
-    "src/decoy_engine/profiling/profiler.py": 660,
     # monolithic train_and_evaluate; decompose into split/fit/calibrate/evaluate modules.
     "src/decoy_engine/profiling/model_pack/trainer.py": 712,
     # compile-check ownership table; split into per-strategy check modules once the check set stabilises.
