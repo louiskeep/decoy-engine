@@ -213,6 +213,7 @@ from decoy_engine.profiling import (
     redact_profile_dict,
     scan_set_to_dict,
     scan_sources,
+    snapshot_joint_warnings,
 )
 from decoy_engine.profiling.model_pack import classifier_status, load_detectors
 from decoy_engine.progress import (
@@ -339,11 +340,9 @@ from decoy_engine.validation_result import (
 )
 from decoy_engine.vault import VaultError, VaultWriter, load_vault, vault_writer_for_config
 
-# F9: names trimmed from __all__ but kept as module bindings so existing
-# attribute access (decoy_engine.EinValidator, decoy_engine.BundlePool, ...)
-# stays non-breaking. Anchoring them here marks the imports as intentional
-# re-exports for the unused-import lint without scattering per-name noqas.
-# The canonical home for the identifier families is decoy_engine.identifiers.
+# F9: names trimmed from __all__ but kept as module bindings so attribute access
+# (decoy_engine.EinValidator, ...) stays non-breaking; anchoring them here marks the
+# imports as intentional re-exports. Canonical home: decoy_engine.identifiers.
 _F9_KEPT_BINDINGS = (
     BundlePool,
     CompositeAddress,
@@ -368,7 +367,7 @@ _F9_KEPT_BINDINGS = (
     SsnValidator,
 )
 
-__version__ = "0.19.0"
+__version__ = "0.20.0"
 
 __all__ = [
     "CAP_DRY_RUN",
@@ -589,6 +588,7 @@ __all__ = [
     "scan_set_to_dict",
     "scan_sources",
     "select_execution_adapter",
+    "snapshot_joint_warnings",
     "source_columns",
     "strategy_catalog",
     "unmask_pipeline",

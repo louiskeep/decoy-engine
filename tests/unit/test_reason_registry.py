@@ -445,3 +445,26 @@ def test_cpu_detection_minor_has_one_fixture_with_exactly_its_identity() -> None
         ("runtime", "cpu_detection_failed")
     ]
     assert pinned["registry_version"] == "1.21.0"
+
+
+JOINT_CAP_FIXTURE = "reason-manifest-v1.22-gen-cond-cap.json"
+
+
+def test_joint_cap_codes_are_registered_with_a_pinned_fixture() -> None:
+    """GEN-COND-CAP E1: two snapshot failures and one fit warning, `since` 1.22.0."""
+    for ns, code, owner in (
+        ("quality", "contingency_top_k_invalid", "DistributionSnapshotError"),
+        ("quality", "contingency_top_k_kind_unsupported", "DistributionSnapshotError"),
+        ("warning", "fit_joint_cells_truncated", "QualityWarning"),
+    ):
+        spec = reasons.find(ns, code)
+        assert spec is not None
+        assert (spec.owner, spec.since) == (owner, "1.22.0")
+        assert not re.search(r"[{}%]", spec.summary)
+    pinned = _load(JOINT_CAP_FIXTURE)
+    assert sorted((e["namespace"], e["code"]) for e in pinned["entries"]) == [
+        ("quality", "contingency_top_k_invalid"),
+        ("quality", "contingency_top_k_kind_unsupported"),
+        ("warning", "fit_joint_cells_truncated"),
+    ]
+    assert pinned["registry_version"] == "1.22.0"
