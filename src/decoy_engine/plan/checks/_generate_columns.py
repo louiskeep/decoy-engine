@@ -21,6 +21,7 @@ from typing import Any
 
 from decoy_engine import reasons
 from decoy_engine.errors import ValidationError
+from decoy_engine.expressions import formula_is_evaluable
 from decoy_engine.plan._checks import check_derived_column_refs
 from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
 from decoy_engine.plan._checks_group_key import check_group_key_refs
@@ -423,6 +424,8 @@ def _check_formula(table: str, cols: list[dict[str, Any]], index: int) -> None:
     except (SyntaxError, ValueError, RecursionError, MemoryError):
         return  # the config layer refuses an unparsable formula
     name = col["name"]
+    if not formula_is_evaluable(tree):
+        raise _refusal(reasons.config.GENERATE_FORMULA_INVALID, table, name, "formula")
     names = [c["name"] for c in cols]
     siblings = set(names)
     raw = col.get("references")

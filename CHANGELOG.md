@@ -9,6 +9,13 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (formula admissibility, GEN-STRICT E2, 2026-11-10)
+
+- A generate-column `formula` that uses syntax the runtime evaluator cannot run (lambda, walrus, set
+  comprehension, a call through a non-name) is now refused at validate and compile with
+  `generate_formula_invalid`. It used to compile and generate a column of nulls. The check reads the
+  evaluator's own node table (`decoy_engine.expressions.formula_is_evaluable`).
+
 ## [0.21.0] - 2026-11-10
 
 ### Breaking for consumers

@@ -39,19 +39,23 @@ from decoy_engine.expressions._lark_parser import (
 # package. This is a strict drop-in replacement.
 from decoy_engine.expressions._safe_eval import (
     BASE_GLOBALS,
+    EVALUATED_NODE_TYPES,
     MASK_GLOBALS,
     _SafeRe,
+    formula_is_evaluable,
     make_mask_globals,
     safe_eval,
 )
 
 __all__ = [
     "BASE_GLOBALS",
+    "EVALUATED_NODE_TYPES",
     "MASK_GLOBALS",
     "CompiledExpression",
     "_SafeRe",
     "compile_expr",
     "evaluate",
+    "formula_is_evaluable",
     "make_mask_globals",
     "safe_eval",
 ]

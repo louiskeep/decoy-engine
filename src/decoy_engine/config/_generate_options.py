@@ -25,6 +25,7 @@ from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from decoy_engine import reasons
 from decoy_engine.config._generate_unique import unique_flag
+from decoy_engine.expressions import formula_is_evaluable
 
 __all__ = [
     "COMMON_OPTIONS",
@@ -166,10 +167,11 @@ def _formula(value: Any, _: Mapping[str, Any]) -> list[Problem]:
     if not isinstance(value, str):
         return [((), _TYPE)]
     try:
-        ast.parse(value.strip(), mode="eval")
+        tree = ast.parse(value.strip(), mode="eval")
     except (SyntaxError, ValueError, RecursionError, MemoryError):
         return [((), _FORMULA)]
-    return _OK
+    # Syntax the runtime evaluator cannot run (lambda, walrus) would generate all nulls.
+    return _OK if formula_is_evaluable(tree) else [((), _FORMULA)]
 
 
 def _categories(value: Any, _: Mapping[str, Any]) -> list[Problem]:

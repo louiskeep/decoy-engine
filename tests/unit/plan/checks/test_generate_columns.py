@@ -514,7 +514,6 @@ def test_valid_formula_shapes_accepted(expr: str) -> None:
     "expr",
     [
         "v + len([v for v in [1, 2, 3]])",  # read outside, bound inside a comprehension
-        "a + (lambda a: a + 1)(2)",  # a lambda parameter shadows the column only inside it
         "len([w for x in [1] for w in [v]])",  # nested comprehension reading an outer name
     ],
 )
@@ -524,15 +523,50 @@ def test_name_bound_in_an_inner_scope_is_still_unknown_outside_it(expr: str) -> 
 
 
 @pytest.mark.parametrize(
-    "expr",
+    ("expr", "expected"),
     [
-        "len([v for v in [1, 2, 3]])",
-        "len([w for v in [[1, 2]] for w in v])",
-        "(lambda q: q + 1)(b)",
+        ("len([v for v in [1, 2, 3]])", [3] * 5),
+        ("len([w for v in [[1, 2]] for w in v])", [2] * 5),
+        ("len({a, b})", [1] * 5),
+        ("i + index", [0, 2, 4, 6, 8]),
     ],
 )
-def test_names_bound_and_used_only_inside_their_scope_are_accepted(expr: str) -> None:
-    assert_accepted(cfg([seq("b"), formula("x", expr, ["b"])]))
+def test_scoped_shapes_are_accepted_and_generate_values(expr: str, expected: list[int]) -> None:
+    config = cfg([seq("a"), seq("b"), formula("x", expr, ["a", "b"])])
+    assert_accepted(config)
+    # An accepted formula must run: a node the evaluator rejects would come back as all nulls.
+    assert generated(config, "x") == expected
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "(lambda q: q + 1)(b)",
+        "a + (lambda a: a + 1)(2)",
+        "(x := b) + 1",
+        "{v for v in [b]}",
+        "str(*[1])",
+        "f(*[1])(2)",
+        "str(**{})",
+    ],
+)
+def test_syntax_the_runtime_cannot_evaluate_is_refused(expr: str) -> None:
+    config = cfg([seq("b"), formula("x", expr, ["b"])])
+    for site in _sites():
+        with pytest.raises(Exception) as info:
+            site(config)
+        assert getattr(info.value, "code", None) == "generate_formula_invalid", site.__name__
+        assert expr not in str(info.value)
+        assert info.value.__context__ is None
+    from decoy_engine.plan.checks import check_generate_columns
+
+    with pytest.raises(PlanCompileError) as plan_only:
+        check_generate_columns(config, provider_snapshot={}, default_locale=None)
+    assert (plan_only.value.code, plan_only.value.path) == (
+        "generate_formula_invalid",
+        p("x", "formula"),
+    )
+    assert expr not in str(plan_only.value)
 
 
 def test_scope_name_constant_matches_the_formula_scope() -> None:
