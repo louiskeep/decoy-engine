@@ -422,6 +422,9 @@ def classify_window_table(
         elif kind == "sequence":
             _check_sequence(table, col, max_cell_chars, window_end)
 
+    pair_members = frozenset(
+        member for pair in spec_table.get("unique_together") or [] for member in pair
+    )
     verdicts: dict[str, str | None] = {}  # column -> Class B reason, None for Class A
     for idx, col in enumerate(cols):
         verdicts[col["name"]] = _class_b_reason(
@@ -433,6 +436,7 @@ def classify_window_table(
             rows,
             instance_default_locale,
             pool_eligible,
+            pair_members,
         )
     reasons = tuple((n, r) for n, r in verdicts.items() if r is not None)
     return WindowAdmission(table, "B" if reasons else "A", reasons)
@@ -447,10 +451,17 @@ def _class_b_reason(
     rows: int,
     instance_default_locale: str | None,
     pool_eligible: Callable[..., bool],
+    pair_members: frozenset[str] = frozenset(),
 ) -> str | None:
     from decoy_engine.generation._faker_pool import pool_opted_out
 
     kind = col.get("type")
+    # Unique draws read the whole column's history, so they cannot be seeked to a window. Checked
+    # before `null_injection` so the reason names the real cause. A sequence stays Class A.
+    if col.get("unique") is True and kind != "sequence":
+        return "unique"
+    if col["name"] in pair_members:
+        return "unique_pair"
     if float(col.get("null_probability") or 0.0) > 0:
         return "null_injection"
     if kind == "sequence":

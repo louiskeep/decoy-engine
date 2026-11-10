@@ -9,16 +9,22 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
-### Added (fitted reference snapshot checks, QA-FK-FANOUT E2a, 2026-11-09)
+### Added (CONFIG-EXPLICIT E2a: declared-columns module, registry 1.19.0, 2026-11-08)
 
-A `reference` column with `distribution: fitted` now has its `snapshot_file` read once and pinned
-into the Plan, like a `statistical` column. Compile, `run_config_only_checks` and `plan_from_yaml`
-refuse a fitted column with no `snapshot_file`, an unreadable snapshot, a snapshot with no fan-out
-for the source column (including every DP snapshot), an invalid fan-out block, or `weights`,
-`min_per_parent` or `max_per_parent` set. A loaded Plan whose manifest dropped the fitted snapshot
-raises `plan.statistical_snapshot_not_pinned`. Messages name fields only, never a stored value. One
-wrapper, `check_generate_snapshot_columns`, now runs the statistical and fitted checks at all three
-sites.
+`decoy_engine` exports `source_columns`, `declared_columns`, `check_columns_declared`,
+`DeclarationRequest`, `PreparedDeclaredSources` and `prepare_declared_sources`: the pre-read
+boundary that checks every source column is listed in the config. Registry 1.19.0 adds
+`source_file.undeclared_column` and `source_file.undeclared_table`. No route calls the boundary
+yet, so run behavior is unchanged.
+
+### Added (`unique` and `unique_together` generate options, GEN-UNIQUE E2, 2026-11-09)
+
+`unique: true` on a `sequence`, `categorical`, `faker` or `reference` generate column draws values with no
+repeats, and `unique_together: [[a, b]]` on a table does the same for a pair of `reference` columns. Rows that
+need more distinct values than exist stop the run with `uniqueness_impossible`, which names the table, column
+and counts but never a value. List and dict categories, parent keys and provider outputs are compared by
+equality, so they dedup instead of failing. Unique columns decline the window and pinned routes, and their
+seen set counts toward the memory floor. A config without these keys generates the same cells as before.
 
 ### Added (`execution_mode="stream"`, RUN-STREAM E1a, 2026-11-09)
 

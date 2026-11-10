@@ -164,6 +164,12 @@ def classify_plan(
         if has_windowed
         else {}
     )
+    pair_members = {
+        (name, member)
+        for name, t in tables.items()
+        for pair in t.get("unique_together") or []
+        for member in pair
+    }
     memo: dict[tuple[str, str], ColumnAdmission] = {}
     in_progress: set[tuple[str, str]] = set()
 
@@ -178,6 +184,8 @@ def classify_plan(
     def classify_reference(table: str, col: dict[str, Any]) -> ColumnAdmission:
         if int(col.get("min_per_parent") or 0) > 0 or int(col.get("max_per_parent") or 0) > 0:
             return decline(table, col, "reference_cardinality_repair")
+        if col.get("distribution") == "fitted":
+            return decline(table, col, "reference_fitted_fanout")
         parent_name = col.get("reference_table")
         parent = tables.get(parent_name) if isinstance(parent_name, str) else None
         parent_col = next(
@@ -224,6 +232,11 @@ def classify_plan(
         kind = col.get("type")
         if col.get("determinism") == "fresh":
             result = decline(table, col, "determinism_fresh")
+        elif col.get("unique") is True and kind != "sequence":
+            # A sequence is distinct by construction, so it stays on the streamed core.
+            result = decline(table, col, "unique")
+        elif (table, col["name"]) in pair_members:
+            result = decline(table, col, "unique_pair")
         elif not ADMISSION_MATRIX.get(str(kind), (False, ""))[0]:
             result = decline(table, col, f"family_declined:{kind}")
         elif kind == "sequence":

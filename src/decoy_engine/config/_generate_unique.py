@@ -27,6 +27,7 @@ from typing import Any
 from decoy_engine import reasons
 
 __all__ = [
+    "UNIQUE_FAKER_ATTEMPTS",
     "UNIQUE_TYPES",
     "Problem",
     "column_conflict_problems",
@@ -35,6 +36,7 @@ __all__ = [
     "table_unique_problems",
     "unique_flag",
     "unique_type_problems",
+    "value_key",
 ]
 
 Problem = tuple[tuple[str | int, ...], str]
@@ -43,6 +45,11 @@ _CONFLICT = str(reasons.config.GENERATE_UNIQUE_CONFLICT)
 _TOO_SMALL = str(reasons.config.GENERATE_UNIQUE_DOMAIN_TOO_SMALL)
 _UNSUPPORTED = str(reasons.config.GENERATE_UNIQUE_UNSUPPORTED)
 _TYPE = str(reasons.config.GENERATE_OPTION_TYPE)
+
+# Faker's own `_UNIQUE_ATTEMPTS`: draws allowed for one row of a unique faker column before the
+# domain counts as spent. The one owner; the draw, its native provider and the draw-site
+# catalogue all read it from here.
+UNIQUE_FAKER_ATTEMPTS = 1000
 
 # The four types whose domain is enumerable or that are distinct by construction.
 UNIQUE_TYPES = frozenset({"sequence", "categorical", "faker", "reference"})
@@ -103,20 +110,42 @@ def column_conflict_problems(
     return problems
 
 
+def value_key(value: Any) -> Any:
+    """A hashable key that is equal for exactly the values that compare equal.
+
+    The one rule every unique draw uses to tell values apart, so a list or dict (a schema-valid
+    category, parent key or provider output) is tracked by equality instead of raising
+    `TypeError` from a `set`. Lists and tuples become tagged tuples of their keys, a dict a
+    frozenset of key pairs (order-free, like dict equality); any other value is its own key.
+    A value with an unhashable leaf raises `TypeError`; callers turn that into a typed refusal.
+    """
+    if isinstance(value, list):
+        return ("list", tuple(value_key(v) for v in value))
+    if isinstance(value, tuple):
+        return ("tuple", tuple(value_key(v) for v in value))
+    if isinstance(value, dict):
+        return ("dict", frozenset((value_key(k), value_key(v)) for k, v in value.items()))
+    hash(value)
+    return value
+
+
 def distinct_categories(categories: Sequence[Any]) -> tuple[list[Any], bool]:
     """Distinct non-null categories in first-seen order, and whether `None` is among them.
 
-    Equality over the list, never `set()`, so a category that is not hashable (a list or dict the
-    config allows) does not raise `TypeError`. `None` is a reusable SQL null, not a colliding
-    value, so it is reported apart. The scan is quadratic in the distinct count, which a config
-    list keeps small.
+    Keyed by `value_key`, never a bare `set()`, so a category that is not hashable (a list or
+    dict the config allows) does not raise `TypeError`. `None` is a reusable SQL null, not a
+    colliding value, so it is reported apart.
     """
     distinct: list[Any] = []
+    seen: set[Any] = set()
     has_null = False
     for category in categories:
         if category is None:
             has_null = True
-        elif not any(category == seen for seen in distinct):
+            continue
+        key = value_key(category)
+        if key not in seen:
+            seen.add(key)
             distinct.append(category)
     return distinct, has_null
 

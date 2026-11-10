@@ -49,13 +49,14 @@ def test_precommit_ruff_hook_matches_lint_extra() -> None:
 
 
 WORKFLOWS = ROOT / ".github" / "workflows"
-# Release and tag publishing keep their triggers; they are not merge gates. The two PR checks
+# Release and tag publishing keep their triggers; they are not merge gates. The PR checks
 # read pull_request context (base_ref, PR body, labels) and cannot run from a manual dispatch.
 TRIGGERED_ON_PURPOSE = {
     "gate-selfhosted.yml",
     "native-companion-release.yml",
     "compat-preflight.yml",
     "regression-proof.yml",
+    "changelog-fragment.yml",
 }
 
 
