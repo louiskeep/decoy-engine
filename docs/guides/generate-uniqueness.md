@@ -168,7 +168,8 @@ headroom. A sequence or a categorical column gives a hard guarantee instead.
 ### The refusal message
 
 The message names the table, the column, the kind of draw and counts only: the rows needed,
-the distinct values found, and for faker the row where the domain ran out. It never quotes a
+the distinct values found, and for faker the row where retries were exhausted or an
+uncomparable value appeared. It never quotes a
 generated or parent value. If the parents of `item_shelves` held only 400 distinct pairs, the
 run would stop with:
 
@@ -199,8 +200,9 @@ keeps the column's seed root:
 
 - For `faker`, the first attempt of each row is the plain per-row draw. A row that did not
   collide keeps the value it had without `unique`. A redraw reseeds from its own derived seed.
-- For `categorical` and `reference`, sampling without replacement replaces the per-row choice,
-  so the values change.
+- For `categorical` and random `reference` draws, sampling without replacement replaces the
+  per-row choice, so outputs may change. A sequential `reference` keeps parent order and stops
+  instead of wrapping.
 - A `unique_together` pair is seeded from its first-declared member.
 
 The draw sites are `gen.faker_unique_retry`, `gen.categorical_unique`, `gen.reference_unique`
