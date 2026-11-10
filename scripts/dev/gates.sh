@@ -68,7 +68,6 @@ PYTEST_MARK=${PYTEST_ARGS[1]}  # the same expression; the parallel and serial pa
 NON_CODE_GLOBS=('docs/*' 'docs/records/*' '*.md' 'LICENSE*' 'NOTICE*' 'CHANGELOG*'
   '.gitignore' '.gitattributes' '.aiignore' '.claude/*' '.tours/*')
 SRC_MATCH='src/*.py'   # changed files that map to a dotted module
-SRC_STRIP='src/'       # prefix removed before turning a path into a module
 PYPATH_DIRS=(src scripts)
 IMPORT_PKG=decoy_engine
 # Directories a test reads by walking them: a stored baseline that is behind main by a change
@@ -142,23 +141,36 @@ cleanup() {
 trap cleanup EXIT
 
 changed_tests() {
-  local base f mod
+  local base f line raw srcs
   base=$(git -C "$ROOT" merge-base origin/main HEAD) || return 1
-  { git -C "$ROOT" diff --name-only --no-renames "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } |
+  raw=$({ git -C "$ROOT" diff --name-only --no-renames "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } |
     LC_ALL=C sort -u | while read -r f; do
       [ -f "$ROOT/$f" ] || continue
       # shellcheck disable=SC2254  # SRC_MATCH is a glob on purpose
       case $f in
         tests/*test_*.py) echo "$f" ;;
-        $SRC_MATCH)
-          mod=${f#"$SRC_STRIP"}; mod=${mod%.py}; mod=${mod%/__init__}; mod=${mod//\//.}
-          (cd "$ROOT" && grep -rlE --include='test_*.py' "${mod//./\\.}([^A-Za-z0-9_]|\$)" tests || true) ;;  # no match is normal, not a failed selection
+        $SRC_MATCH) echo "@src:$f" ;;  # resolved below in one pass (the import graph is built once)
         *)
           # Other code (scripts, native, fixtures): select tests that name the file. No match is
           # normal here; code_changed then makes the gate fail rather than skip.
           non_code "$f" || (cd "$ROOT" && grep -rlF --include='test_*.py' "${f##*/}" tests || true) ;;
       esac
-    done | LC_ALL=C sort -u
+    done) || return 1
+  srcs=()
+  while IFS= read -r line; do
+    case $line in
+      @src:*) srcs+=("${line#@src:}") ;;
+      ?*) echo "$line" ;;
+    esac
+  done <<EOT
+$raw
+EOT
+  # Changed src files select every test that imports them, directly or through other modules
+  # (function-level and relative imports included), or names them as text. No match is normal;
+  # an unparseable tree is not, so a helper failure fails the selection.
+  if [ ${#srcs[@]} -gt 0 ]; then
+    "$BIN/python" "$ROOT/scripts/dev/select_tests.py" "$ROOT" ${srcs[@]+"${srcs[@]}"} || return 1
+  fi
 }
 
 # 0 when f matches NON_CODE_GLOBS (pure documentation or repo metadata).
