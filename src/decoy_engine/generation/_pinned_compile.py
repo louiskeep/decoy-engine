@@ -138,6 +138,11 @@ def reject_unpinnable(config: dict[str, Any]) -> None:
                 code=reasons.plan.PINNED_NOT_GENERATION_ONLY,
                 message=f"table {tname!r} has no generate_columns; pinned mode is generation-only",
             )
+        if table.get("unique_together"):
+            raise PinnedModeError(
+                code=reasons.plan.PINNED_UNIQUE_PAIR_UNSUPPORTED,
+                message=f"table {tname!r}: unique_together has no place in a pinned table",
+            )
         by_name = {c.get("name"): c for c in gcols}
         for col in gcols:
             _reject_column(tname, col, by_name)

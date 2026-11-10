@@ -240,10 +240,11 @@ def pool_opted_out(col: Mapping[str, Any]) -> bool:
     """Whether a column opted out of pooling: the one reader of the column's `pooled` key.
 
     Only an explicit `pooled: false` opts out; absent, null and `true` leave admission to
-    `pool_eligible`. Every admission site passes this as `opted_out`, so a further opt-out
-    reason is added here once.
+    `pool_eligible`. `unique: true` also opts out: a pool holds about 10,000 values and draws
+    from them with replacement, so it cannot promise distinct values. Every admission site
+    passes this as `opted_out`, so a further opt-out reason is added here once.
     """
-    return col.get("pooled") is False
+    return col.get("pooled") is False or col.get("unique") is True
 
 
 def pool_eligible(faker_type: str, requested_locale: Any, n: int, *, opted_out: bool) -> bool:

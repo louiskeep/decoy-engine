@@ -82,6 +82,9 @@ from decoy_engine.execution.native.protocol.providers_gen import (
     ReferenceSamplerProvider,
     StatisticalPerRowProvider,
 )
+from decoy_engine.execution.native.protocol.providers_gen_unique import (
+    GEN_UNIQUE_PROVIDER_CLASSES,
+)
 
 # Private names the determinism drift tests import from here.
 from decoy_engine.execution.native.protocol.providers_mask import (
@@ -220,6 +223,7 @@ _DEDICATED_PROVIDER_CLASSES: tuple[type[DrawSiteProvider], ...] = (
     CodeSetKeyedSelectProvider,
     JointMaskKeyedRowProvider,
     *GEN_POOL_PROVIDER_CLASSES,
+    *GEN_UNIQUE_PROVIDER_CLASSES,
 )
 
 # Unseeded, non-deterministic-by-contract sites.
