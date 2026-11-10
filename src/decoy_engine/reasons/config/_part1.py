@@ -15,6 +15,7 @@ __all__ = [
     "EDGE_UNKNOWN_FROM_NODE",
     "EDGE_UNKNOWN_PORT",
     "EDGE_UNKNOWN_TO_NODE",
+    "ENDPOINT_URL_INVALID",
     "FK_CUSTOM_PROVIDER_UNREGISTERED",
     "FK_EMPTY_PARENT_POOL",
     "FK_INELIGIBLE_CHILD_KIND",
@@ -65,14 +66,19 @@ __all__ = [
     "SOURCE_FILE_BAD_HAS_HEADER_TYPE",
     "SOURCE_FILE_BAD_ROW_LIMIT",
     "SOURCE_FILE_COLUMN_COUNT_MISMATCH",
+    "SOURCE_FILE_COLUMN_NAMES_FILE_INVALID",
+    "SOURCE_FILE_COLUMN_NAMES_SOURCE_CONFLICT",
     "SOURCE_FILE_COLUMN_NAMES_WITH_HEADER",
     "SOURCE_FILE_CSV_PARAM_ON_NON_CSV",
     "SOURCE_FILE_FILE_NOT_FOUND",
+    "SOURCE_FILE_HAS_HEADER_REQUIRED",
     "SOURCE_FILE_LONE_CR",
     "SOURCE_FILE_MISSING_FW_COLUMNS",
     "SOURCE_FILE_MISSING_PATH",
     "SOURCE_FILE_NO_HEADER_COLUMNS",
     "SOURCE_FILE_NUL_BYTE",
+    "SOURCE_FILE_UNDECLARED_COLUMN",
+    "SOURCE_FILE_UNDECLARED_TABLE",
     "SOURCE_FILE_UNSUPPORTED_FORMAT",
     "SOURCE_GCS_MISSING_BUCKET",
     "SOURCE_GCS_MISSING_CREDENTIALS",
@@ -123,10 +129,30 @@ _d = _catalog.config("PipelineValidationError")
 
 DETECTORS_INVALID = _d("detectors_invalid", "Detectors invalid.", since="1.8.0")
 DISMISSAL_INVALID = _d("dismissal_invalid", "Dismissal invalid.", since="1.8.0")
+ENDPOINT_URL_INVALID = _d(
+    "endpoint_url_invalid",
+    "Endpoint URL must be an http or https URL with a host and carry no credentials, query or fragment.",
+    since="1.10.0",
+)
 POST_SCAN_INACTIVE = _d("post_scan_inactive", "Post-scan inactive.", since="1.8.0")
 PRE_SCAN_NER_INACTIVE = _d("pre_scan_ner_inactive", "Pre-scan NER inactive.", since="1.8.0")
 SOURCE_FILE_COLUMN_COUNT_MISMATCH = _d(
     "source_file.column_count_mismatch", "Source file column count mismatch."
+)
+SOURCE_FILE_COLUMN_NAMES_FILE_INVALID = _d(
+    "source_file.column_names_file_invalid",
+    "Source file column names file invalid.",
+    since="1.15.0",
+)
+SOURCE_FILE_UNDECLARED_COLUMN = _d(
+    "source_file.undeclared_column",
+    "Source file undeclared column.",
+    since="1.19.0",
+)
+SOURCE_FILE_UNDECLARED_TABLE = _d(
+    "source_file.undeclared_table",
+    "Source file undeclared table.",
+    since="1.19.0",
 )
 SOURCE_FILE_LONE_CR = _d("source_file.lone_cr", "Source file lone CR.")
 SOURCE_FILE_NUL_BYTE = _d("source_file.nul_byte", "Source file NUL byte.")
@@ -234,6 +260,11 @@ SOURCE_FILE_BAD_HAS_HEADER_TYPE = _d(
     "source_file.bad_has_header_type", "Source file bad has header type."
 )
 SOURCE_FILE_BAD_ROW_LIMIT = _d("source_file.bad_row_limit", "Source file bad row limit.")
+SOURCE_FILE_COLUMN_NAMES_SOURCE_CONFLICT = _d(
+    "source_file.column_names_source_conflict",
+    "Source file column names source conflict.",
+    since="1.15.0",
+)
 SOURCE_FILE_COLUMN_NAMES_WITH_HEADER = _d(
     "source_file.column_names_with_header", "Source file column names with header."
 )
@@ -241,6 +272,9 @@ SOURCE_FILE_CSV_PARAM_ON_NON_CSV = _d(
     "source_file.csv_param_on_non_csv", "Source file CSV param on non CSV."
 )
 SOURCE_FILE_FILE_NOT_FOUND = _d("source_file.file_not_found", "Source file file not found.")
+SOURCE_FILE_HAS_HEADER_REQUIRED = _d(
+    "source_file.has_header_required", "Source file has header required.", since="1.15.0"
+)
 SOURCE_FILE_MISSING_FW_COLUMNS = _d(
     "source_file.missing_fw_columns", "Source file missing fw columns."
 )

@@ -199,6 +199,7 @@ def _run_full_frame(
                 publish=publish,
                 pregenerated=pregenerated,
                 cast_run=cast_run,
+                stream=decision.stream,
             )
         except _ingest_conversion_errors() as exc:
             _raise_if_source_value_unrepresentable(resident_sources, ctx.graph, exc)

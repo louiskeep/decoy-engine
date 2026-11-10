@@ -209,14 +209,11 @@ config:
           max_days: 30
 
         # charge_amount: statistical (numeric). Sampled from the snapshot's
-        # charge_amount histogram (inverse-CDF). params declares the source
+        # charge_amount histogram (inverse-CDF). the distribution block declares the source
         # mean/std so check_distribution_generate enforces the shape band.
         - name: charge_amount
           type: statistical
           snapshot_file: "snapshot:build_charge_snapshot"
-          params:
-            mean: 340.0
-            std: 90.0
 
   relationships:
     - parent:   {table: providers, columns: [provider_id]}
@@ -324,20 +321,22 @@ invariants:
         single-column categorical weight check applies to patient_ref.
 
     # visits.charge_amount: synthetic (statistical generate column). Output
-    # mean/std checked against the declared params band (see generate_columns).
+    # mean/std checked against the declared mean/std band (see distribution).
     # tolerance 0.05 (TH-3.2 dennis LOW): observed mean 340.4 vs declared 340
     # (0.1% off), std 91.9 vs 90 (2.1% off); the tighter band still passes with
     # the std check at ~42% of the band, so the statistical check bites harder.
     - table: visits
       column: charge_amount
       distribution_class: synthetic
+      mean: 340.0
+      std: 90.0
       tolerance: 0.05
       null_pp: 2.0
       joint_columns: []
       joints_waived: true
       joints_waived_reason: >-
         charge_amount is statistical-sampled from the snapshot histogram; no
-        joint declared. Mean/std verified against the params band.
+        joint declared. Mean/std verified against the declared mean/std band.
 
   # 6.7 Quarantine: 12 invalid-Luhn card_no rows removed by the luhn validator.
   quarantine:

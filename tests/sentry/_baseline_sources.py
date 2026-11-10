@@ -202,6 +202,15 @@ SOURCES: tuple[Source, ...] = (
         ),
     ),
     Source(  # keys of the ratchet-schema baseline itself
+        "exception-context",
+        "tests/sentry/baselines/exception-context.json",
+        lambda: set(
+            json.loads((BASELINES / "exception-context.json").read_text(encoding="utf-8"))[
+                "entries"
+            ]
+        ),
+    ),
+    Source(  # keys of the ratchet-schema baseline itself
         "validation-name-messages",
         "tests/sentry/baselines/validation-name-messages.json",
         lambda: set(
@@ -230,6 +239,12 @@ NOT_A_LIST: dict[str, str] = {
     "reason-manifest-v1.4-f06.json": "released reason manifest, frozen by the F29 registry tests",
     "reason-manifest-v1.6-sub-stop.json": "released reason manifest, frozen by the F29 registry tests",
     "reason-manifest-v1.7-lib-l0-1.json": "released reason manifest, frozen by the F29 registry tests",
+    "reason-manifest-v1.19-config-explicit-e2a.json": (
+        "released reason manifest, frozen by the F29 registry tests"
+    ),
+    "reason-manifest-v1.15-config-explicit-e1.json": (
+        "released reason manifest, frozen by the F29 registry tests"
+    ),
     "reason-manifest-v1.8-scanml-m1.json": "released reason manifest, frozen by the F29 registry tests",
     "reason-registry-release.json": "released reason registry, frozen by the F29 registry tests",
     "consumer-contract.json": "F29 consumer contract, compared whole by test_reason_registry",

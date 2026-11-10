@@ -166,8 +166,9 @@ Exactly two behavior changes, both listed in the CHANGELOG:
 2. Discovery SQL (`run_discovery_sql`) runs on a locked in-memory DuckDB connection with external
    access off, accepts exactly one `SELECT`, and reads only the tables it was given.
 
-Everything else is preserved: the default log file, output file names, accepted and rejected table
-names, publish and failure semantics of the table sink, error text.
+Everything else is preserved: output file names, accepted and rejected table names, publish and
+failure semantics of the table sink, error text. The one exception is the engine log: with no `file`
+in the logging config, no log file is written any more (project-layout E2).
 
 ## Routes a strict policy does not serve
 

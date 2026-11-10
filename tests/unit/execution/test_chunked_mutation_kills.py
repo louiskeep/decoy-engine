@@ -60,7 +60,14 @@ def _config(tmp_path, columns: list[dict], table: str = "accounts") -> dict:
         {
             "version": 2,
             "global_settings": {"seed": 42},
-            "sources": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
+            "sources": {
+                table: {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": str(tmp_path / "in.csv"),
+                }
+            },
             "tables": [{"name": table, "columns": columns}],
             "targets": {
                 table: {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}
@@ -653,7 +660,12 @@ class TestRunMaskKeyedGate:
                     "mask_secret_ref": "env:DECOY_CHUNKED_MUTKILL_SECRET",
                 },
                 "sources": {
-                    "accounts": {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}
+                    "accounts": {
+                        "type": "file",
+                        "format": "csv",
+                        "has_header": True,
+                        "path": str(tmp_path / "in.csv"),
+                    }
                 },
                 "tables": [
                     {
@@ -691,7 +703,12 @@ class TestRunMaskKeyedGate:
         base = {
             "version": 2,
             "sources": {
-                "accounts": {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}
+                "accounts": {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": str(tmp_path / "in.csv"),
+                }
             },
             "tables": [
                 {
@@ -793,7 +810,12 @@ class TestRunMaskChunkedCallSites:
                 "version": 2,
                 "global_settings": {"seed": 42, "unconfigured_column_policy": "error"},
                 "sources": {
-                    "accounts": {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}
+                    "accounts": {
+                        "type": "file",
+                        "format": "csv",
+                        "has_header": True,
+                        "path": str(tmp_path / "in.csv"),
+                    }
                 },
                 "tables": [
                     {

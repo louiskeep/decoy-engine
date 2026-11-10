@@ -92,6 +92,22 @@ def _vet_live(raw: str, path: str, root: str) -> None:
             raise ProtectedDirUnsafe
 
 
+def _register(path: str | os.PathLike[str]) -> None:
+    """Make ``path`` a live issued root: it and its children are the engine's own paths."""
+    with _LOCK:
+        _ISSUED.add(_key(path))
+
+
+def _unregister(path: str | os.PathLike[str]) -> None:
+    with _LOCK:
+        _ISSUED.discard(_key(path))
+
+
+def _owned_private(found: os.stat_result) -> bool:
+    """Owned by the effective user with no group or other access (POSIX mode bits)."""
+    return found.st_uid == os.geteuid() and not stat.S_IMODE(found.st_mode) & 0o077
+
+
 # -- filesystem calls, each with OS text and context stripped ----------------------------------
 
 
@@ -156,8 +172,8 @@ def _check(path: str, found: os.stat_result, *, tighten: bool) -> None:
     if sys.platform == "win32":
         owned, closed = _win_state(path)
     else:
-        owned = found.st_uid == os.getuid()
-        closed = not stat.S_IMODE(found.st_mode) & 0o077
+        closed = _owned_private(found)
+        owned = closed or found.st_uid == os.geteuid()
     if not owned:
         raise ProtectedDirUnsafe
     if closed:
@@ -256,6 +272,18 @@ def protected_scratch_dir(
     removed on every exit. While it is open, it and its children are the engine's own paths."""
     if os.sep in prefix or (os.altsep is not None and os.altsep in prefix):
         raise ProtectedDirUnsafe
+    root = _allocate(_parent_base(parent), prefix)
+    _register(root)
+    try:
+        yield Path(root)
+    finally:
+        _unregister(root)
+        _remove(root)
+
+
+def _parent_base(parent: str | os.PathLike[str] | None) -> str:
+    """The directory a fresh root goes under: the system temp directory, or ``parent`` after the
+    policy check (a live issued root is accepted under every policy), made if it is missing."""
     base = tempfile.gettempdir()
     if parent is not None:
         base = os.path.abspath(os.fspath(parent))
@@ -266,7 +294,12 @@ def protected_scratch_dir(
             _vet_live(os.fspath(parent), base, root)
         if _lstat(base) is None:
             _make(base, parents=True)
-    root = ""
+    return base
+
+
+def _allocate(base: str, prefix: str) -> str:
+    """Create a fresh protected directory ``prefix`` plus a random token under ``base``. The
+    caller registers it (``_register``) if it should count as an issued root."""
     for _ in range(8):
         candidate = os.path.join(base, prefix + secrets.token_hex(8))
         clash = False
@@ -275,19 +308,8 @@ def protected_scratch_dir(
         except FileExistsError:
             clash = True
         if not clash:
-            root = candidate
-            break
-    if not root:
-        raise OSError(errno.EEXIST, os.strerror(errno.EEXIST))
-    key = _key(root)
-    with _LOCK:
-        _ISSUED.add(key)
-    try:
-        yield Path(root)
-    finally:
-        with _LOCK:
-            _ISSUED.discard(key)
-        _remove(root)
+            return candidate
+    raise OSError(errno.EEXIST, os.strerror(errno.EEXIST))
 
 
 # -- Windows: owner-only DACL at creation, read back for reuse ---------------------------------
@@ -356,6 +378,29 @@ if sys.platform == "win32":  # pragma: no cover - exercised only on the Windows 
             if not _k32.CreateDirectoryW(path, ctypes.byref(attrs)):
                 exists = ctypes.get_last_error() in (80, 183)  # file / already exists
                 _raise_errno(errno.EEXIST if exists else errno.EACCES)
+        finally:
+            _k32.LocalFree(sd)
+
+    def _win_create_file(path: str) -> int:
+        """Create a new file that never exists without the owner-and-SYSTEM descriptor; return a
+        binary-mode write descriptor (no newline translation of Arrow or Parquet bytes)."""
+        import msvcrt
+
+        sd = _descriptor()
+        try:
+            attrs = _SecurityAttributes(ctypes.sizeof(_SecurityAttributes), sd, False)
+            _k32.CreateFileW.restype = wintypes.HANDLE
+            handle = _k32.CreateFileW(
+                path, 0x40000000, 0, ctypes.byref(attrs), 1, 0x80, None
+            )  # GENERIC_WRITE, no sharing, CREATE_NEW, FILE_ATTRIBUTE_NORMAL
+            if handle in (None, wintypes.HANDLE(-1).value):
+                exists = ctypes.get_last_error() in (80, 183)  # file / already exists
+                _raise_errno(errno.EEXIST if exists else errno.EACCES)
+            try:
+                return msvcrt.open_osfhandle(handle, os.O_WRONLY | os.O_BINARY)
+            except OSError:
+                _k32.CloseHandle(handle)
+                raise
         finally:
             _k32.LocalFree(sd)
 

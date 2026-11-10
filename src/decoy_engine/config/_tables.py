@@ -40,8 +40,19 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
-from pydantic_core import PydanticCustomError
+from pydantic_core import PydanticCustomError, ValidationError
 
+from decoy_engine import reasons
+from decoy_engine.config._generate_options import (
+    closed_key_schema,
+    option_problems,
+    problem_details,
+)
+from decoy_engine.config._generate_unique import (
+    column_conflict_problems,
+    table_unique_problems,
+    unique_type_problems,
+)
 from decoy_engine.config._transforms import TransformOp
 from decoy_engine.errors import ConfigRuleError
 
@@ -239,20 +250,20 @@ class GenerateColumnConfig(BaseModel):
     """A synthesis (generation) column declaration (S6).
 
     Mirrors V1's generate column shape (decoy_engine.generators.columns): ``type``
-    selects the generator (``faker`` / ``sequence`` / ``categorical`` / ``formula`` --
-    the V1 ``ColumnGenerator.generators`` keys), and the per-type params
-    (``faker_type``, ``start``, ``step``, ``values``, ``expr``, ...) ride FLAT on
-    the column, exactly as V1 reads them (``column_config.get("faker_type")``).
-    ``extra="allow"`` carries those flat params so the front-end emit and the V1
-    parity oracle line up (Reading B). S6-ENG-1 ships the spine + ``sequence``;
-    S6-ENG-2 adds the remaining parity-frozen generators.
+    selects the generator, and the per-type options (``faker_type``, ``start``,
+    ``weights``, ...) ride FLAT on the column, exactly as V1 reads them
+    (``column_config.get("faker_type")``).
 
-    NOTE (Dennis S6-ENG-1 gate, Q-S6-1): ``extra="allow"`` here is the deliberate
-    mirror-V1-flat choice over a stricter nested ``config: dict`` under
-    ``extra="forbid"`` -- flagged for the gate.
+    ``extra="allow"`` carries those flat options so the front-end emit and the V1 parity
+    oracle line up, and so the dump and the seed fingerprint (which hashes every dumped key)
+    do not change. The key set is not open: ``_options_valid`` checks every extra against the
+    per-type registry in ``config/_generate_options.py`` and refuses an unknown key, a missing
+    required key or a bad static value, and the JSON schema closes each type the same way.
     """
 
-    model_config = ConfigDict(extra="allow", hide_input_in_errors=True)
+    model_config = ConfigDict(
+        extra="allow", hide_input_in_errors=True, json_schema_extra=closed_key_schema
+    )
 
     name: str
     # The closed set of generators v2 supports. Reading B: this mirrors V1
@@ -291,80 +302,28 @@ class GenerateColumnConfig(BaseModel):
     pooled: StrictBool | None = None
 
     @model_validator(mode="after")
-    def _reference_params_required(self) -> GenerateColumnConfig:
-        """A ``reference`` column must declare its parent: ``reference_table`` +
-        ``reference_column``. Mirrors V1 ``_generate_reference_column`` (which
-        returns placeholder strings when missing -- v2 catches it at validation
-        instead, so the FE/operator sees the error up front)."""
-        if self.type != "reference":
-            return self
+    def _options_valid(self) -> GenerateColumnConfig:
+        """Check the flat per-type options against the registry and report every problem at once.
+
+        Unknown keys, missing required keys and bad static values come from
+        ``config/_generate_options.py``. ``extra="allow"`` stays so the options ride flat and the
+        dump is unchanged; this validator only reads ``model_extra``.
+        """
         extras = self.model_extra or {}
-        if not extras.get("reference_table"):
-            raise ConfigRuleError(f"reference column {self.name!r} requires `reference_table`")
-        if not extras.get("reference_column"):
-            raise ConfigRuleError(f"reference column {self.name!r} requires `reference_column`")
-        return self
-
-    @model_validator(mode="after")
-    def _type_params_present(self) -> GenerateColumnConfig:
-        """QA walks/generators F6 (2026-06-01, MEDIUM correctness / PO
-        Q-F6=no-users): every non-reference generator type now requires
-        the params V1's ColumnGenerator reads at generation time. Pre-
-        fix a YAML typo like ``fker_type: email`` passed validation
-        silently because ``extra="allow"`` carried any key through; V1
-        then fell back to the ``word`` generator at generation time +
-        produced word output instead of the email the operator asked
-        for. Silent semantic failure.
-
-        Per PO answer 2026-06-01 (Q-F6=no-users): no in-the-wild
-        manifests rely on the soft-fail behavior, so ship the hard-
-        error variant directly. No deprecation-warning migration route.
-
-        The validator is ADDITIVE: ``extra="allow"`` stays in place (per
-        Dennis S6-ENG-1 gate Q-S6-1 ordering) so unrelated extras still
-        pass through. Only missing-required-params are caught."""
-        extras = self.model_extra or {}
-        if self.type == "faker" and not extras.get("faker_type"):
-            raise ConfigRuleError(f"faker column {self.name!r} requires `faker_type`")
-        # GP2 (dennis review, 2026-09-17): `pooled` is a faker-only build-
-        # strategy toggle. Pooling sources its values from a Faker provider,
-        # so the flag has no meaning on any other type. Reject it at config
-        # time rather than letting it ride as a silent no-op the fingerprint
-        # then strips: the strip is byte-correct for a faker column that opts
-        # out, but on a non-faker column an accepted-then-ignored `pooled`
-        # is an operator error worth surfacing up front.
-        #
-        # `is not None`, deliberately NOT `"pooled" in model_fields_set`: an
-        # explicit `pooled: null` carries no directive (identical to omitting
-        # it) and must stay legal, because `model_dump()` stamps `pooled: null`
-        # on EVERY generate column. Rejecting on field-presence would reject a
-        # dumped-then-revalidated non-faker column and break config round-trip
-        # (Codex FINAL gate finding 1, 2026-09-17; verified). With StrictBool
-        # above, only a real bool (`true`/`false`) reaches here on a non-faker.
+        problems = option_problems(self.type, extras)
+        # `unique` is accepted per type, and cannot combine with the options that sample with
+        # replacement. `pooled` is a declared field, so it is passed in.
+        problems += unique_type_problems(self.type, extras)
+        problems += column_conflict_problems(self.type, extras, pooled=self.pooled)
+        # `pooled` is a faker-only build-strategy toggle. `is not None`, not field presence:
+        # `model_dump()` stamps `pooled: null` on every generate column, so a dumped non-faker
+        # column must revalidate. With StrictBool only a real bool reaches here.
         if self.type != "faker" and self.pooled is not None:
-            raise ConfigRuleError(
-                f"{self.type} column {self.name!r}: `pooled` is only valid on `type: faker` columns"
+            problems.append((("pooled",), str(reasons.config.GENERATE_OPTION_UNKNOWN)))
+        if problems:
+            raise ValidationError.from_exception_data(
+                "GenerateColumnConfig", problem_details(problems)
             )
-        if self.type == "sequence" and extras.get("start") is None:
-            raise ConfigRuleError(f"sequence column {self.name!r} requires `start`")
-        if self.type == "categorical" and not extras.get("categories"):
-            raise ConfigRuleError(f"categorical column {self.name!r} requires `categories`")
-        if self.type == "formula" and not extras.get("formula"):
-            raise ConfigRuleError(f"formula column {self.name!r} requires `formula`")
-        if self.type == "statistical" and not extras.get("snapshot_file"):
-            raise ConfigRuleError(f"statistical column {self.name!r} requires `snapshot_file`")
-        if self.type == "derived" and not extras.get("expression"):
-            raise ConfigRuleError(f"derived column {self.name!r} requires `expression`")
-        if self.type == "grouped_series" and not extras.get("group_by"):
-            raise ConfigRuleError(f"grouped_series column {self.name!r} requires `group_by`")
-        if self.type == "grouped_series" and not extras.get("order_by"):
-            raise ConfigRuleError(f"grouped_series column {self.name!r} requires `order_by`")
-        if self.type == "windowed_date" and not extras.get("anchor"):
-            raise ConfigRuleError(f"windowed_date column {self.name!r} requires `anchor`")
-        if self.type == "windowed_date" and extras.get("max_days") is None:
-            raise ConfigRuleError(f"windowed_date column {self.name!r} requires `max_days`")
-        if self.type == "group_key" and not extras.get("group_by"):
-            raise ConfigRuleError(f"group_key column {self.name!r} requires `group_by`")
         return self
 
 
@@ -404,6 +363,62 @@ class TableConfig(BaseModel):
     # the mask side (Phase B + a follow-up enables generate-side transforms).
     # The cap bounds derived-column width growth (each derive can add a column).
     transforms: list[TransformOp] = Field(default_factory=list, max_length=32)
+    # GEN-UNIQUE: pairs of `reference` columns of this generate table whose value pairs must not
+    # repeat (SQL `UNIQUE (a, b)`). Omitted from dumps when empty, so existing configs keep their
+    # serialized bytes.
+    unique_together: list[list[str]] = Field(default_factory=list)
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> Any:
+        """Keep the serialization-mode JSON schema field-enumerating (see `_omit_empty_pairs`)."""
+        from decoy_engine.config._declared_casting import recover_serialization_schema
+
+        return recover_serialization_schema(core_schema, handler)
+
+    @model_serializer(mode="wrap")
+    def _omit_empty_pairs(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if not data.get("unique_together"):
+            data.pop("unique_together", None)
+        return data
+
+    @model_validator(mode="after")
+    def _generate_names_unique(self) -> TableConfig:
+        """Two generate columns with one name would silently drop one at run time."""
+        seen: set[str] = set()
+        problems: list[tuple[tuple[str | int, ...], str]] = []
+        for index, col in enumerate(self.generate_columns):
+            if col.name in seen:
+                problems.append(
+                    (
+                        ("generate_columns", index, "name"),
+                        str(reasons.config.GENERATE_COLUMN_DUPLICATE),
+                    )
+                )
+            seen.add(col.name)
+        if problems:
+            raise ValidationError.from_exception_data("TableConfig", problem_details(problems))
+        return self
+
+    @model_validator(mode="after")
+    def _unique_rules(self) -> TableConfig:
+        """`unique_together` shape and categorical domain sizes (GEN-UNIQUE, per table)."""
+        if not self.unique_together and not any(
+            (c.model_extra or {}).get("unique") is True for c in self.generate_columns
+        ):
+            return self
+        table = {
+            "row_count": self.row_count,
+            "unique_together": self.unique_together,
+            "generate_columns": [
+                {**(c.model_extra or {}), "name": c.name, "type": c.type}
+                for c in self.generate_columns
+            ],
+        }
+        problems = table_unique_problems(table)
+        if problems:
+            raise ValidationError.from_exception_data("TableConfig", problem_details(problems))
+        return self
 
     @model_validator(mode="after")
     def _mask_xor_generate(self) -> TableConfig:

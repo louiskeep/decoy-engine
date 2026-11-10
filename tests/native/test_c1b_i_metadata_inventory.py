@@ -28,6 +28,7 @@ from decoy_engine.execution.native._draw_site_providers import (
     all_providers,
     provider_for,
 )
+from tests._changelog import unreleased_text
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 INVENTORY = ROOT / "docs" / "native" / "draw-site-inventory.md"
@@ -168,13 +169,6 @@ def _active_files() -> list[pathlib.Path]:
     return [p for p in files if str(p.relative_to(ROOT)) not in _NOT_CATEGORICAL_SPECIFIC]
 
 
-def _unreleased_changelog() -> str:
-    text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    start = text.index("## [Unreleased]")
-    nxt = re.search(r"^## \[", text[start + 5 :], re.M)
-    return text[start : start + 5 + nxt.start()] if nxt else text[start:]
-
-
 def _windows(text: str, radius: int = 1) -> list[tuple[int, str]]:
     """One `(line_number, surrounding_text)` per line that carries a stale phrase."""
     lines = text.splitlines()
@@ -196,10 +190,12 @@ def _md_section_hits(name: str, text: str) -> list[str]:
     return hits
 
 
-def _stale_categorical_hits() -> list[str]:
+def _stale_categorical_hits(unreleased: str | None = None) -> list[str]:
     hits: list[str] = []
     sources = [(str(p.relative_to(ROOT)), p.read_text(encoding="utf-8")) for p in _active_files()]
-    sources.append(("CHANGELOG.md[Unreleased]", _unreleased_changelog()))
+    sources.append(
+        ("CHANGELOG.md[Unreleased]", unreleased_text() if unreleased is None else unreleased)
+    )
     for name, text in sources:
         if name.endswith(".md") or name.startswith("CHANGELOG"):
             hits += _md_section_hits(name, text)
@@ -216,6 +212,17 @@ def test_no_active_categorical_text_calls_the_draw_unseeded() -> None:
     assert hits == [], "stale categorical 'unseeded'/'differs run to run' prose:\n" + "\n".join(
         hits
     )
+
+
+def test_stale_prose_gate_reads_changelog_fragments(tmp_path: pathlib.Path) -> None:
+    """AT-9: unreleased text lives in `changelog.d/` too, and the gate must see a stale phrase there."""
+    (tmp_path / "CHANGELOG.md").write_text("## [Unreleased]\n\n## [0.1.0] - 2026-01-01\n")
+    (tmp_path / "changelog.d").mkdir()
+    (tmp_path / "changelog.d" / "stale.md").write_text(
+        "### Changed (categorical, S, 2026-11-10)\n\nThe categorical draw is unseeded.\n"
+    )
+    hits = _stale_categorical_hits(unreleased_text(tmp_path))
+    assert any("unseeded" in h and h.startswith("CHANGELOG.md[Unreleased]") for h in hits), hits
 
 
 def _section(path: str, heading: str) -> str:

@@ -1,0 +1,165 @@
+{
+ "sentry_id": "exception-context",
+ "created_in": "B1",
+ "entries": {
+  "decoy_engine/_reference_date.py::normalize_reference_date::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/config/_declared_casting.py::check_column::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/config/_declared_casting.py::typed_format::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/config/_declared_casting.py::typed_sentinel::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/config/_declared_casting.py::typed_sentinel::1": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/config/_global_settings.py::GlobalSettings._normalize_reference_date::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/config/_pre_scan.py::checked_ner_model::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/connectors/postgres_snapshot.py::_check_types::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/connectors/postgres_snapshot.py::_guard_values::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/connectors/postgres_snapshot.py::_load_postgres_extension::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/connectors/postgres_snapshot.py::_open_connection::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/connectors/postgres_snapshot.py::snapshot_tables_to_parquet::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/connectors/postgres_snapshot.py::snapshot_tables_to_parquet::1": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/connectors/postgres_snapshot.py::snapshot_tables_to_parquet::2": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/connectors/postgres_snapshot.py::snapshot_tables_to_parquet::3": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/contracts/_declared_formats.py::validate_format_spec::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/contracts/declared_casting.py::build_contract::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/contracts/declared_casting.py::validate_sentinel_spec::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/contracts/declared_casting.py::validate_sentinel_spec::1": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/declared_casting/_catalog.py::descriptor_for::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/declared_casting/_quarantine_local.py::LocalProtectedQuarantineSink._open_artifact::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/declared_casting/_quarantine_local.py::LocalProtectedQuarantineSink._read_header::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/declared_casting/_quarantine_local.py::LocalProtectedQuarantineSink._verify::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/declared_casting/_quarantine_local.py::LocalProtectedQuarantineSink.open::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/execution/_isolated_memwatch.py::parse_vm_fields::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/execution/_sequential_composite_chain.py::decline_composite_chain::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/execution/_strategies/_tokenize.py::TokenizeStrategyHandler.run::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/execution/_strategies/_tokenize.py::TokenizeStrategyHandler.run::1": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/execution/native/_capabilities.py::capabilities_for::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/execution/out_of_core/_relation.py::_AlignedMaskedCursor.take::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/execution/out_of_core/_stream_join_cursors.py::ChildKeyLockstepCursor.take::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/execution/out_of_core/_stream_join_cursors.py::JoinRowCursor._advance::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/execution/physical/_shadow_generation.py::require_generation_shape::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/generation/_pinned_execute.py::_scan_plan_for_tokens::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/generation/_pinned_plan.py::PinnedPlan.from_dict::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/io/bounded_reader.py::_column_costs::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/io/bounded_reader.py::iter_csv_chunks.flush::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/io/bounded_reader.py::iter_csv_chunks::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/io/bounded_reader.py::iter_csv_chunks::1": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/io/bounded_reader.py::iter_csv_chunks::2": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/io/bounded_reader.py::iter_csv_chunks::3": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/plan/_checks_declared_casting.py::compile_declared_casting_contract::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/plan/_serialize_declared.py::declared_casting_from_dict::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/quarantine.py::publish_staged_jsonl::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/reasons/_identity.py::get_reason::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/run_result/_outcome.py::derive_outcome::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/secret_providers/_types.py::_parse_vault::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/secret_providers/_types.py::_parse_vault::1": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/secret_providers/vault.py::VaultKV2Provider._to_resolved::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/secret_providers/vault.py::_hvac::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/secret_providers/vault.py::_parse_rfc3339::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/transforms/_codeset_loader.py::_resolve_read_path::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  },
+  "decoy_engine/validation/_config.py::_load_config::0": {
+   "reason": "existing raise-from-None inside an except block at the B1 base; hoist is V2 corrective work"
+  }
+ }
+}

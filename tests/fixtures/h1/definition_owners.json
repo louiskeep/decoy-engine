@@ -145,12 +145,13 @@
   }
  },
  "E6a": {
-  "landed": false,
+  "landed": true,
   "from": "src/decoy_engine/generation/synthesize.py",
   "owners": {
    "_derived_generate": "src/decoy_engine/generation/_synthesize_derived.py",
    "_formula": "src/decoy_engine/generation/_synthesize_derived.py",
-   "_reference": "src/decoy_engine/generation/_synthesize_derived.py"
+   "_reference": "src/decoy_engine/generation/_synthesize_derived.py",
+   "parent_keys": "src/decoy_engine/generation/_synthesize_derived.py"
   }
  },
  "stays": {

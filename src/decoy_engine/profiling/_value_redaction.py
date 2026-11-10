@@ -12,6 +12,13 @@ Pattern: classification registry plus default-deny serializer (Google Cloud DLP
 See: https://cloud.google.com/sensitive-data-protection/docs/reference/rest/v2/InspectConfig.
 Findings omit the quote unless asked (DLP); counts and shape survive while values go
 (ydata); a redacted entry keeps its position as a fixed placeholder (Presidio).
+
+The distribution snapshot `decoy fit` writes is classified here too (`SNAPSHOT_VALUE_STATS`),
+so one file answers which fields of a Decoy artifact are cell values. Numeric and datetime
+coarsening follows statistical disclosure control global recoding and top/bottom coding
+(Hundepool et al., Statistical Disclosure Control, Wiley 2012, sections 3.4.2 to 3.4.3; R
+sdcMicro `globalRecode`), and datetimes keep only years as in HIPAA Safe Harbor,
+45 CFR 164.514(b)(2)(i)(C). The data-dependent rules live in `_snapshot_values.py`.
 """
 
 from __future__ import annotations
@@ -22,7 +29,7 @@ import functools
 import math
 import numbers
 import types
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any, Final, TypeGuard, Union, get_args, get_origin, get_type_hints
 
 from decoy_engine.profiling.types import ColumnProfile
@@ -33,6 +40,10 @@ class Rule(enum.Enum):
     EMPTY_LIST = "empty_list"
     PLACEHOLDER = "placeholder"
     PLACEHOLDER_EACH = "placeholder_each"
+    COARSE_RANGE = "coarse_range"  # re-derived from the series on a coarse grid
+    EMPTY_MAP = "empty_map"
+    PREVIOUS_YEAR_START = "previous_year_start"  # re-derived from the year bins
+    NEXT_YEAR_END = "next_year_end"
 
 
 REDACTED: Final = "[redacted]"
@@ -96,6 +107,63 @@ VALUE_FREE_FIELDS: Final[frozenset[tuple[str, str]]] = frozenset(
     # Signal text holds detector ids and header names, not cells.
     | _free("DetectionSignal", "signal", "confidence", "winner", "ml", "skipped")
 )  # fmt: skip
+
+SNAPSHOT_VALUE_STATS: Final[Mapping[tuple[str, str], Rule]] = types.MappingProxyType(
+    {
+        ("numeric", "min"): Rule.COARSE_RANGE,
+        ("numeric", "max"): Rule.COARSE_RANGE,
+        ("numeric", "bin_edges"): Rule.COARSE_RANGE,
+        ("numeric", "bin_counts"): Rule.COARSE_RANGE,
+        ("numeric", "mean"): Rule.NULL,
+        # With the mean, the std fixes both cells of a two-row column.
+        ("numeric", "std"): Rule.NULL,
+        ("numeric", "quantiles"): Rule.EMPTY_MAP,
+        # Any string placeholder here could equal a real category, so the container empties.
+        ("categorical", "top_values"): Rule.EMPTY_LIST,
+        ("datetime", "min"): Rule.PREVIOUS_YEAR_START,
+        ("datetime", "max"): Rule.NEXT_YEAR_END,
+        ("joint", "cells"): Rule.EMPTY_LIST,
+    }
+)
+SNAPSHOT_VALUE_FREE_STATS: Final[frozenset[tuple[str, str]]] = frozenset(
+    _free("document", "schema_version", "row_count", "columns", "joints")
+    | _free(
+        "column",
+        "dtype",
+        "kind",
+        "null_count",
+        "non_null_count",
+        "distinct_count",
+        "stats",
+        "fanout",
+        "cell_format",
+    )
+    # Degree histogram: integer counts only, never a key value.
+    | _free("fanout", "rows", "keys", "degrees")
+    | _free("categorical", "other_count", "high_cardinality")
+    | _free("datetime", "year_bins")
+    | _free("year_bin", "year", "count")
+    | _free("freetext", "length", "length_bin_edges", "length_bin_counts")
+    | _free("length", "min", "max", "mean", "std")
+    | _free("joint", "columns", "cell_count", "other_count")
+)
+SNAPSHOT_KINDS: Final = frozenset({"numeric", "categorical", "datetime", "freetext", "empty"})
+# Rules that need the data; `_apply` performs every other rule.
+DATA_RULES: Final = frozenset({Rule.COARSE_RANGE, Rule.PREVIOUS_YEAR_START, Rule.NEXT_YEAR_END})
+
+
+def snapshot_rules(scope: str) -> Mapping[str, Rule]:
+    """Every value rule the snapshot registry holds for a scope (a column kind, `joint`)."""
+    return types.MappingProxyType(
+        {k: r for (s, k), r in SNAPSHOT_VALUE_STATS.items() if s == scope}
+    )
+
+
+def snapshot_keeper(scope: str) -> Callable[[str, Any], bool]:
+    """Keep test for `_apply`: a key the registry classifies for `scope` survives, any other is denied."""
+    known = {k for (s, k) in SNAPSHOT_VALUE_FREE_STATS if s == scope} | snapshot_rules(scope).keys()
+    return lambda name, _value: name in known
+
 
 _ITEM: Final = "*"
 _Steps = tuple[str, ...]
@@ -229,6 +297,43 @@ def is_value_sensitive(field: Mapping[str, Any]) -> bool:
     return bool(matches) or score >= PII_CANDIDATE_THRESHOLD or unique
 
 
+def _sensitive_entries(fields: Any) -> list[tuple[int | None, str]]:
+    """(index, name) of each value-sensitive entry of a profile's `fields`; index None is a non-list `fields`."""
+    if isinstance(fields, list):
+        return [
+            (
+                i,
+                f["name"]
+                if isinstance(f, Mapping) and isinstance(f.get("name"), str)
+                else REDACTED,
+            )
+            for i, f in enumerate(fields)
+            if is_value_sensitive(f)
+        ]
+    return [] if fields is None else [(None, REDACTED)]
+
+
+def value_sensitive_names(fields: Any) -> list[str]:
+    """Names of the value-sensitive columns in the JSON form of a profile's `fields` list.
+
+    Takes `profile.to_dict()["fields"]`, not the dataclasses: those are not mappings, so the
+    fail-closed predicate would flag every column.
+    """
+    return [name for _, name in _sensitive_entries(fields)]
+
+
+def stamp_value_policy(
+    doc: dict[str, Any], names: list[str], *, include_values: bool
+) -> dict[str, Any]:
+    """Write the policy marker and the sensitive names onto `doc`, which the caller owns."""
+    if include_values:
+        doc.setdefault(VALUE_POLICY_KEY, POLICY_RAW)
+    else:
+        doc[VALUE_POLICY_KEY] = POLICY_REDACTED
+    doc[REDACTED_COLUMNS_KEY] = names
+    return doc
+
+
 def _containers(node: Any, steps: _Steps, parent: Any, key: Any) -> Iterator[dict[str, Any]]:
     """Yield the dicts at `steps` below `node`, replacing an off-shape location in `parent`."""
     if node is None:
@@ -252,12 +357,17 @@ def _containers(node: Any, steps: _Steps, parent: Any, key: Any) -> Iterator[dic
         yield from _containers(node[step], rest, node, step)
 
 
-def _apply(container: dict[str, Any], rules: Mapping[str, Rule], shapes: Mapping[str, Any]) -> None:
-    # Default-deny: a key this engine does not know (a newer writer, a hand edit) may hold a cell,
-    # and so may a value-free slot whose value is not the declared type (a string score).
+def _apply(
+    container: dict[str, Any],
+    rules: Mapping[str, Rule],
+    keep: Callable[[str, Any], bool],
+    *,
+    denied_value: Any = REDACTED,
+) -> None:
+    # Default-deny: a key `keep` does not vouch for (a newer writer, a hand edit) may hold a cell.
     for name in container.keys() - rules.keys():
-        if name not in shapes or not _conforms(container[name], shapes[name]):
-            container[name] = REDACTED
+        if not keep(name, container[name]):
+            container[name] = denied_value
     for name, rule in rules.items():
         if name not in container or container[name] is None:
             continue
@@ -266,10 +376,17 @@ def _apply(container: dict[str, Any], rules: Mapping[str, Rule], shapes: Mapping
             container[name] = None
         elif rule is Rule.EMPTY_LIST:
             container[name] = []
+        elif rule is Rule.EMPTY_MAP:
+            container[name] = {}
         elif rule is Rule.PLACEHOLDER_EACH and isinstance(current, list):
             container[name] = [REDACTED] * len(current)
         else:
             container[name] = REDACTED
+
+
+def _shape_keep(shapes: Mapping[str, Any]) -> Callable[[str, Any], bool]:
+    """A value-free slot survives only while it still has its declared type (a string score is a cell)."""
+    return lambda name, value: name in shapes and _conforms(value, shapes[name])
 
 
 def _shapes(cls: type) -> Mapping[str, Any]:
@@ -298,7 +415,7 @@ def _field_plan() -> tuple[tuple[_Steps, Mapping[str, Rule], Mapping[str, Any]],
 def _redact_field(fields: list[Any], index: int) -> None:
     for steps, rules, shapes in _field_plan():
         for container in _containers(fields[index], steps, fields, index):
-            _apply(container, rules, shapes)
+            _apply(container, rules, _shape_keep(shapes))
 
 
 def _detached(root: Mapping[str, Any]) -> dict[str, Any]:
@@ -335,27 +452,16 @@ def redact_profile_dict(doc: Mapping[str, Any], *, include_values: bool = False)
     out = _detached(doc)
     if not include_values:
         # The two marker keys are rewritten below, so their loaded values never survive.
-        _apply(out, {}, _shapes(ColumnProfile))
-    fields = out.get("fields")
-    names: list[str] = []
-    if isinstance(fields, list):
-        for i, field in enumerate(fields):
-            if not is_value_sensitive(field):
-                continue
-            name = field.get("name") if isinstance(field, Mapping) else None
-            names.append(name if isinstance(name, str) else REDACTED)
-            if not include_values:
-                _redact_field(fields, i)
-    elif fields is not None:
-        names.append(REDACTED)
-        if not include_values:
-            out["fields"] = REDACTED
-    if include_values:
-        out.setdefault(VALUE_POLICY_KEY, POLICY_RAW)
-    else:
-        out[VALUE_POLICY_KEY] = POLICY_REDACTED
-    out[REDACTED_COLUMNS_KEY] = names
-    return out
+        _apply(out, {}, _shape_keep(_shapes(ColumnProfile)))
+    fields: Any = out.get("fields")
+    entries = _sensitive_entries(fields)
+    if not include_values:
+        for index, _ in entries:
+            if index is None:
+                out["fields"] = REDACTED
+            else:
+                _redact_field(fields, index)
+    return stamp_value_policy(out, [name for _, name in entries], include_values=include_values)
 
 
 def profile_document(profile: ColumnProfile, *, include_values: bool = False) -> dict[str, Any]:

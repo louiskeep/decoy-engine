@@ -1,0 +1,1534 @@
+{
+ "file:examples/complex_healthcare_claims.yaml": {
+  "dump": {
+   "global_settings": {
+    "categorical_retention_warn_threshold": 0.8,
+    "fidelity_warn_threshold": 0.85,
+    "freetext_advisory_min_avg_length": 40.0,
+    "freetext_advisory_min_distinctness": 0.5,
+    "mask_secret_ref": null,
+    "on_pool_exhaustion": "fail",
+    "post_validation": true,
+    "seed": 0,
+    "unconfigured_column_policy": null
+   },
+   "namespaces": {
+    "account_vault": {
+     "declared_by": [
+      "members.legacy_account"
+     ]
+    },
+    "member_identity": {
+     "declared_by": [
+      "members.member_id"
+     ]
+    }
+   },
+   "post_scan": {
+    "integrity": false
+   },
+   "quarantine": null,
+   "relationships": [
+    {
+     "children": [
+      {
+       "columns": [
+        "member_id"
+       ],
+       "table": "claims"
+      }
+     ],
+     "namespace": null,
+     "orphan_policy": "fail",
+     "parent": {
+      "columns": [
+       "member_id"
+      ],
+      "table": "members"
+     }
+    },
+    {
+     "children": [
+      {
+       "columns": [
+        "member_id",
+        "plan_id"
+       ],
+       "table": "enrollments"
+      }
+     ],
+     "namespace": "enrollment_key",
+     "orphan_policy": "remap",
+     "parent": {
+      "columns": [
+       "member_id",
+       "plan_id"
+      ],
+      "table": "members"
+     }
+    }
+   ],
+   "sources": {
+    "claims": {
+     "bucket": "acme-phi-landing",
+     "credentials_ref": "phi-readonly",
+     "endpoint_url": null,
+     "format": "parquet",
+     "key": "warehouse/claims/2026-06.parquet",
+     "region": "us-east-1",
+     "type": "s3"
+    },
+    "enrollments": {
+     "format": "parquet",
+     "layout": null,
+     "path": "./in/enrollments.parquet",
+     "type": "file"
+    },
+    "members": {
+     "format": "csv",
+     "layout": null,
+     "path": "./in/members.csv",
+     "type": "file",
+     "has_header": true
+    },
+    "providers": {
+     "format": "csv",
+     "layout": null,
+     "path": "./in/providers.csv",
+     "type": "file",
+     "has_header": true
+    }
+   },
+   "subset": null,
+   "tables": [
+    {
+     "columns": [
+      {
+       "allow_collisions": false,
+       "backend_type": null,
+       "backend_version": null,
+       "cardinality_mode": null,
+       "coherent_with": [],
+       "deterministic": false,
+       "dtype": null,
+       "name": "member_id",
+       "namespace": "member_identity",
+       "pool_size": null,
+       "provider": null,
+       "provider_config": {
+        "charset": "digits",
+        "preserve_separators": true
+       },
+       "scale": null,
+       "strategy": "fpe",
+       "vault": false
+      },
+      {
+       "allow_collisions": false,
+       "backend_type": null,
+       "backend_version": null,
+       "cardinality_mode": null,
+       "coherent_with": [],
+       "deterministic": false,
+       "dtype": null,
+       "name": "ssn",
+       "namespace": "ssn_space",
+       "pool_size": null,
+       "provider": null,
+       "provider_config": {
+        "charset": "digits",
+        "preserve_separators": true
+       },
+       "scale": null,
+       "strategy": "fpe",
+       "vault": false
+      },
+      {
+       "allow_collisions": false,
+       "backend_type": null,
+       "backend_version": null,
+       "cardinality_mode": null,
+       "coherent_with": [],
+       "deterministic": true,
+       "dtype": null,
+       "name": "mrn",
+       "namespace": "mrn_space",
+       "pool_size": null,
+       "provider": null,
+       "provider_config": {
+        "charset": "alphanum"
+       },
+       "scale": null,
+       "strategy": "fpe",
+       "vault": false
+      },
+      {
+       "allow_collisions": false,
+       "backend_type": null,
+       "backend_version": null,
+       "cardinality_mode": null,
+       "coherent_with": [
+        "last_name",
+        "email"
+       ],
+       "deterministic": false,
+       "dtype": null,
+       "name": "first_name",
+       "namespace": "member_pii",
+       "pool_size": null,
+       "provider": "person_name",
+       "provider_config": {},
+       "scale": null,
+       "strategy": "replace_with_synthetic",
+       "vault": false
+      },
+      {
+       "allow_collisions": false,
+       "backend_type": null,
+       "backend_version": null,
+       "cardinality_mode": null,
+       "coherent_with": [
+        "first_name",
+        "email"
+       ],
+       "deterministic": false,
+       "dtype": null,
+       "name": "last_name",
+       "namespace": null,
+       "pool_size": null,
+       "provider": "person_name",
+       "provider_config": {},
+       "scale": null,
+       "strategy": "replace_with_synthetic",
+       "vault": false
+      },
+      {
+       "allow_collisions": false,
+       "backend_type": null,
+       "backend_version": null,
+       "cardinality_mode": null,
+       "coherent_with": [
+        "first_name",
+        "last_name"
+       ],
+       "deterministic": false,
+       "dtype": null,
+       "name": "email",
+       "namespace": null,
+       "pool_size": null,
+       "provider": null,
+       "provider_config": {},
+       "scale": null,
+       "strategy": "synthetic_email",
+       "vault": false
+      },
+      {
+       "allow_collisions": false,
+       "backend_type": null,
+       "backend_version": null,
+       "cardinality_mode": null,
+       "coherent_with": [
+        "state",
+        "zip"
+       ],
+       "deterministic": false,
+       "dtype": null,
+       "name": "city",
+       "namespace": null,
+       "pool_size": null,
+       "provider": "us_city",
+       "provider_config": {},
+       "scale": null,
+       "strategy": "replace_with_synthetic",
+       "vault": false
+      },
+      {
+       "allow_collisions": false,
+       "backend_type": null,
+       "backend_version": null,
+       "cardinality_mode": null,
+       "coherent_with": [
+        "city",
+        "zip"
+       ],
+       "deterministic": false,
+       "dtype": null,
+       "name": "state",
+       "namespace": null,
+       "pool_size": null,
+       "provider": "us_state",
+       "provider_config": {},
+       "scale": null,
+       "strategy": "replace_with_synthetic",
+       "vault": false
+      },
+      {
+       "allow_collisions": false,
+       "backend_type": null,
+       "backend_version": null,
+       "cardinality_mode": null,
+       "coherent_with": [
+        "city",
+        "state"
+       ],
+       "deterministic": false,
+       "dtype": null,
+       "name": "zip",
+       "namespace": null,
+       "pool_size": null,
+       "provider": null,
+       "provider_config": {
+        "charset": "digits"
+       },
+       "scale": null,
+       "strategy": "fpe",
+       "vault": false
+      },
+      {
+       "allow_collisions": false,
+       "backend_type": null,
+       "backend_version": null,
+       "cardinality_mode": null,
+       "coherent_with": [],
+       "deterministic": false,
+       "dtype": null,
+       "name": "legacy_account",
+       "namespace": "account_vault",
+       "pool_size": null,
+       "provider": "account_number",
+       "provider_config": {},
+       "scale": null,
+       "strategy": "replace_with_synthetic",
+       "vault": true
+      }
+     ],
+     "generate_columns": [],
+     "name": "members",
+     "row_count": null,
+     "transforms": [
+      {
+       "expression": "status != 'TEST' and age >= 18",
+       "op": "filter"
+      },
+      {
+       "column": "full_name",
+       "expression": "first_name + ' ' + last_name",
+       "op": "derive"
+      }
+     ]
+    },
+    {
+     "columns": [
+      {
+       "allow_collisions": false,
+       "backend_type": null,
+       "backend_version": null,
+       "cardinality_mode": null,
+       "coherent_with": [],
+       "deterministic": false,
+       "dtype": null,
+       "name": "member_id",
+       "namespace": null,
+       "pool_size": null,
+       "provider": null,
+       "provider_config": {},
+       "scale": null,
+       "strategy": "from_parent",
+       "vault": false
+      },
+      {
+       "allow_collisions": false,
+       "backend_type": null,
+       "backend_version": null,
+       "cardinality_mode": null,
+       "coherent_with": [],
+       "deterministic": false,
+       "dtype": null,
+       "name": "plan_id",
+       "namespace": "plan_space",
+       "pool_size": null,
+       "provider": null,
+       "provider_config": {
+        "charset": "ALPHANUM"
+       },
+       "scale": null,
+       "strategy": "fpe",
+       "vault": false
+      },
+      {
+       "allow_collisions": false,
+       "backend_type": null,
+       "backend_version": null,
+       "cardinality_mode": "match_source_cardinality",
+       "coherent_with": [],
+       "deterministic": false,
+       "dtype": null,
+       "name": "premium",
+       "namespace": null,
+       "pool_size": null,
+       "provider": "currency_amount",
+       "provider_config": {},
+       "scale": null,
+       "strategy": "replace_with_synthetic",
+       "vault": false
+      }
+     ],
+     "generate_columns": [],
+     "name": "enrollments",
+     "row_count": null,
+     "transforms": []
+    },
+    {
+     "columns": [
+      {
+       "allow_collisions": false,
+       "backend_type": null,
+       "backend_version": null,
+       "cardinality_mode": null,
+       "coherent_with": [],
+       "deterministic": false,
+       "dtype": null,
+       "name": "member_id",
+       "namespace": null,
+       "pool_size": null,
+       "provider": null,
+       "provider_config": {},
+       "scale": null,
+       "strategy": "from_parent",
+       "vault": false
+      },
+      {
+       "allow_collisions": false,
+       "backend_type": null,
+       "backend_version": null,
+       "cardinality_mode": null,
+       "coherent_with": [],
+       "deterministic": false,
+       "dtype": null,
+       "name": "claim_id",
+       "namespace": "claim_space",
+       "pool_size": null,
+       "provider": null,
+       "provider_config": {
+        "charset": "digits"
+       },
+       "scale": null,
+       "strategy": "fpe",
+       "vault": false
+      },
+      {
+       "allow_collisions": false,
+       "backend_type": null,
+       "backend_version": null,
+       "cardinality_mode": null,
+       "coherent_with": [],
+       "deterministic": false,
+       "dtype": null,
+       "name": "billed_amount",
+       "namespace": null,
+       "pool_size": null,
+       "provider": "currency_amount",
+       "provider_config": {},
+       "scale": null,
+       "strategy": "replace_with_synthetic",
+       "vault": false
+      }
+     ],
+     "generate_columns": [],
+     "name": "claims",
+     "row_count": null,
+     "transforms": [
+      {
+       "n": 5000000,
+       "op": "limit"
+      }
+     ]
+    },
+    {
+     "columns": [
+      {
+       "allow_collisions": false,
+       "backend_type": null,
+       "backend_version": null,
+       "cardinality_mode": null,
+       "coherent_with": [],
+       "deterministic": false,
+       "dtype": null,
+       "name": "npi",
+       "namespace": "npi_space",
+       "pool_size": null,
+       "provider": null,
+       "provider_config": {
+        "charset": "digits"
+       },
+       "scale": null,
+       "strategy": "fpe",
+       "vault": false
+      },
+      {
+       "allow_collisions": false,
+       "backend_type": null,
+       "backend_version": null,
+       "cardinality_mode": null,
+       "coherent_with": [],
+       "deterministic": false,
+       "dtype": null,
+       "name": "pan",
+       "namespace": "pan_space",
+       "pool_size": null,
+       "provider": null,
+       "provider_config": {
+        "charset": "digits",
+        "preserve_separators": true,
+        "validate_luhn": true
+       },
+       "scale": null,
+       "strategy": "fpe",
+       "vault": false
+      },
+      {
+       "allow_collisions": false,
+       "backend_type": "pool",
+       "backend_version": null,
+       "cardinality_mode": "unique",
+       "coherent_with": [],
+       "deterministic": false,
+       "dtype": null,
+       "name": "tax_id",
+       "namespace": null,
+       "pool_size": 250000,
+       "provider": "tax_id",
+       "provider_config": {},
+       "scale": null,
+       "strategy": "replace_with_synthetic",
+       "vault": false
+      }
+     ],
+     "generate_columns": [],
+     "name": "providers",
+     "row_count": null,
+     "transforms": []
+    },
+    {
+     "columns": [],
+     "generate_columns": [
+      {
+       "name": "event_id",
+       "pooled": null,
+       "start": 1,
+       "step": 1,
+       "type": "sequence"
+      },
+      {
+       "faker_type": "user_name",
+       "name": "actor",
+       "pooled": null,
+       "type": "faker"
+      },
+      {
+       "categories": [
+        "view",
+        "edit",
+        "export",
+        "delete"
+       ],
+       "name": "action",
+       "pooled": null,
+       "type": "categorical"
+      },
+      {
+       "formula": "1 if action == 'delete' else 0",
+       "name": "risk_score",
+       "pooled": null,
+       "type": "formula"
+      },
+      {
+       "name": "latency_ms",
+       "pooled": null,
+       "snapshot_file": "./snapshots/latency.dist.json",
+       "type": "statistical"
+      }
+     ],
+     "name": "audit_log",
+     "row_count": 1000000,
+     "transforms": []
+    }
+   ],
+   "targets": {
+    "audit_log": {
+     "format": "csv",
+     "layout": null,
+     "path": "./out/audit_log.csv",
+     "type": "file"
+    },
+    "claims": {
+     "format": "parquet",
+     "layout": null,
+     "path": "./out/claims.parquet",
+     "type": "file"
+    },
+    "enrollments": {
+     "format": "parquet",
+     "layout": null,
+     "path": "./out/enrollments.parquet",
+     "type": "file"
+    },
+    "members": {
+     "format": "parquet",
+     "layout": null,
+     "path": "./out/members.parquet",
+     "type": "file"
+    },
+    "providers": {
+     "format": "parquet",
+     "layout": null,
+     "path": "./out/providers.parquet",
+     "type": "file"
+    }
+   },
+   "validators": [],
+   "version": 2
+  },
+  "fingerprints": {
+   "audit_log.action": "2e2de566ae01e6d921a76ca207eadf774dd3d1ebd5b4530b468555ccf30a9379",
+   "audit_log.actor": "511b77bbd3a89d89c657694dfe9ea507770e948542705a8916ad5b949c57f984",
+   "audit_log.event_id": "322f8f7d27b5d1fb360eccfdeef97a04c5a4ed9f8ed76e8402a4d185c3973284",
+   "audit_log.latency_ms": "495b1689ca0995dc9c15e9d289d0de9240cc32e02279d807a963f044416f5a3d",
+   "audit_log.risk_score": "ca33758006ea88f6cc023987777cb8b9e9e1e60b79b10669038a492b967152a6"
+  }
+ },
+ "synthetic/all-types": {
+  "dump": {
+   "global_settings": {
+    "categorical_retention_warn_threshold": 0.8,
+    "fidelity_warn_threshold": 0.8,
+    "freetext_advisory_min_avg_length": 40.0,
+    "freetext_advisory_min_distinctness": 0.5,
+    "mask_secret_ref": null,
+    "on_pool_exhaustion": "scale_up",
+    "post_validation": false,
+    "seed": 42,
+    "unconfigured_column_policy": null
+   },
+   "namespaces": {},
+   "post_scan": {
+    "integrity": false
+   },
+   "quarantine": null,
+   "relationships": [],
+   "sources": {},
+   "subset": null,
+   "tables": [
+    {
+     "columns": [],
+     "generate_columns": [
+      {
+       "name": "seq",
+       "null_probability": 0.1,
+       "pad_length": 4,
+       "pooled": null,
+       "prefix": "P",
+       "start": 1,
+       "step": 2,
+       "suffix": "S",
+       "type": "sequence"
+      },
+      {
+       "determinism": "fresh",
+       "faker_type": "name",
+       "locale": [
+        "en_US",
+        "fr_FR"
+       ],
+       "name": "fk1",
+       "pooled": null,
+       "type": "faker"
+      },
+      {
+       "faker_kwargs": {
+        "max_value": 5,
+        "min_value": 1
+       },
+       "faker_type": "pyint",
+       "locale": "en_US",
+       "name": "fk2",
+       "pooled": false,
+       "type": "faker"
+      },
+      {
+       "faker_type": "date_object",
+       "name": "dt",
+       "pooled": null,
+       "type": "faker"
+      },
+      {
+       "categories": [
+        "a",
+        "b",
+        "c"
+       ],
+       "name": "cat",
+       "pooled": null,
+       "type": "categorical",
+       "weights": [
+        1,
+        2.5,
+        0
+       ]
+      },
+      {
+       "formula": "seq * 2",
+       "name": "fm",
+       "pooled": null,
+       "references": [
+        "seq"
+       ],
+       "type": "formula"
+      },
+      {
+       "bounds": {
+        "min": 0
+       },
+       "expression": "seq + 1",
+       "name": "dr",
+       "null_propagation": "explicit_null",
+       "pooled": null,
+       "type": "derived"
+      },
+      {
+       "column": "seq",
+       "name": "ag",
+       "op": "sum",
+       "pooled": null,
+       "type": "derived_aggregate"
+      },
+      {
+       "generator": "cumcount",
+       "group_by": "cat",
+       "max_step": 10,
+       "name": "gs",
+       "order_by": "seq",
+       "pooled": null,
+       "start": 1,
+       "step": 1,
+       "type": "grouped_series"
+      },
+      {
+       "anchor": "dt",
+       "distribution": "uniform",
+       "max_days": 30,
+       "min_days": 1,
+       "name": "wd",
+       "pooled": null,
+       "type": "windowed_date"
+      },
+      {
+       "group_by": "cat",
+       "length": 8,
+       "name": "gk",
+       "pooled": null,
+       "prefix": "K",
+       "type": "group_key"
+      },
+      {
+       "allow_real_categories": false,
+       "condition_on": "cat",
+       "high_cardinality": false,
+       "name": "st",
+       "other_mode": "redistribute",
+       "pooled": null,
+       "snapshot_file": "x.json",
+       "source_column": "src",
+       "type": "statistical"
+      }
+     ],
+     "name": "t1",
+     "row_count": 20,
+     "transforms": []
+    },
+    {
+     "columns": [],
+     "generate_columns": [
+      {
+       "distribution": "weighted",
+       "max_per_parent": 3,
+       "min_per_parent": 0,
+       "name": "r1",
+       "pooled": null,
+       "reference_column": "seq",
+       "reference_table": "t1",
+       "type": "reference",
+       "weights": [
+        1,
+        2
+       ]
+      },
+      {
+       "distribution": "sequential",
+       "name": "r2",
+       "pooled": null,
+       "reference_column": "seq",
+       "reference_table": "t1",
+       "type": "reference"
+      },
+      {
+       "name": "r3",
+       "pooled": null,
+       "reference_column": "seq",
+       "reference_table": "t1",
+       "type": "reference"
+      }
+     ],
+     "name": "t2",
+     "row_count": 20,
+     "transforms": []
+    }
+   ],
+   "targets": {
+    "t1": {
+     "format": "csv",
+     "layout": null,
+     "path": "/out/t1.csv",
+     "type": "file"
+    },
+    "t2": {
+     "format": "csv",
+     "layout": null,
+     "path": "/out/t2.csv",
+     "type": "file"
+    }
+   },
+   "validators": [],
+   "version": 2
+  },
+  "fingerprints": {
+   "t1.ag": "1f2b17f6b4fa283402f7fc569dfcb5e90a8df3aaa610612347b7b51ad9570cd0",
+   "t1.cat": "dd09ba4d8ad8d8744352a6f3fa246a91a17b7f4c3598685a7febbcc485b8148c",
+   "t1.dr": "7d7665aefeec47743ab195681002d6b1cdddf1d85cbd177a8fac7a3b05f13f9e",
+   "t1.dt": "a9e4a7f2651059ed09ecafe171f7bc793b5edbd49111a4017546833e6d08f792",
+   "t1.fk1": "793694a106ffd47d49875ac330603fb82c52dbbc45123b7bf7388cb2e1157934",
+   "t1.fk2": "396a040c18f302f188da609f7d5f32996a18b42b7873c6ccb87d0f4ad4cfcdf4",
+   "t1.fm": "d4679b8949b40c51bc416966cd656aa1e947390b649c3d7d7161d4d26374d54a",
+   "t1.gk": "48fca43e334229cd02f667d990f1344b9785db44008cfb0ce64e088b2bd8a1eb",
+   "t1.gs": "6726185348dccd2745fb79f228f4abccee0a854171bcac5b3d079e9bd95dd488",
+   "t1.seq": "cf35487eb4ebbb10460727610ddf8e6731f4f9b3e6f75c01577436050ef13280",
+   "t1.st": "fc0a56c4dba6be687db7298b30cb29a9e1811b02ce4da56fb38185cb4dcc5dc5",
+   "t1.wd": "43f8844a93214b9aa220f025b6930c9203619b57ddc4d1ade0d037b0312fbcf5",
+   "t2.r1": "ad719105118ece5004ed92bd8e3cfbc1fe9ff119b94447ae71ce719f9a97d44e",
+   "t2.r2": "fed50788ad83ee8b55a9bb8a7f792dff1d7ffd74b0ce47314b99a817125bb5c4",
+   "t2.r3": "4da13208780f85255779ada2859faab8e505ad807ea3a69677989799b66375ca"
+  },
+  "raw": {
+   "global_settings": {
+    "seed": 42
+   },
+   "sources": {},
+   "tables": [
+    {
+     "generate_columns": [
+      {
+       "name": "seq",
+       "null_probability": 0.1,
+       "pad_length": 4,
+       "prefix": "P",
+       "start": 1,
+       "step": 2,
+       "suffix": "S",
+       "type": "sequence"
+      },
+      {
+       "determinism": "fresh",
+       "faker_type": "name",
+       "locale": [
+        "en_US",
+        "fr_FR"
+       ],
+       "name": "fk1",
+       "type": "faker"
+      },
+      {
+       "faker_kwargs": {
+        "max_value": 5,
+        "min_value": 1
+       },
+       "faker_type": "pyint",
+       "locale": "en_US",
+       "name": "fk2",
+       "pooled": false,
+       "type": "faker"
+      },
+      {
+       "faker_type": "date_object",
+       "name": "dt",
+       "type": "faker"
+      },
+      {
+       "categories": [
+        "a",
+        "b",
+        "c"
+       ],
+       "name": "cat",
+       "type": "categorical",
+       "weights": [
+        1,
+        2.5,
+        0
+       ]
+      },
+      {
+       "formula": "seq * 2",
+       "name": "fm",
+       "references": [
+        "seq"
+       ],
+       "type": "formula"
+      },
+      {
+       "bounds": {
+        "min": 0
+       },
+       "expression": "seq + 1",
+       "name": "dr",
+       "null_propagation": "explicit_null",
+       "type": "derived"
+      },
+      {
+       "column": "seq",
+       "name": "ag",
+       "op": "sum",
+       "type": "derived_aggregate"
+      },
+      {
+       "generator": "cumcount",
+       "group_by": "cat",
+       "max_step": 10,
+       "name": "gs",
+       "order_by": "seq",
+       "start": 1,
+       "step": 1,
+       "type": "grouped_series"
+      },
+      {
+       "anchor": "dt",
+       "distribution": "uniform",
+       "max_days": 30,
+       "min_days": 1,
+       "name": "wd",
+       "type": "windowed_date"
+      },
+      {
+       "group_by": "cat",
+       "length": 8,
+       "name": "gk",
+       "prefix": "K",
+       "type": "group_key"
+      },
+      {
+       "allow_real_categories": false,
+       "condition_on": "cat",
+       "high_cardinality": false,
+       "name": "st",
+       "other_mode": "redistribute",
+       "snapshot_file": "x.json",
+       "source_column": "src",
+       "type": "statistical"
+      }
+     ],
+     "name": "t1",
+     "row_count": 20
+    },
+    {
+     "generate_columns": [
+      {
+       "distribution": "weighted",
+       "max_per_parent": 3,
+       "min_per_parent": 0,
+       "name": "r1",
+       "reference_column": "seq",
+       "reference_table": "t1",
+       "type": "reference",
+       "weights": [
+        1,
+        2
+       ]
+      },
+      {
+       "distribution": "sequential",
+       "name": "r2",
+       "reference_column": "seq",
+       "reference_table": "t1",
+       "type": "reference"
+      },
+      {
+       "name": "r3",
+       "reference_column": "seq",
+       "reference_table": "t1",
+       "type": "reference"
+      }
+     ],
+     "name": "t2",
+     "row_count": 20
+    }
+   ],
+   "targets": {
+    "t1": {
+     "format": "csv",
+     "path": "/out/t1.csv",
+     "type": "file"
+    },
+    "t2": {
+     "format": "csv",
+     "path": "/out/t2.csv",
+     "type": "file"
+    }
+   },
+   "version": 2
+  }
+ },
+ "testflight:c_hr_selfref": {
+  "dump": {
+   "global_settings": {
+    "categorical_retention_warn_threshold": 0.8,
+    "fidelity_warn_threshold": 0.8,
+    "freetext_advisory_min_avg_length": 40.0,
+    "freetext_advisory_min_distinctness": 0.5,
+    "mask_secret_ref": null,
+    "on_pool_exhaustion": "scale_up",
+    "post_validation": false,
+    "seed": 44,
+    "unconfigured_column_policy": null
+   },
+   "namespaces": {},
+   "post_scan": {
+    "integrity": false
+   },
+   "quarantine": null,
+   "relationships": [],
+   "sources": {},
+   "subset": null,
+   "tables": [
+    {
+     "columns": [],
+     "generate_columns": [
+      {
+       "name": "event_id",
+       "pad_length": 7,
+       "pooled": null,
+       "prefix": "EVT",
+       "start": 1,
+       "step": 1,
+       "type": "sequence"
+      },
+      {
+       "categories": [
+        "login",
+        "purchase",
+        "view",
+        "error"
+       ],
+       "name": "event_type",
+       "pooled": null,
+       "type": "categorical",
+       "weights": [
+        0.4,
+        0.3,
+        0.2,
+        0.1
+       ]
+      },
+      {
+       "formula": "gauss(50.0, 15.0)",
+       "name": "amount",
+       "pooled": null,
+       "type": "formula"
+      },
+      {
+       "faker_type": "name",
+       "name": "actor",
+       "pooled": null,
+       "type": "faker"
+      },
+      {
+       "expression": "case_when(amount > 60.0, \"high\", amount > 40.0, \"mid\", \"low\")",
+       "name": "derived_flag",
+       "pooled": null,
+       "type": "derived"
+      },
+      {
+       "column": "amount",
+       "name": "rolling_total",
+       "op": "sum",
+       "pooled": null,
+       "type": "derived_aggregate"
+      }
+     ],
+     "name": "synthetic_events",
+     "row_count": 10000,
+     "transforms": []
+    }
+   ],
+   "targets": {
+    "synthetic_events": {
+     "format": "parquet",
+     "layout": null,
+     "path": "/o/synthetic_events.parquet",
+     "type": "file"
+    }
+   },
+   "validators": [],
+   "version": 2
+  },
+  "fingerprints": {
+   "synthetic_events.actor": "61350ee586ad19637766cd5b7361961a5ac6903055daa10298f78c08a3892956",
+   "synthetic_events.amount": "9e26e25e1e6a48b4d02739fff31e4d8db47d1fa41d7a224c21400d6739337135",
+   "synthetic_events.derived_flag": "cdedcb482f619d6ae6c7aca63c4825e3f5369edc303789d946b96316eb33c78c",
+   "synthetic_events.event_id": "06a56230120068dd97d021d9a74b0cba714204cb395510e78f0e4f50fc84fa91",
+   "synthetic_events.event_type": "09c1f0bf9043ad6b14d03603e828217e9b7afa9574ad945a7674d2367b1ecb36",
+   "synthetic_events.rolling_total": "3646217de6347f0c2dbc41762e958ac2ca5fec88ade3c908b92e73716ba13caa"
+  },
+  "raw": {
+   "global_settings": {
+    "seed": 44
+   },
+   "sources": {},
+   "tables": [
+    {
+     "generate_columns": [
+      {
+       "name": "event_id",
+       "pad_length": 7,
+       "prefix": "EVT",
+       "start": 1,
+       "step": 1,
+       "type": "sequence"
+      },
+      {
+       "categories": [
+        "login",
+        "purchase",
+        "view",
+        "error"
+       ],
+       "name": "event_type",
+       "type": "categorical",
+       "weights": [
+        0.4,
+        0.3,
+        0.2,
+        0.1
+       ]
+      },
+      {
+       "formula": "gauss(50.0, 15.0)",
+       "name": "amount",
+       "type": "formula"
+      },
+      {
+       "faker_type": "name",
+       "name": "actor",
+       "type": "faker"
+      },
+      {
+       "expression": "case_when(amount > 60.0, \"high\", amount > 40.0, \"mid\", \"low\")",
+       "name": "derived_flag",
+       "type": "derived"
+      },
+      {
+       "column": "amount",
+       "name": "rolling_total",
+       "op": "sum",
+       "type": "derived_aggregate"
+      }
+     ],
+     "name": "synthetic_events",
+     "row_count": 10000
+    }
+   ],
+   "targets": {
+    "synthetic_events": {
+     "format": "parquet",
+     "path": "/o/synthetic_events.parquet",
+     "type": "file"
+    }
+   },
+   "version": 2
+  }
+ },
+ "testflight:d_longitudinal_visits": {
+  "dump": {
+   "global_settings": {
+    "categorical_retention_warn_threshold": 0.8,
+    "fidelity_warn_threshold": 0.8,
+    "freetext_advisory_min_avg_length": 40.0,
+    "freetext_advisory_min_distinctness": 0.5,
+    "mask_secret_ref": null,
+    "on_pool_exhaustion": "scale_up",
+    "post_validation": false,
+    "seed": 45,
+    "unconfigured_column_policy": null
+   },
+   "namespaces": {},
+   "post_scan": {
+    "integrity": false
+   },
+   "quarantine": null,
+   "relationships": [],
+   "sources": {},
+   "subset": null,
+   "tables": [
+    {
+     "columns": [],
+     "generate_columns": [
+      {
+       "name": "event_idx",
+       "pad_length": 7,
+       "pooled": null,
+       "start": 1,
+       "step": 1,
+       "type": "sequence"
+      },
+      {
+       "categories": [
+        "P000",
+        "P001",
+        "P002",
+        "P003",
+        "P004",
+        "P005",
+        "P006",
+        "P007",
+        "P008",
+        "P009",
+        "P010",
+        "P011",
+        "P012",
+        "P013",
+        "P014",
+        "P015",
+        "P016",
+        "P017",
+        "P018",
+        "P019",
+        "P020",
+        "P021",
+        "P022",
+        "P023",
+        "P024",
+        "P025",
+        "P026",
+        "P027",
+        "P028",
+        "P029"
+       ],
+       "name": "patient_ref",
+       "pooled": null,
+       "type": "categorical",
+       "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+       ]
+      },
+      {
+       "generator": "cumcount",
+       "group_by": "patient_ref",
+       "name": "visit_num",
+       "order_by": "event_idx",
+       "pooled": null,
+       "type": "grouped_series"
+      },
+      {
+       "group_by": "patient_ref",
+       "name": "episode_key",
+       "pooled": null,
+       "prefix": "EP-",
+       "type": "group_key"
+      },
+      {
+       "name": "admit_date",
+       "pooled": null,
+       "snapshot_file": "snapshot:build_charge_snapshot",
+       "source_column": "admit_ts",
+       "type": "statistical"
+      },
+      {
+       "anchor": "admit_date",
+       "max_days": 30,
+       "min_days": 1,
+       "name": "followup_date",
+       "pooled": null,
+       "type": "windowed_date"
+      },
+      {
+       "name": "charge_amount",
+       "pooled": null,
+       "snapshot_file": "snapshot:build_charge_snapshot",
+       "type": "statistical"
+      }
+     ],
+     "name": "visits",
+     "row_count": 6000,
+     "transforms": []
+    }
+   ],
+   "targets": {
+    "visits": {
+     "format": "parquet",
+     "layout": null,
+     "path": "/o/visits.parquet",
+     "type": "file"
+    }
+   },
+   "validators": [],
+   "version": 2
+  },
+  "fingerprints": {
+   "visits.admit_date": "b95d955e3406a07deb18d4b14a822c56debe418822c5cc16474778e7b5ad637c",
+   "visits.charge_amount": "495b1689ca0995dc9c15e9d289d0de9240cc32e02279d807a963f044416f5a3d",
+   "visits.episode_key": "54233bac8d8776d030d7c7e5ad7dea546f8b0f31b05e0db7011322cc1828ca3e",
+   "visits.event_idx": "b31e5096208d27c2ea6871b7a3cd2c90d87fe6146e5c9bef78414ad2eae3579b",
+   "visits.followup_date": "6b234314aabb0fd07a37ac78ad32a9b26d198476e5236985ec681cad69e4dd5f",
+   "visits.patient_ref": "d02ccd2fa1a51bbf7f3dce38caa79a53f7c0d36a1332b9f6623b209503aa7ee4",
+   "visits.visit_num": "6db09a6cf37f665b97e782f42006a38ab2a4e865b89345cede9a1293b212b857"
+  },
+  "raw": {
+   "global_settings": {
+    "seed": 45
+   },
+   "sources": {},
+   "tables": [
+    {
+     "generate_columns": [
+      {
+       "name": "event_idx",
+       "pad_length": 7,
+       "start": 1,
+       "step": 1,
+       "type": "sequence"
+      },
+      {
+       "categories": [
+        "P000",
+        "P001",
+        "P002",
+        "P003",
+        "P004",
+        "P005",
+        "P006",
+        "P007",
+        "P008",
+        "P009",
+        "P010",
+        "P011",
+        "P012",
+        "P013",
+        "P014",
+        "P015",
+        "P016",
+        "P017",
+        "P018",
+        "P019",
+        "P020",
+        "P021",
+        "P022",
+        "P023",
+        "P024",
+        "P025",
+        "P026",
+        "P027",
+        "P028",
+        "P029"
+       ],
+       "name": "patient_ref",
+       "type": "categorical",
+       "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+       ]
+      },
+      {
+       "generator": "cumcount",
+       "group_by": "patient_ref",
+       "name": "visit_num",
+       "order_by": "event_idx",
+       "type": "grouped_series"
+      },
+      {
+       "group_by": "patient_ref",
+       "name": "episode_key",
+       "prefix": "EP-",
+       "type": "group_key"
+      },
+      {
+       "name": "admit_date",
+       "snapshot_file": "snapshot:build_charge_snapshot",
+       "source_column": "admit_ts",
+       "type": "statistical"
+      },
+      {
+       "anchor": "admit_date",
+       "max_days": 30,
+       "min_days": 1,
+       "name": "followup_date",
+       "type": "windowed_date"
+      },
+      {
+       "name": "charge_amount",
+       "snapshot_file": "snapshot:build_charge_snapshot",
+       "type": "statistical"
+      }
+     ],
+     "name": "visits",
+     "row_count": 6000
+    }
+   ],
+   "targets": {
+    "visits": {
+     "format": "parquet",
+     "path": "/o/visits.parquet",
+     "type": "file"
+    }
+   },
+   "version": 2
+  }
+ },
+ "testflight:e_hostile_edge_cases": {
+  "dump": {
+   "global_settings": {
+    "categorical_retention_warn_threshold": 0.8,
+    "fidelity_warn_threshold": 0.8,
+    "freetext_advisory_min_avg_length": 40.0,
+    "freetext_advisory_min_distinctness": 0.5,
+    "mask_secret_ref": null,
+    "on_pool_exhaustion": "scale_up",
+    "post_validation": false,
+    "seed": 46,
+    "unconfigured_column_policy": null
+   },
+   "namespaces": {},
+   "post_scan": {
+    "integrity": false
+   },
+   "quarantine": null,
+   "relationships": [],
+   "sources": {},
+   "subset": null,
+   "tables": [
+    {
+     "columns": [],
+     "generate_columns": [
+      {
+       "name": "seq_id",
+       "pad_length": 4,
+       "pooled": null,
+       "start": 1,
+       "step": 1,
+       "type": "sequence"
+      }
+     ],
+     "name": "empty_table",
+     "row_count": 0,
+     "transforms": []
+    }
+   ],
+   "targets": {
+    "empty_table": {
+     "format": "parquet",
+     "layout": null,
+     "path": "/o/empty_table.parquet",
+     "type": "file"
+    }
+   },
+   "validators": [],
+   "version": 2
+  },
+  "fingerprints": {
+   "empty_table.seq_id": "7075a639413b06d4ed67adfd41c3b15b952e21361e42ba182ed0693a37cfe0ab"
+  },
+  "raw": {
+   "global_settings": {
+    "seed": 46
+   },
+   "sources": {},
+   "tables": [
+    {
+     "generate_columns": [
+      {
+       "name": "seq_id",
+       "pad_length": 4,
+       "start": 1,
+       "step": 1,
+       "type": "sequence"
+      }
+     ],
+     "name": "empty_table",
+     "row_count": 0
+    }
+   ],
+   "targets": {
+    "empty_table": {
+     "format": "parquet",
+     "path": "/o/empty_table.parquet",
+     "type": "file"
+    }
+   },
+   "version": 2
+  }
+ }
+}

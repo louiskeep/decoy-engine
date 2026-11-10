@@ -44,10 +44,7 @@
   "permitted::config/_pipeline.py::PipelineConfig._subset_stage_constraints::fb76c37dc1": {
    "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
   },
-  "permitted::config/_sources.py::FileSource._validate_delimited_params::916f203406": {
-   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
-  },
-  "permitted::config/_sources.py::FileSource._validate_delimited_params::f0a6b297e8": {
+  "permitted::config/_sources.py::FileSource._validate_delimited_params::ba967a5903": {
    "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
   },
   "permitted::config/_sources.py::FileSource._validate_layout_matches_format::2f38290381": {
@@ -69,48 +66,6 @@
    "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
   },
   "permitted::config/_subset.py::SubsetSeedConfig._mode_consistency::c45c4b557d": {
-   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
-  },
-  "permitted::config/_tables.py::GenerateColumnConfig._reference_params_required::1bdeb9937e": {
-   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
-  },
-  "permitted::config/_tables.py::GenerateColumnConfig._reference_params_required::879e5e86f2": {
-   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
-  },
-  "permitted::config/_tables.py::GenerateColumnConfig._type_params_present::0bfbb31d62": {
-   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
-  },
-  "permitted::config/_tables.py::GenerateColumnConfig._type_params_present::125608ba79": {
-   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
-  },
-  "permitted::config/_tables.py::GenerateColumnConfig._type_params_present::1d001d0e25": {
-   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
-  },
-  "permitted::config/_tables.py::GenerateColumnConfig._type_params_present::396f0b19b4": {
-   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
-  },
-  "permitted::config/_tables.py::GenerateColumnConfig._type_params_present::566d83d807": {
-   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
-  },
-  "permitted::config/_tables.py::GenerateColumnConfig._type_params_present::5c5715afda": {
-   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
-  },
-  "permitted::config/_tables.py::GenerateColumnConfig._type_params_present::6ba7940b01": {
-   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
-  },
-  "permitted::config/_tables.py::GenerateColumnConfig._type_params_present::bbfcf9bd14": {
-   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
-  },
-  "permitted::config/_tables.py::GenerateColumnConfig._type_params_present::c05a8378cb": {
-   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
-  },
-  "permitted::config/_tables.py::GenerateColumnConfig._type_params_present::c0dd55532d": {
-   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
-  },
-  "permitted::config/_tables.py::GenerateColumnConfig._type_params_present::d248656c30": {
-   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
-  },
-  "permitted::config/_tables.py::GenerateColumnConfig._type_params_present::d8ec0ed340": {
    "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
   },
   "permitted::config/_tables.py::TableConfig._mask_xor_generate::5606ba86cd": {

@@ -18,18 +18,11 @@ from __future__ import annotations
 from typing import Any
 
 from decoy_engine import reasons
-from decoy_engine.errors import ConfigError, DecoyError
+from decoy_engine._execution_error import ExecutionError as ExecutionError
+from decoy_engine._execution_error import lazy_source_changed as lazy_source_changed
+from decoy_engine.errors import ConfigError
 from decoy_engine.reason_adapter import tag_exception
 from decoy_engine.reasons import Phase, ReasonCode
-
-
-class ExecutionError(DecoyError):
-    """Execution-boundary / runner failure. Carries a machine-readable code."""
-
-    def __init__(self, *, code: str, message: str = "") -> None:
-        self.code = code
-        self.message = message
-        super().__init__(f"[{code}] {message}" if message else f"[{code}]")
 
 
 class StrategyError(ExecutionError):

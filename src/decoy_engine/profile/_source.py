@@ -125,7 +125,7 @@ def profile_source(
     relationships_config = config.get("relationships", []) or []
     pk_cols_per_table = _derive_pk_cols(relationships_config)
     fk_specs_per_table = _derive_fk_specs(relationships_config)
-    relationships = tuple(_build_relationships(relationships_config))
+    relationships = profile_relationships_from_config(relationships_config)
 
     # F06: declared columns are read as exact lexemes (no NA conversion, no inference).
     sources = profile_descriptors(config)
@@ -298,9 +298,9 @@ def _derive_fk_specs(
     return fk_specs
 
 
-def _build_relationships(
+def profile_relationships_from_config(
     relationships_config: list[dict[str, Any]],
-) -> list[Relationship]:
+) -> tuple[Relationship, ...]:
     """Convert config relationships into Profile-layer Relationship tuples.
 
     Each config relationship may have multiple children; each child
@@ -336,4 +336,4 @@ def _build_relationships(
                     namespace=namespace if isinstance(namespace, str) else None,
                 )
             )
-    return out
+    return tuple(out)

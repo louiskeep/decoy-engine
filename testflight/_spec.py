@@ -192,6 +192,11 @@ class ColumnDistributionSpec(BaseModel):
     Default 10.0 pp (matches compute_quality_report's null_drift_threshold_pp default).
     Values above 25.0 are degenerate: they would not catch gross null-rate inflation.
 
+    `mean` and `std` declare the expected distribution of a numeric generate column
+    (formula or statistical). `check_distribution_generate` asserts the output mean and
+    std fall within `tolerance` of them. They live here, not on the generate column,
+    because the pipeline config refuses keys the generators do not read.
+
     `joints_waived` opts this table out of the multi-column joint-pair requirement
     (MEDIUM-2). Must be set on at least one column entry for the table. Requires
     `joints_waived_reason` to be non-empty so the opt-out is reviewable.
@@ -210,6 +215,8 @@ class ColumnDistributionSpec(BaseModel):
     expected_coarsening: bool = False
     joints_waived: bool = False
     joints_waived_reason: str | None = None
+    mean: float | None = None
+    std: float | None = None
 
     @model_validator(mode="after")
     def _require_waiver_reason(self) -> ColumnDistributionSpec:

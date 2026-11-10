@@ -41,7 +41,8 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
         "execution_mode",
         "KEYWORD_ONLY",
         "'auto'",
-        "Literal['auto', 'sequential', 'full_frame', 'out_of_core']",
+        # RUN-STREAM E1a: `"stream"` is the one additive literal (translated to `auto` at entry).
+        "Literal['auto', 'stream', 'sequential', 'full_frame', 'out_of_core']",
     ),
     ("sink", "KEYWORD_ONLY", "None", "TransactionalSink | None"),
     ("source_loader", "KEYWORD_ONLY", "None", "Callable[[str], pa.Table] | None"),
@@ -72,6 +73,8 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
     ("_provider_snapshot", "KEYWORD_ONLY", "None", "Mapping[str, Callable[[Faker], Any]] | None"),
     # E1: the one additive keyword the file-access policy adds (compatibility contract section 9).
     ("file_access", "KEYWORD_ONLY", "None", "FileAccess | None"),
+    # project-layout E2: the placed quarantine path; replaces quarantine.output_path after the hash.
+    ("quarantine_path", "KEYWORD_ONLY", "None", "str | None"),
 )
 FROZEN_RETURN = "ExecutionResult"
 
@@ -95,7 +98,7 @@ def test_run_pipeline_return_annotation_is_frozen() -> None:
 
 def test_the_frozen_table_covers_every_parameter_once() -> None:
     names = [row[0] for row in FROZEN_PARAMETERS]
-    assert len(names) == len(set(names)) == 41
+    assert len(names) == len(set(names)) == 42
     positional = [r[0] for r in FROZEN_PARAMETERS if r[1] == "POSITIONAL_OR_KEYWORD"]
     assert positional == ["config", "sources"]
 

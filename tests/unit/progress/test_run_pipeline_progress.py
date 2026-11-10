@@ -50,7 +50,9 @@ def _scalar_job(tmp_path: Path, rows: int = 3):
         {
             "version": 2,
             "global_settings": {"seed": 42},
-            "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
+            "sources": {
+                "customers": {"type": "file", "format": "csv", "has_header": True, "path": str(src)}
+            },
             "tables": [
                 {
                     "name": "customers",
@@ -79,8 +81,8 @@ def _fk_job(tmp_path: Path):
             "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
-                "customers": {"type": "file", "format": "csv", "path": str(cp)},
-                "orders": {"type": "file", "format": "csv", "path": str(op)},
+                "customers": {"type": "file", "format": "csv", "has_header": True, "path": str(cp)},
+                "orders": {"type": "file", "format": "csv", "has_header": True, "path": str(op)},
             },
             "tables": [
                 {

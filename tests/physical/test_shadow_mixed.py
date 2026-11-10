@@ -87,6 +87,7 @@ def _mixed_config(
     row_count: int = 5,
     seed: int = 20260916,
     relationships: list[dict[str, Any]] | None = None,
+    bypass_parse: bool = False,
 ) -> dict[str, Any]:
     """One generate table + N independent mask tables, no crossing FK edge
     unless `relationships` says otherwise. Mirrors `test_shadow_ooc_fk.
@@ -106,7 +107,11 @@ def _mixed_config(
             {
                 "name": generate_table,
                 "row_count": row_count,
-                "generate_columns": generate_columns or _DEFAULT_GENERATE_COLUMNS,
+                "generate_columns": (
+                    _DEFAULT_GENERATE_COLUMNS
+                    if bypass_parse
+                    else generate_columns or _DEFAULT_GENERATE_COLUMNS
+                ),
             }
         ],
     }
@@ -121,7 +126,15 @@ def _mixed_config(
         raw["tables"].append({"name": name, "columns": mask_table_columns[name]})
     if relationships:
         raw["relationships"] = relationships
-    return PipelineConfig.model_validate(raw).model_dump()
+    dumped = PipelineConfig.model_validate(raw).model_dump()
+    if bypass_parse:
+        # The config layer refuses malformed leaf knobs, but the malformed-generate tests feed
+        # them straight to the executors (a hand-built Plan can carry them), so they are spliced
+        # in after parsing. Only those callers set the flag; every other caller must parse.
+        dumped["tables"][0]["generate_columns"] = [
+            {"pooled": None, **c} for c in generate_columns or ()
+        ]
+    return dumped
 
 
 def _accounts_source(n: int = 6) -> pa.Table:
@@ -282,8 +295,8 @@ def test_positive_generate_to_generate_edge_with_independent_mask_graph(tmp_path
     )
     # Add a second, independent generate table declaring a generate->generate
     # relationship edge back to the first -- `relationships:` is a purely
-    # declarative metadata block (`profile/_source.py`'s `_build_relationships`
-    # reads it straight off `config`, never off actual profiled data), so this
+    # declarative metadata block (`profile/_source.py`'s
+    # `profile_relationships_from_config` reads it straight off `config`, never off actual profiled data), so this
     # is config-schema-valid without needing a `reference`-type column (which
     # is outside this slice's admitted generate-column-type set anyway). Not
     # the direction this slice's gate restricts.
@@ -341,6 +354,7 @@ def _mixed_run_with_malformed_generate(tmp_path: Path) -> MixedDifferentialRun:
         mask_sources={"accounts": accounts},
         mask_table_columns={"accounts": [{"name": "acct_id", "strategy": "passthrough"}]},
         generate_columns=[{"name": "id", "type": "sequence", "start": "abc"}],
+        bypass_parse=True,
     )
     return run_mixed_shadow_and_oracle(config, {"accounts": accounts})
 

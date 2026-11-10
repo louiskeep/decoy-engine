@@ -47,19 +47,8 @@ no top-K collapse, so the artifact additionally exposes every distinct
 code AND rare-code presence/absence -- treat it with the same care as
 a raw extract of that column.
 
-DPS Scope B history: this module previously carried its own `dp_mode` /
-`numeric_domains` fit-time parameters (Option A, 2026-06 through
-2026-07-21) that widened categorical candidacy and fixed numeric bin
-ranges in place, ahead of a since-deleted `quality.dp.apply_dp_noise`.
-That mechanism never satisfied the privacy bound it claimed (see
-CHANGELOG.md) and is gone. The Scope B rebuild
-(`quality.dp.fit_dp_snapshot`) does not call this function at all --
-"Do not route the DP fit through compute_distribution_snapshot. That
-function materializes exact statistics and has value-dependent kind
-behavior unsuitable for DP" is the design rule going forward. This
-module is explicitly non-DP: every kind decision here may look at
-values (bool vs. object vs. numeric, the 30-distinct cardinality cliff,
-etc.), which is exactly what a DP fit must never do.
+DPS Scope B history: the old `dp_mode` fit parameters are gone; see the CHANGELOG entry for DPS
+Scope B. `quality.dp.fit_dp_snapshot` does not call this function, which is explicitly non-DP.
 """
 
 from __future__ import annotations
@@ -73,7 +62,7 @@ import pandas as pd
 
 from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
-from decoy_engine.internal.pandas_compat import canonical_dtype_label
+from decoy_engine.internal.pandas_compat import canonical_dtype_label, utc_naive_datetimes
 
 # Single source of truth for the DP schema version is the pandas-free
 # `dp_schema` module (guide section 3.8), re-exported here for the existing
@@ -113,17 +102,13 @@ class DistributionSnapshotError(DecoyError):
 # fidelity scoring (which tolerates several percent drift).
 _FLOAT_PRECISION = 12
 
-# Fallback bin count when the caller does not override. 10 matches the
-# profiling/profiler histogram so the snapshot and the existing per-column
-# profile visualization line up at the bin level.
-_DEFAULT_NUMERIC_BINS = 10
+# Fallback bin count; 10 matches the profiling/profiler histogram.
+DEFAULT_NUMERIC_BINS = 10
 
-# Top-K caps. Categorical columns past the cap collapse into "other_count";
-# joint contingency tables past the cap do the same. Keep these modest:
-# the snapshot is for evidence, not for analysis, and the JSON size needs
-# to fit in a job-record column at D2 time.
-_DEFAULT_CATEGORICAL_TOP_K = 20
-_DEFAULT_CONTINGENCY_TOP_K = 25
+# Top-K caps. Categorical columns and joint contingency tables past the cap collapse
+# into "other_count". Kept modest so the JSON fits a job-record column.
+DEFAULT_CATEGORICAL_TOP_K = 20
+DEFAULT_CONTINGENCY_TOP_K = 25
 
 # Cardinality cap that splits "categorical" from "freetext" for object
 # columns. Mirrors profiling/_distributions._PROFILE_CATEGORICAL_DISTINCT_CAP (30)
@@ -144,16 +129,17 @@ def compute_distribution_snapshot(
     df: pd.DataFrame,
     *,
     joint_columns: Sequence[tuple[str, str]] | None = None,
-    numeric_bins: int = _DEFAULT_NUMERIC_BINS,
-    categorical_top_k: int = _DEFAULT_CATEGORICAL_TOP_K,
-    contingency_top_k: int = _DEFAULT_CONTINGENCY_TOP_K,
+    numeric_bins: int = DEFAULT_NUMERIC_BINS,
+    categorical_top_k: int = DEFAULT_CATEGORICAL_TOP_K,
+    contingency_top_k: int = DEFAULT_CONTINGENCY_TOP_K,
     high_cardinality_columns: Collection[str] = (),
+    fanout_columns: Collection[str] = (),
+    cell_format: bool = False,
 ) -> dict[str, Any]:
     """Compute a deterministic, JSON-serializable distribution snapshot.
 
-    Explicitly non-DP (module docstring): every kind decision here may
-    look at values. DP fits go through `quality.dp.fit_dp_snapshot`
-    instead, which never calls this function.
+    Explicitly non-DP (module docstring): every kind decision here may look at values.
+    DP fits go through `quality.dp.fit_dp_snapshot`, which never calls this function.
 
     Args:
         df: Input frame. Not mutated.
@@ -171,25 +157,26 @@ def compute_distribution_snapshot(
             `kind: categorical` and keeps every observed category
             (`other_count` stays 0). Opt-in only -- omitted (the default)
             means byte-identical output to every prior engine version.
-            Restricted to string/object/category source dtype and to
-            <=100,000 distinct values / <=16 MiB combined UTF-8 label
-            bytes; violating either raises `DistributionSnapshotError`
-            rather than silently degrading. Unknown column names are
-            silently skipped (matching `joint_columns`, not a validator).
+            Restricted to string/object/category dtype, <=100,000 distinct
+            values and <=16 MiB of label bytes; a violation raises
+            `DistributionSnapshotError`. Unknown names are silently skipped
+            (matching `joint_columns`, not a validator).
+        fanout_columns: Column names that get an optional `fanout` block
+            (degree histogram of the key column, counts only). Omitted means
+            byte-identical output. A bare string or unknown name raises.
+        cell_format: Add a value-free `cell_format` block (decimal places, resolution,
+            blank count) to each column. Default False means byte-identical output.
 
     Returns:
         A dict matching schema `distribution-snapshot/v1` (module
         docstring).
 
     Raises:
-        DistributionSnapshotError: bad `high_cardinality_columns` shape or
-            safety-limit violation (see that arg's docs above).
+        DistributionSnapshotError: bad `high_cardinality_columns` or
+            `fanout_columns`, or a safety-limit violation (see above).
     """
-    # MED-3: a bare str satisfies `Collection[str]` structurally, so
-    # `high_cardinality_columns="code"` would silently iterate characters
-    # ({"c","o","d","e"}) instead of naming the "code" column -- the real
-    # column then stays freetext with no error. Reject the shape explicitly
-    # before it can silently disable the feature.
+    # MED-3: a bare str satisfies `Collection[str]` but would iterate characters
+    # and silently disable the feature; reject the shape explicitly.
     if isinstance(high_cardinality_columns, (str, bytes)):
         raise DistributionSnapshotError(
             code=reasons.quality.HIGH_CARDINALITY_COLUMNS_NOT_COLLECTION,
@@ -207,6 +194,15 @@ def compute_distribution_snapshot(
             categorical_top_k=categorical_top_k,
             high_cardinality=str(col) in high_cardinality_set,
         )
+    if isinstance(fanout_columns, (str, bytes)) or len(fanout_columns) > 0:
+        # Lazy: `generation` imports `quality`, so a top-level import would cycle.
+        from decoy_engine.generation.statistical import add_fanout
+
+        add_fanout(columns_block, df, fanout_columns)
+    if cell_format:
+        from decoy_engine.generation.statistical import add_cell_format
+
+        add_cell_format(columns_block, df)
 
     joints_block: list[dict[str, Any]] = []
     if joint_columns:
@@ -279,7 +275,7 @@ def _stats_for(
         stats = _categorical_stats(non_null.astype(str), top_k=top_k)
         return "categorical", stats
     if pd.api.types.is_numeric_dtype(non_null):
-        stats = _numeric_stats(non_null, bins=numeric_bins)
+        stats = numeric_stats(non_null, bins=numeric_bins)
         return "numeric", stats
     if pd.api.types.is_datetime64_any_dtype(non_null):
         return "datetime", _datetime_stats(non_null)
@@ -398,18 +394,24 @@ def _high_cardinality_categorical_stats(non_null: pd.Series) -> dict[str, Any]:
     return stats
 
 
-def _numeric_stats(
+def _numeric_cells(series: pd.Series) -> np.ndarray[Any, np.dtype[np.float64]]:
+    return np.asarray(pd.to_numeric(series, errors="coerce").dropna(), dtype=float)
+
+
+def finite_numeric_cells(series: pd.Series) -> np.ndarray[Any, np.dtype[np.float64]]:
+    """The series' numeric cells as floats with nan and +-inf dropped."""
+    arr = _numeric_cells(series)
+    return np.extract(np.isfinite(arr), arr)
+
+
+def numeric_stats(
     non_null: pd.Series, *, bins: int, domain: tuple[float, float] | None = None
 ) -> dict[str, Any]:
-    arr = pd.to_numeric(non_null, errors="coerce").dropna().to_numpy(dtype=float)
-    # to_numpy + dropna handles object columns of stringified numbers
-    # without surprising the histogram math below.
-    if arr.size == 0:
-        return {}
-    finite = arr[np.isfinite(arr)]
+    finite = finite_numeric_cells(non_null)
     if finite.size == 0:
-        # All values were inf / -inf / nan. Report an empty numeric stat
-        # rather than crashing; JSON cannot encode inf.
+        if _numeric_cells(non_null).size == 0:
+            return {}
+        # Only inf cells: an empty stat, as JSON cannot encode inf.
         return {
             "min": None,
             "max": None,
@@ -420,9 +422,7 @@ def _numeric_stats(
             "bin_counts": [],
         }
     mean = float(finite.mean())
-    # std with ddof=0 matches pandas describe()'s "population" semantics
-    # only when explicitly requested; we use ddof=1 to align with
-    # pandas defaults and profiling/profiler precedent.
+    # ddof=1 matches the pandas default and the profiling/profiler precedent.
     std = float(finite.std(ddof=1)) if finite.size > 1 else 0.0
 
     quantiles_idx = [0.05, 0.25, 0.50, 0.75, 0.95]
@@ -485,13 +485,9 @@ def _categorical_stats(non_null: pd.Series, *, top_k: int | None) -> dict[str, A
 
 
 def _datetime_stats(non_null: pd.Series) -> dict[str, Any]:
-    coerced = pd.to_datetime(non_null, errors="coerce").dropna()
+    coerced = utc_naive_datetimes(non_null)
     if len(coerced) == 0:
         return {}
-    # Strip timezone before isoformat so two snapshots taken on machines
-    # in different zones don't diverge on the string representation.
-    if getattr(coerced.dtype, "tz", None) is not None:
-        coerced = coerced.dt.tz_convert("UTC").dt.tz_localize(None)
     by_year = coerced.dt.year.value_counts().sort_index()
     year_bins = [{"year": int(year), "count": int(cnt)} for year, cnt in by_year.items()]
     return {
@@ -592,7 +588,7 @@ def _round(value: float) -> float:
     """Round to the snapshot's float precision; return 0.0 for non-finite.
 
     JSON does not encode NaN / +-Inf. Callers feed only finite values
-    here (the non-finite filter sits in _numeric_stats) but the round
+    here (the non-finite filter sits in numeric_stats) but the round
     helper keeps the guard local to avoid future regressions.
     """
     if not math.isfinite(value):

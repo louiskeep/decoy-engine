@@ -15,13 +15,12 @@ from decoy_engine.config._sources import FileSource
 
 
 def _csv(**extra: object) -> dict[str, object]:
-    return {"type": "file", "format": "csv", "path": "data.csv", **extra}
+    return {"type": "file", "format": "csv", "path": "data.csv", "has_header": True, **extra}
 
 
 class TestDelimitedParamsAccepted:
-    def test_defaults_are_todays_behaviour(self) -> None:
+    def test_dialect_defaults_other_than_has_header(self) -> None:
         src = FileSource.model_validate(_csv())
-        assert src.has_header is True
         assert src.column_names is None
         assert src.delimiter == ","
 

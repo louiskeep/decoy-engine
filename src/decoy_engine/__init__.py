@@ -61,7 +61,20 @@ call shape. Any external import of ``Masker`` / ``DataGenerator`` / ``run_graph`
 now fails fast.
 """
 
-from decoy_engine.config import Dismissal, PipelineConfig, PreScanConfig, parse_pipeline_config
+import logging
+
+# ruff: noqa: E402  (the NullHandler attach must precede every submodule import)
+# The one NullHandler attach site; `_configure_logger` preserves it and never creates one.
+logging.getLogger(__name__).addHandler(logging.NullHandler())
+
+from decoy_engine.config import (
+    FILE_SOURCE_PATH_FIELDS,
+    Dismissal,
+    PipelineConfig,
+    PreScanConfig,
+    parse_pipeline_config,
+)
+from decoy_engine.config._pipeline import is_valid_pipeline_name
 from decoy_engine.context import (
     ExecutionContext,
     Logger,
@@ -184,16 +197,30 @@ from decoy_engine.plan.validate import (
     validate_plan,
 )
 from decoy_engine.profile._csv_reader import CsvDialect, read_csv_source, resolve_csv_dialect
+from decoy_engine.profile._declared_columns import (
+    DeclarationRequest,
+    PreparedDeclaredSources,
+    check_columns_declared,
+    declared_columns,
+    prepare_declared_sources,
+    source_columns,
+)
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
 from decoy_engine.profile._fixed_width_writer import write_fixed_width
 from decoy_engine.profiling import (
     ColumnProfile,
     FieldStats,
+    ScanSet,
+    ScanSetCore,
     SentinelFlag,
+    TableScan,
+    distribution_snapshot_document,
     is_value_sensitive,
     profile_columns,
     profile_document,
     redact_profile_dict,
+    scan_set_to_dict,
+    scan_sources,
 )
 from decoy_engine.profiling.model_pack import classifier_status, load_detectors
 from decoy_engine.progress import (
@@ -357,6 +384,7 @@ __all__ = [
     "CAP_RESUMABLE",
     "CAP_SIGNED_URL",
     "CAP_STREAMING",
+    "FILE_SOURCE_PATH_FIELDS",
     "RELEASE_PHASE",
     "RUN_RESULT_SCHEMA",
     "SDK_VERSION",
@@ -387,6 +415,7 @@ __all__ = [
     "ConnectorConfig",
     "ConnectorError",
     "CsvDialect",
+    "DeclarationRequest",
     "DecoyError",
     "DetectorMatch",
     "DeterminismError",
@@ -440,6 +469,7 @@ __all__ = [
     "PoolSampler",
     "PostValidationRunner",
     "PreScanConfig",
+    "PreparedDeclaredSources",
     "ProgressSink",
     "ProviderError",
     "ProviderRegistry",
@@ -458,6 +488,8 @@ __all__ = [
     "RouteEvent",
     "RunResult",
     "RunResultRead",
+    "ScanSet",
+    "ScanSetCore",
     "SecretCachePolicy",
     "SecretDescriptor",
     "SecretKeyProvider",
@@ -472,6 +504,7 @@ __all__ = [
     "StrategyOption",
     "StructuredEvents",
     "StructuredEventsSink",
+    "TableScan",
     "TelemetryClient",
     "TerminalEvent",
     "TransientError",
@@ -490,6 +523,7 @@ __all__ = [
     "atomic_swap_db_providers",
     "build_namespace_registry",
     "build_relationship_graph",
+    "check_columns_declared",
     "check_orphan_fk_policy_completeness",
     "classifier_status",
     "classify_table_kinds",
@@ -499,10 +533,12 @@ __all__ = [
     "composite_name_email",
     "composite_person",
     "composite_provider",
+    "declared_columns",
     "derive",
     "derive_index",
     "derive_outcome",
     "derive_value",
+    "distribution_snapshot_document",
     "emit_fidelity",
     "emit_lineage",
     "emit_quarantine",
@@ -517,6 +553,7 @@ __all__ = [
     "get_default_pool_cache",
     "get_default_registry",
     "is_pre_ga",
+    "is_valid_pipeline_name",
     "is_value_sensitive",
     "job_seed_for_config",
     "keyed_columns_for_config",
@@ -530,6 +567,7 @@ __all__ = [
     "open_protected_dir",
     "parse_pipeline_config",
     "pipeline_config_hash",
+    "prepare_declared_sources",
     "profile_columns",
     "profile_document",
     "protected_scratch_dir",
@@ -548,7 +586,10 @@ __all__ = [
     "run_mask_chunked",
     "run_mask_pipeline_chunked",
     "run_pipeline",
+    "scan_set_to_dict",
+    "scan_sources",
     "select_execution_adapter",
+    "source_columns",
     "strategy_catalog",
     "unmask_pipeline",
     "unregister_faker_provider",
