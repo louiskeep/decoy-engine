@@ -106,28 +106,6 @@ def test_the_zipf_cdf_is_built_once_per_stream(monkeypatch: pytest.MonkeyPatch) 
 # Seed 7, 20 rows, column `x` of table `t`, under the locked numpy (2.2.6 / 2.4.6 / 2.5.0 draw
 # the same stream for these Generator methods; a band that disagrees re-pins here).
 GOLDEN: dict[str, list[float | int]] = {
-    "beta": [
-        0.13047902114369417,
-        0.1236062340159375,
-        0.4293333461845744,
-        0.12004135979718605,
-        0.5170187819810345,
-        0.4171078775643602,
-        0.3875677290319636,
-        0.3841573123563101,
-        0.2646608950339932,
-        0.5217675521167294,
-        0.30279344203675246,
-        0.07692336580017388,
-        0.19850158166216816,
-        0.4556372158043973,
-        0.27789690930395233,
-        0.47172593433109394,
-        0.12276836391953289,
-        0.36497729525199313,
-        0.23481760533273688,
-        0.19707357867754138,
-    ],
     "exponential": [
         0.33979969678376387,
         5.590492802920133,
@@ -149,28 +127,6 @@ GOLDEN: dict[str, list[float | int]] = {
         1.174624128278722,
         5.0778680648710885,
         8.643029453192048,
-    ],
-    "lognormal": [
-        26.020856489203926,
-        15.43539740947004,
-        20.854377671118744,
-        9.088550178553438,
-        8.579423268633468,
-        37.45681993351938,
-        13.31051842234409,
-        54.91547551676914,
-        26.60300400922712,
-        22.442051848419343,
-        24.850535974672635,
-        9.870537334762902,
-        6.664081859997976,
-        23.60390452547621,
-        18.94150456483655,
-        29.62109028527218,
-        11.622614784864076,
-        22.980837003020937,
-        22.498495279906372,
-        33.94852976470646,
     ],
     "normal": [
         39.882619505394786,
@@ -348,18 +304,12 @@ def _analytic(family: str) -> tuple[float, float]:
     c = FAMILY_COLS[family]
     if family == "normal":
         return c["mean"], c["std"] ** 2
-    if family == "lognormal":
-        mu, sg = c["mu"], c["sigma"]
-        return math.exp(mu + sg**2 / 2), (math.exp(sg**2) - 1) * math.exp(2 * mu + sg**2)
     if family == "uniform":
         return (c["low"] + c["high"]) / 2, (c["high"] - c["low"]) ** 2 / 12
     if family == "exponential":
         return c["mean"], c["mean"] ** 2
     if family == "poisson":
         return c["mean"], c["mean"]
-    if family == "beta":
-        a, b = c["alpha"], c["beta"]
-        return a / (a + b), a * b / ((a + b) ** 2 * (a + b + 1))
     pmf = _zipf_pmf(c["s"], c["n"])
     k = np.arange(1, c["n"] + 1)
     mean = float((k * pmf).sum())
@@ -422,3 +372,46 @@ def test_nulls_do_not_correlate_with_a_uniform_draw() -> None:
 
 def test_generate_tables_is_the_public_entry() -> None:
     assert callable(generate_tables)
+
+
+# Cross-arch bytes ------------------------------------------------------------------------
+# The same digests were observed on arm64 (macOS) and x86 (Linux) under numpy 2.2.6. normal and
+# uniform are built from standard_normal and random with separate multiply and add ufuncs,
+# because arm64 fuses `loc + scale * x` into an FMA and rounds differently. A change here that
+# moves a digest on one architecture breaks the byte-identical promise in docs/determinism.md.
+
+_BIT_DIGESTS = {
+    "exponential": ("ed4ad83d00910fface2fd5264ed8f86394182d85c99f7ea43eca74ff0abd7389", 5000),
+    "normal": ("b00ccdc0e91e815c555aa1e34ca667d6c352832d35c979d2310b44a72bb9284f", 5000),
+    "poisson": ("a72426a6d49c11fd3e23626645886c7b3b91f4dbfe405e6602b08f1592909157", 5000),
+    "uniform": ("49b31ab33606b47bab82946979c031ca3edd1ca6ee4aca47829578d5c600be80", 5000),
+    "zipf": ("2e0db534951ba9bfb17de45f8cbf61aebcfe25c3885875b78cfd4e7540dea741", 100_000),
+}
+_CDF_DIGESTS = {
+    (1.2, 50): "6288863be0e8f1524f24f00ced55ec7bea3fb63ad8ac740bcaaa8552e81196cd",
+    (1.05, 1_000_000): "c8ba8bcb467251b22f6704a70ccf396ccd12eb2d424c040d2d43a67b0e287a2b",
+    (0.5, 1_000_000): "62754c9b036ab9057d60e24bd275d781660fb3548801569b7ad279b7b47eea18",
+    (3.0, 1000): "74ffa0d381763cd4ddb61dd269013c3017b4b782188941f25febc9b909810489",
+}
+
+
+def test_every_shipped_family_has_a_pinned_bit_digest() -> None:
+    assert set(_BIT_DIGESTS) == set(FAMILIES)
+
+
+@pytest.mark.parametrize("family", FAMILIES)
+def test_draw_bits_are_identical_on_every_architecture(family: str) -> None:
+    import hashlib
+    import struct
+
+    digest, rows = _BIT_DIGESTS[family]
+    draws = _stream(dist_col(family)).next_batch(0, rows)
+    packed = b"".join(struct.pack("<d", float(v)) for v in draws)
+    assert hashlib.sha256(packed).hexdigest() == digest
+
+
+@pytest.mark.parametrize(("s", "n"), sorted(_CDF_DIGESTS))
+def test_zipf_cdf_bits_are_identical_on_every_architecture(s: float, n: int) -> None:
+    import hashlib
+
+    assert hashlib.sha256(_parametric.zipf_cdf(s, n).tobytes()).hexdigest() == _CDF_DIGESTS[(s, n)]

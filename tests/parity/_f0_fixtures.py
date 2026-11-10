@@ -565,9 +565,8 @@ def cfg_grouped_windowed() -> dict[str, Any]:
 def cfg_source_free() -> dict[str, Any]:
     """GEN-TYPES E1: the source-free kinds, with nulls on the constant and one distribution.
 
-    Integer-valued columns only: a float draw (normal, lognormal) can differ in the last bit between
-    arm64 and x86 libm, and this oracle hashes exact bits. Float families are pinned by the
-    approximate goldens in `tests/unit/generation/kinds`.
+    The oracle hashes exact bits, so the float columns here also prove normal and uniform match
+    across arm64 and x86 (built without a fused multiply-add).
     """
     return config(
         [
@@ -580,6 +579,22 @@ def cfg_source_free() -> dict[str, Any]:
                         "type": "constant",
                         "value": "US",
                         "null_probability": 0.25,
+                    },
+                    {
+                        "name": "age",
+                        "type": "distribution",
+                        "family": "normal",
+                        "mean": 40,
+                        "std": 10,
+                        "min": 18,
+                        "max": 90,
+                    },
+                    {
+                        "name": "score",
+                        "type": "distribution",
+                        "family": "uniform",
+                        "low": 0,
+                        "high": 1,
                     },
                     {
                         "name": "visits",

@@ -260,11 +260,9 @@ CONDITIONAL_REQUIRED: Mapping[str, Mapping[str, Mapping[str, tuple[str, ...]]]] 
     "distribution": {
         "family": {
             "normal": ("mean", "std"),
-            "lognormal": ("mu", "sigma"),
             "uniform": ("low", "high"),
             "exponential": ("mean",),
             "poisson": ("mean",),
-            "beta": ("alpha", "beta"),
             "zipf": ("s", "n"),
         }
     },
@@ -365,12 +363,8 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
             "family": OptionSpec(_family),
             "mean": OptionSpec(mean_value),
             "std": _P,
-            "mu": _N,
-            "sigma": _P,
             "low": _N,
             "high": OptionSpec(high_bound),
-            "alpha": _P,
-            "beta": _P,
             "s": _P,
             "n": OptionSpec(zipf_support),
             "min": OptionSpec(clip_bound("min")),

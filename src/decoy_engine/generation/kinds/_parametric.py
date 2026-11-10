@@ -38,17 +38,16 @@ def zipf_cdf(s: float, n: int) -> np.ndarray[Any, Any]:
 
 def _normal(col: dict[str, Any]) -> _Draw:
     mean, std = float(col["mean"]), float(col["std"])
-    return lambda rng, size: rng.normal(mean, std, size)
-
-
-def _lognormal(col: dict[str, Any]) -> _Draw:
-    mu, sigma = float(col["mu"]), float(col["sigma"])
-    return lambda rng, size: rng.lognormal(mu, sigma, size)
+    # Two separate ufuncs, never `rng.normal(mean, std)`: arm64 fuses loc + scale * x into an FMA
+    # and rounds differently from x86. standard_normal itself is identical on both.
+    return lambda rng, size: np.add(np.multiply(rng.standard_normal(size), std), mean)
 
 
 def _uniform(col: dict[str, Any]) -> _Draw:
     low, high = float(col["low"]), float(col["high"])
-    return lambda rng, size: rng.uniform(low, high, size)
+    width = high - low
+    # Same reason as _normal: no fused multiply-add.
+    return lambda rng, size: np.add(np.multiply(rng.random(size), width), low)
 
 
 def _exponential(col: dict[str, Any]) -> _Draw:
@@ -59,11 +58,6 @@ def _exponential(col: dict[str, Any]) -> _Draw:
 def _poisson(col: dict[str, Any]) -> _Draw:
     mean = float(col["mean"])
     return lambda rng, size: rng.poisson(mean, size)
-
-
-def _beta(col: dict[str, Any]) -> _Draw:
-    alpha, beta = float(col["alpha"]), float(col["beta"])
-    return lambda rng, size: rng.beta(alpha, beta, size)
 
 
 def _zipf(col: dict[str, Any]) -> _Draw:
@@ -80,11 +74,9 @@ def _zipf(col: dict[str, Any]) -> _Draw:
 # Family -> draw builder. The keys each family takes are `CONDITIONAL_REQUIRED["distribution"]`.
 _FAMILIES: dict[str, Callable[[dict[str, Any]], _Draw]] = {
     "normal": _normal,
-    "lognormal": _lognormal,
     "uniform": _uniform,
     "exponential": _exponential,
     "poisson": _poisson,
-    "beta": _beta,
     "zipf": _zipf,
 }
 

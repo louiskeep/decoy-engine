@@ -85,9 +85,13 @@ def high_bound(value: Any, extras: Mapping[str, Any]) -> list[Problem]:
     """`high` of a uniform column: finite and above `low` once `low` is itself a number."""
     if problems := finite(value, extras):
         return problems
-    low = extras.get("low")
-    if _is_number(low) and _as_float(low) is not None and value <= low:
-        return [((), _RANGE)]
+    low = _as_float(extras.get("low")) if _is_number(extras.get("low")) else None
+    if low is not None:
+        if value <= low:
+            return [((), _RANGE)]
+        # A width that overflows to infinity would put inf in the column.
+        if not math.isfinite(float(value) - low):
+            return [((), _RANGE)]
     return _OK
 
 

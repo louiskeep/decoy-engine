@@ -97,6 +97,9 @@ def test_a_missing_family_key_is_missing(family: str) -> None:
 def test_family_is_required_and_a_bad_family_is_a_value_error() -> None:
     assert _problems(None) == [(("family",), "missing")]
     assert _problems("weibull") == [(("family",), VALUE)]
+    # Removed from E1 (not bit-portable across arm64 and x86); deferred to E1b.
+    for name in ("lognormal", "beta"):
+        assert _problems(name) == [(("family",), VALUE)]
     assert _problems("normal ", mean=1, std=1) == [(("family",), VALUE)]
     assert _problems(3) == [(("family",), TYPE)]  # type: ignore[arg-type]
 
@@ -108,15 +111,13 @@ BAD_RANGE: list[tuple[str, dict[str, Any], str]] = [
     ("normal", {"mean": math.inf, "std": 1}, RANGE),
     ("normal", {"mean": math.nan, "std": 1}, RANGE),
     ("normal", {"mean": "4", "std": 1}, TYPE),
-    ("lognormal", {"mu": 0, "sigma": 0}, RANGE),
     ("uniform", {"low": 3, "high": 3}, RANGE),
+    ("uniform", {"low": -1e308, "high": 1e308}, RANGE),
     ("uniform", {"low": 5, "high": 3}, RANGE),
     ("exponential", {"mean": 0}, RANGE),
     ("exponential", {"mean": -2.5}, RANGE),
     ("poisson", {"mean": 0}, RANGE),
     ("poisson", {"mean": 1_000_000_001}, RANGE),
-    ("beta", {"alpha": 0, "beta": 1}, RANGE),
-    ("beta", {"alpha": 1, "beta": -1}, RANGE),
     ("zipf", {"s": 0, "n": 10}, RANGE),
     ("zipf", {"s": 1, "n": 0}, RANGE),
     ("zipf", {"s": 1, "n": 1_000_001}, RANGE),
@@ -271,3 +272,13 @@ def test_schema_and_options_refuse_the_same_foreign_key(family: str) -> None:
 def test_schema_takes_min_and_max_on_every_family() -> None:
     for family in FAMILY_COLS:
         assert _schema_accepts(dist_col(family, name="c", min=0, max=1))
+
+
+def test_the_family_tables_agree() -> None:
+    """The config table, the draw builders and the integer set name the same families."""
+    from decoy_engine.config._generate_type_checks import INT_FAMILIES
+    from decoy_engine.generation.kinds import _parametric
+
+    table = set(opts.CONDITIONAL_REQUIRED["distribution"]["family"])
+    assert table == set(_parametric._FAMILIES) == set(FAMILY_COLS)
+    assert table >= INT_FAMILIES

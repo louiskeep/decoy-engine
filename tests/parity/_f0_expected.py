@@ -244,14 +244,16 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
     },
     "source_free": {
         "source_free": {
-            "schema": "2800e1c5d0a01b0be58fe6b7e8b24243315d0523fd94bcdcdac8bf3f463ca8b6",
+            "schema": "48111c9dfcfdc276b065341e1c9ac03122348d8890d2ef4579fccfffbd11437b",
             "rows": 40,
             "columns": [
                 ("country", "fd7fcb94ae747840f9cdb66640f13400b759dc453490a836f13f23f2e6aad91e"),
+                ("age", "bce8ccd284ea4595c3494b8785522a8853aa68fe22a50be99973f4fbacbcd377"),
+                ("score", "a5020b86563aacb7505087a05ee2daf3226e4ac3b0e042b0f9eb2dbdb0194053"),
                 ("visits", "d726639941f9d983f2f7da1bd5d772d3d019ccb425f038ea38f788774092ddad"),
                 ("rank", "880624c3ece553eac098fc67c4c9c7c852e68aa17295da9b10b17770c085643c"),
             ],
-            "table": "bd5e8583f6a79cfced0dc561d5ca375bc3ad08d1379ea226f4bcf983166c83bf",
+            "table": "50585e799002786ec5302ea032f35f5290da9ab8cdd3373f38f53b32ae1ceb92",
         }
     },
     "nulls": {

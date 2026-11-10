@@ -156,10 +156,14 @@ def g_source_free(t: dict[str, pa.Table]) -> None:
     types = {f.name: f.type for f in table.schema}
     assert types == {
         "country": pa.string(),
+        "age": pa.float64(),
+        "score": pa.float64(),
         "visits": pa.int64(),
         "rank": pa.int64(),
     }
     assert set(_col(t, "source_free", "country")) <= {"US", None}
+    assert all(18 <= v <= 90 for v in _col(t, "source_free", "age"))
+    assert all(0 <= v <= 1 for v in _col(t, "source_free", "score"))
     assert all(v is None or v >= 0 for v in _col(t, "source_free", "visits"))
     assert all(1 <= v <= 40 for v in _col(t, "source_free", "rank"))
 
