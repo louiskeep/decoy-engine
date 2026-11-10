@@ -27,8 +27,7 @@ Public API (the contract CLI and platform code depend on):
                       (decoy_engine.profile._csv_reader) the one CSV source
                       reader: a file read under its declared dialect (header or
                       `column_names`, delimiter), with a fail-closed width scan
-                      for headerless files. `resolve_csv_dialect(descriptor)`
-                      turns a source descriptor into the `CsvDialect`.
+                      for headerless files. `resolve_csv_dialect(descriptor)` gives `CsvDialect`.
     RELEASE_PHASE / ReleasePhase / is_pre_ga:
                       (decoy_engine.release) the single pre-GA/GA switch the rule
                       inversions and CI gates read. Pre-GA: hard-delete is allowed
@@ -136,7 +135,7 @@ from decoy_engine.execution.native._companion_status import (
     native_companion_status,
 )
 from decoy_engine.execution.out_of_core import resolve_conservative_ooc_budget_bytes
-from decoy_engine.execution.pipeline import detect_usable_cpus
+from decoy_engine.execution.pipeline import detect_usable_cpus, route_summary
 from decoy_engine.fileaccess import open_protected_dir, protected_scratch_dir
 from decoy_engine.generation import generated_table_to_pandas
 from decoy_engine.generation.composite import (
@@ -580,6 +579,7 @@ __all__ = [
     "register_secret_provider",
     "resolve_conservative_ooc_budget_bytes",
     "resolve_csv_dialect",
+    "route_summary",
     "run_config_only_checks",
     "run_discovery_sql",
     "run_mask_chunked",

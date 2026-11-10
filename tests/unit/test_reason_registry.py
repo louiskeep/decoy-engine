@@ -452,11 +452,12 @@ JOINT_CAP_FIXTURE = "reason-manifest-v1.22-gen-cond-cap.json"
 
 def test_joint_cap_codes_are_registered_with_a_pinned_fixture() -> None:
     """GEN-COND-CAP E1 (two snapshot failures, one fit warning) and GEN-CLI E1 (two generation
-    warnings), all `since` 1.22.0."""
+    warnings) and E1b (one generation warning), all `since` 1.22.0."""
     for ns, code, owner in (
         ("quality", "contingency_top_k_invalid", "DistributionSnapshotError"),
         ("quality", "contingency_top_k_kind_unsupported", "DistributionSnapshotError"),
         ("warning", "fit_joint_cells_truncated", "QualityWarning"),
+        ("warning", "generation_condition_parent_unseen", "QualityWarning"),
         ("warning", "generation_fidelity_below_threshold", "QualityWarning"),
         ("warning", "seed_ignored_with_master_key", "QualityWarning"),
     ):
@@ -469,6 +470,7 @@ def test_joint_cap_codes_are_registered_with_a_pinned_fixture() -> None:
         ("quality", "contingency_top_k_invalid"),
         ("quality", "contingency_top_k_kind_unsupported"),
         ("warning", "fit_joint_cells_truncated"),
+        ("warning", "generation_condition_parent_unseen"),
         ("warning", "generation_fidelity_below_threshold"),
         ("warning", "seed_ignored_with_master_key"),
     ]
