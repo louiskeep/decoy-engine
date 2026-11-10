@@ -114,4 +114,4 @@ Registry renumbered at merge from 1.10.0 to 1.18.0 by scripts/dev/registry_renum
   `withheld_records` in the header. `keep_paths` keeps the old copy.
 - One tag parser (`family_major`), one JSON-object parse (`json_object`) and typed header fields for the envelope,
   the export header and the job-log header; a missing, malformed or older version is refused.
-Registry renumbered at merge to 1.20.0 (1.19.0 is claimed by CONFIG-EXPLICIT E2a, #441); main was at 1.18.0.
+Registry set to 1.20.0 at merge, the next free minor after the pending E2a slice (#441); the renumber script only knows main, so this was done by hand.
