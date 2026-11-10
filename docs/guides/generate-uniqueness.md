@@ -7,8 +7,8 @@ promise that no two rows hold the same pair of parent keys. This guide covers th
 that do this, `unique` and `unique_together`, and how they interact with `pooled`.
 
 Without these options a generator draws each row on its own, so repeats are normal. A faker
-column repeats once its draws collide. A pooled faker column holds about 10,000 distinct
-values. A junction table built from two `reference` columns can repeat a pair.
+column repeats once its draws collide. A pooled faker column holds about 10,000 entries,
+often with fewer distinct values. A junction table built from two `reference` columns can repeat a pair.
 
 ## `unique: true` on a column
 
@@ -48,7 +48,7 @@ The value must be a real boolean. `unique: "true"` and `unique: 1` are refused w
 
 ### Types that refuse `unique`
 
-Any other type (`formula`, `derived`, `distribution` and the rest) refuses `unique: true` with
+Any other type (`formula`, `derived`, `statistical` and the rest) refuses `unique: true` with
 `config.generate_unique_unsupported`. Their values come from a computation or a fitted
 distribution, so the engine has no domain it can sample without replacement.
 
@@ -116,7 +116,8 @@ tables:
 
 `item_shelves` can hold up to 50 x 20 = 1,000 distinct pairs, so 600 rows fit.
 
-The rules, each refused with `config.generate_unique_conflict` when broken:
+The rules, each refused with `config.generate_unique_conflict` when broken (a member of the
+wrong type fails earlier, at schema validation):
 
 - Each entry names exactly two different columns of the same table.
 - Both columns are `type: reference`.
@@ -188,8 +189,10 @@ pooled column repeats.
 
 ## Determinism
 
-A unique column is deterministic per seed, like any generated column. The same config and seed
-give the same values.
+A unique column with the default `determinism: stable` is deterministic per seed, like any
+generated column. The same config and seed give the same values. A single unique column can
+still set `determinism: fresh`; its values then change on every run. `unique_together` refuses
+`fresh`.
 
 `unique` is left out of the column's seed fingerprint, as `pooled` is. So adding `unique: true`
 keeps the column's seed root:
