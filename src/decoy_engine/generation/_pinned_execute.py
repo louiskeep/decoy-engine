@@ -184,9 +184,24 @@ def execute_pinned(
 def _run(
     plan: PinnedPlan, seed: int, specs: dict[tuple[str, str], StatisticalSpec]
 ) -> dict[str, pa.Table]:
+    from decoy_engine.generation._numeric_typing import numeric_plan
     from decoy_engine.generation.synthesize import _generate_column
 
     by_name = {t.name: t for t in plan.tables}
+    # Pinned jobs are generation-only with no relationships, so the plan's own columns are the
+    # whole input numeric_plan reads; the same answer as the whole-table route gives the same types.
+    numeric = numeric_plan(
+        {
+            "tables": [
+                {
+                    "name": t.name,
+                    "row_count": t.row_count,
+                    "generate_columns": [json.loads(c.config_json) for c in t.columns],
+                }
+                for t in plan.tables
+            ]
+        }
+    )
     pools: dict[str, pa.Table] = {}
     for name in _order_tables(plan):
         table = by_name[name]
@@ -205,6 +220,7 @@ def _run(
                 statistical_specs=specs,
                 reference_date=plan.reference_date,
                 pinned=True,
+                numeric_type=numeric.get((name, pcol.name)),
             )
         pools[name] = arrow_table(data, table_name=name, statistical_specs=specs)
     return {name: pools[name] for name in sorted(pools)}
