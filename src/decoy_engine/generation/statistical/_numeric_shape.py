@@ -199,6 +199,12 @@ def _edges(column: object, stats: Mapping[str, Any]) -> tuple[float, float]:
     _invalid(column, "bin_edges", "needed to check the numeric shape and not usable")
 
 
+# Largest fitted row count a numeric shape may claim (about 1.1 trillion rows). Above it the
+# float slack in the grid floor check would cover whole rows and the exact-mode weights would
+# stop being float-safe, so a larger claimed mass is a hand-edited snapshot and is refused.
+_MAX_MASS = 2**40
+
+
 def _mass(column: object, stats: Mapping[str, Any]) -> int:
     """Finite row count of the column: the sum of its validated `bin_counts`."""
     raw = stats.get("bin_counts")
@@ -206,7 +212,10 @@ def _mass(column: object, stats: Mapping[str, Any]) -> int:
         _invalid(column, "bin_counts", "needed to check the numeric shape and not usable")
     if any(type(c) is not int or c < 0 for c in raw):
         _invalid(column, "bin_counts", "a count is not a non-negative integer")
-    return sum(raw)
+    total = sum(raw)
+    if total > _MAX_MASS:
+        _invalid(column, "bin_counts", f"the counts add up to more than {_MAX_MASS} rows")
+    return total
 
 
 def _check_grid_mass(column: object, probs: list[float], n: int) -> None:

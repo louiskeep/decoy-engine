@@ -133,6 +133,17 @@ def test_exact_giant_count_is_refused() -> None:
     _refused_exact({"values": [4.99, 9.99], "counts": [10**400, 1_000], "dropped_count": 0})
 
 
+def test_exact_giant_consistent_counts_are_refused() -> None:
+    # Counts that agree with bin_counts but are too large for float weights.
+    block = {"values": [4.99, 9.99], "counts": [10**400, 10], "dropped_count": 0}
+    _refused_exact(block, bin_counts=[10**400, 10])
+    huge = 2**40 + 1
+    _refused_exact(
+        {"values": [4.99, 9.99], "counts": [huge - 10, 10], "dropped_count": 0},
+        bin_counts=[huge - 10, 10],
+    )
+
+
 def test_exact_mass_mismatch_is_refused() -> None:
     _refused_exact({"values": [4.99, 9.99], "counts": [1_000, 900], "dropped_count": 0})
     _refused_exact({"values": [4.99, 9.99], "counts": [1_000, 1_000], "dropped_count": 5})

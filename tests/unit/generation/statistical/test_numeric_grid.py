@@ -221,6 +221,19 @@ def test_undersized_tail_on_a_hundred_rows_is_refused() -> None:
         load_spec({"name": "x"}, snapshot=snap)
 
 
+@pytest.mark.parametrize(
+    ("label", "mass", "tail_rows"),
+    [("mass above the cap", 2**54, 1), ("two-row tail at the cap", 2**40, 2)],
+)
+def test_huge_claimed_mass_cannot_hide_a_small_tail(label: str, mass: int, tail_rows: int) -> None:
+    snap, stats = _fit(np.random.default_rng(504).normal(50.0, 5.0, 100))
+    stats["bin_counts"] = [mass // 2, mass - mass // 2]
+    stats["quantile_grid"] = {"probs": [tail_rows / mass, 0.5], "values": [40.0, 50.0]}
+    with pytest.raises(StatisticalSpecError) as caught:
+        load_spec({"name": "x"}, snapshot=snap)
+    assert caught.value.code == _REASON_DEGENERATE
+
+
 def test_equal_neighbouring_grid_values_load() -> None:
     snap, stats = _fit(np.random.default_rng(504).normal(50.0, 5.0, 500))
     grid = stats["quantile_grid"]
