@@ -565,8 +565,9 @@ def cfg_grouped_windowed() -> dict[str, Any]:
 def cfg_source_free() -> dict[str, Any]:
     """GEN-TYPES E1: the source-free kinds, with nulls on the constant and one distribution.
 
-    The oracle hashes exact bits, so the float columns here also prove normal and uniform match
-    across arm64 and x86 (built without a fused multiply-add).
+    Shipped families only (uniform, poisson, zipf). The oracle hashes exact bits, and these three
+    were checked identical on arm64 and x86 at 2M draws; the cross-arch digest tests in
+    `tests/unit/generation/kinds` are the large-n proof, this 40-row table is not.
     """
     return config(
         [
@@ -583,9 +584,9 @@ def cfg_source_free() -> dict[str, Any]:
                     {
                         "name": "age",
                         "type": "distribution",
-                        "family": "normal",
-                        "mean": 40,
-                        "std": 10,
+                        "family": "uniform",
+                        "low": 10,
+                        "high": 100,
                         "min": 18,
                         "max": 90,
                     },

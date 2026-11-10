@@ -14,9 +14,7 @@ SEED = 7
 
 # One valid column per family: the parameters the plan's table gives, plus a name and a type.
 FAMILY_COLS: dict[str, dict[str, Any]] = {
-    "normal": {"family": "normal", "mean": 40, "std": 10},
     "uniform": {"family": "uniform", "low": 2, "high": 9.5},
-    "exponential": {"family": "exponential", "mean": 4.0},
     "poisson": {"family": "poisson", "mean": 6},
     "zipf": {"family": "zipf", "s": 1.2, "n": 50},
 }

@@ -99,7 +99,7 @@ class GenerateTypeOptions:
     optional: tuple[str, ...]
     common: tuple[str, ...]
     # selector key -> selector value -> keys that value requires, e.g.
-    # {"family": {"normal": ("mean", "std")}}. Empty for a type with no conditional rule.
+    # {"family": {"poisson": ("mean",)}}. Empty for a type with no conditional rule.
     required_when: Mapping[str, Mapping[str, tuple[str, ...]]] = field(default_factory=dict)
 
 
@@ -259,9 +259,7 @@ CONDITIONAL_REQUIRED: Mapping[str, Mapping[str, Mapping[str, tuple[str, ...]]]] 
     "reference": {"distribution": {"weighted": ("weights",)}},
     "distribution": {
         "family": {
-            "normal": ("mean", "std"),
             "uniform": ("low", "high"),
-            "exponential": ("mean",),
             "poisson": ("mean",),
             "zipf": ("s", "n"),
         }
@@ -362,7 +360,6 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
         {
             "family": OptionSpec(_family),
             "mean": OptionSpec(mean_value),
-            "std": _P,
             "low": _N,
             "high": OptionSpec(high_bound),
             "s": _P,

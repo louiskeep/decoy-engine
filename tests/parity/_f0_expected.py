@@ -248,12 +248,12 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "rows": 40,
             "columns": [
                 ("country", "fd7fcb94ae747840f9cdb66640f13400b759dc453490a836f13f23f2e6aad91e"),
-                ("age", "bce8ccd284ea4595c3494b8785522a8853aa68fe22a50be99973f4fbacbcd377"),
+                ("age", "6684419c1cfb7568b630f9b083e345a9f8f86ac215e48f9ad728cf36b02521c9"),
                 ("score", "a5020b86563aacb7505087a05ee2daf3226e4ac3b0e042b0f9eb2dbdb0194053"),
                 ("visits", "d726639941f9d983f2f7da1bd5d772d3d019ccb425f038ea38f788774092ddad"),
                 ("rank", "880624c3ece553eac098fc67c4c9c7c852e68aa17295da9b10b17770c085643c"),
             ],
-            "table": "50585e799002786ec5302ea032f35f5290da9ab8cdd3373f38f53b32ae1ceb92",
+            "table": "69ff8f39c02ee733acf8d93185e336e3a3ac6595c4d753ef513c39a4a2a4eea7",
         }
     },
     "nulls": {

@@ -18,15 +18,15 @@ GEN_KIND_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="gen.distribution",
         family="numpy_pcg64",
-        call_site="generation/kinds/_parametric.py:102",
+        call_site="generation/kinds/_parametric.py:93",
         entropy_root="job_seed",
         seed_derivation=(
             'np.random.default_rng(GenDeriveContext.for_column(derive_key, col, seed).base_int("dist"))'
         ),
-        api_operation="numpy.random.default_rng(col_seed).standard_normal / .random / .exponential / .poisson",
+        api_operation="numpy.random.default_rng(col_seed).random / .poisson",
         call_shape=(
             "draws = rng.<family>(*params, size)  # one persistent Generator, size draws per batch; "
-            "normal: standard_normal * std + mean and uniform: random * (high - low) + low, as separate ufuncs (no FMA); "
+            "uniform: random * (high - low) + low as separate ufuncs (no FMA); "
             "zipf: searchsorted(cdf, rng.random(size)) + 1; optional np.clip(draws, min, max)"
         ),
         consumes_variable_draws=False,

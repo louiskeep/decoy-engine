@@ -4,8 +4,8 @@ Two new generate column types need no source file.
 
 `type: constant` with `value:` gives every row that value (a string, integer, float or bool).
 
-`type: distribution` with `family:` draws from a named family: `normal` (`mean`, `std`), `uniform`
-(`low`, `high`), `exponential` (`mean`), `poisson` (`mean`) or `zipf` (`s`, `n`, ranks 1 to `n`). Each family takes exactly its own keys and
+`type: distribution` with `family:` draws from a named family: `uniform`
+(`low`, `high`), `poisson` (`mean`) or `zipf` (`s`, `n`, ranks 1 to `n`). Each family takes exactly its own keys and
 refuses any other. Optional `min` and `max` clip the draw. Output depends only on the seed and the
 column, and is the same on the resident, streamed and pinned routes. Both types accept
 `null_probability`.

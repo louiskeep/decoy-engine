@@ -103,53 +103,8 @@ def test_the_zipf_cdf_is_built_once_per_stream(monkeypatch: pytest.MonkeyPatch) 
 
 # AT-4 ---------------------------------------------------------------------------------
 
-# Seed 7, 20 rows, column `x` of table `t`, under the locked numpy (2.2.6 / 2.4.6 / 2.5.0 draw
-# the same stream for these Generator methods; a band that disagrees re-pins here).
+# Seed 7, 20 rows, column `x` of table `t`, under the locked numpy (a band whose stream disagrees re-pins here).
 GOLDEN: dict[str, list[float | int]] = {
-    "exponential": [
-        0.33979969678376387,
-        5.590492802920133,
-        2.4089051496636604,
-        9.17112392169855,
-        1.6512816127211,
-        2.483976691966289,
-        6.912112944601712,
-        1.1870903537395148,
-        2.5083303741392795,
-        2.4069761066586857,
-        5.743238667860252,
-        0.7160765490933844,
-        11.322073414138796,
-        0.36063128751369683,
-        1.0864584070459773,
-        0.35154729498451365,
-        0.761609977083995,
-        1.174624128278722,
-        5.0778680648710885,
-        8.643029453192048,
-    ],
-    "normal": [
-        39.882619505394786,
-        34.95297029329993,
-        36.15063513834665,
-        48.45480563071052,
-        45.960228224754026,
-        53.70827920036719,
-        41.29864220779061,
-        45.08674751100239,
-        64.23002736699033,
-        32.18780571992148,
-        33.40582696148776,
-        53.70088361046868,
-        26.575454441144398,
-        43.96053665426797,
-        47.0877043097598,
-        37.6230669165137,
-        34.670409699027964,
-        47.926262722303356,
-        44.45763500577173,
-        41.128419088440154,
-    ],
     "poisson": [10, 4, 6, 7, 5, 6, 1, 8, 4, 8, 7, 5, 12, 6, 6, 5, 6, 7, 11, 5],
     "uniform": [
         8.264155134401758,
@@ -206,12 +161,12 @@ def test_constant_golden_and_types() -> None:
 
 
 def test_distribution_arrow_types() -> None:
-    out = generate(one(dist_col("normal", name="a"), rows=4))["t"]
+    out = generate(one(dist_col("uniform", name="a"), rows=4))["t"]
     assert out.schema.field("a").type == pa.float64()
     out = generate(cfg([table("t", 4, [dist_col("poisson", name="p")])]))["t"]
     assert out.schema.field("p").type == pa.int64()
     # An all-null column keeps its declared type rather than inferring `null`.
-    out = generate(one(dist_col("normal", null_probability=1.0), rows=4))["t"]
+    out = generate(one(dist_col("uniform", null_probability=1.0), rows=4))["t"]
     assert out.schema.field("x").type == pa.float64()
     assert out.column("x").to_pylist() == [None] * 4
 
@@ -224,15 +179,15 @@ def test_constant_with_nulls_and_no_draw() -> None:
 
 
 def test_a_column_does_not_move_when_a_sibling_is_added() -> None:
-    alone = values(one(dist_col("normal"), rows=50))
+    alone = values(one(dist_col("uniform"), rows=50))
     both = values(
-        cfg([table("t", 50, [{"name": "k", "type": "constant", "value": 1}, dist_col("normal")])])
+        cfg([table("t", 50, [{"name": "k", "type": "constant", "value": 1}, dist_col("uniform")])])
     )
     assert alone == both
 
 
 def test_two_columns_with_equal_parameters_differ() -> None:
-    out = generate(cfg([table("t", 30, [dist_col("normal", "a"), dist_col("normal", "b")])]))["t"]
+    out = generate(cfg([table("t", 30, [dist_col("uniform", "a"), dist_col("uniform", "b")])]))["t"]
     assert out.column("a").to_pylist() != out.column("b").to_pylist()
 
 
@@ -254,7 +209,7 @@ def _pinned(config: dict[str, Any]) -> dict[str, pa.Table]:
 
 COLUMNS: list[tuple[str, dict[str, Any]]] = [
     *((f, dist_col(f, null_probability=0.25)) for f in FAMILIES),
-    ("clip", dist_col("normal", min=35, max=45)),
+    ("clip", dist_col("uniform", min=4, max=6)),
     ("const_str", {"name": "x", "type": "constant", "value": "US", "null_probability": 0.25}),
     ("const_int", {"name": "x", "type": "constant", "value": 4}),
 ]
@@ -275,7 +230,7 @@ def _prepared(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_the_plan_is_eligible_for_the_stream_core() -> None:
-    adm = classify_plan(_prepared(one(dist_col("normal"))))
+    adm = classify_plan(_prepared(one(dist_col("uniform"))))
     assert adm.eligible, adm.reason()
     adm = classify_plan(_prepared(one({"name": "x", "type": "constant", "value": 1})))
     assert adm.eligible, adm.reason()
@@ -302,12 +257,8 @@ def _zipf_pmf(s: float, n: int) -> np.ndarray:
 
 def _analytic(family: str) -> tuple[float, float]:
     c = FAMILY_COLS[family]
-    if family == "normal":
-        return c["mean"], c["std"] ** 2
     if family == "uniform":
         return (c["low"] + c["high"]) / 2, (c["high"] - c["low"]) ** 2 / 12
-    if family == "exponential":
-        return c["mean"], c["mean"] ** 2
     if family == "poisson":
         return c["mean"], c["mean"]
     pmf = _zipf_pmf(c["s"], c["n"])
@@ -344,10 +295,10 @@ def test_clip_holds_min_and_max_exactly(family: str) -> None:
 
 
 def test_clip_with_one_bound() -> None:
-    low_only = _stream(dist_col("normal", min=40)).next_batch(0, 5000)
-    assert min(low_only) == 40
-    high_only = _stream(dist_col("normal", max=40)).next_batch(0, 5000)
-    assert max(high_only) == 40
+    low_only = _stream(dist_col("uniform", min=5)).next_batch(0, 5000)
+    assert min(low_only) == 5
+    high_only = _stream(dist_col("uniform", max=5)).next_batch(0, 5000)
+    assert max(high_only) == 5
 
 
 # AT-19 --------------------------------------------------------------------------------
@@ -375,17 +326,18 @@ def test_generate_tables_is_the_public_entry() -> None:
 
 
 # Cross-arch bytes ------------------------------------------------------------------------
-# The same digests were observed on arm64 (macOS) and x86 (Linux) under numpy 2.2.6. normal and
-# uniform are built from standard_normal and random with separate multiply and add ufuncs,
-# because arm64 fuses `loc + scale * x` into an FMA and rounds differently. A change here that
-# moves a digest on one architecture breaks the byte-identical promise in docs/determinism.md.
+# Digest of the raw float64 bits of 2,000,000 draws, observed identical on arm64 (macOS) and x86
+# (Linux) under numpy 2.2.6. The count matters: numpy's normal and exponential tails call platform
+# libm and differ by one ulp only at rare rows (the first around row 267,000 of 2M), so a small pin
+# looks stable and is not. Those families are deferred (plan: Deferred to E1b). uniform is built
+# from random() with separate multiply and add ufuncs because arm64 fuses `low + width * x` into
+# an FMA. A change that moves a digest on one architecture breaks docs/determinism.md.
 
+_BIT_ROWS = 2_000_000
 _BIT_DIGESTS = {
-    "exponential": ("ed4ad83d00910fface2fd5264ed8f86394182d85c99f7ea43eca74ff0abd7389", 5000),
-    "normal": ("b00ccdc0e91e815c555aa1e34ca667d6c352832d35c979d2310b44a72bb9284f", 5000),
-    "poisson": ("a72426a6d49c11fd3e23626645886c7b3b91f4dbfe405e6602b08f1592909157", 5000),
-    "uniform": ("49b31ab33606b47bab82946979c031ca3edd1ca6ee4aca47829578d5c600be80", 5000),
-    "zipf": ("2e0db534951ba9bfb17de45f8cbf61aebcfe25c3885875b78cfd4e7540dea741", 100_000),
+    "poisson": "1d6becbcdc7420dcaf4fd0338cfedcd212b9cc52f976501933549e30075961e7",
+    "uniform": "004f9f6941cbc6d91ce04f96f5714435a369fbbb12cf64e72bb6cf1d7590a085",
+    "zipf": "125ecd7e0c7a032edf7023d52391c6cece3778511542ef795fe51d158d60486c",
 }
 _CDF_DIGESTS = {
     (1.2, 50): "6288863be0e8f1524f24f00ced55ec7bea3fb63ad8ac740bcaaa8552e81196cd",
@@ -402,12 +354,10 @@ def test_every_shipped_family_has_a_pinned_bit_digest() -> None:
 @pytest.mark.parametrize("family", FAMILIES)
 def test_draw_bits_are_identical_on_every_architecture(family: str) -> None:
     import hashlib
-    import struct
 
-    digest, rows = _BIT_DIGESTS[family]
-    draws = _stream(dist_col(family)).next_batch(0, rows)
-    packed = b"".join(struct.pack("<d", float(v)) for v in draws)
-    assert hashlib.sha256(packed).hexdigest() == digest
+    draws = _stream(dist_col(family)).next_batch(0, _BIT_ROWS)
+    bits = np.asarray(draws, dtype=np.float64).tobytes()
+    assert hashlib.sha256(bits).hexdigest() == _BIT_DIGESTS[family]
 
 
 @pytest.mark.parametrize(("s", "n"), sorted(_CDF_DIGESTS))

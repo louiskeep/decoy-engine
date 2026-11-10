@@ -11,6 +11,10 @@ and n - k concatenate to the one draw of n. That makes the stream prefix-stable:
 rows `[offset, offset + size)` does not depend on how the rows are split into batches. The bounded
 Zipf draws one `random()` per row through the same Generator and maps it by inverse CDF.
 
+Only families whose draws are bit-identical on arm64 and x86 ship (uniform, poisson, zipf).
+Normal, exponential, lognormal and beta call platform libm in numpy's tail and gamma sampling
+and differ in the last bit; they wait for a portable implementation (plan: Deferred to E1b).
+
 `min` and `max` clip with `numpy.clip` after the draw (one draw per row, so prefix stability
 holds). A truncated distribution by resampling would break it and is not offered.
 """
@@ -36,23 +40,12 @@ def zipf_cdf(s: float, n: int) -> np.ndarray[Any, Any]:
     return np.asarray(cumulative / cumulative[-1])
 
 
-def _normal(col: dict[str, Any]) -> _Draw:
-    mean, std = float(col["mean"]), float(col["std"])
-    # Two separate ufuncs, never `rng.normal(mean, std)`: arm64 fuses loc + scale * x into an FMA
-    # and rounds differently from x86. standard_normal itself is identical on both.
-    return lambda rng, size: np.add(np.multiply(rng.standard_normal(size), std), mean)
-
-
 def _uniform(col: dict[str, Any]) -> _Draw:
     low, high = float(col["low"]), float(col["high"])
     width = high - low
-    # Same reason as _normal: no fused multiply-add.
+    # Two separate ufuncs, never `rng.uniform(low, high)`: arm64 fuses low + width * x into an FMA
+    # and rounds differently from x86. rng.random itself has no libm call and matches on both.
     return lambda rng, size: np.add(np.multiply(rng.random(size), width), low)
-
-
-def _exponential(col: dict[str, Any]) -> _Draw:
-    mean = float(col["mean"])
-    return lambda rng, size: rng.exponential(mean, size)
 
 
 def _poisson(col: dict[str, Any]) -> _Draw:
@@ -73,9 +66,7 @@ def _zipf(col: dict[str, Any]) -> _Draw:
 
 # Family -> draw builder. The keys each family takes are `CONDITIONAL_REQUIRED["distribution"]`.
 _FAMILIES: dict[str, Callable[[dict[str, Any]], _Draw]] = {
-    "normal": _normal,
     "uniform": _uniform,
-    "exponential": _exponential,
     "poisson": _poisson,
     "zipf": _zipf,
 }

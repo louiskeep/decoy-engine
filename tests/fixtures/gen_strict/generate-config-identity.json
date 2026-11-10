@@ -748,13 +748,13 @@
        "value": "US"
       },
       {
-       "family": "normal",
+       "family": "uniform",
+       "high": 100,
+       "low": 10,
        "max": 90,
-       "mean": 40,
        "min": 18,
        "name": "ds",
        "pooled": null,
-       "std": 10,
        "type": "distribution"
       }
      ],
@@ -822,7 +822,7 @@
    "t1.cat": "dd09ba4d8ad8d8744352a6f3fa246a91a17b7f4c3598685a7febbcc485b8148c",
    "t1.cn": "5474f20182b631dc224f7bab649d0688a8262ff779f8430fa2bb979dea770f8d",
    "t1.dr": "7d7665aefeec47743ab195681002d6b1cdddf1d85cbd177a8fac7a3b05f13f9e",
-   "t1.ds": "033393fd481715a040e56662c18e1539921d77c9b64163a0f65ea82187734d8f",
+   "t1.ds": "ae8a2133d95c8948ea5c7c1088c70913192211b34aac6f13bb271100c3485d5c",
    "t1.dt": "a9e4a7f2651059ed09ecafe171f7bc793b5edbd49111a4017546833e6d08f792",
    "t1.fk1": "793694a106ffd47d49875ac330603fb82c52dbbc45123b7bf7388cb2e1157934",
    "t1.fk2": "396a040c18f302f188da609f7d5f32996a18b42b7873c6ccb87d0f4ad4cfcdf4",
@@ -960,9 +960,9 @@
       {
        "name": "ds",
        "type": "distribution",
-       "family": "normal",
-       "mean": 40,
-       "std": 10,
+       "family": "uniform",
+       "low": 10,
+       "high": 100,
        "min": 18,
        "max": 90
       }

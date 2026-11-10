@@ -69,11 +69,8 @@ def positive(value: Any, extras: Mapping[str, Any]) -> list[Problem]:
 
 
 def mean_value(value: Any, extras: Mapping[str, Any]) -> list[Problem]:
-    """`mean` by family: any finite value for normal, positive for exponential, a bounded rate
-    for poisson. An unknown family is reported on `family` itself, so only the type shows here."""
+    """`mean` of a poisson column: a positive, bounded rate. An unknown family is reported on `family` itself, so only the type shows here."""
     family = extras.get("family")
-    if family == "exponential":
-        return positive(value, extras)
     if family == "poisson":
         if problems := positive(value, extras):
             return problems

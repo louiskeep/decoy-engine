@@ -125,7 +125,7 @@ def cfg_distribution() -> dict[str, Any]:
                 "t",
                 40,
                 [
-                    {"name": "x", "type": "distribution", "family": "normal", "mean": 5, "std": 2},
+                    {"name": "x", "type": "distribution", "family": "uniform", "low": 1, "high": 9},
                     {
                         "name": "x_m",
                         "type": "distribution",
