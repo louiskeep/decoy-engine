@@ -343,7 +343,6 @@ def check_statistical_columns(
         if not isinstance(table_entry, dict):
             continue
         table_name = table_entry.get("name", "?")
-        seen: list[str] = []
         for col_entry in table_entry.get("generate_columns", []) or []:
             if not isinstance(col_entry, dict):
                 continue
@@ -387,19 +386,8 @@ def check_statistical_columns(
                         path=f"tables.{table_name}.generate_columns.{col_name}",
                         message=exc.message,
                     ) from exc
-                if spec.condition_on is not None and spec.condition_on not in seen:
-                    raise PlanCompileError(
-                        code=reasons.plan.STATISTICAL_CONDITION_COLUMN_UNAVAILABLE,
-                        path=f"tables.{table_name}.generate_columns.{col_name}.condition_on",
-                        message=(
-                            f"statistical column {col_name!r} conditions on "
-                            f"{spec.condition_on!r}, which is not declared earlier in "
-                            f"table {table_name!r}'s generate_columns. Sequential "
-                            f"conditional sampling needs the parent first."
-                        ),
-                    )
+                # condition_on ordering is checked by plan/checks/_generate_columns.py.
                 column_specs.append((table_name, col_name, snapshot_file, spec_to_dict(spec)))
-            seen.append(str(col_name))
     return column_specs
 
 

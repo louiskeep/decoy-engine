@@ -24,6 +24,11 @@ PINNED = {
         "config_json": "c82643e094caf6665bf2a292cda6561eb89766a1292e244a818c86ce2b45f074",
         "fingerprints": "d25f1cc532c7beae91e731d26bcb92d754e62641192ee872bd4097a74a458fdd",
     },
+    "all_basic_types_unlisted_formula": {
+        "cells": "1f5c4a2f626e7917e8ba2b4978ccac968c7f9234076364d40a9cfe74ef975cca",
+        "config_json": "1a7a3630c78e0ea1f924f26b6d12248be77aada420e34bc1eccfe9f42f823351",
+        "fingerprints": "42e2831b6ec3f309cba7df47c4a6d7e38bec722d64da7aa09d9408059ac6c72e",
+    },
     "pooled_and_opted_out": {
         "cells": "090b25b7223a2c086173164bfa22ed505f9e3fe5ee3f33626c7486273a672a4e",
         "config_json": "112f0e19dfdb6c968665c45966d171e4ef2014fcbd1b4a6195006f5ebb7e5994",
@@ -47,6 +52,7 @@ def test_pins_cover_the_whole_corpus():
 
 
 @pytest.mark.golden
+@pytest.mark.usefixtures("lenient_generate_checks")
 @pytest.mark.parametrize("name", sorted(PINNED))
 def test_cells_plan_and_fingerprints_are_unchanged(name):
     got = digests(name)

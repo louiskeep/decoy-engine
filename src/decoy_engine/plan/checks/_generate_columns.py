@@ -305,10 +305,12 @@ def _referenced(kind: str | None, value: Any) -> frozenset[str]:
 
 
 def _check_forward_references(table: str, cols: list[dict[str, Any]], index: int) -> None:
-    """A column read before it is generated: only for keys whose run fails on it today.
+    """A column the registry marks as a reference must be generated earlier in the table.
 
-    Other keys that name a later column (an aggregate's source, a series' group) run with a
-    placeholder, so refusing them would break a config that validates today.
+    A generate table holds only generate columns, so any name not among the earlier ones is
+    missing or declared later. The generators read siblings in declared order, so a later or
+    missing name gives nulls, an empty aggregate, one group or a crash, never the intended value.
+    This is the single owner of that rule, including `statistical.condition_on`.
     """
     from decoy_engine.config._generate_options import GENERATE_OPTIONS
 
@@ -316,11 +318,9 @@ def _check_forward_references(table: str, cols: list[dict[str, Any]], index: int
     spec = GENERATE_OPTIONS.get(str(col.get("type")))
     if spec is None:
         return
-    names = [c["name"] for c in cols]
-    earlier, later = set(names[:index]), set(names[index:])
+    earlier = {c["name"] for c in cols[:index]}
     for key, option in spec.keys.items():
-        refs = _referenced(option.ref_kind, col.get(key))
-        if any(r in later and r not in earlier for r in refs):
+        if any(r not in earlier for r in _referenced(option.ref_kind, col.get(key))):
             raise _refusal(reasons.plan.GENERATE_COLUMN_FORWARD_REFERENCE, table, col["name"], key)
 
 

@@ -292,6 +292,88 @@ def test_mask_only_config_keeps_its_ref_refusal_value_free() -> None:
     assert "canary_7731_missing" not in str(exc) and exc.__context__ is None
 
 
+# ---- every key that names a sibling column ---------------------------------------------------
+
+REF_KEYS = {
+    "derived_aggregate.column": (
+        lambda r: {"name": "x", "type": "derived_aggregate", "op": "sum", "column": r},
+        "derived_aggregate_missing_column_ref",
+        "column",
+    ),
+    "grouped_series.group_by": (
+        lambda r: {"name": "x", "type": "grouped_series", "group_by": r, "order_by": "o"},
+        "grouped_series_missing_group_by_ref",
+        "group_by",
+    ),
+    "grouped_series.order_by": (
+        lambda r: {"name": "x", "type": "grouped_series", "group_by": "o", "order_by": r},
+        "grouped_series_missing_order_by_ref",
+        "order_by",
+    ),
+    "windowed_date.anchor": (
+        lambda r: {"name": "x", "type": "windowed_date", "anchor": r, "max_days": 3},
+        "windowed_date_missing_anchor_ref",
+        "anchor",
+    ),
+    "group_key.group_by": (
+        lambda r: {"name": "x", "type": "group_key", "group_by": r},
+        "group_key_missing_group_by_ref",
+        "group_by",
+    ),
+    "derived.expression": (
+        lambda r: derived(f"{r} + 1"),
+        "derived_missing_column_ref",
+        "expression",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(REF_KEYS))
+def test_reference_key_earlier_accepted_later_and_missing_refused(name: str) -> None:
+    build, missing_code, key = REF_KEYS[name]
+    assert_accepted(cfg([seq("o"), seq("p"), build("p")]))
+    assert_refused(
+        cfg([seq("o"), build("p"), seq("p")]), "generate_column_forward_reference", p("x", key)
+    )
+    assert_refused(cfg([seq("o"), build("ghost")]), missing_code, p("x", key))
+
+
+def _conditioned_snapshot(tmp_path: Any) -> str:
+    import json
+
+    import pandas as pd
+
+    from decoy_engine.quality.snapshot import compute_distribution_snapshot
+
+    df = pd.DataFrame({"state": ["CA", "NY"] * 60, "tier": ["gold", "silver"] * 60})
+    path = tmp_path / "snap.json"
+    snap = compute_distribution_snapshot(df, joint_columns=[("state", "tier")])
+    path.write_text(json.dumps(snap), encoding="utf-8")
+    return str(path)
+
+
+def test_statistical_condition_on_must_name_an_earlier_column(tmp_path: Any) -> None:
+    snap = _conditioned_snapshot(tmp_path)
+
+    def stat(name: str, **extra: Any) -> dict[str, Any]:
+        return {
+            "name": name,
+            "type": "statistical",
+            "snapshot_file": snap,
+            "allow_real_categories": True,
+            **extra,
+        }
+
+    assert_accepted(cfg([stat("state"), stat("tier", condition_on="state")]))
+    code = "generate_column_forward_reference"
+    assert_refused(
+        cfg([stat("tier", condition_on="state"), stat("state")]), code, p("tier", "condition_on")
+    )
+    # A name the snapshot has no joint for is refused first by the snapshot check, at the column.
+    exc = refusal(cfg([stat("tier", condition_on="ghost")]), run_config_only_checks)
+    assert (exc.code, exc.path) == ("statistical_joint_missing", p("tier"))
+
+
 # ---- formulas ---------------------------------------------------------------------------------
 
 
@@ -429,12 +511,22 @@ def test_h4_repro_is_refused_before_generation_starts(
     assert started == []
 
 
+# What the run raises on its own for each repro when the plan check is bypassed.
+RUN_FAILURE = {
+    "mixed_categories": (("ArrowInvalid", "ArrowTypeError"), None),
+    "group_by_equals_order_by": (("PlanCompileError",), "grouped_series_group_by_equals_order_by"),
+    "derived_forward_reference": (("ValueError",), None),
+}
+
+
 @pytest.mark.parametrize("name", sorted(H4_REPROS))
 def test_h4_repro_is_real_when_the_check_is_bypassed(
     name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cols, _ = H4_REPROS[name]
     monkeypatch.setattr("decoy_engine.plan._compile.check_generate_columns", lambda *a, **k: None)
+    names, code = RUN_FAILURE[name]
     with pytest.raises(Exception) as info:
         synthesize.generate_tables(_compile(cfg(cols)))
-    assert not isinstance(info.value, PlanCompileError) or info.value.code != "never"
+    assert type(info.value).__name__ in names
+    assert getattr(info.value, "code", None) == code

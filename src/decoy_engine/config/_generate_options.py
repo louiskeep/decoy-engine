@@ -56,9 +56,10 @@ _OK: list[Problem] = []
 class OptionSpec:
     """One option: a static check and whether the value names sibling columns.
 
-    ``ref_kind`` is ``None``, ``column``, ``column_list`` or ``expression``. It is set only for a
-    key whose forward reference fails at run today (a column read before it is generated); the
-    plan check refuses those. A later column named by any other key runs, so it stays accepted.
+    ``ref_kind`` is ``None``, ``column``, ``column_list`` or ``expression``. A key that names a
+    sibling column carries it, and the plan check refuses a name not generated earlier: a column
+    read before it exists is a null, an empty aggregate or a single group, never the value the
+    config meant.
     """
 
     check: Check | None = None
@@ -289,12 +290,12 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
         required=("expression",),
     ),
     "derived_aggregate": TypeOptions(
-        {"op": _S, "column": _S},
+        {"op": _S, "column": OptionSpec(_str, ref_kind="column")},
     ),
     "grouped_series": TypeOptions(
         {
-            "group_by": _S,
-            "order_by": _S,
+            "group_by": OptionSpec(_str, ref_kind="column"),
+            "order_by": OptionSpec(_str, ref_kind="column"),
             "generator": _S,
             "step": _I,
             "max_step": _I,
@@ -304,7 +305,7 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
     ),
     "windowed_date": TypeOptions(
         {
-            "anchor": _S,
+            "anchor": OptionSpec(_str, ref_kind="column"),
             "max_days": _I,
             "min_days": _I,
             "distribution": _S,
@@ -312,7 +313,7 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
         required=("anchor", "max_days"),
     ),
     "group_key": TypeOptions(
-        {"group_by": _S, "length": _I, "prefix": _S},
+        {"group_by": OptionSpec(_str, ref_kind="column"), "length": _I, "prefix": _S},
         required=("group_by",),
     ),
 }
