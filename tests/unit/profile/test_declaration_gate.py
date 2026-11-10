@@ -218,6 +218,30 @@ def test_a_loader_needs_its_schemas_and_the_reverse(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("schemas", "refusal"),
+    [
+        ({}, ValueError),
+        ({"other": pa.schema([("id", pa.string())])}, PipelineValidationError),
+    ],
+)
+def test_a_loader_table_without_a_schema_is_refused_before_the_loader_runs(
+    schemas: dict[str, pa.Schema], refusal: type[Exception], tmp_path: Path
+) -> None:
+    narrow = _write(tmp_path, "narrow", ["id"])
+    config = _config({"t": _csv(narrow)}, {"t": ["id"]}, tmp_path)
+    loader = Loader(_table("id", "zz_secret"))
+    with pytest.raises(refusal):
+        run_pipeline(
+            config,
+            engine_version="e2c-test",
+            execution_mode="full_frame",
+            source_loader=loader,
+            source_loader_schemas=schemas,
+        )
+    assert loader.calls == 0
+
+
 # AT-E2c-3 -----------------------------------------------------------------------------------
 
 

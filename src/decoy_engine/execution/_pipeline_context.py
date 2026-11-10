@@ -349,7 +349,8 @@ def build_run_context(
     schemas = {n: s.schema for n, s in caller_sources.items()}
     request = DeclarationRequest.for_run(config, schemas, source_loader_schemas)
     declared = prepare_declared_sources(request)
-    source_loader = declared.checked_loader(source_loader) if source_loader else None
+    if source_loader is not None and source_loader_schemas is not None:
+        source_loader = declared.checked_loader(source_loader, source_loader_schemas)
 
     # Duplicate field names are refused after the config-only admission and before profiling,
     # routing and every pandas conversion: each looks columns up by name and would fail uncoded.

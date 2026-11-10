@@ -306,13 +306,21 @@ def test_prepared_capability(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert next(chunks).column_names == ["id", "email"]
     with pytest.raises(PipelineValidationError):
         next(chunks)
-    loader = prepared.checked_loader(
-        lambda name: _chunk("id", "zz") if name == "bad" else _chunk("id")
-    )
+    served: list[str] = []
+
+    def raw(name: str) -> pa.Table:
+        served.append(name)
+        return _chunk("id", "zz") if name == "bad" else _chunk("id")
+
+    loader = prepared.checked_loader(raw, ("t", "bad"))
     assert loader("t").column_names == ["id"]
     with pytest.raises(PipelineValidationError):
         loader("bad")
     assert len(calls) == 5
+    # A table with no declared schema is refused before the loader runs.
+    with pytest.raises(ValueError, match="no entry in source_loader_schemas"):
+        loader("other")
+    assert served == ["t", "bad"]
 
 
 def test_request_shapes_keep_duplicates_separate(tmp_path: Path) -> None:

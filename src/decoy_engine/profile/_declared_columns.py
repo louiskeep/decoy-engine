@@ -268,10 +268,22 @@ class PreparedDeclaredSources:
         self.check_names(table, arrow_columns(chunk.schema))
         return chunk
 
-    def checked_loader(self, loader: Callable[[str], Any]) -> Callable[[str], Any]:
-        """`loader` wrapped so each table it returns is checked before the caller sees it."""
+    def checked_loader(
+        self, loader: Callable[[str], Any], served: Iterable[str]
+    ) -> Callable[[str], Any]:
+        """`loader` wrapped so each table it returns is checked before the caller sees it.
+
+        `served` names the tables with a declared schema; any other table is refused before the
+        loader runs, so an empty or partial schema map cannot let a loader read first.
+        """
+        declared_tables = frozenset(served)
 
         def load(name: str) -> Any:
+            if name not in declared_tables:
+                raise ValueError(
+                    "run_pipeline: the source_loader was asked for a table with no entry in "
+                    "source_loader_schemas."
+                )
             loaded = loader(name)
             self.check_names(name, arrow_columns(loaded.schema))
             return loaded
