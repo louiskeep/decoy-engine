@@ -25,13 +25,14 @@ from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import ExecutionResult, run_pipeline
 from decoy_engine.execution._pipeline_routing import _sequential_eligible, decide_execution_route
 from decoy_engine.relationships import RelationshipGraph
+from tests._declared_schema import declare_rest
 
 _ENGINE_VERSION = "a1-post-validation-test"
 
 
 def _validated(raw: dict[str, Any]) -> dict[str, Any]:
     """The run_pipeline contract: caller pre-validates, engine consumes the dump."""
-    return PipelineConfig.model_validate(raw).model_dump()
+    return PipelineConfig.model_validate(declare_rest(raw)).model_dump()
 
 
 def _single_mask_config(
@@ -654,6 +655,7 @@ class TestLoaderBackedFullFrame:
             sources={},  # lazy path: nothing resident up front
             engine_version=_ENGINE_VERSION,
             source_loader=loader,
+            source_loader_schemas={n: t.schema for n, t in src.items()},
             post_validation=True,
             use_byte_estimate_routing=False,  # rollback path: row-count routing
         )

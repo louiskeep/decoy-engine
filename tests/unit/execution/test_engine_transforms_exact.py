@@ -478,9 +478,13 @@ class TestExactViewShapes:
         plain = _run(plain_cfg, tbl)
         neutral = _run(neutral_cfg, tbl)
         tables_equal(neutral.outputs["t"], plain.outputs["t"])
-        assert len(seen) == 2
-        assert seen[0] == seen[1], "adapter-visible dtypes must match the no-transform run"
-        assert list(seen[0]) == list(seen[1])
+        # One dispatch per declared column in each run; the two runs must see the same frames.
+        nodes = len(plain_cfg["tables"][0]["columns"])
+        assert len(seen) == 2 * nodes
+        assert seen[:nodes] == seen[nodes:], (
+            "adapter-visible dtypes must match the no-transform run"
+        )
+        assert [list(f) for f in seen[:nodes]] == [list(f) for f in seen[nodes:]]
 
     def test_boundary_arithmetic_agrees_with_the_bare_pandas_view(self, shape):
         tbl = _exact_view_tables()[shape]

@@ -22,6 +22,7 @@ from decoy_engine.execution import (
     run_pipeline,
     run_pipeline_isolated,
 )
+from tests._declared_schema import declare_rest
 from tests.unit.execution import _auto_chunk_support as support
 from tests.unit.execution import _b6a_support as b6a
 from tests.unit.execution import _multi_table_support as mt
@@ -233,19 +234,21 @@ def _worker_job(tmp_path: Path) -> tuple[dict[str, Any], pa.Table]:
 
 
 def _payload(cfg: dict[str, Any], tmp_path: Path, name: str, **kwargs: Any) -> dict[str, Any]:
-    return {
-        "config": cfg,
-        "sources": {"t": cfg["sources"]["t"]["path"]},
-        "kwargs": {
-            "engine_version": "b6a-worker",
-            "auto_chunk_threshold_rows": 1_000,
-            "chunk_size_rows": 50_000,
-            **kwargs,
-        },
-        "mem_cap_bytes": None,
-        "rlimit_kind": "data",
-        "staging_output_dir": str(tmp_path / name),
-    }
+    return declare_rest(
+        {
+            "config": cfg,
+            "sources": {"t": cfg["sources"]["t"]["path"]},
+            "kwargs": {
+                "engine_version": "b6a-worker",
+                "auto_chunk_threshold_rows": 1_000,
+                "chunk_size_rows": 50_000,
+                **kwargs,
+            },
+            "mem_cap_bytes": None,
+            "rlimit_kind": "data",
+            "staging_output_dir": str(tmp_path / name),
+        }
+    )
 
 
 def test_the_isolated_worker_streams_a_routed_job_and_matches_the_resident_bytes(

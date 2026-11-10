@@ -20,6 +20,7 @@ from decoy_engine.execution import ExecutionError
 from decoy_engine.execution import _pipeline_route_dispatch as dispatch
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.plan._compile import _hash_config
+from tests._declared_schema import declare_rest
 
 _AGE = ["10", "20", "30", "40", "50", "badX"]
 _IDS = ["p0", "p1", "p2", "p3", "p4", "p5"]
@@ -44,7 +45,7 @@ def _single_config(tmp_path: Path, declared: str) -> tuple[dict[str, Any], dict[
         "validators": [{"name": "luhn", "columns": {"t": ["cc"]}}],
         "quarantine": {"enabled": True, "output_path": declared, "triggers": ["validation_fail"]},
     }
-    return config, {"t": pq.read_table(src)}
+    return declare_rest(config), {"t": pq.read_table(src)}
 
 
 def _fk_config(tmp_path: Path, declared: str) -> tuple[dict[str, Any], dict[str, pa.Table]]:
@@ -99,7 +100,7 @@ def _fk_config(tmp_path: Path, declared: str) -> tuple[dict[str, Any], dict[str,
         ],
         "quarantine": {"enabled": True, "output_path": declared, "triggers": ["format_error"]},
     }
-    return config, {
+    return declare_rest(config), {
         "parent": pq.read_table(config["sources"]["parent"]["path"]),
         "child": pq.read_table(config["sources"]["child"]["path"]),
     }

@@ -20,6 +20,7 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import pytest
 
+from tests._declared_schema import declare_rest
 from tests.unit.execution import _auto_chunk_support as support
 
 N = support.ROWS
@@ -132,6 +133,7 @@ def build_source(cell: str, path: str) -> tuple[dict[str, Any], pa.Table]:
     cfg = support.make_cfg(base + ([xcfg] if xcfg else []), path=path)
     table = support.table_of(cols, fields)
     pq.write_table(table, path)
+    declare_rest(cfg)
     return cfg, table
 
 

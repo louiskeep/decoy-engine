@@ -23,6 +23,7 @@ from decoy_engine.execution._strategies._faker import FakerStrategyHandler
 from decoy_engine.generation.pool import _sampler
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._errors import GenerationError
+from tests._declared_schema import declare_rest
 from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 from tests.unit.execution import _c5c_a_support as sup
 
@@ -153,13 +154,15 @@ def test_sampler_sees_exact_values_at_both_kernel_boundaries(
 
 def _config(path: str, columns: list[dict[str, Any]]) -> dict[str, Any]:
     return PipelineConfig.model_validate(
-        {
-            "version": 2,
-            "global_settings": {"seed": 42},
-            "sources": {"t": {"type": "file", "format": "parquet", "path": path}},
-            "tables": [{"name": "t", "columns": columns}],
-            "targets": {"t": {"type": "file", "format": "parquet", "path": "/dev/null"}},
-        }
+        declare_rest(
+            {
+                "version": 2,
+                "global_settings": {"seed": 42},
+                "sources": {"t": {"type": "file", "format": "parquet", "path": path}},
+                "tables": [{"name": "t", "columns": columns}],
+                "targets": {"t": {"type": "file", "format": "parquet", "path": "/dev/null"}},
+            }
+        )
     ).model_dump()
 
 
@@ -551,29 +554,31 @@ def _fk_child_job(
         paths[name] = str(tmp_path / f"{name}.parquet")
         pq.write_table(table, paths[name])
     cfg = PipelineConfig.model_validate(
-        {
-            "version": 2,
-            "global_settings": {"seed": 42},
-            "sources": {
-                k: {"type": "file", "path": v, "format": "parquet"} for k, v in paths.items()
-            },
-            "targets": {
-                k: {"type": "file", "path": v + ".out", "format": "parquet"}
-                for k, v in paths.items()
-            },
-            "tables": [
-                {"name": "parent", "columns": [col("id", "p_ns")]},
-                {"name": "child", "columns": [col("pid", "p_ns"), col("n", "n_ns")]},
-            ],
-            "relationships": [
-                {
-                    "parent": {"table": "parent", "columns": ["id"]},
-                    "children": [{"table": "child", "columns": ["pid"]}],
-                    "orphan_policy": "preserve",
-                    "namespace": "p_ns",
-                }
-            ],
-        }
+        declare_rest(
+            {
+                "version": 2,
+                "global_settings": {"seed": 42},
+                "sources": {
+                    k: {"type": "file", "path": v, "format": "parquet"} for k, v in paths.items()
+                },
+                "targets": {
+                    k: {"type": "file", "path": v + ".out", "format": "parquet"}
+                    for k, v in paths.items()
+                },
+                "tables": [
+                    {"name": "parent", "columns": [col("id", "p_ns")]},
+                    {"name": "child", "columns": [col("pid", "p_ns"), col("n", "n_ns")]},
+                ],
+                "relationships": [
+                    {
+                        "parent": {"table": "parent", "columns": ["id"]},
+                        "children": [{"table": "child", "columns": ["pid"]}],
+                        "orphan_policy": "preserve",
+                        "namespace": "p_ns",
+                    }
+                ],
+            }
+        )
     ).model_dump()
     result = run_pipeline(cfg, sources={"parent": parent, "child": child}, engine_version="x")
     return {name: table.to_pydict() for name, table in result.outputs.items()}

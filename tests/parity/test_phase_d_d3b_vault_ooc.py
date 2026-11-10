@@ -41,6 +41,7 @@ from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 from decoy_engine.unmask import unmask_pipeline
 from decoy_engine.vault import VaultWriter, load_vault, vault_writer_for_config
+from tests._declared_schema import declare_rest
 from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 from tests.parity import _strict_compare as sc
 
@@ -117,24 +118,26 @@ def job(
         path = tmp / f"{name}.parquet"
         pq.write_table(table, path)
         src[name] = {"type": "file", "path": str(path), "format": "parquet"}
-    return {
-        "version": 2,
-        "global_settings": {"seed": 7},
-        "sources": src,
-        "targets": {
-            n: {"type": "file", "format": "parquet", "path": str(tmp / f"{n}.out.parquet")}
-            for n in tables
-        },
-        "tables": [{"name": n, "columns": cols} for n, cols in columns.items()],
-        "relationships": [
-            {
-                "parent": {"table": "parent", "columns": ["id"]},
-                "children": [{"table": "child", "columns": ["parent_id"]}],
-                "orphan_policy": orphan,
-                "namespace": "ns",
-            }
-        ],
-    }
+    return declare_rest(
+        {
+            "version": 2,
+            "global_settings": {"seed": 7},
+            "sources": src,
+            "targets": {
+                n: {"type": "file", "format": "parquet", "path": str(tmp / f"{n}.out.parquet")}
+                for n in tables
+            },
+            "tables": [{"name": n, "columns": cols} for n, cols in columns.items()],
+            "relationships": [
+                {
+                    "parent": {"table": "parent", "columns": ["id"]},
+                    "children": [{"table": "child", "columns": ["parent_id"]}],
+                    "orphan_policy": orphan,
+                    "namespace": "ns",
+                }
+            ],
+        }
+    )
 
 
 def standard(

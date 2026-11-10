@@ -55,6 +55,7 @@ from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
 from decoy_engine.secret_providers import admit_mask_key
+from tests._declared_schema import declare_rest
 
 _EV = "de02-accept"
 _JOB_SEED = (42).to_bytes(8, "big")
@@ -166,6 +167,7 @@ def _config(tmp_path, columns=None, seed: int = 42, mask_secret_ref=None) -> dic
 def _run(tmp_path, cfg, *, key_provider=None, **kwargs):
     df = _frame()
     df.to_csv(tmp_path / "t.csv", index=False)
+    declare_rest(cfg)
     sources = {"t": pa.Table.from_pandas(df, preserve_index=False)}
     result = run_pipeline(
         cfg, sources=sources, engine_version=_EV, key_provider=key_provider, **kwargs

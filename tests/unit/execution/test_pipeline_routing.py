@@ -32,6 +32,7 @@ from decoy_engine.errors import ConfigError
 from decoy_engine.execution import ParquetTransactionalSink
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._pipeline_routing import _sequential_eligible
+from tests._declared_schema import declare_rest
 
 _N = 20
 
@@ -74,44 +75,46 @@ def _fk_pure_mask_config(tmp_path: Path) -> dict[str, Any]:
     parent, child = _fk_tables()
     parent_src = _write_source(tmp_path, parent, "parent")
     child_src = _write_source(tmp_path, child, "child")
-    return {
-        "version": 2,
-        "global_settings": {"job_name": "s2-routing-fk", "seed": 7},
-        "sources": {
-            "parent": {"type": "file", "path": parent_src, "format": "parquet"},
-            "child": {"type": "file", "path": child_src, "format": "parquet"},
-        },
-        "targets": {
-            "parent": {
-                "type": "file",
-                "path": str(tmp_path / "parent.out.parquet"),
-                "format": "parquet",
+    return declare_rest(
+        {
+            "version": 2,
+            "global_settings": {"job_name": "s2-routing-fk", "seed": 7},
+            "sources": {
+                "parent": {"type": "file", "path": parent_src, "format": "parquet"},
+                "child": {"type": "file", "path": child_src, "format": "parquet"},
             },
-            "child": {
-                "type": "file",
-                "path": str(tmp_path / "child.out.parquet"),
-                "format": "parquet",
+            "targets": {
+                "parent": {
+                    "type": "file",
+                    "path": str(tmp_path / "parent.out.parquet"),
+                    "format": "parquet",
+                },
+                "child": {
+                    "type": "file",
+                    "path": str(tmp_path / "child.out.parquet"),
+                    "format": "parquet",
+                },
             },
-        },
-        "tables": [
-            {
-                "name": "parent",
-                "columns": [
-                    _faker_col("id", "ns"),
-                    {"name": "age", "strategy": "bucketize", "provider_config": {"width": 10}},
-                ],
-            },
-            {"name": "child", "columns": [_faker_col("parent_id", "ns")]},
-        ],
-        "relationships": [
-            {
-                "parent": {"table": "parent", "columns": ["id"]},
-                "children": [{"table": "child", "columns": ["parent_id"]}],
-                "orphan_policy": "preserve",
-                "namespace": "ns",
-            }
-        ],
-    }
+            "tables": [
+                {
+                    "name": "parent",
+                    "columns": [
+                        _faker_col("id", "ns"),
+                        {"name": "age", "strategy": "bucketize", "provider_config": {"width": 10}},
+                    ],
+                },
+                {"name": "child", "columns": [_faker_col("parent_id", "ns")]},
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "parent", "columns": ["id"]},
+                    "children": [{"table": "child", "columns": ["parent_id"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "ns",
+                }
+            ],
+        }
+    )
 
 
 def _fk_sources(config: dict[str, Any]) -> dict[str, pa.Table]:
@@ -122,16 +125,18 @@ def _no_relationships_config(tmp_path: Path) -> dict[str, Any]:
     """A single mask table with no relationships block: never eligible."""
     src = pa.table({"email": pa.array([f"u{i}@x.com" for i in range(5)], type=pa.string())})
     src_path = _write_source(tmp_path, src, "t")
-    return {
-        "version": 2,
-        "global_settings": {"job_name": "s2-routing-no-fk", "seed": 7},
-        "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
-        "targets": {
-            "t": {"type": "file", "path": str(tmp_path / "t.out.parquet"), "format": "parquet"}
-        },
-        "tables": [{"name": "t", "columns": [_faker_col("email", "ns")]}],
-        "relationships": [],
-    }
+    return declare_rest(
+        {
+            "version": 2,
+            "global_settings": {"job_name": "s2-routing-no-fk", "seed": 7},
+            "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
+            "targets": {
+                "t": {"type": "file", "path": str(tmp_path / "t.out.parquet"), "format": "parquet"}
+            },
+            "tables": [{"name": "t", "columns": [_faker_col("email", "ns")]}],
+            "relationships": [],
+        }
+    )
 
 
 def _generate_plus_mask_config(tmp_path: Path) -> dict[str, Any]:
@@ -140,48 +145,52 @@ def _generate_plus_mask_config(tmp_path: Path) -> dict[str, Any]:
     parent, child = _fk_tables()
     parent_src = _write_source(tmp_path, parent, "parent")
     child_src = _write_source(tmp_path, child, "child")
-    return {
-        "version": 2,
-        "global_settings": {"job_name": "s2-routing-mixed", "seed": 7},
-        "sources": {
-            "parent": {"type": "file", "path": parent_src, "format": "parquet"},
-            "child": {"type": "file", "path": child_src, "format": "parquet"},
-        },
-        "targets": {
-            "parent": {
-                "type": "file",
-                "path": str(tmp_path / "parent.out.parquet"),
-                "format": "parquet",
+    return declare_rest(
+        {
+            "version": 2,
+            "global_settings": {"job_name": "s2-routing-mixed", "seed": 7},
+            "sources": {
+                "parent": {"type": "file", "path": parent_src, "format": "parquet"},
+                "child": {"type": "file", "path": child_src, "format": "parquet"},
             },
-            "child": {
-                "type": "file",
-                "path": str(tmp_path / "child.out.parquet"),
-                "format": "parquet",
+            "targets": {
+                "parent": {
+                    "type": "file",
+                    "path": str(tmp_path / "parent.out.parquet"),
+                    "format": "parquet",
+                },
+                "child": {
+                    "type": "file",
+                    "path": str(tmp_path / "child.out.parquet"),
+                    "format": "parquet",
+                },
+                "extra": {
+                    "type": "file",
+                    "path": str(tmp_path / "extra.out.parquet"),
+                    "format": "parquet",
+                },
             },
-            "extra": {
-                "type": "file",
-                "path": str(tmp_path / "extra.out.parquet"),
-                "format": "parquet",
-            },
-        },
-        "tables": [
-            {"name": "parent", "columns": [_faker_col("id", "ns")]},
-            {"name": "child", "columns": [_faker_col("parent_id", "ns")]},
-            {
-                "name": "extra",
-                "row_count": 3,
-                "generate_columns": [{"name": "seq", "type": "sequence", "start": 1, "step": 1}],
-            },
-        ],
-        "relationships": [
-            {
-                "parent": {"table": "parent", "columns": ["id"]},
-                "children": [{"table": "child", "columns": ["parent_id"]}],
-                "orphan_policy": "preserve",
-                "namespace": "ns",
-            }
-        ],
-    }
+            "tables": [
+                {"name": "parent", "columns": [_faker_col("id", "ns")]},
+                {"name": "child", "columns": [_faker_col("parent_id", "ns")]},
+                {
+                    "name": "extra",
+                    "row_count": 3,
+                    "generate_columns": [
+                        {"name": "seq", "type": "sequence", "start": 1, "step": 1}
+                    ],
+                },
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "parent", "columns": ["id"]},
+                    "children": [{"table": "child", "columns": ["parent_id"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "ns",
+                }
+            ],
+        }
+    )
 
 
 # --------------------------------------------------------------------------
@@ -432,6 +441,7 @@ class TestTelemetryHonesty:
             execution_mode="sequential",
             sink=sink,
             source_loader=lazy_loader,
+            source_loader_schemas={n: t.schema for n, t in sources.items()},
         )
         exec_meta = result.quality_metrics["execution"]
         assert exec_meta["loaded_fully_in_memory"] is True
@@ -456,6 +466,7 @@ class TestTelemetryHonesty:
             execution_mode="sequential",
             sink=sink,
             source_loader=lazy_loader,
+            source_loader_schemas={n: t.schema for n, t in sources.items()},
         )
         exec_meta = result.quality_metrics["execution"]
         assert exec_meta["loaded_fully_in_memory"] is False
@@ -528,36 +539,38 @@ def _cycle_config(tmp_path: Path) -> dict[str, Any]:
     )
     a_src = _write_source(tmp_path, a, "a")
     b_src = _write_source(tmp_path, b, "b")
-    return {
-        "version": 2,
-        "global_settings": {"job_name": "s2-cycle-routing", "seed": 7},
-        "sources": {
-            "a": {"type": "file", "path": a_src, "format": "parquet"},
-            "b": {"type": "file", "path": b_src, "format": "parquet"},
-        },
-        "targets": {
-            "a": {"type": "file", "path": str(tmp_path / "a.out.parquet"), "format": "parquet"},
-            "b": {"type": "file", "path": str(tmp_path / "b.out.parquet"), "format": "parquet"},
-        },
-        "tables": [
-            {"name": "a", "columns": [_faker_col("id", "na"), _faker_col("ref_b", "nb")]},
-            {"name": "b", "columns": [_faker_col("id", "nb"), _faker_col("ref_a", "na")]},
-        ],
-        "relationships": [
-            {
-                "parent": {"table": "a", "columns": ["id"]},
-                "children": [{"table": "b", "columns": ["ref_a"]}],
-                "orphan_policy": "preserve",
-                "namespace": "na",
+    return declare_rest(
+        {
+            "version": 2,
+            "global_settings": {"job_name": "s2-cycle-routing", "seed": 7},
+            "sources": {
+                "a": {"type": "file", "path": a_src, "format": "parquet"},
+                "b": {"type": "file", "path": b_src, "format": "parquet"},
             },
-            {
-                "parent": {"table": "b", "columns": ["id"]},
-                "children": [{"table": "a", "columns": ["ref_b"]}],
-                "orphan_policy": "preserve",
-                "namespace": "nb",
+            "targets": {
+                "a": {"type": "file", "path": str(tmp_path / "a.out.parquet"), "format": "parquet"},
+                "b": {"type": "file", "path": str(tmp_path / "b.out.parquet"), "format": "parquet"},
             },
-        ],
-    }
+            "tables": [
+                {"name": "a", "columns": [_faker_col("id", "na"), _faker_col("ref_b", "nb")]},
+                {"name": "b", "columns": [_faker_col("id", "nb"), _faker_col("ref_a", "na")]},
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "a", "columns": ["id"]},
+                    "children": [{"table": "b", "columns": ["ref_a"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "na",
+                },
+                {
+                    "parent": {"table": "b", "columns": ["id"]},
+                    "children": [{"table": "a", "columns": ["ref_b"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "nb",
+                },
+            ],
+        }
+    )
 
 
 class TestCrossTableFkCycleRoutingGuard:

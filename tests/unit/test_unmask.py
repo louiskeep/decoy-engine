@@ -9,6 +9,8 @@ recovers the source bytes exactly.
 
 from __future__ import annotations
 
+import copy
+
 import pandas as pd
 import pyarrow as pa
 import pytest
@@ -18,6 +20,7 @@ from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import ExecutionError, run_pipeline
 from decoy_engine.keyprovider import SecretKeyProvider
 from decoy_engine.unmask import UnmaskResult
+from tests._declared_schema import declare_rest
 
 _SECRET = SecretKeyProvider(b"a-strong-32B+-managed-secret-value!!", key_version="v1")
 
@@ -64,9 +67,10 @@ def _fpe_col(name: str, namespace: str = "acct_ns", **provider_config) -> dict:
 
 def _mask(tmp_path, cfg: dict, df: pd.DataFrame, *, key_provider=None) -> dict[str, pa.Table]:
     df.to_csv(tmp_path / "accounts.csv", index=False)
+    run_cfg = declare_rest(copy.deepcopy(cfg))  # unmask still gets the config as written
     sources = {"accounts": pa.Table.from_pandas(df, preserve_index=False)}
     result = run_pipeline(
-        cfg, sources=sources, engine_version=_ENGINE_VERSION, key_provider=key_provider
+        run_cfg, sources=sources, engine_version=_ENGINE_VERSION, key_provider=key_provider
     )
     return dict(result.outputs)
 

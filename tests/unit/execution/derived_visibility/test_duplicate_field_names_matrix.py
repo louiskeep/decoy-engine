@@ -31,6 +31,7 @@ from decoy_engine.execution import _guards
 from decoy_engine.execution._transforms import TransformError
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.reason_adapter import reason_from_exception
+from tests._declared_schema import declare_rest
 from tests._keyed_secret import THROWAWAY_SECRET
 from tests.unit.execution._transform_testkit import ENGINE_VERSION, fk_config
 
@@ -85,7 +86,7 @@ def _config(tmp_path: Path, work: str, descriptor_child: pa.Table) -> dict[str, 
     cfg = fk_config(tmp_path, _parent(), descriptor_child, child_transforms=transforms)
     cfg["tables"][1]["columns"].extend(_WORK_COLUMNS[work])
     cfg["global_settings"]["mask_secret_ref"] = f"env:{SECRET_ENV}"
-    return cfg
+    return declare_rest(cfg)
 
 
 @pytest.fixture(autouse=True)
@@ -246,6 +247,9 @@ def _e1(tmp_path: Path, route: str, kind: str, work: str, *, dup: str | None) ->
         engine_version=ENGINE_VERSION,
         execution_mode=route,
         source_loader=loader,
+        source_loader_schemas=None
+        if loader is None
+        else {n: loader(n).schema for n in cfg["sources"]},
     )
 
 

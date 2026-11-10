@@ -23,6 +23,7 @@ import pyarrow.parquet as pq
 
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._sequential import table_topo_order
+from tests._declared_schema import declare_rest
 
 _N = 40
 
@@ -50,57 +51,59 @@ def _fpe_payload_fk_config(tmp_path: Path) -> dict[str, Any]:
         }
     )
     tables = {"parent": parent, "child": child}
-    return {
-        "version": 2,
-        "global_settings": {"job_name": "sc3-fpe-routing", "seed": 11},
-        "sources": {
-            name: {"type": "file", "path": _src(tmp_path, tbl, name), "format": "parquet"}
-            for name, tbl in tables.items()
-        },
-        "targets": {
-            name: {
-                "type": "file",
-                "path": str(tmp_path / f"{name}.out.parquet"),
-                "format": "parquet",
-            }
-            for name in tables
-        },
-        "tables": [
-            {
-                "name": "parent",
-                "columns": [
-                    {"name": "id", "strategy": "hash", "namespace": "pns"},
-                    {
-                        "name": "ssn",
-                        "strategy": "fpe",
-                        "namespace": "pns",
-                        "provider_config": {"charset": "digits"},
-                    },
-                ],
+    return declare_rest(
+        {
+            "version": 2,
+            "global_settings": {"job_name": "sc3-fpe-routing", "seed": 11},
+            "sources": {
+                name: {"type": "file", "path": _src(tmp_path, tbl, name), "format": "parquet"}
+                for name, tbl in tables.items()
             },
-            {
-                "name": "child",
-                "columns": [
-                    {"name": "cid", "strategy": "hash", "namespace": "cns"},
-                    {"name": "pid", "strategy": "hash", "namespace": "pns"},
-                    {
-                        "name": "acct",
-                        "strategy": "fpe",
-                        "namespace": "cns",
-                        "provider_config": {"charset": "digits"},
-                    },
-                ],
+            "targets": {
+                name: {
+                    "type": "file",
+                    "path": str(tmp_path / f"{name}.out.parquet"),
+                    "format": "parquet",
+                }
+                for name in tables
             },
-        ],
-        "relationships": [
-            {
-                "parent": {"table": "parent", "columns": ["id"]},
-                "children": [{"table": "child", "columns": ["pid"]}],
-                "orphan_policy": "preserve",
-                "namespace": "pns",
-            },
-        ],
-    }
+            "tables": [
+                {
+                    "name": "parent",
+                    "columns": [
+                        {"name": "id", "strategy": "hash", "namespace": "pns"},
+                        {
+                            "name": "ssn",
+                            "strategy": "fpe",
+                            "namespace": "pns",
+                            "provider_config": {"charset": "digits"},
+                        },
+                    ],
+                },
+                {
+                    "name": "child",
+                    "columns": [
+                        {"name": "cid", "strategy": "hash", "namespace": "cns"},
+                        {"name": "pid", "strategy": "hash", "namespace": "pns"},
+                        {
+                            "name": "acct",
+                            "strategy": "fpe",
+                            "namespace": "cns",
+                            "provider_config": {"charset": "digits"},
+                        },
+                    ],
+                },
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "parent", "columns": ["id"]},
+                    "children": [{"table": "child", "columns": ["pid"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "pns",
+                },
+            ],
+        }
+    )
 
 
 def _sources(config: dict[str, Any]) -> dict[str, pa.Table]:
@@ -155,6 +158,7 @@ def test_m1_forced_out_of_core_lazy_source_loader(tmp_path: Path) -> None:
         engine_version="0.1.0",
         execution_mode="out_of_core",
         source_loader=loader,
+        source_loader_schemas={n: t.schema for n, t in resident.items()},
     )
 
     assert forced.quality_metrics["execution"]["execution_mode"] == "out_of_core"

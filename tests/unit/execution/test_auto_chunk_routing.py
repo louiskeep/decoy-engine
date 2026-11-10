@@ -38,6 +38,7 @@ import pytest
 from decoy_engine.config import PipelineConfig
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution import ExecutionError, run_pipeline
+from tests._declared_schema import declare_rest
 from tests.native._chunked_entry_support import force_oracle, forced_reason
 
 _ENGINE_VERSION = "p3-auto-chunk-test"
@@ -51,7 +52,7 @@ _CHUNK = 16
 
 
 def _validated_dump(cfg: dict) -> dict:
-    return PipelineConfig.model_validate(cfg).model_dump()
+    return PipelineConfig.model_validate(declare_rest(cfg)).model_dump()
 
 
 def _config(tmp_path, columns: list[dict], table: str = "accounts") -> dict:

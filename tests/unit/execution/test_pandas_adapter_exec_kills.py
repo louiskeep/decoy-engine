@@ -35,6 +35,7 @@ from decoy_engine.plan._types import ColumnSeed, GroupSeed, SeedEnvelope, TableS
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
+from tests._declared_schema import declare_rest
 from tests.perf_fixtures.fk_relational import build_fk_relational
 
 _REG = get_default_registry()
@@ -410,52 +411,58 @@ def _fk_key_error_config(tmp_path: Path) -> dict[str, Any]:
             "parent_id": pa.array(_KEY_DATES, type=pa.string()),
         }
     )
-    return {
-        "version": 2,
-        "global_settings": {"job_name": "run-kills-keyerror", "seed": 42},
-        "sources": {
-            "parent": {
-                "type": "file",
-                "path": _write(tmp_path, parent, "parent"),
-                "format": "parquet",
+    return declare_rest(
+        {
+            "version": 2,
+            "global_settings": {"job_name": "run-kills-keyerror", "seed": 42},
+            "sources": {
+                "parent": {
+                    "type": "file",
+                    "path": _write(tmp_path, parent, "parent"),
+                    "format": "parquet",
+                },
+                "child": {
+                    "type": "file",
+                    "path": _write(tmp_path, child, "child"),
+                    "format": "parquet",
+                },
             },
-            "child": {
-                "type": "file",
-                "path": _write(tmp_path, child, "child"),
-                "format": "parquet",
+            "targets": {
+                "parent": {
+                    "type": "file",
+                    "path": str(tmp_path / "p.out.parquet"),
+                    "format": "parquet",
+                },
+                "child": {
+                    "type": "file",
+                    "path": str(tmp_path / "c.out.parquet"),
+                    "format": "parquet",
+                },
             },
-        },
-        "targets": {
-            "parent": {
-                "type": "file",
-                "path": str(tmp_path / "p.out.parquet"),
-                "format": "parquet",
-            },
-            "child": {"type": "file", "path": str(tmp_path / "c.out.parquet"), "format": "parquet"},
-        },
-        "tables": [
-            {
-                "name": "parent",
-                "columns": [
-                    {
-                        "name": "id",
-                        "strategy": "date_shift",
-                        "provider_config": {"min_days": 1, "max_days": 30},
-                        "namespace": "parent_ns",
-                    }
-                ],
-            },
-            {"name": "child", "columns": [_faker_col("parent_id", "parent_ns")]},
-        ],
-        "relationships": [
-            {
-                "parent": {"table": "parent", "columns": ["id"]},
-                "children": [{"table": "child", "columns": ["parent_id"]}],
-                "orphan_policy": "preserve",
-                "namespace": "parent_ns",
-            }
-        ],
-    }
+            "tables": [
+                {
+                    "name": "parent",
+                    "columns": [
+                        {
+                            "name": "id",
+                            "strategy": "date_shift",
+                            "provider_config": {"min_days": 1, "max_days": 30},
+                            "namespace": "parent_ns",
+                        }
+                    ],
+                },
+                {"name": "child", "columns": [_faker_col("parent_id", "parent_ns")]},
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "parent", "columns": ["id"]},
+                    "children": [{"table": "child", "columns": ["parent_id"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "parent_ns",
+                }
+            ],
+        }
+    )
 
 
 class TestFullFrameKeyErrorCascade:
@@ -753,33 +760,37 @@ def _group_by_config(tmp_path: Path) -> dict[str, Any]:
             "patient_id": pa.array(["p1", "p1", "p2", "p2"], type=pa.string()),
         }
     )
-    return {
-        "version": 2,
-        "global_settings": {"job_name": "run-kills-groupby", "seed": 7},
-        "sources": {"t": {"type": "file", "path": _write(tmp_path, src, "t"), "format": "parquet"}},
-        "targets": {
-            "t": {"type": "file", "path": str(tmp_path / "t.out.parquet"), "format": "parquet"}
-        },
-        "tables": [
-            {
-                "name": "t",
-                "columns": [
-                    {
-                        "name": "d",
-                        "strategy": "date_shift",
-                        "provider_config": {
-                            "min_days": -100,
-                            "max_days": 100,
-                            "date_format": "%Y-%m-%d",
-                            "group_by": "patient_id",
+    return declare_rest(
+        {
+            "version": 2,
+            "global_settings": {"job_name": "run-kills-groupby", "seed": 7},
+            "sources": {
+                "t": {"type": "file", "path": _write(tmp_path, src, "t"), "format": "parquet"}
+            },
+            "targets": {
+                "t": {"type": "file", "path": str(tmp_path / "t.out.parquet"), "format": "parquet"}
+            },
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {
+                            "name": "d",
+                            "strategy": "date_shift",
+                            "provider_config": {
+                                "min_days": -100,
+                                "max_days": 100,
+                                "date_format": "%Y-%m-%d",
+                                "group_by": "patient_id",
+                            },
+                            "namespace": "dates",
                         },
-                        "namespace": "dates",
-                    },
-                    {"name": "patient_id", "strategy": "hash", "namespace": "pid"},
-                ],
-            }
-        ],
-    }
+                        {"name": "patient_id", "strategy": "hash", "namespace": "pid"},
+                    ],
+                }
+            ],
+        }
+    )
 
 
 class TestGroupByAnchorSnapshot:

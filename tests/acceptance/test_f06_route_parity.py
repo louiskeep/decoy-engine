@@ -14,6 +14,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from tests._declared_schema import declare_rest
 from tests.acceptance._f06_support import (
     INT64,
     ISO_DATE,
@@ -198,7 +199,7 @@ def _fk_cfg(tmp_path: Path, *, endpoints: bool, policy: str = "null") -> dict[st
     }
     if policy == "quarantine":
         cfg["protected_quarantine"] = PROTECTED_QUARANTINE
-    return cfg
+    return declare_rest(cfg)
 
 
 def _fk_sources() -> dict[str, pa.Table]:
