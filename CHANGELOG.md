@@ -9,16 +9,13 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
-### Added (record library, engine side)
+### Added (CONFIG-EXPLICIT E2a: declared-columns module, registry 1.19.0, 2026-11-08)
 
-`decoy_engine.records` holds the envelope the CLI's local record library and the platform importer share: `build`,
-`encode` and `decode` for `decoy-record/v1`, one canonical JSON form and content-addressed ids, a kind registry
-(`evidence`, `run-result`, `sample-run/v1`, `scan-set`; `publication` and `checkpoint` reserved), the
-`decoy-library-export/v1` codec and the `decoy-job-log/v1` header and reader. A record of an unknown kind or a later
-major decodes to an opaque record or `RecordNeedsNewer` instead of an error. Seven reasons join the registry at
-1.20.0: `runtime.record_invalid`, `runtime.record_corrupt`, `runtime.record_kind_reserved`,
-`warning.library_write_failed`, `warning.job_log_write_failed`, `warning.library_degraded` and
-`warning.library_delete_skipped`.
+`decoy_engine` exports `source_columns`, `declared_columns`, `check_columns_declared`,
+`DeclarationRequest`, `PreparedDeclaredSources` and `prepare_declared_sources`: the pre-read
+boundary that checks every source column is listed in the config. Registry 1.19.0 adds
+`source_file.undeclared_column` and `source_file.undeclared_table`. No route calls the boundary
+yet, so run behavior is unchanged.
 
 ### Added (`unique` and `unique_together` generate options, GEN-UNIQUE E2, 2026-11-09)
 

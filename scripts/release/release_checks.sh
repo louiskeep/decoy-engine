@@ -3,6 +3,8 @@
 #
 #   scripts/release/release_checks.sh VERSION
 #
+# 0. changelog.d/ holds nothing but its README: every fragment was compiled into CHANGELOG.md by
+#    stamp_release.py. A fragment that merged after the release prep PR is caught here.
 # 1. uv.lock agrees with pyproject.toml (uv lock --check: nothing is written).
 # 2. A throwaway venv synced --frozen from the lock in the DP certified profile (the lock-profile CPython,
 #    extras dev+lint+vault+cloud: the same profile as ci.yml's dp-certified-gate).
@@ -30,6 +32,12 @@ done
 here="$(cd -P -- "$(dirname -- "$0")" >/dev/null && pwd)"
 root="$(git -C "$here" rev-parse --show-toplevel)"
 cd "$root"
+
+if [ -d changelog.d ]; then
+  left="$(find changelog.d -mindepth 1 ! -name README.md | sort | head -n 5)"
+  [ -z "$left" ] || die "changelog.d still holds uncompiled fragments (run scripts/release/stamp_release.py): $(echo "$left" | tr '\n' ' ')"
+fi
+
 command -v uv >/dev/null 2>&1 || die "uv is required on PATH"
 
 have="$(sed -n '/^\[project\]$/,/^\[/{s/^version = "\([^"]*\)"$/\1/p;}' pyproject.toml)"
