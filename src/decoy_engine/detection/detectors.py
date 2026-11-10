@@ -62,6 +62,7 @@ from decoy_engine.detection._scoring import (  # noqa: F401  re-exported constan
     LOW_CONFIDENCE_NO_HINT_FLOOR,
     NAME_HINT_MIN_RATE,
     SAMPLE_MISS_LIMIT,
+    PreparedValues,
     _evaluate,
     _series_str,
     prepared_scope,
@@ -81,9 +82,8 @@ from decoy_engine.detection.types import CustomDetectorSpec, DetectorMatch
 # ── name-hint patterns (case-insensitive, matched against the column name) ──
 #
 # Detection sprint (V1): expanded with US English abbreviation forms drawn
-# from real-world health, fintech, and payroll headers. Cross-cultural
-# variants (Spanish / French / German / etc.) are V1.5; keeping V1 to a
-# single locale keeps the false-positive surface predictable.
+# from real-world health, fintech, and payroll headers. Cross-cultural variants
+# (Spanish / French / German / etc.) are V1.5; one locale keeps false positives predictable.
 
 
 def _hint(terms: list[str]) -> re.Pattern[str]:

@@ -27,7 +27,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from decoy_engine.detection._scoring import PreparedValues, _series_str
+from decoy_engine.detection.detectors import PreparedValues, _series_str
 from decoy_engine.profiling.types import SentinelFlag
 
 # ── known sentinel values ─────────────────────────────────────────────────────

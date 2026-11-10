@@ -76,13 +76,13 @@ def test_dates_after_a_non_date_head_skip_full_coercion(monkeypatch: pytest.Monk
     from decoy_engine.profiling import _date_sniff
 
     calls: list[int] = []
-    real = pd.to_datetime
+    real = _date_sniff._coerce
 
-    def spy(values: Any, *a: Any, **k: Any) -> Any:
+    def spy(values: Any) -> Any:
         calls.append(len(values))
-        return real(values, *a, **k)
+        return real(values)
 
-    monkeypatch.setattr(_date_sniff.pd, "to_datetime", spy)
+    monkeypatch.setattr(_date_sniff, "_coerce", spy)
     df = pd.DataFrame({"notes": [f"free text {i}" for i in range(5_000)]})
     field = profile_columns(df, "t").fields[0]
     assert calls == [200]

@@ -16,10 +16,11 @@ from typing import Any
 import pandas as pd
 
 from decoy_engine.context import ExecutionContext, emit_lineage, emit_step
-from decoy_engine.detection._scoring import _series_str, prepared_scope
 from decoy_engine.detection.detectors import (
+    _series_str,
     hits_custom_name_hint,
     hits_name_hint,
+    prepared_scope,
     run_all_detectors,
 )
 from decoy_engine.detection.types import (

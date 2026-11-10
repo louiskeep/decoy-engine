@@ -3,7 +3,10 @@
 Each candidate column is factorized once; every 2- and 3-column combo then
 reduces to integer arithmetic on the codes. The old per-combo ``groupby``
 re-factorized the same columns up to 165 times, which dominated a full-frame
-profile. The result (minimum group size, tied combos) is unchanged.
+profile. Output matches the old groupby except for two cases it got wrong or
+skipped: a category-dtype column with unused categories (the old
+``observed=False`` groupby counted empty groups, giving k=0, now k=1) and
+mixed-object columns the old groupby skipped (now reported).
 """
 
 from __future__ import annotations
