@@ -158,6 +158,7 @@ class PipelineRunContext:
     now_iso: str | None
     # F06: the resolved protected-quarantine runtime (sink + owner); None unless supplied.
     quarantine_runtime: Any = None
+    out_of_core_threads: int | None = None
 
 
 @dataclass(frozen=True)
@@ -219,6 +220,7 @@ def build_run_context(
     secret_registry: SecretProviderRegistry | None = None,
     secret_cache_policy: SecretCachePolicy | None = None,
     quarantine_runtime: Any = None,
+    out_of_core_threads: int | None = None,
 ) -> PipelineRunContext:
     """Resolve and validate every run input, in the order the inline code did.
 
@@ -277,6 +279,8 @@ def build_run_context(
     require_positive_int("full_frame_reject_rows", full_frame_reject_rows)
     if out_of_core_budget_bytes is not None:
         require_positive_int("out_of_core_budget_bytes", out_of_core_budget_bytes)
+    if out_of_core_threads is not None:
+        require_positive_int("out_of_core_threads", out_of_core_threads)
     require_bool("use_byte_estimate_routing", use_byte_estimate_routing)
     require_bool("use_probe_routing", use_probe_routing)
     require_bool("unified_slice_enabled", unified_slice_enabled)
@@ -424,6 +428,7 @@ def build_run_context(
         out_of_core_threshold_rows=out_of_core_threshold_rows,
         full_frame_reject_rows=full_frame_reject_rows,
         out_of_core_budget_bytes=out_of_core_budget_bytes,
+        out_of_core_threads=out_of_core_threads,
         use_byte_estimate_routing=use_byte_estimate_routing,
         use_probe_routing=use_probe_routing,
         out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,

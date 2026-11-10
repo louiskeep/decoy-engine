@@ -4,9 +4,9 @@ The engine-side thread-knee clamp lives in one place, the Rust thread-budget res
 (`decoy-engine-native/src/threads.rs::NativeThreadBudget::resolve`): a per-call `native_threads`
 request is lowered to `min(requested, host_available, knee)`. Its CLAMP ARITHMETIC is guarded on
 the Rust side (`threads::tests::resolve_clamps_*`, `resolve_wires_the_env_knee_end_to_end`), which
-is where "a request of 8 becomes 4" is actually asserted; there is no Python-observable accessor
-for the resolved budget (the compiled kernel exposes only `abi_version`, `derive_batch`,
-`derive_index_batch`), so it cannot be asserted from here.
+is where "a request of 8 becomes 4" is actually asserted. The kernel also exposes that resolver as
+`resolve_native_threads`, which the run telemetry records, and the last test here pins that the
+recorded count is the compiled resolver's own.
 
 What Python owns is the property the clamp relies on: the masking kernels are thread-INVARIANT, so
 lowering a thread grant can never change the bytes. A native job derives each row independently and
@@ -157,3 +157,21 @@ def test_index_thread_invariance_value_and_type() -> None:
             assert out.to_pylist() == baseline, (
                 f"pool_size={pool_size} threads={threads}: index output diverged from t1"
             )
+
+
+@pytest.mark.skipif(not _COMPANION_PRESENT, reason="decoy-engine-native companion not built")
+def test_recorded_clamp_is_the_count_the_kernel_resolves() -> None:
+    """Cross-boundary: the stamp's `applied` comes from the compiled resolver, not a Python copy."""
+    from decoy_engine_native import _kernel
+
+    from decoy_engine.execution.pipeline import native_thread_clamp
+
+    for requested in (1, 2, 6, 64):
+        assert native_thread_clamp(requested) == {
+            "requested": requested,
+            "applied": _kernel.resolve_native_threads(requested),
+        }
+    assert _kernel.resolve_native_threads(None) == 1
+    assert 1 <= _kernel.resolve_native_threads(64) <= (os.cpu_count() or 1)
+    with pytest.raises(ValueError, match="native_threads_zero"):
+        _kernel.resolve_native_threads(0)

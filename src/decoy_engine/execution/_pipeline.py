@@ -140,6 +140,7 @@ def run_pipeline(
     out_of_core_threshold_rows: int = _OUT_OF_CORE_THRESHOLD_DEFAULT,
     full_frame_reject_rows: int = _FULL_FRAME_REJECT_DEFAULT,
     out_of_core_budget_bytes: int | None = None,
+    out_of_core_threads: int | None = None,
     use_byte_estimate_routing: bool = True,
     use_probe_routing: bool = True,
     key_provider: KeyProvider | None = None,
@@ -273,12 +274,10 @@ def run_pipeline(
     stream_required = execution_mode == "stream"
     execution_mode = "auto" if stream_required else execution_mode
     require_optional_nonempty_str("quarantine_path", quarantine_path)
-    # MG-5: the `tokenize` strategy masks per-cell through a platform-injected
-    # token vault, threaded only to the FULL-FRAME adapter (bounded routes build
-    # their own StrategyContext without it) and else failing closed with
-    # `tokenize_requires_vault`. A vault is passed only for a tokenize job, so its
-    # presence is the signal: force full-frame and disable auto-chunk when the
-    # caller left the route on `auto`. An explicit execution_mode is left untouched
+    # MG-5: `tokenize` masks per-cell through a platform-injected token vault, threaded only to
+    # the FULL-FRAME adapter (bounded routes fail closed with `tokenize_requires_vault`). A vault
+    # is passed only for a tokenize job, so its presence forces full-frame and disables
+    # auto-chunk while the route is `auto`. An explicit execution_mode is left untouched
     # (a caller that forces a bounded route for a tokenize job gets the honest fail-closed).
     if token_vault_writer is not None and execution_mode == "auto":
         execution_mode = "full_frame"
@@ -320,6 +319,7 @@ def run_pipeline(
                 out_of_core_threshold_rows=out_of_core_threshold_rows,
                 full_frame_reject_rows=full_frame_reject_rows,
                 out_of_core_budget_bytes=out_of_core_budget_bytes,
+                out_of_core_threads=out_of_core_threads,
                 use_byte_estimate_routing=use_byte_estimate_routing,
                 use_probe_routing=use_probe_routing,
                 key_provider=key_provider,

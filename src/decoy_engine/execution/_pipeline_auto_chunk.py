@@ -31,6 +31,7 @@ from decoy_engine.execution import _chunked_output_sink as _output_sink
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import DeclaredCastRouteError, ExecutionError
 from decoy_engine.execution._substrate import require_bool, require_positive_int
+from decoy_engine.execution.pipeline import native_thread_clamp
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
@@ -501,6 +502,8 @@ def run_auto_chunk(
         "lane_reason": lane_reason,
         "native_threads": native_threads,
     }
+    if native_threads > 1:  # the default of 1 cannot be clamped, so default runs stamp nothing new
+        quality_metrics["auto_chunk"]["native_thread_clamp"] = native_thread_clamp(native_threads)
     if output_block is not None:
         quality_metrics["auto_chunk"]["output"] = output_block
     if input_block is not None:

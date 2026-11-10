@@ -22,9 +22,7 @@ Public API (the contract CLI and platform code depend on):
                       newline-delimited fixed-width file into a DataFrame per
                       a FixedWidthLayout, or the equivalent validated-config
                       dict (`FileSource.layout`); raises FixedWidthParseError
-                      or ConfigError. Exported so a `format: fixed_width`
-                      FileSource can be read without importing the private
-                      `profile._fixed_width_reader` module directly.
+                      or ConfigError. Exported so a `format: fixed_width` FileSource reads.
     read_csv_source / CsvDialect / resolve_csv_dialect:
                       (decoy_engine.profile._csv_reader) the one CSV source
                       reader: a file read under its declared dialect (header or
@@ -139,6 +137,8 @@ from decoy_engine.execution.native._companion_status import (
     NativeCompanionStatus,
     native_companion_status,
 )
+from decoy_engine.execution.out_of_core import resolve_conservative_ooc_budget_bytes
+from decoy_engine.execution.pipeline import detect_usable_cpus
 from decoy_engine.fileaccess import open_protected_dir, protected_scratch_dir
 from decoy_engine.generation.composite import (
     BundlePool,
@@ -536,6 +536,7 @@ __all__ = [
     "derive_index",
     "derive_outcome",
     "derive_value",
+    "detect_usable_cpus",
     "distribution_snapshot_document",
     "emit_fidelity",
     "emit_lineage",
@@ -578,6 +579,7 @@ __all__ = [
     "register_faker_provider",
     "register_faker_provider_v2",
     "register_secret_provider",
+    "resolve_conservative_ooc_budget_bytes",
     "resolve_csv_dialect",
     "run_config_only_checks",
     "run_discovery_sql",
