@@ -9,6 +9,7 @@ tests on the result.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -175,14 +176,19 @@ def test_compile_on_the_real_changelog_keeps_the_repo_changelog_tests_green(
     from tests.unit import test_changelog_breaking_ratchet as ratchet
     from tests.unit import test_version_agreement as agreement
 
+    # The next minor after the checked-in version, so the test still compiles on the release prep
+    # branch, where CHANGELOG.md already holds this version's section.
+    pyproject = (REPO / "pyproject.toml").read_text(encoding="utf-8")
+    current = re.search(r'(?m)^version = "(\d+)\.(\d+)\.\d+"$', pyproject)
+    assert current is not None
+    nxt = f"{current[1]}.{int(current[2]) + 1}.0"
+
     def build(with_fragments: bool) -> Path:
         r = ScratchRepo(tmp_path / ("with" if with_fragments else "without"))
         r.commit(
             {
                 "CHANGELOG.md": (REPO / "CHANGELOG.md").read_text(encoding="utf-8"),
-                "pyproject.toml": (REPO / "pyproject.toml")
-                .read_text(encoding="utf-8")
-                .replace('version = "0.19.0"', 'version = "0.20.0"', 1),
+                "pyproject.toml": pyproject.replace(current[0], f'version = "{nxt}"', 1),
                 "changelog.d/README.md": "fragments\n",
                 "tests/fixtures/changelog_released_sections.json": (
                     REPO / "tests/fixtures/changelog_released_sections.json"
@@ -192,7 +198,7 @@ def test_compile_on_the_real_changelog_keeps_the_repo_changelog_tests_green(
         )
         if with_fragments:
             _add_three(r)
-        sr.compile_fragments(r.path, "0.20.0", "2026-11-10")
+        sr.compile_fragments(r.path, nxt, "2026-11-10")
         return r.path
 
     base = build(False)
