@@ -50,6 +50,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "compute_shape_fidelity": "shape_fidelity",
     "CATEGORICAL_DISTINCT_CAP": "snapshot",
     "DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION": "snapshot",
+    "MAX_CONTINGENCY_TOP_K": "snapshot",
     "compute_distribution_snapshot": "snapshot",
     "check_dp_fit_request": "dp",
     "SYNTH_REPORT_SCHEMA_VERSION": "synth_report",
@@ -76,6 +77,7 @@ def __dir__() -> list[str]:
 __all__ = [
     "CATEGORICAL_DISTINCT_CAP",
     "DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION",
+    "MAX_CONTINGENCY_TOP_K",
     "QUALITY_DIAGNOSTIC_SCHEMA_VERSION",
     "QUALITY_FIDELITY_SCHEMA_VERSION",
     "QUALITY_POLICY_SCHEMA_VERSION",
