@@ -1,0 +1,47 @@
+{
+  "entries": [
+    {
+      "code": "source_file.undeclared_column",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "config",
+      "owner": "PipelineValidationError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.19.0",
+      "summary": "Source file undeclared column.",
+      "symbol": "SOURCE_FILE_UNDECLARED_COLUMN"
+    },
+    {
+      "code": "source_file.undeclared_table",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "config",
+      "owner": "PipelineValidationError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.19.0",
+      "summary": "Source file undeclared table.",
+      "symbol": "SOURCE_FILE_UNDECLARED_TABLE"
+    }
+  ],
+  "event_schema_version": 1,
+  "reason_schema_version": 1,
+  "registry_version": "1.19.0"
+}
