@@ -75,6 +75,8 @@ def _base_config() -> dict[str, Any]:
                         "namespace": "t_name",
                         "deterministic": True,
                     },
+                    {"name": "age", "strategy": "passthrough"},
+                    {"name": "score", "strategy": "passthrough"},
                 ],
             },
         ],

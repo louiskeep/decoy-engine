@@ -81,6 +81,7 @@ SENTRIES = (
     "tests/sentry/parallel/test_stable_ids.py",
     "tests/sentry/profiling/test_profile_value_registry.py",
     "tests/sentry/profiling/test_snapshot_value_registry.py",
+    "tests/sentry/source_config/test_declaration_gate.py",
     "tests/sentry/source_config/test_source_dialect_choke_point.py",
     # Named sentries that live outside tests/sentry/.
     "tests/secret_providers/test_leak_sentry.py",

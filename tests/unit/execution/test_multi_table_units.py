@@ -14,7 +14,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine.errors import RowErrorsFailedError
+from decoy_engine.errors import PipelineValidationError, RowErrorsFailedError
 from decoy_engine.execution import _pipeline_multi_table as pmt
 from decoy_engine.execution import run_pipeline
 from tests.unit.execution import _multi_table_support as mt
@@ -449,7 +449,7 @@ def test_the_key_provider_reaches_both_the_dispatched_and_the_group_tables(
         )
 
 
-def test_the_unconfigured_column_policy_reaches_the_group_call(tmp_path: Path) -> None:
+def test_the_declaration_gate_refuses_before_the_group_call(tmp_path: Path) -> None:
     small = pa.table({**mt.string_table(mt.SMALL, "s").to_pydict(), "extra": ["z"] * mt.SMALL})
     cfg, sources = mt.build_job(
         tmp_path,
@@ -458,17 +458,12 @@ def test_the_unconfigured_column_policy_reaches_the_group_call(tmp_path: Path) -
             "small": (mt.std_columns("small_ns"), small),
         },
     )
-    cfg["global_settings"]["unconfigured_column_policy"] = "error"
-    errors: list[BaseException] = []
-    for extra in ({}, mt.off_kw()):
-        with pytest.raises(Exception) as raised:
-            run_pipeline(cfg, sources=sources, **mt.kw(**extra))
-        errors.append(raised.value)
-    assert mt.same_error(errors[0], errors[1])
-    cfg["global_settings"]["unconfigured_column_policy"] = "warn"
-    ok = run_pipeline(cfg, sources=sources, **mt.kw())
-    assert mt.dispatched_tables(ok) == ["big"]
-    assert ok.outputs["small"].column("extra").to_pylist() == ["z"] * mt.SMALL
+    for policy in ("error", "warn"):
+        cfg["global_settings"]["unconfigured_column_policy"] = policy
+        for extra in ({}, mt.off_kw()):
+            with pytest.raises(PipelineValidationError) as raised:
+                run_pipeline(cfg, sources=sources, **mt.kw(**extra))
+            assert raised.value.code == "source_file.undeclared_column"
 
 
 def test_a_group_table_row_error_still_raises_with_its_own_records(tmp_path: Path) -> None:

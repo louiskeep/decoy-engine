@@ -727,7 +727,11 @@ class TestSchemaGuard:
             "tables": [
                 {
                     "name": "t",
-                    "columns": [{"name": "ix", "strategy": "redact"}],
+                    "columns": [
+                        {"name": "ix", "strategy": "redact"},
+                        {"name": "id", "strategy": "passthrough"},
+                        {"name": "s", "strategy": "passthrough"},
+                    ],
                     "transforms": [{"op": "derive", "column": "ix", "expression": "id * 2"}],
                 }
             ]

@@ -130,6 +130,7 @@ def run_pipeline(
     execution_mode: Literal["auto", "stream", "sequential", "full_frame", "out_of_core"] = "auto",
     sink: TransactionalSink | None = None,
     source_loader: Callable[[str], pa.Table] | None = None,
+    source_loader_schemas: Mapping[str, pa.Schema] | None = None,
     fpe_chunk_count: int = _pipeline_finalize.FPE_CHUNK_COUNT_DEFAULT,
     explain_plan: bool = False,
     auto_chunk: bool = _pipeline_finalize.AUTO_CHUNK_DEFAULT,
@@ -200,6 +201,10 @@ def run_pipeline(
     `quality_metrics["post_validation_enforce"]` for the platform consumer to
     promote hard-fails to a job failure. SECURITY: only synthetic masked values
     reach the summary (R18); no source PII is emitted.
+
+    `source_loader_schemas` is required with a `source_loader` and refused without one: it
+    declares the Arrow schema of every table the loader serves, so the declaration check runs
+    before the loader is called. A table the loader returns with other columns is refused.
 
     Execution routing (`execution_mode`, `sink`, `source_loader`, `auto_chunk`,
     `chunk_size_rows`, `auto_chunk_threshold_rows`, `native_threads`,
@@ -314,6 +319,7 @@ def run_pipeline(
                 stream_required=stream_required,
                 sink=sink,
                 source_loader=source_loader,
+                source_loader_schemas=source_loader_schemas,
                 fpe_chunk_count=fpe_chunk_count,
                 explain_plan=explain_plan,
                 auto_chunk=auto_chunk,

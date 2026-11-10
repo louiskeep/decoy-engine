@@ -84,7 +84,10 @@ def _fk_config(tmp_path: Path, declared: str) -> tuple[dict[str, Any], dict[str,
                     {"name": "age", "strategy": "bucketize", "provider_config": {"width": 10}},
                 ],
             },
-            {"name": "child", "columns": [{**fk, "name": "parent_id"}]},
+            {
+                "name": "child",
+                "columns": [{**fk, "name": "parent_id"}, {"name": "id", "strategy": "passthrough"}],
+            },
         ],
         "relationships": [
             {

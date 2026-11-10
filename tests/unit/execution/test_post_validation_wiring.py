@@ -142,7 +142,13 @@ def _dup_pk_fk_config(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Tabl
         },
         "tables": [
             {"name": "parent", "columns": [{"name": "id", **trunc}]},
-            {"name": "child", "columns": [{"name": "parent_id", **trunc}]},
+            {
+                "name": "child",
+                "columns": [
+                    {"name": "parent_id", **trunc},
+                    {"name": "id", "strategy": "passthrough"},
+                ],
+            },
         ],
         "relationships": [
             {
