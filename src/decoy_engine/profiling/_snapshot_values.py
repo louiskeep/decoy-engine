@@ -27,8 +27,13 @@ from typing import Any, Final
 import numpy as np
 import pandas as pd
 
+from decoy_engine import reasons
+from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.profiling._value_redaction import (
     DATA_RULES,
+    POLICY_REDACTED,
+    REDACTED_COLUMNS_KEY,
+    VALUE_POLICY_KEY,
     Rule,
     _apply,
     snapshot_keeper,
@@ -41,6 +46,7 @@ from decoy_engine.quality.snapshot import (
     DEFAULT_CATEGORICAL_TOP_K,
     DEFAULT_CONTINGENCY_TOP_K,
     DEFAULT_NUMERIC_BINS,
+    DistributionSnapshotError,
     compute_distribution_snapshot,
     finite_numeric_cells,
     numeric_stats,
@@ -146,6 +152,66 @@ def _redact_column(non_null: pd.Series, col: dict[str, Any]) -> None:
     _withhold(stats, kind)
 
 
+def _refuse_raised_cap_on_raw_kinds(doc: dict[str, Any]) -> None:
+    """A cap above the default keeps more cells, so only plain categorical labels may fill them.
+
+    A numeric, datetime, freetext or empty column, or a `high_cardinality` one, would put raw
+    values into the extra cells of a snapshot that withholds values.
+    """
+    for joint in doc["joints"]:
+        for name in joint["columns"]:
+            col = doc["columns"][name]
+            kind = col["kind"]
+            if kind == "categorical" and col["stats"].get("high_cardinality"):
+                kind = "high_cardinality"
+            if kind != "categorical":
+                raise DistributionSnapshotError(
+                    code=reasons.quality.CONTINGENCY_TOP_K_KIND_UNSUPPORTED,
+                    message=(
+                        f"joint column {name!r} has kind {kind}; a joint cell cap above "
+                        f"{DEFAULT_CONTINGENCY_TOP_K} needs plain categorical columns "
+                        "unless values are included."
+                    ),
+                )
+
+
+def snapshot_joint_warnings(doc: dict[str, Any], *, contingency_top_k: int) -> list[QualityWarning]:
+    """One warning per joint whose cell cap cut combinations out of `doc`.
+
+    `cap_dropped` is what the cap cut; `policy_dropped` is what a value policy removed from the
+    kept head afterwards, so a reader never raises the cap to recover those. Joints whose values
+    the writer withheld get no record. Details hold names and counts only, never a cell label.
+    """
+    withheld = (
+        set(doc.get(REDACTED_COLUMNS_KEY, ()))
+        if doc.get(VALUE_POLICY_KEY) == POLICY_REDACTED
+        else set()
+    )
+    out: list[QualityWarning] = []
+    for joint in doc["joints"]:
+        cell_count = joint["cell_count"]
+        cap_dropped = max(0, cell_count - contingency_top_k)
+        if cap_dropped == 0 or withheld & set(joint["columns"]):
+            continue
+        cells_kept = len(joint["cells"])
+        out.append(
+            QualityWarning(
+                code=reasons.warning.FIT_JOINT_CELLS_TRUNCATED,
+                provider="snapshot",
+                column=",".join(joint["columns"]),
+                detail={
+                    "columns": list(joint["columns"]),
+                    "cell_count": cell_count,
+                    "cells_kept": cells_kept,
+                    "cap_dropped": cap_dropped,
+                    "policy_dropped": min(contingency_top_k, cell_count) - cells_kept,
+                    "other_count": joint["other_count"],
+                },
+            )
+        )
+    return out
+
+
 def distribution_snapshot_document(
     df: pd.DataFrame,
     *,
@@ -184,6 +250,8 @@ def distribution_snapshot_document(
         fanout_columns=fanout_columns,
         cell_format=True,
     )
+    if not include_values and contingency_top_k > DEFAULT_CONTINGENCY_TOP_K:
+        _refuse_raised_cap_on_raw_kinds(doc)
     profiled = df if profile_row_cap is None else df.head(profile_row_cap)
     profile = profile_columns(profiled, source_label)
     names = value_sensitive_names(profile.to_dict()["fields"])

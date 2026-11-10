@@ -54,6 +54,8 @@ def test_all_lists_every_public_name():
         # RUN-STREAM E1b: host CPU probe and the conservative CLI auto memory budget.
         "detect_usable_cpus",
         "resolve_conservative_ooc_budget_bytes",
+        # GEN-COND-CAP E1: fit-side warning for a joint whose cell cap dropped combinations.
+        "snapshot_joint_warnings",
         # Audit H5 (2026-06-12): profile-free compile-check subset for
         # config-only callers (decoy validate).
         "run_config_only_checks",

@@ -292,7 +292,8 @@ def test_other_count_is_written_only_by_the_one_collapse_helper() -> None:
         for n in ast.walk(fn)
         if isinstance(n, ast.Constant) and n.value == "other_count"
     ]
-    assert set(owners) == {"_collapse_counted_items"}
+    # `snapshot_joint_warnings` only reads the count to report it; it never writes one.
+    assert set(owners) == {"_collapse_counted_items", "snapshot_joint_warnings"}
 
 
 @pytest.mark.parametrize(

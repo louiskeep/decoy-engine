@@ -109,6 +109,8 @@ DEFAULT_NUMERIC_BINS = 10
 # into "other_count". Kept modest so the JSON fits a job-record column.
 DEFAULT_CATEGORICAL_TOP_K = 20
 DEFAULT_CONTINGENCY_TOP_K = 25
+# Upper bound on `contingency_top_k`: two ordinary categoricals (30 distinct each) fit in 900 cells.
+MAX_CONTINGENCY_TOP_K = 1000
 
 # Cardinality cap that splits "categorical" from "freetext" for object
 # columns. Mirrors profiling/_distributions._PROFILE_CATEGORICAL_DISTINCT_CAP (30)
@@ -149,18 +151,13 @@ def compute_distribution_snapshot(
         numeric_bins: Number of equal-width bins per numeric column.
         categorical_top_k: Max distinct values kept per categorical
             column; rest collapse into the column's `other_count`.
-        contingency_top_k: Max cells kept per joint table; rest collapse
-            into the joint's `other_count`.
-        high_cardinality_columns: Column names (HC-5) to fit with FULL
-            vocabulary retention instead of the ordinary cardinality cliff
-            (>30 distinct -> freetext) and top-K collapse: forces
-            `kind: categorical` and keeps every observed category
-            (`other_count` stays 0). Opt-in only -- omitted (the default)
-            means byte-identical output to every prior engine version.
-            Restricted to string/object/category dtype, <=100,000 distinct
-            values and <=16 MiB of label bytes; a violation raises
-            `DistributionSnapshotError`. Unknown names are silently skipped
-            (matching `joint_columns`, not a validator).
+        contingency_top_k: Max cells kept per joint table (an int from 1 to
+            `MAX_CONTINGENCY_TOP_K`); rest collapse into the joint's `other_count`.
+        high_cardinality_columns: Column names (HC-5) kept with FULL vocabulary:
+            forces `kind: categorical`, `other_count` stays 0. Opt-in; omitted
+            means byte-identical output. String/object/category dtype only, at
+            most 100,000 distinct values and 16 MiB of label bytes. Unknown
+            names are silently skipped (like `joint_columns`).
         fanout_columns: Column names that get an optional `fanout` block
             (degree histogram of the key column, counts only). Omitted means
             byte-identical output. A bare string or unknown name raises.
@@ -172,9 +169,15 @@ def compute_distribution_snapshot(
         docstring).
 
     Raises:
-        DistributionSnapshotError: bad `high_cardinality_columns` or
-            `fanout_columns`, or a safety-limit violation (see above).
+        DistributionSnapshotError: bad `contingency_top_k`, `high_cardinality_columns`,
+            `fanout_columns` or a safety-limit violation.
     """
+    if type(contingency_top_k) is not int or not 1 <= contingency_top_k <= MAX_CONTINGENCY_TOP_K:
+        raise DistributionSnapshotError(
+            code=reasons.quality.CONTINGENCY_TOP_K_INVALID,
+            message=f"contingency_top_k must be an int from 1 to {MAX_CONTINGENCY_TOP_K} "
+            f"(got type {type(contingency_top_k).__name__}).",
+        )
     # MED-3: a bare str satisfies `Collection[str]` but would iterate characters
     # and silently disable the feature; reject the shape explicitly.
     if isinstance(high_cardinality_columns, (str, bytes)):
