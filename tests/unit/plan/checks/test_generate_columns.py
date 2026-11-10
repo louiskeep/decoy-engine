@@ -28,8 +28,10 @@ def cfg(cols: list[dict[str, Any]], n: int = 5) -> dict[str, Any]:
     }
 
 
-def _compile(config: dict[str, Any]) -> Any:
-    return compile_plan(config, empty_profile(), decoy_engine_version="test")
+def _compile(config: dict[str, Any], **kwargs: Any) -> Any:
+    """Compile as `decoy run` does: the platform default locale is known (None is en_US)."""
+    kwargs.setdefault("instance_default_locale", None)
+    return compile_plan(config, empty_profile(), decoy_engine_version="test", **kwargs)
 
 
 def _sites() -> list[Any]:
@@ -99,10 +101,14 @@ def test_custom_provider_accepted_live_and_from_snapshot() -> None:
     from decoy_engine.plan.checks import check_generate_columns
 
     check_generate_columns(
-        cfg([faker(faker_type="gen_strict_probe")]), provider_snapshot={"gen_strict_probe": custom}
+        cfg([faker(faker_type="gen_strict_probe")]),
+        provider_snapshot={"gen_strict_probe": custom},
+        default_locale=None,
     )
     with pytest.raises(PlanCompileError):
-        check_generate_columns(cfg([faker(faker_type="gen_strict_probe")]), provider_snapshot={})
+        check_generate_columns(
+            cfg([faker(faker_type="gen_strict_probe")]), provider_snapshot={}, default_locale=None
+        )
 
 
 @pytest.mark.parametrize("locale", ["xx_YY", ["en_US", "xx_YY"]])
@@ -128,6 +134,74 @@ def test_faker_kwargs_unknown_key_refused_and_real_one_accepted() -> None:
     )
     ok = {"name": "r", "type": "faker", "faker_type": "random_int", "faker_kwargs": {"min": 0}}
     assert_accepted(cfg([ok]))
+
+
+# ---- the platform default locale ---------------------------------------------------------------
+
+
+def dept(**extra: Any) -> dict[str, Any]:
+    """`department` exists in fr_FR only, so it needs a locale from the column or the platform."""
+    return {"name": "d", "type": "faker", "faker_type": "department", **extra}
+
+
+def _generate(config: dict[str, Any], **kwargs: Any) -> list[Any]:
+    plan = compile_plan(config, empty_profile(), decoy_engine_version="test")  # default deferred
+    return synthesize.generate_tables(plan, **kwargs)["t"].column("d").to_pylist()
+
+
+DEPT_REFUSAL = ("generate_faker_type_unknown", p("d", "faker_type"))
+
+
+def test_provider_of_the_platform_default_locale_passes_plan_and_generates() -> None:
+    config = cfg([dept()])
+    run_config_only_checks(config, instance_default_locale="fr_FR")
+    _compile(config, instance_default_locale="fr_FR")
+    _compile(config, instance_default_locale=_deferred())  # a plan generated later
+    values = _generate(config, instance_default_locale="fr_FR")
+    assert len(values) == 5 and all(isinstance(v, str) and v for v in values)
+
+
+def _deferred() -> Any:
+    from decoy_engine.plan.checks import DEFERRED
+
+    return DEFERRED
+
+
+@pytest.mark.parametrize("default", [None, "en_US", "de_DE"])
+def test_provider_missing_from_the_effective_locale_is_refused_even_if_another_has_it(
+    default: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = cfg([dept()])
+    # Validate, and a compile that knows the default, refuse at plan time.
+    with pytest.raises(PlanCompileError) as info:
+        run_config_only_checks(config, instance_default_locale=default)
+    assert (info.value.code, info.value.path) == DEPT_REFUSAL
+    with pytest.raises(PlanCompileError) as info:
+        _compile(config, instance_default_locale=default)
+    assert (info.value.code, info.value.path) == DEPT_REFUSAL
+    # A plan compiled without it is refused when generation starts, before any provider runs.
+    monkeypatch.setattr(
+        "decoy_engine.generation._streamed.GenerationBudgetLedger",
+        lambda *a, **k: pytest.fail("generation started"),
+    )
+    with pytest.raises(PlanCompileError) as info:
+        _generate(config, instance_default_locale=default)
+    assert (info.value.code, info.value.path) == DEPT_REFUSAL
+    assert info.value.__context__ is None
+
+
+def test_column_locale_overrides_the_platform_default() -> None:
+    assert _generate(cfg([dept(locale="fr_FR")]), instance_default_locale="en_US")
+    assert_refused(cfg([dept(locale="en_US")]), *DEPT_REFUSAL)
+    assert_refused(cfg([dept(locale="de_DE")]), *DEPT_REFUSAL)
+
+
+def test_name_no_locale_has_is_still_refused_at_plan_time() -> None:
+    assert_refused(
+        cfg([faker(faker_type="not_a_provider")]),
+        "generate_faker_type_unknown",
+        p("f", "faker_type"),
+    )
 
 
 # ---- categorical ------------------------------------------------------------------------------
@@ -434,6 +508,31 @@ def test_braced_template_form_refused() -> None:
 )
 def test_valid_formula_shapes_accepted(expr: str) -> None:
     assert_accepted(cfg([seq("a"), seq("b"), formula("x", expr, ["a", "b"])]))
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "v + len([v for v in [1, 2, 3]])",  # read outside, bound inside a comprehension
+        "a + (lambda a: a + 1)(2)",  # a lambda parameter shadows the column only inside it
+        "len([w for x in [1] for w in [v]])",  # nested comprehension reading an outer name
+    ],
+)
+def test_name_bound_in_an_inner_scope_is_still_unknown_outside_it(expr: str) -> None:
+    cols = [seq("b"), formula("x", expr, ["b"])]
+    assert_refused(cfg(cols), "generate_formula_name_unknown", p("x", "formula"))
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "len([v for v in [1, 2, 3]])",
+        "len([w for v in [[1, 2]] for w in v])",
+        "(lambda q: q + 1)(b)",
+    ],
+)
+def test_names_bound_and_used_only_inside_their_scope_are_accepted(expr: str) -> None:
+    assert_accepted(cfg([seq("b"), formula("x", expr, ["b"])]))
 
 
 def test_scope_name_constant_matches_the_formula_scope() -> None:

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Callable, Mapping
-from functools import partial
+from functools import lru_cache, partial
 from typing import Any
 
 from decoy_engine import reasons
@@ -28,7 +28,7 @@ from decoy_engine.plan._checks_grouped_series import check_grouped_series_refs
 from decoy_engine.plan._checks_windowed_date import check_windowed_date_refs
 from decoy_engine.plan._errors import PlanCompileError
 
-__all__ = ["check_generate_columns"]
+__all__ = ["DEFERRED", "check_faker_default_locale", "check_generate_columns"]
 
 _REF_CHECKS = (
     check_derived_column_refs,
@@ -42,6 +42,16 @@ _ARITHMETIC = (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.P
 _ROW_NAMES = frozenset({"i", "index"})
 # Where a translated parse error points when the library error names no option.
 _PRIMARY_KEY = {"derived": "expression"}
+
+
+class _Deferred:
+    """The platform default locale is not known yet; the run's first choke point checks it."""
+
+    def __repr__(self) -> str:
+        return "DEFERRED"
+
+
+DEFERRED = _Deferred()
 
 
 def _code(symbol: Any) -> str:
@@ -80,11 +90,15 @@ def check_generate_columns(
     config: dict[str, Any],
     *,
     provider_snapshot: Mapping[str, Callable[..., Any]] | None = None,
+    default_locale: str | None | _Deferred = DEFERRED,
 ) -> None:
     """Refuse a generate column the run would ignore, crash on or fill with nulls.
 
     Raises ``PlanCompileError`` on the first problem, naming table, column and option.
     ``provider_snapshot`` is the custom-provider view the run will use (``None``: the live one).
+    ``default_locale`` is the platform's ``instance_default_locale`` when the caller knows it
+    (``None`` means Faker's en_US); ``DEFERRED`` leaves locale-less faker columns to
+    ``check_faker_default_locale`` at generation.
     """
     _run_ref_checks(config)
     tables = config.get("tables")
@@ -100,7 +114,7 @@ def check_generate_columns(
             continue
         cols = [c for c in columns if isinstance(c, dict) and isinstance(c.get("name"), str)]
         for index in range(len(cols)):
-            _check_column(table_name, cols, index, by_name, fakers)
+            _check_column(table_name, cols, index, by_name, fakers, default_locale)
 
 
 def _check_column(
@@ -109,11 +123,12 @@ def _check_column(
     index: int,
     tables: Mapping[str, dict[str, Any]],
     fakers: _FakerView,
+    default_locale: str | None | _Deferred,
 ) -> None:
     col = cols[index]
     kind = col.get("type")
     if kind == "faker":
-        fakers.check(table, col)
+        fakers.check(table, col, default_locale)
     elif kind == "categorical":
         _check_categories(table, col)
     elif kind == "reference":
@@ -127,37 +142,56 @@ def _check_column(
 # ---- faker ----------------------------------------------------------------------------------
 
 
+@lru_cache(maxsize=64)
+def _builtin(entry: str | None) -> tuple[Any, frozenset[str]]:
+    """One Faker per locale and its built-in provider names, shared by every check call.
+
+    The custom-provider layer is not cached: it changes at run time, so ``check`` reads it fresh.
+    """
+    from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
+
+    fake = make_faker(entry)
+    return fake, frozenset(get_faker_providers(fake, provider_snapshot={}))
+
+
 class _FakerView:
-    """Locale and provider lookups for one check pass, built once per locale."""
+    """Provider and kwargs lookups for one check pass, against the effective locale only."""
 
     def __init__(self, snapshot: Mapping[str, Callable[..., Any]] | None) -> None:
         self._snapshot = snapshot
-        self._by_locale: dict[Any, tuple[Any, frozenset[str]]] = {}
 
-    def _locale(self, locale: Any) -> tuple[Any, frozenset[str]]:
-        key = tuple(locale) if isinstance(locale, list) else (locale or None)
-        if key not in self._by_locale:
-            from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
+    @staticmethod
+    def _locale(locale: Any) -> tuple[Any, frozenset[str]]:
+        # One Faker per entry: a multi-locale Faker proxies attribute reads and some raise.
+        entries = locale if isinstance(locale, list) else [locale]
+        built = [_builtin(entry or None) for entry in entries]
+        return built[0][0], frozenset().union(*(names for _, names in built))
 
-            # One Faker per entry: a multi-locale Faker proxies attribute reads and some raise.
-            fakes = [
-                make_faker(entry or None)
-                for entry in (locale if isinstance(locale, list) else [locale])
-            ]
-            names = frozenset().union(
-                *(get_faker_providers(f, provider_snapshot=self._snapshot) for f in fakes)
-            )
-            self._by_locale[key] = (fakes[0], names)
-        return self._by_locale[key]
+    def check(
+        self,
+        table: str,
+        col: dict[str, Any],
+        default_locale: str | None | _Deferred = DEFERRED,
+    ) -> None:
+        """Refuse a faker column the effective locale cannot serve.
 
-    def check(self, table: str, col: dict[str, Any]) -> None:
+        A column without ``locale`` generates in the platform's ``instance_default_locale``. When
+        the caller does not know it yet (``DEFERRED``: plan time on a plan that will be
+        generated later) only the locale list is checked here, and ``check_faker_default_locale``
+        repeats the check with the real locale before any provider runs.
+        """
+        from decoy_engine.internal.faker_setup import has_custom_faker_override
+
         name = col["name"]
         locale = col.get("locale")
         if not self._locales_known(locale):
             raise _refusal(reasons.plan.GENERATE_LOCALE_UNKNOWN, table, name, "locale")
-        fake, names = self._locale(locale)
+        if not locale and isinstance(default_locale, _Deferred):
+            return
+        effective = locale or default_locale
+        fake, names = self._locale(effective)
         faker_type = col.get("faker_type", "word")
-        if faker_type not in names:
+        if faker_type not in names and not has_custom_faker_override(faker_type, self._snapshot):
             raise _refusal(reasons.plan.GENERATE_FAKER_TYPE_UNKNOWN, table, name, "faker_type")
         kwargs = col.get("faker_kwargs")
         if isinstance(kwargs, dict) and kwargs and not self._kwargs_known(fake, faker_type, kwargs):
@@ -327,16 +361,29 @@ def _check_forward_references(table: str, cols: list[dict[str, Any]], index: int
 # ---- formulas ---------------------------------------------------------------------------------
 
 
-def _unbound_reads(tree: ast.AST) -> set[str]:
-    """Names the expression reads that it does not bind itself (comprehension targets, lambdas)."""
-    bound: set[str] = set()
-    loads: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name):
-            (loads if isinstance(node.ctx, ast.Load) else bound).add(node.id)
-        elif isinstance(node, ast.arg):
-            bound.add(node.arg)
-    return loads - bound
+def _unbound_reads(text: str) -> set[str]:
+    """Names the expression reads from outside itself, honoring lexical scope.
+
+    Uses the stdlib ``symtable`` (the compiler's own scope analysis, PEP 227): a comprehension,
+    lambda or generator binds its names only inside its own scope, so ``v + len([v for v in
+    xs])`` still reads an outer ``v``. A symbol that is referenced, global in its table and
+    never assigned there is a read of the surrounding scope.
+    """
+    import symtable
+
+    try:
+        root = symtable.symtable(text.strip(), "<formula>", "eval")
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return set()  # the config layer refuses an unparsable formula
+    reads: set[str] = set()
+    pending = [root]
+    while pending:
+        table = pending.pop()
+        for sym in table.get_symbols():
+            if sym.is_referenced() and sym.is_global() and not sym.is_assigned():
+                reads.add(sym.get_name())
+        pending.extend(table.get_children())
+    return reads
 
 
 def _braced_sibling(node: ast.AST, siblings: set[str]) -> bool:
@@ -387,7 +434,7 @@ def _check_formula(table: str, cols: list[dict[str, Any]], index: int) -> None:
             raise _refusal(code, table, name, f"references.{position}")
     if _uses_braced_form(tree, siblings):
         raise _refusal(reasons.plan.GENERATE_FORMULA_TEMPLATE_SYNTAX, table, name, "formula")
-    reads = _unbound_reads(tree)
+    reads = _unbound_reads(text)
     for read in sorted(reads):
         if read in declared or read in FORMULA_SCOPE_NAMES or read in _ROW_NAMES:
             continue
@@ -431,3 +478,35 @@ def _check_reference_weights(
             raise _refusal(
                 reasons.plan.REFERENCE_WEIGHTS_LENGTH_MISMATCH, table, col["name"], "weights"
             )
+
+
+def check_faker_default_locale(
+    config: dict[str, Any],
+    instance_default_locale: str | None,
+    *,
+    provider_snapshot: Mapping[str, Callable[..., Any]] | None = None,
+    table: str | None = None,
+) -> None:
+    """Re-run the faker checks for columns with no ``locale``, in the run's effective locale.
+
+    Plan time cannot know ``instance_default_locale`` (``generate_tables`` takes it after the
+    plan is compiled), so the first choke point that has it calls this before any provider runs:
+    ``run_generation`` and the window admission. ``table`` limits it to one table.
+    """
+    tables = config.get("tables")
+    if not isinstance(tables, list):
+        return
+    view = _FakerView(provider_snapshot)
+    for entry in tables:
+        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+            continue
+        if table is not None and entry["name"] != table:
+            continue
+        for col in entry.get("generate_columns") or []:
+            if (
+                isinstance(col, dict)
+                and isinstance(col.get("name"), str)
+                and col.get("type") == "faker"
+                and not col.get("locale")
+            ):
+                view.check(entry["name"], col, instance_default_locale)

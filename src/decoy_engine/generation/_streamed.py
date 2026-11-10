@@ -345,7 +345,10 @@ def run_generation(
     receives each fidelity-gate ``QualityWarning``; it never changes the generated tables.
     """
     from decoy_engine.plan._seed import _normalize_job_seed_int
+    from decoy_engine.plan.checks import check_faker_default_locale
 
+    # Before any pool or provider: a column without `locale` runs in the platform default.
+    check_faker_default_locale(config, instance_default_locale, provider_snapshot=provider_snapshot)
     resolved_batch = batch_rows
     if ledger is None:
         if budget_bytes is None:

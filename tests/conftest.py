@@ -170,3 +170,4 @@ def lenient_generate_checks(monkeypatch: pytest.MonkeyPatch) -> None:
     tests/unit/plan/checks; this keeps the runtime behavior covered.
     """
     monkeypatch.setattr("decoy_engine.plan._compile.check_generate_columns", lambda *a, **k: None)
+    monkeypatch.setattr("decoy_engine.plan.checks.check_faker_default_locale", lambda *a, **k: None)

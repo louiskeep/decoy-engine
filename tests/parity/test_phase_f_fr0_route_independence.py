@@ -200,6 +200,8 @@ _CHILD = """
 import json, sys
 import decoy_engine.plan._compile as _compile
 _compile.check_generate_columns = lambda *a, **k: None  # the fixture pins the runtime fallback
+import decoy_engine.plan.checks as _checks
+_checks.check_faker_default_locale = lambda *a, **k: None
 from tests.parity import _f0_fixtures as fx
 from tests.parity._f0_canonical import table_fingerprint
 out = {}

@@ -94,7 +94,7 @@ from decoy_engine.plan._types import (
     Plan,
     PlanCompileResult,
 )
-from decoy_engine.plan.checks import check_generate_columns
+from decoy_engine.plan.checks import DEFERRED, check_generate_columns
 from decoy_engine.profile._hash import profile_hash
 from decoy_engine.profile._types import Profile
 
@@ -116,10 +116,14 @@ def compile_plan(
     no_profile: bool = False,
     file_access: FileAccess | None = None,
     base_dir: str | Path | None = None,
+    instance_default_locale: Any = DEFERRED,
 ) -> Plan:
     """Compile (config, profile, engine_version) into a frozen Plan.
 
     Args:
+        instance_default_locale: the locale a faker column without `locale` will generate in,
+            when the caller knows it (`None` is Faker's en_US). The default leaves those
+            columns to the check `run_generation` repeats with the real locale.
         no_profile: when True, source distinct counts are treated as
             unavailable (S1's `--no-profile` mode, restored in S5 F4). The
             distinct-count-dependent checks (`basic_uniqueness_pre_flight`,
@@ -200,7 +204,7 @@ def compile_plan(
     # Rows 16-20 (derived, derived_aggregate, grouped_series, windowed_date and group_key column
     # refs) and GEN-STRICT E2 (per-type generate column checks), through one wrapper. Config-only;
     # both branches + run_config_only_checks.
-    check_generate_columns(config)
+    check_generate_columns(config, default_locale=instance_default_locale)
     # Row 27 (HC-3a, 2026-07-17): reject date_shift columns whose group_by
     # (entity-anchor) column is missing. Config-only; both branches +
     # run_config_only_checks.
@@ -468,8 +472,12 @@ def run_config_only_checks(
     *,
     file_access: FileAccess | None = None,
     base_dir: str | Path | None = None,
+    instance_default_locale: str | None = None,
 ) -> tuple[str, ...]:
     """Run the profile-free subset of plan-compile checks.
+
+    `instance_default_locale` is the locale a faker column without `locale` generates in
+    (`None`: Faker's en_US, which is what `decoy validate` runs with).
 
     Audit H5 (2026-06-12): `decoy validate` only schema-checked configs,
     so configs guaranteed to crash at `run` (e.g. `strategy: faker` on a
@@ -514,7 +522,7 @@ def run_config_only_checks(
     # Row 15 (SP-04): reject unknown or structurally unsupported FPE checksum schemes.
     check_fpe_checksum_scheme(config)
     # Rows 16-20 column refs plus GEN-STRICT E2 generate column checks (one wrapper, as above).
-    check_generate_columns(config)
+    check_generate_columns(config, default_locale=instance_default_locale)
     # Row 27 (HC-3a): reject date_shift columns with a missing group_by
     # (entity-anchor) column ref. Config-only.
     check_date_shift_group_by_refs(config)
