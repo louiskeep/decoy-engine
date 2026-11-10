@@ -55,6 +55,7 @@ SENTRIES = (
     "tests/sentry/test_physical_seam_disconnection.py",
     "tests/sentry/test_private_files.py",
     "tests/sentry/test_proof_manifest.py",
+    "tests/sentry/test_pytest_timeout_configured.py",
     "tests/sentry/test_public_import_boundary.py",
     "tests/sentry/test_ratchet_check.py",
     "tests/sentry/test_reason_baseline_frozen.py",

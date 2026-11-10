@@ -172,6 +172,10 @@ dev = [
     # step (ENGINE-PAR P2). Part of `dev` so the lock-synced gate venv has it; the certified DP
     # fingerprint is re-pinned in the same change (dp_provenance._CERTIFIED_STACKS).
     "pytest-xdist>=3.5",
+    # Per-test hang guard: one stuck test fails with a stack dump instead of stalling a suite
+    # (a full run hung 70 min on 2026-11-10). The limit is `timeout` in [tool.pytest.ini_options];
+    # tests/sentry/test_pytest_timeout_configured.py fails if the plugin or the limit goes missing.
+    "pytest-timeout>=2.4",
 ]
 # Test-Quality Program (TQ-0, 2026-07-25): coverage measurement + mutation
 # grading. pytest-cov feeds the TQ-3 diff-coverage ratchet; mutmut grades
@@ -409,6 +413,12 @@ pythonpath = ["src", "scripts"]
 # codec/characterization/driver-unit tests, including the hash-order
 # fail-control); run the marked determinism sweep explicitly via
 # `pytest -m determinism_harness` or `python scripts/faker-determinism/check_determinism.py`.
+# Per-test hang guard (pytest-timeout, `dev` extra). 780 s is 3x the slowest default-selection test
+# (test_exhaustive_six_digit_permutation, 247 s under -n 4 on 2026-11-10), rounded up to a whole
+# minute; a hung test fails with a stack dump instead of stalling the suite. `signal` is the
+# precise method on Linux and macOS; pytest-timeout falls back to `thread` by itself on Windows.
+timeout = 780
+timeout_method = "signal"
 addopts = "-m 'not benchmark and not testflight and not packaging and not codspeed and not determinism_harness'"
 markers = [
     "no_default_secret: opt out of the shared throwaway secret (tests/_keyed_secret.py); the test asserts behavior with no secret supplied",
