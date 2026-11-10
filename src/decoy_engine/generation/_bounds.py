@@ -23,6 +23,7 @@ import pyarrow as pa
 
 from decoy_engine import reasons
 from decoy_engine.generation._faker_pool import POOL_ELIGIBLE_LOCALE_PAIRS
+from decoy_engine.generation.kinds import constant_payload_bound, parametric_payload_bound
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -193,6 +194,10 @@ def compute_payload_bounds(
             result = sequence_payload_bound(col, rows)
         elif kind == "categorical":
             result = categorical_payload_bound(col)
+        elif kind == "constant":
+            result = constant_payload_bound(col)
+        elif kind == "distribution":
+            result = parametric_payload_bound()
         elif kind == "faker":
             result = faker_payload_bound(col, provider_snapshot)
         elif kind == "reference":

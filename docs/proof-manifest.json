@@ -3,7 +3,7 @@
   "generated_at": "2026-06-14",
   "surface": {
     "mask": 24,
-    "generate": 12,
+    "generate": 13,
     "providers": 34
   },
   "hero": {
@@ -1242,6 +1242,7 @@
   ],
   "generation_strategies": [
     "categorical",
+    "constant",
     "derived",
     "derived_aggregate",
     "distribution",

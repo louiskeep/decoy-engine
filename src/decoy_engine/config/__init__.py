@@ -37,7 +37,11 @@ from __future__ import annotations
 
 from decoy_engine.config._errors import PipelineConfigError
 from decoy_engine.config._fixed_width import FixedWidthColumn, FixedWidthLayout
-from decoy_engine.config._generate_options import GenerateTypeOptions, generate_option_catalog
+from decoy_engine.config._generate_options import (
+    GenerateTypeOptions,
+    generate_option_catalog,
+    refuse_unlisted_generate_families,
+)
 from decoy_engine.config._generate_unique import (
     UNIQUE_FAKER_ATTEMPTS,
     distinct_categories,
@@ -137,5 +141,6 @@ __all__ = [
     "parse_pipeline_config",
     "parse_relationship_config",
     "post_scan_integrity_requested",
+    "refuse_unlisted_generate_families",
     "value_key",
 ]

@@ -115,6 +115,14 @@
         "seq": "60c7d93fd8cea3692dc4b842110a50054bd993a02ee6c55eddd5caabacf69e82"
       }
     },
+    "source_free": {
+      "envelope_digest": "b95615ebd017b26ee29c40d613735eea887d6bdf3cc4776b91cb08e64212f0b4",
+      "excluded_columns": [],
+      "status": "unchanged",
+      "tables": {
+        "source_free": "62e95273151b5286452a137c75186489eb772ac07c2548f0e173ef75951e88b1"
+      }
+    },
     "statistical": {
       "envelope_digest": "d0f20bd6aec45963e323a9000a4a0adc23653d17fb404f54642c4b4dc83397e8",
       "excluded_columns": [],

@@ -72,6 +72,7 @@ from decoy_engine.execution.native.protocol.providers_base import (
 from decoy_engine.execution.native.protocol.providers_gen import (
     CategoricalChoicesProvider,
     CompositeBuildPoolProvider,
+    DistributionProvider,
     DistributionSnapshotProvider,
     FakerPerRowProvider,
     FakerPoolBuildProvider,
@@ -207,6 +208,7 @@ _DEDICATED_PROVIDER_CLASSES: tuple[type[DrawSiteProvider], ...] = (
     WindowedDateProvider,
     NullProbabilityProvider,
     DistributionSnapshotProvider,
+    DistributionProvider,
     PoolNonDeterministicProvider,
     CompositeBuildPoolProvider,
     CategoricalChoicesProvider,
@@ -287,6 +289,7 @@ __all__ = [
     "CategoricalChoicesProvider",
     "CodeSetKeyedSelectProvider",
     "CompositeBuildPoolProvider",
+    "DistributionProvider",
     "DistributionSnapshotProvider",
     "DrawSiteProtocolError",
     "DrawSiteProvider",

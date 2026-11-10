@@ -731,6 +731,10 @@ module = [
     "decoy_engine.generation.pool._sampler",
     "decoy_engine.generation.pool._validate",
     "decoy_engine.generation.pool._value_pool",
+    # GEN-TYPES: constant and parametric distribution generate types.
+    "decoy_engine.generation.kinds",
+    "decoy_engine.generation.kinds._constant",
+    "decoy_engine.generation.kinds._parametric",
     # engine-v2 S8 (Composite Generators). Spec:
     # docs/v2/sprints/engine-v2/sprint-08-composite-generators.md in decoy-platform.
     # Per best-practices §5.4 + S8 spec §1.

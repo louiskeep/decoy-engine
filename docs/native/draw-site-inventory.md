@@ -44,11 +44,11 @@ partitionable.
 
 ## Summary
 
-- 38 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
+- 39 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
   the out-of-core batched path, the delegation handlers, and the 9 identifier
   provider adapters).
-- 23 partitionable, 15 not.
-- Family breakdown: `source_keyed_hmac` 15, `numpy_pcg64` 8, `faker_seed_instance`
+- 23 partitionable, 16 not.
+- Family breakdown: `source_keyed_hmac` 15, `numpy_pcg64` 9, `faker_seed_instance`
   5, `python_mt19937` 6, `per_row_reseed` 2, `per_group_stream` 1,
   `gen_derive_context` 1.
 - GP2 (2026-09-17) added `gen.faker_pool_build` / `gen.faker_pool_selection`: a
@@ -243,7 +243,7 @@ valid `derive` IKM lengths. Wired into output via the provider registry
 
 ---
 
-## Family: numpy_pcg64 (8 sites)
+## Family: numpy_pcg64 (9 sites)
 
 Draws from a `numpy.random.Generator` (`default_rng`, PCG64). Most are
 whole-column vector draws and are therefore NOT partitionable. The exception is
@@ -287,6 +287,13 @@ mirror at `generators/columns.py:221`.
 `choice(k, size=num_rows, p=probs)`, `uniform(lo, hi)`, or `random(num_rows)`.
 Numeric, categorical, and datetime samplers all draw whole-column vectors
 (`:141`, `:266`, `:386`). NOT partitionable.
+
+### gen.distribution
+`generation/kinds/_parametric.py:67`. `default_rng(base_int("dist"))` then, per batch,
+`random(size)` (uniform), scaled and shifted by separate ufuncs so there is no fused multiply-add,
+with an optional `np.clip` to `min`/`max`. The `dist` family is separate
+from `np` so the value stream never shares uniforms with `gen.null_probability`. Draws of sizes
+k and n-k concatenate to one draw of n, so batching does not change values. NOT partitionable.
 
 ### gen.pool_nondeterministic
 `generation/pool/_sampler.py:122`.
@@ -573,8 +580,8 @@ The `unit_float_from_bits53(raw_u64)` primitive extracts the upper 53 bits of a
 FULL 64-bit value (`(raw_u64 >> 11) / 2**53`), matching NumPy's own `random()`
 construction and always `< 1.0` (the all-ones input maps to `(2**53 - 1) / 2**53`).
 
-Registry: exactly one provider per catalogued `draw_site_id` (38 sites; 23
-partitionable, 15 not). An import-time invariant fails if the registry drifts
+Registry: exactly one provider per catalogued `draw_site_id` (39 sites; 23
+partitionable, 16 not). An import-time invariant fails if the registry drifts
 from `DRAW_SITES`.
 
 | draw_site_id                      | family              | partitionable | provider_version |
@@ -586,6 +593,7 @@ from `DRAW_SITES`.
 | mask.text_mask_faker              | faker_seed_instance | yes           | Faker (seed_instance detaches a per-instance random.Random) |
 | gen.derive_context                | gen_derive_context  | yes           | seed_protocol_v7 |
 | gen.composite_build_pool          | numpy_pcg64         | no            | seed_protocol_v7; numpy NEP-19 PCG64 |
+| gen.distribution                  | numpy_pcg64         | no            | seed_protocol_v7 (GenDeriveContext); numpy NEP-19 PCG64 |
 | gen.distribution_snapshot         | numpy_pcg64         | no            | seed_protocol_v7 (GenDeriveContext); numpy NEP-19 PCG64 |
 | gen.faker_pool_selection          | numpy_pcg64         | no            | seed_protocol_v7 (GenDeriveContext.family_bytes); numpy NEP-19 PCG64 |
 | gen.identifier_nondeterministic   | numpy_pcg64         | no            | numpy NEP-19 PCG64 |

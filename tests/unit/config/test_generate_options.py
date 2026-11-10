@@ -33,6 +33,8 @@ MINIMAL: dict[str, dict[str, Any]] = {
     "grouped_series": {"group_by": "g", "order_by": "o"},
     "windowed_date": {"anchor": "a", "max_days": 5},
     "group_key": {"group_by": "g"},
+    "constant": {"value": "US"},
+    "distribution": {"family": "uniform", "low": 0, "high": 3},
 }
 
 

@@ -12,6 +12,8 @@ RNG families), consumed incrementally:
 - per-row faker: `seed_instance(row_int("faker", global_i))` then the provider;
 - pooled faker: pool built once, then one persistent `default_rng(selection_seed)`;
 - reference (no repair): parent key set materialized once, one persistent `random.Random`;
+- constant: no draw, the one configured value;
+- distribution: one persistent `default_rng(base_int("dist"))`, `size` draws per call;
 - windowed_date: no RNG state; each row derives its own offset from the global row index and
   its own same-batch anchor value (`transforms/windowed_date.py`), so it needs the sibling batch;
 - null mask: one `default_rng(base_int("np")).random(size)` per call.
@@ -32,6 +34,7 @@ import pandas as pd
 from decoy_engine.generation import _faker_pool
 from decoy_engine.generation._bounds import faker_pool_bytes
 from decoy_engine.generation._numeric_typing import sequence_affixes
+from decoy_engine.generation.kinds import ConstantStream, ParametricStream
 from decoy_engine.generators.derivation import GenDeriveContext, column_identity, with_table
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 
@@ -289,6 +292,10 @@ def make_column_stream(
         )
     elif kind == "windowed_date":
         inner = WindowedDateStream(col, seed)
+    elif kind == "constant":
+        inner = ConstantStream(col)
+    elif kind == "distribution":
+        inner = ParametricStream(col, ctx)
     else:
         raise ValueError(f"column {col.get('name')!r}: type {kind!r} has no streamed generator")
     null_prob = float(col.get("null_probability") or 0.0)
