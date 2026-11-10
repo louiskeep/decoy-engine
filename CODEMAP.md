@@ -244,6 +244,9 @@ concrete path that does not exist. Layer membership will live in `./.importlinte
 | Layer contracts | `./.importlinter` (target) beside `./pyproject.toml` | `.importlinter` | `tests/sentry/layout/test_import_layers.py` (target) | exact membership snapshot in the test; ignore baseline `tests/sentry/baselines/import-layers.json` (target) |
 | Dev tooling | `scripts/dev/`; one-off tools in a topic folder: `scripts/audit/`, `scripts/codeset_etl/`, `scripts/faker-determinism/`, `scripts/fk-scale/`, `scripts/native-baseline/`, `scripts/native-testing/`, `scripts/release/`, or `scripts/bench-*/` | by tool concern | tool tests | root `scripts/` freeze at 26; `tests/sentry/test_module_size.py` |
 | Plans, decisions, records | `docs/plans/`, `docs/decisions/`, `docs/records/` | `docs/plans/YYYY-MM-DD-<slug>.md`; `docs/records/YYYY-MM-DD-<slug>.md` | - | undated older plans are listed exceptions |
+| Changelog fragments | `changelog.d/` (README in `changelog.d/README.md`) | `changelog.d/<slice-slug>.md`, one per behavior change | `tests/unit/scripts/test_stamp_release_compile.py`, `tests/unit/scripts/test_check_fragment.py` | grammar `parse_fragment` in `scripts/release/stamp_release.py`; PR check `scripts/dev/check_fragment.py` |
+| Cross-suite test helpers | `tests/` root | `tests/_<concern>.py` (for example `tests/_changelog.py`, `tests/_dp_cert.py`) | the tests that import them | - |
+| Lightweight automatic PR checks | `.github/workflows/` | `.github/workflows/<concern>.yml`; `ci.yml` stays manual-only | the script it runs | `TRIGGERED_ON_PURPOSE` in `tests/sentry/test_ci_config.py` |
 | Unit tests | `tests/unit/<package>/` mirroring `src/` | `test_<behavior>.py` | - | current exceptions: `tests/parity/`, `tests/native/`, `tests/physical/`, `tests/fileaccess/`, `tests/secret_providers/`, `tests/generation/`, `tests/connectors/`, and loose files in `tests/unit/` |
 
 Known inconsistencies, listed and not fixed here: `execution/_errors.py` and 14 other
