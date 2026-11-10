@@ -1,8 +1,8 @@
 # Trademarks
 
-"Decoy", the Decoy wordmark, and any Decoy logos (collectively, the "Decoy Marks") are common-law trademarks of Decoy Labs, Inc.
+"Decoy", the Decoy wordmark, and any Decoy logos (collectively, the "Decoy Marks") are common-law trademarks of Decoy Labs LLC.
 
-TODO(licensor): Replace "Decoy Labs, Inc." with the final registered entity name once incorporation is complete.
+TODO(licensor): Replace "Decoy Labs LLC" with the final registered entity name once the LLC is formed.
 TODO(legal): Update this file once any USPTO or international trademark filings are in progress or registered.
 
 ## What the license does and does not grant
@@ -19,7 +19,7 @@ You may use the Decoy Marks in plain text — without alteration, in normal sent
 
 ## Uses that require permission
 
-You must obtain prior written permission from Decoy Labs, Inc. to:
+You must obtain prior written permission from Decoy Labs LLC to:
 
 - Use the Decoy Marks (including logos) in or on a product name, company name, domain name, or any branding.
 - Use the Decoy Marks in a way that suggests sponsorship, endorsement, or affiliation that does not exist.

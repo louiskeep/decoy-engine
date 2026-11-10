@@ -6,7 +6,7 @@ FSL-1.1-ALv2
 
 ## Notice
 
-Copyright 2026 Decoy Labs, Inc.
+Copyright 2026 Decoy Labs LLC
 
 ## Terms and Conditions
 
