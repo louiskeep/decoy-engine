@@ -1,0 +1,26 @@
+{
+  "approximate_columns": [
+    {
+      "column": "status",
+      "table": "claims"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "/work/.decoy/scratch/sample-1/claims.csv",
+      "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "table": "claims"
+    }
+  ],
+  "root_table": "médecins",
+  "sample_size": 50,
+  "scratch_dir": ".decoy/scratch/sample-1",
+  "subset_seed_counts": {
+    "médecins": 50
+  },
+  "table_rows": {
+    "claims": 212,
+    "médecins": 50
+  },
+  "ttl_seconds": 86400
+}

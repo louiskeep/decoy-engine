@@ -32,12 +32,8 @@ Prior art surveyed (per repo rule "use established methodology"):
     captures exactly enough to support those comparisons later without
     re-touching raw rows.
 
-What this module does NOT do (out of scope for D1a, owned by D1b/c/d):
-  - Compute fidelity scores or grades. That belongs in D1c (fidelity.py)
-    and operates on two snapshots, not two frames.
-  - Diagnostic structural checks (column survival, dtype drift). That
-    belongs in D1b (diagnostic.py).
-  - Persist snapshots to a job record. That's D2.
+What this module does NOT do: score fidelity (D1c, fidelity.py), run structural checks (D1b,
+diagnostic.py) or persist snapshots to a job record (D2).
 
 Sensitive artifact: a categorical column's `top_values` already carries
 REAL source values (gated by the consumer-side `allow_real_categories`
@@ -109,20 +105,28 @@ DEFAULT_NUMERIC_BINS = 10
 # into "other_count". Kept modest so the JSON fits a job-record column.
 DEFAULT_CATEGORICAL_TOP_K = 20
 DEFAULT_CONTINGENCY_TOP_K = 25
+# Upper bound on `contingency_top_k`: two ordinary categoricals (30 distinct each) fit in 900 cells.
+MAX_CONTINGENCY_TOP_K = 1000
 
-# Cardinality cap that splits "categorical" from "freetext" for object
-# columns. Mirrors profiling/_distributions._PROFILE_CATEGORICAL_DISTINCT_CAP (30)
-# so the kind assignment is consistent across the engine. This is the SINGLE
-# fit source of truth (HC-5 D4): the Pre-scan copy is a deliberately independent
-# profiler-chart constant, not derived from this one.
-_CATEGORICAL_DISTINCT_CAP = 30
+# Cardinality cap that splits "categorical" from "freetext" for object columns. Mirrors
+# profiling/_distributions._PROFILE_CATEGORICAL_DISTINCT_CAP (30). This is the SINGLE fit
+# source of truth (HC-5 D4): the Pre-scan copy is a deliberately independent constant.
+CATEGORICAL_DISTINCT_CAP = 30
 
-# HC-5 hard safety limits for an opt-in `high_cardinality` column: the "full
-# fidelity" promise (retain every observed category) must fail loudly rather
-# than silently truncate or balloon the JSON artifact. Both are typed fit
-# errors, never a silent cap.
+# HC-5 hard safety limits for an opt-in `high_cardinality` column: "full fidelity"
+# must fail loudly (typed fit errors), never silently truncate or balloon the artifact.
 _HIGH_CARDINALITY_MAX_DISTINCT = 100_000
 _HIGH_CARDINALITY_MAX_LABEL_BYTES = 16 * 1024 * 1024  # 16 MiB
+
+
+def check_contingency_top_k(value: object) -> None:
+    """Raise `DistributionSnapshotError` unless `value` is an int from 1 to the maximum."""
+    if type(value) is not int or not 1 <= value <= MAX_CONTINGENCY_TOP_K:
+        raise DistributionSnapshotError(
+            code=reasons.quality.CONTINGENCY_TOP_K_INVALID,
+            message=f"contingency_top_k must be an int from 1 to {MAX_CONTINGENCY_TOP_K} "
+            f"(got type {type(value).__name__}).",
+        )
 
 
 def compute_distribution_snapshot(
@@ -146,21 +150,17 @@ def compute_distribution_snapshot(
         joint_columns: Pairs of column names whose pairwise contingency
             table should be captured. Pairs referencing unknown columns
             are silently skipped (the snapshot is not a validator).
-        numeric_bins: Number of equal-width bins per numeric column.
+        numeric_bins: Number of equal-width bins per numeric column. A numeric column also gets
+            an optional `quantile_grid` or `exact_values` block (generation/statistical/_numeric_shape.py).
         categorical_top_k: Max distinct values kept per categorical
             column; rest collapse into the column's `other_count`.
-        contingency_top_k: Max cells kept per joint table; rest collapse
-            into the joint's `other_count`.
-        high_cardinality_columns: Column names (HC-5) to fit with FULL
-            vocabulary retention instead of the ordinary cardinality cliff
-            (>30 distinct -> freetext) and top-K collapse: forces
-            `kind: categorical` and keeps every observed category
-            (`other_count` stays 0). Opt-in only -- omitted (the default)
-            means byte-identical output to every prior engine version.
-            Restricted to string/object/category dtype, <=100,000 distinct
-            values and <=16 MiB of label bytes; a violation raises
-            `DistributionSnapshotError`. Unknown names are silently skipped
-            (matching `joint_columns`, not a validator).
+        contingency_top_k: Max cells kept per joint table (an int from 1 to
+            `MAX_CONTINGENCY_TOP_K`); rest collapse into the joint's `other_count`.
+        high_cardinality_columns: Column names (HC-5) kept with FULL vocabulary:
+            forces `kind: categorical`, `other_count` stays 0. Opt-in; omitted
+            means byte-identical output. String/object/category dtype only, at
+            most 100,000 distinct values and 16 MiB of label bytes. Unknown
+            names are silently skipped (like `joint_columns`).
         fanout_columns: Column names that get an optional `fanout` block
             (degree histogram of the key column, counts only). Omitted means
             byte-identical output. A bare string or unknown name raises.
@@ -172,9 +172,10 @@ def compute_distribution_snapshot(
         docstring).
 
     Raises:
-        DistributionSnapshotError: bad `high_cardinality_columns` or
-            `fanout_columns`, or a safety-limit violation (see above).
+        DistributionSnapshotError: bad `contingency_top_k`, `high_cardinality_columns`,
+            `fanout_columns` or a safety-limit violation.
     """
+    check_contingency_top_k(contingency_top_k)
     # MED-3: a bare str satisfies `Collection[str]` but would iterate characters
     # and silently disable the feature; reject the shape explicitly.
     if isinstance(high_cardinality_columns, (str, bytes)):
@@ -203,6 +204,9 @@ def compute_distribution_snapshot(
         from decoy_engine.generation.statistical import add_cell_format
 
         add_cell_format(columns_block, df)
+    from decoy_engine.generation.statistical import add_numeric_shape
+
+    add_numeric_shape(columns_block, df)
 
     joints_block: list[dict[str, Any]] = []
     if joint_columns:
@@ -281,7 +285,7 @@ def _stats_for(
         return "datetime", _datetime_stats(non_null)
 
     distinct = non_null.nunique()
-    if distinct <= _CATEGORICAL_DISTINCT_CAP:
+    if distinct <= CATEGORICAL_DISTINCT_CAP:
         stats = _categorical_stats(non_null.astype(str), top_k=top_k)
         return "categorical", stats
     return "freetext", _freetext_stats(non_null.astype(str), bins=numeric_bins)

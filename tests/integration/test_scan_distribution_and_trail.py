@@ -108,7 +108,7 @@ class TestPatternDistribution:
         f = _profile("ssn", df)
         # SSN detector should fire, and column is small enough that we'd hit
         # the categorical path unless detector takes priority. The profiler
-        # routes to pattern when distinct_count > _CATEGORICAL_DISTINCT_CAP OR
+        # routes to pattern when distinct_count > CATEGORICAL_DISTINCT_CAP OR
         # when no detector fired but cardinality is high - let's check the
         # actual routing for low-cardinality detector-fired columns.
         # In the current implementation: low cardinality wins regardless of

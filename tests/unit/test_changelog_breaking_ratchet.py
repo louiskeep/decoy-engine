@@ -14,16 +14,17 @@ Two named limits:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from pathlib import Path
+
+from scripts.release.stamp_release import release_sections as _releases
+from scripts.release.stamp_release import section_digest as _digest
 
 ROOT = Path(__file__).resolve().parents[2]
 CHANGELOG = ROOT / "CHANGELOG.md"
 PINS = ROOT / "tests" / "fixtures" / "changelog_released_sections.json"
 
-_RELEASE = re.compile(r"^## \[(\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?)\] - \d{4}-\d{2}-\d{2}$", re.M)
 _SUBSECTION = re.compile(r"^### (.+)$", re.M)
 _BREAKING = "Breaking for consumers"
 _BREAK_WORDS = re.compile(r"now fails?|\brefus(?:e|es|ed)\b|\braises?\b|\brejected\b", re.I)
@@ -31,6 +32,78 @@ _KEY_CHARS = 60
 
 # (release, the entry's first 60 normalized characters) -> why it is not a separate break.
 TRIAGED: dict[tuple[str, str], str] = {
+    ("0.20.0", "A `reference` column with `distribution: fitted` now has its"): (
+        "new feature: the refusals apply only to a fitted reference column, new in this release"
+    ),
+    ("0.20.0", "`decoy_engine.detect_usable_cpus(*, fs_root=None, affinity=N"): (
+        "new function; it raises only for new callers"
+    ),
+    ("0.20.0", '`run_pipeline(execution_mode="stream")` means "must stream".'): (
+        "new opt-in mode: only `stream` refuses; `auto` routing is unchanged"
+    ),
+    ("0.20.0", "A `type: statistical` column whose snapshot carries a `cell_"): (
+        "new snapshot block: a snapshot without it generates byte-identical output"
+    ),
+    ("0.20.0", "Registry 1.17.0 adds four identities for GEN-UNIQUE: `config"): (
+        "new reason identities; nothing raises them in this entry"
+    ),
+    ("0.20.0", "Registry 1.16.0 adds one `plan` identity, `statistical_cell_"): (
+        "new reason identity; nothing raises it in this entry"
+    ),
+    ("0.20.0", "A generate column now accepts only the option keys its `type"): (
+        "Breaking: unknown or malformed generate options are refused"
+    ),
+    ("0.20.0", "Pre-GA hard change: a config that carried an unknown or malf"): (
+        "Breaking: unknown or malformed generate options are refused"
+    ),
+    ("0.20.0", "A pipeline with `global_settings.dp` now refuses a `type: re"): (
+        "Breaking: DP refuses a fitted reference column"
+    ),
+    ("0.20.0", "`PipelineConfig` accepts an optional top-level `name:`. It i"): (
+        "new optional key: a config without `name:` dumps and hashes as before"
+    ),
+    ("0.20.0", "`run_pipeline(..., quarantine_path=None)` takes the path the"): (
+        "new keyword with a default; only a bad value is refused"
+    ),
+    ("0.20.0", "`decoy_engine.profile.profile_relationships_from_config(rela"): (
+        "new function; its refusals reach only new callers"
+    ),
+    ("0.20.0", "A generate run that keeps its output in memory is now refuse"): (
+        "Breaking: an in-memory generate run over capacity is refused"
+    ),
+    ("0.20.0", "Generation reads that marker. A `type: statistical` column t"): (
+        "only snapshots fit with the new redaction marker; an older one loads as before"
+    ),
+    ("0.20.0", "`decoy_engine.quality.check_dp_fit_request(column_schema, *,"): (
+        "new function; it raises only for new callers"
+    ),
+    ("0.20.0", "The out-of-core spill root and its subdirectories, the isola"): (
+        "Breaking: a caller-named scratch dir that is unsafe is refused (scratch_unsafe)"
+    ),
+    ("0.20.0", "`scan_sources(sources, *, tables=None, sample_rows=10_000, s"): (
+        "new function; its refusals reach only new callers"
+    ),
+    ("0.20.0", "- `decoy_engine.parse_pipeline_config(raw)` is the one route"): (
+        "error type and text only; the same configs are refused"
+    ),
+    ("0.20.0", "- Validator text is shown only for the new `ConfigRuleError`"): (
+        "error text only; the same configs are refused"
+    ),
+    ("0.20.0", "- A per-row `derived` failure no longer echoes the cell valu"): (
+        "error text only; the same rows fail"
+    ),
+    ("0.20.0", "- A source table with duplicate field names (caller Arrow ta"): (
+        "Breaking: duplicate source field names are refused"
+    ),
+    ("0.20.0", "- `run_discovery_sql`: `DiscoverySqlError` no longer include"): (
+        "error text and class only; the same queries fail"
+    ),
+    ("0.20.0", "`pre_scan.detectors` and `post_scan.detectors` choose betwee"): (
+        "new optional config keys; a config without them dumps and hashes as before"
+    ),
+    ("0.20.0", "Behavior change: the local protected quarantine arena goes t"): (
+        "Breaking: the quarantine arena goes through the allocator"
+    ),
     ("0.19.0", "A column can now declare `logical_type`, `parse_format`, `se"): (
         "new opt-in feature: a route refuses only a job that declares casting, "
         "a config that does not is unchanged (PLAN_VERSION is in the Breaking list)"
@@ -97,15 +170,6 @@ TRIAGED: dict[tuple[str, str], str] = {
 }
 
 
-def _releases(text: str) -> list[tuple[str, str]]:
-    """(version, section text from its heading up to the next release heading), newest first."""
-    marks = list(_RELEASE.finditer(text))
-    return [
-        (m.group(1), text[m.start() : marks[i + 1].start() if i + 1 < len(marks) else len(text)])
-        for i, m in enumerate(marks)
-    ]
-
-
 def _entries_outside_breaking(section: str) -> list[str] | None:
     """Normalized entries (bullets and paragraphs) outside the Breaking list, or None when the
     release has no Breaking list."""
@@ -122,11 +186,6 @@ def _entries_outside_breaking(section: str) -> list[str] | None:
             if normalized:
                 out.append(normalized)
     return out
-
-
-def _digest(section: str) -> str:
-    lines = [line.rstrip() for line in section.strip().splitlines()]
-    return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
 
 
 def _untriaged_and_stale(text: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:

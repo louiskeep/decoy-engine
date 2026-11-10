@@ -116,6 +116,8 @@ ssn/v1  npi/v1  pan/v1  iban/v1  ein/v1  mrn/v1  ndc/v1  icd10/v1
 cusip/v1  address/v1  locality/v1  person/v1  provider/v1
 composite/v1  custom/v1   ... (every disguise spec)
 subset-manifest/v1         decoy-run-result/v1
+decoy-record/v1            sample-run/v1         decoy-library-export/v1
+decoy-job-log/v1
 scan-set/v1
 ```
 
@@ -132,6 +134,15 @@ reason it cannot validate as `null`. Numbers and flags are strict on both sides 
 document of another major (`/v2`), free text or a missing key is refused, never read as v1; a reader
 that wants `/v2` support adds a new model under a new tag. Hand-authored corpus samples (the v1 sample and its cross-minor variants) are in
 `tests/integration/compat_corpus/run_result/`.
+
+`decoy-record/v1` is the envelope of the local record library (`decoy_engine.records`): kind, payload tag, a
+content-addressed `id` (SHA-256 of the canonical envelope without `id`, parsed first so a reformatted file keeps
+its id), `payload_digest`, closed `labels`, typed `links`, and the payload. The kind registry owns each kind's payload
+tag and models: `evidence` (`cli-local-1`, the CLI manifest), `run-result` (`decoy-run-result/v1`), `sample-run/v1`
+(metadata of a `--sample N` run, never rows), `scan-set` (`scan-set/v1`, the engine's `ScanSetCore`), and the reserved `publication` and `checkpoint`. A record of a
+kind or payload major this version does not know is returned as an opaque record or as `RecordNeedsNewer`, never
+dropped. A default export withholds such a record (its id goes in the header's `withheld_records`); `keep_paths` copies it byte for byte. `decoy-library-export/v1` is the JSON Lines export format and
+`decoy-job-log/v1` the header of a job log. Corpus samples are in `tests/integration/compat_corpus/records/`.
 
 `scan-set/v1` is the record of one multi-table scan (`decoy_engine.scan_sources`). The engine
 owns its shape: `ScanSetCore` to write (unknown fields refused), `ScanSetCoreRead` to read
@@ -343,6 +354,9 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   (A5a): a `format: fixed_width` `FileSource` can now be read through these
   names instead of importing the private `decoy_engine.profile._fixed_width_reader`
   module, which the additive-only rule in §4.1 does not cover.
+  It also includes `generated_table_to_pandas(table)` (2026-11-08): converts a generated
+  Arrow table to pandas with every integer column kept as a pandas nullable integer, so
+  output written from the frame prints `1` where a plain `to_pandas()` prints `1.0`.
   It also includes `decoy_engine.profile.profile_relationships_from_config(relationships_config)
   -> tuple[Relationship, ...]` (CLI-QA1 E-b): the config's `relationships:` block as one
   `Relationship` per child, skipping malformed entries; an unequal composite column count, or an

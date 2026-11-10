@@ -9,6 +9,164 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-10
+
+### Breaking for consumers
+
+- Numeric fidelity scores drop for skewed or drifted columns (FID-RANGE); re-check
+  `fidelity_warn_threshold` and policy floors.
+- A csv file source must set `has_header` (CONFIG-EXPLICIT E1). Without it validation fails with
+  `source_file.has_header_required`; add `has_header: true` to keep the old read. A headerless source can
+  name its columns in a one-record header file with `column_names_file`. A csv dump always carries
+  `has_header`, so the physical plan hash moves for those configs. `resolve_csv_dialect` and
+  `build_profile_source` are now file-access entry points. Registry 1.15.0 adds three reasons (see
+  `docs/reasons.md`).
+- A generate column accepts only the option keys its `type` reads. A config whose unknown or
+  malformed option ran before because the generator ignored it is now refused with a
+  `config.generate_*` code; deleting such a key changes that column's seed and generated output.
+- A pipeline with `global_settings.dp` refuses a `type: reference` column with
+  `distribution: fitted` (`dp_generate_fitted_fanout_unsupported`). Use `distribution: random` under DP.
+- A generate run that keeps its output in memory is refused with `generation_budget_exceeded` when
+  the output cannot fit the detected memory ceiling, instead of running until the host kills it.
+- A source table with duplicate field names is refused with
+  `TransformError(code="duplicate_source_field_names")` at every public entry, instead of an
+  uncoded `KeyError`/`ValueError` or a silent out-of-core success.
+- The local protected quarantine arena goes through the allocator: on POSIX an empty arena with a
+  permissive mode is tightened to 0700 and accepted; one that already holds files is still refused
+  (`arena_unsafe`).
+- Generated numeric columns (an unformatted `sequence`, a faker provider that returns an int or a
+  float) are typed int64/float64 instead of string, and Parquet output has numeric columns. A
+  consumer that reads them as text sees a type change; convert with `generated_table_to_pandas`,
+  or nullable integer columns print as `1.0`.
+- A caller-named `temp_dir`, `staging_dir` or spill directory that already exists must be a real
+  directory you own with no group or other access. One that holds files, is a symlink or is owned by
+  another user is refused with `runtime.scratch_unsafe` (an empty open one is tightened to 0700). A
+  caller-named `staging_dir` is now created without parents, so its parent directory must exist.
+
+### Changed (numeric fidelity scale, FID-RANGE, 2026-11-10)
+
+Numeric column similarity now divides the quantile error by the source interquartile range
+(p75 - p25) instead of the source min-to-max range, so one extreme value no longer hides a wrong
+shape. When that range is 0 it uses p95 - p05, then max - min. A constant column scores 1 when the
+output quantiles match it and 0 otherwise. The old 1.0 floor is gone, so scores no longer depend
+on the column's units. The report shape and method name do not change.
+
+### Changed (generated numeric columns are typed, GEN-NUMERIC-TYPING, 2026-11-10)
+
+Generated numeric columns are now typed int64/float64 instead of string: an unformatted `sequence`
+and a faker provider that returns an int or float (pyint, pyfloat and similar). `derived`
+arithmetic and `grouped_series` ordering now work on numbers. Cell text is unchanged for non-null
+values; Parquet output has numeric columns. Formatted sequences (prefix, suffix, pad) and other
+faker providers stay string. A column stays string when its values cannot be proven to fit int64
+(a sequence whose last value overflows, an unbounded or oversized faker int provider), when a
+custom provider overrides its name, or when any reader of it needs text: formula references,
+aggregate input, group labels, window anchors, statistical conditioning, a `derived` expression
+that uses it with `+`, `==` or `in` against strings, or a relationship whose paired column is not
+generated with the same type.
+
+An engine release containing this change must ship together with the CLI switch from
+`table.to_pandas()` to `generated_table_to_pandas`, or nullable integer columns print as `1.0`.
+
+#### Added: `generated_table_to_pandas`
+
+`decoy_engine.generated_table_to_pandas(table)` converts a generated Arrow table to pandas with
+nullable integer dtypes, so a nullable numeric column writes `1` and not `1.0`.
+
+### Added (record library, engine side, LIB-L1a, 2026-11-10)
+
+`decoy_engine.records` holds the envelope the CLI's local record library and the platform importer share: `build`,
+`encode` and `decode` for `decoy-record/v1`, one canonical JSON form and content-addressed ids, a kind registry
+(`evidence`, `run-result`, `sample-run/v1`, `scan-set`; `publication` and `checkpoint` reserved), the
+`decoy-library-export/v1` codec and the `decoy-job-log/v1` header and reader. A record of an unknown kind or a later
+major decodes to an opaque record or `RecordNeedsNewer` instead of an error. Seven reasons join the registry at
+1.20.0: `runtime.record_invalid`, `runtime.record_corrupt`, `runtime.record_kind_reserved`,
+`warning.library_write_failed`, `warning.job_log_write_failed`, `warning.library_degraded` and
+`warning.library_delete_skipped`.
+
+### Added (fitted reference snapshot checks, QA-FK-FANOUT E2a, 2026-11-09)
+
+A `reference` column with `distribution: fitted` now has its `snapshot_file` read once and pinned
+into the Plan, like a `statistical` column. Compile, `run_config_only_checks` and `plan_from_yaml`
+refuse a fitted column with no `snapshot_file`, an unreadable snapshot, a snapshot with no fan-out
+for the source column (including every DP snapshot), an invalid fan-out block, or `weights`,
+`min_per_parent` or `max_per_parent` set. A loaded Plan whose manifest dropped the fitted snapshot
+raises `plan.statistical_snapshot_not_pinned`. Messages name fields only, never a stored value. One
+wrapper, `check_generate_snapshot_columns`, now runs the statistical and fitted checks at all three
+sites.
+
+### Added (fitted reference fan-out execution, FK-FANOUT E2b, 2026-11-10)
+
+A `reference` generate column with `distribution: fitted` and a `snapshot_file` made with a fan-out block gives
+each parent a child count drawn from the fitted degree histogram, instead of independent uniform picks. The
+snapshot is read once at compile and pinned, so deleting or editing the file after compile changes nothing, and
+seed derivation and the null mask never reopen it. The column takes the whole-table route. A `fitted` column
+with no pinned fan-out stops with `reference_fanout_missing`, and child rows against an empty parent pool stop
+with `reference_parent_pool_empty`. Other distributions generate the same cells as before.
+
+### Added (host CPU probe, DuckDB thread cap and conservative budget, RUN-STREAM E1b, 2026-11-09)
+
+`decoy_engine.detect_usable_cpus(*, fs_root=None, affinity=None)` is the platform's cgroup-aware core
+count moved into the engine: the tightest quota on the cgroup path (v1 or v2), capped by CPU affinity,
+or `os.cpu_count()` where the OS has no affinity call (macOS). A limit file that is present but
+unreadable raises `ExecutionError` with the new `runtime.cpu_detection_failed` (registry 1.21.0).
+`decoy_engine.resolve_conservative_ooc_budget_bytes()` returns 25% of the effective memory ceiling
+through `resolve_budget(None)`; `resolve_ooc_memory_limit(None)` keeps its ceiling-minus-reserve default
+for every other caller.
+
+`run_pipeline(out_of_core_threads=...)` caps the DuckDB threads of the out-of-core route. The cap is bound
+per run and read where each connection opens, so every nested connection gets
+`max(1, min(cap or usable CPUs, memory_limit // 2 GiB))` threads. DuckDB thread sizing now uses usable
+CPUs instead of `os.cpu_count()`. If the CPU limit cannot be read, a given cap is used in place of the CPU
+term (so `out_of_core_threads` works around the failure); without a cap the error is raised. The connection settings actually applied are returned in
+`quality_metrics["resources"]["out_of_core"]` (`thread_cap`, `applied`). The auto-chunk lane stamp gains
+`native_thread_clamp` (`requested`, `applied`). `applied` is the native companion's own answer
+(new `resolve_native_threads`, the resolver every kernel call uses), or None when the companion
+or that symbol is absent. The cgroup membership, mountinfo parsing and mount-root translation the CPU probe and the memory
+budget both need now live in one module, `execution/pipeline/_cgroup.py`. The memory budget finds its
+cgroup directory through mountinfo like the CPU probe, so a mount that exposes only a subtree (a
+container's cgroup namespace) is read at the right directory instead of falling back to host RAM.
+
+### Added (CONFIG-EXPLICIT E2a: declared-columns module, registry 1.19.0, 2026-11-08)
+
+`decoy_engine` exports `source_columns`, `declared_columns`, `check_columns_declared`,
+`DeclarationRequest`, `PreparedDeclaredSources` and `prepare_declared_sources`: the pre-read
+boundary that checks every source column is listed in the config. Registry 1.19.0 adds
+`source_file.undeclared_column` and `source_file.undeclared_table`. No route calls the boundary
+yet, so run behavior is unchanged.
+
+### Added (`unique` and `unique_together` generate options, GEN-UNIQUE E2, 2026-11-09)
+
+`unique: true` on a `sequence`, `categorical`, `faker` or `reference` generate column draws values with no
+repeats, and `unique_together: [[a, b]]` on a table does the same for a pair of `reference` columns. Rows that
+need more distinct values than exist stop the run with `uniqueness_impossible`, which names the table, column
+and counts but never a value. List and dict categories, parent keys and provider outputs are compared by
+equality, so they dedup instead of failing. Unique columns decline the window and pinned routes, and their
+seen set counts toward the memory floor. A config without these keys generates the same cells as before.
+
+### Added (`execution_mode="stream"`, RUN-STREAM E1a, 2026-11-09)
+
+`run_pipeline(execution_mode="stream")` means "must stream". It runs as `auto` with one extra
+requirement, and a job no streaming route can take is refused with the new
+`runtime.streaming_unavailable` (registry 1.18.0) before any source passed in `sources` is read.
+The size threshold does not apply, so a table of any size, empty included, takes the chunked lane. A
+table needs a lazy source and a streaming sink. Parquet output keeps one row group per chunk, split at
+pyarrow's 1,048,576-row writer cap, the grouping `ParquetWriter.write_table` gives each chunk of a
+`--chunked` run; the 256 MiB early cut stays an `auto` rule. A job with FK edges runs as one lane unit
+per table when every mask table passes the complete chunked compatibility gate. If the gate rejects it,
+the job takes the out-of-core route only when that route accepts the job and the FK dtype hazard is
+clear, and is refused otherwise. `auto` routing, its threshold and its row-group rules are unchanged.
+An empty source under `stream` writes an empty file with the source schema, as base `--chunked` does; the resident run types the empty columns differently (plan G6).
+
+### Changed (fidelity scores null-rate drift, GEN-FIT-SHAPE E3, 2026-11-09)
+
+Each `quality-fidelity/v1` column entry gains `value_similarity` (the score as before) and
+`missing_value_similarity` (`1 - |source null rate - output null rate|`, `null` when either side has no
+rows). `similarity` is the value score times the missing score, so a column that lost its nulls no longer
+scores 1.000; when the rates match, `similarity` is exactly the old number. `empty` and `kind_mismatch`
+entries stay out of the aggregate but report the missing score. If either snapshot carries a `dp` block the
+missing score is reported and not applied, because a DP null count is noise. The null fraction itself is now
+the public `decoy_engine.quality.snapshot_null_fraction`, the one place that count and zero-row rule live.
+
 ### Changed (generate uniqueness groundwork, GEN-UNIQUE E1, 2026-11-09)
 
 No generated-cell changes. Groundwork for `unique` generate columns: the config-time checks (`config/_generate_unique.py`),
@@ -53,15 +211,6 @@ Existing identities keep their numbers.
 Registry 1.16.0 adds one `plan` identity, `statistical_cell_format_invalid`, for a malformed `cell_format`
 block in a statistical column's snapshot entry. Nothing raises it yet; the decoder lands with GEN-FIT-SHAPE E2.
 Existing identities keep their numbers.
-
-### Breaking for consumers
-
-- A csv file source must set `has_header` (CONFIG-EXPLICIT E1). Without it validation fails with
-  `source_file.has_header_required`; add `has_header: true` to keep the old read. A headerless source can
-  name its columns in a one-record header file with `column_names_file`. A csv dump always carries
-  `has_header`, so the physical plan hash moves for those configs. `resolve_csv_dialect` and
-  `build_profile_source` are now file-access entry points. Registry 1.15.0 adds three reasons (see
-  `docs/reasons.md`).
 
 ### Changed (generate-column options are validated, registry 1.13.0)
 

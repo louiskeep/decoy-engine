@@ -1,0 +1,40 @@
+# Changelog fragment check.
+#
+# A PR that changes src/ must add one changelog.d/<slug>.md fragment, and every fragment it adds
+# must parse. Release prep compiles the fragments into CHANGELOG.md (stamp_release.py). Light
+# on purpose: stdlib Python and git only, so it runs on every PR while ci.yml stays manual.
+
+name: Changelog fragment
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  changelog-fragment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          # The next steps run Python the PR controls: leave no token in .git/config.
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Fetch base branch
+        run: git fetch origin "$BASE_REF"
+        env:
+          BASE_REF: ${{ github.base_ref }}
+
+      - name: Fragment check
+        run: python scripts/dev/check_fragment.py --base "origin/$BASE_REF"
+        env:
+          BASE_REF: ${{ github.base_ref }}

@@ -14,6 +14,7 @@ __all__ = [
     "BUNDLE_MISSING_OUTPUT_COLUMNS",
     "CARDINALITY_TARGET_EXCEEDS_POOL",
     "CATEGORICAL_CATEGORIES_NOT_LIST",
+    "CPU_DETECTION_FAILED",
     "DETERMINISTIC_MODE_UNSUPPORTED_CARDINALITY",
     "DETERMINISTIC_REQUIRES_SOURCE_AND_NAMESPACE",
     "EXACT_INT_NULL_MASK_MISMATCH",
@@ -99,6 +100,7 @@ __all__ = [
     "SOURCE_LENGTH_MISMATCH",
     "SOURCE_REQUIRED_FOR_CARDINALITY_MODE",
     "SPLIT_SINK_NEEDS_ALL_DISPATCHED",
+    "STREAMING_UNAVAILABLE",
     "TIMEZONE_NAIVE_DATETIME",
     "TRANSFORM_SOURCE_MISSING",
     "UNDECLARED_OUTPUT_COLUMNS",
@@ -218,8 +220,17 @@ SEQUENTIAL_TEXT_MASK_INPUT_TYPE_DRIFT = _d(
 SEQUENTIAL_TEXT_REDACT_INPUT_TYPE_DRIFT = _d(
     "sequential_text_redact_input_type_drift", "Sequential text redact input type drift."
 )
+CPU_DETECTION_FAILED = _d(
+    "cpu_detection_failed",
+    "CPU limit detection failed.",
+    retry=RetryClass.ENVIRONMENT_REPAIR,
+    since="1.21.0",
+)
 SPLIT_SINK_NEEDS_ALL_DISPATCHED = _d(
     "split_sink_needs_all_dispatched", "Split sink needs all dispatched."
+)
+STREAMING_UNAVAILABLE = _d(
+    "streaming_unavailable", "No streaming route applies to this job.", since="1.18.0"
 )
 TRANSFORM_SOURCE_MISSING = _d("transform_source_missing", "Transform source missing.")
 UNDECLARED_OUTPUT_COLUMNS = _d("undeclared_output_columns", "Undeclared output columns.")

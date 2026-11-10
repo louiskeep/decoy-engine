@@ -300,6 +300,26 @@ def test_cell_format_minor_has_one_fixture_with_exactly_its_identity() -> None:
     assert pinned["registry_version"] == "1.16.0"
 
 
+RUN_STREAM_FIXTURE = "reason-manifest-v1.18-run-stream-e1a.json"
+
+
+def test_streaming_unavailable_is_registered_with_its_owner() -> None:
+    """RUN-STREAM E1a: one additive identity owned by ExecutionError, `since` 1.18.0."""
+    from decoy_engine import reasons
+
+    spec = reasons.find("runtime", "streaming_unavailable")
+    assert spec is not None
+    assert spec.owner == "ExecutionError"
+    assert spec.since == "1.18.0"
+    assert reasons.runtime.STREAMING_UNAVAILABLE == "streaming_unavailable"
+
+
+def test_run_stream_minor_has_one_fixture_with_exactly_its_identity() -> None:
+    pinned = _load(RUN_STREAM_FIXTURE)
+    got = [(e["namespace"], e["code"]) for e in pinned["entries"]]
+    assert got == [("runtime", "streaming_unavailable")]
+
+
 GEN_UNIQUE_FIXTURE = "reason-manifest-v1.17-gen-unique.json"
 GEN_UNIQUE = [
     ("config", "generate_unique_conflict", "PipelineValidationError"),
@@ -402,3 +422,49 @@ def test_fit_redact_code_is_a_registered_plan_error_with_a_pinned_fixture() -> N
     assert [(e["namespace"], e["code"]) for e in fixture["entries"]] == [
         ("plan", "statistical_snapshot_values_redacted")
     ]
+
+
+CPU_DETECTION_FIXTURE = "reason-manifest-v1.21-run-stream-e1b.json"
+
+
+def test_cpu_detection_failed_is_registered_as_an_environment_repair() -> None:
+    """RUN-STREAM E1b: one additive identity owned by ExecutionError, `since` 1.21.0."""
+    spec = reasons.find("runtime", "cpu_detection_failed")
+    assert spec is not None
+    assert spec.owner == "ExecutionError"
+    assert spec.since == "1.21.0"
+    assert spec.kind is reasons.Kind.FAILURE
+    assert {r.retry for r in spec.rules} == {reasons.RetryClass.ENVIRONMENT_REPAIR}
+    assert reasons.runtime.CPU_DETECTION_FAILED == "cpu_detection_failed"
+    assert not re.search(r"[{}%]", spec.summary)
+
+
+def test_cpu_detection_minor_has_one_fixture_with_exactly_its_identity() -> None:
+    pinned = _load(CPU_DETECTION_FIXTURE)
+    assert [(e["namespace"], e["code"]) for e in pinned["entries"]] == [
+        ("runtime", "cpu_detection_failed")
+    ]
+    assert pinned["registry_version"] == "1.21.0"
+
+
+JOINT_CAP_FIXTURE = "reason-manifest-v1.22-gen-cond-cap.json"
+
+
+def test_joint_cap_codes_are_registered_with_a_pinned_fixture() -> None:
+    """GEN-COND-CAP E1: two snapshot failures and one fit warning, `since` 1.22.0."""
+    for ns, code, owner in (
+        ("quality", "contingency_top_k_invalid", "DistributionSnapshotError"),
+        ("quality", "contingency_top_k_kind_unsupported", "DistributionSnapshotError"),
+        ("warning", "fit_joint_cells_truncated", "QualityWarning"),
+    ):
+        spec = reasons.find(ns, code)
+        assert spec is not None
+        assert (spec.owner, spec.since) == (owner, "1.22.0")
+        assert not re.search(r"[{}%]", spec.summary)
+    pinned = _load(JOINT_CAP_FIXTURE)
+    assert sorted((e["namespace"], e["code"]) for e in pinned["entries"]) == [
+        ("quality", "contingency_top_k_invalid"),
+        ("quality", "contingency_top_k_kind_unsupported"),
+        ("warning", "fit_joint_cells_truncated"),
+    ]
+    assert pinned["registry_version"] == "1.22.0"

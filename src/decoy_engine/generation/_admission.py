@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.generation._numeric_typing import numeric_plan
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
@@ -164,6 +166,13 @@ def classify_plan(
         if has_windowed
         else {}
     )
+    numeric = numeric_plan(config, provider_snapshot=provider_snapshot)
+    pair_members = {
+        (name, member)
+        for name, t in tables.items()
+        for pair in t.get("unique_together") or []
+        for member in pair
+    }
     memo: dict[tuple[str, str], ColumnAdmission] = {}
     in_progress: set[tuple[str, str]] = set()
 
@@ -178,6 +187,8 @@ def classify_plan(
     def classify_reference(table: str, col: dict[str, Any]) -> ColumnAdmission:
         if int(col.get("min_per_parent") or 0) > 0 or int(col.get("max_per_parent") or 0) > 0:
             return decline(table, col, "reference_cardinality_repair")
+        if col.get("distribution") == "fitted":
+            return decline(table, col, "reference_fitted_fanout")
         parent_name = col.get("reference_table")
         parent = tables.get(parent_name) if isinstance(parent_name, str) else None
         parent_col = next(
@@ -224,10 +235,15 @@ def classify_plan(
         kind = col.get("type")
         if col.get("determinism") == "fresh":
             result = decline(table, col, "determinism_fresh")
+        elif col.get("unique") is True and kind != "sequence":
+            # A sequence is distinct by construction, so it stays on the streamed core.
+            result = decline(table, col, "unique")
+        elif (table, col["name"]) in pair_members:
+            result = decline(table, col, "unique_pair")
         elif not ADMISSION_MATRIX.get(str(kind), (False, ""))[0]:
             result = decline(table, col, f"family_declined:{kind}")
         elif kind == "sequence":
-            result = admit(table, col, pa.string())
+            result = admit(table, col, numeric.get((table, col["name"])) or pa.string())
         elif kind == "categorical":
             arrow_type, reason = _categorical_type(col)
             result = admit(table, col, arrow_type) if arrow_type else decline(table, col, reason)
@@ -236,7 +252,7 @@ def classify_plan(
         elif kind == "faker":
             faker_type = col.get("faker_type", "word")
             if isinstance(faker_type, str) and faker_is_built_in(faker_type, provider_snapshot):
-                result = admit(table, col, pa.string())
+                result = admit(table, col, numeric.get((table, col["name"])) or pa.string())
             else:
                 result = decline(table, col, "faker_custom_or_unresolved_provider")
         else:

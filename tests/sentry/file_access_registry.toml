@@ -5,7 +5,7 @@
 # `dir_category` (protected_root, protected_child, output_parent, published_output, non_row) and
 # `dir_test` (an existing pytest node id; every category but protected_root) mark directory
 # creators for tests/sentry/protected_dir (G-ONE-PROTECTED-DIR).
-# Count: 188 (asserted by the sentry).
+# Count: 190 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -386,6 +386,15 @@ owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
 [[entry]]
+module = "decoy_engine/execution/pipeline/_host.py"
+function = "_read"
+sink = "Path.read_text"
+ordinal = 0
+rule = "constant `/proc/self` or cgroup mount path under the `fs_root` argument"
+owner = "cam"
+reason = "usable CPU detection; no caller or config value reaches the path"
+
+[[entry]]
 module = "decoy_engine/execution/out_of_core/_budget.py"
 function = "detect_host_memory_bytes"
 sink = "Path.read_text"
@@ -408,6 +417,15 @@ module = "decoy_engine/execution/out_of_core/_budget.py"
 function = "_cgroup_leaf_dir"
 sink = "Path.read_text"
 ordinal = 0
+rule = "constant `/proc` or `/sys/fs/cgroup` path"
+owner = "cam"
+reason = "host memory limit detection; no caller or config value reaches the path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_budget.py"
+function = "_cgroup_leaf_dir"
+sink = "Path.read_text"
+ordinal = 1
 rule = "constant `/proc` or `/sys/fs/cgroup` path"
 owner = "cam"
 reason = "host memory limit detection; no caller or config value reaches the path"

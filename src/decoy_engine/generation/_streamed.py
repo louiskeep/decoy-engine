@@ -46,6 +46,7 @@ from decoy_engine.generation._bounds import (
     key_pool_bytes,
     legacy_table_bytes,
     sink_buffer_bytes,
+    table_unique_peak,
 )
 from decoy_engine.generation._budget_ledger import (
     GenerationBudgetExceeded,
@@ -59,6 +60,7 @@ from decoy_engine.generation._column_streams import (
     make_column_stream,
 )
 from decoy_engine.generation._faker_pool import pool_eligible, pool_opted_out
+from decoy_engine.generation._numeric_typing import restore_declared
 from decoy_engine.generation.pool._runtime_pool_size import DEFAULT_POOL_SIZE
 from decoy_engine.progress import get_active_channel
 
@@ -165,6 +167,12 @@ def _table_order(config: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _payloads(table: dict[str, Any], bounds: Mapping[tuple[str, str], int | None]) -> list[int]:
     return [bounds.get((table["name"], c["name"])) or 0 for c in table["generate_columns"]]
+
+
+def _bound_payload(
+    bounds: Mapping[tuple[str, str], int | None], table: str
+) -> Callable[[dict[str, Any]], int]:
+    return lambda col: bounds.get((table, col["name"])) or 0
 
 
 def _referenced_keys(tables: Sequence[dict[str, Any]]) -> set[tuple[str, str]]:
@@ -281,14 +289,15 @@ def _table_batches(
     collectors: Mapping[str, KeyPool],
 ) -> Iterator[pa.RecordBatch]:
     offset = 0
-    names = [c["name"] for c in table["generate_columns"]]
+    cols = table["generate_columns"]
+    names = [c["name"] for c in cols]
     for size in sizes:
         arrays = []
         # Post-null-mask values of the columns already emitted in THIS batch, which is what the
         # legacy path's `generated` mapping holds when a windowed_date column reads its anchor.
         emitted: dict[str, list[Any]] = {}
-        for name, stream, field_ in zip(names, streams, schema, strict=True):
-            values = draw_batch(stream, offset, size, emitted)
+        for col, name, stream, field_ in zip(cols, names, streams, schema, strict=True):
+            values = restore_declared(col, draw_batch(stream, offset, size, emitted), field_.type)
             emitted[name] = values
             arr = pa.array(values, type=field_.type)
             if name in widths:
@@ -429,8 +438,9 @@ def run_generation(
                 ledger=ledger,
                 stage=stage,
                 faker_payload=bounds.get((name, c["name"])),
+                numeric=pa.types.is_integer(f.type),
             )
-            for c in t["generate_columns"]
+            for c, f in zip(t["generate_columns"], schema, strict=True)
         ]
         widths: dict[str, int] = {}
         for c in t["generate_columns"]:
@@ -527,6 +537,11 @@ def _run_legacy(
     if ledger.bounded:
         need = sum(
             legacy_table_bytes(int(t.get("row_count") or 0), _payloads(t, bounds)) for t in tables
+        )
+        # Unique draws free their set before the next table starts: the largest one counts once.
+        need += max(
+            (table_unique_peak(t, _bound_payload(bounds, t["name"])) for t in tables),
+            default=0,
         )
         if not _fits(ledger, need):
             raise GenerationBudgetExceeded(

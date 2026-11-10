@@ -49,13 +49,14 @@ def test_precommit_ruff_hook_matches_lint_extra() -> None:
 
 
 WORKFLOWS = ROOT / ".github" / "workflows"
-# Release and tag publishing keep their triggers; they are not merge gates. The two PR checks
+# Release and tag publishing keep their triggers; they are not merge gates. The PR checks
 # read pull_request context (base_ref, PR body, labels) and cannot run from a manual dispatch.
 TRIGGERED_ON_PURPOSE = {
     "gate-selfhosted.yml",
     "native-companion-release.yml",
     "compat-preflight.yml",
     "regression-proof.yml",
+    "changelog-fragment.yml",
 }
 
 
@@ -120,22 +121,79 @@ def test_seeded_unsafe_selfhosted_workflows_are_caught() -> None:
     ]
 
 
-def test_selfhosted_gate_runs_gates_under_the_shared_lock() -> None:
+def _gate_jobs() -> tuple[dict, dict]:
     wf = yaml.safe_load((WORKFLOWS / "gate-selfhosted.yml").read_text())
-    (job,) = wf["jobs"].values()
+    assert set(wf["jobs"]) == {"fast", "gate"}
+    return wf["jobs"]["fast"], wf["jobs"]["gate"]
+
+
+def _checkout(job: dict) -> dict:
+    return next(s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/checkout"))
+
+
+def test_selfhosted_gate_runs_gates_under_the_shared_lock() -> None:
+    _, job = _gate_jobs()
     assert job["runs-on"] == ["self-hosted", "decoy-gate"]
     assert "timeout-minutes" in job
-    assert wf["permissions"] == {"contents": "read"}
+    assert yaml.safe_load((WORKFLOWS / "gate-selfhosted.yml").read_text())["permissions"] == {
+        "contents": "read"
+    }
     assert "secrets." not in (WORKFLOWS / "gate-selfhosted.yml").read_text()
-    checkout = next(
-        s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/checkout")
-    )
-    assert checkout["with"]["persist-credentials"] is False
+    assert _checkout(job)["with"]["persist-credentials"] is False
     runs = " ".join(step.get("run", "") for step in job["steps"])
     assert "flock ~/.cache/pytest-one.lock scripts/dev/gates.sh" in runs
-    # Host-only failures that main shares must not fail every Mac run.
-    assert "scripts/dev/gates.sh --keep-going --baseline" in runs
+    # Host-only failures that main shares must not fail every dispatch run.
+    assert "scripts/dev/gates.sh --keep-going $mode" in runs
+    assert "mode=--baseline" in runs
     assert _triggers(WORKFLOWS / "gate-selfhosted.yml") == {"push", "workflow_dispatch"}
+
+
+def test_full_gate_runs_only_on_dispatch_and_main_in_two_shards() -> None:
+    _, job = _gate_jobs()
+    guard = str(job["if"])
+    # The expensive self-hosted gate: manual dispatch or a push to main, never a feature push.
+    assert "github.event_name == 'workflow_dispatch'" in guard
+    assert "github.ref == 'refs/heads/main'" in guard
+    assert "github.repository_owner == 'louiskeep'" in guard
+    assert "github.actor == 'louiskeep'" in guard
+    assert "!github.event.repository.fork" in guard
+    assert job["strategy"]["matrix"]["shard"] == [1, 2]
+    runs = " ".join(step.get("run", "") for step in job["steps"])
+    assert '--shard "${{ matrix.shard }}/2"' in runs
+    # On main HEAD equals origin/main, so an impact selection is empty: main runs the full suite,
+    # and without --baseline (main against itself would call every failure shared).
+    assert "mode=--full" in runs
+    assert "mode=--baseline" in runs
+    assert (
+        'if [ "${{ github.event_name }}" = push ]; then mode=--full; else mode=--baseline; fi'
+        in runs
+    )
+    # The exact command line: lock, keep-going, mode, step list, shard. Shard 1 owns the lint,
+    # type, sentry and licence steps; every other shard runs only its slice of the tests.
+    assert (
+        "flock ~/.cache/pytest-one.lock scripts/dev/gates.sh --keep-going $mode $steps"
+        ' --shard "${{ matrix.shard }}/2"'
+    ) in runs
+    # The step list has one owner, gates.sh: shard 1 passes no --steps, the others only tests.
+    assert 'if [ "${{ matrix.shard }}" = 1 ]; then steps=; else steps="--steps tests"; fi' in runs
+    assert "env,ruff" not in runs
+
+
+def test_fast_check_is_hosted_owner_guarded_and_push_only() -> None:
+    fast, _ = _gate_jobs()
+    # GitHub-hosted: free on a public repo, and never a self-hosted runner for feature pushes.
+    assert fast["runs-on"] == "ubuntu-latest"
+    assert "self-hosted" not in str(fast["runs-on"])
+    assert "timeout-minutes" in fast
+    guard = str(fast["if"])
+    assert "github.event_name == 'push'" in guard
+    assert "github.repository_owner == 'louiskeep'" in guard
+    assert "github.actor == 'louiskeep'" in guard
+    assert "!github.event.repository.fork" in guard
+    assert _checkout(fast)["with"]["persist-credentials"] is False
+    runs = " ".join(step.get("run", "") for step in fast["steps"])
+    assert "scripts/dev/gates.sh --keep-going --steps env,ruff,format,mypy,sentry" in runs
+    assert "tests" not in runs.split("--steps")[1].split()[0].split(",")
 
 
 GATE_BRANCHES_IGNORE = [

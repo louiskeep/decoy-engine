@@ -36,8 +36,19 @@ from tests.unit.generation.statistical._cf_support import fit, none_rate
 OLD_BYTES = "ef2f6b2b750ecd02cfa541ef775baca3d7b3fe5e6278afbc4f94606e4f251128"
 
 
+def _without_numeric_shape(snap_file: str) -> str:
+    """Drop the number-shape blocks a fit now adds, so the file is what an older engine wrote."""
+    path = Path(snap_file)
+    doc = json.loads(path.read_text())
+    for col in doc["columns"].values():
+        col["stats"].pop("quantile_grid", None)
+        col["stats"].pop("exact_values", None)
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    return snap_file
+
+
 def _old_outputs(tmp_path: Path) -> dict[str, str]:
-    snap = fitted(tmp_path, cell_format=False)
+    snap = _without_numeric_shape(fitted(tmp_path, cell_format=False))
     cfg = config(all_columns(snap, with_void=False))
     specs = [
         spec_to_dict(load_spec(c, snapshot=json.loads(Path(snap).read_text())))

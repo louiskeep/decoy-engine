@@ -35,6 +35,7 @@ import pyarrow.compute as pc
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine.fileaccess import FileAccess
+from decoy_engine.generation._numeric_typing import numeric_plan, restore_declared
 from decoy_engine.generation._statistical_column import arrow_table
 from decoy_engine.generation._window_admission import (
     CODE_NOT_CLASS_A,
@@ -148,6 +149,19 @@ def _positional(
         return stream.next_batch(off, n)
 
     return draw
+
+
+def _typed(
+    draw: Callable[[int, int, Mapping[str, list[Any]]], list[Any]],
+    col: dict[str, Any],
+    dtype: pa.DataType,
+) -> Callable[[int, int, Mapping[str, list[Any]]], list[Any]]:
+    """A window draw whose values carry the numeric type the plan declared for the column."""
+
+    def typed(off: int, n: int, sib: Mapping[str, list[Any]]) -> list[Any]:
+        return restore_declared(col, draw(off, n, sib), dtype)
+
+    return typed
 
 
 def _build_streams(
@@ -310,6 +324,11 @@ def generate_rows(
         provider_snapshot=provider_snapshot,
         specs=specs,
     )
+    numeric = numeric_plan(prepared.config, provider_snapshot=provider_snapshot)
+    for c in cols:
+        dtype = numeric.get((table, c["name"]))
+        if dtype is not None:
+            draws[c["name"]] = _typed(draws[c["name"]], c, dtype)
     names = [c["name"] for c in cols]
 
     def typed(data: dict[str, list[Any]]) -> pa.Table:

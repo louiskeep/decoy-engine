@@ -49,7 +49,13 @@ def test_all_lists_every_public_name():
         # surface; submodule-only import was an unintentional gap.
         "compile_plan",
         "generate_tables",
+        "generated_table_to_pandas",
         "run_pipeline",
+        # RUN-STREAM E1b: host CPU probe and the conservative CLI auto memory budget.
+        "detect_usable_cpus",
+        "resolve_conservative_ooc_budget_bytes",
+        # GEN-COND-CAP E1: fit-side warning for a joint whose cell cap dropped combinations.
+        "snapshot_joint_warnings",
         # Audit H5 (2026-06-12): profile-free compile-check subset for
         # config-only callers (decoy validate).
         "run_config_only_checks",
@@ -302,11 +308,23 @@ def test_all_lists_every_public_name():
         "CsvDialect",
         "read_csv_source",
         "resolve_csv_dialect",
+        # LIB L1a: the record envelope and its decode results (functions: decoy_engine.records).
+        "DecodedRecord",
+        "OpaqueRecord",
+        "RecordError",
+        "RecordNeedsNewer",
         # LIB L0.1: the protected directory allocator.
         "open_protected_dir",
         "protected_scratch_dir",
         # CONFIG-EXPLICIT E1: the FileSource fields that name a file.
         "FILE_SOURCE_PATH_FIELDS",
+        # CONFIG-EXPLICIT E2a: the declared-columns boundary.
+        "DeclarationRequest",
+        "PreparedDeclaredSources",
+        "check_columns_declared",
+        "declared_columns",
+        "prepare_declared_sources",
+        "source_columns",
         # SCAN-MULTI S1a: the multi-table scan and its scan-set/v1 document.
         "ScanSet",
         "ScanSetCore",

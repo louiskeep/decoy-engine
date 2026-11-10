@@ -686,7 +686,9 @@
         }
        },
        "method": "tvd",
-       "similarity": 0.0
+       "missing_value_similarity": 1.0,
+       "similarity": 0.0,
+       "value_similarity": 0.0
       },
       {
        "column": "p",
@@ -701,7 +703,9 @@
         }
        },
        "method": "tvd",
-       "similarity": 1.0
+       "missing_value_similarity": 1.0,
+       "similarity": 1.0,
+       "value_similarity": 1.0
       },
       {
        "column": "r",
@@ -715,7 +719,9 @@
         }
        },
        "method": "tvd",
-       "similarity": 0.0
+       "missing_value_similarity": 1.0,
+       "similarity": 0.0,
+       "value_similarity": 0.0
       },
       {
        "column": "tr",
@@ -729,7 +735,9 @@
         }
        },
        "method": "tvd",
-       "similarity": 0.0
+       "missing_value_similarity": 1.0,
+       "similarity": 0.0,
+       "value_similarity": 0.0
       }
      ],
      "score": 0.25
@@ -878,7 +886,9 @@
          }
         },
         "method": "tvd",
-        "similarity": 0.0
+        "missing_value_similarity": 1.0,
+        "similarity": 0.0,
+        "value_similarity": 0.0
        },
        {
         "column": "p",
@@ -893,7 +903,9 @@
          }
         },
         "method": "tvd",
-        "similarity": 1.0
+        "missing_value_similarity": 1.0,
+        "similarity": 1.0,
+        "value_similarity": 1.0
        },
        {
         "column": "r",
@@ -907,7 +919,9 @@
          }
         },
         "method": "tvd",
-        "similarity": 0.0
+        "missing_value_similarity": 1.0,
+        "similarity": 0.0,
+        "value_similarity": 0.0
        },
        {
         "column": "tr",
@@ -921,7 +935,9 @@
          }
         },
         "method": "tvd",
-        "similarity": 0.0
+        "missing_value_similarity": 1.0,
+        "similarity": 0.0,
+        "value_similarity": 0.0
        }
       ],
       "score": 0.25
@@ -1239,7 +1255,9 @@
         }
        },
        "method": "tvd",
-       "similarity": 0.0
+       "missing_value_similarity": 1.0,
+       "similarity": 0.0,
+       "value_similarity": 0.0
       },
       {
        "column": "parent_id",
@@ -1253,7 +1271,9 @@
         }
        },
        "method": "tvd",
-       "similarity": 0.0
+       "missing_value_similarity": 1.0,
+       "similarity": 0.0,
+       "value_similarity": 0.0
       }
      ],
      "score": 0.0
@@ -1371,7 +1391,9 @@
         }
        },
        "method": "tvd",
-       "similarity": 0.0
+       "missing_value_similarity": 1.0,
+       "similarity": 0.0,
+       "value_similarity": 0.0
       },
       {
        "column": "note",
@@ -1385,7 +1407,9 @@
         }
        },
        "method": "tvd",
-       "similarity": 0.0
+       "missing_value_similarity": 1.0,
+       "similarity": 0.0,
+       "value_similarity": 0.0
       }
      ],
      "score": 0.0
@@ -1514,7 +1538,9 @@
          }
         },
         "method": "tvd",
-        "similarity": 0.0
+        "missing_value_similarity": 1.0,
+        "similarity": 0.0,
+        "value_similarity": 0.0
        },
        {
         "column": "parent_id",
@@ -1528,7 +1554,9 @@
          }
         },
         "method": "tvd",
-        "similarity": 0.0
+        "missing_value_similarity": 1.0,
+        "similarity": 0.0,
+        "value_similarity": 0.0
        }
       ],
       "score": 0.0
@@ -1646,7 +1674,9 @@
          }
         },
         "method": "tvd",
-        "similarity": 0.0
+        "missing_value_similarity": 1.0,
+        "similarity": 0.0,
+        "value_similarity": 0.0
        },
        {
         "column": "note",
@@ -1660,7 +1690,9 @@
          }
         },
         "method": "tvd",
-        "similarity": 0.0
+        "missing_value_similarity": 1.0,
+        "similarity": 0.0,
+        "value_similarity": 0.0
        }
       ],
       "score": 0.0
@@ -2032,8 +2064,8 @@
         "field_name": "seq",
         "metadata": null,
         "name": "seq",
-        "numpy_type": "object",
-        "pandas_type": "unicode"
+        "numpy_type": "int64",
+        "pandas_type": "int64"
        }
       ],
       "index_columns": []
@@ -2041,15 +2073,15 @@
     },
     "rows": {
      "seq": [
-      "1",
-      "2",
-      "3"
+      1,
+      2,
+      3
      ]
     },
     "schema": [
      [
       "seq",
-      "string",
+      "int64",
       true
      ]
     ]

@@ -103,11 +103,7 @@ if TYPE_CHECKING:
 
 __all__ = ["classify_table_kinds", "run_pipeline"]
 
-# The substrate/auto-chunk knob defaults live on `_pipeline_finalize` now (single source of truth
-# for this signature and the non-default-ness check `stamp_execution_metrics` computes).
-# SC2 out-of-core auto-routing thresholds (per largest mask table). Defaults target the 32 GB
-# deployment box; see `_planner` for the memory-model reasoning. Plumbed as run_pipeline kwargs so
-# the platform SC5 estimator can override them with box+schema-calibrated values.
+# Knob defaults live on `_pipeline_finalize`; the SC2 thresholds are kwargs the platform estimator overrides.
 _OUT_OF_CORE_THRESHOLD_DEFAULT = OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT
 _FULL_FRAME_REJECT_DEFAULT = FULL_FRAME_REJECT_ROWS_DEFAULT
 
@@ -129,7 +125,7 @@ def run_pipeline(
     post_validation_sample_size: int = 100,
     post_validation_enforce: bool = False,
     now_iso: str | None = None,
-    execution_mode: Literal["auto", "sequential", "full_frame", "out_of_core"] = "auto",
+    execution_mode: Literal["auto", "stream", "sequential", "full_frame", "out_of_core"] = "auto",
     sink: TransactionalSink | None = None,
     source_loader: Callable[[str], pa.Table] | None = None,
     fpe_chunk_count: int = _pipeline_finalize.FPE_CHUNK_COUNT_DEFAULT,
@@ -144,6 +140,7 @@ def run_pipeline(
     out_of_core_threshold_rows: int = _OUT_OF_CORE_THRESHOLD_DEFAULT,
     full_frame_reject_rows: int = _FULL_FRAME_REJECT_DEFAULT,
     out_of_core_budget_bytes: int | None = None,
+    out_of_core_threads: int | None = None,
     use_byte_estimate_routing: bool = True,
     use_probe_routing: bool = True,
     key_provider: KeyProvider | None = None,
@@ -217,7 +214,8 @@ def run_pipeline(
     of docs/plans/2026-10-01-dispatcher-auto-chunk.md. The SC2 size thresholds
     default to 32 GB-box-calibrated constants (see `_planner`) and are kwargs the
     platform admission estimator can override; `execution_mode` gains
-    `"out_of_core"` as an explicit fail-closed force.
+    `"out_of_core"` as an explicit fail-closed force and `"stream"` means "must stream"
+    (`execution.pipeline._stream`).
 
     Sprint B2 (docs/plans/2026-07-10-oom-avoidance-routing-redesign.md
     §3.3/§11/§13): `use_probe_routing` (TB-5 default `True`; no effect without
@@ -273,13 +271,13 @@ def run_pipeline(
     `None` (every real caller) resolves against the live registry.
     """
     refuse_unapplied_subset(config)  # `subset:` is refused first, before any source is read
+    stream_required = execution_mode == "stream"
+    execution_mode = "auto" if stream_required else execution_mode
     require_optional_nonempty_str("quarantine_path", quarantine_path)
-    # MG-5: the `tokenize` strategy masks per-cell through a platform-injected
-    # token vault, threaded only to the FULL-FRAME adapter (bounded routes build
-    # their own StrategyContext without it) and else failing closed with
-    # `tokenize_requires_vault`. A vault is passed only for a tokenize job, so its
-    # presence is the signal: force full-frame and disable auto-chunk when the
-    # caller left the route on `auto`. An explicit execution_mode is left untouched
+    # MG-5: `tokenize` masks per-cell through a platform-injected token vault, threaded only to
+    # the FULL-FRAME adapter (bounded routes fail closed with `tokenize_requires_vault`). A vault
+    # is passed only for a tokenize job, so its presence forces full-frame and disables
+    # auto-chunk while the route is `auto`. An explicit execution_mode is left untouched
     # (a caller that forces a bounded route for a tokenize job gets the honest fail-closed).
     if token_vault_writer is not None and execution_mode == "auto":
         execution_mode = "full_frame"
@@ -306,6 +304,7 @@ def run_pipeline(
                 post_validation_enforce=post_validation_enforce,
                 now_iso=now_iso,
                 execution_mode=execution_mode,
+                stream_required=stream_required,
                 sink=sink,
                 source_loader=source_loader,
                 fpe_chunk_count=fpe_chunk_count,
@@ -320,6 +319,7 @@ def run_pipeline(
                 out_of_core_threshold_rows=out_of_core_threshold_rows,
                 full_frame_reject_rows=full_frame_reject_rows,
                 out_of_core_budget_bytes=out_of_core_budget_bytes,
+                out_of_core_threads=out_of_core_threads,
                 use_byte_estimate_routing=use_byte_estimate_routing,
                 use_probe_routing=use_probe_routing,
                 key_provider=key_provider,

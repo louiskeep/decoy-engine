@@ -86,6 +86,8 @@ GUARDED_MODULES: tuple[str, ...] = (
     # B7 (independent multi-table dispatch): another routing executor, it calls
     # `run_auto_chunk` per table and must not import `execution.physical` either.
     "execution/_pipeline_multi_table.py",
+    # RUN-STREAM E1a: the strict stream preflight is routing code and must not import the seam.
+    "execution/pipeline/_stream.py",
     # B6a (incremental output sink): the streamed lane's row-group assembly and publish
     # session sit between the dispatcher lane and the caller's sink; no physical import.
     "execution/_chunked_output_sink.py",
@@ -385,6 +387,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_transforms_table.py",
             "src/decoy_engine/execution/out_of_core/_runner.py",
             "src/decoy_engine/execution/out_of_core/_preflight.py",
+            # RUN-STREAM E1b: the host CPU probe (new sub-package `execution/pipeline/`), the
+            # conservative budget export and the run-scoped DuckDB thread cap. None imports
+            # `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/__init__.py",
+            "src/decoy_engine/execution/pipeline/_cgroup.py",
+            "src/decoy_engine/execution/pipeline/_host.py",
             # Dcomp-OOC (composite FK strict parity): the out-of-core joiners raise the one
             # orphan FAIL error producer (`_fk_resolve.orphan_fk_violation_error`) directly.
             # Both import nothing from `execution.physical`.
@@ -516,6 +524,7 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/native/protocol/__init__.py",
             "src/decoy_engine/execution/native/protocol/providers_base.py",
             "src/decoy_engine/execution/native/protocol/providers_gen.py",
+            "src/decoy_engine/execution/native/protocol/providers_gen_unique.py",
             "src/decoy_engine/execution/native/protocol/providers_mask.py",
             "src/decoy_engine/execution/out_of_core/_mask_group_b.py",
             # Slice C5b-i (position-keyed non-deterministic Faker, 2026-10-05): the oracle Faker
@@ -697,6 +706,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # `_pipeline_generate_mask.py` the split call site, `_pipeline_finalize.py` the
             # split's evidence stamp. None imports `execution.physical`.
             "src/decoy_engine/execution/_pipeline_multi_table.py",
+            # RUN-STREAM E1a: the strict `execution_mode="stream"` preflight (new sub-package
+            # `execution/pipeline/`) and its threading through the routing, lane and sink modules
+            # listed here. Routing code that reads config, the plan and source footers; it imports
+            # nothing from `execution.physical` (GUARDED_MODULES covers `_stream.py`).
+            "src/decoy_engine/execution/pipeline/__init__.py",
+            "src/decoy_engine/execution/pipeline/_stream.py",
             # B7 also corrects the module docstring of `_pipeline_chunk_route.py`, which said
             # auto-chunk routing was single-table only (a docstring-only edit).
             "src/decoy_engine/execution/_pipeline_chunk_route.py",

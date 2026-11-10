@@ -6,10 +6,15 @@ from decoy_engine.reasons import _catalog
 
 __all__ = [
     "CARDINALITY_MATCH_DEVIATION",
+    "FIT_JOINT_CELLS_TRUNCATED",
     "FORMAT_RULE_VIOLATION",
     "FPE_JOIN_GROUP_ACTIVE",
     "FPE_PARTIAL_PLAINTEXT_DISCLOSURE",
     "GEO_GENERALIZE_CASCADE",
+    "JOB_LOG_WRITE_FAILED",
+    "LIBRARY_DEGRADED",
+    "LIBRARY_DELETE_SKIPPED",
+    "LIBRARY_WRITE_FAILED",
     "MIMESIS_LOCALE_FALLBACK",
     "NESTED_CELL_JSON_PARSE_ERROR",
     "NESTED_JSONPATH_PATH_OVERLAP",
@@ -29,6 +34,9 @@ __all__ = [
 _d = _catalog.warning("QualityWarning")
 
 CARDINALITY_MATCH_DEVIATION = _d("cardinality_match_deviation", "Cardinality match deviation.")
+FIT_JOINT_CELLS_TRUNCATED = _d(
+    "fit_joint_cells_truncated", "Fit joint cells truncated.", since="1.22.0"
+)
 FORMAT_RULE_VIOLATION = _d("format_rule_violation", "Format rule violation.")
 FPE_JOIN_GROUP_ACTIVE = _d("fpe_join_group_active", "FPE join group active.")
 FPE_PARTIAL_PLAINTEXT_DISCLOSURE = _d(
@@ -57,3 +65,12 @@ TEXT_MASK_SUB_FLOOR_SPAN_HANDLED = _d(
 TOP_CODE_GENERALIZED = _d("top_code_generalized", "Top code generalized.")
 UNDECLARED_OUTPUT_COLUMNS = _d("undeclared_output_columns", "Undeclared output columns.")
 VALUE_REUSE_FIXED_POINT = _d("value_reuse_fixed_point", "Value reuse fixed point.")
+
+# Events the CLI builds around the local record library; they are registered here because an
+# unregistered code reaches the wire as `unregistered_reason`.
+_d = _catalog.warning("LibraryEvent")
+
+JOB_LOG_WRITE_FAILED = _d("job_log_write_failed", "Job log write failed.", since="1.20.0")
+LIBRARY_DEGRADED = _d("library_degraded", "Library degraded.", since="1.20.0")
+LIBRARY_DELETE_SKIPPED = _d("library_delete_skipped", "Library delete skipped.", since="1.20.0")
+LIBRARY_WRITE_FAILED = _d("library_write_failed", "Library write failed.", since="1.20.0")

@@ -104,21 +104,14 @@ sequential, never concurrent), so the run's ceiling is the max over every
 table. But incoming-edge fan-in is a property of the PLAN's relationship
 graph, which this module never sees -- both budget functions take only byte
 counts, by design, so neither depends on `decoy_engine.relationships` or
-`decoy_engine.plan`. No exact bound is derivable here without that dependency,
-so `max_concurrent_instances` is an explicit, documented, CONSERVATIVE default
-(`_DEFAULT_MAX_CONCURRENT_DUCKDB_INSTANCES`) rather than a computed one: real
-FK schemas rarely fan many incoming edges into one table (the 100M-row cloud
-benchmark's parent->child->grandchild chain peaks at 2 -- one joiner plus one
-relation build), so the default trades a little headroom for safety on any
-schema up to that fan-in without a caller having to know the graph. A caller
-that DOES have graph visibility (and a wider-fan-in schema) should pass
-`max_concurrent_instances` explicitly, sized from its own edge count. The
-resolved `memory_limit` is `budget_bytes // max_concurrent_instances` (floored
-at `_MIN_BUDGET_BYTES` per instance), so the SUM of every live instance's cap
-stays within `budget_bytes`, which itself already excludes the reserve above.
-`batch_rows` scales with the (undivided) budget, not `memory_limit`: it
-bounds Python/Arrow-side batch buffers, already carved out by the reserve,
-not DuckDB's own accounting, so it is not further divided by concurrency.
+`decoy_engine.plan`. So `max_concurrent_instances` is an explicit CONSERVATIVE
+default (`_DEFAULT_MAX_CONCURRENT_DUCKDB_INSTANCES`), not a computed one: real FK
+schemas rarely fan many incoming edges into one table (the 100M-row cloud
+benchmark's chain peaks at 2). A caller with graph visibility and a wider
+fan-in passes `max_concurrent_instances` from its own edge count. The
+resolved `memory_limit` is `budget_bytes // max_concurrent_instances`, so the SUM
+of every live instance's cap stays within `budget_bytes`, which already excludes
+the reserve above.
 """
 
 from __future__ import annotations
@@ -131,6 +124,13 @@ from pathlib import Path
 from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core._join import _JOIN_BATCH_ROWS
+from decoy_engine.execution.pipeline import (
+    CgroupMappingError,
+    parse_membership,
+    parse_mountinfo,
+    relative_to_root,
+    select_mount,
+)
 
 # Conservative auto-detect fraction of the effective memory ceiling (JVM
 # default heap fraction).
@@ -150,11 +150,11 @@ _MAX_BATCH_ROWS = _JOIN_BATCH_ROWS
 
 _PROC_MEMINFO = Path("/proc/meminfo")
 
-# cgroup filesystem locations. Module-level so tests can monkeypatch them to
-# a fake tree instead of depending on the real host's cgroup setup.
+# Membership and mount tables. Module-level so tests can monkeypatch them to a fake tree instead of
+# depending on the real host's cgroup setup. Where each hierarchy is mounted, and which subtree of
+# it the mount exposes, comes from mountinfo (translated by the shared `pipeline` helpers).
 _PROC_SELF_CGROUP = Path("/proc/self/cgroup")
-_CGROUP_V2_MOUNT = Path("/sys/fs/cgroup")
-_CGROUP_V1_MEMORY_MOUNT = Path("/sys/fs/cgroup/memory")
+_PROC_SELF_MOUNTINFO = Path("/proc/self/mountinfo")
 
 # cgroup v1 has no literal "unlimited" string like v2's "max"; it instead
 # sets memory.limit_in_bytes to LLONG_MAX rounded down to the page size
@@ -289,32 +289,39 @@ def _cgroup_v1_effective_limit_bytes(leaf: Path, root: Path) -> int | None:
     return min(values) if values else None
 
 
-def _cgroup_leaf_dir(mount: Path, proc_self_cgroup: Path, *, controller: str | None) -> Path:
-    """This process's leaf cgroup directory under `mount`.
+def _cgroup_leaf_dir(*, controller: str | None) -> tuple[Path, Path] | None:
+    """(this process's leaf cgroup directory, the mountpoint above which the walk stops).
 
-    Parsed from `/proc/self/cgroup`, whose lines are `hierarchy-ID:controller-
-    list:path` (cgroups(7)). v2's unified hierarchy has ID "0" and an empty
-    controller list; v1 hierarchies have a real ID and a comma-separated
-    controller list, so `controller=None` selects the v2 line and
-    `controller="memory"` selects the v1 memory controller's line. Falls
-    back to `mount` itself (the root cgroup) when the file is unreadable or
-    no matching line is found, e.g. under a plain (non-cgroup) sandbox.
+    `controller=None` selects the v2 unified hierarchy, `controller="memory"` the v1 memory
+    hierarchy. The membership comes from `/proc/self/cgroup`, the mount from
+    `/proc/self/mountinfo`, and the membership is translated through the mount's root field, so a
+    mount that exposes only a subtree (a container's cgroup namespace) maps to the right directory.
+    `None` when either file is unreadable, the process is in no such hierarchy, or the mapping is
+    ambiguous or outside every mount root: detection must degrade to "no cgroup limit", never raise.
     """
     try:
-        text = proc_self_cgroup.read_text()
+        cgroup_text = _PROC_SELF_CGROUP.read_text()
+        mountinfo_text = _PROC_SELF_MOUNTINFO.read_text()
     except OSError:
-        return mount
-    for line in text.splitlines():
-        parts = line.split(":", 2)
-        if len(parts) != 3:
-            continue
-        hierarchy_id, controllers, cgroup_path = parts
-        is_v2_line = hierarchy_id == "0" and controllers == ""
-        matches = is_v2_line if controller is None else controller in controllers.split(",")
-        if matches:
-            rel = cgroup_path.strip().lstrip("/")
-            return (mount / rel) if rel else mount
-    return mount
+        return None
+    v2_path, v1_path = parse_membership(cgroup_text, v1_controller=controller or "")
+    path = ((v2_path if controller is None else v1_path) or "").strip()
+    if not path:
+        return None
+    try:
+        mount = select_mount(
+            parse_mountinfo(mountinfo_text),
+            path,
+            v2=controller is None,
+            v1_controller=controller or "",
+        )
+        rel = None if mount is None else relative_to_root(path, mount.root)
+    except CgroupMappingError:
+        return None
+    if mount is None or rel is None:
+        return None
+    mountpoint = Path(str(mount.mountpoint))
+    return mountpoint.joinpath(*rel.parts), mountpoint
 
 
 def detect_cgroup_memory_limit_bytes() -> int | None:
@@ -328,12 +335,12 @@ def detect_cgroup_memory_limit_bytes() -> int | None:
     explicit choice (cgroup vs. host RAM) instead of this function silently
     picking one.
     """
-    v2_leaf = _cgroup_leaf_dir(_CGROUP_V2_MOUNT, _PROC_SELF_CGROUP, controller=None)
-    v2_limit = _cgroup_v2_effective_max_bytes(v2_leaf, _CGROUP_V2_MOUNT)
+    v2 = _cgroup_leaf_dir(controller=None)
+    v2_limit = None if v2 is None else _cgroup_v2_effective_max_bytes(*v2)
     if v2_limit is not None:
         return v2_limit
-    v1_leaf = _cgroup_leaf_dir(_CGROUP_V1_MEMORY_MOUNT, _PROC_SELF_CGROUP, controller="memory")
-    return _cgroup_v1_effective_limit_bytes(v1_leaf, _CGROUP_V1_MEMORY_MOUNT)
+    v1 = _cgroup_leaf_dir(controller="memory")
+    return None if v1 is None else _cgroup_v1_effective_limit_bytes(*v1)
 
 
 def detect_effective_memory_bytes() -> int:
@@ -393,6 +400,11 @@ def resolve_budget(
         memory_limit=f"{budget_bytes // (1024 * 1024)}MB",
         batch_rows=batch_rows,
     )
+
+
+def resolve_conservative_ooc_budget_bytes() -> int:
+    """CLI `auto` memory: `resolve_budget(None)`'s 25% of the ceiling, so two runs share a host."""
+    return resolve_budget(None).budget_bytes
 
 
 def resolve_ooc_memory_limit(
@@ -604,6 +616,7 @@ __all__ = [
     "detect_effective_memory_bytes",
     "detect_host_memory_bytes",
     "resolve_budget",
+    "resolve_conservative_ooc_budget_bytes",
     "resolve_ooc_memory_limit",
     "temp_disk_bytes",
 ]
