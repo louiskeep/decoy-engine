@@ -202,6 +202,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | Out-of-core masking and relation staging (Phase 4) | `src/decoy_engine/execution/out_of_core/_mask.py`, `_mask_group_b.py`, `_mask_group_c.py` (payload strategy dispatch); `src/decoy_engine/execution/out_of_core/_relation.py` (parent-key relation staging with Phase-4 split-dedup for bounded-parent cardinality); `src/decoy_engine/execution/out_of_core/_batch_join.py` (small-parent fast-path, complement to reorder route) |
 | Job-level performance gates (opt-in `pytest.mark.benchmark`) | `tests/perf/test_job_performance_gates.py` |
 | Generation | `src/decoy_engine/generation/synthesize.py` |
+| Unique generated columns (`unique`, `unique_together`) | [docs/guides/generate-uniqueness.md](docs/guides/generate-uniqueness.md); config checks `src/decoy_engine/config/_generate_unique.py`, draws `src/decoy_engine/generation/_unique.py` |
 | Relationships and namespace | `src/decoy_engine/relationships/_graph.py`, `_namespace.py` |
 | Provider registry | `src/decoy_engine/providers_v2/_registry.py` |
 | Validation surface | `src/decoy_engine/validation/_config.py`, `src/decoy_engine/validation_result.py` |
