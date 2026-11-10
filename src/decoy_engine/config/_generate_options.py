@@ -25,6 +25,7 @@ from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from decoy_engine import reasons
 from decoy_engine.config._generate_unique import unique_flag
+from decoy_engine.expressions import formula_is_evaluable
 
 __all__ = [
     "COMMON_OPTIONS",
@@ -54,9 +55,12 @@ _OK: list[Problem] = []
 
 @dataclass(frozen=True)
 class OptionSpec:
-    """One option: a static check and, for E2, whether the value names sibling columns.
+    """One option: a static check and whether the value names sibling columns.
 
-    ``ref_kind`` is ``None``, ``column``, ``column_list`` or ``expression``.
+    ``ref_kind`` is ``None``, ``column``, ``column_list`` or ``expression``. A key that names a
+    sibling column carries it, and the plan check refuses a name not generated earlier: a column
+    read before it exists is a null, an empty aggregate or a single group, never the value the
+    config meant.
     """
 
     check: Check | None = None
@@ -163,10 +167,11 @@ def _formula(value: Any, _: Mapping[str, Any]) -> list[Problem]:
     if not isinstance(value, str):
         return [((), _TYPE)]
     try:
-        ast.parse(value.strip(), mode="eval")
+        tree = ast.parse(value.strip(), mode="eval")
     except (SyntaxError, ValueError, RecursionError, MemoryError):
         return [((), _FORMULA)]
-    return _OK
+    # Syntax the runtime evaluator cannot run (lambda, walrus) would generate all nulls.
+    return _OK if formula_is_evaluable(tree) else [((), _FORMULA)]
 
 
 def _categories(value: Any, _: Mapping[str, Any]) -> list[Problem]:

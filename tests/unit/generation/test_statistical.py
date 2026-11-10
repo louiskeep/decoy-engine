@@ -735,18 +735,15 @@ class TestGenerateTablesIntegration:
                 }
             ],
         }
-        # The declared-order rule now surfaces at compile time
-        # (`check_statistical_columns`, guide step 5/7): `generate_tables`
+        # The declared-order rule surfaces at compile time
+        # (`check_generate_columns`, GEN-STRICT E2): `generate_tables`
         # is Plan-only, so a config that can never compile never reaches
-        # it. This specific rule is `check_statistical_columns`'s OWN
-        # check (not one `load_spec` raises), so it surfaces directly as
-        # `PlanCompileError`, not the wrapped `StatisticalSpecError` a
-        # `load_spec` failure would raise.
+        # it.
         from decoy_engine.plan import PlanCompileError
 
         with pytest.raises(PlanCompileError) as exc:
             compile_plan(cfg, empty_profile(), decoy_engine_version="test")
-        assert exc.value.code == "statistical_condition_column_unavailable"
+        assert exc.value.code == "generate_column_forward_reference"
 
 
 class TestCompileCheck:
@@ -800,7 +797,7 @@ class TestCompileCheck:
         )
         with pytest.raises(PlanCompileError) as exc:
             run_config_only_checks(cfg)
-        assert exc.value.code == "statistical_condition_column_unavailable"
+        assert exc.value.code == "generate_column_forward_reference"
 
     def test_clean_statistical_config_passes(self, tmp_path):
         from decoy_engine import run_config_only_checks

@@ -372,6 +372,7 @@ def classify_window_table(
     """Classify one generate table for a windowed read. Raises on any refusal, else A or B."""
     from decoy_engine.generation._faker_pool import pool_eligible, pool_opted_out
     from decoy_engine.generation._reproducibility import reproducibility_exclusions
+    from decoy_engine.plan.checks import check_faker_default_locale
 
     spec_table = next(
         (
@@ -385,6 +386,9 @@ def classify_window_table(
         raise GenerationWindowError(
             code=CODE_TABLE_UNKNOWN, message=f"{table!r} is not a generate table of this plan"
         )
+    check_faker_default_locale(
+        config, instance_default_locale, provider_snapshot=provider_snapshot, table=table
+    )
     cols: list[dict[str, Any]] = spec_table["generate_columns"]
     rows = int(spec_table.get("row_count") or 0)
     exclusions = reproducibility_exclusions(config, provider_snapshot=provider_snapshot)
