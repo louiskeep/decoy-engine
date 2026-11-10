@@ -33,12 +33,18 @@ _OK: list[Problem] = []
 
 
 def _as_float(value: Any) -> float | None:
-    """The value as a finite float, or None when it is not one (an int too large to convert)."""
+    """The value as a finite float, or None when it is not one exactly.
+
+    An int that float64 cannot hold exactly (past 2**53) is refused, since the draw would round
+    it and could land outside the bounds the config set.
+    """
     try:
         number = float(value)
     except OverflowError:
         return None
-    return number if math.isfinite(number) else None
+    if not math.isfinite(number) or (type(value) is int and number != value):
+        return None
+    return number
 
 
 def _is_number(value: Any) -> bool:
@@ -58,7 +64,7 @@ def high_bound(value: Any, extras: Mapping[str, Any]) -> list[Problem]:
         return problems
     low = _as_float(extras.get("low")) if _is_number(extras.get("low")) else None
     if low is not None:
-        if value <= low:
+        if float(value) <= low:
             return [((), _RANGE)]
         # A width that overflows to infinity would put inf in the column.
         if not math.isfinite(float(value) - low):
@@ -74,8 +80,10 @@ def clip_bound(which: str) -> Callable[[Any, Mapping[str, Any]], list[Problem]]:
         if problems := finite(value, extras):
             return problems
         other = extras.get("min")
-        if which == "max" and _is_number(other) and _as_float(other) is not None and other > value:
-            return [((), _RANGE)]
+        if which == "max" and _is_number(other):
+            low = _as_float(other)
+            if low is not None and low > float(value):
+                return [((), _RANGE)]
         return _OK
 
     return check

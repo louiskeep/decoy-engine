@@ -29,7 +29,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from decoy_engine.config._generate_options import refuse_unlisted_generate_families
+from decoy_engine.config import refuse_unlisted_generate_families
 
 # Note: imports from decoy_engine.relationships are deferred inside
 # compile_plan to break a circular import. decoy_engine/__init__.py

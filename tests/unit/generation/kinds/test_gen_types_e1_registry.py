@@ -118,6 +118,10 @@ BAD_RANGE: list[tuple[str, dict[str, Any], str]] = [
     ("uniform", {"low": -1e308, "high": 1e308}, RANGE),
     ("uniform", {"low": 5, "high": 3}, RANGE),
     ("uniform", {"low": 0, "high": 1, "min": "a"}, TYPE),
+    # Past 2**53 float64 rounds an int, so the draw could leave the configured bounds.
+    ("uniform", {"low": 2**53 + 1, "high": 2**53 + 2}, RANGE),
+    ("uniform", {"low": 0, "high": 2**53 + 1}, RANGE),
+    ("uniform", {"low": 0, "high": 1, "min": 2**53 + 1}, RANGE),
 ]
 
 
@@ -130,6 +134,7 @@ def test_range_and_type_rules(family: str, extras: dict[str, Any], code: str) ->
 def test_boundary_values_pass() -> None:
     assert _problems("uniform", low=-5, high=5, min=2, max=2) == []
     assert _problems("uniform", low=-1, high=1.0, min=0, max=0.5) == []
+    assert _problems("uniform", low=0, high=2**53) == []
 
 
 def test_the_reference_weighted_rule_keeps_its_code_and_location() -> None:
