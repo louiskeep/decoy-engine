@@ -226,3 +226,27 @@ def test_unseeded_parent_through_the_pipeline_matches_full_frame(
     with pytest.raises(PipelineValidationError) as refused:
         tf.run(config, sources, gate=gate, mode=mode, tmp=tmp_path)
     assert refused.value.code == "source_file.undeclared_column"
+
+
+def test_a_declared_passthrough_parent_key_matches_full_frame(tmp_path: Path) -> None:
+    """With every column declared (the parent key as a passthrough, so it carries no seed) the
+    job completes and equals the full-frame run. This keeps the parity check the gate-refused
+    cells above used to make."""
+    unit, _label, value, in_ns = CELLS[0]
+    parent, child = _keys(unit, value, in_ns, "warn")
+    ref_dir, run_dir = tmp_path / "ref", tmp_path / "run"
+    configs = []
+    for directory in (ref_dir, run_dir):
+        config, sources = tf.job(directory, parent, child, policy="warn")
+        table = config["tables"][0]
+        table["columns"] = [
+            {"name": "id", "strategy": "passthrough"} if c["name"] == "id" else c
+            for c in table["columns"]
+        ]
+        configs.append((config, sources))
+    reference = tf.run(*configs[0], gate="full_frame")
+    run = tf.run(*configs[1], gate="large_fk", mode="resident", tmp=run_dir)
+    ref_child = reference.outputs["child"].column("parent_id").combine_chunks()
+    got_child = run.outputs["child"].column("parent_id").combine_chunks()
+    assert got_child.equals(ref_child.cast(got_child.type)), run.mode
+    assert value in run.outputs["parent"].column("id").to_pylist()
