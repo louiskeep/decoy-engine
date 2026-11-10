@@ -50,8 +50,9 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
 # Re-pinned 2026-11-09: gen.reference records the fitted fan-out shuffles on its stream.
 # Re-pinned 2026-11-09: gen.statistical_per_row records the fitted cell format draws.
 # Re-pinned for FK-FANOUT E2b: gen.reference call site and fingerprint source.
+# Re-pinned for GEN-NUM-SHAPE: gen.statistical_per_row call shape text.
 # Re-pinned for GEN-UNIQUE E2: four unique-draw sites, the moved synthesize.py call sites, and the shared attempt limit.
-_CATALOGUE_DIGEST = "8bece3d6106b0884a73c1a273eae61aa297a61c322014dd7912a9b6e8947e99a"
+_CATALOGUE_DIGEST = "2843c1687e68aaf439d735c1f2980be9ef6751f6d449cac033701e23c3c65091"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -117,7 +118,8 @@ _ENTRY_DIGESTS = [
     # gen.reference re-pinned for FK-FANOUT E2b: call site moved, fitted seeds from the pinned snapshot digest.
     "7d9bce3693d567778b4149b7bc631a4aef99431cd732f5ecf190fb5c47fee918",
     "e4b331d3617ea390a2a489148f3524dcb9438ecb6516fe6bd1b53131d90dbd04",
-    "e4ca36f5c5bfef93d57ebd502d2d24db01dac1f576643e83291f9a589c76f3c9",
+    # gen.statistical_per_row re-pinned for GEN-NUM-SHAPE: the call shape names the grid and exact draws.
+    "fa0bc05758594e2412aad9fb148660c9fd4a7c596911516db1b9537e5302866f",
     # gen.statistical_per_row re-pinned 2026-11-09: fitted cell_format adds the blank and null draws.
     "1541fac2e458daf4f58ad25655b4bc605875566fe044af99e4a12fd1d762a2c7",
     "fa2fd07097a3ed68edb71e46b40c43e0d697b50cf784b740b49c180bcae2e5d2",

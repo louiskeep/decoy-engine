@@ -32,12 +32,8 @@ Prior art surveyed (per repo rule "use established methodology"):
     captures exactly enough to support those comparisons later without
     re-touching raw rows.
 
-What this module does NOT do (out of scope for D1a, owned by D1b/c/d):
-  - Compute fidelity scores or grades. That belongs in D1c (fidelity.py)
-    and operates on two snapshots, not two frames.
-  - Diagnostic structural checks (column survival, dtype drift). That
-    belongs in D1b (diagnostic.py).
-  - Persist snapshots to a job record. That's D2.
+What this module does NOT do: score fidelity (D1c, fidelity.py), run structural checks (D1b,
+diagnostic.py) or persist snapshots to a job record (D2).
 
 Sensitive artifact: a categorical column's `top_values` already carries
 REAL source values (gated by the consumer-side `allow_real_categories`
@@ -115,7 +111,7 @@ DEFAULT_CONTINGENCY_TOP_K = 25
 # so the kind assignment is consistent across the engine. This is the SINGLE
 # fit source of truth (HC-5 D4): the Pre-scan copy is a deliberately independent
 # profiler-chart constant, not derived from this one.
-_CATEGORICAL_DISTINCT_CAP = 30
+CATEGORICAL_DISTINCT_CAP = 30
 
 # HC-5 hard safety limits for an opt-in `high_cardinality` column: the "full
 # fidelity" promise (retain every observed category) must fail loudly rather
@@ -146,7 +142,8 @@ def compute_distribution_snapshot(
         joint_columns: Pairs of column names whose pairwise contingency
             table should be captured. Pairs referencing unknown columns
             are silently skipped (the snapshot is not a validator).
-        numeric_bins: Number of equal-width bins per numeric column.
+        numeric_bins: Number of equal-width bins per numeric column. A numeric column also gets
+            an optional `quantile_grid` or `exact_values` block (generation/statistical/_numeric_shape.py).
         categorical_top_k: Max distinct values kept per categorical
             column; rest collapse into the column's `other_count`.
         contingency_top_k: Max cells kept per joint table; rest collapse
@@ -203,6 +200,9 @@ def compute_distribution_snapshot(
         from decoy_engine.generation.statistical import add_cell_format
 
         add_cell_format(columns_block, df)
+    from decoy_engine.generation.statistical import add_numeric_shape
+
+    add_numeric_shape(columns_block, df)
 
     joints_block: list[dict[str, Any]] = []
     if joint_columns:
@@ -281,7 +281,7 @@ def _stats_for(
         return "datetime", _datetime_stats(non_null)
 
     distinct = non_null.nunique()
-    if distinct <= _CATEGORICAL_DISTINCT_CAP:
+    if distinct <= CATEGORICAL_DISTINCT_CAP:
         stats = _categorical_stats(non_null.astype(str), top_k=top_k)
         return "categorical", stats
     return "freetext", _freetext_stats(non_null.astype(str), bins=numeric_bins)

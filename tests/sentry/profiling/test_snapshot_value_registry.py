@@ -28,9 +28,10 @@ from decoy_engine.quality import snapshot as snapshot_module
 from decoy_engine.quality.snapshot import compute_distribution_snapshot
 
 _SRC = Path(__file__).parents[3] / "src" / "decoy_engine"
-_N = 40
+_N = 120
 _SSNS = [f"{101 + i:03d}-{23 + i:02d}-{4501 + i:04d}" for i in range(25)]
 _BALANCE = [31337.25, *[40000.5 + 1000 * i for i in range(_N - 2)], 98765.5]
+_MRNS = [1001001, 1002002, 1003003]  # three values on _N / 3 rows each: exact_values
 _PAIRS = [("ssn", "email"), ("status", "balance")]
 
 
@@ -41,6 +42,7 @@ def _frame() -> pd.DataFrame:
             "ssn": [_SSNS[i % 25] for i in range(_N)],
             "email": [f"user{i % 25}@example.com" for i in range(_N)],
             "balance": _BALANCE,
+            "mrn": [_MRNS[i % 3] for i in range(_N)],
             "admitted": pd.date_range("1991-06-01", periods=_N, freq="D"),
             "status": ["open", "closed"] * (_N // 2),
             "notes": [f"free text number {i} with a long tail {i * 7919}" for i in range(_N)],
@@ -183,7 +185,7 @@ def test_every_value_entry_removes_what_the_raw_snapshot_holds(entry: tuple[str,
     raw = compute_distribution_snapshot(df, joint_columns=_PAIRS[:1])
     doc = distribution_snapshot_document(df, joint_columns=_PAIRS[:1])
     names = set(doc["redacted_columns"])
-    assert {"ssn", "email", "balance", "admitted"} <= names
+    assert {"ssn", "email", "balance", "mrn", "admitted"} <= names
     assert "status" not in names
     before = [c[key] for c in _containers(raw, scope, names) if key in c]
     after = [c[key] for c in _containers(doc, scope, names) if key in c]
@@ -200,7 +202,7 @@ def test_every_value_entry_removes_what_the_raw_snapshot_holds(entry: tuple[str,
         raw_numbers = _numbers(_containers(raw, scope, names))
         assert raw_numbers & set(_BALANCE)
         if key == "bin_counts":
-            assert after == [[_N]]
+            assert after and all(a == [_N] for a in after)
         else:
             written = _numbers(after)
             assert written

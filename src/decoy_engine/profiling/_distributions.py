@@ -18,7 +18,7 @@ from decoy_engine.profiling.types import Distribution
 # Cardinality threshold for "categorical" object columns. Below this we group
 # by value and show top-10 + other; above it we treat the column as freetext
 # or pattern-shaped depending on whether a detector fired. Deliberately
-# independent of quality/snapshot.py's fit-time _CATEGORICAL_DISTINCT_CAP
+# independent of quality/snapshot.py's fit-time CATEGORICAL_DISTINCT_CAP
 # (HC-5 D4): this is a profiler-chart display concern, not the fit source of
 # truth, so it is not imported from there even though the value matches.
 _PROFILE_CATEGORICAL_DISTINCT_CAP = 30

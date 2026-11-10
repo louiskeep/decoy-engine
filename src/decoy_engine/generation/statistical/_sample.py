@@ -2,7 +2,12 @@
 
 Methodology:
 
-- Numeric: histogram inverse-CDF -- pick a bin by cumulative bin_counts,
+- Numeric with a `quantile_grid` or `exact_values` block (_numeric_shape.py): inverse CDF over
+  the piecewise-linear empirical quantile function (Hyndman and Fan 1996, type 7), one random
+  draw per value, or a weighted draw of the observed values. The release floor and the sources
+  are in that module. A snapshot without either block, a redacted fit and a DP-verified column
+  take the histogram path below.
+- Numeric histogram: inverse-CDF -- pick a bin by cumulative bin_counts,
   then uniform within the bin. The standard inversion method over an
   empirical histogram (Devroye, Non-Uniform Random Variate Generation,
   1986, ch. II.2 inversion / III histogram methods). Pure-Python
@@ -48,6 +53,11 @@ from decoy_engine.generation.statistical._cell_format import (
     floor_datetime,
     format_numeric,
     is_integer_dtype,
+)
+from decoy_engine.generation.statistical._numeric_shape import (
+    NumericShape,
+    decode_numeric_shape,
+    grid_value,
 )
 from decoy_engine.generation.statistical._spec import (
     OTHER_TOKEN,
@@ -205,6 +215,13 @@ def _numeric_row(rng: random.Random, edges: list[float], cum: list[float]) -> fl
     return lo + rng.random() * (hi - lo)
 
 
+def _shape_row(rng: random.Random, shape: NumericShape) -> float | int:
+    """One draw from a quantile grid (one random value) or from the exact values (a weighted pick)."""
+    if shape.counts is None:
+        return grid_value(shape.probs, shape.values, rng.random())
+    return rng.choices(shape.values, weights=shape.counts, k=1)[0]
+
+
 def _decode_flag_token(token: object, column: str) -> bool:
     """The one legal decode for a `flag`-carrier top_values entry: the
     artifact always serializes the canonical `"true"`/`"false"` tokens
@@ -266,6 +283,37 @@ def _conditional_tables(
     return by_parent
 
 
+def _sample_shape(
+    spec: StatisticalSpec,
+    shape: NumericShape,
+    n: int,
+    rng: random.Random,
+    *,
+    col_seed: int,
+    start: int,
+) -> list[Any]:
+    fmt = spec.cell_format
+    null_rate = _null_rate(fmt)
+    as_int = emits_int(spec)
+    exact = shape.counts is not None
+    # The grid's own ends bound the output; exact values are source cells and need no clamp.
+    lo_bound, hi_bound = shape.values[0], shape.values[-1]
+    out: list[Any] = []
+    for i in range(n):
+        rng.seed(col_seed + start + i)
+        x = _shape_row(rng, shape)
+        if exact:
+            value: Any = int(x) if as_int else float(x)
+        elif fmt is not None:
+            value = format_numeric(x, fmt, lo_bound, hi_bound, as_int=as_int)
+        elif as_int:
+            value = int(min(max(round(x), lo_bound), hi_bound))
+        else:
+            value = x
+        out.append(None if null_rate and rng.random() < null_rate else value)
+    return out
+
+
 def sample_column(
     spec: StatisticalSpec,
     n: int,
@@ -303,6 +351,9 @@ def sample_column(
     null_rate = _null_rate(fmt)
 
     if spec.kind == "numeric":
+        shape = decode_numeric_shape(spec.column, spec.stats, spec.carrier)
+        if shape is not None:
+            return _sample_shape(spec, shape, n, rng, col_seed=col_seed, start=start)
         edges = [float(e) for e in spec.stats.get("bin_edges") or []]
         counts = [float(c) for c in spec.stats.get("bin_counts") or []]
         if len(edges) < 2 or len(counts) != len(edges) - 1 or sum(counts) <= 0:

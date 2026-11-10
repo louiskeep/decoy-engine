@@ -52,6 +52,10 @@ REDACTED_COLUMNS_KEY: Final = "redacted_columns"
 POLICY_REDACTED: Final = "flagged-redacted/v1"
 POLICY_RAW: Final = "raw"
 PII_CANDIDATE_THRESHOLD: Final = 0.6
+# Minimum source rows behind a released numeric interval, tail or exact value. Agencies use
+# minimum-frequency thresholds of 3 to 11 (Hundepool et al., Statistical Disclosure Control,
+# Wiley 2012, section 4.2; the CMS cell-size policy suppresses cells under 11).
+MIN_RELEASE_COUNT: Final = 10
 
 VALUE_FIELDS: Final[Mapping[tuple[str, str], Rule]] = types.MappingProxyType(
     {
@@ -118,6 +122,8 @@ SNAPSHOT_VALUE_STATS: Final[Mapping[tuple[str, str], Rule]] = types.MappingProxy
         # With the mean, the std fixes both cells of a two-row column.
         ("numeric", "std"): Rule.NULL,
         ("numeric", "quantiles"): Rule.EMPTY_MAP,
+        ("numeric", "quantile_grid"): Rule.NULL,
+        ("numeric", "exact_values"): Rule.NULL,
         # Any string placeholder here could equal a real category, so the container empties.
         ("categorical", "top_values"): Rule.EMPTY_LIST,
         ("datetime", "min"): Rule.PREVIOUS_YEAR_START,

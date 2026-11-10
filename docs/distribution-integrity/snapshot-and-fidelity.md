@@ -62,7 +62,7 @@ Top-level shape:
 
 | Kind | Assigned when | `stats` |
 |---|---|---|
-| `numeric` | Numeric dtype | `min`, `max`, `mean`, `std`, `quantiles` (`p05`, `p25`, `p50`, `p75`, `p95`), `bin_edges`, `bin_counts` (equal-width over min to max) |
+| `numeric` | Numeric dtype | `min`, `max`, `mean`, `std`, `quantiles` (`p05`, `p25`, `p50`, `p75`, `p95`), `bin_edges`, `bin_counts` (equal-width over min to max); optional `quantile_grid` (`probs`, `values`) for 100 or more finite cells, or `exact_values` (`values`, `counts`, `dropped_count`) for at most 30 distinct values. Both are value-bearing: a redacted fit sets them to null |
 | `categorical` | Bool dtype, or object dtype with at most 30 distinct values | `top_values` (`[{value, count}]`, sorted by count then value), `other_count` |
 | `datetime` | Datetime dtype | `min`, `max` (ISO), `year_bins` (`[{year, count}]`) |
 | `freetext` | Object dtype with more than 30 distinct values | `length` (`min`, `max`, `mean`, `std`), `length_bin_edges`, `length_bin_counts` |
