@@ -30,9 +30,11 @@ __all__ = [
     "COMMON_OPTIONS",
     "GENERATE_OPTIONS",
     "INTERNAL_KEYS",
+    "GenerateTypeOptions",
     "OptionSpec",
     "TypeOptions",
     "closed_key_schema",
+    "generate_option_catalog",
     "option_problems",
     "problem_details",
 ]
@@ -67,6 +69,20 @@ class TypeOptions:
 
     keys: Mapping[str, OptionSpec]
     required: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class GenerateTypeOptions:
+    """Public, read-only view of one generate type's option names.
+
+    Names only: the registry's validator callables stay private. `common` is the set every type
+    may carry beyond its own keys (`COMMON_OPTIONS`).
+    """
+
+    type: str
+    required: tuple[str, ...]
+    optional: tuple[str, ...]
+    common: tuple[str, ...]
 
 
 def _is_int(value: Any) -> bool:
@@ -394,3 +410,18 @@ def closed_key_schema(schema: dict[str, Any]) -> None:
         }
         for type_, spec in GENERATE_OPTIONS.items()
     ]
+
+
+def generate_option_catalog() -> Mapping[str, GenerateTypeOptions]:
+    """Every generate type with its required, optional and common option names, read from
+    `GENERATE_OPTIONS` so a new type or option shows up here with no second list."""
+    common = tuple(COMMON_OPTIONS)
+    return {
+        type_: GenerateTypeOptions(
+            type=type_,
+            required=spec.required,
+            optional=tuple(key for key in spec.keys if key not in spec.required),
+            common=common,
+        )
+        for type_, spec in GENERATE_OPTIONS.items()
+    }

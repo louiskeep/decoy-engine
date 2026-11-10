@@ -1,0 +1,115 @@
+{
+  "command": "python -m tests.unit._gen_cli_golden",
+  "engine_base": "86a28222",
+  "graph": {
+    "config": {
+      "global_settings": {
+        "seed": 7
+      },
+      "tables": [
+        {
+          "generate_columns": [
+            {
+              "name": "id",
+              "start": 1,
+              "type": "sequence"
+            }
+          ],
+          "name": "p1",
+          "row_count": 5
+        },
+        {
+          "generate_columns": [
+            {
+              "name": "id",
+              "start": 1,
+              "type": "sequence"
+            }
+          ],
+          "name": "p2",
+          "row_count": 4
+        },
+        {
+          "generate_columns": [
+            {
+              "name": "id",
+              "start": 1,
+              "type": "sequence"
+            },
+            {
+              "name": "p2_id",
+              "reference_column": "id",
+              "reference_table": "p2",
+              "type": "reference"
+            },
+            {
+              "name": "p1_id",
+              "reference_column": "id",
+              "reference_table": "p1",
+              "type": "reference"
+            }
+          ],
+          "name": "c",
+          "row_count": 12
+        },
+        {
+          "generate_columns": [
+            {
+              "name": "id",
+              "start": 1,
+              "type": "sequence"
+            },
+            {
+              "name": "c_id",
+              "reference_column": "id",
+              "reference_table": "c",
+              "type": "reference"
+            },
+            {
+              "name": "p1_id",
+              "reference_column": "id",
+              "reference_table": "p1",
+              "type": "reference"
+            }
+          ],
+          "name": "d",
+          "row_count": 20
+        }
+      ],
+      "version": 2
+    },
+    "config_hash": "4ecdfb1e39ccb411702421c409ad1737d3b5c405b19a20c6e76eee26c4de656b",
+    "tables": {
+      "c": "0ea17cc117a17b67fad8250ecf2fc145cd7701bf165b4a952b108366b429ee64",
+      "d": "18a8ffa3c79b114a236915824f3d18d0238efbe67e0357d11f17dfb6b7035650",
+      "p1": "3a68e86474afddefd272fa54a299d99efee3fcf8e95c34f63791337dccbd4855",
+      "p2": "1ee24b1dfcdaed480c43b806e8605eee7efc24b59441b79b3974da553133440f"
+    }
+  },
+  "statistical": {
+    "config": {
+      "global_settings": {
+        "fidelity_warn_threshold": 0.99,
+        "seed": 42
+      },
+      "tables": [
+        {
+          "generate_columns": [
+            {
+              "name": "amount",
+              "snapshot_file": "snap.json",
+              "type": "statistical"
+            }
+          ],
+          "name": "synthetic",
+          "row_count": 300
+        }
+      ],
+      "version": 2
+    },
+    "config_hash": "793a2e88e19a9530846fee4e04daf2ce93b73d02c36d41725a70c0082b19058c",
+    "tables": {
+      "synthetic": "aa1663c8ea409478463f844acb6b53d7c4821efcce4ab7512c0457add8468eab"
+    }
+  }
+}

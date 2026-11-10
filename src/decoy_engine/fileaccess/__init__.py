@@ -11,6 +11,7 @@ Docs: docs/security/file-access-policy.md. Pattern: object capabilities (see `_t
 
 from __future__ import annotations
 
+from decoy_engine.fileaccess._config_path import config_relative
 from decoy_engine.fileaccess._entry import (
     ambient_forbidden,
     at_position,
@@ -131,6 +132,7 @@ __all__ = [
     "at_position",
     "bind_iterator",
     "capture",
+    "config_relative",
     "current",
     "encode_field_key",
     "engine_dir_handle",

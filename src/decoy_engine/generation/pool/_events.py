@@ -31,6 +31,10 @@ class QualityWarning:
       a locale outside Mimesis coverage; the adapter fell back to Faker for
       that locale + provider. `detail` carries `requested_locale` +
       `mimesis_locales`.
+    - `generation_fidelity_below_threshold` (statistical fidelity gate): a generated table's
+      overall score, or one comparable column's score, is below `fidelity_warn_threshold`.
+      `detail` carries `table`, `snapshot_index`, `overall_score`, `threshold`, `trigger`,
+      `worst_columns` and `below_columns`; scores and names only, never a cell value.
     """
 
     code: str

@@ -93,6 +93,8 @@ from decoy_engine.progress import ProgressChannel, ProgressSink, use_progress
 from decoy_engine.secret_providers import AdmissionScope
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from faker import Faker
 
     from decoy_engine.execution._transactional_sink import TransactionalSink
@@ -154,6 +156,7 @@ def run_pipeline(
     _provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     file_access: FileAccess | None = None,
     quarantine_path: str | None = None,
+    base_dir: str | Path | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -253,6 +256,10 @@ def run_pipeline(
     cover its contracts; an explicit `execution_mode` lacking one is refused before any read.
     `quarantine_path` replaces `quarantine.output_path` after the config hash; a blank or non-`str` is refused.
 
+    `base_dir` is the pipeline YAML's folder: a relative `snapshot_file` and a relative
+    `quarantine.output_path` resolve from it. `None` keeps the working-directory behavior. Through
+    `run_pipeline_isolated` it must be an absolute `str` (the kwargs cross a JSON boundary).
+
     Under `auto`, a declared job that an admission layer kept off a route (mixed, chunked,
     unified slice, out-of-core, or the multi-table split) falls back to a capable route and says
     so: `quality_metrics["execution"]["declared_route_refusals"]` lists one value-free
@@ -331,8 +338,9 @@ def run_pipeline(
                 secret_scope=secret_scope,
                 secret_registry=secret_registry,
                 secret_cache_policy=secret_cache_policy,
+                base_dir=base_dir,
             )
-        ctx = _ctx.with_quarantine_path(ctx, quarantine_path)
+        ctx = _ctx.with_quarantine_path(ctx, quarantine_path, base_dir)
         with collect_refusals() as refusals:
             decision = _ctx.decide_route(ctx)
             _emit_route(_progress, decision)

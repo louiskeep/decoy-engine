@@ -347,6 +347,26 @@ def test_quality_facade_exports_the_dp_request_check():
     assert quality.check_dp_fit_request is dp.check_dp_fit_request
 
 
+def test_generation_cli_names_export_from_their_packages_not_the_root():
+    """GEN-CLI E1 (AT-33): the root facade is at its line budget, so the new names live in
+    their own packages."""
+    from pathlib import Path
+
+    from decoy_engine import config, fileaccess, generation
+
+    root = Path(decoy_engine.__file__)
+    assert len(root.read_text(encoding="utf-8").splitlines()) <= 600
+    for package, name in (
+        (generation, "generation_order"),
+        (config, "generate_option_catalog"),
+        (config, "GenerateTypeOptions"),
+        (fileaccess, "config_relative"),
+    ):
+        assert name in package.__all__
+        assert callable(getattr(package, name))
+        assert name not in decoy_engine.__all__
+
+
 def test_version_attribute_exists():
     assert isinstance(decoy_engine.__version__, str)
 

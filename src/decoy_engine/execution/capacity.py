@@ -70,7 +70,6 @@ different directory than `decoy run` still evaluates the identical files.
 
 from __future__ import annotations
 
-import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -78,7 +77,7 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import fileaccess, reasons
-from decoy_engine.config import post_scan_integrity_requested
+from decoy_engine.config import FILE_SOURCE_PATH_FIELDS, post_scan_integrity_requested
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pipeline import classify_table_kinds
 from decoy_engine.execution._pipeline_route_exec import (
@@ -97,7 +96,7 @@ from decoy_engine.execution.out_of_core._capacity_eval import (
     CapacityVerdict,
     evaluate_capacity,
 )
-from decoy_engine.fileaccess import FileAccess, entry_point
+from decoy_engine.fileaccess import FileAccess, config_relative, entry_point
 from decoy_engine.generation import detected_memory_bytes, resident_floor_shortfall
 
 __all__ = ["estimate_job_capacity"]
@@ -153,20 +152,10 @@ _ROUTING_REJECT_CODES = frozenset(
 )
 
 
-def _resolve_source_path(raw_path: str, base_dir: Path) -> Path:
-    """Mirror the CLI's `run.py:_resolve_path`: a relative path resolves
-    against `base_dir` (the pipeline YAML's directory); an absolute path
-    passes through unchanged. Kept as a private mirror rather than an
-    import across repos -- the CLI and engine are separate packages."""
-    p = Path(raw_path)
-    # Lexical, not `Path.resolve()`: making the path absolute needs no file-system access, and
-    # which file is read is decided later, at the open, by the file-access policy.
-    return p if p.is_absolute() else Path(os.path.abspath(base_dir / p))
-
-
 def _resolved_config_copy(config_dump: dict[str, Any], base_dir: Path) -> dict[str, Any]:
-    """A shallow copy of `config_dump` with every file-type source's `path`
-    resolved to an absolute string against `base_dir`.
+    """A shallow copy of `config_dump` with every file-type source's path fields
+    (`FILE_SOURCE_PATH_FIELDS`: `path`, `column_names_file`) resolved to an absolute string
+    against `base_dir`.
 
     Needed because `profile_source`'s file readers (`_build_file_source`)
     open `descriptor["path"]` verbatim, with no base-directory concept of
@@ -182,13 +171,12 @@ def _resolved_config_copy(config_dump: dict[str, Any], base_dir: Path) -> dict[s
         return config_dump
     resolved_sources: dict[str, Any] = {}
     for name, descriptor in sources.items():
-        if (
-            isinstance(descriptor, dict)
-            and descriptor.get("type") == "file"
-            and isinstance(descriptor.get("path"), str)
-        ):
+        if isinstance(descriptor, dict) and descriptor.get("type") == "file":
             descriptor = dict(descriptor)
-            descriptor["path"] = str(_resolve_source_path(descriptor["path"], base_dir))
+            for field in FILE_SOURCE_PATH_FIELDS:
+                value = descriptor.get(field)
+                if isinstance(value, str) and value:
+                    descriptor[field] = config_relative(value, base_dir)
         resolved_sources[name] = descriptor
     resolved = dict(config_dump)
     resolved["sources"] = resolved_sources
@@ -348,7 +336,9 @@ def estimate_job_capacity(
         )
 
     registry = get_default_registry()
-    plan = compile_plan(config, profile, decoy_engine_version=engine_version)
+    plan = compile_plan(
+        config, profile, decoy_engine_version=engine_version, base_dir=base_dir_path
+    )
     ns_registry = build_namespace_registry(config, profile)
     orphan_lookup = check_orphan_fk_policy_completeness(config, profile.relationships)
     graph = build_relationship_graph(

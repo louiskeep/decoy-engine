@@ -10,6 +10,7 @@ __all__ = [
     "FORMAT_RULE_VIOLATION",
     "FPE_JOIN_GROUP_ACTIVE",
     "FPE_PARTIAL_PLAINTEXT_DISCLOSURE",
+    "GENERATION_FIDELITY_BELOW_THRESHOLD",
     "GEO_GENERALIZE_CASCADE",
     "JOB_LOG_WRITE_FAILED",
     "LIBRARY_DEGRADED",
@@ -24,6 +25,7 @@ __all__ = [
     "SCAN_CRASHED",
     "SCAN_HEADER_SUSPECT",
     "SCAN_KEY_TYPE_MISMATCH",
+    "SEED_IGNORED_WITH_MASTER_KEY",
     "SOURCE_VALUE_LEAK",
     "TEXT_MASK_SUB_FLOOR_SPAN_HANDLED",
     "TOP_CODE_GENERALIZED",
@@ -42,6 +44,11 @@ FPE_JOIN_GROUP_ACTIVE = _d("fpe_join_group_active", "FPE join group active.")
 FPE_PARTIAL_PLAINTEXT_DISCLOSURE = _d(
     "fpe_partial_plaintext_disclosure", "FPE partial plaintext disclosure."
 )
+GENERATION_FIDELITY_BELOW_THRESHOLD = _d(
+    "generation_fidelity_below_threshold",
+    "Generated table scores below the fidelity warn threshold.",
+    since="1.22.0",
+)
 GEO_GENERALIZE_CASCADE = _d("geo_generalize_cascade", "Geo generalize cascade.")
 MIMESIS_LOCALE_FALLBACK = _d("mimesis_locale_fallback", "Mimesis locale fallback.")
 NESTED_CELL_JSON_PARSE_ERROR = _d("nested_cell_json_parse_error", "Nested cell JSON parse error.")
@@ -57,6 +64,11 @@ SCAN_HEADER_SUSPECT = _d(
 )
 SCAN_KEY_TYPE_MISMATCH = _d(
     "scan_key_type_mismatch", "Relationship key columns differ in type.", since="1.10.0"
+)
+SEED_IGNORED_WITH_MASTER_KEY = _d(
+    "seed_ignored_with_master_key",
+    "The job seed is not used for generated tables when a master key is set.",
+    since="1.22.0",
 )
 SOURCE_VALUE_LEAK = _d("source_value_leak", "Source value leak.")
 TEXT_MASK_SUB_FLOOR_SPAN_HANDLED = _d(
