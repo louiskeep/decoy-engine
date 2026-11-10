@@ -29,6 +29,30 @@ An engine release containing this change must ship together with the CLI switch 
 
 `decoy_engine.generated_table_to_pandas(table)` converts a generated Arrow table to pandas with
 nullable integer dtypes, so a nullable numeric column writes `1` and not `1.0`.
+
+### Added (`unique` and `unique_together` generate options, GEN-UNIQUE E2, 2026-11-09)
+
+`unique: true` on a `sequence`, `categorical`, `faker` or `reference` generate column draws values with no
+repeats, and `unique_together: [[a, b]]` on a table does the same for a pair of `reference` columns. Rows that
+need more distinct values than exist stop the run with `uniqueness_impossible`, which names the table, column
+and counts but never a value. List and dict categories, parent keys and provider outputs are compared by
+equality, so they dedup instead of failing. Unique columns decline the window and pinned routes, and their
+seen set counts toward the memory floor. A config without these keys generates the same cells as before.
+
+### Added (`execution_mode="stream"`, RUN-STREAM E1a, 2026-11-09)
+
+`run_pipeline(execution_mode="stream")` means "must stream". It runs as `auto` with one extra
+requirement, and a job no streaming route can take is refused with the new
+`runtime.streaming_unavailable` (registry 1.18.0) before any source passed in `sources` is read.
+The size threshold does not apply, so a table of any size, empty included, takes the chunked lane. A
+table needs a lazy source and a streaming sink. Parquet output keeps one row group per chunk, split at
+pyarrow's 1,048,576-row writer cap, the grouping `ParquetWriter.write_table` gives each chunk of a
+`--chunked` run; the 256 MiB early cut stays an `auto` rule. A job with FK edges runs as one lane unit
+per table when every mask table passes the complete chunked compatibility gate. If the gate rejects it,
+the job takes the out-of-core route only when that route accepts the job and the FK dtype hazard is
+clear, and is refused otherwise. `auto` routing, its threshold and its row-group rules are unchanged.
+An empty source under `stream` writes an empty file with the source schema, as base `--chunked` does; the resident run types the empty columns differently (plan G6).
+
 ### Changed (fidelity scores null-rate drift, GEN-FIT-SHAPE E3, 2026-11-09)
 
 Each `quality-fidelity/v1` column entry gains `value_similarity` (the score as before) and

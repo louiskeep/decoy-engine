@@ -55,6 +55,9 @@ _EXCLUDED_FROM_FINGERPRINT = frozenset(
         "null_probability",
         "determinism",
         "pooled",
+        # GEN-UNIQUE: a build-strategy toggle like `pooled`. A unique column keeps its seed root, so
+        # its first-draw rows equal the plain column's values (invariant U5).
+        "unique",
         "_table",
     }
 )
@@ -183,7 +186,9 @@ def strategy_config_fingerprint(
 #   py    -> random.Random(...)
 #   np    -> numpy.random.default_rng(...)
 #   faker -> Faker.seed_instance(...)
-GEN_FAMILIES = ("py", "np", "faker")
+#   faker_unique -> Faker.seed_instance(...) for the retry attempts of a unique faker row
+#   unique_pair  -> random.Random(...) sampling the pair index of a `unique_together` entry
+GEN_FAMILIES = ("py", "np", "faker", "faker_unique", "unique_pair")
 
 
 def _gen_hmac(key: bytes, label: bytes, *, extra: bytes = b"") -> bytes:
@@ -300,8 +305,8 @@ class GenDeriveContext:
     def family_bytes(self, label: str) -> bytes:
         """Public byte-returning accessor for an arbitrary sub-key label.
 
-        `base_int`/`row_int` only serve the three fixed `GEN_FAMILIES`
-        ("py"/"np"/"faker"). GP2's pool bridge needs two ADDITIONAL,
+        `base_int`/`row_int` only serve the fixed `GEN_FAMILIES`
+        ("py"/"np"/"faker" and the two GEN-UNIQUE families). GP2's pool bridge needs two ADDITIONAL,
         mutually-independent domains off the same column root --
         "faker_pool_build" and "faker_pool_selection" (Codex round-2/3
         spec B) -- that are neither RNG-family names nor row-indexed.

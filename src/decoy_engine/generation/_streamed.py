@@ -46,6 +46,7 @@ from decoy_engine.generation._bounds import (
     key_pool_bytes,
     legacy_table_bytes,
     sink_buffer_bytes,
+    table_unique_peak,
 )
 from decoy_engine.generation._budget_ledger import (
     GenerationBudgetExceeded,
@@ -166,6 +167,12 @@ def _table_order(config: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _payloads(table: dict[str, Any], bounds: Mapping[tuple[str, str], int | None]) -> list[int]:
     return [bounds.get((table["name"], c["name"])) or 0 for c in table["generate_columns"]]
+
+
+def _bound_payload(
+    bounds: Mapping[tuple[str, str], int | None], table: str
+) -> Callable[[dict[str, Any]], int]:
+    return lambda col: bounds.get((table, col["name"])) or 0
 
 
 def _referenced_keys(tables: Sequence[dict[str, Any]]) -> set[tuple[str, str]]:
@@ -530,6 +537,11 @@ def _run_legacy(
     if ledger.bounded:
         need = sum(
             legacy_table_bytes(int(t.get("row_count") or 0), _payloads(t, bounds)) for t in tables
+        )
+        # Unique draws free their set before the next table starts: the largest one counts once.
+        need += max(
+            (table_unique_peak(t, _bound_payload(bounds, t["name"])) for t in tables),
+            default=0,
         )
         if not _fits(ledger, need):
             raise GenerationBudgetExceeded(

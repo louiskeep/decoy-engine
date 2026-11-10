@@ -14,9 +14,7 @@ moved. `config_json` and `fingerprints` are untouched.
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
 
-from decoy_engine import reasons
 from decoy_engine.config._pipeline import PipelineConfig
 from tests.unit.generation.unique._gu_corpus import CORPUS, digests
 
@@ -64,22 +62,22 @@ def test_config_json_has_no_unique_keys():
     assert "'unique'" not in repr(cfg)
 
 
-def test_unique_keys_are_still_refused_until_the_wiring_slice():
-    # Every head stays runnable: before the wiring slice the keys are unknown, as today.
+def test_unique_keys_are_accepted_once_wired():
+    # E1 pinned these keys as refused until the wiring slice; E2 is that slice, so they now validate.
     col = {"name": "c", "type": "sequence", "start": 1, "unique": True}
     cfg = {
         **CORPUS["all_basic_types"],
         "tables": [{"name": "t", "row_count": 3, "generate_columns": [col]}],
         "targets": {"t": {"type": "file", "format": "csv", "path": "o.csv"}},
     }
-    with pytest.raises(ValidationError) as exc:
-        PipelineConfig.model_validate(cfg)
-    assert {e["type"] for e in exc.value.errors()} == {str(reasons.config.GENERATE_OPTION_UNKNOWN)}
+    assert PipelineConfig.model_validate(cfg)
 
     plain = {"name": "c", "type": "sequence", "start": 1}
     table = {"name": "t", "row_count": 3, "unique_together": [], "generate_columns": [plain]}
-    with pytest.raises(ValidationError):
-        PipelineConfig.model_validate({**cfg, "tables": [table]})
+    assert (
+        "unique_together"
+        not in PipelineConfig.model_validate({**cfg, "tables": [table]}).model_dump()["tables"][0]
+    )
 
 
 def test_serialization_schema_still_lists_the_table_fields():

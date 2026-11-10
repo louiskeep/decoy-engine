@@ -256,6 +256,27 @@ def unique_set_bytes(rows: int, payload: int) -> int:
     )
 
 
+def table_unique_peak(table: dict[str, Any], payload_of: Callable[[dict[str, Any]], int]) -> int:
+    """The largest one-column unique working set of a generate table, 0 when it has none.
+
+    Columns draw one after another and free their set before the next, so the table needs the
+    largest, never the sum. A `sequence` is distinct by construction and holds nothing. A pair
+    holds only sampled indices, priced with no payload. `payload_of` gives a column's value width
+    (0 when unknown, which keeps this a lower bound).
+    """
+    rows = int(table.get("row_count") or 0)
+    peak = unique_set_bytes(rows, 0) if table.get("unique_together") else 0
+    for col in table["generate_columns"]:
+        if col.get("unique") is True and col.get("type") != "sequence":
+            peak = max(peak, unique_set_bytes(rows, payload_of(col)))
+    return peak
+
+
+def _floor_payload(col: dict[str, Any]) -> int:
+    bound = faker_payload_bound(col) if col.get("type") == "faker" else None
+    return bound or 0
+
+
 def key_pool_bytes(parent_rows: int, key_payload: int) -> int:
     return parent_rows * (key_payload + STR_OBJECT_OVERHEAD_BYTES + _KEY_POOL_PER_KEY_EXTRA)
 
@@ -303,6 +324,9 @@ def _floor_by_table(config: dict[str, Any], admission: PlanAdmission) -> dict[st
     floors = dict.fromkeys(rows_of, 0)
     for (table, _), nbytes in priced.items():
         floors[table] += nbytes
+    for t in config.get("tables") or []:
+        if t.get("generate_columns"):
+            floors[t["name"]] += table_unique_peak(t, _floor_payload)
     return floors
 
 
@@ -376,5 +400,6 @@ __all__ = [
     "legacy_table_bytes",
     "sequence_payload_bound",
     "sink_buffer_bytes",
+    "table_unique_peak",
     "unique_set_bytes",
 ]

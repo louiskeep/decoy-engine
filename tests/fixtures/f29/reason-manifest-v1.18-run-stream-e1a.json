@@ -1,0 +1,44 @@
+{
+  "entries": [
+    {
+      "code": "streaming_unavailable",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "ExecutionError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.18.0",
+      "summary": "No streaming route applies to this job.",
+      "symbol": "STREAMING_UNAVAILABLE"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.18.0"
+}

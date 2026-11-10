@@ -41,7 +41,7 @@ from decoy_engine.generation._numeric_typing import numeric_plan, restore_declar
 from decoy_engine.generation._statistical_column import arrow_table, statistical_generate
 from decoy_engine.generation._synthesize_derived import _derived_generate, _formula, _reference
 from decoy_engine.generation.statistical import StatisticalSpec
-from decoy_engine.generators.derivation import GenDeriveContext, with_table
+from decoy_engine.generators.derivation import TABLE_KEY, GenDeriveContext, with_table
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 from decoy_engine.transforms.derived_aggregate import generate_derived_aggregate_column
 
@@ -148,20 +148,39 @@ def _generate_tables_from_config(
         # (WS3 sequential conditional sampling). Iteration order is the
         # same as the prior dict comprehension; parity unaffected.
         data: dict[str, list[Any]] = {}
+        # GEN-UNIQUE pair hook: a `unique_together` entry is drawn at its first-declared member's
+        # turn; the second member's values wait here until the loop reaches it.
+        pair_hooks: dict[str, Any] = {}
+        pending: dict[str, list[Any]] = {}
+        if table.get("unique_together"):
+            from decoy_engine.generation._unique import pair_hooks as _pair_hooks
+
+            pair_hooks = _pair_hooks(table)
         for col in gcols:
-            data[col["name"]] = _generate_column(
-                col,
-                n,
-                seed,
-                derive_key,
-                pools,
-                instance_default_locale,
-                data,
-                table_name=name,
-                statistical_specs=statistical_specs,
-                provider_snapshot=provider_snapshot,
-                numeric_type=numeric.get((name, col["name"])),
-            )
+            cname = col["name"]
+            if cname in pending:
+                data[cname] = pending.pop(cname)
+            elif cname in pair_hooks:
+                from decoy_engine.generation._unique import unique_pair
+
+                first, second = pair_hooks[cname]
+                data[cname], pending[second["name"]] = unique_pair(
+                    first, second, n, seed, derive_key, pools, table_name=name
+                )
+            else:
+                data[cname] = _generate_column(
+                    col,
+                    n,
+                    seed,
+                    derive_key,
+                    pools,
+                    instance_default_locale,
+                    data,
+                    table_name=name,
+                    statistical_specs=statistical_specs,
+                    provider_snapshot=provider_snapshot,
+                    numeric_type=numeric.get((name, col["name"])),
+                )
         # Cross-column formula post-pass: a `formula` column carrying
         # `references` was filled with None placeholders by `_formula`
         # above (the per-column loop cannot read siblings that may not
@@ -349,6 +368,10 @@ def _categorical(col: dict[str, Any], n: int, seed: int, derive_key: Any = None)
     (import V1's helper, do not reinvent), so seed-only output is byte-identical
     to V1's under the same ``seed`` + ``derive_key=None``.
     """
+    if col.get("unique") is True:
+        from decoy_engine.generation._unique import unique_categorical
+
+        return unique_categorical(col, n, seed, derive_key)
     cats = col.get("categories", ["Category A", "Category B"])
     weights = col.get("weights")  # optional; None -> uniform
     col_seed = GenDeriveContext.for_column(
@@ -432,6 +455,18 @@ def _faker(
     # QA-7 F1/C1 lock existed only because the default instance was a process-wide singleton.
     if pre_seed is not None:
         faker_inst.seed_instance(pre_seed)
+    if col.get("unique") is True:
+        from decoy_engine.generation._unique import unique_faker
+
+        return unique_faker(
+            faker_inst,
+            provider_func,
+            faker_kwargs,
+            gen_ctx,
+            n,
+            table=col.get(TABLE_KEY),
+            column=col.get("name"),
+        )
     for i in range(n):
         faker_inst.seed_instance(gen_ctx.row_int("faker", i))
         out.append(provider_func(**faker_kwargs))

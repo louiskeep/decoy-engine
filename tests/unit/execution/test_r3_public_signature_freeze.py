@@ -41,7 +41,8 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
         "execution_mode",
         "KEYWORD_ONLY",
         "'auto'",
-        "Literal['auto', 'sequential', 'full_frame', 'out_of_core']",
+        # RUN-STREAM E1a: `"stream"` is the one additive literal (translated to `auto` at entry).
+        "Literal['auto', 'stream', 'sequential', 'full_frame', 'out_of_core']",
     ),
     ("sink", "KEYWORD_ONLY", "None", "TransactionalSink | None"),
     ("source_loader", "KEYWORD_ONLY", "None", "Callable[[str], pa.Table] | None"),
