@@ -78,7 +78,7 @@ TRIAGED: dict[tuple[str, str], str] = {
         "new function; it raises only for new callers"
     ),
     ("0.20.0", "The out-of-core spill root and its subdirectories, the isola"): (
-        "hardening: a caller-named scratch dir that holds files is refused (scratch_unsafe)"
+        "Breaking: a caller-named scratch dir that is unsafe is refused (scratch_unsafe)"
     ),
     ("0.20.0", "`scan_sources(sources, *, tables=None, sample_rows=10_000, s"): (
         "new function; its refusals reach only new callers"

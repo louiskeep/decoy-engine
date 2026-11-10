@@ -38,6 +38,10 @@ minimum engine version it was tested against via its
   float) are typed int64/float64 instead of string, and Parquet output has numeric columns. A
   consumer that reads them as text sees a type change; convert with `generated_table_to_pandas`,
   or nullable integer columns print as `1.0`.
+- A caller-named `temp_dir`, `staging_dir` or spill directory that already exists must be a real
+  directory you own with no group or other access. One that holds files, is a symlink or is owned by
+  another user is refused with `runtime.scratch_unsafe` (an empty open one is tightened to 0700). A
+  caller-named `staging_dir` is now created without parents, so its parent directory must exist.
 
 ### Changed (numeric fidelity scale, FID-RANGE, 2026-11-10)
 
