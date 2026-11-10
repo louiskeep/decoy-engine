@@ -87,7 +87,8 @@ have the same fingerprint, the same `col_seed`, and therefore the same uniform
 draw on every row. Each marginal is correct; the columns are rank-locked.
 
 Measured on two independent source columns (correlation 0.02): generated
-correlation 0.97. With an explicit, distinct `source_column` on each column the
+correlation 0.97. The same holds for any generate type with identical config
+(`faker`, `categorical`), and with `--master-key`. With an explicit, distinct `source_column` on each column the
 fingerprints differ and the correlation is 0.02.
 
 The `name` exclusion is deliberate (renaming a column must not change its
@@ -124,6 +125,11 @@ The CLI does not currently surface this warning in its run summary.
 | Categories beyond top-K | Collapsed into `other_count`. |
 | Dependence between columns | Only a fitted pair with `condition_on`; one parent per column. |
 | Cross-table fan-out | A snapshot describes one frame. `reference` columns do not read fitted key counts. |
+
+Measured consequences of these limits, with the numbers, are in
+[Extending](extending.md#open-defects) and in the QA record it cites. The
+largest: a single outlier stretches the equal-width bins and ruins a numeric
+column, and joint tables are capped at 25 cells with a silent fallback.
 
 ## Tests
 

@@ -87,20 +87,59 @@ Check whether it moves the certified profile. If it does, follow
 
 ## Open defects
 
-Found by hands-on CLI testing (`docs/records/2026-11-08-cli-qa-*.md` in the
-`decoy` repo) and reproduced while writing these docs.
+Measured in the ten-question QA pass, `docs/records/2026-11-10-cli-qa-generation-distribution-models.md`
+in the `decoy` repo. IDs below are that record's. It holds the evidence, the
+repro steps and a mapping to roadmap rows. Line numbers are for engine commit
+`44d6afe`.
 
-| Defect | Where | Notes |
+### Wrong data with no warning
+
+| ID | Defect | Where | Notes for a fix |
+|---|---|---|---|
+| C1 | Columns with identical config share a seed. Identical output for any generate type; statistical columns rank-lock (0.97). | `generators/derivation.py:57`, `:114`, `:213`; `generation/_statistical_column.py:76` | `name` is excluded on purpose so a rename keeps values. Candidates: mix in a per-table occurrence index for equal fingerprints, or always hash `source_column`. Any fix changes bytes for affected configs. Workaround today: distinct `source_column`. Roadmap row 24i. |
+| C2 | One outlier ruins a numeric column (mean 150 to 49,940). | `quality/snapshot.py:401`, `:449`, `:119`; `generation/statistical/_sample.py:160` | Equal-width bins over min to max. Options: quantile-based bins, winsorized range plus explicit tail mass, or sampling from the stored quantile grid. Changes snapshot bytes. |
+| H3 | Skew and discrete numerics distorted (median 19.9 to 91.5; 4 values to 20,000). | Same as C2 | A low-distinct numeric could keep exact values like a categorical. Needs the same disclosure gate. |
+| H1 | `condition_on` falls back silently when a parent's cells were truncated at 25. | `quality/snapshot.py:126`, `:547`; `generation/statistical/_sample.py:323` | Expose the cap; warn at fit when `cell_count` exceeds it and at compile when a parent has no cells. |
+| H2 | Null rates not reproduced. | `null_count` fitted at `quality/snapshot.py:232`, unused by `_sample.py:234` | Roadmap row 24l. `null_probability` on the column works today. |
+| M2 | Unseen parent value falls back silently. | `_sample.py:323` | Same warning path as H1. |
+| M3 | Dates keep only the year mix and gain a time of day. | `quality/snapshot.py:487`; `_sample.py:327` | Month and weekday bins; emit date-only when the source is date-only. |
+
+### Measurement blind spots
+
+| ID | Defect | Where | Notes for a fix |
+|---|---|---|---|
+| C3 | Numeric similarity divides by the source range, so a wide range hides any error. The C2 file graded B; the outlier column scored 0.940 and its KS extra 0.997. | `quality/fidelity.py:366` (formula at `:19`) | Normalize by an interquantile range, or compare on a rank scale. Shape-only scoring caught it (0.102). Changing the score is a re-baseline of the platform contract. |
+| C3 | Nulls are in no score. | `quality/fidelity.py`, `quality/report.py:260` | Roadmap row 24l. Today only `diagnostic.null_drift` reports it. |
+| H5 | The generation warn-gate default (0.8) did not fire on the C2 file (0.979). | `generation/_fidelity_gate.py:52`; `config/_global_settings.py:116` | Inherits C3. Also logger-only; the CLI does not surface it. |
+| M5 | The in-run report and the CLI report infer kinds differently (C versus A on one run). | `execution/_pipeline_finalize.py:157`; CLI `report.py:1816` | One inference path, or record the kinds used in the report. |
+| F-DI0-1 | Chi-square unavailable on disjoint or constant categories. | `quality/_distribution_gof.py` | Primary `tvd` is correct for both. |
+| n/a | Unknown policy keys pass silently. | `quality/policy.py:142` | Malformed config is treated as no policy. A typo disables a gate. |
+
+### Disclosure
+
+| ID | Defect | Where | Notes for a fix |
+|---|---|---|---|
+| H6 | A label held by one row is stored with `count: 1` and can be generated. Exact `min` and `max` are stored for numerics with no consent gate. | `quality/snapshot.py:464`, `:401`; gate at `generation/statistical/_spec.py:373` covers categories only | Roadmap row 24f. A minimum-count floor and rounded bounds are the usual controls. |
+| H7 | Free text with 30 or fewer distinct values is classed categorical, stored and emitted verbatim. | `quality/snapshot.py:133`, `:269` | Roadmap row 24f. |
+
+### Differential privacy
+
+| ID | Defect | Where | Notes for a fix |
+|---|---|---|---|
+| H8 | The allocation search costs 11 s, 36 s and 85 s for 2, 8 and 20 columns and is cached in memory only, so every CLI call pays it. | `quality/dp_session.py:119`; `quality/dp_budget.py:267` | The result is a pure function of the public schedule, the request and library versions, so it could be persisted. Only the scalar may be cached, never a measurement or certificate. |
+| M7 | A release with no labels validates and then fails at run (`statistical_stats_degenerate`). | `generation/statistical/_sample.py:289` | Check at compile. Same class as roadmap row 24b. |
+| M8 | The noisy `row_count` can be 0 or far off on small data. | `quality/dp.py:226` | By design; document, and consider a compile warning. |
+| M9 | A forged or hand-edited DP snapshot is accepted. | `plan/_checks_dp.py:210` | Documented limit in [What Decoy does not prove](../what-we-cannot-prove.md). Needs artifact authentication. |
+
+### CLI surface
+
+| ID | Defect | Where |
 |---|---|---|
-| Columns with identical config share a seed | `generators/derivation.py::strategy_config_fingerprint` excludes `name` | Statistical columns rank-lock (correlation 0.97 on independent sources); duplicate faker columns are identical. Workaround: distinct `source_column`. A fix must keep rename stability. Candidates: mix in the column's position or a per-table occurrence index for otherwise-equal fingerprints, or default `source_column` into the fingerprint payload. Any fix changes generated bytes for affected configs. |
-| Null rates not reproduced | `generation/statistical/_sample.py` | `null_count` is fitted but unused. |
-| Numeric precision lost | Numeric sampler | Uniform within a bin; no rounding to source precision. |
-| Fidelity warn-gate invisible in the CLI | `generation/_fidelity_gate.py` logs only | The CLI run summary does not show it. |
-| Inline and post-hoc grades disagree | In-run report uses loaded frames; `report fidelity` re-reads CSV | Kinds are inferred differently. `report fidelity` has no date parsing. |
-| Chi-square unavailable on disjoint or constant categories | `_distribution_gof.py` (F-DI0-1) | Primary `tvd` is correct for both. |
-| Unknown policy keys pass silently | `policy.py` treats malformed config as no policy | A typo disables a gate. |
-| Plain `fit` gives no disclosure warning | CLI `fit.py` | The snapshot holds real labels. |
-| `validate` crashes on a generate-only relationship without `namespace` | CLI | See the QA record. |
+| H4 | Report warnings (`null_drift`, `kind_drift`) are in the JSON only. | CLI `report.py:1843` |
+| M1 | A renamed parent cannot be used with `condition_on`; the error suggests a `--joint` that would not help. | `generation/statistical/_spec.py:453`, `:464`; `plan/_checks.py:396` |
+| M4 | Zero-padded codes are fitted as numbers. | CLI `fit.py:402` |
+| M6 | `--parse-dates` on an unparseable column falls back to text with no message. | CLI `fit.py:402` |
+| n/a | Plain `fit` prints no disclosure warning. | CLI `fit.py:422` |
 
 ## Gaps by program stage
 

@@ -225,10 +225,39 @@ bookkeeping. Production never passes one.
   inference could re-type a column on one record, fix dtypes before the fit.
 - **Live objects in cells are out of scope.** Only `KeyboardInterrupt` and
   `SystemExit` escape the conversion.
-- **Utility is not guaranteed.** With a uniform per-query split, more columns
-  mean less budget each. On 500 rows at epsilon 1 with 8 queries, three of
-  five categories were suppressed; on 50,000 rows with 6 queries, all
-  survived with counts within 1 percent of the truth.
+- **Utility is not guaranteed.** See the sizing table below.
+
+## Measured utility and cost
+
+From `docs/records/2026-11-10-cli-qa-generation-distribution-models.md` in the
+`decoy` repo. Labels surviving for a 5-value and a 20-value column, delta 1e-6,
+one draw per cell.
+
+| Columns (queries) | Rows | epsilon 0.1 | epsilon 1 | epsilon 5 |
+|---|---|---|---|---|
+| 2 (4) | 500 | 0/5 | 3/5 | 5/5 |
+| 2 (4) | 5,000 | 3/5 | 5/5 | 5/5 |
+| 8 (13) | 500 | 0/5, 0/20 | 0/5, 0/20 | 4/5, 3/20 |
+| 8 (13) | 5,000 | 1/5, 0/20 | 5/5, 6/20 | 5/5, 20/20 |
+| 8 (13) | 50,000 | 5/5, 6/20 | 5/5, 20/20 | 5/5, 20/20 |
+| 20 (31) | 5,000 | 0/5, 0/20 | 4/5, 3/20 | 5/5, 16/20 |
+| 20 (31) | 50,000 | 4/5, 4/20 | 5/5, 20/20 | 5/5, 20/20 |
+
+With a uniform per-query split, each added column lowers every column's share.
+
+Allocation search cost, first fit per `(schedule, epsilon, delta)` in a
+process: 11 s for 4 queries, 36 s for 13, 85 s for 31. Later fits with the same
+key reuse the cached scalar (0.3 to 2.4 s at 5,000 rows). The CLI starts cold
+every time. Release cost then scales with rows: about 14 s, 55 s and 140 s at
+500,000 rows.
+
+A release can be empty. Twenty rows at epsilon 0.02 released no labels and a
+row count of 318. It compiles and then fails at generation with
+`statistical_stats_degenerate`.
+
+Forged artifacts were tested and are accepted, as the scope statement says: an
+added label, a lowered `epsilon_total`, and an exact snapshot reshaped to the
+DP schema all passed `verify_dp_snapshots`.
 
 ## Design history
 
