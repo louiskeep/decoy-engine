@@ -27,10 +27,11 @@ from decoy_engine.profile._readers import (
     ParquetFileSource,
     build_profile_source,
 )
+from tests._declared_schema import declare_rest
 
 
 def _config(sources: dict[str, Any]) -> dict[str, Any]:
-    return {"global_settings": {"seed": 0}, "sources": sources, "relationships": []}
+    return declare_rest({"global_settings": {"seed": 0}, "sources": sources, "relationships": []})
 
 
 def _write_parquet(path: Path, rows: int) -> pa.Table:

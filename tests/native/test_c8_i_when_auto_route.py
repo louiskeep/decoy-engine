@@ -22,6 +22,7 @@ from decoy_engine.execution import run_pipeline
 from decoy_engine.execution.native._when_admission import when_native_rejection
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
+from tests._declared_schema import declare_rest
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     NEEDS_COMPANION,
@@ -55,7 +56,7 @@ def _config(columns: list[dict[str, Any]], tmp_path: Path, source: pa.Table) -> 
     pq.write_table(source, path)
     cfg["sources"][TABLE] = {"type": "file", "format": "parquet", "path": path}
     cfg["targets"][TABLE] = {"type": "file", "format": "parquet", "path": path + ".out"}
-    return cfg
+    return declare_rest(cfg)
 
 
 def _run(cfg: dict[str, Any], source: pa.Table, **kw: Any) -> Any:

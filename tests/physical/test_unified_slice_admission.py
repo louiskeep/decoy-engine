@@ -25,6 +25,7 @@ from decoy_engine.plan import compile_plan
 from decoy_engine.profile import profile_source
 from decoy_engine.providers_v2 import ProviderRegistry, get_default_registry
 from decoy_engine.relationships import RelationshipGraph
+from tests._declared_schema import declare_rest
 from tests.physical._shadow_helpers import build_config, write_read_only_fixture
 
 ENGINE_VERSION = "unified-slice-admission-test"
@@ -198,6 +199,9 @@ def test_cheap_admission_declines_undeclared_passthrough_column(tmp_path: Path) 
     )
     config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
     profile, _ = _profile_and_plan(config, source)
+    # The declaration gate refuses this config before any run, so the fixture drops the column
+    # the builder declared and calls the admission check directly: the check stays a second guard.
+    config["tables"][0]["columns"] = [{"name": "c", "strategy": "passthrough"}]
     assert _cheap_ok(config, profile, source) is None
 
 
@@ -222,7 +226,7 @@ def test_cheap_admission_declines_duplicate_column_declaration(tmp_path: Path) -
         },
         "tables": [{"name": "t", "columns": [{"name": "c", "strategy": "passthrough"}]}],
     }
-    config = PipelineConfig.model_validate(raw).model_dump()
+    config = PipelineConfig.model_validate(declare_rest(raw)).model_dump()
     # Mutate post-validation to inject the duplicate the schema itself would
     # reject at submit time -- proving the admission check is a real,
     # independent guard, not merely inherited from schema validation.

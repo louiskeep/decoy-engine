@@ -44,6 +44,7 @@ from decoy_engine.execution._pipeline_routing_signals import byte_estimate_full_
 from decoy_engine.profile import profile_source
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.profile._types import ColumnProfile, Profile, TableProfile
+from tests._declared_schema import declare_rest
 from tests.native._rev9_type_catalogue import CATALOGUE
 
 _GB = 1024 * 1024 * 1024
@@ -424,13 +425,17 @@ def test_prepared_path_prices_date32_as_a_python_object() -> None:
 def _profile_of(path: Path, name: str = "t") -> Profile:
     first = pq.read_schema(path).names[0]
     config = PipelineConfig.model_validate(
-        {
-            "version": 2,
-            "global_settings": {"seed": 1},
-            "sources": {name: {"type": "file", "format": "parquet", "path": str(path)}},
-            "targets": {name: {"type": "file", "format": "parquet", "path": str(path) + ".out"}},
-            "tables": [{"name": name, "columns": [{"name": first, "strategy": "passthrough"}]}],
-        }
+        declare_rest(
+            {
+                "version": 2,
+                "global_settings": {"seed": 1},
+                "sources": {name: {"type": "file", "format": "parquet", "path": str(path)}},
+                "targets": {
+                    name: {"type": "file", "format": "parquet", "path": str(path) + ".out"}
+                },
+                "tables": [{"name": name, "columns": [{"name": first, "strategy": "passthrough"}]}],
+            }
+        )
     ).model_dump()
     return profile_source(config, seed=1)
 

@@ -188,7 +188,11 @@ def test_independent_multi_table_job_streams_every_table(tmp_path: Path) -> None
     for name, source in srcs["resident"].items():
         got = pq.read_table(target / f"{name}.parquet")
         want = run_pipeline(
-            {**cfg, "tables": [t for t in cfg["tables"] if t["name"] == name]},
+            {
+                **cfg,
+                "sources": {name: cfg["sources"][name]},
+                "tables": [t for t in cfg["tables"] if t["name"] == name],
+            },
             sources={name: source},
             engine_version=rs.ENGINE_VERSION,
             auto_chunk=False,

@@ -20,6 +20,7 @@ from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution import ExecutionError, run_pipeline
 from decoy_engine.execution.native._dispatch import NativeRouteEvidence
 from decoy_engine.plan._errors import PlanCompileError
+from tests._declared_schema import declare_rest
 from tests.native._chunked_entry_support import (
     COMPANION_PRESENT,
     ENGINE_VERSION,
@@ -93,6 +94,7 @@ def _full_frame(config: dict[str, Any], source: pa.Table, tmp_path: Path) -> pa.
     config = copy.deepcopy(config)
     config["sources"][TABLE] = {"type": "file", "format": "parquet", "path": path}
     config["targets"][TABLE] = {"type": "file", "format": "parquet", "path": path + ".out"}
+    declare_rest(config, {TABLE: source})
     result = run_pipeline(
         config,
         {TABLE: source},

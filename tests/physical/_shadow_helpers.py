@@ -44,6 +44,7 @@ from decoy_engine.generation import _plan_entry as _plan_entry_module
 from decoy_engine.internal.faker_setup import snapshot_custom_faker_providers
 from decoy_engine.keyprovider import KeyProvider
 from decoy_engine.providers_v2 import ProviderRegistry
+from tests._declared_schema import declare_rest
 
 if TYPE_CHECKING:
     from decoy_engine.execution._transactional_sink import TransactionalSink
@@ -82,7 +83,7 @@ def build_config(
         },
         "tables": [{"name": table_name, "columns": columns}],
     }
-    return PipelineConfig.model_validate(raw).model_dump()
+    return PipelineConfig.model_validate(declare_rest(raw)).model_dump()
 
 
 @dataclass(frozen=True)

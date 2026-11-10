@@ -26,6 +26,7 @@ from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_join import StreamFkJoiner
 from decoy_engine.relationships._graph import OrphanPolicy
+from tests._declared_schema import declare_rest
 from tests.parity import _d2b_shapes as s
 
 VERSION = "0.1.0"
@@ -107,7 +108,7 @@ def job(
             }
         ],
     }
-    return config, {"parent": p_tbl, "child": c_tbl}
+    return declare_rest(config), {"parent": p_tbl, "child": c_tbl}
 
 
 @dataclass(frozen=True)

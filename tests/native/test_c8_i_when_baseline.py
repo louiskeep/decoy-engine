@@ -23,6 +23,7 @@ import pytest
 from decoy_engine.execution import run_pipeline
 from decoy_engine.execution._fk_keys import to_pandas_fk_safe
 from decoy_engine.execution._when_gate import _eval_predicate
+from tests._declared_schema import declare_rest
 from tests.native._c8_i_support import (
     chunk_by_sizes,
     run_public_oracle,
@@ -141,6 +142,7 @@ def _whole_frame(config: dict[str, Any], source: pa.Table, tmp_path: Path) -> pa
     config = copy.deepcopy(config)
     config["sources"][TABLE] = {"type": "file", "format": "parquet", "path": path}
     config["targets"][TABLE] = {"type": "file", "format": "parquet", "path": path + ".out"}
+    declare_rest(config)
     result = run_pipeline(
         config,
         {TABLE: source},

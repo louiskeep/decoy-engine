@@ -36,6 +36,11 @@ from typing import Any
 
 from decoy_engine._lexeme import profile_descriptors
 from decoy_engine.fileaccess import FileAccess, entry_point
+from decoy_engine.profile._declared_columns import (
+    DeclarationRequest,
+    PreparedDeclaredSources,
+    prepare_declared_sources,
+)
 from decoy_engine.profile._readers import (
     BOUNDED_FALLBACK_ROWS,
     ProfileSource,
@@ -53,6 +58,7 @@ def profile_source(
     seed: int | None = None,
     residency: str = "bounded",
     file_access: FileAccess | None = None,
+    declared: PreparedDeclaredSources | None = None,
 ) -> Profile:
     """Profile every source declared in `config["sources"]`.
 
@@ -76,6 +82,8 @@ def profile_source(
             - "full": the historical whole-source read (`to_frame()` per
               source), for callers that pass `sample_rows=None` and genuinely
               need whole-column distincts on a source small enough to hold.
+        declared: the capability a caller prepared for this same `config`, so the headers and
+            footers are not read twice. A capability for another config raises `ValueError`.
 
     Returns:
         A frozen `Profile` covering every table declared in
@@ -86,6 +94,14 @@ def profile_source(
         raise ValueError(
             f"profile_source: residency must be 'bounded' or 'full', got {residency!r}."
         )
+
+    # Before any reader exists: every source column must be declared (CONFIG-EXPLICIT E2).
+    if declared is None:
+        prepare_declared_sources(
+            DeclarationRequest.for_descriptors(config), file_access=file_access
+        )
+    elif not declared.matches(config):
+        raise ValueError("profile_source: `declared` was prepared for a different config.")
 
     from decoy_engine import __version__ as engine_version
 

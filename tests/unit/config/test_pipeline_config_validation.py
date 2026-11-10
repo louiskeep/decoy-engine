@@ -396,9 +396,17 @@ def _acceptance_config(tmp_path: Path) -> dict[str, Any]:
                         "strategy": "faker_name",
                         "provider": "person_name",
                         "cardinality_mode": "reuse",
-                    }
+                    },
+                    {"name": "customer_id", "strategy": "passthrough"},
                 ],
-            }
+            },
+            {
+                "name": "orders",
+                "columns": [
+                    {"name": "order_id", "strategy": "passthrough"},
+                    {"name": "customer_id", "strategy": "passthrough"},
+                ],
+            },
         ],
         "relationships": [
             {

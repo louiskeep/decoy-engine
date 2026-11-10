@@ -33,6 +33,7 @@ from decoy_engine.execution._residency_warning import (
     residency_warning_message,
 )
 from decoy_engine.profile._readers import LazySource
+from tests._declared_schema import file_schemas
 from tests.unit.execution.test_out_of_core_routing import (
     _fk_ooc_config,
     _sources,
@@ -201,6 +202,7 @@ def test_forced_ooc_loader_job_records_the_source_loader_shape(tmp_path: Path) -
         engine_version="0.1.0",
         execution_mode="out_of_core",
         source_loader=_file_loader(config),
+        source_loader_schemas=file_schemas(config),
     )
     assert result.quality_metrics["execution"]["execution_mode"] == "out_of_core"
     shapes = _residency_qws(result)[0].detail["shapes"]

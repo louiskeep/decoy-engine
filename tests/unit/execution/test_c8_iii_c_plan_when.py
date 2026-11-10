@@ -20,6 +20,7 @@ from decoy_engine.errors import ValidationError
 from decoy_engine.execution import PandasExecutionAdapter
 from decoy_engine.plan import plan_from_yaml, plan_to_yaml
 from decoy_engine.plan._serialize import _plan_from_dict
+from tests._declared_schema import declare_rest
 from tests.unit.execution import _c8_iii_c_support as sup
 
 CODE = "when_outside_closed_grammar"
@@ -262,7 +263,7 @@ def _fk_plan(tmp_path: Path) -> Any:
         }
     from decoy_engine.config import PipelineConfig
 
-    cfg = PipelineConfig.model_validate(cfg).model_dump()
+    cfg = PipelineConfig.model_validate(declare_rest(cfg)).model_dump()
     return sup.compile_job(cfg)[0]
 
 

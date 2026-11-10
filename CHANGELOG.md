@@ -9,6 +9,60 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-10
+
+### Breaking for consumers
+
+- a generate column that names an unknown faker type or locale, passes a keyword its provider does not take, mixes category types, reads a column that is not ready yet, or has a formula with an unknown name now fails at `decoy validate` and `decoy run`.
+
+### Added (constant and parametric distribution generate types, GEN-TYPES E1, 2026-11-10)
+
+Two new generate column types need no source file.
+
+`type: constant` with `value:` gives every row that value (a string, integer, float or bool).
+
+`type: distribution` with `family: uniform` and `low`, `high` draws uniform values in that range.
+Only `uniform` ships: the other families (normal, exponential, lognormal, beta, poisson, zipf) are
+refused until a portable sampler lands, because numpy's versions are not bit-identical across
+arm64 and x86. The family takes exactly its own keys and refuses any other. Optional `min` and `max` clip the draw. Output depends only on the seed and the
+column, and is the same on the resident, streamed and pinned routes. Both types accept
+`null_probability`.
+
+`generate_option_catalog()` entries gain `required_when`, which lists the keys a chosen family (or
+a `weighted` reference) requires. The capability matrix now lists `constant` and no longer calls
+`distribution` a legacy entry.
+
+### Added (fitted fan-out reference docs, QA-FK-FANOUT D, 2026-11-10)
+
+`docs/strategies.md` documents `distribution: fitted` for `reference` generate columns: the
+`fanout` block that `decoy fit --fanout` and `fanout_columns=` write, how children are allocated to
+parents and assigned, and every refusal code. CODEMAP names the fan-out module and its one lazy
+`quality` to `generation` call.
+
+### Added (public joint cell cap, GEN-COND-CAP, 2026-11-10)
+
+`decoy_engine.quality.MAX_CONTINGENCY_TOP_K` (1000), the largest `contingency_top_k` a snapshot accepts, is now public so callers can name the bound without keeping their own copy.
+
+### Changed (generate columns are checked per type at validate, GEN-STRICT E2, 2026-11-10)
+
+`run_config_only_checks` and `compile_plan` now call one check, `check_generate_columns`, in place of the five separate reference checks. It refuses a faker type or locale Faker does not know, `faker_kwargs` the provider does not accept, categories Arrow cannot type, a `derived` expression that reads a later column, a transform option its own parser rejects (for example `group_by` equal to `order_by`), and weights whose length differs from a `sequence` parent's row count. A formula must list every sibling column it reads in `references`, may not use an unknown name or the `{a}` form, and may not read itself or a later formula that has `references`. Each refusal names the table, column and option, with a registered code, and never echoes a submitted value. The messages of the five existing reference checks are now fixed text as well.
+
+A `statistical` column whose `condition_on` names a later column already failed before this change; it now reports `generate_column_forward_reference` instead of `statistical_condition_column_unavailable`. A faker column with no `locale` is checked at plan time against every Faker locale and again, with the platform's `instance_default_locale`, when generation starts.
+
+A `formula` that uses syntax the runtime evaluator cannot run (lambda, walrus, set comprehension, a call through a non-name) is now refused at validate and compile with `generate_formula_invalid`; it used to compile and generate a column of nulls. The check reads the evaluator's own node table (`decoy_engine.expressions.formula_is_evaluable`).
+
+### Fixed (profile every row at near the old speed, row 24f follow-up, 2026-11-10)
+
+`profile_columns` on a full frame is back to seconds at 1M rows x 8 columns (it took minutes after the
+CLI began profiling every row). Detectors match each distinct value once and weight by count, so
+the match rate, sample misses and format pattern are the same as matching every cell. The date probe
+judges the parse rate on the first 200 non-null values and coerces the full series only for date
+columns. K-anonymity factorizes each candidate column once, the sentinel scan judges distinct values,
+and the casing and alphabet samples convert only the rows they read. Profile output is unchanged
+except k-anonymity, which now also covers category-dtype and mixed-object columns that the old
+groupby got wrong or skipped: a category column with unused categories used to give k=0 and now
+gives k=1, and mixed-object combos the old groupby skipped are now reported.
+
 ## [0.21.0] - 2026-11-10
 
 ### Breaking for consumers
