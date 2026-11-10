@@ -12,7 +12,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, StrictInt
 
-from decoy_engine._value_free import (
+from decoy_engine.records._grammar import Kind, PayloadTag, RecordId
+from decoy_engine.records._read_model import read_model_of
+from decoy_engine.run_result._model import (
     InvocationId,
     RelPath,
     SafeName,
@@ -20,8 +22,6 @@ from decoy_engine._value_free import (
     UtcTimestamp,
     Version,
 )
-from decoy_engine.records._grammar import Kind, PayloadTag, RecordId
-from decoy_engine.records._read_model import read_model_of
 
 __all__ = [
     "ENVELOPE_SCHEMA",

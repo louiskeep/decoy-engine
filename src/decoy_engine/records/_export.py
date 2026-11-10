@@ -22,7 +22,7 @@ from pydantic import (
 )
 
 from decoy_engine import reasons
-from decoy_engine._value_free import Count, InvocationId, UtcTimestamp
+from decoy_engine._value_free import Count
 from decoy_engine.records import _kinds  # noqa: F401  (registers the V1 kinds)
 from decoy_engine.records._canonical import canonical_bytes, payload_digest, record_id, sha256_tag
 from decoy_engine.records._codec import decode, json_object, project, utc_stamp, validated
@@ -38,6 +38,7 @@ from decoy_engine.records._export_rules import file_name
 from decoy_engine.records._grammar import RecordId, family_major, is_record_id
 from decoy_engine.records._read_model import read_model_of
 from decoy_engine.records._registry import KindSpec, kind_spec
+from decoy_engine.run_result._model import InvocationId, UtcTimestamp
 
 __all__ = [
     "EXPORT_SCHEMA",

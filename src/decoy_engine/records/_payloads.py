@@ -21,7 +21,8 @@ from pydantic import (
     StringConstraints,
 )
 
-from decoy_engine._value_free import Count, SafeName, Sha256
+from decoy_engine._value_free import Count
+from decoy_engine.run_result._model import SafeName, Sha256
 
 __all__ = ["EvidencePayload", "ExportLayout", "SampleRunPayload"]
 

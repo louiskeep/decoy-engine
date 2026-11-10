@@ -13,7 +13,6 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from decoy_engine import reasons
-from decoy_engine._value_free import InvocationId, RelPath, UtcTimestamp
 from decoy_engine.reasons import EVENT_SCHEMA_VERSION
 from decoy_engine.records._canonical import canonical_bytes
 from decoy_engine.records._codec import json_object
@@ -21,6 +20,7 @@ from decoy_engine.records._envelope import Producer
 from decoy_engine.records._errors import RecordError
 from decoy_engine.records._read_model import read_model_of
 from decoy_engine.records._registry import family_major
+from decoy_engine.run_result._model import InvocationId, RelPath, UtcTimestamp
 
 __all__ = ["JOB_LOG_SCHEMA", "JobLog", "JobLogHeader", "header_line", "read_job_log"]
 

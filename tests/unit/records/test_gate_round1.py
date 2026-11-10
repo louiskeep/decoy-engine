@@ -89,11 +89,11 @@ def test_there_is_one_deriver() -> None:
 
 
 def test_the_envelope_uses_the_shared_value_free_types() -> None:
-    from decoy_engine import _value_free
     from decoy_engine.records import _envelope
+    from decoy_engine.run_result import _model
 
     for name in ("InvocationId", "RelPath", "UtcTimestamp", "SafeName", "SafeRef", "Version"):
-        assert getattr(_envelope, name) is getattr(_value_free, name)
+        assert getattr(_envelope, name) is getattr(_model, name)
 
 
 @pytest.mark.parametrize(
@@ -252,6 +252,6 @@ def test_a_log_line_with_a_bad_owner_is_a_bad_line() -> None:
 
 
 def test_the_joblog_header_uses_the_shared_types() -> None:
-    from decoy_engine import _value_free
+    from decoy_engine.run_result import _model
 
-    assert joblog.InvocationId is _value_free.InvocationId
+    assert joblog.InvocationId is _model.InvocationId
