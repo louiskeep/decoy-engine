@@ -172,6 +172,7 @@ def _malformed_cases() -> list[tuple[str, Any]]:
         ("string member", lambda g: g.update(probs=[0.1, 0.9], values=["1", 2.0])),
         ("value outside edges", lambda g: g.update(probs=[0.1, 0.9], values=[1.0, 1e9])),
         ("unknown member", lambda g: g.update(extra=1)),
+        ("integer float cannot hold", lambda g: g.update(probs=[0.1, 0.9], values=[1.0, 10**400])),
         ("not an object", lambda g: None),
     ]
 

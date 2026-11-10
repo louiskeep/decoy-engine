@@ -95,6 +95,7 @@ def _bad_blocks() -> list[tuple[str, Any]]:
         ("empty", with_(values=[], counts=[])),
         ("outside edges", with_(values=[4.99, 123456.5])),
         ("unknown member", with_(extra=1)),
+        ("integer float cannot hold", with_(values=[4.99, 10**400])),
     ]
 
 
@@ -155,6 +156,7 @@ def test_exact_mode_threshold() -> None:
         return _fit(values)[1]
 
     assert _shape_of(numeric([20] * 30)) == "exact"
+    assert "quantile_grid" not in numeric([20] * 30)
     assert _shape_of(numeric([20] * 31)) == "grid"
     rare = numeric([10] * 25 + [1] * 5)
     assert _shape_of(rare) == "grid"
