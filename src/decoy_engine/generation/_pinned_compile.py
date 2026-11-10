@@ -39,6 +39,8 @@ PINNABLE_TYPES = frozenset(
     {
         "sequence",
         "categorical",
+        "constant",
+        "distribution",
         "reference",
         "derived",
         "derived_aggregate",

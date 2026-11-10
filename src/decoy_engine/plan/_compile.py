@@ -29,6 +29,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from decoy_engine.config import refuse_unlisted_generate_families
+
 # Note: imports from decoy_engine.relationships are deferred inside
 # compile_plan to break a circular import. decoy_engine/__init__.py
 # eagerly loads decoy_engine.relationships (per S2 spec API summary),
@@ -244,6 +246,7 @@ def compile_plan(
     # no provider (the seed-envelope builder drops them, leaking the raw value).
     # Config-only; both branches + run_config_only_checks.
     check_faker_requires_provider(config)
+    refuse_unlisted_generate_families(config)
     # Row 29 (HC-7, 2026-07-17): clinical free-text advisory. WARN-ONLY --
     # unlike every check above, this never raises; it returns warning
     # strings folded into PlanCompileResult.warnings below (same shape as
@@ -546,6 +549,7 @@ def run_config_only_checks(
     check_fpe_charset_config(config)
     # Row 26 (DE-03 sibling): faker-without-provider rejection. Config-only.
     check_faker_requires_provider(config)
+    refuse_unlisted_generate_families(config)
     # F06: declared parsing/casting contracts. Reported only when a config declares any, so a
     # legacy config's list is unchanged.
     declared = (

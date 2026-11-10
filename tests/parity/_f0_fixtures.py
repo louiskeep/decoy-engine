@@ -562,6 +562,63 @@ def cfg_grouped_windowed() -> dict[str, Any]:
     )
 
 
+def cfg_source_free() -> dict[str, Any]:
+    """GEN-TYPES E1: the source-free kinds, with nulls on the constant and one distribution.
+
+    Shipped family only (uniform). The oracle hashes exact bits, and uniform was checked identical
+    on arm64 and x86 at 2M draws; the cross-arch digest test in `tests/unit/generation/kinds` is
+    the large-n proof, this 40-row table is not.
+    """
+    return config(
+        [
+            table(
+                "source_free",
+                40,
+                [
+                    {
+                        "name": "country",
+                        "type": "constant",
+                        "value": "US",
+                        "null_probability": 0.25,
+                    },
+                    {
+                        "name": "age",
+                        "type": "distribution",
+                        "family": "uniform",
+                        "low": 10,
+                        "high": 100,
+                        "min": 18,
+                        "max": 90,
+                    },
+                    {
+                        "name": "score",
+                        "type": "distribution",
+                        "family": "uniform",
+                        "low": 0,
+                        "high": 1,
+                    },
+                    {
+                        "name": "visits",
+                        "type": "distribution",
+                        "family": "uniform",
+                        "low": 0,
+                        "high": 20,
+                        "null_probability": 0.3,
+                    },
+                    {
+                        "name": "rank",
+                        "type": "distribution",
+                        "family": "uniform",
+                        "low": 1,
+                        "high": 100,
+                        "max": 40,
+                    },
+                ],
+            )
+        ]
+    )
+
+
 def cfg_nulls() -> dict[str, Any]:
     """Partial-null on several generator types, an all-null column, and a zero-row table."""
     return config(
@@ -801,6 +858,7 @@ FIXTURES: tuple[Fixture, ...] = (
         "grouped_windowed", ENTRY_GENERATE_TABLES, "grouped-windowed", _gt(cfg_grouped_windowed)
     ),
     Fixture("nulls", ENTRY_GENERATE_TABLES, "partial-null/all-null", _gt(cfg_nulls)),
+    Fixture("source_free", ENTRY_GENERATE_TABLES, "source-free-kinds", _gt(cfg_source_free)),
     Fixture(
         "mixed_fk_generated_parent",
         ENTRY_RUN_PIPELINE,

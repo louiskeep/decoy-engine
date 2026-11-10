@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine.generation._numeric_typing import numeric_plan
+from decoy_engine.generation.kinds import constant_arrow_type, parametric_arrow_type
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -42,6 +43,11 @@ ADMISSION_MATRIX: dict[str, tuple[bool, str]] = {
     "categorical": (True, "one persistent random.Random stream; homogeneous scalar categories"),
     "faker": (True, "built-in providers only; per-row seeded or one persistent pooled stream"),
     "reference": (True, "without min/max_per_parent repair; parent key set built once"),
+    "constant": (True, "no draw; the one configured value; prefix-stable"),
+    "distribution": (
+        True,
+        "one persistent numpy Generator from the dist family; n draws equal batched draws",
+    ),
     "formula": (False, "whole-column pandas coercion"),
     "statistical": (False, "whole-column fit/condition_on, pinned-snapshot sampler"),
     "derived": (False, "reads sibling columns row by row; no sibling-input seam yet"),
@@ -247,6 +253,10 @@ def classify_plan(
         elif kind == "categorical":
             arrow_type, reason = _categorical_type(col)
             result = admit(table, col, arrow_type) if arrow_type else decline(table, col, reason)
+        elif kind == "constant":
+            result = admit(table, col, constant_arrow_type(col))
+        elif kind == "distribution":
+            result = admit(table, col, parametric_arrow_type(col))
         elif kind == "windowed_date":
             result = classify_windowed_date(table, col)
         elif kind == "faker":

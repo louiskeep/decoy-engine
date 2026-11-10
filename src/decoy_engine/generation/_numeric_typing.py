@@ -35,6 +35,7 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine.generation._numeric_derived import derived_uses_as_numbers
+from decoy_engine.generation.kinds import constant_arrow_type, parametric_arrow_type
 from decoy_engine.internal.pandas_compat import table_to_pandas_exact_ints
 
 _INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
@@ -143,6 +144,8 @@ READER_KEYS: dict[str, tuple[tuple[str, str], ...]] = {
     "faker": (),
     "sequence": (),
     "categorical": (),
+    "constant": (),
+    "distribution": (),
     "formula": (("references", "formula.references"),),
     "reference": (),
     "statistical": (("condition_on", "statistical.condition_on"),),
@@ -255,6 +258,10 @@ def numeric_plan(
             return pa.string()
         if kind == "categorical":
             return _categorical_type(dict(col))[0]
+        if kind == "constant":
+            return constant_arrow_type(dict(col))
+        if kind == "distribution":
+            return parametric_arrow_type(dict(col))
         return None
 
     def is_number(key: Key) -> bool:

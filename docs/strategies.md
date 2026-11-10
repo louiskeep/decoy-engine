@@ -1277,10 +1277,121 @@ child can point at a generated parent's keys.
 - `reference_table` / `reference_column`: the generated parent table and column
   to draw from (both required).
 - `distribution`: how draws are spread across the parent values: `random`
-  (default), `sequential`, or `weighted`.
+  (default), `sequential`, `weighted`, or `fitted` (below).
 - `weights`: per-value weights, used when `distribution` is `weighted`.
 - `min_per_parent` / `max_per_parent`: optional per-parent cardinality bounds
   (0 = unbounded). These bounds do not compose with `sequential`.
+- `snapshot_file` / `source_column`: only with `distribution: fitted` (below).
+  Any other distribution refuses them with `config.generate_option_unknown`.
+
+`random` and `weighted` pick a parent for each child row on its own, so on 30
+parents and 60 children almost every parent gets 1 to 4 children. A source
+where a few parents hold most of the children, or many parents hold none, loses
+that shape. `distribution: fitted` keeps it.
+
+#### Fitted fan-out (`distribution: fitted`)
+
+The fan-out of a key column is how many child rows each parent key has. A
+fitted reference column gives each generated parent a child count drawn from
+the fan-out of the source child table.
+
+```yaml
+- name: patient_id
+  type: reference
+  reference_table: patients
+  reference_column: patient_id
+  distribution: fitted
+  snapshot_file: visits.snap.json
+  source_column: patient_id   # optional; defaults to the column name
+```
+
+**What the snapshot records.** `decoy fit visits.csv --fanout patient_id`
+writes a `fanout` block on the `patient_id` entry of the snapshot. The CLI
+option ships with the CLI release that pins this engine; from Python, pass
+`fanout_columns=["patient_id"]` to `compute_distribution_snapshot` or
+`distribution_snapshot_document`.
+
+```json
+"patient_id": {
+  "kind": "categorical",
+  "fanout": {"rows": 20, "keys": 8, "degrees": [[1, 5], [2, 1], [5, 1], [8, 1]]}
+}
+```
+
+- `rows`: the non-null rows of the column.
+- `keys`: the distinct non-null keys.
+- `degrees`: `[children, parents]` pairs in ascending order. `[1, 5]` means 5
+  keys appear on exactly 1 row. Keys compare as strings, the way the rest of
+  the snapshot treats them.
+
+The block holds counts only, never a key value, so a snapshot written with
+sensitive columns withheld still keeps it. Without `--fanout` the snapshot is
+unchanged. A DP snapshot never carries a fan-out.
+
+**How children are allocated to parents.** Generation reads the pinned
+snapshot bytes from the compiled Plan, never the file. With `P` unique non-null
+generated parent keys and a child `row_count` of `N`:
+
+1. Active parents: `K = round(N * keys / rows)`, clamped to at least 1 and at
+   most `min(P, N)`. This keeps the source's mean children per active parent.
+   If the child and parent row counts keep the source's ratio, the share of
+   parents with no children comes out as in the source too, without reading
+   the parent file.
+2. Base degrees: the `K` values of the source degree histogram at evenly
+   spaced quantiles (systematic resampling with a fixed offset). This step
+   draws nothing at random. When `K` equals the source `keys`, it returns the
+   source degrees exactly.
+3. Scale to `N`: largest-remainder apportionment makes the degrees sum to
+   exactly `N` with every active parent holding at least one child. All
+   arithmetic is on integers, so every platform gets the same result.
+4. Cap: no parent gets more children than the largest source parent, as long
+   as `N <= K * max_degree`. When `K` was clamped to `P` and `N` is larger
+   than that, the cap cannot hold and some parents exceed the source maximum.
+
+**Assignment.** Two shuffles are the only random draws. The first assigns the
+`K` degrees, plus a zero for each of the other `P - K` parents, to the parent
+keys. The second shuffles the child rows. Every child key comes from the
+generated parent pool (no orphans) and the column has exactly `N` rows. The
+seed derives from the master key (or `seed`), the column config and the
+snapshot digest, through the same derivation as every reference column, so
+the same inputs give byte-identical output.
+
+For the source above (`rows` 20, `keys` 8):
+
+| Generated parents `P` | Child rows `N` | Result |
+|---|---|---|
+| 10 | 20 | degrees `8, 5, 2, 1, 1, 1, 1, 1, 0, 0`: the source exactly |
+| 30 | 60 | 24 of 30 parents have children; 15 have 1, 3 have 2, 3 have 5, 3 have 8 |
+
+Notes:
+
+- `null_probability` applies after assignment, as on any reference column, so
+  each parent loses children at random.
+- Two fitted reference columns in one child table are allocated separately,
+  so which patient sees which provider is not kept. A chain (`patients`,
+  `visits`, `claims`) is fitted one level at a time from each child file.
+- A plan with a fitted column runs on the legacy generation route; the
+  streamed core declines it (admission reason `reference_fitted_fanout`).
+- `random`, `sequential` and `weighted` output does not change.
+
+**Refusals.** `fitted` never falls back to uniform draws or to an all-null
+column.
+
+| Code | When |
+|---|---|
+| `plan.reference_fanout_missing` | No `snapshot_file`; the source column is not in the snapshot; or its entry has no `fanout` (a snapshot fitted without `--fanout`, or any DP snapshot). Also raised at generation if no pinned fan-out reached it (a caller that skipped compile). |
+| `plan.reference_fanout_invalid` | The `fanout` block breaks a rule: not an object; a count that is not a plain integer (bools, floats and numeric strings are refused, not coerced); a pair that is not two positive integers; degrees not strictly ascending; parent counts that do not sum to `keys`; children that do not sum to `rows`; or `keys` of 0. |
+| `plan.reference_fanout_conflict` | `weights`, `min_per_parent` or `max_per_parent` is set; the fan-out already fixes the per-parent counts. |
+| `plan.reference_parent_pool_empty` | The child table has rows but the generated parent column has no non-null keys. |
+| `plan.dp_generate_fitted_fanout_unsupported` | The config declares `global_settings.dp`. The exact source fan-out would reach DP output unprotected; use `distribution: random`. |
+| `plan.statistical_snapshot_unreadable`, `plan.statistical_snapshot_schema_mismatch` | The snapshot file could not be read or is not `distribution-snapshot/v1`. |
+| `plan.statistical_snapshot_not_pinned` | A saved Plan loaded with `plan_from_yaml` no longer carries the fitted column's snapshot. |
+| `plan.pinned_snapshot_file_not_statistical` | The pinned API (`compile_pinned`) takes `snapshot_file` only on statistical columns. |
+| `quality.fanout_column_unknown` | At fit: a fan-out column is not in the source, or `fanout_columns` is a bare string. |
+| `config.generate_unique_conflict` | `unique: true` with `distribution: fitted`. |
+
+Messages name tables, columns and fields only, never a key value or a stored
+count.
 
 ### formula
 

@@ -18,26 +18,36 @@ from __future__ import annotations
 import ast
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from decoy_engine import reasons
+from decoy_engine.config._generate_type_checks import (
+    clip_bound,
+    constant_value,
+    finite,
+    high_bound,
+)
 from decoy_engine.config._generate_unique import unique_flag
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.expressions import formula_is_evaluable
 
 __all__ = [
     "COMMON_OPTIONS",
+    "CONDITIONAL_REQUIRED",
     "GENERATE_OPTIONS",
     "INTERNAL_KEYS",
     "GenerateTypeOptions",
     "OptionSpec",
     "TypeOptions",
     "closed_key_schema",
+    "generate_family_problems",
     "generate_option_catalog",
     "option_problems",
     "problem_details",
+    "refuse_unlisted_generate_families",
 ]
 
 _TYPE = str(reasons.config.GENERATE_OPTION_TYPE)
@@ -69,10 +79,15 @@ class OptionSpec:
 
 @dataclass(frozen=True)
 class TypeOptions:
-    """The keys one column type reads, and the ones it cannot run without."""
+    """The keys one column type reads, and the ones it cannot run without.
+
+    ``closed_by`` names a selector key of ``CONDITIONAL_REQUIRED`` whose chosen value also closes
+    the key set: a key listed under another value of that selector is then refused as unknown.
+    """
 
     keys: Mapping[str, OptionSpec]
     required: tuple[str, ...] = ()
+    closed_by: str | None = None
 
 
 @dataclass(frozen=True)
@@ -87,6 +102,9 @@ class GenerateTypeOptions:
     required: tuple[str, ...]
     optional: tuple[str, ...]
     common: tuple[str, ...]
+    # selector key -> selector value -> keys that value requires, e.g.
+    # {"family": {"uniform": ("low", "high")}}. Empty for a type with no conditional rule.
+    required_when: Mapping[str, Mapping[str, tuple[str, ...]]] = field(default_factory=dict)
 
 
 def _is_int(value: Any) -> bool:
@@ -178,6 +196,33 @@ def _categories(value: Any, _: Mapping[str, Any]) -> list[Problem]:
     return _OK if isinstance(value, list) else [((), _TYPE)]
 
 
+def _family(value: Any, _: Mapping[str, Any]) -> list[Problem]:
+    if not isinstance(value, str):
+        return [((), _TYPE)]
+    return _OK if value in CONDITIONAL_REQUIRED["distribution"]["family"] else [((), _VALUE)]
+
+
+def generate_family_problems(config: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """``(dotted path, reason code)`` for each `distribution` column of a raw config dict whose
+    `family` is missing from the table.
+
+    The one family gate for a raw dict: `compile_plan` and `run_config_only_checks` call it, so a
+    family the validator refuses (a deferred one) cannot reach a run by skipping validation. It
+    reads the same `_family` check `option_problems` runs, quotes nothing, and never raises.
+    """
+    found: list[tuple[str, str]] = []
+    tables = config.get("tables")
+    for table in tables if isinstance(tables, list) else []:
+        columns = table.get("generate_columns") if isinstance(table, dict) else None
+        for col in columns if isinstance(columns, list) else []:
+            if not isinstance(col, dict) or col.get("type") != "distribution":
+                continue
+            for _, code in _family(col.get("family"), col):
+                path = f"tables.{table.get('name', '?')}.generate_columns.{col.get('name', '?')}.family"
+                found.append((path, code))
+    return found
+
+
 def _weight_ok(w: Any) -> bool:
     """A non-negative weight the generators can turn into a finite float.
 
@@ -231,6 +276,21 @@ COMMON_OPTIONS: Mapping[str, OptionSpec] = {
 
 # Engine-internal keys the generators stamp or read that a config may carry. None today.
 INTERNAL_KEYS: frozenset[str] = frozenset()
+
+# The one table of family-dependent keys: type -> selector key -> selector value -> the keys that
+# value requires. `option_problems` reads required keys from it (the `reference` weights rule
+# included), a closed type (`TypeOptions.closed_by`) refuses every key another value lists, the
+# catalog shows it as `required_when` and `closed_key_schema` builds its branches from it.
+CONDITIONAL_REQUIRED: Mapping[str, Mapping[str, Mapping[str, tuple[str, ...]]]] = {
+    "reference": {"distribution": {"weighted": ("weights",)}},
+    "distribution": {
+        "family": {
+            "uniform": ("low", "high"),
+        }
+    },
+}
+
+_N = OptionSpec(finite)
 
 GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
     "faker": TypeOptions(
@@ -318,6 +378,18 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
         {"group_by": OptionSpec(_str, ref_kind="column"), "length": _I, "prefix": _S},
         required=("group_by",),
     ),
+    "constant": TypeOptions({"value": OptionSpec(constant_value)}, required=("value",)),
+    "distribution": TypeOptions(
+        {
+            "family": OptionSpec(_family),
+            "low": _N,
+            "high": OptionSpec(high_bound),
+            "min": OptionSpec(clip_bound("min")),
+            "max": OptionSpec(clip_bound("max")),
+        },
+        required=("family",),
+        closed_by="family",
+    ),
 }
 
 # Optional keys whose readers treat None as "not given" (`col.get(k)`, `col.get(k) or default`, or
@@ -339,15 +411,37 @@ _NONE_MEANS_ABSENT = frozenset(
         "condition_on",
         "other_mode",
         "source_column",
+        "min",
+        "max",
     }
 )
 
-# A required key counts as given when it is not None, so `start: 0` and `max_days: 0` are valid.
-_NONE_MEANS_MISSING = frozenset({"start", "max_days"})
+# A required key counts as given when it is not None, so `start: 0`, `max_days: 0` and a constant
+# `value: 0` or `value: false` are valid. Keys that a `CONDITIONAL_REQUIRED` value requires follow
+# the same rule (`mean: 0` is given).
+_NONE_MEANS_MISSING = frozenset({"start", "max_days", "value"})
 
 
 def _missing(key: str, value: Any) -> bool:
     return value is None if key in _NONE_MEANS_MISSING else not value
+
+
+def _family_keys(type_: str, extras: Mapping[str, Any]) -> tuple[tuple[str, ...], frozenset[str]]:
+    """The keys the chosen selector value requires, and the keys it makes foreign.
+
+    A selector that is absent or names a value outside the table adds nothing: the selector's own
+    check reports it. Foreign keys apply only to a type that is ``closed_by`` that selector.
+    """
+    required: list[str] = []
+    foreign: set[str] = set()
+    for selector, by_value in CONDITIONAL_REQUIRED.get(type_, {}).items():
+        chosen = extras.get(selector)
+        if not isinstance(chosen, str) or chosen not in by_value:
+            continue
+        required.extend(by_value[chosen])
+        if GENERATE_OPTIONS[type_].closed_by == selector:
+            foreign |= {k for keys in by_value.values() for k in keys if k not in by_value[chosen]}
+    return tuple(required), frozenset(foreign)
 
 
 def option_problems(type_: str, extras: Mapping[str, Any]) -> list[Problem]:
@@ -360,13 +454,19 @@ def option_problems(type_: str, extras: Mapping[str, Any]) -> list[Problem]:
     spec = GENERATE_OPTIONS[type_]
     found: list[Problem] = []
     check_input = {**extras, "type": type_}
+    family_required, foreign = _family_keys(type_, extras)
     for key, value in extras.items():
+        if key in foreign:
+            found.append(((key,), UNKNOWN))
+            continue
         option = spec.keys.get(key) or COMMON_OPTIONS.get(key)
         if option is None:
             if key not in INTERNAL_KEYS:
                 found.append(((key,), UNKNOWN))
             continue
         if key in spec.required and _missing(key, value):
+            continue
+        if key in family_required and value is None:
             continue
         if value is None:
             if key not in _NONE_MEANS_ABSENT:
@@ -377,12 +477,7 @@ def option_problems(type_: str, extras: Mapping[str, Any]) -> list[Problem]:
         found.extend(((key, *rel), code) for rel, code in option.check(value, check_input))
     given_missing = [k for k in spec.required if _missing(k, extras.get(k))]
     found.extend(((k,), "missing") for k in given_missing)
-    if (
-        type_ == "reference"
-        and extras.get("distribution") == "weighted"
-        and extras.get("weights") is None
-    ):
-        found.append((("weights",), "missing"))
+    found.extend(((k,), "missing") for k in family_required if extras.get(k) is None)
     return found
 
 
@@ -407,14 +502,36 @@ def closed_key_schema(schema: dict[str, Any]) -> None:
     schema["allOf"] = [
         {
             "if": {"properties": {"type": {"const": type_}}, "required": ["type"]},
-            "then": {
-                "properties": {key: {} for key in [*shared, *spec.keys]},
-                "required": list(spec.required),
-                "additionalProperties": False,
-            },
+            "then": _closed_branch(type_, spec, shared),
         }
         for type_, spec in GENERATE_OPTIONS.items()
     ]
+
+
+def _closed_branch(type_: str, spec: TypeOptions, shared: list[str]) -> dict[str, Any]:
+    """One type's closed key set, plus a nested ``if selector == value`` branch per table entry."""
+    then: dict[str, Any] = {
+        "properties": {key: {} for key in [*shared, *spec.keys]},
+        "required": list(spec.required),
+        "additionalProperties": False,
+    }
+    nested: list[dict[str, Any]] = []
+    for selector, by_value in CONDITIONAL_REQUIRED.get(type_, {}).items():
+        for value, keys in by_value.items():
+            inner: dict[str, Any] = {"required": list(keys)}
+            if spec.closed_by == selector:
+                foreign = sorted({k for ks in by_value.values() for k in ks} - set(keys))
+                if foreign:
+                    inner["not"] = {"anyOf": [{"required": [k]} for k in foreign]}
+            nested.append(
+                {
+                    "if": {"properties": {selector: {"const": value}}, "required": [selector]},
+                    "then": inner,
+                }
+            )
+    if nested:
+        then["allOf"] = nested
+    return then
 
 
 def generate_option_catalog() -> Mapping[str, GenerateTypeOptions]:
@@ -427,6 +544,29 @@ def generate_option_catalog() -> Mapping[str, GenerateTypeOptions]:
             required=spec.required,
             optional=tuple(key for key in spec.keys if key not in spec.required),
             common=common,
+            required_when={
+                selector: dict(by_value)
+                for selector, by_value in CONDITIONAL_REQUIRED.get(type_, {}).items()
+            },
         )
         for type_, spec in GENERATE_OPTIONS.items()
     }
+
+
+def refuse_unlisted_generate_families(config: Mapping[str, Any]) -> None:
+    """Raise `PipelineValidationError` for the first `distribution` column with a listed-out family.
+
+    `compile_plan` and `run_config_only_checks` call this beside their other config-only checks, so
+    a raw dict that never went through `PipelineConfig` cannot reach a draw with a deferred family.
+    It reads `generate_family_problems`, the function the validator's checker also backs. The
+    message is the registry's fixed summary (no config value is quoted) and nothing is chained.
+    """
+    for path, code in generate_family_problems(config):
+        summary = reasons.lookup(code)[0].summary
+        if code == str(reasons.config.GENERATE_OPTION_TYPE):
+            raise PipelineValidationError(
+                summary, path=path, code=reasons.config.GENERATE_OPTION_TYPE
+            )
+        raise PipelineValidationError(
+            summary, path=path, code=reasons.config.GENERATE_OPTION_VALUE_UNKNOWN
+        )

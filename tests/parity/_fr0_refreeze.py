@@ -151,6 +151,23 @@ def g_nulls_large(t: dict[str, pa.Table]) -> None:
     gate.check_marginal(_col(t, "nulls", "cat_partial"), ["u", "v"])
 
 
+def g_source_free(t: dict[str, pa.Table]) -> None:
+    table = t["source_free"]
+    types = {f.name: f.type for f in table.schema}
+    assert types == {
+        "country": pa.string(),
+        "age": pa.float64(),
+        "score": pa.float64(),
+        "visits": pa.float64(),
+        "rank": pa.float64(),
+    }
+    assert set(_col(t, "source_free", "country")) <= {"US", None}
+    assert all(18 <= v <= 90 for v in _col(t, "source_free", "age"))
+    assert all(0 <= v <= 1 for v in _col(t, "source_free", "score"))
+    assert all(v is None or 0 <= v <= 20 for v in _col(t, "source_free", "visits"))
+    assert all(1 <= v <= 40 for v in _col(t, "source_free", "rank"))
+
+
 def g_reference(t: dict[str, pa.Table]) -> None:
     child, parent = t["ref_child"], t["ref_parent"]
     for col in ("r_random", "r_seq", "r_weighted", "r_bounded"):
@@ -192,6 +209,7 @@ GATES: dict[str, Callable[[dict[str, pa.Table]], None]] = {
     "live_faker_default_locale": g_live_default_locale,
     "keyed_derive": g_keyed,
     "nulls": g_nulls,
+    "source_free": g_source_free,
     "reference": g_reference,
     "referenced_formula": g_referenced_formula,
     "derived": g_derived,

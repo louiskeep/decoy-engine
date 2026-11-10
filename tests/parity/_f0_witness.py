@@ -110,7 +110,11 @@ REAL = "real"
 STAND_IN = "stand_in"
 
 _UNOBSERVED_KINDS = frozenset({"statistical", "grouped_series", "windowed_date", "group_key"})
-_NO_EVENT_KINDS = frozenset({"sequence", "derived", "derived_aggregate"})
+# constant draws nothing; distribution draws from its own numpy Generator, which is a parametric
+# draw and not a selection, so the witness has no event to hook for either (GEN-TYPES E1).
+_NO_EVENT_KINDS = frozenset(
+    {"sequence", "derived", "derived_aggregate", "constant", "distribution"}
+)
 
 
 class WitnessError(AssertionError):
