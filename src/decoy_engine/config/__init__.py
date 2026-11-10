@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from decoy_engine.config._errors import PipelineConfigError
 from decoy_engine.config._fixed_width import FixedWidthColumn, FixedWidthLayout
+from decoy_engine.config._generate_options import GenerateTypeOptions, generate_option_catalog
 from decoy_engine.config._generate_unique import (
     UNIQUE_FAKER_ATTEMPTS,
     distinct_categories,
@@ -108,6 +109,7 @@ __all__ = [
     "FixedWidthLayout",
     "GCSSource",
     "GCSTarget",
+    "GenerateTypeOptions",
     "GlobalSettings",
     "LimitOp",
     "NamespaceConfig",
@@ -130,6 +132,7 @@ __all__ = [
     "TargetDescriptor",
     "TransformOp",
     "distinct_categories",
+    "generate_option_catalog",
     "override_sources",
     "parse_pipeline_config",
     "parse_relationship_config",

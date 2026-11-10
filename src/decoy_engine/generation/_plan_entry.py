@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 
     from faker import Faker
 
+    from decoy_engine.generation.pool._events import QualityWarning
     from decoy_engine.plan._types import GenerationPlan
 
 
@@ -183,6 +184,7 @@ def generate_tables(
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     budget_bytes: int | None = None,
     file_access: FileAccess | None = None,
+    on_warning: Callable[[QualityWarning], None] | None = None,
 ) -> dict[str, pa.Table]:
     """Build one Arrow table per generate table in the compiled ``Plan``.
 
@@ -224,6 +226,10 @@ def generate_tables(
     enforces itself (see ``generate_tables_streamed``). ``None`` is the explicit unbounded mode
     every pre-existing caller uses, with no bounded-memory guarantee.
 
+    ``on_warning`` (additive, default ``None``) receives each fidelity-gate ``QualityWarning``
+    (code ``warning.generation_fidelity_below_threshold``) as it is raised. It never changes
+    the generated tables.
+
     Raises:
         TypeError: ``plan`` is not a compiled ``Plan``, or the Plan has no
             ``generation`` payload (a Plan compiled without any
@@ -239,6 +245,7 @@ def generate_tables(
         budget_bytes=budget_bytes,
         provider_snapshot=provider_snapshot,
         legacy_kwargs=prepared.legacy_kwargs,
+        on_warning=on_warning,
     )
     assert result.tables is not None  # noqa: S101 -- sink=None can only run resident
     return result.tables
@@ -253,6 +260,7 @@ def generate_tables_streamed(
     budget_bytes: int | None = None,
     batch_rows: int | None = None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+    on_warning: Callable[[QualityWarning], None] | None = None,
 ) -> GenerationResult:
     """Generate a Plan's tables into a bounded transactional ``sink`` when the plan and budget
     allow, else in memory.
@@ -277,6 +285,7 @@ def generate_tables_streamed(
         batch_rows=batch_rows,
         provider_snapshot=provider_snapshot,
         legacy_kwargs=prepared.legacy_kwargs,
+        on_warning=on_warning,
     )
 
 
@@ -287,6 +296,7 @@ def generate_tables_from_generation_plan(
     *,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     budget_bytes: int | None = None,
+    on_warning: Callable[[QualityWarning], None] | None = None,
 ) -> dict[str, pa.Table]:
     """`generate_tables` for an already-pinned `GenerationPlan`, byte-identical to calling it on
     the full `Plan` that embeds the same payload.
@@ -307,6 +317,7 @@ def generate_tables_from_generation_plan(
         budget_bytes=budget_bytes,
         provider_snapshot=provider_snapshot,
         legacy_kwargs=prepared.legacy_kwargs,
+        on_warning=on_warning,
     )
     assert result.tables is not None  # noqa: S101 -- sink=None can only run resident
     return result.tables
@@ -321,6 +332,7 @@ def generate_tables_streamed_from_generation_plan(
     budget_bytes: int | None = None,
     batch_rows: int | None = None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+    on_warning: Callable[[QualityWarning], None] | None = None,
 ) -> GenerationResult:
     """`generate_tables_streamed` for an already-pinned `GenerationPlan`; see
     `generate_tables_from_generation_plan` for the trust contract."""
@@ -334,4 +346,5 @@ def generate_tables_streamed_from_generation_plan(
         batch_rows=batch_rows,
         provider_snapshot=provider_snapshot,
         legacy_kwargs=prepared.legacy_kwargs,
+        on_warning=on_warning,
     )

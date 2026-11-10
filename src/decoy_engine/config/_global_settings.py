@@ -66,9 +66,10 @@ class GlobalSettings(BaseModel):
     plan-compile); default `scale_up` matches the engine default.
     `fidelity_warn_threshold` drives the generation-time fidelity
     warn-gate: statistical generate columns are scored against their
-    source snapshot after generation and a warning is logged when the
-    overall fidelity score falls below this value (warn-only; never
-    fails the run or changes output bytes).
+    source snapshot after generation and a warning is raised when the
+    overall fidelity score, or any one comparable column's score, falls
+    below this value (warn-only; never fails the run or changes output
+    bytes).
     `categorical_retention_warn_threshold` (HC-5) drives the FIT-time
     categorical-retention warn-gate (`quality._retention_gate`): a warning
     is logged for any snapshot column that fell to `freetext` via the

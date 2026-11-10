@@ -69,6 +69,8 @@ if TYPE_CHECKING:
 
     from faker import Faker
 
+    from decoy_engine.generation.pool._events import QualityWarning
+
 DEFAULT_BATCH_ROWS = 65_536
 _MIN_BATCH_ROWS = 1_024
 
@@ -153,16 +155,12 @@ def _make_layout(
 
 
 def _table_order(config: dict[str, Any]) -> list[dict[str, Any]]:
-    from decoy_engine.generation.synthesize import _topo_sort
+    from decoy_engine.generation.synthesize import generation_order
 
     generate_by_name = {
         t["name"]: t for t in config.get("tables") or [] if t.get("generate_columns")
     }
-    deps = {
-        name: {c["reference_table"] for c in t["generate_columns"] if c.get("type") == "reference"}
-        for name, t in generate_by_name.items()
-    }
-    return [generate_by_name[name] for name in _topo_sort(deps)]
+    return [generate_by_name[name] for name, _parents in generation_order(config)]
 
 
 def _payloads(table: dict[str, Any], bounds: Mapping[tuple[str, str], int | None]) -> list[int]:
@@ -337,12 +335,14 @@ def run_generation(
     ledger: GenerationBudgetLedger | None = None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     legacy_kwargs: dict[str, Any] | None = None,
+    on_warning: Callable[[QualityWarning], None] | None = None,
 ) -> GenerationResult:
     """Run a plan's configuration through the core. See the module docstring for the modes.
 
     ``budget_bytes=None`` and no ``ledger`` is the explicit unbounded mode: no byte ceiling is
     enforced and no bounded-memory guarantee is made. ``partition(table, rows)`` overrides the
-    batch layout (used to prove route-independence over irregular partitions).
+    batch layout (used to prove route-independence over irregular partitions). ``on_warning``
+    receives each fidelity-gate ``QualityWarning``; it never changes the generated tables.
     """
     from decoy_engine.plan._seed import _normalize_job_seed_int
 
@@ -376,6 +376,7 @@ def run_generation(
             instance_default_locale,
             provider_snapshot,
             legacy_kwargs or {},
+            on_warning,
         )
 
     layout = {
@@ -524,6 +525,7 @@ def _run_legacy(
     instance_default_locale: str | None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None,
     legacy_kwargs: dict[str, Any],
+    on_warning: Callable[[QualityWarning], None] | None = None,
 ) -> GenerationResult:
     """Whole-table generation for plans with a semantically ineligible column.
 
@@ -555,6 +557,7 @@ def _run_legacy(
         derive_key,
         instance_default_locale,
         provider_snapshot=provider_snapshot,
+        on_warning=on_warning,
         **legacy_kwargs,
     )
     if ledger.bounded:

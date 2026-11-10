@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 from typing import Any
 
 # Note: imports from decoy_engine.relationships are deferred inside
@@ -74,10 +75,7 @@ from decoy_engine.plan._checks_date_shift import (
 )
 from decoy_engine.plan._checks_declared_casting import compile_declared_casting_contract
 from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
-from decoy_engine.plan._checks_dp import (
-    check_dp_generate_contract,
-    verify_dp_snapshots,
-)
+from decoy_engine.plan._checks_dp import check_dp_generate_contract
 from decoy_engine.plan._checks_faker import check_faker_requires_provider
 from decoy_engine.plan._checks_fpe import check_fpe_charset_config
 from decoy_engine.plan._checks_fpe_join import check_fpe_join_groups
@@ -90,8 +88,7 @@ from decoy_engine.plan._checks_when import check_when_grammar, check_when_with_c
 from decoy_engine.plan._checks_windowed_date import check_windowed_date_refs
 from decoy_engine.plan._generation import (
     build_generation_plan,
-    check_generate_snapshot_columns,
-    read_and_pin_snapshots,
+    pin_and_check_snapshots,
 )
 from decoy_engine.plan._graph import _build_namespaces, _build_relationships
 
@@ -122,6 +119,7 @@ def compile_plan(
     decoy_engine_version: str,
     no_profile: bool = False,
     file_access: FileAccess | None = None,
+    base_dir: str | Path | None = None,
 ) -> Plan:
     """Compile (config, profile, engine_version) into a frozen Plan.
 
@@ -136,6 +134,7 @@ def compile_plan(
             deferred to runtime the way soft cardinality can. The structural
             checks (provider, composite-length, orphan policy, namespace, FK
             ordering) run regardless: they do not consume distinct counts.
+        base_dir: the config file's folder; a relative `snapshot_file` is read from it.
 
     Raises:
         PipelineValidationError: `config` sets `subset:`.
@@ -185,13 +184,8 @@ def compile_plan(
     # DPS Scope B (guide 4.7/5): read-and-pin once so every check below sees the same bytes;
     # DP verification runs first, as check_statistical_columns needs its dp_verified verdicts.
     check_dp_generate_contract(config)  # Row 31 (DPS-3): config-only, so before any snapshot read
-    _pinned_snapshots, _snapshot_read_failures = read_and_pin_snapshots(config)
-    _dp_verified_columns, _dp_verification = verify_dp_snapshots(config, _pinned_snapshots)
-    # Row 12 (WS3): statistical and fitted-reference columns vs their snapshots. The C-M1
-    # `_snapshot_read_failures` raise a classified verdict instead of reopening the path.
-    _column_specs = check_generate_snapshot_columns(
-        config, _pinned_snapshots, _dp_verified_columns, failures=_snapshot_read_failures
-    )
+    # Row 12 (WS3): statistical and fitted-reference columns vs their snapshots, inside the pass.
+    _snapshots = pin_and_check_snapshots(config, base_dir=base_dir)
     # Row 13 (capability-gaps WS2, 2026-06-12): text_redact `ner` opt-in requires the spacy
     # extra + model on THIS host; both branches + run_config_only_checks.
     check_text_redact_ner_available(config)
@@ -451,7 +445,10 @@ def compile_plan(
     ordering = tuple(OrderingNode(table=t, columns=c) for (t, c) in relationship_graph.ordering)
     seed_envelope, stamp_warnings = _build_seed_envelope(config, profile)
     generation_plan = build_generation_plan(
-        config, _pinned_snapshots, column_specs=_column_specs, dp_verification=_dp_verification
+        config,
+        _snapshots.pinned,
+        column_specs=_snapshots.column_specs,
+        dp_verification=_snapshots.dp_verification,
     )
 
     return Plan(
@@ -484,7 +481,10 @@ def compile_plan(
 
 @entry_point
 def run_config_only_checks(
-    config: dict[str, Any], *, file_access: FileAccess | None = None
+    config: dict[str, Any],
+    *,
+    file_access: FileAccess | None = None,
+    base_dir: str | Path | None = None,
 ) -> tuple[str, ...]:
     """Run the profile-free subset of plan-compile checks.
 
@@ -519,12 +519,8 @@ def run_config_only_checks(
     check_non_poolable_provider_with_pool_backend(config)
     # DPS Scope B (guide 4.7/5): same read-verify-validate order as above.
     check_dp_generate_contract(config)  # Row 31 (DPS-3), before any snapshot read
-    _pinned_snapshots, _snapshot_read_failures = read_and_pin_snapshots(config)
-    _dp_verified_columns, _dp_verification = verify_dp_snapshots(config, _pinned_snapshots)
     # Row 12 (WS3): config plus its snapshot artifacts, so config-only callers catch a bad one.
-    check_generate_snapshot_columns(
-        config, _pinned_snapshots, _dp_verified_columns, failures=_snapshot_read_failures
-    )
+    pin_and_check_snapshots(config, base_dir=base_dir)
     # Row 13 (WS2): text_redact `ner` opt-in needs spacy + model here.
     check_text_redact_ner_available(config)
     # Row 30 (TX-2, 2026-07-20): text_mask `ner` opt-in needs the same

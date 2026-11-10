@@ -46,7 +46,9 @@ from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 from decoy_engine.transforms.derived_aggregate import generate_derived_aggregate_column
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping
+    from collections.abc import Callable, Iterable, Iterator, Mapping
+
+    from decoy_engine.generation.pool._events import QualityWarning
 
 # QA-7 F5 (2026-06-01): seed default aligned with plan compiler's _normalize_job_seed default
 # (0). Pre-fix _DEFAULT_SEED = 42 diverged from plan/_compile.py which defaults to 0 when
@@ -84,6 +86,7 @@ def _generate_tables_from_config(
     snapshot_artifacts: list[dict[str, Any]] | None = None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     reference_fanouts: dict[tuple[str, str], FanoutSpec] | None = None,
+    on_warning: Callable[[QualityWarning], None] | None = None,
 ) -> dict[str, pa.Table]:
     """The actual generation logic, over a plain config dict recovered
     from ``GenerationPlan.config_json``. Not part of the public surface
@@ -100,6 +103,8 @@ def _generate_tables_from_config(
     custom faker providers against the live registry exactly as before.
     ``reference_fanouts`` is ``{(table_name, column_name): FanoutSpec}`` decoded from the
     pinned snapshot bytes; a ``distribution: fitted`` reference column reads only this.
+    ``on_warning`` receives each fidelity-gate ``QualityWarning`` as it is raised; it never
+    changes the generated tables.
     """
     statistical_specs = statistical_specs or {}
     snapshot_index_for_column = snapshot_index_for_column or {}
@@ -116,29 +121,8 @@ def _generate_tables_from_config(
     # Generate tables only (mask tables are skipped). Key by name + build the dep
     # graph so a `reference` column can read its already-generated parent's pool.
     generate_by_name = {t["name"]: t for t in tables_list if t.get("generate_columns")}
-    deps: dict[str, set[str]] = {}
-    for name, t in generate_by_name.items():
-        d: set[str] = set()
-        for col in t["generate_columns"]:
-            if col.get("type") == "reference":
-                ref = col["reference_table"]
-                # F-7 fix: validate reference_table resolves to a generate table.
-                # PipelineConfig._reference_graph_valid catches this at validation
-                # time, but generate_tables is documented to accept unvalidated
-                # dicts (V1-parity callers). Surface a typed error here instead
-                # of a downstream KeyError from `pools[ref_table]` in `_reference`.
-                if ref not in generate_by_name:
-                    raise ValueError(
-                        f"table {name!r} column {col.get('name')!r}: "
-                        f"reference_table {ref!r} is not a generate table"
-                    )
-                d.add(ref)
-        deps[name] = d
-    # Topo-sort parents-before-children (PipelineConfig._reference_graph_valid
-    # already pinned this acyclic + every reference_table resolves to a generate
-    # table). V1 iterates in declared order + warns on missing deps; v2 is
-    # stricter without breaking parity for already-orderable configs.
-    ordered = _topo_sort(deps)
+    # Parents-before-children, ties by declaration and first-reference order (never a `set`).
+    ordered = [name for name, _parents in generation_order(config)]
     numeric = numeric_plan(config, provider_snapshot=provider_snapshot)
     pools: dict[str, pa.Table] = {}
     out: dict[str, pa.Table] = {}
@@ -219,13 +203,43 @@ def _generate_tables_from_config(
                 statistical_specs=statistical_specs,
                 snapshot_index_for_column=snapshot_index_for_column,
                 snapshot_artifacts=snapshot_artifacts,
+                on_warning=on_warning,
             )
         pools[name] = tbl
         out[name] = tbl
     return out
 
 
-def _topo_sort(deps: dict[str, set[str]]) -> list[str]:
+def generation_order(config: dict[str, Any]) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Each generate table with the generate tables it references, parents first.
+
+    The one order walk for every generation route. Roots are visited in table declaration order
+    and each table's parents in first-reference order (the first `type: reference` column naming
+    each parent, deduplicated), so the result is a function of the config alone and does not
+    depend on `PYTHONHASHSEED`. Takes unvalidated dicts, so a `reference_table` that is not a
+    generate table raises a typed `ValueError` here rather than a `KeyError` downstream.
+    """
+    generate_by_name = {
+        t["name"]: t for t in config.get("tables") or [] if t.get("generate_columns")
+    }
+    deps: dict[str, tuple[str, ...]] = {}
+    for name, t in generate_by_name.items():
+        refs: list[str] = []
+        for col in t["generate_columns"]:
+            if col.get("type") != "reference":
+                continue
+            ref = col["reference_table"]
+            if ref not in generate_by_name:
+                raise ValueError(
+                    f"table {name!r} column {col.get('name')!r}: "
+                    f"reference_table {ref!r} is not a generate table"
+                )
+            refs.append(ref)
+        deps[name] = tuple(dict.fromkeys(refs))
+    return tuple((name, deps[name]) for name in _topo_sort(deps))
+
+
+def _topo_sort(deps: Mapping[str, Iterable[str]]) -> list[str]:
     """Iterative DFS post-order over the reference dep graph. The
     PipelineConfig validator already pinned the graph acyclic, so this
     is order-only; missing nodes (e.g. a parent referenced by name that

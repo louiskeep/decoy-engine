@@ -45,6 +45,8 @@ Codes are append-only: a code never disappears or changes meaning. A retired cod
 
 `reason-manifest-v1.22-gen-cond-cap.json` pins the three joint-cap additions (`quality.contingency_top_k_invalid`, `quality.contingency_top_k_kind_unsupported` and `warning.fit_joint_cells_truncated`; `since` 1.22.0: a `contingency_top_k` outside 1 to 1000, a raised cap on a joint with a non-categorical column in a plain snapshot, and a joint whose cell cap dropped combinations).
 
+The same fixture also pins the two GEN-CLI additions (`warning.generation_fidelity_below_threshold`: a generated table's overall score, or one comparable column's score, is below `fidelity_warn_threshold`; and `warning.seed_ignored_with_master_key`: a job seed is set next to a master key, so generated tables do not use the seed).
+
 An older consumer that reads a record whose identity it does not know (same registry major) degrades to `decoy.unknown_reason_from_future`, keeping the original identity in an uninterpreted context field. An unsupported major becomes `decoy.unsupported_schema_version`. Neither is ever read as success or as retry advice.
 
 Slices that add codes build at the next minor of their base. At merge, `scripts/dev/registry_renumber.py` moves the slice to the next free minor and `--check` holds the merge gate. `tests/sentry/test_reason_minor_fixtures.py` requires one fixture per minor above 1.5, and `scripts/release/reason_manifest_policy.py` is the one place these rules live.

@@ -17,6 +17,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from decoy_engine import fileaccess, reasons
@@ -215,6 +216,7 @@ def compile_pinned_plan(
     reference_date: datetime | str | None = None,
     *,
     file_access: FileAccess | None = None,
+    base_dir: str | Path | None = None,
 ) -> PinnedPlan:
     """Resolve ``config`` into a ``PinnedPlan`` bound to ``reference_date``.
 
@@ -222,9 +224,10 @@ def compile_pinned_plan(
     used, so an approved config carries its own clock anchor. The positional argument wins.
 
     The config seed is deliberately dropped: the caller supplies the seed at execution, and the
-    fingerprint must be the same for every seed.
+    fingerprint must be the same for every seed. ``base_dir`` is the config file's folder, from
+    which a relative ``snapshot_file`` is read; the fingerprint never sees it.
     """
-    return compile_pinned_plan_with_generation(config, reference_date).pinned
+    return compile_pinned_plan_with_generation(config, reference_date, base_dir=base_dir).pinned
 
 
 @fileaccess.entry_point
@@ -233,6 +236,7 @@ def compile_pinned_plan_with_generation(
     reference_date: datetime | str | None = None,
     *,
     file_access: FileAccess | None = None,
+    base_dir: str | Path | None = None,
 ) -> PinnedCompilation:
     """``compile_pinned_plan`` that also returns the ``GenerationPlan`` of the same compile.
 
@@ -258,7 +262,10 @@ def compile_pinned_plan_with_generation(
     reset = snapshot_content_guard.set(lambda parsed: refuse_live_tokens(parsed, "snapshot"))
     try:
         plan = compile_plan(
-            config, _empty_profile(reference), decoy_engine_version=str(decoy_engine.__version__)
+            config,
+            _empty_profile(reference),
+            decoy_engine_version=str(decoy_engine.__version__),
+            base_dir=base_dir,
         )
     finally:
         snapshot_content_guard.reset(reset)
