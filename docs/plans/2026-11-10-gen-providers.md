@@ -242,8 +242,8 @@ columns:
 1. **Factory table (behavior-preserving masking refactor).** The refactor is two commits.
    - Commit 1 adds `tests/unit/execution/test_composite_handler_digests.py` and nothing else. It
      runs each of the six masking composites through `CompositeHandler` on a fixed frame, in
-     deterministic mode (a fixed `mask_key`) and in non-deterministic mode (a fixed seed), and
-     asserts a SHA-256 digest of every output column. The digests are captured on the base commit
+     deterministic mode (a fixed `mask_key`) and in non-deterministic mode (a fixed `job_seed`, which the
+     handler passes as `spec.seed` at `execution/_strategies/_composite.py:123`), and asserts a SHA-256 digest of every output column. The digests are captured on the base commit
      and committed as constants. No byte golden for these composites exists today:
      `tests/integration/golden/test_execution_e2e.py` checks coherence, not bytes.
    - Commit 2 is the refactor. The digest test must pass unchanged.
@@ -354,7 +354,7 @@ columns:
 | P12 | Pinned or streamed silently half-supports `provider` | route divergence | explicit `REJECTED_TYPES` and `ADMISSION_MATRIX` entries; AT-9 |
 | P13 | The new module reads a key not in the registry (for example `provider_options`) | silently ignored key | `READER_FILES` entry; AT-17 |
 | P14 | `synthesize.py` crosses 600 lines after GEN-TYPES and GEN-INHERIT also land | module size census entry | dispatch is at most 10 lines; the bundle-cache plumbing moves into `kinds/_provider_group.py` if needed; Placement rule |
-| P15 | The identifier draw is too slow | large tables stall | floor of 20k rows/s per column at 100k rows, measured at T2; Dennis measured NPI 59k, IBAN 53k, MRN 70k and `composite_person` 26k rows/s per group on x86; below the floor blocks the slice |
+| P15 | The identifier draw is too slow | large tables stall | floor of 20k rows/s per column at 100k rows, measured at T2; Dennis measured NPI 59k, IBAN 53k, MRN 70k and `composite_person` 26k rows/s per group on x86; a result below the floor is not a V1 blocker under the V1 bar; it opens the batch keyed path V2-LOG item and goes in the slice's gate notes |
 | P16 | A float or libm step enters a draw path | bytes differ between x86 and arm64 | integer-only paths stated in E1 step 7; AT-3 committed digests run on the Mac (arm64) and a Linux VM at T2 |
 
 ## Acceptance tests
@@ -569,7 +569,7 @@ minor at merge and adds `changelog.d/gen-providers-e<N>.md` (`### Added`).
 - `provider_options` (Owner question 3).
 - Pinned route support and streamed admission for `provider`.
 - Per-provider payload width bounds in `_bounds.py`.
-- A batch keyed path for identifiers, if T2 shows per-row `derive_value` slower than per-row faker.
+- A batch keyed path for identifiers and composites, if T2 shows any path below 20k rows/s.
 - Locales beyond each provider's declared `supported_locales`.
 - More optional person fields (for example `phone` tied to `state`) and other `sex` labels.
 
@@ -603,7 +603,8 @@ Dennis round 1 on `d782ffc4`: NO-GO, one blocker, three required edits, six fold
   platform picker's two new entries.
 - M3 (`from None` keeps `__context__`). Accepted. The translation now raises after the `except`
   block closes. Design notes, E1 step 7, class 6 and the AT-16 mutant updated.
-- Fold-ins: P15 now sets a 20k rows/s floor with Dennis's measurements. The catch set adds
+- Fold-ins: P15 now sets a 20k rows/s floor with Dennis's measurements. A miss opens the
+  V2-LOG batch path rather than blocking, per the V1 bar. The catch set adds
   `IdentifierError` and `DeterminismError`. The Fields line now says `determinism: fresh` uses an
   `os.urandom` root. `ProviderSpec` sets `deterministic`, `namespace` and `seed` explicitly. The
   three extra composite name lists join the set guard, and the two plain lists read `COMPOSITES`
