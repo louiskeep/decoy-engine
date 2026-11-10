@@ -22,9 +22,7 @@ Public API (the contract CLI and platform code depend on):
                       newline-delimited fixed-width file into a DataFrame per
                       a FixedWidthLayout, or the equivalent validated-config
                       dict (`FileSource.layout`); raises FixedWidthParseError
-                      or ConfigError. Exported so a `format: fixed_width`
-                      FileSource can be read without importing the private
-                      `profile._fixed_width_reader` module directly.
+                      or ConfigError. Exported so a `format: fixed_width` FileSource reads.
     read_csv_source / CsvDialect / resolve_csv_dialect:
                       (decoy_engine.profile._csv_reader) the one CSV source
                       reader: a file read under its declared dialect (header or
@@ -47,28 +45,17 @@ Public exceptions (also in decoy_engine.errors):
 Anything not listed in __all__ -- and anything under decoy_engine.internal --
 is private and may change without a version bump.
 
-V2 NOTE: the V1 public surface (``Masker``, ``DataGenerator``, ``run_graph`` /
-``preview_graph`` / ``validate_graph*``) and the V1 graph runner were removed
-under the ``decoy_v2_clean_break`` PO directive (the final V1 graph-runner and
-V1-only transform deletion landed in S22, 2026-05-30). The engine is now
-plan-first: a caller validates a ``PipelineConfig`` at the choke-point, profiles
-the source, calls ``compile_plan`` to produce a frozen ``Plan``, and hands the
-plan to an ``ExecutionAdapter`` (pandas by default) for a MASK job, or to
-``generation.synthesize.generate_tables`` for a GENERATE job. See
-``api/jobs/v2_runner.py`` for the platform-side spine and
-``tests/integration/golden/test_execution_e2e.py`` for the canonical end-to-end
-call shape. Any external import of ``Masker`` / ``DataGenerator`` / ``run_graph``
-now fails fast.
+V2 NOTE: the V1 surface (``Masker``, ``DataGenerator``, ``run_graph``) was removed
+in S22 (2026-05-30). The engine is plan-first: validate a ``PipelineConfig``, profile
+the source, ``compile_plan``, then run the plan through an ``ExecutionAdapter`` (MASK)
+or ``generation.synthesize.generate_tables`` (GENERATE). See
+``tests/integration/golden/test_execution_e2e.py`` for the end-to-end call shape.
 """
 
 import logging
 
 # ruff: noqa: E402  (the NullHandler attach must precede every submodule import)
-
-# The one NullHandler attach site. It runs before any submodule import, because those imports
-# build objects that fetch the engine logger. With a handler on the package logger, Python's
-# last-resort handler does not print engine warnings to stderr. `_configure_logger` preserves
-# this handler and never creates one.
+# The one NullHandler attach site; `_configure_logger` preserves it and never creates one.
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 from decoy_engine.config import (
@@ -203,6 +190,14 @@ from decoy_engine.plan.validate import (
     validate_plan,
 )
 from decoy_engine.profile._csv_reader import CsvDialect, read_csv_source, resolve_csv_dialect
+from decoy_engine.profile._declared_columns import (
+    DeclarationRequest,
+    PreparedDeclaredSources,
+    check_columns_declared,
+    declared_columns,
+    prepare_declared_sources,
+    source_columns,
+)
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
 from decoy_engine.profile._fixed_width_writer import write_fixed_width
 from decoy_engine.profiling import (
@@ -281,6 +276,7 @@ from decoy_engine.providers_v2.identifiers import (
 )
 from decoy_engine.reason_adapter import reason_from_exception, reasons_from_report
 from decoy_engine.reasons import ReasonContext, ReasonRecord
+from decoy_engine.records import DecodedRecord, OpaqueRecord, RecordError, RecordNeedsNewer
 from decoy_engine.relationships import (
     NamespaceBinding,
     NamespaceConfigError,
@@ -413,6 +409,8 @@ __all__ = [
     "ConnectorConfig",
     "ConnectorError",
     "CsvDialect",
+    "DeclarationRequest",
+    "DecodedRecord",
     "DecoyError",
     "DetectorMatch",
     "DeterminismError",
@@ -452,6 +450,7 @@ __all__ = [
     "NamespaceRegistry",
     "NativeCompanionStatus",
     "NullCount",
+    "OpaqueRecord",
     "OrphanPolicy",
     "PandasExecutionAdapter",
     "PermanentError",
@@ -466,6 +465,7 @@ __all__ = [
     "PoolSampler",
     "PostValidationRunner",
     "PreScanConfig",
+    "PreparedDeclaredSources",
     "ProgressSink",
     "ProviderError",
     "ProviderRegistry",
@@ -476,6 +476,8 @@ __all__ = [
     "RateSample",
     "ReasonContext",
     "ReasonRecord",
+    "RecordError",
+    "RecordNeedsNewer",
     "RelationshipEdge",
     "RelationshipGraph",
     "ReleasePhase",
@@ -519,6 +521,7 @@ __all__ = [
     "atomic_swap_db_providers",
     "build_namespace_registry",
     "build_relationship_graph",
+    "check_columns_declared",
     "check_orphan_fk_policy_completeness",
     "classifier_status",
     "classify_table_kinds",
@@ -528,6 +531,7 @@ __all__ = [
     "composite_name_email",
     "composite_person",
     "composite_provider",
+    "declared_columns",
     "derive",
     "derive_index",
     "derive_outcome",
@@ -562,6 +566,7 @@ __all__ = [
     "open_protected_dir",
     "parse_pipeline_config",
     "pipeline_config_hash",
+    "prepare_declared_sources",
     "profile_columns",
     "profile_document",
     "protected_scratch_dir",
@@ -584,6 +589,7 @@ __all__ = [
     "scan_set_to_dict",
     "scan_sources",
     "select_execution_adapter",
+    "source_columns",
     "strategy_catalog",
     "unmask_pipeline",
     "unregister_faker_provider",

@@ -31,10 +31,15 @@ import yaml
 from decoy_engine import reasons
 from decoy_engine.expressions._when_parser import validate_envelope_when
 from decoy_engine.fileaccess import FileAccess, entry_point
-from decoy_engine.plan._checks import check_statistical_columns
 from decoy_engine.plan._checks_dp import check_dp_generate_contract, verify_dp_snapshots
 from decoy_engine.plan._errors import PlanCompileError
-from decoy_engine.plan._generation import ReadSnapshot, build_generation_plan
+from decoy_engine.plan._generation import (
+    ReadSnapshot,
+    build_generation_plan,
+    check_generate_snapshot_columns,
+    column_pins_snapshot,
+    snapshot_schema_failure,
+)
 from decoy_engine.plan._serialize_declared import (
     declared_casting_from_dict,
     declared_casting_to_dict,
@@ -346,10 +351,13 @@ def _pinned_snapshot_from_dict(
                 "valid JSON. A digest match is not proof the payload is a JSON snapshot artifact."
             ),
         )
+    mismatch = snapshot_schema_failure(parsed, position)
+    if mismatch is not None:
+        raise PlanCompileError(code=mismatch.code, path=position, message=mismatch.message)
     read_snapshot = ReadSnapshot(
         path=source_path,
         sha256=stored_sha256,
-        parsed=parsed if isinstance(parsed, dict) else {},
+        parsed=parsed,
         raw=raw,
     )
     return pinned_snapshot, read_snapshot
@@ -380,7 +388,7 @@ def _require_statistical_snapshots_pinned(
             continue
         table_name = table_entry.get("name", "?")
         for col_entry in table_entry.get("generate_columns", []) or []:
-            if not isinstance(col_entry, dict) or col_entry.get("type") != "statistical":
+            if not isinstance(col_entry, dict) or not column_pins_snapshot(col_entry):
                 continue
             snapshot_file = col_entry.get("snapshot_file")
             col_name = col_entry.get("name", "?")
@@ -389,7 +397,7 @@ def _require_statistical_snapshots_pinned(
                     code=reasons.plan.STATISTICAL_SNAPSHOT_NOT_PINNED,
                     path=f"tables.{table_name}.generate_columns.{col_name}.snapshot_file",
                     message=(
-                        f"statistical column {col_name!r} references a snapshot_file that is "
+                        f"generate column {col_name!r} references a snapshot_file that is "
                         "not among this Plan's pinned snapshots -- a malformed manifest, not a "
                         "fallback to a fresh filesystem read."
                     ),
@@ -439,7 +447,7 @@ def _generation_plan_from_dict(data: dict[str, Any]) -> GenerationPlan:
     # guarantee fails closed (a generic refusal) rather than falling back
     # to `check_statistical_columns`'s legacy direct-read path, which
     # would reopen a path this deserialization step must never touch.
-    column_specs = check_statistical_columns(
+    column_specs = check_generate_snapshot_columns(
         config, pinned_by_path, dp_verified_columns, failures={}
     )
     rebuilt = build_generation_plan(

@@ -39,8 +39,8 @@ from faker import Faker
 from decoy_engine.generation import _faker_pool
 from decoy_engine.generation._statistical_column import arrow_table, statistical_generate
 from decoy_engine.generation._synthesize_derived import _derived_generate, _formula, _reference
-from decoy_engine.generation.statistical import StatisticalSpec
-from decoy_engine.generators.derivation import GenDeriveContext, with_table
+from decoy_engine.generation.statistical import FanoutSpec, StatisticalSpec
+from decoy_engine.generators.derivation import TABLE_KEY, GenDeriveContext, with_table
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 from decoy_engine.transforms.derived_aggregate import generate_derived_aggregate_column
 
@@ -82,6 +82,7 @@ def _generate_tables_from_config(
     snapshot_index_for_column: dict[tuple[str, str], int] | None = None,
     snapshot_artifacts: list[dict[str, Any]] | None = None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+    reference_fanouts: dict[tuple[str, str], FanoutSpec] | None = None,
 ) -> dict[str, pa.Table]:
     """The actual generation logic, over a plain config dict recovered
     from ``GenerationPlan.config_json``. Not part of the public surface
@@ -96,6 +97,8 @@ def _generate_tables_from_config(
     artifacts, keyed the same way. ``provider_snapshot`` (5a-faker) forwards
     to every ``_generate_column`` call; ``None`` (the default) resolves
     custom faker providers against the live registry exactly as before.
+    ``reference_fanouts`` is ``{(table_name, column_name): FanoutSpec}`` decoded from the
+    pinned snapshot bytes; a ``distribution: fitted`` reference column reads only this.
     """
     statistical_specs = statistical_specs or {}
     snapshot_index_for_column = snapshot_index_for_column or {}
@@ -146,19 +149,39 @@ def _generate_tables_from_config(
         # (WS3 sequential conditional sampling). Iteration order is the
         # same as the prior dict comprehension; parity unaffected.
         data: dict[str, list[Any]] = {}
+        # GEN-UNIQUE pair hook: a `unique_together` entry is drawn at its first-declared member's
+        # turn; the second member's values wait here until the loop reaches it.
+        pair_hooks: dict[str, Any] = {}
+        pending: dict[str, list[Any]] = {}
+        if table.get("unique_together"):
+            from decoy_engine.generation._unique import pair_hooks as _pair_hooks
+
+            pair_hooks = _pair_hooks(table)
         for col in gcols:
-            data[col["name"]] = _generate_column(
-                col,
-                n,
-                seed,
-                derive_key,
-                pools,
-                instance_default_locale,
-                data,
-                table_name=name,
-                statistical_specs=statistical_specs,
-                provider_snapshot=provider_snapshot,
-            )
+            cname = col["name"]
+            if cname in pending:
+                data[cname] = pending.pop(cname)
+            elif cname in pair_hooks:
+                from decoy_engine.generation._unique import unique_pair
+
+                first, second = pair_hooks[cname]
+                data[cname], pending[second["name"]] = unique_pair(
+                    first, second, n, seed, derive_key, pools, table_name=name
+                )
+            else:
+                data[cname] = _generate_column(
+                    col,
+                    n,
+                    seed,
+                    derive_key,
+                    pools,
+                    instance_default_locale,
+                    data,
+                    table_name=name,
+                    statistical_specs=statistical_specs,
+                    provider_snapshot=provider_snapshot,
+                    reference_fanouts=reference_fanouts,
+                )
         # Cross-column formula post-pass: a `formula` column carrying
         # `references` was filled with None placeholders by `_formula`
         # above (the per-column loop cannot read siblings that may not
@@ -251,6 +274,7 @@ def _generate_column(
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     reference_date: str | None = None,
     pinned: bool = False,
+    reference_fanouts: dict[tuple[str, str], FanoutSpec] | None = None,
 ) -> list[Any]:
     """Dispatch a generate column to its generator by ``type`` (mirrors V1
     ``ColumnGenerator.generators``), then apply the V1 ``null_probability``
@@ -277,7 +301,12 @@ def _generate_column(
     elif kind == "formula":
         values = _formula(col, n, seed, derive_key)
     elif kind == "reference":
-        values = _reference(col, n, seed, derive_key, pools or {})
+        if col.get("distribution") == "fitted":
+            fanout = (reference_fanouts or {}).get((table_name, str(col.get("name"))))
+            values = _reference(col, n, seed, derive_key, pools or {}, fanout=fanout)
+        else:
+            # The non-fitted call keeps its five-argument shape: parity tests wrap `_reference`.
+            values = _reference(col, n, seed, derive_key, pools or {})
     elif kind == "statistical":
         values = statistical_generate(
             col, n, seed, derive_key, generated or {}, table_name, statistical_specs or {}
@@ -318,6 +347,11 @@ def _generate_column(
         and pinned_spec.snapshot_digest
         else None
     )
+    if kind == "reference" and col.get("distribution") == "fitted":
+        # The null mask derives its seed through `for_column` too; the pinned digest keeps
+        # it from reopening `snapshot_file`. A missing spec already raised in `_reference`.
+        fanout = (reference_fanouts or {}).get((table_name, str(col.get("name"))))
+        digest = fanout.seed_digest if fanout is not None else None
     return _apply_null_probability(values, col, seed, derive_key, snapshot_content_digest=digest)
 
 
@@ -354,6 +388,10 @@ def _categorical(col: dict[str, Any], n: int, seed: int, derive_key: Any = None)
     (import V1's helper, do not reinvent), so seed-only output is byte-identical
     to V1's under the same ``seed`` + ``derive_key=None``.
     """
+    if col.get("unique") is True:
+        from decoy_engine.generation._unique import unique_categorical
+
+        return unique_categorical(col, n, seed, derive_key)
     cats = col.get("categories", ["Category A", "Category B"])
     weights = col.get("weights")  # optional; None -> uniform
     col_seed = GenDeriveContext.for_column(
@@ -437,6 +475,18 @@ def _faker(
     # QA-7 F1/C1 lock existed only because the default instance was a process-wide singleton.
     if pre_seed is not None:
         faker_inst.seed_instance(pre_seed)
+    if col.get("unique") is True:
+        from decoy_engine.generation._unique import unique_faker
+
+        return unique_faker(
+            faker_inst,
+            provider_func,
+            faker_kwargs,
+            gen_ctx,
+            n,
+            table=col.get(TABLE_KEY),
+            column=col.get("name"),
+        )
     for i in range(n):
         faker_inst.seed_instance(gen_ctx.row_int("faker", i))
         out.append(provider_func(**faker_kwargs))

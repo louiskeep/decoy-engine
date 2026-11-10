@@ -19,7 +19,7 @@ def _digest(value: object) -> str:
 
 
 def test_catalogue_length_and_order_are_unchanged() -> None:
-    assert len(protocol.DRAW_SITES) == len(_ORDERED_IDS) == 34
+    assert len(protocol.DRAW_SITES) == len(_ORDERED_IDS) == 38
     assert [site.draw_site_id for site in protocol.DRAW_SITES] == _ORDERED_IDS
 
 
@@ -49,7 +49,9 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
 # Re-pinned at the GEN-C1 main merge: carries the shuffle and derive_context re-pins plus the moved gen call sites.
 # Re-pinned 2026-11-09: gen.reference records the fitted fan-out shuffles on its stream.
 # Re-pinned 2026-11-09: gen.statistical_per_row records the fitted cell format draws.
-_CATALOGUE_DIGEST = "d6dbf6aeef7bfd2351e99c2ac22b2add62b91ffe5660128d91e1855942cdccb3"
+# Re-pinned for FK-FANOUT E2b: gen.reference call site and fingerprint source.
+# Re-pinned for GEN-UNIQUE E2: four unique-draw sites, the moved synthesize.py call sites, and the shared attempt limit.
+_CATALOGUE_DIGEST = "8bece3d6106b0884a73c1a273eae61aa297a61c322014dd7912a9b6e8947e99a"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -76,6 +78,10 @@ _ORDERED_IDS = [
     "gen.pool_deterministic",
     "gen.pool_nondeterministic",
     "gen.composite_build_pool",
+    "gen.faker_unique_retry",
+    "gen.categorical_unique",
+    "gen.reference_unique",
+    "gen.unique_pair",
     "mask.faker",
     "gen.pool_build_faker",
     "gen.identifier_deterministic",
@@ -105,18 +111,23 @@ _ENTRY_DIGESTS = [
     "474ab1f76ab596a309f6b3f4b6a1e4995555c6f07473a831af12862a22283a60",
     "d30d45fdcacb74a57114f50fb09d3557bfe838db4afa0b1910f59816dc18b90b",
     "f01f96cde92e4a13757bc0724ba4eda31b1178bbb420edb144e676a144444b3c",
-    "ed83ddf5acc149240117e64b8054cf308f86112e5111c56ec3b75eb6066c508b",
-    "8b3d98cad9b169be0e27fddb70ac3bc5d9776dd9bf370c4c661511c70702b1e6",
+    "9c81fac91647febb718f4beba8811f914e22fc6097ee7205b14426644b5552c0",
+    "3f6ffacf2df718610ae2090ecb26bf1d130dcb6efbccaa875de6b7ecd1afb8ae",
     # gen.reference re-pinned 2026-11-09: the fan-out allocator is a mirror call site.
-    "9a090ccc3985230c304646f2192066f37fbcb796fa3e5f28917a1df151410149",
-    "22ddc02bdf5fbcd992e9c621d629885b7c036e872f7f71b90f73fc3fa4f2023d",
-    # gen.statistical_per_row re-pinned 2026-11-09: fitted cell_format adds the blank and null draws.
+    # gen.reference re-pinned for FK-FANOUT E2b: call site moved, fitted seeds from the pinned snapshot digest.
+    "7d9bce3693d567778b4149b7bc631a4aef99431cd732f5ecf190fb5c47fee918",
+    "e4b331d3617ea390a2a489148f3524dcb9438ecb6516fe6bd1b53131d90dbd04",
     "e4ca36f5c5bfef93d57ebd502d2d24db01dac1f576643e83291f9a589c76f3c9",
-    "dd5d6269da3bf5a40df6a7257d12ea39b6d752df3683aae258197accb07cdf7d",
+    # gen.statistical_per_row re-pinned 2026-11-09: fitted cell_format adds the blank and null draws.
+    "1541fac2e458daf4f58ad25655b4bc605875566fe044af99e4a12fd1d762a2c7",
     "fa2fd07097a3ed68edb71e46b40c43e0d697b50cf784b740b49c180bcae2e5d2",
     "451e4aa4bcb7f23e437468f4e692768c4571e4defb8a081d879be0eb428a1308",
     "648d1fb0b894493e6e8ad55de08b481dbbece29402ecb9ae3eb9cc54b995b211",
     "00cc3c083188a7299b963006aa4a5981a1abc2f0aee6e91e7ef31fe69cd532d4",
+    "039d679f351c8e7d8e9e92ae0b5ee7e0cfa058cf99e1a71b409fc47327565a4a",
+    "1dc06347f9b91e1fbbfcb307edfb7f7fea1c6c88e96c892c14a95af48e19d679",
+    "b22f3004c978c61af573fd3bfaad6fb85dfddbc68e8a9a851c17173847b8e6cb",
+    "890db69a3b481dbf7dd7ba338e26342350d8f073f3a5c6373b0449b3a0c5d206",
     "8a782e44afd97fb81aa7bbcc9acbf82e446ff3ef0cc19b7d2a0d3f99091e69ed",
     "4448026c1f789d220610a85dbcb0c17d8ce04e4497d1cda09e0346f713f5d2ba",
     "b9489ca4978756b4e41678489ce88c9f434a61526272c9cb639bbaddd282f944",

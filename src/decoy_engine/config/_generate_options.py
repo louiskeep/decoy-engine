@@ -24,6 +24,7 @@ from typing import Any
 from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from decoy_engine import reasons
+from decoy_engine.config._generate_unique import unique_flag
 
 __all__ = [
     "COMMON_OPTIONS",
@@ -80,6 +81,13 @@ def _str(value: Any, _: Mapping[str, Any]) -> list[Problem]:
     return _OK if isinstance(value, str) else [((), _TYPE)]
 
 
+def _fitted_only_str(value: Any, extras: Mapping[str, Any]) -> list[Problem]:
+    """Reference-column snapshot keys mean something only for a fitted fan-out."""
+    if extras.get("distribution") != "fitted":
+        return [((), UNKNOWN)]
+    return _str(value, extras)
+
+
 def _bool(value: Any, _: Mapping[str, Any]) -> list[Problem]:
     return _OK if type(value) is bool else [((), _TYPE)]
 
@@ -132,7 +140,7 @@ def _determinism(value: Any, _: Mapping[str, Any]) -> list[Problem]:
 def _distribution(value: Any, _: Mapping[str, Any]) -> list[Problem]:
     if not isinstance(value, str):
         return [((), _TYPE)]
-    return _OK if value in ("random", "weighted", "sequential") else [((), _VALUE)]
+    return _OK if value in ("random", "weighted", "sequential", "fitted") else [((), _VALUE)]
 
 
 def _formula(value: Any, _: Mapping[str, Any]) -> list[Problem]:
@@ -195,6 +203,9 @@ _M = OptionSpec(_mapping)
 COMMON_OPTIONS: Mapping[str, OptionSpec] = {
     "null_probability": OptionSpec(_null_probability),
     "determinism": OptionSpec(_determinism),
+    # Accepted on `sequence`, `categorical`, `faker` and `reference`; the type rule is
+    # `_generate_unique.unique_type_problems`, run by the column validator.
+    "unique": OptionSpec(unique_flag),
 }
 
 # Engine-internal keys the generators stamp or read that a config may carry. None today.
@@ -235,6 +246,8 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
             "weights": OptionSpec(_weights),
             "min_per_parent": OptionSpec(_int_at_least(0)),
             "max_per_parent": OptionSpec(_int_at_least(0)),
+            "snapshot_file": OptionSpec(_fitted_only_str),
+            "source_column": OptionSpec(_fitted_only_str),
         },
         required=("reference_table", "reference_column"),
     ),
@@ -295,6 +308,7 @@ _NONE_MEANS_ABSENT = frozenset(
         "locale",
         "faker_kwargs",
         "null_probability",
+        "unique",
         "references",
         "min_per_parent",
         "max_per_parent",

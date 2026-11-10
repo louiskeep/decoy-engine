@@ -14,7 +14,7 @@ minimum engine version it was tested against via its
 `decoy_engine.detect_usable_cpus(*, fs_root=None, affinity=None)` is the platform's cgroup-aware core
 count moved into the engine: the tightest quota on the cgroup path (v1 or v2), capped by CPU affinity,
 or `os.cpu_count()` where the OS has no affinity call (macOS). A limit file that is present but
-unreadable raises `ExecutionError` with the new `runtime.cpu_detection_failed` (registry 1.19.0).
+unreadable raises `ExecutionError` with the new `runtime.cpu_detection_failed` (registry 1.21.0).
 `decoy_engine.resolve_conservative_ooc_budget_bytes()` returns 25% of the effective memory ceiling
 through `resolve_budget(None)`; `resolve_ooc_memory_limit(None)` keeps its ceiling-minus-reserve default
 for every other caller.
@@ -31,6 +31,23 @@ or that symbol is absent. The cgroup membership, mountinfo parsing and mount-roo
 budget both need now live in one module, `execution/pipeline/_cgroup.py`. The memory budget finds its
 cgroup directory through mountinfo like the CPU probe, so a mount that exposes only a subtree (a
 container's cgroup namespace) is read at the right directory instead of falling back to host RAM.
+
+### Added (CONFIG-EXPLICIT E2a: declared-columns module, registry 1.19.0, 2026-11-08)
+
+`decoy_engine` exports `source_columns`, `declared_columns`, `check_columns_declared`,
+`DeclarationRequest`, `PreparedDeclaredSources` and `prepare_declared_sources`: the pre-read
+boundary that checks every source column is listed in the config. Registry 1.19.0 adds
+`source_file.undeclared_column` and `source_file.undeclared_table`. No route calls the boundary
+yet, so run behavior is unchanged.
+
+### Added (`unique` and `unique_together` generate options, GEN-UNIQUE E2, 2026-11-09)
+
+`unique: true` on a `sequence`, `categorical`, `faker` or `reference` generate column draws values with no
+repeats, and `unique_together: [[a, b]]` on a table does the same for a pair of `reference` columns. Rows that
+need more distinct values than exist stop the run with `uniqueness_impossible`, which names the table, column
+and counts but never a value. List and dict categories, parent keys and provider outputs are compared by
+equality, so they dedup instead of failing. Unique columns decline the window and pinned routes, and their
+seen set counts toward the memory floor. A config without these keys generates the same cells as before.
 
 ### Added (`execution_mode="stream"`, RUN-STREAM E1a, 2026-11-09)
 
