@@ -40,7 +40,7 @@ from decoy_engine.generation import _faker_pool
 from decoy_engine.generation._numeric_typing import numeric_plan, restore_declared
 from decoy_engine.generation._statistical_column import arrow_table, statistical_generate
 from decoy_engine.generation._synthesize_derived import _derived_generate, _formula, _reference
-from decoy_engine.generation.statistical import StatisticalSpec
+from decoy_engine.generation.statistical import FanoutSpec, StatisticalSpec
 from decoy_engine.generators.derivation import TABLE_KEY, GenDeriveContext, with_table
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 from decoy_engine.transforms.derived_aggregate import generate_derived_aggregate_column
@@ -83,6 +83,7 @@ def _generate_tables_from_config(
     snapshot_index_for_column: dict[tuple[str, str], int] | None = None,
     snapshot_artifacts: list[dict[str, Any]] | None = None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+    reference_fanouts: dict[tuple[str, str], FanoutSpec] | None = None,
 ) -> dict[str, pa.Table]:
     """The actual generation logic, over a plain config dict recovered
     from ``GenerationPlan.config_json``. Not part of the public surface
@@ -97,6 +98,8 @@ def _generate_tables_from_config(
     artifacts, keyed the same way. ``provider_snapshot`` (5a-faker) forwards
     to every ``_generate_column`` call; ``None`` (the default) resolves
     custom faker providers against the live registry exactly as before.
+    ``reference_fanouts`` is ``{(table_name, column_name): FanoutSpec}`` decoded from the
+    pinned snapshot bytes; a ``distribution: fitted`` reference column reads only this.
     """
     statistical_specs = statistical_specs or {}
     snapshot_index_for_column = snapshot_index_for_column or {}
@@ -180,6 +183,7 @@ def _generate_tables_from_config(
                     statistical_specs=statistical_specs,
                     provider_snapshot=provider_snapshot,
                     numeric_type=numeric.get((name, col["name"])),
+                    reference_fanouts=reference_fanouts,
                 )
         # Cross-column formula post-pass: a `formula` column carrying
         # `references` was filled with None placeholders by `_formula`
@@ -274,6 +278,7 @@ def _generate_column(
     reference_date: str | None = None,
     pinned: bool = False,
     numeric_type: pa.DataType | None = None,
+    reference_fanouts: dict[tuple[str, str], FanoutSpec] | None = None,
 ) -> list[Any]:
     """Dispatch a generate column to its generator by ``type`` (mirrors V1
     ``ColumnGenerator.generators``), then apply the V1 ``null_probability``
@@ -300,7 +305,12 @@ def _generate_column(
     elif kind == "formula":
         values = _formula(col, n, seed, derive_key)
     elif kind == "reference":
-        values = _reference(col, n, seed, derive_key, pools or {})
+        if col.get("distribution") == "fitted":
+            fanout = (reference_fanouts or {}).get((table_name, str(col.get("name"))))
+            values = _reference(col, n, seed, derive_key, pools or {}, fanout=fanout)
+        else:
+            # The non-fitted call keeps its five-argument shape: parity tests wrap `_reference`.
+            values = _reference(col, n, seed, derive_key, pools or {})
     elif kind == "statistical":
         values = statistical_generate(
             col, n, seed, derive_key, generated or {}, table_name, statistical_specs or {}
@@ -342,6 +352,11 @@ def _generate_column(
         and pinned_spec.snapshot_digest
         else None
     )
+    if kind == "reference" and col.get("distribution") == "fitted":
+        # The null mask derives its seed through `for_column` too; the pinned digest keeps
+        # it from reopening `snapshot_file`. A missing spec already raised in `_reference`.
+        fanout = (reference_fanouts or {}).get((table_name, str(col.get("name"))))
+        digest = fanout.seed_digest if fanout is not None else None
     return _apply_null_probability(values, col, seed, derive_key, snapshot_content_digest=digest)
 
 

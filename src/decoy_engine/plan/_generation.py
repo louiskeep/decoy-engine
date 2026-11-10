@@ -74,6 +74,14 @@ class ReadSnapshot:
         )
 
 
+def column_pins_snapshot(col: dict[str, Any]) -> bool:
+    """True when the compile's read-once pass must pin this generate column's `snapshot_file`:
+    a `statistical` column, or a `reference` column with `distribution: fitted`."""
+    return col.get("type") == "statistical" or (
+        col.get("type") == "reference" and col.get("distribution") == "fitted"
+    )
+
+
 def _iter_statistical_snapshot_paths(config: dict[str, Any]) -> list[str]:
     """Every distinct `snapshot_file` path referenced by a `type:
     statistical` generate column, in declared order (tables then columns),
@@ -90,7 +98,7 @@ def _snapshot_field_keys(config: dict[str, Any]) -> dict[str, str]:
         if not isinstance(table_entry, dict):
             continue
         for col_entry in table_entry.get("generate_columns", []) or []:
-            if not isinstance(col_entry, dict) or col_entry.get("type") != "statistical":
+            if not isinstance(col_entry, dict) or not column_pins_snapshot(col_entry):
                 continue
             path = col_entry.get("snapshot_file")
             if path:

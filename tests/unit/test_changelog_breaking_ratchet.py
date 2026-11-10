@@ -14,16 +14,17 @@ Two named limits:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from pathlib import Path
+
+from scripts.release.stamp_release import release_sections as _releases
+from scripts.release.stamp_release import section_digest as _digest
 
 ROOT = Path(__file__).resolve().parents[2]
 CHANGELOG = ROOT / "CHANGELOG.md"
 PINS = ROOT / "tests" / "fixtures" / "changelog_released_sections.json"
 
-_RELEASE = re.compile(r"^## \[(\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?)\] - \d{4}-\d{2}-\d{2}$", re.M)
 _SUBSECTION = re.compile(r"^### (.+)$", re.M)
 _BREAKING = "Breaking for consumers"
 _BREAK_WORDS = re.compile(r"now fails?|\brefus(?:e|es|ed)\b|\braises?\b|\brejected\b", re.I)
@@ -97,15 +98,6 @@ TRIAGED: dict[tuple[str, str], str] = {
 }
 
 
-def _releases(text: str) -> list[tuple[str, str]]:
-    """(version, section text from its heading up to the next release heading), newest first."""
-    marks = list(_RELEASE.finditer(text))
-    return [
-        (m.group(1), text[m.start() : marks[i + 1].start() if i + 1 < len(marks) else len(text)])
-        for i, m in enumerate(marks)
-    ]
-
-
 def _entries_outside_breaking(section: str) -> list[str] | None:
     """Normalized entries (bullets and paragraphs) outside the Breaking list, or None when the
     release has no Breaking list."""
@@ -122,11 +114,6 @@ def _entries_outside_breaking(section: str) -> list[str] | None:
             if normalized:
                 out.append(normalized)
     return out
-
-
-def _digest(section: str) -> str:
-    lines = [line.rstrip() for line in section.strip().splitlines()]
-    return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
 
 
 def _untriaged_and_stale(text: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
