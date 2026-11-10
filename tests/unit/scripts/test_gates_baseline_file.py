@@ -735,6 +735,9 @@ _ALLOWED_PY_ARGS = (
     ("--version",),
     ("]",),  # `[ -x "$BIN/python" ]` existence test
     ("$ROOT/scripts/dev/_gates_report.py",),
+    (
+        "$ROOT/scripts/dev/_select_tests.py",
+    ),  # picks test files from imports; never reads the baseline
     ('${junit[@]+"${junit[@]}"}',),  # args for the `bash -c` wrapper, built by gates.sh itself
 )
 

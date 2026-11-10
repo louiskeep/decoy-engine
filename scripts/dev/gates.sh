@@ -148,30 +148,30 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Tags one changed path for changed_tests: t = a test file, s = a src module, o = other code, or
+# nothing for a deleted path or pure documentation. A function, not an inline case: bash 3.2 (the
+# Mac runner) cannot parse case patterns inside $( ).
+tag_changed() {
+  [ -f "$ROOT/$1" ] || return 0
+  # shellcheck disable=SC2254  # SRC_MATCH is a glob on purpose
+  case $1 in
+    tests/*test_*.py) echo "t $1" ;;
+    $SRC_MATCH) echo "s $1" ;;
+    *) non_code "$1" || echo "o $1" ;;
+  esac
+}
+
 changed_tests() {
-  local base f mod
+  local base lines f deps scanned
   base=$(git -C "$ROOT" merge-base origin/main HEAD) || return 1
-  { git -C "$ROOT" diff --name-only --no-renames "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } |
-    LC_ALL=C sort -u | while read -r f; do
-      [ -f "$ROOT/$f" ] || continue
-      # shellcheck disable=SC2254  # SRC_MATCH is a glob on purpose
-      case $f in
-        tests/*test_*.py) echo "$f" ;;
-        $SRC_MATCH)
-          mod=${f#"$SRC_STRIP"}; mod=${mod%.py}; mod=${mod%/__init__}; mod=${mod//\//.}
-          (cd "$ROOT" && grep -rlE --include='test_*.py' "${mod//./\\.}([^A-Za-z0-9_]|\$)" tests || true)  # no match is normal, not a failed selection
-          # `from a.b import c` (also parenthesized, aliased) never spells a.b.c: select files that
-          # import from the parent package AND mention the leaf as a whole word. Over-selects slightly.
-          case $mod in
-            *.*) (cd "$ROOT" && { grep -rlE --include='test_*.py' "from[[:space:]]+$(printf '%s' "${mod%.*}" | sed 's/\./\\./g')[[:space:]]+import" tests 2>/dev/null |
-                   xargs -r grep -lw -- "${mod##*.}" 2>/dev/null; } || true) ;;
-          esac ;;
-        *)
-          # Other code (scripts, native, fixtures): select tests that name the file. No match is
-          # normal here; code_changed then makes the gate fail rather than skip.
-          non_code "$f" || (cd "$ROOT" && grep -rlF --include='test_*.py' "${f##*/}" tests || true) ;;
-      esac
-    done | LC_ALL=C sort -u
+  # Test files in the diff select themselves. Every other code file goes to the import-aware
+  # scanner (_select_tests.py), which owns all dependency matching: no grep of import spellings.
+  lines=$({ git -C "$ROOT" diff --name-only --no-renames "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } |
+    LC_ALL=C sort -u | while read -r f; do tag_changed "$f"; done) || return 1
+  deps=$(printf '%s\n' "$lines" | grep -E '^[so] ' || true)  # none is normal
+  scanned=$(printf '%s\n' "$deps" |
+    "$BIN/python" "$ROOT/scripts/dev/_select_tests.py" --root "$ROOT" --src-strip "$SRC_STRIP") || return 1
+  { printf '%s\n' "$lines" | sed -n 's/^t //p'; printf '%s\n' "$scanned"; } | grep -v '^$' | LC_ALL=C sort -u || true
 }
 
 # 0 when f matches NON_CODE_GLOBS (pure documentation or repo metadata).
