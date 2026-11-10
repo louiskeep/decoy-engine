@@ -5,6 +5,8 @@ from __future__ import annotations
 from decoy_engine.reasons import _catalog
 
 __all__ = [
+    "CONTINGENCY_TOP_K_INVALID",
+    "CONTINGENCY_TOP_K_KIND_UNSUPPORTED",
     "DP_ADAPTER_AMBIGUOUS_COLUMN",
     "DP_ADAPTER_DUPLICATE_COLUMN",
     "DP_ADAPTER_MISSING_COLUMN",
@@ -89,6 +91,12 @@ DP_SCHEMA_TYPE = _d("dp_schema_type", "DP schema type.")
 
 _d = _catalog.quality("DistributionSnapshotError")
 
+CONTINGENCY_TOP_K_INVALID = _d(
+    "contingency_top_k_invalid", "Contingency top K invalid.", since="1.22.0"
+)
+CONTINGENCY_TOP_K_KIND_UNSUPPORTED = _d(
+    "contingency_top_k_kind_unsupported", "Contingency top K kind unsupported.", since="1.22.0"
+)
 FANOUT_COLUMN_UNKNOWN = _d("fanout_column_unknown", "Fan-out column unknown.", since="1.14.0")
 HIGH_CARDINALITY_AMBIGUOUS_STRING_COERCION = _d(
     "high_cardinality_ambiguous_string_coercion", "High cardinality ambiguous string coercion."

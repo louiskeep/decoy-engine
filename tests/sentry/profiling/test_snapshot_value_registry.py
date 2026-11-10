@@ -283,16 +283,78 @@ def test_the_snapshot_path_has_no_second_rule_or_applier() -> None:
     assert "_collapse_counted_items" in calls
 
 
+_MUTATORS = {"setdefault", "update", "pop", "__setitem__", "__delitem__", "dict"}
+
+
+def _other_count_writers(source: str) -> set[str]:
+    """Functions that store, delete or seed `other_count`; reads and a warning's `detail=` do not count."""
+    tree = ast.parse(source)
+    reports = {
+        id(k.value)
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        for k in n.keywords
+        if k.arg == "detail"
+    }
+
+    def is_key(n: ast.AST | None) -> bool:
+        return isinstance(n, ast.Constant) and n.value == "other_count"
+
+    writers: set[str] = set()
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Subscript) and not isinstance(node.ctx, ast.Load):
+                hit = is_key(node.slice)
+            elif isinstance(node, ast.Call):
+                name = getattr(node.func, "attr", getattr(node.func, "id", ""))
+                hit = name in _MUTATORS and (
+                    any(map(is_key, node.args))
+                    or any(k.arg == "other_count" for k in node.keywords)
+                )
+            elif isinstance(node, ast.Dict):
+                hit = id(node) not in reports and any(map(is_key, node.keys))
+            else:
+                hit = False
+            if hit:
+                writers.add(fn.name)
+    return writers
+
+
 def test_other_count_is_written_only_by_the_one_collapse_helper() -> None:
-    tree = _tree(_VALUE_PATH)
-    owners = [
-        fn.name
-        for fn in ast.walk(tree)
-        if isinstance(fn, ast.FunctionDef)
-        for n in ast.walk(fn)
-        if isinstance(n, ast.Constant) and n.value == "other_count"
-    ]
-    assert set(owners) == {"_collapse_counted_items"}
+    writers = _other_count_writers(_VALUE_PATH.read_text(encoding="utf-8"))
+    assert writers == {"_collapse_counted_items"}
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        'def f(j):\n    j["other_count"] = 0',
+        'def f(j):\n    j["other_count"] += 1',
+        'def f(j):\n    del j["other_count"]',
+        "def f(j):\n    j.update(other_count=0)",
+        'def f(j):\n    j.update({"other_count": 0})',
+        'def f(j):\n    j.setdefault("other_count", 0)',
+        'def f(j):\n    j.pop("other_count")',
+        'def f(d):\n    d["joints"][0] = {"cells": [], "other_count": 0}',
+        'def f(d):\n    d["joints"].append({"other_count": 0})',
+    ],
+)
+def test_the_other_count_guard_bites_on_each_write_shape(snippet: str) -> None:
+    assert _other_count_writers(snippet) == {"f"}
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        'def f(j):\n    return j["other_count"]',
+        'def f(j):\n    return j.get("other_count", 0)',
+        'def f(j):\n    return W(code="c", detail={"other_count": j["other_count"]})',
+    ],
+)
+def test_the_other_count_guard_lets_reads_through(snippet: str) -> None:
+    assert _other_count_writers(snippet) == set()
 
 
 @pytest.mark.parametrize(

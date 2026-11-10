@@ -6,6 +6,7 @@ from decoy_engine.reasons import _catalog
 
 __all__ = [
     "CARDINALITY_MATCH_DEVIATION",
+    "FIT_JOINT_CELLS_TRUNCATED",
     "FORMAT_RULE_VIOLATION",
     "FPE_JOIN_GROUP_ACTIVE",
     "FPE_PARTIAL_PLAINTEXT_DISCLOSURE",
@@ -33,6 +34,9 @@ __all__ = [
 _d = _catalog.warning("QualityWarning")
 
 CARDINALITY_MATCH_DEVIATION = _d("cardinality_match_deviation", "Cardinality match deviation.")
+FIT_JOINT_CELLS_TRUNCATED = _d(
+    "fit_joint_cells_truncated", "Fit joint cells truncated.", since="1.22.0"
+)
 FORMAT_RULE_VIOLATION = _d("format_rule_violation", "Format rule violation.")
 FPE_JOIN_GROUP_ACTIVE = _d("fpe_join_group_active", "FPE join group active.")
 FPE_PARTIAL_PLAINTEXT_DISCLOSURE = _d(
