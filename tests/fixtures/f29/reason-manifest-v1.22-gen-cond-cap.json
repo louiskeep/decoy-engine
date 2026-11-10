@@ -85,6 +85,38 @@
       "symbol": "FIT_JOINT_CELLS_TRUNCATED"
     },
     {
+      "code": "generation_condition_parent_unseen",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "warning",
+      "namespace": "warning",
+      "owner": "QualityWarning",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "findings",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "warning"
+        }
+      ],
+      "since": "1.22.0",
+      "summary": "Conditional column drew some rows from its overall counts.",
+      "symbol": "GENERATION_CONDITION_PARENT_UNSEEN"
+    },
+    {
       "code": "generation_fidelity_below_threshold",
       "context": [],
       "deprecated_in": null,

@@ -10,6 +10,7 @@ __all__ = [
     "FORMAT_RULE_VIOLATION",
     "FPE_JOIN_GROUP_ACTIVE",
     "FPE_PARTIAL_PLAINTEXT_DISCLOSURE",
+    "GENERATION_CONDITION_PARENT_UNSEEN",
     "GENERATION_FIDELITY_BELOW_THRESHOLD",
     "GEO_GENERALIZE_CASCADE",
     "JOB_LOG_WRITE_FAILED",
@@ -43,6 +44,11 @@ FORMAT_RULE_VIOLATION = _d("format_rule_violation", "Format rule violation.")
 FPE_JOIN_GROUP_ACTIVE = _d("fpe_join_group_active", "FPE join group active.")
 FPE_PARTIAL_PLAINTEXT_DISCLOSURE = _d(
     "fpe_partial_plaintext_disclosure", "FPE partial plaintext disclosure."
+)
+GENERATION_CONDITION_PARENT_UNSEEN = _d(
+    "generation_condition_parent_unseen",
+    "Conditional column drew some rows from its overall counts.",
+    since="1.22.0",
 )
 GENERATION_FIDELITY_BELOW_THRESHOLD = _d(
     "generation_fidelity_below_threshold",

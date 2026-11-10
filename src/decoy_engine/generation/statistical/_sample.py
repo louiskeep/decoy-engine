@@ -44,7 +44,7 @@ from __future__ import annotations
 import random
 from bisect import bisect_right
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
 from decoy_engine import reasons
 from decoy_engine.generation.statistical._cell_format import (
@@ -283,6 +283,56 @@ def _conditional_tables(
     return by_parent
 
 
+def _conditional_lookup(spec: StatisticalSpec) -> dict[str, tuple[list[str], list[float]]]:
+    """The draw tables of a conditional column, zero weights dropped; empty when not conditional."""
+    if not spec.condition_on:
+        return {}
+    return {k: _positive_weight_only(v, w) for k, (v, w) in _conditional_tables(spec).items()}
+
+
+def _select_table(
+    conditional: dict[str, tuple[list[str], list[float]]],
+    marginal: tuple[list[Any], list[float]],
+    parent_values: list[Any],
+    i: int,
+) -> tuple[list[Any], list[float], bool]:
+    """The table row `i` draws from and whether it is the marginal fallback. The one place the
+    parent is keyed (`str`, None included), shared by the sampler and the fallback counter."""
+    parent = parent_values[i] if i < len(parent_values) else None
+    table = conditional.get(str(parent))
+    if table is None:
+        return marginal[0], marginal[1], True
+    return table[0], table[1], False
+
+
+class FallbackCounts(NamedTuple):
+    """Rows that drew from the overall counts, rows among them with a None or missing parent,
+    and the number of distinct parent keys that had no fitted combination."""
+
+    rows: int
+    rows_null_parent: int
+    parent_values: int
+
+
+def conditional_fallback_counts(
+    spec: StatisticalSpec, parent_values: list[Any], n: int
+) -> FallbackCounts:
+    """Count the rows `sample_column` draws from the marginal for lack of a joint cell. Selects
+    through `_select_table` and never draws."""
+    if spec.kind != "categorical" or spec.condition_on is None:
+        return FallbackCounts(0, 0, 0)
+    conditional = _conditional_lookup(spec)
+    rows = rows_null = 0
+    keys: set[str] = set()
+    for i in range(n):
+        if _select_table(conditional, ([], []), parent_values, i)[2]:
+            parent = parent_values[i] if i < len(parent_values) else None
+            rows += 1
+            rows_null += parent is None
+            keys.add(str(parent))
+    return FallbackCounts(rows, rows_null, len(keys))
+
+
 def _sample_shape(
     spec: StatisticalSpec,
     shape: NumericShape,
@@ -403,19 +453,16 @@ def sample_column(
         # the marginal non-empty; each conditional table is non-empty because admission refuses a
         # conditional row whose weights sum to <= 0.
         values, weights = _positive_weight_only(values, weights)
-        conditional = (
-            {k: _positive_weight_only(v, w) for k, (v, w) in _conditional_tables(spec).items()}
-            if spec.condition_on
-            else {}
-        )
+        conditional = _conditional_lookup(spec)
         out = []
         for i in range(n):
             rng.seed(col_seed + start + i)
-            table = (values, weights)
+            t_values, t_weights = values, weights
             if spec.condition_on is not None and parent_values is not None:
-                parent = parent_values[i] if i < len(parent_values) else None
-                table = conditional.get(str(parent), (values, weights))
-            value = rng.choices(table[0], weights=table[1], k=1)[0]
+                t_values, t_weights, _ = _select_table(
+                    conditional, (values, weights), parent_values, i
+                )
+            value = rng.choices(t_values, weights=t_weights, k=1)[0]
             out.append(None if null_rate and rng.random() < null_rate else value)
         return out
 

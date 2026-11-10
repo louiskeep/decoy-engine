@@ -109,8 +109,8 @@ prior: it would change output bytes for every conditional column.
 ## 5. The two warnings
 
 Both codes go in the engine reason registry (warning namespace, `QualityWarning` catalog). Their
-`since` follows the registry rule in force at build time: `UNRELEASED` if REG-RELEASE has merged.
-Engine messages carry table names, column names and counts only, never a cell value or label, and
+`since` is the unreleased registry version, `1.22.0` (no `UNRELEASED` marker exists);
+`REGISTRY_VERSION` is not bumped and E1b extends the v1.22 manifest fixture. Engine messages carry table names, column names and counts only, never a cell value or label, and
 never a CLI flag name (L1). The CLI builds its own text from `code` and `detail`.
 
 | Code | Slice | Raised by | `detail` | CLI text built from detail |

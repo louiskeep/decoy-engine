@@ -35,6 +35,10 @@ class QualityWarning:
       overall score, or one comparable column's score, is below `fidelity_warn_threshold`.
       `detail` carries `table`, `snapshot_index`, `overall_score`, `threshold`, `trigger`,
       `worst_columns` and `below_columns`; scores and names only, never a cell value.
+    - `generation_condition_parent_unseen` (conditional statistical column): some rows had a
+      `condition_on` parent with no fitted combination and drew from the column's overall counts.
+      `detail` carries `table`, `column`, `condition_on`, `rows`, `rows_null_parent`,
+      `rows_total` and `parent_values` (a count of distinct parent keys); names and counts only.
     """
 
     code: str
