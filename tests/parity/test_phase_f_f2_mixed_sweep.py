@@ -218,10 +218,10 @@ def _no_raw_survives(
     MATRIX[-1]["raw_leaks"] = 0
 
 
-def _int_ids(tmp_path: Path, parent_columns: list[dict[str, Any]]) -> list[Any]:
+def _coupled_parent_ids(tmp_path: Path, parent_columns: list[dict[str, Any]]) -> list[Any]:
     """The generated parent keys (via the oracle), so child keys can hit real parents."""
     child = child_table(pa.array(["x"] * 7, pa.string()))
-    config = mixed_config(tmp_path, child, parent_columns=parent_columns, coupled=False)
+    config = mixed_config(tmp_path, child, parent_columns=parent_columns, coupled=True)
     return oracle(config, {CHILD: child}).outputs[PARENT].column("id").to_pylist()
 
 
@@ -360,7 +360,7 @@ def test_family_as_the_coupled_fk_parent_key(
     tmp_path: Path, family: str, static_reasons: list[str], generate_calls: list[int]
 ) -> None:
     column, expect = KEY_FAMILIES[family]
-    ids = _int_ids(tmp_path, [column])
+    ids = _coupled_parent_ids(tmp_path, [column])
     keys = pa.array([ids[i % len(ids)] for i in range(N)])
     config, child = _family_job(tmp_path, [column], coupled=True, keys=keys)
     _, got = _compare(

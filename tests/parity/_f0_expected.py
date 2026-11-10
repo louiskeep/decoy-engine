@@ -23,6 +23,11 @@ Re-captured (column identity joined the seed): every fixture that draws random v
 because a column's stream now derives from (table, column) as well as its strategy config. Sequence,
 derived and other draw-free tables are unchanged. Captured with `python -m tests.parity._f0_capture`.
 
+Re-baselined 2026-11-08 (generated numeric typing): an unformatted `sequence` and a numeric faker
+provider (annotated int or float) now declare and emit int64/float64 instead of string. Each affected
+column prints the same text per row with nulls at the same rows. Manifest and reasons:
+`tests/fixtures/phase_f_fr0/manifest.json`.
+
 Shape: ``EXPECTED[fixture_id][table_name]`` is a `_f0_canonical.table_fingerprint` dict.
 ``POOL_SEAM`` is the generation pooled-faker seam (`_f0_seams.PoolCall.signature`) for the
 `pooled_faker` fixture, one entry per pooled column in declared order.
@@ -35,14 +40,14 @@ from typing import Any
 EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
     "sequence": {
         "seq": {
-            "schema": "78245e41da3e6c183061ef9ef03bbef39ac3f9382c79529a27a3be7455fe50a5",
+            "schema": "2e516e0de60d68531db9b2a95c93b72ff0d4f1dbfef8095010adc85d3a917fd2",
             "rows": 12,
             "columns": [
-                ("plain", "ead623bb7bba1e2d6759460612dc7b16d09ecbef7392fbdc5fbd6185d52e7e05"),
+                ("plain", "1ec5b45351654227288d8573b2a2f8abbdf3833928c098506c6218347709e20d"),
                 ("padded", "182a14b18053384fae0fd7c2f0e0eb23a08e5492da8d6d96e445c9e4504859a6"),
-                ("neg", "7261f29cb7402f0f484b325fb3d3ffdce24cbada803c01b48798d51db4222b23"),
+                ("neg", "778d292de22dfb187def46d18ddffb157a66cef6b22e4883f3e3556a71719c68"),
             ],
-            "table": "3df0c6047f7783128b54df894c8f737792708e97a3fb318223c710a621d3698b",
+            "table": "60c7d93fd8cea3692dc4b842110a50054bd993a02ee6c55eddd5caabacf69e82",
         }
     },
     "categorical": {
@@ -71,17 +76,17 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
     },
     "live_faker": {
         "live": {
-            "schema": "839b1064d81a7eec3f24e9575ebaf98eb95936e3471ceda1a942866b4ab0d623",
+            "schema": "1434a50bfef0ac821ea753928ab82960061f2496cd5ff8f92faa0d76b8ee742e",
             "rows": 30,
             "columns": [
                 ("city", "3c662c698ec2248412e490fc3e0b2869fed7a452a2b91ecc50bdf5dbc124e379"),
                 ("email", "b503077a15137cc8ee43fb4c777d2798b684ba0863e0547ff7ffbd8e9621bcb9"),
                 ("de_name", "41f77afe03d3215973a433ce52a942a938a45db63c7c160e8b332b702808d441"),
-                ("num", "9322e0e26f307cda0f219fa6e9be59713285782fefe7eb675d10c478503f35e2"),
+                ("num", "bbe70cef490a524527d1b4aed6042cb1ba24324d607b39d3a84e43a4d2ef4b8d"),
                 ("fallback", "cfc1f9a7fb56d5b16e2f6a211c1ca6932310d05d7c4fb54c7a69f9458bf61845"),
                 ("opt_out", "0639140d18601078b0f58cb03bb06d3b6fd000f54a3253671709be262ce4f969"),
             ],
-            "table": "8aba04ab3f97f3d163a41609c45e4cad07b93e724a9fddf4b5d199240a2e83b7",
+            "table": "61de7a2800710c2f26ffc95d8dd245aed4eeada6c25cc4303dd0160af254dd0d",
         }
     },
     "live_faker_default_locale": {
@@ -166,16 +171,16 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "table": "e61822720e498b0467325d7ecc3bbe360ddc05f0fb7fd0c81c63f3591c1a0f12",
         },
         "ref_child": {
-            "schema": "bcdc2b8897e69826f903a27d76c1b30c52b9b51e38eef04d07f0a8f98ca60a06",
+            "schema": "caf87e5f6df18b1b93f08ea35b5f19c1afa80ea27aadbec91438c3925488c0e0",
             "rows": 14,
             "columns": [
-                ("cid", "c15e5ad0b6fc9c50eb2e9dc73c00215b98ed3f0a0dbe1667a596aae05caa0c36"),
+                ("cid", "646b88e4574ca08f606c4055c214e53579235a0f19b04859f98f93a8f538e68d"),
                 ("r_random", "16c68d66e25b1a6b398ddd8653d8d6c1385f429405bdcfe4b451e1208a438f6c"),
                 ("r_seq", "7473de76d925e72f2e1e17752bb7ec7e68b6ad55ac758a766ab670a9ed6b0eba"),
                 ("r_weighted", "9e4118839347533759f5621cce525941d1f96db60497d3ab41dc023dfa014598"),
                 ("r_bounded", "bf74ff55758cee1caa28837d735b09c71b177f49bb423470654485ec356aec31"),
             ],
-            "table": "adf4fc4788230dd109a649b6278057e5438d272a84f7720b6ae616d9526d0790",
+            "table": "da6831948c5b95121f50ada166d22ccb7188661de0c811fa435e6c0a0ea75d2f",
         },
     },
     "derived_aggregate": {
@@ -236,10 +241,10 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
     },
     "nulls": {
         "nulls": {
-            "schema": "3eaa2e412ab4937ecee72bce2d43fe1b603db5344d5d02ea60cf3d2aae5a7d63",
+            "schema": "afa05e79b1f71aff04817653984fa103c0290616100f2970a75bee269e48973a",
             "rows": 30,
             "columns": [
-                ("seq_partial", "cae118f85ec101711fc3e3970e8e723dac808ffafa2f44d48df6e56c2986423f"),
+                ("seq_partial", "1658001bd49fa6efc4790b2a94833407f98e528840127eec8ae8f0a6f9732736"),
                 ("cat_partial", "47527e9e4692908bceba22f2a651e2e5d20c6c3dd9a097d368bec48226023ae4"),
                 (
                     "faker_partial",
@@ -250,13 +255,13 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
                     "265822d774b2309b02cae4e9497a6d4d157cf60aa317e02cc6b04a3fa94a81e6",
                 ),
             ],
-            "table": "0049feb16d5d0bcbd64050769c50fe3fcaaad68a17414b7bd53ab054a06a311b",
+            "table": "b50fc72af868f3b4939885213bdabc243221ba63dda6df3b3be46e9e46edebc8",
         },
         "empty": {
-            "schema": "c0cc89f59ad1792bfd3e6ab9eef47a610f70e3264bfcb4591ced62ec7de299bf",
+            "schema": "767f26506b2eda1f3f581fdf1e36590ef25bec3fcaab771816c61ffb14aee70c",
             "rows": 0,
             "columns": [("id", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")],
-            "table": "2445c1c0db89b65b0be8c6c6f88cf5befd76dd3251e7a8f9701fffe9db6872fd",
+            "table": "ce940f92e39e5478efccdb62a91b30ed86cc61e167838bc2ceda3539859a3626",
         },
     },
     "mixed_fk_generated_parent": {

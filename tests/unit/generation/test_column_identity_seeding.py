@@ -96,7 +96,7 @@ def test_same_column_name_in_two_tables_differs() -> None:
 def test_sequence_columns_are_deterministic() -> None:
     cols = _pair({"type": "sequence", "start": 1, "step": 2})
     out = _gen(cols)
-    assert out["a"] == out["b"] == [str(i) for i in range(1, 2 * ROWS, 2)]
+    assert out["a"] == out["b"] == list(range(1, 2 * ROWS, 2))
 
 
 def test_statistical_columns_from_independent_sources_are_uncorrelated(tmp_path) -> None:

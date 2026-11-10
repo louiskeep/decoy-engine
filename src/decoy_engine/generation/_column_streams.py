@@ -31,6 +31,7 @@ import pandas as pd
 
 from decoy_engine.generation import _faker_pool
 from decoy_engine.generation._bounds import faker_pool_bytes
+from decoy_engine.generation._numeric_typing import sequence_affixes
 from decoy_engine.generators.derivation import GenDeriveContext, column_identity, with_table
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 
@@ -112,14 +113,16 @@ class KeyPool:
 
 
 class SequenceStream:
-    def __init__(self, col: dict[str, Any]) -> None:
+    def __init__(self, col: dict[str, Any], *, numeric: bool = False) -> None:
         self._start = int(col.get("start", 1))
         self._step = int(col.get("step", 1))
-        self._prefix = str(col.get("prefix", ""))
-        self._suffix = str(col.get("suffix", ""))
+        self._prefix, self._suffix = sequence_affixes(col)
         self._pad = int(col.get("pad_length", 0))
+        self._numeric = numeric
 
     def next_batch(self, offset: int, size: int) -> list[Any]:
+        if self._numeric:
+            return [self._start + i * self._step for i in range(offset, offset + size)]
         out: list[Any] = []
         for i in range(offset, offset + size):
             value = self._start + i * self._step
@@ -256,6 +259,7 @@ def make_column_stream(
     ledger: GenerationBudgetLedger,
     stage: ExitStack,
     faker_payload: int | None,
+    numeric: bool = False,
 ) -> ColumnStream:
     """Build one column's stream. Reservations taken here live until `stage` closes."""
     col = with_table(col, table)
@@ -263,7 +267,7 @@ def make_column_stream(
     kind = col.get("type")
     inner: ColumnStream
     if kind == "sequence":
-        inner = SequenceStream(col)
+        inner = SequenceStream(col, numeric=numeric)
     elif kind == "categorical":
         inner = CategoricalStream(col, ctx)
     elif kind == "faker":

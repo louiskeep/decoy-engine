@@ -61,6 +61,10 @@ import pyarrow as pa
 
 from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.internal.pandas_compat import (
+    exact_int_types_mapper,
+    table_to_pandas_exact_ints,
+)
 
 if TYPE_CHECKING:
     from decoy_engine.relationships._graph import RelationshipEdge
@@ -276,32 +280,10 @@ _INT64_MIN: Final = -(2**63)
 _INT64_MAX: Final = 2**63 - 1
 _UINT64_MAX: Final = 2**64 - 1
 
-# Every Arrow integer type `to_pandas_fk_safe` may see on an FK column, mapped
-# to its OWN same-width, same-signedness nullable pandas extension dtype --
-# see this module's docstring "The lossless representation..." paragraph for
-# why this must be per-type rather than a single blanket `Int64`.
-_ARROW_INT_TO_NULLABLE_DTYPE: Final[dict[pa.DataType, type[pd.api.extensions.ExtensionDtype]]] = {
-    pa.int8(): pd.Int8Dtype,
-    pa.int16(): pd.Int16Dtype,
-    pa.int32(): pd.Int32Dtype,
-    pa.int64(): pd.Int64Dtype,
-    pa.uint8(): pd.UInt8Dtype,
-    pa.uint16(): pd.UInt16Dtype,
-    pa.uint32(): pd.UInt32Dtype,
-    pa.uint64(): pd.UInt64Dtype,
-}
-
-
-def _exact_fk_types_mapper(arrow_type: pa.DataType) -> pd.api.extensions.ExtensionDtype | None:
-    """`to_pandas(types_mapper=...)` hook: exact per-Arrow-integer-type
-    nullable pandas dtype, preserving width and signedness (closes BLOCKER #1
-    / HIGH #2 / MEDIUM #3 -- see module docstring). Returns `None` for a
-    non-integer type or an integer width/signedness this contract does not
-    special-case, so `to_pandas_fk_safe`'s caller (already gated on
-    `pa.types.is_integer`) falls back to pyarrow's own default for anything
-    this map does not cover, rather than raising."""
-    dtype_cls = _ARROW_INT_TO_NULLABLE_DTYPE.get(arrow_type)
-    return dtype_cls() if dtype_cls is not None else None
+# The per-Arrow-integer-type nullable dtype map lives in `internal.pandas_compat` (generation
+# needs the same conversion). Kept under this name so the route's patch point stays here.
+# See this module's docstring "The lossless representation..." paragraph for why it is per-type.
+_exact_fk_types_mapper = exact_int_types_mapper
 
 
 def lossless_fk_int_values(values: Sequence[object]) -> list[int | None] | None:
@@ -545,36 +527,19 @@ def to_pandas_fk_safe(table: pa.Table, fk_columns: Collection[str]) -> pd.DataFr
     other route raises for a genuinely unrepresentable FK key, instead of
     surfacing an uncoded crash unique to this route.
     """
-    df = table.to_pandas()
-    for col in fk_columns:
-        if col not in table.column_names:
-            continue
-        arrow_type = table.schema.field(col).type
-        if not pa.types.is_integer(arrow_type):
-            continue
-        try:
-            fk_series = table.column(col).to_pandas(types_mapper=_exact_fk_types_mapper)
-            # Positional, not label-aligned: `df` (from `table.to_pandas()`)
-            # keeps whatever pandas index the Arrow table's pandas metadata
-            # carries (e.g. a real parquet file's original row labels), while
-            # `fk_series` always gets a fresh default RangeIndex from this
-            # column-only `to_pandas()` call. `df[col] = fk_series` aligns by
-            # LABEL, not position -- for any table whose index is not already
-            # `[0, 1, 2, ...]` (duplicate labels, a shuffled/non-default
-            # index, or labels absent from the fresh RangeIndex) that silently
-            # nulls, swaps, or duplicates values instead of raising. A pandas
-            # `ExtensionArray` (`.array`, not `.values`) carries no index at
-            # all, so assigning it is always positional regardless of `df`'s
-            # index.
-            df[col] = fk_series.array
-            continue
-        except (pa.lib.ArrowInvalid, OverflowError):
-            pass
+
+    def unsupported(col: str) -> NoReturn:
         raise ExecutionError(
             code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
             message=f"FK column {col!r} could not be ingested as a lossless nullable integer.",
         )
-    return df
+
+    return table_to_pandas_exact_ints(
+        table,
+        [col for col in fk_columns if col in table.column_names],
+        types_mapper=_exact_fk_types_mapper,
+        on_unconvertible=unsupported,
+    )
 
 
 __all__ = [

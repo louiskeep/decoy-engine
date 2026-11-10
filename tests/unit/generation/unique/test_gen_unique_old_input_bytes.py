@@ -5,6 +5,10 @@ The pinned digests were captured on engine main (`6bdd4840`) before the E1 refac
 green run says generated cells, the Plan's embedded `config_json` and every column's seed
 fingerprint are what they were. Do not re-pin to make this pass: a moved digest is output drift
 (U3) and is fixed at its source.
+
+Re-pinned `cells` for three corpus configs when generated numeric columns became int64 (GEN-C2):
+rendering each numeric column back to text reproduces the old digests, so only the cell type
+moved. `config_json` and `fingerprints` are untouched.
 """
 
 from __future__ import annotations
@@ -16,7 +20,7 @@ from tests.unit.generation.unique._gu_corpus import CORPUS, digests
 
 PINNED = {
     "all_basic_types": {
-        "cells": "736bb7ab5fd4cc4c92f01753bfe52c4d0b3f8f39d28f0affd989527e147a511e",
+        "cells": "1f5c4a2f626e7917e8ba2b4978ccac968c7f9234076364d40a9cfe74ef975cca",
         "config_json": "1a7a3630c78e0ea1f924f26b6d12248be77aada420e34bc1eccfe9f42f823351",
         "fingerprints": "42e2831b6ec3f309cba7df47c4a6d7e38bec722d64da7aa09d9408059ac6c72e",
     },
@@ -26,12 +30,12 @@ PINNED = {
         "fingerprints": "d67f68757ce19ce25611dc593bcfa666faa87ef11ad98a035df2f247160493db",
     },
     "reference_shapes": {
-        "cells": "cf5b75d46a16dc727a6e7b2cc893525823aad608c921b68d1f726df7ce1f0185",
+        "cells": "d2d6fef3a62e972cf3b7de53a426f9466db94bc4228c83ed572439eb80b109ee",
         "config_json": "340574619a7f541f441d255d4d46b8a46944c081cb2c8b8249504b00be7163d5",
         "fingerprints": "1d9c6f66c834e768ed3e14db1dfc81e326df6352d69768863cf156391c4d5361",
     },
     "reference_to_sparse_parent": {
-        "cells": "52bc517b47d08c550cdd648ac1e739f05f34f5bb943f38c9f4fcf08a16e66679",
+        "cells": "73072f2424b22ae2468badd3d7ef1095ced76cdac67e7816fdc288ac872449f8",
         "config_json": "e4cd641dbe9b3acc1c287b5f6918a45a580156c9d71f282a50956c106ca207a4",
         "fingerprints": "52c95b54d59718ec5e4cb993dc9110e9efec9fdef9cf50563c0917527d058c68",
     },

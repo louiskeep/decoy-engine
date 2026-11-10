@@ -1175,7 +1175,7 @@ class TestDpDeclaredWithNoStatisticalColumns:
         from decoy_engine.generation.synthesize import generate_tables
 
         out = generate_tables(plan)  # must not raise TypeError
-        assert out["t"].column("id").to_pylist() == ["1", "2", "3", "4", "5"]
+        assert out["t"].column("id").to_pylist() == [1, 2, 3, 4, 5]
 
 
 class TestColumnSchemaPerColumnIdentity:
