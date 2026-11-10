@@ -40,7 +40,7 @@ REFROZEN: dict[str, dict[str, Any]] = {
     },
     "live_faker": {
         "reason": (
-            "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row"
+            "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row; 2026-11-10: the `fallback` column (an unknown faker type, now refused at compile) was removed from the fixture"
         ),
         "previous_tables": {
             "live": "8aba04ab3f97f3d163a41609c45e4cad07b93e724a9fddf4b5d199240a2e83b7"
@@ -114,7 +114,7 @@ def g_pooled(t: dict[str, pa.Table]) -> None:
 
 
 def g_live_faker(t: dict[str, pa.Table]) -> None:
-    for name in ("city", "email", "de_name", "fallback", "opt_out"):
+    for name in ("city", "email", "de_name", "opt_out"):
         assert all(isinstance(v, str) and v for v in _col(t, "live", name))
     assert all("@" in v for v in _col(t, "live", "email"))
     assert all(5 <= int(v) <= 9 for v in _col(t, "live", "num"))

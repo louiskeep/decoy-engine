@@ -178,7 +178,6 @@ def test_date_of_birth_is_anchored_not_clock_dependent() -> None:
         assert rep.is_clock_dependent_faker_type(t), t
 
 
-@pytest.mark.usefixtures("lenient_generate_checks")
 def test_deterministic_columns_are_never_excluded() -> None:
     cfg = fx.cfg_live_faker()
     assert _excl(cfg, controlled_clock=True) == {}
