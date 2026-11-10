@@ -115,6 +115,7 @@ def _out_of_core_route(
     if ctx.out_of_core_threads is not None:  # a run that sets no cap keeps today's metrics
         result.quality_metrics.setdefault("resources", {})["out_of_core"] = {
             "thread_cap": recorder.thread_cap,
+            "memory_cap_bytes": ctx.out_of_core_budget_bytes,
             "applied": [asdict(pair) for pair in recorder.applied()],
         }
     return result
