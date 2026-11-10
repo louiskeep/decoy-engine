@@ -40,7 +40,7 @@ from decoy_engine.execution._chunked_output_sink import OutputPublish
 from decoy_engine.execution._transforms_admission import out_of_core_declined, routing_profile
 from decoy_engine.execution._transforms_gate import reject_any_per_table_transforms
 from decoy_engine.fileaccess import config_relative
-from decoy_engine.profile._declared_columns import DeclarationRequest, prepare_declared_sources
+from decoy_engine.profile import DeclarationRequest, prepare_declared_sources
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:

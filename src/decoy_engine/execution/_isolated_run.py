@@ -107,7 +107,7 @@ from decoy_engine.execution._isolated_reason import commit_reason, reason_from_e
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._row_errors import RowErrorRecord
 from decoy_engine.fileaccess import FileAccess, FileRequest, FileRole, entry_point
-from decoy_engine.profile._declared_columns import DeclarationRequest, prepare_declared_sources
+from decoy_engine.profile import DeclarationRequest, prepare_declared_sources
 from decoy_engine.reason_adapter import reason_from_exception
 from decoy_engine.reasons import ReasonRecord
 from decoy_engine.reasons import decoy as _decoy_reasons
