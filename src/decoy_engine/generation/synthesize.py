@@ -44,6 +44,7 @@ from decoy_engine.generation._statistical_column import (
     warn_on_unseen_parents,
 )
 from decoy_engine.generation._synthesize_derived import _derived_generate, _formula, _reference
+from decoy_engine.generation.kinds import constant_values, parametric_values
 from decoy_engine.generation.statistical import FanoutSpec, StatisticalSpec
 from decoy_engine.generators.derivation import TABLE_KEY, GenDeriveContext, with_table
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
@@ -337,6 +338,16 @@ def _generate_column(
         else:
             # The non-fitted call keeps its five-argument shape: parity tests wrap `_reference`.
             values = _reference(col, n, seed, derive_key, pools or {})
+    elif kind == "constant":
+        values = constant_values(col, n)
+    elif kind == "distribution":
+        values = parametric_values(
+            col,
+            n,
+            GenDeriveContext.for_column(
+                derive_key=derive_key, column_config=col, fallback_seed=seed
+            ),
+        )
     elif kind == "statistical":
         values = statistical_generate(
             col, n, seed, derive_key, generated or {}, table_name, statistical_specs or {}

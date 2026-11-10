@@ -139,6 +139,9 @@ def compute_of(p: Probe) -> str:
         return NO_SELECTION
     if p.kind == "categorical":
         return PYTHON_RNG
+    if p.kind in {"constant", "distribution"}:
+        # A parametric draw is not a selection among values: no backend event to witness.
+        return NO_SELECTION
     if p.kind == "reference":
         # An empty parent returns None before any draw; `sequential` is a direct index.
         if p.parent_empty and not p.repair:
@@ -161,6 +164,8 @@ def witness_of(p: Probe) -> tuple[str, str]:
     """(status, why). A positive value witness is granted only where one can be compared."""
     if p.kind in {"statistical", "grouped_series", "group_key"}:
         return EXCLUDED, "unobserved kind on the legacy path; proven by route and reason"
+    if p.kind in {"constant", "distribution"}:
+        return EXCLUDED, "no selection event to mark; value equality is the GEN-TYPES route tests"
     if p.kind == "windowed_date" and not p.anchor_ok:
         return EXCLUDED, "legacy windowed_date is unobserved; proven by route and reason"
     if p.kind == "reference" and p.repair:
@@ -235,6 +240,18 @@ ROWS: Final[tuple[AuditRow, ...]] = (
         Probe("categorical"),
         lambda p: p.kind == "categorical" and _clean(p),
         "one persistent random.Random.choices stream",
+    ),
+    _row(
+        "constant",
+        Probe("constant"),
+        lambda p: p.kind == "constant" and _clean(p),
+        "the one configured value; no RNG event",
+    ),
+    _row(
+        "distribution",
+        Probe("distribution"),
+        lambda p: p.kind == "distribution" and _clean(p),
+        "one persistent numpy Generator from the dist family; prefix-stable",
     ),
     _row(
         "reference-sequential",

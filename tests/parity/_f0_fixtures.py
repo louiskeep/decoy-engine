@@ -562,6 +562,46 @@ def cfg_grouped_windowed() -> dict[str, Any]:
     )
 
 
+def cfg_source_free() -> dict[str, Any]:
+    """GEN-TYPES E1: the source-free kinds, with nulls on the constant and one distribution.
+
+    Integer-valued columns only: a float draw (normal, lognormal) can differ in the last bit between
+    arm64 and x86 libm, and this oracle hashes exact bits. Float families are pinned by the
+    approximate goldens in `tests/unit/generation/kinds`.
+    """
+    return config(
+        [
+            table(
+                "source_free",
+                40,
+                [
+                    {
+                        "name": "country",
+                        "type": "constant",
+                        "value": "US",
+                        "null_probability": 0.25,
+                    },
+                    {
+                        "name": "visits",
+                        "type": "distribution",
+                        "family": "poisson",
+                        "mean": 6,
+                        "null_probability": 0.3,
+                    },
+                    {
+                        "name": "rank",
+                        "type": "distribution",
+                        "family": "zipf",
+                        "s": 1.2,
+                        "n": 50,
+                        "max": 40,
+                    },
+                ],
+            )
+        ]
+    )
+
+
 def cfg_nulls() -> dict[str, Any]:
     """Partial-null on several generator types, an all-null column, and a zero-row table."""
     return config(
@@ -801,6 +841,7 @@ FIXTURES: tuple[Fixture, ...] = (
         "grouped_windowed", ENTRY_GENERATE_TABLES, "grouped-windowed", _gt(cfg_grouped_windowed)
     ),
     Fixture("nulls", ENTRY_GENERATE_TABLES, "partial-null/all-null", _gt(cfg_nulls)),
+    Fixture("source_free", ENTRY_GENERATE_TABLES, "source-free-kinds", _gt(cfg_source_free)),
     Fixture(
         "mixed_fk_generated_parent",
         ENTRY_RUN_PIPELINE,

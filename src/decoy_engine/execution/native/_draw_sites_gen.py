@@ -13,6 +13,38 @@ from __future__ import annotations
 from decoy_engine.config import UNIQUE_FAKER_ATTEMPTS
 from decoy_engine.execution.native._draw_site_types import _V6, DrawSite
 
+# Appended to the end of DRAW_SITES by `_determinism_protocol` (the catalogue order is pinned).
+GEN_KIND_DRAW_SITES: tuple[DrawSite, ...] = (
+    DrawSite(
+        draw_site_id="gen.distribution",
+        family="numpy_pcg64",
+        call_site="generation/kinds/_parametric.py:110",
+        entropy_root="job_seed",
+        seed_derivation=(
+            'np.random.default_rng(GenDeriveContext.for_column(derive_key, col, seed).base_int("dist"))'
+        ),
+        api_operation="numpy.random.default_rng(col_seed).normal / .lognormal / .uniform / .exponential / .poisson / .beta / .random",
+        call_shape=(
+            "draws = rng.<family>(*params, size)  # one persistent Generator, size draws per batch; "
+            "zipf: searchsorted(cdf, rng.random(size)) + 1; optional np.clip(draws, min, max)"
+        ),
+        consumes_variable_draws=False,
+        identity="column",
+        null_draw_behavior=(
+            "null_probability is gen.null_probability on the separate np family; "
+            "every row draws, nulls replace values afterwards"
+        ),
+        partitionable=False,
+        config_fingerprint_source="strategy_config_fingerprint(column_config)",
+        provider_version=f"{_V6} (GenDeriveContext); numpy NEP-19 PCG64",
+        notes=(
+            "Own RNG family so the value stream never shares uniforms with the null mask. "
+            "Prefix-stable: draws of sizes k and n-k concatenate to one draw of n, so batching "
+            "does not change values, but a partition cannot resume mid-stream."
+        ),
+    ),
+)
+
 GEN_DRAW_SITES: tuple[DrawSite, ...] = (
     # -- Generation: Faker per-row reseed ------------------------------------
     DrawSite(

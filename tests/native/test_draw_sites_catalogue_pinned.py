@@ -19,7 +19,7 @@ def _digest(value: object) -> str:
 
 
 def test_catalogue_length_and_order_are_unchanged() -> None:
-    assert len(protocol.DRAW_SITES) == len(_ORDERED_IDS) == 38
+    assert len(protocol.DRAW_SITES) == len(_ORDERED_IDS) == 39
     assert [site.draw_site_id for site in protocol.DRAW_SITES] == _ORDERED_IDS
 
 
@@ -52,7 +52,8 @@ def test_lookup_by_id_returns_the_catalogued_entry() -> None:
 # Re-pinned for FK-FANOUT E2b: gen.reference call site and fingerprint source.
 # Re-pinned for GEN-NUM-SHAPE: gen.statistical_per_row call shape text.
 # Re-pinned for GEN-UNIQUE E2: four unique-draw sites, the moved synthesize.py call sites, and the shared attempt limit.
-_CATALOGUE_DIGEST = "2843c1687e68aaf439d735c1f2980be9ef6751f6d449cac033701e23c3c65091"
+# Re-pinned for GEN-TYPES E1: gen.distribution appended at the end of the catalogue.
+_CATALOGUE_DIGEST = "93d40cc89c1bd971776c3e4a807f433f43a0c326ec9ac803e68f424bec4078ac"
 
 _ORDERED_IDS = [
     "mask.shuffle",
@@ -93,6 +94,7 @@ _ORDERED_IDS = [
     "gen.faker_pool_selection",
     "mask.faker_nondeterministic",
     "mask.tokenize",
+    "gen.distribution",
 ]
 
 _ENTRY_DIGESTS = [
@@ -140,11 +142,13 @@ _ENTRY_DIGESTS = [
     "46b422be131d1e91c5ed2a6174d86f970429577b88e5da660ab3a4926171dab4",
     "f698d376bd1e62f5e3f17bde97a7e4da236bf76ad09baf49d95a8c6445614c2c",
     "c8ae317b9397f7faf9152ddc3c0e4e0d0fd55de2f87148512d76b9e28a343324",
+    "4cfe9ac8a30d7a79c7de7db35b351c103fbd3a8eed3ed020e04ac714aab2ae89",
 ]
 
 _MAP_DIGESTS = {
     "MASK_STRATEGY_TO_SITE": "e42b340fc017f0608c08ec988fb697bb52c84f5cbb657dfa99b9531cd56681e9",
-    "GEN_KIND_TO_SITE": "f5311cdfc5e5d172e6c63f12a15a79c1cb4480577f571d12fe391a94bbc6c1e1",
+    # GEN_KIND_TO_SITE re-pinned for GEN-TYPES E1: constant and distribution.
+    "GEN_KIND_TO_SITE": "356b51d1f29aeef7e1b873981bad78cb9b7efd7abbdb1889f00c943f6ecdfa0e",
     "PROVIDER_IDENTIFIER_SITES": "19593ad7e4ac52025cdc024aa16bdb04ab776755b83e6f7c0e546210b6fc7cd6",
     "FAMILIES": "cbbf3f70f90b3995c7bb16f11bf1560ce135af11761cc6444aa41feaf659e811",
     "ENTROPY_ROOTS": "4f3fdb974258ed94e92188bd4dd456363696dba2d2a4a90a4f744c53879949f8",

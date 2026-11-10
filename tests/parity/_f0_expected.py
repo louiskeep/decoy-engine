@@ -23,6 +23,9 @@ Re-captured (column identity joined the seed): every fixture that draws random v
 because a column's stream now derives from (table, column) as well as its strategy config. Sequence,
 derived and other draw-free tables are unchanged. Captured with `python -m tests.parity._f0_capture`.
 
+Added 2026-11-10 (GEN-TYPES E1): the `source_free` fixture (constant and distribution columns).
+Captured once under numpy 2.2.6 (identical on arm64 and x86); no existing entry moved.
+
 Re-baselined 2026-11-08 (generated numeric typing): an unformatted `sequence` and a numeric faker
 provider (annotated int or float) now declare and emit int64/float64 instead of string. Each affected
 column prints the same text per row with nulls at the same rows. Manifest and reasons:
@@ -237,6 +240,18 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
                 ("gkey", "1f1257b96d35a13ef2a21e12d6d7c865cf1644d1002736a512b09e182c2e2e7c"),
             ],
             "table": "42e36d728df63493caf355c0e9603f09aed5f35961d251fd1a94bd671651ee34",
+        }
+    },
+    "source_free": {
+        "source_free": {
+            "schema": "2800e1c5d0a01b0be58fe6b7e8b24243315d0523fd94bcdcdac8bf3f463ca8b6",
+            "rows": 40,
+            "columns": [
+                ("country", "fd7fcb94ae747840f9cdb66640f13400b759dc453490a836f13f23f2e6aad91e"),
+                ("visits", "d726639941f9d983f2f7da1bd5d772d3d019ccb425f038ea38f788774092ddad"),
+                ("rank", "880624c3ece553eac098fc67c4c9c7c852e68aa17295da9b10b17770c085643c"),
+            ],
+            "table": "bd5e8583f6a79cfced0dc561d5ca375bc3ad08d1379ea226f4bcf983166c83bf",
         }
     },
     "nulls": {

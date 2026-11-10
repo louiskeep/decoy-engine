@@ -103,6 +103,42 @@ def cfg_categorical() -> dict[str, Any]:
     )
 
 
+def cfg_constant() -> dict[str, Any]:
+    return fx.config(
+        [
+            _t(
+                "t",
+                40,
+                [
+                    {"name": "k", "type": "constant", "value": "US"},
+                    {"name": "k_m", "type": "constant", "value": 7, "null_probability": 0.3},
+                ],
+            )
+        ]
+    )
+
+
+def cfg_distribution() -> dict[str, Any]:
+    return fx.config(
+        [
+            _t(
+                "t",
+                40,
+                [
+                    {"name": "x", "type": "distribution", "family": "normal", "mean": 5, "std": 2},
+                    {
+                        "name": "x_m",
+                        "type": "distribution",
+                        "family": "poisson",
+                        "mean": 4,
+                        "null_probability": 0.3,
+                    },
+                ],
+            )
+        ]
+    )
+
+
 def _parent(null_probability: float = 0.0) -> dict[str, Any]:
     col: dict[str, Any] = {"name": "k", "type": "categorical", "categories": ["K1", "K2", "K3"]}
     if null_probability:
@@ -538,6 +574,12 @@ def _cells(unmarked_windowed: Callable[..., list[Any]]) -> tuple[Cell, ...]:
             cfg_categorical,
             {("t", "cat"): "categorical", ("t", "cat_m"): "categorical"},
             mutants=m("categorical"),
+        ),
+        Cell("constant", cfg_constant, {("t", "k"): "constant", ("t", "k_m"): "constant"}),
+        Cell(
+            "distribution",
+            cfg_distribution,
+            {("t", "x"): "distribution", ("t", "x_m"): "distribution"},
         ),
         ref_cell("reference-sequential", "sequential"),
         ref_cell("reference-random", "random"),

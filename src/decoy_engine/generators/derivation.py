@@ -188,7 +188,11 @@ def strategy_config_fingerprint(
 #   faker -> Faker.seed_instance(...)
 #   faker_unique -> Faker.seed_instance(...) for the retry attempts of a unique faker row
 #   unique_pair  -> random.Random(...) sampling the pair index of a `unique_together` entry
-GEN_FAMILIES = ("py", "np", "faker", "faker_unique", "unique_pair")
+#   dist  -> numpy.random.default_rng(...) drawing a `distribution` column. Its own family, never
+#            "np": the null mask draws default_rng(base_int("np")).random(n) on the same column and
+#            `null_probability` is not in the fingerprint, so a shared family would hand the mask
+#            and the value the same uniforms.
+GEN_FAMILIES = ("py", "np", "faker", "faker_unique", "unique_pair", "dist")
 
 
 def _gen_hmac(key: bytes, label: bytes, *, extra: bytes = b"") -> bytes:

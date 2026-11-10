@@ -41,6 +41,8 @@ READER_FILES = (
     "generation/_pinned_compile.py",
     "generation/_faker_pool.py",
     "generation/_grouped_windowed_generators.py",
+    "generation/kinds/_constant.py",
+    "generation/kinds/_parametric.py",
     "generation/_referenced_formula.py",
     "generators/columns.py",
     "generators/derivation.py",

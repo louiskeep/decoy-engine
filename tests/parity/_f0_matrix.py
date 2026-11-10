@@ -159,6 +159,14 @@ MATRIX: tuple[MatrixRow, ...] = (
         "owned by the DP track, not F0. F1 inherits the exact-snapshot row for generation.",
     ),
     MatrixRow(
+        "source-free-kinds",
+        SUPPORTED,
+        ("source_free",),
+        ("constant", "distribution"),
+        "GEN-TYPES E1: constant draws nothing; distribution is one default_rng(base_int('dist')) "
+        "Generator per column, prefix-stable across batches. Recorded under numpy 2.2.6.",
+    ),
+    MatrixRow(
         "conditional-sampling",
         SUPPORTED,
         ("conditional",),

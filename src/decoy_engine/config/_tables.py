@@ -286,6 +286,8 @@ class GenerateColumnConfig(BaseModel):
         "grouped_series",
         "windowed_date",
         "group_key",
+        "constant",
+        "distribution",
     ]
 
     # GP2 (Codex round-2 spec A/G7): the ONLY validated `type: faker` knob.

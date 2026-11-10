@@ -134,6 +134,7 @@ _SCENARIOS: dict[str, Callable[[], Any]] = {
     "gen.distribution_snapshot": lambda: _np(
         provider_for("gen.distribution_snapshot").col_generator(_ctx())
     ),
+    "gen.distribution": lambda: _np(provider_for("gen.distribution").col_generator(_ctx())),
     "gen.pool_deterministic": lambda: provider_for("gen.pool_deterministic").draw(
         _JOB, _NS, b"cfg", pool_size=17
     ),
@@ -219,6 +220,7 @@ _GOLDEN_OUTPUT: dict[str, str] = {
     "gen.unique_pair": "12bb5d6bf1cb5f88bf02cc27f901d636257733275fb353619fded1fd5c50a559",
     "gen.composite_build_pool": "e804c947fbca8cbce1e13b3f6c5860e7050f6434e2b1c37f4a0278d080f521ce",
     "gen.derive_context": "7846c03077346d8ac4b081666ff721c8a7a0c74cbfb6f92e5bf8e5cabd8249dc",
+    "gen.distribution": "da8c203a890d906561c0bae8871bfe163b9936f95da4ef0634a02360384e5e6d",
     "gen.distribution_snapshot": "b73024fefa1fe793af5aee4905dc07f9d8d48930cb3f3854f04531e6579b20ad",
     "gen.faker_per_row": "28982d28b19852f557cf5f8618643d7529b02a3fd1fb0b276ae761b5a4a28166",
     "gen.faker_pool_build": "d8867409a8d2aae81b3d596c6dd91438e08bd5482c107a2def8da8711251d5c2",
@@ -252,4 +254,4 @@ _GOLDEN_OUTPUT: dict[str, str] = {
     "mask.windowed_date": "e7155d227e2e065ea4ad6de21ddd5f12c08f5d6a9654351f208c5f6f7b2b612a",
 }
 
-_GOLDEN_REGISTRY = "7149067810ae54068bf85aa49a675cddebe914f660dc504ca8320c4731040b4a"
+_GOLDEN_REGISTRY = "636eecdcaa4d6acf29ed8d11a20e3bb540ee0f23bb3c82361a9c5f9e1de98260"

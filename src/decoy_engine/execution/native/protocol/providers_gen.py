@@ -49,6 +49,19 @@ class DistributionSnapshotProvider(_SeededNumpyBaseIntProvider):
     draw_site_id = "gen.distribution_snapshot"
 
 
+class DistributionProvider(DrawSiteProvider):
+    """``gen.distribution``: one ``default_rng(base_int("dist"))`` advanced across all rows.
+
+    The ``dist`` family, not ``np``: the null mask draws ``default_rng(base_int("np"))`` on the
+    same column. Prefix-stable but stream-positional, so NON-partitionable.
+    """
+
+    draw_site_id = "gen.distribution"
+
+    def col_generator(self, gen_ctx: GenDeriveContext) -> np.random.Generator:
+        return np.random.default_rng(gen_ctx.base_int("dist"))
+
+
 class _SeededFromBytesNumpyProvider(DrawSiteProvider):
     """Whole-column numpy stream seeded from ``int.from_bytes(seed, "big")``.
 
