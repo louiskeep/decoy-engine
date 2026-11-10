@@ -61,6 +61,10 @@ Anything but `None` or a non-blank `str` raises `ExecutionError` (`invalid_execu
 source is read. Breaking, no shim: the engine logger no longer writes `logs/decoy_engine.log` when the
 logging config has no `file`; a caller that wants a log file passes `file`.
 
+**Pre-GA additive keyword with GEN-CLI E1 (#460, 2026-11-10).** `run_pipeline(..., base_dir: str |
+Path | None = None)` is keyword-only (44 frozen parameters). Relative config paths resolve against it;
+`None` leaves every path as written (today's behavior).
+
 **Pre-GA correction (main health, 2026-10-31).** `RESERVED_NAMES` of the `when` closed grammar gains `type`
 (additive to the list, breaking for a config whose `when:` references a column named `type`, which now fails
 with `when_outside_closed_grammar`). It is listed on every interpreter rather than derived from
