@@ -280,6 +280,8 @@ changes for the two previously unmapped artifact kinds and the new workflow, not
 - A release with new codes takes exactly one registry minor, however many slices added codes.
 - A release with only declared deprecations and/or summaries takes one patch; with nothing pending,
   the registry does not move.
+- Recovery is clean-tree plus rollback from git, not resume, after three review rounds found
+  recovery-provenance holes.
 
 ## Owner questions
 

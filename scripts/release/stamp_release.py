@@ -220,8 +220,18 @@ def _remove(path: Path) -> None:
     path.unlink()
 
 
-def _section_of(text: str, version: str) -> str | None:
-    return next((sec for v, sec in release_sections(text) if v == version), None)
+def _owned_paths() -> list[str]:
+    return ["CHANGELOG.md", PIN_FILE.as_posix(), FRAGMENT_DIR]
+
+
+def _dirty(root: Path) -> list[str]:
+    out = _git(root, "status", "--porcelain", "--untracked-files=all", "--", *_owned_paths())
+    return [line[3:] for line in out.splitlines()]
+
+
+def _rollback(root: Path) -> None:
+    """Put CHANGELOG.md, the pin and `changelog.d/` (deleted fragments included) back to HEAD."""
+    _git(root, "restore", "--source=HEAD", "--staged", "--worktree", "--", *_owned_paths())
 
 
 def _parse_all(root: Path, ordered: list[str]) -> tuple[list[Fragment], str | None]:
@@ -237,48 +247,24 @@ def _parse_all(root: Path, ordered: list[str]) -> tuple[list[Fragment], str | No
     return fragments, None
 
 
-def _entries(section: str) -> list[str]:
-    """The section's `###` entries, each stripped. A fragment block holds exactly one `###` line
-    (`parse_fragment` enforces it), so entry boundaries and fragment blocks coincide."""
-    return [e.strip() for e in re.split(r"(?m)^(?=### )", section)[1:]]
-
-
-def _compiled_into(section: str, date: str, version: str, fragments: list[Fragment]) -> bool:
-    """True when `section` is this release's section and holds every remaining fragment exactly.
-
-    Each remaining fragment's block must equal one entry, and the blocks must sit as one run in
-    fragment order (the deletions go newest first, so what remains is a suffix of the order). Each
-    `Breaking:` line must be a whole bullet of the Breaking list. Equality, never containment: a
-    fragment amended after a partial failure must not match its old text."""
-    if not section.startswith(f"## [{version}] - {date}\n"):
-        return False
-    entries = _entries(section)
-    bullets: set[str] = set()
-    for entry in entries:
-        if entry.startswith(BREAKING_HEADING):
-            bullets.update(entry.split("\n")[1:])
-    if any(f.breaking is not None and f"- {f.breaking}" not in bullets for f in fragments):
-        return False
-    blocks = [f.block for f in fragments]
-    if not blocks:
-        return True
-    return any(
-        entries[i : i + len(blocks)] == blocks for i in range(len(entries) - len(blocks) + 1)
-    )
-
-
 def compile_fragments(root: Path, version: str, date: str) -> None:
     """Fold the fragments and the old `[Unreleased]` body into a dated `version` section.
 
-    Writes go in an order that makes a rerun safe after any failure: the pin row first (it is
-    rewritten identically on a rerun), then CHANGELOG.md, then the fragment deletions. A rerun that
-    finds this release's section already holding every remaining fragment skips the CHANGELOG write
-    and finishes the pin and the deletions; a finished compile is a no-op.
+    There is no resume path. The compile starts only when CHANGELOG.md, the pin and `changelog.d/`
+    match HEAD, and a failure while writing restores those paths from HEAD before it re-raises. A
+    crash that skips the rollback leaves a dirty tree, which the next run refuses; the operator runs
+    the `git restore` the message names.
     """
     if _VERSION.fullmatch(version) is None:
         raise FragmentError("version must look like X.Y.Z")
     if not _valid_date(date):
         raise FragmentError("date must be a real YYYY-MM-DD date")
+    dirty = _dirty(root)
+    if dirty:
+        raise FragmentError(
+            f"uncommitted changes in {', '.join(dirty)}; restore them with: git restore "
+            f"--source=HEAD --staged --worktree -- {' '.join(_owned_paths())}"
+        )
     names = _fragment_files(root)
     ordered = _newest_first(root, names) if names else []
     fragments, problem = _parse_all(root, ordered)
@@ -287,16 +273,11 @@ def compile_fragments(root: Path, version: str, date: str) -> None:
 
     changelog_path = root / "CHANGELOG.md"
     before = changelog_path.read_text(encoding="utf-8")
-    existing = _section_of(before, version)
-    if existing is None:
-        text = _compose(before, version, date, fragments)
-    elif _compiled_into(existing, date, version, fragments):
-        text = before
-    else:
-        raise FragmentError("CHANGELOG.md already has a different section for this version")
+    if any(v == version for v, _ in release_sections(before)):
+        raise FragmentError("CHANGELOG.md already has a section for this version")
+    text = _compose(before, version, date, fragments)
 
-    sections = release_sections(text)
-    prev_version, prev_section = sections[1]
+    prev_version, prev_section = release_sections(text)[1]
     pin_path = root / PIN_FILE
     pins = json.loads(pin_path.read_text(encoding="utf-8"))
     pins = {
@@ -304,11 +285,14 @@ def compile_fragments(root: Path, version: str, date: str) -> None:
         **{k: v for k, v in pins.items() if k != prev_version},
     }
 
-    _replace(pin_path, json.dumps(pins, indent=2) + "\n")
-    if text != before:
+    try:
+        _replace(pin_path, json.dumps(pins, indent=2) + "\n")
         _replace(changelog_path, text)
-    for name in ordered:
-        _remove(root / FRAGMENT_DIR / name)
+        for name in ordered:
+            _remove(root / FRAGMENT_DIR / name)
+    except BaseException:
+        _rollback(root)
+        raise
 
 
 def main(argv: list[str] | None = None) -> int:

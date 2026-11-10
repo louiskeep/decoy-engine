@@ -215,22 +215,22 @@ def test_compile_on_the_real_changelog_keeps_the_repo_changelog_tests_green(
     assert "- alpha now breaks" in text
 
 
-def _clean_result(tmp_path: Path) -> tuple[str, str]:
-    r = _seed(tmp_path / "clean")
-    _add_three(r)
-    sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
-    pin = "tests/fixtures/changelog_released_sections.json"
-    return (r.path / "CHANGELOG.md").read_text(), (r.path / pin).read_text()
+PIN = "tests/fixtures/changelog_released_sections.json"
+OWNED = ("CHANGELOG.md", PIN, "changelog.d")
 
 
-@pytest.mark.parametrize("fail_at", [1, 2, 3, 4, 5])
-def test_failure_after_any_write_step_is_recoverable(
-    tmp_path: Path, monkeypatch, fail_at: int
-) -> None:
-    """Steps: pin write, CHANGELOG write, then one delete per fragment (5 in all)."""
-    expected = _clean_result(tmp_path)
-    r = _seed(tmp_path / "faulty")
-    _add_three(r)
+def _tracked_state(r: ScratchRepo) -> dict[str, str]:
+    """Byte content of every file the compiler may touch."""
+    out = {}
+    for rel in ("CHANGELOG.md", PIN):
+        out[rel] = (r.path / rel).read_text(encoding="utf-8")
+    for p in sorted((r.path / "changelog.d").glob("*")):
+        out[f"changelog.d/{p.name}"] = p.read_text(encoding="utf-8")
+    return out
+
+
+def _inject(monkeypatch, fail_at: int) -> None:
+    """Raise OSError on the `fail_at`-th write step: pin, CHANGELOG, then one delete per fragment."""
     calls = {"n": 0}
     real_replace, real_remove = sr._replace, sr._remove
 
@@ -241,30 +241,72 @@ def test_failure_after_any_write_step_is_recoverable(
 
     monkeypatch.setattr(sr, "_replace", lambda p, t: (tick(), real_replace(p, t))[1])
     monkeypatch.setattr(sr, "_remove", lambda p: (tick(), real_remove(p))[1])
+
+
+@pytest.mark.parametrize("fail_at", [1, 2, 3, 4, 5])
+def test_failure_after_any_write_step_restores_head(
+    tmp_path: Path, monkeypatch, fail_at: int
+) -> None:
+    r = _seed(tmp_path)
+    _add_three(r)
+    before = _tracked_state(r)
+    _inject(monkeypatch, fail_at)
+    with pytest.raises(OSError, match="injected"):
+        sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
+    monkeypatch.undo()
+    assert _tracked_state(r) == before
+    assert r.git("status", "--porcelain", "--untracked-files=all") == ""
+
+
+@pytest.mark.parametrize(
+    "dirty",
+    ["CHANGELOG.md", PIN, "changelog.d/z.md", "changelog.d/untracked.md"],
+)
+def test_dirty_tree_is_refused_before_any_write(tmp_path: Path, dirty: str) -> None:
+    r = _seed(tmp_path)
+    _add_three(r)
+    (r.path / dirty).write_text(
+        (r.path / dirty).read_text() + "\n" if (r.path / dirty).exists() else fragment(),
+        encoding="utf-8",
+    )
+    before = _tracked_state(r)
+    with pytest.raises(sr.FragmentError, match="uncommitted") as info:
+        sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
+    assert dirty in str(info.value)
+    assert _tracked_state(r) == before
+
+
+def test_a_crash_leaves_a_dirty_tree_that_a_git_restore_clears(tmp_path: Path, monkeypatch) -> None:
+    r = _seed(tmp_path)
+    _add_three(r)
+    # Simulate the process dying before it could roll back.
+    monkeypatch.setattr(sr, "_rollback", lambda root: None)
+    _inject(monkeypatch, 3)
     with pytest.raises(OSError, match="injected"):
         sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
     monkeypatch.undo()
 
+    with pytest.raises(sr.FragmentError, match="git restore") as info:
+        sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
+    assert "CHANGELOG.md" in str(info.value)
+
+    r.git("restore", "--source=HEAD", "--staged", "--worktree", "--", *OWNED)
+    assert r.git("status", "--porcelain", "--untracked-files=all") == ""
+    # The operator drops a Breaking line, commits, and retries.
+    r.commit({"changelog.d/a.md": fragment("Alpha text.", name="a-title")}, "feat: a, no break")
     sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
-    pin = "tests/fixtures/changelog_released_sections.json"
-    assert ((r.path / "CHANGELOG.md").read_text(), (r.path / pin).read_text()) == expected
+    text = (r.path / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "alpha now breaks" not in text
+    assert "Alpha text." in text
     assert not list((r.path / "changelog.d").glob("[!R]*.md"))
-    sr.compile_fragments(r.path, "0.3.0", "2026-11-10")  # finished state: a no-op
-    assert (r.path / "CHANGELOG.md").read_text() == expected[0]
 
 
-def test_rerun_with_a_different_date_after_a_finished_compile_is_refused(tmp_path: Path) -> None:
+def test_an_existing_section_for_the_version_is_a_plain_refusal(tmp_path: Path) -> None:
     r = _seed(tmp_path)
     sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
-    with pytest.raises(sr.FragmentError, match="already"):
-        sr.compile_fragments(r.path, "0.3.0", "2026-11-11")
-
-
-def test_unrelated_fragment_beside_a_compiled_section_is_refused(tmp_path: Path) -> None:
-    r = _seed(tmp_path)
-    sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
-    r.commit({"changelog.d/late.md": fragment("Late text.", name="late")}, "feat: late")
-    with pytest.raises(sr.FragmentError, match="already"):
+    r.git("add", "-A")
+    r.git("commit", "-q", "-m", "chore: compiled")
+    with pytest.raises(sr.FragmentError, match="already has a section"):
         sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
 
 
@@ -275,95 +317,3 @@ def test_refusals_carry_no_exception_context(tmp_path: Path) -> None:
         with pytest.raises(sr.FragmentError) as info:
             sr.compile_fragments(r.path, version, date)
         assert info.value.__context__ is None
-
-
-def _fail_after_changelog_write(tmp_path: Path, monkeypatch) -> ScratchRepo:
-    """Fail on the first fragment delete: the section is written, every fragment still exists."""
-    r = _seed(tmp_path)
-    _add_three(r)
-    real_remove = sr._remove
-
-    def boom(path: Path) -> None:
-        raise OSError("injected")
-
-    monkeypatch.setattr(sr, "_remove", boom)
-    with pytest.raises(OSError, match="injected"):
-        sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
-    monkeypatch.setattr(sr, "_remove", real_remove)
-    return r
-
-
-def _rewrite_z(r: ScratchRepo, text: str) -> None:
-    (r.path / "changelog.d" / "z.md").write_text(text, encoding="utf-8")
-
-
-@pytest.mark.parametrize(
-    "amended",
-    [
-        pytest.param(fragment("Zed", name="z-title"), id="shortened-body"),
-        pytest.param(fragment("Zed text. More added.", name="z-title"), id="lengthened-body"),
-        pytest.param(fragment("Zed text.", name="z-retitled"), id="edited-title"),
-        pytest.param(
-            fragment("Zed text.\n\nSecond paragraph.", name="z-title"), id="added-paragraph"
-        ),
-        pytest.param(
-            fragment("Zed text.", name="z-title", breaking="zed now breaks"), id="added-breaking"
-        ),
-    ],
-)
-def test_rerun_refuses_an_amended_fragment_and_touches_nothing(
-    tmp_path: Path, monkeypatch, amended: str
-) -> None:
-    r = _fail_after_changelog_write(tmp_path, monkeypatch)
-    _rewrite_z(r, amended)
-    changelog = (r.path / "CHANGELOG.md").read_text(encoding="utf-8")
-    pin = (r.path / "tests/fixtures/changelog_released_sections.json").read_text()
-    with pytest.raises(sr.FragmentError, match="different section"):
-        sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
-    assert (r.path / "changelog.d" / "z.md").read_text(encoding="utf-8") == amended
-    assert len(list((r.path / "changelog.d").glob("[!R]*.md"))) == 3
-    assert (r.path / "CHANGELOG.md").read_text(encoding="utf-8") == changelog
-    assert (r.path / "tests/fixtures/changelog_released_sections.json").read_text() == pin
-
-
-def test_rerun_refuses_a_shortened_second_paragraph(tmp_path: Path, monkeypatch) -> None:
-    r = _seed(tmp_path)
-    r.commit({"changelog.d/z.md": fragment("Zed one.\n\nZed two.", name="z-title")}, "feat: z")
-    monkeypatch.setattr(sr, "_remove", lambda p: (_ for _ in ()).throw(OSError("injected")))
-    with pytest.raises(OSError, match="injected"):
-        sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
-    monkeypatch.undo()
-    _rewrite_z(r, fragment("Zed one.", name="z-title"))
-    with pytest.raises(sr.FragmentError, match="different section"):
-        sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
-
-
-def test_rerun_refuses_a_shortened_breaking_line(tmp_path: Path, monkeypatch) -> None:
-    r = _fail_after_changelog_write(tmp_path, monkeypatch)
-    (r.path / "changelog.d" / "a.md").write_text(
-        fragment("Alpha text.", name="a-title", breaking="alpha now"), encoding="utf-8"
-    )
-    with pytest.raises(sr.FragmentError, match="different section"):
-        sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
-
-
-def test_rerun_with_an_unchanged_fragment_after_a_partial_delete_completes(
-    tmp_path: Path, monkeypatch
-) -> None:
-    r = _seed(tmp_path)
-    _add_three(r)
-    calls = {"n": 0}
-    real_remove = sr._remove
-
-    def second_delete_fails(path: Path) -> None:
-        calls["n"] += 1
-        if calls["n"] == 2:
-            raise OSError("injected")
-        real_remove(path)
-
-    monkeypatch.setattr(sr, "_remove", second_delete_fails)
-    with pytest.raises(OSError, match="injected"):
-        sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
-    monkeypatch.undo()
-    sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
-    assert not list((r.path / "changelog.d").glob("[!R]*.md"))
