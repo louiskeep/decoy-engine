@@ -9,6 +9,29 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (host CPU probe, DuckDB thread cap and conservative budget, RUN-STREAM E1b, 2026-11-09)
+
+`decoy_engine.detect_usable_cpus(*, fs_root=None, affinity=None)` is the platform's cgroup-aware core
+count moved into the engine: the tightest quota on the cgroup path (v1 or v2), capped by CPU affinity,
+or `os.cpu_count()` where the OS has no affinity call (macOS). A limit file that is present but
+unreadable raises `ExecutionError` with the new `runtime.cpu_detection_failed` (registry 1.21.0).
+`decoy_engine.resolve_conservative_ooc_budget_bytes()` returns 25% of the effective memory ceiling
+through `resolve_budget(None)`; `resolve_ooc_memory_limit(None)` keeps its ceiling-minus-reserve default
+for every other caller.
+
+`run_pipeline(out_of_core_threads=...)` caps the DuckDB threads of the out-of-core route. The cap is bound
+per run and read where each connection opens, so every nested connection gets
+`max(1, min(cap or usable CPUs, memory_limit // 2 GiB))` threads. DuckDB thread sizing now uses usable
+CPUs instead of `os.cpu_count()`. If the CPU limit cannot be read, a given cap is used in place of the CPU
+term (so `out_of_core_threads` works around the failure); without a cap the error is raised. The connection settings actually applied are returned in
+`quality_metrics["resources"]["out_of_core"]` (`thread_cap`, `applied`). The auto-chunk lane stamp gains
+`native_thread_clamp` (`requested`, `applied`). `applied` is the native companion's own answer
+(new `resolve_native_threads`, the resolver every kernel call uses), or None when the companion
+or that symbol is absent. The cgroup membership, mountinfo parsing and mount-root translation the CPU probe and the memory
+budget both need now live in one module, `execution/pipeline/_cgroup.py`. The memory budget finds its
+cgroup directory through mountinfo like the CPU probe, so a mount that exposes only a subtree (a
+container's cgroup namespace) is read at the right directory instead of falling back to host RAM.
+
 ### Added (CONFIG-EXPLICIT E2a: declared-columns module, registry 1.19.0, 2026-11-08)
 
 `decoy_engine` exports `source_columns`, `declared_columns`, `check_columns_declared`,

@@ -51,6 +51,9 @@ def test_all_lists_every_public_name():
         "generate_tables",
         "generated_table_to_pandas",
         "run_pipeline",
+        # RUN-STREAM E1b: host CPU probe and the conservative CLI auto memory budget.
+        "detect_usable_cpus",
+        "resolve_conservative_ooc_budget_bytes",
         # Audit H5 (2026-06-12): profile-free compile-check subset for
         # config-only callers (decoy validate).
         "run_config_only_checks",
@@ -303,6 +306,11 @@ def test_all_lists_every_public_name():
         "CsvDialect",
         "read_csv_source",
         "resolve_csv_dialect",
+        # LIB L1a: the record envelope and its decode results (functions: decoy_engine.records).
+        "DecodedRecord",
+        "OpaqueRecord",
+        "RecordError",
+        "RecordNeedsNewer",
         # LIB L0.1: the protected directory allocator.
         "open_protected_dir",
         "protected_scratch_dir",

@@ -32,9 +32,8 @@ Public API (the contract CLI and platform code depend on):
     RELEASE_PHASE / ReleasePhase / is_pre_ga:
                       (decoy_engine.release) the single pre-GA/GA switch the rule
                       inversions and CI gates read. Pre-GA: hard-delete is allowed
-                      and the compatibility contract is advisory. The platform
-                      reads RELEASE_PHASE across the in-process boundary; there is
-                      no separate platform constant.
+                      and the compatibility contract is advisory. The platform reads
+                      RELEASE_PHASE in process (no separate platform constant).
 
 Public exceptions (also in decoy_engine.errors):
     DecoyError, ConfigError, PipelineValidationError,
@@ -42,21 +41,13 @@ Public exceptions (also in decoy_engine.errors):
     LicenseError, LicenseExpiredError,
     FlagPauseSignal, FixedWidthParseError
 
-Anything not listed in __all__ -- and anything under decoy_engine.internal --
-is private and may change without a version bump.
+Anything not in __all__, and anything under decoy_engine.internal, is private.
 
-V2 NOTE: the V1 public surface (``Masker``, ``DataGenerator``, ``run_graph`` /
-``preview_graph`` / ``validate_graph*``) and the V1 graph runner were removed
-under the ``decoy_v2_clean_break`` PO directive (the final V1 graph-runner and
-V1-only transform deletion landed in S22, 2026-05-30). The engine is now
-plan-first: a caller validates a ``PipelineConfig`` at the choke-point, profiles
-the source, calls ``compile_plan`` to produce a frozen ``Plan``, and hands the
-plan to an ``ExecutionAdapter`` (pandas by default) for a MASK job, or to
-``generation.synthesize.generate_tables`` for a GENERATE job. See
-``api/jobs/v2_runner.py`` for the platform-side spine and
-``tests/integration/golden/test_execution_e2e.py`` for the canonical end-to-end
-call shape. Any external import of ``Masker`` / ``DataGenerator`` / ``run_graph``
-now fails fast.
+V2 NOTE: the V1 surface (``Masker``, ``DataGenerator``, ``run_graph``) was removed
+in S22 (2026-05-30). The engine is plan-first: validate a ``PipelineConfig``, profile
+the source, ``compile_plan``, then run the plan through an ``ExecutionAdapter`` (MASK)
+or ``generation.synthesize.generate_tables`` (GENERATE). See
+``tests/integration/golden/test_execution_e2e.py`` for the end-to-end call shape.
 """
 
 import logging
@@ -144,6 +135,8 @@ from decoy_engine.execution.native._companion_status import (
     NativeCompanionStatus,
     native_companion_status,
 )
+from decoy_engine.execution.out_of_core import resolve_conservative_ooc_budget_bytes
+from decoy_engine.execution.pipeline import detect_usable_cpus
 from decoy_engine.fileaccess import open_protected_dir, protected_scratch_dir
 from decoy_engine.generation import generated_table_to_pandas
 from decoy_engine.generation.composite import (
@@ -282,6 +275,7 @@ from decoy_engine.providers_v2.identifiers import (
 )
 from decoy_engine.reason_adapter import reason_from_exception, reasons_from_report
 from decoy_engine.reasons import ReasonContext, ReasonRecord
+from decoy_engine.records import DecodedRecord, OpaqueRecord, RecordError, RecordNeedsNewer
 from decoy_engine.relationships import (
     NamespaceBinding,
     NamespaceConfigError,
@@ -415,6 +409,7 @@ __all__ = [
     "ConnectorError",
     "CsvDialect",
     "DeclarationRequest",
+    "DecodedRecord",
     "DecoyError",
     "DetectorMatch",
     "DeterminismError",
@@ -454,6 +449,7 @@ __all__ = [
     "NamespaceRegistry",
     "NativeCompanionStatus",
     "NullCount",
+    "OpaqueRecord",
     "OrphanPolicy",
     "PandasExecutionAdapter",
     "PermanentError",
@@ -479,6 +475,8 @@ __all__ = [
     "RateSample",
     "ReasonContext",
     "ReasonRecord",
+    "RecordError",
+    "RecordNeedsNewer",
     "RelationshipEdge",
     "RelationshipGraph",
     "ReleasePhase",
@@ -537,6 +535,7 @@ __all__ = [
     "derive_index",
     "derive_outcome",
     "derive_value",
+    "detect_usable_cpus",
     "distribution_snapshot_document",
     "emit_fidelity",
     "emit_lineage",
@@ -580,6 +579,7 @@ __all__ = [
     "register_faker_provider",
     "register_faker_provider_v2",
     "register_secret_provider",
+    "resolve_conservative_ooc_budget_bytes",
     "resolve_csv_dialect",
     "run_config_only_checks",
     "run_discovery_sql",

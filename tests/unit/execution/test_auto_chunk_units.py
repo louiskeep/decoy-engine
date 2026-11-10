@@ -229,7 +229,9 @@ def test_run_auto_chunk_dispatcher_lane_returns_the_five_part_shape() -> None:
     assert isinstance(timings, tuple) and {t.column for t in timings} == {"r", "p"}
     assert conversion_ms == 0.0
     assert warnings == ()
-    assert metrics["auto_chunk"] == {"lane": "dispatcher", "lane_reason": None, "native_threads": 2}
+    stamp = dict(metrics["auto_chunk"])
+    assert stamp.pop("native_thread_clamp")["requested"] == 2  # E1b: the clamp record, host-bound
+    assert stamp == {"lane": "dispatcher", "lane_reason": None, "native_threads": 2}
     route = metrics["chunked_route"]
     assert route["table"] == "t"
     assert route["native_admitted"] is True and route["reroute_reason"] is None
@@ -246,7 +248,9 @@ def test_run_auto_chunk_legacy_lane_reports_the_same_shape_on_pandas() -> None:
     )
     assert outputs["t"].num_rows == support.ROWS and conversion_ms > 0.0
     assert {t.column for t in timings} == {"r", "p"}
-    assert metrics["auto_chunk"] == {
+    stamp = dict(metrics["auto_chunk"])
+    assert stamp.pop("native_thread_clamp")["requested"] == 7  # E1b: the clamp record, host-bound
+    assert stamp == {
         "lane": "legacy_oracle",
         "lane_reason": "dispatcher_disabled",
         "native_threads": 7,

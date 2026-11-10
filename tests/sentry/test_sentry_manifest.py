@@ -59,6 +59,7 @@ SENTRIES = (
     "tests/sentry/test_reason_baseline_frozen.py",
     "tests/sentry/test_reason_minor_fixtures.py",
     "tests/sentry/test_reason_policy_single_source.py",
+    "tests/sentry/test_record_export_rules.py",
     "tests/sentry/test_reason_registry.py",
     "tests/sentry/test_run_result_constructor.py",
     "tests/sentry/test_script_call_kwargs.py",
