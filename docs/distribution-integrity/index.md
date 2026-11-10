@@ -1,5 +1,7 @@
 # Distribution integrity: developer reference
 
+Status: current
+
 How the engine measures, copies and protects the statistical shape of data.
 This is the map for anyone changing `decoy_engine.quality`,
 `decoy_engine.generation.statistical`, or the code that calls them.

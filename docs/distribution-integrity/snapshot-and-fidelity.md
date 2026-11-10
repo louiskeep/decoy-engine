@@ -1,5 +1,7 @@
 # Snapshots, fidelity and the quality report
 
+Status: current
+
 [Back to the developer reference](index.md)
 
 The measurement half of the subsystem: summarize two frames, compare the
@@ -31,8 +33,15 @@ compute_distribution_snapshot(
     categorical_top_k=20,
     contingency_top_k=25,
     high_cardinality_columns=(),
+    fanout_columns=(),
+    cell_format=False,           # True adds a per-column `cell_format` block
 )
 ```
+
+`profiling._snapshot_values.distribution_snapshot_document` wraps it with
+`cell_format=True` and withholds the cell values of columns the profiler flags
+as sensitive (engine #420). Columns the profiler does not flag keep their
+values, including rare labels and exact `min` and `max`.
 
 Top-level shape:
 
@@ -107,6 +116,9 @@ A failed diagnostic does not stop scoring. It surfaces as report warnings.
 
 Aggregation:
 
+- Since engine #438 a column's `similarity` is `value_similarity` (the formula
+  above) times `missing_value_similarity` (`1 - |source null rate - output null
+  rate|`). For a DP source the missing score is reported and not applied.
 - `marginal.score` is the mean of comparable column similarities.
 - `pairwise.score` is the mean of comparable joint similarities.
 - `overall_score` is the equal-weight mean of the two. If only one exists it

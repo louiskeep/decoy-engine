@@ -1,5 +1,7 @@
 # Extending and open work
 
+Status: current
+
 [Back to the developer reference](index.md)
 
 Where to make common changes, the rules that constrain them, and the defects
@@ -88,29 +90,37 @@ Check whether it moves the certified profile. If it does, follow
 ## Open defects
 
 Measured in the ten-question QA pass, `docs/records/2026-11-10-cli-qa-generation-distribution-models.md`
-in the `decoy` repo. IDs below are that record's. It holds the evidence, the
-repro steps and a mapping to roadmap rows. Line numbers are for engine commit
-`44d6afe`.
+in the `decoy` repo, and re-tested on engine `5c24a75e`. IDs below are that
+record's. It holds the evidence, the repro steps, the re-test numbers and a
+mapping to roadmap rows. Line numbers are for engine commit `44d6afe`.
+
+### Fixed since the QA pass
+
+| ID | Fix | Re-test |
+|---|---|---|
+| C1 | Engine #421: the column seed includes table and column name. | No repeated rows for identical statistical or `pyint` columns; independent columns at -0.01. |
+| C3 (nulls) | Engine #438: `similarity` is value score times `missing_value_similarity`. | A 90% null column generated with no nulls now scores 0.096. |
+| H2 (engine) | Engine #434 and #436: `cell_format` records the null rate and the sampler applies it. | 10% and 90% nulls came out 9.7% and 90.2%. `decoy fit` does not write the block yet (roadmap row 24l). |
+| H3 (decimals) | Engine #436: rounded to the fitted decimal places. | Prices have 2 decimals; the shape defect stays open below. |
+| M3 (time part) | Engine #436: floored to the fitted resolution. | Date-only source gives dates; month shape stays open below. |
+| H6 (flagged columns) | Engine #420: `distribution_snapshot_document` withholds values of profiler-flagged columns. | Flagged `diagnosis` and `salary` withheld. `decoy fit` does not call it yet (roadmap row 24f). |
 
 ### Wrong data with no warning
 
 | ID | Defect | Where | Notes for a fix |
 |---|---|---|---|
-| C1 | Columns with identical config share a seed. Identical output for any generate type; statistical columns rank-lock (0.97). | `generators/derivation.py:57`, `:114`, `:213`; `generation/_statistical_column.py:76` | `name` is excluded on purpose so a rename keeps values. Candidates: mix in a per-table occurrence index for equal fingerprints, or always hash `source_column`. Any fix changes bytes for affected configs. Workaround today: distinct `source_column`. Roadmap row 24i. |
-| C2 | One outlier ruins a numeric column (mean 150 to 49,940). | `quality/snapshot.py:401`, `:449`, `:119`; `generation/statistical/_sample.py:160` | Equal-width bins over min to max. Options: quantile-based bins, winsorized range plus explicit tail mass, or sampling from the stored quantile grid. Changes snapshot bytes. |
-| H3 | Skew and discrete numerics distorted (median 19.9 to 91.5; 4 values to 20,000). | Same as C2 | A low-distinct numeric could keep exact values like a categorical. Needs the same disclosure gate. |
-| H1 | `condition_on` falls back silently when a parent's cells were truncated at 25. | `quality/snapshot.py:126`, `:547`; `generation/statistical/_sample.py:323` | Expose the cap; warn at fit when `cell_count` exceeds it and at compile when a parent has no cells. |
-| H2 | Null rates not reproduced. | `null_count` fitted at `quality/snapshot.py:232`, unused by `_sample.py:234` | Roadmap row 24l. `null_probability` on the column works today. |
+| C2 | One outlier ruins a numeric column (mean 150 to 50,084 on re-test). | `quality/snapshot.py:401`, `:449`, `:119`; `generation/statistical/_sample.py:160` | Equal-width bins over min to max. Options: quantile-based bins, winsorized range plus explicit tail mass, or sampling from the stored quantile grid. Changes snapshot bytes. Roadmap row 24u. |
+| H3 | Skew and discrete numerics distorted (median 20.5 to 92.1; 4 prices to 3,585 values with a `cell_format` block, 20,000 without). | Same as C2 | A low-distinct numeric could keep exact values like a categorical. Needs the same disclosure gate. Roadmap row 24u. |
+| H1 | `condition_on` falls back silently when a parent's cells were truncated at 25 (0.72% invented pairs on re-test). | `quality/snapshot.py:126`, `:547`; `generation/statistical/_sample.py:323` | Expose the cap; warn at fit when `cell_count` exceeds it and at compile when a parent has no cells. Roadmap row 24w. |
 | M2 | Unseen parent value falls back silently. | `_sample.py:323` | Same warning path as H1. |
-| M3 | Dates keep only the year mix and gain a time of day. | `quality/snapshot.py:487`; `_sample.py:327` | Month and weekday bins; emit date-only when the source is date-only. |
+| M3 | Dates keep only the year mix (66.5% January to 8.4% on re-test). | `quality/snapshot.py:487`; `_sample.py:327` | Month and weekday bins. |
 
 ### Measurement blind spots
 
 | ID | Defect | Where | Notes for a fix |
 |---|---|---|---|
-| C3 | Numeric similarity divides by the source range, so a wide range hides any error. The C2 file graded B; the outlier column scored 0.940 and its KS extra 0.997. | `quality/fidelity.py:366` (formula at `:19`) | Normalize by an interquantile range, or compare on a rank scale. Shape-only scoring caught it (0.102). Changing the score is a re-baseline of the platform contract. |
-| C3 | Nulls are in no score. | `quality/fidelity.py`, `quality/report.py:260` | Roadmap row 24l. Today only `diagnostic.null_drift` reports it. |
-| H5 | The generation warn-gate default (0.8) did not fire on the C2 file (0.979). | `generation/_fidelity_gate.py:52`; `config/_global_settings.py:116` | Inherits C3. Also logger-only; the CLI does not surface it. |
+| C3 | Numeric similarity divides by the source range, so a wide range hides any error. The C2 file graded B; the outlier column scored 0.940 (unchanged on re-test) and its KS extra 0.997. | `quality/fidelity.py:366` (formula at `:19`) | Normalize by an interquantile range, or compare on a rank scale. Shape-only scoring caught it (0.102). Changing the score is a re-baseline of the platform contract. Roadmap row 24v. |
+| H5 | The generation warn-gate default (0.8) did not fire on the C2 file (0.979; 0.861 on re-test with null scoring). | `generation/_fidelity_gate.py:52`; `config/_global_settings.py:116` | Inherits C3. Logger-only, and since #426 and #429 nothing is written unless the host configures logging; the CLI does not surface it. Roadmap row 24o. |
 | M5 | The in-run report and the CLI report infer kinds differently (C versus A on one run). | `execution/_pipeline_finalize.py:157`; CLI `report.py:1816` | One inference path, or record the kinds used in the report. |
 | F-DI0-1 | Chi-square unavailable on disjoint or constant categories. | `quality/_distribution_gof.py` | Primary `tvd` is correct for both. |
 | n/a | Unknown policy keys pass silently. | `quality/policy.py:142` | Malformed config is treated as no policy. A typo disables a gate. |
@@ -119,8 +129,8 @@ repro steps and a mapping to roadmap rows. Line numbers are for engine commit
 
 | ID | Defect | Where | Notes for a fix |
 |---|---|---|---|
-| H6 | A label held by one row is stored with `count: 1` and can be generated. Exact `min` and `max` are stored for numerics with no consent gate. | `quality/snapshot.py:464`, `:401`; gate at `generation/statistical/_spec.py:373` covers categories only | Roadmap row 24f. A minimum-count floor and rounded bounds are the usual controls. |
-| H7 | Free text with 30 or fewer distinct values is classed categorical, stored and emitted verbatim. | `quality/snapshot.py:133`, `:269` | Roadmap row 24f. |
+| H6 | A label held by one row is stored with `count: 1` and can be generated. Exact `min` and `max` are stored for numerics with no consent gate. #420 covers profiler-flagged columns only. | `quality/snapshot.py:464`, `:401`; gate at `generation/statistical/_spec.py:373` covers categories only | Roadmap row 24f. A minimum-count floor and rounded bounds are the usual controls. |
+| H7 | Free text with 30 or fewer distinct values is classed categorical, stored and emitted verbatim. Not flagged by the profiler, so #420 keeps it. | `quality/snapshot.py:133`, `:269` | Roadmap row 24f. |
 
 ### Differential privacy
 

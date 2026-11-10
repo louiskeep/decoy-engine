@@ -1,5 +1,7 @@
 # Differential privacy internals
 
+Status: current
+
 [Back to the developer reference](index.md)
 
 How `fit_dp_snapshot` produces a `dps-marginal/v3` release, how generation

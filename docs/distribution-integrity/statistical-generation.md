@@ -1,5 +1,7 @@
 # Statistical generation
 
+Status: current
+
 [Back to the developer reference](index.md)
 
 How a `type: statistical` generate column turns a snapshot into values.
@@ -59,14 +61,24 @@ or `flag` for a verified DP column. The sampler branches on it only to decode
 
 | Kind | Method | Source pattern |
 |---|---|---|
-| numeric | Pick a bin by cumulative `bin_counts`, then uniform within the bin. Integer dtypes are rounded and clamped. | Histogram inverse-CDF (Devroye 1986) |
+| numeric | Pick a bin by cumulative `bin_counts`, then uniform within the bin. Integer dtypes are rounded and clamped. With a `cell_format` block, rounded to the fitted `decimal_places`. | Histogram inverse-CDF (Devroye 1986) |
 | categorical | Weighted draw over `top_values`. `other_count` is redistributed or emitted. | |
-| datetime | Weighted year from `year_bins`, uniform timestamp in the year, clamped to `[min, max]`. | |
+| datetime | Weighted year from `year_bins`, uniform timestamp in the year, clamped to `[min, max]`. With a `cell_format` block, floored to the fitted `resolution` (day resolution emits `datetime.date`). | |
 | freetext | Length from the length histogram, filled with lorem tokens. No source tokens exist in the snapshot. | |
 | conditional | Draw from the joint row for the parent value; fall back to the marginal when the parent value has no cells. | Sequential conditional sampling (synthpop) |
 
 The numeric sampler uses only `bin_edges` and `bin_counts`. `quantiles`, `mean`
 and `std` are not used for sampling.
+
+When a column entry carries `cell_format` (`statistical/_cell_format.py`, engine
+#434 and #436), the sampler also draws a null with probability
+`null_count / row_count` and, for freetext, a blank with the fitted
+`blank_count` share. A column that sets `null_probability` skips the fitted
+null draw (`apply_nulls` is false), so one null mechanism acts on a column.
+Snapshots without the block, every DP snapshot included, generate the same
+bytes as before. `compute_distribution_snapshot(..., cell_format=True)` and
+`profiling._snapshot_values.distribution_snapshot_document` write the block;
+`decoy fit` in the CLI does not yet (roadmap row 24l).
 
 ## Determinism and seeds
 
@@ -74,26 +86,19 @@ One `random.Random` is reseeded per row with `col_seed + start + i`. Row `i`
 depends only on `(col_seed, i, spec, parent value)`, so any chunking gives
 byte-identical output.
 
-`col_seed` comes from `GenDeriveContext.for_column(...).base_int("np")`. Its
-root is derived from `strategy_config_fingerprint(column_config)`: the SHA-256
-of the column's canonical config, with `snapshot_file` replaced by the
-snapshot's content digest.
+`col_seed` comes from `GenDeriveContext.for_column(...).base_int("np")`. It
+derives from the job seed (or master key and label), the strategy config
+fingerprint (the SHA-256 of the column's canonical config, with
+`snapshot_file` replaced by the snapshot's content digest) and the column
+identity, table name plus column name (engine #421). Renaming a column or
+moving it to another table changes its values.
 
-### Known defect: identical configs share a seed
+### Fixed: identical configs shared a seed
 
-`strategy_config_fingerprint` excludes `name` (along with `null_probability`,
-`determinism`, `pooled`). Two statistical columns that differ only by `name`
-have the same fingerprint, the same `col_seed`, and therefore the same uniform
-draw on every row. Each marginal is correct; the columns are rank-locked.
-
-Measured on two independent source columns (correlation 0.02): generated
-correlation 0.97. The same holds for any generate type with identical config
-(`faker`, `categorical`), and with `--master-key`. With an explicit, distinct `source_column` on each column the
-fingerprints differ and the correlation is 0.02.
-
-The `name` exclusion is deliberate (renaming a column must not change its
-values), so the fix is not simply to hash `name`. Options are in
-[Extending](extending.md#open-defects).
+Before engine #421 the identity was not part of the seed, so two columns with
+identical settings drew the same values on every row (QA finding C1). A
+re-test on engine `5c24a75e` found no repeated rows for statistical or `pyint`
+columns and a correlation of -0.01 for two independent statistical columns.
 
 ## The fidelity warn-gate (`generation/_fidelity_gate.py`)
 
@@ -104,7 +109,9 @@ logs when the score is under `global_settings.fidelity_warn_threshold`
 (default 0.8).
 
 It is warn-only by design. It never raises, never mutates the table and never
-changes output bytes. A correct sampler can still score low: a `condition_on`
+changes output bytes. It logs through the `decoy_engine` logger only. Since
+engine #426 there is no default log file and #429 attaches a `NullHandler`, so
+the warning is lost unless the host configures logging. A correct sampler can still score low: a `condition_on`
 column that falls back to the marginal, or `other_mode: emit`.
 
 The CLI does not currently surface this warning in its run summary.
@@ -119,9 +126,9 @@ The CLI does not currently surface this warning in its run summary.
 
 | Limit | Reason |
 |---|---|
-| Sub-bin numeric detail, decimal precision | Uniform draw within 10 equal-width bins. |
-| Month, weekday or time-of-day patterns | Only `year_bins` are fitted. |
-| Null rates | `null_count` is stored but the samplers do not emit nulls. |
+| Sub-bin numeric detail | Uniform draw within 10 equal-width bins. Decimal places are kept only with a `cell_format` block. |
+| Month, weekday or time-of-day patterns | Only `year_bins` are fitted. A `cell_format` block keeps the resolution, not the pattern. |
+| Null rates without `cell_format` | A snapshot without the block emits no fitted nulls; only `null_probability` does. |
 | Categories beyond top-K | Collapsed into `other_count`. |
 | Dependence between columns | Only a fitted pair with `condition_on`; one parent per column. |
 | Cross-table fan-out | A snapshot describes one frame. `reference` columns do not read fitted key counts. |
