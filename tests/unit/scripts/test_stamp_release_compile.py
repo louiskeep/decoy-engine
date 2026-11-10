@@ -116,8 +116,8 @@ def test_compile_with_no_fragments_still_folds_the_unreleased_body(tmp_path: Pat
     "bad",
     [
         "no heading\n",
-        "### Added (a, b, c)\n\nx\n\n### Added (d, e, f)\n\ny\n",
-        "Breaking:\n### Added (a, b, c)\n",
+        "### Added (a, b, 2026-11-10)\n\nx\n\n### Added (d, e, 2026-11-10)\n\ny\n",
+        "Breaking:\n### Added (a, b, 2026-11-10)\n",
     ],
 )
 def test_compile_refuses_a_malformed_fragment_and_writes_nothing(tmp_path: Path, bad: str) -> None:
@@ -213,3 +213,65 @@ def test_compile_on_the_real_changelog_keeps_the_repo_changelog_tests_green(
     assert now == baseline
     assert text.count("### Breaking for consumers") >= 1
     assert "- alpha now breaks" in text
+
+
+def _clean_result(tmp_path: Path) -> tuple[str, str]:
+    r = _seed(tmp_path / "clean")
+    _add_three(r)
+    sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
+    pin = "tests/fixtures/changelog_released_sections.json"
+    return (r.path / "CHANGELOG.md").read_text(), (r.path / pin).read_text()
+
+
+@pytest.mark.parametrize("fail_at", [1, 2, 3, 4, 5])
+def test_failure_after_any_write_step_is_recoverable(
+    tmp_path: Path, monkeypatch, fail_at: int
+) -> None:
+    """Steps: pin write, CHANGELOG write, then one delete per fragment (5 in all)."""
+    expected = _clean_result(tmp_path)
+    r = _seed(tmp_path / "faulty")
+    _add_three(r)
+    calls = {"n": 0}
+    real_replace, real_remove = sr._replace, sr._remove
+
+    def tick() -> None:
+        calls["n"] += 1
+        if calls["n"] == fail_at:
+            raise OSError("injected")
+
+    monkeypatch.setattr(sr, "_replace", lambda p, t: (tick(), real_replace(p, t))[1])
+    monkeypatch.setattr(sr, "_remove", lambda p: (tick(), real_remove(p))[1])
+    with pytest.raises(OSError, match="injected"):
+        sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
+    monkeypatch.undo()
+
+    sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
+    pin = "tests/fixtures/changelog_released_sections.json"
+    assert ((r.path / "CHANGELOG.md").read_text(), (r.path / pin).read_text()) == expected
+    assert not list((r.path / "changelog.d").glob("[!R]*.md"))
+    sr.compile_fragments(r.path, "0.3.0", "2026-11-10")  # finished state: a no-op
+    assert (r.path / "CHANGELOG.md").read_text() == expected[0]
+
+
+def test_rerun_with_a_different_date_after_a_finished_compile_is_refused(tmp_path: Path) -> None:
+    r = _seed(tmp_path)
+    sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
+    with pytest.raises(sr.FragmentError, match="already"):
+        sr.compile_fragments(r.path, "0.3.0", "2026-11-11")
+
+
+def test_unrelated_fragment_beside_a_compiled_section_is_refused(tmp_path: Path) -> None:
+    r = _seed(tmp_path)
+    sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
+    r.commit({"changelog.d/late.md": fragment("Late text.", name="late")}, "feat: late")
+    with pytest.raises(sr.FragmentError, match="already"):
+        sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
+
+
+def test_refusals_carry_no_exception_context(tmp_path: Path) -> None:
+    r = _seed(tmp_path)
+    r.commit({"changelog.d/bad.md": "no heading\n"}, "feat: bad")
+    for version, date in (("0.3.0", "2026-02-30"), ("0.3.0", "2026-11-10")):
+        with pytest.raises(sr.FragmentError) as info:
+            sr.compile_fragments(r.path, version, date)
+        assert info.value.__context__ is None

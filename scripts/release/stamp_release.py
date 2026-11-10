@@ -38,12 +38,35 @@ PIN_FILE = Path("tests") / "fixtures" / "changelog_released_sections.json"
 BREAKING_HEADING = "### Breaking for consumers"
 
 _BREAKING_LINE = re.compile(r"Breaking: (?P<text>\S.*)")
-_HEADING = re.compile(rf"### (?:{'|'.join(TYPES)}) \(\S.*\)")
+_HEADING = re.compile(
+    rf"### (?:{'|'.join(TYPES)}) \((?P<title>\S.*), (?P<slice>[^,()\s][^,()]*), (?P<date>\d{{4}}-\d{{2}}-\d{{2}})\)"
+)
 _ANY_H3 = re.compile(r"###(?!#)")
 _SLUG = re.compile(r"[a-z0-9][a-z0-9-]*\.md")
 _VERSION = re.compile(r"\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?")
 _RELEASE = re.compile(r"^## \[(\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?)\] - \d{4}-\d{2}-\d{2}$", re.M)
 _ANY_H2 = re.compile(r"^## \[", re.M)
+
+
+def is_fragment_name(name: str) -> bool:
+    """The one file-name rule: `<slug>.md`, lowercase letters, digits and hyphens, not the README."""
+    return name != README and _SLUG.fullmatch(name) is not None
+
+
+def _heading_ok(line: str) -> bool:
+    m = _HEADING.fullmatch(line)
+    return m is not None and _valid_date(m.group("date"))
+
+
+def _valid_date(text: str) -> bool:
+    """A real calendar date written YYYY-MM-DD (fromisoformat alone also takes other forms)."""
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) is None:
+        return False
+    try:
+        datetime.date.fromisoformat(text)
+    except ValueError:
+        return False
+    return True
 
 
 class FragmentError(ValueError):
@@ -71,7 +94,7 @@ def parse_fragment(text: str) -> Fragment:
         i = 1
     while i < len(lines) and lines[i] == "":
         i += 1
-    if i >= len(lines) or _HEADING.fullmatch(lines[i]) is None:
+    if i >= len(lines) or not _heading_ok(lines[i]):
         raise FragmentError(
             f"line {i + 1}: expected the '### <Type> (<title>, <slice>, <date>)' heading"
         )
@@ -117,7 +140,7 @@ def _fragment_files(root: Path) -> list[str]:
     for p in sorted(folder.iterdir()):
         if p.name == README:
             continue
-        if not p.is_file() or _SLUG.fullmatch(p.name) is None:
+        if not p.is_file() or not is_fragment_name(p.name):
             raise FragmentError(f"{FRAGMENT_DIR}/{p.name}: not a '<slug>.md' fragment file")
         names.append(p.name)
     return names
@@ -131,6 +154,7 @@ def _newest_first(root: Path, names: list[str]) -> list[str]:
         root,
         "log",
         "--topo-order",
+        "--no-renames",
         "--diff-filter=A",
         "--name-only",
         "--format=",
@@ -192,16 +216,16 @@ def _replace(path: Path, text: str) -> None:
         raise
 
 
-def compile_fragments(root: Path, version: str, date: str) -> None:
-    """Fold the fragments and the old `[Unreleased]` body into a dated `version` section."""
-    if _VERSION.fullmatch(version) is None:
-        raise FragmentError("version must look like X.Y.Z")
-    try:
-        datetime.date.fromisoformat(date)
-    except ValueError:
-        raise FragmentError("date must be YYYY-MM-DD") from None
-    names = _fragment_files(root)
-    ordered = _newest_first(root, names)
+def _remove(path: Path) -> None:
+    path.unlink()
+
+
+def _section_of(text: str, version: str) -> str | None:
+    return next((sec for v, sec in release_sections(text) if v == version), None)
+
+
+def _parse_all(root: Path, ordered: list[str]) -> tuple[list[Fragment], str | None]:
+    """The parsed fragments in order, or a refusal message naming the first bad file."""
     fragments: list[Fragment] = []
     for name in ordered:
         try:
@@ -209,27 +233,62 @@ def compile_fragments(root: Path, version: str, date: str) -> None:
                 parse_fragment((root / FRAGMENT_DIR / name).read_text(encoding="utf-8"))
             )
         except FragmentError as err:
-            raise FragmentError(f"{FRAGMENT_DIR}/{name}: {err}") from None
+            return [], f"{FRAGMENT_DIR}/{name}: {err}"
+    return fragments, None
+
+
+def _compiled_into(section: str, date: str, version: str, fragments: list[Fragment]) -> bool:
+    """True when `section` is this release's section and already holds every fragment."""
+    if not section.startswith(f"## [{version}] - {date}\n"):
+        return False
+    return all(
+        f.block in section and (f.breaking is None or f"- {f.breaking}" in section)
+        for f in fragments
+    )
+
+
+def compile_fragments(root: Path, version: str, date: str) -> None:
+    """Fold the fragments and the old `[Unreleased]` body into a dated `version` section.
+
+    Writes go in an order that makes a rerun safe after any failure: the pin row first (it is
+    rewritten identically on a rerun), then CHANGELOG.md, then the fragment deletions. A rerun that
+    finds this release's section already holding every remaining fragment skips the CHANGELOG write
+    and finishes the pin and the deletions; a finished compile is a no-op.
+    """
+    if _VERSION.fullmatch(version) is None:
+        raise FragmentError("version must look like X.Y.Z")
+    if not _valid_date(date):
+        raise FragmentError("date must be a real YYYY-MM-DD date")
+    names = _fragment_files(root)
+    ordered = _newest_first(root, names) if names else []
+    fragments, problem = _parse_all(root, ordered)
+    if problem is not None:
+        raise FragmentError(problem)
 
     changelog_path = root / "CHANGELOG.md"
     before = changelog_path.read_text(encoding="utf-8")
-    if any(v == version for v, _ in release_sections(before)):
-        raise FragmentError("CHANGELOG.md already has a section for this version")
-    after = _compose(before, version, date, fragments)
+    existing = _section_of(before, version)
+    if existing is None:
+        text = _compose(before, version, date, fragments)
+    elif _compiled_into(existing, date, version, fragments):
+        text = before
+    else:
+        raise FragmentError("CHANGELOG.md already has a different section for this version")
 
+    sections = release_sections(text)
+    prev_version, prev_section = sections[1]
     pin_path = root / PIN_FILE
     pins = json.loads(pin_path.read_text(encoding="utf-8"))
-    sections = release_sections(after)
-    prev_version, prev_section = sections[1]
     pins = {
         prev_version: section_digest(prev_section),
         **{k: v for k, v in pins.items() if k != prev_version},
     }
 
-    _replace(changelog_path, after)
     _replace(pin_path, json.dumps(pins, indent=2) + "\n")
+    if text != before:
+        _replace(changelog_path, text)
     for name in ordered:
-        (root / FRAGMENT_DIR / name).unlink()
+        _remove(root / FRAGMENT_DIR / name)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -27,12 +27,16 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from scripts.release.stamp_release import FRAGMENT_DIR, FragmentError, parse_fragment  # noqa: E402
+from scripts.release.stamp_release import (  # noqa: E402
+    FRAGMENT_DIR,
+    README,
+    FragmentError,
+    is_fragment_name,
+    parse_fragment,
+)
 
-README = "README.md"
 EXEMPT_TYPES = frozenset({"test", "docs", "ci", "chore", "refactor"})
 _SUBJECT = re.compile(r"(?P<type>[a-z]+)(?:\([^()\s]*\))?(?P<bang>!)?: \S.*")
-_SLUG = re.compile(r"[a-z0-9][a-z0-9-]*\.md")
 
 
 class PreconditionError(RuntimeError):
@@ -71,10 +75,12 @@ def check(repo: Path, base: str) -> list[str]:
     problems: list[str] = []
     added = 0
     for status, path in changes:
-        if not path.startswith(prefix) or path == prefix + README or status == "D":
+        if not path.startswith(prefix) or status == "D":
             continue
         name = path[len(prefix) :]
-        if _SLUG.fullmatch(name) is None:
+        if name == README:
+            continue
+        if not is_fragment_name(name):
             problems.append(f"{path}: not a '<slug>.md' fragment file name")
             continue
         try:

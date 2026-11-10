@@ -69,11 +69,11 @@ def test_a_diff_that_leaves_src_alone_passes(repo, capsys) -> None:
     "text",
     [
         "no heading at all\n",
-        "### Added (a, b, c)\n\ntext\n\n### Changed (d, e, f)\n\ntext\n",
-        "Breaking:\n\n### Added (a, b, c)\n\ntext\n",
-        "Breaking: x\nsecond line\n### Added (a, b, c)\n",
-        "stray line\n### Added (a, b, c)\n\ntext\n",
-        "### Added (a, b, c) trailing\n",
+        "### Added (a, b, 2026-11-10)\n\ntext\n\n### Changed (d, e, 2026-11-10)\n\ntext\n",
+        "Breaking:\n\n### Added (a, b, 2026-11-10)\n\ntext\n",
+        "Breaking: x\nsecond line\n### Added (a, b, 2026-11-10)\n",
+        "stray line\n### Added (a, b, 2026-11-10)\n\ntext\n",
+        "### Added (a, b, 2026-11-10) trailing\n",
         "",
     ],
 )
@@ -107,3 +107,36 @@ def test_checker_holds_no_fragment_grammar_of_its_own() -> None:
         and getattr(n, "attr", getattr(n, "id", "")) == "parse_fragment"
         for n in ast.walk(tree)
     )
+
+
+def test_checker_holds_no_file_name_rule_of_its_own() -> None:
+    """The `<slug>.md` rule and the README name come from stamp_release, like the heading."""
+    tree = ast.parse((REPO / "scripts" / "dev" / "check_fragment.py").read_text(encoding="utf-8"))
+    literals = [
+        n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    ]
+    assert not [s for s in literals if "a-z0-9" in s or s.endswith(".md")]
+    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    assert "is_fragment_name" in names
+
+
+def test_renamed_fragment_passes_the_check_and_compiles(repo, capsys, tmp_path) -> None:
+    """One rule for both tools: a path is ordered by the commit that created it."""
+    from scripts.release import stamp_release as sr
+
+    repo.commit({"changelog.d/old-name.md": fragment("Renamed text.")}, "feat: add fragment")
+    repo.git("mv", "changelog.d/old-name.md", "changelog.d/new-name.md")
+    repo.git("commit", "-q", "-m", "docs: rename fragment")
+    repo.commit({SRC: "x = 2\n"}, "feat: change src")
+    assert _run(repo, capsys)[0] == 0
+
+    repo.commit(
+        {
+            "CHANGELOG.md": "# C\n\n## [Unreleased]\n\n## [0.1.0] - 2026-10-01\n\n- first\n",
+            "tests/fixtures/changelog_released_sections.json": "{}\n",
+        },
+        "chore: seed changelog",
+    )
+    sr.compile_fragments(repo.path, "0.2.0", "2026-11-10")
+    assert "Renamed text." in (repo.path / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert not (repo.path / "changelog.d" / "new-name.md").exists()
