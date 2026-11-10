@@ -128,7 +128,7 @@ class PinnedPlan:
                     )
                     for s in data["statistical"]
                 ),
-                numeric_types=tuple(_numeric_entry(n) for n in data.get("numeric_types") or []),
+                numeric_types=_numeric_types(data),
             )
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
             raise PinnedModeError(
@@ -140,11 +140,23 @@ class PinnedPlan:
 NUMERIC_TYPE_NAMES = frozenset({"int64", "float64"})
 
 
+def _numeric_types(data: dict[str, Any]) -> tuple[tuple[str, str, str], ...]:
+    """Decode the optional field strictly: absent means none; present must be a list of entries."""
+    if "numeric_types" not in data:
+        return ()
+    raw = data["numeric_types"]
+    if not isinstance(raw, list):
+        raise TypeError("numeric_types is not a list")
+    return tuple(_numeric_entry(n) for n in raw)
+
+
 def _numeric_entry(n: Any) -> tuple[str, str, str]:
+    if not isinstance(n, (list, tuple)) or len(n) != 3 or not all(isinstance(v, str) for v in n):
+        raise TypeError("numeric_types entry is not three strings")
     table, column, dtype = n
-    if str(dtype) not in NUMERIC_TYPE_NAMES:
+    if dtype not in NUMERIC_TYPE_NAMES:
         raise ValueError("unknown numeric type")
-    return (str(table), str(column), str(dtype))
+    return (table, column, dtype)
 
 
 def runtime_identity() -> tuple[tuple[str, str], ...]:

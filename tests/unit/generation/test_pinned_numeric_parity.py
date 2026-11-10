@@ -117,3 +117,28 @@ def test_unknown_numeric_type_name_is_a_malformed_plan() -> None:
     data["numeric_types"] = [["people", "id", "decimal"]]
     with pytest.raises(PinnedModeError):
         PinnedPlan.from_dict(data)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        False,
+        None,
+        0,
+        "",
+        {},
+        {"people": "int64"},
+        [["people", "id"]],
+        [["people", "id", "int64", "x"]],
+        [["people", 1, "int64"]],
+        [[None, "id", "int64"]],
+        ["people.id.int64"],
+    ],
+)
+def test_a_present_but_malformed_numeric_types_field_is_refused(bad: Any) -> None:
+    from decoy_engine._reference_date import PinnedModeError
+
+    data = compile_pinned_plan(_cfg(REFCOL), REF).to_dict()
+    data["numeric_types"] = bad
+    with pytest.raises(PinnedModeError):
+        PinnedPlan.from_dict(data)
