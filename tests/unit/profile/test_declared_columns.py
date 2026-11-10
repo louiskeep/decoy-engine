@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import inspect
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ from decoy_engine.profile import (
     source_columns,
 )
 from decoy_engine.profile._declared_columns import DeclarationInput, arrow_columns
+from tests._declared_schema import declare_rest
 
 MARK_A, MARK_B = "zz_marker_a", "zz_marker_b"
 
@@ -101,7 +103,7 @@ def _descriptor(kind: str, tmp: Path) -> dict[str, Any]:
 )
 def test_source_columns_match_profile(kind: str, tmp_path: Path) -> None:
     descriptor = _descriptor(kind, tmp_path)
-    config = _config({"t": descriptor}, [])
+    config = declare_rest(_config({"t": descriptor}, []))
     profiled = profile_source(config, seed=0).tables[0]
     assert source_columns(descriptor, table="t") == tuple(c.name for c in profiled.columns)
     for name in (
@@ -416,7 +418,9 @@ def test_declared_columns_agree_with_de03(tmp_path: Path) -> None:
             path = tmp_path / f"{name}.csv"
             path.write_text(",".join(names) + "\n" + ",".join("1" for _ in names) + "\n")
             config["sources"][name] = _csv(path)
-        profile = profile_source(config, seed=0)
+        # The gate would refuse the columns the config leaves out, so profile a copy that
+        # lists them and compile the original against that profile.
+        profile = profile_source(declare_rest(copy.deepcopy(config)), seed=0)
         plan = compile_plan(config, profile, decoy_engine_version="0")
         for name in tables:
             assert set(declared_columns(config, name)) - _drops(config, name) == set(

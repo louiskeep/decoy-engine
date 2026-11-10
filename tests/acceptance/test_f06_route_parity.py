@@ -558,6 +558,8 @@ def _int_only(tmp_path: Path, policy: str) -> dict[str, Any]:
     cfg = _cfg(tmp_path, policy)
     table = cfg["tables"][0]
     table["columns"] = [c for c in table["columns"] if c["name"] != "start"]
+    # The source file drops `start` too, so the config still lists every column it holds.
+    write_csv(tmp_path / "g.csv", ["id", "age"], [["1", "1"]])
     return cfg
 
 

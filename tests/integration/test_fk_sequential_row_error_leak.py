@@ -574,6 +574,7 @@ class TestSequentialMultiTableQuarantineJsonlNotClobbered:
             ],
             "quarantine": {"enabled": True, "output_path": qpath, "triggers": ["format_error"]},
         }
+        declare_rest(config)
         sources = _sources(config)
         sink = ParquetTransactionalSink(tmp_path / "out")
 

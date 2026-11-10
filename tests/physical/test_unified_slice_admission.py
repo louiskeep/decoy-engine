@@ -199,6 +199,9 @@ def test_cheap_admission_declines_undeclared_passthrough_column(tmp_path: Path) 
     )
     config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
     profile, _ = _profile_and_plan(config, source)
+    # The declaration gate refuses this config before any run, so the fixture drops the column
+    # the builder declared and calls the admission check directly: the check stays a second guard.
+    config["tables"][0]["columns"] = [{"name": "c", "strategy": "passthrough"}]
     assert _cheap_ok(config, profile, source) is None
 
 

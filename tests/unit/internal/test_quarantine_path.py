@@ -169,6 +169,7 @@ def test_out_of_core_route_receives_the_given_path(
         return real(**kwargs)
 
     monkeypatch.setattr(dispatch._route_exec, "run_out_of_core_route", spy)
+    declare_rest(config, sources)
     before = copy.deepcopy(config)
     run_pipeline(
         config,

@@ -458,6 +458,7 @@ def test_the_declaration_gate_refuses_before_the_group_call(tmp_path: Path) -> N
             "small": (mt.std_columns("small_ns"), small),
         },
     )
+    cfg["tables"][1]["columns"] = [c for c in cfg["tables"][1]["columns"] if c["name"] != "extra"]
     for policy in ("error", "warn"):
         cfg["global_settings"]["unconfigured_column_policy"] = policy
         for extra in ({}, mt.off_kw()):

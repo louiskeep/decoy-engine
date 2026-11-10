@@ -36,7 +36,7 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.config import PipelineConfig
-from decoy_engine.errors import RowErrorsFailedError
+from decoy_engine.errors import PipelineValidationError, RowErrorsFailedError
 from decoy_engine.execution import ExecutionError, run_pipeline
 from tests._declared_schema import declare_rest
 from tests.native._chunked_entry_support import force_oracle, forced_reason
@@ -715,9 +715,11 @@ class TestFailClosed:
         sources["extra"] = pa.Table.from_pandas(
             pd.DataFrame({"x": [1, 2, 3]}), preserve_index=False
         )
-        auto, forced = _run_pair(cfg, sources, monkeypatch, explain_plan=True)
-        _assert_full_frame_and_identical(auto, forced, "accounts", "extra")
-        assert auto.outputs["extra"].equals(forced.outputs["extra"])
+        # The declaration gate (CONFIG-EXPLICIT E2c) refuses a loaded table the config does not
+        # declare, so no route ever sees an extra frame.
+        with pytest.raises(PipelineValidationError) as refused:
+            _run_pair(cfg, sources, monkeypatch, explain_plan=True)
+        assert refused.value.code == "source_file.undeclared_table"
 
     def test_composite_provider_rejected_by_planner(self, tmp_path, monkeypatch):
         """A composite (coherent_with) provider that satisfies the per-column

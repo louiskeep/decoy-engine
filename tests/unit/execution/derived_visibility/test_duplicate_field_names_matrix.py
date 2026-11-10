@@ -241,6 +241,7 @@ def _e1(tmp_path: Path, route: str, kind: str, work: str, *, dup: str | None) ->
         descriptor, runtime = clean, _child(dup=dup)
     cfg = _config(tmp_path, work, descriptor)
     sources, loader = _sources(kind, tmp_path, runtime)
+    declare_rest(cfg, sources or {"child": runtime, "parent": _parent()})
     return run_pipeline(
         cfg,
         sources,
@@ -487,10 +488,12 @@ def _isolated(
     else:
         descriptor, runtime = clean, (child if child is not None else _child(dup=dup))
     cfg = _config(tmp_path, cell.work, descriptor)
+    tables = {"parent": _parent(), "child": runtime}
+    declare_rest(cfg, tables)
     spawned: list[int] = []
     result = run_pipeline_isolated(
         cfg,
-        {"parent": _parent(), "child": runtime},
+        tables,
         engine_version=ENGINE_VERSION,
         execution_mode=cell.route,
         isolate=isolate,

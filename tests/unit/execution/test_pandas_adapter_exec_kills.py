@@ -58,7 +58,9 @@ def _compile(config: dict[str, Any]):
         build_relationship_graph,
         check_orphan_fk_policy_completeness,
     )
+    from tests._declared_schema import declare_rest
 
+    declare_rest(config)
     job_seed = _normalize_job_seed_int(config)
     profile = profile_source(config, seed=job_seed)
     plan = compile_plan(config, profile, decoy_engine_version="0.1.0")

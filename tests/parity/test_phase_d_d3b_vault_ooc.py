@@ -733,6 +733,7 @@ def test_all_null_vaulted_column_adds_no_entries(tmp_path: Path) -> None:
     only_empty = [_h("id", "ns"), _h("empty", "empty_ns", vault=True)]
     cfg, tables = standard(tmp_path, parent_vault=only_empty)
     cfg["tables"][1]["columns"] = [c for c in cfg["tables"][1]["columns"] if "vault" not in c]
+    declare_rest(cfg)
     ooc, writer = run(cfg, tables)
     assert mode(ooc)[0] == "out_of_core"
     assert writer._entries == set()

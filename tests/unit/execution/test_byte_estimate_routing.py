@@ -848,6 +848,7 @@ class TestEndToEndWiring:
                 ],
             }
             sources = {n: pq.read_table(s["path"]) for n, s in config["sources"].items()}
+            declare_rest(config, sources)
             try:
                 result = run_pipeline(
                     config,
