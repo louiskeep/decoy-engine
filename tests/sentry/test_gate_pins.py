@@ -7,7 +7,11 @@ missing paths, silently drop the pin. This sentry fails first and names the path
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "unit" / "scripts"))
+from _gates_harness import read_pins
 
 ROOT = Path(__file__).resolve().parents[2]
 PINS = ROOT / "scripts" / "dev" / "gate_pins.txt"
@@ -15,8 +19,7 @@ GATES = ROOT / "scripts" / "dev" / "gates.sh"
 
 
 def _paths() -> list[str]:
-    lines = (ln.split("#")[0].strip() for ln in PINS.read_text().splitlines())
-    return [ln for ln in lines if ln]
+    return read_pins(PINS)
 
 
 def test_list_is_not_empty() -> None:
@@ -42,4 +45,6 @@ def test_no_duplicates() -> None:
 
 
 def test_gates_reads_the_list() -> None:
+    # Only that gates.sh names this file. The behavior (every pin joins a selected run) is
+    # proved in tests/unit/scripts/test_gates_pins.py.
     assert "PINS_FILE=scripts/dev/gate_pins.txt" in GATES.read_text()

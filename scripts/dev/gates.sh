@@ -159,7 +159,13 @@ changed_tests() {
         tests/*test_*.py) echo "$f" ;;
         $SRC_MATCH)
           mod=${f#"$SRC_STRIP"}; mod=${mod%.py}; mod=${mod%/__init__}; mod=${mod//\//.}
-          (cd "$ROOT" && grep -rlE --include='test_*.py' "${mod//./\\.}([^A-Za-z0-9_]|\$)" tests || true) ;;  # no match is normal, not a failed selection
+          (cd "$ROOT" && grep -rlE --include='test_*.py' "${mod//./\\.}([^A-Za-z0-9_]|\$)" tests || true)  # no match is normal, not a failed selection
+          # `from a.b import c` (also parenthesized, aliased) never spells a.b.c: select files that
+          # import from the parent package AND mention the leaf as a whole word. Over-selects slightly.
+          case $mod in
+            *.*) (cd "$ROOT" && { grep -rlE --include='test_*.py' "from[[:space:]]+$(printf '%s' "${mod%.*}" | sed 's/\./\\./g')[[:space:]]+import" tests 2>/dev/null |
+                   xargs -r grep -lw -- "${mod##*.}" 2>/dev/null; } || true) ;;
+          esac ;;
         *)
           # Other code (scripts, native, fixtures): select tests that name the file. No match is
           # normal here; code_changed then makes the gate fail rather than skip.
@@ -218,7 +224,7 @@ EOT
     # that selects nothing fails below, and a docs-only diff has nothing to pin.
     [ -f "$ROOT/$PINS_FILE" ] || { echo "gates: FAIL: pin list missing: $PINS_FILE" >&2; exit 2; }
     while IFS= read -r p; do
-      p=${p%%#*}; p=${p//[[:space:]]/}
+      p=${p%%#*}; p=${p#"${p%%[![:space:]]*}"}; p=${p%"${p##*[![:space:]]}"}
       [ -n "$p" ] || continue
       [ -e "$ROOT/$p" ] || { echo "gates: FAIL: pinned test path not found: $p ($PINS_FILE)" >&2; exit 2; }
       PATHS+=("$p")

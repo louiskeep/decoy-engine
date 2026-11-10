@@ -5,7 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from _gates_harness import BASH, GIT, diff_clone, gates, pytest_argvs, recording_venv
+from _gates_harness import (
+    BASH,
+    GIT,
+    diff_clone,
+    gates,
+    pytest_argvs,
+    read_pins,
+    recording_venv,
+)
 
 pytestmark = pytest.mark.skipif(BASH is None or GIT is None, reason="needs bash and git")
 
@@ -14,8 +22,7 @@ PINS = REPO / "scripts" / "dev" / "gate_pins.txt"
 
 
 def _pinned() -> list[str]:
-    lines = (ln.split("#")[0].strip() for ln in PINS.read_text().splitlines())
-    return sorted(ln for ln in lines if ln)
+    return read_pins(PINS)
 
 
 def _tests_argv(log: Path) -> list[str]:
@@ -49,3 +56,16 @@ def test_missing_pin_fails_the_gate(tmp_path: Path) -> None:
     venv, _ = recording_venv(tmp_path)
     rc, out = gates(clone, venv, "--steps", "tests")
     assert rc == 2 and "pinned test path not found: tests/unit/absent_pin.py" in out, out
+
+
+def test_shards_partition_selection_plus_pins(tmp_path: Path) -> None:
+    clone = diff_clone(tmp_path, {"tests/_x/test_probe.py": "def test_ok():\n    pass\n"})
+    venv, log = recording_venv(tmp_path)
+    seen: list[list[str]] = []
+    for shard in ("1/2", "2/2"):
+        log.unlink(missing_ok=True)
+        rc, out = gates(clone, venv, "--steps", "tests", "--shard", shard, GATES_WORKERS="1")
+        assert rc == 0, out
+        seen.append(_tests_argv(log))
+    assert not set(seen[0]) & set(seen[1]), "a test ran in both shards"
+    assert set(seen[0]) | set(seen[1]) == {"tests/_x/test_probe.py", *_pinned()}

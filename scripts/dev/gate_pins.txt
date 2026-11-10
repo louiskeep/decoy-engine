@@ -1,9 +1,9 @@
 # Always-on gate tests: scripts/dev/gates.sh adds every path below to each impact-selected run,
-# whatever changed. They pin output (route baselines, golden and digest pins) or a refactor
-# invariant (H-1 definition owners) and are reached by name-based selection only by luck:
-# main went red when a function-local import (#438) or a definition-only check (#440) slipped
-# past it. One path per line (a file or a directory); `#` starts a comment.
-# tests/sentry/test_gate_pins.py fails when a path here no longer exists.
+# whatever changed. They are for output-pinning tests (route baselines, golden and digest pins, a
+# refactor invariant) that no name-based selection can find, because they read output rather than
+# import the changed module. They are not a fallback for imports the selector misses; fix the
+# selector (changed_tests) for those. One path per line (a file or a directory); `#` starts a
+# comment. tests/sentry/test_gate_pins.py fails when a path here no longer exists.
 
 # H-1 definition owners
 tests/unit/test_wave_b_definition_owners.py
