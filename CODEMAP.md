@@ -150,6 +150,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | Engine audit | Maintained in the commercial platform repo |
 | Remediation plan | Maintained in the commercial platform repo |
 | Public exports | `src/decoy_engine/__init__.py` |
+| Distribution integrity (snapshots, fidelity report, statistical generation, DP fit) | [docs/distribution-integrity/index.md](docs/distribution-integrity/index.md) |
 | Identifier validators/adapters/domains | `src/decoy_engine/identifiers.py` |
 | Check-digit validation and FPE checksum support | `src/decoy_engine/checksums.py` |
 | Expression parser (closed grammar, `derived`/`case_when`) | `src/decoy_engine/expressions/_lark_parser.py` (`compile_expr`, `evaluate`, `CompiledExpression`) |
