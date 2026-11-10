@@ -61,6 +61,7 @@ _DEFAULT_REMEDY = "Lower row_count, drop unique, or use a source with more value
 _REMEDY = {
     "pool sample": "Lower the output row count, or use a pool with more distinct values.",
     "bundle sample": "Lower the output row count, or use a bundle pool with more distinct tuples.",
+    "faker value": "Use a provider that returns plain values (text, numbers, dates, lists or dicts of those), or drop unique.",
 }
 
 
@@ -95,6 +96,11 @@ def raise_uniqueness_impossible(
     what = f"unique {kind}" if kind is not None else "unique values"
     message = f"{where}: {what} needs {needed:,} distinct value(s) but only {available:,} exist"
     if row is not None:
-        message += f"; the domain ran out at row {_count('row', row) + 1:,}"
+        verb = (
+            "a value that cannot be compared came at"
+            if kind == "faker value"
+            else "the domain ran out at"
+        )
+        message += f"; {verb} row {_count('row', row) + 1:,}"
     message += f". {_REMEDY.get(kind or '', _DEFAULT_REMEDY)}"
     raise GenerationError(code=reasons.runtime.UNIQUENESS_IMPOSSIBLE, message=message)

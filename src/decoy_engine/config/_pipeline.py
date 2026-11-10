@@ -40,9 +40,11 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
-from pydantic_core import PydanticCustomError
+from pydantic_core import PydanticCustomError, ValidationError
 
 from decoy_engine import reasons
+from decoy_engine.config._generate_options import problem_details
+from decoy_engine.config._generate_unique import cross_table_unique_problems
 from decoy_engine.config._global_settings import GlobalSettings
 from decoy_engine.config._namespaces import NamespaceConfig
 from decoy_engine.config._post_scan import PostScanConfig
@@ -321,6 +323,36 @@ class PipelineConfig(BaseModel):
                     state[parent_name] = GRAY
                     path.append(parent_name)
                     stack.append((parent_name, iter(deps.get(parent_name, ()))))
+        return self
+
+    @model_validator(mode="after")
+    def _unique_domains_valid(self) -> PipelineConfig:
+        """GEN-UNIQUE: a unique reference or junction pair cannot exceed its parents' row counts.
+
+        Uses each parent's declared `row_count`, an upper bound on its key count. The real
+        distinct key count is known only after generation, and the run re-checks it.
+        """
+        if not any(
+            t.unique_together
+            or any((c.model_extra or {}).get("unique") is True for c in t.generate_columns)
+            for t in self.tables
+        ):
+            return self
+        tables = [
+            {
+                "name": t.name,
+                "row_count": t.row_count,
+                "unique_together": t.unique_together,
+                "generate_columns": [
+                    {**(c.model_extra or {}), "name": c.name, "type": c.type}
+                    for c in t.generate_columns
+                ],
+            }
+            for t in self.tables
+        ]
+        problems = cross_table_unique_problems(tables)
+        if problems:
+            raise ValidationError.from_exception_data("PipelineConfig", problem_details(problems))
         return self
 
     @model_validator(mode="after")

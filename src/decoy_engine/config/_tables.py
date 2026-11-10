@@ -48,6 +48,11 @@ from decoy_engine.config._generate_options import (
     option_problems,
     problem_details,
 )
+from decoy_engine.config._generate_unique import (
+    column_conflict_problems,
+    table_unique_problems,
+    unique_type_problems,
+)
 from decoy_engine.config._transforms import TransformOp
 from decoy_engine.errors import ConfigRuleError
 
@@ -304,7 +309,12 @@ class GenerateColumnConfig(BaseModel):
         ``config/_generate_options.py``. ``extra="allow"`` stays so the options ride flat and the
         dump is unchanged; this validator only reads ``model_extra``.
         """
-        problems = option_problems(self.type, self.model_extra or {})
+        extras = self.model_extra or {}
+        problems = option_problems(self.type, extras)
+        # `unique` is accepted per type, and cannot combine with the options that sample with
+        # replacement. `pooled` is a declared field, so it is passed in.
+        problems += unique_type_problems(self.type, extras)
+        problems += column_conflict_problems(self.type, extras, pooled=self.pooled)
         # `pooled` is a faker-only build-strategy toggle. `is not None`, not field presence:
         # `model_dump()` stamps `pooled: null` on every generate column, so a dumped non-faker
         # column must revalidate. With StrictBool only a real bool reaches here.
@@ -353,6 +363,24 @@ class TableConfig(BaseModel):
     # the mask side (Phase B + a follow-up enables generate-side transforms).
     # The cap bounds derived-column width growth (each derive can add a column).
     transforms: list[TransformOp] = Field(default_factory=list, max_length=32)
+    # GEN-UNIQUE: pairs of `reference` columns of this generate table whose value pairs must not
+    # repeat (SQL `UNIQUE (a, b)`). Omitted from dumps when empty, so existing configs keep their
+    # serialized bytes.
+    unique_together: list[list[str]] = Field(default_factory=list)
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> Any:
+        """Keep the serialization-mode JSON schema field-enumerating (see `_omit_empty_pairs`)."""
+        from decoy_engine.config._declared_casting import recover_serialization_schema
+
+        return recover_serialization_schema(core_schema, handler)
+
+    @model_serializer(mode="wrap")
+    def _omit_empty_pairs(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if not data.get("unique_together"):
+            data.pop("unique_together", None)
+        return data
 
     @model_validator(mode="after")
     def _generate_names_unique(self) -> TableConfig:
@@ -368,6 +396,26 @@ class TableConfig(BaseModel):
                     )
                 )
             seen.add(col.name)
+        if problems:
+            raise ValidationError.from_exception_data("TableConfig", problem_details(problems))
+        return self
+
+    @model_validator(mode="after")
+    def _unique_rules(self) -> TableConfig:
+        """`unique_together` shape and categorical domain sizes (GEN-UNIQUE, per table)."""
+        if not self.unique_together and not any(
+            (c.model_extra or {}).get("unique") is True for c in self.generate_columns
+        ):
+            return self
+        table = {
+            "row_count": self.row_count,
+            "unique_together": self.unique_together,
+            "generate_columns": [
+                {**(c.model_extra or {}), "name": c.name, "type": c.type}
+                for c in self.generate_columns
+            ],
+        }
+        problems = table_unique_problems(table)
         if problems:
             raise ValidationError.from_exception_data("TableConfig", problem_details(problems))
         return self
