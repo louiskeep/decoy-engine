@@ -334,6 +334,7 @@ class TestFakerParityV1:
         }
         assert _v2_run(col, 10) == _v1_run(col, 10, numeric=True)
 
+    @pytest.mark.usefixtures("lenient_generate_checks")
     def test_unknown_faker_type_falls_back_to_word(self):
         # V1: unknown faker_type silently falls back to providers["word"]
         # (columns.py:246-247). The v2 mirrors the silent fallback.
@@ -802,6 +803,7 @@ def _v2_run_single_table(gcols: list[dict], n: int, seed: int = 42, derive_key=N
     return {c: tbl.column(c).to_pylist() for c in tbl.column_names}
 
 
+@pytest.mark.usefixtures("lenient_generate_checks")
 class TestReferencedFormulaPostPass:
     """BF3: a ``formula`` column carrying ``references: [...]`` is filled by an
     in-memory declared-order post-pass (ColumnGenerator.fill_referenced_formula_column)
@@ -1553,6 +1555,7 @@ class TestReferenceEdgeCases:
             },
         ]
 
+    @pytest.mark.usefixtures("lenient_generate_checks")
     def test_weighted_size_mismatch_falls_back_to_uniform(self):
         # parent pool has 5 unique values; weights has only 3 -> V1 sets weights
         # to None (uniform). v2 mirrors.

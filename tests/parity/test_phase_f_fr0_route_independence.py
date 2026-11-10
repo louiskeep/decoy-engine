@@ -198,6 +198,8 @@ def test_core_values_equal_the_legacy_whole_table_generator(rows: int, cuts: lis
 
 _CHILD = """
 import json, sys
+import decoy_engine.plan._compile as _compile
+_compile.check_generate_columns = lambda *a, **k: None  # the fixture pins the runtime fallback
 from tests.parity import _f0_fixtures as fx
 from tests.parity._f0_canonical import table_fingerprint
 out = {}

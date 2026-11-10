@@ -20,9 +20,9 @@ from tests.unit.generation.unique._gu_corpus import CORPUS, digests
 
 PINNED = {
     "all_basic_types": {
-        "cells": "1f5c4a2f626e7917e8ba2b4978ccac968c7f9234076364d40a9cfe74ef975cca",
-        "config_json": "1a7a3630c78e0ea1f924f26b6d12248be77aada420e34bc1eccfe9f42f823351",
-        "fingerprints": "42e2831b6ec3f309cba7df47c4a6d7e38bec722d64da7aa09d9408059ac6c72e",
+        "cells": "c7ea7449a95cb1740c336f96421aa53acb924b3760ec007f1bea1e81f5434fe6",
+        "config_json": "c82643e094caf6665bf2a292cda6561eb89766a1292e244a818c86ce2b45f074",
+        "fingerprints": "d25f1cc532c7beae91e731d26bcb92d754e62641192ee872bd4097a74a458fdd",
     },
     "pooled_and_opted_out": {
         "cells": "090b25b7223a2c086173164bfa22ed505f9e3fe5ee3f33626c7486273a672a4e",

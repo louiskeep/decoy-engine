@@ -109,7 +109,7 @@ ALLOWLIST: dict[str, int] = {
     # compile-check ownership table; split into per-strategy check modules once the check set stabilises.
     "src/decoy_engine/plan/_checks.py": 712,
     # statistical-column check threading; same per-strategy-check decomposition target as _checks.py.
-    "src/decoy_engine/plan/_compile.py": 700,
+    "src/decoy_engine/plan/_compile.py": 666,
     # dispatch entry plus the table-keyed params, the job-seed hand-off and the eager string-pool
     # check for the position-keyed faker; dense exception, the pool check itself lives in _chunk_masking.
     # OBS-2: threads the decline records and branch-call snapshot onto each chunk's evidence.

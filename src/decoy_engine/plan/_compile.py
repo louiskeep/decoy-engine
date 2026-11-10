@@ -51,7 +51,6 @@ from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._checks import (
     check_basic_uniqueness_pre_flight,
     check_composite_columns_length_match,
-    check_derived_column_refs,
     check_fpe_checksum_scheme,
     check_non_poolable_provider_with_pool_backend,
     check_null_bearing_int_unsupported,
@@ -74,18 +73,14 @@ from decoy_engine.plan._checks_date_shift import (
     check_date_shift_group_by_refs,
 )
 from decoy_engine.plan._checks_declared_casting import compile_declared_casting_contract
-from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
 from decoy_engine.plan._checks_dp import check_dp_generate_contract
 from decoy_engine.plan._checks_faker import check_faker_requires_provider
 from decoy_engine.plan._checks_fpe import check_fpe_charset_config
 from decoy_engine.plan._checks_fpe_join import check_fpe_join_groups
 from decoy_engine.plan._checks_freetext_advisory import check_freetext_advisory
-from decoy_engine.plan._checks_group_key import check_group_key_refs
-from decoy_engine.plan._checks_grouped_series import check_grouped_series_refs
 from decoy_engine.plan._checks_top_code import check_top_code_config
 from decoy_engine.plan._checks_truncate import check_truncate_config
 from decoy_engine.plan._checks_when import check_when_grammar, check_when_with_coherent_with
-from decoy_engine.plan._checks_windowed_date import check_windowed_date_refs
 from decoy_engine.plan._generation import (
     build_generation_plan,
     pin_and_check_snapshots,
@@ -99,6 +94,7 @@ from decoy_engine.plan._types import (
     Plan,
     PlanCompileResult,
 )
+from decoy_engine.plan.checks import check_generate_columns
 from decoy_engine.profile._hash import profile_hash
 from decoy_engine.profile._types import Profile
 
@@ -201,23 +197,10 @@ def compile_plan(
     # unsupported FPE checksum schemes at compile time. Config-only; both branches +
     # run_config_only_checks.
     check_fpe_checksum_scheme(config)
-    # Row 16 (SP-10 / P5.S.derived, 2026-06-28): reject derived columns whose
-    # expression references a missing column or forms a cycle. Config-only; both
-    # branches + run_config_only_checks.
-    check_derived_column_refs(config)
-    # Row 17 (SP-10b / P5.S.derived_aggregate, 2026-06-28): reject derived_aggregate
-    # columns whose source column is missing or op is invalid. Config-only; both
-    # branches + run_config_only_checks.
-    check_derived_aggregate_refs(config)
-    # Row 18 (SP-10c / P5.S.grouped_series.1, 2026-06-29): reject grouped_series
-    # columns whose group_by or order_by column is missing. Config-only.
-    check_grouped_series_refs(config)
-    # Row 19 (SP-10c / P5.S.windowed_date, 2026-06-29): reject windowed_date
-    # columns whose anchor column is missing. Config-only.
-    check_windowed_date_refs(config)
-    # Row 20 (SP-10c / P5.P.group_key, 2026-06-29): reject group_key columns
-    # whose group_by column is missing. Config-only.
-    check_group_key_refs(config)
+    # Rows 16-20 (derived, derived_aggregate, grouped_series, windowed_date and group_key column
+    # refs) and GEN-STRICT E2 (per-type generate column checks), through one wrapper. Config-only;
+    # both branches + run_config_only_checks.
+    check_generate_columns(config)
     # Row 27 (HC-3a, 2026-07-17): reject date_shift columns whose group_by
     # (entity-anchor) column is missing. Config-only; both branches +
     # run_config_only_checks.
@@ -530,21 +513,8 @@ def run_config_only_checks(
     check_vault_columns(config)
     # Row 15 (SP-04): reject unknown or structurally unsupported FPE checksum schemes.
     check_fpe_checksum_scheme(config)
-    # Row 16 (SP-10 / P5.S.derived): reject derived expression with missing or
-    # cyclic column refs. Config-only; config + Lark parse only.
-    check_derived_column_refs(config)
-    # Row 17 (SP-10b / P5.S.derived_aggregate): reject derived_aggregate source
-    # column refs that are missing or have an invalid op. Config-only.
-    check_derived_aggregate_refs(config)
-    # Row 18 (SP-10c / P5.S.grouped_series.1): reject grouped_series columns with
-    # missing group_by or order_by column refs. Config-only.
-    check_grouped_series_refs(config)
-    # Row 19 (SP-10c / P5.S.windowed_date): reject windowed_date columns with a
-    # missing anchor column ref. Config-only.
-    check_windowed_date_refs(config)
-    # Row 20 (SP-10c / P5.P.group_key): reject group_key columns with a missing
-    # group_by column ref. Config-only.
-    check_group_key_refs(config)
+    # Rows 16-20 column refs plus GEN-STRICT E2 generate column checks (one wrapper, as above).
+    check_generate_columns(config)
     # Row 27 (HC-3a): reject date_shift columns with a missing group_by
     # (entity-anchor) column ref. Config-only.
     check_date_shift_group_by_refs(config)

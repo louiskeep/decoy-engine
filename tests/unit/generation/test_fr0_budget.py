@@ -225,8 +225,8 @@ def test_bounds_are_exact_or_defensible() -> None:
                         {
                             "name": "bad",
                             "type": "faker",
-                            "faker_type": "city",
-                            "faker_kwargs": {"x": 1},
+                            "faker_type": "pystr",
+                            "faker_kwargs": {"max_chars": 5},
                         },
                         {"name": "wild", "type": "faker", "faker_type": "pystr"},
                     ],
@@ -554,6 +554,7 @@ def test_value_wider_than_its_declared_bound_aborts(monkeypatch: pytest.MonkeyPa
     assert "xxxx" not in str(err.value), "an error must never carry a data value"
 
 
+@pytest.mark.usefixtures("lenient_generate_checks")
 def test_bounded_and_unbounded_runs_emit_identical_values() -> None:
     config = prepared_config(fx.cfg_live_faker())
     bounded = run_generation(config, budget_bytes=256 * MIB).tables

@@ -78,7 +78,12 @@ CORPUS: dict[str, dict[str, Any]] = {
                         "type": "faker",
                         "faker_type": "pyint",
                     },
-                    {"name": "f", "type": "formula", "formula": "id + score"},
+                    {
+                        "name": "f",
+                        "type": "formula",
+                        "formula": "score * 2",
+                        "references": ["score"],
+                    },
                 ],
             }
         ]
