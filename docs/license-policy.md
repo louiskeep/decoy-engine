@@ -1,7 +1,9 @@
 # License policy
 
 What installing `decoy-engine` may pull in, and how `NOTICE` (shipped in the wheel as a
-license file) is kept true. The engine itself is Apache-2.0.
+license file) is kept true. The engine itself is FSL-1.1-ALv2 (`LICENSE`); this policy covers
+third-party packages only, so the FSL entry under "Not allowed" below is about dependencies, not
+the engine or `decoy-engine-native`, which are first party.
 
 ## Scope
 

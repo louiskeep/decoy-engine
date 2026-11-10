@@ -5,9 +5,9 @@
 TODO(licensor): Replace "Decoy Labs, Inc." with the final registered entity name once incorporation is complete.
 TODO(legal): Update this file once any USPTO or international trademark filings are in progress or registered.
 
-## What the Apache License does and does not grant
+## What the license does and does not grant
 
-The Apache License 2.0 governs the source code in this repository. Per Section 6 of that license, it **does not** grant any rights to use the Decoy Marks beyond what is required to accurately describe the origin of the software (nominative fair use).
+The Functional Source License 1.1 (FSL-1.1-ALv2) governs the source code in this repository. Per its Trademarks clause, it **does not** grant any rights to use the Decoy Marks beyond what is required to accurately describe the origin of the software (nominative fair use).
 
 ## Permitted uses (nominative fair use)
 
@@ -23,7 +23,7 @@ You must obtain prior written permission from Decoy Labs, Inc. to:
 
 - Use the Decoy Marks (including logos) in or on a product name, company name, domain name, or any branding.
 - Use the Decoy Marks in a way that suggests sponsorship, endorsement, or affiliation that does not exist.
-- Distribute a modified version of this software under the "Decoy" name. Forks must be renamed.
+- Distribute a modified version of this software under the "Decoy" name. Forks must be renamed. This also applies after a release converts to the Apache License 2.0, whose Section 6 grants no trademark rights either.
 - Use any Decoy logo in marketing or merchandise.
 
 ## Reporting misuse

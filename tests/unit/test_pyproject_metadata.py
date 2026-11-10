@@ -28,11 +28,11 @@ def test_distribution_name_is_decoy_engine() -> None:
     assert data["project"]["name"] == "decoy-engine"
 
 
-def test_license_is_apache_2_0() -> None:
-    """The engine ships Apache-2.0 from day one (unlike the CLI dist,
-    which keeps BUSL-1.1 until OSS.2 flips it)."""
+def test_license_is_fsl_1_1_alv2() -> None:
+    """Engine and CLI share FSL-1.1-ALv2; each version becomes Apache-2.0 two years after release."""
     data = _load()
-    assert data["project"]["license"] == "Apache-2.0"
+    assert data["project"]["license"] == "FSL-1.1-ALv2"
+    assert data["project"]["license-files"] == ["LICENSE", "NOTICE"]
 
 
 def test_classifiers_cover_python_3_10_3_11_3_12() -> None:
@@ -44,12 +44,12 @@ def test_classifiers_cover_python_3_10_3_11_3_12() -> None:
         assert cls in classifiers, f"missing Trove classifier {cls!r}"
 
 
-def test_classifiers_include_apache_license() -> None:
-    """The OSI-Approved Apache classifier is what makes the PyPI license
-    filter resolve correctly."""
+def test_classifiers_do_not_claim_osi_approval() -> None:
+    """FSL is source-available, not OSI-approved, and has no Trove classifier of its own."""
     data = _load()
     classifiers = data["project"]["classifiers"]
-    assert "License :: OSI Approved :: Apache Software License" in classifiers
+    assert "License :: Other/Proprietary License" in classifiers
+    assert not any(c.startswith("License :: OSI Approved") for c in classifiers)
 
 
 def test_project_urls_present() -> None:
