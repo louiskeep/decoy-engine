@@ -126,19 +126,19 @@ def _kind_frame() -> dict[str, pd.DataFrame]:
     kid = [f"SENTK{i % 3}" for i in range(n)]
     base = {"kid": kid}
     return {
-        "numeric": pd.DataFrame({"p": list(range(n)), **base}),
-        "datetime": pd.DataFrame({"p": pd.date_range("2020-01-01", periods=n), **base}),
-        "highcard": pd.DataFrame({"p": [f"label{i}" for i in range(n)], **base}),
-        "freetext": pd.DataFrame({"p": [f"some text {i}" for i in range(n)], **base}),
-        "empty": pd.DataFrame({"p": [None] * n, **base}),
+        "numeric": pd.DataFrame({"a_p": list(range(n)), **base}),
+        "datetime": pd.DataFrame({"a_p": pd.date_range("2020-01-01", periods=n), **base}),
+        "highcard": pd.DataFrame({"a_p": [f"label{i}" for i in range(n)], **base}),
+        "freetext": pd.DataFrame({"a_p": [f"some text {i}" for i in range(n)], **base}),
+        "empty": pd.DataFrame({"a_p": [None] * n, **base}),
     }
 
 
 @pytest.mark.parametrize("which", ["numeric", "datetime", "highcard", "freetext", "empty"])
 def test_at13_non_categorical_pairs_refused_above_default(which: str) -> None:
     df = _kind_frame()[which]
-    hc = ["p"] if which == "highcard" else []
-    joint = [("p", "kid")]
+    hc = ["a_p"] if which == "highcard" else []
+    joint = [("a_p", "kid")]
     kw: dict[str, Any] = {"joint_columns": joint, "high_cardinality_columns": hc}
     # allowed at the default and with explicit raw opt-in
     distribution_snapshot_document(df, **kw)
@@ -146,7 +146,7 @@ def test_at13_non_categorical_pairs_refused_above_default(which: str) -> None:
     with pytest.raises(DistributionSnapshotError) as exc:
         distribution_snapshot_document(df, contingency_top_k=26, **kw)
     assert exc.value.code == "contingency_top_k_kind_unsupported"
-    assert "'p'" in str(exc.value)
+    assert "'a_p'" in str(exc.value)
     assert "--" not in str(exc.value)
     _scan([str(exc.value)])
 
@@ -154,3 +154,36 @@ def test_at13_non_categorical_pairs_refused_above_default(which: str) -> None:
 def test_at13_categorical_pair_fits_raised_cap() -> None:
     doc = distribution_snapshot_document(_cond_frame(), joint_columns=_PAIR, contingency_top_k=36)
     assert len(doc["joints"][0]["cells"]) == 36
+
+
+def test_a_raw_column_sorting_after_the_categorical_one_is_refused_too() -> None:
+    df = _kind_frame()["numeric"].rename(columns={"a_p": "z_p"})
+    with pytest.raises(DistributionSnapshotError) as exc:
+        distribution_snapshot_document(df, joint_columns=[("z_p", "kid")], contingency_top_k=26)
+    assert exc.value.code == "contingency_top_k_kind_unsupported"
+    assert "'z_p'" in str(exc.value)
+
+
+def test_a_sensitive_joint_in_a_raw_document_still_warns_at_the_default_cap() -> None:
+    emails = [f"user{i % 12}@example.com" for i in range(1200)]
+    kids = [f"SENTK{(i // 12) % 3}" for i in range(1200)]
+    df = pd.DataFrame({"email": emails, "kid": kids})
+    doc = distribution_snapshot_document(df, joint_columns=[("email", "kid")], include_values=True)
+    (w,) = snapshot_joint_warnings(doc, contingency_top_k=DEFAULT_CONTINGENCY_TOP_K)
+    assert w.detail["cap_dropped"] == 11
+
+
+@pytest.mark.parametrize("bad", [0, -1, MAX_CONTINGENCY_TOP_K + 1, True, 2.5, None])
+def test_the_warning_reader_validates_its_cap_like_the_writer(bad: Any) -> None:
+    doc = compute_distribution_snapshot(_cond_frame(), joint_columns=_PAIR)
+    with pytest.raises(DistributionSnapshotError) as exc:
+        snapshot_joint_warnings(doc, contingency_top_k=bad)
+    assert exc.value.code == "contingency_top_k_invalid"
+
+
+def test_the_warning_reader_refuses_a_cap_smaller_than_the_document_holds() -> None:
+    doc = compute_distribution_snapshot(_cond_frame(), joint_columns=_PAIR, contingency_top_k=36)
+    with pytest.raises(DistributionSnapshotError) as exc:
+        snapshot_joint_warnings(doc, contingency_top_k=25)
+    assert exc.value.code == "contingency_top_k_invalid"
+    _scan([str(exc.value)])

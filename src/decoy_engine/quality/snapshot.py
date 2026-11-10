@@ -112,19 +112,25 @@ DEFAULT_CONTINGENCY_TOP_K = 25
 # Upper bound on `contingency_top_k`: two ordinary categoricals (30 distinct each) fit in 900 cells.
 MAX_CONTINGENCY_TOP_K = 1000
 
-# Cardinality cap that splits "categorical" from "freetext" for object
-# columns. Mirrors profiling/_distributions._PROFILE_CATEGORICAL_DISTINCT_CAP (30)
-# so the kind assignment is consistent across the engine. This is the SINGLE
-# fit source of truth (HC-5 D4): the Pre-scan copy is a deliberately independent
-# profiler-chart constant, not derived from this one.
+# Cardinality cap that splits "categorical" from "freetext" for object columns. Mirrors
+# profiling/_distributions._PROFILE_CATEGORICAL_DISTINCT_CAP (30). This is the SINGLE fit
+# source of truth (HC-5 D4): the Pre-scan copy is a deliberately independent constant.
 _CATEGORICAL_DISTINCT_CAP = 30
 
-# HC-5 hard safety limits for an opt-in `high_cardinality` column: the "full
-# fidelity" promise (retain every observed category) must fail loudly rather
-# than silently truncate or balloon the JSON artifact. Both are typed fit
-# errors, never a silent cap.
+# HC-5 hard safety limits for an opt-in `high_cardinality` column: "full fidelity"
+# must fail loudly (typed fit errors), never silently truncate or balloon the artifact.
 _HIGH_CARDINALITY_MAX_DISTINCT = 100_000
 _HIGH_CARDINALITY_MAX_LABEL_BYTES = 16 * 1024 * 1024  # 16 MiB
+
+
+def check_contingency_top_k(value: object) -> None:
+    """Raise `DistributionSnapshotError` unless `value` is an int from 1 to the maximum."""
+    if type(value) is not int or not 1 <= value <= MAX_CONTINGENCY_TOP_K:
+        raise DistributionSnapshotError(
+            code=reasons.quality.CONTINGENCY_TOP_K_INVALID,
+            message=f"contingency_top_k must be an int from 1 to {MAX_CONTINGENCY_TOP_K} "
+            f"(got type {type(value).__name__}).",
+        )
 
 
 def compute_distribution_snapshot(
@@ -172,12 +178,7 @@ def compute_distribution_snapshot(
         DistributionSnapshotError: bad `contingency_top_k`, `high_cardinality_columns`,
             `fanout_columns` or a safety-limit violation.
     """
-    if type(contingency_top_k) is not int or not 1 <= contingency_top_k <= MAX_CONTINGENCY_TOP_K:
-        raise DistributionSnapshotError(
-            code=reasons.quality.CONTINGENCY_TOP_K_INVALID,
-            message=f"contingency_top_k must be an int from 1 to {MAX_CONTINGENCY_TOP_K} "
-            f"(got type {type(contingency_top_k).__name__}).",
-        )
+    check_contingency_top_k(contingency_top_k)
     # MED-3: a bare str satisfies `Collection[str]` but would iterate characters
     # and silently disable the feature; reject the shape explicitly.
     if isinstance(high_cardinality_columns, (str, bytes)):

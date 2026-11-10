@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 from decoy_engine import reasons
-from decoy_engine.generation.pool._events import QualityWarning
+from decoy_engine.generation.pool import QualityWarning
 from decoy_engine.profiling._value_redaction import (
     DATA_RULES,
     POLICY_REDACTED,
@@ -47,6 +47,7 @@ from decoy_engine.quality.snapshot import (
     DEFAULT_CONTINGENCY_TOP_K,
     DEFAULT_NUMERIC_BINS,
     DistributionSnapshotError,
+    check_contingency_top_k,
     compute_distribution_snapshot,
     finite_numeric_cells,
     numeric_stats,
@@ -187,8 +188,14 @@ def snapshot_joint_warnings(doc: dict[str, Any], *, contingency_top_k: int) -> l
         if doc.get(VALUE_POLICY_KEY) == POLICY_REDACTED
         else set()
     )
+    check_contingency_top_k(contingency_top_k)
     out: list[QualityWarning] = []
     for joint in doc["joints"]:
+        if len(joint["cells"]) > contingency_top_k:
+            raise DistributionSnapshotError(
+                code=reasons.quality.CONTINGENCY_TOP_K_INVALID,
+                message="contingency_top_k is smaller than the cells a joint in the document holds.",
+            )
         cell_count = joint["cell_count"]
         cap_dropped = max(0, cell_count - contingency_top_k)
         if cap_dropped == 0 or withheld & set(joint["columns"]):
