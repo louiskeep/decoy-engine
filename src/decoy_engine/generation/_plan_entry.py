@@ -26,7 +26,12 @@ import pyarrow as pa
 
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation._streamed import GenerationResult, run_generation
-from decoy_engine.generation.statistical import spec_from_dict
+from decoy_engine.generation.statistical import (
+    FanoutSpec,
+    fanout_spec_from_snapshot,
+    spec_from_dict,
+)
+from decoy_engine.plan._generation import column_pins_snapshot
 from decoy_engine.plan._types import unfreeze_json
 
 if TYPE_CHECKING:
@@ -119,14 +124,40 @@ def _prepare_generation(generation: GenerationPlan | None, caller: str) -> _Prep
     # `statistical_specs` above, and the fidelity gate via this list)
     # reads only these already-pinned bytes.
     snapshot_artifacts = [json.loads(base64.b64decode(s.payload_b64)) for s in generation.snapshots]
+    reference_fanouts = _decode_fanouts(config, generation, snapshot_artifacts)
     return _PreparedPlan(
         config,
         {
             "statistical_specs": statistical_specs,
             "snapshot_index_for_column": snapshot_index_for_column,
             "snapshot_artifacts": snapshot_artifacts,
+            "reference_fanouts": reference_fanouts,
         },
     )
+
+
+def _decode_fanouts(
+    config: dict[str, Any], generation: GenerationPlan, artifacts: list[dict[str, Any]]
+) -> dict[tuple[str, str], FanoutSpec]:
+    """Decode each `distribution: fitted` reference column's fan-out from the pinned bytes.
+
+    A column whose snapshot the plan did not pin is left out, so generation refuses it
+    (`reference_fanout_missing`) instead of reopening the path.
+    """
+    index = {s.source_path: i for i, s in enumerate(generation.snapshots)}
+    out: dict[tuple[str, str], FanoutSpec] = {}
+    for table in config.get("tables") or []:
+        for col in table.get("generate_columns") or []:
+            if not column_pins_snapshot(col) or col.get("type") != "reference":
+                continue
+            i = index.get(str(col.get("snapshot_file")))
+            if i is None:
+                continue
+            source = str(col.get("source_column") or col["name"])
+            out[(table["name"], col["name"])] = fanout_spec_from_snapshot(
+                artifacts[i], source, digest=generation.snapshots[i].sha256
+            )
+    return out
 
 
 def _prepare_pinned(generation_plan: Any, caller: str) -> _PreparedPlan:
