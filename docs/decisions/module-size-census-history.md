@@ -796,3 +796,5 @@ split the probe-recovery resolver into its own module when next touched.
   `execution/_pipeline_routing_signals.py` (643 -> 638) shrank while taking the F06 hooks.
 - `execution/_planner.py` stays at 578: the column lookups moved to `_planner_columns.py` to make room for the
   chunk-stability rule for declared columns.
+- `__init__.py` (600 -> 606, `generated_table_to_pandas` export from gen-numeric-typing) is now a dense entry at 626, the
+  initial pin for its size.
