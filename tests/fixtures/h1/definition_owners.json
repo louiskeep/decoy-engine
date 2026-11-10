@@ -205,7 +205,8 @@
    "_generate_tables_from_config",
    "_get_default_faker",
    "_sequence",
-   "_topo_sort"
+   "_topo_sort",
+   "generation_order"
   ]
  }
 }
