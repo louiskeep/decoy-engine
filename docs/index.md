@@ -59,6 +59,9 @@ link to GitHub rather than into the rendered API reference.
 - [Reason codes and progress events](reasons.md): the versioned reason registry, retry classes, outcome categories and the version-1 progress event schema.
 - [Compatibility contract](compatibility-contract.md): the frozen public surface and what changing it means.
 - [Supported production matrix](native/supported-matrix.md): supported Python/OS/arch combinations for the core, the compiled native companion's prebuilt wheels, and the official production image.
+- [derive_index contract](native/derive-index-contract.md): the frozen contract for deterministic Faker pool selection that the compiled `derive_index_batch` reproduces.
+- [Native cryptography testing reference](native/crypto-testing-reference.md): how the native keyed derivation and FPE kernels are tested.
+- [RNG draw-site inventory](native/draw-site-inventory.md): every place the engine draws randomness for masked or generated output, and how each draw is seeded.
 
 ## Development & planning
 
@@ -81,6 +84,7 @@ recipes
 strategies
 guides/free-text-ner
 relationships
+declared-casting
 determinism
 cli
 what-we-cannot-prove
@@ -96,7 +100,11 @@ capability-matrix
 distribution-integrity/index
 execution-backends
 compatibility-contract
+reasons
 native/supported-matrix
+native/derive-index-contract
+native/crypto-testing-reference
+native/draw-site-inventory
 ```
 
 ```{toctree}

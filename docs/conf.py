@@ -182,6 +182,10 @@ nitpick_ignore = [
     ("py:class", "faker.Faker"),
     ("py:class", "numpy.random.Generator"),
     ("py:class", "numpy.ndarray"),
+    # numpy has no intersphinx mapping here; these come from `np.ndarray[Any, np.dtype[np.float64]]`
+    # return hints in quality.snapshot.
+    ("py:class", "numpy.dtype"),
+    ("py:class", "numpy.float64"),
     ("py:class", "pydantic.BaseModel"),
     ("py:obj", "pydantic.BaseModel"),
     ("py:class", "pydantic.SecretStr"),
@@ -260,6 +264,10 @@ nitpick_ignore = [
     # its return annotation as a :class: cross-reference but there is no
     # documented class page for a Literal alias.
     ("py:class", "Band"),
+    # Same for the Literal aliases `DetectorSource` (detection.types) and `Strategy`
+    # (profiling.scan_set), rendered from dataclass field annotations.
+    ("py:class", "DetectorSource"),
+    ("py:class", "Strategy"),
     # `ColumnFeatures` is a public dataclass in profiling.features.types; the
     # bare (unqualified) :class:`ColumnFeatures` in profiling.features.builder's
     # module docstring cannot be resolved by autoapi without a full dotted
@@ -417,4 +425,12 @@ exclude_patterns = [
     "v2/**",
     "review-notes/**",
     "remediation-source.md",
+    # Same reasoning: build records, test-quality ledgers, design concepts, agent handoff inputs
+    # and preserved validation runs are working docs. Without this each one fails -W as a page
+    # outside every toctree.
+    "records/**",
+    "quality/**",
+    "design/**",
+    "handoffs/**",
+    "product/**",
 ]

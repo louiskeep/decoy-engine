@@ -6,7 +6,7 @@ covered at the end.
 
 This page is a human-readable reading of the authoritative, test-enforced sources:
 the per-operator compute classification in
-[`records/2026-10-16-d-audit-compute-matrix.md`](records/2026-10-16-d-audit-compute-matrix.md)
+[`records/2026-10-16-d-audit-compute-matrix.md`](https://github.com/louiskeep/decoy-engine/blob/main/docs/records/2026-10-16-d-audit-compute-matrix.md)
 (masking) and the generation compute audit (the
 [F-audit plan](https://github.com/louiskeep/decoy-engine/blob/main/docs/plans/2026-10-19-phase-f-f-audit-no-legacy.md)).
 The enumerated strategy/provider list is [`capability-matrix.md`](capability-matrix.md);

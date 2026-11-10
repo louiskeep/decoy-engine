@@ -7,8 +7,9 @@ exception's text, class name or ``.code`` attribute.
 
 Trust model. An exception's ``.code`` is trusted only when the exception's class is one of the
 engine families registered below *and* the code is registered in that family's namespace, or,
-when it is not, the code is a :class:`ReasonCode` registry symbol registered in its own
-namespace (a family error re-wrapping another family's refusal). Character shape is not trust:
+when it is not, the code is a :class:`~decoy_engine.reasons.ReasonCode` registry symbol
+registered in its own namespace (a family error re-wrapping another family's refusal).
+Character shape is not trust:
 an exception raised by a parser or a user callback can carry a data-derived ``code`` that is
 still lowercase and underscores, and a third-party class can copy an engine code string.
 Everything else becomes ``decoy.unexpected_error``; the original exception is untouched and keeps
