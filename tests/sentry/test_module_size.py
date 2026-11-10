@@ -87,6 +87,9 @@ def ceiling_for(loc: int) -> int:
 # One-line rationale per entry; the per-file growth history lives in
 # docs/decisions/module-size-census-history.md.
 ALLOWLIST: dict[str, int] = {
+    # LIB-L1a: the records package exports (DecodedRecord etc.) join the one public surface; move the
+    # export blocks into a generated exports module when the package split lands.
+    "src/decoy_engine/__init__.py": 605,
     # F06: one declared-casting route guard per route owner (the sentry in test_f06_declared_casting
     # inventories them) and the cast_run threaded through the sequential and out-of-core executors;
     # no casting logic of its own lives in these routers.
