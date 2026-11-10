@@ -191,7 +191,7 @@ pooled column repeats.
 
 A unique column with the default `determinism: stable` is deterministic per seed, like any
 generated column. The same config and seed give the same values. A single unique column can
-still set `determinism: fresh`; its values then change on every run. `unique_together` refuses
+still set `determinism: fresh`; its values are then not guaranteed to be reproducible across runs. `unique_together` refuses
 `fresh`.
 
 `unique` is left out of the column's seed fingerprint, as `pooled` is. So adding `unique: true`
