@@ -63,7 +63,7 @@ def test_shards_partition_selection_plus_pins(tmp_path: Path) -> None:
     venv, log = recording_venv(tmp_path)
     seen: list[list[str]] = []
     for shard in ("1/2", "2/2"):
-        log.unlink(missing_ok=True)
+        log.with_suffix(".jsonl").unlink(missing_ok=True)
         rc, out = gates(clone, venv, "--steps", "tests", "--shard", shard, GATES_WORKERS="1")
         assert rc == 0, out
         seen.append(_tests_argv(log))
