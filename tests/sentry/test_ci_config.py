@@ -57,6 +57,9 @@ TRIGGERED_ON_PURPOSE = {
     "compat-preflight.yml",
     "regression-proof.yml",
     "changelog-fragment.yml",
+    # GitHub-hosted docs build on push, so docs drift fails on the branch that caused it. Its
+    # filters are pinned by test_docs_build_push_filters_are_pinned.
+    "docs.yml",
 }
 
 
@@ -215,3 +218,26 @@ def test_selfhosted_gate_push_filters_are_pinned() -> None:
     assert not {"branches", "paths", "paths-ignore"} & set(push)
     for ref in ("main", "refs/heads/main"):
         assert not any(fnmatch.fnmatchcase(ref, pat) for pat in push["branches-ignore"])
+
+
+DOCS_PATHS = ["docs/**", "docs/conf.py", "src/decoy_engine/**", ".github/workflows/docs.yml"]
+
+
+def test_docs_build_push_filters_are_pinned() -> None:
+    wf = yaml.safe_load((WORKFLOWS / "docs.yml").read_text())
+    assert _trigger_names(wf) == {"push", "workflow_dispatch"}
+    push = (wf.get(True) or wf["on"])["push"]
+    assert push["branches-ignore"] == GATE_BRANCHES_IGNORE
+    assert push["paths"] == DOCS_PATHS
+    assert not {"branches", "paths-ignore"} & set(push)
+    build = wf["jobs"]["build"]
+    # Hosted and owner-guarded: a docs push must never land on the self-hosted queue.
+    assert build["runs-on"] == "ubuntu-latest"
+    assert "timeout-minutes" in build
+    guard = str(build["if"])
+    assert "github.repository_owner == 'louiskeep'" in guard
+    assert "github.actor == 'louiskeep'" in guard
+    assert "!github.event.repository.fork" in guard
+    assert _checkout(build)["with"]["persist-credentials"] is False
+    runs = " ".join(step.get("run", "") for step in build["steps"])
+    assert "sphinx-build -b html -W --keep-going docs docs/_build/html" in runs

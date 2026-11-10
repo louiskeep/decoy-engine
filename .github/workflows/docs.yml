@@ -16,26 +16,45 @@
 name: docs
 
 on:
-  # Manual dispatch only. gate-selfhosted.yml is the merge gate; the paid runners
-  # fire on demand so they stop failing every push (X0a). Old triggers: git history.
+  # A push that touches the docs or the documented source builds them with -W, so a broken
+  # reference or a page outside every toctree fails on the branch that added it. The build runs
+  # on a GitHub-hosted runner, free on this public repo, so it never queues on the self-hosted
+  # gate. Same branch filter as gate-selfhosted.yml; main is never ignored. Never pull_request
+  # or pull_request_target: this repo is public. Filters pinned by tests/sentry/test_ci_config.py.
+  push:
+    branches-ignore:
+      - "plan/**"
+      - "feat/v2-**"
+      - "plan/v2-**"
+      - "feat/v1plus-**"
+      - "plan/v1plus-**"
+    paths:
+      - "docs/**"
+      - "docs/conf.py"
+      - "src/decoy_engine/**"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 # The build job gets read-only contents; only deploy holds the Pages scopes.
 permissions:
   contents: read
 
-# Serialize concurrent deploys; cancel-in-progress=false so an in-flight
-# deploy isn't aborted mid-write (which can leave Pages in a half-deployed
-# state).
+# One build per ref: a newer push to a branch cancels its older build. Main is never cancelled.
+# The deploy job serializes on its own group below.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: docs-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Owner-only, same guard as the gate's fast check.
+    if: github.repository_owner == 'louiskeep' && github.actor == 'louiskeep' && !github.event.repository.fork
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: ./.github/actions/lock-env
         with:
@@ -49,18 +68,24 @@ jobs:
         run: sphinx-build -b html -W --keep-going docs docs/_build/html
 
       - name: Upload Pages artifact
+        # Only where it can be deployed or was asked for; a feature push needs the pass or fail.
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
         uses: actions/upload-pages-artifact@v3
         with:
           path: docs/_build/html
 
   # Only deploy on main, AND only when the DOCS_DEPLOY repo variable is "true"
   # (Settings -> Secrets and variables -> Actions -> Variables). Pages is not enabled yet,
-  # so deploy stays OFF to keep main green. PRs still get the build for validation
-  # (HTML downloadable as a workflow artifact); they never overwrite the live site.
+  # so deploy stays OFF to keep main green. Branch pushes get the build only; they never
+  # overwrite the live site.
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DOCS_DEPLOY == 'true'
     needs: build
     runs-on: ubuntu-latest
+    # Serialize deploys; never cancel one mid-write (that can leave Pages half-deployed).
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     permissions:
       pages: write
       id-token: write

@@ -265,7 +265,8 @@ nitpick_ignore = [
     # documented class page for a Literal alias.
     ("py:class", "Band"),
     # Same for the Literal aliases `DetectorSource` (detection.types) and `Strategy`
-    # (profiling.scan_set), rendered from dataclass field annotations.
+    # (profiling.scan_set), rendered from dataclass field annotations. autoapi emits the bare
+    # name, so the qualified form does not match.
     ("py:class", "DetectorSource"),
     ("py:class", "Strategy"),
     # `ColumnFeatures` is a public dataclass in profiling.features.types; the
