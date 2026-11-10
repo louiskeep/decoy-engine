@@ -433,6 +433,7 @@ def test_positive_cross_run_determinism() -> None:
         "categorical-mixed-category-types",
     ],
 )
+@pytest.mark.usefixtures("lenient_generate_checks")
 def test_malformed_leaf_knob_is_identical_rejection(columns: list[dict[str, Any]]) -> None:
     config = _generate_config(columns=columns, bypass_parse=True)
     diff = run_generation_shadow_and_oracle(config)

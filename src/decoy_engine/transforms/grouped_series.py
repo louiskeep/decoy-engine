@@ -101,6 +101,7 @@ class GroupedSeriesConfig:
         Raises:
             PlanCompileError: ``group_by`` is missing or empty.
             PlanCompileError: ``order_by`` is missing or empty.
+            PlanCompileError: ``group_by`` and ``order_by`` name the same column.
             PlanCompileError: ``generator`` is set but not in
                 GROUPED_SERIES_GENERATORS.
         """
@@ -125,6 +126,13 @@ class GroupedSeriesConfig:
                     "Provide the name of the column that sorts rows within each "
                     "group."
                 ),
+            )
+
+        if str(group_by) == str(order_by):
+            raise PlanCompileError(
+                code=reasons.plan.GROUPED_SERIES_GROUP_BY_EQUALS_ORDER_BY,
+                path="provider_config.order_by",
+                message="'group_by' and 'order_by' must name different columns.",
             )
 
         generator = str(cfg.get("generator", "cumcount"))

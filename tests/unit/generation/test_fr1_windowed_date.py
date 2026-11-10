@@ -78,7 +78,6 @@ def test_matrix_row_records_changed_semantics() -> None:
 @pytest.mark.parametrize(
     ("cols", "reason"),
     [
-        ([_win(), DOB], "windowed_date_anchor_not_earlier"),
         ([{"name": "dob", "type": "sequence"}, _win()], None),
         (
             [{"name": "dob", "type": "categorical", "categories": [1, 2]}, _win()],
@@ -102,6 +101,13 @@ def test_anchor_declines(cols: list[dict[str, Any]], reason: str | None) -> None
         assert classify_plan(prepared_config(cfg)).eligible
     else:
         assert _ev_reason(cfg) == reason
+
+
+def test_later_anchor_declines() -> None:
+    # The plan check refuses a later anchor, so classify the raw configuration: admission is a
+    # second, independent guard for a caller that bypasses compile.
+    cfg = _cfg(10, _win(), DOB)
+    assert _ev_reason(cfg, compile_first=False) == "windowed_date_anchor_not_earlier"
 
 
 def test_cross_table_anchor_declines() -> None:
