@@ -1,0 +1,29 @@
+# Always-on gate tests: scripts/dev/gates.sh adds every path below to each impact-selected run,
+# whatever changed. They are for output-pinning tests (route baselines, golden and digest pins, a
+# refactor invariant) that no name-based selection can find, because they read output rather than
+# import the changed module. They are not a fallback for imports the selector misses; fix the
+# selector (changed_tests) for those. One path per line (a file or a directory); `#` starts a
+# comment. tests/sentry/test_gate_pins.py fails when a path here no longer exists.
+
+# H-1 definition owners
+tests/unit/test_wave_b_definition_owners.py
+
+# R3 route baselines
+tests/unit/execution/test_r3_within_route_baseline.py
+tests/unit/execution/test_r3_failure_publication_trace.py
+tests/unit/execution/test_r3_route_executors.py
+tests/unit/execution/test_r3_public_signature_freeze.py
+
+# F06 route matrix
+tests/acceptance/test_f06_route_cells.py
+tests/acceptance/test_f06_route_parity.py
+
+# Determinism goldens and byte/digest pins
+tests/native/test_determinism_goldens.py
+tests/native/test_draw_site_providers_golden.py
+tests/native/test_draw_sites_catalogue_pinned.py
+tests/unit/determinism/test_derive_vectors.py
+tests/unit/generation/unique/test_gen_unique_old_input_bytes.py
+tests/unit/generation/test_generate_determinism_ratchets.py
+tests/integration/golden/test_determinism_invariants.py
+tests/integration/golden/test_fidelity_report_golden.py

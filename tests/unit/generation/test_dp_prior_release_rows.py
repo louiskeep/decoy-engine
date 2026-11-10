@@ -35,13 +35,26 @@ _V0_19_0_ROWS = (
 )
 # The engine dev/CI profile on 0.19.0 once pytest-xdist joined `dev` (79 dists; ENGINE-PAR P2).
 _XDIST_DEV_ROW = "78af2b5a1bb11c826f1d3918f705dc7edada72a081804e74d55e37938d8300b6"
-# The two rows this release certifies: the xdist lock with the engine at 0.20.0, and the CLI
-# runtime profile on engine 0.20.0.
+# The two rows v0.20.0 certified: the xdist lock with the engine at 0.20.0, and the CLI runtime
+# profile on engine 0.20.0.
 _V0_20_0_ROWS = (
     "176aff0bf8727f2fe64e0bddd4febb487aeaa05daa97547143ec6cc4230200cc",
     "725f80a30807dee263ee9404c05829d4947870b2600ab0a165c0fa7951b91268",
 )
-_ALL_ROWS = _V0_17_0_ROWS + _V0_18_0_ROWS + _V0_19_0_ROWS + (_XDIST_DEV_ROW,) + _V0_20_0_ROWS
+# The two rows this release certifies: the dev/CI lock with the engine at 0.21.0, and the CLI
+# runtime profile on engine 0.21.0.
+_V0_21_0_ROWS = (
+    "4560f601e6f299e4c586ce9d795dbaea8e14ac5dc8b5d0e1310b57913e25eac9",
+    "aa038ddd1d2e783042e34c75c313921f19b8e1dc580559cf8d5081ed19ea11e1",
+)
+_ALL_ROWS = (
+    _V0_17_0_ROWS
+    + _V0_18_0_ROWS
+    + _V0_19_0_ROWS
+    + (_XDIST_DEV_ROW,)
+    + _V0_20_0_ROWS
+    + _V0_21_0_ROWS
+)
 
 
 @pytest.mark.parametrize("fingerprint", _ALL_ROWS)
