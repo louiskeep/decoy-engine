@@ -518,6 +518,7 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/native/protocol/__init__.py",
             "src/decoy_engine/execution/native/protocol/providers_base.py",
             "src/decoy_engine/execution/native/protocol/providers_gen.py",
+            "src/decoy_engine/execution/native/protocol/providers_gen_unique.py",
             "src/decoy_engine/execution/native/protocol/providers_mask.py",
             "src/decoy_engine/execution/out_of_core/_mask_group_b.py",
             # Slice C5b-i (position-keyed non-deterministic Faker, 2026-10-05): the oracle Faker

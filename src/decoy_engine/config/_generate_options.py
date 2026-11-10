@@ -24,6 +24,7 @@ from typing import Any
 from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from decoy_engine import reasons
+from decoy_engine.config._generate_unique import unique_flag
 
 __all__ = [
     "COMMON_OPTIONS",
@@ -195,6 +196,9 @@ _M = OptionSpec(_mapping)
 COMMON_OPTIONS: Mapping[str, OptionSpec] = {
     "null_probability": OptionSpec(_null_probability),
     "determinism": OptionSpec(_determinism),
+    # Accepted on `sequence`, `categorical`, `faker` and `reference`; the type rule is
+    # `_generate_unique.unique_type_problems`, run by the column validator.
+    "unique": OptionSpec(unique_flag),
 }
 
 # Engine-internal keys the generators stamp or read that a config may carry. None today.
@@ -295,6 +299,7 @@ _NONE_MEANS_ABSENT = frozenset(
         "locale",
         "faker_kwargs",
         "null_probability",
+        "unique",
         "references",
         "min_per_parent",
         "max_per_parent",

@@ -10,6 +10,7 @@ from __future__ import annotations
 import random
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine.config import value_key
 from decoy_engine.generators.derivation import GenDeriveContext
 
 if TYPE_CHECKING:
@@ -95,9 +96,14 @@ def parent_keys(pools: dict[str, pa.Table], table: str, column: str) -> list[Any
     seen: set = set()
     keys: list[Any] = []
     for v in pools[table].column(column).to_pylist():
-        if v is None or v in seen:
+        if v is None:
             continue
-        seen.add(v)
+        # Keyed by equality, so a list or dict parent key dedups instead of raising TypeError.
+        # Arrow values come back as plain builtins, so every key is keyable.
+        key = value_key(v)
+        if key in seen:
+            continue
+        seen.add(key)
         keys.append(v)
     return keys
 
@@ -141,6 +147,11 @@ def _reference(
     max_per = int(col.get("max_per_parent") or 0)
 
     ref_vals = parent_keys(pools, ref_table, ref_column)
+
+    if col.get("unique") is True:
+        from decoy_engine.generation._unique import unique_reference
+
+        return unique_reference(col, ref_vals, n, seed, derive_key)
 
     if not ref_vals:
         return [None] * n
