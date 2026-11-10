@@ -271,6 +271,16 @@ def test_fitted_reference_parses_and_other_values_still_refuse() -> None:
     assert [_spot(e) for e in errs] == [(VALUE, ("distribution",))]
 
 
+def test_snapshot_keys_refused_unless_distribution_is_fitted() -> None:
+    for extra in ({"snapshot_file": "s.json"}, {"source_column": "c"}):
+        errs = _errors(_col("reference", distribution="random", **extra))
+        (key,) = extra
+        assert [_spot(e) for e in errs] == [(UNKNOWN_KEY, (key,))]
+    PipelineConfig.model_validate(
+        _config(_col("reference", distribution="fitted", snapshot_file="s.json", source_column="c"))
+    )
+
+
 def test_weighted_distribution_requires_weights() -> None:
     errs = _errors(_col("reference", distribution="weighted"))
     assert [_spot(e) for e in errs] == [("missing", ("weights",))]

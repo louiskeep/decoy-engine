@@ -18,7 +18,7 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="gen.faker_per_row",
         family="faker_seed_instance",
-        call_site="generation/synthesize.py:476",
+        call_site="generation/synthesize.py:491",
         entropy_root="job_seed",
         seed_derivation='faker_inst.seed_instance(gen_ctx.row_int("faker", i))',
         api_operation="Faker.seed_instance(row_int) then provider_func(**kwargs)",
@@ -40,7 +40,7 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="gen.categorical",
         family="python_mt19937",
-        call_site="generation/synthesize.py:388",
+        call_site="generation/synthesize.py:403",
         entropy_root="job_seed",
         seed_derivation=(
             'random.Random(GenDeriveContext.for_column(derive_key, col, seed).base_int("py"))'
@@ -115,7 +115,7 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
         ),
         mirror_call_sites=(
             "generators/_formula.py:144",
-            "generation/_synthesize_derived.py:84",
+            "generation/_synthesize_derived.py:90",
         ),
     ),
     # -- Generation: statistical sampler per-row reseed ----------------------
@@ -151,7 +151,7 @@ GEN_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="gen.null_probability",
         family="numpy_pcg64",
-        call_site="generation/synthesize.py:516",
+        call_site="generation/synthesize.py:531",
         entropy_root="job_seed",
         seed_derivation=('np.random.default_rng(GenDeriveContext.for_column(...).base_int("np"))'),
         api_operation="numpy.random.default_rng(col_seed).random(n)",

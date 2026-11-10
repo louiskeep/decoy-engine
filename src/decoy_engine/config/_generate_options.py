@@ -81,6 +81,13 @@ def _str(value: Any, _: Mapping[str, Any]) -> list[Problem]:
     return _OK if isinstance(value, str) else [((), _TYPE)]
 
 
+def _fitted_only_str(value: Any, extras: Mapping[str, Any]) -> list[Problem]:
+    """Reference-column snapshot keys mean something only for a fitted fan-out."""
+    if extras.get("distribution") != "fitted":
+        return [((), UNKNOWN)]
+    return _str(value, extras)
+
+
 def _bool(value: Any, _: Mapping[str, Any]) -> list[Problem]:
     return _OK if type(value) is bool else [((), _TYPE)]
 
@@ -239,8 +246,8 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
             "weights": OptionSpec(_weights),
             "min_per_parent": OptionSpec(_int_at_least(0)),
             "max_per_parent": OptionSpec(_int_at_least(0)),
-            "snapshot_file": _S,
-            "source_column": _S,
+            "snapshot_file": OptionSpec(_fitted_only_str),
+            "source_column": OptionSpec(_fitted_only_str),
         },
         required=("reference_table", "reference_column"),
     ),

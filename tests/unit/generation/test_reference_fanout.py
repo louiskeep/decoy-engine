@@ -255,21 +255,34 @@ def test_shape_equals_source_at_the_source_ratio(tmp_path: Path) -> None:
     assert hist[0] == 200
 
 
-def test_shape_scales_with_tolerance(tmp_path: Path) -> None:
-    src = _heavy_tail()
-    rows = sum(d * c for d, c in src.items())
+def _shape_score(src: dict[int, int], degrees: list[int]) -> float:
+    """One minus the KS distance between the generated and source degree CDFs over active parents."""
     keys = sum(src.values())
-    parents, children = int((keys + 200) * 1.5), int(rows * 1.5)
-    plan = _plan(_config(_write_snapshot(tmp_path, src), parents=parents, children=children))
-    pk, child = _run(plan)
-    degrees = _degrees(pk, child)
-    assert len(child) == children
-    assert max(degrees) <= max(src)
-    # KS distance between the generated and source degree CDFs over active parents.
     gen = sorted(d for d in degrees if d)
     ks = 0.0
     for d in sorted(set(src) | set(gen)):
         f_src = sum(c for k, c in src.items() if k <= d) / keys
         f_gen = sum(1 for g in gen if g <= d) / len(gen)
         ks = max(ks, abs(f_src - f_gen))
-    assert 1 - ks >= 0.95
+    return 1 - ks
+
+
+def test_shape_scales_with_tolerance(tmp_path: Path) -> None:
+    src = _heavy_tail()
+    rows = sum(d * c for d, c in src.items())
+    keys = sum(src.values())
+    parents, children = int((keys + 200) * 1.5), int(rows * 1.5)
+    cfg = _config(_write_snapshot(tmp_path, src), parents=parents, children=children)
+    pk, child = _run(_plan(cfg))
+    degrees = _degrees(pk, child)
+    assert len(child) == children
+    assert max(degrees) <= max(src)
+    assert _shape_score(src, degrees) >= 0.95
+
+    # Precondition: the same sizes with `random` score clearly lower (0.84 measured, a
+    # long way under the 0.95 bar), so the score above is the fitted histogram's doing.
+    ref = cfg["tables"][1]["generate_columns"][0]
+    ref["distribution"] = "random"
+    del ref["snapshot_file"]
+    pk_r, child_r = _run(_plan(cfg))
+    assert _shape_score(src, _degrees(pk_r, child_r)) < 0.9
