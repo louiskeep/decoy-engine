@@ -23,7 +23,7 @@ from decoy_engine.generation.statistical._fanout import (
     fitted_reference_values,
 )
 from decoy_engine.generation.statistical._numeric_shape import add_numeric_shape
-from decoy_engine.generation.statistical._sample import sample_column
+from decoy_engine.generation.statistical._sample import conditional_fallback_counts, sample_column
 from decoy_engine.generation.statistical._spec import (
     StatisticalSpec,
     StatisticalSpecError,
@@ -42,6 +42,7 @@ __all__ = [
     "add_numeric_shape",
     "cell_format_arrow_type",
     "cell_format_member_ok",
+    "conditional_fallback_counts",
     "fanout_spec_from_snapshot",
     "fitted_reference_values",
     "learn_cell_format",

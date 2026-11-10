@@ -118,9 +118,14 @@ def test_applied_pairs_are_the_distinct_connection_settings(
     assert got == want
 
 
-def test_a_run_without_a_cap_keeps_todays_metrics(tmp_path: Path) -> None:
+def test_a_run_without_a_thread_cap_still_records_the_route_resources(tmp_path: Path) -> None:
+    # E3 supersedes "no cap keeps today's metrics": the route summary needs the budget and the
+    # applied limits of every out-of-core run. The block only gains fields.
     result = _run(tmp_path)
-    assert "resources" not in result.quality_metrics
+    block = result.quality_metrics["resources"]["out_of_core"]
+    assert block["thread_cap"] is None
+    assert block["memory_cap_bytes"] == _BUDGET
+    assert block["applied"]
 
 
 def test_a_run_without_the_route_has_no_out_of_core_block(tmp_path: Path) -> None:

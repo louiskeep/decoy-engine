@@ -30,6 +30,8 @@ VOLATILE_KEYS: frozenset[str] = frozenset(
         "peak_rss_bytes",
         "rss_bytes",
         "peak_memory_delta_kb",
+        # E3: the DuckDB settings each out-of-core connection applied, which follow the host.
+        "applied",
     }
 )
 VOLATILE_SUFFIXES: tuple[str, ...] = ("_ms",)

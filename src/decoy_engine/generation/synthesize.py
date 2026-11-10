@@ -38,7 +38,11 @@ from faker import Faker
 
 from decoy_engine.generation import _faker_pool
 from decoy_engine.generation._numeric_typing import numeric_plan, restore_declared
-from decoy_engine.generation._statistical_column import arrow_table, statistical_generate
+from decoy_engine.generation._statistical_column import (
+    arrow_table,
+    statistical_generate,
+    warn_on_unseen_parents,
+)
 from decoy_engine.generation._synthesize_derived import _derived_generate, _formula, _reference
 from decoy_engine.generation.statistical import FanoutSpec, StatisticalSpec
 from decoy_engine.generators.derivation import TABLE_KEY, GenDeriveContext, with_table
@@ -168,6 +172,14 @@ def _generate_tables_from_config(
                     provider_snapshot=provider_snapshot,
                     numeric_type=numeric.get((name, col["name"])),
                     reference_fanouts=reference_fanouts,
+                )
+                warn_on_unseen_parents(
+                    col,
+                    n,
+                    data,
+                    table_name=name,
+                    statistical_specs=statistical_specs,
+                    on_warning=on_warning,
                 )
         # Cross-column formula post-pass: a `formula` column carrying
         # `references` was filled with None placeholders by `_formula`
