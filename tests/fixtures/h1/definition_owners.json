@@ -150,7 +150,8 @@
   "owners": {
    "_derived_generate": "src/decoy_engine/generation/_synthesize_derived.py",
    "_formula": "src/decoy_engine/generation/_synthesize_derived.py",
-   "_reference": "src/decoy_engine/generation/_synthesize_derived.py"
+   "_reference": "src/decoy_engine/generation/_synthesize_derived.py",
+   "parent_keys": "src/decoy_engine/generation/_synthesize_derived.py"
   }
  },
  "stays": {
