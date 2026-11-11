@@ -72,6 +72,10 @@ SENTRIES = (
     "tests/sentry/test_unified_backend_map.py",
     "tests/sentry/test_validate_no_mutation.py",
     "tests/sentry/test_wave_b_no_registry_version_literal.py",
+    "tests/sentry/ci_scan/test_identity.py",
+    "tests/sentry/layout/test_package_fanout.py",
+    "tests/sentry/layout/test_vendored_files.py",
+    "tests/sentry/protected_dir/test_protected_dir.py",
     "tests/sentry/defects/test_anchored_regex.py",
     "tests/sentry/defects/test_exception_context.py",
     "tests/sentry/defects/test_generate_option_reads.py",
@@ -109,10 +113,13 @@ def uncovered(sentries: tuple[str, ...], paths: list[str]) -> list[str]:
     ]
 
 
+def sentry_files(root: Path) -> set[str]:
+    """Every sentry test file under ``tests/sentry``, nested folders included."""
+    return {p.relative_to(root).as_posix() for p in (root / "tests" / "sentry").rglob("test_*.py")}
+
+
 def test_manifest_lists_every_sentry_file_and_no_ghost() -> None:
-    on_disk = {
-        p.relative_to(ROOT).as_posix() for p in (ROOT / "tests" / "sentry").glob("test_*.py")
-    }
+    on_disk = sentry_files(ROOT)
     listed = {s for s in SENTRIES if s.startswith("tests/sentry/")}
     assert on_disk - listed == set(), "sentry files missing from SENTRIES"
     assert [s for s in SENTRIES if not (ROOT / s).is_file()] == []
@@ -147,3 +154,11 @@ def collected() -> set[str]:
 
 def test_gates_step_collects_every_sentry(collected: set[str]) -> None:
     assert [s for s in SENTRIES if s not in collected] == []
+
+
+def test_a_nested_unlisted_sentry_is_reported_missing(tmp_path: Path) -> None:
+    """AT-8: the walk descends into sub-folders, so a planted nested sentry is not invisible."""
+    nested = tmp_path / "tests" / "sentry" / "layout"
+    nested.mkdir(parents=True)
+    (nested / "test_unlisted.py").write_text("", encoding="utf-8")
+    assert sentry_files(tmp_path) - set(SENTRIES) == {"tests/sentry/layout/test_unlisted.py"}
