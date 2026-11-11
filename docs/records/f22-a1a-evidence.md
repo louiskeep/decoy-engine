@@ -7,9 +7,13 @@ for `docs/publication.md` and `tests/fileaccess/publication/`; `docs/publication
 
 ## Environment
 
-- Container, Linux, effective uid 0 (root). `python -V` in the project venv: Python 3.11.18.
-  PyArrow 24.0.0, DuckDB 1.5.4. `uv sync --frozen --extra dev` was run before the slice.
-- Branch `feat/f22-a1a`; slice start commit `9878d17` (= `origin/main`).
+- Container, Linux, effective uid 0 (root). The lock profile: `.venv` built by
+  `bash scripts/dev/bootstrap.sh` (extras dev, lint, vault, cloud); `bootstrap.sh --check`
+  reports `OK, environment matches uv.lock`. `.venv/bin/python -V`: Python 3.10.20. PyArrow
+  24.0.0, DuckDB 1.5.4, ruff 0.15.22, mypy 2.3.0, pytest 9.1.1. The native companion is not
+  installed (native-only tests skip, as on baseline).
+- Branch `feat/f22-a1a`; slice start commit `9878d17` (= `origin/main`, unchanged during these
+  runs). Code head for every check below: `04ff3d7`; the commit after it adds only this record.
 - Because the container runs as root, which ignores owner mode bits, the new tests wrap `os.open`
   and `os.mkdir` in their `spawn` children so that a call needing an owner bit the directory
   lacks raises `EACCES` (plan 7.2, "Root:"), and set `_openat2.FORCE_PORTABLE` so confined opens
@@ -19,28 +23,47 @@ for `docs/publication.md` and `tests/fileaccess/publication/`; `docs/publication
 
 ## Red first (start commit `9878d17`, tests from commit `db11405`)
 
-Command: `uv run pytest tests/fileaccess/publication -q -p no:cacheprovider -rA --tb=line`.
-Result: 11 failed, 6 passed. Same sets under uid 65534 (no emulation): 11 failed, 6 passed.
+Run in a temporary detached worktree at `db11405` (the slice tests on main's `src/`), with the same
+`.venv`: `PYTHONPATH=<worktree>/src .venv/bin/python -m pytest tests/fileaccess/publication -q
+-p no:cacheprovider -rA --tb=line`, from the worktree root. The project is installed editable
+from the main checkout, so the worktree's `src` was put first on the path (`PYTHONPATH`, and
+pytest's `pythonpath = ["src"]` resolves against the worktree root); a session-finish hook printed
+`decoy_engine.__file__` and `fileaccess._local.__file__`, both under the worktree, and
+`_local.make_parent_dir_at` was absent. Worktree removed afterwards.
+
+Result: 12 failed, 5 passed.
 
 | Test id | Red reason on `9878d17` |
 |---|---|
 | `test_i_umask_0477_parents_are_0700_through_the_entry_point[strict]` | wrong outcome: `begin()` refused, the new parent `p` is born 0300 and cannot be opened |
 | `test_i_umask_0477_parents_are_0700_through_the_entry_point[ambient]` | wrong outcome: parents left 0300; absent API (`_make_dir_core` spy saw nothing) |
-| `test_ii_killed_between_mkdir_and_repair_retry_refuses_then_publishes[strict]` | wrong outcome: parent `p` is left 0300 before `a` is reached, so the kill never fires and nothing publishes |
-| `test_ii_killed_between_mkdir_and_repair_retry_refuses_then_publishes[ambient]` | wrong outcome: the retry publishes through the unopenable 0300 parent |
-| `test_v_set_group_id_parent[18]`, `[319]` | absent API: `make_parent_dir_at` (`AttributeError`); also `make_stage_dir_at` keeps set-group-ID (0o2700) |
+| `test_ii_killed_between_mkdir_and_repair_retry_refuses_then_publishes[strict]` | wrong outcome: parent `p` is left 0300 before `a` is reached, so the kill never fires (exit 0, not SIGKILL) |
+| `test_ii_killed_between_mkdir_and_repair_retry_refuses_then_publishes[ambient]` | wrong outcome: as strict, the kill never fires |
+| `test_iii_eexist_continues_through_the_existing_directory[ambient]` | hook not reached (non-vacuity line `"ino" in got` fails): see below |
+| `test_v_set_group_id_parent[18]`, `[319]` | absent API: `make_parent_dir_at` (`AttributeError`) |
 | `test_vii_ensure_dir_under_0477[strict]` | wrong outcome: `ensure_dir` refused (0300 parent); spy empty |
-| `test_vii_ensure_dir_under_0477[ambient]` | wrong outcome: `p`, `a`, `out` are 0300 |
+| `test_vii_ensure_dir_under_0477[ambient]` | wrong outcome: `p` is 0300 (192) |
 | `test_viii_no_umask_round_trip_and_no_proc_read[strict]` | wrong outcome: refused (0300 parent) |
 | `test_viii_no_umask_round_trip_and_no_proc_read[ambient]` | absent API: the core spy saw no call (non-vacuity line) |
-| `test_umask_0477_first_attempt_publishes[ambient]` | wrong outcome: the `mkdtemp` stage and the `create_dir` subdirectory are 0300 |
+| `test_umask_0477_first_attempt_publishes[ambient]` | wrong outcome: the `mkdtemp` stage or the `create_dir` subdirectory is 0300 (192), not 0700 |
 
-Green at baseline (characterization, each paired with a mutation below):
-`test_iii_eexist_continues_through_the_existing_directory[strict]`, `[ambient]`,
+`test_iii[ambient]` is red on Python 3.10 and green on 3.11 for a version reason, not an outcome:
+main's ambient walk makes parents with `Path.mkdir(parents=True, exist_ok=True)`, and on 3.10
+`Path.mkdir` calls `pathlib._NormalAccessor.mkdir`, the builtin `os.mkdir` bound when `pathlib`
+was imported, so the test's `os.mkdir` hook is never reached and its non-vacuity line fails. On
+3.11 `Path.mkdir` calls `os.mkdir` at call time, the hook fires, and the case is green at
+baseline (characterization). On the head it is green on 3.10: the ambient walk calls
+`os.mkdir(..., dir_fd=)` through `_make_dir_core`.
+
+Green at baseline on 3.10 (characterization, each paired with a mutation below):
+`test_iii_eexist_continues_through_the_existing_directory[strict]`,
 `test_iv_umask_022_parents_keep_the_born_mode[strict]`, `[ambient]`,
 `test_vi_ambient_user_components_keep_path_semantics`,
 `test_umask_0477_first_attempt_publishes[strict]` (main's strict stage already used
 `make_stage_dir_at`, which F25 S1a-0 landed before this slice).
+
+Earlier note (Python 3.11.18, a venv off the lock profile): 11 failed, 6 passed, the same set
+without `test_iii[ambient]`; the same sets under uid 65534.
 
 ## Mutations (each applied once on the production commit, run, then reverted with `git checkout -- src`)
 
@@ -60,74 +83,110 @@ The plan's mutation "report `published` over an unopenable same-uid parent" need
 the ambient walk opens existing ancestors by path, not through `make_parent_dir_at`. Working tree
 clean after every revert; no commit carries a mutation.
 
-## Checks
+Re-run on the code head `04ff3d7` (lock profile) for the mutations on the ambient walk and the
+`EEXIST` path, each applied once, run on `tests/fileaccess/publication -n 2`, reverted with
+`git checkout -- src` (tree clean after each):
 
-All runs from `/home/user/decoy-engine`, `-n 2`. `tests/unit/publication` does not exist yet (slice
-a2 creates it) and pytest exits 4 when given a missing path, so it was dropped from the first
-command on both sides.
+| Mutation | Tests that went red |
+|---|---|
+| treat `EEXIST` as an error in `make_parent_dir_at` | `test_iii[strict]`, `test_iii[ambient]`, also `test_ii[strict]` and `test_umask_0477_first_attempt_publishes[strict]` |
+| repair an unopenable existing ancestor in the ambient walk (`chmod` 0700 and reopen in `_local._open_dir`) | `test_ii[ambient]` |
+| repair an existing unopenable parent on `EEXIST` (strict path, `_open_existing_dir`) | `test_ii[strict]` |
 
-| Command | Head | Passed | Failed | Errors | Skipped | Other |
+## Checks (lock profile, code head `04ff3d7`)
+
+All runs from `/home/user/decoy-engine` unless a worktree is named. Baselines ran in a detached
+worktree of `origin/main` (`9878d17`) with the same `.venv` and `PYTHONPATH=<worktree>/src`; a
+session-finish hook confirmed `decoy_engine` was imported from the worktree. `tests/unit/publication`
+does not exist yet (slice a2 creates it) and pytest exits 4 on a missing path, so it was dropped
+from the first command on both sides.
+
+| Command | Tree | Passed | Failed | Errors | Skipped | Other |
 |---|---|---|---|---|---|---|
-| `uv run pytest tests/fileaccess tests/sentry -q -p no:cacheprovider -n 2 -rfE` | `9878d17` (baseline) | 5867 | 12 | 77 | 7 | |
-| same | `c33f376` | 5885 | 12 | 77 | 7 | |
-| same | `f3bbb0f` | 5885 | 12 | 77 | 7 | same 89 ids as baseline |
-| `uv run pytest tests/unit/execution tests/integration tests/parity tests/security -q -p no:cacheprovider -n 2 -rfE` | `9878d17` (baseline) | 12230 | 0 | 6 | 2389 | 37 xfailed |
-| same | `c563498` | 12230 | 0 | 6 | 2389 | 37 xfailed |
-| `uv run ruff check src tests` | branch and `9878d17` | | 3 (both) | | | RUF036 in `plan/checks/_generate_columns.py`, untouched |
-| `uv run ruff format --check src tests` | branch | clean | | | | |
-| `mypy src/decoy_engine` (`/root/.local/bin/mypy`, the tool `uv run` resolves) | branch and `9878d17` | | 158 (both, identical lines) | | | missing `numpy` stubs and similar, environment |
-| `GATES_WORKERS=2 bash scripts/dev/gates.sh --keep-going --baseline <slice paths>` | `f3bbb0f` | tests: branch=80 baseline=80 failing ids, branch-only=0 | | | | |
+| `.venv/bin/python -m pytest tests/fileaccess tests/sentry -q -p no:cacheprovider -n 2 -rfE` | `9878d17` | 5890 | 10 | 56 | 7 | 5963 collected |
+| same | `04ff3d7` | 5910 | 10 | 56 | 7 | 5983 collected; same 66 failing ids |
+| `.venv/bin/python -m pytest tests/unit/execution tests/integration tests/parity tests/security -q -p no:cacheprovider -n 2 -rfE` | `9878d17` | 12230 | 0 | 6 | 2389 | 37 xfailed |
+| same | `04ff3d7` | 12230 | 0 | 6 | 2389 | 37 xfailed; same 6 failing ids |
+| `.venv/bin/ruff check src tests` | `04ff3d7` | All checks passed | | | | |
+| `.venv/bin/ruff format --check src tests` | `04ff3d7` | 2210 files already formatted | | | | |
+| `.venv/bin/mypy src/decoy_engine` | `04ff3d7` | Success, 785 source files | | | | |
+| `GATES_WORKERS=2 bash scripts/dev/gates.sh --keep-going --baseline tests/fileaccess/publication tests/fileaccess tests/unit/execution/test_b6b_sink.py` | `04ff3d7`, baseline `9878d17` | exit 0 | | | | see below |
 
-Failing ids, first command: identical sets on baseline and branch (89 ids). They are the 77
-`tests/fileaccess/scratch/test_private_creators.py` errors (its fixture asserts a non-root uid),
-10 `tests/sentry/layout/test_import_layers.py` failures and 2 `tests/sentry/test_outbound_clients.py`
-failures. No new failing id; no baseline id now passes. Collected count: 5963 to 5981 (+18: the 17
-new tests, plus one sentry case parametrized by the new registry row; gates' sentry step shows
-4938 to 4939 passed).
+Failing ids, first command: identical sets on baseline and head (66 ids): the 56 errors of
+`tests/fileaccess/scratch/test_private_creators.py` (its fixture asserts a non-root uid) and 10
+failures of `tests/sentry/layout/test_import_layers.py` (import-linter is not in `.venv`; gates
+runs that file in `.venv-layers`, where its `layers` step passes). No new failing id; no baseline
+id now passes. Collected count 5963 to 5983 (+20: the 17 new tests, the new seeded case of
+`test_private_files.py`, and 2 sentry cases not itemised here).
 
 Failing ids, second command: identical on both sides, the 6 errors of
 `tests/unit/execution/test_scratch_root_umask.py` (root precondition). Collected count unchanged.
-`tests/unit/execution/test_b6b_sink.py::test_a_nested_target_spills_under_its_own_spill_parent_not_tmpdir`
-failed once on `c33f376` because its `mkdtemp` spy no longer saw ambient stages; the spy now also
-observes `_local._make_stage_dir` (commit `c563498`) and the file passes (9 passed, 2 skipped for the
-absent native companion, as on baseline).
 
-gates.sh: its `env`, `ruff`, `format` and `mypy` steps fail on both sides for the environment
-(`bootstrap.sh --check`: the venv is Python 3.11.18 where the lock expects 3.10.20; `ruff` and `mypy`
-are not installed in `.venv`, rc 127); they are listed as branch-only only because the baseline skips
-`env`. Sentry and tests failing ids are the same on both sides; `layers` and `licenses` pass.
+gates.sh (EVIDENCE block, Python 3.10.20, workers 2): branch `env`, `ruff`, `format`, `mypy`
+(`src/decoy_engine testflight`), `sentry` (ratchet check, then 4965 passed, 0 failed, 2 skipped),
+`layers` (15 passed) and `licenses` (63 passed) all PASS. `tests`: branch 985 passed, 56 errors,
+7 skipped; baseline 968 passed, 56 errors, 7 skipped; failing ids branch=56 baseline=56
+branch-only=0 (all `test_private_creators.py`, root precondition). Branch-only failing steps: none.
 
 Signature grep (`git grep` in `tests/` for `make_stage_dir_at`, `make_parent_dir_at`,
 `_make_dir_core`, `ensure_dir`, `_open_parent`, `create_dir(`, `LocalOutputTxn`, `LocalOutputDir`,
-`RootedOutputDir`, `RootedOutputTxn`): every hit is under `tests/fileaccess/` or `tests/sentry/`,
-covered by the first command.
+`RootedOutputDir`, `RootedOutputTxn`, `_open_dir`, `_open_dir_creating`, `_make_stage_dir`,
+`_ensure_dirs`): every hit is under `tests/fileaccess/`, `tests/sentry/` or is
+`tests/unit/execution/test_b6b_sink.py`, all run by the first two commands.
 
-Non-root (uid 65534, no emulation), branch `f3bbb0f`:
-`.venv/bin/python -m pytest tests/fileaccess/scratch/test_private_creators.py tests/fileaccess/publication -q -p no:cacheprovider`
-73 passed (56 F25 creator cases, including `public_dir_stage_unchanged` and
-`output_parent_unchanged`, plus the 17 slice tests). On `9878d17` the same 56 creator cases pass.
+Non-root (uid 65534, no emulation), code head `04ff3d7`: the 3.10 interpreter lives under `/root`
+(mode 0700), so it was copied to a world-readable temporary directory and run with
+`setpriv --reuid=65534 --regid=65534 --clear-groups`, `PYTHONPATH=src:.venv/lib/python3.10/site-packages`
+(uid and `decoy_engine.__file__` printed first), `PYTHONDONTWRITEBYTECODE=1` and a basetemp owned
+by that uid: `python -m pytest tests/fileaccess/scratch/test_private_creators.py
+tests/fileaccess/publication -q -p no:cacheprovider` gave 73 passed (56 F25 creator cases,
+including `public_dir_stage_unchanged` and `output_parent_unchanged`, plus the 17 slice tests).
 
-### Final code head
+### Why the earlier 3.11 run missed a sentry failure
 
-`f3bbb0f` is the last commit that touches code or tests; the commit after it adds only this record.
-The first command was rerun there (row above): identical failing ids to baseline, 5981 collected.
-The second command's last run is on `c563498`; `f3bbb0f` changed only files under
-`tests/fileaccess/publication/`, which that command does not collect.
+The first record ran on Python 3.11.18 in a venv without the `cloud` extra. There
+`tests/sentry/test_outbound_clients.py` fails on both sides because `google-cloud-storage` is
+not importable (`gcs_name_set` fails rather than skips), which hid a branch-only failure of
+`test_gcs_calls_carry_timeout_and_retry`: the new `os.open` in `_local._open_dir` was a new
+`.open` collision key, and `baselines/gcs-call-kwargs.json` is shrink-only (ratchet). Commit
+`151d0b3` replaced the hand-written errno-only wrapper in `_open_dir` with the existing
+`_output._call` (the same helper `_output.py` uses for its `os.open` calls); the outbound sentry
+treats `_call(os.open, ...)` as a call of `_call`, so the baseline is untouched. The file-access
+scan still records the site as `os.open` (`_local.py`, `_open_dir`, ordinal 0), so the registry
+row the slice added is unchanged. `test_private_files.py` read the `os.open` flags at the wrong
+argument of a `_call` site and failed closed (a false P1 on that `read` row); it now skips the
+wrapped callee as `fa/rules.py` does, with a seeded write case (P1) and a seeded read-only control.
+The same 3.11 venv also lacked `ruff` and `mypy`; its 3 RUF036 and 158 mypy lines came from tools
+outside the lock and do not appear on the lock profile.
 
-## Tests changed outside the new directory (fault seams only, assertions unchanged)
+Earlier note (Python 3.11.18, off the lock profile, head `f3bbb0f`): first command 5885 passed,
+12 failed, 77 errors, 7 skipped, same 89 ids as its baseline; second command 12230 passed,
+6 errors, 2389 skipped, 37 xfailed on `c563498`; gates `env`, `ruff`, `format`, `mypy` failed for
+the environment.
+
+## Tests changed outside the new directory (fault seams and sentry reading, assertions unchanged)
 
 - `tests/fileaccess/test_write_private.py::test_error_text_is_value_free[begin]`: the fault was
   injected at `Path.mkdir`, which the POSIX arm no longer calls; it now also fails the
   directory open the POSIX arm makes first.
 - `tests/fileaccess/test_x4_scratch_and_names.py`: the creation probe recorded a bare name for a
   descriptor-relative `os.mkdir`; it now resolves `dir_fd` before judging the location.
-- `tests/unit/execution/test_b6b_sink.py`: see above.
+- `tests/unit/execution/test_b6b_sink.py`: its `mkdtemp` spy no longer saw ambient stages; it
+  now also observes `_local._make_stage_dir`.
 - `tests/sentry/file_access_registry.toml`: one row for `_local._open_dir` (`os.open`, `read`);
   count 190 to 191. The `win32` arms keep main's calls at the same registry keys.
+- `tests/sentry/test_private_files.py` and its `fixtures/private_files/` corpus: flags of a
+  `_call(os.open, ...)` site are read one argument later (above); with that shift removed, the
+  `_open_dir` row and the new seeded control both go red.
+- The two unit-file content checks in `tests/fileaccess/publication/` compare bytes again: the
+  test makes the bound file 0600 first (it is born 0200 under umask 0477; file modes are a1b), so
+  the check holds under root and uid 65534.
 
 ## Not run
 
 - The full suite, the perf suite, and the docs build.
+- `tests/sentry/layout/test_import_layers.py` outside gates (no import-linter in `.venv`); gates
+  ran it in `.venv-layers` (15 passed).
 - macOS (the plan names a Mac mini run before a1a lands): not available here.
 - Windows: the win32 arms are main's code unchanged and were not executed.
 
