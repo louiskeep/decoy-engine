@@ -22,7 +22,6 @@ from tests.sentry.layout import (
 )
 
 ROOT = Path(__file__).resolve().parents[3]
-PKG = ROOT / "src" / "decoy_engine"
 LIMIT = 25
 LAYOUT_HEADING = "## Where Things Go"
 
@@ -44,32 +43,39 @@ FANOUT_ALLOWLIST: dict[str, int] = {
 }
 
 
-def fanout_dirs() -> list[Path]:
-    """Every directory under ``src/decoy_engine`` and ``scripts`` that holds a module."""
+def fanout_dirs(root: Path = ROOT) -> list[Path]:
+    """Every directory under ``src/decoy_engine`` and ``scripts`` of ``root`` that holds a module."""
     found: set[Path] = set()
-    for top in (PKG, ROOT / "scripts"):
+    for top in (root / "src" / "decoy_engine", root / "scripts"):
+        if not top.is_dir():
+            continue
         for d in [top, *top.rglob("*")]:
             if d.is_dir() and "__pycache__" not in d.parts and direct_modules(d):
                 found.add(d)
     return sorted(found)
 
 
-def rel(path: Path) -> str:
-    return path.relative_to(ROOT).as_posix()
+def rel(path: Path, root: Path = ROOT) -> str:
+    return path.relative_to(root).as_posix()
 
 
-@pytest.mark.parametrize("directory", fanout_dirs(), ids=rel)
-def test_package_fanout_within_limit(directory: Path) -> None:
-    key = rel(directory)
-    reason = ratchet_verdict(
+def fanout_reason(directory: Path, allowlist: dict[str, int], root: Path = ROOT) -> str | None:
+    """The live check for one directory: its module count against the cap or its frozen entry."""
+    key = rel(directory, root)
+    return ratchet_verdict(
         key,
         direct_modules(directory),
-        FANOUT_ALLOWLIST.get(key),
+        allowlist.get(key),
         goal=LIMIT,
         limit=LIMIT,
         margin=0,
         terms=FANOUT_TERMS,
     )
+
+
+@pytest.mark.parametrize("directory", fanout_dirs(), ids=rel)
+def test_package_fanout_within_limit(directory: Path) -> None:
+    reason = fanout_reason(directory, FANOUT_ALLOWLIST)
     assert reason is None, reason
 
 
@@ -110,10 +116,27 @@ def test_every_subpackage_of_a_frozen_package_is_in_the_map() -> None:
 # --- meta-tests: seeded violations prove each guard sees them ----------------------------
 
 
-def verdict(count: int, recorded: int | None) -> str | None:
-    return ratchet_verdict(
-        "pkg", count, recorded, goal=LIMIT, limit=LIMIT, margin=0, terms=FANOUT_TERMS
-    )
+FROZEN = "src/decoy_engine/frozen"
+OPEN = "src/decoy_engine/open"
+
+
+def _plant(root: Path, package: str, count: int) -> None:
+    """A package of ``count`` empty modules plus an ``__init__.py`` under ``root``."""
+    pkg = root / package
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    for i in range(count):
+        (pkg / f"m{i:03}.py").write_text("", encoding="utf-8")
+
+
+def census(root: Path, allowlist: dict[str, int]) -> dict[str, str]:
+    """Run the live walk and check over a scratch tree: directory to refusal, failures only."""
+    out = {}
+    for d in fanout_dirs(root):
+        reason = fanout_reason(d, allowlist, root)
+        if reason is not None:
+            out[rel(d, root)] = reason
+    return out
 
 
 def test_direct_modules_counts_modules_only(tmp_path: Path) -> None:
@@ -125,20 +148,37 @@ def test_direct_modules_counts_modules_only(tmp_path: Path) -> None:
     assert direct_modules(tmp_path) == 3
 
 
-def test_a_module_planted_in_a_frozen_package_is_red() -> None:
-    message = verdict(105, 104)
-    assert message is not None and "may only shrink" in message
+def test_a_scratch_tree_at_its_frozen_counts_is_green(tmp_path: Path) -> None:
+    _plant(tmp_path, FROZEN, 30)
+    _plant(tmp_path, OPEN, LIMIT)
+    _plant(tmp_path, "scripts", 3)
+    assert {rel(d, tmp_path) for d in fanout_dirs(tmp_path)} == {FROZEN, OPEN, "scripts"}
+    assert census(tmp_path, {FROZEN: 30}) == {}
 
 
-def test_a_module_removed_from_a_frozen_package_demands_a_ratchet_down() -> None:
-    message = verdict(103, 104)
-    assert message is not None and "down to 103" in message
+def test_a_module_planted_in_a_frozen_package_is_red(tmp_path: Path) -> None:
+    _plant(tmp_path, FROZEN, 31)
+    found = census(tmp_path, {FROZEN: 30})
+    assert list(found) == [FROZEN] and "may only shrink" in found[FROZEN]
 
 
-def test_a_26th_module_in_an_unfrozen_package_is_red() -> None:
-    assert verdict(25, None) is None
-    message = verdict(26, None)
-    assert message is not None and "26 modules" in message
+def test_a_module_removed_from_a_frozen_package_demands_a_ratchet_down(tmp_path: Path) -> None:
+    _plant(tmp_path, FROZEN, 29)
+    found = census(tmp_path, {FROZEN: 30})
+    assert list(found) == [FROZEN] and "down to 29" in found[FROZEN]
+
+
+def test_a_26th_module_in_an_unfrozen_package_is_red(tmp_path: Path) -> None:
+    _plant(tmp_path, OPEN, LIMIT + 1)
+    found = census(tmp_path, {})
+    assert list(found) == [OPEN] and f"{LIMIT + 1} modules" in found[OPEN]
+
+
+def test_a_crowded_nested_package_and_scripts_folder_are_walked(tmp_path: Path) -> None:
+    nested = f"{OPEN}/deep/er"
+    _plant(tmp_path, nested, LIMIT + 1)
+    _plant(tmp_path, "scripts/dev", LIMIT + 1)
+    assert set(census(tmp_path, {})) == {nested, "scripts/dev"}
 
 
 def test_an_unmapped_subpackage_is_reported(tmp_path: Path) -> None:

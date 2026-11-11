@@ -91,11 +91,6 @@ def _git_show(root: Path, ref: str, rel: str) -> str | None:
     return res.stdout if res.returncode == 0 else None
 
 
-def _base_keys(root: Path, ref: str, path: str) -> frozenset[str]:
-    text = _git_show(root, ref, path)
-    return parse_baseline(text).keys if text is not None else frozenset()
-
-
 def _base_entries(root: Path, ref: str, path: str) -> dict[str, object]:
     text = _git_show(root, ref, path)
     return parse_baseline(text).reasons if text is not None else {}
@@ -185,10 +180,14 @@ def check(root: Path, base_ref: str) -> tuple[list[str], list[str]]:
         findings += reason_findings(path, base)
 
     removed = set(base_reg) - set(head)
-    old_union: frozenset[str] = frozenset().union(
-        *(_base_keys(root, base_ref, base_reg[s]) for s in removed)
-    )
+    # A key a replacement keeps must keep its max too, or a rename would launder a raised max.
+    old_entries: dict[str, list[object]] = {}
+    for s in removed:
+        for key, entry in _base_entries(root, base_ref, base_reg[s]).items():
+            old_entries.setdefault(key, []).append(entry)
+    old_union = frozenset(old_entries)
     new_union: frozenset[str] = frozenset()
+    replaced_raised: set[str] = set()
     union_ids = set(removed)
     for sid, base in sorted(loaded.items()):
         path = head[sid]
@@ -214,6 +213,11 @@ def check(root: Path, base_ref: str) -> tuple[list[str], list[str]]:
         elif removed:
             new_union |= base.keys
             union_ids.add(sid)
+            replaced_raised |= {
+                k
+                for k in base.keys & old_union
+                if any(max_raised(base.reasons[k], old) for old in old_entries[k])
+            }
         else:
             # Newly registered in this diff: the one way a first inventory is admitted.
             report.append(f"{sid}: first inventory, {len(base.keys)} key(s), review required")
@@ -224,5 +228,10 @@ def check(root: Path, base_ref: str) -> tuple[list[str], list[str]]:
     if removed and grown:
         findings.append(
             f"replacement or split of {_fmt(frozenset(removed))} adds key(s): {_fmt(grown)}"
+        )
+    if replaced_raised:
+        findings.append(
+            f"replacement or split of {_fmt(frozenset(removed))} raised or dropped max for"
+            f" key(s): {_fmt(frozenset(replaced_raised))}"
         )
     return findings, report

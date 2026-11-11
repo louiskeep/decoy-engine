@@ -280,3 +280,29 @@ def test_numeric_max_may_not_rise(
     assert (res.returncode == 1) is red, res.stdout + res.stderr
     if red:
         assert "m::f" in res.stdout + res.stderr and "max" in res.stdout + res.stderr
+
+
+def _sid_max_baseline(sid: str, max_value: int | None) -> str:
+    entry: dict[str, object] = {"reason": REASON}
+    if max_value is not None:
+        entry["max"] = max_value
+    return json.dumps({"sentry_id": sid, "created_in": "S0", "entries": {"m::f": entry}})
+
+
+@pytest.mark.parametrize(
+    "base_max, head_max, red", [c[1:] for c in MAX_VALUE_CASES], ids=[c[0] for c in MAX_VALUE_CASES]
+)
+def test_a_rename_may_not_raise_a_numeric_max(
+    repo: Path, base_max: int | None, head_max: int | None, red: bool
+) -> None:
+    _write(repo, A, _sid_max_baseline("a", base_max))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "max")
+    renamed = "tests/sentry/baselines/r.json"
+    (repo / A).unlink()
+    _write(repo, renamed, _sid_max_baseline("r", head_max))
+    _write(repo, REG, _registry({"r": renamed}))
+    res = _run(repo)
+    assert (res.returncode == 1) is red, res.stdout + res.stderr
+    if red:
+        assert "replacement or split of a raised or dropped max for key(s): m::f" in res.stderr
