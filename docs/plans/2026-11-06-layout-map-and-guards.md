@@ -1,6 +1,7 @@
 # LAYOUT: layout map and placement guards for engine and CLI
 
-Status: plan (2026-11-06, not built). Covers both repos; lives in the engine repo.
+Status: plan (2026-11-06). Built: E1 (engine #410), C1 (CLI #183), E2 (engine #479). Not built: E3,
+C2, C3. Covers both repos; lives in the engine repo.
 
 Rules consulted: `~/dev-rules/00-universal.md`, `risk-and-exceptions.md`, `development-loop.md`, `architecture.md`
 (section "Layout: where things go"), `cross-cutting-concerns.md`, `testing.md`, `reuse-first.md`,
