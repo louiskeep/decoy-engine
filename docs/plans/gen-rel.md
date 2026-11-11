@@ -8,7 +8,7 @@ api-and-compatibility, exploration, reuse-first, security, config-secrets-and-su
 observability-and-resilience, data-and-migrations, scope-discipline, documentation, verification,
 profiles/local-operations, catalogs/recurring-defects
 
-Base: engine `origin/main` `9878d17e5bda3c0771645a803be86b397bb880b8`. Roadmap row 24n.
+Base: engine `origin/main` `0651d215740c9148c153e260fec7488049b99143`. Roadmap row 24n.
 Engine only; the CLI docs follow in the GEN-CLI plan. All source locations and module counts below
 were checked with `git show origin/main:<path>` and `git ls-tree origin/main` on 2026-11-11.
 
@@ -39,8 +39,11 @@ the one descriptor for every generate-column input. Public
 `iter_generate_input_refs(table, column) -> tuple[GenerateInputRef, ...]`, exported by `config`,
 resolves only those descriptors. The existing strict-schema walk in
 `plan/checks/_generate_columns.py` remains the one checker of the resolved table, column and order;
-generation order, reproducibility and deferred-aggregate checks consume the same descriptors
-without revalidating them. There is no second input-edge table in `_generate_relational.py`.
+generation order, reproducibility, numeric typing and deferred-aggregate checks consume the same
+resolved edges without revalidating them. `_numeric_typing.py` keeps the one reader-safety policy,
+keyed by the resolved edge's consumer kind and option, but removes its `READER_KEYS` option-key
+table and never resolves an option value as a sibling itself. There is no second input-edge table
+in `_generate_relational.py` or `_numeric_typing.py`.
 Relationship-policy parsing stays in its existing
 `relationships/_graph.py` owner: extract `normalize_orphan_policy_lookup(config)` there, export it
 from `decoy_engine.relationships`, and make both graph construction and generation consume it. The
@@ -314,7 +317,13 @@ with every re-pinned artifact listed in E1's slice report.
     plan bypassed compile, so `_pinned_execute.py` never reaches a column it cannot look up;
   - the reproducibility graph (`generation/_reproducibility.py:58`), which consumes those edges so a
     child is not reported reproducible when its parent anchor or lookup FK is not, without also
-    reading a same-named child column.
+    reading a same-named child column;
+  - numeric typing (`generation/_numeric_typing.py:145-164`, `:282-299`), which consumes the
+    resolved source table and column from each edge when finding readers. Its one `READERS`
+    classification remains the reader-safety policy, including the expression-specific decision,
+    while the parallel `READER_KEYS` option-key table and sibling-only `_names_read` resolution go.
+    The registry guard walks `iter_generate_input_refs` and requires every realistic resolved
+    reader edge to have a safety classification and reason.
 - **Coded value-free date failures at the source.** `transforms/windowed_date.py` gives
   `WindowedDateError` a registered code and removes row positions, raw type names and submitted
   values from every message. Invalid grammar/type/timezone/NaT uses
@@ -366,7 +375,8 @@ with every re-pinned artifact listed in E1's slice report.
   - the streaming admission already declines `derived_aggregate` (`generation/_admission.py:58`);
   - pinned compile refuses the per-parent form with `plan.pinned_relational_option_unsupported`, and
     pinned execute uses the runtime twin for a supplied plan that bypassed compile;
-  - the reproducibility graph consumes the child's value and `via` reference edges.
+  - the reproducibility graph and numeric typing consume the child's value and `via` reference
+    edges, so neither treats a same-named parent column as the aggregate input.
 - **Docs.** Update `docs/strategies.md`, `docs/capability-matrix.md`, `docs/reasons.md` and add
   `changelog.d/gen-rel-e3b.md`.
 
@@ -405,6 +415,7 @@ determines empty-parent behavior; AT-1 proves that its non-empty generated Arrow
 | Relationship conflict text echoes submitted policy tokens | Sanitize the central `_graph.py` builders; sentinel surface test (AT-6r) |
 | A same-named child column silently stands in for a parent anchor | Streaming declines `anchor_via`; pinned refuses it (AT-10, AT-11) |
 | GEN-STRICT still treats a cross-table anchor as a child sibling | Cross-table `OptionSpec.ref_kind` descriptors and one resolver; descriptor mutations (AT-11, AT-12) |
+| Numeric typing treats a resolved cross-table input as a same-table sibling | Numeric typing consumes `iter_generate_input_refs`; AT-11 and AT-12 pin the unrelated same-named column's Arrow type |
 | A non-null FK is missing, or a present parent has a null anchor | Typed lookup distinguishes missing from present-null and raises fixed codes (AT-11c) |
 | An anchor or shifted result is outside the supported range | Central coded `WindowedDateError`, with min and max boundary cells (AT-11c) |
 | A child is reported reproducible though its parent input is not | Reproducibility graph includes cross-table inputs (AT-11b) |
@@ -434,10 +445,10 @@ Each test is red on the current build or on the named mutant.
 | AT-8 | Self-reference over 200 rows and 10 seeds: rows below `root_count` are null, every other parent key belongs to an earlier row, every chain reaches a root | a mutant drawing from all rows |
 | AT-9 | Self-reference with `max_per_parent: 2`: no key has more than 2 children over 10 seeds; `weighted`, `sequential`, `min_per_parent` and `null_probability` each refuse with `config.generate_self_reference_option_unsupported`; a non-sequence or nullable key refuses with `config.generate_self_reference_key_invalid`; `row_count: 0` with the default or an otherwise out-of-range `root_count` validates; `root_count: 0` on 10 rows refuses with `config.generate_option_range`; `root_count` on a non-self reference refuses with `config.generate_option_unknown` | a mutant ignoring max or failing to add each new row to the open set; current build |
 | AT-10 | Pinned compile refuses a self-reference, an `anchor_via` column and a per-parent aggregate with `plan.pinned_relational_option_unsupported`. Pinned execute independently refuses a deserialized or hand-built plan carrying any of them with `runtime.pinned_relational_option_unsupported` at GENERATE. A tampered internal orphan-policy field of the wrong type or an unknown token also gets the runtime refusal before draw | a mutant that guards compile only, reuses the plan code at execute, or parses stored metadata laxly |
-| AT-11 | `anchor_via` child date is within `[parent.birth + min_days, parent.birth + max_days]` for every row, on a child whose deliberately different same-named `birth` column would fail that range; the 64-row, four-parent, 30-day fixture gives identical output for the same seed and at least one changed non-null anchored date for a fixed second seed; both outputs stay in their own parent windows. The test fails if either output has no non-null dates. Streaming declines the column; a non-sequence parent key and self-reference refuse with the generic parent-lookup config codes | current build; same-named-child, constant-date and module-global-random mutants |
+| AT-11 | `anchor_via` child date is within `[parent.birth + min_days, parent.birth + max_days]` for every row, on a child whose deliberately different same-named numeric `birth` column would fail that range; that unrelated child `birth` keeps its numeric Arrow type. The 64-row, four-parent, 30-day fixture gives identical output for the same seed and at least one changed non-null anchored date for a fixed second seed; both outputs stay in their own parent windows. The test fails if either output has no non-null dates. Streaming declines the column; a non-sequence parent key and self-reference refuse with the generic parent-lookup config codes | current build; same-named-child, sibling-only numeric-input resolution, constant-date and module-global-random mutants |
 | AT-11c | Parent lookup and date failures are distinct: non-null FK absent from the map gives `runtime.parent_lookup_key_missing`; present parent with null anchor gives `runtime.windowed_date_parent_anchor_null`; anchors just below and above the supported range give `runtime.windowed_date_anchor_out_of_range`; offsets crossing minimum and maximum give `runtime.windowed_date_offset_out_of_range`. Invalid grammar/type gives `runtime.windowed_date_anchor_invalid`. List and dict lookup keys work, null FK yields null, and a duplicate normalized parent key gives `runtime.parent_lookup_key_not_unique`. GEN-INHERIT's planned caller is pinned to reuse the missing-key code and present-null result. Every exception is value-free and has no cause/context | current build's uncoded row-position error; mutants that use `dict[fk]`, conflate missing with null, or wrap inside `except` |
 | AT-11b | A child whose `anchor_via` parent anchor is not reproducible is reported not reproducible. Existing configs without `anchor_via` keep the exact old reproducibility report | a mutant that keeps `_SIBLING_KEYS` same-table only; a refactor that changes old dependency edges |
-| AT-12 | Per-parent `sum`, `count`, `mean`, `min`, `max` match a pandas `groupby` with a left join; childless parents get 0, 0, `None`, `None`, `None` (not NaN); the final returned parent Arrow table contains the filled values. A repeated or nullable parent key refuses with `config.generate_parent_lookup_key_not_unique`. The strict-schema OptionSpec resolver accepts `column` in `from_table` even when no same-named parent sibling exists, and refuses a missing child column. Each realistic resolved reader edge refuses an aggregate read before fill. `null_probability` on the aggregate refuses with `config.generate_per_parent_null_conflict` | current build; descriptor-as-sibling, childless-mean, NaN, placeholder-table and omitted-edge mutants |
+| AT-12 | Per-parent `sum`, `count`, `mean`, `min`, `max` match a pandas `groupby` with a left join; childless parents get 0, 0, `None`, `None`, `None` (not NaN); the final returned parent Arrow table contains the filled values. The child aggregate source and the parent both have a numeric `amount` column, and the unrelated parent `amount` keeps its numeric Arrow type. A repeated or nullable parent key refuses with `config.generate_parent_lookup_key_not_unique`. The strict-schema OptionSpec resolver accepts `column` in `from_table` even when no same-named parent sibling exists, and refuses a missing child column. Each realistic resolved reader edge refuses an aggregate read before fill. `null_probability` on the aggregate refuses with `config.generate_per_parent_null_conflict` | current build; descriptor-as-sibling, sibling-only numeric-input resolution, childless-mean, NaN, placeholder-table and omitted-edge mutants |
 | AT-13 | Weighted reference with 3 weights against 4 distinct parent keys refuses at run with `runtime.reference_weights_length_mismatch` on the resident eligible core, streamed sink, forced legacy route and pinned execute | current build (uniform fallback, H7); omission of any route call |
 | AT-14 | Every new code is in the correct config, plan, runtime or warning catalog with the `since` the Frozen contracts rule gives it. `WindowedDateError` is removed from `UNCLASSIFIED`. Compile and execute use the plan and runtime twins of the pinned relational refusal. The registry version follows the rule in Frozen contracts | a mutant that raises an unregistered code, leaves the allowlist entry, or puts an execute refusal in `plan` |
 | AT-15 | Every new or edited refusal and warning contains only its registered fixed summary plus table and column names. Sentinel keys, policy tokens, row positions, counts, bounds, weights and other configured or generated values are absent from `str(exc)`, logs and reason payloads. Every safe exception has `__cause__ is None` and `__context__ is None` | mutants that format a key, policy, row, count or bound, or raise inside an `except` block |
@@ -448,10 +459,13 @@ with-replacement fill, drops the runtime feasibility check, removes each pool-ch
 uses a Python `assert`, a raw parent value as a counter key, a second relationship parser, a direct
 warning log call, generic empty-parent handling before fitted handling, and policy-token interpolation
 in `_graph.py`; E2 draws tree parents from all rows and skips every cycle edge instead of the self-edge
-only; E3a changes each cross-table `ref_kind` to `column`, inlines a parent lookup, conflates missing
-with present-null, restores row positions in date errors, returns one legal date for both seeds and
-lets streaming admit `anchor_via`; E3b fills childless `mean` with 0, returns the placeholder table
-and removes each realistic resolved input edge. Each mutation must turn a named test red. A later
+only; E3a changes each cross-table `ref_kind` to `column`, restores `_numeric_typing.py` resolution
+to `(consumer table, option value)` instead of the resolved source edge, inlines a parent lookup,
+conflates missing with present-null, restores row positions in date errors, returns one legal date
+for both seeds and lets streaming admit `anchor_via`; E3b restores the same sibling-only
+numeric-input resolution, fills childless `mean` with 0, returns the placeholder table and removes
+each realistic resolved input edge. The named sibling-only numeric-input mutation must turn both
+the AT-11 and AT-12 Arrow-type assertions red. Each mutation must turn a named test red. A later
 source edit voids the mutation result.
 
 ## Class table
@@ -497,6 +511,9 @@ exact path and name and walk their callers; no cap, census value or allowlist is
 - `GenDeriveContext.for_column(...).base_int("py")`: the per-column seed for every new draw.
 - The option registry `TypeOptions`/`OptionSpec` (`config/_generate_options.py:66`) and GEN-STRICT's
   registry-driven reference resolver for all same-table and cross-table input edges.
+- Numeric typing's `READERS` policy (`generation/_numeric_typing.py:123`) remains the one place that
+  decides whether a resolved reader is numeric-safe; option keys and source locations come only
+  from `config.iter_generate_input_refs`.
 - The normalized relationship-policy helper in `relationships/_graph.py`, exported by the package
   and consumed by graph construction and generation rather than copied.
 - `_windowed_date_generate` (`generation/_grouped_windowed_generators.py:67`) for the window; only
@@ -590,6 +607,9 @@ exact path and name and walk their callers; no cap, census value or allowlist is
 - Generate input descriptors: `OptionSpec.ref_kind`, `ref_context_key` and `ref_phase` are the
   single registry for same-table, cross-table and post-fill inputs. No parallel edge table may be
   added.
+- Numeric reader safety: `_numeric_typing.py` classifies resolved reader identities in one policy
+  and consumes their resolved source endpoints from `iter_generate_input_refs`; it has no second
+  option-key or source-resolution table.
 - Parent lookup: null FK returns null; missing non-null FK refuses with
   `runtime.parent_lookup_key_missing`; present-null selected value remains distinguishable; Arrow
   type is preserved. GEN-INHERIT consumes this exact contract.
@@ -615,10 +635,10 @@ exact path and name and walk their callers; no cap, census value or allowlist is
 | Pinned refusals and compiled policy | `generation/_pinned_plan.py`, `generation/_pinned_compile.py`, `generation/_pinned_execute.py` | Generation | `numeric_types` optional-field precedent; `_generate_column` call |
 | Window generation and coded primitive failures | `generation/_grouped_windowed_generators.py`, `transforms/windowed_date.py` | Generation; Transforms | existing shared window helper |
 | Resolved inputs and reproducibility | `generation/synthesize.py`, `generation/_reproducibility.py` | Generation | current generation-order and sibling scans |
+| Resolved inputs and numeric reader safety | `generation/_numeric_typing.py` | Generation | existing `READERS` safety policy and numeric fixed-point walk |
 | Probe loosening | `execution/_probe_scale.py` | Pipeline spine and routes | `downscale_config` |
 | Reason codes | existing `reasons/config/_part2.py`, `reasons/runtime/_part2.py`, `reasons/plan/_part3.py`, `reasons/warning/_part1.py` | Reason codes | existing generate codes |
 | Docs and release fragments | `docs/strategies.md`, `docs/capability-matrix.md`, `docs/reasons.md`, new `changelog.d/gen-rel-e<N>.md` | Plans/records docs; Changelog fragments | current generation docs and fragment README |
-| Plan filename correction | rename `docs/plans/gen-rel.md` to `docs/plans/2026-11-11-gen-rel.md` in E1 and update GEN-INHERIT's link | Plans | CODEMAP row 255 date rule; current file is the source artifact |
 | Config and relationship tests | new `tests/unit/config/test_generate_relational.py`; edit `tests/unit/relationships/test_orphan_fk_policy_dedup.py`, `test_multi_parent_fk.py` | Unit tests | existing relationship parser tests |
 | Strict-schema tests | edit `tests/unit/plan/checks/test_generate_columns.py` | Unit tests | existing `ref_kind` forward-reference cells |
 | Cardinality tests | new `tests/unit/generation/relational/test_cardinality.py` | Unit tests | mirrors `generation/relational/_cardinality.py` |
@@ -628,9 +648,10 @@ exact path and name and walk their callers; no cap, census value or allowlist is
 | Route acceptance tests | new `tests/unit/generation/relational/test_routes.py` | Unit tests | nested beside the new relational source package |
 | Pool choke-point sentry | new `tests/sentry/defects/test_reference_pool_choke_point.py` | Sentry test | recurring-defect sentries |
 | Option-input sentry | new `tests/sentry/defects/test_generate_input_edges.py` | Sentry test | existing `test_generate_option_reads.py` registry walk |
+| Numeric edge-resolution tests | edit `tests/unit/generation/test_numeric_typing.py`, `tests/parity/test_numeric_typing_readers.py`, `tests/sentry/test_numeric_reader_registry.py` | Unit tests; current parity exception; Sentry test | existing numeric candidate, reader-policy and registry-guard cells |
 | New foundation leaf registration | `.importlinter`, `tests/sentry/layout/test_import_layers.py` | Foundation; Sentry test | exhaustive root-module tier and snapshot |
 
-Against `9878d17e`, `generation/` has 25 direct non-`__init__` Python modules, so all four new
+Against `0651d215`, `generation/` has 25 direct non-`__init__` Python modules, so all four new
 generation modules go in the named `generation/relational/` sub-package. `config/` has 23 direct
 non-`__init__` modules and gains only `_generate_relational.py`, reaching 24. `plan/` has 30 direct
 non-`__init__` modules and gains none. `tests/unit/generation/` already has 32 direct Python modules,
@@ -645,10 +666,10 @@ fan-out ratchet, allowlist or import-layer ignore rises.
 
 | Order | Slice / branch | Source and durable files | Test files and red-first acceptance | Gate |
 |---|---|---|---|---|
-| 1 | E1 / `feat/gen-rel-e1` | `src/decoy_engine/_capacity.py`; `generation/pool/_capacity.py`; `config/_generate_relational.py`, `config/__init__.py`, `config/_pipeline.py`; `relationships/_graph.py`, `relationships/__init__.py`; `generation/relational/__init__.py`, `generation/relational/_cardinality.py`, `generation/_synthesize_derived.py`, `generation/_column_streams.py`, `generation/_streamed.py`, `generation/synthesize.py`, `generation/_pinned_plan.py`, `generation/_pinned_compile.py`, `generation/_pinned_execute.py`; `generators/columns.py`; `execution/_probe_scale.py`; `reasons/config/_part2.py`, `reasons/runtime/_part2.py`, `reasons/warning/_part1.py`; `.importlinter`; `CODEMAP.md`; `docs/strategies.md`, `docs/capability-matrix.md`, `docs/reasons.md`; `changelog.d/gen-rel-e1.md`; rename `docs/plans/gen-rel.md` to `docs/plans/2026-11-11-gen-rel.md` | new `tests/unit/config/test_generate_relational.py`, `tests/unit/generation/relational/test_cardinality.py`, `tests/unit/generation/relational/test_routes.py`, `tests/sentry/defects/test_reference_pool_choke_point.py`; edit `tests/unit/relationships/test_orphan_fk_policy_dedup.py`, `tests/unit/relationships/test_multi_parent_fk.py`, `tests/sentry/layout/test_import_layers.py`, `tests/unit/generation/pool/test_capacity_null_reusable.py`, `tests/unit/generation/test_pinned_generation.py`, `tests/unit/generation/test_pinned_with_generation.py`, `tests/unit/generation/test_fr0_streamed_entry.py`, `tests/unit/execution/test_probe_scale.py`, `tests/unit/execution/test_probe_scale_kills.py`. Red first: AT-1 to AT-6, AT-6f, AT-6r, AT-13 to AT-15 | Full suite once because reason manifests, snapshots and the plan rename are frozen-contract/moved-test triggers; no registry-version stamp |
+| 1 | E1 / `feat/gen-rel-e1` | `src/decoy_engine/_capacity.py`; `generation/pool/_capacity.py`; `config/_generate_relational.py`, `config/__init__.py`, `config/_pipeline.py`; `relationships/_graph.py`, `relationships/__init__.py`; `generation/relational/__init__.py`, `generation/relational/_cardinality.py`, `generation/_synthesize_derived.py`, `generation/_column_streams.py`, `generation/_streamed.py`, `generation/synthesize.py`, `generation/_pinned_plan.py`, `generation/_pinned_compile.py`, `generation/_pinned_execute.py`; `generators/columns.py`; `execution/_probe_scale.py`; `reasons/config/_part2.py`, `reasons/runtime/_part2.py`, `reasons/warning/_part1.py`; `.importlinter`; `CODEMAP.md`; `docs/strategies.md`, `docs/capability-matrix.md`, `docs/reasons.md`; `changelog.d/gen-rel-e1.md` | new `tests/unit/config/test_generate_relational.py`, `tests/unit/generation/relational/test_cardinality.py`, `tests/unit/generation/relational/test_routes.py`, `tests/sentry/defects/test_reference_pool_choke_point.py`; edit `tests/unit/relationships/test_orphan_fk_policy_dedup.py`, `tests/unit/relationships/test_multi_parent_fk.py`, `tests/sentry/layout/test_import_layers.py`, `tests/unit/generation/pool/test_capacity_null_reusable.py`, `tests/unit/generation/test_pinned_generation.py`, `tests/unit/generation/test_pinned_with_generation.py`, `tests/unit/generation/test_fr0_streamed_entry.py`, `tests/unit/execution/test_probe_scale.py`, `tests/unit/execution/test_probe_scale_kills.py`. Red first: AT-1 to AT-6, AT-6f, AT-6r, AT-13 to AT-15 | Full suite once because reason manifests and snapshots are frozen-contract triggers; no registry-version stamp |
 | 2 | E2 / `feat/gen-rel-e2` | `config/_generate_options.py`, `config/_generate_relational.py`, `config/_pipeline.py`; `generation/relational/_self_reference.py`, `generation/synthesize.py`, `generation/_admission.py`, `generation/_pinned_compile.py`, `generation/_pinned_execute.py`; `execution/_probe_scale.py`; `reasons/config/_part2.py`, `reasons/plan/_part3.py`, `reasons/runtime/_part2.py`; `docs/strategies.md`, `docs/capability-matrix.md`, `docs/reasons.md`; `changelog.d/gen-rel-e2.md` | edit `tests/unit/config/test_generate_relational.py`, `tests/unit/generation/relational/test_routes.py`, `tests/unit/generation/test_generation_order.py`, `tests/unit/generation/test_pinned_generation.py`, `tests/unit/execution/test_probe_scale.py`; new `tests/unit/generation/relational/test_self_reference.py`. Red first: AT-7 to AT-9, self-reference AT-10, tree AT-16 | Full suite once for reason-manifest changes; no registry-version stamp |
-| 3 | E3a / `feat/gen-rel-e3a` | `config/_generate_options.py`, `config/__init__.py`, `config/_generate_relational.py`; `plan/checks/_generate_columns.py`, `plan/_checks_windowed_date.py`; `generation/relational/_parent_lookup.py`, `generation/synthesize.py`, `generation/_grouped_windowed_generators.py`, `generation/_admission.py`, `generation/_pinned_compile.py`, `generation/_pinned_execute.py`, `generation/_reproducibility.py`; `transforms/windowed_date.py`; `reasons/config/_part2.py`, `reasons/runtime/_part2.py`; `docs/strategies.md`, `docs/capability-matrix.md`, `docs/reasons.md`; `changelog.d/gen-rel-e3a.md` | edit `tests/unit/config/test_generate_options.py`, `tests/unit/config/test_generate_relational.py`, `tests/unit/plan/checks/test_generate_columns.py`, `tests/unit/generation/relational/test_routes.py`, `tests/unit/generation/test_fr1_windowed_date.py`, `tests/unit/generation/test_fr0_reproducibility.py`, `tests/unit/generation/test_pinned_generation.py`, `tests/unit/transforms/test_windowed_date.py`; new `tests/unit/generation/relational/test_parent_lookup.py`, `tests/sentry/defects/test_generate_input_edges.py`. Red first: anchor AT-10, AT-11, AT-11b, AT-11c, date AT-14/15/16 | Full suite once for reason-manifest and frozen error-contract changes; no registry-version stamp |
-| 4 | E3b / `feat/gen-rel-e3b` | `config/_generate_options.py`, `config/_generate_relational.py`; `plan/checks/_generate_columns.py`, `plan/_checks_derived_aggregate.py`; `generation/relational/_aggregate.py`, `generation/synthesize.py`, `generation/_pinned_compile.py`, `generation/_pinned_execute.py`, `generation/_reproducibility.py`; `reasons/config/_part2.py`; `docs/strategies.md`, `docs/capability-matrix.md`, `docs/reasons.md`; `changelog.d/gen-rel-e3b.md` | edit `tests/unit/config/test_generate_options.py`, `tests/unit/plan/checks/test_generate_columns.py`, `tests/unit/generation/relational/test_routes.py`, `tests/unit/transforms/test_derived_aggregate.py`, `tests/sentry/defects/test_generate_input_edges.py`; new `tests/unit/generation/relational/test_aggregate.py`. Red first: aggregate AT-10, AT-12, aggregate AT-16 | Full suite once for reason-manifest changes; no registry-version stamp |
+| 3 | E3a / `feat/gen-rel-e3a` | `config/_generate_options.py`, `config/__init__.py`, `config/_generate_relational.py`; `plan/checks/_generate_columns.py`, `plan/_checks_windowed_date.py`; `generation/relational/_parent_lookup.py`, `generation/synthesize.py`, `generation/_grouped_windowed_generators.py`, `generation/_admission.py`, `generation/_pinned_compile.py`, `generation/_pinned_execute.py`, `generation/_reproducibility.py`, `generation/_numeric_typing.py`; `transforms/windowed_date.py`; `reasons/config/_part2.py`, `reasons/runtime/_part2.py`; `docs/strategies.md`, `docs/capability-matrix.md`, `docs/reasons.md`; `changelog.d/gen-rel-e3a.md` | edit `tests/unit/config/test_generate_options.py`, `tests/unit/config/test_generate_relational.py`, `tests/unit/plan/checks/test_generate_columns.py`, `tests/unit/generation/relational/test_routes.py`, `tests/unit/generation/test_fr1_windowed_date.py`, `tests/unit/generation/test_fr0_reproducibility.py`, `tests/unit/generation/test_pinned_generation.py`, `tests/unit/generation/test_numeric_typing.py`, `tests/parity/test_numeric_typing_readers.py`, `tests/sentry/test_numeric_reader_registry.py`, `tests/unit/transforms/test_windowed_date.py`; new `tests/unit/generation/relational/test_parent_lookup.py`, `tests/sentry/defects/test_generate_input_edges.py`. Red first: anchor AT-10, AT-11 including the unrelated child Arrow type, AT-11b, AT-11c, date AT-14/15/16; restoring sibling-only numeric-input resolution turns the AT-11 type cell red | Full suite once for reason-manifest and frozen error-contract changes; no registry-version stamp |
+| 4 | E3b / `feat/gen-rel-e3b` | `config/_generate_options.py`, `config/_generate_relational.py`; `plan/checks/_generate_columns.py`, `plan/_checks_derived_aggregate.py`; `generation/relational/_aggregate.py`, `generation/synthesize.py`, `generation/_pinned_compile.py`, `generation/_pinned_execute.py`, `generation/_reproducibility.py`, `generation/_numeric_typing.py`; `reasons/config/_part2.py`; `docs/strategies.md`, `docs/capability-matrix.md`, `docs/reasons.md`; `changelog.d/gen-rel-e3b.md` | edit `tests/unit/config/test_generate_options.py`, `tests/unit/plan/checks/test_generate_columns.py`, `tests/unit/generation/relational/test_routes.py`, `tests/unit/generation/test_numeric_typing.py`, `tests/parity/test_numeric_typing_readers.py`, `tests/sentry/test_numeric_reader_registry.py`, `tests/unit/transforms/test_derived_aggregate.py`, `tests/sentry/defects/test_generate_input_edges.py`; new `tests/unit/generation/relational/test_aggregate.py`. Red first: aggregate AT-10, AT-12 including the unrelated parent Arrow type, aggregate AT-16; restoring sibling-only numeric-input resolution turns the AT-12 type cell red and, when applied to the integrated E3 head, AT-11 red too | Full suite once for reason-manifest changes; no registry-version stamp |
 
 Each slice keeps AT-1 green and starts from main after the previous one merges.
 
@@ -676,13 +697,15 @@ mutation on the final source head; any later source edit invalidates the mutatio
   changing its fill. The slice report enumerates every re-pin before gate.
 - **E2 red-first order:** AT-7 cycle pair, AT-8 tree invariant, AT-9 option matrix, then pinned and
   seed cells of AT-10/16. A two-table cycle must remain red beside the newly accepted self-edge.
-- **E3a red-first order:** first the two strict-schema cross-table cells and their descriptor
-  mutations; then typed lookup list/dict/null/missing/duplicate cells; then all five coded date
+- **E3a red-first order:** first the two strict-schema cross-table cells, the unrelated same-named
+  child Arrow-type cell and their descriptor and sibling-only-resolution mutations; then typed
+  lookup list/dict/null/missing/duplicate cells; then all five coded date
   failures at both supported-range ends; then the same-name anchor, route/refusal and non-vacuous
   two-seed fixture; finally reproducibility, reason registry and sentries.
 - **E3b red-first order:** strict-schema accepts the child-table column and rejects a missing one;
-  then every aggregate op and childless identity; then read-before-fill readers, placeholder-return,
-  reproducibility and pinned cells.
+  next the unrelated same-named parent Arrow-type cell and the sibling-only-resolution mutation;
+  then every aggregate op and childless identity; then read-before-fill readers,
+  placeholder-return, reproducibility and pinned cells.
 
 ## Engineering calls made
 
