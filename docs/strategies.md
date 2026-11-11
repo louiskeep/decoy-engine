@@ -1253,9 +1253,12 @@ accepts `unique_together` for pairs of `reference` columns. See
 Each type takes a fixed set of keys, listed below. Every type also takes `name`, `type`,
 `null_probability` (a number from 0 to 1) and `determinism` (`stable` or `fresh`). `unique` is
 taken by the four types named above, and `pooled` by `faker` only (any other type refuses it
-with `generate_option_unknown`). `generate_option_catalog()` returns this table, with the
-common keys as `common` and the last column as `required_when`. `decoy schema` closes each type
-to its keys, so an editor flags a misspelt key. A test checks this table against the registry.
+with `generate_option_unknown`). `generate_option_catalog()` returns this table: the columns
+are `required`, `optional` and `required_when`, the common keys are `common`, and the required
+keys marked "at plan compile" are also in `required_at_plan`. `decoy schema` closes each type
+to its keys and lists the same required keys, and it allows `pooled` only on `faker` (other
+types may carry `pooled: null`), so an editor flags a misspelt or misplaced key. A test checks
+this table against `generate_option_catalog()`.
 
 | Type | Required | Optional | Required when |
 |---|---|---|---|
@@ -1274,8 +1277,8 @@ to its keys, so an editor flags a misspelt key. A test checks this table against
 | `distribution` | `family` | `low`, `high`, `min`, `max` | `low`, `high` if `family: uniform` |
 
 `derived_aggregate` is the one type whose required keys are checked at plan compile, not at
-config parse: a missing `op` or `column` is refused with `derived_aggregate_op_missing` or
-`derived_aggregate_column_missing`.
+config parse: its transform refuses a missing `op` or `column` with `derived_aggregate_op_missing`
+or `derived_aggregate_column_missing`.
 
 Two layers refuse a bad column, and `decoy validate` and `decoy run` run both, so they refuse the
 same configs:
@@ -1291,8 +1294,11 @@ same configs:
 - **Plan compile** checks what needs Faker, Arrow or the other columns: an unknown locale, faker
   type or faker keyword (`generate_locale_unknown`, `generate_faker_type_unknown`,
   `generate_faker_kwargs_unknown`), categories Arrow cannot put in one column
-  (`generate_categories_mixed`), a column read before it is generated
-  (`generate_column_forward_reference`), `group_by` equal to `order_by`
+  (`generate_categories_mixed`), a key that names a column the table does not have
+  (`derived_missing_column_ref`, `derived_aggregate_missing_column_ref`,
+  `grouped_series_missing_group_by_ref`, `grouped_series_missing_order_by_ref`,
+  `windowed_date_missing_anchor_ref`, `group_key_missing_group_by_ref`), a column the table has
+  but generates later (`generate_column_forward_reference`), `group_by` equal to `order_by`
   (`grouped_series_group_by_equals_order_by`), the formula rules below, `weighted` reference
   weights whose length differs from a `sequence` parent's `row_count`
   (`reference_weights_length_mismatch`), and every other parse rule a type's transform has. Those
@@ -1321,10 +1327,11 @@ take:
 If that floor is larger than the machine's memory ceiling (the cgroup limit, else host RAM), the
 run is refused with `generation_budget_exceeded`, and the message gives the bytes needed, the
 bytes available and the largest table. `estimate_job_capacity` makes the same check and reports
-`INSUFFICIENT` with that code, so a capacity preflight (`decoy validate preflight` in the CLI)
-refuses the config before a run. Plain `decoy validate` checks the config only and does not
-run the capacity check. The floor is a lower bound, so a run that
-passes it can still run out of memory. It is skipped when the run has an explicit memory budget
+`INSUFFICIENT` with that code, so the CLI refuses the config before a run: `decoy validate
+pipeline.yaml` runs it as part of the whole pre-run gate, and `decoy validate preflight
+pipeline.yaml` runs that layer alone. `decoy validate config` checks the config only and does
+not run the capacity check. The floor is a lower bound, so a run that passes it can still run
+out of memory. It is skipped when the run has an explicit memory budget
 (the run then holds itself to that budget), when it streams eligible columns to a bounded sink,
 and when the ceiling cannot be read.
 `CAPACITY_REASON_CODES` in `decoy_engine.errors` lists every code that means the same verdict.

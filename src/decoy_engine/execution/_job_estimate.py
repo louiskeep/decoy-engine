@@ -1,6 +1,6 @@
 """Advisory job estimate: route + peak memory + runtime band (job-time-estimator Slice 2).
 
-`estimate_job` is the shared, PUBLIC primitive the CLI (`decoy preflight`) and the
+`estimate_job` is the shared, PUBLIC primitive the CLI (`decoy validate preflight`) and the
 platform (preview / job create) call to show "this will take ~X and need ~Y RAM"
 BEFORE running. Advisory per the §CAP lock: it never gates, never raises (an
 unpriceable or error case returns a flagged result, not an exception), and never

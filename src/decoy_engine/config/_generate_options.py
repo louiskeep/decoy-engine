@@ -39,6 +39,7 @@ __all__ = [
     "CONDITIONAL_REQUIRED",
     "GENERATE_OPTIONS",
     "INTERNAL_KEYS",
+    "POOLED_TYPE",
     "GenerateTypeOptions",
     "OptionSpec",
     "TypeOptions",
@@ -83,11 +84,17 @@ class TypeOptions:
 
     ``closed_by`` names a selector key of ``CONDITIONAL_REQUIRED`` whose chosen value also closes
     the key set: a key listed under another value of that selector is then refused as unknown.
+
+    ``plan_required`` keys are required too, but config parse leaves them alone: the type's
+    transform refuses a missing one at plan compile with its own code (for example
+    ``derived_aggregate_op_missing``), and moving that refusal to config parse would change the
+    code a caller sees. The catalog and the editor schema still list them as required.
     """
 
     keys: Mapping[str, OptionSpec]
     required: tuple[str, ...] = ()
     closed_by: str | None = None
+    plan_required: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -105,6 +112,8 @@ class GenerateTypeOptions:
     # selector key -> selector value -> keys that value requires, e.g.
     # {"family": {"uniform": ("low", "high")}}. Empty for a type with no conditional rule.
     required_when: Mapping[str, Mapping[str, tuple[str, ...]]] = field(default_factory=dict)
+    # The subset of `required` that is checked at plan compile, not at config parse.
+    required_at_plan: tuple[str, ...] = ()
 
 
 def _is_int(value: Any) -> bool:
@@ -353,6 +362,7 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
     ),
     "derived_aggregate": TypeOptions(
         {"op": _S, "column": OptionSpec(_str, ref_kind="column")},
+        plan_required=("op", "column"),
     ),
     "grouped_series": TypeOptions(
         {
@@ -492,13 +502,17 @@ def problem_details(problems: list[tuple[tuple[str | int, ...], str]]) -> list[I
     return details
 
 
+# The one type that takes `pooled`; `GenerateColumnConfig` refuses it elsewhere.
+POOLED_TYPE = "faker"
+
+
 def closed_key_schema(schema: dict[str, Any]) -> None:
     """JSON-schema hook: one ``if type then {closed key set}`` branch per generate type.
 
     The schema stays open at the top (the model allows extras) and each branch closes it, so an
     editor flags a typo-shaped key without any new model field.
     """
-    shared = ["name", "type", "pooled", *COMMON_OPTIONS, *sorted(INTERNAL_KEYS)]
+    shared = ["name", "type", *COMMON_OPTIONS, *sorted(INTERNAL_KEYS)]
     schema["allOf"] = [
         {
             "if": {"properties": {"type": {"const": type_}}, "required": ["type"]},
@@ -510,9 +524,12 @@ def closed_key_schema(schema: dict[str, Any]) -> None:
 
 def _closed_branch(type_: str, spec: TypeOptions, shared: list[str]) -> dict[str, Any]:
     """One type's closed key set, plus a nested ``if selector == value`` branch per table entry."""
+    properties: dict[str, Any] = {key: {} for key in [*shared, *spec.keys]}
+    # `model_dump()` stamps `pooled: null` on every column, so other types may carry the null.
+    properties["pooled"] = {} if type_ == POOLED_TYPE else {"type": "null"}
     then: dict[str, Any] = {
-        "properties": {key: {} for key in [*shared, *spec.keys]},
-        "required": list(spec.required),
+        "properties": properties,
+        "required": [*spec.required, *spec.plan_required],
         "additionalProperties": False,
     }
     nested: list[dict[str, Any]] = []
@@ -541,13 +558,16 @@ def generate_option_catalog() -> Mapping[str, GenerateTypeOptions]:
     return {
         type_: GenerateTypeOptions(
             type=type_,
-            required=spec.required,
-            optional=tuple(key for key in spec.keys if key not in spec.required),
+            required=(*spec.required, *spec.plan_required),
+            optional=tuple(
+                key for key in spec.keys if key not in (*spec.required, *spec.plan_required)
+            ),
             common=common,
             required_when={
                 selector: dict(by_value)
                 for selector, by_value in CONDITIONAL_REQUIRED.get(type_, {}).items()
             },
+            required_at_plan=spec.plan_required,
         )
         for type_, spec in GENERATE_OPTIONS.items()
     }

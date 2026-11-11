@@ -16,10 +16,18 @@ def test_the_catalog_covers_every_registered_type_and_option() -> None:
     for type_, spec in GENERATE_OPTIONS.items():
         entry = catalog[type_]
         assert entry.type == type_
-        assert entry.required == spec.required
+        assert entry.required == (*spec.required, *spec.plan_required)
+        assert entry.required_at_plan == spec.plan_required
         assert set(entry.required) | set(entry.optional) == set(spec.keys)
         assert not set(entry.required) & set(entry.optional)
         assert entry.common == tuple(COMMON_OPTIONS)
+
+
+def test_keys_checked_at_plan_compile_are_listed_as_required() -> None:
+    entry = generate_option_catalog()["derived_aggregate"]
+    assert entry.required == ("op", "column")
+    assert entry.required_at_plan == ("op", "column")
+    assert entry.optional == ()
 
 
 def test_the_record_is_frozen_names_only() -> None:

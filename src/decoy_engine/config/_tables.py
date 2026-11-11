@@ -44,6 +44,7 @@ from pydantic_core import PydanticCustomError, ValidationError
 
 from decoy_engine import reasons
 from decoy_engine.config._generate_options import (
+    POOLED_TYPE,
     closed_key_schema,
     option_problems,
     problem_details,
@@ -320,7 +321,7 @@ class GenerateColumnConfig(BaseModel):
         # `pooled` is a faker-only build-strategy toggle. `is not None`, not field presence:
         # `model_dump()` stamps `pooled: null` on every generate column, so a dumped non-faker
         # column must revalidate. With StrictBool only a real bool reaches here.
-        if self.type != "faker" and self.pooled is not None:
+        if self.type != POOLED_TYPE and self.pooled is not None:
             problems.append((("pooled",), str(reasons.config.GENERATE_OPTION_UNKNOWN)))
         if problems:
             raise ValidationError.from_exception_data(
