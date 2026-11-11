@@ -68,7 +68,7 @@ SENTRY_PATHS=(tests/sentry tests/secret_providers/test_leak_sentry.py)
 # layer test runs only in the `layers` step. Every other pytest route ignores it.
 LAYER_TEST=tests/sentry/layout/test_import_layers.py
 LAYER_IGNORE=(--ignore=$LAYER_TEST)
-# The one place that keeps the layer test out of every other pytest route. --ignore covers a
+# The one place that keeps the layer test out of every other pytest route. LAYER_IGNORE covers a
 # directory argument; a file or ::nodeid argument naming the layer test (any route: selection,
 # explicit paths, shard expansion, baseline rerun) is dropped here. Reads paths on stdin.
 drop_layer_test() {
