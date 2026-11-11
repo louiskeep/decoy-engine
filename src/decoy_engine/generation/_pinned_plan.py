@@ -169,13 +169,13 @@ def runtime_identity() -> tuple[tuple[str, str], ...]:
     import pandas
     import pyarrow
 
-    import decoy_engine
     from decoy_engine.determinism import SEED_PROTOCOL_VERSION
+    from decoy_engine.release import __version__ as engine_version
 
     return tuple(
         sorted(
             {
-                "engine": str(decoy_engine.__version__),
+                "engine": str(engine_version),
                 "numpy": str(numpy.__version__),
                 "pandas": str(pandas.__version__),
                 "pyarrow": str(pyarrow.__version__),

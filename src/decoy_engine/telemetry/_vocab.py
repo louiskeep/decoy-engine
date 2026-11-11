@@ -80,7 +80,7 @@ def _rule_allows(key: str, value: str) -> bool:
         return reason_value(namespace, code) == value
     if rule == "safe_error_class":
         return safe_error_class(value) == value
-    from decoy_engine import __version__
+    from decoy_engine.release import __version__
 
     return value == __version__
 

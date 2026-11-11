@@ -99,3 +99,7 @@ baseline = "tests/sentry/baselines/validation-name-messages.json"
 [[sentry]]
 id = "package-fanout"
 baseline = "tests/sentry/baselines/package-fanout.json"
+
+[[sentry]]
+id = "import-layers"
+baseline = "tests/sentry/baselines/import-layers.json"

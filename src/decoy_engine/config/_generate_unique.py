@@ -67,7 +67,7 @@ _PAIR_MEMBER_BLOCKED = ("unique", "null_probability", "weights", "min_per_parent
 def _capacity_ok(domain: int, rows: int, *, null_reusable: bool = False) -> bool:
     # Imported here: `generation.pool` pulls pandas and the provider registry, and the config
     # layer stays light until a unique column actually needs the shared rule.
-    from decoy_engine.generation.pool import unique_capacity_ok
+    from decoy_engine.generation.pool._capacity import unique_capacity_ok
 
     return unique_capacity_ok(domain, rows, null_reusable=null_reusable)
 

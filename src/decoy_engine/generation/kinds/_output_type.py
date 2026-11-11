@@ -225,7 +225,7 @@ def cast_output_values(
 
 
 def _refuse(table: str, column: str, out: OutputType, outcome: CastOutcome) -> None:
-    from decoy_engine.execution import ExecutionError
+    from decoy_engine._execution_error import ExecutionError
 
     raise ExecutionError(
         code=reasons.runtime.OUTPUT_TYPE_CAST_FAILED,

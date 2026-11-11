@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 from decoy_engine import reasons
-from decoy_engine.generation.pool import QualityWarning
+from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.profiling._value_redaction import (
     DATA_RULES,
     POLICY_REDACTED,
@@ -140,7 +140,7 @@ def _redact_column(non_null: pd.Series, col: dict[str, Any]) -> None:
     kind, stats = col["kind"], col["stats"]
     if "cell_format" in col:
         # Lazy, as in `quality/snapshot.py`: `generation` imports `quality` and `profiling`.
-        from decoy_engine.generation.statistical import scrub_cell_format
+        from decoy_engine.generation.statistical._cell_format import scrub_cell_format
 
         col["cell_format"] = scrub_cell_format(kind, col["cell_format"])
     data_keys = {k: r for k, r in snapshot_rules(kind).items() if r in DATA_RULES}

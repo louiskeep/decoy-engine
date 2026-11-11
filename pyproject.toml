@@ -184,10 +184,10 @@ dev = [
 # `dev+lint+vault` and its 79-dist fingerprint (dp_provenance) must
 # stay exact, so mutmut/pytest-cov and their transitive deps (libcst, textual,
 # coverage, ...) live in this separate extra that the cert gate never installs.
-mutation = [
-    "pytest-cov>=5.0",
-    "mutmut>=3.0",
-]
+mutation = ["pytest-cov>=5.0", "mutmut>=3.0"]
+# LAYOUT E3: import-linter for the layer contract in .importlinter. Its own extra, synced only
+# into .venv-layers by gates.sh --steps layers, so the certified profile above stays exact.
+layers = ["import-linter==2.15"]
 # Compatibility alias (2026-11-07): pytest-xdist is part of `dev` now, so `.[dev,xdist]` and
 # `.[dev]` install the same set. Kept so an existing `--extra xdist` still resolves; new
 # callers use `dev`. The suite is parallel-safe through scripts/dev/gates.sh (`GATES_WORKERS`);
