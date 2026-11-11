@@ -10,6 +10,7 @@ its own venv (LAYOUT E3); the two routes must partition ``SENTRIES`` with no gap
 from __future__ import annotations
 
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -97,11 +98,15 @@ SENTRIES = (
 )
 
 
+def _array(name: str, text: str) -> list[str] | None:
+    m = re.search(rf"^{name}=\(([^)]*)\)", text, re.MULTILINE)
+    return shlex.split(m.group(1), comments=True) if m else None
+
+
 def gates_sentry_paths(text: str | None = None) -> list[str]:
-    text = GATES.read_text(encoding="utf-8") if text is None else text
-    m = re.search(r"^SENTRY_PATHS=\(([^)]*)\)", text, re.MULTILINE)
-    assert m, "gates.sh has no SENTRY_PATHS array"
-    return m.group(1).split()
+    paths = _array("SENTRY_PATHS", GATES.read_text(encoding="utf-8") if text is None else text)
+    assert paths is not None, "gates.sh has no SENTRY_PATHS array"
+    return paths
 
 
 def gates_marker_expr() -> str:
@@ -117,9 +122,25 @@ def gates_layer_test(text: str) -> str:
 
 
 def gates_ignores(text: str) -> list[str]:
-    """Every path an ``--ignore=`` in gates.sh excludes, with ``$LAYER_TEST`` resolved."""
+    """Every path ``LAYER_IGNORE`` excludes, with ``$LAYER_TEST`` resolved.
+
+    The array goes through the same ``_array`` (shlex) parser as SENTRY_PATHS, and both pytest
+    spellings count: ``--ignore=PATH`` and ``--ignore PATH``.
+    """
     layer = gates_layer_test(text)
-    return [p.replace("$LAYER_TEST", layer) for p in re.findall(r"--ignore=(\S+?)[)\s]", text)]
+    tokens = _array("LAYER_IGNORE", text)
+    assert tokens is not None, "gates.sh has no LAYER_IGNORE array"
+    paths: list[str] = []
+    rest = iter(tokens)
+    for token in rest:
+        paths.append(next(rest, token) if token == "--ignore" else token.removeprefix("--ignore="))
+    return [p.replace("$LAYER_TEST", layer) for p in paths]
+
+
+def stray_ignores(text: str) -> int:
+    """How many ``--ignore`` flags gates.sh has outside the ``LAYER_IGNORE`` array."""
+    outside = re.sub(r"^LAYER_IGNORE=\([^)]*\)", "", text, flags=re.MULTILINE)
+    return len(re.findall(r"--ignore\b", outside))
 
 
 def route_findings(text: str) -> list[str]:
@@ -130,6 +151,8 @@ def route_findings(text: str) -> list[str]:
         found.append(f"LAYER_TEST {layer} is not in SENTRIES")
     if gates_ignores(text) != [layer]:
         found.append(f"the only --ignore must be LAYER_TEST, got {gates_ignores(text)}")
+    if stray_ignores(text):
+        found.append("an --ignore outside LAYER_IGNORE hides tests from the route check")
     if not re.search(r"\bSTEPS=\S*\blayers\b", text):
         found.append("the default step list has no layers step")
     step = re.search(r"^\s+layers\) cmd=\(layer_step\b", text, re.MULTILINE)
@@ -199,6 +222,13 @@ def test_the_sentry_and_layers_routes_partition_the_sentries() -> None:
     assert route_findings(GATES.read_text(encoding="utf-8")) == []
 
 
+def test_ignore_parse_reads_both_spellings() -> None:
+    """``--ignore PATH`` and ``--ignore=PATH`` both reach the route check."""
+    base = "LAYER_TEST=tests/sentry/a.py\n"
+    for array in ("(--ignore $LAYER_TEST --ignore b.py)", "(--ignore=$LAYER_TEST --ignore=b.py)"):
+        assert gates_ignores(f"{base}LAYER_IGNORE={array}\n") == ["tests/sentry/a.py", "b.py"]
+
+
 def test_a_broken_route_split_is_detected() -> None:
     """AT-8: removing the layers step or ignoring a second sentry is red."""
     text = GATES.read_text(encoding="utf-8")
@@ -211,6 +241,17 @@ def test_a_broken_route_split_is_detected() -> None:
         "LAYER_IGNORE=(--ignore=$LAYER_TEST --ignore=tests/sentry/test_ci_config.py)",
     )
     assert any("only --ignore" in f for f in route_findings(second))
+    spaced = text.replace(
+        "LAYER_IGNORE=(--ignore=$LAYER_TEST)",
+        "LAYER_IGNORE=(--ignore $LAYER_TEST --ignore tests/sentry/test_ci_config.py)",
+    )
+    assert any("only --ignore" in f for f in route_findings(spaced))
+    stray = text.replace(
+        "LAYER_IGNORE=(--ignore=$LAYER_TEST)\n",
+        "LAYER_IGNORE=(--ignore=$LAYER_TEST)\nX=(--ignore tests/sentry/test_ci_config.py)\n",
+    )
+    assert stray != text
+    assert any("outside LAYER_IGNORE" in f for f in route_findings(stray))
     unignored = text.replace(
         '${LAYER_IGNORE[@]+"${LAYER_IGNORE[@]}"} ${SENTRY_PATHS', "${SENTRY_PATHS"
     )
