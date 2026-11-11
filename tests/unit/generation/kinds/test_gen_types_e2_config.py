@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from decoy_engine import reasons
 from decoy_engine.config import PipelineConfig
+from decoy_engine.config import _generate_option_catalog as catalog
 from decoy_engine.config import _generate_options as opts
 from decoy_engine.errors import PipelineValidationError
 from decoy_engine.generators.derivation import GenDeriveContext, with_table
@@ -186,7 +187,7 @@ def test_the_new_codes_are_registered_with_value_free_text() -> None:
 
 @pytest.mark.parametrize("kind", sorted(ACCEPTS))
 def test_the_catalog_lists_output_type_as_optional_per_type_not_common(kind: str) -> None:
-    entry = opts.generate_option_catalog()[kind]
+    entry = catalog.generate_option_catalog()[kind]
     assert "output_type" in entry.optional
     assert "output_type" not in entry.common
     assert "output_type" not in opts.COMMON_OPTIONS
@@ -194,12 +195,12 @@ def test_the_catalog_lists_output_type_as_optional_per_type_not_common(kind: str
 
 @pytest.mark.parametrize("kind", sorted(NOT_ACCEPTED))
 def test_the_catalog_omits_output_type_where_it_is_unknown(kind: str) -> None:
-    assert "output_type" not in opts.generate_option_catalog()[kind].optional
+    assert "output_type" not in catalog.generate_option_catalog()[kind].optional
 
 
 def test_the_json_schema_closes_the_key_set_with_output_type() -> None:
     schema: dict[str, Any] = {}
-    opts.closed_key_schema(schema)
+    catalog.closed_key_schema(schema)
     branches = {b["if"]["properties"]["type"]["const"]: b["then"] for b in schema["allOf"]}
     for kind in ACCEPTS:
         assert "output_type" in branches[kind]["properties"]

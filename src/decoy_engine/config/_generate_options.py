@@ -8,6 +8,7 @@ the dump: ``option_problems`` reads the extras and never writes them.
 The registry is the config layer's authority; ``tests/sentry/defects/test_generate_option_reads.py``
 checks it against the keys the generators read. It holds no pyarrow or Faker import. Whatever
 needs them (locale, provider and kwargs names, category typing) is a plan check.
+The public catalog and the editor-schema hook read it from ``_generate_option_catalog``.
 
 Refusal text is the registered reason's fixed summary, so a submitted value never reaches a
 message. Check functions return ``(relative location, reason code)`` pairs.
@@ -18,7 +19,7 @@ from __future__ import annotations
 import ast
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 from pydantic_core import InitErrorDetails, PydanticCustomError
@@ -41,12 +42,9 @@ __all__ = [
     "CONDITIONAL_REQUIRED",
     "GENERATE_OPTIONS",
     "INTERNAL_KEYS",
-    "GenerateTypeOptions",
     "OptionSpec",
     "TypeOptions",
-    "closed_key_schema",
     "generate_family_problems",
-    "generate_option_catalog",
     "option_problems",
     "problem_details",
     "refuse_unlisted_generate_families",
@@ -85,28 +83,17 @@ class TypeOptions:
 
     ``closed_by`` names a selector key of ``CONDITIONAL_REQUIRED`` whose chosen value also closes
     the key set: a key listed under another value of that selector is then refused as unknown.
+
+    ``plan_required`` keys are required too, but config parse leaves them alone: the type's
+    transform refuses a missing one at plan compile with its own code (for example
+    ``derived_aggregate_op_missing``), and moving that refusal to config parse would change the
+    code a caller sees. The catalog and the editor schema still list them as required.
     """
 
     keys: Mapping[str, OptionSpec]
     required: tuple[str, ...] = ()
     closed_by: str | None = None
-
-
-@dataclass(frozen=True)
-class GenerateTypeOptions:
-    """Public, read-only view of one generate type's option names.
-
-    Names only: the registry's validator callables stay private. `common` is the set every type
-    may carry beyond its own keys (`COMMON_OPTIONS`).
-    """
-
-    type: str
-    required: tuple[str, ...]
-    optional: tuple[str, ...]
-    common: tuple[str, ...]
-    # selector key -> selector value -> keys that value requires, e.g.
-    # {"family": {"uniform": ("low", "high")}}. Empty for a type with no conditional rule.
-    required_when: Mapping[str, Mapping[str, tuple[str, ...]]] = field(default_factory=dict)
+    plan_required: tuple[str, ...] = ()
 
 
 def _is_int(value: Any) -> bool:
@@ -365,6 +352,7 @@ _BASE_OPTIONS: Mapping[str, TypeOptions] = {
             "op": _S,
             "column": OptionSpec(_str, ref_kind="column"),
         },
+        plan_required=("op", "column"),
     ),
     "grouped_series": TypeOptions(
         {
@@ -511,67 +499,6 @@ def problem_details(problems: list[tuple[tuple[str | int, ...], str]]) -> list[I
             kind = PydanticCustomError(code, reasons.lookup(code)[0].summary)
         details.append({"type": kind, "loc": loc, "input": None})
     return details
-
-
-def closed_key_schema(schema: dict[str, Any]) -> None:
-    """JSON-schema hook: one ``if type then {closed key set}`` branch per generate type.
-
-    The schema stays open at the top (the model allows extras) and each branch closes it, so an
-    editor flags a typo-shaped key without any new model field.
-    """
-    shared = ["name", "type", "pooled", *COMMON_OPTIONS, *sorted(INTERNAL_KEYS)]
-    schema["allOf"] = [
-        {
-            "if": {"properties": {"type": {"const": type_}}, "required": ["type"]},
-            "then": _closed_branch(type_, spec, shared),
-        }
-        for type_, spec in GENERATE_OPTIONS.items()
-    ]
-
-
-def _closed_branch(type_: str, spec: TypeOptions, shared: list[str]) -> dict[str, Any]:
-    """One type's closed key set, plus a nested ``if selector == value`` branch per table entry."""
-    then: dict[str, Any] = {
-        "properties": {key: {} for key in [*shared, *spec.keys]},
-        "required": list(spec.required),
-        "additionalProperties": False,
-    }
-    nested: list[dict[str, Any]] = []
-    for selector, by_value in CONDITIONAL_REQUIRED.get(type_, {}).items():
-        for value, keys in by_value.items():
-            inner: dict[str, Any] = {"required": list(keys)}
-            if spec.closed_by == selector:
-                foreign = sorted({k for ks in by_value.values() for k in ks} - set(keys))
-                if foreign:
-                    inner["not"] = {"anyOf": [{"required": [k]} for k in foreign]}
-            nested.append(
-                {
-                    "if": {"properties": {selector: {"const": value}}, "required": [selector]},
-                    "then": inner,
-                }
-            )
-    if nested:
-        then["allOf"] = nested
-    return then
-
-
-def generate_option_catalog() -> Mapping[str, GenerateTypeOptions]:
-    """Every generate type with its required, optional and common option names, read from
-    `GENERATE_OPTIONS` so a new type or option shows up here with no second list."""
-    common = tuple(COMMON_OPTIONS)
-    return {
-        type_: GenerateTypeOptions(
-            type=type_,
-            required=spec.required,
-            optional=tuple(key for key in spec.keys if key not in spec.required),
-            common=common,
-            required_when={
-                selector: dict(by_value)
-                for selector, by_value in CONDITIONAL_REQUIRED.get(type_, {}).items()
-            },
-        )
-        for type_, spec in GENERATE_OPTIONS.items()
-    }
 
 
 def refuse_unlisted_generate_families(config: Mapping[str, Any]) -> None:
