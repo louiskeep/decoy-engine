@@ -230,6 +230,8 @@ pins an existing refusal.
 | E1 | engine | `feat/date-shift-unkeyed-e1` | S (about 40 lines of tests, about 190 lines deleted) | T1: `tests/secret_providers/`, `tests/sentry/`, `tests/unit/transforms/`, `tests/unit/execution/test_date_shift_oracle_identity.py`, `test_expression_log_redaction.py`; M1 to M3 |
 | C1 | CLI | `feat/date-shift-unkeyed-c1` | XS (test-only) | T1: `tests/e2e/test_keyed_secret_guidance.py`; M4. Needs no engine release: the refusal is already in `v0.22.0` |
 
+**When to build.** Feature group: date and number strategies (engine QA checklist section 07). Owner rule 2026-11-11: QA and its fixes run only on a V1-complete group, so E1 and C1 are built at that group's QA pass, not before.
+
 C1 can merge first. E1 reaches CLI users with the next engine release and repin; since the deleted
 code is unreachable, the repin carries no behavior change for them.
 
