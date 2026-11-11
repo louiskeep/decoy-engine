@@ -1246,12 +1246,75 @@ In `mode: generate`, each column declares a `type` instead of a `strategy`.
 accepts `unique_together` for pairs of `reference` columns. See
 [Unique generated columns](guides/generate-uniqueness.md).
 
+### Options are checked per type
+
+Each type takes a fixed set of keys, listed below. Every type also takes `name`, `type`,
+`pooled`, `null_probability` (a number from 0 to 1) and `determinism` (`stable` or `fresh`);
+`unique` is taken by the four types named above. `generate_option_catalog()` returns the same
+table, and `decoy schema` closes each type to its keys, so an editor flags a misspelt key.
+
+| Type | Required | Optional |
+|---|---|---|
+| `sequence` | `start` | `step`, `prefix`, `suffix`, `pad_length` |
+| `faker` | `faker_type` | `locale`, `faker_kwargs` |
+| `categorical` | `categories` | `weights` |
+| `reference` | `reference_table`, `reference_column` | `distribution`, `weights` (required when `distribution: weighted`), `min_per_parent`, `max_per_parent`, `snapshot_file`, `source_column` |
+| `formula` | `formula` | `references` |
+| `statistical` | `snapshot_file` | `source_column`, `high_cardinality`, `allow_real_categories`, `other_mode`, `condition_on` |
+| `derived` | `expression` | `bounds`, `null_propagation` |
+| `derived_aggregate` | | `op`, `column` |
+| `grouped_series` | `group_by`, `order_by` | `generator`, `step`, `max_step`, `start` |
+| `windowed_date` | `anchor`, `max_days` | `min_days`, `distribution` |
+| `group_key` | `group_by` | `length`, `prefix` |
+| `constant` | `value` | |
+| `distribution` | `family` (`low` and `high` when it is `uniform`) | `min`, `max` |
+
+Two layers refuse a bad column, and `decoy validate` and `decoy run` run both, so they refuse the
+same configs:
+
+- **Config parse** checks each key on its own: a key the type does not take
+  (`generate_option_unknown`), a wrong type (`generate_option_type`), a value out of range
+  (`generate_option_range`, for example `step: 0` or `null_probability: 2`), a value outside a
+  fixed list (`generate_option_value_unknown`), weights that are negative, not finite, sum to 0
+  or do not match the categories in length (`generate_weights_invalid`), a formula Python cannot
+  parse or the evaluator cannot run (`generate_formula_invalid`), and two columns with one name
+  (`generate_column_duplicate`). The location is the index path, such as
+  `tables[0].generate_columns[2].weigths`.
+- **Plan compile** checks what needs Faker, Arrow or the other columns: an unknown locale, faker
+  type or faker keyword (`generate_locale_unknown`, `generate_faker_type_unknown`,
+  `generate_faker_kwargs_unknown`), categories Arrow cannot put in one column
+  (`generate_categories_mixed`), a column read before it is generated
+  (`generate_column_forward_reference`), `group_by` equal to `order_by`
+  (`grouped_series_group_by_equals_order_by`), the formula rules below, `weighted` reference
+  weights whose length differs from a `sequence` parent's `row_count`
+  (`reference_weights_length_mismatch`), and any other parse rule a type's transform has
+  (`generate_option_invalid`). The path uses names: `tables.<table>.generate_columns.<column>.<key>`.
+
+A refusal message holds the reason's fixed text and the table, column and option names. It
+never holds a category, weight, formula or other option value.
+
+### Memory floor
+
+Before a resident generate run starts, the engine adds up the bytes the generated tables must
+hold in Arrow form (fixed-width columns at their bit width, variable-width columns at one offset
+per row, plus the seen-sets of `unique` columns). If that floor is larger than the machine's
+memory ceiling (the cgroup limit, else host RAM), the run is refused with
+`generation_budget_exceeded`, and the message gives the bytes needed, the bytes available and
+the largest table. `estimate_job_capacity` makes the same check and reports `INSUFFICIENT` with
+that code, so `decoy validate` refuses the config too. The floor is a lower bound, so a run that
+passes it can still run out of memory. It is skipped when the run has an explicit memory budget
+(the run then holds itself to that budget), when it streams eligible columns to a bounded sink,
+and when the ceiling cannot be read.
+`CAPACITY_REASON_CODES` in `decoy_engine.errors` lists every code that means the same verdict.
+
 ### sequence
 
 Monotonic counter.
 
-- `start`: first value.
-- `step`: increment.
+- `start`: first value (required).
+- `step`: increment, any integer but 0 (default 1).
+- `prefix` / `suffix` / `pad_length`: turn the value into text, zero-padded to `pad_length`
+  digits.
 
 Use it for surrogate primary keys.
 
@@ -1259,15 +1322,19 @@ Use it for surrogate primary keys.
 
 A synthetic value per row from a named faker type.
 
-- `faker_type`: the faker generator (for example `first_name`, `email`, `job`).
-- locale and faker kwargs are supported per the generator.
+- `faker_type`: the faker generator (for example `first_name`, `email`, `job`). It must be a
+  provider in the column's locale or a registered custom provider.
+- `locale`: one locale or a non-empty list, each one Faker knows (`en_US` or `en-US`). A column
+  without one is checked again in the run's default locale before any provider runs.
+- `faker_kwargs`: keyword arguments the provider method accepts; an unknown keyword is refused.
 
 ### categorical
 
 Draws each row from a fixed category pool.
 
-- `categories`: the pool.
-- `weights`: optional per-category distribution.
+- `categories`: the pool. The values must fit one Arrow column type (`[1, 2.5]` and
+  `["a", null]` do; `["a", 1]` does not).
+- `weights`: optional, one non-negative number per category with a positive sum.
 
 ### reference
 
@@ -1277,8 +1344,9 @@ child can point at a generated parent's keys.
 - `reference_table` / `reference_column`: the generated parent table and column
   to draw from (both required).
 - `distribution`: how draws are spread across the parent values: `random`
-  (default), `sequential`, `weighted`, or `fitted` (below).
-- `weights`: per-value weights, used when `distribution` is `weighted`.
+  (default), `sequential`, `weighted`, or `fitted` (below). Any other value is refused.
+- `weights`: per-value weights, required when `distribution` is `weighted`. Against a
+  `sequence` parent with no nulls, the list must have one weight per parent row.
 - `min_per_parent` / `max_per_parent`: optional per-parent cardinality bounds
   (0 = unbounded). These bounds do not compose with `sequential`.
 - `snapshot_file` / `source_column`: only with `distribution: fitted` (below).
@@ -1399,10 +1467,15 @@ Computes a column from an expression over the other generated columns.
 
 - `formula`: the Python expression evaluated per row (required).
 - `references`: the sibling column names the expression reads; filled in a
-  single declared-order post-pass after the other columns exist. A formula
-  column that reads a later-declared referenced formula sibling sees that
-  sibling's null placeholder, not its computed value. Declare dependencies
-  before the columns that read them.
+  single declared-order post-pass after the other columns exist.
+
+Plan compile refuses a formula that reads a sibling not listed in `references`
+(`generate_formula_reference_missing`), lists a column the table does not have
+(`generate_formula_reference_unknown`), reads a name that is neither a sibling nor one
+the formula scope provides, such as `round` or `random`
+(`generate_formula_name_unknown`), wraps a sibling in braces as `{a} * 2` (`generate_formula_template_syntax`), or reads itself or a later formula
+that has `references` (`generate_column_forward_reference`). Declare dependencies
+before the columns that read them.
 
 ### derived
 
@@ -1414,18 +1487,23 @@ validation timing, and security note.
 In generate mode the same parameters (`expression`, `bounds`,
 `null_propagation`) are top-level keys on the generate column config, not
 nested under `provider_config:`. Sibling columns must be declared before the
-`derived` column that reads them; a forward reference fails at evaluation time.
+`derived` column that reads them; plan compile refuses a forward reference with
+`generate_column_forward_reference`.
+
+### constant
+
+Every row gets the same `value`: a string, a bool, a 64-bit integer or a finite float.
 
 ### distribution
 
-Samples rows whose distribution matches a provided snapshot (numeric,
-categorical, or datetime). Use it to generate a column shaped like a real
-source column's distribution.
+Draws numbers from a named family, with no source file. To shape a column like a real one, use
+`statistical` with a `decoy fit` snapshot instead.
 
-- `snapshot`: a dict with `kind` (`numeric`, `categorical`, or `datetime`) and a
-  `stats` block. `numeric` needs `bin_edges` + `bin_counts`; `categorical` needs
-  `top_values` + `other_count`; `datetime` needs `year_bins` + `min` + `max`.
-  This matches `compute_distribution_snapshot`'s output.
+- `family`: `uniform` is the only family. Others are refused with
+  `generate_option_value_unknown` until a sampler gives the same bytes on arm64 and x86.
+- `low` / `high`: the uniform range (both required, `high` above `low`). The family takes
+  only its own keys.
+- `min` / `max`: optional clip applied to each draw (`min` at most `max`).
 
 ## Job-level config: validators and quarantine (SP-05, extended Sprint 2 honesty pack)
 
