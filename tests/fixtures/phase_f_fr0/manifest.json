@@ -58,11 +58,11 @@
       }
     },
     "live_faker": {
-      "envelope_digest": "bf25fb87a054d6d37a5db151ee88c2b2e8102bae5f5153faeefa9d88e190ee7f",
+      "envelope_digest": "87d89562a99b15850e57f1745ed93e13833f1ac67538277eaa68d64d8ab3ce92",
       "excluded_columns": [],
       "status": "refrozen",
       "tables": {
-        "live": "61de7a2800710c2f26ffc95d8dd245aed4eeada6c25cc4303dd0160af254dd0d"
+        "live": "138be283ade86ae610b3be41dbd782f9ece18cc89c286257b3daf1f2790b9f91"
       }
     },
     "live_faker_default_locale": {
@@ -138,7 +138,7 @@
       "previous_tables": {
         "live": "8aba04ab3f97f3d163a41609c45e4cad07b93e724a9fddf4b5d199240a2e83b7"
       },
-      "reason": "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row"
+      "reason": "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row; 2026-11-10: the `fallback` column (an unknown faker type, now refused at compile) was removed from the fixture"
     },
     "nulls": {
       "previous_tables": {

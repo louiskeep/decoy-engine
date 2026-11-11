@@ -54,6 +54,9 @@ UNIQUE_FAKER_ATTEMPTS = 1000
 # The four types whose domain is enumerable or that are distinct by construction.
 UNIQUE_TYPES = frozenset({"sequence", "categorical", "faker", "reference"})
 
+# Unique-capable types whose values an `output_type` cast can merge.
+_LOSSY_OUTPUT_TYPES = frozenset({"categorical", "faker"})
+
 # A reference distribution that picks parents with replacement or by weight.
 _REFERENCE_CONFLICT_DISTRIBUTIONS = frozenset({"weighted", "fitted"})
 # Options a pair member may not set: the pair draw replaces the member's own sampling and skips
@@ -98,6 +101,11 @@ def column_conflict_problems(
     problems: list[Problem] = []
     if pooled is True:
         problems.append((("pooled",), _CONFLICT))
+    if "output_type" in extras and type_ in _LOSSY_OUTPUT_TYPES:
+        # The cast runs after the distinctness check, so "1" and "01" (int), "true" and "TRUE"
+        # (bool) or 1.2 and 1.4 (decimal(0)) can land on one value. A sequence never collides:
+        # its step is a nonzero integer, so int and decimal(n) keep its values apart.
+        problems.append((("output_type",), _CONFLICT))
     if type_ == "categorical" and extras.get("weights") is not None:
         problems.append((("weights",), _CONFLICT))
     if type_ == "reference":

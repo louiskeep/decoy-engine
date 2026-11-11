@@ -332,7 +332,7 @@ def generate_rows(
     names = [c["name"] for c in cols]
 
     def typed(data: dict[str, list[Any]]) -> pa.Table:
-        return arrow_table(data, table_name=table, statistical_specs=specs)
+        return arrow_table(data, table_name=table, statistical_specs=specs, columns=cols)
 
     acc: dict[str, list[Any]] = {n: [] for n in names}
     emitted = used = 0

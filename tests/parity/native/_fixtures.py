@@ -48,8 +48,7 @@ _ENGINE_VERSION = "native-parity-harness"
 # Native execution is route-chosen (never caller-chosen): the candidate is the
 # default `run_pipeline` route, which runs the compiled kernels when the native
 # companion is installed and the pandas oracle otherwise. A matrix case passes
-# when the two agree logically; cases stay xfail(strict=False) because the
-# companion is optional in CI.
+# when the two agree logically, with or without the companion installed.
 
 
 # ---------------------------------------------------------------------------

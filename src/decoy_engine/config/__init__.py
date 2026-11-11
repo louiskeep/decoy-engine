@@ -42,6 +42,10 @@ from decoy_engine.config._generate_options import (
     generate_option_catalog,
     refuse_unlisted_generate_families,
 )
+from decoy_engine.config._generate_type_checks import (
+    parse_output_type,
+    refuse_fixed_width_output_types,
+)
 from decoy_engine.config._generate_unique import (
     UNIQUE_FAKER_ATTEMPTS,
     distinct_categories,
@@ -138,9 +142,11 @@ __all__ = [
     "distinct_categories",
     "generate_option_catalog",
     "override_sources",
+    "parse_output_type",
     "parse_pipeline_config",
     "parse_relationship_config",
     "post_scan_integrity_requested",
+    "refuse_fixed_width_output_types",
     "refuse_unlisted_generate_families",
     "value_key",
 ]
