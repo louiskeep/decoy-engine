@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from functools import lru_cache
-from typing import Any
+from typing import Any, get_args
 
 from pydantic import BaseModel
 
@@ -42,6 +42,12 @@ class FormatDescriptor:
     width_rule: str  # exact | bounded | unknown
     vectors: tuple[tuple[dict[str, Any], Any, Any], ...]
 
+    @property
+    def declarable(self) -> bool:
+        """False for a format only generation uses (`boolean/text/v1`): F06 declared columns have
+        no boolean logical type, so contracts, routes and the capability manifest leave it out."""
+        return self.logical in get_args(C.LogicalType)
+
 
 def _string_exact(spec: Any, value: Any) -> CastOutcome:
     # Strings cannot fail by value; a non-text carrier is a route-level type mismatch.
@@ -50,6 +56,21 @@ def _string_exact(spec: Any, value: Any) -> CastOutcome:
         if isinstance(value, str)
         else fail(reasons.route.DECLARED_CAST_INPUT_TYPE_INCOMPATIBLE)
     )
+
+
+_BOOL_TOKENS = {"true": True, "false": False, "1": True, "0": False}
+
+
+def _parse_boolean(spec: Any, raw: Any) -> CastOutcome:
+    if not isinstance(raw, str) or raw.lower() not in _BOOL_TOKENS:
+        return fail(_R.DECLARED_BOOLEAN_INVALID)
+    return succeed(_BOOL_TOKENS[raw.lower()])
+
+
+def _format_boolean(spec: Any, value: Any) -> CastOutcome:
+    if type(value) is not bool:
+        return fail(_R.DECLARED_BOOLEAN_INVALID)
+    return succeed("true" if value else "false")
 
 
 _INT = {"id": "integer/ascii/v1", "signed": True, "bit_width": 16}
@@ -108,6 +129,13 @@ _PARSE: dict[str, tuple[Kernel, str, str, str, tuple[tuple[dict[str, Any], Any, 
         "date/iso8601/v1",
         "exact",
         (({"id": "date/iso8601/v1"}, "2026-02-01", date(2026, 2, 1)),),
+    ),
+    "boolean/text/v1": (
+        _parse_boolean,
+        "text",
+        "boolean/text/v1",
+        "bounded",
+        (({"id": "boolean/text/v1"}, "TRUE", True),),
     ),
     "date/strptime/v1": (
         _date.parse_date,
@@ -181,6 +209,12 @@ _FORMAT: dict[str, tuple[Kernel, str, str, tuple[tuple[dict[str, Any], Any, Any]
         "date/iso8601/v1",
         "exact",
         (({"id": "date/iso8601/v1"}, date(2026, 2, 1), "2026-02-01"),),
+    ),
+    "boolean/text/v1": (
+        _format_boolean,
+        "boolean/text/v1",
+        "bounded",
+        (({"id": "boolean/text/v1"}, True, "true"),),
     ),
     "date/strftime/v1": (
         _date.format_date,
@@ -270,6 +304,28 @@ def validate_format_spec(spec: Any, *, direction: str = "parse") -> Any:
 
 def validate_sentinel_spec(spec: Any, *, binary: bool) -> Any:
     return C.validate_sentinel_spec(spec, binary=binary)
+
+
+# -- generated values ------------------------------------------------------------------------
+
+_GENERATED_PRECISION = 38  # decimal128's limit; the scale is the user's, the whole digits the rest
+
+
+def generated_value_spec(kind: str, scale: int | None = None) -> dict[str, Any]:
+    """The parse spec a generated ``output_type`` compiles to: ``int``, ``decimal``, ``date`` or ``bool``.
+
+    Generation casts through the same descriptors declared columns use, so the format ids live only
+    here. ``scale`` is read for ``decimal`` alone.
+    """
+    if kind == "int":
+        return {"id": "integer/ascii/v1", "signed": True, "bit_width": 64}
+    if kind == "decimal":
+        return {"id": "decimal/plain/v1", "precision": _GENERATED_PRECISION, "scale": scale or 0}
+    if kind == "date":
+        return {"id": "date/iso8601/v1"}
+    if kind == "bool":
+        return {"id": "boolean/text/v1"}
+    raise ValueError("unknown generated value kind")
 
 
 # -- widths ------------------------------------------------------------------------------------
@@ -462,6 +518,8 @@ def match_sentinel(spec: Any, raw: Any, *, binary: bool) -> bool:
 def capability_manifest() -> dict[str, Any]:
     formats: dict[str, dict[str, Any]] = {}
     for d in _DESCRIPTORS:
+        if not d.declarable:
+            continue
         entry = formats.setdefault(
             d.format_id,
             {

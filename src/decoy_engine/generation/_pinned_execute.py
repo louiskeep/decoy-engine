@@ -217,5 +217,10 @@ def _run(
                 pinned=True,
                 numeric_type=numeric.get((name, pcol.name)),
             )
-        pools[name] = arrow_table(data, table_name=name, statistical_specs=specs)
+        pools[name] = arrow_table(
+            data,
+            table_name=name,
+            statistical_specs=specs,
+            columns=[json.loads(c.config_json) for c in table.columns],
+        )
     return {name: pools[name] for name in sorted(pools)}

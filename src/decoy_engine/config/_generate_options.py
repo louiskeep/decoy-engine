@@ -18,17 +18,19 @@ from __future__ import annotations
 import ast
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from decoy_engine import reasons
 from decoy_engine.config._generate_type_checks import (
+    OUTPUT_TYPE_KINDS,
     clip_bound,
     constant_value,
     finite,
     high_bound,
+    output_type_value,
 )
 from decoy_engine.config._generate_unique import unique_flag
 from decoy_engine.errors import PipelineValidationError
@@ -300,8 +302,9 @@ CONDITIONAL_REQUIRED: Mapping[str, Mapping[str, Mapping[str, tuple[str, ...]]]] 
 }
 
 _N = OptionSpec(finite)
+_OUT = OptionSpec(output_type_value)
 
-GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
+_BASE_OPTIONS: Mapping[str, TypeOptions] = {
     "faker": TypeOptions(
         {
             "faker_type": _S,
@@ -321,11 +324,17 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
         required=("start",),
     ),
     "categorical": TypeOptions(
-        {"categories": OptionSpec(_categories), "weights": OptionSpec(_weights)},
+        {
+            "categories": OptionSpec(_categories),
+            "weights": OptionSpec(_weights),
+        },
         required=("categories",),
     ),
     "formula": TypeOptions(
-        {"formula": OptionSpec(_formula), "references": OptionSpec(_str_list)},
+        {
+            "formula": OptionSpec(_formula),
+            "references": OptionSpec(_str_list),
+        },
         required=("formula",),
     ),
     "reference": TypeOptions(
@@ -361,7 +370,10 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
         required=("expression",),
     ),
     "derived_aggregate": TypeOptions(
-        {"op": _S, "column": OptionSpec(_str, ref_kind="column")},
+        {
+            "op": _S,
+            "column": OptionSpec(_str, ref_kind="column"),
+        },
         plan_required=("op", "column"),
     ),
     "grouped_series": TypeOptions(
@@ -400,6 +412,15 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
         required=("family",),
         closed_by="family",
     ),
+}
+
+# `output_type` is added from `OUTPUT_TYPE_KINDS`, the one table of the types that take it, so the
+# option set and the per-type allowed kinds cannot drift apart.
+GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
+    name: replace(opts, keys={**opts.keys, "output_type": _OUT})
+    if name in OUTPUT_TYPE_KINDS
+    else opts
+    for name, opts in _BASE_OPTIONS.items()
 }
 
 # Optional keys whose readers treat None as "not given" (`col.get(k)`, `col.get(k) or default`, or

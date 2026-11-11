@@ -76,6 +76,8 @@ protected_quarantine:
 | `cobol/zoned-ebcdic-trailing/v1` | bytes | digit zones `F`; final zone `A C E` (+) / `B D` (-) when signed, `F` when unsigned; output is canonical `C`/`D`/`F` |
 | `cobol/comp-3/v1` | bytes | `ceil((precision+1)/2)` bytes, sign nibble `C` / `D` (or `F` unsigned), leading nibble zero for even precision |
 
+`boolean/text/v1` (parse `true`, `false`, `1`, `0` in any case; write `true` or `false`) is registered for generate columns' `output_type: bool` only. It is not in the manifest, the route matrix or any declared contract: declared source columns have no boolean logical type. `round_to_scale` is the one explicit rounding helper, also for generation (`output_type: decimal(n)`); the parse kernels below never round.
+
 Numbers are exact: text becomes an unscaled integer and a declared scale, built as `Decimal(i).scaleb(-s)` inside an engine-pinned `decimal` context, so a caller's or thread's ambient context cannot change a result. There is no float, rounding or locale. A value that would lose a digit, exceed `precision`, or overflow `bit_width` fails with a registered code.
 
 Binary kinds list sentinels as hex strings and match the raw field bytes exactly, with no pad removal. Fixed-width output widths include the sign, token, separators and padding, and are measured in `width_unit` (`code_points` or `bytes`); the fixed-width writer is a code-point writer, so only `code_points` is admitted for a fixed-width target.

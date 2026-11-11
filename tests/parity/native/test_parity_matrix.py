@@ -16,10 +16,11 @@ Two halves:
 
 2. The golden matrix (`STRATEGY_MATRIX` / `PROVIDER_MATRIX`, generated from the
    LIVE registries) enumerates one case per strategy and one per provider
-   binding. Every case runs the candidate against the pinned pandas oracle. The
-   candidate routes through the native substrate, which does not exist yet, so
-   each case is `xfail(strict=False)`: the matrix is COMPLETE now and each case
-   flips to PASS as its strategy's native phase lands. The completeness tests
+   binding. Every runnable case runs the candidate against the pinned pandas
+   oracle and must pass. A case with no minimal single-column fixture is a
+   strict xfail that must raise `PipelineValidationError`: its stub config is
+   refused before any row is read, so it proves nothing about parity, and a
+   non-strict mark would let a real case break unseen. The completeness tests
    guarantee a newly added strategy or provider MUST appear here rather than be
    silently omitted.
 """
@@ -29,6 +30,7 @@ from __future__ import annotations
 import pyarrow as pa
 import pytest
 
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution._row_errors import RowErrorRecord
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
 from decoy_engine.generation.pool._events import QualityWarning
@@ -153,7 +155,7 @@ class TestHarnessStrictness:
 def test_strategy_matrix_covers_every_live_strategy() -> None:
     """Every strategy in the live handler registry appears in STRATEGY_MATRIX.
 
-    A newly added strategy must show up here (as an xfail case) rather than be
+    A newly added strategy must show up here (as a case) rather than be
     silently omitted from the safety net.
     """
     covered = {case.strategy for case in STRATEGY_MATRIX}
@@ -184,10 +186,22 @@ def test_pinned_oracle_runs_for_runnable_case(case: MatrixCase) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Native parity matrix: complete now, each case flips to PASS as its phase
-# lands. The candidate routes through the native substrate (not wired yet),
-# so every case is an expected failure today.
+# Native parity matrix: one case per strategy and provider. Runnable cases must
+# pass; stub cases are strict xfails so neither kind can change state unseen.
 # ---------------------------------------------------------------------------
+
+_NO_FIXTURE = pytest.mark.xfail(
+    strict=True,
+    raises=PipelineValidationError,
+    reason="no minimal single-column fixture: enumerated for coverage, its stub config is refused",
+)
+
+
+def _matrix_params(cases: list[MatrixCase]) -> list[object]:
+    return [
+        pytest.param(case, id=case.case_id, marks=() if case.oracle_runnable else _NO_FIXTURE)
+        for case in cases
+    ]
 
 
 def _native_parity(case: MatrixCase) -> None:
@@ -196,17 +210,11 @@ def _native_parity(case: MatrixCase) -> None:
     assert_logical_parity(candidate, oracle, allowed_physical_diffs=case.allowed_physical_diffs)
 
 
-@pytest.mark.xfail(
-    strict=False, reason="native substrate not wired yet (Phase 1+); flips to PASS per phase"
-)
-@pytest.mark.parametrize("case", STRATEGY_MATRIX, ids=[c.case_id for c in STRATEGY_MATRIX])
+@pytest.mark.parametrize("case", _matrix_params(STRATEGY_MATRIX))
 def test_strategy_matrix_native_parity(case: MatrixCase) -> None:
     _native_parity(case)
 
 
-@pytest.mark.xfail(
-    strict=False, reason="native substrate not wired yet (Phase 1+); flips to PASS per phase"
-)
-@pytest.mark.parametrize("case", PROVIDER_MATRIX, ids=[c.case_id for c in PROVIDER_MATRIX])
+@pytest.mark.parametrize("case", _matrix_params(PROVIDER_MATRIX))
 def test_provider_matrix_native_parity(case: MatrixCase) -> None:
     _native_parity(case)

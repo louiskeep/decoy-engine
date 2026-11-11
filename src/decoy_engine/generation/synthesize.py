@@ -196,7 +196,7 @@ def _generate_tables_from_config(
             )
 
             fill_referenced_formula_columns(gcols, data, seed, derive_key, table_name=name)
-        tbl = arrow_table(data, table_name=name, statistical_specs=statistical_specs)
+        tbl = arrow_table(data, table_name=name, statistical_specs=statistical_specs, columns=gcols)
         # Generation-time fidelity warn-gate (deferred follow-up 5,
         # 2026-06-12): score statistical columns against their source
         # snapshot and warn below global_settings.fidelity_warn_threshold.
