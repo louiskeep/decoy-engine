@@ -58,6 +58,9 @@ _EXCLUDED_FROM_FINGERPRINT = frozenset(
         # GEN-UNIQUE: a build-strategy toggle like `pooled`. A unique column keeps its seed root, so
         # its first-draw rows equal the plain column's values (invariant U5).
         "unique",
+        # GEN-TYPES E2: how a value is printed, not which value is drawn; adding it must not
+        # re-seed the column (the values before the cast stay equal).
+        "output_type",
         "_table",
     }
 )

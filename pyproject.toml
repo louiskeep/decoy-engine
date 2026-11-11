@@ -744,6 +744,7 @@ module = [
     # GEN-TYPES: constant and parametric distribution generate types.
     "decoy_engine.generation.kinds",
     "decoy_engine.generation.kinds._constant",
+    "decoy_engine.generation.kinds._output_type",
     "decoy_engine.generation.kinds._parametric",
     # engine-v2 S8 (Composite Generators). Spec:
     # docs/v2/sprints/engine-v2/sprint-08-composite-generators.md in decoy-platform.

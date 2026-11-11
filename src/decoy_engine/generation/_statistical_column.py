@@ -13,12 +13,13 @@ Behavior is unchanged: this is a pure code move, not a rewrite.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine.generation.kinds import cast_output_columns, output_types
 from decoy_engine.generation.pool import QualityWarning, emit_generation_warning
 from decoy_engine.generation.statistical import StatisticalSpec, conditional_fallback_counts
 from decoy_engine.generators.derivation import GenDeriveContext
@@ -94,8 +95,12 @@ def arrow_table(
     *,
     table_name: str,
     statistical_specs: Mapping[tuple[str, str], StatisticalSpec],
+    columns: Sequence[Mapping[str, Any]] | None = None,
 ) -> pa.Table:
     """The table for `data`, with each fitted statistical column typed by its spec.
+
+    A column of `columns` that declares an `output_type` is cast to it here (the one whole-table
+    cast site; `_streamed._table_batches` is the batch one) and typed by its compiled Arrow type.
 
     Inference over drawn values would give `null` to a fitted column whose rows are all None
     (a small table, a narrow window) and `int64` to the same column in a full run, so the type
@@ -104,14 +109,18 @@ def arrow_table(
     """
     from decoy_engine.generation.statistical import cell_format_arrow_type
 
-    columns: dict[str, Any] = {}
+    declared = output_types(columns)
+    data = cast_output_columns(dict(data), declared, table_name=table_name)
+    arrays: dict[str, Any] = {}
     for name, values in data.items():
         spec = statistical_specs.get((table_name, name))
-        if spec is not None and spec.cell_format is not None:
-            columns[name] = pa.array(values, type=cell_format_arrow_type(spec))
+        if name in declared:
+            arrays[name] = pa.array(values, type=declared[name].arrow_type)
+        elif spec is not None and spec.cell_format is not None:
+            arrays[name] = pa.array(values, type=cell_format_arrow_type(spec))
         else:
-            columns[name] = values
-    return pa.table(columns)
+            arrays[name] = values
+    return pa.table(arrays)
 
 
 def warn_on_unseen_parents(

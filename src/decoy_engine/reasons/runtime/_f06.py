@@ -8,6 +8,7 @@ from decoy_engine.reasons import _catalog
 from decoy_engine.reasons._types import Phase, RetryClass
 
 __all__ = [
+    "DECLARED_BOOLEAN_INVALID",
     "DECLARED_COBOL_INVALID",
     "DECLARED_CURRENCY_INVALID",
     "DECLARED_DATE_INVALID",
@@ -48,6 +49,11 @@ DECLARED_INTEGER_INVALID = _d(
 )
 DECLARED_INTEGER_OVERFLOW = _d(
     "declared_integer_overflow", "A value is outside the declared integer range.", **_VALUE
+)
+DECLARED_BOOLEAN_INVALID = _d(
+    "declared_boolean_invalid",
+    "A value is not a boolean under the declared format.",
+    **{**_VALUE, "since": "1.23.0"},
 )
 DECLARED_DECIMAL_INVALID = _d(
     "declared_decimal_invalid", "A value does not match the declared decimal grammar.", **_VALUE

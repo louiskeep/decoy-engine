@@ -161,7 +161,7 @@ def test_the_catalog_shows_the_family_requirements() -> None:
     entry = opts.generate_option_catalog()["distribution"]
     assert entry.required == ("family",)
     assert entry.required_when["family"] == {"uniform": ("low", "high")}
-    assert set(entry.optional) == {"low", "high", "min", "max"}
+    assert set(entry.optional) == {"low", "high", "min", "max", "output_type"}
     ref = opts.generate_option_catalog()["reference"]
     assert ref.required_when == {"distribution": {"weighted": ("weights",)}}
     assert opts.generate_option_catalog()["sequence"].required_when == {}
