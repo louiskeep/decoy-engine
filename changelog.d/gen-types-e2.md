@@ -4,9 +4,13 @@ A generate column can say how its values are printed with `output_type: int`, `d
 to 18), `date` or `bool`. The option compiles to a declared-casting descriptor, so a column emits
 `int64`, `decimal128(38, n)`, `date32` or `bool` on the resident, streamed and pinned routes alike.
 `decimal(n)` rounds half-even on the decimal value of the generated number; `int` refuses a fraction
-instead of rounding it (use `decimal(0)`). Which types accept which output type is the table in
-`generate_option_catalog()`. Same-table readers (`derived`, `formula`) keep reading the generator's
-own values, and adding `output_type` to a column does not change the values it draws.
+instead of rounding it (use `decimal(0)`). Which types accept which output type is the table
+`OUTPUT_TYPE_KINDS` in `decoy_engine.config`; `generate_option_catalog()` lists the option per
+type. `date` takes the date part of ISO datetime text, so faker datetime providers work. A `unique`
+categorical or faker column refuses `output_type` (`generate_unique_conflict`), because the cast can
+merge values the uniqueness check kept apart. Same-table readers (`derived`, `formula`) keep
+reading the generator's own values, and adding `output_type` to a column does not change the values
+it draws.
 
 `declared_casting` gains the `boolean/text/v1` format (generation only; declared source columns gain
 no boolean type), `round_to_scale`, `generated_value_spec` and `arrow_type_for_spec`. A value that

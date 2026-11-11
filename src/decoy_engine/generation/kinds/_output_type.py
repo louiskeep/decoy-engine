@@ -35,6 +35,11 @@ from decoy_engine.reasons import ReasonCode
 
 # A Decimal or date object is wider than the 8 bytes a plain number is priced at.
 _TYPED_PAYLOAD_BYTES = 64
+_ISO_DATETIME = re.compile(
+    r"([0-9]{4}-[0-9]{2}-[0-9]{2})[T ][0-9]{2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]{1,9})?)?"
+    r"(?:Z|[+-][0-9]{2}(?::?[0-9]{2})?)?",
+    re.ASCII,
+)
 _PLAIN_NUMBER = re.compile(r"[+-]?[0-9]{1,100}(?:\.[0-9]{1,100})?", re.ASCII)
 
 
@@ -142,7 +147,11 @@ def _date_text(value: Any) -> str | None:
         return value.date().isoformat()
     if isinstance(value, date):
         return value.isoformat()
-    return value if isinstance(value, str) else None
+    if isinstance(value, str):
+        # A faker datetime is text by the time it is cast; its date part is the date.
+        match = _ISO_DATETIME.fullmatch(value)
+        return match.group(1) if match else value
+    return None
 
 
 def _bool_text(value: Any) -> str | None:

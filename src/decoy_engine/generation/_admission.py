@@ -77,6 +77,9 @@ class ColumnAdmission:
     eligible: bool
     reason: str
     arrow_type: pa.DataType | None = None
+    # The type of the values the generator draws, before any `output_type` cast. `arrow_type` is
+    # what is emitted. They differ only for a column with an `output_type`.
+    generated_type: pa.DataType | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +103,10 @@ class PlanAdmission:
         return pa.schema(
             [pa.field(c.column, c.arrow_type) for c in self.columns if c.table == table]
         )
+
+    def generated_types(self, table: str) -> list[pa.DataType | None]:
+        """Per column of `table`, the type the generator draws (before any `output_type` cast)."""
+        return [c.generated_type for c in self.columns if c.table == table]
 
 
 def _categorical_type(col: dict[str, Any]) -> tuple[pa.DataType | None, str]:
@@ -198,6 +205,7 @@ def classify_plan(
             True,
             "eligible",
             output_arrow_type(col) or arrow_type,
+            arrow_type,
         )
 
     def classify_reference(table: str, col: dict[str, Any]) -> ColumnAdmission:
