@@ -29,6 +29,7 @@ from decoy_engine.config._generate_type_checks import (
     constant_value,
     finite,
     high_bound,
+    output_type_value,
 )
 from decoy_engine.config._generate_unique import unique_flag
 from decoy_engine.errors import PipelineValidationError
@@ -291,6 +292,7 @@ CONDITIONAL_REQUIRED: Mapping[str, Mapping[str, Mapping[str, tuple[str, ...]]]] 
 }
 
 _N = OptionSpec(finite)
+_OUT = OptionSpec(output_type_value)
 
 GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
     "faker": TypeOptions(
@@ -298,6 +300,7 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
             "faker_type": _S,
             "locale": OptionSpec(_locale),
             "faker_kwargs": _M,
+            "output_type": _OUT,
         },
         required=("faker_type",),
     ),
@@ -308,15 +311,24 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
             "prefix": _S,
             "suffix": _S,
             "pad_length": OptionSpec(_int_at_least(0)),
+            "output_type": _OUT,
         },
         required=("start",),
     ),
     "categorical": TypeOptions(
-        {"categories": OptionSpec(_categories), "weights": OptionSpec(_weights)},
+        {
+            "categories": OptionSpec(_categories),
+            "weights": OptionSpec(_weights),
+            "output_type": _OUT,
+        },
         required=("categories",),
     ),
     "formula": TypeOptions(
-        {"formula": OptionSpec(_formula), "references": OptionSpec(_str_list)},
+        {
+            "formula": OptionSpec(_formula),
+            "references": OptionSpec(_str_list),
+            "output_type": _OUT,
+        },
         required=("formula",),
     ),
     "reference": TypeOptions(
@@ -348,11 +360,16 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
             "expression": OptionSpec(_str, ref_kind="expression"),
             "bounds": _M,
             "null_propagation": _S,
+            "output_type": _OUT,
         },
         required=("expression",),
     ),
     "derived_aggregate": TypeOptions(
-        {"op": _S, "column": OptionSpec(_str, ref_kind="column")},
+        {
+            "op": _S,
+            "column": OptionSpec(_str, ref_kind="column"),
+            "output_type": _OUT,
+        },
     ),
     "grouped_series": TypeOptions(
         {
@@ -362,6 +379,7 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
             "step": _I,
             "max_step": _I,
             "start": _I,
+            "output_type": _OUT,
         },
         required=("group_by", "order_by"),
     ),
@@ -371,6 +389,7 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
             "max_days": _I,
             "min_days": _I,
             "distribution": _S,
+            "output_type": _OUT,
         },
         required=("anchor", "max_days"),
     ),
@@ -378,7 +397,9 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
         {"group_by": OptionSpec(_str, ref_kind="column"), "length": _I, "prefix": _S},
         required=("group_by",),
     ),
-    "constant": TypeOptions({"value": OptionSpec(constant_value)}, required=("value",)),
+    "constant": TypeOptions(
+        {"value": OptionSpec(constant_value), "output_type": _OUT}, required=("value",)
+    ),
     "distribution": TypeOptions(
         {
             "family": OptionSpec(_family),
@@ -386,6 +407,7 @@ GENERATE_OPTIONS: Mapping[str, TypeOptions] = {
             "high": OptionSpec(high_bound),
             "min": OptionSpec(clip_bound("min")),
             "max": OptionSpec(clip_bound("max")),
+            "output_type": _OUT,
         },
         required=("family",),
         closed_by="family",

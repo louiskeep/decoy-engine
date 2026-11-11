@@ -28,7 +28,11 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine.generation._numeric_typing import numeric_plan
-from decoy_engine.generation.kinds import constant_arrow_type, parametric_arrow_type
+from decoy_engine.generation.kinds import (
+    constant_arrow_type,
+    output_arrow_type,
+    parametric_arrow_type,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -186,8 +190,14 @@ def classify_plan(
         return ColumnAdmission(table, col["name"], str(col.get("type")), False, reason)
 
     def admit(table: str, col: dict[str, Any], arrow_type: pa.DataType) -> ColumnAdmission:
+        # A declared `output_type` is the emitted type; the cast itself runs at the batch boundary.
         return ColumnAdmission(
-            table, col["name"], str(col.get("type")), True, "eligible", arrow_type
+            table,
+            col["name"],
+            str(col.get("type")),
+            True,
+            "eligible",
+            output_arrow_type(col) or arrow_type,
         )
 
     def classify_reference(table: str, col: dict[str, Any]) -> ColumnAdmission:

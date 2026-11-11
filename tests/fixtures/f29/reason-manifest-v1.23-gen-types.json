@@ -1,0 +1,96 @@
+{
+  "entries": [
+    {
+      "code": "generate_output_type_unsupported",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "config",
+      "owner": "PipelineValidationError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.23.0",
+      "summary": "Generate column type or target cannot carry the requested output type.",
+      "symbol": "GENERATE_OUTPUT_TYPE_UNSUPPORTED"
+    },
+    {
+      "code": "declared_boolean_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.23.0",
+      "summary": "A value is not a boolean under the declared format.",
+      "symbol": "DECLARED_BOOLEAN_INVALID"
+    },
+    {
+      "code": "output_type_cast_failed",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "ExecutionError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.23.0",
+      "summary": "A generated value could not be cast to its output type.",
+      "symbol": "OUTPUT_TYPE_CAST_FAILED"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.23.0"
+}

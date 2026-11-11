@@ -61,6 +61,7 @@ from decoy_engine.generation._column_streams import (
 )
 from decoy_engine.generation._faker_pool import pool_eligible, pool_opted_out
 from decoy_engine.generation._numeric_typing import restore_declared
+from decoy_engine.generation.kinds import cast_output_values, output_types
 from decoy_engine.generation.pool._runtime_pool_size import DEFAULT_POOL_SIZE
 from decoy_engine.progress import get_active_channel
 
@@ -289,6 +290,7 @@ def _table_batches(
     offset = 0
     cols = table["generate_columns"]
     names = [c["name"] for c in cols]
+    declared = output_types(cols)
     for size in sizes:
         arrays = []
         # Post-null-mask values of the columns already emitted in THIS batch, which is what the
@@ -296,7 +298,11 @@ def _table_batches(
         emitted: dict[str, list[Any]] = {}
         for col, name, stream, field_ in zip(cols, names, streams, schema, strict=True):
             values = restore_declared(col, draw_batch(stream, offset, size, emitted), field_.type)
-            emitted[name] = values
+            emitted[name] = values  # siblings read the generator's values, not the typed ones
+            if name in declared:
+                values = cast_output_values(
+                    values, declared[name], table=str(table["name"]), column=name
+                )
             arr = pa.array(values, type=field_.type)
             if name in widths:
                 _check_width(arr, widths[name], name)
