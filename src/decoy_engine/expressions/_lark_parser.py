@@ -6,7 +6,7 @@ See: https://github.com/lark-parser/lark
 SECURITY DESIGN: config-supplied expressions route through a CLOSED Lark
 grammar (grammar.lark in this package). Only the explicit operator set
 (arithmetic, comparison, logical, membership, concat, slice, days_between,
-ternary, literals, column references) can parse. Any expression outside
+ternary, if(), literals, column references) can parse. Any expression outside
 the grammar -- function calls other than concat/slice/days_between, attribute
 access, dunder identifiers, subscript syntax, import -- produces a Lark
 ParseError converted to ValidationError at compile time (before any row
@@ -186,7 +186,25 @@ def compile_expr(expr_string: str) -> CompiledExpression:
     # per-row inside evaluate().
     _validate_string_escapes(tree, expr_string)
 
+    # ``if(c, a, b)`` is sugar for the ternary: every reader of the tree
+    # (evaluator, column-ref walk, numeric typing) sees one conditional kind.
+    _rewrite_if_calls(tree)
+
     return CompiledExpression(source=expr_string, tree=tree)
+
+
+def _rewrite_if_calls(tree: lark.Tree[Any]) -> None:
+    """Rewrite each ``if_op(c, a, b)`` node in place to ``ternary(a, c, b)``.
+
+    The ternary rule orders its children (then, condition, else), so the
+    function form's children are reordered. ``iter_subtrees`` visits children
+    before parents, so nested calls are already rewritten.
+    """
+    for subtree in tree.iter_subtrees():
+        if subtree.data == "if_op":
+            cond, then, other = subtree.children
+            subtree.data = "ternary"
+            subtree.children = [then, cond, other]
 
 
 def _validate_string_escapes(tree: lark.Tree[Any], source: str) -> None:
@@ -228,9 +246,9 @@ def evaluate(compiled: CompiledExpression, row_context: dict[str, Any]) -> Any:
         KeyError: A column reference is not in ``row_context``.
         ValidationError: A dunder identifier was referenced.
     """
-    transformer = _ExprTransformer(row_context)
+    evaluator = _LazyEvaluator(_ExprTransformer(row_context))
     try:
-        return transformer.transform(compiled.tree)
+        return evaluator.visit(compiled.tree)
     except lark.exceptions.VisitError as exc:
         # Lark wraps transformer exceptions in VisitError; unwrap so
         # callers see KeyError / ValidationError directly.
@@ -240,12 +258,69 @@ def evaluate(compiled: CompiledExpression, row_context: dict[str, Any]) -> Any:
         raise
 
 
+class _LazyEvaluator(lark.visitors.Interpreter):  # type: ignore[type-arg]
+    """Top-down evaluation so a conditional runs only the branch it chooses.
+
+    ``ternary``, ``case_when_op``, ``or_expr`` and ``and_expr`` visit the
+    condition first and skip the operands they do not need; every other rule
+    evaluates its children and hands the values to the same-named
+    :class:`_ExprTransformer` method, so operator semantics live in one place.
+    A skipped operand is never evaluated, so it cannot raise.
+    """
+
+    def __init__(self, ops: _ExprTransformer) -> None:
+        super().__init__()
+        self._ops = ops
+
+    def _value(self, child: Any) -> Any:
+        return self.visit(child) if isinstance(child, lark.Tree) else child
+
+    def __default__(self, tree: lark.Tree[Any]) -> Any:
+        items = [self._value(c) for c in tree.children]
+        return getattr(self._ops, str(tree.data))(items)
+
+    def ternary(self, tree: lark.Tree[Any]) -> Any:
+        if len(tree.children) == 1:
+            return self._value(tree.children[0])
+        then, condition, other = tree.children
+        return self._value(then) if self._value(condition) else self._value(other)
+
+    def case_when_op(self, tree: lark.Tree[Any]) -> Any:
+        """SQL-style CASE WHEN conditional expression (SP-10b / ISO/IEC 9075-2).
+
+        Conditions are tried left to right; the first truthy one returns its
+        value, else the mandatory default (the last child). The grammar
+        guarantees an odd child count: (cond, val) pairs then the default.
+        """
+        *pairs, default = tree.children
+        for i in range(0, len(pairs), 2):
+            if self._value(pairs[i]):
+                return self._value(pairs[i + 1])
+        return self._value(default)
+
+    def or_expr(self, tree: lark.Tree[Any]) -> Any:
+        result = self._value(tree.children[0])
+        for operand in tree.children[1:]:
+            if result:
+                return result
+            result = self._value(operand)
+        return result
+
+    def and_expr(self, tree: lark.Tree[Any]) -> Any:
+        result = self._value(tree.children[0])
+        for operand in tree.children[1:]:
+            if not result:
+                return result
+            result = self._value(operand)
+        return result
+
+
 class _ExprTransformer(lark.Transformer):  # type: ignore[type-arg]
     """Transforms a Lark parse tree into a Python value.
 
-    Each method corresponds to a rule alias in grammar.lark. Lark calls
-    them bottom-up: leaves are evaluated first, parent rules receive
-    their children already resolved.
+    Each method corresponds to a rule alias in grammar.lark and receives its
+    already-evaluated children. :class:`_LazyEvaluator` drives them top-down
+    and handles the conditional rules itself.
     """
 
     def __init__(self, row_context: dict[str, Any]) -> None:
@@ -260,29 +335,7 @@ class _ExprTransformer(lark.Transformer):  # type: ignore[type-arg]
     def expr(self, items: list[Any]) -> Any:
         return items[0]
 
-    # ---- ternary  (value if condition else other) -------------------------
-
-    def ternary(self, items: list[Any]) -> Any:
-        if len(items) == 1:
-            return items[0]
-        # Grammar: or_expr "if" or_expr "else" ternary
-        # items: [value_expr, condition_expr, else_expr]
-        value, condition, else_expr = items
-        return value if condition else else_expr
-
-    # ---- logical operators -----------------------------------------------
-
-    def or_expr(self, items: list[Any]) -> Any:
-        result = items[0]
-        for operand in items[1:]:
-            result = result or operand
-        return result
-
-    def and_expr(self, items: list[Any]) -> Any:
-        result = items[0]
-        for operand in items[1:]:
-            result = result and operand
-        return result
+    # ---- logical operators (or/and/ternary/case_when: see _LazyEvaluator) --
 
     def not_op(self, items: list[Any]) -> Any:
         return not items[0]
@@ -398,37 +451,6 @@ class _ExprTransformer(lark.Transformer):  # type: ignore[type-arg]
         start = _parse_date(items[0])
         end = _parse_date(items[1])
         return (end - start).days
-
-    def case_when_op(self, items: list[Any]) -> Any:
-        """SQL-style CASE WHEN conditional expression (SP-10b / ISO/IEC 9075-2).
-
-        Pattern: SQL CASE WHEN conditional expression (ANSI SQL ISO/IEC 9075-2).
-        Semantics: evaluate conditions left-to-right; first truthy condition
-        returns its value; fall through to the mandatory default (last item).
-
-        Non-short-circuit evaluation: Lark drives this transformer bottom-up
-        (leaves are evaluated before their parents). All conditions AND all
-        value sub-expressions are evaluated before any branch is selected. A
-        sub-expression that would raise for some rows (e.g. 100 // a when a=0)
-        will do so even if its branch will never be chosen. Every sub-expression
-        must be safe to evaluate for all rows, unconditionally. This behaviour
-        matches the existing ``ternary`` rule and is a known property of the
-        bottom-up evaluator model. Changing it to short-circuit semantics is a
-        larger refactor; it is deferred.
-
-        items layout: [cond1, val1, ..., condN, valN, default]
-        Length is always odd: 1 pair = 3 items; 2 pairs = 5 items; etc.
-        The grammar rule guarantees this shape.
-        """
-        # The last item is always the default expression.
-        default = items[-1]
-        # Pairs occupy items[0..len-2] in cond/val order.
-        for i in range(0, len(items) - 1, 2):
-            cond = items[i]
-            val = items[i + 1]
-            if cond:
-                return val
-        return default
 
     # ---- primary atoms --------------------------------------------------
 
