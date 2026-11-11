@@ -1,4 +1,4 @@
-Status: handoff, plan only (revision 4, Opus planner: Codex NO-GO on revision 3 `774ab826` remediated, 3 BLOCKER, 2 HIGH, 1 MEDIUM; owner decisions of 2026-11-01 applied). No implementation, merge, release or deployment approval is granted by this document. Slice 3a-i is dispatchable now (section 8).
+Status: handoff, plan only (revision 5, V1 scope; owner 2026-11-11: narrow the guarantee to what V1 needs, section 0). Revision 5 keeps revision 4 (`18847ac0`) whole and marks what V1 still builds: one closeout slice, 5-v1 (section 0). The CLI slices 4a and 4b are MERGED (CLI #78, `b4f19ba`); the platform slices 3a-i, 3a-ii, 3a-iii and the repin are Platform V1, parked until CLI V1 ships (CLI `docs/ROADMAP.md:40`). No implementation, merge, release or deployment approval is granted by this document.
 
 Summary: the platform keys masking from its instance master key (HKDF with its own label, wrapped in the engine's `SecretKeyProvider`) and hands one provider per attempt to every engine entry it calls; previews (bounded and nested) get one random per-request key that never touches the master. Job configs may not name a secret reference. Master-key and KMS failures become fixed-code, value-free errors raised from frames that hold no key material. In the CLI, one shared helper owns ref shape, flag injection and a single admission per command, and `--mask-secret` is added to `decoy unmask` and `decoy report vault`. Neither consumer falls back to the job seed. The platform work lands as three bounded slices stacked on the engine 0.17.0 repin branch, which merges only after them.
 
@@ -17,7 +17,36 @@ Threat model: V1 (self-hosted single-org, trusted engine process). In scope: acc
 
 # F13 slices 3-4: platform provider injection and CLI secret resolution, PLAN
 
-## 0. Revision 4 remediation map (Codex NO-GO on `774ab826`)
+## 0. V1 scope (revision 5)
+
+Owner 2026-11-11 (dev-loop review decision 2): plans stuck in review are narrowed to a V1 scope that passes in one or two rounds; cut cases go to the V2 backlog. V1 bar: only a product-function break, data loss or corruption, or a value shown to a non-admin blocks V1. Roadmap row 73 ("F13 slices 3b and 5", Phase 1 engine and CLI) is the row this plan serves. Slice 3b no longer exists (revision 4 section 13: the pin bump is the platform repin branch), and slice 5 is the cross-repository closeout of the F13 contract plan (`docs/plans/2026-10-29-f13-secret-provider-contract-preflight.md` at `039c5cef`, section 6 "Slice 5"). Baselines for this section: engine `origin/main` `6e2e57bd` (version 0.22.0), CLI `origin/main` `f77de8d` (pins `decoy-engine==0.22.0`, `pyproject.toml:122`).
+
+**V1 guarantee.** In CLI V1 every keyed command (`decoy run` with or without `--vault`, `decoy tokenize`, `decoy unmask`, `decoy report vault`, `decoy.mask()`) takes its masking secret from exactly one of `--mask-secret REF` or `global_settings.mask_secret_ref`, and the engine admits it once per command, before any source read, as an `env:` or owner-only `file:` reference of at least 32 bytes. A keyed plan with no secret, a weak secret, a group- or world-readable secret file, both places set, a malformed reference or a `vault://` reference (the CLI registers no Vault provider in V1) is refused with a registered code and constant text, and no secret, reference value or secret path reaches stdout, stderr, `--json`, evidence or notifications. Nothing falls back to the job seed. All of this is merged: engine slices 0 to 2 (#339) and the owner-only `file:` check (A-4, #361), CLI 4a and 4b (#78, including Dennis's 4a-0 refusal of `--chunked --vault`, CLI `src/decoy/cli/run/_prepare.py:391`). What V1 still builds is slice 5-v1 below.
+
+**Slice 5-v1 (engine docs plus CLI closeout; R1).**
+- Engine: a "Consumers" section in `docs/security/secret-providers.md` (none at `6e2e57bd`; headings stop at "Structural sentry"): the CLI surfaces and their one-place rule, `file:` first (Vault Agent or a Kubernetes secret volume rendered to an owner-only file), `env:` for CI, `vault://` refused by the CLI with `secret_provider_unknown` until row 83, and the platform consumer parked. This is the docs half of E0; its docstring half is already on main (`config/_global_settings.py:84-95`, "no `job_seed` fallback").
+- CLI: one test, `tests/sentry/test_mask_secret_ref_shape.py::test_vault_ref_is_refused_without_echo[<surface>]` over `run`, `unmask`, `report vault` and `decoy.mask()`: a `vault://` reference carrying a canary path exits with `secret_provider_unknown`, the constant text, no canary in any output, and no source read. CHAR (expected green on `f77de8d`: `_mask_secret.py:33-35` passes the scheme to the engine, which refuses it), so it is recorded green, not red; it pins the V1 claim that no CLI test covers today (no test under `tests/` names `vault://`).
+- Closeout record: the six CLI F13 test modules (`tests/e2e/test_mask_secret_flag_parity.py`, `test_mask_secret_single_read.py`, `test_run_mask_secret.py`; `tests/sentry/test_mask_secret_error_text.py`, `test_mask_secret_file_mode.py`, `test_mask_secret_ref_shape.py`) plus the new test, run on the exact CLI head at its pinned engine, on the Mac or a VM, with the command, both SHAs and the result in the CLI's `docs/records`. Size: engine docs under 60 lines; CLI one test module edit under 80 lines.
+
+Every finding from the last rounds: Codex gate 4 on revision 3 (`774ab826`, NO-GO) and Dennis round 1 on revision 4 (`18847ac0`, GO-WITH-FIXES, CLI 4a/4b scope). The 4a/4b code-gate rounds closed with the merge of #78.
+
+| Finding | Where | Revision 5 |
+|---|---|---|
+| Codex g4 BLOCKER 1: CLI baselines obsolete | CLI 4a/4b | Closed: rebased in revision 4, built and merged as #78 |
+| Codex g4 BLOCKER 2: slice 3a over both bounds | platform 3a | Platform V1 (parked); revision 4's measured split into 3a-i, 3a-ii, 3a-iii stands |
+| Codex g4 BLOCKER 3: acceptance inventory | 10.1 to 10.5 | CLI cells closed by #78; platform cells (10.1 to 10.3) parked with their slices |
+| Codex g4 HIGH 4: A-4 is not a 3a dependency | 3.7 | Closed in revision 4; A-4 has since merged (engine #361), so 3.7's B-5 list applies whenever the platform repins |
+| Codex g4 HIGH 5: keyed nested preview returns 500 | platform 3a-iii | Platform V1 (parked) |
+| Codex g4 HIGH 6: master-key traceback locals | platform 3a-i | Platform V1 (parked). Already in the V2 backlog as admin-only (backlog "F13 3a" T-i.3 row); the message-text half (T-i.4) stays with 3a-i |
+| Codex g4 MEDIUM 7: citations | throughout | Revision 4 re-derived them; platform citations are re-derived again when the platform is unparked (platform main has moved) |
+| Dennis r1 HIGH: refuse `--chunked --vault` (slice 4a-0) | CLI | Closed: built (`_ChunkedVaultError`, CLI `run/_prepare.py:391`) and merged in #78 |
+| Dennis r1 class 8, 9, 10 items (T-4b.1 label, no CHAR for `run --vault` without a secret, Slice 0 citation, 0600 fixtures, tokenize remedy text) | CLI 4a/4b | Already V2-LOG (backlog, "F13 CLI 4a/4b", `18847ac0`): test labels and wording, no function, data or value effect |
+| Live Vault tests not run (engine slice 2; `secret-providers.md` "The five live tests ... have not been run") | engine | Moved to row 83 (external adapters, Phase 2): no V1 surface reaches the Vault provider, since the CLI registers none |
+| Slice 5 three-way engine, CLI and platform parity on one reference; mutation and full-suite closeout | engine, CLI, platform | Platform half parked; the CLI half is the 5-v1 closeout record. Mutation follows the owner's 2026-11-10 rule (core logic only); 5-v1 adds no logic |
+
+Also out of this row: the vault key floor (slice 0) is roadmap row 11 with its own plan; its "after 3a and 4a" precondition (section 8) is met for the CLI, and the platform takes the floor with 3a when it is unparked. Nothing new goes to the V2 backlog.
+
+## 0a. Revision 4 remediation map (Codex NO-GO on `774ab826`)
 
 | # | Finding (class) | Disposition | Where |
 |---|---|---|---|
@@ -195,15 +224,35 @@ Other engine-using platform modules were checked and reach no keyed entry: `text
 
 ### 6.3 FK shapes
 
-Single-column, composite (always keyed, `_requirements.py:225-228`), self-reference, chain A -> B -> C (sequential and out-of-core), child rows in a later batch (streaming, `base_row_offset`), two tables in one preview request (job and node routes).
+- single-column
+- composite (always keyed, `_requirements.py:225-228`)
+- self-reference
+- chain A -> B -> C (sequential and out-of-core)
+- child rows in a later batch (streaming, `base_row_offset`)
+- two tables in one preview request (job and node routes)
 
 ### 6.4 Fields
 
-`SecretKeyProvider.secret`, `.key_version` (redacted repr, `keyprovider.py:145-148`); `JobRunContext.key_provider` (frozen dataclass default repr shows the provider's redacted repr); `MaskSecretConfigError.code`, `.message`, `.args`; `KmsError.code`, `.message`; `UnmaskOut`, `UnmaskColumnEntry` (unchanged); CLI JSON envelopes of `report vault` and `unmask` (unchanged keys).
+- `SecretKeyProvider.secret`, `.key_version` (redacted repr, `keyprovider.py:145-148`)
+- `JobRunContext.key_provider` (frozen dataclass default repr shows the provider's redacted repr)
+- `MaskSecretConfigError.code`, `.message`, `.args`
+- `KmsError.code`, `.message`
+- `UnmaskOut`, `UnmaskColumnEntry` (unchanged)
+- CLI JSON envelopes of `report vault` and `unmask` (unchanged keys)
 
 ### 6.5 Output surfaces
 
-Platform: `Job.log` narrative and `api.job_failure` log line (`error_projection.py:153`), error node `code`/`message`, server logs (`v2_orchestrator.py:270` `_log.exception`, startup `main.py:1224`), HTTP 422 bodies of `/unmask`, `/validate-yaml`, job create and nested preview, rendered traceback locals of platform frames, preview scratch `request.json`. CLI: stdout, stderr, `--json` error payload (`run.py:1005-1007`), notifications (type name only, `run.py:1019-1030`), `--help` of the new flags.
+- Platform: `Job.log` narrative and `api.job_failure` log line (`error_projection.py:153`)
+- Platform: error node `code`/`message`
+- Platform: server logs (`v2_orchestrator.py:270` `_log.exception`, startup `main.py:1224`)
+- Platform: HTTP 422 bodies of `/unmask`, `/validate-yaml`, job create and nested preview
+- Platform: rendered traceback locals of platform frames
+- Platform: preview scratch `request.json`
+- CLI: stdout
+- CLI: stderr
+- CLI: `--json` error payload (`run.py:1005-1007`)
+- CLI: notifications (type name only, `run.py:1019-1030`)
+- CLI: `--help` of the new flags
 
 ## 7. Rotation, stated honestly
 
@@ -216,13 +265,14 @@ Platform: `Job.log` narrative and `api.job_failure` log line (`error_projection.
 
 | Step | Repo, branch | Content | Gate | State after |
 |---|---|---|---|---|
-| E0 | engine, from main | `config/_global_settings.py:84-94` text; "Consumers" section in `docs/security/secret-providers.md` (sections 3.2, 7) | Codex | Green; docs only. Dispatchable now, independent. |
-| 3a-i | platform, branch from `chore/repin-engine-0.17.0` `6e9967e6`, PR into the repin branch | 3.4 registry and boundary, `engine_key.py`, projection codes | Codex | Repin branch still red on keyed jobs, but failures log their code. Dispatchable now. |
-| 3a-ii | platform, from the repin branch after 3a-i merges into it | Provider threaded to every job route and the bounded preview child | Codex | Keyed jobs and bounded previews green (40 base-red tests turn green). |
-| 3a-iii | platform, after 3a-ii | `/unmask` provider and 422s, nested preview, ingress guard, T8a sentry | Codex | Repin branch green on F13 surfaces. |
-| 4a | CLI, from `main` | Shared helper, flags on `unmask`/`report vault`, single admission | Codex | Independent of 3a; can run in parallel with 3a-i. |
+| E0 | engine, from main | `config/_global_settings.py:84-94` text; "Consumers" section in `docs/security/secret-providers.md` (sections 3.2, 7) | Codex | Docstring half on main (`6e2e57bd`); the docs half is in 5-v1 (section 0). |
+| 5-v1 | engine docs, then CLI, from main | Section 0: Consumers docs, one CLI test, closeout record | Codex | The only V1 build left on row 73. |
+| 3a-i | platform (Platform V1, parked), branch from `chore/repin-engine-0.17.0` `6e9967e6`, PR into the repin branch | 3.4 registry and boundary, `engine_key.py`, projection codes | Codex | Repin branch still red on keyed jobs, but failures log their code. Dispatchable now. |
+| 3a-ii | platform (Platform V1, parked), from the repin branch after 3a-i merges into it | Provider threaded to every job route and the bounded preview child | Codex | Keyed jobs and bounded previews green (40 base-red tests turn green). |
+| 3a-iii | platform (Platform V1, parked), after 3a-ii | `/unmask` provider and 422s, nested preview, ingress guard, T8a sentry | Codex | Repin branch green on F13 surfaces. |
+| 4a | CLI, from `main` | Shared helper, flags on `unmask`/`report vault`, single admission | Codex | MERGED with 4b (CLI #78). |
 | Repin merge | platform | `chore/repin-engine-0.17.0` into `main` | Owner | Only after 3a-i, 3a-ii, 3a-iii are merged into it and 4a is merged; the repin branch must first merge platform `main` (`8a581fe`, #136 overlaps `pyproject.toml` and the lock). |
-| 4b | CLI, after 4a | Error text projection | Codex | Not a repin precondition. |
+| 4b | CLI, after 4a | Error text projection | Codex | MERGED (CLI #78). |
 | B-5 | both | Consumer repin to an engine containing A-4 (3.7 list) | separate plan | Not part of this plan. |
 | Slice 0 | engine | Vault key floor (`origin/plan/slice0`) | own plan | After 3a and 4a; consumers already supply 32-byte providers. |
 
@@ -343,7 +393,8 @@ Production sizes are measured from the prototype diffs in `docs/plans/evidence/2
 
 | Slice | Repo | Production files (measured) | Production lines (measured +/-) | Test-line cap | Total cap | Content |
 |---|---|---|---|---|---|---|
-| E0 | engine | 1 code file (docstring) + 1 doc | under 60, docs | 0 | 60 | 1.2, 3.2, 7 text |
+| E0 | engine | 1 code file (docstring) + 1 doc | under 60, docs | 0 | 60 | 1.2, 3.2, 7 text (docstring on main; docs half moved to 5-v1) |
+| 5-v1 (V1) | engine, CLI | 1 doc (engine); 1 test module edit (CLI) | under 60, docs | 80 | 140 | section 0 |
 | 3a-i | platform | 6: `api/keys/mask_secret_errors.py` (new, 61), `api/keys/master.py` (+44/-44), `api/keys/kms.py` (+37/-35), `api/keys/derive.py` (+10/-4), `api/jobs/engine_key.py` (new, 46), `api/persistence/error_projection.py` (+6) | +204/-83 = 287 | 320 | 607 | 3.3 constructors, 3.4, T-i.* |
 | 3a-ii | platform | 10: `job_run_context.py`, `v2_orchestrator.py`, `v2_vault.py`, `v2_runner.py`, `v2_full_frame.py`, `route_dispatch_exec.py`, `v2_stream_coordinator.py`, `v2_sequential.py`, `v2_out_of_core.py`, `preview_child.py` (all `api/jobs/`) | +41/-3 = 44, plus at most 8 for the 6.1 pre-`try` recording (52) | 520 (of which mechanical call-site edits at most 100: 64 sites, 30 imports, one fixture module) | 572 | 3.3 threading, T-ii.* |
 | 3a-iii | platform | 5: `api/pipelines/mask_secret_guard.py` (new, 22), `api/jobs/v2_config.py` (+2), `api/pipelines/v2_validation.py` (+9), `api/unmask/router.py` (+16/-2), `api/nested_preview/router.py` (+16/-3) | +65/-5 = 70 | 560 | 630 | 3.5, 3.6, `/unmask`, T-iii.* |
@@ -363,6 +414,7 @@ Old slices removed: revision 3's 3a (split above), 3b (the pin bump is the repin
 
 ## 15. What I could not verify, and what I did not run
 
+- Revision 5 added section 0 and changed the status line and the section 8, 13 and 18 rows. It was written by a plan author and has not been reviewed. Sections 1 to 17 otherwise keep revision 4's text and citations (engine `51548303`, platform `6e9967e6`, CLI `a5d36b4`); only section 0 was checked at engine `6e2e57bd` and CLI `f77de8d`. The 5-v1 CLI test was not written or run, and the six CLI modules were not re-run for this revision.
 - CLI: the repo is not attached to this session; it was read from a public clone at `a5d36b4`. No CLI code was executed: the clone's `scripts/dev/bootstrap.sh` was refused by the session's permission policy, so no CLI baseline, test or probe ran. CLI prototype files were only parsed (`ast.parse`). Every CLI "fails at" in 10.4-10.5 is from reading code.
 - Platform: probes and two test runs only (evidence README: 32 job/vault/preview modules on base and on the 3a-ii prototype; master-key, nested-preview, validation, config and A-8 modules on the 3a-iii prototype). Not run: the full platform suite, `scripts/dev/gates.sh`, mutation testing, the native dispatcher (companion not installed), PostgreSQL-marked tests. The repin worker's whole-suite counts (249 failed, 311 errors, 508 with the keyed error) were not reproduced.
 - Engine: no engine test was run; engine facts are from `git show`/`git grep` at the Baselines refs.
@@ -390,5 +442,6 @@ Name the class of every finding and fix the class, not the instance. Write the t
 
 ## 18. Review history
 
+- After revision 4: Dennis round 1 on `18847ac0` for the CLI slices (GO-WITH-FIXES, 1 HIGH: slice 4a-0, refuse `--chunked --vault`); CLI 4a/4b code gates (Codex NO-GO on `b9fd22db` and `b97df3a6`, fixed in `bdadb4fb`), merged as CLI #78. The platform slices were not reviewed again. Revision 5 is section 0.
 - Codex round 1 on `fef6c78c` (GO-WITH-FIXES, 3 HIGH, 3 MEDIUM, 2 LOW) and argon round 2 on `6e767cc8` (GO-WITH-FIXES, 3 MEDIUM, 2 LOW): folded in revisions 2 and 3; their structures stand where the code still supports them (value-free boundary, required providers, ingress table, preview once per request, domain separation). Details in the git history of this file (revision 3 is `774ab826`).
 - Codex on revision 3 `774ab826` (NO-GO: 3 BLOCKER, 2 HIGH, 1 MEDIUM): all seven accepted after checking each against the code; disposition in section 0. Corrections found while re-verifying, beyond the findings: the nested-preview failure mechanism on `v0.17.0` (namespace and vault checks, `AttributeError` only for `text_mask`); the job-authored ref is honored on the repin head (F-3); the engine constructor's own frame holds the secret, so the revision 3 "one expression, no local" rule was not enough (3.4); provider construction failure escapes the job's `try` (F-4); the CLI rule-code item is obsolete (1.3); save is structural only, so the ingress table changed (3.5).
