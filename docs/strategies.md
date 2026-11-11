@@ -989,10 +989,10 @@ path. The engine calls no `eval()`, `exec()`, or `__import__`. A column value
 that looks like an expression string is treated as data and is never re-parsed.
 
 In generate mode, each derived column reads from already-generated sibling
-columns in declared order. A forward reference (a derived column that
-references a sibling declared later in `generate_columns`) is caught at
-evaluation time with a fail-closed error, not yet at plan-compile time.
-Declare dependencies before the columns that read them.
+columns in declared order. Plan compile refuses a forward reference (a derived
+column that references a sibling declared later in `generate_columns`) with
+`generate_column_forward_reference`. Declare dependencies before the columns
+that read them.
 
 **Shipped in SP-10b:** `case_when` (closed-grammar CASE WHEN conditional
 expression) and `derived_aggregate` (intra-table scalar aggregate). Neither
@@ -1000,12 +1000,14 @@ implements `conditioned_on`: `case_when` is a conditional expression construct
 in the closed grammar; `conditioned_on` is a separate planned parameter on the
 `categorical` strategy (per-row nested weight tables) and is not yet built.
 
-**Carry-forwards (SP-10c and later, not yet built):** `grouped_series`,
-`windowed_date`; FK extensions (`cardinality`, `composite_depth`, `null_m2m`);
-layer-2/3 features (`conditioned_on`, `group_key`, `reconciliation_pass`). The
-FK-driven cross-table aggregate (parent.total = sum(child.amount), Gen Gap 4)
-is also not yet built; it is deferred to SP-10c. Forward-reference detection
-at plan-compile time is also deferred.
+`grouped_series`, `windowed_date` and `group_key` are built; their keys are in
+the table under [Options are checked per type](#options-are-checked-per-type).
+
+**Carry-forwards (SP-10c and later, not yet built):** FK extensions
+(`cardinality`, `composite_depth`, `null_m2m`); layer-2/3 features
+(`conditioned_on`, `reconciliation_pass`). The FK-driven cross-table aggregate
+(parent.total = sum(child.amount), Gen Gap 4) is also not yet built; it is
+deferred to SP-10c.
 
 ```yaml
 # Mask mode: replace an existing column value using source siblings.
@@ -1249,25 +1251,31 @@ accepts `unique_together` for pairs of `reference` columns. See
 ### Options are checked per type
 
 Each type takes a fixed set of keys, listed below. Every type also takes `name`, `type`,
-`pooled`, `null_probability` (a number from 0 to 1) and `determinism` (`stable` or `fresh`);
-`unique` is taken by the four types named above. `generate_option_catalog()` returns the same
-table, and `decoy schema` closes each type to its keys, so an editor flags a misspelt key.
+`null_probability` (a number from 0 to 1) and `determinism` (`stable` or `fresh`). `unique` is
+taken by the four types named above, and `pooled` by `faker` only (any other type refuses it
+with `generate_option_unknown`). `generate_option_catalog()` returns this table, with the
+common keys as `common` and the last column as `required_when`. `decoy schema` closes each type
+to its keys, so an editor flags a misspelt key. A test checks this table against the registry.
 
-| Type | Required | Optional |
-|---|---|---|
-| `sequence` | `start` | `step`, `prefix`, `suffix`, `pad_length` |
-| `faker` | `faker_type` | `locale`, `faker_kwargs` |
-| `categorical` | `categories` | `weights` |
-| `reference` | `reference_table`, `reference_column` | `distribution`, `weights` (required when `distribution: weighted`), `min_per_parent`, `max_per_parent`, `snapshot_file`, `source_column` |
-| `formula` | `formula` | `references` |
-| `statistical` | `snapshot_file` | `source_column`, `high_cardinality`, `allow_real_categories`, `other_mode`, `condition_on` |
-| `derived` | `expression` | `bounds`, `null_propagation` |
-| `derived_aggregate` | | `op`, `column` |
-| `grouped_series` | `group_by`, `order_by` | `generator`, `step`, `max_step`, `start` |
-| `windowed_date` | `anchor`, `max_days` | `min_days`, `distribution` |
-| `group_key` | `group_by` | `length`, `prefix` |
-| `constant` | `value` | |
-| `distribution` | `family` (`low` and `high` when it is `uniform`) | `min`, `max` |
+| Type | Required | Optional | Required when |
+|---|---|---|---|
+| `sequence` | `start` | `step`, `prefix`, `suffix`, `pad_length` | |
+| `faker` | `faker_type` | `locale`, `faker_kwargs` | |
+| `categorical` | `categories` | `weights` | |
+| `reference` | `reference_table`, `reference_column` | `distribution`, `weights`, `min_per_parent`, `max_per_parent`, `snapshot_file`, `source_column` | `weights` if `distribution: weighted` |
+| `formula` | `formula` | `references` | |
+| `statistical` | `snapshot_file` | `source_column`, `high_cardinality`, `allow_real_categories`, `other_mode`, `condition_on` | |
+| `derived` | `expression` | `bounds`, `null_propagation` | |
+| `derived_aggregate` | `op`, `column` (at plan compile) | | |
+| `grouped_series` | `group_by`, `order_by` | `generator`, `step`, `max_step`, `start` | |
+| `windowed_date` | `anchor`, `max_days` | `min_days`, `distribution` | |
+| `group_key` | `group_by` | `length`, `prefix` | |
+| `constant` | `value` | | |
+| `distribution` | `family` | `low`, `high`, `min`, `max` | `low`, `high` if `family: uniform` |
+
+`derived_aggregate` is the one type whose required keys are checked at plan compile, not at
+config parse: a missing `op` or `column` is refused with `derived_aggregate_op_missing` or
+`derived_aggregate_column_missing`.
 
 Two layers refuse a bad column, and `decoy validate` and `decoy run` run both, so they refuse the
 same configs:
@@ -1287,21 +1295,35 @@ same configs:
   (`generate_column_forward_reference`), `group_by` equal to `order_by`
   (`grouped_series_group_by_equals_order_by`), the formula rules below, `weighted` reference
   weights whose length differs from a `sequence` parent's `row_count`
-  (`reference_weights_length_mismatch`), and any other parse rule a type's transform has
-  (`generate_option_invalid`). The path uses names: `tables.<table>.generate_columns.<column>.<key>`.
+  (`reference_weights_length_mismatch`), and every other parse rule a type's transform has. Those
+  keep the transform's own code, such as `derived_aggregate_op_missing`,
+  `derived_bounds_inverted`, `grouped_series_generator_invalid`,
+  `windowed_date_min_exceeds_max` or `group_key_length_odd`; `generate_option_invalid` is used
+  only for a failure that carries no registered code. The path uses names:
+  `tables.<table>.generate_columns.<column>.<key>`.
 
 A refusal message holds the reason's fixed text and the table, column and option names. It
 never holds a category, weight, formula or other option value.
 
 ### Memory floor
 
-Before a resident generate run starts, the engine adds up the bytes the generated tables must
-hold in Arrow form (fixed-width columns at their bit width, variable-width columns at one offset
-per row, plus the seen-sets of `unique` columns). If that floor is larger than the machine's
-memory ceiling (the cgroup limit, else host RAM), the run is refused with
-`generation_budget_exceeded`, and the message gives the bytes needed, the bytes available and
-the largest table. `estimate_job_capacity` makes the same check and reports `INSUFFICIENT` with
-that code, so `decoy validate` refuses the config too. The floor is a lower bound, so a run that
+Before a resident generate run starts, the engine prices the bytes the generated tables must
+hold, plus the seen-sets of `unique` columns. How it prices them follows the route the run will
+take:
+
+- **Arrow route** (every column eligible): each column at its Arrow size (fixed-width columns at
+  their bit width, variable-width columns at one offset per row). All tables are held together,
+  so their floors add up.
+- **Legacy route** (any column declined): every column at one eight-byte list slot per row. The
+  legacy path frees each table's slots before the next table starts, so only the largest table
+  counts.
+
+If that floor is larger than the machine's memory ceiling (the cgroup limit, else host RAM), the
+run is refused with `generation_budget_exceeded`, and the message gives the bytes needed, the
+bytes available and the largest table. `estimate_job_capacity` makes the same check and reports
+`INSUFFICIENT` with that code, so a capacity preflight (`decoy validate preflight` in the CLI)
+refuses the config before a run. Plain `decoy validate` checks the config only and does not
+run the capacity check. The floor is a lower bound, so a run that
 passes it can still run out of memory. It is skipped when the run has an explicit memory budget
 (the run then holds itself to that budget), when it streams eligible columns to a bounded sink,
 and when the ceiling cannot be read.
@@ -1326,7 +1348,9 @@ A synthetic value per row from a named faker type.
   provider in the column's locale or a registered custom provider.
 - `locale`: one locale or a non-empty list, each one Faker knows (`en_US` or `en-US`). A column
   without one is checked again in the run's default locale before any provider runs.
-- `faker_kwargs`: keyword arguments the provider method accepts; an unknown keyword is refused.
+- `faker_kwargs`: keyword arguments for the provider method. For a built-in Faker method an
+  unknown keyword is refused (`generate_faker_kwargs_unknown`). A registered custom provider is
+  called as `fn(faker)` and never reads them, so any keyword is accepted there and ignored.
 
 ### categorical
 
@@ -1472,7 +1496,7 @@ Computes a column from an expression over the other generated columns.
 Plan compile refuses a formula that reads a sibling not listed in `references`
 (`generate_formula_reference_missing`), lists a column the table does not have
 (`generate_formula_reference_unknown`), reads a name that is neither a sibling nor one
-the formula scope provides, such as `round` or `random`
+the formula scope provides, such as `abs` or `sqrt` (`round` and `random` are in the scope)
 (`generate_formula_name_unknown`), wraps a sibling in braces as `{a} * 2` (`generate_formula_template_syntax`), or reads itself or a later formula
 that has `references` (`generate_column_forward_reference`). Declare dependencies
 before the columns that read them.
