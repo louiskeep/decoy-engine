@@ -5,7 +5,8 @@ under ``tests/sentry/baselines/``. ``scripts/dev/sentry_registry.toml`` binds ea
 exactly one baseline path. ``check`` compares the working tree with a base commit and returns
 findings; an empty list means the ratchet holds. Baseline keys compare exactly, except the
 ``permitted::<file>::<site>::<digest>`` keys of the sentries in ``REKEY_PER_SITE``, which
-compare by count per site (see ``growth``). Messages carry ids, paths and keys only.
+compare by count per site (see ``growth``). An entry that carries a numeric ``max`` may keep
+or lower it, never raise or drop it (see ``max_raised``). Messages carry ids, paths and keys only.
 """
 
 from __future__ import annotations
@@ -95,6 +96,22 @@ def _base_keys(root: Path, ref: str, path: str) -> frozenset[str]:
     return parse_baseline(text).keys if text is not None else frozenset()
 
 
+def _base_entries(root: Path, ref: str, path: str) -> dict[str, object]:
+    text = _git_show(root, ref, path)
+    return parse_baseline(text).reasons if text is not None else {}
+
+
+def _max_of(entry: object) -> int | None:
+    value = entry.get("max") if isinstance(entry, dict) else None
+    return value if isinstance(value, int) else None
+
+
+def max_raised(head: object, base: object) -> bool:
+    """True when a numeric ``max`` rose, or was dropped, against the base entry."""
+    old, new = _max_of(base), _max_of(head)
+    return old is not None and (new is None or new > old)
+
+
 def _permit_site(key: str) -> str | None:
     """``<file>::<site>`` of a ``permitted::<file>::<site>::<digest>`` key, else ``None``."""
     kind, _, rest = key.partition("::")
@@ -180,9 +197,8 @@ def check(root: Path, base_ref: str) -> tuple[list[str], list[str]]:
             if base_reg[sid] != path:
                 findings.append(f"{sid}: baseline moved from {base_reg[sid]} to {path}")
                 continue
-            grown, rekeyed = growth(
-                base.keys, _base_keys(root, base_ref, path), sid in REKEY_PER_SITE
-            )
+            old = _base_entries(root, base_ref, path)
+            grown, rekeyed = growth(base.keys, frozenset(old), sid in REKEY_PER_SITE)
             report += [
                 f"{sid}: re-keyed permitted site {site} (review the message)" for site in rekeyed
             ]
@@ -190,6 +206,11 @@ def check(root: Path, base_ref: str) -> tuple[list[str], list[str]]:
                 findings.append(
                     f"{sid}: baseline gained key(s) not in the merge base: {_fmt(grown)}"
                 )
+            raised = sorted(
+                k for k in base.keys & old.keys() if max_raised(base.reasons[k], old[k])
+            )
+            if raised:
+                findings.append(f"{sid}: max raised or dropped for key(s): {', '.join(raised)}")
         elif removed:
             new_union |= base.keys
             union_ids.add(sid)
