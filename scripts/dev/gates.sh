@@ -286,7 +286,8 @@ shard_expand() {
   for p in ${PATHS[@]+"${PATHS[@]}"}; do
     if [ -d "$ROOT/$p" ]; then
       out=$(cd "$ROOT" && git ls-files -- "$p") || return 1
-      printf '%s\n' "$out" | grep -E '(^|/)test_[^/]*\.py$' || [ $? = 1 ] || return 1
+      # Explicit file args defeat pytest --ignore, so drop the layer test here as the selector does.
+      printf '%s\n' "$out" | grep -E '(^|/)test_[^/]*\.py$' | grep -vxF "$LAYER_TEST" || [ $? = 1 ] || return 1
     else
       echo "$p"
     fi

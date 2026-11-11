@@ -1,0 +1,1 @@
+- gates.sh: sharded runs no longer pass the import-layer test to the certified venv; directory expansion drops it the same way branch selection does.

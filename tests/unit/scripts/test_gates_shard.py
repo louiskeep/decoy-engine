@@ -70,6 +70,19 @@ def test_full_mode_shards_split_the_whole_tests_directory(tmp_path: Path) -> Non
     assert seen[0][0] + seen[1][0] == seen[0][1], seen
 
 
+def test_shard_expansion_leaves_out_the_layer_test(tmp_path: Path) -> None:
+    # Expanding a directory to file args defeats pytest --ignore; the layer test runs only in
+    # the layers step, so a sharded run of its directory must not name it.
+    clone = diff_clone(tmp_path, FILES)
+    proc = _run(
+        [*GATES, "--steps", "tests", "--shard", "1/1", "tests/_shard", "tests/sentry/layout"], clone
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    assert "test_import_layers" not in out, out
+    assert "test_package_fanout" in out, out
+
+
 @pytest.mark.parametrize("spec", ["1/2/3", "3/2", "0/2", "1/0", "a/2", "1/", "/2", "01/2", "1/2x"])
 def test_malformed_shard_exits_2(tmp_path: Path, spec: str) -> None:
     clone = diff_clone(tmp_path, FILES)
