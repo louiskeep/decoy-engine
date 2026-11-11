@@ -169,8 +169,9 @@ planned.
 without `--vault`), `decoy tokenize`, `decoy unmask`, `decoy report vault` and `decoy.mask()`,
 takes the secret from exactly one place: `--mask-secret REF` (`mask_secret=` for `decoy.mask()`)
 or `global_settings.mask_secret_ref` in the YAML. Setting both is a usage error. The command
-admits the secret once through `admit_mask_key` inside an `AdmissionScope` and hands the one
-provider to every engine entry it calls, so a run and its vault see one read and one key.
+admits the secret once through `admit_mask_key` inside an `AdmissionScope`. It hands the admitted
+provider to the engine entries it calls; `report vault` passes the admitted provider's mask key to
+`load_vault`. A run and its vault therefore see one read and one key.
 
 - `file:` is the recommended form. With Vault, let Vault Agent (or a Kubernetes secret volume with
   `defaultMode: 0400`) render the key to an owner-only file and point `file:` at it; the engine
@@ -181,8 +182,10 @@ provider to every engine entry it calls, so a run and its vault see one read and
   is written. Direct Vault, AWS, GCP and Azure adapters in the CLI are roadmap row 83.
 
 The CLI may report a usage or source error before it admits the secret, so a bad flag or a
-missing input file can surface first. Admission still comes before any write. The CLI test that
-pins the `vault://` case is `tests/sentry/test_mask_secret_ref_shape.py::test_vault_ref_is_refused_without_echo`.
+missing input file can surface first. Admission still comes before output, vault and evidence
+publication. The CLI test that pins the `vault://` case is
+`tests/sentry/test_mask_secret_ref_shape.py::test_vault_ref_is_refused_without_echo`; it lands
+with CLI PR #204.
 
 **Platform.** Provider injection for platform jobs and `POST /unmask` (F13 slice 3a) is parked
 with platform V1. Nothing in this engine depends on it.
