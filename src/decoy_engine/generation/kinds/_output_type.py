@@ -36,10 +36,13 @@ from decoy_engine.reasons import ReasonCode
 # A Decimal or date object is wider than the 8 bytes a plain number is priced at.
 _TYPED_PAYLOAD_BYTES = 64
 _ISO_DATETIME = re.compile(
-    r"([0-9]{4}-[0-9]{2}-[0-9]{2})[T ][0-9]{2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]{1,9})?)?"
-    r"(?:Z|[+-][0-9]{2}(?::?[0-9]{2})?)?",
+    r"([0-9]{4}-[0-9]{2}-[0-9]{2})[T ](?P<h>[0-9]{2}):(?P<m>[0-9]{2})"
+    r"(?::(?P<s>[0-9]{2})(?:\.[0-9]{1,9})?)?"
+    r"(?:Z|[+-](?P<oh>[0-9]{2})(?::?(?P<om>[0-9]{2}))?)?",
     re.ASCII,
 )
+# Upper bound of each time field; a time out of range leaves the text whole for the kernel to refuse.
+_TIME_LIMITS = {"h": 23, "m": 59, "s": 59, "oh": 23, "om": 59}
 _PLAIN_NUMBER = re.compile(r"[+-]?[0-9]{1,100}(?:\.[0-9]{1,100})?", re.ASCII)
 
 
@@ -150,7 +153,11 @@ def _date_text(value: Any) -> str | None:
     if isinstance(value, str):
         # A faker datetime is text by the time it is cast; its date part is the date.
         match = _ISO_DATETIME.fullmatch(value)
-        return match.group(1) if match else value
+        if match is None or any(
+            int(match.group(f)) > top for f, top in _TIME_LIMITS.items() if match.group(f)
+        ):
+            return value
+        return match.group(1)
     return None
 
 

@@ -141,12 +141,31 @@ def test_the_option_registry_and_the_kind_table_name_the_same_types() -> None:
         ("2002-12-11", "2002-12-11"),
         ("not a date", "not a date"),
         ("2002-12-11 junk", "2002-12-11 junk"),
+        ("2002-12-11T23:59:59-23:59", "2002-12-11"),
+        ("2002-12-11T24:00:00", "2002-12-11T24:00:00"),
+        ("2002-12-11T12:60:00", "2002-12-11T12:60:00"),
+        ("2002-12-11T12:00:60", "2002-12-11T12:00:60"),
+        ("2002-12-11T12:00:00+24:00", "2002-12-11T12:00:00+24:00"),
+        ("2002-12-11T12:00:00+02:60", "2002-12-11T12:00:00+02:60"),
+        ("2002-12-11T99:99:99+99:99", "2002-12-11T99:99:99+99:99"),
     ],
 )
 def test_date_text_takes_the_date_part_of_iso_datetime_text(text: str, want: str) -> None:
     from decoy_engine.generation.kinds._output_type import _date_text
 
     assert _date_text(text) == want
+
+
+def test_an_out_of_range_datetime_fails_the_date_cast_without_the_value() -> None:
+    from decoy_engine.execution import ExecutionError
+
+    bad = "2002-12-11T99:99:99+99:99"
+    col = _col("x", "constant", "date", value=bad)
+    with pytest.raises(ExecutionError) as exc:
+        generate(one(col, rows=2))
+    assert exc.value.code == SENTINEL_FREE
+    assert bad not in str(exc.value) and "99" not in str(exc.value)
+    assert exc.value.__cause__ is None and exc.value.__context__ is None
 
 
 @pytest.mark.parametrize("provider", ["date_time", "iso8601"])
