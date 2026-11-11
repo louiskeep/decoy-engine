@@ -1,5 +1,7 @@
 # 10. Expressions and conditional masking
 
+Status: plan
+
 ## What it covers
 
 Config-supplied expressions: `formula`, `derived`, `derived_aggregate`, and the `when:`

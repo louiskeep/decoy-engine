@@ -1,5 +1,7 @@
 # 11. Relationships and subsetting
 
+Status: plan
+
 ## What it covers
 
 Keeping joins intact when several tables are masked together (the `relationships:`

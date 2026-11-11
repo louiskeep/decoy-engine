@@ -1,5 +1,7 @@
 # 14. Declared casting, validators and quarantine
 
+Status: plan
+
 ## What it covers
 
 Three related controls: declared parsing and output formats on a column

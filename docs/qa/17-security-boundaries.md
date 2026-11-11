@@ -1,5 +1,7 @@
 # 17. Security boundaries
 
+Status: plan
+
 ## What it covers
 
 The edges where the engine meets untrusted input or sensitive material: the

@@ -1,5 +1,7 @@
 # 18. Evidence, reasons and compatibility
 
+Status: plan
+
 ## What it covers
 
 What a run reports about itself and what the engine promises to keep stable:

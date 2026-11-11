@@ -1,5 +1,7 @@
 # 01. Config and validation
 
+Status: plan
+
 ## What it covers
 
 The pipeline config (`version: 2` YAML or dict) and the one place it is validated:

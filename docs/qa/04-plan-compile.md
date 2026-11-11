@@ -1,5 +1,7 @@
 # 04. Plan compile
 
+Status: plan
+
 ## What it covers
 
 `compile_plan(config, profile, decoy_engine_version=...)` turns a validated config and a

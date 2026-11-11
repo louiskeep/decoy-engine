@@ -1,5 +1,7 @@
 # 15. Execution routes and the native companion
 
+Status: plan
+
 ## What it covers
 
 How a job is run: the full-frame pandas route (the reference), automatic chunking for

@@ -1,5 +1,7 @@
 # 09. Domain strategies
 
+Status: plan
+
 ## What it covers
 
 Strategies tied to a subject area: `geo_generalize` (ZIP and lat/lng), `joint_mask`

@@ -1,5 +1,7 @@
 # 02. Sources, targets and file I/O
 
+Status: plan
+
 ## What it covers
 
 Reading source tables and writing outputs: local CSV, Parquet and fixed-width files,

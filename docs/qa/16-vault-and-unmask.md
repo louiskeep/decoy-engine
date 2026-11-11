@@ -1,5 +1,7 @@
 # 16. Token vault and unmask
 
+Status: plan
+
 ## What it covers
 
 Reversing a mask: `unmask_pipeline` for `fpe` columns, and the encrypted token vault

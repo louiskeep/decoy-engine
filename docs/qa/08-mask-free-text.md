@@ -1,5 +1,7 @@
 # 08. Free-text strategies
 
+Status: plan
+
 ## What it covers
 
 `text_redact` and `text_mask`, which find PII inside a cell of prose and change only

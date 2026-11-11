@@ -1,5 +1,7 @@
 # 03. Pre-scan, profiling and detection
 
+Status: plan
+
 ## What it covers
 
 Looking at a source before masking: `profile_columns` and `scan_sources` produce a

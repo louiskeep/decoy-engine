@@ -1,5 +1,7 @@
 # 13. Fit, fidelity and differential privacy
 
+Status: plan
+
 ## What it covers
 
 Measuring a table and generating data shaped like it: the distribution snapshot

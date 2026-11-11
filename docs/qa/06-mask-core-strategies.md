@@ -1,5 +1,7 @@
 # 06. Core mask strategies
 
+Status: plan
+
 ## What it covers
 
 The general-purpose column strategies: `hash`, `fpe`, `faker`, `categorical`,

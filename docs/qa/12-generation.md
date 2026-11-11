@@ -1,5 +1,7 @@
 # 12. Generation
 
+Status: plan
+
 ## What it covers
 
 `mode: generate`: building tables from a schema with no source data. Column types

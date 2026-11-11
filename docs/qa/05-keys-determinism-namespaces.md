@@ -1,5 +1,7 @@
 # 05. Keys, determinism and namespaces
 
+Status: plan
+
 ## What it covers
 
 The four things that decide whether two runs agree: the job seed

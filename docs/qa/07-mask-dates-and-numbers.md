@@ -1,5 +1,7 @@
 # 07. Date and number strategies
 
+Status: plan
+
 ## What it covers
 
 `date_shift`, `bucket_perturb`, `bucketize`, `top_code` and `windowed_date`, plus the
