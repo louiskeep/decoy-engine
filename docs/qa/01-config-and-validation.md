@@ -32,7 +32,7 @@ re-validate it.
 | CFG-03 | Give a column a `strategy` that does not exist. | Refused at validation with a registered code. The message names the table and column. |
 | CFG-04 | Put a recognisable string (`SECRET-VALUE-123`) in a field of the wrong type, then validate. | Refused. The string appears nowhere in the error text, the exception chain or the logs. |
 | CFG-05 | Validate a config, then compare the input dict with a deep copy taken before the call. | Identical. Validation did not mutate it. |
-| CFG-06 | Call `validate_config` on a config with three independent errors. | Returns a result listing all three. Does not raise. |
+| CFG-06 | Call `validate_config` on a valid config, then on a config with three independent field errors. | Returns `None` for the valid config. For the other it raises `PipelineValidationError`; the message counts three problems and lists each by field path, with no values. |
 | CFG-07 | Declare a relationship with no `orphan_policy`. | Refused. The policy has no default. |
 | CFG-08 | Set a keyed strategy (`hash`, `fpe`, `date_shift`) with no `namespace`. | Refused before any row is masked. `decoy validate` and `decoy run` agree. |
 | CFG-09 | Set `quarantine.enabled: true` with an empty `output_path`, then with an unknown trigger name. | Both refused at validation. |

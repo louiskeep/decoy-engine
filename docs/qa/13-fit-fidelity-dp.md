@@ -36,9 +36,9 @@ and the differential-privacy fit (`decoy fit --epsilon`, `fit_dp_snapshot`).
 |---|---|---|
 | FIT-01 | Fit the same CSV twice. | Byte-identical snapshot files. |
 | FIT-02 | Fit a table with an email column, then search the snapshot for a known email. | Absent. The column is marked as withheld. |
-| FIT-03 | `statistical` numeric column from a snapshot, 100,000 rows. | Generated histogram is close to the source's. Record the fidelity score. |
-| FIT-04 | `statistical` categorical column without `allow_real_categories`; then with it. | First refused with `statistical_real_categories_not_allowed`. Second emits labels in roughly source proportions. |
-| FIT-05 | `source_column` not in the snapshot; a snapshot with the wrong `schema_version`; a missing file. | `statistical_column_not_in_snapshot`; `statistical_snapshot_schema_mismatch`; `statistical_snapshot_unreadable`. |
+| FIT-03 | `statistical` numeric column from a snapshot, 100,000 rows. | The column's fidelity score is at or above 0.8, the default `fidelity_warn_threshold`, and no fidelity warning is logged. Record the score. |
+| FIT-04 | `statistical` categorical column without `allow_real_categories`; then with it. | First refused with `plan.statistical_real_categories_not_allowed`. Second emits labels in roughly source proportions. |
+| FIT-05 | `source_column` not in the snapshot; a snapshot with the wrong `schema_version`; a missing file. | `plan.statistical_column_not_in_snapshot`; `plan.statistical_snapshot_schema_mismatch`; `plan.statistical_snapshot_unreadable`. |
 | FIT-06 | Generate from a snapshot whose sensitive column values were withheld. | Refused with `plan.statistical_snapshot_values_redacted`. No invented categories. |
 | FIT-07 | `condition_on` with a fitted joint of 10 cells; then of 60 cells. | First reproduces the joint. For the second, a warning says the joint was truncated at the cap (25 by default); confirm the cap can be raised at fit. |
 | FIT-08 | `reference` with `distribution: fitted`, parents and children at the source's own counts. | Child counts per parent equal the source's degree list exactly. No orphans. |
@@ -46,7 +46,7 @@ and the differential-privacy fit (`decoy fit --epsilon`, `fit_dp_snapshot`).
 | FIT-10 | Quality report on a masked table, then search the report for any source value or label. | None present. Scores and counts only. |
 | FIT-11 | Policy with `mode: fail` and `overall: {min: 0.99}` on a low-scoring run; then `mode: report`. | First gives a failing verdict with violations. Second records the violations and still returns `pass`. |
 | FIT-12 | `decoy fit --epsilon 1.0` on a default (uncertified) install. | Ends with a plain-language message and a next step, exit code 3, before any cell is read. |
-| FIT-13 | On the certified stack: generate under `global_settings.dp` from a non-DP snapshot; with `condition_on`; over the declared budget. | Each rejected at compile. The last with `dp_budget_exceeded`. |
+| FIT-13 | On the certified stack: generate under `global_settings.dp` from a non-DP snapshot; with `condition_on`; over the declared budget. | Each rejected at compile. The last with `plan.dp_budget_exceeded`. |
 
 ## Open points
 

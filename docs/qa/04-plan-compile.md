@@ -28,11 +28,11 @@ profile into a frozen `Plan`. Also `run_config_only_checks`, `validate_plan`,
 |---|---|---|
 | PLAN-01 | Compile the same config and profile twice, in two processes. | Identical plan YAML and identical hash. |
 | PLAN-02 | Try to set an attribute on a compiled `Plan`. | Raises. The plan is frozen. |
-| PLAN-03 | `derived` column referencing a column that does not exist. | `PlanCompileError(derived_missing_column_ref)`. |
-| PLAN-04 | Two `derived` columns that reference each other, then a three-column cycle. | `PlanCompileError(derived_cyclic_ref)` for both. |
-| PLAN-05 | `fpe` with `checksum: lunh` (misspelled); `checksum: iban`; `checksum: vin` with a digits-only charset. | `fpe_checksum_unknown_scheme`, `fpe_checksum_iban_unsupported`, `fpe_checksum_charset_incompatible`. |
+| PLAN-03 | `derived` column referencing a column that does not exist. | `PlanCompileError` with `plan.derived_missing_column_ref`. |
+| PLAN-04 | Two `derived` columns that reference each other, then a three-column cycle. | `PlanCompileError` with `plan.derived_cyclic_reference` for both. |
+| PLAN-05 | `fpe` with `checksum: lunh` (misspelled); `checksum: iban`; `checksum: vin` with a digits-only charset. | `plan.fpe_checksum_unknown_scheme`, `plan.fpe_checksum_iban_unsupported`, `plan.fpe_checksum_charset_incompatible`. |
 | PLAN-06 | `cardinality_mode: deterministic_map`. | Refused with the rename message pointing at `deterministic: true` plus a mode. |
-| PLAN-07 | `allow_collisions: true` together with `cardinality_mode: unique`. | Refused with `allow_collisions_mode_conflict`. |
+| PLAN-07 | `allow_collisions: true` together with `cardinality_mode: unique`. | Refused with `plan.allow_collisions_mode_conflict`. |
 | PLAN-08 | Compile with a mask secret set, write the plan with `plan_to_yaml`, search the file for the secret. | The secret is absent. Only the reference is present. |
 | PLAN-09 | Round-trip: `plan_to_yaml` then `plan_from_yaml`, then execute both plans on the same source. | Byte-identical outputs. |
 | PLAN-10 | Compile a generate config with a statistical column, delete the snapshot file, then generate from the compiled plan. | Generation succeeds from the pinned bytes. A plan reloaded from YAML without the snapshot fails with `plan.statistical_snapshot_not_pinned`. |

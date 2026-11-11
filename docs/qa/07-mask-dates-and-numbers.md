@@ -36,13 +36,13 @@ Status: plan
 | DATE-03 | `date_shift` on a column with one cell `not-a-date`, quarantine off. | Job fails with `RowErrorsFailedError` naming table, column and count. The bad cell is not in any output. |
 | DATE-04 | Same, with `quarantine.triggers: [format_error]`. | Job completes. The row is absent from the output and present in the quarantine file. |
 | DATE-05 | `bucket_perturb` with `bucket: month` across month ends and a leap-year February. | Every output is in the same calendar month as its source and is a real date. |
-| DATE-06 | `bucket_perturb` with `bucket: fortnight`; then `date_format: "%H:%M:%S"`. | First fails with `bucket_perturb_invalid_config` before any row. Second is refused at compile with `bucket_perturb_date_format_unsupported`. |
+| DATE-06 | `bucket_perturb` with `bucket: fortnight`; then `date_format: "%H:%M:%S"`. | First fails with `runtime.bucket_perturb_invalid_config` before any row. Second is refused at compile with `plan.bucket_perturb_date_format_unsupported`. |
 | DATE-07 | `preserve_values: ["9999-12-31", "2099-01-01"]` on a column holding both. | Both pass through unchanged; other rows are masked. The preserved count is reported with no values. |
-| DATE-08 | `preserve_values` with no `date_format`; with `group_by`; on the child side of a relationship. | Each refused at compile (`date_preserve_values_with_group_by_unsupported`, `date_preserve_values_unsupported_fk_shape` for the last two). |
+| DATE-08 | `preserve_values` with no `date_format`; with `group_by`; on the child side of a relationship. | Each refused at compile (`plan.date_preserve_values_with_group_by_unsupported`, `plan.date_preserve_values_unsupported_fk_shape` for the last two). |
 | DATE-09 | `bucketize` with `width: 10` in each `format`, on ages including nulls and a text cell. | 37 becomes `30`, `30-39` or the midpoint. Nulls stay null. The text cell is a row error, not a kept value. |
 | DATE-10 | `top_code` with `preset: hipaa_age` on ages 0 to 110. | 0 to 89 render as their own integers; 90 and above render as `90+`. Output is one string type. |
 | DATE-11 | `top_code` with an unknown preset; with `floor >= cap`; under a `when:` gate. | Each refused at compile. |
-| DATE-12 | `windowed_date` with `min_days: 1`, `max_days: 30` and each distribution. | Every output is 1 to 30 days after its anchor. `early` skews near 1, `late` near 30. Rerun is identical. |
+| DATE-12 | `windowed_date` with `min_days: 1`, `max_days: 30` and each distribution, 10,000 rows each. | Every output is 1 to 30 days after its anchor. `early` takes the smaller of two uniform draws and `late` the larger, so the mean offset is within 0.5 day of 10.5 (`early`), 15.5 (`uniform`) and 20.5 (`late`). Rerun is identical. |
 
 ## Open points
 

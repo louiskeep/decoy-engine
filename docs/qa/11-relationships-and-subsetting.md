@@ -38,7 +38,7 @@ block), orphan handling, composite and self-referencing keys, `from_parent`, and
 | REL-04 | Three-column composite key between `enrollments` and `claims`. | The composite join is preserved. A child matching on two of three columns is treated as an orphan. |
 | REL-05 | `employees.manager_id` referencing `employees.id`. | The self-join gives the same manager for every employee as in the source. |
 | REL-06 | Child rows with null FK. | Null in the output. Not counted as orphans under any policy. |
-| REL-07 | Ten orphan child rows under each of the four policies. | `preserve`: keys unchanged. `remap`: new masked values matching no parent. `warn`: unchanged, one warning with count 10. `fail`: `orphan_fk_violation`, no output. |
+| REL-07 | Ten orphan child rows under each of the four policies. | `preserve`: keys unchanged. `remap`: new masked values matching no parent. `warn`: unchanged, one warning with count 10. `fail`: `runtime.orphan_fk_violation`, no output. |
 | REL-08 | Three-level chain (`patients`, `visits`, `claims`) with FPE keys. | Both joins preserved. Keys keep their format. |
 | REL-09 | A parent key cell that row-errors, with a child referencing it, quarantine on. | Parent row and child row are both removed and both appear in quarantine. The raw key is in no output. |
 | REL-10 | Relationship naming a table or column that does not exist. | Refused at validation, not by flagging every row at run time. |

@@ -38,15 +38,15 @@ customer corpora), the coherent composites (`composite_name_email`,
 
 | Id | Run this | What should happen |
 |---|---|---|
-| DOM-01 | `geo_generalize` zip cascade with `k_threshold: 5` on a table where one ZIP5 has 10 rows, one ZIP3 has 6 rows across rare ZIP5s, and one ZIP is unique. | Rows keep ZIP5, fall to ZIP3, or are suppressed accordingly. A `geo_generalize_cascade` warning lists the rows that cascaded. |
-| DOM-02 | Cascade without `suppress`; unknown `type`; empty cascade. | `geo_generalize_missing_suppress`, `geo_generalize_unsupported_type`, `geo_generalize_invalid_cascade`. |
+| DOM-01 | `geo_generalize` zip cascade with `k_threshold: 5` on a table where one ZIP5 has 10 rows, one ZIP3 has 6 rows across rare ZIP5s, and one ZIP is unique. | Rows keep ZIP5, fall to ZIP3, or are suppressed accordingly. A `warning.geo_generalize_cascade` warning lists the rows that cascaded. |
+| DOM-02 | Cascade without `suppress`; unknown `type`; empty cascade. | `plan.geo_generalize_missing_suppress`, `plan.geo_generalize_unsupported_type`, `plan.geo_generalize_invalid_cascade`. |
 | DOM-03 | `type: lat_lng` without the `[geo]` extra. | Fails closed with an error naming the extra. |
 | DOM-04 | `joint_mask` over `zip`, `city`, `state` keyed by `patient_id`. | Every output triple is a row of the reference table. The same `patient_id` gets the same triple. |
-| DOM-05 | `joint_mask` with a column not in the reference table; unknown reference; missing `key_by`. | `joint_mask_column_not_in_reference`, `joint_mask_reference_not_found`, `joint_mask_key_by_missing`, all before any row changes. |
+| DOM-05 | `joint_mask` with a column not in the reference table; unknown reference; missing `key_by`. | `plan.joint_mask_column_not_in_reference`, `plan.joint_mask_reference_not_found`, `plan.joint_mask_key_by_missing`, all before any row changes. |
 | DOM-06 | `code_set: icd10` on a column of valid codes. | Every output is a corpus code and differs from its input. Rerun is identical. |
 | DOM-07 | `code_set` with `chapter_preserve: true` where one input's chapter is absent from the corpus. | That row is a `mask_error`: the job fails, or the row is quarantined if the trigger is on. No cross-chapter fallback. |
-| DOM-08 | `code_set: cpt` with the shipped source; then with `corpus_source: customer:<path>`. | First refused with `code_set_reserved_licensed_name`. Second runs. |
-| DOM-09 | `corpus_source_version: "FY1999"` against a corpus stamped otherwise. | Load fails with `code_set_corpus_version_mismatch`. |
+| DOM-08 | `code_set: cpt` with the shipped source; then with `corpus_source: customer:<path>`. | First refused with `plan.code_set_reserved_licensed_name`. Second runs. |
+| DOM-09 | `corpus_source_version: "FY1999"` against a corpus stamped otherwise. | Load fails with `plan.code_set_corpus_version_mismatch`. |
 | DOM-10 | Run a `code_set` job and read `quality_metrics["code_set_corpora"]`. | One entry per code_set column with source, version, licence, `is_seed` and row count. No codes. |
 | DOM-11 | `composite_city_state_zip` across `city`, `state`, `zip` with `coherent_with`. | Every output triple is a real combination. Rerun is identical. |
 | DOM-12 | `composite_name_email` across first name, last name and email. | The email's local part reflects the masked name on the same row. |

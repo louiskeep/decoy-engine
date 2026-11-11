@@ -40,7 +40,7 @@ those spans, and the optional spaCy NER for person names and locations.
 | TEXT-07 | `text_mask` with `unmatched_span_policy: passthrough`. | Prose is kept. A warning is emitted for each cell saying only the tier-1 detectors ran. |
 | TEXT-08 | `text_mask` with `per_detector_strategy: {ssn: fpe}` on two cells holding the same SSN. | Both cells get the same replacement SSN, in SSN shape. |
 | TEXT-09 | `text_mask` with `us_zip: fpe` on text containing `90210`, with `sub_floor_span` unset. | Job fails closed on the first match. Nothing is published. |
-| TEXT-10 | Same with `sub_floor_span: synthetic`, and a cell holding `90210-1234`. | The 5-digit ZIP becomes a synthetic valid ZIP with a `text_mask_sub_floor_span_handled` warning. The ZIP+4 goes through FF1. |
+| TEXT-10 | Same with `sub_floor_span: synthetic`, and a cell holding `90210-1234`. | The 5-digit ZIP becomes a synthetic valid ZIP with a `warning.text_mask_sub_floor_span_handled` warning. The ZIP+4 goes through FF1. |
 | TEXT-11 | A cell where an email contains a URL-like substring. | One replacement, for the leftmost then longest span. No doubled or nested tokens. |
 | TEXT-12 | Run TEXT-06 with debug logging on, then search logs and evidence for a known SSN from the source. | Absent everywhere. |
 

@@ -38,10 +38,10 @@ strategy the classifier does not recognise is treated as keyed.
 | KEY-02 | Same job with a different secret. | Every hashed value differs. |
 | KEY-03 | Same job, same secret, different `seed`. | Hashed and FPE values are unchanged. Only seed-driven columns move. |
 | KEY-04 | Two tables, the same value in columns sharing a namespace; then the same value under two namespaces. | First pair matches. Second pair differs. |
-| KEY-05 | `hash` column with no secret configured at all. | Refused with `keyed_strategy_requires_secret` before any source is read. |
-| KEY-06 | `mask_secret_ref: env:NAME` with the variable unset; then set to a 16-byte value. | `missing_mask_secret`; then `weak_mask_secret`. |
-| KEY-07 | `mask_secret_ref: ftp:something`; then a malformed `env:` reference containing a recognisable string. | `secret_provider_unknown`; then `bad_secret_ref`. The reference text is not repeated in the error. |
-| KEY-08 | Pass `SeedKeyProvider` as `key_provider` for a keyed job. | Refused with `keyed_strategy_requires_secret`. |
+| KEY-05 | `hash` column with no secret configured at all. | Refused with `runtime.keyed_strategy_requires_secret` before any source is read. |
+| KEY-06 | `mask_secret_ref: env:NAME` with the variable unset; then set to a 16-byte value. | `runtime.missing_mask_secret`; then `runtime.weak_mask_secret`. |
+| KEY-07 | `mask_secret_ref: ftp:something`; then a malformed `env:` reference containing a recognisable string. | `runtime.secret_provider_unknown`; then `runtime.bad_secret_ref`. The reference text is not repeated in the error. |
+| KEY-08 | Pass `SeedKeyProvider` as `key_provider` for a keyed job. | Refused with `runtime.keyed_strategy_requires_secret`. |
 | KEY-09 | Config with only unkeyed strategies (`redact`, `bucketize`, non-deterministic `faker`) and no secret. | Runs. No secret is demanded. |
 | KEY-10 | Non-deterministic `faker`, same seed and input, two processes; then a different seed. | Identical; then different. |
 | KEY-11 | Generate with `--master-key` and `--key-label` on two machines; then change the label. | Byte-identical across machines; different under the new label. |

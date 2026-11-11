@@ -12,6 +12,8 @@ It is not a roadmap and tracks no work. A check that fails becomes a roadmap row
 
 ## Sections
 
+Eighteen sections, 225 checks.
+
 | # | File | Area | Checks |
 |---|---|---|---|
 | 01 | [Config and validation](01-config-and-validation.md) | `PipelineConfig`, strict schema, `validate_config` | CFG-01 to CFG-12 |
@@ -52,6 +54,11 @@ It is not a roadmap and tracks no work. A check that fails becomes a roadmap row
 - "Refused" means the run stops before any output is published and the error carries a
   registered reason code. Where this checklist names a code, the code is part of the
   expectation. Where it says only "a registered code", confirm the code and add it here.
+- A check table names a reason code as `namespace.code` (`plan.derived_cyclic_reference`).
+  `tests/sentry/test_qa_checklist_reasons.py` fails when a named code is not in
+  `decoy_engine.reasons`, or when a registered code appears without its namespace.
+- A check marked **Exploratory.** has no pass condition because no doc or code sets one.
+  Record what it observes. A result that looks wrong becomes an open point, not a failure.
 - "Value-free" means the message, log line or evidence entry names tables, columns,
   positions and counts, and never a cell value, a secret or a path the caller did not
   supply.

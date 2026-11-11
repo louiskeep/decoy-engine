@@ -37,12 +37,12 @@ large FK jobs, the unified native slice, and the optional Rust companion
 | ROUTE-03 | An FK job run full-frame, sequential and out-of-core. | Identical outputs, joins preserved in all three. |
 | ROUTE-04 | Every job in ROUTE-01 and ROUTE-03 with the companion installed and uninstalled. | Identical outputs. The result records which backend ran each column. |
 | ROUTE-05 | `native_companion_status()` with the companion present, absent, and with a build reporting a different ABI tag. | `present-ok`; `absent`; `abi-mismatch`. In the last two, masking still runs on the Python path with a coded reason. |
-| ROUTE-06 | Hash a value containing a codepoint newer than the running Python's Unicode version, with and without the companion. | Record whether the tokens differ. The docs say they can, and that the companion result is canonical. |
+| ROUTE-06 | Hash a value containing a codepoint newer than the running Python's Unicode version, with and without the companion. | **Exploratory.** Record whether the tokens differ. The docs say they can, and that the companion result is canonical. |
 | ROUTE-07 | `execution_mode="out_of_core"` on a job using a strategy that route does not support. | Refused with a registered reason naming why. No fallback to another route. |
 | ROUTE-08 | `execution_mode="stream"` where no streaming route applies. | Refused with `runtime.streaming_unavailable` before any source is read. |
 | ROUTE-09 | `explain_plan=True` on a chunked job and on a full-frame job. | The result states the route and lane chosen and the reason. |
 | ROUTE-10 | `estimate_job` and `estimate_job_capacity` on a job well beyond available memory. | A verdict that the job does not fit full-frame. Running it under `auto` picks a bounded route or refuses; it does not exhaust memory. |
-| ROUTE-11 | A large generate job with and without the companion. | Same output and comparable speed. |
+| ROUTE-11 | A large generate job with and without the companion. | Same output. Speed is exploratory: record both wall times. |
 | ROUTE-12 | A managed (bundle) CLI install with the companion removed afterwards. | Every command except `upgrade`, `--version` and `--help` refuses with exit code 3 and points at `decoy upgrade --force`. |
 
 ## Open points

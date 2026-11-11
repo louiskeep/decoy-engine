@@ -40,14 +40,14 @@ The general-purpose column strategies: `hash`, `fpe`, `faker`, `categorical`,
 | MASK-02 | `hash` with `truncate: 12`. | Every token is 12 hex characters and is the prefix of the untruncated token. |
 | MASK-03 | `hash` on an integer column with nulls, full-frame and chunked. | Same tokens on both routes. Nulls stay null. `1` and `1.0` do not appear as different inputs. |
 | MASK-04 | `fpe` with `charset: digits` on `123-45-6789` style values. | Output is 9 digits with dashes in the same places. Same input gives the same output. Different inputs give different outputs. |
-| MASK-05 | `fpe` on a column of 4-digit values. | Job fails with `fpe_unencryptable_domain`. No output is published. |
-| MASK-06 | `fpe` with `charset: digits` on a column containing `N/A`. | Job fails with `fpe_unencryptable_value`. The value is not passed through. |
+| MASK-05 | `fpe` on a column of 4-digit values. | Job fails with `runtime.fpe_unencryptable_domain`. No output is published. |
+| MASK-06 | `fpe` with `charset: digits` on a column containing `N/A`. | Job fails with `runtime.fpe_unencryptable_value`. The value is not passed through. |
 | MASK-07 | `fpe` with `checksum: luhn` on valid card numbers; `checksum: npi` on NPIs. | Every output passes the scheme's validator. NPI outputs start with 1 or 2. |
 | MASK-08 | `faker` with `provider: person_first_name`, `deterministic: true`, a namespace, on a column with repeats. | Equal source values get equal fake names. Rerun gives the same output. |
-| MASK-09 | Same column without `deterministic`. | The same source value gets different names on different rows. Rerun with the same seed is identical. |
-| MASK-10 | Deterministic `faker` on a column with 50,000 distinct values and the default `pool_size`. | Record how many distinct outputs come back. See the open point on collisions. |
-| MASK-11 | `faker` with `cardinality_mode: unique` on more rows than `pool_size`; then `unique` with `deterministic: true`. | First fails with `uniqueness_impossible`. Second is refused as an incompatible combination. |
-| MASK-12 | `categorical` with `categories` and `weights` on 100,000 rows. | Output shares match the weights within sampling error. Nulls preserved. |
+| MASK-09 | Same column without `deterministic`, on a source where one value repeats on 1,000 rows. | The repeated value does not map to one fixed name: its 1,000 rows get more than one distinct name. Equal names on different source values can occur by chance. Rerun with the same seed is identical. |
+| MASK-10 | Deterministic `faker` on a column with 50,000 distinct values and the default `pool_size`. | **Exploratory.** Record how many distinct outputs come back. Slot collisions are expected (see the open point on collisions). |
+| MASK-11 | `faker` with `cardinality_mode: unique` on more rows than `pool_size`; then `unique` with `deterministic: true`. | First fails with `runtime.uniqueness_impossible`. Second is refused as an incompatible combination. |
+| MASK-12 | `categorical` with `categories` and `weights` on a source of 100,000 distinct values. | Each output share is within 4 standard errors of its weight, √(w(1−w)/n) with n the distinct source values (about ±0.6 points for a weight of 0.7). The draw is keyed per source value, so repeated values share a category. Nulls preserved. |
 | MASK-13 | `shuffle` on a column with nulls. | Sorted non-null output equals sorted non-null input. Null positions are unchanged. Two runs are byte-identical. |
 | MASK-14 | `redact` with default and with `redact_with: "XXX"`; `truncate` with `length: 3`, then `keep: tail`, then `mask_char: "*"`. | Outputs are as configured. With `mask_char`, output length equals input length. Nulls preserved. |
 | MASK-15 | `tokenize` with no vault writer; then on an integer column. | Both refused with a registered code before any row is masked. |

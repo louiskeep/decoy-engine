@@ -34,13 +34,13 @@ reversible.
 | Id | Run this | What should happen |
 |---|---|---|
 | VAULT-01 | Mask with `fpe` on an SSN column, then `unmask_pipeline` with the same config and secret. | Every value round-trips exactly. The column reports `reversed_unverified`. |
-| VAULT-02 | Unmask VAULT-01's output with a different secret. | Values do not match the source. Record what the report says; it cannot verify. |
+| VAULT-02 | Unmask VAULT-01's output with a different secret. | Values do not match the source, and the column still reports `reversed_unverified`: FF1 is unauthenticated, so a wrong key gives plausible wrong values with no error. |
 | VAULT-03 | `hash` column with `vault: true` and a vault path, then unmask with the vault. | Every value recovered. Status `vault_reversed`, zero misses. |
 | VAULT-04 | Same column with `vault: true` but no vault path; and a vault path with no `vault: true` column. | No vault file is written in either case. |
-| VAULT-05 | `vault: true` with no namespace; on `fpe`; on `passthrough`. | `vault_requires_namespace`; `vault_strategy_reversible`; `vault_strategy_unmasked`, all at compile. |
-| VAULT-06 | Unmask with a vault from a different run. | `vault_miss` with zero hits. No wrong values are written as if recovered. |
-| VAULT-07 | Open a vault with a different mask secret. | `vault_key_mismatch`. |
-| VAULT-08 | Truncate the vault file; corrupt its magic bytes. | `vault_unreadable` for both. |
+| VAULT-05 | `vault: true` with no namespace; on `fpe`; on `passthrough`. | `plan.vault_requires_namespace`; `plan.vault_strategy_reversible`; `plan.vault_strategy_unmasked`, all at compile. |
+| VAULT-06 | Unmask with a vault written by a run that used a different secret or namespace. | `vault_miss` with zero hits. No wrong values are written as if recovered. Lookup is by (namespace, masked value) with no run identity, so a vault from a run with the same config, secret and namespace can hit. |
+| VAULT-07 | Open a vault with a different mask secret. | `runtime.vault_key_mismatch`. |
+| VAULT-08 | Truncate the vault file; corrupt its magic bytes. | `runtime.vault_unreadable` for both. |
 | VAULT-09 | `faker` column with `allow_collisions: true` and `vault: true` where two sources share a masked value. | Those entries are dropped. `ambiguous_dropped` is non-zero in the header and in the unmask report. No value is recovered wrongly. |
 | VAULT-10 | Search the vault file's bytes for a known source value. | Absent. Only the JSON header is readable, and it holds no values. |
 | VAULT-11 | `fpe` with `validate_luhn: true` on a column where one source value fails Luhn, then unmask. | Luhn-valid sources round-trip exactly. The invalid one returns with its body exact and last digit normalised, and the report carries the caveat. |

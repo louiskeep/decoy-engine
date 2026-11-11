@@ -37,8 +37,8 @@ expression evaluators, and SQL surfaces.
 | SEC-02 | A rooted policy, with a source `path` of `../../etc/passwd` and with a symlink pointing outside the root. | Both denied. The denial names the config position, not the resolved path. |
 | SEC-03 | A rooted policy with `column_names_file`, a `code_set` customer corpus path, a snapshot path and a quarantine `output_path` each pointing outside the root. | Every one denied. No path field bypasses the policy. |
 | SEC-04 | Under an installed policy, call a nested engine entry point with a different, wider policy. | `FileAccessUnavailable`. The installed policy is not replaced. |
-| SEC-05 | `vault://` reference with `version=latest`, with a duplicated query key, and with a `..` path segment. | Each rejected with `bad_secret_ref`. The message contains no part of the reference. |
-| SEC-06 | `file:` secret reference to a group- or world-readable file. | Refused with `secret_file_permissions_unsafe`. |
+| SEC-05 | `vault://` reference with `version=latest`, with a duplicated query key, and with a `..` path segment. | Each rejected with `runtime.bad_secret_ref`. The message contains no part of the reference. |
+| SEC-06 | `file:` secret reference to a group- or world-readable file. | Refused with `runtime.secret_file_permissions_unsafe`. |
 | SEC-07 | A run that fails on a bad CSV row holding a recognisable marker value, with debug logging on. | The marker appears in no error message, exception chain, log line, progress event or evidence file. |
 | SEC-08 | A run that fails validation on a value holding the marker; a row error on a cell holding the marker. | Same as SEC-07 for both. |
 | SEC-09 | Run with a mask secret set and debug logging on, then search every artifact (plan, logs, evidence, run result, vault header) for the secret. | Absent everywhere. |
