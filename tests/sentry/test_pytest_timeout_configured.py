@@ -7,6 +7,7 @@ subprocess run proves the plugin turns a sleeping test into a failure that carri
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import textwrap
@@ -27,12 +28,13 @@ def test_default_timeout_is_configured(pytestconfig: pytest.Config) -> None:
     raw = pytestconfig.getini("timeout")
     assert raw, "[tool.pytest.ini_options] must set a non-zero `timeout` (seconds per test)"
     assert float(raw) > 0
-    assert pytestconfig.getini("timeout_method") == "signal"
+    # Unset on purpose: the plugin picks signal on POSIX and thread on Windows by itself.
+    assert not pytestconfig.getini("timeout_method")
 
 
 def test_pyproject_declares_the_limit() -> None:
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert "\ntimeout = " in text and "\ntimeout_method = " in text
+    assert "\ntimeout = " in text and "\ntimeout_method" not in text
 
 
 def test_a_test_past_its_limit_fails_with_its_stack(tmp_path: Path) -> None:
@@ -61,11 +63,14 @@ def test_a_test_past_its_limit_fails_with_its_stack(tmp_path: Path) -> None:
             "addopts=",
             "-o",
             "timeout=1",
-            "-o",
-            "timeout_method=signal",
+            "-p",
+            "pytest_timeout",
             str(tmp_path / "test_hang.py"),
         ],
         cwd=tmp_path,
+        # Autoload off and the plugin named, so the run works whether or not the parent disabled
+        # autoload (naming it with autoload on would register it twice).
+        env={**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"},
         capture_output=True,
         text=True,
         timeout=60,

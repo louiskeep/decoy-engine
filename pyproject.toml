@@ -415,10 +415,10 @@ pythonpath = ["src", "scripts"]
 # `pytest -m determinism_harness` or `python scripts/faker-determinism/check_determinism.py`.
 # Per-test hang guard (pytest-timeout, `dev` extra). 780 s is 3x the slowest default-selection test
 # (test_exhaustive_six_digit_permutation, 247 s under -n 4 on 2026-11-10), rounded up to a whole
-# minute; a hung test fails with a stack dump instead of stalling the suite. `signal` is the
-# precise method on Linux and macOS; pytest-timeout falls back to `thread` by itself on Windows.
+# minute; a hung test fails with a stack dump instead of stalling the suite. No `timeout_method`
+# on purpose: the plugin default is signal on POSIX and thread on Windows, and an explicit
+# "signal" would make every test error on Windows (no SIGALRM).
 timeout = 780
-timeout_method = "signal"
 addopts = "-m 'not benchmark and not testflight and not packaging and not codspeed and not determinism_harness'"
 markers = [
     "no_default_secret: opt out of the shared throwaway secret (tests/_keyed_secret.py); the test asserts behavior with no secret supplied",
