@@ -43,12 +43,8 @@ from pydantic import (
 from pydantic_core import PydanticCustomError, ValidationError
 
 from decoy_engine import reasons
-from decoy_engine.config._generate_options import (
-    POOLED_TYPE,
-    closed_key_schema,
-    option_problems,
-    problem_details,
-)
+from decoy_engine.config._generate_option_catalog import POOLED_TYPE, closed_key_schema
+from decoy_engine.config._generate_options import option_problems, problem_details
 from decoy_engine.config._generate_unique import (
     column_conflict_problems,
     table_unique_problems,

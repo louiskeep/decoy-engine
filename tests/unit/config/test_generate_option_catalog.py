@@ -27,7 +27,8 @@ def test_keys_checked_at_plan_compile_are_listed_as_required() -> None:
     entry = generate_option_catalog()["derived_aggregate"]
     assert entry.required == ("op", "column")
     assert entry.required_at_plan == ("op", "column")
-    assert entry.optional == ()
+    assert not set(entry.required_at_plan) & set(entry.optional)
+    assert entry.optional == ("output_type",)
 
 
 def test_the_record_is_frozen_names_only() -> None:

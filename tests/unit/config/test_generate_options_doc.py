@@ -91,7 +91,10 @@ def test_the_doc_table_matches_the_catalog() -> None:
 @pytest.mark.parametrize(
     ("old", "new"),
     [
-        ("| `faker_type` | `locale`, `faker_kwargs` |", "| `faker_type` | `locale` |"),
+        (
+            "| `faker_type` | `locale`, `faker_kwargs`, `output_type` |",
+            "| `faker_type` | `locale`, `output_type` |",
+        ),
         ("| `op`, `column` (at plan compile) |", "| `op`, `column` |"),
     ],
     ids=["optional key dropped", "plan-compile marker dropped"],

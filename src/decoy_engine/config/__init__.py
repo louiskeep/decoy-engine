@@ -37,11 +37,11 @@ from __future__ import annotations
 
 from decoy_engine.config._errors import PipelineConfigError
 from decoy_engine.config._fixed_width import FixedWidthColumn, FixedWidthLayout
-from decoy_engine.config._generate_options import (
+from decoy_engine.config._generate_option_catalog import (
     GenerateTypeOptions,
     generate_option_catalog,
-    refuse_unlisted_generate_families,
 )
+from decoy_engine.config._generate_options import refuse_unlisted_generate_families
 from decoy_engine.config._generate_type_checks import (
     parse_output_type,
     refuse_fixed_width_output_types,

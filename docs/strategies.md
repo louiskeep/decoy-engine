@@ -1260,21 +1260,26 @@ to its keys and lists the same required keys, and it allows `pooled` only on `fa
 types may carry `pooled: null`), so an editor flags a misspelt or misplaced key. A test checks
 this table against `generate_option_catalog()`.
 
+`output_type` (`int`, `decimal(n)`, `date` or `bool`) sets the type of the column written.
+`distribution`, `sequence`, `grouped_series` and `derived_aggregate` take `int` or `decimal(n)`
+only, `windowed_date` takes `date` only, and `reference`, `statistical` and `group_key` do not
+take it.
+
 | Type | Required | Optional | Required when |
 |---|---|---|---|
-| `sequence` | `start` | `step`, `prefix`, `suffix`, `pad_length` | |
-| `faker` | `faker_type` | `locale`, `faker_kwargs` | |
-| `categorical` | `categories` | `weights` | |
+| `sequence` | `start` | `step`, `prefix`, `suffix`, `pad_length`, `output_type` | |
+| `faker` | `faker_type` | `locale`, `faker_kwargs`, `output_type` | |
+| `categorical` | `categories` | `weights`, `output_type` | |
 | `reference` | `reference_table`, `reference_column` | `distribution`, `weights`, `min_per_parent`, `max_per_parent`, `snapshot_file`, `source_column` | `weights` if `distribution: weighted` |
-| `formula` | `formula` | `references` | |
+| `formula` | `formula` | `references`, `output_type` | |
 | `statistical` | `snapshot_file` | `source_column`, `high_cardinality`, `allow_real_categories`, `other_mode`, `condition_on` | |
-| `derived` | `expression` | `bounds`, `null_propagation` | |
-| `derived_aggregate` | `op`, `column` (at plan compile) | | |
-| `grouped_series` | `group_by`, `order_by` | `generator`, `step`, `max_step`, `start` | |
-| `windowed_date` | `anchor`, `max_days` | `min_days`, `distribution` | |
+| `derived` | `expression` | `bounds`, `null_propagation`, `output_type` | |
+| `derived_aggregate` | `op`, `column` (at plan compile) | `output_type` | |
+| `grouped_series` | `group_by`, `order_by` | `generator`, `step`, `max_step`, `start`, `output_type` | |
+| `windowed_date` | `anchor`, `max_days` | `min_days`, `distribution`, `output_type` | |
 | `group_key` | `group_by` | `length`, `prefix` | |
-| `constant` | `value` | | |
-| `distribution` | `family` | `low`, `high`, `min`, `max` | `low`, `high` if `family: uniform` |
+| `constant` | `value` | `output_type` | |
+| `distribution` | `family` | `low`, `high`, `min`, `max`, `output_type` | `low`, `high` if `family: uniform` |
 
 `derived_aggregate` is the one type whose required keys are checked at plan compile, not at
 config parse: its transform refuses a missing `op` or `column` with `derived_aggregate_op_missing`
