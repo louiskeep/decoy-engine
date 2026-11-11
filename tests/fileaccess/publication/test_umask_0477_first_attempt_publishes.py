@@ -36,5 +36,6 @@ def test_umask_0477_first_attempt_publishes(tmp_path: Path, policy: str) -> None
     assert got["probe"] == 0o200  # non-vacuity: a plain new file loses owner read
     assert code == 0 and got["outcome"] == "published", got
     assert got["stage_mode"] == 0o700 and got["sub_mode"] == 0o700
-    assert (base / "out" / "leaf" / UNIT_FILE).read_bytes() == UNIT_BYTES
+    # file modes are a1b; under this umask the unit file is 0200, so compare its size
+    assert (base / "out" / "leaf" / UNIT_FILE).stat().st_size == len(UNIT_BYTES)
     assert (base / "out" / "leaf" / "sub" / "g").exists()

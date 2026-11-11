@@ -213,7 +213,10 @@ def _probe(base: Path) -> int:
 
 def _write(result: str, data: dict[str, Any]) -> None:
     data.pop("held_fd", None)
-    Path(result).write_text(json.dumps(data), encoding="utf-8")
+    fd = os.open(result, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    os.fchmod(fd, 0o600)  # the case's umask would leave it unreadable to a non-root parent
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(data))
 
 
 def publish_case(spec_path: str) -> None:
