@@ -1,4 +1,4 @@
-### Added (GEN-TYPES E2: `output_type` on generate columns, 2026-11-11)
+### Added (`output_type` on generate columns, GEN-TYPES E2, 2026-11-11)
 
 A generate column can say how its values are printed with `output_type: int`, `decimal(n)` (n from 0
 to 18), `date` or `bool`. The option compiles to a declared-casting descriptor, so a column emits
