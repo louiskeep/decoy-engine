@@ -5,7 +5,7 @@
 # `dir_category` (protected_root, protected_child, output_parent, published_output, non_row) and
 # `dir_test` (an existing pytest node id; every category but protected_root) mark directory
 # creators for tests/sentry/protected_dir (G-ONE-PROTECTED-DIR).
-# Count: 190 (asserted by the sentry).
+# Count: 191 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -1106,6 +1106,16 @@ ordinal = 1
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "_open_dir"
+sink = "os.open"
+ordinal = 0
+disposition = "read"
+rule = "the FileRequest.locator of a request served by LocalFileAccess, an ancestor of it, or its stage directory, opened read-only as a directory so the creators in _output.py work beneath a held descriptor"
+owner = "cam"
+reason = "ambient CLI semantics (links followed, path as given), POSIX arm only: F22 5.0 rule 1 opens the deepest existing ancestor and makes each missing output parent under it"
 
 [[entry]]
 module = "decoy_engine/fileaccess/_local.py"
