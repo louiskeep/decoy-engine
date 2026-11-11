@@ -55,8 +55,10 @@ def test_i_umask_0477_parents_are_0700_through_the_entry_point(base: Path, polic
     code, got = _publish(base, policy, 0o477, spies=True)
     assert got["probe"] == 0o200  # non-vacuity: the umask strips owner read from a new file
     assert code == 0 and got["outcome"] == "published", got
-    # file modes are a1b; under this umask the unit file is 0200, so compare its size
-    assert (base / "p" / "a" / "out" / UNIT_FILE).stat().st_size == len(UNIT_BYTES)
+    # file modes are a1b; under this umask the unit file is born 0200, so its owner makes it
+    # readable before the content check
+    os.chmod(base / "p" / "a" / "out" / UNIT_FILE, 0o600)
+    assert (base / "p" / "a" / "out" / UNIT_FILE).read_bytes() == UNIT_BYTES
     assert mode(base / "p") == 0o700 and mode(base / "p" / "a") == 0o700
     assert ["p", PARENT] in got["core"] and ["a", PARENT] in got["core"]
 
