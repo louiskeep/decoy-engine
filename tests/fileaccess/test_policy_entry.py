@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextvars
+import gc
 import subprocess
 import sys
 import textwrap
@@ -190,6 +191,56 @@ def test_bound_iterator_closes_the_generator_under_its_policy() -> None:
     assert next(it) == 1
     it.close()  # type: ignore[attr-defined]
     assert closed == ["a"]
+
+
+_HELD: contextvars.ContextVar[str] = contextvars.ContextVar("test_held", default="default")
+
+
+@pytest.mark.parametrize("ending", ["collected", "closed"])
+def test_a_token_held_across_a_yield_resets_when_the_iterator_ends_unconsumed(
+    ending: str,
+) -> None:
+    events: list[tuple[str, str, str]] = []
+
+    def gen() -> Iterator[int]:
+        token = _HELD.set("inner")
+        try:
+            yield 1
+            yield 2
+        finally:
+            events.append(("before-reset", _HELD.get(), current().name))  # type: ignore[attr-defined]
+            _HELD.reset(token)
+            events.append(("after-reset", _HELD.get(), current().name))  # type: ignore[attr-defined]
+
+    it = bind_iterator(_Marker("bound"), gen())  # type: ignore[arg-type]
+    assert next(it) == 1
+    assert _HELD.get() == "default", "the iterator's own value stays in its context"
+    if ending == "closed":
+        it.close()  # type: ignore[attr-defined]
+    else:
+        cycle: list[Any] = [it]
+        cycle.append(cycle)
+        del it, cycle
+        gc.collect()
+    assert events == [("before-reset", "inner", "bound"), ("after-reset", "default", "bound")]
+    assert _HELD.get() == "default"
+
+
+def test_a_bound_iterator_sees_the_context_it_was_bound_in() -> None:
+    def gen() -> Iterator[str]:
+        while True:
+            yield _HELD.get()
+
+    token = _HELD.set("at-bind")
+    try:
+        it = bind_iterator(_Marker("bound"), gen())  # type: ignore[arg-type]
+    finally:
+        _HELD.reset(token)
+    token = _HELD.set("at-step")
+    try:
+        assert next(it) == "at-bind"
+    finally:
+        _HELD.reset(token)
 
 
 def test_a_collected_bound_iterator_closes_without_touching_the_current_context() -> None:
