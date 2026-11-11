@@ -68,6 +68,17 @@ SENTRY_PATHS=(tests/sentry tests/secret_providers/test_leak_sentry.py)
 # layer test runs only in the `layers` step. Every other pytest route ignores it.
 LAYER_TEST=tests/sentry/layout/test_import_layers.py
 LAYER_IGNORE=(--ignore=$LAYER_TEST)
+# The one place that keeps the layer test out of every other pytest route. --ignore covers a
+# directory argument; a file or ::nodeid argument naming the layer test (any route: selection,
+# explicit paths, shard expansion, baseline rerun) is dropped here. Reads paths on stdin.
+drop_layer_test() {
+  local p f
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    f=${p%%::*}; f=${f#./}
+    [ "$f" = "$LAYER_TEST" ] || printf '%s\n' "$p"
+  done
+}
 LICENSE_TESTS=(tests/sentry/test_license_policy.py tests/sentry/test_sdv_import_sentry.py)
 PYTEST_ARGS=(-m 'not benchmark and not packaging and not codspeed')
 PYTEST_MARK=${PYTEST_ARGS[1]}  # the same expression; the parallel and serial passes add to it
@@ -199,7 +210,7 @@ changed_tests() {
   deps=$(printf '%s\n' "$lines" | grep -E '^[so] ' || true)  # none is normal
   scanned=$(printf '%s\n' "$deps" |
     "$BIN/python" "$ROOT/scripts/dev/_select_tests.py" --root "$ROOT" --src-strip "$SRC_STRIP") || return 1
-  { printf '%s\n' "$lines" | sed -n 's/^t //p'; printf '%s\n' "$scanned"; } | grep -v '^$' | grep -vxF "$LAYER_TEST" | LC_ALL=C sort -u || true
+  { printf '%s\n' "$lines" | sed -n 's/^t //p'; printf '%s\n' "$scanned"; } | drop_layer_test | LC_ALL=C sort -u || true
 }
 
 # 0 when f matches NON_CODE_GLOBS (pure documentation or repo metadata).
@@ -272,6 +283,14 @@ EOT
   fi
 else
   SELECTION="explicit: ${PATHS[*]+${PATHS[*]}}"
+  KEPT=$(printf '%s\n' ${PATHS[@]+"${PATHS[@]}"} | drop_layer_test)
+  if [ -n "${PATHS[*]+x}" ] && [ -z "$KEPT" ]; then
+    echo "gates: FAIL: $LAYER_TEST runs only in the layers step: use --steps layers" >&2; exit 2
+  fi
+  PATHS=()
+  while IFS= read -r p; do [ -n "$p" ] && PATHS+=("$p"); done <<EOT
+$KEPT
+EOT
   # An explicit path that is missing from the branch is a typo or a deleted test, never a skip.
   if [[ ",$STEPS," == *,tests,* ]]; then
     for p in ${PATHS[@]+"${PATHS[@]}"}; do
@@ -286,8 +305,7 @@ shard_expand() {
   for p in ${PATHS[@]+"${PATHS[@]}"}; do
     if [ -d "$ROOT/$p" ]; then
       out=$(cd "$ROOT" && git ls-files -- "$p") || return 1
-      # Explicit file args defeat pytest --ignore, so drop the layer test here as the selector does.
-      printf '%s\n' "$out" | grep -E '(^|/)test_[^/]*\.py$' | grep -vxF "$LAYER_TEST" || [ $? = 1 ] || return 1
+      printf '%s\n' "$out" | grep -E '(^|/)test_[^/]*\.py$' || [ $? = 1 ] || return 1
     else
       echo "$p"
     fi
@@ -313,7 +331,7 @@ if [ -n "$SHARD" ]; then
     if [ "$SHARD_I" -gt 1 ]; then echo "gates: shard $SHARD: no tests selected; shard 1 reports it"; exit 0; fi
   else
     # A git failure is a failed gate (exit 2); only grep's "no match" (exit 1) is tolerated.
-    RAW=$(shard_expand) || { echo "gates: --shard could not list the test files (git ls-files failed)" >&2; exit 2; }
+    RAW=$(shard_expand | drop_layer_test; exit "${PIPESTATUS[0]}") || { echo "gates: --shard could not list the test files (git ls-files failed)" >&2; exit 2; }
     # C locale: every shard must deal the same file order, whatever the host's LANG.
     ALL=$(printf '%s\n' "$RAW" | LC_ALL=C sort -u)
     if [ -z "$ALL" ]; then

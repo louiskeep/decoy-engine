@@ -10,7 +10,7 @@ import stat
 from pathlib import Path
 
 import pytest
-from _gates_harness import BASH, GIT, diff_clone, seeded_clone
+from _gates_harness import BASH, GIT, diff_clone, gates, pytest_argvs, recording_venv, seeded_clone
 from _gates_harness import run as _run
 
 pytestmark = pytest.mark.skipif(BASH is None or GIT is None, reason="needs bash and git")
@@ -70,17 +70,48 @@ def test_full_mode_shards_split_the_whole_tests_directory(tmp_path: Path) -> Non
     assert seen[0][0] + seen[1][0] == seen[0][1], seen
 
 
-def test_shard_expansion_leaves_out_the_layer_test(tmp_path: Path) -> None:
-    # Expanding a directory to file args defeats pytest --ignore; the layer test runs only in
-    # the layers step, so a sharded run of its directory must not name it.
+LAYER = "tests/sentry/layout/test_import_layers.py"
+
+
+def _layer_args(log: Path) -> list[str]:
+    """Every pytest argument naming the layer test, other than its own --ignore."""
+    return [
+        a
+        for argv in pytest_argvs(log)
+        for a in argv
+        if LAYER in a and not a.startswith("--ignore=")
+    ]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--full", "--steps", "tests", "--shard", "1/1"],
+        ["--steps", "tests", "--shard", "1/1", "tests/_shard", "tests/sentry/layout"],
+        ["--steps", "tests", "tests/_shard", LAYER],
+        ["--steps", "tests", "tests/_shard", f"./{LAYER}"],
+        ["--steps", "tests", "tests/_shard", f"{LAYER}::test_the_layer_contract_is_kept"],
+    ],
+    ids=["full-shard", "dir-shard", "explicit-file", "dot-slash", "nodeid"],
+)
+def test_no_route_hands_the_layer_test_to_pytest(tmp_path: Path, args: list[str]) -> None:
+    # pytest --ignore does not drop an explicitly named file, so a file or nodeid argument would
+    # run the layer test in the certified venv, which has no import-linter (engine main, #480).
     clone = diff_clone(tmp_path, FILES)
-    proc = _run(
-        [*GATES, "--steps", "tests", "--shard", "1/1", "tests/_shard", "tests/sentry/layout"], clone
-    )
-    out = proc.stdout + proc.stderr
-    assert proc.returncode == 0, out
-    assert "test_import_layers" not in out, out
-    assert "test_package_fanout" in out, out
+    venv, log = recording_venv(tmp_path)
+    rc, out = gates(clone, venv, *args)
+    assert rc == 0, out
+    assert pytest_argvs(log), out
+    assert _layer_args(log) == [], out
+
+
+def test_naming_only_the_layer_test_fails_with_advice(tmp_path: Path) -> None:
+    clone = diff_clone(tmp_path, FILES)
+    venv, log = recording_venv(tmp_path)
+    rc, out = gates(clone, venv, "--steps", "tests", LAYER)
+    assert rc == 2, out
+    assert "--steps layers" in out
+    assert _layer_args(log) == []
 
 
 @pytest.mark.parametrize("spec", ["1/2/3", "3/2", "0/2", "1/0", "a/2", "1/", "/2", "01/2", "1/2x"])
