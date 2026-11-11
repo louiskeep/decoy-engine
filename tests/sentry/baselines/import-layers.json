@@ -1,0 +1,132 @@
+{
+ "sentry_id": "import-layers",
+ "created_in": "LAYOUT-E3",
+ "entries": {
+  "layers::decoy_engine.config._generate_unique -> decoy_engine.generation.pool": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.declared_casting._boundary -> decoy_engine.execution._errors": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.declared_casting._boundary -> decoy_engine.execution._pipeline_sources": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.declared_casting._cleanup -> decoy_engine.execution._errors": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.declared_casting._eligibility -> decoy_engine.execution._errors": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.declared_casting._quarantine_local -> decoy_engine.execution._errors": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.declared_casting._stream -> decoy_engine.execution.out_of_core._budget": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.declared_casting._stream -> decoy_engine.execution.out_of_core._scratch": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.errors -> decoy_engine.execution._row_error_summary": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.execution._job_estimate -> decoy_engine": {
+   "reason": "child-to-root import of `__version__` from the root facade; goes when a leaf version module exists"
+  },
+  "layers::decoy_engine.execution.capacity -> decoy_engine": {
+   "reason": "child-to-root import of `__version__` from the root facade; goes when a leaf version module exists"
+  },
+  "layers::decoy_engine.fileaccess._errors -> decoy_engine.execution._isolated_common": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.generation._bounds -> decoy_engine.execution": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.generation._bounds -> decoy_engine.execution.out_of_core._budget": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.generation._pinned_compile -> decoy_engine": {
+   "reason": "child-to-root import of `__version__` from the root facade; goes when a leaf version module exists"
+  },
+  "layers::decoy_engine.generation._pinned_plan -> decoy_engine": {
+   "reason": "child-to-root import of `__version__` from the root facade; goes when a leaf version module exists"
+  },
+  "layers::decoy_engine.generation._reproducibility -> decoy_engine": {
+   "reason": "child-to-root import of `__version__` from the root facade; goes when a leaf version module exists"
+  },
+  "layers::decoy_engine.generation._streamed -> decoy_engine.execution._chunked_output_sink": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.generation._streamed -> decoy_engine.execution._mem_estimate": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.generation._streamed -> decoy_engine.execution.out_of_core._budget": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.generation.kinds._output_type -> decoy_engine.execution": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.generation.pool._sampler -> decoy_engine.execution.native._crypto_ext": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.generation.pool._sampler -> decoy_engine.execution.native._index_ext": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.internal.faker_setup -> decoy_engine.generation._dob_anchor": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.plan._checks_bucketize -> decoy_engine.execution._strategies._bucketize": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.plan._checks_correctness -> decoy_engine.execution._errors": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.plan._checks_correctness -> decoy_engine.execution.out_of_core._mask": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.plan._checks_top_code -> decoy_engine.execution._strategies._top_code": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.plan._seed_envelope -> decoy_engine.execution._distribution_behavior": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.plan._seed_envelope -> decoy_engine.execution._technique_class": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.profile._declared_columns -> decoy_engine.execution._pipeline_context": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.profile._declared_columns -> decoy_engine.execution._transforms": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.profile._source -> decoy_engine": {
+   "reason": "child-to-root import of `__version__` from the root facade; goes when a leaf version module exists"
+  },
+  "layers::decoy_engine.profiling._scan_integrity -> decoy_engine.execution": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.profiling._snapshot_values -> decoy_engine.generation.pool": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.profiling._snapshot_values -> decoy_engine.generation.statistical": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.profiling._snapshot_values -> decoy_engine.quality.snapshot": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.profiling.scan_set -> decoy_engine": {
+   "reason": "child-to-root import of `__version__` from the root facade; goes when a leaf version module exists"
+  },
+  "layers::decoy_engine.profiling.scan_set -> decoy_engine.execution": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.telemetry._recorder -> decoy_engine.progress": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  },
+  "layers::decoy_engine.telemetry._vocab -> decoy_engine": {
+   "reason": "child-to-root import of `__version__` from the root facade; goes when a leaf version module exists"
+  },
+  "layers::decoy_engine.telemetry._vocab -> decoy_engine.progress": {
+   "reason": "back import measured when LAYOUT E3 declared the tiers; may only shrink"
+  }
+ }
+}

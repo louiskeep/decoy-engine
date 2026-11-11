@@ -248,9 +248,9 @@ concrete path that does not exist. Layer membership will live in `./.importlinte
 | Reason codes | `src/decoy_engine/reasons/` with one catalog package per namespace | by reason namespace | reason tests | `src/decoy_engine/reasons/_registry.py`; reason sentries |
 | Versioned contracts | `src/decoy_engine/contracts/` | `src/decoy_engine/contracts/<contract>.py` | contract tests | contract sentries |
 | Secret providers, file access | `src/decoy_engine/secret_providers/`, `src/decoy_engine/fileaccess/` | by provider or access concern | owning package tests | `tests/sentry/file_access_registry.toml`, `tests/sentry/file_access_modules.toml` |
-| Foundation (errors, reason adapters, private leaves) | `src/decoy_engine/` | `src/decoy_engine/_<name>.py` | owning surface tests | bottom layer in `./.importlinter` (target) |
+| Foundation (errors, reason adapters, private leaves) | `src/decoy_engine/` | `src/decoy_engine/_<name>.py` | owning surface tests | bottom layer in `./.importlinter` |
 | Sentry test | existing rules in `tests/sentry/`; layout rules in `tests/sentry/layout/`; recurring-defect class rules in `tests/sentry/defects/`; test-tooling rules (pytest plugins and settings) in `tests/sentry/tooling/` | `test_<rule>.py`; helper `_<name>.py` | self-tests and seeded mutations | `tests/sentry/test_sentry_manifest.py` (walks nested folders); `*_ALLOWLIST`; `tests/sentry/baselines/`; `scripts/dev/sentry_registry.toml`; `tests/sentry/_baseline_sources.py` |
-| Layer contracts | `./.importlinter` (target) beside `./pyproject.toml` | `.importlinter` | `tests/sentry/layout/test_import_layers.py` (target) | exact membership snapshot in the test; ignore baseline `tests/sentry/baselines/import-layers.json` (target) |
+| Layer contracts | `./.importlinter` beside `./pyproject.toml` | `.importlinter` | `tests/sentry/layout/test_import_layers.py` | exact membership snapshot in the test; ignore baseline `tests/sentry/baselines/import-layers.json` |
 | Dev tooling | `scripts/dev/`; one-off tools in a topic folder: `scripts/audit/`, `scripts/codeset_etl/`, `scripts/faker-determinism/`, `scripts/fk-scale/`, `scripts/native-baseline/`, `scripts/native-testing/`, `scripts/release/`, `scripts/bench-auto-chunk/`, `scripts/bench-generation-pool/`, `scripts/bench-multi-table/`, `scripts/bench-unconfigured-passthrough/`, or `scripts/bench-unified-slice/` | by tool concern | tool tests | root `scripts/` freeze at 26; `tests/sentry/test_module_size.py`; `tests/sentry/layout/test_package_fanout.py` |
 | Plans, decisions, records | `docs/plans/`, `docs/decisions/`, `docs/records/` | `docs/plans/YYYY-MM-DD-<slug>.md`; `docs/records/YYYY-MM-DD-<slug>.md` | - | undated older plans are listed exceptions |
 | Changelog fragments | `changelog.d/` (README in `changelog.d/README.md`) | `changelog.d/<slice-slug>.md`, one per behavior change | `tests/unit/scripts/test_stamp_release_compile.py`, `tests/unit/scripts/test_check_fragment.py` | grammar `parse_fragment` in `scripts/release/stamp_release.py`; PR check `scripts/dev/check_fragment.py` |
@@ -258,9 +258,11 @@ concrete path that does not exist. Layer membership will live in `./.importlinte
 | Lightweight automatic PR checks | `.github/workflows/` | `.github/workflows/<concern>.yml`; `ci.yml` stays manual-only | the script it runs | `TRIGGERED_ON_PURPOSE` in `tests/sentry/test_ci_config.py` |
 | Unit tests | `tests/unit/<package>/` mirroring `src/` | `test_<behavior>.py` | - | current exceptions: `tests/parity/`, `tests/native/`, `tests/physical/`, `tests/fileaccess/`, `tests/secret_providers/`, `tests/generation/`, `tests/connectors/`, and loose files in `tests/unit/` |
 
-Known inconsistencies, listed and not fixed here: `execution/_errors.py` and 14 other
-`execution` modules are imported from lower tiers (foundation code that lives in
-`execution/`); `__version__` is read from the root facade by 7 modules (target: a leaf
+Known inconsistencies, listed and not fixed here (the 42 ignore lines in `./.importlinter`
+name each one): `execution/_errors.py`, 16 other `execution` modules and the `execution`
+package itself are imported from lower tiers (foundation code that lives in `execution/`);
+`profiling` and `config` reach up into `generation` and `quality`; `telemetry` reads
+`progress`; `__version__` is read from the root facade by 8 modules (target: a leaf
 version module).
 
 ## Known Issues / Flags

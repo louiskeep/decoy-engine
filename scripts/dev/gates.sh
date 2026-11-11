@@ -33,7 +33,10 @@
 #                 file_seconds of the baseline FILE; the order map is stored as order_seconds.
 #                 Without it the run keeps collection order. A compare (--baseline-file) orders
 #                 by the order_seconds of the baseline it compares with, so its mode matches.
-#   --steps LIST  comma list from: env,ruff,format,mypy,sentry,licenses,tests (default: all)
+#   --steps LIST  comma list from: env,ruff,format,mypy,sentry,layers,licenses,tests (default: all)
+#                 layers syncs .venv-layers (dev plus the `layers` extra, import-linter) and runs
+#                 only $LAYER_TEST there; the certified .venv is never touched. `--steps layers`
+#                 alone needs no ordinary .venv and no origin/main.
 #   --shard I/N   run only shard I of N of the tests step (1 <= I <= N). The selected test
 #                 paths are expanded to files, sorted, and dealt round-robin, so each shard
 #                 takes every Nth file. Every shard runs the same --steps, so give shards after
@@ -61,6 +64,10 @@ REPO_NAME=decoy-engine
 RUFF_PATHS=(src tests testflight scripts)
 MYPY_ARGS=(src/decoy_engine testflight)
 SENTRY_PATHS=(tests/sentry tests/secret_providers/test_leak_sentry.py)
+# The one sentry outside the sentry step: import-linter is not in the certified profile, so the
+# layer test runs only in the `layers` step. Every other pytest route ignores it.
+LAYER_TEST=tests/sentry/layout/test_import_layers.py
+LAYER_IGNORE=(--ignore=$LAYER_TEST)
 LICENSE_TESTS=(tests/sentry/test_license_policy.py tests/sentry/test_sdv_import_sentry.py)
 PYTEST_ARGS=(-m 'not benchmark and not packaging and not codspeed')
 PYTEST_MARK=${PYTEST_ARGS[1]}  # the same expression; the parallel and serial passes add to it
@@ -89,7 +96,7 @@ DOC_WALK_GUARDS=(tests/sentry/ tests/secret_providers/test_leak_sentry.py)
 ROOT=$(git rev-parse --show-toplevel) || exit 2
 VENV=${DECOY_VENV:-${UV_PROJECT_ENVIRONMENT:-$ROOT/.venv}}
 BIN=$VENV/bin
-KEEP=0 BASELINE=0 FULL=0 BASEFILE='' WRITEBASE='' ORDERFROM='' SHARD='' STEPS=env,ruff,format,mypy,sentry,licenses,tests PATHS=()
+KEEP=0 BASELINE=0 FULL=0 BASEFILE='' WRITEBASE='' ORDERFROM='' SHARD='' STEPS=env,ruff,format,mypy,sentry,layers,licenses,tests PATHS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --keep-going) KEEP=1 ;;
@@ -109,6 +116,21 @@ done
 # A baseline verdict compares every step, so a step skipped after an early failure can never
 # read as shared with main.
 if [ $BASELINE = 1 ]; then KEEP=1; fi
+for name in ${STEPS//,/ }; do
+  case $name in env|ruff|format|mypy|sentry|layers|licenses|tests) ;; *) echo "gates: unknown step $name" >&2; exit 2 ;; esac
+done
+LAYER_VENV=$ROOT/.venv-layers
+LAYER_PY=$(bash "$ROOT/scripts/dev/lock_version.sh" --python) || exit 2
+# Deps only: the package is imported from the tree under test through PYTHONPATH, so a baseline
+# worktree never re-points this venv.
+LAYER_SYNC=(uv sync -q --project "$ROOT" --frozen --no-install-project --extra dev --extra layers --python "$LAYER_PY")
+LAYERS_ONLY=0
+if [ "$STEPS" = layers ]; then
+  # The layer venv is the only venv this run needs, so it also runs the reporter.
+  LAYERS_ONLY=1
+  UV_PROJECT_ENVIRONMENT=$LAYER_VENV ${LAYER_SYNC[@]+"${LAYER_SYNC[@]}"} >&2 || { echo "gates: FAIL: could not sync $LAYER_VENV" >&2; exit 2; }
+  VENV=$LAYER_VENV BIN=$LAYER_VENV/bin
+fi
 [ -x "$BIN/python" ] || { echo "gates: no venv at $VENV; run scripts/dev/bootstrap.sh" >&2; exit 2; }
 if [ -n "$ORDERFROM" ] && [ -z "$WRITEBASE" ]; then
   echo "gates: --order-from only applies to --write-baseline (a compare orders by the baseline it reads)" >&2; exit 2
@@ -171,7 +193,7 @@ changed_tests() {
   deps=$(printf '%s\n' "$lines" | grep -E '^[so] ' || true)  # none is normal
   scanned=$(printf '%s\n' "$deps" |
     "$BIN/python" "$ROOT/scripts/dev/_select_tests.py" --root "$ROOT" --src-strip "$SRC_STRIP") || return 1
-  { printf '%s\n' "$lines" | sed -n 's/^t //p'; printf '%s\n' "$scanned"; } | grep -v '^$' | LC_ALL=C sort -u || true
+  { printf '%s\n' "$lines" | sed -n 's/^t //p'; printf '%s\n' "$scanned"; } | grep -v '^$' | grep -vxF "$LAYER_TEST" | LC_ALL=C sort -u || true
 }
 
 # 0 when f matches NON_CODE_GLOBS (pure documentation or repo metadata).
@@ -202,6 +224,8 @@ TESTS_REQUIRED=0
 if [ $FULL = 1 ] && [ ${#PATHS[@]} -eq 0 ]; then
   PATHS=(tests)
   SELECTION="full suite (tests)"
+elif [ ${#PATHS[@]} -eq 0 ] && [ $LAYERS_ONLY = 1 ]; then
+  SELECTION="none: the layers step runs only $LAYER_TEST"
 elif [ ${#PATHS[@]} -eq 0 ]; then
   if ! git -C "$ROOT" rev-parse -q --verify origin/main >/dev/null; then
     echo "gates: origin/main missing; run: git fetch origin main" >&2; exit 2
@@ -388,6 +412,12 @@ combine_rc() {  # $1 parallel-pass rc, $2 serial-pass rc
   if [ "$a" = 1 ] || [ "$b" = 1 ]; then echo 1; else echo 0; fi
 }
 
+# The layers step: sync the layer venv, then run only the layer test in it (pytest args in $@).
+layer_step() {
+  UV_PROJECT_ENVIRONMENT=$LAYER_VENV ${LAYER_SYNC[@]+"${LAYER_SYNC[@]}"} || { echo "gates: could not sync $LAYER_VENV"; return 2; }
+  "$LAYER_VENV/bin/python" -m pytest "$@" "$LAYER_TEST"
+}
+
 # Baseline pass only: 0 when the branch passed or skipped step $1, so main is not rerun for it.
 branch_step_ok() {
   awk -F'\t' -v n="$1" '$1 == n { found = 1; if ($2 == 0 || $2 == -1) ok = 1 } END { exit !(found && ok) }' "$OUT/branch.steps"
@@ -410,7 +440,8 @@ run_steps() {  # $1 label, $2 tree
       # ratchet_check first (baselines never grow); skipped in trees that predate it (the baseline worktree)
       sentry)
         # strict: the gate venv is the certified profile, so a registry entry that cannot be verified is a failure
-        cmd=(env DECOY_GATE_VENV_STRICT=1 bash -c 'if [ -f scripts/dev/ratchet_check.py ]; then "$0" scripts/dev/ratchet_check.py || exit 1; fi; exec "$0" -m pytest "$@"' "$BIN/python" ${junit[@]+"${junit[@]}"} ${SENTRY_PATHS[@]+"${SENTRY_PATHS[@]}"}) ;;
+        cmd=(env DECOY_GATE_VENV_STRICT=1 bash -c 'if [ -f scripts/dev/ratchet_check.py ]; then "$0" scripts/dev/ratchet_check.py || exit 1; fi; exec "$0" -m pytest "$@"' "$BIN/python" ${junit[@]+"${junit[@]}"} ${LAYER_IGNORE[@]+"${LAYER_IGNORE[@]}"} ${SENTRY_PATHS[@]+"${SENTRY_PATHS[@]}"}) ;;
+      layers) cmd=(layer_step ${junit[@]+"${junit[@]}"}) ;;
       # strict: a venv that drifted from uv.lock fails instead of skipping the metadata check
       licenses)
         lic=(); for p in ${LICENSE_TESTS[@]+"${LICENSE_TESTS[@]}"}; do [ -e "$tree/$p" ] && lic+=("$p"); done
@@ -434,10 +465,10 @@ run_steps() {  # $1 label, $2 tree
           w=1; note=" (serial: this tree has no tests/_xdist_safe_reports.py)"
         fi
         if [ "$w" -gt 1 ]; then
-          cmd=(${pyt[@]+"${pyt[@]}"} ${jbase[@]+"${jbase[@]}"} -m "($PYTEST_MARK) and not serial" -n "$w" --dist loadfile ${tests[@]+"${tests[@]}"})
-          cmd2=(${pyt[@]+"${pyt[@]}"} -p no:cacheprovider -q -rfE -o junit_family=xunit1 "--junitxml=$OUT/$label-tests-serial.xml" "--basetemp=$TMP_ROOT/$label-tests-serial" ${tmpargs[@]+"${tmpargs[@]}"} -m "($PYTEST_MARK) and serial" ${tests[@]+"${tests[@]}"})
+          cmd=(${pyt[@]+"${pyt[@]}"} ${jbase[@]+"${jbase[@]}"} -m "($PYTEST_MARK) and not serial" -n "$w" --dist loadfile ${LAYER_IGNORE[@]+"${LAYER_IGNORE[@]}"} ${tests[@]+"${tests[@]}"})
+          cmd2=(${pyt[@]+"${pyt[@]}"} -p no:cacheprovider -q -rfE -o junit_family=xunit1 "--junitxml=$OUT/$label-tests-serial.xml" "--basetemp=$TMP_ROOT/$label-tests-serial" ${tmpargs[@]+"${tmpargs[@]}"} -m "($PYTEST_MARK) and serial" ${LAYER_IGNORE[@]+"${LAYER_IGNORE[@]}"} ${tests[@]+"${tests[@]}"})
         else
-          cmd=(${pyt[@]+"${pyt[@]}"} ${junit[@]+"${junit[@]}"} ${tests[@]+"${tests[@]}"})
+          cmd=(${pyt[@]+"${pyt[@]}"} ${junit[@]+"${junit[@]}"} ${LAYER_IGNORE[@]+"${LAYER_IGNORE[@]}"} ${tests[@]+"${tests[@]}"})
         fi ;;
       *) echo "gates: unknown step $name" >&2; exit 2 ;;
     esac
@@ -451,6 +482,7 @@ run_steps() {  # $1 label, $2 tree
       rc=-1; cmd=("(not applicable: the diff touches no code paths)")
     elif [ "$name" = tests ] && [ ${#tests[@]} -eq 0 ]; then rc=-1; cmd=("(no test paths present)")
     elif [ "$name" = licenses ] && [ ${#lic[@]} -eq 0 ]; then rc=-1; cmd=("(no license tests in this tree)")
+    elif [ "$name" = layers ] && [ ! -f "$tree/$LAYER_TEST" ]; then rc=-1; cmd=("(not applicable: this tree predates $LAYER_TEST)")
     elif [ "$name" = env ] && [ "$label" = baseline ]; then rc=-1; cmd=("(same venv as branch)")
     else
       echo "gates: [$label] $name ..." >&2

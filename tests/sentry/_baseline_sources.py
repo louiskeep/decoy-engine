@@ -96,6 +96,26 @@ def toml_keys(rel: str) -> Callable[[], set[str]]:
     return keys
 
 
+def import_layer_keys(rel: str, contract: str) -> Callable[[], set[str]]:
+    """``<contract>::<importer> -> <imported>`` for each ignore line of an import-linter config.
+
+    Layer membership is not keyed here: it is the exact snapshot in ``test_import_layers.py``.
+    """
+
+    def keys() -> set[str]:
+        path = SENTRY / "layout" / "_layout.py"
+        spec = importlib.util.spec_from_file_location("_bl_layout", path)
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod  # dataclasses in the module look themselves up here
+        spec.loader.exec_module(mod)
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        return {f"{contract}::{key}" for key in mod.ignore_keys(text)}
+
+    return keys
+
+
 @dataclass(frozen=True)
 class Source:
     sentry_id: str
@@ -143,6 +163,7 @@ SOURCES: tuple[Source, ...] = (
         in_code("layout/test_package_fanout.py", "FANOUT_ALLOWLIST"),
         maxes=in_code("layout/test_package_fanout.py", "FANOUT_ALLOWLIST").maxes,
     ),
+    Source("import-layers", ".importlinter", import_layer_keys(".importlinter", "layers")),
     Source(
         "public-import-boundary",
         "test_public_import_boundary.py",

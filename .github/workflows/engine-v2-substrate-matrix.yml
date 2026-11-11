@@ -39,4 +39,7 @@ jobs:
         # codspeed + packaging excluded too (they need optional extras not in
         # [dev]: tests/codspeed uses the pytest-codspeed `benchmark` fixture),
         # matching the regression-gate selector in ci.yml.
-        run: pytest tests -m "not benchmark and not codspeed and not packaging" --tb=short
+        # The layer test needs import-linter (not in this profile); ci.yml's layers-gate owns it.
+        run: >
+          pytest tests -m "not benchmark and not codspeed and not packaging"
+          --ignore=tests/sentry/layout/test_import_layers.py --tb=short
