@@ -32,6 +32,7 @@ from decoy_engine.fileaccess._output import (
     PRIVATE_LABELS,
     STAGE_PREFIX,
     STAGE_SUFFIX,
+    _call,
     make_parent_dir_at,
     make_stage_dir_at,
 )
@@ -216,12 +217,7 @@ def _sync_dir(directory: Path) -> None:
 def _open_dir(directory: Path) -> int:
     """Open an existing directory by path, following links as the ambient policy always has.
     A failure keeps only its errno: the stock text names the path."""
-    code = 0
-    try:
-        return os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
-    except OSError as exc:
-        code = exc.errno or errno.EIO
-    raise OSError(code, os.strerror(code))
+    return _call(os.open, directory, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
 
 
 def _open_dir_creating(directory: Path) -> int:
