@@ -416,5 +416,7 @@ exclude_patterns = [
     "decisions/**",
     "v2/**",
     "review-notes/**",
+    # The QA checklist is a working doc for QA passes, not product reference.
+    "qa/**",
     "remediation-source.md",
 ]
