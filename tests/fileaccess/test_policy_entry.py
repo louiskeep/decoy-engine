@@ -280,6 +280,7 @@ def test_a_collected_bound_iterator_closes_without_touching_the_current_context(
             gc.set_threshold(700)
         gc.collect()
         assert _entry._CURRENT.get() is None
+        assert not _entry._ANCHORS, len(_entry._ANCHORS)
         print("ok")
         """
     )
@@ -287,6 +288,78 @@ def test_a_collected_bound_iterator_closes_without_touching_the_current_context(
         [sys.executable, "-c", code], capture_output=True, text=True, timeout=120
     )
     assert out.returncode == 0 and out.stdout.strip() == "ok", (out.returncode, out.stderr)
+
+
+def _two() -> Iterator[int]:
+    yield 1
+    yield 2
+
+
+def _raises() -> Iterator[int]:
+    yield 1
+    raise ValueError("boom")
+
+
+def test_every_way_a_bound_iterator_ends_releases_its_anchor() -> None:
+    from decoy_engine.fileaccess import _entry
+
+    exhausted = bind_iterator(_Marker("p"), _two())
+    assert list(exhausted) == [1, 2]
+    assert id(exhausted) not in _entry._ANCHORS
+
+    closed = bind_iterator(_Marker("p"), _two())
+    next(closed)
+    closed.close()  # type: ignore[attr-defined]
+    assert id(closed) not in _entry._ANCHORS
+
+    raised = bind_iterator(_Marker("p"), _raises())
+    next(raised)
+    with pytest.raises(ValueError):
+        next(raised)
+    held = id(raised)
+    del raised
+    gc.collect()
+    assert held not in _entry._ANCHORS
+
+    dropped = bind_iterator(_Marker("p"), _two())
+    next(dropped)
+    held = id(dropped)
+    del dropped
+    gc.collect()
+    assert held not in _entry._ANCHORS
+
+
+def _bind_self_holding(closed: list[int]) -> None:
+    box: list[Any] = []
+
+    def gen() -> Iterator[Any]:
+        try:
+            yield 1
+            yield box[0]
+        finally:
+            closed.append(1)
+
+    it = bind_iterator(_Marker("p"), gen())  # type: ignore[arg-type]
+    box.append(it)  # the generator's frame now reaches its own wrapper
+    next(it)
+
+
+def test_a_generator_that_holds_its_own_wrapper_is_never_collected() -> None:
+    # Known limit, pinned so a change to it is deliberate: the anchor keeps the generator
+    # reachable, so a cycle through the generator's own frame back to its wrapper never dies
+    # and the generator's `finally` never runs. No engine caller has this shape.
+    from decoy_engine.fileaccess import _entry
+
+    closed: list[int] = []
+    before = set(_entry._ANCHORS)
+    _bind_self_holding(closed)
+    gc.collect()
+    gc.collect()
+    leaked = [key for key in _entry._ANCHORS if key not in before]
+    assert closed == [] and len(leaked) == 1
+    for key in leaked:
+        _entry._ANCHORS.pop(key).close()  # type: ignore[attr-defined]
+    assert closed == [1]
 
 
 def test_entry_point_generator_keeps_its_policy(nothing_installed: None) -> None:

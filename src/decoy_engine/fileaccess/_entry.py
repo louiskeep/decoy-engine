@@ -205,6 +205,9 @@ def position_key(suffix: str) -> str:
 # wrapper and its generator die together in a cycle the collector may finalize the generator
 # first, running its `finally` in whatever context is current. Holding the generator here
 # keeps it out of the cycle until the wrapper's `__del__` has closed it in its own context.
+# Known limit: a generator whose own frame reaches its wrapper is then reachable from here, so
+# that cycle never dies and the generator's `finally` never runs (pinned by
+# `test_a_generator_that_holds_its_own_wrapper_is_never_collected`; no engine caller does this).
 _ANCHORS: dict[int, Iterator[Any]] = {}
 
 
@@ -218,6 +221,10 @@ class _BoundIterator:
     `ContextVar.set` on this thread and free the map that call is still reading (a segfault
     on CPython 3.10). Values the consumer sets after binding are not seen by the iterator,
     and values the iterator sets do not reach the consumer.
+
+    Advancing the iterator from inside its own generator, or from two threads at once, raises
+    `RuntimeError` (the context is already entered) rather than `ValueError`. Advancing it from
+    different threads one after another is fine.
     """
 
     def __init__(self, policy: FileAccess, it: Iterable[Any]) -> None:
