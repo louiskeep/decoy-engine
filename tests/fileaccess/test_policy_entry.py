@@ -192,6 +192,52 @@ def test_bound_iterator_closes_the_generator_under_its_policy() -> None:
     assert closed == ["a"]
 
 
+def test_a_collected_bound_iterator_closes_without_touching_the_current_context() -> None:
+    # The collector runs `__del__` at any allocation, including the node allocations inside
+    # another `ContextVar.set`. A finalizer that set and reset a variable on the current
+    # context there freed the map that set was still reading (a segfault on CPython 3.10).
+    # Each pass leaves one bound iterator in a cycle and lowers the gen-0 threshold so the
+    # collection lands at a different allocation of the next `set`; the sweep crosses the
+    # node allocation. Runs in a child so a crash fails this test, not the worker.
+    code = textwrap.dedent(
+        """
+        import gc
+
+        from decoy_engine.fileaccess import _entry
+
+        class Marker:
+            def __init__(self, name):
+                self.name = name
+
+        def gen():
+            yield 1
+            yield 2
+
+        outer = Marker("outer")
+        for n in range(600):
+            gc.disable()
+            it = _entry.bind_iterator(Marker("bound"), gen())
+            next(it)
+            cycle = [it]
+            cycle.append(cycle)
+            del it, cycle
+            gc.set_threshold(1 + n % 60)
+            gc.enable()
+            token = _entry._CURRENT.set(outer)
+            assert _entry._CURRENT.get() is outer
+            _entry._CURRENT.reset(token)
+            gc.set_threshold(700)
+        gc.collect()
+        assert _entry._CURRENT.get() is None
+        print("ok")
+        """
+    )
+    out = subprocess.run(  # noqa: S603 - runs this interpreter on a fixed script
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=120
+    )
+    assert out.returncode == 0 and out.stdout.strip() == "ok", (out.returncode, out.stderr)
+
+
 def test_entry_point_generator_keeps_its_policy(nothing_installed: None) -> None:
     @entry_point
     def stream(n: int, *, file_access: Any = None) -> Iterator[str]:

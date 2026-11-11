@@ -232,8 +232,13 @@ class _BoundIterator:
             self._run(closer)
 
     def __del__(self) -> None:
+        # The collector can run this finalizer from inside another `ContextVar.set` on this
+        # thread. CPython 3.10 updates the context's variable map through a borrowed pointer
+        # there, so a set and reset on the current context here frees the map that call is
+        # still reading, and the process segfaults. Closing inside a copy of the context
+        # keeps every change off the current one.
         try:
-            self.close()
+            contextvars.copy_context().run(self.close)
         except Exception:
             pass
 
