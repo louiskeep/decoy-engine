@@ -131,6 +131,8 @@ def test_positive_control_types_are_certified_where_available() -> None:
     )
 
 
+# Spawns the full determinism matrix: about 260 s alone, so 3x that as the limit.
+@pytest.mark.timeout(780)
 @pytest.mark.determinism_harness
 @pytest.mark.skipif(not _GOLDEN, reason="golden_digests.json is empty or not yet generated")
 def test_full_matrix_against_golden(tmp_path: Path) -> None:
