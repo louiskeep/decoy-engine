@@ -123,6 +123,14 @@ class DateIso(ContractModel):
     logical = "date"
 
 
+class BooleanText(ContractModel):
+    """Generation-only: a generated `output_type: bool` cell. F06 declared columns do not gain a
+    boolean logical type from it (`contracts.declared_casting._LOGICAL_FOR` leaves it out)."""
+
+    id: Literal["boolean/text/v1"]
+    logical = "boolean"
+
+
 class DateStrptime(ContractModel):
     id: Literal["date/strptime/v1"]
     format: str
@@ -346,6 +354,7 @@ PARSE_MODELS: dict[str, type[ContractModel]] = {
         DecimalPlain,
         DecimalGrouped,
         DateIso,
+        BooleanText,
         DateStrptime,
         Currency,
         Overpunch,
@@ -362,6 +371,7 @@ OUTPUT_MODELS: dict[str, type[ContractModel]] = {
         DecimalPlainOut,
         DecimalGroupedOut,
         DateIsoOut,
+        BooleanText,
         DateStrftime,
         CurrencyOut,
         Overpunch,

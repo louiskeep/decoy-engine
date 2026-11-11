@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from tests._dp_cert import is_certified_dp_env, should_skip_dp
+from tests._lenient_checks import LENIENT_CHECK_TARGETS
 
 # Registers the xdist-worker report scrubber (a lone surrogate in a captured log would otherwise
 # abort a parallel run with an INTERNALERROR). Inert outside an xdist worker.
@@ -158,3 +159,16 @@ def _default_throwaway_secret(request: pytest.FixtureRequest, monkeypatch: pytes
     if request.node.get_closest_marker("no_default_secret") or "/tests/secret_providers/" in path:
         return
     _install_default_secret(monkeypatch)
+
+
+@pytest.fixture
+def lenient_generate_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip the compile-time generate column checks (GEN-STRICT E2) for a runtime-backstop test.
+
+    A few suites feed the generators configs that validate no longer accept (an unknown faker type
+    that falls back to `word`, a formula reading an unlisted sibling) to pin what the run does
+    with them if one gets past the plan. The check has its own tests in
+    tests/unit/plan/checks; this keeps the runtime behavior covered.
+    """
+    for target in LENIENT_CHECK_TARGETS:
+        monkeypatch.setattr(target, lambda *a, **k: None)

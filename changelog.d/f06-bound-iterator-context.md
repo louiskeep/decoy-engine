@@ -1,0 +1,3 @@
+### Fixed (bound iterators run in one private context, F06-CRASH, 2026-11-11)
+
+A bound iterator (`bind_iterator`) now runs every step, including a close from the garbage collector, in one private context copied when it was bound. This stops a worker crash on CPython 3.10 when the collector finalized a bound iterator inside another `ContextVar.set`. ContextVar values the consumer sets after binding are no longer seen by the iterator, and values the iterator sets no longer reach the consumer. Advancing one from inside its own generator, or from two threads at once, raises `RuntimeError` instead of `ValueError`.

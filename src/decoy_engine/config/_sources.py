@@ -15,15 +15,18 @@ and forbidden otherwise, enforced below.
 
 CSV-PARAMS (delimited input hardening): `FileSource` grows three optional
 delimited-dialect fields -- `has_header`, `column_names`, `delimiter` --
-so a headerless or non-comma delimited file can be declared. Additive
-(all three default to today's behaviour: a comma CSV with a header row),
-so existing configs are unaffected. The fields are csv-only; setting any
-on a parquet/fixed_width source is a validation error. The reserved
-`ValidationCode.SOURCE_FILE_*` entries (no_header_columns,
-column_names_with_header, bad_delimiter, csv_param_on_non_csv,
-bad_has_header_type) name these exact checks; config validation is
-pydantic here (the engine has no ValidationResult-based config path), so
-each check raises `ValueError` with the corresponding semantic.
+so a headerless or non-comma delimited file can be declared. The fields
+are csv-only; setting any on a parquet/fixed_width source is a validation
+error.
+
+CONFIG-EXPLICIT E1 (pre-GA correction): a csv source must
+set `has_header`; the old silent default of `true` is gone. A headerless
+file names its columns inline (`column_names`) or in a one-record header
+file (`column_names_file`). The coded checks raise `PydanticCustomError`
+with their `reasons.config` code (has_header_required,
+column_names_source_conflict, column_names_with_header, no_header_columns,
+csv_param_on_non_csv); the name-list and delimiter checks stay plain
+`ValueError`.
 
 Credentials: `credentials_ref` is OPAQUE to the engine. The engine treats
 it as a string identifier the platform layer resolves against its
@@ -41,18 +44,28 @@ https://docs.pydantic.dev/latest/concepts/unions/#discriminated-unions.
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
+from urllib.parse import SplitResult, urlsplit
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
     SerializerFunctionWrapHandler,
+    ValidationInfo,
+    field_validator,
     model_serializer,
     model_validator,
 )
+from pydantic_core import PydanticCustomError
 
-from decoy_engine.config._csv_dialect import CSV_DIALECT_DEFAULTS, csv_dialect_problem
+from decoy_engine import reasons
+from decoy_engine.config._csv_dialect import (
+    CSV_DIALECT_DEFAULTS,
+    DIALECT_PROBLEM_CODES,
+    csv_dialect_problem,
+)
 from decoy_engine.config._fixed_width import FixedWidthLayout
+from decoy_engine.errors import ConfigRuleError
 
 
 def _strip_serialization(node: Any) -> Any:
@@ -73,19 +86,19 @@ class FileSource(BaseModel):
     `FixedWidthLayout` for the schema contract); it is required for
     that format and forbidden for `csv` / `parquet`.
 
-    `has_header` / `column_names` / `delimiter` are csv-only delimited-dialect
-    controls. They default to today's behaviour (a comma-delimited file whose
-    first row is the header), so an existing `format: csv` source keeps reading
-    exactly as before. To read a headerless file, set `has_header: false` and
-    supply `column_names` (the names your mask rules key on); otherwise the
-    columns would get pandas' positional `0,1,2...` names and no rule matches.
+    `has_header` / `column_names` / `column_names_file` / `delimiter` are
+    csv-only delimited-dialect controls. A csv source must set `has_header`:
+    `true` when the first row names the columns, or `false` with the names given
+    inline (`column_names`) or in a one-record header file (`column_names_file`),
+    since a wrong guess silently reads a data row as names or names as data.
+    `delimiter` defaults to a comma.
     """
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     type: Literal["file"]
     format: Literal["csv", "parquet", "fixed_width"]
-    path: str
+    path: str = Field(json_schema_extra={"x-decoy-path": True})
     layout: FixedWidthLayout | None = Field(
         default=None,
         description=(
@@ -93,11 +106,13 @@ class FileSource(BaseModel):
             "format, forbidden (must be omitted/None) for csv/parquet."
         ),
     )
-    has_header: bool = Field(
-        default=CSV_DIALECT_DEFAULTS.has_header,
+    # `None` means "not given", which a csv source refuses; it is not a dialect default.
+    has_header: bool | None = Field(
+        default=None,
+        validate_default=True,
         description=(
-            "csv only. Whether the first row is a header. Set false for a "
-            "headerless file and supply `column_names`."
+            "csv only, and required for csv. Whether the first row is a header. Set false "
+            "for a headerless file and supply `column_names` or `column_names_file`."
         ),
     )
     column_names: list[str] | None = Field(
@@ -105,6 +120,15 @@ class FileSource(BaseModel):
         description=(
             "csv only. Column names for a headerless file (has_header=false); "
             "required in that case, forbidden when has_header is true."
+        ),
+    )
+    column_names_file: str | None = Field(
+        default=None,
+        min_length=1,
+        json_schema_extra={"x-decoy-path": True},
+        description=(
+            "csv only. Path to a one-record header file naming the columns of a "
+            "headerless file (has_header=false); the alternative to `column_names`."
         ),
     )
     delimiter: str = Field(
@@ -115,12 +139,28 @@ class FileSource(BaseModel):
         ),
     )
 
+    @field_validator("has_header")
+    @classmethod
+    def _require_csv_has_header(cls, value: bool | None, info: ValidationInfo) -> bool | None:
+        # A failed `format` is absent here; its own error stands and this adds none.
+        source_format = info.data.get("format")
+        if value is None and source_format == "csv":
+            raise PydanticCustomError(
+                reasons.config.SOURCE_FILE_HAS_HEADER_REQUIRED,
+                "csv sources must set has_header: add `has_header: true` if the first row "
+                "names the columns (the old default), or `has_header: false` with "
+                "`column_names` or `column_names_file`.",
+            )
+        return value
+
     @model_validator(mode="after")
     def _validate_layout_matches_format(self) -> FileSource:
         if self.format == "fixed_width" and self.layout is None:
-            raise ValueError("FileSource: format='fixed_width' requires a `layout` column-spec")
+            raise ConfigRuleError(
+                "FileSource: format='fixed_width' requires a `layout` column-spec"
+            )
         if self.format != "fixed_width" and self.layout is not None:
-            raise ValueError(
+            raise ConfigRuleError(
                 "FileSource: `layout` is only valid when format='fixed_width' "
                 f"(got format={self.format!r})"
             )
@@ -128,37 +168,53 @@ class FileSource(BaseModel):
 
     @model_validator(mode="after")
     def _validate_delimited_params(self) -> FileSource:
-        # The delimited-dialect fields are csv-only. `has_header`/`delimiter`
-        # have non-None defaults, so "was it set on a non-csv source?" is read
-        # from model_fields_set, not from the value (source_file.csv_param_on_non_csv).
+        # The delimited-dialect fields are csv-only. `delimiter` has a non-None
+        # default, so "was it set on a non-csv source?" is read from
+        # model_fields_set, not from the value (source_file.csv_param_on_non_csv).
         if self.format != "csv":
-            offenders = sorted({"has_header", "column_names", "delimiter"} & self.model_fields_set)
+            offenders = sorted(
+                {"has_header", "column_names", "column_names_file", "delimiter"}
+                & self.model_fields_set
+            )
             if offenders:
-                raise ValueError(
-                    "FileSource: delimited params "
-                    f"({', '.join(offenders)}) are only valid when format='csv' "
-                    f"(got format={self.format!r})"
+                # Pre-formatted: pydantic reads braces in the message as template fields.
+                message = (
+                    f"FileSource: delimited params ({', '.join(offenders)}) are only valid "
+                    f"when format='csv' (got format={self.format!r})"
                 )
+                raise PydanticCustomError(reasons.config.SOURCE_FILE_CSV_PARAM_ON_NON_CSV, message)
             return self
-        problem = csv_dialect_problem(self.has_header, self.column_names, self.delimiter)
+        problem = csv_dialect_problem(
+            self.has_header,
+            self.column_names,
+            self.delimiter,
+            column_names_file=self.column_names_file,
+        )
+        if problem in DIALECT_PROBLEM_CODES:
+            raise PydanticCustomError(DIALECT_PROBLEM_CODES[problem], f"FileSource: {problem}")
         if problem is not None:
-            raise ValueError(f"FileSource: {problem}")
+            # The name-list and delimiter checks stay uncoded.
+            raise ConfigRuleError(f"FileSource: {problem}")
         return self
 
     @model_serializer(mode="wrap")
     def _omit_default_delimited_params(
         self, handler: SerializerFunctionWrapHandler
     ) -> dict[str, Any]:
-        # The delimited params at their defaults stay out of the dump, so a csv
-        # source that never sets them round-trips and persists byte-identically to
-        # before the fields existed, and an older engine can re-validate the dump.
-        # (`pipeline_config_hash` already excludes `sources`; this keeps the config
-        # dump itself stable, not that hash.) An explicit default means the same as
-        # an omitted one, so both drop.
+        # `column_names` and `delimiter` at their defaults stay out of the dump; an
+        # explicit default means the same as an omitted one, so both drop. A csv dump
+        # always carries `has_header`, the required answer, and a non-csv dump never
+        # does. (`pipeline_config_hash` excludes `sources`; the physical plan hash
+        # sees the dump.) `exclude_none` would also drop `layout: None`, which stays.
         data: dict[str, Any] = handler(self)
         for name in CSV_DIALECT_DEFAULTS._fields:
+            if name == "has_header":
+                continue
             if data.get(name) == getattr(CSV_DIALECT_DEFAULTS, name):
                 data.pop(name, None)
+        for name in ("has_header", "column_names_file"):
+            if name in data and data[name] is None:
+                del data[name]
         return data
 
     @classmethod
@@ -175,6 +231,30 @@ class FileSource(BaseModel):
         return schema
 
 
+def _endpoint_refused() -> PydanticCustomError:
+    """The one refusal for a bad endpoint_url. It names the field and never the submitted value."""
+    return PydanticCustomError(
+        str(reasons.config.ENDPOINT_URL_INVALID), "endpoint_url is not an acceptable URL."
+    )
+
+
+# Every `FileSource` field that names a file, read from the `x-decoy-path` marker so a new
+# path field joins by declaring the marker, not by editing a second list.
+FILE_SOURCE_PATH_FIELDS: tuple[str, ...] = tuple(
+    name
+    for name, field in FileSource.model_fields.items()
+    if isinstance(field.json_schema_extra, dict) and field.json_schema_extra.get("x-decoy-path")
+)
+
+
+def _marked(model: type[BaseModel], marker: str) -> tuple[str, ...]:
+    return tuple(
+        name
+        for name, field in model.model_fields.items()
+        if isinstance(field.json_schema_extra, dict) and field.json_schema_extra.get(marker)
+    )
+
+
 class S3Source(BaseModel):
     """An S3 (or S3-compatible) CSV / Parquet source.
 
@@ -188,11 +268,14 @@ class S3Source(BaseModel):
 
     type: Literal["s3"]
     format: Literal["csv", "parquet"]
-    bucket: str = Field(..., min_length=1, max_length=255)
-    key: str = Field(..., min_length=1)
-    region: str | None = None
+    bucket: str = Field(
+        ..., min_length=1, max_length=255, json_schema_extra={"x-decoy-locator": True}
+    )
+    key: str = Field(..., min_length=1, json_schema_extra={"x-decoy-path": True})
+    region: str | None = Field(default=None, json_schema_extra={"x-decoy-locator": True})
     endpoint_url: str | None = Field(
         default=None,
+        json_schema_extra={"x-decoy-locator": True},
         description=(
             "Override the AWS endpoint (e.g. http://localhost:9000 for MinIO, "
             "https://<account>.r2.cloudflarestorage.com for Cloudflare R2). "
@@ -201,12 +284,34 @@ class S3Source(BaseModel):
     )
     credentials_ref: str | None = Field(
         default=None,
+        json_schema_extra={"x-decoy-locator": True},
         description=(
             "Opaque credentials identifier the platform resolves at run time. "
             "The engine never sees raw secrets; when None the SDK walks its "
             "default credential chain (env vars / instance profile / etc.)."
         ),
     )
+
+    @field_validator("endpoint_url")
+    @classmethod
+    def _endpoint_is_a_host(cls, value: str | None) -> str | None:
+        """An endpoint names a service. Userinfo is a credential and a query string is a
+        request, and either would be echoed by every log line that prints the descriptor."""
+        if value is None:
+            return value
+        lowered = value.lower()
+        if any(mark in lowered for mark in ("@", "?", "#", "%40", "%3f", "%23")):
+            raise _endpoint_refused()
+        parts: SplitResult | None = None
+        try:
+            parts = urlsplit(value)
+            parts.port  # noqa: B018 - raises ValueError on a malformed port
+        except ValueError:
+            # Refuse below, outside the except: the ValueError quotes the endpoint and must not stay as __context__.
+            parts = None
+        if parts is None or parts.scheme not in ("http", "https") or not parts.hostname:
+            raise _endpoint_refused()
+        return value
 
 
 class GCSSource(BaseModel):
@@ -220,10 +325,13 @@ class GCSSource(BaseModel):
 
     type: Literal["gcs"]
     format: Literal["csv", "parquet"]
-    bucket: str = Field(..., min_length=1, max_length=255)
-    object: str = Field(..., min_length=1)
+    bucket: str = Field(
+        ..., min_length=1, max_length=255, json_schema_extra={"x-decoy-locator": True}
+    )
+    object: str = Field(..., min_length=1, json_schema_extra={"x-decoy-path": True})
     credentials_ref: str | None = Field(
         default=None,
+        json_schema_extra={"x-decoy-locator": True},
         description=(
             "Opaque credentials identifier the platform resolves at run time. "
             "The engine never sees raw secrets; when None the SDK uses GCP "
@@ -236,3 +344,23 @@ SourceDescriptor = Annotated[
     FileSource | S3Source | GCSSource,
     Field(discriminator="type"),
 ]
+
+
+# Every source field that names a file or an object, across all source types (`x-decoy-path`):
+# a record that stores a descriptor reduces these to their last segment when it is shared.
+SOURCE_PATH_FIELDS: tuple[str, ...] = tuple(
+    dict.fromkeys(
+        (
+            *FILE_SOURCE_PATH_FIELDS,
+            *_marked(S3Source, "x-decoy-path"),
+            *_marked(GCSSource, "x-decoy-path"),
+        )
+    )
+)
+
+# Fields that locate or authorize remote storage (`x-decoy-locator`: bucket, endpoint, region,
+# credentials reference) but are not paths: sharing a record
+# that carries one cannot reduce it, so the export lists the record as unstripped.
+SOURCE_LOCATOR_FIELDS: tuple[str, ...] = tuple(
+    dict.fromkeys((*_marked(S3Source, "x-decoy-locator"), *_marked(GCSSource, "x-decoy-locator")))
+)

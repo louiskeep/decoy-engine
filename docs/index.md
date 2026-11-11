@@ -10,6 +10,7 @@ New to Decoy? Start with the quickstart, then the recipes.
 - [Recipes](recipes.md): five runnable recipes (CSV, folder + FKs, generate, detect PII, CI).
 - [Strategy catalog](strategies.md): every mask and generation strategy.
 - [Free-text NER](guides/free-text-ner.md): activating spaCy person-name/location detection on `text_redact`.
+- [Unique generated columns](guides/generate-uniqueness.md): `unique`, `unique_together` and `pooled` on generate columns; the domain checks and refusal codes.
 - [Relationships](relationships.md): foreign-key and referential-integrity preservation.
 - [Declared parsing, casting and quarantine](declared-casting.md): per-column parse formats, sentinels, error policies and output formats.
 - [Determinism](determinism.md): the seed and key protocol; what is and is not deterministic.
@@ -54,6 +55,7 @@ link to GitHub rather than into the rendered API reference.
 ## Reference
 
 - [Capability matrix](capability-matrix.md): what the engine can and cannot do, by strategy and route.
+- [Distribution integrity developer reference](distribution-integrity/index.md): snapshots, fidelity scoring, the quality report and policy, statistical generation, the differential-privacy fit and its certified stack, and where to extend each.
 - [Execution backends and route coverage](execution-backends.md): which backend (compiled Rust, Arrow, or Python) computes each masking strategy per route, and where a shape is declined with a caller-visible reason; generation is Python/NumPy by design.
 - [Reason codes and progress events](reasons.md): the versioned reason registry, retry classes, outcome categories and the version-1 progress event schema.
 - [Compatibility contract](compatibility-contract.md): the frozen public surface and what changing it means.
@@ -79,6 +81,7 @@ quickstart
 recipes
 strategies
 guides/free-text-ner
+guides/generate-uniqueness
 relationships
 determinism
 cli
@@ -92,6 +95,7 @@ acceptance-test-flight
 :caption: Reference
 
 capability-matrix
+distribution-integrity/index
 execution-backends
 compatibility-contract
 native/supported-matrix

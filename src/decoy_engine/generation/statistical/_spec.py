@@ -51,9 +51,28 @@ from typing import Any
 from decoy_engine import fileaccess, reasons
 from decoy_engine.errors import DecoyError
 from decoy_engine.fileaccess import FileRole
+from decoy_engine.generation.statistical._cell_format import (
+    CellFormat,
+    cell_format_from_dict,
+    decode_cell_format,
+)
+from decoy_engine.generation.statistical._numeric_shape import (
+    decode_numeric_shape,
+    numeric_shape_withheld,
+    redacted_fix_hint,
+)
+from decoy_engine.profiling import (
+    POLICY_RAW,
+    POLICY_REDACTED,
+    REDACTED_COLUMNS_KEY,
+    VALUE_POLICY_KEY,
+)
 from decoy_engine.quality.snapshot import DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
 
 _SUPPORTED_KINDS = ("numeric", "categorical", "datetime", "freetext")
+# `empty` (an all-null source column) is sampled only when the snapshot carries a `cell_format`
+# block, which is what makes "all null" a stated fact rather than a missing histogram.
+_EMPTY_KIND = "empty"
 _OTHER_MODES = ("redistribute", "emit")
 
 # The placeholder emitted for tail mass under other_mode="emit".
@@ -101,6 +120,9 @@ class StatisticalSpec:
     # The sampler (`_sample.py`) dispatches on `carrier is None` for exactly
     # this reason, so legacy behavior stays byte-identical.
     carrier: str | None = None
+    # Fitted cell shape (`generation/statistical/_cell_format.py`); None for a snapshot without the
+    # block, which keeps the old draw sequence byte for byte.
+    cell_format: CellFormat | None = None
 
 
 def spec_to_dict(spec: StatisticalSpec) -> dict[str, Any]:
@@ -114,6 +136,8 @@ def spec_to_dict(spec: StatisticalSpec) -> dict[str, Any]:
     data = asdict(spec)
     if data.get("carrier") is None:
         del data["carrier"]
+    if data.get("cell_format") is None:
+        del data["cell_format"]
     return data
 
 
@@ -134,6 +158,9 @@ def spec_from_dict(data: Mapping[str, Any]) -> StatisticalSpec:
         parent_first=bool(data["parent_first"]),
         snapshot_digest=data.get("snapshot_digest"),
         carrier=data.get("carrier"),
+        cell_format=cell_format_from_dict(
+            data["column"], str(data["kind"]), data.get("cell_format")
+        ),
     )
 
 
@@ -216,6 +243,66 @@ def _snapshot_declares_flag(
     schema = dp_block.get("column_schema") if isinstance(dp_block, Mapping) else None
     entry = schema.get(source_column) if isinstance(schema, Mapping) else None
     return isinstance(entry, Mapping) and entry.get("carrier") == "flag"
+
+
+def _refuse_withheld_values(
+    name: Any,
+    snap: Mapping[str, Any],
+    *,
+    source_column: str,
+    kind: Any,
+    dp_verified: bool,
+    condition_on: Any,
+    holds_numeric_shape: bool = False,
+) -> None:
+    """Refuse a column that would sample categories a redacted fit snapshot withheld.
+
+    Only the marker is read, and only to refuse: `value_policy: "raw"` removes this refusal
+    and grants nothing, so the `allow_real_categories` opt-in still applies after it. A
+    snapshot with neither marker key is a legacy file and keeps its old behavior; the
+    placeholder string a profile uses for withheld text is never a signal, because a raw or
+    legacy snapshot can hold it as a real category. Numeric and datetime columns read
+    coarse bins and years that carry no cell value, so they reach it only through a restored
+    `quantile_grid` or `exact_values` block (`holds_numeric_shape`).
+    """
+    if VALUE_POLICY_KEY not in snap and REDACTED_COLUMNS_KEY not in snap:
+        return
+    samples_values = (
+        (kind == "categorical" and not dp_verified)
+        or condition_on is not None
+        or holds_numeric_shape
+    )
+    if not samples_values:
+        return
+    policy = snap.get(VALUE_POLICY_KEY)
+    listed = snap.get(REDACTED_COLUMNS_KEY)
+    well_formed = policy in (POLICY_REDACTED, POLICY_RAW) and (
+        isinstance(listed, (list, tuple)) and all(isinstance(c, str) for c in listed)
+    )
+    if well_formed and policy == POLICY_RAW:
+        return
+    if not well_formed:
+        why = (
+            "the snapshot's value-policy marker (`value_policy`, `redacted_columns`) is missing "
+            "or malformed, so it cannot be shown that the values of source column "
+            f"{source_column!r} were kept"
+        )
+    else:
+        named = (source_column,) if condition_on is None else (source_column, str(condition_on))
+        redacted = [c for c in named if c in (listed or ())]
+        if not redacted:
+            return
+        why = (
+            f"the snapshot withheld the real values of source column {redacted[0]!r} "
+            "(a sensitive column)"
+        )
+    raise StatisticalSpecError(
+        code=reasons.plan.STATISTICAL_SNAPSHOT_VALUES_REDACTED,
+        message=(
+            f"statistical column {name!r}: {why}, so there are no values to sample. "
+            + redacted_fix_hint(numeric=kind == "numeric" and condition_on is None)
+        ),
+    )
 
 
 def load_spec(
@@ -319,7 +406,19 @@ def load_spec(
         )
 
     kind = col_entry.get("kind")
-    if kind not in _SUPPORTED_KINDS:
+    cell_format = (
+        decode_cell_format(
+            name,
+            str(kind),
+            col_entry,
+            snapshot=snap,
+            # `null_probability` is None-means-absent: any other value, 0 included, owns the nulls.
+            apply_nulls=col_cfg.get("null_probability") is None,
+        )
+        if kind in (*_SUPPORTED_KINDS, _EMPTY_KIND)
+        else None
+    )
+    if kind not in _SUPPORTED_KINDS and not (kind == _EMPTY_KIND and cell_format is not None):
         raise StatisticalSpecError(
             code=reasons.plan.STATISTICAL_KIND_UNSUPPORTED,
             message=(
@@ -352,6 +451,19 @@ def load_spec(
                 f"bool, got {allow_real!r}."
             ),
         )
+
+    col_stats = col_entry.get("stats") if isinstance(col_entry.get("stats"), dict) else {}
+    _refuse_withheld_values(
+        name,
+        snap,
+        source_column=source_column,
+        kind=kind,
+        dp_verified=dp_verified,
+        condition_on=col_cfg.get("condition_on"),
+        holds_numeric_shape=kind == "numeric"
+        and not dp_verified
+        and numeric_shape_withheld(col_stats),
+    )
 
     if high_cardinality and col_cfg.get("allow_real_categories") is not True:
         raise StatisticalSpecError(
@@ -399,7 +511,6 @@ def load_spec(
     # tail is already gone from the artifact, so redistribution would
     # permanently drop it. Provenance marker, not `other_count`, is the
     # source of truth (DP snapshots deep-copy the marker through noising).
-    col_stats = col_entry.get("stats") if isinstance(col_entry.get("stats"), dict) else {}
     if high_cardinality and col_stats.get("high_cardinality") is not True:
         raise StatisticalSpecError(
             code=reasons.plan.STATISTICAL_HIGH_CARDINALITY_SNAPSHOT_MISMATCH,
@@ -412,6 +523,9 @@ def load_spec(
                 f"before setting high_cardinality: true here."
             ),
         )
+
+    if kind == "numeric":
+        decode_numeric_shape(name, col_stats, carrier)  # refuse a malformed block at load
 
     other_mode = str(col_cfg.get("other_mode") or "redistribute")
     if other_mode not in _OTHER_MODES:
@@ -478,4 +592,5 @@ def load_spec(
         parent_first=parent_first,
         snapshot_digest=snapshot_digest,
         carrier=carrier,
+        cell_format=cell_format,
     )

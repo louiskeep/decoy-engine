@@ -1,0 +1,3 @@
+{"command":"run","event_schema":1,"invocation_id":"11111111-2222-4333-8444-555555555555","log_schema":"decoy-job-log/v1","pipeline":"pipelines/claims.yaml","producer":{"engine_version":"0.20.0","name":"decoy-cli","version":"0.9.0"},"started_at":"2026-11-08T12:00:00.123456Z"}
+{"kind":"phase","phase":"mask"}
+{"kind":"terminal","status":"ok"}

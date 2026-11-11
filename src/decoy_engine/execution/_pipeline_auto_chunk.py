@@ -31,6 +31,7 @@ from decoy_engine.execution import _chunked_output_sink as _output_sink
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import DeclaredCastRouteError, ExecutionError
 from decoy_engine.execution._substrate import require_bool, require_positive_int
+from decoy_engine.execution.pipeline import native_thread_clamp
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
@@ -329,6 +330,7 @@ def _run_streamed(
     expected: _chunked_input.SourceFacts | None,
     preresolved: PreResolvedColumn | None = None,
     cast_run: Any = None,  # accepted for the shared call shape; run_auto_chunk refuses it earlier
+    align_row_groups: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """The dispatcher lane with the chunks streamed into `sink`; returns the `output` and
     `input` blocks. A `LazySource` is read as batches (B6b) and its handle is closed on every
@@ -369,6 +371,8 @@ def _run_streamed(
             table,
             chunks,
             fixed_columns=rule.string_columns | frozenset(rule.passthrough_types),
+            align_row_groups=align_row_groups,
+            empty_schema=first.schema if first.num_rows == 0 else None,
         )
     finally:
         inputs.close()
@@ -392,6 +396,7 @@ def run_auto_chunk(
     expected: _chunked_input.SourceFacts | None = None,
     preresolved: PreResolvedColumn | None = None,
     cast_run: Any = None,
+    align_row_groups: bool = False,
 ) -> tuple[dict[str, pa.Table], tuple[Any, ...], float, tuple[Any, ...], dict[str, Any]]:
     """Mask one eligible table in `chunk_size_rows`-row slices on the selected lane.
 
@@ -404,6 +409,9 @@ def run_auto_chunk(
     Row errors are not part of the return: both lanes fail closed with
     `RowErrorsFailedError` the moment a chunk reports one. An error after the first
     chunk propagates with its own type and code; nothing retries on the other lane.
+
+    `align_row_groups` (a run that requires streaming): the streamed output keeps one row group
+    per masked chunk instead of regrouping across chunks; see `_chunked_output_sink.stream_table`.
 
     `preresolved` (the mixed route's coupled FK key, `_chunked_preresolved`) replaces
     one column's source values with a slice resolved up front, per chunk, before the
@@ -450,6 +458,7 @@ def run_auto_chunk(
             native_threads=native_threads,
             expected=expected,
             chunk_results=streamed_evidence,
+            align_row_groups=align_row_groups,
             **common,
         )
         evidence = _without_elapsed(streamed_evidence.route_evidence())
@@ -493,6 +502,8 @@ def run_auto_chunk(
         "lane_reason": lane_reason,
         "native_threads": native_threads,
     }
+    if native_threads > 1:  # the default of 1 cannot be clamped, so default runs stamp nothing new
+        quality_metrics["auto_chunk"]["native_thread_clamp"] = native_thread_clamp(native_threads)
     if output_block is not None:
         quality_metrics["auto_chunk"]["output"] = output_block
     if input_block is not None:

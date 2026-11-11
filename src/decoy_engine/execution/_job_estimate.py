@@ -1,6 +1,6 @@
 """Advisory job estimate: route + peak memory + runtime band (job-time-estimator Slice 2).
 
-`estimate_job` is the shared, PUBLIC primitive the CLI (`decoy preflight`) and the
+`estimate_job` is the shared, PUBLIC primitive the CLI (`decoy validate preflight`) and the
 platform (preview / job create) call to show "this will take ~X and need ~Y RAM"
 BEFORE running. Advisory per the §CAP lock: it never gates, never raises (an
 unpriceable or error case returns a flagged result, not an exception), and never
@@ -100,7 +100,6 @@ def estimate_job(
 
 
 def _estimate(config_dump: dict[str, Any], base_dir: Path | str) -> JobEstimate:
-    from decoy_engine import __version__ as engine_version
     from decoy_engine.execution._mem_estimate import estimate_peak_bytes, raw_data_bytes
     from decoy_engine.execution._pipeline_context import classify_table_kinds
     from decoy_engine.execution._pipeline_routing import decide_execution_route
@@ -119,6 +118,7 @@ def _estimate(config_dump: dict[str, Any], base_dir: Path | str) -> JobEstimate:
         build_relationship_graph,
         check_orphan_fk_policy_completeness,
     )
+    from decoy_engine.release import __version__ as engine_version
 
     config = _resolved_config_copy(config_dump, Path(base_dir))
     table_kinds = classify_table_kinds(config)
@@ -127,7 +127,9 @@ def _estimate(config_dump: dict[str, Any], base_dir: Path | str) -> JobEstimate:
 
     profile = profile_source(config, seed=_normalize_job_seed_int(config))
     registry = get_default_registry()
-    plan = compile_plan(config, profile, decoy_engine_version=engine_version)
+    plan = compile_plan(
+        config, profile, decoy_engine_version=engine_version, base_dir=Path(base_dir)
+    )
     ns_registry = build_namespace_registry(config, profile)
     orphan_lookup = check_orphan_fk_policy_completeness(config, profile.relationships)
     graph = build_relationship_graph(

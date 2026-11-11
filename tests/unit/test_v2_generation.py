@@ -40,7 +40,9 @@ def _mask_config() -> dict:
     return {
         "version": 2,
         "global_settings": {"seed": 0},
-        "sources": {"customers": {"type": "file", "format": "csv", "path": "in.csv"}},
+        "sources": {
+            "customers": {"type": "file", "format": "csv", "has_header": True, "path": "in.csv"}
+        },
         "tables": [
             {
                 "name": "customers",
@@ -128,23 +130,15 @@ class TestMaskContractUnchanged:
 class TestGenerationOpSpine:
     def test_produces_row_count_rows(self):
         # THE S6-ENG-1 GATE: a single-column generate config produces row_count rows.
-        # ENG-2 M1 fix: V1 sequence ALWAYS returns strings (columns.py:305-319 wraps
-        # every value through f"{prefix}{value_str}{suffix}"), even unformatted.
+        # A bare counter (no prefix/suffix/pad) is generated as int64; only a formatted sequence
+        # is text (the V1 oracle below still renders text, so its parity cells convert).
         cfg = PipelineConfig.model_validate(_generate_config(row_count=7)).model_dump()
         tables = compile_and_generate(cfg)
         assert set(tables) == {"customers"}
         t = tables["customers"]
         assert t.num_rows == 7
         assert t.column_names == ["id"]
-        assert t.column("id").to_pylist() == [
-            "1000",
-            "1001",
-            "1002",
-            "1003",
-            "1004",
-            "1005",
-            "1006",
-        ]
+        assert t.column("id").to_pylist() == [1000, 1001, 1002, 1003, 1004, 1005, 1006]
 
     def test_zero_rows(self):
         cfg = PipelineConfig.model_validate(_generate_config(row_count=0)).model_dump()
@@ -188,13 +182,18 @@ def _v1_run(
     seed: int = 42,
     derive_key=None,
     instance_default_locale: str | None = None,
+    numeric: bool = False,
 ) -> list:
     """Run V1 ``ColumnGenerator.generate_column`` (the public entry, including the
     ``null_probability`` post-process) against a single v2-shape column dict and
     return the values list -- the parity oracle covers BOTH the generator output
     AND the null injection. ``derive_key`` + ``instance_default_locale`` default to
     None so the 16 existing ENG-2/3 callers stay byte-identical; ENG-4 cells pass
-    them explicitly."""
+    them explicitly.
+
+    V1 renders every sequence and numeric faker value as text. v2 emits those columns as int64
+    (#445), so a cell whose column is numeric passes ``numeric=True`` and the oracle's text is
+    read back as ints, values unchanged."""
     from decoy_engine.generators.columns import ColumnGenerator
 
     cg = ColumnGenerator(
@@ -202,7 +201,13 @@ def _v1_run(
         derive_key=derive_key,
         instance_default_locale=instance_default_locale,
     )
-    return cg.generate_column(n, col, "t", {}).tolist()
+    values = cg.generate_column(n, col, "t", {}).tolist()
+    return _text_to_ints(values) if numeric else values
+
+
+def _text_to_ints(values: list) -> list:
+    """Read the V1 oracle's text numbers as ints; nulls stay null."""
+    return [None if v is None else int(v) for v in values]
 
 
 def _v2_run(
@@ -238,7 +243,7 @@ class TestSequenceParityV1:
         # M1 oracle: V1 returns STRINGS even with no prefix/suffix/pad. The v2 spine
         # used to return ints here -- corrected in this sub-commit of S6-ENG-2.
         col = {"name": "id", "type": "sequence", "start": 1, "step": 1}
-        assert _v2_run(col, 5) == _v1_run(col, 5)
+        assert _v2_run(col, 5) == _v1_run(col, 5, numeric=True)
 
     def test_formatted_pad(self):
         col = {
@@ -253,7 +258,7 @@ class TestSequenceParityV1:
 
     def test_step_and_start(self):
         col = {"name": "n", "type": "sequence", "start": 100, "step": 7}
-        assert _v2_run(col, 10) == _v1_run(col, 10)
+        assert _v2_run(col, 10) == _v1_run(col, 10, numeric=True)
 
 
 class TestCategoricalParityV1:
@@ -289,7 +294,9 @@ class TestCategoricalParityV1:
         operator sees the error at submit time, not as suspicious output
         rows downstream."""
         col = {"name": "x", "type": "categorical"}
-        with pytest.raises(ValidationError, match="categorical column 'x' requires `categories`"):
+        with pytest.raises(
+            ValidationError, match=r"generate_columns\.0\.categories\n\s+Field required"
+        ):
             _v2_run(col, 5)
 
 
@@ -325,8 +332,9 @@ class TestFakerParityV1:
             "faker_type": "pyint",
             "faker_kwargs": {"min_value": 0, "max_value": 100},
         }
-        assert _v2_run(col, 10) == _v1_run(col, 10)
+        assert _v2_run(col, 10) == _v1_run(col, 10, numeric=True)
 
+    @pytest.mark.usefixtures("lenient_generate_checks")
     def test_unknown_faker_type_falls_back_to_word(self):
         # V1: unknown faker_type silently falls back to providers["word"]
         # (columns.py:246-247). The v2 mirrors the silent fallback.
@@ -428,7 +436,7 @@ class TestPooledFakerNoLongerV1Frozen:
         # POOL_ELIGIBLE_FAKER_TYPES (Codex round-2/3 spec C).
         col = {"name": "n", "type": "faker", "faker_type": "pyint"}
         n = _faker_pool.N_THRESHOLD + 50
-        assert _v2_run(col, n) == _v1_run(col, n)
+        assert _v2_run(col, n) == _v1_run(col, n, numeric=True)
 
     def test_opted_out_allowlisted_type_stays_v1_frozen_above_threshold(self):
         from decoy_engine.generation import _faker_pool
@@ -773,7 +781,9 @@ class TestFormulaParityV1:
         config until they noticed an all-null output column. Post-fix
         the validator catches the empty formula up front."""
         col = {"name": "x", "type": "formula", "formula": ""}
-        with pytest.raises(ValidationError, match="formula column 'x' requires `formula`"):
+        with pytest.raises(
+            ValidationError, match=r"generate_columns\.0\.formula\n\s+Field required"
+        ):
             _v2_run(col, 5)
 
 
@@ -793,6 +803,7 @@ def _v2_run_single_table(gcols: list[dict], n: int, seed: int = 42, derive_key=N
     return {c: tbl.column(c).to_pylist() for c in tbl.column_names}
 
 
+@pytest.mark.usefixtures("lenient_generate_checks")
 class TestReferencedFormulaPostPass:
     """BF3: a ``formula`` column carrying ``references: [...]`` is filled by an
     in-memory declared-order post-pass (ColumnGenerator.fill_referenced_formula_column)
@@ -1010,7 +1021,25 @@ def _v1_run_multi(tables_cfg: list[dict], seed: int = 42, derive_key=None) -> di
             df[col["name"]] = series
         reference_data[name] = df
         out[name] = {c: df[c].tolist() for c in df.columns}
+    for table_name, col_name in _numeric_columns(tables_cfg):
+        out[table_name][col_name] = _text_to_ints(out[table_name][col_name])
     return out
+
+
+def _numeric_columns(tables_cfg: list[dict]) -> set[tuple[str, str]]:
+    """Columns v2 emits as int64: a bare sequence (no prefix/suffix/pad) and a reference to one.
+
+    The V1 oracle renders both as text; ``_v1_run_multi`` reads them back as ints."""
+    numeric: set[tuple[str, str]] = set()
+    for table in tables_cfg:
+        for col in table["generate_columns"]:
+            kind = col["type"]
+            bare = not (col.get("prefix") or col.get("suffix") or col.get("pad_length"))
+            if (kind == "sequence" and bare) or (
+                kind == "reference" and (col["reference_table"], col["reference_column"]) in numeric
+            ):
+                numeric.add((table["name"], col["name"]))
+    return numeric
 
 
 def _v2_run_multi(tables_cfg: list[dict], seed: int = 42, derive_key=None) -> dict[str, dict]:
@@ -1379,7 +1408,7 @@ class TestDeriveKeyParity:
         col = {"name": "id", "type": "sequence", "start": 1, "step": 1}
         keyed = _v2_run(col, 5, derive_key=_fake_key)
         keyless = _v2_run(col, 5)
-        assert keyed == keyless == _v1_run(col, 5, derive_key=_fake_key)
+        assert keyed == keyless == _v1_run(col, 5, derive_key=_fake_key, numeric=True)
 
     def test_keyed_categorical_parity(self):
         col = {
@@ -1464,28 +1493,16 @@ class TestInstanceDefaultLocale:
         assert with_instance == without_instance == _v1_run(col, 5, instance_default_locale="en_GB")
 
 
-class TestLegacyColumnNameSeed:
-    """M2: V1's pre-R3.10 column-name path (``_legacy_column_name_seed: true``) stays
-    V1-aligned through ``synthetic_column_seed``. Default path (R3.10) fingerprints
-    strategy/config so column renames are stable in unkeyed runs."""
+class TestColumnIdentitySeed:
+    """Default path: the draw derives from strategy/config plus (table, column), and V1
+    and v2 agree on it."""
 
-    def test_legacy_seed_opt_back_parity(self):
-        col = {
-            "name": "fn",
-            "type": "faker",
-            "faker_type": "first_name",
-            "_legacy_column_name_seed": True,
-        }
-        assert _v2_run(col, 10) == _v1_run(col, 10)
-
-    def test_default_rename_stable(self):
-        # Default R3.10 path: same strategy/config but a different `name` -> same
-        # seed -> same output (rename-stable in the unkeyed seed path).
+    def test_rename_shifts_output_and_matches_v1(self):
         col_a = {"name": "alpha", "type": "faker", "faker_type": "first_name"}
         col_b = {"name": "beta", "type": "faker", "faker_type": "first_name"}
-        assert _v2_run(col_a, 10) == _v2_run(col_b, 10)
-        # And both match V1's R3.10 output (which is also rename-stable).
+        assert _v2_run(col_a, 10) != _v2_run(col_b, 10)
         assert _v2_run(col_a, 10) == _v1_run(col_a, 10)
+        assert _v2_run(col_b, 10) == _v1_run(col_b, 10)
 
 
 class TestDeterminismFresh:
@@ -1538,6 +1555,7 @@ class TestReferenceEdgeCases:
             },
         ]
 
+    @pytest.mark.usefixtures("lenient_generate_checks")
     def test_weighted_size_mismatch_falls_back_to_uniform(self):
         # parent pool has 5 unique values; weights has only 3 -> V1 sets weights
         # to None (uniform). v2 mirrors.
@@ -1551,8 +1569,9 @@ class TestReferenceEdgeCases:
         }
         assert _v2_run_multi(self._two_table(child)) == _v1_run_multi(self._two_table(child))
 
-    def test_unknown_distribution_falls_through_to_random(self):
-        # V1 warns + uses random; v2 silently uses random. Parity in values.
+    def test_unknown_distribution_is_refused_at_validation(self):
+        # V1 warned and used random, v2 silently used random. GEN-STRICT E1 refuses the typo
+        # up front instead of letting the run pick a distribution the operator did not ask for.
         child = {
             "name": "customer_id",
             "type": "reference",
@@ -1560,7 +1579,11 @@ class TestReferenceEdgeCases:
             "reference_column": "id",
             "distribution": "not_a_real_distribution",
         }
-        assert _v2_run_multi(self._two_table(child)) == _v1_run_multi(self._two_table(child))
+        with pytest.raises(ValidationError) as info:
+            _v2_run_multi(self._two_table(child))
+        (err,) = info.value.errors()
+        assert err["type"] == "generate_option_value_unknown"
+        assert err["loc"][-1] == "distribution"
 
 
 class TestFC1QAFindings:
@@ -1602,6 +1625,7 @@ class TestFC1QAFindings:
                         "customers": {
                             "type": "file",
                             "format": "csv",
+                            "has_header": True,
                             "path": "c.csv",
                         },
                     },

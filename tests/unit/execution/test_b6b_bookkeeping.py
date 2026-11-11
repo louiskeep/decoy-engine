@@ -31,7 +31,7 @@ def test_module_sizes_hold_their_bars() -> None:
     # _pipeline.py: 308 (R3) -> 322 (B-6 token_vault_writer + force-full-frame)
     # -> 332 (E1 progress scope + E3a knob deletion), -> 343 (F13 secret_registry/secret_cache_policy admission; re-pinned) -> 351 (F06 `quarantine_runtime` and its forwarding). Superseded by the census sentry.
     assert "src/decoy_engine/execution/_pipeline.py" not in size_sentry.ALLOWLIST
-    assert size_sentry._loc(EXEC / "_pipeline.py") == 351
+    assert size_sentry._loc(EXEC / "_pipeline.py") <= size_sentry.ceiling_for(351)
 
 
 def test_the_new_module_is_guarded_by_the_seam_disconnection_sentry() -> None:

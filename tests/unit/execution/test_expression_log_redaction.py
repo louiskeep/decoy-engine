@@ -6,6 +6,7 @@ import logging
 import warnings
 
 import pandas as pd
+import pytest
 
 from decoy_engine.execution._transforms import FilterOp, apply_transforms
 from decoy_engine.execution._when_gate import _eval_predicate
@@ -118,6 +119,7 @@ def _formula_cfg(formula: str) -> dict:
     }
 
 
+@pytest.mark.usefixtures("lenient_generate_checks")
 def test_formula_undefined_name_is_reported_once(caplog) -> None:
     with caplog.at_level(logging.WARNING):
         compile_and_generate(_formula_cfg("nope + 1"))
@@ -126,6 +128,7 @@ def test_formula_undefined_name_is_reported_once(caplog) -> None:
     assert "undefined name(s) ['nope']" in failures[0].getMessage()
 
 
+@pytest.mark.usefixtures("lenient_generate_checks")
 def test_formula_undefined_function_is_reported(caplog) -> None:
     with caplog.at_level(logging.WARNING):
         compile_and_generate(_formula_cfg("nofn(1)"))
@@ -153,6 +156,7 @@ def test_run_with_when_gate_passes_the_target_column(monkeypatch) -> None:
     assert seen["column"] == "email"
 
 
+@pytest.mark.usefixtures("lenient_generate_checks")
 def test_referenced_formula_undefined_name_is_reported(caplog) -> None:
     cfg = _formula_cfg("first_name + nope")
     cfg["tables"][0]["generate_columns"] = [

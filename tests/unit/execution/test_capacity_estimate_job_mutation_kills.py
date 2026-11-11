@@ -43,6 +43,11 @@ def _write_parquet(tmp_path: Path, table: pa.Table, name: str) -> str:
     return str(p)
 
 
+def _header(fmt: str) -> dict[str, bool]:
+    # csv sources must say whether the first row is a header; other formats must not.
+    return {"has_header": True} if fmt == "csv" else {}
+
+
 def _write_csv(tmp_path: Path, table: pa.Table, name: str) -> str:
     p = tmp_path / f"{name}.csv"
     table.to_pandas().to_csv(p, index=False)
@@ -87,8 +92,13 @@ def _ooc_config(
         "version": 2,
         "global_settings": {"job_name": "capacity-kill-test", "seed": 7},
         "sources": {
-            "parent": {"type": "file", "path": parent_src, "format": parent_fmt},
-            "child": {"type": "file", "path": child_src, "format": child_fmt},
+            "parent": {
+                "type": "file",
+                "path": parent_src,
+                "format": parent_fmt,
+                **_header(parent_fmt),
+            },
+            "child": {"type": "file", "path": child_src, "format": child_fmt, **_header(child_fmt)},
         },
         "targets": {
             "parent": {
@@ -827,8 +837,18 @@ def _two_csv_build_parents_config(tmp_path: Path, *, mid_rows: int = 2000) -> di
         "version": 2,
         "global_settings": {"job_name": "two-csv-parents", "seed": 7},
         "sources": {
-            "aaa": {"type": "file", "path": _write_csv(tmp_path, aaa, "aaa"), "format": "csv"},
-            "bbb": {"type": "file", "path": _write_csv(tmp_path, bbb, "bbb"), "format": "csv"},
+            "aaa": {
+                "type": "file",
+                "path": _write_csv(tmp_path, aaa, "aaa"),
+                "format": "csv",
+                "has_header": True,
+            },
+            "bbb": {
+                "type": "file",
+                "path": _write_csv(tmp_path, bbb, "bbb"),
+                "format": "csv",
+                "has_header": True,
+            },
             "ccc": {
                 "type": "file",
                 "path": _write_parquet(tmp_path, ccc, "ccc"),

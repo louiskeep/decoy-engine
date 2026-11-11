@@ -9,7 +9,7 @@ a leaf of the dependency graph.
 from __future__ import annotations
 
 from decoy_engine._lexeme import lexeme_columns_by_table, profile_descriptors
-from decoy_engine.declared_casting._boundary import DeclaredCastRun, arrow_type
+from decoy_engine.declared_casting._boundary import DeclaredCastRun, arrow_type, arrow_type_for_spec
 from decoy_engine.declared_casting._catalog import (
     FormatDescriptor,
     capability_manifest,
@@ -18,6 +18,7 @@ from decoy_engine.declared_casting._catalog import (
     descriptor_for,
     descriptors,
     format_value,
+    generated_value_spec,
     match_sentinel,
     max_rendered_width,
     output_width,
@@ -34,6 +35,7 @@ from decoy_engine.declared_casting._eligibility import (
     evaluate_declared_casting,
     preflight_declared_casting,
 )
+from decoy_engine.declared_casting._numeric import round_to_scale
 from decoy_engine.declared_casting._quarantine_local import LocalProtectedQuarantineSink
 from decoy_engine.declared_casting._quarantine_protocol import (
     OpaqueRetrievalToken,
@@ -74,6 +76,7 @@ __all__ = [
     "QuarantineSession",
     "RuntimeCapabilities",
     "arrow_type",
+    "arrow_type_for_spec",
     "capability_manifest",
     "compile_formatter",
     "compile_parser",
@@ -82,6 +85,7 @@ __all__ = [
     "descriptors",
     "evaluate_declared_casting",
     "format_value",
+    "generated_value_spec",
     "lexeme_columns_by_table",
     "match_sentinel",
     "max_rendered_width",
@@ -89,6 +93,7 @@ __all__ = [
     "parse_value",
     "preflight_declared_casting",
     "profile_descriptors",
+    "round_to_scale",
     "validate_format_spec",
     "validate_sentinel_spec",
 ]

@@ -412,7 +412,23 @@ def main(out: Path, whole: bool = False) -> int:
     return 0
 
 
+def failing_files(out: Path) -> list[str]:
+    """Test files holding a failing branch test, in first-seen order (no node ids, no params).
+
+    The baseline reruns whole files, not node ids: a node id main lacks makes pytest abort the
+    whole run ("not found"), which would read a shared failure as branch-only."""
+    files: list[str] = []
+    for tid in failing_ids(out, "branch", "tests"):
+        path = tid.split("::", 1)[0]
+        if path.endswith(".py") and path not in files:
+            files.append(path)
+    return files
+
+
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--failing-files"]:
+        print("\n".join(failing_files(Path(sys.argv[2]))))
+        sys.exit(0)
     if sys.argv[1:2] == ["--verdict"]:
         print("\n".join(branch_only_steps(Path(sys.argv[2]))))
         sys.exit(0)

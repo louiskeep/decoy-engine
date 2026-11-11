@@ -13,7 +13,7 @@ import math
 from dataclasses import dataclass
 
 from decoy_engine import reasons
-from decoy_engine._progress_events import safe_error_class
+from decoy_engine.progress import safe_error_class
 from decoy_engine.reasons import Phase
 
 TELEMETRY_SCHEMA = "decoy-telemetry/v1"
@@ -80,7 +80,7 @@ def _rule_allows(key: str, value: str) -> bool:
         return reason_value(namespace, code) == value
     if rule == "safe_error_class":
         return safe_error_class(value) == value
-    from decoy_engine import __version__
+    from decoy_engine.release import __version__
 
     return value == __version__
 

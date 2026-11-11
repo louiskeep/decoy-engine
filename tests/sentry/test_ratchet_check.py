@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.sentry.layout import MAX_VALUE_CASES
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "dev" / "ratchet_check.py"
 REASON = "reviewed on 2026-11-04, tracked for removal"
@@ -172,3 +174,135 @@ def test_growth_fails_even_when_the_registry_is_also_edited(repo: Path) -> None:
     _write(repo, "tests/sentry/baselines/n.json", _baseline("n", ["m::one"]))
     _write(repo, REG, _registry({"a": A, "n": "tests/sentry/baselines/n.json"}))
     _assert_red(repo, "m::new")
+
+
+P1, P2 = "permitted::c/a.py::K.m::aaaaaaaaaa", "permitted::c/a.py::K.m::bbbbbbbbbb"
+P3 = "permitted::c/a.py::K.m::cccccccccc"
+OTHER_SITE = "permitted::c/a.py::K.other::dddddddddd"
+
+
+V_ID, V = "validation-name-messages", "tests/sentry/baselines/v.json"
+
+
+def _set_keys(repo: Path, keys: list[str], sid: str = V_ID) -> None:
+    """Write ``keys`` to the re-key-enabled sentry (or to ``a`` when ``sid`` is ``"a"``)."""
+    _write(repo, REG, _registry({"a": A, V_ID: V}))
+    if sid == "a":
+        _write(repo, A, _baseline("a", keys))
+    else:
+        _write(repo, V, _baseline(V_ID, keys))
+
+
+def _commit_keys(repo: Path, keys: list[str], sid: str = V_ID) -> None:
+    _set_keys(repo, keys, sid)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "permits")
+
+
+def test_same_count_rekey_of_a_permitted_site_passes_and_reports(repo: Path) -> None:
+    _commit_keys(repo, ["m::f", P1])
+    _set_keys(repo, ["m::f", P2])
+    res = _run(repo)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert f"{V_ID}: re-keyed permitted site c/a.py::K.m (review the message)" in res.stdout
+
+
+def test_permitted_count_growth_for_a_site_fails(repo: Path) -> None:
+    _commit_keys(repo, [P1])
+    _set_keys(repo, [P2, P3])
+    _assert_red(repo, "c/a.py::K.m")
+
+
+def test_new_permitted_site_fails(repo: Path) -> None:
+    _commit_keys(repo, [P1])
+    _set_keys(repo, [P1, OTHER_SITE])
+    _assert_red(repo, OTHER_SITE)
+
+
+def test_split_rekey_with_fewer_keys_passes(repo: Path) -> None:
+    _commit_keys(repo, [P1, P2])
+    _set_keys(repo, [P3])
+    res = _run(repo)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "re-keyed permitted site c/a.py::K.m" in res.stdout
+
+
+def test_swapping_one_site_for_another_fails(repo: Path) -> None:
+    # Same total count, different site: a per-file or per-baseline count would let this through.
+    _commit_keys(repo, [P1])
+    _set_keys(repo, [OTHER_SITE])
+    _assert_red(repo, OTHER_SITE)
+
+
+def test_permitted_keys_of_a_sentry_not_opted_in_compare_exactly(repo: Path) -> None:
+    _commit_keys(repo, [P1], sid="a")
+    _set_keys(repo, [P2], sid="a")
+    _assert_red(repo, P2)
+
+
+def test_non_permitted_keys_keep_exact_comparison(repo: Path) -> None:
+    other = "uncertified::c/a.py::K.m::eeeeeeeeee"
+    _commit_keys(repo, ["uncertified::c/a.py::K.m::ffffffffff"])
+    _set_keys(repo, [other])
+    _assert_red(repo, other)
+
+
+def test_replacing_an_opted_in_sentry_with_one_not_opted_in_compares_exactly(repo: Path) -> None:
+    _commit_keys(repo, [P1])
+    n = "tests/sentry/baselines/n.json"
+    (repo / V).unlink()
+    _write(repo, n, _baseline("n", [P2]))
+    _write(repo, REG, _registry({"a": A, "n": n}))
+    _assert_red(repo, P2)
+
+
+# --- numeric ``max`` entries: a head value above its base value is growth --------------------
+
+
+def _max_baseline(max_value: int | None) -> str:
+    entry: dict[str, object] = {"reason": REASON}
+    if max_value is not None:
+        entry["max"] = max_value
+    return json.dumps({"sentry_id": "a", "created_in": "S0", "entries": {"m::f": entry}})
+
+
+@pytest.mark.parametrize(
+    "base_max, head_max, red", [c[1:] for c in MAX_VALUE_CASES], ids=[c[0] for c in MAX_VALUE_CASES]
+)
+def test_numeric_max_may_not_rise(
+    repo: Path, base_max: int | None, head_max: int | None, red: bool
+) -> None:
+    _write(repo, A, _max_baseline(base_max))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "max")
+    _write(repo, A, _max_baseline(head_max))
+    res = _run(repo)
+    assert (res.returncode == 1) is red, res.stdout + res.stderr
+    if red:
+        assert "m::f" in res.stdout + res.stderr and "max" in res.stdout + res.stderr
+
+
+def _sid_max_baseline(sid: str, max_value: int | None) -> str:
+    entry: dict[str, object] = {"reason": REASON}
+    if max_value is not None:
+        entry["max"] = max_value
+    return json.dumps({"sentry_id": sid, "created_in": "S0", "entries": {"m::f": entry}})
+
+
+@pytest.mark.parametrize(
+    "base_max, head_max, red", [c[1:] for c in MAX_VALUE_CASES], ids=[c[0] for c in MAX_VALUE_CASES]
+)
+def test_a_rename_may_not_raise_a_numeric_max(
+    repo: Path, base_max: int | None, head_max: int | None, red: bool
+) -> None:
+    _write(repo, A, _sid_max_baseline("a", base_max))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "max")
+    renamed = "tests/sentry/baselines/r.json"
+    (repo / A).unlink()
+    _write(repo, renamed, _sid_max_baseline("r", head_max))
+    _write(repo, REG, _registry({"r": renamed}))
+    res = _run(repo)
+    assert (res.returncode == 1) is red, res.stdout + res.stderr
+    if red:
+        assert "replacement or split of a raised or dropped max for key(s): m::f" in res.stderr

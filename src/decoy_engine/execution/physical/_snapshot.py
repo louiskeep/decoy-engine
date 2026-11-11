@@ -33,6 +33,8 @@ from decoy_engine.execution.physical._inputs import (
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.providers_v2 import ProviderRegistry
 
@@ -67,11 +69,13 @@ def capture_physical_plan_inputs(
     use_probe_routing: bool = True,
     out_of_core_reorder_threshold_rows: int | None = None,
     vault_writer: Any = None,
+    base_dir: str | Path | None = None,
 ) -> PhysicalPlanInputs:
     """Build a `PhysicalPlanInputs` snapshot for `config`/`sources` by running
     the real preflight sequence. Argument defaults mirror `run_pipeline`'s own
     (`_pipeline_finalize` / `_planner` constants) so an unspecified knob here
-    captures the same routing facts an unspecified `run_pipeline` kwarg would.
+    captures the same routing facts an unspecified `run_pipeline` kwarg would. `base_dir` is the
+    config file's folder, as for `run_pipeline`.
     """
     from decoy_engine.execution._pipeline import classify_table_kinds
     from decoy_engine.execution._pipeline_routing_fk_dtype import fk_out_of_core_dtype_hazard
@@ -149,7 +153,7 @@ def capture_physical_plan_inputs(
 
     job_seed = _normalize_job_seed_int(config)
     profile = profile_source(config, seed=job_seed)
-    plan = compile_plan(config, profile, decoy_engine_version=engine_version)
+    plan = compile_plan(config, profile, decoy_engine_version=engine_version, base_dir=base_dir)
 
     ns_registry = build_namespace_registry(config, profile)
     if profile.relationships:

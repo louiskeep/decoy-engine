@@ -1,0 +1,30 @@
+{
+ "sentry_id": "package-fanout",
+ "created_in": "LAYOUT-E2",
+ "entries": {
+  "scripts": {
+   "reason": "over the 25-module cap at 26 when LAYOUT E2 froze it; may only shrink, next module goes in a topic folder such as scripts/dev/",
+   "max": 26
+  },
+  "src/decoy_engine/execution": {
+   "reason": "over the 25-module cap at 104 when LAYOUT E2 froze it; may only shrink, next module goes in execution/chunked/, execution/sequential/ or execution/isolated/",
+   "max": 104
+  },
+  "src/decoy_engine/execution/_strategies": {
+   "reason": "over the 25-module cap at 29 when LAYOUT E2 froze it; may only shrink, next module goes in execution/_strategies/<family>/",
+   "max": 29
+  },
+  "src/decoy_engine/execution/native": {
+   "reason": "over the 25-module cap at 55 when LAYOUT E2 froze it; may only shrink, next module goes in execution/native/draw/ or execution/native/chunked/",
+   "max": 55
+  },
+  "src/decoy_engine/execution/out_of_core": {
+   "reason": "over the 25-module cap at 44 when LAYOUT E2 froze it; may only shrink, next module goes in execution/out_of_core/stream/",
+   "max": 44
+  },
+  "src/decoy_engine/plan": {
+   "reason": "over the 25-module cap at 30 when LAYOUT E2 froze it; may only shrink, next module goes in plan/checks/",
+   "max": 30
+  }
+ }
+}

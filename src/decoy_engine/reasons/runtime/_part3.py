@@ -49,6 +49,10 @@ __all__ = [
     "NESTED_TARGET_UNSET",
     "NESTED_TARGET_UNWRITABLE_CONTAINER",
     "NUMEXPR_REQUIRED",
+    "RECORD_CORRUPT",
+    "RECORD_INVALID",
+    "RECORD_KIND_RESERVED",
+    "SCAN_SOURCE_FAILED",
     "SCRATCH_ACL_FAILED",
     "SCRATCH_UNSAFE",
     "SHUFFLE_REQUIRES_NAMESPACE",
@@ -319,3 +323,13 @@ SCRATCH_ACL_FAILED = _d("scratch_acl_failed", "Scratch ACL failed.", since="1.7.
 _d = _catalog.runtime("ProtectedDirUnsafe")
 
 SCRATCH_UNSAFE = _d("scratch_unsafe", "Scratch unsafe.", since="1.7.0")
+
+_d = _catalog.runtime("RecordError")
+
+RECORD_CORRUPT = _d("record_corrupt", "Record corrupt.", since="1.20.0")
+RECORD_INVALID = _d("record_invalid", "Record invalid.", since="1.20.0")
+RECORD_KIND_RESERVED = _d("record_kind_reserved", "Record kind reserved.", since="1.20.0")
+
+_d = _catalog.runtime("ScanSourceError")
+
+SCAN_SOURCE_FAILED = _d("scan_source_failed", "A table could not be scanned.", since="1.10.0")

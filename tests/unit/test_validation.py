@@ -22,7 +22,12 @@ def _valid_v2_pipeline_config() -> dict:
         "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
-            "customers": {"type": "file", "format": "csv", "path": "uploads/customers.csv"},
+            "customers": {
+                "type": "file",
+                "format": "csv",
+                "has_header": True,
+                "path": "uploads/customers.csv",
+            },
         },
         "tables": [
             {

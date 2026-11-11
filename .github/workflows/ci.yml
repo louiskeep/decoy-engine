@@ -132,8 +132,11 @@ jobs:
         # --junitxml: written for Mergify's merge-queue / flaky-test
         # detection (see the upload step below); this job's own pass/fail
         # is still the pytest exit code, unaffected by the flag.
+        # --ignore: the layer test needs import-linter, which this certified profile lacks; the
+        # layers-gate job below owns it.
         run: >
           pytest tests -m "not benchmark and not packaging and not codspeed"
+          --ignore=tests/sentry/layout/test_import_layers.py
           --tb=short --durations=25 --junitxml=junit-results.xml
 
       # Mergify consumes this artifact for merge-queue flaky-test detection
@@ -148,6 +151,22 @@ jobs:
           name: junit-results
           path: junit-results.xml
           retention-days: 14
+
+  # layers-gate: the engine import-layer contract (.importlinter, LAYOUT E3). Same isolated route
+  # as the local gate: gates.sh syncs .venv-layers (dev plus the `layers` extra) from uv.lock and
+  # runs only tests/sentry/layout/test_import_layers.py there. The certified profile above never
+  # gets import-linter.
+  layers-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-uv
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10.20"
+      - name: Import layers (isolated venv)
+        run: bash scripts/dev/gates.sh --steps layers
 
   # ml-gate: activates the ML field-recognition tests that importorskip
   # themselves out of the regression-gate above (which installs .[dev] only,

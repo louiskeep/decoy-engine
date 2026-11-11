@@ -257,6 +257,7 @@ _ALLOWLIST = frozenset(
         # protocol package; same non-output-draw rationale as that module's entry.
         "execution/native/protocol/providers_base.py",
         "execution/native/protocol/providers_gen.py",
+        "execution/native/protocol/providers_gen_unique.py",
         "execution/native/protocol/providers_mask.py",
         # GP2 (2026-09-17): DrawSiteProvider siblings split out of
         # _draw_site_providers.py's own recorded LOC ceiling; same non-output-draw
@@ -279,11 +280,11 @@ _ALLOWLIST = frozenset(
         # uncanonicalized hex derivation. Not a new draw site (mirrors _index_ext.py).
         "execution/native/_group_key_ext.py",
         # Phase F FR0 unified generation core: the persistent per-column streams re-express the
-        # ALREADY-catalogued synthesize.py draws (sequence has none; categorical, reference,
-        # per-row faker, pooled faker and the null mask use the same GenDeriveContext roots and
-        # RNG families), consumed `size=batch` at a time. They are the same draw sites, advanced
-        # incrementally, not new ones; `synthesize.py` keeps the catalogued entries for the legacy
-        # whole-table path.
+        # ALREADY-catalogued legacy draws (sequence has none; categorical, reference, per-row
+        # faker, pooled faker and the null mask use the same GenDeriveContext roots and RNG
+        # families), consumed `size=batch` at a time. They are the same draw sites, advanced
+        # incrementally, not new ones; `synthesize.py` and `_synthesize_derived.py` keep the
+        # catalogued entries for the legacy whole-table path.
         "generation/_column_streams.py",
     }
 )

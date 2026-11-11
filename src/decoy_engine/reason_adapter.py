@@ -79,6 +79,7 @@ _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.io.bounded_reader", "BoundedReadError", "runtime"),
     ("decoy_engine.fileaccess._protected_dir", "ProtectedDirAclFailed", "runtime"),
     ("decoy_engine.fileaccess._protected_dir", "ProtectedDirUnsafe", "runtime"),
+    ("decoy_engine.records._errors", "RecordError", "runtime"),
     ("decoy_engine.subset._errors", "SubsetError", "subset"),
     ("decoy_engine.subset._errors", "SubsetInternalError", "runtime"),
     ("decoy_engine.providers_v2._errors", "ProviderError", "provider"),
@@ -107,6 +108,7 @@ _FIXED: tuple[tuple[str, str, ReasonCode], ...] = (
     ("decoy_engine.sdk", "TransientError", reasons.decoy.CONNECTOR_TRANSIENT_FAILURE),
     ("decoy_engine.sdk", "PermanentError", reasons.decoy.CONNECTOR_PERMANENT_FAILURE),
     ("decoy_engine.fileaccess._types", "FileAccessDenied", reasons.decoy.FILE_ACCESS_DENIED),
+    ("decoy_engine.profiling.scan_set", "ScanSourceError", reasons.runtime.SCAN_SOURCE_FAILED),
 )
 
 

@@ -55,7 +55,9 @@ def _job(tmp_path: Path, tag: str = "t", rows: int = 4):
         {
             "version": 2,
             "global_settings": {"seed": 42},
-            "sources": {table: {"type": "file", "format": "csv", "path": str(src)}},
+            "sources": {
+                table: {"type": "file", "format": "csv", "has_header": True, "path": str(src)}
+            },
             "tables": [
                 {
                     "name": table,

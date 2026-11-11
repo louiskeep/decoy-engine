@@ -64,7 +64,9 @@ def build_matrix() -> dict[str, Any]:
     from decoy_engine.declared_casting._eligibility import ROUTE_CAPABILITIES
 
     rows: dict[str, Any] = {}
-    for desc in sorted(descriptors(), key=lambda d: (d.format_id, d.direction)):
+    for desc in sorted(
+        (d for d in descriptors() if d.declarable), key=lambda d: (d.format_id, d.direction)
+    ):
         cells: dict[str, dict[str, str]] = {}
         for route in ROUTES:
             cells[route] = {}
@@ -104,7 +106,7 @@ def test_every_format_has_a_cell_for_every_route_and_policy() -> None:
     from decoy_engine.declared_casting import ROUTES, descriptors
 
     matrix = build_matrix()
-    assert len(matrix["formats"]) == len(descriptors())
+    assert len(matrix["formats"]) == len([d for d in descriptors() if d.declarable])
     for row in matrix["formats"].values():
         assert set(row["routes"]) == set(ROUTES)
         for cells in row["routes"].values():

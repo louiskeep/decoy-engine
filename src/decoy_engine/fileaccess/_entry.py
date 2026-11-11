@@ -200,36 +200,65 @@ def position_key(suffix: str) -> str:
     return f"{base}.{suffix}" if base else suffix
 
 
+# The iterator each live `_BoundIterator` wraps, keyed by the wrapper's id. Python has no
+# finalizer hook for sync generators (PEP 525 gives one only to async generators), so when a
+# wrapper and its generator die together in a cycle the collector may finalize the generator
+# first, running its `finally` in whatever context is current. Holding the generator here
+# keeps it out of the cycle until the wrapper's `__del__` has closed it in its own context.
+# Known limit: a generator whose own frame reaches its wrapper is then reachable from here, so
+# that cycle never dies and the generator's `finally` never runs (pinned by
+# `test_a_generator_that_holds_its_own_wrapper_is_never_collected`; no engine caller does this).
+_ANCHORS: dict[int, Iterator[Any]] = {}
+
+
 class _BoundIterator:
-    """Runs every step of an iterator inside the policy it was created under."""
+    """Runs every step of an iterator in one private context, copied when it was bound and
+    holding the policy it was bound under (the `asyncio.Task` pattern from PEP 567).
+
+    A ContextVar token the iterator creates before a yield belongs to that context, so its
+    reset works on any later step, including a close from the garbage collector. A close
+    that set and reset variables on the current context instead could run inside another
+    `ContextVar.set` on this thread and free the map that call is still reading (a segfault
+    on CPython 3.10). Values the consumer sets after binding are not seen by the iterator,
+    and values the iterator sets do not reach the consumer.
+
+    Advancing the iterator from inside its own generator, or from two threads at once, raises
+    `RuntimeError` (the context is already entered) rather than `ValueError`. Advancing it from
+    different threads one after another is fine.
+    """
 
     def __init__(self, policy: FileAccess, it: Iterable[Any]) -> None:
-        self._policy = policy
-        self._it = iter(it)
+        self._ctx = contextvars.copy_context()
+        self._ctx.run(_CURRENT.set, policy)
+        self._it = self._ctx.run(iter, it)
+        _ANCHORS[id(self)] = self._it
 
     def __iter__(self) -> _BoundIterator:
         return self
 
-    def _run(self, fn: Callable[..., Any], *args: Any) -> Any:
-        token = _CURRENT.set(self._policy)
+    def _step(self, fn: Callable[..., Any], *args: Any) -> Any:
         try:
-            return fn(*args)
-        finally:
-            _CURRENT.reset(token)
+            return self._ctx.run(fn, *args)
+        except StopIteration:
+            _ANCHORS.pop(id(self), None)
+            raise
 
     def __next__(self) -> Any:
-        return self._run(next, self._it)
+        return self._step(next, self._it)
 
     def send(self, value: Any) -> Any:
-        return self._run(self._it.send, value)  # type: ignore[attr-defined]
+        return self._step(self._it.send, value)  # type: ignore[attr-defined]
 
     def throw(self, *args: Any) -> Any:
-        return self._run(self._it.throw, *args)  # type: ignore[attr-defined]
+        return self._step(self._it.throw, *args)  # type: ignore[attr-defined]
 
     def close(self) -> None:
-        closer = getattr(self._it, "close", None)
-        if closer is not None:
-            self._run(closer)
+        try:
+            closer = getattr(self._it, "close", None)
+            if closer is not None:
+                self._ctx.run(closer)
+        finally:
+            _ANCHORS.pop(id(self), None)
 
     def __del__(self) -> None:
         try:
@@ -240,7 +269,8 @@ class _BoundIterator:
 
 def bind_iterator(policy: FileAccess, it: Iterable[T]) -> Iterator[T]:
     """Wrap a generator or iterator so every `__next__`, `send`, `throw` and `close` runs
-    under `policy`, whatever is installed when it is consumed."""
+    under `policy`, whatever is installed when it is consumed, in a private copy of the
+    context taken now."""
     return _BoundIterator(policy, it)
 
 

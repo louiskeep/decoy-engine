@@ -11,7 +11,7 @@ non-contract and ZERO residual (the one message-prose mutant, 33, was KILLED, an
 exist). This replaces the earlier "47 survivors not individually verified"
 honest-residual note. `capacity.py` exposes one public
 function, `estimate_job_capacity`: the estimate-only entrypoint for the
-out-of-core-FK memory capacity gate (`decoy preflight` / `decoy run`). It derives
+out-of-core-FK memory capacity gate (`decoy validate preflight` / `decoy run`). It derives
 the routing inputs by calling the same engine primitives `run_pipeline` uses,
 asks `decide_execution_route` twice (a row-count-only decision, then a worst-case
 byte-estimate probe), and defers the final FIT/INSUFFICIENT/UNKNOWN/NOT_APPLICABLE

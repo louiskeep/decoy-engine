@@ -30,7 +30,7 @@ module; `_pipeline` re-exports it, so its public import path is unchanged.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -39,9 +39,13 @@ from decoy_engine.execution import _guards, _pipeline_auto_chunk, _pipeline_rout
 from decoy_engine.execution._chunked_output_sink import OutputPublish
 from decoy_engine.execution._transforms_admission import out_of_core_declined, routing_profile
 from decoy_engine.execution._transforms_gate import reject_any_per_table_transforms
+from decoy_engine.fileaccess import config_relative
+from decoy_engine.profile import DeclarationRequest, prepare_declared_sources
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from faker import Faker
 
     from decoy_engine.execution._adapter import ExecutionAdapter
@@ -50,6 +54,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution._planner import ExecutionPlan
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.execution._transforms_prepare import PreparedSources
+    from decoy_engine.execution.pipeline._stream import StreamVerdict
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
     from decoy_engine.profile._types import Profile
@@ -130,6 +135,9 @@ class PipelineRunContext:
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None
     # Knobs.
     execution_mode: str
+    # `execution_mode="stream"` was translated to "auto" at the entry; this is the one place the
+    # requirement survives (read by `decide_route` only).
+    stream_required: bool
     resolved_substrate: str
     fpe_chunk_count: int
     explain_plan: bool
@@ -154,6 +162,7 @@ class PipelineRunContext:
     now_iso: str | None
     # F06: the resolved protected-quarantine runtime (sink + owner); None unless supplied.
     quarantine_runtime: Any = None
+    out_of_core_threads: int | None = None
 
 
 @dataclass(frozen=True)
@@ -168,6 +177,8 @@ class RouteDecision:
     ooc_declined: str | None
     # The statically admitted mixed job when `route == "mixed"` (`_mixed_static`).
     mixed: MixedStaticPlan | None = None
+    # Set only for a run that requires streaming and takes the chunked lane.
+    stream: StreamVerdict | None = None
 
 
 def build_run_context(
@@ -187,8 +198,10 @@ def build_run_context(
     post_validation_enforce: bool,
     now_iso: str | None,
     execution_mode: str,
+    stream_required: bool = False,
     sink: TransactionalSink | None,
     source_loader: Callable[[str], pa.Table] | None,
+    source_loader_schemas: Mapping[str, pa.Schema] | None = None,
     fpe_chunk_count: int,
     explain_plan: bool,
     auto_chunk: bool,
@@ -212,6 +225,8 @@ def build_run_context(
     secret_registry: SecretProviderRegistry | None = None,
     secret_cache_policy: SecretCachePolicy | None = None,
     quarantine_runtime: Any = None,
+    out_of_core_threads: int | None = None,
+    base_dir: str | Path | None = None,
 ) -> PipelineRunContext:
     """Resolve and validate every run input, in the order the inline code did.
 
@@ -270,6 +285,8 @@ def build_run_context(
     require_positive_int("full_frame_reject_rows", full_frame_reject_rows)
     if out_of_core_budget_bytes is not None:
         require_positive_int("out_of_core_budget_bytes", out_of_core_budget_bytes)
+    if out_of_core_threads is not None:
+        require_positive_int("out_of_core_threads", out_of_core_threads)
     require_bool("use_byte_estimate_routing", use_byte_estimate_routing)
     require_bool("use_probe_routing", use_probe_routing)
     require_bool("unified_slice_enabled", unified_slice_enabled)
@@ -326,15 +343,29 @@ def build_run_context(
         )
     )
 
-    # Duplicate field names are refused here, after the config-only admission and before
-    # profiling, routing and every pandas conversion: each of those looks columns up by name
-    # and would fail uncoded (or, on the loader out-of-core path, publish the duplicate).
+    # Every source column must be declared, checked from headers, footers and schemas first.
+    if (source_loader is None) != (source_loader_schemas is None):
+        raise ValueError("run_pipeline: source_loader and source_loader_schemas go together.")
+    schemas = {n: s.schema for n, s in caller_sources.items()}
+    request = DeclarationRequest.for_run(config, schemas, source_loader_schemas)
+    declared = prepare_declared_sources(request)
+    if source_loader is not None and source_loader_schemas is not None:
+        source_loader = declared.checked_loader(source_loader, source_loader_schemas)
+
+    # Duplicate field names are refused after the config-only admission and before profiling,
+    # routing and every pandas conversion: each looks columns up by name and would fail uncoded.
     _guards.refuse_duplicate_run_sources(config, caller_sources)
     source_loader = _guards.refusing_source_loader(source_loader)
 
-    profile = profile_source(config, seed=job_seed)
+    profile = profile_source(config, seed=job_seed, declared=declared)
 
-    plan = compile_plan(config, profile, decoy_engine_version=engine_version)
+    plan = compile_plan(
+        config,
+        profile,
+        decoy_engine_version=engine_version,
+        base_dir=base_dir,
+        instance_default_locale=instance_default_locale,
+    )
 
     # Late defense in depth: the compiled plan may not need more than admission covered.
     assert_plan_requirements_admitted(plan, admitted)
@@ -404,6 +435,7 @@ def build_run_context(
         instance_default_locale=instance_default_locale,
         provider_snapshot=provider_snapshot,
         execution_mode=execution_mode,
+        stream_required=stream_required,
         resolved_substrate=resolved_substrate,
         fpe_chunk_count=fpe_chunk_count,
         explain_plan=explain_plan,
@@ -416,6 +448,7 @@ def build_run_context(
         out_of_core_threshold_rows=out_of_core_threshold_rows,
         full_frame_reject_rows=full_frame_reject_rows,
         out_of_core_budget_bytes=out_of_core_budget_bytes,
+        out_of_core_threads=out_of_core_threads,
         use_byte_estimate_routing=use_byte_estimate_routing,
         use_probe_routing=use_probe_routing,
         out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
@@ -428,6 +461,32 @@ def build_run_context(
         now_iso=now_iso,
         quarantine_runtime=quarantine_runtime,
     )
+
+
+def with_quarantine_path(
+    ctx: PipelineRunContext, path: str | None, base_dir: str | Path | None = None
+) -> PipelineRunContext:
+    """`ctx` with `quarantine.output_path` replaced in a copy of its config.
+
+    A caller's `path` wins and is used as given. Without one, a relative YAML path resolves
+    against `base_dir` (`fileaccess.config_relative`); with neither, the context is unchanged.
+
+    Called after the plan, and so its config hash, was built from the caller's config: the hash
+    and the caller's dict are untouched. Every route reads `ctx.config`, so none needs its own
+    override. Without a path or a `quarantine` block the context is returned as is.
+    """
+    quarantine = ctx.config.get("quarantine")
+    if not isinstance(quarantine, dict):
+        return ctx
+    if path is None:
+        declared = quarantine.get("output_path")
+        if base_dir is None or not isinstance(declared, str) or not declared:
+            return ctx
+        path = config_relative(declared, base_dir)
+        if path == declared:
+            return ctx
+    effective = {**ctx.config, "quarantine": {**quarantine, "output_path": path}}
+    return replace(ctx, config=effective)
 
 
 def decide_route(ctx: PipelineRunContext) -> RouteDecision:
@@ -444,6 +503,10 @@ def decide_route(ctx: PipelineRunContext) -> RouteDecision:
     surfaces it on every route, relationship jobs included. `keep_lazy` is the B6b footer
     snapshot of lazy candidates; see `_pipeline_routing`.
     """
+    if ctx.stream_required:
+        from decoy_engine.execution.pipeline import _stream
+
+        return _stream.decide_stream_route(ctx, decide_route)
     mixed = _mixed_static_plan(ctx)
     route, route_reason = _pipeline_routing.resolve_execution_route(
         routing_profile(ctx.profile, ctx.caller_sources, ctx.prepared.prepared),

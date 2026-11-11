@@ -19,6 +19,12 @@ BASH = shutil.which("bash")
 GIT = shutil.which("git")
 
 
+def read_pins(pins: Path = DEV / "gate_pins.txt") -> list[str]:
+    """The pinned test paths of gate_pins.txt: `#` comments and surrounding blanks dropped."""
+    lines = (ln.split("#")[0].strip() for ln in pins.read_text().splitlines())
+    return sorted(ln for ln in lines if ln)
+
+
 def run(
     argv: list[str], cwd: Path, check: bool = False, **extra: str
 ) -> subprocess.CompletedProcess[str]:

@@ -11,6 +11,7 @@ Docs: docs/security/file-access-policy.md. Pattern: object capabilities (see `_t
 
 from __future__ import annotations
 
+from decoy_engine.fileaccess._config_path import config_relative
 from decoy_engine.fileaccess._entry import (
     ambient_forbidden,
     at_position,
@@ -83,10 +84,16 @@ ENTRY_POINTS: tuple[str, ...] = (
     "decoy_engine.plan._serialize.plan_from_yaml",
     "decoy_engine.plan.validate._consolidator.validate_plan",
     "decoy_engine.profile._csv_reader.read_csv_source",
+    "decoy_engine.profile._csv_reader.resolve_csv_dialect",
+    "decoy_engine.profile._declared_columns.prepare_declared_sources",
+    "decoy_engine.profile._declared_columns.source_columns",
     "decoy_engine.profile._fixed_width_reader.read_fixed_width",
     "decoy_engine.profile._fixed_width_writer.write_fixed_width",
+    "decoy_engine.profile._readers.build_declared_source",
+    "decoy_engine.profile._readers.build_profile_source",
     "decoy_engine.profile._source.profile_source",
     "decoy_engine.profiling.profiler.profile_columns",
+    "decoy_engine.profiling.scan_set.scan_sources",
     "decoy_engine.quarantine.apply_quarantine",
     "decoy_engine.reference_tables._loader.load_table",
     "decoy_engine.subset._api.plan_subset",
@@ -125,6 +132,7 @@ __all__ = [
     "at_position",
     "bind_iterator",
     "capture",
+    "config_relative",
     "current",
     "encode_field_key",
     "engine_dir_handle",

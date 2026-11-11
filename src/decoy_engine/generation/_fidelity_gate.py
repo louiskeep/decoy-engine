@@ -6,13 +6,19 @@ the generated values with the same `compute_distribution_snapshot` the
 fit step used, compare with `compute_fidelity` (quantile RMSE + TVD,
 SDV QualityReport aggregation; see `quality/fidelity.py` for the
 methodology and citations), and surface a warning when the overall
-score falls below `global_settings.fidelity_warn_threshold`.
+score, or any one comparable column's score, falls below
+`global_settings.fidelity_warn_threshold`.
 
 Warn-only by design: the gate never raises on a low score, never
 mutates the generated table, and never changes output bytes. The one
-signal channel is the logger, matching the engine's established
-soft-degradation precedent (numexpr fallback logging). A hard gate is
-a policy decision deferred to the platform layer.
+signals are the logger (matching the engine's soft-degradation
+precedent) and a structured `QualityWarning` record handed to the
+caller's `on_warning` sink, which reaches `ExecutionResult.warnings`.
+A hard gate is a policy decision deferred to the platform layer.
+
+One broken column can hide in a high aggregate, so the threshold also
+applies per comparable column (SDMetrics and Great Expectations report a
+table score beside the per-column scores it averages).
 
 Why a gate can score low with a correct sampler: `condition_on`
 columns fall back to the marginal when a parent value misses the joint
@@ -37,11 +43,13 @@ snapshot artifact once, from `GenerationPlan`, before this gate runs.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 import pandas as pd
 
 from decoy_engine import reasons
+from decoy_engine.generation.pool import QualityWarning, emit_generation_warning
 from decoy_engine.generation.statistical import StatisticalSpec
 from decoy_engine.generation.statistical._spec import StatisticalSpecError
 from decoy_engine.quality.fidelity import compute_fidelity
@@ -73,14 +81,15 @@ def score_generated_fidelity(
     statistical_specs: dict[tuple[str, str], StatisticalSpec],
     snapshot_index_for_column: dict[tuple[str, str], int],
     snapshot_artifacts: list[dict[str, Any]],
-) -> list[str]:
+) -> list[QualityWarning]:
     """Score a generated table's statistical columns against their snapshots.
 
     Args:
         generate_columns: The table's `generate_columns` config entries.
         data: The generated column values, keyed by generated column name.
         table_name: Table name, for the warning text.
-        threshold: Warn when a snapshot group's overall score is below this.
+        threshold: Warn when a snapshot group's overall score, or any comparable
+            column's score, is below this. 0.0 disables the gate.
         statistical_specs: `{(table, column): StatisticalSpec}`, pinned at
             compile time (guide section 4.7/4.8) -- no path is reopened.
         snapshot_index_for_column: `{(table, column): index into
@@ -91,9 +100,10 @@ def score_generated_fidelity(
             caller).
 
     Returns:
-        Warning strings, one per snapshot artifact whose generated
-        columns score below `threshold`. Empty when the table has no
-        statistical columns or every group scores at or above it.
+        One `QualityWarning` per snapshot artifact whose generated columns score below
+        `threshold` overall or in any comparable column. `trigger` is `"overall"` or
+        `"column"` (overall wins when both hold). Empty when the table has no statistical
+        columns or every score is at or above the threshold.
     """
     by_snapshot: dict[int, dict[str, str]] = {}
     for col in generate_columns:
@@ -117,7 +127,7 @@ def score_generated_fidelity(
             )
         group[spec.source_column] = spec.column
 
-    warnings: list[str] = []
+    warnings: list[QualityWarning] = []
     for index, columns in sorted(by_snapshot.items()):
         # H5 (guide section 4.7): `index` comes from a pinned `Plan`'s
         # `PinnedStatisticalSpec.snapshot_index`, which a hand-edited or
@@ -138,26 +148,64 @@ def score_generated_fidelity(
             )
         artifact = snapshot_artifacts[index]
         frame = pd.DataFrame(
-            {source_col: data[gen_col] for source_col, gen_col in sorted(columns.items())}
+            {
+                source_col: _frame_column(
+                    data[gen_col], statistical_specs.get((table_name, gen_col))
+                )
+                for source_col, gen_col in sorted(columns.items())
+            }
         )
         generated_snapshot = compute_distribution_snapshot(frame)
         fidelity = compute_fidelity(artifact, generated_snapshot)
         overall = fidelity.get("overall_score")
-        if overall is None or overall >= threshold:
+        if overall is None:
             continue
         scored = [
             (c["column"], c["similarity"])
             for c in fidelity["marginal"]["columns"]
             if c["comparable"]
         ]
+        below = [(name, score) for name, score in scored if score < threshold]
+        if overall >= threshold and not below:
+            continue
         worst = sorted(scored, key=lambda item: item[1])[:3]
-        worst_text = ",".join(f"{name}:{score}" for name, score in worst)
         warnings.append(
-            f"generation_fidelity_below_threshold: table={table_name} "
-            f"snapshot_index={index} overall_score={overall} "
-            f"threshold={threshold} worst_columns=[{worst_text}]"
+            QualityWarning(
+                code=reasons.warning.GENERATION_FIDELITY_BELOW_THRESHOLD,
+                provider="statistical",
+                column=None,
+                detail={
+                    "table": table_name,
+                    "snapshot_index": index,
+                    "overall_score": float(overall),
+                    "threshold": float(threshold),
+                    "trigger": "overall" if overall < threshold else "column",
+                    "worst_columns": [[name, float(score)] for name, score in worst],
+                    "below_columns": [[name, float(score)] for name, score in sorted(below)],
+                },
+            )
         )
     return warnings
+
+
+def _frame_column(values: list[Any], spec: StatisticalSpec | None) -> Any:
+    """Generated cells as a frame column. A day-resolution `date` column would otherwise reach
+    the snapshot as strings and score as a kind mismatch against its datetime source. Microsecond
+    unit, the unit generation emits: nanoseconds stop at 2262, and a source with a far-future
+    sentinel date must still generate."""
+    if spec is not None and spec.kind == "datetime":
+        return pd.Series(values, dtype="datetime64[us]")
+    return values
+
+
+def _log_line(record: QualityWarning) -> str:
+    detail = record.detail
+    worst = ",".join(f"{name}:{score}" for name, score in detail["worst_columns"])
+    return (
+        f"generation_fidelity_below_threshold: table={detail['table']} "
+        f"snapshot_index={detail['snapshot_index']} overall_score={detail['overall_score']} "
+        f"threshold={detail['threshold']} trigger={detail['trigger']} worst_columns=[{worst}]"
+    )
 
 
 def warn_on_low_fidelity(
@@ -169,9 +217,11 @@ def warn_on_low_fidelity(
     statistical_specs: dict[tuple[str, str], StatisticalSpec],
     snapshot_index_for_column: dict[tuple[str, str], int],
     snapshot_artifacts: list[dict[str, Any]],
+    on_warning: Callable[[QualityWarning], None] | None = None,
 ) -> None:
-    """Run the gate and log each warning. The generate path's one call site."""
-    for message in score_generated_fidelity(
+    """Run the gate, log each warning and hand each record to `on_warning`. The generate path's
+    one call site."""
+    for record in score_generated_fidelity(
         generate_columns,
         data,
         table_name=table_name,
@@ -180,4 +230,4 @@ def warn_on_low_fidelity(
         snapshot_index_for_column=snapshot_index_for_column,
         snapshot_artifacts=snapshot_artifacts,
     ):
-        _log.warning(message)
+        emit_generation_warning(record, _log, _log_line(record), on_warning)

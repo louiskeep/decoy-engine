@@ -462,15 +462,25 @@ def head_frame_from_batches(
 # ---------------------------------------------------------------------
 
 
-def build_declared_source(table: str, descriptor: dict[str, Any]) -> ProfileSource:
+@fileaccess.entry_point
+def build_declared_source(
+    table: str, descriptor: dict[str, Any], *, file_access: FileAccess | None = None
+) -> ProfileSource:
     """The `ProfileSource` for config table `table`, read under its own config position
     `sources.<table>.path`. Every reader of a declared source goes through here, so a policy
     that grants access per position sees the same key from each of them."""
-    return build_profile_source(descriptor, field_key=f"sources.{table}.path", table=table)
+    return build_profile_source(
+        descriptor, field_key=f"sources.{table}.path", table=table, file_access=file_access
+    )
 
 
+@fileaccess.entry_point
 def build_profile_source(
-    descriptor: dict[str, Any], *, field_key: str = "source.path", table: str = "source"
+    descriptor: dict[str, Any],
+    *,
+    field_key: str = "source.path",
+    table: str = "source",
+    file_access: FileAccess | None = None,
 ) -> ProfileSource:
     """Build the `ProfileSource` for one validated source descriptor. A local file is
     read through the installed policy under `field_key`, the config position it came from.
@@ -515,7 +525,7 @@ def _build_file_source(
             f"{fileaccess.shown(repr(path), _at(field_key, 'path'))}"
         )
     if fmt == "csv":
-        dialect = resolve_csv_dialect(descriptor)
+        dialect = resolve_csv_dialect(descriptor, table=table)
         return CsvFileSource(
             Path(path),
             has_header=dialect.has_header,

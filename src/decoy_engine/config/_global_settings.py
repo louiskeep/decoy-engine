@@ -20,6 +20,7 @@ from pydantic import (
 )
 
 from decoy_engine._reference_date import PinnedModeError, normalize_reference_date
+from decoy_engine.errors import ConfigRuleError
 
 
 class DpGenerateSettings(BaseModel):
@@ -65,9 +66,10 @@ class GlobalSettings(BaseModel):
     plan-compile); default `scale_up` matches the engine default.
     `fidelity_warn_threshold` drives the generation-time fidelity
     warn-gate: statistical generate columns are scored against their
-    source snapshot after generation and a warning is logged when the
-    overall fidelity score falls below this value (warn-only; never
-    fails the run or changes output bytes).
+    source snapshot after generation and a warning is raised when the
+    overall fidelity score, or any one comparable column's score, falls
+    below this value (warn-only; never fails the run or changes output
+    bytes).
     `categorical_retention_warn_threshold` (HC-5) drives the FIT-time
     categorical-retention warn-gate (`quality._retention_gate`): a warning
     is logged for any snapshot column that fell to `freetext` via the
@@ -135,7 +137,9 @@ class GlobalSettings(BaseModel):
         try:
             return normalize_reference_date(value)
         except PinnedModeError:
-            raise ValueError("reference_date must be a timezone-aware ISO 8601 datetime") from None
+            raise ConfigRuleError(
+                "reference_date must be a timezone-aware ISO 8601 datetime"
+            ) from None
 
     @model_validator(mode="before")
     @classmethod
@@ -192,7 +196,7 @@ class GlobalSettings(BaseModel):
             return data
         snapshot = dict(data)
         if "dp" in snapshot and snapshot["dp"] is None:
-            raise ValueError(
+            raise ConfigRuleError(
                 "global_settings.dp is present but null. Remove the key entirely for a "
                 "pipeline with no DP contract, or supply {epsilon: ..., delta: ...} to "
                 "declare one. An explicit null is refused so it can never be read as "

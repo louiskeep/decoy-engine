@@ -49,6 +49,9 @@ _DECISION_REASON = "forwards the rejection ReasonCode of the central route decis
 ADAPTERS: dict[tuple[str, str], str] = {
     # -- F06 declared casting ----------------------------------------------------------------
     ("contracts/_declared_base.py", "DeclaredCastContractError.__init__"): _CTOR,
+    ("execution/pipeline/_route_summary.py", "route_summary"): (
+        "copies the route reason code the engine recorded in quality_metrics into the summary record"
+    ),
     ("execution/_errors.py", "DeclaredCastValueError.__init__"): _CTOR,
     ("execution/_errors.py", "QuarantineError.__init__"): _CTOR,
     ("contracts/_declared_formats.py", "validate_format_spec"): _FIRST_CODE,
@@ -68,10 +71,11 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("detection/ner.py", "NerUnavailableError.__init__"): _CTOR,
     ("determinism/_derive.py", "DeterminismError.__init__"): _CTOR,
     ("errors.py", "FpeChecksumError.__init__"): _CTOR,
+    ("records/_errors.py", "RecordError.__init__"): _CTOR,
     ("errors.py", "FpeUnencryptableError.__init__"): _CTOR,
     ("errors.py", "PipelineValidationError.__init__"): _CTOR,
     ("errors.py", "ValidationError.__init__"): _CTOR,
-    ("execution/_errors.py", "ExecutionError.__init__"): _CTOR,
+    ("_execution_error.py", "ExecutionError.__init__"): _CTOR,
     ("execution/_errors.py", "StrategyError.__init__"): _CTOR,
     ("execution/_mixed_admission.py", "MixedDeclineError.__init__"): _CTOR,
     ("execution/_transforms.py", "TransformError.__init__"): _CTOR,
@@ -111,7 +115,7 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("generation/_pinned_compile.py", "_reject_column"): _HELPER,
     ("generation/_window_admission.py", "_refuse"): _HELPER,
     ("plan/_checks_dp.py", "_raise"): _HELPER,
-    ("profile/_csv_reader.py", "_refusal"): _HELPER,
+    ("profile/_csv_reader.py", "source_refusal"): _HELPER,
     ("plan/_checks_top_code.py", "_reject_unusable_bound"): _HELPER,
     # -- re-wraps of an already-registered exception code ------------------------------------
     ("execution/_chunked_when_guard.py", "PositionalWhenGuard.check_schema"): _REWRAP,
@@ -122,6 +126,12 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("execution/physical/_shadow_mixed.py", "_as_shadow_difference"): _REWRAP,
     ("plan/_checks.py", "_check_ner_available_for_strategy"): _REWRAP,
     ("plan/_checks.py", "check_statistical_columns"): _REWRAP,
+    ("plan/checks/_generate_columns.py", "_located"): (
+        "re-wraps the registered code of the ref check or parse rule it caught, with fixed text; "
+        "its other callers pass a registry symbol"
+    ),
+    ("plan/_generation.py", "check_fitted_references"): _REWRAP,
+    ("plan/_serialize.py", "_pinned_snapshot_from_dict"): _REWRAP,
     ("plan/validate/_consolidator.py", "validate_plan"): _REWRAP,
     ("subset/_api.py", "_compute"): _REWRAP,
     ("unmask.py", "unmask_pipeline"): _REWRAP,
@@ -727,7 +737,7 @@ def test_forwarding_helper_callers_are_checked(tmp_path: Path) -> None:
 
 
 def test_the_csv_reader_refusals_are_scanned_and_registry_backed() -> None:
-    sites = [s for s in _scan() if s.file == "profile/_csv_reader.py" and s.family == "_refusal"]
+    sites = [s for s in _scan() if s.file == "profile/_csv_reader.py" and s.family == "source_refusal"]  # fmt: skip
     assert len(sites) >= 6
     assert {s.value_class for s in sites} == {"registry"}
 
@@ -809,7 +819,7 @@ def test_the_unchecked_ratchet_fails_swap_regrowth_and_collision() -> None:
 
 def test_every_forwarding_helper_is_checked_or_a_listed_follow_up() -> None:
     assert UNCHECKED_HELPERS <= HELPER_IDENTITIES, UNCHECKED_HELPERS - HELPER_IDENTITIES
-    assert ("profile/_csv_reader.py", "_refusal") in HELPER_SINKS
+    assert ("profile/_csv_reader.py", "source_refusal") in HELPER_SINKS
     assert len(UNCHECKED_HELPERS) <= 5  # in-suite floor; the registered baseline is the ratchet
 
 
@@ -822,3 +832,24 @@ def test_every_helper_sink_is_discovered_or_has_a_recorded_rationale() -> None:
     assert set(NOT_POSITIONAL_SINKS) <= HELPER_IDENTITIES
     # a rationale is not a place to park a helper the scanner does see
     assert not set(NOT_POSITIONAL_SINKS) & set(discovered)
+
+
+def test_baseline_script_runs_standalone(tmp_path: Path) -> None:
+    """The documented ``python tests/sentry/_reason_baseline.py`` entry point imports cleanly.
+
+    Run from an unrelated directory so neither the repo root nor tests/sentry is on the path
+    except through the script's own setup.
+    """
+    import subprocess
+
+    script = Path(__file__).resolve().parent / "_reason_baseline.py"
+    proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [sys.executable, str(script)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert "identities" in proc.stdout

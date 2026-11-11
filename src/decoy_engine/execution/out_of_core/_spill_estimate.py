@@ -139,7 +139,7 @@ backstop -- the estimate does not need to be exact, only conservative.
 
 TEMP-ROOT LOW: `default_ooc_temp_root()` reads `tempfile.gettempdir()` once at
 call time; a job that later re-points `TMPDIR` between this preflight and the
-runner's `mkdtemp` could check a different mount than it spills to. In
+runner's protected scratch directory could check a different mount than it spills to. In
 practice `run_out_of_core_route` reads the same `default_ooc_temp_root()` for
 its runtime budget, so both agree unless the environment mutates underneath
 them mid-dispatch -- documented, not defended against.
@@ -518,8 +518,8 @@ def predict_ooc_disk_bytes(
 
 def default_ooc_temp_root() -> Path:
     """Where the out-of-core runner's scratch directory lands absent an
-    explicit `temp_dir` (`run_fk_out_of_core`'s own `tempfile.mkdtemp` default,
-    which draws from the same `tempfile.gettempdir()` root). Single source of
+    explicit `temp_dir` (`run_fk_out_of_core`'s own default, a `protected_scratch_dir`
+    under the same `tempfile.gettempdir()` root). Single source of
     truth so this module's preflight and `_pipeline_route_exec.run_out_of_core_
     route`'s runtime-budget threading check the SAME filesystem -- two guards
     silently checking two different mounts could disagree on whether disk is

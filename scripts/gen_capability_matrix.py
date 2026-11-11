@@ -173,10 +173,7 @@ def render() -> str:
     gen = _generation_strategies()
     w(f"\n## Generation strategies ({len(gen)})\n\n")
     w(", ".join(f"`{g}`" for g in gen) + "\n")
-    w(
-        "\nThis enumeration combines V2 configuration types and legacy ColumnGenerator keys. "
-        "`distribution` is a legacy entry, not a streamed-generation promise.\n"
-    )
+    w("\nThis enumeration combines V2 configuration types and legacy ColumnGenerator keys.\n")
 
     prov = _providers()
     w(f"\n## Synthetic providers ({len(prov)})\n\n")
