@@ -82,6 +82,23 @@ def test_config_layers_equal_the_reviewed_snapshot() -> None:
     assert config_layers(CONFIG.read_text(encoding="utf-8")) == LAYERS
 
 
+def facade_ignores(text: str, src: Path) -> list[str]:
+    """Ignore lines whose importer or imported side is a package rather than a leaf module.
+
+    import-linter exempts a whole module edge, not the symbols that first needed it, so an
+    ignore on a package facade lets any later import through that facade.
+    """
+    return sorted(
+        key
+        for key in ignore_keys(text)
+        if any((src / Path(*side.split("."))).is_dir() for side in key.split(" -> "))
+    )
+
+
+def test_every_ignore_names_leaf_modules() -> None:
+    assert facade_ignores(CONFIG.read_text(encoding="utf-8"), ROOT / "src") == []
+
+
 # --- meta-tests: the guard fails closed and sees seeded violations -------------------------
 
 
@@ -185,6 +202,32 @@ def test_a_tier_six_module_importing_execution_is_red(scratch: Path, tmp_path: P
         leaf.read_text(encoding="utf-8") + "\nfrom decoy_engine.execution import _errors\n",
         encoding="utf-8",
     )
+    assert not lint_scratch(tree)
+
+
+def test_the_facade_check_sees_a_package_ignore() -> None:
+    text = "[c]\nignore_imports =\n    decoy_engine.generation._bounds -> decoy_engine.execution\n"
+    assert facade_ignores(text, ROOT / "src") == [
+        "decoy_engine.generation._bounds -> decoy_engine.execution"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("module", "line"),
+    [
+        # Tier 3 reaching tier 2 through the execution facade.
+        ("generation/_bounds.py", "from decoy_engine.execution import PandasExecutionAdapter"),
+        # Tier 2 reaching tier 1 through the root facade.
+        ("execution/_job_estimate.py", "from decoy_engine import DecodedRecord"),
+    ],
+)
+def test_an_upward_import_through_a_facade_is_red(
+    scratch: Path, tmp_path: Path, module: str, line: str
+) -> None:
+    """Both importers keep exempt leaf edges, and both edges once had a facade exemption."""
+    tree = _tree(scratch, tmp_path)
+    path = tree / "src" / "decoy_engine" / module
+    path.write_text(path.read_text(encoding="utf-8") + f"\n{line}\n", encoding="utf-8")
     assert not lint_scratch(tree)
 
 

@@ -44,6 +44,11 @@ ReleasePhase = Literal["pre-ga", "ga"]
 #     docs/discussions/2026-07-14-de02-keyprovider-design.md.
 RELEASE_PHASE: ReleasePhase = "pre-ga"
 
+# The engine's own version claim, kept a literal (tests/unit/test_version_agreement.py says
+# why) and bumped with [project].version. The package root re-exports it; modules inside the
+# package read it here so none of them imports the root facade.
+__version__ = "0.22.0"
+
 
 def is_pre_ga() -> bool:
     """True before general availability.

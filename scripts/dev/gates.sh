@@ -124,11 +124,17 @@ LAYER_PY=$(bash "$ROOT/scripts/dev/lock_version.sh" --python) || exit 2
 # Deps only: the package is imported from the tree under test through PYTHONPATH, so a baseline
 # worktree never re-points this venv.
 LAYER_SYNC=(uv sync -q --project "$ROOT" --frozen --no-install-project --extra dev --extra layers --python "$LAYER_PY")
+# Synced once per run: the branch and baseline passes share these deps-only venv contents.
+LAYER_SYNCED=skip
+case ",$STEPS," in
+  *,layers,*)
+    if UV_PROJECT_ENVIRONMENT=$LAYER_VENV ${LAYER_SYNC[@]+"${LAYER_SYNC[@]}"} >&2; then LAYER_SYNCED=ok; else LAYER_SYNCED=fail; fi ;;
+esac
 LAYERS_ONLY=0
 if [ "$STEPS" = layers ]; then
   # The layer venv is the only venv this run needs, so it also runs the reporter.
   LAYERS_ONLY=1
-  UV_PROJECT_ENVIRONMENT=$LAYER_VENV ${LAYER_SYNC[@]+"${LAYER_SYNC[@]}"} >&2 || { echo "gates: FAIL: could not sync $LAYER_VENV" >&2; exit 2; }
+  [ $LAYER_SYNCED = ok ] || { echo "gates: FAIL: could not sync $LAYER_VENV" >&2; exit 2; }
   VENV=$LAYER_VENV BIN=$LAYER_VENV/bin
 fi
 [ -x "$BIN/python" ] || { echo "gates: no venv at $VENV; run scripts/dev/bootstrap.sh" >&2; exit 2; }
@@ -412,9 +418,9 @@ combine_rc() {  # $1 parallel-pass rc, $2 serial-pass rc
   if [ "$a" = 1 ] || [ "$b" = 1 ]; then echo 1; else echo 0; fi
 }
 
-# The layers step: sync the layer venv, then run only the layer test in it (pytest args in $@).
+# The layers step: run only the layer test in the venv synced above (pytest args in $@).
 layer_step() {
-  UV_PROJECT_ENVIRONMENT=$LAYER_VENV ${LAYER_SYNC[@]+"${LAYER_SYNC[@]}"} || { echo "gates: could not sync $LAYER_VENV"; return 2; }
+  [ "$LAYER_SYNCED" = ok ] || { echo "gates: could not sync $LAYER_VENV"; return 2; }
   "$LAYER_VENV/bin/python" -m pytest "$@" "$LAYER_TEST"
 }
 

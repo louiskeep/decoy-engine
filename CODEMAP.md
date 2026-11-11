@@ -258,12 +258,12 @@ concrete path that does not exist. Layer membership will live in `./.importlinte
 | Lightweight automatic PR checks | `.github/workflows/` | `.github/workflows/<concern>.yml`; `ci.yml` stays manual-only | the script it runs | `TRIGGERED_ON_PURPOSE` in `tests/sentry/test_ci_config.py` |
 | Unit tests | `tests/unit/<package>/` mirroring `src/` | `test_<behavior>.py` | - | current exceptions: `tests/parity/`, `tests/native/`, `tests/physical/`, `tests/fileaccess/`, `tests/secret_providers/`, `tests/generation/`, `tests/connectors/`, and loose files in `tests/unit/` |
 
-Known inconsistencies, listed and not fixed here (the 42 ignore lines in `./.importlinter`
-name each one): `execution/_errors.py`, 16 other `execution` modules and the `execution`
-package itself are imported from lower tiers (foundation code that lives in `execution/`);
-`profiling` and `config` reach up into `generation` and `quality`; `telemetry` reads
-`progress`; `__version__` is read from the root facade by 8 modules (target: a leaf
-version module).
+Known inconsistencies, listed and not fixed here (the 32 ignore lines in `./.importlinter`
+name each one as an exact module-to-module edge, never a package facade):
+`execution/_errors.py` and 18 other `execution` modules are imported from lower tiers
+(foundation code that lives in `execution/`); `profiling` and `config` reach up into
+`generation` and `quality`; `telemetry` reads `progress`. Modules inside the package read the
+engine version from `release.py`, not the root facade.
 
 ## Known Issues / Flags
 

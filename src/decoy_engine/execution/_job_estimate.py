@@ -100,7 +100,6 @@ def estimate_job(
 
 
 def _estimate(config_dump: dict[str, Any], base_dir: Path | str) -> JobEstimate:
-    from decoy_engine import __version__ as engine_version
     from decoy_engine.execution._mem_estimate import estimate_peak_bytes, raw_data_bytes
     from decoy_engine.execution._pipeline_context import classify_table_kinds
     from decoy_engine.execution._pipeline_routing import decide_execution_route
@@ -119,6 +118,7 @@ def _estimate(config_dump: dict[str, Any], base_dir: Path | str) -> JobEstimate:
         build_relationship_graph,
         check_orphan_fk_policy_completeness,
     )
+    from decoy_engine.release import __version__ as engine_version
 
     config = _resolved_config_copy(config_dump, Path(base_dir))
     table_kinds = classify_table_kinds(config)
