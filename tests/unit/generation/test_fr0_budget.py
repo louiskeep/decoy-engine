@@ -555,7 +555,6 @@ def test_value_wider_than_its_declared_bound_aborts(monkeypatch: pytest.MonkeyPa
     assert "xxxx" not in str(err.value), "an error must never carry a data value"
 
 
-@pytest.mark.usefixtures("lenient_generate_checks")
 def test_bounded_and_unbounded_runs_emit_identical_values() -> None:
     config = prepared_config(fx.cfg_live_faker())
     bounded = run_generation(config, budget_bytes=256 * MIB).tables
