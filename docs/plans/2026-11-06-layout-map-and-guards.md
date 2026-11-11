@@ -1,8 +1,8 @@
 # LAYOUT: layout map and placement guards for engine and CLI
 
-Status: plan (2026-11-06). Built: E1 (engine #410), C1 (CLI #183), E2 (engine #479), C2 (CLI
-#196). E3 in review on branch `feat/layout-e3-layers`. Not built: C3. Covers both repos;
-lives in the engine repo.
+Status: record (2026-11-06; all slices built 2026-11-11, CLI roadmap row 7 closed). Built: E1
+(engine #410), C1 (CLI #183), E2 (engine #479), C2 (CLI #196), E3 (engine #480), C3 (CLI #199).
+Covers both repos; lives in the engine repo.
 
 Rules consulted: `~/dev-rules/00-universal.md`, `risk-and-exceptions.md`, `development-loop.md`, `architecture.md`
 (section "Layout: where things go"), `cross-cutting-concerns.md`, `testing.md`, `reuse-first.md`,
