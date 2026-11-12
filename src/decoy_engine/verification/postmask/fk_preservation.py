@@ -14,12 +14,11 @@ import pyarrow as pa
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine.config import RelationshipConfig, RelationshipEnd, parse_relationship_config
+from decoy_engine.profiling import MEMORY_LIMIT
 from decoy_engine.verification.postmask._keys import KeyCounts, KeyResult, check_keys
 from decoy_engine.verification.postmask._stream_input import TableBatches, from_table
 from decoy_engine.verification.postmask.types import FKPreservationFinding, Severity
 
-# The key scan's own default; a caller that holds its run's limit passes `keys` instead.
-_MEMORY_LIMIT = "512MB"
 _ORPHANS = reasons.post_scan.FOREIGN_KEY_ORPHANS_INTRODUCED
 
 
@@ -76,7 +75,8 @@ def _frame_keys(
             tables(source_frames),
             tables(output_frames),
             scratch=scratch,
-            memory_limit=_MEMORY_LIMIT,
+            # The key scan's own cap; a caller that holds its run's limit passes `keys` instead.
+            memory_limit=MEMORY_LIMIT,
         )
 
 

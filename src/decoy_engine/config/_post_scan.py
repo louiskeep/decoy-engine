@@ -133,3 +133,9 @@ def post_scan_integrity_requested(config: Mapping[str, Any]) -> bool:
     """True when a validated config dict opts in to Post-scan integrity."""
     block = config.get("post_scan")
     return bool(block.get("integrity")) if isinstance(block, Mapping) else False
+
+
+def post_scan_gate_applies(config: Mapping[str, Any]) -> bool:
+    """True when a validated config dict needs the post-scan gate: a relationship is declared or
+    Post-scan integrity is on. The one place that decision is made."""
+    return bool(config.get("relationships")) or post_scan_integrity_requested(config)
