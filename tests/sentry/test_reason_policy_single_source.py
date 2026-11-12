@@ -443,3 +443,71 @@ def test_guard_flags_qualified_uses_through_module_aliases(tmp_path: Path) -> No
         "src/b.py::moved",
         "src/c.py::moved",
     ]
+
+
+# REG-RELEASE E2: the four registry transitions and the pending-state decisions are made only by
+# the policy module. A branch on a transition's pending sets outside it is a second decision point
+# even when it collects nothing (it may only pick a version).
+_DEPRECATION_BRANCH = (
+    "def target(t, allowed):\n"
+    "    version = allowed\n"
+    "    if t.pending_deprecations and not t.pending_identities:\n"
+    "        version = allowed + '.1'\n"
+    "    return version\n"
+)
+_PENDING_SUMMARY_FILTER = (
+    "def marked(t, live):\n    return [e for e in live if (e[0], e[1]) in t.pending_summaries]\n"
+)
+
+
+def test_guard_flags_a_local_transition_branch(tmp_path: Path) -> None:
+    files = _tree(
+        tmp_path,
+        {"scripts/release/s.py": _DEPRECATION_BRANCH, "scripts/dev/r.py": _PENDING_SUMMARY_FILTER},
+    )
+    assert guard_violations(tmp_path, files, {}) == [
+        "scripts/dev/r.py::marked",
+        "scripts/release/s.py::target",
+    ]
+
+
+def private_registry_imports(root: Path, files: list[str]) -> list[str]:
+    """Scripts that import the registry's private module instead of `decoy_engine.reasons`."""
+    found = []
+    for rel in files:
+        if not rel.startswith("scripts/"):
+            continue
+        for n in ast.walk(ast.parse((root / rel).read_text(encoding="utf-8"))):
+            names = [a.name for a in n.names] if isinstance(n, ast.Import) else []
+            if isinstance(n, ast.ImportFrom) and n.module:
+                names = [n.module] + [f"{n.module}.{a.name}" for a in n.names]
+            if any(x.startswith("decoy_engine.reasons._registry") for x in names):
+                found.append(rel)
+    return found
+
+
+def test_no_script_imports_the_private_registry_module() -> None:
+    assert private_registry_imports(ROOT, tracked_py(ROOT)) == []
+
+
+def test_private_registry_import_guard_flags_a_seeded_import(tmp_path: Path) -> None:
+    files = _tree(
+        tmp_path,
+        {
+            "scripts/a.py": "from decoy_engine.reasons._registry import PENDING_SUMMARY_EDITS\n",
+            "scripts/b.py": "from decoy_engine.reasons import _registry\n",
+            "scripts/c.py": "from decoy_engine.reasons import pending_summary_edits\n",
+        },
+    )
+    assert private_registry_imports(tmp_path, files) == ["scripts/a.py", "scripts/b.py"]
+
+
+RELEASE_CHECKS = ROOT / "scripts" / "release" / "release_checks.sh"
+# Registry state words a shell check would need to parse the catalog itself.
+_SHELL_STATE = ("REGISTRY_VERSION", "PENDING_SUMMARY_EDITS", "UNRELEASED", "unreleased", "since=")
+
+
+def test_release_checks_asks_the_policy_and_parses_no_registry_state() -> None:
+    text = RELEASE_CHECKS.read_text(encoding="utf-8")
+    assert '"$py" scripts/release/reason_release_pin.py --release-ready' in text
+    assert [w for w in _SHELL_STATE if w in text] == []
