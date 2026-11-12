@@ -41,7 +41,7 @@ from decoy_engine.execution._chunked_output_sink import OutputPublish
 from decoy_engine.execution._transforms_admission import out_of_core_declined, routing_profile
 from decoy_engine.execution._transforms_gate import reject_any_per_table_transforms
 from decoy_engine.fileaccess import config_relative
-from decoy_engine.profile import DeclarationRequest, prepare_declared_sources
+from decoy_engine.profile import DeclarationRequest
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
@@ -325,7 +325,7 @@ def build_run_context(
         raise ValueError("run_pipeline: source_loader and source_loader_schemas go together.")
     schemas = {n: s.schema for n, s in caller_sources.items()}
     request = DeclarationRequest.for_run(config, schemas, source_loader_schemas)
-    declared = prepare_declared_sources(request)
+    declared = _guards.prepare_declared_execution_sources(request, registry=resolved_registry)
     if source_loader is not None and source_loader_schemas is not None:
         source_loader = declared.checked_loader(source_loader, source_loader_schemas)
 
@@ -334,7 +334,9 @@ def build_run_context(
     _guards.refuse_duplicate_run_sources(config, caller_sources)
     source_loader = _guards.refusing_source_loader(source_loader)
 
-    profile = profile_source(config, seed=job_seed, declared=declared)
+    profile = profile_source(
+        config, seed=job_seed, declared=declared, supplied_sources=caller_sources
+    )
 
     plan = compile_plan(
         config,
