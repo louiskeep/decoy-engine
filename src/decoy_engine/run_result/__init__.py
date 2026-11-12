@@ -4,10 +4,11 @@ The run-record names are re-exported from ``decoy_engine``; the projection names
 (``project_tables`` and its fact types) are public here only. The value-free leaf types (``Token``,
 ``SafeName`` and the rest) are exported here for the sibling ``records`` package, which shares
 them; they are not part of the top-level API. The per-table projection lives in
-``_project.py``; the builder is ``_build.py``; the collector arrives in a later slice of the same package.
+``_project.py``, the progress collector in ``_collect.py`` and the builder in ``_build.py``.
 """
 
 from decoy_engine.run_result._build import FailureInput, RouteView, RunFacts, build_run_result
+from decoy_engine.run_result._collect import RunResultCollector
 from decoy_engine.run_result._model import (
     RUN_RESULT_SCHEMA,
     BaselineLink,
@@ -53,6 +54,7 @@ __all__ = [
     "RouteView",
     "RunFacts",
     "RunResult",
+    "RunResultCollector",
     "RunResultRead",
     "SafeName",
     "SafeRef",
