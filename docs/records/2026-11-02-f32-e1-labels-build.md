@@ -47,3 +47,15 @@ L6 to L8 were also run on `55b28933` (M6 to M8 in the original record). S1 to S1
 - Cross-bundle unlinkability beyond position-only labels (V2-LOG, plan 12).
 - The exact per-node timings are not bucketed (V2-LOG, plan 12).
 - No Platform or CLI code was run; Python 3.10 only.
+
+## 5. Main merge, 2026-11-12
+
+Merged `feat/f32-e1-types` (which carries `origin/main` `426e6d05`) into this branch with a plain merge, no rebase. One conflict, in `src/decoy_engine/support/__init__.py` (import block): kept the types half's `from decoy_engine.reasons import Outcome, RetryClass, Severity` and this half's `from decoy_engine.support._labels import LabelAllocator`.
+
+Edits in this half: `tests/sentry/test_sentry_manifest.py` lists `tests/sentry/test_support_no_network.py` in `SENTRIES`; the `CODEMAP.md` "Support bundles" row names that sentry and `_labels.py`; fragment `changelog.d/f32-e1-labels.md` (`check_fragment.py --base origin/main` exits 0). No `.importlinter`, snapshot, enum or registry edit: those are in the types half. `_labels.py` imports only `decoy_engine.support._shape`, so the facade rule passes.
+
+Results: `tests/sentry tests/unit/support tests/unit/test_reason_registry.py` on the Mac: 5109 passed, 10 failed, the 10 tests in `tests/sentry/layout/test_import_layers.py` that fail on macOS by design. Those 15 layout tests pass on Linux through `scripts/dev/gates.sh --steps layers`. ruff check, ruff format --check and mypy on `support`: clean.
+
+Mutations on this head (each applied once, run against `tests/unit/support` and the no-network sentry, reverted; tree clean after): L6, L7, L8 and S1 to S10 all red, each on the test named in the table above. L7 and L6 also trip three other `test_labels.py` cells.
+
+Not run: the full suite.
