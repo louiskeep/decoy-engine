@@ -116,7 +116,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/validation/` | `validate_config` |
 | `src/decoy_engine/validation_result.py` | `ValidationResult`, `ValidationMessage`, `VALIDATION_CODES` |
 | `src/decoy_engine/sdk.py` | Public Connector SDK (file-shaped) |
-| `src/decoy_engine/connectors/` | In-tree file connectors (`s3.py`, `gcs.py`, `sftp.py`) |
+| `src/decoy_engine/connectors/` | In-tree file connectors (`s3.py`, `gcs.py`, `sftp.py`) and the cloud object store (`object_store.py`) |
 | `src/decoy_engine/internal/` | Private helpers (crypto, faker setup, validators) |
 | `src/decoy_engine/disguises/` | Disguise registry (post-FORECAST replacement) |
 | `src/decoy_engine/instrumentation/` | Public timing / collector helpers |

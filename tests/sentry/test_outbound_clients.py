@@ -404,6 +404,7 @@ def test_seeded_case(case: str, seeded: dict[str, set[tuple[str, str]]]) -> None
 LITERAL_FILES = (
     "decoy_engine/connectors/_clients.py",
     "decoy_engine/connectors/gcs.py",
+    "decoy_engine/connectors/object_store.py",
     "decoy_engine/connectors/s3.py",
     "decoy_engine/profile/_cloud_readers.py",
 )

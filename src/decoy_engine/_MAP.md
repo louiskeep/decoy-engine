@@ -40,7 +40,7 @@ sentry (`tests/sentry/test_package_map_paths.py`) asserts every path here exists
 | `disguises/` | Compliance disguise bundles |
 | `determinism/`, `keyprovider.py`, `_reference_date.py` | Seed protocol, key derivation, reference-date anchoring |
 | `vault.py`, `unmask.py` | Token vault write and unmask |
-| `connectors/`, `sdk.py` | Connector SDK and in-tree file connectors (S3, GCS, SFTP, Postgres snapshot) |
+| `connectors/`, `sdk.py` | Connector SDK and in-tree file connectors (S3, GCS, SFTP, Postgres snapshot) and the conditional-write object store |
 | `data_discovery.py` | Read-only SQL over output (DuckDB) |
 | `context.py`, `instrumentation/` | Caller context and `Logger` protocol; opt-in timing collector |
 | `errors.py` | Engine exception types |
