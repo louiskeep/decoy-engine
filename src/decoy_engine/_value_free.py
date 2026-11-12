@@ -137,7 +137,7 @@ class _Deriver:
             # Only a Literal is held exact: a field of the same name that is a model still derives.
             keep = name in self.exact_fields and get_origin(info.annotation) is Literal
             read_ann = ann if keep else self.annotation(ann)
-            fields[name] = (read_ann, Field(default, alias=info.alias))
+            fields[name] = (read_ann, Field(default, alias=info.alias, exclude_if=info.exclude_if))
         read = create_model(
             f"{model.__name__}Read",
             __base__=(self.base, *rules),

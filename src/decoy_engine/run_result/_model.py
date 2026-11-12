@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from typing import Annotated, Any, ClassVar, Final, Literal
+from typing import Annotated, Any, Final, Literal
 
 from annotated_types import Ge, Le, MaxLen
 from packaging.version import InvalidVersion
@@ -34,9 +34,7 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
-    SerializerFunctionWrapHandler,
     Strict,
-    model_serializer,
 )
 
 from decoy_engine._value_free import (
@@ -228,18 +226,6 @@ class _Base(BaseModel):
 
     model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
 
-    # Optional fields left off the wire while unset, so a record that never set one keeps its
-    # old bytes on every dump path (dict, JSON, nested).
-    _OMIT_WHEN_NONE: ClassVar[frozenset[str]] = frozenset()
-
-    @model_serializer(mode="wrap")
-    def _omit_when_none(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
-        data: dict[str, Any] = handler(self)
-        for name in self._OMIT_WHEN_NONE:
-            if data.get(name, 0) is None:
-                del data[name]
-        return data
-
     def to_payload(self) -> dict[str, Any]:
         """The JSON dict written to ``--result`` and stored as the record payload."""
         return self.model_dump(mode="json", by_alias=True)
@@ -251,8 +237,6 @@ class _Model(_Base):
 
 class _ReadBase(_Base):
     model_config = ConfigDict(extra="ignore")
-    # The derived read class has no declaration of its own, so the base carries the document's.
-    _OMIT_WHEN_NONE: ClassVar[frozenset[str]] = frozenset({"sample"})
 
     def to_payload(self) -> dict[str, Any]:
         """The read projection: what this reader understood, as the wire dict.
@@ -404,10 +388,8 @@ class RunResult(_Model):
     timings: Timings
     links: Links
     # Optional under /v1 (compatibility contract section 3.1): a record that never set it keeps
-    # its old wire form, so the key is left out until a sample sets it.
-    sample: SampleMarker | None = None
-
-    _OMIT_WHEN_NONE: ClassVar[frozenset[str]] = frozenset({"sample"})
+    # its old wire form, so the key is left out of every dump until a sample sets it.
+    sample: SampleMarker | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 # --- read model, derived -----------------------------------------------------------------------
