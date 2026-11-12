@@ -251,6 +251,8 @@ class _Model(_Base):
 
 class _ReadBase(_Base):
     model_config = ConfigDict(extra="ignore")
+    # The derived read class has no declaration of its own, so the base carries the document's.
+    _OMIT_WHEN_NONE: ClassVar[frozenset[str]] = frozenset({"sample"})
 
     def to_payload(self) -> dict[str, Any]:
         """The read projection: what this reader understood, as the wire dict.
