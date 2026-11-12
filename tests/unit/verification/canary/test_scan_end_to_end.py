@@ -191,4 +191,4 @@ def test_dictionary_index_bounds_make_cells_uncompared() -> None:
     report = scan(("a",), [art(0, batch(column))])
     assert report.finding_count == 1 and report.affected_cell_count == 1
     assert report.uncompared_cell_count == 2
-    assert report.reasons == (R.MATCH, R.SCAN_INCOMPLETE, R.CELL_UNCOMPARED)
+    assert report.reasons == (R.MATCH, R.SCAN_INCOMPLETE, R.CELL_UNCOMPARED, R.SPAN_SHORT_EXCLUDED)
