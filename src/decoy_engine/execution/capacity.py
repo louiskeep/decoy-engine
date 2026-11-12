@@ -280,7 +280,6 @@ def estimate_job_capacity(
     swallowing it into a verdict (R3): an unexpected failure here is a real
     problem the caller needs to see, not a silent "capacity unknown".
     """
-    from decoy_engine import __version__ as engine_version
     from decoy_engine.plan import compile_plan
     from decoy_engine.plan._seed import _normalize_job_seed_int
     from decoy_engine.profile import profile_source
@@ -290,6 +289,7 @@ def estimate_job_capacity(
         build_relationship_graph,
         check_orphan_fk_policy_completeness,
     )
+    from decoy_engine.release import __version__ as engine_version
 
     base_dir_path = Path(base_dir)
     config = _resolved_config_copy(config_dump, base_dir_path)

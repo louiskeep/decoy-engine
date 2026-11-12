@@ -14,7 +14,7 @@ Scope: every package in uv.lock that installing decoy-engine can pull in: its
 runtime dependencies and those of the optional runtime extras
 (cloud, gcs, geo, hashicorp-vault, mimesis, ml, ner, sftp, vault),
 across every Python version and platform the lock covers. Development and
-tooling extras (dev, docs, lint, mutation, perf, xdist) are excluded, as is the
+tooling extras (dev, docs, layers, lint, mutation, perf, xdist) are excluded, as is the
 separate decoy-engine-native companion package.
 
 Named license exceptions (scripts/dev/license_policy.json). Each is used

@@ -288,6 +288,7 @@ from decoy_engine.relationships import (
     check_orphan_fk_policy_completeness,
 )
 from decoy_engine.release import RELEASE_PHASE, ReleasePhase, is_pre_ga
+from decoy_engine.release import __version__ as __version__
 from decoy_engine.run_result import RUN_RESULT_SCHEMA, RunResult, RunResultRead, derive_outcome
 from decoy_engine.safe_output import ConfigProblem
 
@@ -366,7 +367,6 @@ _F9_KEPT_BINDINGS = (
     SsnValidator,
 )
 
-__version__ = "0.22.0"
 
 __all__ = [
     "CAP_DRY_RUN",

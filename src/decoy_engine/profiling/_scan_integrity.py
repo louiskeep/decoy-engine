@@ -308,7 +308,7 @@ def _check(
     memory_limit: str,
 ) -> RelationshipFacts:
     # Imported here because decoy_engine.execution imports the profiling package.
-    from decoy_engine.execution import connect_duckdb
+    from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 
     config, parent = rel.config, rel.config.parent
     width = len(parent.columns)

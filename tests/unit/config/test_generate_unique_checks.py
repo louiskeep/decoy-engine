@@ -158,7 +158,9 @@ class TestCategoricalDomain:
 
     def test_capacity_goes_through_the_one_shared_rule(self, monkeypatch):
         # M12: a second comparison would ignore this patch and the cell would not flip.
-        monkeypatch.setattr("decoy_engine.generation.pool.unique_capacity_ok", lambda *a, **k: True)
+        monkeypatch.setattr(
+            "decoy_engine.generation.pool._capacity.unique_capacity_ok", lambda *a, **k: True
+        )
         assert gu.table_unique_problems(cat_table(99, ["a"])) == []
 
     def test_message_inputs_never_include_category_values(self):
