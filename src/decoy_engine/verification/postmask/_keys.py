@@ -9,13 +9,13 @@ Results hold counts, table names, column names and reason codes, never a key val
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
 from decoy_engine import reasons
 from decoy_engine.config import RelationshipConfig
-from decoy_engine.profiling import KeyBatches, key_facts
+from decoy_engine.profiling import KeyBatches, key_facts, passes_through
 from decoy_engine.progress import safe_error_class
 from decoy_engine.reasons import ReasonCode
 from decoy_engine.verification.postmask._stream_input import (
@@ -69,7 +69,7 @@ class KeyResult:
             "parent": list(self.parent),
             "status": self.status,
             "bounded": self.bounded,
-            "codes": [f"{c.namespace}.{c}" for c in self.codes],
+            "codes": [asdict(c.spec.ref) for c in self.codes],
             "source": self.source.as_dict(self.kind),
             "output": self.output.as_dict(self.kind),
         }
@@ -129,13 +129,35 @@ class _Run:
             if status == "checked":
                 base = self._measure("source", end, parents)[2]
         except Exception as exc:
+            if passes_through(exc):
+                raise
             # The class name only: a DuckDB or reader message can quote key values.
             failed = safe_error_class(type(exc).__name__) or "Exception"
+        table, columns = end
         if failed is not None:
-            return KeyResult(*end, kind, names, "error", True, (reasons.post_scan.CHECK_ERROR,),
-                             KeyCounts(), KeyCounts(), failed)  # fmt: skip
-        return KeyResult(*end, kind, names, status, bounded, _codes(status, kind, base, out),
-                         base, out)  # fmt: skip
+            return KeyResult(
+                table=table,
+                columns=columns,
+                kind=kind,
+                parent=names,
+                status="error",
+                bounded=True,
+                codes=(reasons.post_scan.CHECK_ERROR,),
+                source=KeyCounts(),
+                output=KeyCounts(),
+                error_class=failed,
+            )
+        return KeyResult(
+            table=table,
+            columns=columns,
+            kind=kind,
+            parent=names,
+            status=status,
+            bounded=bounded,
+            codes=_codes(status, kind, base, out),
+            source=base,
+            output=out,
+        )
 
     def _keys(self, side: str, end: _End) -> KeyBatches | None:
         table = self._sides[side].get(end[0])
@@ -152,8 +174,11 @@ class _Run:
             return ("key_column_missing" if side == "output" else "checked"), True, KeyCounts()
         if not parents:
             facts = key_facts(own, (), scratch=self._scratch, memory_limit=self._limit)
-            counts = KeyCounts(facts.parent_rows, facts.parent_null_key_rows,
-                               facts.parent_duplicate_excess)  # fmt: skip
+            counts = KeyCounts(
+                rows=facts.parent_rows,
+                null_key_rows=facts.parent_null_key_rows,
+                duplicate_excess=facts.parent_duplicate_excess,
+            )
             return facts.status, facts.bounded, counts
         union = _union([k for k in found if k is not None])
         # Every extra parent rides along as a child so key_facts compares its types with the
@@ -163,9 +188,13 @@ class _Run:
         if facts.status != "checked":
             return facts.status, facts.bounded, KeyCounts()
         c = facts.children[-1]
-        return "checked", facts.bounded, KeyCounts(
-            c.rows, c.null_key_rows, 0, c.orphan_rows, c.orphan_distinct_keys
-        )  # fmt: skip
+        counts = KeyCounts(
+            rows=c.rows,
+            null_key_rows=c.null_key_rows,
+            orphan_rows=c.orphan_rows,
+            orphan_distinct_keys=c.orphan_distinct_keys,
+        )
+        return "checked", facts.bounded, counts
 
 
 def _union(parts: Sequence[KeyBatches]) -> KeyBatches:

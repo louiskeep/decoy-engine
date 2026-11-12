@@ -183,7 +183,7 @@ def test_a_duckdb_failure_is_check_error_with_the_class_name_only(
     assert CANARY not in repr(keys_report(results))
 
 
-class _LocalBoom(Exception):
+class _LocalBoomError(Exception):
     pass
 
 
@@ -191,7 +191,7 @@ def test_a_class_the_engine_does_not_define_is_reported_as_exception(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def boom(conn: Any) -> None:
-        raise _LocalBoom(CANARY)
+        raise _LocalBoomError(CANARY)
 
     monkeypatch.setattr(_scan_integrity, "_before_fetch", boom)
     rels = [rel("p", ["id"], ("c", ["pid"]))]

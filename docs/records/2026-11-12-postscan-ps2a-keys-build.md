@@ -17,15 +17,23 @@ Branch `feat/postscan-ps2a`, stacked on `feat/reg-release-e2` with `origin/main`
 - Five `post_scan` reason codes in `reasons/post_scan/_part2.py`, all `since=UNRELEASED` and
   `CONFIGURATION_REPAIR`.
 
+## Deviation from the plan
+
+- AT-12 was written as an open choice and is built differently from the plan's exception-chain
+  test. An uncoded failure in a key check gives an `error` result with `post_scan.check_error`
+  and the safe class name, and raises nothing. A coded engine error (`lazy_source_changed`, the
+  file-access errors, `PipelineValidationError`, any registered family) propagates unchanged,
+  decided by `decoy_engine.profiling.passes_through`, the same rule pre-scan applies. The raise
+  with no cause and no context belongs to the gate slice (PS-7). A new exception class here would
+  need an entry in `reason_adapter._CODED` or the sentry's `UNCLASSIFIED` list, both outside this
+  slice. The test that stands in for the chain check: no message text reaches the report.
+
 ## Decisions the plan left open
 
-- A failed key check does not raise. The key gets status `error`, code `post_scan.check_error` and
-  the safe class name; the gate (PS-7) raises the coded error. A new exception class here would
-  need an entry in `reason_adapter._CODED` or the sentry's `UNCLASSIFIED` list, both outside this
-  slice. The exception-chain test of AT-12 becomes: no message text reaches the report.
 - A table or key column absent from the inputs has a baseline of zero (a generated table). Only a
   missing output column is a code.
 - `parent` in a foreign key's result is the tuple of parent table names.
+- A report code is the mapping `{"namespace", "code"}`, the engine's wire form for a reason.
 
 ## Red and mutations
 

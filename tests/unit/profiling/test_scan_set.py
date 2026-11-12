@@ -493,7 +493,7 @@ def test_relationship_facts_pass_a_coded_or_config_error_through_and_wrap_an_unc
     config = PipelineConfigError("bad")
     for err in (coded, config):
 
-        def refuse(*args: Any, **kwargs: Any) -> Any:
+        def refuse(*args: Any, err: BaseException = err, **kwargs: Any) -> Any:
             raise err
 
         monkeypatch.setattr(scan_module._scan_integrity, "relationship_facts", refuse)
@@ -510,7 +510,7 @@ def test_relationship_facts_pass_a_coded_or_config_error_through_and_wrap_an_unc
     assert (wrapped.value.table, wrapped.value.cause_class) == ("relationships", "TypeError")
 
 
-class _Local(Exception):
+class _LocalError(Exception):
     pass
 
 
@@ -520,4 +520,4 @@ def test_the_pass_through_rule_is_one_public_predicate() -> None:
     assert passes_through(FileAccessDenied("x"))
     assert passes_through(ScanSourceError("t", "TypeError"))
     assert not passes_through(TypeError("x"))
-    assert not passes_through(_Local("x"))
+    assert not passes_through(_LocalError("x"))
