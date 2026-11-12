@@ -32,6 +32,102 @@ _KEY_CHARS = 60
 
 # (release, the entry's first 60 normalized characters) -> why it is not a separate break.
 TRIAGED: dict[tuple[str, str], str] = {
+    ("0.23.0", "- `VaultWriter`, `load_vault` and the run-entry key-match gu"): (
+        "Breaking: a vault opens and writes only under the 32-byte mask root"
+    ),
+    ("0.23.0", "- `vault_writer_for_config` never keys a vault on `job_seed`"): (
+        "Breaking: a vault opens and writes only under the 32-byte mask root"
+    ),
+    ("0.23.0", "A bound iterator (`bind_iterator`) now runs every step, incl"): (
+        "bug fix in error type for misuse of a bound iterator; no valid caller changes"
+    ),
+    ("0.23.0", "A generate column can say how its values are printed with `o"): (
+        "new opt-in key: the refusals apply only to a column that sets `output_type`"
+    ),
+    ("0.23.0", "A relationship whose parent table is generated is refused wi"): (
+        "Breaking: a generated relationship parent whose key is not provably unique is refused"
+    ),
+    ("0.23.0", "Four reasons in the `decoy` namespace, all pending release: "): (
+        "new reason codes and a new delivery input check; no existing call changes"
+    ),
+    ("0.23.0", "On Linux and macOS, every directory the engine creates on an"): (
+        "retry refusal for a directory left unopenable by a crash under a restrictive umask; no change for a normal run"
+    ),
+    ("0.23.0", "Plan only, no code change. `docs/plans/2026-10-30-f22-public"): (
+        "plan only, no code change; the refusals described are the planned publication guarantee"
+    ),
+    ("0.23.0", "The `fpe` strategy reported two failures under codes the rea"): (
+        "the same two failures now carry registered codes; which inputs fail is unchanged"
+    ),
+    ("0.23.0", "The declaration gate refuses a column the config declares fo"): (
+        "Breaking: a column declared for a mask table but missing from the source is refused"
+    ),
+    ("0.23.0", "The file is read once at compile time and its bytes are stor"): (
+        "new `lookup` type: the refusal applies only to a plan that carries a lookup column"
+    ),
+    ("0.23.0", "The local record library's `evidence` payload (`cli-local-1`"): (
+        "new optional key pair; the reader refuses only a half pair, which no earlier writer produced"
+    ),
+    ("0.23.0", "The shared staging writer now raises `out_of_core_temp_disk_"): (
+        "Breaking: the capacity reason-code set widens; this is the staging-writer case of it"
+    ),
+    ("0.23.0", "What a caller has to do: build a vault writer from an admitt"): (
+        "Breaking: a vault opens and writes only under the 32-byte mask root"
+    ),
+    ("0.23.0", "`ConnectorError` takes a keyword `kind`, one of `access_deni"): (
+        "Breaking: S3 and GCS connector errors carry fixed text and a `kind`"
+    ),
+    ("0.23.0", "`declared_casting` gains the `boolean/text/v1` format (gener"): (
+        "new opt-in cast format: a config that does not declare it is unchanged"
+    ),
+    ("0.23.0", "`decoy_engine.fileaccess` exports `ScratchArena`, an A-4 `St"): (
+        "new class; no engine route uses it yet, so no existing run is refused"
+    ),
+    ("0.23.0", "`decoy_engine.run_result` exports `RunResultCollector`, a pr"): (
+        "new class; the match is the sentence saying it never raises"
+    ),
+    ("0.23.0", "`decoy_engine.subset` gains `sample_request(config, *, rows,"): (
+        "new function and optional fields; refusals reach only a caller that asks for a sample"
+    ),
+    ("0.23.0", "`decoy_engine.subset` gains `select_subset(request, inputs, "): (
+        "new function; standalone subsetting refuses what it refused before"
+    ),
+    ("0.23.0", "`decoy_engine.verification.canary.scan_canary_artifacts` sca"): (
+        "new function; its refusals reach only new callers"
+    ),
+    ("0.23.0", "`decoy_engine.verification.postmask` gains `post_scan_verdic"): (
+        "new function; the loader check refuses only a batch wider than its declared type, a new input"
+    ),
+    ("0.23.0", "`derived` expressions accept `if(condition, value, other)`, "): (
+        "new syntax; a missing column in an unchosen branch is refused as it was in other branches"
+    ),
+    ("0.23.0", "`generate_option_catalog()` lists `derived_aggregate`'s `op`"): (
+        "catalog listing only; config parse is unchanged"
+    ),
+    ("0.23.0", "`plan_delivery` now plans every declared table whose target "): (
+        "callers pass an outcome per deliverable table; the change removes a raise (s3 and gcs outcomes) rather than adding one"
+    ),
+    ("0.23.0", "`profile_source`, `run_pipeline` and `run_pipeline_isolated`"): (
+        "Breaking: a source column or table the config does not declare is refused before any row is read"
+    ),
+    ("0.23.0", "`run_mask_pipeline_chunked`, `run_mask_chunked` and `run_nat"): (
+        "Breaking: the three chunked entries refuse an undeclared table or column"
+    ),
+    ("0.23.0", "`run_pipeline` now applies a `subset:` block: it selects the"): (
+        "new capability: a config with a `subset:` block used to be refused and now runs"
+    ),
+    ("0.23.0", "`runtime/out_of_core_reorder_disk_budget_too_small` is a new"): (
+        "new reason code for a case that already raised; it replaces a code in the capacity set (see Breaking)"
+    ),
+    ("0.23.0", "`scikit-learn==1.7.2` and `lightgbm==4.6.0` moved from the `"): (
+        "Breaking: the `ml` extra is removed; the match says a missing library does not raise"
+    ),
+    ("0.23.0", "`scripts/release/stamp_release.py` now stamps the registry i"): (
+        "release tooling only; it refuses a tag, not a runtime call"
+    ),
+    ("0.23.0", "`type: lookup` draws each row's value from a list kept in a "): (
+        "new `lookup` type: the refusals apply only to the new type"
+    ),
     ("0.22.0", "`type: distribution` with `family: uniform` and `low`, `high"): (
         "new feature: the family and key refusals apply only to the new distribution type"
     ),

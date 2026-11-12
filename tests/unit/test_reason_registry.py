@@ -598,7 +598,7 @@ def test_a_post_scan_blocked_error_whose_only_code_is_unregistered_is_unregister
 
 
 def test_gen_types_e3_codes_are_registered() -> None:
-    """GEN-TYPES E3: nine `lookup_*` plan codes and the pinned-mode refusal, all pending."""
+    """GEN-TYPES E3: nine `lookup_*` plan codes and the pinned-mode refusal, all stamped at 1.25.0."""
     expected = [
         ("plan", "lookup_column_missing", "PlanCompileError"),
         ("plan", "lookup_file_empty", "PlanCompileError"),
@@ -614,7 +614,7 @@ def test_gen_types_e3_codes_are_registered() -> None:
     for ns, code, owner in expected:
         spec = reasons.find(ns, code)
         assert spec is not None
-        assert (spec.owner, spec.since) == (owner, "unreleased")
+        assert (spec.owner, spec.since) == (owner, "1.25.0")
         assert not re.search(r"[{}%]", spec.summary)
         assert getattr(getattr(reasons, ns), code.upper()) == code
     assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 24, 0)

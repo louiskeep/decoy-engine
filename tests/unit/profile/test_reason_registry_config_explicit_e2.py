@@ -63,10 +63,10 @@ def _keys(manifest: dict) -> set[tuple[str, str]]:
 
 
 def test_declared_column_missing_is_registered_pending_and_owned() -> None:
-    """AT-E2b-1 registry half: one new code, pending and owned."""
+    """AT-E2b-1 registry half: one new code, stamped and owned."""
     code = reasons.config.SOURCE_FILE_DECLARED_COLUMN_MISSING
     spec = reasons.find("config", code)
     assert code == "source_file.declared_column_missing"
     assert spec is not None
-    assert (spec.owner, spec.since) == ("PipelineValidationError", reasons.UNRELEASED)
+    assert (spec.owner, spec.since) == ("PipelineValidationError", "1.25.0")
     assert code == CODES.SOURCE_FILE_DECLARED_COLUMN_MISSING
