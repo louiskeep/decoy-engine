@@ -520,7 +520,11 @@ CAPACITY_REASON_CODES: frozenset[str] = frozenset(
 )
 
 
+CAPACITY_EXCLUSIONS: Mapping[str, str] = {}
+
+
 __all__ = [
+    "CAPACITY_EXCLUSIONS",
     "CAPACITY_REASON_CODES",
     "ConfigError",
     "ConfigRuleError",

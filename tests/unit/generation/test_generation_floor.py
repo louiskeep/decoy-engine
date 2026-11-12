@@ -19,7 +19,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from decoy_engine import errors, reasons
+from decoy_engine import reasons
 from decoy_engine.execution import capacity as capacity_mod
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._probe_scale import downscale_config
@@ -474,19 +474,7 @@ def test_mask_tables_and_empty_plans_have_no_floor() -> None:
     assert generation_floor_bytes(config, classify_plan(config)) == 0
 
 
-# ---- AT-10: the capacity reason codes ---------------------------------------------------------
-
-
-def test_capacity_reason_codes_are_the_three_registered_codes() -> None:
-    assert isinstance(errors.CAPACITY_REASON_CODES, frozenset)
-    assert {
-        "generation_budget_exceeded",
-        "out_of_core_insufficient_memory",
-        "out_of_core_fanin_exceeds_budget",
-    } == errors.CAPACITY_REASON_CODES
-    assert "CAPACITY_REASON_CODES" in errors.__all__
-    for code in errors.CAPACITY_REASON_CODES:
-        assert reasons.is_registered(code), code
+# ---- the capacity reason-code set is pinned in tests/unit/test_capacity_reason_codes.py ------
 
 
 def _private_imports(path: str, package: str) -> list[str]:
