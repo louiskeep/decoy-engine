@@ -14,6 +14,7 @@ import pytest
 from decoy_engine import fileaccess, reasons
 from decoy_engine.config import PipelineConfigError
 from decoy_engine.errors import PipelineValidationError
+from decoy_engine.execution import ExecutionError
 from decoy_engine.execution._transforms import TransformError
 from decoy_engine.fileaccess import FileAccessDenied
 from decoy_engine.profile import _readers
@@ -21,6 +22,7 @@ from decoy_engine.profiling import (
     ScanSetCore,
     ScanSetCoreRead,
     ScanSourceError,
+    passes_through,
     scan_set_to_dict,
     scan_sources,
 )
@@ -441,3 +443,80 @@ def test_closed_sets_are_types() -> None:
 
 def test_entry_point_is_registered() -> None:
     assert "decoy_engine.profiling.scan_set.scan_sources" in fileaccess.ENTRY_POINTS
+
+
+def lazy_source_changed(table: str, detail: str) -> ExecutionError:
+    return ExecutionError(code=reasons.runtime.LAZY_SOURCE_CHANGED, message=f"{table} {detail}")
+
+
+def _declared() -> list[dict[str, Any]]:
+    return [
+        {
+            "parent": {"table": "p", "columns": ["id"]},
+            "children": [{"table": "c", "columns": ["pid"]}],
+        }
+    ]
+
+
+def test_table_read_passes_a_coded_error_through_and_wraps_an_uncoded_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Characterization of the per-table site: behavior pinned before the rule became shared."""
+    sources = {"t": _csv(tmp_path, "t", "a\n1\n")}
+    coded = lazy_source_changed("t", "gone")
+
+    def refuse(*args: Any) -> Any:
+        raise coded
+
+    monkeypatch.setattr(scan_module, "_read_and_profile", refuse)
+    with pytest.raises(type(coded)) as info:
+        scan_sources(sources)
+    assert info.value is coded
+
+    def crash(*args: Any) -> Any:
+        raise TypeError(CANARY)
+
+    monkeypatch.setattr(scan_module, "_read_and_profile", crash)
+    with pytest.raises(ScanSourceError) as wrapped:
+        scan_sources(sources)
+    assert wrapped.value.cause_class == "TypeError"
+    assert CANARY not in str(wrapped.value)
+
+
+def test_relationship_facts_pass_a_coded_or_config_error_through_and_wrap_an_uncoded_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Characterization of the relationship site, which also lets a config error through."""
+    sources = {"p": _csv(tmp_path, "p", "id\n1\n"), "c": _csv(tmp_path, "c", "pid\n1\n")}
+    coded = lazy_source_changed("p", "gone")
+    config = PipelineConfigError("bad")
+    for err in (coded, config):
+
+        def refuse(*args: Any, **kwargs: Any) -> Any:
+            raise err
+
+        monkeypatch.setattr(scan_module._scan_integrity, "relationship_facts", refuse)
+        with pytest.raises(type(err)) as info:
+            scan_sources(sources, relationships=_declared())
+        assert info.value is err
+
+    def crash(*args: Any, **kwargs: Any) -> Any:
+        raise TypeError(CANARY)
+
+    monkeypatch.setattr(scan_module._scan_integrity, "relationship_facts", crash)
+    with pytest.raises(ScanSourceError) as wrapped:
+        scan_sources(sources, relationships=_declared())
+    assert (wrapped.value.table, wrapped.value.cause_class) == ("relationships", "TypeError")
+
+
+class _Local(Exception):
+    pass
+
+
+def test_the_pass_through_rule_is_one_public_predicate() -> None:
+    assert passes_through(lazy_source_changed("t", "x"))
+    assert passes_through(PipelineValidationError("x"))
+    assert passes_through(FileAccessDenied("x"))
+    assert passes_through(ScanSourceError("t", "TypeError"))
+    assert not passes_through(TypeError("x"))
+    assert not passes_through(_Local("x"))

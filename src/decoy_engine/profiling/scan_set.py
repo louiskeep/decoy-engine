@@ -335,6 +335,10 @@ def _scan_one(
     raise ScanSourceError(name, cause or "Exception")
 
 
+def passes_through(exc: BaseException) -> bool:
+    return False
+
+
 def _is_coded(exc: BaseException) -> bool:
     """True for a scan error or any engine error family the reason adapter classifies."""
     return isinstance(exc, (ScanSourceError, *reason_adapter.registered_families()))
