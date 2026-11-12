@@ -6,7 +6,9 @@ import copy
 from dataclasses import replace
 from typing import Any
 
+import pyarrow as pa
 import pytest
+from pydantic import ValidationError
 
 from decoy_engine import reasons
 from decoy_engine._execution_error import ExecutionError
@@ -28,6 +30,7 @@ from tests.unit.subset._sample_fixtures import config, orphans, parent_child
 from tests.unit.subset.conftest import JOB_SEED_CONFIG
 
 FK = ("p", "id", "c", "pid")
+SELF = ("employees", "id", "employees", "manager_id")
 KNOB = reasons.runtime.INVALID_EXECUTION_KNOB
 
 
@@ -63,9 +66,58 @@ def test_default_seeds_are_child_free_tables_with_upward_edges() -> None:
 
 def test_pure_cycle_seeds_its_first_table() -> None:
     cfg = config({"a": "mask", "b": "mask"}, [("a", "id", "b", "aid"), ("b", "id", "a", "bid")])
-    assert _heads(sample_request(cfg, rows=2)) == ["a"]
+    req = sample_request(cfg, rows=2)
+    assert _heads(req) == ["a"]
+    cycle = {
+        "a": pa.table({"id": ["a0", "a1", "a2"], "bid": ["b0", "b1", "b2"]}),
+        "b": pa.table({"id": ["b0", "b1", "b2"], "aid": ["a0", "a1", "a2"]}),
+    }
+    chosen = select_subset(req, cycle, config=JOB_SEED_CONFIG)
+    assert chosen.survivors["a"] and chosen.survivors["b"]
     flipped = config({"b": "mask", "a": "mask"}, [("a", "id", "b", "aid"), ("b", "id", "a", "bid")])
     assert _heads(sample_request(flipped, rows=2)) == ["b"]
+
+
+def _staff(order: list[str]) -> dict[str, Any]:
+    kinds = dict.fromkeys(order, "mask")
+    return config(kinds, [("departments", "id", "employees", "dept_id"), SELF])
+
+
+def _staff_tables() -> dict[str, Any]:
+    ids = [f"e{i}" for i in range(8)]
+    return {
+        "departments": pa.table({"id": ["d0", "d1", "d2"]}),
+        "employees": pa.table(
+            {
+                "id": ids,
+                "dept_id": [f"d{i % 3}" for i in range(8)],
+                "manager_id": [ids[max(i - 1, 0)] for i in range(8)],
+            }
+        ),
+    }
+
+
+@pytest.mark.parametrize("order", [["departments", "employees"], ["employees", "departments"]])
+def test_a_self_referencing_table_is_child_free_and_seeds_the_sample(order: list[str]) -> None:
+    req = sample_request(_staff(order), rows=3)
+    assert _heads(req) == ["employees"]
+    tables = _staff_tables()
+    chosen = select_subset(req, tables, config=JOB_SEED_CONFIG)
+    assert len(chosen.survivors["employees"]) >= 3
+    pairs = [("departments", "id", "employees", "dept_id"), SELF]
+    assert orphans(tables, dict(chosen.survivors), pairs) == 0
+
+
+def test_a_relationship_naming_a_table_outside_the_mask_tables_is_coded() -> None:
+    cfg = config({"p": "mask", "c": "mask"}, [FK, ("p", "id", "ghost", "pid")])
+    with pytest.raises(SubsetPreflightError) as excinfo:
+        sample_request(cfg, rows=2)
+    assert excinfo.value.code == reasons.subset.SUBSET_UNKNOWN_TABLE
+    assert "ghost" in str(excinfo.value)
+    flipped = config({"p": "mask", "c": "mask"}, [FK, ("ghost", "id", "c", "gid")])
+    with pytest.raises(SubsetPreflightError) as excinfo:
+        sample_request(flipped, rows=2)
+    assert excinfo.value.code == reasons.subset.SUBSET_UNKNOWN_TABLE
 
 
 def test_cycle_with_a_child_free_table_seeds_that_table() -> None:
@@ -237,7 +289,7 @@ def _pipeline(extra: dict[str, Any]) -> dict[str, Any]:
     ],
 )
 def test_yaml_cannot_say_head_or_cap(seed: dict[str, Any]) -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         PipelineConfig.model_validate(_pipeline(seed))
 
 
