@@ -25,6 +25,7 @@ import yaml
 
 from decoy_engine import reasons
 from decoy_engine.fileaccess import FileRole
+from decoy_engine.fileaccess._openat2 import openat2_usable
 from decoy_engine.generation import _plan_entry
 from decoy_engine.generation.kinds import _lookup as lookup_kind
 from decoy_engine.generators.derivation import (
@@ -61,9 +62,15 @@ def _opens(policy: RecordingFileAccess) -> int:
     return sum(1 for role, access, _k, _o in policy.requests if role is FileRole.LOOKUP)
 
 
+def _rooted(tmp_path: Path) -> RootRelative:
+    if not openat2_usable():
+        pytest.skip("rooted file access needs Linux openat2")
+    return RootRelative(tmp_path)
+
+
 @pytest.fixture
 def world(tmp_path: Path):  # type: ignore[no-untyped-def]
-    policy = RecordingFileAccess(RootRelative(tmp_path))
+    policy = RecordingFileAccess(_rooted(tmp_path))
     yield tmp_path, policy
     policy.inner.close()  # type: ignore[attr-defined]
 
@@ -153,7 +160,7 @@ def test_every_hostile_file_is_refused_with_its_code_and_no_text(
     cases = _hostile(tmp_path, monkeypatch)
     monkeypatch.setattr(_lookup_tables, "EMBEDDED_SNAPSHOT_MAX_BYTES", 100)
     monkeypatch.setattr(lookup_kind, "MAX_LOOKUP_ENTRIES", 2)
-    policy = RootRelative(tmp_path)
+    policy = _rooted(tmp_path)
     try:
         for name, extra, code in cases:
             config = one(_lookup(file=name, **extra))
