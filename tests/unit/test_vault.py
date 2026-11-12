@@ -28,6 +28,7 @@ from decoy_engine.plan import PlanCompileError, compile_plan, run_config_only_ch
 from decoy_engine.vault import (
     VaultError,
     VaultWriter,
+    assert_vault_writer_keyed,
     collect_vault_entries,
     load_vault,
     vault_writer_for_config,
@@ -747,6 +748,14 @@ class TestVaultKeyFloor:
         writer.write(path)
         mapping, _ = load_vault(path, original)
         assert mapping == {(ns, m): s for ns, m, s in _ENTRIES}
+
+    @pytest.mark.parametrize("length", [8, 31])
+    def test_key_match_refuses_a_short_run_key(self, length: int) -> None:
+        # A non-keyed run resolves the 8-byte job seed; a strong writer checked against it is
+        # refused for the weak key, not reported as a mismatch.
+        with pytest.raises(VaultError) as exc:
+            assert_vault_writer_keyed(VaultWriter(_STRONG), b"\x07" * length)
+        assert exc.value.code == "weak_mask_secret"
 
     def test_vault_header_keys_are_frozen_CHARACTERIZATION(self, tmp_path: Path) -> None:
         blob = _written(tmp_path).read_bytes()
