@@ -556,15 +556,19 @@ class ColumnGenerator(_DistributionMixin, _FormulaMixin):
         min_per_parent: int,
         max_per_parent: int,
         rng: random.Random,
+        *,
+        table: str | None = None,
+        column: str | None = None,
     ) -> list:
         """Repair a generated value list to honor per-parent cardinality bounds.
 
         A thin call: the repair lives in ``generation/relational/_cardinality.py`` and the v2
-        reference draw uses the same one.
+        reference draw reaches the same one through this method. Bounds that cannot hold are
+        refused there; nothing is patched on a best-effort basis.
         """
         # Imported here: `generation` imports this module while it is still loading.
         from decoy_engine.generation.relational import apply_cardinality_bounds
 
         return apply_cardinality_bounds(
-            values, ref_values, min_per_parent, max_per_parent, rng, logger=self.logger
+            values, ref_values, min_per_parent, max_per_parent, rng, table=table, column=column
         )

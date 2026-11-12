@@ -42,6 +42,7 @@ from decoy_engine.config._generate_option_catalog import (
     generate_option_catalog,
 )
 from decoy_engine.config._generate_options import refuse_unlisted_generate_families
+from decoy_engine.config._generate_relational import per_parent_problems
 from decoy_engine.config._generate_type_checks import (
     parse_output_type,
     refuse_fixed_width_output_types,
@@ -145,6 +146,7 @@ __all__ = [
     "parse_output_type",
     "parse_pipeline_config",
     "parse_relationship_config",
+    "per_parent_problems",
     "post_scan_integrity_requested",
     "refuse_fixed_width_output_types",
     "refuse_unlisted_generate_families",

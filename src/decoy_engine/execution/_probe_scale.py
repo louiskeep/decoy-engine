@@ -47,6 +47,13 @@ row count where FIXED per-job overhead (interpreter start, imports, Faker
 pool init, DuckDB init) would dominate the measured peak and swamp the
 per-row signal the two-point fit needs -- §11's "the ~1% runtime claim
 ignores fixed setup, which dominates at 100k" correction.
+
+Scaling row counts can break a per-parent bound that holds at full size
+(rounding moves the parent and child counts apart), and the run refuses
+infeasible bounds. `downscale_config` therefore loosens the bounds of a
+bounded `reference` column to the scaled sizes, by the same pigeonhole rule
+the run checks, and never strips them: a bounded reference stays on the
+whole-table route the full job takes.
 """
 
 from __future__ import annotations
@@ -108,6 +115,9 @@ def downscale_config(
     module's docstring. A table dict missing/None `row_count` (a mask
     table, or a malformed generate table the schema would have already
     rejected upstream) is left alone rather than guessed at.
+
+    A `reference` column with a positive `min_per_parent` or `max_per_parent`
+    gets both bounds rewritten for the scaled sizes (`_loosened_bounds`).
     """
     scaled = copy.deepcopy(config)
     for table in scaled.get("tables") or []:
@@ -118,7 +128,59 @@ def downscale_config(
         row_count = table.get("row_count")
         if isinstance(row_count, int):
             table["row_count"] = scale_row_count(row_count, fraction, floor_rows=floor_rows)
+    _loosen_per_parent_bounds(scaled)
     return scaled
+
+
+def _positive(value: Any) -> int:
+    return value if type(value) is int and value > 0 else 0
+
+
+def _loosened_bounds(lo: int, hi: int, rows: int, parent_rows: int, exact: bool) -> tuple[int, int]:
+    """Per-parent bounds that `rows` children over `parent_rows` parents can always meet.
+
+    `exact` means every parent row is a distinct key (a `sequence` with no nulls): the minimum
+    drops to the floor of the mean and the maximum rises to its ceiling, in integer arithmetic
+    so a row count above float precision stays exact. Otherwise the distinct key count is
+    unknown until the run, and only the widest bounds are safe.
+    """
+    if not exact:
+        return 0, rows
+    return min(lo, rows // parent_rows), max(hi, (rows + parent_rows - 1) // parent_rows)
+
+
+def _loosen_per_parent_bounds(scaled: dict[str, Any]) -> None:
+    """Rewrite the bounds of every bounded `reference` column of `scaled` in place.
+
+    A reference with no positive bound is not touched, so no new key appears in its config. A
+    parent that scales to no rows keeps the bounds: the run's empty-parent rule decides there.
+    """
+    tables = [t for t in scaled.get("tables") or [] if isinstance(t, dict)]
+    by_name = {t.get("name"): t for t in tables}
+    for table in tables:
+        rows = table.get("row_count")
+        for col in table.get("generate_columns") or []:
+            if not isinstance(col, dict) or col.get("type") != "reference":
+                continue
+            lo, hi = _positive(col.get("min_per_parent")), _positive(col.get("max_per_parent"))
+            parent = by_name.get(col.get("reference_table"))
+            parent_rows = parent.get("row_count") if parent else None
+            if not (lo or hi) or type(rows) is not int or type(parent_rows) is not int:
+                continue
+            if parent is None or parent_rows <= 0:
+                continue
+            key = next(
+                (
+                    c
+                    for c in parent.get("generate_columns") or []
+                    if isinstance(c, dict) and c.get("name") == col.get("reference_column")
+                ),
+                {},
+            )
+            exact = key.get("type") == "sequence" and not (key.get("null_probability") or 0) > 0
+            col["min_per_parent"], col["max_per_parent"] = _loosened_bounds(
+                lo, hi, rows, parent_rows, exact
+            )
 
 
 def downscale_sources(

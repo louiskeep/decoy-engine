@@ -12,15 +12,20 @@ from typing import TYPE_CHECKING, Any
 
 from decoy_engine import reasons
 from decoy_engine.config import value_key
+from decoy_engine.generation.relational import check_fitted_bounds, check_reference_pool
 from decoy_engine.generation.statistical import (
     FanoutSpec,
     StatisticalSpecError,
     fitted_reference_values,
 )
-from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.generators.derivation import TABLE_KEY, GenDeriveContext
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import pyarrow as pa
+
+    from decoy_engine.generation.pool import QualityWarning
 
 
 def _derived_generate(
@@ -154,27 +159,34 @@ def _reference(
     derive_key: Any = None,
     pools: dict[str, pa.Table] | None = None,
     fanout: FanoutSpec | None = None,
+    *,
+    policy: str | None = None,
+    on_warning: Callable[[QualityWarning], None] | None = None,
 ) -> list[Any]:
     """FK / mint-a-pool: sample values from a parent table's already-generated key
-    column. Parity-frozen vs V1 ``_generate_reference_column`` (``columns.py:758-865``).
+    column. Parity-frozen vs V1 ``_generate_reference_column`` (``columns.py:758-865``)
+    wherever the config gives a shape the draw can honor.
 
     Pattern (mirror V1):
       - Read parent values from ``pools[reference_table].column(reference_column)``.
       - INSERTION-ORDER unique + dropna (V1 uses pandas ``Series.dropna().unique()``,
         which is insertion-order; a naive ``set()`` would break parity).
-      - Empty parent pool -> ``[None] * n`` (V1 warns + returns Nones).
+      - ``check_reference_pool`` runs before any value is chosen: infeasible per-parent
+        bounds and a ``weighted`` weights list that does not match the real key count
+        are refused, and an empty parent pool follows ``policy`` (the orphan policy of
+        the relationship that covers this column, ``None`` without one): ``fail``
+        refuses, ``warn`` reports through ``on_warning``, anything else stays silent.
+        ``fitted`` is exempt: its allocator owns the empty-pool refusal.
+      - Empty parent pool that was not refused -> ``[None] * n``.
       - Reseed ``random`` from the per-column seed (V1's exact pattern -- the
         ``categorical`` generator does the same).
       - Dispatch by ``distribution``: ``random`` (random.choice), ``sequential``
-        (parent_vals[i % len]), ``weighted`` (random.choices with weights;
-        size-mismatch falls back to None for uniform), ``fitted`` (parent degrees from a
-        pinned fan-out, see ``_fitted_reference``). Unknown -> random
-        (V1 warns; the v2 falls through silently, values match).
-      - Optional cardinality repair via V1 ``_apply_cardinality_bounds`` (~150 LoC
-        repair algorithm) -- DELEGATED to V1 the same way ``_formula`` delegates
-        ``_eval_formula_inline``: Reading B pragmatic guaranteed parity; the
-        repair is generic set-cover-like logic, not v1-specific; v2-native rewrite
-        lifts at S9 alongside v1 removal.
+        (parent_vals[i % len]), ``weighted`` (random.choices with weights), ``fitted``
+        (parent degrees from a pinned fan-out, see ``_fitted_reference``). Unknown ->
+        random (V1 warns; the v2 falls through silently, values match).
+      - Optional cardinality repair through the V1 thin call
+        ``ColumnGenerator._apply_cardinality_bounds``, which both generators route to
+        ``generation/relational``.
 
     The PipelineConfig ``_reference_graph_valid`` validator + topo-sort in
     ``generate_tables`` guarantee the parent is in ``pools`` by the time we get
@@ -189,12 +201,17 @@ def _reference(
 
     ref_vals = parent_keys(pools, ref_table, ref_column)
 
+    if distribution != "fitted":
+        check_reference_pool(col, ref_vals, n, policy, col.get(TABLE_KEY), on_warning)
+
     if col.get("unique") is True:
         from decoy_engine.generation._unique import unique_reference
 
         return unique_reference(col, ref_vals, n, seed, derive_key)
 
     if distribution == "fitted":
+        # A non-empty pool refuses bounds here; an empty one reaches the allocator's own refusal.
+        check_fitted_bounds(col, ref_vals)
         return _fitted_reference(col, ref_vals, n, seed, derive_key, fanout)
 
     if not ref_vals:
@@ -213,10 +230,8 @@ def _reference(
         elif distribution == "sequential":
             values.append(ref_vals[i % len(ref_vals)])
         elif distribution == "weighted":
-            weights = col.get("weights")
-            if not weights or len(weights) != len(ref_vals):
-                weights = None  # V1: size-mismatch -> uniform
-            values.append(rng.choices(ref_vals, weights=weights, k=1)[0])
+            # The pool check already refused a weights list of the wrong length.
+            values.append(rng.choices(ref_vals, weights=col.get("weights") or None, k=1)[0])
         else:
             # V1 unknown -> warn + random; the v2 falls through silently (parity
             # in values, not in log lines).
@@ -236,5 +251,7 @@ def _reference(
             min_per,
             max_per,
             rng=rng,
+            table=col.get(TABLE_KEY),
+            column=col.get("name"),
         )
     return values

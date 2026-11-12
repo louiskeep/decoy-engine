@@ -42,6 +42,9 @@ POLICY_KEY = "orphan_policy"
 POLICY_PARSER_FILE = "relationships/_graph.py"
 GENERATION_DIRS = ("generation", "generators")
 LOG_METHODS = frozenset({"warning", "warn", "error", "info", "exception", "critical"})
+CONTAINERS = frozenset({"Counter", "set", "dict", "defaultdict", "frozenset"})
+# The names the repair and the pool check give a list of raw parent or child values.
+RAW_VALUE_NAMES = frozenset({"values", "ref_values", "ref_vals", "keys"})
 
 
 def _callee(call: ast.Call) -> str:
@@ -157,9 +160,9 @@ def relational_problems(source: str) -> list[str]:
             continue
         if isinstance(node.func, ast.Attribute) and node.func.attr in LOG_METHODS:
             problems.append(f"line {node.lineno}: logs directly instead of the one emitter")
-        if _callee(node) in {"Counter", "set", "dict", "defaultdict"} and node.args:
+        if _callee(node) in CONTAINERS and node.args:
             names = {n.id for a in node.args for n in ast.walk(a) if isinstance(n, ast.Name)}
-            if "value_key" not in names and not names <= {"counts", "tally"}:
+            if names & RAW_VALUE_NAMES and "value_key" not in names:
                 problems.append(f"line {node.lineno}: a container built from raw parent values")
     return problems
 

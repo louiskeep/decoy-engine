@@ -35,7 +35,13 @@ from decoy_engine.generation import _faker_pool
 from decoy_engine.generation._bounds import faker_pool_bytes
 from decoy_engine.generation._numeric_typing import sequence_affixes
 from decoy_engine.generation.kinds import ConstantStream, ParametricStream
-from decoy_engine.generators.derivation import GenDeriveContext, column_identity, with_table
+from decoy_engine.generation.relational import check_reference_pool
+from decoy_engine.generators.derivation import (
+    TABLE_KEY,
+    GenDeriveContext,
+    column_identity,
+    with_table,
+)
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 
 if TYPE_CHECKING:
@@ -44,6 +50,7 @@ if TYPE_CHECKING:
     from faker import Faker
 
     from decoy_engine.generation._budget_ledger import GenerationBudgetLedger
+    from decoy_engine.generation.pool import QualityWarning
 
 
 class ColumnStream(Protocol):
@@ -195,14 +202,26 @@ class PooledFakerStream:
 
 
 class ReferenceStream:
-    """Reference column without cardinality repair, over an already-sealed parent key list."""
+    """Reference column without cardinality repair, over an already-sealed parent key list.
 
-    def __init__(self, col: dict[str, Any], ctx: GenDeriveContext, ref_vals: list[Any]) -> None:
+    The pool check runs here, once per column stream and before the first batch, so the streamed
+    route refuses and warns exactly as the whole-table draw does.
+    """
+
+    def __init__(
+        self,
+        col: dict[str, Any],
+        ctx: GenDeriveContext,
+        ref_vals: list[Any],
+        *,
+        rows: int,
+        policy: str | None = None,
+        on_warning: Callable[[QualityWarning], None] | None = None,
+    ) -> None:
+        check_reference_pool(col, ref_vals, rows, policy, col.get(TABLE_KEY), on_warning)
         self._vals = ref_vals
         self._distribution = col.get("distribution", "random")
-        weights = col.get("weights")
-        # Size mismatch falls back to uniform, as the whole-table generator does.
-        self._weights = weights if weights and len(weights) == len(ref_vals) else None
+        self._weights = col.get("weights") or None
         self._rng = random.Random(ctx.base_int("py"))
 
     def next_batch(self, offset: int, size: int) -> list[Any]:
@@ -263,6 +282,8 @@ def make_column_stream(
     stage: ExitStack,
     faker_payload: int | None,
     numeric: bool = False,
+    reference_policy: str | None = None,
+    on_warning: Callable[[QualityWarning], None] | None = None,
 ) -> ColumnStream:
     """Build one column's stream. Reservations taken here live until `stage` closes."""
     col = with_table(col, table)
@@ -288,7 +309,12 @@ def make_column_stream(
         )
     elif kind == "reference":
         inner = ReferenceStream(
-            col, ctx, key_pools[(col["reference_table"], col["reference_column"])]
+            col,
+            ctx,
+            key_pools[(col["reference_table"], col["reference_column"])],
+            rows=rows,
+            policy=reference_policy,
+            on_warning=on_warning,
         )
     elif kind == "windowed_date":
         inner = WindowedDateStream(col, seed)

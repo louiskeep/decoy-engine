@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
+from decoy_engine.reasons._types import UNRELEASED
 
 __all__ = [
     "CARDINALITY_MATCH_DEVIATION",
@@ -23,6 +24,7 @@ __all__ = [
     "ORPHAN_FK",
     "OUT_OF_CORE_CALLER_MANAGED_RESIDENCY",
     "POOL_DOMINATES_CACHE",
+    "REFERENCE_PARENT_POOL_EMPTY",
     "SCAN_CRASHED",
     "SCAN_HEADER_SUSPECT",
     "SCAN_KEY_TYPE_MISMATCH",
@@ -64,6 +66,11 @@ OUT_OF_CORE_CALLER_MANAGED_RESIDENCY = _d(
     "out_of_core_caller_managed_residency", "Out of core caller managed residency."
 )
 POOL_DOMINATES_CACHE = _d("pool_dominates_cache", "Pool dominates cache.")
+REFERENCE_PARENT_POOL_EMPTY = _d(
+    "reference_parent_pool_empty",
+    "Reference column is null because its parent column has no keys.",
+    since=UNRELEASED,
+)
 SCAN_CRASHED = _d("scan_crashed", "Scan crashed.")
 SCAN_HEADER_SUSPECT = _d(
     "scan_header_suspect", "First row looks like data, not a header.", since="1.10.0"

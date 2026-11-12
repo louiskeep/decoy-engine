@@ -9,6 +9,11 @@ fingerprint are what they were. Do not re-pin to make this pass: a moved digest 
 Re-pinned `cells` for three corpus configs when generated numeric columns became int64 (GEN-C2):
 rendering each numeric column back to text reproduces the old digests, so only the cell type
 moved. `config_json` and `fingerprints` are untouched.
+
+Re-pinned `cells` for `reference_shapes` when the per-parent repair fill became room-aware
+(GEN-REL E1, the owner-ratified one-time change for a bounded reference whose fill runs): only
+`child.bounded` (`min_per_parent: 1`, `max_per_parent: 5`) moved; `rand`, `seq`, `wtd` and the
+parent columns hash as before, and `config_json` and `fingerprints` are untouched.
 """
 
 from __future__ import annotations
@@ -35,7 +40,7 @@ PINNED = {
         "fingerprints": "d67f68757ce19ce25611dc593bcfa666faa87ef11ad98a035df2f247160493db",
     },
     "reference_shapes": {
-        "cells": "d2d6fef3a62e972cf3b7de53a426f9466db94bc4228c83ed572439eb80b109ee",
+        "cells": "893c24d3ab54cfdef57e77393405af8f033eeb340879aa3a0f84ea3dd0883c1b",
         "config_json": "340574619a7f541f441d255d4d46b8a46944c081cb2c8b8249504b00be7163d5",
         "fingerprints": "1d9c6f66c834e768ed3e14db1dfc81e326df6352d69768863cf156391c4d5361",
     },

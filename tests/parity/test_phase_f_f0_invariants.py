@@ -576,7 +576,8 @@ def test_whole_table_quantities_are_not_prefix_stable() -> None:
     )
 
     def repaired(n: int) -> list[Any]:
-        tables, name = _ref("random", n, min_per_parent=2, max_per_parent=5)
+        # Feasible at both sizes over the parent's three distinct keys (15 <= n <= 42).
+        tables, name = _ref("random", n, min_per_parent=5, max_per_parent=14)
         return fx.run_generate_tables(fx.config(tables))[name].column("c").to_pylist()
 
     assert repaired(17) != repaired(40)[:17]

@@ -32,7 +32,6 @@ def test_docstring_names_rows_that_must_hold_distinct_values_and_the_null_case()
 def test_the_pool_export_is_a_facade_over_the_foundation_leaf(monkeypatch):
     """GEN-REL: config and generation share one predicate without a config-to-generation import."""
     import decoy_engine._capacity as foundation
-
     from decoy_engine.generation.pool import _capacity as facade
 
     assert foundation.unique_capacity_ok(5, 6) is False

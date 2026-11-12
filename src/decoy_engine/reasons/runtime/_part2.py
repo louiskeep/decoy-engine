@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import Outcome, Phase, RetryClass
+from decoy_engine.reasons._types import UNRELEASED, Outcome, Phase, RetryClass
 
 __all__ = [
     "BAD_SECRET_REF",
@@ -25,6 +25,8 @@ __all__ = [
     "FPE__CHECKSUM_INVALID_SOURCE",
     "FPE__UNENCRYPTABLE_DOMAIN",
     "FPE__UNENCRYPTABLE_LENGTH",
+    "GENERATE_FITTED_REFERENCE_BOUNDS_CONFLICT",
+    "GENERATE_PER_PARENT_INFEASIBLE",
     "GENERATION_BUDGET_EXCEEDED",
     "GENERATION_COLUMN_UNBOUNDED",
     "GENERATION_NOT_CLASS_A",
@@ -82,6 +84,9 @@ __all__ = [
     "RAW_HEX_BATCH_LENGTH_MISMATCH",
     "RAW_HEX_BATCH_TYPE_MISMATCH",
     "RAW_HEX_BATCH_UNEXPECTED_NULL",
+    "REFERENCE_BOUNDS_UNSATISFIED",
+    "REFERENCE_PARENT_POOL_EMPTY",
+    "REFERENCE_WEIGHTS_LENGTH_MISMATCH",
     "RELATIONSHIP_CYCLE",
     "ROW_EXCEEDS_MAX_ROW_BYTES",
     "RUN_SINGLE_REQUIRES_TABLE",
@@ -310,6 +315,36 @@ SOURCE_REQUIRED_FOR_CARDINALITY_MODE = _d(
 TIMEZONE_NAIVE_DATETIME = _d("timezone_naive_datetime", "Timezone naive datetime.")
 UNIQUENESS_IMPOSSIBLE = _d("uniqueness_impossible", "Uniqueness impossible.")
 UNKNOWN_CARDINALITY_MODE = _d("unknown_cardinality_mode", "Unknown cardinality mode.")
+
+# Reference-draw refusals. A summary is the whole message beside the table and column names, so
+# none names a key, count, bound or weight.
+_d = _catalog.runtime("GenerationError")
+
+GENERATE_FITTED_REFERENCE_BOUNDS_CONFLICT = _d(
+    "generate_fitted_reference_bounds_conflict",
+    "Generate reference column per-parent bounds cannot be combined with distribution fitted.",
+    since=UNRELEASED,
+)
+GENERATE_PER_PARENT_INFEASIBLE = _d(
+    "generate_per_parent_infeasible",
+    "Generate reference column per-parent bounds cannot hold for its parent keys and row count.",
+    since=UNRELEASED,
+)
+REFERENCE_BOUNDS_UNSATISFIED = _d(
+    "reference_bounds_unsatisfied",
+    "Reference column per-parent bounds did not hold after the repair.",
+    since=UNRELEASED,
+)
+REFERENCE_PARENT_POOL_EMPTY = _d(
+    "reference_parent_pool_empty",
+    "Reference column has rows to fill but its parent column has no keys.",
+    since=UNRELEASED,
+)
+REFERENCE_WEIGHTS_LENGTH_MISMATCH = _d(
+    "reference_weights_length_mismatch",
+    "Reference column weights count does not match its parent key count.",
+    since=UNRELEASED,
+)
 
 _d = _catalog.runtime("GenerationUnboundedError")
 

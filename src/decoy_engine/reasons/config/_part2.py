@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
+from decoy_engine.reasons._types import UNRELEASED
 
 __all__ = [
     "GENERATE_COLUMN_DUPLICATE",
+    "GENERATE_FITTED_REFERENCE_BOUNDS_CONFLICT",
     "GENERATE_FORMULA_INVALID",
     "GENERATE_OPTION_RANGE",
     "GENERATE_OPTION_TYPE",
     "GENERATE_OPTION_UNKNOWN",
     "GENERATE_OPTION_VALUE_UNKNOWN",
     "GENERATE_OUTPUT_TYPE_UNSUPPORTED",
+    "GENERATE_PER_PARENT_BOUNDS_CONFLICT",
+    "GENERATE_PER_PARENT_INFEASIBLE",
+    "GENERATE_PER_PARENT_NULL_CONFLICT",
     "GENERATE_UNIQUE_CONFLICT",
     "GENERATE_UNIQUE_DOMAIN_TOO_SMALL",
     "GENERATE_UNIQUE_UNSUPPORTED",
@@ -33,6 +38,11 @@ GENERATE_COLUMN_DUPLICATE = _d(
     "generate_column_duplicate",
     "Two generate columns in one table have the same name.",
     since="1.13.0",
+)
+GENERATE_FITTED_REFERENCE_BOUNDS_CONFLICT = _d(
+    "generate_fitted_reference_bounds_conflict",
+    "Generate reference column per-parent bounds cannot be combined with distribution fitted.",
+    since=UNRELEASED,
 )
 GENERATE_FORMULA_INVALID = _d(
     "generate_formula_invalid",
@@ -63,6 +73,21 @@ GENERATE_OUTPUT_TYPE_UNSUPPORTED = _d(
     "generate_output_type_unsupported",
     "Generate column type or target cannot carry the requested output type.",
     since="1.23.0",
+)
+GENERATE_PER_PARENT_BOUNDS_CONFLICT = _d(
+    "generate_per_parent_bounds_conflict",
+    "Generate reference column min_per_parent is greater than its max_per_parent.",
+    since=UNRELEASED,
+)
+GENERATE_PER_PARENT_INFEASIBLE = _d(
+    "generate_per_parent_infeasible",
+    "Generate reference column per-parent bounds cannot hold for its parent keys and row count.",
+    since=UNRELEASED,
+)
+GENERATE_PER_PARENT_NULL_CONFLICT = _d(
+    "generate_per_parent_null_conflict",
+    "Generate column null_probability cannot be combined with a per-parent option.",
+    since=UNRELEASED,
 )
 GENERATE_UNIQUE_CONFLICT = _d(
     "generate_unique_conflict",

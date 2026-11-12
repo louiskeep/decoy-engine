@@ -112,7 +112,9 @@ def _witness_config() -> dict[str, Any]:
             "reference_table": "par",
             "reference_column": "k",
             "distribution": "weighted",
-            "weights": [1, 2, 3],
+            # One weight per distinct parent key: the three-row parent draws two of its three
+            # categories under this fixture's seed, and a mismatch is refused at run.
+            "weights": [1, 2],
         },
     ]
     parent = [{"name": "k", "type": "categorical", "categories": ["K1", "K2", "K3"]}]

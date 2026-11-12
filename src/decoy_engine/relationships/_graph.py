@@ -194,12 +194,9 @@ def build_relationship_graph(
             raise PlanCompileError(
                 code=reasons.plan.ORPHAN_POLICY_CONFLICT,
                 path=f"relationships[{child_table}.{child_columns}]",
-                message=(
-                    f"Column {child_table}.{child_columns} declares FK relationships "
-                    f"to multiple parents with CONFLICTING orphan policies: "
-                    f"{sorted(policies)!r}. A multi-parent child resolves through "
-                    "every parent map before a row counts as an orphan, so the "
-                    "edges must share one policy; align the orphan_policy values."
+                message=_policy_text(
+                    reasons.plan.ORPHAN_POLICY_CONFLICT,
+                    f"Child {_end(child_table, child_columns)}.",
                 ),
             )
 
@@ -313,134 +310,137 @@ def build_relationship_graph(
     return RelationshipGraph(edges=edges_sorted, ordering=tuple(ordered))
 
 
+_Key = tuple[str, tuple[str, ...], str, tuple[str, ...]]
+_POLICY_TOKENS = frozenset(policy.value for policy in OrphanPolicy)
+
+
+def _end(table: str, columns: Any) -> str:
+    return f"{table}.{', '.join(columns)}"
+
+
+def _policy_text(code: reasons.ReasonCode, where: str) -> str:
+    """The text of a relationship-policy refusal: the registered summary plus names.
+
+    The one message builder for the invalid, duplicate and conflict refusals. It takes the
+    ends as names only, so a submitted policy token (any text a config can carry) never
+    reaches a message.
+    """
+    return f"{code.spec.summary} {where}"
+
+
+def normalize_orphan_policy_lookup(config: dict[str, Any]) -> dict[_Key, OrphanPolicy]:
+    """Every relationship child entry of `config` as one policy lookup.
+
+    Keyed by `(parent_table, parent_columns, child_table, child_columns)`, so two children of
+    one parent may carry different policies. The one parser of the `relationships` block's
+    policies: the compile checks and generation both read this, never the raw entries. An
+    entry or end that is not shaped like a relationship is skipped; the config schema owns
+    that shape.
+
+    Raises:
+
+    - `PlanCompileError(code='orphan_fk_policy_missing')`: an entry has no `orphan_policy`.
+    - `PlanCompileError(code='orphan_fk_policy_invalid')`: the policy is not one of
+      `preserve`, `remap`, `warn`, `fail`.
+    - `PlanCompileError(code='orphan_fk_policy_duplicate')`: two entries name the same parent
+      and child with different policies. Equal duplicates carry no new information and pass.
+    """
+    lookup: dict[_Key, OrphanPolicy] = {}
+    entries = config.get("relationships", [])
+    if not isinstance(entries, list):
+        return lookup
+    for idx, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        parent = entry.get("parent")
+        if not isinstance(parent, dict):
+            continue
+        parent_table = parent.get("table")
+        parent_cols = parent.get("columns")
+        if not (
+            isinstance(parent_table, str)
+            and isinstance(parent_cols, list)
+            and all(isinstance(c, str) for c in parent_cols)
+        ):
+            continue
+        policy = entry.get("orphan_policy")
+        if policy is None:
+            raise PlanCompileError(
+                code=reasons.plan.ORPHAN_FK_POLICY_MISSING,
+                path=f"relationships[{idx}]",
+                message=(
+                    f"Relationship entry for parent {parent_table}.{parent_cols} "
+                    "does not declare an orphan_policy. Every relationship must "
+                    "explicitly name one of: 'preserve', 'remap', 'warn', 'fail'. "
+                    "There is no default."
+                ),
+            )
+        if not isinstance(policy, str) or policy not in _POLICY_TOKENS:
+            raise PlanCompileError(
+                code=reasons.plan.ORPHAN_FK_POLICY_INVALID,
+                path=f"relationships[{idx}].orphan_policy",
+                message=_policy_text(
+                    reasons.plan.ORPHAN_FK_POLICY_INVALID,
+                    f"Parent {_end(parent_table, parent_cols)}.",
+                ),
+            )
+        children = entry.get("children", [])
+        if not isinstance(children, list):
+            continue
+        for child in children:
+            if not isinstance(child, dict):
+                continue
+            child_table = child.get("table")
+            child_cols = child.get("columns")
+            if not (
+                isinstance(child_table, str)
+                and isinstance(child_cols, list)
+                and all(isinstance(c, str) for c in child_cols)
+            ):
+                continue
+            key = (parent_table, tuple(parent_cols), child_table, tuple(child_cols))
+            if key in lookup and lookup[key].value != policy:
+                raise PlanCompileError(
+                    code=reasons.plan.ORPHAN_FK_POLICY_DUPLICATE,
+                    path=f"relationships[{idx}]",
+                    message=_policy_text(
+                        reasons.plan.ORPHAN_FK_POLICY_DUPLICATE,
+                        f"Parent {_end(parent_table, parent_cols)}, "
+                        f"child {_end(child_table, child_cols)}.",
+                    ),
+                )
+            lookup[key] = OrphanPolicy(policy)
+    return lookup
+
+
 def check_orphan_fk_policy_completeness(
     config: dict[str, Any],
     relationships: tuple[Relationship, ...],
-) -> dict[tuple[str, tuple[str, ...], str, tuple[str, ...]], OrphanPolicy]:
+) -> dict[_Key, OrphanPolicy]:
     """Validate that the config declares `orphan_policy` for every relationship.
 
     Per S2 §3 (resolution of TODO 4): no default; every relationship must
     explicitly name its orphan-handling policy. Returns a lookup keyed
     by `(parent_table, parent_columns, child_table, child_columns)` ->
     `OrphanPolicy` so `build_relationship_graph` can populate every
-    `RelationshipEdge` without re-reading the config. The 4-tuple key
-    (S13-rebaseline P1, 2026-06-01) allows same-parent-different-child
-    relationships to declare different orphan policies; pre-fix the
-    2-tuple key collapsed them and rejected the legitimate pattern as a
-    duplicate.
+    `RelationshipEdge` without re-reading the config. The config side is read
+    by `normalize_orphan_policy_lookup`, which raises for a missing, invalid
+    or conflicting policy.
 
     Raises:
 
     - `PlanCompileError(code='orphan_fk_policy_missing')`: a relationship
       exists in `profile.relationships` but the config has no matching
       entry, OR the matching entry has no `orphan_policy` field.
-    - `PlanCompileError(code='orphan_fk_policy_invalid')`: the config
-      entry declares an `orphan_policy` value not in the four valid
-      values (`preserve`, `remap`, `warn`, `fail`).
 
     Compile-check ownership table row #6 (per S1 spec).
     """
-    # Build the lookup from the config side: each (parent, child) pair
-    # maps to one orphan_policy string. Reject invalid values immediately
-    # so the error names the offending entry's exact location.
-    #
-    # S13-rebaseline P1 BLOCKER fix (2026-06-01): key is now
-    # (parent_table, parent_cols, child_table, child_cols) so two
-    # legitimate FKs from the same parent to different children with
-    # different orphan policies are not falsely flagged as duplicates.
-    # The nullable_fk golden invariant exercises this: an `employees`
-    # table is the parent of two `reviews` FKs (employee_id +
-    # reviewer_id) with different policies. Pre-fix the (parent_only)
-    # dedup key rejected the second entry as a merge conflict; the
-    # legitimate pattern was unbuildable.
-    config_lookup: dict[tuple[str, tuple[str, ...], str, tuple[str, ...]], str] = {}
-    config_relationships = config.get("relationships", [])
-    if isinstance(config_relationships, list):
-        for idx, entry in enumerate(config_relationships):
-            if not isinstance(entry, dict):
-                continue
-            parent = entry.get("parent")
-            if not isinstance(parent, dict):
-                continue
-            parent_table = parent.get("table")
-            parent_cols = parent.get("columns")
-            if not (
-                isinstance(parent_table, str)
-                and isinstance(parent_cols, list)
-                and all(isinstance(c, str) for c in parent_cols)
-            ):
-                continue
-            policy = entry.get("orphan_policy")
-            if policy is None:
-                raise PlanCompileError(
-                    code=reasons.plan.ORPHAN_FK_POLICY_MISSING,
-                    path=f"relationships[{idx}]",
-                    message=(
-                        f"Relationship entry for parent {parent_table}.{parent_cols} "
-                        "does not declare an orphan_policy. Every relationship must "
-                        "explicitly name one of: 'preserve', 'remap', 'warn', 'fail'. "
-                        "There is no default."
-                    ),
-                )
-            if policy not in ("preserve", "remap", "warn", "fail"):
-                raise PlanCompileError(
-                    code=reasons.plan.ORPHAN_FK_POLICY_INVALID,
-                    path=f"relationships[{idx}].orphan_policy",
-                    message=(
-                        f"Relationship entry for parent {parent_table}.{parent_cols} "
-                        f"declares orphan_policy={policy!r}, which is not one of the "
-                        "four valid values: 'preserve', 'remap', 'warn', 'fail'."
-                    ),
-                )
-            # Read the children list to build per-(parent, child) keys.
-            # The canonical config schema declares `children:` as a list
-            # of child ends (enforced by config/_relationships.py:Field
-            # min_length=1 with extra="forbid"); each child becomes its
-            # own key, optionally sharing a policy with siblings.
-            children = entry.get("children", [])
-            if not isinstance(children, list):
-                continue
-            for child in children:
-                if not isinstance(child, dict):
-                    continue
-                child_table = child.get("table")
-                child_cols = child.get("columns")
-                if not (
-                    isinstance(child_table, str)
-                    and isinstance(child_cols, list)
-                    and all(isinstance(c, str) for c in child_cols)
-                ):
-                    continue
-                # QA-8 F3 (2026-06-01, S13-rebaseline fix): detect duplicate-
-                # key conflict. A second entry for the same
-                # (parent_table, parent_cols, child_table, child_cols)
-                # with a different orphan_policy used to silently
-                # overwrite the first; the operator never saw the conflict
-                # and the winning policy was last-declared. A merge-
-                # conflict resolution tool could produce this shape.
-                # Same-policy duplicates are tolerated (no information
-                # loss). LEGITIMATE same-parent-different-child entries
-                # with different policies are NOT a duplicate because
-                # the key now includes the child end.
-                key = (parent_table, tuple(parent_cols), child_table, tuple(child_cols))
-                if key in config_lookup and config_lookup[key] != policy:
-                    raise PlanCompileError(
-                        code=reasons.plan.ORPHAN_FK_POLICY_DUPLICATE,
-                        path=f"relationships[{idx}]",
-                        message=(
-                            f"Relationship for parent {parent_table}.{parent_cols} "
-                            f"-> child {child_table}.{child_cols} "
-                            f"declares orphan_policy={policy!r} but a previous "
-                            f"entry declared {config_lookup[key]!r}. Remove the "
-                            "duplicate entry."
-                        ),
-                    )
-                config_lookup[key] = policy
+    config_lookup = normalize_orphan_policy_lookup(config)
 
     # Now check every profile relationship has a matching config entry.
     # Lookup key is now per-(parent, child) so different children of the
     # same parent can carry different policies.
-    lookup: dict[tuple[str, tuple[str, ...], str, tuple[str, ...]], OrphanPolicy] = {}
+    lookup: dict[_Key, OrphanPolicy] = {}
     for rel in relationships:
         key = (
             rel.parent_table,
@@ -463,5 +463,5 @@ def check_orphan_fk_policy_completeness(
                     "the config; one of: 'preserve', 'remap', 'warn', 'fail'."
                 ),
             )
-        lookup[key] = OrphanPolicy(config_lookup[key])
+        lookup[key] = config_lookup[key]
     return lookup

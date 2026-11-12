@@ -103,9 +103,9 @@ def _config(snapshot: str, seed: int = 11, **overrides: Any) -> dict[str, Any]:
                 "reference_table": "zeta_customers",
                 "reference_column": "id",
                 "distribution": "random",
-                "min_per_parent": 1,
+                # 25 children over 40 parents: a positive minimum would be infeasible, and a
+                # bounded reference takes no null injection.
                 "max_per_parent": 3,
-                "null_probability": 0.1,
             },
         ],
     }

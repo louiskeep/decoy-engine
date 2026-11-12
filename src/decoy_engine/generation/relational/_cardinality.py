@@ -1,7 +1,28 @@
-"""Per-parent cardinality repair for generated reference columns.
+"""Per-parent cardinality for generated reference columns: the pool check and the repair.
 
-Moved from ``generators/columns.py`` so the V1 ``ColumnGenerator`` and the v2 reference draw
-share one repair.
+Two questions about a child column that references a parent key list are answered here and
+nowhere else:
+
+- ``check_reference_pool``: may this draw start? It holds the empty-parent rule (the
+  relationship's orphan policy decides), the bounds feasibility rule and the weights rule. The
+  whole-table draw and the streamed draw both call it before the first value, so no route can
+  enforce a different rule. ``distribution: fitted`` is the one named exemption: it keeps its
+  own empty-pool refusal and refuses bounds through ``check_fitted_bounds``.
+- ``apply_cardinality_bounds``: move a drawn value list inside ``min_per_parent`` and
+  ``max_per_parent``. The V1 ``ColumnGenerator`` and the v2 reference draw share it.
+
+Pattern: pigeonhole feasibility and room-aware fill. ``P`` parents that each take at most
+``max`` children hold ``N`` rows exactly when ``N <= max * P``, and each can get ``min`` exactly
+when ``min * P <= N`` (the pigeonhole principle; the degree constraints of a bipartite
+b-matching, Schrijver, *Combinatorial Optimization*, ch. 21). The comparison is the engine's
+one domain-versus-rows rule, ``unique_capacity_ok``. The fill draws uniformly from the parents
+that still have room and swap-removes a parent when its last slot is taken, the constant-time
+removal of sampling without replacement (Knuth, *TAOCP* vol. 2, sec. 3.4.2), so it allocates
+O(P + N) and cannot pass ``max``.
+
+Every map and counter is keyed by ``value_key``, so a list or dict parent key is tracked by
+equality; the values written back are the original parent objects. Messages are the registered
+summary plus the table and column names: no key, count, bound or weight reaches one.
 """
 
 from __future__ import annotations
@@ -9,111 +30,249 @@ from __future__ import annotations
 import logging
 import random
 from collections import Counter
+from collections.abc import Callable, Sequence
+from typing import Any
+
+from decoy_engine import _capacity, reasons, relationships
+from decoy_engine.config import value_key
+from decoy_engine.generation.pool import GenerationError, QualityWarning, emit_generation_warning
+from decoy_engine.generators.derivation import TABLE_KEY
+
+__all__ = [
+    "apply_cardinality_bounds",
+    "check_fitted_bounds",
+    "check_reference_pool",
+    "reference_policies",
+]
+
+_LOG = logging.getLogger(__name__)
+
+
+def _where(table: Any, column: Any) -> str:
+    if isinstance(table, str) and isinstance(column, str):
+        return f" Table {table!r}, column {column!r}."
+    return ""
+
+
+def _text(code: reasons.ReasonCode, table: Any, column: Any) -> str:
+    """The whole text of a reference-draw refusal or warning: fixed summary plus names."""
+    return f"{code.spec.summary}{_where(table, column)}"
+
+
+def _infeasible(table: Any, column: Any) -> GenerationError:
+    """The one builder of the run-time infeasible-bounds refusal."""
+    return GenerationError(
+        code=reasons.runtime.GENERATE_PER_PARENT_INFEASIBLE,
+        message=_text(reasons.runtime.GENERATE_PER_PARENT_INFEASIBLE, table, column),
+    )
+
+
+def _bound(col: dict[str, Any], key: str) -> int:
+    """A per-parent bound; zero, absent and null all mean unset."""
+    return max(int(col.get(key) or 0), 0)
+
+
+def _feasible(lo: int, hi: int, parents: int, rows: int) -> bool:
+    """`lo * parents <= rows` and, with a maximum, `rows <= hi * parents`. Equality fits."""
+    if lo > 0 and not _capacity.unique_capacity_ok(rows, lo * parents):
+        return False
+    return hi <= 0 or _capacity.unique_capacity_ok(hi * parents, rows)
+
+
+def reference_policies(config: dict[str, Any]) -> dict[tuple[str, str], str]:
+    """`(table, column) -> orphan policy` for each generate reference a relationship covers.
+
+    A reference column is covered when a relationship child entry names exactly its
+    `(reference_table, [reference_column], table, [column])`. Read once per run through the
+    relationship package's own normalizer; a column with no entry has no policy.
+    """
+    lookup = relationships.normalize_orphan_policy_lookup(config)
+    found: dict[tuple[str, str], str] = {}
+    if not lookup:
+        return found
+    for table in config.get("tables") or []:
+        if not isinstance(table, dict):
+            continue
+        for col in table.get("generate_columns") or []:
+            if not isinstance(col, dict) or col.get("type") != "reference":
+                continue
+            name, column = table.get("name"), col.get("name")
+            key = (col.get("reference_table"), (col.get("reference_column"),), name, (column,))
+            policy = lookup.get(key)  # type: ignore[arg-type]
+            if policy is not None and isinstance(name, str) and isinstance(column, str):
+                found[(name, column)] = policy.value
+    return found
+
+
+def check_reference_pool(
+    col: dict[str, Any],
+    keys: Sequence[Any],
+    n: int,
+    policy: str | None,
+    table: str | None,
+    on_warning: Callable[[QualityWarning], None] | None,
+) -> None:
+    """Refuse a non-fitted reference draw that cannot give the shape its config asks for.
+
+    `keys` is the real distinct parent key list the draw reads, not the parent's `row_count`.
+    With no keys and rows to fill, `policy` decides: `fail` refuses, `warn` emits one coded
+    warning, and `preserve`, `remap` or no relationship stay silent; the caller then writes
+    nulls. With keys, positive bounds must be feasible and `weighted` weights must have one
+    entry per key. Called once per column, before the first value.
+    """
+    column = col.get("name")
+    if not keys:
+        if n <= 0:
+            return
+        if policy == relationships.OrphanPolicy.FAIL.value:
+            raise GenerationError(
+                code=reasons.runtime.REFERENCE_PARENT_POOL_EMPTY,
+                message=_text(reasons.runtime.REFERENCE_PARENT_POOL_EMPTY, table, column),
+            )
+        if policy == relationships.OrphanPolicy.WARN.value:
+            emit_generation_warning(
+                QualityWarning(
+                    code=reasons.warning.REFERENCE_PARENT_POOL_EMPTY,
+                    provider="reference",
+                    column=column,
+                    detail={"table": table, "column": column},
+                ),
+                _LOG,
+                _text(reasons.warning.REFERENCE_PARENT_POOL_EMPTY, table, column),
+                on_warning,
+            )
+        return
+    lo, hi = _bound(col, "min_per_parent"), _bound(col, "max_per_parent")
+    if not _feasible(lo, hi, len(keys), n):
+        raise _infeasible(table, column)
+    weights = col.get("weights")
+    if (
+        col.get("distribution") == "weighted"
+        and isinstance(weights, (list, tuple))
+        and len(weights) != len(keys)
+    ):
+        raise GenerationError(
+            code=reasons.runtime.REFERENCE_WEIGHTS_LENGTH_MISMATCH,
+            message=_text(reasons.runtime.REFERENCE_WEIGHTS_LENGTH_MISMATCH, table, column),
+        )
+
+
+def check_fitted_bounds(col: dict[str, Any], keys: Sequence[Any]) -> None:
+    """Refuse a positive bound on a `fitted` reference that has parents to draw from.
+
+    Fitted degrees come from the pinned fan-out, so a bound would be dropped without a word.
+    An empty pool is left to the fitted allocator, whose refusal has precedence.
+    """
+    if keys and (_bound(col, "min_per_parent") or _bound(col, "max_per_parent")):
+        raise GenerationError(
+            code=reasons.runtime.GENERATE_FITTED_REFERENCE_BOUNDS_CONFLICT,
+            message=_text(
+                reasons.runtime.GENERATE_FITTED_REFERENCE_BOUNDS_CONFLICT,
+                col.get(TABLE_KEY),
+                col.get("name"),
+            ),
+        )
 
 
 def apply_cardinality_bounds(
-    values: list,
-    ref_values: list,
+    values: list[Any],
+    ref_values: Sequence[Any],
     min_per_parent: int,
     max_per_parent: int,
     rng: random.Random,
     *,
-    logger: logging.Logger,
-) -> list:
-    """Repair a generated value list to honor per-parent cardinality bounds.
+    table: str | None = None,
+    column: str | None = None,
+) -> list[Any]:
+    """Repair `values` in place so every parent holds between `min` and `max` of them.
 
-    Repair algorithm:
-      1. Free over-max slots: for any parent value above max, mark
-         the excess slot positions for replacement.
-      2. Compute under-min deficits per parent value.
-      3. If the deficit exceeds the over-max free slots, pull donor
-         slots from over-min values (values that have more than
-         min). Each donor can supply at most ``count - min`` slots
-         without violating its own min.
-      4. Build a replacement queue: under-min injections first, any
-         remaining slots filled randomly from eligible parent values
-         (those not yet at max).
-      5. Shuffle + apply to the freed slots.
+    1. Free the slots of any parent above `max`.
+    2. Count each parent's deficit below `min`.
+    3. When the deficits exceed the freed slots, take donor slots from parents above `min`;
+       a donor gives at most `count - min`.
+    4. Queue the deficits, then fill what is left from the parents that still have room.
+    5. Shuffle the queue and write it to the freed slots.
 
-    Best-effort on impossible constraints (warn, never raise):
-      - ``min * |pool| > num_rows``: cannot satisfy min for every
-        parent; partially satisfy and warn.
-      - All values at max while slots remain: over-fill the pool
-        uniformly and warn (the constraint is unsatisfiable but the
-        caller wanted num_rows back).
+    Feasible bounds always end inside both limits. The final count is checked on an explicit
+    branch, not an `assert`, so `python -O` keeps it: bounds that do not hold are refused with
+    `runtime.reference_bounds_unsatisfied`, never patched on a best-effort basis.
     """
     n = len(values)
     max_eff = max_per_parent if max_per_parent > 0 else n + 1
-    counts = Counter(values)
+    keys = [value_key(pv) for pv in ref_values]
+    parent_of = {key: pv for key, pv in zip(keys, ref_values, strict=True)}
+    slot_keys = [value_key(v) for v in values]
+    counts: Counter[Any] = Counter()
+    positions: dict[Any, list[int]] = {}
+    for i, key in enumerate(slot_keys):
+        counts[key] += 1
+        positions.setdefault(key, []).append(i)
     free_slots: list[int] = []
 
-    # 1. Mandatory: free over-max excess slots.
-    for pv in ref_values:
-        if counts[pv] > max_eff:
-            excess = counts[pv] - max_eff
-            indices = [i for i, v in enumerate(values) if v == pv]
+    for key in keys:
+        if counts[key] > max_eff:
+            excess = counts[key] - max_eff
+            indices = list(positions[key])
             rng.shuffle(indices)
             free_slots.extend(indices[:excess])
-            counts[pv] = max_eff
+            counts[key] = max_eff
 
-    # 2. Compute under-min deficits using post-truncation counts.
-    deficits = {pv: max(0, min_per_parent - counts[pv]) for pv in ref_values}
+    # Deficits use the counts after step 1 trimmed each parent to `max`.
+    deficits = {key: max(0, min_per_parent - counts[key]) for key in keys}
     total_deficit = sum(deficits.values())
 
-    # 3. Optional: pull donor slots from over-min values when the
-    #    deficit exceeds what step 1 freed. Each donor pv can give
-    #    up to (counts[pv] - min_per_parent) slots without dropping
-    #    below its own min.
     if total_deficit > len(free_slots):
         needed = total_deficit - len(free_slots)
         already_free = set(free_slots)
         donor_indices: list[int] = []
-        for pv in ref_values:
-            surplus = counts[pv] - min_per_parent
+        for key in keys:
+            surplus = counts[key] - min_per_parent
             if surplus <= 0:
                 continue
-            candidates = [i for i, v in enumerate(values) if v == pv and i not in already_free]
+            candidates = [i for i in positions.get(key, ()) if i not in already_free]
             rng.shuffle(candidates)
             donor_indices.extend(candidates[:surplus])
         rng.shuffle(donor_indices)
         taken = donor_indices[:needed]
         for i in taken:
-            counts[values[i]] -= 1
+            counts[slot_keys[i]] -= 1
         free_slots.extend(taken)
 
-    # 4. Build replacement queue: deficits first, then eligible fills.
-    queue: list = []
-    for pv in ref_values:
-        if deficits[pv] > 0:
-            queue.extend([pv] * deficits[pv])
-
-    if len(queue) > len(free_slots):
-        logger.warning(
-            f"Cardinality: min_per_parent={min_per_parent} cannot be "
-            f"fully satisfied - would need {len(queue)} injections, only "
-            f"{len(free_slots)} slots available without violating other "
-            f"min bounds. Partial satisfaction."
-        )
-        queue = queue[: len(free_slots)]
+    queue: list[Any] = []
+    for key in keys:
+        queue.extend([key] * deficits[key])
+    del queue[len(free_slots) :]
 
     remaining = len(free_slots) - len(queue)
     if remaining > 0:
         tally = Counter(counts)
-        for q in queue:
-            tally[q] += 1
-        eligible = [v for v in ref_values if tally[v] < max_eff]
-        if not eligible:
-            logger.warning(
-                f"Cardinality: all values at max_per_parent={max_per_parent}; "
-                f"over-filling proportionally for {remaining} rows."
-            )
-            eligible = ref_values
-        queue.extend(rng.choices(eligible, k=remaining))
+        for key in queue:
+            tally[key] += 1
+        # Parents with room; one leaves the array the moment its last slot is taken, so a
+        # pick never lands on a full parent and nothing is sized by `max`.
+        open_keys = [key for key in keys if tally[key] < max_eff]
+        for _ in range(remaining):
+            if not open_keys:
+                break
+            pick = rng.randrange(len(open_keys))
+            key = open_keys[pick]
+            queue.append(key)
+            tally[key] += 1
+            if tally[key] >= max_eff:
+                open_keys[pick] = open_keys[-1]
+                open_keys.pop()
 
-    # 5. Apply replacements in shuffled order so the repair doesn't
-    #    bias position.
+    # Shuffled so the repair does not bias position.
     rng.shuffle(queue)
-    for slot, replacement in zip(free_slots, queue, strict=False):
-        values[slot] = replacement
+    for slot, key in zip(free_slots, queue, strict=False):
+        values[slot] = parent_of[key]
 
+    final: Counter[Any] = Counter()
+    for value in values:
+        final[value_key(value)] += 1
+    if any(final[key] < min_per_parent or final[key] > max_eff for key in keys):
+        raise GenerationError(
+            code=reasons.runtime.REFERENCE_BOUNDS_UNSATISFIED,
+            message=_text(reasons.runtime.REFERENCE_BOUNDS_UNSATISFIED, table, column),
+        )
     return values

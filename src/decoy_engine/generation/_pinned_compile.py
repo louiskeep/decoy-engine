@@ -335,6 +335,11 @@ def compile_pinned_plan_with_generation(
     from decoy_engine.generation._numeric_typing import numeric_plan
 
     numeric = tuple(sorted((t, c, str(dt)) for (t, c), dt in numeric_plan(resolved).items()))
+    # The plan keeps no relationships either, so the policy an empty parent follows is carried
+    # as its own field, read from the resolved config by the one relationship normalizer.
+    from decoy_engine.generation.relational import reference_policies
+
+    policies = tuple(sorted((t, c, p) for (t, c), p in reference_policies(resolved).items()))
     pinned = PinnedPlan(
         schema_version=PINNED_PLAN_SCHEMA,
         reference_date=reference,
@@ -342,5 +347,6 @@ def compile_pinned_plan_with_generation(
         tables=tuple(tables),
         statistical=tuple(sorted(statistical, key=lambda s: (s.table, s.column))),
         numeric_types=numeric,
+        reference_policies=policies,
     )
     return PinnedCompilation(pinned=pinned, generation=gen)

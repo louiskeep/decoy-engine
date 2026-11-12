@@ -45,6 +45,7 @@ from decoy_engine.generation._statistical_column import (
 )
 from decoy_engine.generation._synthesize_derived import _derived_generate, _formula, _reference
 from decoy_engine.generation.kinds import constant_values, parametric_values
+from decoy_engine.generation.relational import reference_policies
 from decoy_engine.generation.statistical import FanoutSpec, StatisticalSpec
 from decoy_engine.generators.derivation import TABLE_KEY, GenDeriveContext, with_table
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
@@ -108,8 +109,8 @@ def _generate_tables_from_config(
     custom faker providers against the live registry exactly as before.
     ``reference_fanouts`` is ``{(table_name, column_name): FanoutSpec}`` decoded from the
     pinned snapshot bytes; a ``distribution: fitted`` reference column reads only this.
-    ``on_warning`` receives each fidelity-gate ``QualityWarning`` as it is raised; it never
-    changes the generated tables.
+    ``on_warning`` receives each ``QualityWarning`` (fidelity gate, empty reference parent under
+    ``orphan_policy: warn``) as it is raised; it never changes the generated tables.
     """
     statistical_specs = statistical_specs or {}
     snapshot_index_for_column = snapshot_index_for_column or {}
@@ -129,6 +130,7 @@ def _generate_tables_from_config(
     # Parents-before-children, ties by declaration and first-reference order (never a `set`).
     ordered = [name for name, _parents in generation_order(config)]
     numeric = numeric_plan(config, provider_snapshot=provider_snapshot)
+    policies = reference_policies(config)
     pools: dict[str, pa.Table] = {}
     out: dict[str, pa.Table] = {}
     for name in ordered:
@@ -173,6 +175,8 @@ def _generate_tables_from_config(
                     provider_snapshot=provider_snapshot,
                     numeric_type=numeric.get((name, col["name"])),
                     reference_fanouts=reference_fanouts,
+                    reference_policy=policies.get((name, cname)),
+                    on_warning=on_warning,
                 )
                 warn_on_unseen_parents(
                     col,
@@ -306,6 +310,8 @@ def _generate_column(
     pinned: bool = False,
     numeric_type: pa.DataType | None = None,
     reference_fanouts: dict[tuple[str, str], FanoutSpec] | None = None,
+    reference_policy: str | None = None,
+    on_warning: Callable[[QualityWarning], None] | None = None,
 ) -> list[Any]:
     """Dispatch a generate column to its generator by ``type`` (mirrors V1
     ``ColumnGenerator.generators``), then apply the V1 ``null_probability``
@@ -318,7 +324,9 @@ def _generate_column(
     ``table_name``/``statistical_specs`` (DPS Scope B) are the pinned-spec
     lookup for the ``statistical`` branch -- no snapshot path is reopened
     here (guide section 4.8). ``provider_snapshot`` (5a-faker) forwards to the ``faker`` branch
-    only. ``reference_date`` (pinned execution only) anchors ``windowed_date`` ``now``/``today``."""
+    only. ``reference_date`` (pinned execution only) anchors ``windowed_date`` ``now``/``today``.
+    ``reference_policy`` is the orphan policy of the relationship covering a ``reference`` column;
+    with ``on_warning`` it decides what an empty parent does (see ``_reference``)."""
     col = with_table(col, table_name)
     kind = col.get("type")
     if kind == "sequence":
@@ -332,12 +340,13 @@ def _generate_column(
     elif kind == "formula":
         values = _formula(col, n, seed, derive_key)
     elif kind == "reference":
+        # A plain call keeps its five-argument shape: parity tests wrap `_reference`.
+        extra: dict[str, Any] = {}
         if col.get("distribution") == "fitted":
-            fanout = (reference_fanouts or {}).get((table_name, str(col.get("name"))))
-            values = _reference(col, n, seed, derive_key, pools or {}, fanout=fanout)
-        else:
-            # The non-fitted call keeps its five-argument shape: parity tests wrap `_reference`.
-            values = _reference(col, n, seed, derive_key, pools or {})
+            extra["fanout"] = (reference_fanouts or {}).get((table_name, str(col.get("name"))))
+        if reference_policy is not None or on_warning is not None:
+            extra = {**extra, "policy": reference_policy, "on_warning": on_warning}
+        values = _reference(col, n, seed, derive_key, pools or {}, **extra)
     elif kind == "constant":
         values = constant_values(col, n)
     elif kind == "distribution":
