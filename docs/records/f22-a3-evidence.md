@@ -25,8 +25,8 @@ receipts, `publish_tables`, and the registry codes.
 | `publication/_publish.py` (new) | 341 | `publish_unit`, `publish_tables`, `_after_judge`, judge, D2, receipts |
 | `publication/_types.py` | 180 to 235 | `PublicationRefused`, `PublicationFailed`, `raise_for_outcome`; `CommitReceipt.reason_code` checked against the registry (`decoy` namespace) instead of by shape |
 | `publication/__init__.py` | 48 to 58 | exports |
-| `reasons/decoy/_core.py` | 158 to 268 | thirteen `decoy.publication_*` codes, owner `decoy_engine.publication`, outcome `publication`, `since` 1.24.0 |
-| `reasons/_registry.py` | 198 | `REGISTRY_VERSION` 1.23.0 to 1.24.0 |
+| `reasons/decoy/_core.py` | 158 to 268 | thirteen `decoy.publication_*` codes, owner `decoy_engine.publication`, outcome `publication`, `since` 1.25.0 |
+| `reasons/_registry.py` | 198 | `REGISTRY_VERSION` 1.23.0 to 1.24.0 (renumbered to 1.25.0 at merge) |
 | `reason_adapter.py` | 446 to 462 | `_CODED`: `PublicationRefused`, `PublicationFailed` (namespace `decoy`); `_FIXED`: `CommitUncertain`, `LockUnavailable`, `LockTimeout` to their publication codes, `LeafTooLarge` to `decoy.publication_failed` |
 
 Six production files: plan 9 row a3 names four, plus `reason_adapter.py` (owner decision
@@ -34,12 +34,12 @@ Six production files: plan 9 row a3 names four, plus `reason_adapter.py` (owner 
 600 lines; no census entry changed.
 
 Registry procedure (`docs/reasons.md`, `scripts/release/reason_manifest_policy.py`), additive
-only: the slice builds at the next minor of its base (1.24.0); one pinned fixture for the minor,
-`tests/fixtures/f29/reason-manifest-v1.24-f22-publication.json` (13 entries, generated from
+only: the slice builds at the next minor of its base (1.25.0); one pinned fixture for the minor,
+`tests/fixtures/f29/reason-manifest-v1.25-f22-publication.json` (13 entries, generated from
 `reasons.manifest()` with the formatting that reproduces the 1.23 fixture byte for byte);
 `tests/fixtures/f29/consumer-contract.json` regenerated with
 `python tests/unit/progress/test_consumer_contract.py` (only `registry_version` moves, 27 lines);
-`docs/reasons.md` names 1.24.0 and the fixture; `tests/unit/test_reason_registry.py` gains the
+`docs/reasons.md` names 1.25.0 and the fixture; `tests/unit/test_reason_registry.py` gains the
 pin test. `scripts/dev/registry_renumber.py --check` answers `main-not-merged` (main moved and is
 not merged into the stack), so the renumber to the next free minor is the merge-time step the
 policy describes.
@@ -103,7 +103,7 @@ clean after every revert and no commit carries a mutation.
 | skip `txn.abort()` when the outcome is `already_committed` (class 2) | 2: `test_exit_matrix_publish[ambient-E4_already_committed]`, `test_retry_already_committed[ambient]`; the strict cells stay green because the strict transaction's `weakref.finalize` discards an unreferenced stage when it is collected (A-4) |
 | report `already_committed` whatever the D2 fsync returned (class 3: "issue already_committed before its fsync") | 8: `test_exit_matrix_publish[*-E4a_chain_fsync_fails]` (2), `test_adopt_syncs_ancestor_chain[*]` (6) |
 | put the leaf name in the refusal text (class 1; 7.2 marker row) | 2: `test_marker_corpus_user_surfaces[strict,ambient]` |
-| add a `decoy` code at `since` 1.24.0 without its fixture entry (class 10) | `tests/sentry/test_reason_minor_fixtures.py::test_live_registry_has_one_complete_fixture_per_minor`, `tests/unit/test_reason_registry.py::test_every_symbol_matches_its_attribute` |
+| add a `decoy` code at `since` 1.25.0 without its fixture entry (class 10) | `tests/sentry/test_reason_minor_fixtures.py::test_live_registry_has_one_complete_fixture_per_minor`, `tests/unit/test_reason_registry.py::test_every_symbol_matches_its_attribute` |
 | class 8, test side: the crash child's SIGKILL made a no-op | `test_adopt_syncs_ancestor_chain[*]` (6) red; with the two non-vacuity lines (`code == -SIGKILL`, kill marker) also deleted the same 6 pass on the no-kill build, so those lines are what make the crash cells non-vacuous |
 
 The "judge before lock" mutation was first applied wrongly (it edited the signature of `_locked`
@@ -307,3 +307,4 @@ the uid 65534 pass.
 V2-LOG: `publication/_publish.py::_measure_one` closes the staged file descriptor with a raw
 `os.close` in a `finally`; a close error there would replace a measurement error or fail a good
 measurement. It is a read-only regular file, not a directory, and was left as is.
+Registry renumbered at merge from 1.24.0 to 1.25.0 by scripts/dev/registry_renumber.py; main was at 1.24.0.

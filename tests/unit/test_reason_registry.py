@@ -502,11 +502,11 @@ def test_gen_types_e2_codes_are_registered_with_a_pinned_fixture() -> None:
     assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 23, 0)
 
 
-F22_PUBLICATION_FIXTURE = "reason-manifest-v1.24-f22-publication.json"
+F22_PUBLICATION_FIXTURE = "reason-manifest-v1.25-f22-publication.json"
 
 
 def test_f22_publication_codes_are_registered_with_a_pinned_fixture() -> None:
-    """F22 publication: the thirteen `decoy` publication outcome codes, all `since` 1.24.0."""
+    """F22 publication: the thirteen `decoy` publication outcome codes, all `since` 1.25.0."""
     codes = (
         "publication_attempt_aborted",
         "publication_attempt_sealed",
@@ -525,15 +525,15 @@ def test_f22_publication_codes_are_registered_with_a_pinned_fixture() -> None:
     for code in codes:
         spec = reasons.find("decoy", code)
         assert spec is not None
-        assert (spec.owner, spec.since) == ("decoy_engine.publication", "1.24.0")
+        assert (spec.owner, spec.since) == ("decoy_engine.publication", "1.25.0")
         assert not re.search(r"[{}%]", spec.summary)
         assert getattr(reasons.decoy, code.upper()) == code
     pinned = _load(F22_PUBLICATION_FIXTURE)
     assert sorted((e["namespace"], e["code"]) for e in pinned["entries"]) == sorted(
         ("decoy", c) for c in codes
     )
-    assert pinned["registry_version"] == "1.24.0"
-    assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 24, 0)
+    assert pinned["registry_version"] == "1.25.0"
+    assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 25, 0)
 
 
 FPE_FALLBACKS_FIXTURE = "reason-manifest-v1.24-fpe-fallbacks.json"

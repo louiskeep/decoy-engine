@@ -70,7 +70,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "This publication attempt was aborted.",
       "symbol": "PUBLICATION_ATTEMPT_ABORTED"
     },
@@ -144,7 +144,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "This publication attempt already committed and accepts no further change.",
       "symbol": "PUBLICATION_ATTEMPT_SEALED"
     },
@@ -218,7 +218,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "A commit is already in progress on this publication.",
       "symbol": "PUBLICATION_COMMIT_IN_PROGRESS"
     },
@@ -292,7 +292,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "An output whose commit was uncertain is not at the destination.",
       "symbol": "PUBLICATION_COMMIT_NOT_VISIBLE"
     },
@@ -366,7 +366,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "The output is visible but its durability could not be confirmed.",
       "symbol": "PUBLICATION_COMMIT_UNCERTAIN"
     },
@@ -440,7 +440,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "Another writer held the output destination lock past the deadline.",
       "symbol": "PUBLICATION_LOCK_TIMEOUT"
     },
@@ -514,7 +514,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "The output destination cannot be locked on this filesystem.",
       "symbol": "PUBLICATION_LOCK_UNAVAILABLE"
     },
@@ -588,7 +588,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "This operation already published a different result to the destination.",
       "symbol": "PUBLICATION_OPERATION_CONFLICT"
     },
@@ -662,7 +662,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "A recovery is already in progress on this publication.",
       "symbol": "PUBLICATION_RECOVERY_IN_PROGRESS"
     },
@@ -736,7 +736,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "The output destination already holds a different or unreadable result.",
       "symbol": "PUBLICATION_TARGET_OCCUPIED"
     },
@@ -810,7 +810,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "A vault with different contents already exists for this output.",
       "symbol": "PUBLICATION_VAULT_CONFLICT"
     },
@@ -884,7 +884,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "The committed output at the destination was bound with a different vault.",
       "symbol": "PUBLICATION_VAULT_MISMATCH"
     },
@@ -958,11 +958,11 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "A write is already in progress on this publication.",
       "symbol": "PUBLICATION_WRITE_IN_PROGRESS"
     }
   ],
   "reason_schema_version": 1,
-  "registry_version": "1.24.0"
+  "registry_version": "1.25.0"
 }

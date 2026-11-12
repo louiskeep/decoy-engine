@@ -180,89 +180,89 @@ PUBLICATION_LOCK_UNAVAILABLE = _p(
     "The output destination cannot be locked on this filesystem.",
     retry=RetryClass.ENVIRONMENT_REPAIR,
     outcome=Outcome.PUBLICATION,
-    since="1.24.0",
+    since="1.25.0",
 )
 PUBLICATION_LOCK_TIMEOUT = _p(
     "publication_lock_timeout",
     "Another writer held the output destination lock past the deadline.",
     retry=RetryClass.RETRY_OPERATION,
     outcome=Outcome.PUBLICATION,
-    since="1.24.0",
+    since="1.25.0",
 )
 PUBLICATION_TARGET_OCCUPIED = _p(
     "publication_target_occupied",
     "The output destination already holds a different or unreadable result.",
     retry=RetryClass.ENVIRONMENT_REPAIR,
     outcome=Outcome.PUBLICATION,
-    since="1.24.0",
+    since="1.25.0",
 )
 PUBLICATION_OPERATION_CONFLICT = _p(
     "publication_operation_conflict",
     "This operation already published a different result to the destination.",
     retry=RetryClass.NEVER,
     outcome=Outcome.PUBLICATION,
-    since="1.24.0",
+    since="1.25.0",
 )
 PUBLICATION_COMMIT_UNCERTAIN = _p(
     "publication_commit_uncertain",
     "The output is visible but its durability could not be confirmed.",
     retry=RetryClass.RETRY_OPERATION,
     outcome=Outcome.PUBLICATION,
-    since="1.24.0",
+    since="1.25.0",
 )
 PUBLICATION_COMMIT_NOT_VISIBLE = _p(
     "publication_commit_not_visible",
     "An output whose commit was uncertain is not at the destination.",
     retry=RetryClass.RESTART_ATTEMPT,
     outcome=Outcome.PUBLICATION,
-    since="1.24.0",
+    since="1.25.0",
 )
 PUBLICATION_VAULT_MISMATCH = _p(
     "publication_vault_mismatch",
     "The committed output at the destination was bound with a different vault.",
     retry=RetryClass.NEVER,
     outcome=Outcome.PUBLICATION,
-    since="1.24.0",
+    since="1.25.0",
 )
 PUBLICATION_VAULT_CONFLICT = _p(
     "publication_vault_conflict",
     "A vault with different contents already exists for this output.",
     retry=RetryClass.NEVER,
     outcome=Outcome.PUBLICATION,
-    since="1.24.0",
+    since="1.25.0",
 )
 PUBLICATION_WRITE_IN_PROGRESS = _p(
     "publication_write_in_progress",
     "A write is already in progress on this publication.",
     retry=RetryClass.RETRY_OPERATION,
     outcome=Outcome.PUBLICATION,
-    since="1.24.0",
+    since="1.25.0",
 )
 PUBLICATION_COMMIT_IN_PROGRESS = _p(
     "publication_commit_in_progress",
     "A commit is already in progress on this publication.",
     retry=RetryClass.RETRY_OPERATION,
     outcome=Outcome.PUBLICATION,
-    since="1.24.0",
+    since="1.25.0",
 )
 PUBLICATION_RECOVERY_IN_PROGRESS = _p(
     "publication_recovery_in_progress",
     "A recovery is already in progress on this publication.",
     retry=RetryClass.RETRY_OPERATION,
     outcome=Outcome.PUBLICATION,
-    since="1.24.0",
+    since="1.25.0",
 )
 PUBLICATION_ATTEMPT_SEALED = _p(
     "publication_attempt_sealed",
     "This publication attempt already committed and accepts no further change.",
     retry=RetryClass.NEVER,
     outcome=Outcome.PUBLICATION,
-    since="1.24.0",
+    since="1.25.0",
 )
 PUBLICATION_ATTEMPT_ABORTED = _p(
     "publication_attempt_aborted",
     "This publication attempt was aborted.",
     retry=RetryClass.NEVER,
     outcome=Outcome.PUBLICATION,
-    since="1.24.0",
+    since="1.25.0",
 )
