@@ -531,6 +531,8 @@ def test_fpe_handler_fallback_codes_are_registered_with_a_pinned_fixture() -> No
     assert sorted((e["namespace"], e["code"]) for e in pinned["entries"]) == sorted(
         (n, c) for n, c, _ in expected
     )
+    assert pinned["registry_version"] == "1.24.0"
+    assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 24, 0)
 
 
 SCANML_M5_FIXTURE = "reason-manifest-v1.25-scanml-m5.json"
@@ -547,5 +549,5 @@ def test_scanml_m5_route_refusal_is_registered_with_a_pinned_fixture() -> None:
     assert [(e["namespace"], e["code"]) for e in pinned["entries"]] == [
         ("route", "post_scan_models_unsupported")
     ]
-    assert pinned["registry_version"] == "1.24.0"
-    assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 24, 0)
+    assert pinned["registry_version"] == "1.25.0"
+    assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 25, 0)
