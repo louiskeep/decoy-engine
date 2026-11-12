@@ -19,21 +19,6 @@
   },
   "decoy_engine.execution.physical._snapshot.capture_physical_plan_inputs": {
    "reason": "initial X0a inventory of test_file_access_entry_points.py; existing entry, reviewed by its own sentry"
-  },
-  "decoy_engine.generation.kinds._lookup.lookup_column_values": {
-   "reason": "GEN-TYPES E3 lookup: reaches policy only through bytes the plan already pinned or shipped package data; reviewed by its own sentry"
-  },
-  "decoy_engine.generation.kinds._lookup.lookup_from_codeset": {
-   "reason": "GEN-TYPES E3 lookup: reaches policy only through bytes the plan already pinned or shipped package data; reviewed by its own sentry"
-  },
-  "decoy_engine.generation.window.classify_window": {
-   "reason": "GEN-TYPES E3 lookup: reaches policy only through bytes the plan already pinned or shipped package data; reviewed by its own sentry"
-  },
-  "decoy_engine.generation.window.classify_window_from_generation_plan": {
-   "reason": "GEN-TYPES E3 lookup: reaches policy only through bytes the plan already pinned or shipped package data; reviewed by its own sentry"
-  },
-  "decoy_engine.plan.checks._lookup_tables.checked_lookup": {
-   "reason": "GEN-TYPES E3 lookup: reaches policy only through bytes the plan already pinned or shipped package data; reviewed by its own sentry"
   }
  }
 }

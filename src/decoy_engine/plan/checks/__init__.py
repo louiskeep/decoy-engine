@@ -5,13 +5,12 @@ from decoy_engine.plan.checks._generate_columns import (
     check_faker_default_locale,
     check_generate_columns,
 )
-from decoy_engine.plan.checks._lookup_tables import ReadLookup, checked_lookup, lookup_columns
+from decoy_engine.plan.checks._lookup_tables import ReadLookup, lookup_columns
 
 __all__ = [
     "DEFERRED",
     "ReadLookup",
     "check_faker_default_locale",
     "check_generate_columns",
-    "checked_lookup",
     "lookup_columns",
 ]

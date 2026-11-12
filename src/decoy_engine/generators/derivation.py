@@ -31,7 +31,7 @@ import hmac
 import json
 import os
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, NamedTuple
 
 from decoy_engine import fileaccess
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION
@@ -111,9 +111,14 @@ def column_identity(column_config: dict[str, Any]) -> str:
 # no digest may have the fingerprint read the file: only the standalone ``snapshot_file`` case may.
 # A lookup file is pinned at compile and the run reads the plan only, so a missing digest is an
 # error and the fingerprint never opens the path (a second read would reopen the TOCTOU window).
-FILE_VALUED_KEYS: dict[tuple[str, str], tuple[FileRole, bool]] = {
-    ("*", "snapshot_file"): (FileRole.SNAPSHOT, True),
-    ("lookup", "file"): (FileRole.LOOKUP, False),
+class _FileValuedKey(NamedTuple):
+    role: FileRole
+    disk_fallback: bool
+
+
+FILE_VALUED_KEYS: dict[tuple[str, str], _FileValuedKey] = {
+    ("*", "snapshot_file"): _FileValuedKey(FileRole.SNAPSHOT, True),
+    ("lookup", "file"): _FileValuedKey(FileRole.LOOKUP, False),
 }
 
 

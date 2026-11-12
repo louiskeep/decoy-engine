@@ -47,10 +47,10 @@ from decoy_engine.generation._synthesize_derived import _derived_generate, _form
 from decoy_engine.generation.kinds import (
     LookupList,
     constant_values,
-    lookup_column_values,
     lookup_digests,
     parametric_values,
 )
+from decoy_engine.generation.kinds._lookup import lookup_column_values
 from decoy_engine.generation.statistical import FanoutSpec, StatisticalSpec
 from decoy_engine.generators.derivation import TABLE_KEY, GenDeriveContext, with_table
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker

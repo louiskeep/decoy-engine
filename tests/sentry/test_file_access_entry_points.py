@@ -35,21 +35,6 @@ INTERNAL_SEAMS: dict[str, str] = {
     "decoy_engine.execution.out_of_core._mask.mask_column": "per-column step of the FK route",
     "decoy_engine.execution.out_of_core._relation.build_parent_key_relation": "FK route step",
     "decoy_engine.execution.physical._snapshot.capture_physical_plan_inputs": "shadow-plan capture",
-    "decoy_engine.generation.kinds._lookup.lookup_column_values": (
-        "draws a lookup column; derives its seed from the pinned digest, never a path"
-    ),
-    "decoy_engine.generation.kinds._lookup.lookup_from_codeset": (
-        "reads a shipped code set, which is package data, inside a declared entry point"
-    ),
-    "decoy_engine.generation.window.classify_window": (
-        "decodes the plan's pinned lookup bytes; a code set is shipped package data"
-    ),
-    "decoy_engine.generation.window.classify_window_from_generation_plan": (
-        "decodes the plan's pinned lookup bytes; a code set is shipped package data"
-    ),
-    "decoy_engine.plan.checks._lookup_tables.checked_lookup": (
-        "parses a lookup column from pinned bytes; no path is read, run inside generate_tables"
-    ),
 }
 
 

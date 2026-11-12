@@ -21,7 +21,8 @@ from typing import Any
 
 from decoy_engine import reasons
 from decoy_engine.fileaccess import FileRole
-from decoy_engine.generation.kinds import LookupList, lookup_from_codeset, parse_lookup_bytes
+from decoy_engine.generation.kinds import LookupList, parse_lookup_bytes
+from decoy_engine.generation.kinds._lookup import lookup_from_codeset
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._generation import (
     EMBEDDED_SNAPSHOT_MAX_BYTES,
