@@ -22,8 +22,16 @@ serialized blob before encryption (F13 privacy fix, 2026-06-26).
 The key derives from the keyed-mask IKM (`mask_key`): `derive(mask_key,
 "vault", b"vault-key/v1")` (`src/decoy_engine/vault.py`, `_fernet`). Under
 a configured secret, `mask_key` is the 32-byte `SecretKeyProvider` HKDF
-mask root; with no secret it falls back to the 8-byte `job_seed`
-(byte-identical to pre-DE-02). This is the same HMAC-SHA256 envelope every
+mask root. There is no no-secret fallback: every key that writes, opens or
+is matched against a vault must be exactly that 32-byte mask root,
+checked when a `VaultWriter` is built and again at every write, load and
+key-match (`weak_mask_secret` otherwise, before any file is created, changed
+or read), and `vault_writer_for_config` raises `keyed_strategy_requires_secret`
+when no secret is admitted, for every config. An 8-byte public seed gives a
+KDF nothing to amplify. A vault an older engine wrote under the 8-byte
+`job_seed` no longer opens under any key; it is regenerated, together with
+its masked output, by re-running the mask job under a secret (pre-GA hard
+delete; no migration and no recovery path). This is the same HMAC-SHA256 envelope every
 other engine derivation uses, with its own label -- and the same `mask_key`
 that FPE, hash, and the other keyed strategies draw from (see
 [key derivation](key-derivation.md)), so a vault is bound to the run's
@@ -61,11 +69,9 @@ the failure would surface as an opaque `vault_key_mismatch`.
 
 - **Vault + mask secret = re-identification.** The run's `mask_key`
   derives the decryption key: the secret behind
-  `global_settings.mask_secret_ref` (or a programmatic `key_provider`)
-  when one is configured, or the `job_seed` in the no-secret fallback.
-  Anyone holding the vault file AND that mask secret (or, in the
-  no-secret case, the config's seed) recovers every vaulted source
-  value. This extends the key-as-unlock property `decoy unmask`
+  `global_settings.mask_secret_ref` (or a programmatic `key_provider`).
+  Anyone holding the vault file AND that mask secret recovers every
+  vaulted source value. A vault is never keyed on the config's seed. This extends the key-as-unlock property `decoy unmask`
   introduced for fpe columns: with a vault in play, the mask key now
   unlocks one-way columns too.
 - **The vault grows with the data.** Unlike the seed (a constant-size
@@ -109,7 +115,8 @@ attribute is machine-readable.
 | `vault_unreadable` | The file is missing, has a bad magic header, or is truncated. |
 | `vault_format_unsupported` | The `format` field in the header names a version this engine does not consume. |
 | `vault_protocol_version_mismatch` | The header's `seed_protocol_version` differs from the running `SEED_PROTOCOL_VERSION`. Cross-version unmask is not supported; re-mask under the correct engine version. |
-| `vault_key_mismatch` | A Fernet chunk could not be decrypted. The vault was written under a different `mask_key` (a different mask secret, or the no-secret `job_seed` when the current run supplies a secret). |
+| `vault_key_mismatch` | A Fernet chunk could not be decrypted. The vault was written under a different `mask_key` (a different mask secret, or an older engine's `job_seed`). |
+| `weak_mask_secret` | The key handed to `VaultWriter`, `load_vault` or the run-entry key-match guard is not 32 bytes, as bytes (for example the 8-byte `job_seed`, or a longer key the key derivation cannot take). Raised before any file is created, changed or read. |
 
 Note: `vault_protocol_version_mismatch` is checked before any decryption
 attempt. A cross-version vault also fails decryption (the protocol version

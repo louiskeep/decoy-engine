@@ -174,14 +174,14 @@ def test_r6_mask_secret_file_errors() -> None:
 
 
 def test_r10_vault_read_errors() -> None:
-    missing = _raises(lambda: load_vault("nope.dcyvault", b"12345678"))
+    missing = _raises(lambda: load_vault("nope.dcyvault", b"12345678" * 4))
     assert isinstance(missing, VaultError)
     assert _text(missing) == (
         "[vault_unreadable] vault file 'nope.dcyvault' could not be read: "
         "[Errno 2] No such file or directory: 'nope.dcyvault'"
     )
     Path("bad.dcyvault").write_bytes(b"junk")
-    bad = _raises(lambda: load_vault("bad.dcyvault", b"12345678"))
+    bad = _raises(lambda: load_vault("bad.dcyvault", b"12345678" * 4))
     assert (
         _text(bad)
         == "[vault_unreadable] 'bad.dcyvault' is not a decoy vault file (bad magic header)."
