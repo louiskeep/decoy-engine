@@ -27,10 +27,8 @@ from tests._declared_schema import chunked_entry_kwargs, declare_rest, declared_
 
 _VAR = "SUB_STOP_TEST_SECRET"
 _CODE = "subset_run_unsupported"
-_MESSAGE = (
-    "subset: is not applied by a pipeline run yet; run the subset step first and "
-    "point this run's sources at its output, or remove the subset: block"
-)
+_MESSAGE = "subset: is applied only by run_pipeline; this entry does not apply it"
+_LOADER_MESSAGE = "subset: cannot be applied to a source_loader run; pass sources instead"
 
 
 @pytest.fixture(autouse=True)
@@ -145,20 +143,30 @@ def _assert_refusal(err: PipelineValidationError) -> None:
     assert err.code == _CODE
 
 
-def test_run_pipeline_refuses_subset_before_any_read(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_source_loader_run_refuses_with_a_fixed_text_before_any_read(tmp_path: Path) -> None:
     cfg = _dump(tmp_path, subset=True)
     sources = _RecordingSources(_tables(tmp_path))
-
-    def _boom(*a: Any, **k: Any) -> Any:
-        raise AssertionError("context built")
-
-    monkeypatch.setattr("decoy_engine.execution._pipeline_context.build_run_context", _boom)
     with pytest.raises(PipelineValidationError) as ei:
-        run_pipeline(cfg, sources, engine_version="t")
+        run_pipeline(
+            cfg,
+            None,
+            engine_version="t",
+            source_loader=lambda name: sources[name],
+            source_loader_schemas={n: t.schema for n, t in _tables(tmp_path).items()},
+        )
     _assert_refusal(ei.value)
+    assert str(ei.value) == _LOADER_MESSAGE
     assert sources.accesses == 0
+
+
+def test_probe_peak_bytes_refuses_a_subset_config(tmp_path: Path) -> None:
+    from decoy_engine.execution._probe import probe_peak_bytes
+
+    cfg = _dump(tmp_path, subset=True)
+    with pytest.raises(PipelineValidationError) as ei:
+        probe_peak_bytes(cfg, _tables(tmp_path), reference_table="customers", target_rows=1000)
+    _assert_refusal(ei.value)
+    assert str(ei.value) == _MESSAGE
 
 
 def test_refusal_text_is_fixed(tmp_path: Path) -> None:
@@ -168,52 +176,81 @@ def test_refusal_text_is_fixed(tmp_path: Path) -> None:
     texts = []
     for c in (cfg, renamed):
         with pytest.raises(PipelineValidationError) as ei:
-            run_pipeline(c, _tables(tmp_path), engine_version="t")
+            compile_plan(c, profile_source(c), decoy_engine_version="t")
         texts.append(str(ei.value))
         shown = str(ei.value) + repr(ei.value)
         for leak in ("customers", "orders", str(tmp_path)):
             assert leak not in shown
-        assert " 5 " not in shown
     assert texts[0] == texts[1] == _MESSAGE
 
 
-@pytest.mark.parametrize("isolate", [True, False])
-def test_isolated_refuses_before_spawn(tmp_path: Path, isolate: bool) -> None:
-    cfg = _dump(tmp_path, subset=True)
-    spawned: list[int] = []
-    stage, out = tmp_path / "stage", tmp_path / "out"
-    with pytest.raises(PipelineValidationError) as ei:
+def test_isolated_runs_a_subset_and_refuses_a_typed_request_before_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.execution import _isolated_run
+    from decoy_engine.subset import SubsetRequest, subset_request_from_config
+    from tests.unit.execution import _subset_run_support as sup
+
+    # String keys: a child run with a sink takes the out-of-core route, which refuses int FK keys.
+    cfg, data, _ = sup.job(tmp_path)
+    request = subset_request_from_config(cfg)
+    assert isinstance(request, SubsetRequest)
+    writes: list[int] = []
+    real = _isolated_run._write_payload
+
+    def spy(*a: Any, **k: Any) -> Any:
+        writes.append(1)
+        return real(*a, **k)
+
+    monkeypatch.setattr(_isolated_run, "_write_payload", spy)
+    with pytest.raises(ValueError) as ei:
         run_pipeline_isolated(
             cfg,
-            _tables(tmp_path),
-            staging_dir=stage,
-            output_dir=out,
-            on_spawn=spawned.append,
+            data,
+            staging_dir=tmp_path / "stage",
+            output_dir=tmp_path / "out",
+            engine_version="t",
+            subset_request=request,
+        )
+    assert writes == []
+    assert "customers" not in str(ei.value) and repr(request) not in str(ei.value)
+    assert ei.value.__cause__ is None and ei.value.__context__ is None
+    monkeypatch.setattr(_isolated_run, "_write_payload", real)
+    for isolate in (False, True):
+        out = run_pipeline_isolated(
+            cfg,
+            data,
+            staging_dir=tmp_path / f"s{isolate}",
+            output_dir=tmp_path / f"o{isolate}",
             isolate=isolate,
             engine_version="t",
+            subset_request="config",
         )
-    _assert_refusal(ei.value)
-    assert spawned == []
-    for d in (stage, out):
-        assert not d.exists() or not any(d.iterdir())
+        assert out.outcome == "completed", (isolate, out.error)
+        assert out.outputs is not None and out.outputs["customers"].num_rows == 5
+    skipped = run_pipeline_isolated(
+        cfg,
+        data,
+        isolate=True,
+        staging_dir=tmp_path / "sk",
+        output_dir=tmp_path / "ok",
+        engine_version="t",
+        subset_request="skip",
+    )
+    assert skipped.outputs is not None and skipped.outputs["customers"].num_rows == 30
 
 
-def test_governor_refuses_before_any_rung(tmp_path: Path) -> None:
+def test_governor_delegates_and_applies_the_subset(tmp_path: Path) -> None:
     cfg = _dump(tmp_path, subset=True)
-    trips: list[Any] = []
-    stage = tmp_path / "gstage"
-    with pytest.raises(PipelineValidationError) as ei:
-        run_job_with_governor(
-            cfg,
-            _tables(tmp_path),
-            budget_bytes=2**30,
-            staging_dir=stage,
-            on_trip=trips.append,
-            engine_version="t",
-        )
-    _assert_refusal(ei.value)
-    assert trips == []
-    assert not stage.exists() or not any(stage.iterdir())
+    got = run_job_with_governor(
+        cfg,
+        _tables(tmp_path),
+        budget_bytes=2**30,
+        staging_dir=tmp_path / "gstage",
+        engine_version="t",
+    )
+    assert got.result is not None and got.result.outputs is not None
+    assert got.result.outputs["customers"].num_rows == 5
 
 
 def test_chunked_refuses_at_call_without_pulling(tmp_path: Path) -> None:
@@ -256,11 +293,14 @@ def test_compile_plan_refuses_subset(tmp_path: Path) -> None:
     with pytest.raises(PipelineValidationError) as ei:
         compile_plan(cfg, profile_source(cfg), decoy_engine_version="t")
     _assert_refusal(ei.value)
-    # estimate_job never raises by contract: the refusal becomes the unpriceable fallback.
     est = decoy_engine.estimate_job(cfg, tmp_path)
     assert est.priceable is False
-    assert est.route == "unknown"
-    assert est.notes == ("estimate unavailable (PipelineValidationError)",)
+    assert est.route == "subset"
+    assert est.notes == ("not applicable: subset",)
+    from decoy_engine.execution.capacity import CapacityVerdict, estimate_job_capacity
+
+    cap = estimate_job_capacity(cfg, tmp_path)
+    assert cap.verdict is CapacityVerdict.NOT_APPLICABLE and cap.route == "subset"
     control = decoy_engine.estimate_job(_dump(tmp_path, subset=False), tmp_path)
     assert control.route != "unknown"
     assert not any(n.startswith("estimate unavailable") for n in control.notes)

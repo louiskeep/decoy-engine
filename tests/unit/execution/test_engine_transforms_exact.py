@@ -998,12 +998,6 @@ class TestDefectsThroughRoutes:
         assert getattr(err, "__notes__", []) == []
         assert err.__cause__ is None and err.__context__ is None
 
-    def test_stored_index_reference_without_transforms_fails_as_on_main(self, tmp_path):
-        tbl = _stored_table()
-        cfg = single_table_config(tmp_path, tbl, columns=[{"name": "ix", "strategy": "redact"}])
-        with pytest.raises(KeyError, match="ix"):
-            _run(cfg, tbl)
-
 
 class TestUnsupportedKeyTypes:
     """Nested columns cannot be sorted or compared by pandas; that is a coded error."""

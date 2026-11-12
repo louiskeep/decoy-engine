@@ -21,6 +21,7 @@ from decoy_engine.profile import (
     PreparedDeclaredSources,
     _declared_columns,
     check_columns_declared,
+    declaration_findings,
     prepare_declared_sources,
     profile_source,
     source_columns,
@@ -50,7 +51,7 @@ def _csv(path: Path, **extra: Any) -> dict[str, Any]:
 
 
 def _inputs(table: str, *columns: str) -> list[DeclarationInput]:
-    return [DeclarationInput(table, tuple(columns), "test")]
+    return [DeclarationInput(table, tuple(columns), "test", created=frozenset())]
 
 
 # AT-E2a-1 -----------------------------------------------------------------------------------
@@ -225,6 +226,85 @@ def test_undeclared_tables_and_order() -> None:
     assert "column 2 of 2 (1 undeclared)" in str(caught.value)
     # A generate table has no source columns to declare.
     assert check_columns_declared(config, _inputs("gen", "anything")) is None
+
+
+# AT-E2b-1 ------------------------------------------------------------------------------------
+
+
+def test_declared_column_missing_from_source_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A declared column the source lacks is refused from the header alone, value-free."""
+    from decoy_engine.profile import _readers_csv
+
+    path = tmp_path / "t.csv"
+    path.write_text(f"id,email,age\n1,{MARK_A},{MARK_B}\n", encoding="utf-8")
+    config = _config(
+        {"t": _csv(path)},
+        [{"name": "t", "columns": [_col(c) for c in ("id", "email", "age", "account_number")]}],
+    )
+    rows: list[str] = []
+    for name in ("_read", "to_frame", "sample_frame"):
+        real = getattr(_readers_csv.CsvFileSource, name)
+
+        def spy(*a: Any, _real: Any = real, _n: str = name, **k: Any) -> Any:
+            rows.append(_n)
+            return _real(*a, **k)
+
+        monkeypatch.setattr(_readers_csv.CsvFileSource, name, spy)
+    with pytest.raises(PipelineValidationError) as caught:
+        prepare_declared_sources(
+            DeclarationRequest.for_descriptors(config), created_targets=lambda _e, _c: frozenset()
+        )
+    err = caught.value
+    assert err.code == "source_file.declared_column_missing"
+    assert str(err).startswith(
+        "source_file.declared_column_missing: source t column account_number"
+    )
+    assert "(1 missing)" in str(err)
+    for text in (str(err), repr(err)):
+        assert MARK_A not in text
+        assert MARK_B not in text
+        assert str(path) not in text
+    assert err.__cause__ is None
+    assert err.__context__ is None
+    assert rows == []
+
+
+def test_missing_findings_order_and_scope() -> None:
+    """Undeclared table, then undeclared column, then missing; mask tables only."""
+    tables = [
+        {"name": "a", "columns": [_col("x"), _col("y"), _col("z")]},
+        {"name": "gen", "generate_columns": [{"name": "g"}], "row_count": 3},
+        {
+            "name": "d",
+            "columns": [_col("k")],
+            "transforms": [{"op": "drop_column", "columns": ["gone"]}],
+        },
+    ]
+    config = _config({}, tables)
+    # Missing columns are named in config order, each count includes all of them.
+    found = declaration_findings(config, _inputs("a", "x"))
+    assert [f.kind for f in found] == ["missing"]
+    assert "column y is declared but the source has no such column (2 missing)" in found[0].detail
+    assert found[0].undeclared == ("y", "z")
+    # An undeclared source column is reported before a missing declared one.
+    both = declaration_findings(config, _inputs("a", "x", "q"))
+    assert [f.kind for f in both] == ["column", "missing"]
+    # A table finding comes first of all.
+    mixed = declaration_findings(
+        config, [*_inputs("a", "x"), DeclarationInput("ghost", ("q",), "t")]
+    )
+    assert [f.kind for f in mixed] == ["table", "missing"]
+    # A drop_column naming an absent column is refused; a generate table has no source.
+    drop = declaration_findings(config, _inputs("d", "k"))
+    assert drop[0].undeclared == ("gone",)
+    assert declaration_findings(config, _inputs("gen", "anything")) == ()
+    # An existence-only input has no columns to compare.
+    assert declaration_findings(config, [DeclarationInput("a", None, "t")]) == ()
+    # Duplicate table inputs are checked independently.
+    twice = declaration_findings(config, [*_inputs("a", "x", "y", "z"), *_inputs("a", "x")])
+    assert [f.kind for f in twice] == ["missing"]
 
 
 # AT-E2a-5 -----------------------------------------------------------------------------------

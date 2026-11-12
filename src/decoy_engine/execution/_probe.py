@@ -51,6 +51,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.config._subset_run import refuse_unapplied_subset
 from decoy_engine.execution._isolated_common import IsolatedRunResult
 from decoy_engine.execution._isolated_run import run_pipeline_isolated
 from decoy_engine.execution._probe_scale import (
@@ -346,6 +347,7 @@ def probe_peak_bytes(
     -- `probe_fits` is where the asymmetric error_band margin (mirroring
     `_mem_estimate.fits`) gets applied for a routing decision.
     """
+    refuse_unapplied_subset(config)
     if "execution_mode" in run_pipeline_kwargs:
         raise ValueError(
             "probe_peak_bytes always measures the full_frame path; do not pass "

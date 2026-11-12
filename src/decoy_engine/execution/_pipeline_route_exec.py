@@ -63,6 +63,18 @@ __all__ = [
 _TEMP_DISK_SAFETY_FRACTION = 0.9
 
 
+def resolve_temp_disk_budget() -> int | None:
+    """The runtime temp-disk cap: a safety fraction of the free space at the out-of-core temp
+    root, or `None` when the count is undetectable (the cap is then left unset rather than
+    newly blocking a job the route would otherwise have run)."""
+    from decoy_engine.execution.out_of_core._spill_estimate import default_ooc_temp_root
+
+    try:
+        return int(shutil.disk_usage(default_ooc_temp_root()).free * _TEMP_DISK_SAFETY_FRACTION)
+    except OSError:
+        return None
+
+
 def execution_telemetry(
     *,
     route: str,
@@ -316,7 +328,6 @@ def run_out_of_core_route(
     from decoy_engine.execution._sequential import table_topo_order
     from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit, run_fk_out_of_core
     from decoy_engine.execution.out_of_core._capacity_eval import enforce_ooc_memory_preflight
-    from decoy_engine.execution.out_of_core._spill_estimate import default_ooc_temp_root
 
     # P4-A (Option A): the residency bound holds only for the structural bounded
     # shape (LazySource sources + an incrementally-consuming sink). Classify any
@@ -375,16 +386,7 @@ def run_out_of_core_route(
     # one `run_fk_out_of_core` spills under by default -- so `check_temp_disk_
     # budget` (already called at each table boundary inside the runner) is
     # enforced on the pipeline path, not just callers that pass this directly.
-    temp_disk_budget_bytes: int | None = None
-    try:
-        free_bytes = shutil.disk_usage(default_ooc_temp_root()).free
-        temp_disk_budget_bytes = int(free_bytes * _TEMP_DISK_SAFETY_FRACTION)
-    except OSError:
-        # Undetectable free-disk count: leave the runtime cap unset rather than
-        # newly blocking a job the route would otherwise have run. This runtime
-        # cap is OOC-D's enforcer; the up-front `enforce_ooc_disk_preflight` is
-        # advisory (warn-only) and never blocks a job.
-        pass
+    temp_disk_budget_bytes = resolve_temp_disk_budget()
 
     # SPRINT-1 Part B: the hybrid memory capacity preflight, an advisory
     # build-floor check plus a hard fan-in guard underneath Part A's
