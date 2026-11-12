@@ -425,3 +425,23 @@ def _child_facts(conn: Any, width: int, on: str) -> ChildKeyFacts:
     keys = ", ".join(f"c.{label}" for label in _labels(width))
     orphan_keys = _count(conn, f"SELECT count(*) FROM (SELECT DISTINCT {keys} {orphans})")
     return ChildKeyFacts(rows, rows - complete_rows, orphan_rows, orphan_keys)
+
+
+def column_distinct(keys: KeyBatches, *, scratch: Path, memory_limit: str) -> int:
+    """Exact count of distinct non-null values in the one column `keys` reads (labelled `k0`).
+
+    A float NaN is not a value here, as in pandas; DuckDB would count it. The type decides, not
+    the data. `scratch` is caller-owned; the connection spills under it and is closed on every
+    exit."""
+    # Imported here because decoy_engine.execution imports the profiling package.
+    from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
+
+    if len(keys.schema) != 1:
+        raise ValueError("column_distinct: the keys must hold exactly one column")
+    skip_nan = " FILTER (WHERE NOT isnan(k0))" if pa.types.is_floating(keys.schema.types[0]) else ""
+    conn = connect_duckdb(temp_dir=scratch, memory_limit=memory_limit)
+    try:
+        conn.register("incoming", pa.RecordBatchReader.from_batches(keys.schema, keys.batches()))
+        return _count(conn, f"SELECT count(DISTINCT k0){skip_nan} FROM incoming")
+    finally:
+        conn.close()
