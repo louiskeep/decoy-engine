@@ -226,6 +226,12 @@ class _Base(BaseModel):
 
     model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
 
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        dumped = super().model_dump(**kwargs)
+        if dumped.get("sample", 0) is None:
+            del dumped["sample"]
+        return dumped
+
     def to_payload(self) -> dict[str, Any]:
         """The JSON dict written to ``--result`` and stored as the record payload."""
         return self.model_dump(mode="json", by_alias=True)
@@ -359,6 +365,16 @@ class Links(_Model):
     baseline: BaselineLink | None
 
 
+class SampleMarker(_Model):
+    """A run made with `--sample`: the head rows asked for, the seed tables, the rows read from
+    each edgeless table and the scratch folder (relative to the project) the outputs went to."""
+
+    rows: Count
+    roots: Annotated[tuple[SafeName, ...], MaxLen(256)]
+    head_tables: dict[SafeName, Count]
+    scratch: RelPath
+
+
 class RunResult(_Model):
     # ``schema`` would shadow ``BaseModel.schema``, so the field has another name and the wire key.
     schema_tag: SchemaTag = Field(default=RUN_RESULT_SCHEMA, alias="schema")
@@ -377,6 +393,9 @@ class RunResult(_Model):
     failure: Failure | None
     timings: Timings
     links: Links
+    # Optional under /v1 (compatibility contract section 3.1): a record that never set it keeps
+    # its old wire form, so the key is left out until a sample sets it.
+    sample: SampleMarker | None = None
 
 
 # --- read model, derived -----------------------------------------------------------------------
