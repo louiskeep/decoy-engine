@@ -190,8 +190,9 @@ jobs:
 
   # base-install: AT-M2a. A venv synced with NO extras (the engine's base dependencies only)
   # loads the bundled classifier pack and classifies a frame. This is the proof that moving
-  # scikit-learn and lightgbm into the base list left a plain install working. The macOS
-  # (libomp) and Windows lanes are checked on the Mac mini and by hand; see the M2 build record.
+  # scikit-learn and lightgbm into the base list left a plain install working. Linux only.
+  # macOS without libomp was run on the Mac mini; macOS with libomp and Windows are not
+  # checked. See docs/records/2026-11-12-scan-ml-m2-build.md.
   base-install:
     runs-on: ubuntu-latest
     timeout-minutes: 15
