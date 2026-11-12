@@ -177,7 +177,7 @@ dev = [
     # moto is used by S3 connector contract tests (Week 2 of Sprint G).
     # Pinned here so a fresh `pip install -e .[dev]` brings it along
     # rather than failing on the first import in test collection.
-    "moto[s3]>=5.0",
+    "moto[s3]>=5.2.2",
     # The property suite (tests/property/test_mask_invariants.py, audit
     # remediation 2026-06-12) is part of the default test run; without
     # this pin CI fails at collection with ModuleNotFoundError.
@@ -282,7 +282,7 @@ docs = [
 # cloud-less install does not crash on `import decoy_engine`. `gcs` stays
 # as a compat alias pointing at `cloud`. SFTP remains a separate opt-in
 # extra pending S18.
-cloud = ["boto3>=1.26", "google-cloud-storage>=2.0"]
+cloud = ["boto3>=1.43.36", "google-cloud-storage>=2.0"]
 gcs = ["decoy-engine[cloud]"]
 sftp = ["paramiko>=3.0"]
 # SP-08b (2026-06-28): H3 geospatial indexing for lat/lng generalization.

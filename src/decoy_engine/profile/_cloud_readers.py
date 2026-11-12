@@ -180,13 +180,13 @@ def _s3_range(client: Any, bucket: str, key: str, start: int, end_inclusive: int
     # Q17: draining .read() does not release the socket; close the body so the
     # connection returns to the pool (multi-range parquet reads reuse it).
     with response["Body"] as stream:
-        return bytes(stream.read())
+        return bytes(_clients.s3_call(stream.read))
 
 
 def _s3_full(client: Any, bucket: str, key: str) -> bytes:
     response = _clients.s3_call(client.get_object, Bucket=bucket, Key=key)
     with response["Body"] as stream:
-        return bytes(stream.read())
+        return bytes(_clients.s3_call(stream.read))
 
 
 class S3ParquetSource:

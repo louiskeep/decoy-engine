@@ -29,7 +29,7 @@ Google imports are local so ``import decoy_engine`` works without the cloud extr
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 from decoy_engine.errors import ConnectorErrorKind
@@ -38,6 +38,9 @@ from decoy_engine.sdk import ConnectorError, PermanentError, TransientError
 # Read at call time, never bound into defaults, so tests can shorten them.
 GCS_TIMEOUT: tuple[float, float] = (5.0, 60.0)
 GCS_RETRY_TOTAL_S: float = 120.0
+
+# S3 multipart minimum part size. AWS rejects parts smaller than 5 MiB except the last.
+_MULTIPART_MIN_PART_BYTES = 5 * 1024 * 1024
 
 # Fixed words per kind. SDK text is untrusted and never joins a message.
 _PHRASE: dict[ConnectorErrorKind, str] = {
@@ -298,7 +301,8 @@ def s3_client(
         kwargs["aws_access_key_id"] = access_key_id
     if secret_access_key is not None:
         kwargs["aws_secret_access_key"] = secret_access_key
-    return boto3.client("s3", **kwargs)
+    # A bad endpoint, half-set credentials or an unknown profile fail here, not on first use.
+    return _call(s3_error, boto3.client, "s3", **kwargs)
 
 
 def _s3_kind(exc: BaseException) -> ConnectorErrorKind:
@@ -349,3 +353,65 @@ def s3_error(exc: BaseException) -> ConnectorError:
 def s3_call(call: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """Run one S3 SDK call; a failure leaves as ``s3_error(exc)`` with no chain."""
     return _call(s3_error, call, *args, **kwargs)
+
+
+def s3_put(
+    client: Any, bucket: str, key: str, chunks: Iterator[bytes], conditions: Mapping[str, str]
+) -> int:
+    """Write ``chunks`` to one object and return the bytes written: the one S3 put path.
+
+    Bodies under the 5 MiB part minimum go as a single ``put_object``; larger ones as a
+    multipart upload of exact 5 MiB parts plus a short final part. ``conditions`` (for
+    example ``{"IfNoneMatch": "*"}``) ride on the call that creates the object, the single
+    PUT or ``complete_multipart_upload``. A failure after the upload starts aborts it, best
+    effort, so an abort error never masks the write error.
+    """
+    buffer = bytearray()
+    upload_id: str | None = None
+    parts: list[dict[str, Any]] = []
+    total = 0
+
+    def upload(payload: bytes) -> None:
+        nonlocal total
+        number = len(parts) + 1
+        response = s3_call(
+            client.upload_part,
+            Bucket=bucket,
+            Key=key,
+            UploadId=upload_id,
+            PartNumber=number,
+            Body=payload,
+        )
+        parts.append({"PartNumber": number, "ETag": response["ETag"]})
+        total += len(payload)
+
+    try:
+        for chunk in chunks:
+            buffer.extend(chunk)
+            while len(buffer) >= _MULTIPART_MIN_PART_BYTES:
+                if upload_id is None:
+                    started = s3_call(client.create_multipart_upload, Bucket=bucket, Key=key)
+                    upload_id = started["UploadId"]
+                upload(bytes(buffer[:_MULTIPART_MIN_PART_BYTES]))
+                del buffer[:_MULTIPART_MIN_PART_BYTES]
+        if upload_id is None:
+            s3_call(client.put_object, Bucket=bucket, Key=key, Body=bytes(buffer), **conditions)
+            return len(buffer)
+        if buffer:
+            upload(bytes(buffer))
+        s3_call(
+            client.complete_multipart_upload,
+            Bucket=bucket,
+            Key=key,
+            UploadId=upload_id,
+            MultipartUpload={"Parts": parts},
+            **conditions,
+        )
+        return total
+    except Exception:
+        if upload_id is not None:
+            try:
+                client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+            except Exception:
+                pass
+        raise

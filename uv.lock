@@ -631,7 +631,7 @@ xdist = [
 
 [package.metadata]
 requires-dist = [
-    { name = "boto3", marker = "extra == 'cloud'", specifier = ">=1.26" },
+    { name = "boto3", marker = "extra == 'cloud'", specifier = ">=1.43.36" },
     { name = "click", marker = "extra == 'ner'", specifier = ">=8.1,<9" },
     { name = "cryptography", specifier = ">=42" },
     { name = "decoy-engine", extras = ["cloud"], marker = "extra == 'gcs'" },
@@ -649,7 +649,7 @@ requires-dist = [
     { name = "lightgbm", specifier = "==4.6.0" },
     { name = "linkify-it-py", marker = "extra == 'docs'", specifier = ">=2" },
     { name = "mimesis", marker = "extra == 'mimesis'", specifier = ">=19.0,<20" },
-    { name = "moto", extras = ["s3"], marker = "extra == 'dev'", specifier = ">=5.0" },
+    { name = "moto", extras = ["s3"], marker = "extra == 'dev'", specifier = ">=5.2.2" },
     { name = "mutmut", marker = "extra == 'mutation'", specifier = ">=3.0" },
     { name = "mypy", marker = "extra == 'lint'", specifier = "==2.3.0" },
     { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=2,<5" },

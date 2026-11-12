@@ -109,15 +109,15 @@ def test_a_failed_part_aborts_once_and_leaves_value_free_and_unchained() -> None
 
 
 def test_a_failing_source_aborts_and_the_original_error_propagates() -> None:
-    class Boom(Exception):
+    class BoomError(Exception):
         pass
 
     def chunks() -> Iterator[bytes]:
         yield b"x" * PART
-        raise Boom
+        raise BoomError
 
     client = Recorder()
-    with pytest.raises(Boom):
+    with pytest.raises(BoomError):
         _put(client, chunks())
     assert client.names() == ["create_multipart_upload", "upload_part", "abort_multipart_upload"]
 
