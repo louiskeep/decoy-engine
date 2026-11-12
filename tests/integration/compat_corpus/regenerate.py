@@ -34,9 +34,9 @@ from decoy_engine.vault import VaultWriter
 
 HERE = Path(__file__).resolve().parent
 
-# A fixed synthetic 32-byte mask key (the vault refuses anything shorter than
-# `keyprovider.MIN_SECRET_BYTES`). Stored in the manifest so the test can decrypt
-# the locked vault; it is a test literal, never a real secret.
+# A fixed synthetic 32-byte mask key (the vault takes only a key of exactly 32 bytes,
+# the length of a mask root). Stored in the manifest so the test can decrypt the
+# locked vault; it is a test literal, never a real secret.
 _SYNTHETIC_MASK_KEY = bytes.fromhex(
     "c0ffee0badc0de01c0ffee0badc0de02c0ffee0badc0de03c0ffee0badc0de04"
 )

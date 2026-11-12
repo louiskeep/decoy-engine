@@ -1043,7 +1043,7 @@ def test_fpe_with_vault_is_still_a_config_reject(tmp_path: Path) -> None:
     assert exc.value.code == "vault_strategy_reversible"
 
 
-def test_an_unkeyed_vault_writer_is_still_rejected_on_the_ooc_route(tmp_path: Path) -> None:
+def test_a_vault_writer_on_another_key_is_rejected_on_the_ooc_route(tmp_path: Path) -> None:
     cfg, tables = standard(tmp_path)
     with pytest.raises(Exception) as exc:
         run(cfg, tables, writer=VaultWriter(b"\x00" * 32))

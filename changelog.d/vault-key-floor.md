@@ -23,7 +23,9 @@ public `job_seed`.
 - `simpleeval>=1.0.5` (was `>=0.9.13`): GHSA-44vg-5wv2-h2hg / CVE-2026-32640 is patched in 1.0.5.
   The lock already resolved 1.0.7; nothing installed changes.
 
-The CLI already builds its vault writer and opens vaults from the run's resolved secret. The
-platform's job vault writer (`api/jobs/v2_vault.py`) must pass a `SecretKeyProvider` before the
-platform moves its `decoy-engine` pin past this change; until then every platform vault job fails
-closed.
+What a caller has to do: build a vault writer from an admitted secret, either a `key_provider`
+whose `mask_key()` is the 32-byte mask root or a `global_settings.mask_secret_ref` the engine can
+admit, and open a vault with that same 32-byte mask key. A `SeedKeyProvider` gives the 8-byte job
+seed and is refused. The CLI already does both. A platform vault job keeps working after it moves
+its `decoy-engine` pin past this change only if the `key_provider` it passes to
+`vault_writer_for_config` yields a 32-byte mask root; otherwise the job fails closed.

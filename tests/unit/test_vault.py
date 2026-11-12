@@ -1,8 +1,8 @@
 """decoy_engine.vault: the token vault (deferred follow-up 1, 2026-06-12).
 
 The vault records (namespace, masked) -> source for `vault: true`
-columns at mask time, Fernet-encrypted under a key derived from the job
-seed (`derive(job_seed, "vault", b"vault-key/v1")`), so one-way
+columns at mask time, Fernet-encrypted under a key derived from the run's
+32-byte mask root (`derive(mask_key, "vault", b"vault-key/v1")`), so one-way
 strategies (hash, deterministic faker) become reversible at unmask
 time. Every test except the absent-dep subprocess one needs the
 `cryptography` extra and skips without it.
@@ -139,8 +139,8 @@ class TestRoundTrip:
         outputs, vault_path = _mask_with_vault(tmp_path, cfg, df)
         masked_contacts = outputs["accounts"].column("contact").to_pylist()
 
-        job_seed = vault_writer_for_config(cfg)._mask_key
-        vault_map, _ = load_vault(vault_path, job_seed)
+        mask_key = vault_writer_for_config(cfg)._mask_key
+        vault_map, _ = load_vault(vault_path, mask_key)
 
         result = unmask_pipeline(cfg, outputs, vault_path=str(vault_path))
         recovered = result.outputs["accounts"].column("contact").to_pylist()
@@ -213,9 +213,9 @@ class TestChunkedParity:
         chunked_path = tmp_path / "vault-chunked.bin"
         chunked_writer.write(chunked_path)
 
-        job_seed = vault_writer_for_config(cfg)._mask_key
-        full_map, full_ambiguous = load_vault(full_path, job_seed)
-        chunked_map, chunked_ambiguous = load_vault(chunked_path, job_seed)
+        mask_key = vault_writer_for_config(cfg)._mask_key
+        full_map, full_ambiguous = load_vault(full_path, mask_key)
+        chunked_map, chunked_ambiguous = load_vault(chunked_path, mask_key)
         assert chunked_map == full_map
         assert chunked_ambiguous == full_ambiguous
         # All 30 hash entries are collision-free; faker entries may drop
@@ -303,7 +303,7 @@ class TestProtocolVersionGuard:
         writer.add([("ns", "masked", "source")])
         path = tmp_path / "v.bin"
         writer.write(path)
-        # Same job_seed (so the key is correct), but the stamped version differs.
+        # Same key (so it opens), but the stamped version differs.
         _patch_vault_header(path, seed_protocol_version=999)
         with pytest.raises(VaultError) as exc:
             load_vault(path, b"\x01" * 32)
