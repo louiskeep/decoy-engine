@@ -1,4 +1,4 @@
-### Changed (GEN-TYPES E4: if() and lazy conditionals, 2026-11-11)
+### Changed (lazy conditionals and the `if` call in derived expressions, GEN-TYPES E4, 2026-11-11)
 
 `derived` expressions accept `if(condition, value, other)`, the call form of the ternary
 `value if condition else other`. Conditionals now evaluate lazily: `ternary`, `if(...)`,
