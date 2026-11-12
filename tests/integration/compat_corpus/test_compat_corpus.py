@@ -84,6 +84,19 @@ def test_corpus_artifact_round_trips(artifact: dict) -> None:
             assert spec.parent_first == rec["parent_first"], ctx
             assert (spec.joint is not None) == rec["has_joint"], ctx
             assert spec.stats, ctx  # the sampler needs non-empty stats
+    elif artifact["kind"] == "risk_utility_report":
+        from decoy_engine.anonymize.report import RiskUtilityReportRead
+
+        document = json.loads((HERE / artifact["path"]).read_text(encoding="utf-8"))
+        read = RiskUtilityReportRead.model_validate(document).to_payload()
+        for path, want in artifact["expected_values"].items():
+            got: object = read
+            for part in path.split("."):
+                got = got[part]  # type: ignore[index]
+            assert got == want, (
+                f"{artifact['tag']} written by engine {artifact['produced_by_engine_version']}: "
+                f"{path} no longer reads back to its recorded value (compatibility-contract 3.1)."
+            )
     else:  # pragma: no cover - guards against an unrecorded artifact kind
         pytest.fail(f"no round-trip check implemented for artifact kind {artifact['kind']!r}")
 
@@ -134,3 +147,62 @@ def test_harness_bites_on_corruption_snapshot(tmp_path: Path) -> None:
     with pytest.raises(StatisticalSpecError) as exc:
         _load_snapshot(str(tampered))
     assert exc.value.code == "statistical_snapshot_schema_mismatch"
+
+
+RISK_VARIANTS = HERE / "risk_utility_report"
+
+
+def _risk_report_artifact() -> dict:
+    found = [a for a in _artifacts() if a["kind"] == "risk_utility_report"]
+    assert len(found) == 1, "expected one risk_utility_report artifact in the corpus"
+    return found[0]
+
+
+def test_harness_bites_on_corruption_risk_report() -> None:
+    """Meta-test: a document of another major must be refused, never read as v1."""
+    from pydantic import ValidationError
+
+    from decoy_engine.anonymize.report import RiskUtilityReportRead
+
+    art = _risk_report_artifact()
+    data = json.loads((HERE / art["path"]).read_text(encoding="utf-8"))
+    data["schema"] = "risk-utility-report/v2"
+    with pytest.raises(ValidationError):
+        RiskUtilityReportRead.model_validate(data)
+
+
+def test_risk_report_next_minor_variant_reads() -> None:
+    """An added field and a token from a later minor read under /v1; the writer refuses them."""
+    from pydantic import ValidationError
+
+    from decoy_engine.anonymize.report import RiskUtilityReport, RiskUtilityReportRead
+
+    data = json.loads((RISK_VARIANTS / "risk-utility-report-v1-next-minor.json").read_text("utf-8"))
+    read = RiskUtilityReportRead.model_validate(data)
+    assert read.method == "local_recoding"
+    with pytest.raises(ValidationError):
+        RiskUtilityReport.model_validate(data)
+
+
+def test_risk_report_other_major_variant_is_refused() -> None:
+    from pydantic import ValidationError
+
+    from decoy_engine.anonymize.report import RiskUtilityReportRead
+
+    data = json.loads((RISK_VARIANTS / "risk-utility-report-v1-other-major.json").read_text("utf-8"))
+    with pytest.raises(ValidationError):
+        RiskUtilityReportRead.model_validate(data)
+
+
+def test_risk_report_producer_still_writes_the_locked_sample(tmp_path: Path) -> None:
+    """Producer golden: minting into tmp_path (never the corpus) gives the committed bytes."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_corpus_regenerate", HERE / "regenerate.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    entry = module.risk_utility_report_artifact(tmp_path)
+    committed = _risk_report_artifact()
+    assert entry["expected_values"] == committed["expected_values"]
+    assert (tmp_path / entry["path"]).read_bytes() == (HERE / committed["path"]).read_bytes()

@@ -332,7 +332,8 @@ def _report_classes() -> list[type]:
 
 
 def test_every_report_class_is_found() -> None:
-    assert len(_report_classes()) == 3
+    assert len(_report_classes()) == 4
+    assert anonymity.ReidentificationRiskReport in _report_classes()
     exported = {n for n in anonymity.__all__ if dataclasses.is_dataclass(getattr(anonymity, n))}
     assert exported >= _NOT_REPORTS
 
@@ -358,6 +359,11 @@ def _all_reports() -> list[Any]:
         measure_t_closeness_equal(frame, qi, sensitive, t_target=0.3),
         measure_t_closeness_ordered(frame, qi, sensitive, t_target=0.3),
     ]
+    reports.append(
+        anonymity.measure_reidentification_risk(
+            frame, qi, risk_threshold=0.2, population=pd.concat([frame, frame])
+        )
+    )
     table = pa.Table.from_pandas(frame, preserve_index=False)
     reports.append(measure_k_anonymity(table, qi, k_target=2))
     reports.append(measure_t_closeness_ordered(table, qi, sensitive, t_target=0.3))

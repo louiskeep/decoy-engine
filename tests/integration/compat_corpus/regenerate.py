@@ -132,6 +132,87 @@ def _distribution_snapshot_artifact() -> dict:
     }
 
 
+RISK_REPORT_PATH = "risk-utility-report-v1__synthetic.json"
+
+# Dotted paths into the document whose values the corpus test checks after read-back.
+RISK_REPORT_EXPECTED_PATHS = (
+    "schema",
+    "method",
+    "quasi_identifiers",
+    "node",
+    "suppression.rows_input",
+    "suppression.rows_suppressed",
+    "suppression.rows_released",
+    "utility.discernibility",
+    "risk.population",
+    "risk.risk_threshold",
+    "risk.prosecutor.highest",
+    "risk.prosecutor.rows_at_risk",
+    "risk.journalist.average",
+    "risk.marketer.average",
+    "models",
+)
+
+
+def _risk_report_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """A fixed release table and a population that contains it plus more rows."""
+    release = pd.DataFrame(
+        {
+            "age": [21, 22, 23, 24, 31, 33, 35, 38, 41, 49, 52, 58],
+            "zip": ["121", "121", "122", "122", "130", "131", "130", "131", "210", "211", "210", "212"],
+            "dx": ["a", "b", "a", "c", "b", "a", "c", "c", "a", "b", "c", "a"],
+        }
+    )
+    extra = pd.DataFrame(
+        {"age": [25, 36, 44, 57], "zip": ["123", "132", "213", "214"], "dx": ["a", "b", "c", "a"]}
+    )
+    return release, pd.concat([release, extra], ignore_index=True)
+
+
+def _dotted(document: dict, path: str) -> object:
+    value: object = document
+    for part in path.split("."):
+        value = value[part]  # type: ignore[index]
+    return value
+
+
+def build_risk_report_document() -> dict:
+    """The ``risk-utility-report/v1`` payload the corpus locks, built by the current engine."""
+    from decoy_engine.anonymize.hierarchies import Lattice, interval_hierarchy, prefix_hierarchy
+    from decoy_engine.anonymize.report import build_risk_utility_report
+    from decoy_engine.anonymize.search import apply_search, search_lattice
+    from decoy_engine.quality.anonymity import EntropyLDiversity, KAnonymity
+
+    release, population = _risk_report_frames()
+    lattice = Lattice(
+        {"age": interval_hierarchy((5, 10)), "zip": prefix_hierarchy(3, keep=(2, 1))}
+    )
+    models = (KAnonymity(2), EntropyLDiversity("dx", 2))
+    result = search_lattice(release, lattice, models, suppression_limit=0.25)
+    released = apply_search(release, lattice, result)
+    report = build_risk_utility_report(
+        released, lattice, result, risk_threshold=0.2, population=population
+    )
+    return report.to_payload()
+
+
+def risk_utility_report_artifact(out_dir: Path = HERE) -> dict:
+    """Write the locked sample into ``out_dir`` and return its manifest entry."""
+    document = build_risk_report_document()
+    (out_dir / RISK_REPORT_PATH).write_text(
+        json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    print(f"wrote {RISK_REPORT_PATH}")
+    return {
+        "tag": "risk-utility-report/v1",
+        "kind": "risk_utility_report",
+        "synthetic": True,
+        "produced_by_engine_version": decoy_engine.__version__,
+        "path": RISK_REPORT_PATH,
+        "expected_values": {p: _dotted(document, p) for p in RISK_REPORT_EXPECTED_PATHS},
+    }
+
+
 def main() -> None:
     # NOTE: masked CSV/Parquet output is intentionally NOT frozen here -- the
     # engine never reads its own masked output back, so there is no decoy-owned
@@ -151,6 +232,7 @@ def main() -> None:
         "artifacts": [
             _vault_artifact(),
             _distribution_snapshot_artifact(),
+            risk_utility_report_artifact(),
         ],
     }
     (HERE / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
