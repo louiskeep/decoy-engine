@@ -409,7 +409,7 @@ markers = [
     "golden: engine-v2 S1 golden fixture suite (CSVs + manifests under tests/fixtures/golden/); CI gates engine-v2 sprint work on these",
     "regression: a bugfix's regression test; the prove-regression gate re-runs it against the pre-fix baseline and requires it to fail there",
     "testflight: acceptance test-flight suite (deliberately run, multi-job); excluded from the default loop; invoke via pytest testflight -m testflight or python scripts/test_flight.py",
-    "ml: Pre-scan field-recognition ML tests (scikit-learn + lightgbm, base dependencies). Run by the ml-gate CI job (pytest -m ml); they also run in the default gate, and importorskip only where lightgbm cannot import (macOS without libomp). Mark a new ML test module by adding pytestmark = pytest.mark.ml at module top so coverage stays automatic rather than a hand-maintained path list.",
+    "ml: Pre-scan field-recognition ML tests (scikit-learn + lightgbm, base dependencies). Run by the ml-gate CI job (pytest -m ml); they also run in the default gate, and skip through tests/_ml.py only where scikit-learn or lightgbm cannot import (macOS without libomp, Linux without libgomp1). Mark a new ML test module by adding pytestmark = pytest.mark.ml at module top so coverage stays automatic rather than a hand-maintained path list.",
     "ner: tests that load the real spaCy model (the [ner] extra plus the pinned en_core_web_sm wheel). Run by the ner-gate CI job (pytest -m ner). They skip when spaCy or the model is missing, as in the default gate; with DECOY_REQUIRE_NER=1 (set by ner-gate) a missing install fails instead.",
     "packaging: build-artifact tests that shell out to the wheel build frontend (DE-07 wheel-membership gate). Run by the packaging-gate CI job (pytest -m packaging with `build` installed); importorskip out of the default loop where `build` is absent.",
     "dp_certified: requires the certified DP proof-stack (fit_dp_snapshot only completes in the 79-dist dev+lint+vault 3.10.20 profile); tests/conftest.py's pytest_collection_modifyitems skips these off that profile. Run by the dp-certified-gate CI job.",
@@ -874,14 +874,14 @@ module = [
     "google.cloud",
     "google.cloud.*",
     # scikit-learn ships no py.typed marker; imported lazily in
-    # profiling.model_pack.trainer and profiling.eval.split (ml extra only).
+    # profiling.model_pack.trainer and profiling.eval.split (base dependency).
     "sklearn",
     "sklearn.*",
     # joblib ships no py.typed marker; imported lazily in
-    # profiling.model_pack.trainer and profiling.model_pack.loader (ml extra only).
+    # profiling.model_pack.trainer and profiling.model_pack.loader (base dependency).
     "joblib",
     # lightgbm ships no py.typed marker; imported lazily in
-    # profiling.model_pack.trainer (ml extra only).
+    # profiling.model_pack.trainer (base dependency).
     "lightgbm",
     "lightgbm.*",
     # python-stdnum ships no py.typed marker / stub package.

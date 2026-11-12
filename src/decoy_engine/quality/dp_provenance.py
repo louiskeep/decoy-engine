@@ -308,11 +308,11 @@ _CERTIFIED_STACKS: dict[tuple[PlatformTriple, str], frozenset[str]] = {
             # packaging==26.2). To reproduce: `--no-dev` install it into a 3.10.20 venv and run the
             # CLI repo's scripts/cert_smoke.py (recomputes this fingerprint over the running set,
             # then runs fit -> dps-marginal/v3 -> generate). Engine-only bumps 0.6.0 to 0.22.0
-            # changed just decoy-engine's own version; each of those rows was derived from a fresh
-            # venv (63 pins + engine + cli 0.1.0, 65 dists); all stay.
-            # SCAN-ML M2 (1db3e3da..., dev row e738e729...): scikit-learn 1.7.2, lightgbm 4.6.0,
-            # joblib 1.5.3 and threadpoolctl 3.6.0 joined the base install (the lock's versions):
-            # 67 pins, 69 dists with engine 0.22.0 and cli 0.1.0; the old set gives d5898d1f....
+            # changed just decoy-engine's own version. Only 0.6.0 (and the 0.5.0 revert) was
+            # installed in a real 3.10.20 venv; 0.7.0 to 0.22.0 are computed from the 63 pins. All stay.
+            # SCAN-ML M2 (1db3e3da..., dev row e738e729...): computed, not installed. The 63 pins
+            # plus scikit-learn 1.7.2, lightgbm 4.6.0, joblib 1.5.3, threadpoolctl 3.6.0 (67 pins,
+            # 69 dists). A real install and fit is CLI slice C1. Old set: d5898d1f....
             "1db3e3daf52c2b3944393f8a90e98d7519f50540191c6aefc9a987d097a2998f",
             "d5898d1ff084203f455907d8648e59e0156e320d0e5a12ba1e22aeba8ad6675d",
             "aa038ddd1d2e783042e34c75c313921f19b8e1dc580559cf8d5081ed19ea11e1",
