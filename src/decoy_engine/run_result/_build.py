@@ -70,10 +70,11 @@ def _route(result: RunFacts | None, chunked: bool, native: NativeRoute | None) -
     else:
         # A route the model has no name for (mixed, a later one) reads "other", never raises.
         kind = next((m for m in _MODES if m == mode), "other")
-    reason = telemetry.get("route_reason") if isinstance(telemetry, Mapping) else None
+    raw = telemetry.get("route_reason") if isinstance(telemetry, Mapping) else None
+    route_reason = approve_ref(raw)
     return Route(
         execution_mode=kind,
-        route_reason=approve_ref(reason),
+        route_reason=route_reason,
         chunked=chunked,
         native=native,
     )
