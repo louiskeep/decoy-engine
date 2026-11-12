@@ -85,12 +85,9 @@ class DeliveryFacts:
             raise TypeError("delivery tables must be a mapping")
         if not all(isinstance(entry, TableDelivery) for entry in self.tables.values()):
             raise TypeError("delivery entries must be run_result.TableDelivery")
-        # Each entry is rebuilt through the model, so its reason data is a validated deep copy
-        # that nothing the caller still holds can reach.
-        owned = {
-            name: TableDelivery.model_validate(entry.model_dump())
-            for name, entry in self.tables.items()
-        }
+        # Each entry is rebuilt through the model's constructor from a dump, so its reason data
+        # is a validated deep copy that nothing the caller still holds can reach.
+        owned = {name: TableDelivery(**entry.model_dump()) for name, entry in self.tables.items()}
         object.__setattr__(self, "tables", MappingProxyType(owned))
 
     @classmethod
