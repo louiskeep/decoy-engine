@@ -122,10 +122,10 @@ from decoy_engine.transforms._codeset_loader import (
     _check_source_version_pin,
     _CorpusRecord,
     _get_corpus_record,
-    load_corpus,  # noqa: F401 -- re-exported public API (see below)
     load_corpus_provenance,  # noqa: F401 -- re-exported public API (see below)
     verify_corpus,  # noqa: F401 -- re-exported public API (see below)
 )
+from decoy_engine.transforms._codeset_loader import load_corpus as load_corpus
 
 # Stable salt for HMAC-keyed row derivation. Same purpose as
 # reference_tables._KEYED_ACCESS_SALT: determinism, not secrecy.
