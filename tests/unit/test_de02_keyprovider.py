@@ -1168,6 +1168,7 @@ def _run_route(route: str, cfg: dict, tables: dict, writer, key_provider=None):
                 single,
                 [tables["P"]],
                 table="P",
+                source_schema=declared_schema(single, "P"),
                 engine_version=_EV,
                 vault_writer=writer,
                 key_provider=key_provider,

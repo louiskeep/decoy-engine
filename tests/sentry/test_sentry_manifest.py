@@ -29,6 +29,7 @@ SENTRIES = (
     "tests/sentry/test_cdf_threshold_ratchet.py",
     "tests/sentry/test_ci_config.py",
     "tests/sentry/test_ci_lock_installs.py",
+    "tests/sentry/test_dependency_floors.py",
     "tests/sentry/test_deprecation_expiry.py",
     "tests/sentry/test_dp_lock_row.py",
     "tests/sentry/test_engine_string_targets.py",
