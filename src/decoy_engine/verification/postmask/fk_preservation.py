@@ -84,8 +84,8 @@ def _frame_keys(
 
 def _whole(key: pd.DataFrame) -> pd.DataFrame:
     """pandas reads a nullable integer column as float, so read a float key column (NumPy or
-    nullable extension) whose non-null values are all whole and in the Int64 range as Int64. The
-    whole column decides; every other column keeps its dtype."""
+    nullable extension) with at least one non-null value, all of them whole and in the Int64
+    range, as Int64. The whole column decides; every other column keeps its dtype."""
     whole = {c: "Int64" for c, col in key.items() if is_float_dtype(col.dtype) and _integral(col)}
     return key.astype(whole) if whole else key
 
@@ -94,7 +94,10 @@ def _integral(column: pd.Series) -> bool:
     # One NumPy view for every float dtype; a null is NaN there and is left out.
     values = column.to_numpy(dtype="float64", na_value=np.nan)
     values = values[~np.isnan(values)]
-    return bool(np.all((values == np.trunc(values)) & (values >= -(2.0**63)) & (values < 2.0**63)))
+    # An all-null column carries no evidence that it was an integer column.
+    return values.size > 0 and bool(
+        np.all((values == np.trunc(values)) & (values >= -(2.0**63)) & (values < 2.0**63))
+    )
 
 
 def _finding(
