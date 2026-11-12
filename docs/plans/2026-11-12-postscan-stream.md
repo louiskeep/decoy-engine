@@ -249,6 +249,10 @@ which `_evaluate` reports `(detector_id, hits, n, threshold, name_hint)` before 
 The suite runs `run_all_detectors` per batch inside the scope, sums hits and `n`, and decides with
 the same threshold and `_confidence_bucket`. `sample_misses` stays empty here (it holds values).
 
+Batch boundaries must not change any fact. A pandas frame built per batch takes its dtype from
+that batch (an integer column with a null becomes float), so comparisons run in Arrow or through a
+dtype mapping derived from the schema, never from one batch's values.
+
 `residual_pii.py` and `policy_validation.py` keep their decision tables and take these facts.
 `run_post_mask(source_frames, output_frames, *, config, keys=None)` stays the public adapter.
 When `keys is None`, it computes key facts from those frames through `from_table` and `_keys.py`,
@@ -445,6 +449,18 @@ Fixture census from `origin/main`, complete for tests and shipped examples/docs 
 - `tests/parity/test_phase_f_f2_mixed_admission.py:176-201`, `:415-431`, `:473-486`: categorical
   parent keys. Use same-type unique categories and regenerate exact values.
 
+- `tests/parity/test_numeric_typing_readers.py`
+  (`test_relationship_parent_that_is_a_reference_column_keeps_the_root_text`): a `reference`
+  parent key. Add `unique: true`; assertions unchanged. The first census missed it because the
+  parity conftest lifts `check_generate_columns` through `lenient_generate_checks`. The lenient
+  path (`tests/_lenient_checks.py`) keeps `check_generated_parent_keys` on, so a lifted test cannot
+  skip this rule.
+
+`unique: true` is trusted on every type that carries it: config validation accepts it on
+`sequence`, `categorical`, `faker` and `reference` only (`generate_unique_unsupported` otherwise)
+and generation enforces it on all four (`generation/_unique.py`). A type that gains `unique` must
+be enforced by generation before validation accepts it.
+
 The one-row categorical at `tests/physical/test_shadow_mixed_fk.py:227-233` is accepted by the
 `row_count <= 1` rule and does not migrate. No config in `examples/complex_healthcare_claims.yaml`
 or `examples/runnable_demo.py` uses its generated `audit_log` as a relationship parent
@@ -534,9 +550,9 @@ Red first: each slice's first commit adds its tests, red on the base.
 | AT-32 | PS-2b | Verdict cells: residual and policy `fail` block with one value-free table/column/detector-id message; warning/info do not; error or `pass_failed_with` gives `check_error`; FK fail/error derived from a key adds no duplicate code | block on key codes only |
 | AT-14 | PS-2a, PS-6, PS-8 | Canary `CANARY-7f3a` duplicated, orphaned, in a column hit and in a forced DuckDB error: absent from the report, `str(exc)`, `ReasonRecord`, logs and the `quality_metrics` dump | add a value to a finding |
 | AT-23 | PS-3 | Generated parent faker key without `unique` is refused before any read; `row_count <= 1`, `unique: true`, a sequence, and `unique_together` exactly equal to composite parent columns are accepted; pair supersets and subsets are refused | accept a non-unique faker key |
-| AT-23b | PS-3 | The four-file fixture census is complete: grep census and affected suites are red before migration, then green with same-Arrow-type unique keys and regenerated exact values; shipped examples and current docs have zero refused configs | omit `_f0_fixtures.py` from the census |
+| AT-23b | PS-3 | The five-file fixture census is complete (four parity fixture files plus `test_numeric_typing_readers.py`), taken with the lenient generate checks off: grep census and affected suites are red before migration, then green with same-Arrow-type unique keys and regenerated exact values; shipped examples and current docs have zero refused configs | omit `_f0_fixtures.py` from the census |
 | AT-21 | PS-4 | FK findings: introduced orphans `fail`, inherited only `warning`, none `info`, unchecked `error`; a composite fills the tuples; tag stays v2; the three named fixtures change as listed; `compute_post_scan_integrity` retains FK findings when `keys=None` | keep the 1% threshold |
-| AT-19 | PS-5 | Column facts on tables of 10, 10,000 and 250,000 rows over batches of 7 and 100,000: identity counts, `bytes_identical`, distinct counts and every detector rate equal the resident pandas values exactly | average per-batch rates instead of summing hits |
+| AT-19 | PS-5 | Column facts on tables of 10, 10,000 and 250,000 rows over batches of 7 and 100,000: identity counts, `bytes_identical`, distinct counts and every detector rate equal the resident pandas values exactly. Batch boundaries change no result: an integer column whose nulls sit only in the second batch, plus a string column, give the same facts in one batch and in uneven batches as the whole table | average per-batch rates instead of summing hits; compare per-batch pandas frames whose dtype depends on the batch |
 | AT-22 | PS-6 | `run_post_mask` adapter equals the old runner on every existing fixture; a column near `min_rate` escalates exactly as on the resident path | read only the first batch |
 | AT-31 | PS-7 | Unit: `run_resident` stamps `keys` and `verdict`; a second call is a no-op; `before_commit` on a required, unrun gate with a sink lacking `staged_tables` raises `check_error` | reset `ran` in `before_commit` |
 | AT-16 | PS-8, PS-10 | A blocking verdict commits nothing. At PS-8 sequential and out-of-core no-sink cells block at step 5; full-frame also blocks. Sink cells for sequential, out-of-core, chunked and mixed land in PS-10: no output table, sink evidence aborted, temp files gone | run the gate after `sink.commit()` |
@@ -637,7 +653,8 @@ Changed modules (layer, size now, after; no ceiling or pin rises; only the DS-9 
 |---|---|---|---|
 | `verification/postmask/_stream_input.py`, `_keys.py`, `_column_facts.py`, `_blocked.py` | verification | 0 | about 140, 220, 190, 110 |
 | `execution/pipeline/_post_scan.py` | execution | 0 | about 300 (gate plus loader tee) |
-| `plan/checks/_relationship_keys.py` | plan | 0 | about 60 |
+| `plan/checks/_relationship_keys.py` | plan | 0 | about 80 |
+| `detection/detectors.py` | detection | existing | +2 names: re-exports `counting_scope` and `_confidence_bucket` through its existing `_scoring` import block, so the column suite imports the package's public module (PS-5 deviation, accepted) |
 | `profiling/_scan_integrity.py`, `profiling/__init__.py` | profiling | 368, existing | about 470, export swap |
 | `profile/_readers.py`, `profile/_lazy_csv.py`; `detection/_scoring.py` | profile; detection | 568, 246; 192 | about 575, 250; 220 |
 | `verification/postmask/__init__.py`, `residual_pii.py`, `policy_validation.py`, `fk_preservation.py`, `runner.py`, `types.py` | verification | existing, 398, 221, 337, 190, 148 | export swap, about 360, 200, 90, 210, 160 |
