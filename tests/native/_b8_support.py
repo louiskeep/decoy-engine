@@ -24,6 +24,7 @@ import pyarrow as pa
 
 from decoy_engine.execution import _chunked
 from decoy_engine.execution._chunked import run_mask_pipeline_chunked
+from decoy_engine.execution._column_access import created_columns
 from decoy_engine.execution.native import _chunked_entry, _dispatch
 from decoy_engine.execution.native._chunked_entry import run_mask_chunked
 from decoy_engine.execution.native._dispatch import run_native_or_oracle_chunked
@@ -33,6 +34,7 @@ from decoy_engine.profile import (
     prepare_declared_sources,
 )
 from decoy_engine.profile._declared_columns import arrow_columns
+from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.vault import VaultWriter
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
@@ -77,7 +79,10 @@ def below_gate(
         # An unknown table is the compatibility check's refusal, which runs below the gate.
         entry = {"name": table, "columns": []}
         declared["tables"].append(entry)
-    capability = prepare_declared_sources(DeclarationRequest.for_chunks(declared, table, None))
+    capability = prepare_declared_sources(
+        DeclarationRequest.for_chunks(declared, table, None),
+        created_targets=lambda e, cols: created_columns(e, cols, get_default_registry()),
+    )
     if isinstance(chunks, _FixedSchemaChunks):
         _declare_columns(entry, chunks.source_schema)
         return capability, chunks

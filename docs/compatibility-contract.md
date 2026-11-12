@@ -754,6 +754,16 @@ profiling its own file), which `build_run_context` now passes. Execution routes 
 creates its own target when its row says so, every column it reads is a source column, and none of
 them is the target. This slice only records the policy; it adds no refusal and no reason code.
 
+**Declared-but-missing columns (CONFIG-EXPLICIT E2b-r).** The same boundary now also refuses a column the config
+declares for a mask table (a `columns` entry, a `drop_column` column or a composite-relationship child column) that
+the source's header, footer or schema does not have: `source_file.declared_column_missing`, registry unreleased. It runs
+on every catalog the routes above already check, so the refusal comes before any data row is read; for the chunked
+entries the catalog is `source_schema` (pipeline entry) or the first chunk, and each later chunk is checked before it
+masks. It names the first missing column and the count (config names, never a value). Order is undeclared table,
+undeclared source column, then missing declared column. Before this, `run` failed late with a bare `KeyError`. The reverse rule belongs to the execution
+choke point, which knows the columns the config creates: `profile_source`, `prepare_declared_sources`
+and `check_columns_declared` called without a created-column policy apply the forward rule only.
+
 ### 3.5 Disguises
 
 Disguises are dated/versioned specs (`disguises/`, `disguises/loader.py`,
