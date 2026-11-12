@@ -93,4 +93,10 @@ already required there; on the E2c base it fails with `DID NOT RAISE` (the call 
 
 ## Test results
 
-See the report that came with the push: T1 selection and gates.sh result on the pushed head.
+`scripts/dev/gates.sh --keep-going --baseline` on a Linux VM at head e0c90dcf (selection of the
+changed test files plus the always-on pins, not the full suite): env, ruff, format, mypy, layers
+and licenses pass; tests 34880 passed, 0 failed (5302 skipped). The sentry step had 2 failures,
+both the secret-material census, whose `_oracle_preflight_admitted` line number moved; fixed in
+87e2430b by `scripts/secret_material_census.py --write` (two line numbers, verdicts kept) and
+re-run green with `test_module_size`, `source_config` and the file-access entry-point sentry
+(948 passed). The baseline rerun on main was not waited for.
