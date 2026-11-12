@@ -191,6 +191,11 @@ SOURCES: tuple[Source, ...] = (
         in_code("test_file_access_entry_points.py", "INTERNAL_SEAMS"),
     ),
     Source(
+        "post-scan-route-exempt",
+        "test_post_scan_route_guard.py",
+        in_code("test_post_scan_route_guard.py", "EXEMPT"),
+    ),
+    Source(
         "locator-waivers", "test_locator_hygiene.py", in_code("test_locator_hygiene.py", "WAIVERS")
     ),
     Source(

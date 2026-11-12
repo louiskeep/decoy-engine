@@ -152,9 +152,7 @@ def b1_as_the_lane(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     from decoy_engine.execution import _chunked
     from decoy_engine.execution import _pipeline_route_exec as rx
     from decoy_engine.execution._chunked_code_set import aggregate_chunk_code_set_corpora
-
-    # The internal entry: the public one refuses a vault writer (B-6 B0).
-    from decoy_engine.execution.native._chunked_entry import _run_mask_chunked as run_mask_chunked
+    from decoy_engine.execution.native._chunked_entry import run_mask_chunked
 
     def b1_lane(
         config: Any,
@@ -278,10 +276,11 @@ def check_contract(
 def spy_lanes(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
     """Count calls into every lane entry point; each wrapper forwards to the real one.
 
-    `auto_chunk_module` only exists once B2 is implemented, so it is patched when present."""
+    `auto_chunk_module` only exists once B2 is implemented, so it is patched when present. The
+    lane calls each entry's guard-free core, so the `entry.` and `oracle.` keys count those."""
     from decoy_engine.execution import _chunked_oracle
     from decoy_engine.execution import _pipeline_route_exec as rx
-    from decoy_engine.execution.native import _chunked_entry
+    from decoy_engine.execution.native.chunked import _core as _native_core
 
     calls: dict[str, list[Any]] = {
         "route_exec.run_mask_chunked": [],
@@ -300,12 +299,10 @@ def spy_lanes(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
     monkeypatch.setattr(
         rx, "run_mask_chunked", wrap("route_exec.run_mask_chunked", rx.run_mask_chunked)
     )
-    # The lane calls the internal names (B-6 B0: the public chunked entries refuse a vault
-    # writer); the labels keep the public names the assertions were written against.
     monkeypatch.setattr(
-        _chunked_entry,
-        "_run_mask_chunked",
-        wrap("entry.run_mask_chunked", _chunked_entry._run_mask_chunked),
+        _native_core,
+        "mask_chunked",
+        wrap("entry.run_mask_chunked", _native_core.mask_chunked),
     )
     monkeypatch.setattr(
         _chunked_oracle,

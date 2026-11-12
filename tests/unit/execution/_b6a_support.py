@@ -166,7 +166,7 @@ class ChunkSpy:
         exc: BaseException | None = None,
         before_pull: Callable[[str, int], None] | None = None,
     ) -> None:
-        from decoy_engine.execution.native import _chunked_entry
+        from decoy_engine.execution.native.chunked import _core as _native_core
 
         self.refs: dict[str, list[weakref.ref[pa.Table]]] = {}
         self.result_lists: dict[str, list[Any]] = {}
@@ -174,14 +174,14 @@ class ChunkSpy:
         self.fail_at = fail_at
         self.exc = exc if exc is not None else RuntimeError("injected kernel failure")
         self.before_pull = before_pull
-        real = _chunked_entry._run_mask_chunked
+        real = _native_core.mask_chunked
 
         def spy(config: Any, chunks: Any, *, table: str, **kwargs: Any) -> Iterator[pa.Table]:
             self.result_lists[table] = kwargs.get("chunk_result_sink")
             inner = real(config, chunks, table=table, **kwargs)
             return self._wrap(table, inner)
 
-        monkeypatch.setattr(_chunked_entry, "_run_mask_chunked", spy)
+        monkeypatch.setattr(_native_core, "mask_chunked", spy)
 
     def _wrap(self, table: str, inner: Iterator[pa.Table]) -> Iterator[pa.Table]:
         index = 0

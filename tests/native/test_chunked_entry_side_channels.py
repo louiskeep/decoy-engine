@@ -19,8 +19,8 @@ from decoy_engine.execution import _chunked_dgrn
 from decoy_engine.execution._chunked import check_chunked_compatibility
 from decoy_engine.execution._chunked_oracle import _mask_pipeline_chunked
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
-from decoy_engine.execution.native._chunked_entry import _run_mask_chunked
 from decoy_engine.execution.native._dispatch import NativeRouteEvidence
+from decoy_engine.execution.native.chunked._core import mask_chunked as _run_mask_chunked
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.vault import VaultWriter, collect_vault_entries
 from tests._declared_schema import declared_schema

@@ -6,7 +6,9 @@ lane (default) masks the resident table in `chunk_size_rows`-row slices through
 B1's `run_mask_chunked`, which picks the native or the oracle route once for the
 whole table, and joins the chunks with `join_dispatcher_chunks`. The kill switch
 `dispatcher_enabled=False` runs the previous lane unchanged
-(`run_mask_pipeline_chunked` plus `concat_masked_chunks`).
+(`run_mask_pipeline_chunked` plus `concat_masked_chunks`). Both lanes call the entries'
+guard-free cores (`native.chunked._core.mask_chunked`, `_chunked_oracle._mask_pipeline_chunked`):
+this run does its own post-scan, so the post-scan route guard of the public entries does not apply.
 
 Output contract of the dispatcher lane (plan 2026-10-01-dispatcher-auto-chunk,
 guarantee 3): masked columns keep their values, string-output columns (hash,
@@ -250,7 +252,6 @@ def _run_legacy(
     if preresolved is not None:  # pragma: no cover - the mixed route requires the dispatcher lane
         raise AssertionError("a pre-resolved column reaches only the dispatcher lane")
     chunks_in, render = _declared_wrap(cast_run, table, _slices(source, chunk_size_rows))
-    # The internal name: this lane returns resident output, so it may collect vault entries (B0).
     masked_chunks = list(
         render(
             _chunked_oracle._mask_pipeline_chunked(
@@ -286,9 +287,8 @@ def _run_dispatcher(
     preresolved: PreResolvedColumn | None = None,
     cast_run: Any = None,
 ) -> pa.Table:
-    # Looked up through the module so a spy sees the call. The internal name: this lane returns
-    # resident output, so it may collect vault entries (B0).
-    from decoy_engine.execution.native import _chunked_entry
+    # Looked up through the module so a spy on the core sees the call.
+    from decoy_engine.execution.native.chunked import _core
 
     # The C5c-ii producer: resident slices carry the resident schema metadata-inclusive,
     # which the chunked route needs to admit deterministic Faker over bool/int/uint.
@@ -298,7 +298,7 @@ def _run_dispatcher(
     )
     chunks = list(
         render(
-            _chunked_entry._run_mask_chunked(
+            _core.mask_chunked(
                 config,
                 chunks_in,
                 table=table,
@@ -338,8 +338,8 @@ def _run_streamed(
     """The dispatcher lane with the chunks streamed into `sink`; returns the `output` and
     `input` blocks. A `LazySource` is read as batches (B6b) and its handle is closed on every
     exit."""
-    from decoy_engine.execution.native import _chunked_entry
     from decoy_engine.execution.native._chunked_schema_rule import build_schema_rule
+    from decoy_engine.execution.native.chunked import _core
 
     inputs = _chunked_input.open_input(
         source,
@@ -356,7 +356,7 @@ def _run_streamed(
         # The columns B1's schema rule pins resolve from chunk 0, so only the rest can hold
         # the stream back (`_chunked_output_sink` module docstring).
         rule = build_schema_rule(config, table=table, first=first, registry=registry)
-        chunks = _chunked_entry._run_mask_chunked(
+        chunks = _core.mask_chunked(
             config,
             stream,
             table=table,

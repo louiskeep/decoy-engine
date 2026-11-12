@@ -101,6 +101,7 @@ def _sequential(plan: Any, sources: dict[str, pa.Table], graph: RelationshipGrap
     PandasExecutionAdapter().run_sequential(
         plan,
         sources.__getitem__,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         namespace_registry=_NS,

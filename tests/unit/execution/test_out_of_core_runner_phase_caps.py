@@ -144,6 +144,7 @@ class TestSinkPathPhaseCaps:
         run_fk_out_of_core(
             _fan_in_hub_plan(),
             _fan_in_hub_sources(),
+            config={},
             registry=_REG,
             relationship_graph=_fan_in_hub_graph(),
             sink=ParquetTransactionalSink(tmp_path / "out"),
@@ -171,6 +172,7 @@ class TestSinkPathPhaseCaps:
         run_fk_out_of_core(
             _fan_in_hub_plan(),
             _fan_in_hub_sources(),
+            config={},
             registry=_REG,
             relationship_graph=_fan_in_hub_graph(),
             sink=ParquetTransactionalSink(tmp_path / "out"),
@@ -191,6 +193,7 @@ class TestResidentPathPhaseCaps:
         run_fk_out_of_core(
             _fan_in_hub_plan(),
             _fan_in_hub_sources(),
+            config={},
             registry=_REG,
             relationship_graph=_fan_in_hub_graph(),
             temp_dir=tmp_path / "work",

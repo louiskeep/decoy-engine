@@ -166,8 +166,12 @@ import pyarrow as pa
 
 from decoy_engine import reasons
 from decoy_engine.declared_casting._eligibility import declared_route_guard
+from decoy_engine.execution._guards import (  # re-exported: the core's declaration-gate seam
+    prepare_declared_execution_sources as prepare_declared_execution_sources,
+)
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.verification.postmask._route_guard import refuse_unchecked_route
 
 from . import _chunked_bucket_perturb as bucket_perturb_gate
 from . import _chunked_categorical as categorical_gate
@@ -433,14 +437,15 @@ def run_mask_pipeline_chunked(
     value-keyed strategy. See `_chunked_dgrn.py` for the domain contract.
 
     Validation and plan compile happen EAGERLY at call time; only the per-chunk masking is lazy.
+    This route runs no post-scan, so a model post-scan config is refused first
+    (`PostScanRouteError`).
     """
-    from decoy_engine.config._subset_run import refuse_unapplied_subset
-
-    refuse_unapplied_subset(config)
     if vault_writer is not None:
         raise vault_requires_resident_output()
+    # Lazy: `_chunked_oracle` imports this module at load time.
     from . import _chunked_oracle
 
+    refuse_unchecked_route(config, "chunked")
     return _chunked_oracle._mask_pipeline_chunked(
         config,
         chunks,
@@ -449,6 +454,7 @@ def run_mask_pipeline_chunked(
         source_schema=source_schema,
         registry=registry,
         adapter=adapter,
+        vault_writer=vault_writer,
         chunk_result_sink=chunk_result_sink,
         key_provider=key_provider,
         base_row_offset=base_row_offset,

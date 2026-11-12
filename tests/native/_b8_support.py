@@ -27,8 +27,9 @@ from decoy_engine.execution._chunked import run_mask_pipeline_chunked
 from decoy_engine.execution._chunked_oracle import _mask_pipeline_chunked
 from decoy_engine.execution._column_access import created_columns
 from decoy_engine.execution.native import _chunked_entry, _dispatch
-from decoy_engine.execution.native._chunked_entry import _run_mask_chunked, run_mask_chunked
+from decoy_engine.execution.native._chunked_entry import run_mask_chunked
 from decoy_engine.execution.native._dispatch import run_native_or_oracle_chunked
+from decoy_engine.execution.native.chunked._core import mask_chunked as _run_mask_chunked
 from decoy_engine.profile import (
     DeclarationRequest,
     PreparedDeclaredSources,

@@ -10,7 +10,8 @@ walks guard it:
   `read_csv_source(` in `src/decoy_engine` is in `READERS` with a reason. A new reader fails
   until someone lists it and says why it is safe.
 
-- (c) the three public chunked entries (E2d) are in `ROUTES` too; in
+- (c) the chunked routes (E2d) are in `ROUTES` too: `run_native_or_oracle_chunked` and the two
+  guard-free cores that `run_mask_pipeline_chunked` and `run_mask_chunked` return; in
   `_oracle_preflight_admitted` the first chunk's columns are checked (`checked_stream(`) right
   after `next(`, with no profile, compile or per-chunk wrap between; and no `declared=None`
   appears in `src/`.
@@ -25,6 +26,10 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+
+import pytest
+
+from tests.sentry._call_resolution import resolved_calls
 
 SRC = Path(__file__).parents[3] / "src" / "decoy_engine"
 GATE = "prepare_declared_sources"
@@ -48,8 +53,9 @@ ROUTES: dict[tuple[str, str], frozenset[str]] = {
     ("execution/_isolated_run.py", "run_pipeline_isolated"): frozenset(
         {"_write_payload", "_run_in_process", "_run_isolated"}
     ),
-    ("execution/_chunked_oracle.py", "_mask_pipeline_chunked"): frozenset({"_oracle_preflight"}),
-    ("execution/native/_chunked_entry.py", "_run_mask_chunked"): frozenset({"_run_chunked"}),
+    # The two public chunked entries return these cores, which hold their one pre-read sequence.
+    ("execution/_chunked_oracle.py", "_mask_pipeline_chunked"): frozenset({"_mask_declared"}),
+    ("execution/native/chunked/_core.py", "mask_chunked"): frozenset({"_run_chunked"}),
     ("execution/native/_dispatch.py", "run_native_or_oracle_chunked"): frozenset({"_run_chunked"}),
 }
 
@@ -276,42 +282,6 @@ def test_no_route_passes_declared_none() -> None:
 CHOKE_POINT = ("execution/_guards.py", "prepare_declared_execution_sources")
 
 
-def _local_names(tree: ast.AST, target: str) -> set[str]:
-    """Names `target` is reachable under in a module: itself, import aliases, plain re-bindings."""
-    names = {target}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            names.update(a.asname for a in node.names if a.name == target and a.asname)
-    grew = True
-    while grew:
-        grew = False
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Assign)
-                and isinstance(node.value, ast.Name)
-                and node.value.id in names
-            ):
-                bound = {t.id for t in node.targets if isinstance(t, ast.Name)} - names
-                if bound:
-                    names |= bound
-                    grew = True
-    return names
-
-
-def _resolved_calls(tree: ast.AST, target: str) -> list[ast.Call]:
-    """Calls of `target` by its name, an alias of it, or as an attribute (`mod.target(...)`)."""
-    names = _local_names(tree, target)
-    return [
-        call
-        for call in ast.walk(tree)
-        if isinstance(call, ast.Call)
-        and (
-            (isinstance(call.func, ast.Name) and call.func.id in names)
-            or (isinstance(call.func, ast.Attribute) and call.func.attr == target)
-        )
-    ]
-
-
 def _outside_function(tree: ast.Module, calls: list[ast.Call], name: str | None) -> list[ast.Call]:
     if name is None:
         return calls
@@ -321,14 +291,14 @@ def _outside_function(tree: ast.Module, calls: list[ast.Call], name: str | None)
 
 def _direct_gate_calls(tree: ast.Module, exempt: str | None = None) -> list[int]:
     """Lines calling the profile boundary directly, outside the exempt function's body."""
-    calls = _outside_function(tree, _resolved_calls(tree, GATE), exempt)
+    calls = _outside_function(tree, resolved_calls(tree, GATE), exempt)
     return [c.lineno for c in calls]
 
 
 def _profile_calls_without_declared(tree: ast.Module) -> list[int]:
     return [
         c.lineno
-        for c in _resolved_calls(tree, "profile_source")
+        for c in resolved_calls(tree, "profile_source")
         if not any(kw.arg == "declared" for kw in c.keywords)
     ]
 
@@ -388,3 +358,46 @@ def test_the_profile_call_check_sees_a_missing_declared_keyword() -> None:
     assert _profile_calls_without_declared(kwargs_only) == [2]
     passing = ast.parse("def f(c, d):\n    return profile_source(c, declared=d)\n")
     assert _profile_calls_without_declared(passing) == []
+
+
+LANE_CORES = (
+    ("execution/_chunked_oracle.py", "_mask_pipeline_chunked"),
+    ("execution/native/chunked/_core.py", "mask_chunked"),
+)
+
+
+def test_each_route_calls_a_read_it_guards() -> None:
+    """A route whose function calls none of its guarded names passes the ordering check vacuously."""
+    for (rel, func_name), guarded in ROUTES.items():
+        called = {name for name, _ in _calls(_function(_parse(rel), func_name))}
+        assert guarded & called, (rel, func_name, sorted(guarded))
+
+
+def _core_route(key: tuple[str, str]) -> frozenset[str]:
+    guarded = ROUTES.get(key)
+    assert guarded is not None, f"the lane core {key} is not in ROUTES"
+    return guarded
+
+
+@pytest.mark.parametrize("key", LANE_CORES)
+def test_moving_the_read_above_the_gate_in_a_lane_core_makes_the_walk_fail(
+    key: tuple[str, str],
+) -> None:
+    guarded = _core_route(key)
+    rel, func_name = key
+    tree = _parse(rel)
+    func = _function(tree, func_name)
+    gate_at = next(i for i, s in enumerate(func.body) if _contains_gate(s))
+    read_at = next(i for i, s in enumerate(func.body) if any(n in guarded for n, _ in _calls(s)))
+    func.body.insert(gate_at, func.body.pop(read_at))
+    assert _route_violations(_reparse(tree), func_name, guarded) != []
+
+
+@pytest.mark.parametrize("key", LANE_CORES)
+def test_dropping_the_gate_from_a_lane_core_makes_the_walk_fail(key: tuple[str, str]) -> None:
+    guarded = _core_route(key)
+    rel, func_name = key
+    tree = _parse(rel)
+    func = _function(tree, func_name)
+    func.body = [s for s in func.body if not _contains_gate(s)]
+    assert _route_violations(_reparse(tree), func_name, guarded) != []

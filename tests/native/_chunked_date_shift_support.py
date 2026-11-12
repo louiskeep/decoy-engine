@@ -17,7 +17,7 @@ import pyarrow as pa
 from decoy_engine import run_mask_chunked
 
 # A vault writer goes through the internal entry: the public one refuses it (B-6 B0).
-from decoy_engine.execution.native._chunked_entry import _run_mask_chunked
+from decoy_engine.execution.native.chunked._core import mask_chunked as _run_mask_chunked
 from decoy_engine.vault import VaultWriter
 from tests.native._b8_support import (
     FORCE,

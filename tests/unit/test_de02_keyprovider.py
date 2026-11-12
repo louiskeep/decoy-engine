@@ -837,6 +837,7 @@ class TestPublicEntryPointsGated:
             run_fk_out_of_core(
                 plan,
                 sources,
+                config={},
                 registry=get_default_registry(),
                 relationship_graph=RelationshipGraph(edges=(), ordering=()),
             )

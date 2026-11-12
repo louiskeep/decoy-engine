@@ -26,16 +26,14 @@ from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution import ExecutionError
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
-
-# A vault writer goes through the internal entry: the public one refuses it (B-6 B0).
-from decoy_engine.execution.native._chunked_entry import (
-    _run_mask_chunked,
-    aggregate_chunked_route_evidence,
-)
+from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route_evidence
 from decoy_engine.execution.native._dispatch import (
     NativeChunkSchemaDriftError,
     NativeRouteEvidence,
 )
+
+# A vault writer goes through the internal entry: the public one refuses it (B-6 B0).
+from decoy_engine.execution.native.chunked._core import mask_chunked as _run_mask_chunked
 from decoy_engine.vault import VaultWriter
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,

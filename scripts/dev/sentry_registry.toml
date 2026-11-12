@@ -37,6 +37,10 @@ id = "file-access-entry-seams"
 baseline = "tests/sentry/baselines/file-access-entry-seams.json"
 
 [[sentry]]
+id = "post-scan-route-exempt"
+baseline = "tests/sentry/baselines/post-scan-route-exempt.json"
+
+[[sentry]]
 id = "locator-waivers"
 baseline = "tests/sentry/baselines/locator-waivers.json"
 

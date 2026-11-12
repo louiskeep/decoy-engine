@@ -10,7 +10,7 @@ import pytest
 
 from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution._chunked_oracle import _mask_pipeline_chunked
-from decoy_engine.execution.native._chunked_entry import _run_mask_chunked
+from decoy_engine.execution.native.chunked._core import mask_chunked as _run_mask_chunked
 from decoy_engine.vault import VaultWriter
 from tests._declared_schema import declared_schema
 from tests.native._chunked_entry_support import (

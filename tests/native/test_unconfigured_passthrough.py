@@ -22,17 +22,15 @@ from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution import ExecutionError
 from decoy_engine.execution._chunked_profile import first_chunk_profile
 from decoy_engine.execution.native import _chunked_entry
-
-# A vault writer goes through the internal entry: the public one refuses it (B-6 B0).
-from decoy_engine.execution.native._chunked_entry import (
-    _run_mask_chunked,
-    aggregate_chunked_route_evidence,
-)
+from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route_evidence
 from decoy_engine.execution.native._dispatch import (
     NativeChunkSchemaDriftError,
     plan_native_route,
 )
 from decoy_engine.execution.native._real_type_admission import real_type_rejection
+
+# A vault writer goes through the internal entry: the public one refuses it (B-6 B0).
+from decoy_engine.execution.native.chunked._core import mask_chunked as _run_mask_chunked
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.vault import VaultWriter

@@ -130,6 +130,7 @@ def test_t2_reorder_route_output_matches_batch_join_exactly(tmp_path: Path) -> N
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(batch_join_dir),
@@ -139,6 +140,7 @@ def test_t2_reorder_route_output_matches_batch_join_exactly(tmp_path: Path) -> N
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(reorder_dir),
@@ -264,6 +266,7 @@ def test_t7_too_small_budget_raises_and_aborts_sink(tmp_path: Path) -> None:
         run_fk_out_of_core(
             plan,
             sources,
+            config={},
             registry=_REG,
             relationship_graph=graph,
             sink=ParquetTransactionalSink(target),
@@ -359,6 +362,7 @@ def test_t8_routes_by_deduped_key_count_not_raw_rows(
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(tmp_path / "above-raw-below-deduped"),
@@ -375,6 +379,7 @@ def test_t8_routes_by_deduped_key_count_not_raw_rows(
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(tmp_path / "at-deduped-count"),
@@ -471,6 +476,7 @@ def test_t10_mixed_job_routes_independently_and_matches_batch_join(
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(mixed_dir),
@@ -486,6 +492,7 @@ def test_t10_mixed_job_routes_independently_and_matches_batch_join(
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(baseline_dir),

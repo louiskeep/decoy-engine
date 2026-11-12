@@ -22,12 +22,6 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from decoy_engine.config._subset_run import refuse_unapplied_subset
-from decoy_engine.execution._guards import prepare_declared_execution_sources
-from decoy_engine.execution.chunked import observe_chunked
-from decoy_engine.fileaccess import FileAccess
-from decoy_engine.profile import DeclarationRequest
-
 from . import _chunked as _chunked_mod
 from . import _chunked_bucket_perturb as bucket_perturb_gate
 from . import _chunked_code_set as code_set_gate
@@ -52,6 +46,7 @@ from ._row_error_summary import chunk_row_error_summary
 from ._transforms import reject_config_references_stored_index
 
 if TYPE_CHECKING:
+    from decoy_engine.fileaccess import FileAccess
     from decoy_engine.profile import PreparedDeclaredSources
 
 
@@ -524,14 +519,52 @@ def _mask_pipeline_chunked(
     base_row_offset: int = 0,
     file_access: FileAccess | None = None,
 ) -> Iterator[pa.Table]:
-    """`run_mask_pipeline_chunked` with a `vault_writer`, for `run_pipeline`'s auto-chunk lane
-    only: that lane returns resident output, so the caller writes the vault before publishing."""
+    """`run_mask_pipeline_chunked` without the post-scan route guard. The entry runs the guard and
+    returns this core, and `run_pipeline`'s resident auto-chunk lane, which does its own post-scan,
+    calls it directly, so the pre-read sequence lives here only. The gate is reached through the
+    entry module's seam."""
+    from decoy_engine.config._subset_run import refuse_unapplied_subset
+    from decoy_engine.profile import DeclarationRequest
+
     refuse_unapplied_subset(config)
-    declared = prepare_declared_execution_sources(
+    # Before `chunks` is touched: the table and `source_schema` must be declared (E2d).
+    declared = _chunked_mod.prepare_declared_execution_sources(
         DeclarationRequest.for_chunks(config, table, source_schema),
         file_access=file_access,
         registry=registry,
     )
+    return _mask_declared(
+        config,
+        chunks,
+        table=table,
+        engine_version=engine_version,
+        declared=declared,
+        registry=registry,
+        adapter=adapter,
+        vault_writer=vault_writer,
+        chunk_result_sink=chunk_result_sink,
+        key_provider=key_provider,
+        base_row_offset=base_row_offset,
+    )
+
+
+def _mask_declared(
+    config: dict[str, Any],
+    chunks: Iterable[pa.Table],
+    *,
+    table: str,
+    engine_version: str,
+    declared: PreparedDeclaredSources,
+    registry: Any = None,
+    adapter: Any = None,
+    vault_writer: Any = None,
+    chunk_result_sink: list[Any] | None = None,
+    key_provider: Any = None,
+    base_row_offset: int = 0,
+) -> Iterator[pa.Table]:
+    """The oracle preflight and per-chunk masking, after the entry's checks and gate."""
+    from decoy_engine.execution.chunked import observe_chunked
+
     state = _oracle_preflight(
         config,
         chunks,

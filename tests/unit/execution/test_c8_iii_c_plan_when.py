@@ -123,6 +123,7 @@ def test_run_sequential_rejects_before_any_sink_write_or_handler_call(tmp_path: 
         adapter.run_sequential(
             bad,
             lambda name: job.sources[name],
+            config={},
             sink=lambda name, table: writes.append(name),
             **_sequential_kwargs(job),
         )
@@ -170,6 +171,7 @@ def test_run_sequential_rejects_a_bad_seed_for_a_table_it_never_loads(tmp_path: 
         adapter.run_sequential(
             bad,
             lambda name: job.sources[name],
+            config={},
             sink=lambda name, table: writes.append(name),
             **_sequential_kwargs(job),
         )

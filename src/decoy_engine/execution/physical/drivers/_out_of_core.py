@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
@@ -46,6 +46,7 @@ class OutOfCoreAdapter:
         plan: Plan,
         sources: Mapping[str, pa.Table | LazySource],
         *,
+        config: Mapping[str, Any],
         registry: ProviderRegistry,
         relationship_graph: RelationshipGraph,
         sink: TransactionalSink | None = None,
@@ -66,6 +67,7 @@ class OutOfCoreAdapter:
         return run_fk_out_of_core(
             plan,
             sources,
+            config=config,
             registry=registry,
             relationship_graph=relationship_graph,
             sink=sink,

@@ -201,7 +201,7 @@ def test_group_c_payload_parity(kind: str, policy: OrphanPolicy, batch_rows: int
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
     ooc = run_fk_out_of_core(
-        plan, sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
+        plan, sources, config={}, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
     )
     for table in oracle.outputs:
         _assert_value_equal(
@@ -220,7 +220,7 @@ def test_group_c_payload_actually_transforms(kind: str) -> None:
     plan, sources, graph = _payload_edge_job(
         payload_seed, payload_vals, policy=OrphanPolicy.PRESERVE
     )
-    ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+    ooc = run_fk_out_of_core(plan, sources, config={}, registry=_REG, relationship_graph=graph)
     src = sources["parent"].column("pay").to_pylist()
     out = ooc.outputs["parent"].column("pay").to_pylist()
     changed = [o for s, o in zip(src, out, strict=True) if s is not None and o != s]
@@ -245,7 +245,7 @@ def test_group_c_all_null_column_parity(kind: str, batch_rows: int | None) -> No
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
     ooc = run_fk_out_of_core(
-        plan, sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
+        plan, sources, config={}, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
     )
     for table in oracle.outputs:
         _assert_value_equal(
@@ -280,7 +280,7 @@ def test_text_mask_ner_path_parity(batch_rows: int | None) -> None:
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
     ooc = run_fk_out_of_core(
-        plan, sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
+        plan, sources, config={}, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
     )
     for table in oracle.outputs:
         _assert_value_equal(
@@ -408,7 +408,7 @@ class TestOutOfCoreCodeSetCorporaEvidence:
         oracle = PandasExecutionAdapter().run(
             plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
         )
-        ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+        ooc = run_fk_out_of_core(plan, sources, config={}, registry=_REG, relationship_graph=graph)
 
         oracle_corpora = oracle.quality_metrics.get("code_set_corpora")
         ooc_corpora = ooc.quality_metrics.get("code_set_corpora")
@@ -433,7 +433,7 @@ class TestOutOfCoreCodeSetCorporaEvidence:
         plan, sources, graph = _payload_edge_job(
             payload_seed, payload_vals, policy=OrphanPolicy.PRESERVE
         )
-        ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+        ooc = run_fk_out_of_core(plan, sources, config={}, registry=_REG, relationship_graph=graph)
         assert "code_set_corpora" not in ooc.quality_metrics
 
     def test_ooc_sink_path_also_surfaces_code_set_corpora(self, tmp_path: Any) -> None:
@@ -448,6 +448,7 @@ class TestOutOfCoreCodeSetCorporaEvidence:
         ooc = run_fk_out_of_core(
             plan,
             sources,
+            config={},
             registry=_REG,
             relationship_graph=graph,
             sink=ParquetTransactionalSink(tmp_path / "published"),
@@ -509,7 +510,7 @@ class TestOutOfCoreCodeSetCorporaEvidence:
         )
         sources = {"parent": parent, "child": child}
         assert _gate_admits(plan, graph)
-        ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+        ooc = run_fk_out_of_core(plan, sources, config={}, registry=_REG, relationship_graph=graph)
         corpora = ooc.quality_metrics.get("code_set_corpora")
         assert corpora is not None and len(corpora) == 2, (
             f"expected one evidence entry per (table, column), got {corpora!r}"
@@ -544,7 +545,7 @@ class TestOutOfCoreCodeSetCorporaAllNullEvidenceParity:
         oracle = PandasExecutionAdapter().run(
             plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
         )
-        ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+        ooc = run_fk_out_of_core(plan, sources, config={}, registry=_REG, relationship_graph=graph)
 
         # Structural parity: neither route reports a corpus as "used" for a
         # column that never dispatched a single masked value.
@@ -562,7 +563,7 @@ class TestOutOfCoreCodeSetCorporaAllNullEvidenceParity:
             payload_seed, all_null_vals, policy=OrphanPolicy.PRESERVE
         )
         ooc = run_fk_out_of_core(
-            plan, sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
+            plan, sources, config={}, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
         )
         assert "code_set_corpora" not in ooc.quality_metrics
 
@@ -611,7 +612,7 @@ class TestOutOfCoreCodeSetCorporaAllNullEvidenceParity:
         oracle = PandasExecutionAdapter().run(
             plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
         )
-        ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+        ooc = run_fk_out_of_core(plan, sources, config={}, registry=_REG, relationship_graph=graph)
 
         for label, result in (("oracle", oracle), ("ooc", ooc)):
             corpora = result.quality_metrics.get("code_set_corpora")
@@ -644,7 +645,7 @@ class TestOutOfCoreCodeSetCorporaAllNullEvidenceParity:
             plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
         )
         ooc = run_fk_out_of_core(
-            plan, sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
+            plan, sources, config={}, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
         )
 
         def _stamped(entries: list[dict[str, Any]]) -> set[tuple[str, str, str]]:
@@ -712,7 +713,7 @@ class TestOutOfCoreCodeSetCorporaAllNullEvidenceParity:
             plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
         )
         ooc = run_fk_out_of_core(
-            plan, sources, registry=_REG, relationship_graph=graph, batch_rows=1
+            plan, sources, config={}, registry=_REG, relationship_graph=graph, batch_rows=1
         )
         # Neither route may claim the corpus is "used" -- the kernel masks nothing.
         assert "code_set_corpora" not in oracle.quality_metrics
@@ -737,6 +738,7 @@ class TestOutOfCoreCodeSetCorporaAllNullEvidenceParity:
         ooc = run_fk_out_of_core(
             plan,
             sources,
+            config={},
             registry=_REG,
             relationship_graph=graph,
             sink=ParquetTransactionalSink(tmp_path / "published"),
@@ -774,7 +776,7 @@ def test_text_mask_sub_floor_warning_parity_resident_route() -> None:
     oracle = PandasExecutionAdapter().run(
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
-    ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+    ooc = run_fk_out_of_core(plan, sources, config={}, registry=_REG, relationship_graph=graph)
 
     oracle_ws = _sub_floor_warnings(oracle.warnings)
     ooc_ws = _sub_floor_warnings(ooc.warnings)
@@ -807,6 +809,7 @@ def test_text_mask_sub_floor_warning_parity_reorder_sink_route(tmp_path: Any) ->
     ooc = run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(tmp_path / "published"),
