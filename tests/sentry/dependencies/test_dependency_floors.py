@@ -19,7 +19,7 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 
 # GHSA-44vg-5wv2-h2hg / CVE-2026-32640: objects passed as names can leak modules or dangerous
 # callables into the simpleeval sandbox; affected < 1.0.5, patched in 1.0.5.

@@ -106,7 +106,7 @@ dependencies = [
     # posture for numexpr / jsonpath-ng (do not roll our own AST sandbox).
     # Required at import time of decoy_engine.expressions. Floor at the
     # release that fixes GHSA-44vg-5wv2-h2hg / CVE-2026-32640 (patched in
-    # 1.0.5); tests/sentry/test_dependency_floors.py keeps lock >= floor.
+    # 1.0.5); tests/sentry/dependencies/test_dependency_floors.py keeps lock >= floor.
     "simpleeval>=1.0.5",
     # SP-04 / P5.INFRA.1: check-digit validators for luhn, iban, ean, isbn,
     # and gtin (python-stdnum); npi and vin are hand-rolled (not in stdnum).
