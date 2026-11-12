@@ -433,8 +433,7 @@ def run_mask_pipeline_chunked(
     `windowed_date` strategy consumes (Phase 4 slice 1); inert for every
     value-keyed strategy. See `_chunked_dgrn.py` for the domain contract.
 
-    Validation and plan compile happen EAGERLY at call time; only the
-    per-chunk masking is lazy.
+    Validation and plan compile happen EAGERLY at call time; only the per-chunk masking is lazy.
     """
     from . import _chunked_oracle
 
