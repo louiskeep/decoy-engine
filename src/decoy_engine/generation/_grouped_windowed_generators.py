@@ -13,9 +13,12 @@ Called from ``generation/synthesize._generate_column`` when:
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any
 
-from decoy_engine.generators.derivation import column_identity
+import pyarrow as pa
+
+from decoy_engine.generators.derivation import TABLE_KEY, column_identity
 
 
 def _grouped_series_generate(
@@ -64,11 +67,57 @@ def _grouped_series_generate(
     return list(apply_grouped_series(config, df, seed=seed_bytes, namespace=namespace))
 
 
+def _parent_anchor_cells(
+    col: dict[str, Any],
+    generated: dict[str, list[Any]],
+    pools: Mapping[str, pa.Table],
+    siblings: Sequence[Mapping[str, Any]],
+) -> list[Any]:
+    """The parent row's anchor for each row of a `windowed_date` column with `anchor_via`.
+
+    The anchor's table and column come from the column's resolved input, so a same-named
+    column of this table is never read. The row is found by the one parent lookup: a null
+    foreign key gives a null anchor (and so a null date), and a foreign key with no parent row
+    is that lookup's refusal. A parent row that is found but holds no anchor is refused here:
+    the child asked for a date counted from its parent's, and there is none to count from.
+    """
+    from decoy_engine.config import iter_generate_input_refs
+    from decoy_engine.generation.relational._parent_lookup import lookup_parent_values
+    from decoy_engine.transforms.windowed_date import (
+        WindowedDateError,
+        WindowedDateParentAnchorNullError,
+    )
+
+    table, name, via = str(col.get(TABLE_KEY) or ""), str(col["name"]), str(col["anchor_via"])
+    edges = iter_generate_input_refs({"name": table, "generate_columns": siblings}, col)
+    anchor = next((e for e in edges if e.option == "anchor"), None)
+    key = next((s.get("reference_column") for s in siblings if s.get("name") == via), None)
+    # Plan compile refuses an anchor that resolves to no finished table; a caller that skipped
+    # it gets the same fixed text as any other anchor that is not a date.
+    if anchor is None or anchor.source_table not in pools or not isinstance(key, str):
+        raise WindowedDateError(table=table, column=name)
+    looked_up = lookup_parent_values(
+        dict(pools),
+        parent_table=anchor.source_table,
+        key_column=key,
+        value_column=anchor.source_column,
+        foreign_keys=generated[via],
+        child_table=table,
+        child_column=via,
+    )
+    cells = zip(looked_up.values, looked_up.found, strict=True)
+    if any(found and value is None for value, found in cells):
+        raise WindowedDateParentAnchorNullError(table=table, column=name)
+    return looked_up.values
+
+
 def _windowed_date_generate(
     col: dict[str, Any],
     n: int,
     seed: int,
     generated: dict[str, list[Any]],
+    pools: Mapping[str, pa.Table] | None = None,
+    siblings: Sequence[Mapping[str, Any]] = (),
     *,
     reference_date: str | None = None,
 ) -> list[Any]:
@@ -76,7 +125,9 @@ def _windowed_date_generate(
 
     Builds a temporary DataFrame from the already-generated anchor column,
     then applies apply_windowed_date. The anchor column must be declared
-    before this column in generate_columns.
+    before this column in generate_columns. With ``anchor_via`` the anchor is
+    the parent row's column instead (``_parent_anchor_cells``); the window and
+    its per-row seeds are the same.
 
     Methodology: derive()-per-column namespace (HKDF-SHA256 + HMAC-SHA256)
     for per-row seed isolation; pandas Timestamp + Timedelta for date
@@ -100,7 +151,10 @@ def _windowed_date_generate(
     if "distribution" in col:
         cfg_dict["distribution"] = col["distribution"]
     config = WindowedDateConfig.from_dict(cfg_dict)
-    anchor_vals = generated.get(config.anchor, [None] * n)
+    if col.get("anchor_via") is not None:
+        anchor_vals = _parent_anchor_cells(col, generated, pools or {}, siblings)
+    else:
+        anchor_vals = generated.get(config.anchor, [None] * n)
     if reference_date is not None:
         from decoy_engine.generation._pinned_anchor import resolve_anchor_cells
 

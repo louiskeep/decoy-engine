@@ -553,7 +553,7 @@ class TestWindowedDateCodedFailures:
             "2024-13-01",
             "2024-01-01T25:00",
             "2024-01-01 10:61:00",
-            "0000-01-01",
+            "1650-02-30T00:00:00.123456789",
             "",
             "NaT",
             20240101,
@@ -580,8 +580,11 @@ class TestWindowedDateCodedFailures:
             "1699-12-31T23:59:59.999999999",
             "2201-01-01",
             "2201-01-01T00:00:00",
+            "0000-01-01",
             "0001-01-01",
             "9999-12-31",
+            "1650-01-01T00:00:00.123456789",
+            "9999-12-31T23:59:59.999999999",
         ],
     )
     def test_a_string_anchor_outside_the_supported_range_is_out_of_range(self, anchor) -> None:

@@ -2,21 +2,24 @@
 
 Which column a generate option reads is declared once, as `OptionSpec.ref_kind` (with
 `ref_context_key` and `ref_phase`) in `config/_generate_options.py`, and resolved once, by
-`iter_generate_input_refs`. The plan check, numeric typing and the reproducibility report all
-consume the resolved edges. A second option-key table or a consumer that resolves an option
-value by itself would read a same-named column of the wrong table, so this sentry fails on:
+`iter_generate_input_refs` in `config/_generate_relational.py`. The plan check, numeric typing
+and the reproducibility report all consume the resolved edges. A second option-key table or a
+consumer that resolves an option value by itself would read a same-named column of the wrong
+table, so this sentry fails on:
 
-1. a read of a descriptor field outside the registry module;
+1. a read of a descriptor field outside the registry module and the resolver's own functions;
 2. a consumer that stops calling the resolver, or a new caller that is not inventoried;
 3. any of the retired per-consumer tables and resolvers coming back;
 4. a cross-table descriptor turned back into a same-table `column`: the acceptance cells that
-   depend on it are run against that descriptor and must fail.
+   depend on it are run against that descriptor and must fail;
+5. an option name or a column type inside the resolver, or a module-level table of input
+   option names anywhere outside the registry: what an option reads belongs in its descriptor.
 
 The row a child's foreign key points at is found once too, by `lookup_parent_values` in
 `generation/relational/_parent_lookup.py`:
 
-5. no other generation module builds a key-to-row map over a `pools[...]` column;
-6. the lookup's callers are inventoried by exact file and function.
+6. no other generation module builds a key-to-row map over a `pools[...]` column;
+7. the lookup's callers are inventoried by exact file and function.
 
 The meta-tests seed one realistic bypass of each scan and require the scan to see it.
 """
@@ -39,6 +42,42 @@ from decoy_engine.plan import PlanCompileError
 SRC = Path(__file__).resolve().parents[3] / "src" / "decoy_engine"
 REGISTRY_FILE = "config/_generate_options.py"
 RESOLVER = "iter_generate_input_refs"
+RESOLVER_FILE = "config/_generate_relational.py"
+RESOLVER_FUNCTIONS = frozenset({RESOLVER, "_named_columns", "_source_table"})
+# Every string the resolver may hold: the descriptor vocabulary it branches on, the parse-tree
+# node of a column read, and the keys of the one structure it follows, a `reference` column.
+RESOLVER_LITERALS = frozenset(
+    {
+        "column_list",
+        "expression",
+        "column_in_named_table",
+        "inline",
+        "col_ref",
+        "",
+        "name",
+        "type",
+        "reference",
+        "reference_table",
+    }
+)
+INPUT_OPTIONS = frozenset(
+    key
+    for spec in registry.GENERATE_OPTIONS.values()
+    for key, option in spec.keys.items()
+    if option.ref_kind is not None
+)
+READER_IDS = frozenset(
+    f"{type_}.{key}"
+    for type_, spec in registry.GENERATE_OPTIONS.items()
+    for key, option in spec.keys.items()
+    if option.ref_kind is not None
+)
+# Where generate columns are parsed, checked and drawn. The masking side has its own strategy
+# options (`provider_config`), which this registry does not describe.
+GENERATE_SIDE = ("config/", "plan/", "generation/", "generators/")
+# The one table keyed by reader identity outside the registry: the numeric-safety policy. It
+# says whether a resolved read is safe, never which column an option reads.
+SAFETY_POLICY = ("generation/_numeric_typing.py", "READERS")
 DESCRIPTOR_FIELDS = frozenset({"ref_kind", "ref_context_key", "ref_phase"})
 # Every function that asks the resolver for a column's inputs.
 RESOLVER_CALLERS = frozenset(
@@ -111,14 +150,61 @@ def callers_of(sources: dict[str, str], name: str) -> set[tuple[str, str]]:
 
 
 def descriptor_reads(sources: dict[str, str]) -> list[str]:
-    """`file:line` of each read of a descriptor field outside the registry module."""
+    """`file:line` of each read of a descriptor field outside the registry and the resolver."""
     found: list[str] = []
     for rel, text in sources.items():
         if rel == REGISTRY_FILE:
             continue
-        for node in ast.walk(ast.parse(text)):
-            if isinstance(node, ast.Attribute) and node.attr in DESCRIPTOR_FIELDS:
-                found.append(f"{rel}:{node.lineno}")
+        tree = ast.parse(text)
+        owner = _owners(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Attribute) or node.attr not in DESCRIPTOR_FIELDS:
+                continue
+            if rel == RESOLVER_FILE and owner.get(id(node)) in RESOLVER_FUNCTIONS:
+                continue
+            found.append(f"{rel}:{node.lineno}")
+    return found
+
+
+def _strings(node: ast.AST) -> set[str]:
+    return {
+        n.value for n in ast.walk(node) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    }
+
+
+def resolver_literals(source: str) -> set[str]:
+    """Every string constant in the resolver's functions, their docstrings aside."""
+    found: set[str] = set()
+    seen: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.FunctionDef) and node.name in RESOLVER_FUNCTIONS:
+            seen.add(node.name)
+            body = node.body[1:] if ast.get_docstring(node) else node.body
+            for statement in body:
+                found |= _strings(statement)
+    assert seen == RESOLVER_FUNCTIONS, f"resolver functions not found: {RESOLVER_FUNCTIONS - seen}"
+    return found
+
+
+def input_name_tables(sources: dict[str, str]) -> list[str]:
+    """`file:line name` of each module-level value outside the registry that lists two or more
+    input option names or reader identities: an option-name table by any shape."""
+    found: list[str] = []
+    for rel, text in sources.items():
+        if rel == REGISTRY_FILE or not rel.startswith(GENERATE_SIDE):
+            continue
+        for node in ast.parse(text).body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                target, value = node.targets[0], node.value
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                target, value = node.target, node.value
+            else:
+                continue
+            name = target.id if isinstance(target, ast.Name) else ""
+            if (rel, name) == SAFETY_POLICY:
+                continue
+            if len(_strings(value) & (INPUT_OPTIONS | READER_IDS)) >= 2:
+                found.append(f"{rel}:{node.lineno} {name}")
     return found
 
 
@@ -154,12 +240,46 @@ def test_the_resolver_is_defined_once_and_called_by_the_inventoried_consumers() 
         for node in ast.walk(ast.parse(text))
         if isinstance(node, ast.FunctionDef) and node.name == RESOLVER
     ]
-    assert defined == [REGISTRY_FILE]
+    assert defined == [RESOLVER_FILE]
     assert callers_of(SOURCES, RESOLVER) == RESOLVER_CALLERS
 
 
 def test_the_retired_tables_and_resolvers_are_gone() -> None:
     assert retired_names(SOURCES) == []
+
+
+def test_the_resolver_holds_no_option_name_and_no_column_type_list() -> None:
+    literals = resolver_literals(SOURCES[RESOLVER_FILE])
+    assert literals == RESOLVER_LITERALS
+    # `expression` is here as the descriptor kind of that name, the only overlap.
+    kinds = {"column", "column_list", "expression", "column_via_reference", "column_in_named_table"}
+    assert not (literals - kinds) & INPUT_OPTIONS, "an option name belongs in its descriptor"
+    # `reference` is the column a `column_via_reference` descriptor goes through, nothing else.
+    assert literals & set(registry.GENERATE_OPTIONS) == {"reference"}
+
+
+def test_no_module_outside_the_registry_lists_input_option_names() -> None:
+    assert input_name_tables(SOURCES) == []
+
+
+def test_meta_an_option_name_in_the_resolver_or_a_table_beside_it_is_seen() -> None:
+    real = SOURCES[RESOLVER_FILE]
+    branch = real.replace(
+        "        if option.ref_kind is None:\n            continue\n",
+        "        if option.ref_kind is None and key != 'anchor':\n            continue\n",
+    )
+    assert branch != real
+    assert resolver_literals(branch) - RESOLVER_LITERALS == {"anchor"}
+    for table in (
+        "INPUTS = {'windowed_date': ('anchor', 'anchor_via'), 'group_key': ('group_by',)}\n",
+        "KEYS: tuple[str, ...] = ('group_by', 'order_by')\n",
+        "REFS = frozenset({'grouped_series.order_by', 'derived.expression'})\n",
+        "READERS = {'windowed_date.anchor': 'p', 'formula.references': 't'}\n",
+    ):
+        sources = {**SOURCES, RESOLVER_FILE: real + "\n" + table}
+        assert len(input_name_tables(sources)) == 1, table
+    one_name = {**SOURCES, "generation/_rogue.py": "ANCHOR_KEY = 'anchor'\n"}
+    assert input_name_tables(one_name) == []
 
 
 def test_meta_a_second_resolver_or_table_is_seen() -> None:

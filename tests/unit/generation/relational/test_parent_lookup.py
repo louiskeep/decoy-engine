@@ -14,13 +14,13 @@ from typing import Any
 
 import pyarrow as pa
 import pytest
+
+from decoy_engine import reasons
+from decoy_engine.generation.pool import GenerationError
 from decoy_engine.generation.relational._parent_lookup import (
     ParentLookupResult,
     lookup_parent_values,
 )
-
-from decoy_engine import reasons
-from decoy_engine.generation.pool import GenerationError
 from tests.unit.generation.relational._support import is_safe
 
 SENTINEL = "SENTINELKEY"
@@ -121,8 +121,8 @@ def test_a_missing_key_is_refused_even_when_every_value_is_null() -> None:
     assert exc.code == reasons.runtime.PARENT_LOOKUP_KEY_MISSING
 
 
-def test_a_null_parent_key_is_never_a_match() -> None:
-    pools = _pools([1, None], ["a", "b"])
+def test_a_null_parent_key_is_never_a_match_and_never_a_duplicate() -> None:
+    pools = _pools([1, None, None], ["a", "b", "c"])
     assert _lookup(pools, [1, None]).values == ["a", None]
     assert _refusal(pools, [2]).code == reasons.runtime.PARENT_LOOKUP_KEY_MISSING
 

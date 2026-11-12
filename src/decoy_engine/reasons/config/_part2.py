@@ -14,6 +14,8 @@ __all__ = [
     "GENERATE_OPTION_UNKNOWN",
     "GENERATE_OPTION_VALUE_UNKNOWN",
     "GENERATE_OUTPUT_TYPE_UNSUPPORTED",
+    "GENERATE_PARENT_LOOKUP_KEY_NOT_UNIQUE",
+    "GENERATE_PARENT_LOOKUP_SELF_REFERENCE",
     "GENERATE_PER_PARENT_BOUNDS_CONFLICT",
     "GENERATE_PER_PARENT_INFEASIBLE",
     "GENERATE_PER_PARENT_NULL_CONFLICT",
@@ -75,6 +77,17 @@ GENERATE_OUTPUT_TYPE_UNSUPPORTED = _d(
     "generate_output_type_unsupported",
     "Generate column type or target cannot carry the requested output type.",
     since="1.23.0",
+)
+GENERATE_PARENT_LOOKUP_KEY_NOT_UNIQUE = _d(
+    "generate_parent_lookup_key_not_unique",
+    "Generate column reads a parent row through a column that is not a reference to a sequence "
+    "key with no null_probability.",
+    since=UNRELEASED,
+)
+GENERATE_PARENT_LOOKUP_SELF_REFERENCE = _d(
+    "generate_parent_lookup_self_reference",
+    "Generate column reads a parent row through a reference to its own table.",
+    since=UNRELEASED,
 )
 GENERATE_PER_PARENT_BOUNDS_CONFLICT = _d(
     "generate_per_parent_bounds_conflict",

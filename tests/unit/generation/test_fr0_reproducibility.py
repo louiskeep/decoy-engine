@@ -314,7 +314,8 @@ def test_the_report_takes_its_inputs_from_the_one_resolver(
         seen.append((table["name"], column["name"]))
         return real(table, column)
 
+    prepared = prepared_config(_anchored())
     monkeypatch.setattr(config_api, "iter_generate_input_refs", spy)
-    _excl(_anchored())
+    rep.reproducibility_exclusions(prepared)
     assert len(seen) == len(set(seen)) == 6
     assert not hasattr(rep, "_SIBLING_KEYS") and not hasattr(rep, "_sibling_inputs")

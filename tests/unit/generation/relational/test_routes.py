@@ -770,6 +770,8 @@ def test_at11_a_windowed_read_does_not_serve_the_anchored_table() -> None:
 
     verdict = classify_window_table(_prepared(anchored()), "kids", statistical_specs={})
     assert not verdict.is_class_a
+    # The lookup column is a `reference`, which no windowed read serves, whatever the anchor is.
+    assert ("pid", "family_class_b:reference") in verdict.class_b_reasons
 
 
 def test_at10_pinned_compile_refuses_an_anchored_date() -> None:
@@ -968,11 +970,21 @@ def test_at14_date_codes_are_registered_unreleased_in_the_right_catalog(
 
 def test_at14_a_windowed_date_error_is_a_classified_family() -> None:
     from decoy_engine.reason_adapter import reason_from_exception, registered_families
+    from decoy_engine.transforms import windowed_date as wd
 
     assert WindowedDateError in registered_families()
-    error = WindowedDateError(reasons.runtime.WINDOWED_DATE_OFFSET_OUT_OF_RANGE)
-    record = reason_from_exception(error, phase=reasons.Phase.GENERATE)
-    assert (record.namespace, record.code) == ("runtime", "windowed_date_offset_out_of_range")
+    by_code = {
+        "windowed_date_anchor_invalid": WindowedDateError,
+        "windowed_date_anchor_out_of_range": wd.WindowedDateAnchorRangeError,
+        "windowed_date_offset_out_of_range": wd.WindowedDateOffsetRangeError,
+        "windowed_date_parent_anchor_null": wd.WindowedDateParentAnchorNullError,
+    }
+    for code, error_class in by_code.items():
+        error = error_class()
+        assert isinstance(error, WindowedDateError) and isinstance(error, ValueError)
+        assert error.code == code and error_class.__dict__["code"].namespace == "runtime"
+        record = reason_from_exception(error, phase=reasons.Phase.GENERATE)
+        assert (record.namespace, record.code) == ("runtime", code)
 
 
 def test_at14_the_twin_lookup_codes_differ_by_namespace() -> None:

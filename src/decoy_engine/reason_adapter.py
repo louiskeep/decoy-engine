@@ -61,6 +61,7 @@ _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.generation.pool._errors", "PoolCapacityError", "runtime"),
     ("decoy_engine.execution._transforms", "TransformError", "runtime"),
     ("decoy_engine.determinism._derive", "DeterminismError", "runtime"),
+    ("decoy_engine.transforms.windowed_date", "WindowedDateError", "runtime"),
     ("decoy_engine.errors", "FpeUnencryptableError", "runtime"),
     ("decoy_engine.errors", "FpeChecksumError", "runtime"),
     ("decoy_engine.errors", "MaskKeyDerivationError", "runtime"),

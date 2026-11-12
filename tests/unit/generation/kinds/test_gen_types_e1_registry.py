@@ -20,7 +20,7 @@ from decoy_engine.config._tables import GENERATE_TYPES
 from decoy_engine.execution.native import _determinism_protocol as protocol
 from decoy_engine.execution.native._capabilities import _GEN_ONLY
 from decoy_engine.generation._admission import ADMISSION_MATRIX
-from decoy_engine.generation._numeric_typing import READER_KEYS
+from decoy_engine.generation._numeric_typing import numeric_plan
 from decoy_engine.generation._pinned_compile import PINNABLE_TYPES, REJECTED_TYPES
 from tests.unit.generation.kinds._support import (
     DEFERRED_FAMILIES,
@@ -61,7 +61,14 @@ def test_every_registry_names_the_new_types(kind: str) -> None:
     assert kind in catalog.generate_option_catalog()
     assert kind in ADMISSION_MATRIX
     assert kind in PINNABLE_TYPES or kind in REJECTED_TYPES
-    assert kind in READER_KEYS
+    # A type the input registry did not know would keep every numeric column of its table text.
+    counter = {"name": "n", "type": "sequence", "start": 1}
+    table = {
+        "name": "t",
+        "row_count": 2,
+        "generate_columns": [counter, {"name": "c", "type": kind}],
+    }
+    assert ("t", "n") in numeric_plan({"tables": [table]})
     assert kind in protocol.GEN_KIND_TO_SITE
     assert kind in _GEN_ONLY
 
