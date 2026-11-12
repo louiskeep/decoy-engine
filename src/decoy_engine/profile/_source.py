@@ -30,9 +30,10 @@ from __future__ import annotations
 
 import random
 import warnings
-from dataclasses import replace
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from decoy_engine._lexeme import profile_descriptors
 from decoy_engine.fileaccess import FileAccess, entry_point
@@ -43,11 +44,38 @@ from decoy_engine.profile._declared_columns import (
 )
 from decoy_engine.profile._readers import (
     BOUNDED_FALLBACK_ROWS,
+    LazySource,
     ProfileSource,
+    RowCount,
     build_declared_source,
+    head_frame_from_batches,
 )
 from decoy_engine.profile._types import Profile, Relationship, TableProfile
 from decoy_engine.profile._walk import walk_dataframe
+
+if TYPE_CHECKING:
+    import pandas as pd
+    import pyarrow as pa
+
+
+@dataclass(frozen=True)
+class _SuppliedLazy:
+    """`ProfileSource` over a supplied file handle that no descriptor describes."""
+
+    lazy: LazySource
+
+    def row_count(self) -> RowCount:
+        return RowCount(self.lazy.num_rows, exact=True)
+
+    def schema(self) -> pa.Schema:
+        return self.lazy.schema
+
+    def sample_frame(self, sample_rows: int) -> pd.DataFrame:
+        batches = self.lazy.iter_batches(sample_rows)
+        return head_frame_from_batches(batches, sample_rows, self.lazy.schema)
+
+    def to_frame(self) -> pd.DataFrame:
+        return self.lazy.to_table().to_pandas()
 
 
 @entry_point
@@ -59,6 +87,7 @@ def profile_source(
     residency: str = "bounded",
     file_access: FileAccess | None = None,
     declared: PreparedDeclaredSources | None = None,
+    supplied_sources: Mapping[str, pa.Table | LazySource] | None = None,
 ) -> Profile:
     """Profile every source declared in `config["sources"]`.
 
@@ -84,6 +113,9 @@ def profile_source(
               need whole-column distincts on a source small enough to hold.
         declared: the capability a caller prepared for this same `config`, so the headers and
             footers are not read twice. A capability for another config raises `ValueError`.
+        supplied_sources: tables the caller hands the run. One with no descriptor is profiled
+            from the supplied table, so `Profile.tables` covers every table the run will mask;
+            a same-name descriptor keeps profiling its own file.
 
     Returns:
         A frozen `Profile` covering every table declared in
@@ -145,19 +177,29 @@ def profile_source(
 
     # F06: declared columns are read as exact lexemes (no NA conversion, no inference).
     sources = profile_descriptors(config)
+    supplied = dict(supplied_sources or {})
     tables: list[TableProfile] = []
-    for table_name, source_descriptor in sources.items():
-        reader = build_declared_source(table_name, source_descriptor)
-        table = _profile_one_source(
-            reader,
-            table_name=table_name,
-            declared_pk_cols=pk_cols_per_table.get(table_name, frozenset()),
-            fk_specs=fk_specs_per_table.get(table_name, {}),
-            sample_rows=sample_rows,
-            residency=residency,
-            rng=rng,
+    for table_name in (*sources, *(n for n in supplied if n not in sources)):
+        # A descriptor stays the profile's source for its table (a resident table may be a
+        # pre-filtered view of that file, and routing cross-checks the two); a table with no
+        # descriptor has nothing else to be profiled from.
+        given = None if table_name in sources else supplied.get(table_name)
+        walk: dict[str, Any] = {
+            "table_name": table_name,
+            "declared_pk_cols": pk_cols_per_table.get(table_name, frozenset()),
+            "fk_specs": fk_specs_per_table.get(table_name, {}),
+            "sample_rows": sample_rows,
+            "rng": rng,
+        }
+        if given is not None and not isinstance(given, LazySource):
+            tables.append(walk_dataframe(given.to_pandas(), **walk))
+            continue
+        reader = (
+            build_declared_source(table_name, sources[table_name])
+            if given is None
+            else _SuppliedLazy(given)
         )
-        tables.append(table)
+        tables.append(_profile_one_source(reader, residency=residency, **walk))
 
     return Profile(
         schema_version=1,

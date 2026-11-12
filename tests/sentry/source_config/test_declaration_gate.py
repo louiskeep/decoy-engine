@@ -26,6 +26,9 @@ from pathlib import Path
 
 SRC = Path(__file__).parents[3] / "src" / "decoy_engine"
 GATE = "prepare_declared_sources"
+# Execution routes call the choke point in `execution/_guards.py`, which adds the created-column
+# policy and then calls the profile boundary; both names count as the gate.
+GATES = frozenset({GATE, "prepare_declared_execution_sources"})
 
 # (file, function) -> calls that must come after the gate in that function body.
 ROUTES: dict[tuple[str, str], frozenset[str]] = {
@@ -121,7 +124,7 @@ def _calls(node: ast.AST) -> list[tuple[str, int]]:
 def violations(func: ast.FunctionDef, guarded: frozenset[str]) -> list[str]:
     """Guarded calls that are not preceded by the gate, or all of them when there is no gate."""
     calls = _calls(func)
-    gate_lines = [line for name, line in calls if name == GATE]
+    gate_lines = [line for name, line in calls if name in GATES]
     first = min(gate_lines) if gate_lines else None
     return [
         f"{name}@{line}"
@@ -139,7 +142,7 @@ def _parse(rel: str) -> ast.Module:
 
 
 def _contains_gate(stmt: ast.stmt) -> bool:
-    return any(name == GATE for name, _ in _calls(stmt))
+    return any(name in GATES for name, _ in _calls(stmt))
 
 
 def _reparse(tree: ast.Module) -> ast.Module:
@@ -150,7 +153,7 @@ def test_the_gate_precedes_every_reader_on_each_route() -> None:
     for (rel, func_name), guarded in ROUTES.items():
         tree = _parse(rel)
         assert _route_violations(tree, func_name, guarded) == [], (rel, func_name)
-        assert any(name == GATE for name, _ in _calls(_function(tree, func_name))), (
+        assert any(name in GATES for name, _ in _calls(_function(tree, func_name))), (
             f"{func_name} has no {GATE} call"
         )
 
@@ -265,4 +268,17 @@ def test_no_route_passes_declared_none() -> None:
                         and kw.value.value is None
                     ):
                         offenders.append(f"{path.relative_to(SRC).as_posix()}:{node.lineno}")
+    assert offenders == []
+
+
+def test_execution_builds_the_capability_only_through_the_choke_point() -> None:
+    """The created-column policy rides on `prepare_declared_execution_sources`; a route that
+    calls the profile boundary directly would skip it."""
+    offenders = [
+        path.relative_to(SRC).as_posix()
+        for path in sorted((SRC / "execution").rglob("*.py"))
+        if path.name != "_guards.py"
+        for call in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(call, ast.Call) and _call_name(call) == GATE
+    ]
     assert offenders == []

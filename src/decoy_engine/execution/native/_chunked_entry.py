@@ -39,7 +39,10 @@ from decoy_engine.execution import _chunked_text_mask as text_mask_gate
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._chunked import _chain_first
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._guards import run_chunk_ingest_guards
+from decoy_engine.execution._guards import (
+    prepare_declared_execution_sources,
+    run_chunk_ingest_guards,
+)
 from decoy_engine.execution._output_projection import (
     enforce_output_projection,
     known_output_columns,
@@ -90,7 +93,6 @@ from decoy_engine.instrumentation.timing import StrategyTimingRecord
 from decoy_engine.profile import (
     DeclarationRequest,
     PreparedDeclaredSources,
-    prepare_declared_sources,
 )
 from decoy_engine.progress import get_active_channel
 
@@ -652,7 +654,7 @@ def run_mask_chunked(
     refuse_unapplied_subset(config)
     _validate_native_threads(native_threads)
     # Config-level check before `chunks` is touched; the first chunk is checked in preflight.
-    declared = prepare_declared_sources(
+    declared = prepare_declared_execution_sources(
         DeclarationRequest.for_chunks(config, table, None), file_access=file_access
     )
     # Progress: account every yielded chunk on the active channel (bound by the
