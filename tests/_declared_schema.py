@@ -54,6 +54,8 @@ def declare_rest(
     ]
     tables = config.setdefault("tables", [])
     for finding in declaration_findings(config, inputs):
+        if finding.kind not in ("table", "column"):
+            continue
         entries = [
             {"name": n, "strategy": "passthrough"} for n in dict.fromkeys(finding.undeclared)
         ]
