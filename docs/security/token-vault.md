@@ -23,7 +23,7 @@ The key derives from the keyed-mask IKM (`mask_key`): `derive(mask_key,
 "vault", b"vault-key/v1")` (`src/decoy_engine/vault.py`, `_fernet`). Under
 a configured secret, `mask_key` is the 32-byte `SecretKeyProvider` HKDF
 mask root. There is no no-secret fallback: every key that writes, opens or
-is matched against a vault must be at least `MIN_SECRET_BYTES` (32) bytes,
+is matched against a vault must be exactly that 32-byte mask root,
 checked when a `VaultWriter` is built and again at every write, load and
 key-match (`weak_mask_secret` otherwise, before any file is created, changed
 or read), and `vault_writer_for_config` raises `keyed_strategy_requires_secret`
@@ -116,7 +116,7 @@ attribute is machine-readable.
 | `vault_format_unsupported` | The `format` field in the header names a version this engine does not consume. |
 | `vault_protocol_version_mismatch` | The header's `seed_protocol_version` differs from the running `SEED_PROTOCOL_VERSION`. Cross-version unmask is not supported; re-mask under the correct engine version. |
 | `vault_key_mismatch` | A Fernet chunk could not be decrypted. The vault was written under a different `mask_key` (a different mask secret, or an older engine's `job_seed`). |
-| `weak_mask_secret` | The key handed to `VaultWriter`, `load_vault` or the run-entry key-match guard is not bytes of at least 32 bytes (for example the 8-byte `job_seed`). Raised before any file is created, changed or read. |
+| `weak_mask_secret` | The key handed to `VaultWriter`, `load_vault` or the run-entry key-match guard is not 32 bytes, as bytes (for example the 8-byte `job_seed`, or a longer key the key derivation cannot take). Raised before any file is created, changed or read. |
 
 Note: `vault_protocol_version_mismatch` is checked before any decryption
 attempt. A cross-version vault also fails decryption (the protocol version
