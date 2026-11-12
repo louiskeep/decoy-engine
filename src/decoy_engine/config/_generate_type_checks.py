@@ -119,6 +119,7 @@ _ALL = ("int", "decimal", "date", "bool")
 _NUMBER = ("int", "decimal")
 OUTPUT_TYPE_KINDS: Mapping[str, tuple[str, ...]] = {
     "constant": _ALL,
+    "lookup": _ALL,
     "categorical": _ALL,
     "derived": _ALL,
     "formula": _ALL,

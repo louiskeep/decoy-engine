@@ -52,6 +52,7 @@ ADMISSION_MATRIX: dict[str, tuple[bool, str]] = {
         True,
         "one persistent numpy Generator from the dist family; n draws equal batched draws",
     ),
+    "lookup": (False, "file-backed lookup; resident only in this row"),
     "formula": (False, "whole-column pandas coercion"),
     "statistical": (False, "whole-column fit/condition_on, pinned-snapshot sampler"),
     "derived": (False, "reads sibling columns row by row; no sibling-input seam yet"),
