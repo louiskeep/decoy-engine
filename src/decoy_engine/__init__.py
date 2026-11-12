@@ -329,14 +329,10 @@ from decoy_engine.validation.post import (
     PostValidationRunner,
     QualitySummary,
 )
-from decoy_engine.validation_result import (
-    CODES as VALIDATION_CODES,
-)
-from decoy_engine.validation_result import (
-    ValidationMessage,
-    ValidationResult,
-)
+from decoy_engine.validation_result import CODES as VALIDATION_CODES
+from decoy_engine.validation_result import ValidationMessage, ValidationResult
 from decoy_engine.vault import VaultError, VaultWriter, load_vault, vault_writer_for_config
+from decoy_engine.verification.postmask._model_findings import PostScanBlockedError
 from decoy_engine.verification.postmask._route_guard import PostScanRouteError
 
 # F9: names trimmed from __all__ but kept as module bindings so attribute access
@@ -459,6 +455,7 @@ __all__ = [
     "PoolBuilder",
     "PoolCapacityError",
     "PoolSampler",
+    "PostScanBlockedError",
     "PostScanRouteError",
     "PostValidationRunner",
     "PreScanConfig",

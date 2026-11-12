@@ -177,3 +177,19 @@ def log_detector_run(
         from decoy_engine.context import emit_step
 
         emit_step(ctx.logger, name, status="finish")
+
+
+def log_detector_models(phase: str, table: str, position: int, counts: Mapping[str, int]) -> None:
+    """One INFO record per checked table: `<phase>.models table=<name> <count>=N ...`.
+
+    A table name that is not a plain identifier is logged by its 1-based position (`#3`), so a
+    line keeps one token per field.
+    """
+    if phase not in _PHASES:
+        raise ValueError("phase must be pre_scan or post_scan")
+    fields = [f"table={table if _SAFE_VALUE.fullmatch(table) else f'#{position}'}"]
+    for key, value in counts.items():
+        if not isinstance(value, int) or not _SAFE_VALUE.fullmatch(key):
+            raise ValueError("detector counts must be identifiers and integers")
+        fields.append(f"{key}={value}")
+    _log.info("%s.models %s", phase, " ".join(fields))

@@ -166,6 +166,15 @@ the guard cannot recognise (a person name, an address) is the stated limit. The 
 cell value. The optional per-table `detail` member of `scan_set_to_dict(detail=True)` is
 the nested `ColumnProfile` dict; it is additive-only within `/v1` and is not part of the core.
 
+`post-scan-integrity/v2` (the dict `run_post_mask` returns and `run_pipeline` stamps under
+`quality_metrics["post_scan_integrity"]`) gained additive keys in SCAN-ML M4 (2026-11), so the tag
+stays `/v2`. Each `residual_pii` finding gains `source` (`regex`, `classifier` or `ner`), `model`
+(`{id, version}` of the model that ran, or `null`), `band` (the classifier's `high` or `review`),
+`dismissed` and `promoted`; `match_rate` is `null` for a classifier finding, so a reader that
+assumes a number needs a `null` case. The report gains `detectors` (the runs), `tables_checked`
+(every output table the residual-PII check read, clean tables included) and `config_sha256`
+(`null` unless the caller sets it). A regex-only report keeps every earlier key and value.
+
 **Rules:**
 
 - **Never mutate the shape under an existing tag.** If you change what
@@ -678,6 +687,18 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   `SequentialAdapter.run` and `OutOfCoreAdapter.run`); a caller that passed none must now pass
   it. `run_pipeline` is unchanged: its resident auto-chunk lane calls guard-free cores and runs the
   post-scan itself.
+  SCAN-ML M4 (2026-11) adds `PostScanBlockedError` and model findings in the post-scan.
+  `run_post_mask` takes a keyword `detectors` (a `DetectorSet`); `None`, the default and the
+  platform hook's call, runs the regex detectors as before. `run_pipeline` with
+  `post_scan.integrity` true loads its `post_scan.detectors` strictly at run start, so a model that
+  cannot run refuses the run with `ModelUnavailableError` before any row is masked, and runs each
+  model over every output table after the regex pass. Under `post_scan.ner_findings: fail` an NER
+  finding at `fail`, or an NER pass that raised, makes `run_pipeline` raise `PostScanBlockedError`
+  (`post_scan.ner_blocked`, registry 1.26.0) before it returns: `str(error)` and `message` are the
+  fixed registry summary, `report` is the value-free report, and the exception chain is empty. A
+  `post_scan.dismissed` entry now lowers the `warning` it names to `info`. `classify_frame` gains a
+  keyword `subsample` (default `False`, so `classify_fields` is unchanged): `True` classifies a
+  seeded subsample of at most 60 non-null values per column.
 - **CLI:** verb names, flag names, and the exit-code contract (0 ok, 1
   validation/usage, 2 deprecated-shim, 3 runtime).
 - **Config:** the `pipeline.yaml` schema. An old config must keep validating and

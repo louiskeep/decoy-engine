@@ -306,7 +306,7 @@ def _run_full_frame(
             post_validation_enforce=ctx.post_validation_enforce,
         )
         _pipeline_finalize.compute_post_scan_integrity(
-            result, config=ctx.config, sources=step.sources
+            result, config=ctx.config, sources=step.sources, detectors=ctx.post_scan_detectors
         )
         if cast_run is not None:
             # Seal only once nothing failure-capable remains but the publish itself; a failure

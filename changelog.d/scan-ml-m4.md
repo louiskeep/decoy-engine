@@ -1,0 +1,16 @@
+### Added (model findings in the post-scan, SCAN-ML M4, 2026-11-12)
+
+The post-scan runs the classifier and spaCy NER detectors a pipeline names in
+`post_scan.detectors`, after the regex detectors, over every output table. `run_post_mask` takes a
+keyword `detectors`; without it the post-scan runs the regex detectors only, as before.
+`run_pipeline` loads the requested models strictly at run start, so a model that cannot run
+refuses the run before any row is masked. A model finding names its `source`, the `model` that
+ran and a rate (NER) or a band (classifier), never a value; its severity comes from one table by
+the column's configured strategy, and classifier findings are never above `warning`. NER scores
+free-text columns only. Each model pass runs in its own `try`: a pass that raises adds one `error`
+finding and keeps the regex findings. `post_scan.dismissed` entries lower the exact `warning` they
+name to `info`; a stale one is counted in the `post_scan.models` log line. Under
+`post_scan.ner_findings: fail` an NER warning becomes `fail` (`promoted`), and an NER `fail` or
+`error` makes `run_pipeline` raise the new public `PostScanBlockedError` (reason
+`post_scan.ner_blocked`, `since` 1.26.0) before it returns, so no output is published. The report
+gains `detectors`, `tables_checked` and `config_sha256`; the tag stays `post-scan-integrity/v2`.

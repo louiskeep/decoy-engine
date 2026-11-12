@@ -163,6 +163,8 @@ class PipelineRunContext:
     # F06: the resolved protected-quarantine runtime (sink + owner); None unless supplied.
     quarantine_runtime: Any = None
     out_of_core_threads: int | None = None
+    # The post-scan detector set `run_pipeline` loaded strictly at run start (a `DetectorSet`).
+    post_scan_detectors: Any = None
 
 
 @dataclass(frozen=True)

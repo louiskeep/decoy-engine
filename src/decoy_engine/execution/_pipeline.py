@@ -69,6 +69,7 @@ docstring describes.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -283,6 +284,10 @@ def run_pipeline(
     `None` (every real caller) resolves against the live registry.
     """
     refuse_unapplied_subset(config)  # `subset:` is refused first, before any source is read
+    from decoy_engine.verification.postmask._model_findings import post_scan_detectors
+
+    # A post-scan model that cannot run refuses here, before any row is masked.
+    detectors = post_scan_detectors(config, file_access=file_access)
     stream_required = execution_mode == "stream"
     execution_mode = "auto" if stream_required else execution_mode
     require_optional_nonempty_str("quarantine_path", quarantine_path)
@@ -347,6 +352,7 @@ def run_pipeline(
                 base_dir=base_dir,
             )
         ctx = _ctx.with_quarantine_path(ctx, quarantine_path, base_dir)
+        ctx = dataclasses.replace(ctx, post_scan_detectors=detectors)
         with collect_refusals() as refusals:
             decision = _ctx.decide_route(ctx)
             _emit_route(_progress, decision)
