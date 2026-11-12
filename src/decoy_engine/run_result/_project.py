@@ -21,6 +21,7 @@ from decoy_engine.run_result._model import (
     DeliveryOutcome,
     RowsSource,
     TableDelivery,
+    TableKind,
     TableOutcome,
     TableResult,
     VaultState,
@@ -34,7 +35,7 @@ class _Attributed(Protocol):
 
 class ExecutionFacts(Protocol):
     """The part of ``execution.ExecutionResult`` the projection reads. A protocol, because
-    ``run_result`` sits above ``execution`` in the layer contract and may not import it."""
+    ``run_result`` sits below ``execution`` in the layer contract and may not import it."""
 
     @property
     def outputs(self) -> Mapping[str, Any]: ...
@@ -61,6 +62,14 @@ class CollectedFacts:
     aggregate_error: bool = False
     phases: tuple[tuple[str, float], ...] = ()
 
+    def __post_init__(self) -> None:
+        # A snapshot: later events must not change what the builder already holds.
+        for name in ("finished", "rate_rows", "elapsed"):
+            object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
+        object.__setattr__(self, "started", frozenset(self.started))
+        object.__setattr__(self, "errored", frozenset(self.errored))
+        object.__setattr__(self, "phases", tuple(self.phases))
+
 
 @dataclass(frozen=True)
 class DeliveryFacts:
@@ -72,6 +81,8 @@ class DeliveryFacts:
 
     def __post_init__(self) -> None:
         # One entry type: a second delivery vocabulary would drift from the document's.
+        if not isinstance(self.tables, Mapping):
+            raise TypeError("delivery tables must be a mapping")
         if not all(isinstance(entry, TableDelivery) for entry in self.tables.values()):
             raise TypeError("delivery entries must be run_result.TableDelivery")
         object.__setattr__(self, "tables", MappingProxyType(dict(self.tables)))
@@ -116,6 +127,14 @@ def _outcome(
     return "not_run"
 
 
+def _kind(kind: str) -> TableKind:
+    if kind == "mask":
+        return "mask"
+    if kind == "generate":
+        return "generate"
+    raise ValueError("unknown table kind")
+
+
 def _delivery_outcome(entries: Mapping[str, TableDelivery]) -> DeliveryOutcome:
     if not entries:
         return "not_applicable"
@@ -128,12 +147,15 @@ def _delivery_outcome(entries: Mapping[str, TableDelivery]) -> DeliveryOutcome:
 def project_tables(
     *,
     config: Mapping[str, Any],
-    execution_result: ExecutionFacts | None = None,
-    facts: CollectedFacts | None = None,
-    delivery: DeliveryFacts | None = None,
-    run_failed: bool = False,
+    execution_result: ExecutionFacts | None,
+    facts: CollectedFacts | None,
+    delivery: DeliveryFacts | None,
+    run_failed: bool,
 ) -> ProjectedTables:
     """One entry per declared table, in config order.
+
+    ``run_failed`` is true when the run ended in failure or cancellation; it decides whether a
+    table that started and never finished counts as failed. It has no default on purpose.
 
     ``rows_out`` takes the first of: ``execution_result.outputs``, the phase finish rows, the
     final rate sample, else null; ``rows_source`` names which. A delivery fact of ``failed``
@@ -142,8 +164,12 @@ def project_tables(
     facts = facts or CollectedFacts()
     delivery = delivery or DeliveryFacts.not_applicable()
     row_errors = execution_result.row_errors if execution_result is not None else None
+    kinds = classify_table_kinds(dict(config))
+    if not delivery.tables.keys() <= kinds.keys():
+        # A mis-keyed adapter would otherwise split the tables from the summary.
+        raise ValueError("delivery names a table the config does not declare")
     rows: list[TableResult] = []
-    for index, (name, kind) in enumerate(classify_table_kinds(dict(config)).items()):
+    for index, (name, kind) in enumerate(kinds.items()):
         rows_out, source = _rows(name, execution_result, facts)
         entry = delivery.tables.get(name, _NO_DELIVERY)
         failed_delivery = entry.state == "failed"
@@ -151,7 +177,7 @@ def project_tables(
             TableResult(
                 index=index,
                 name=approve_name(name),
-                kind="generate" if kind == "generate" else "mask",
+                kind=_kind(kind),
                 outcome="failed"
                 if failed_delivery
                 else _outcome(name, execution_result, facts, run_failed),

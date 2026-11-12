@@ -2,8 +2,8 @@
 
 Public names are re-exported from ``decoy_engine``. The value-free leaf types (``Token``,
 ``SafeName`` and the rest) are exported here for the sibling ``records`` package, which shares
-them; they are not part of the top-level API. The per-table projection lives in ``_project.py``; the builder and collector arrive in later
-slices of the same package.
+them; they are not part of the top-level API. The per-table projection lives in
+``_project.py``; the builder and collector arrive in later slices of the same package.
 """
 
 from decoy_engine.run_result._model import (
