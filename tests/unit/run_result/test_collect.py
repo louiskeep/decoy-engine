@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -17,19 +18,25 @@ from decoy_engine.run_result import CollectedFacts, RunResultCollector, project_
 _VERSION = "collect-test"
 
 
-def _job(tmp_path: Path, names: tuple[str, ...], rows: int = 3, generate: str | None = None):
+def _job(
+    tmp_path: Path,
+    names: tuple[str, ...],
+    rows: int = 3,
+    generate: str | None = None,
+    fk: bool = False,
+):
     sources: dict[str, Any] = {}
     in_memory: dict[str, pa.Table] = {}
     tables: list[dict] = []
     targets: dict[str, dict] = {}
     for name in names:
-        df = pd.DataFrame({"email": [f"{name}-{i}@x.com" for i in range(rows)]})
+        df = pd.DataFrame({"id": [f"{name}-{i}" for i in range(rows)]})
         path = tmp_path / f"{name}.csv"
         df.to_csv(path, index=False)
         sources[name] = {"type": "file", "format": "csv", "has_header": True, "path": str(path)}
         in_memory[name] = pa.Table.from_pandas(df, preserve_index=False)
         tables.append(
-            {"name": name, "columns": [{"name": "email", "strategy": "hash", "namespace": "e"}]}
+            {"name": name, "columns": [{"name": "id", "strategy": "hash", "namespace": "k"}]}
         )
         targets[name] = {"type": "file", "format": "csv", "path": str(tmp_path / f"{name}_o.csv")}
     if generate:
@@ -45,9 +52,20 @@ def _job(tmp_path: Path, names: tuple[str, ...], rows: int = 3, generate: str | 
             "format": "csv",
             "path": str(tmp_path / f"{generate}_o.csv"),
         }
+    # Sequential and out-of-core routes only accept a job that has relationships: chain the tables.
+    relationships = [
+        {
+            "parent": {"table": parent, "columns": ["id"]},
+            "children": [{"table": child, "columns": ["id"]}],
+            "orphan_policy": "preserve",
+            "namespace": "k",
+        }
+        for parent, child in pairwise(names)
+    ]
     cfg = PipelineConfig.model_validate(
         {
             "version": 2,
+            **({"relationships": relationships} if fk else {}),
             "global_settings": {"seed": 42},
             "sources": sources,
             "tables": tables,
@@ -80,7 +98,7 @@ def _phase(name: str, status: str, table: str | None = None, **kw: Any) -> Phase
     ],
 )
 def test_whole_table_routes_count_rows(tmp_path: Path, route: str, kwargs: dict, source: str):
-    cfg, sources = _job(tmp_path, ("t1", "t2"), generate="g1")
+    cfg, sources = _job(tmp_path, ("t1", "t2"), fk=True)
     collector = RunResultCollector()
     result = run_pipeline(
         cfg, sources=sources, engine_version=_VERSION, progress=collector, **kwargs
@@ -90,8 +108,14 @@ def test_whole_table_routes_count_rows(tmp_path: Path, route: str, kwargs: dict,
         assert tables[name].rows_out == result.outputs[name].num_rows == 3
         assert tables[name].rows_source == source
         assert tables[name].outcome == "succeeded"
-    assert tables["g1"].rows_out == 5
-    assert tables["g1"].rows_source == "phase"
+
+
+def test_generate_table_counts_rows_from_its_phase(tmp_path: Path):
+    cfg, sources = _job(tmp_path, ("t1",), generate="g1")
+    collector = RunResultCollector()
+    run_pipeline(cfg, sources=sources, engine_version=_VERSION, progress=collector)
+    row = _project(cfg, collector)["g1"]
+    assert (row.rows_out, row.rows_source, row.outcome) == (5, "phase", "succeeded")
 
 
 def test_full_frame_resident_mask_tables_have_no_rows(tmp_path: Path):
@@ -114,7 +138,7 @@ def test_per_table_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         return real(plan, tables, *rest)
 
     monkeypatch.setattr(_sequential, "run_chunk_ingest_guards", boom)
-    cfg, sources = _job(tmp_path, ("t1", "t2", "t3"))
+    cfg, sources = _job(tmp_path, ("t1", "t2", "t3"), fk=True)
     collector = RunResultCollector()
     with pytest.raises(Exception):
         run_pipeline(
@@ -157,19 +181,18 @@ def test_on_event_swallows_bad_input():
     collector = RunResultCollector()
     before = collector.snapshot()
 
-    class Exploding:
+    class Exploding(PhaseEvent):
         @property
         def table(self) -> str:
             raise RuntimeError("read")
 
-        name = "mask"
-        status = "start"
+    exploding = PhaseEvent.__new__(Exploding)
 
     forged = _phase("mask", "start", "t1")
     object.__setattr__(forged, "table", "/etc/passwd")
     rate = RateSample("t1", 4, 1.0, 1.0, final=True)
     object.__setattr__(rate, "table", "https://x.test/p")
-    for bad in (object(), None, "text", Exploding(), forged, rate):
+    for bad in (object(), None, "text", exploding, forged, rate):
         collector.on_event(bad)  # type: ignore[arg-type]
     assert collector.snapshot() == before
 
@@ -187,7 +210,7 @@ def test_phase_timings():
 
 
 def test_phase_timings_on_a_real_run(tmp_path: Path):
-    cfg, sources = _job(tmp_path, ("t1", "t2"))
+    cfg, sources = _job(tmp_path, ("t1", "t2"), fk=True)
     collector = RunResultCollector()
     run_pipeline(
         cfg,
