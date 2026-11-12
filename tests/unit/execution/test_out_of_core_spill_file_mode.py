@@ -2,8 +2,9 @@
 0700, whatever the umask: the F06 typed staging copy and the route's spill (key stages, relation
 and dedup files, sorter runs, payload stores) share that root and all hold source values.
 
-Each file's mode is captured just before the engine removes it (``unlink``) or removes the root
-(``rmtree``), so a file that lives only inside one statement is still seen. DuckDB's own block
+Each file's mode is captured just before the engine removes it (``unlink`` by path or by
+``dir_fd``, ``rmdir`` by ``dir_fd``) or removes the root (``rmtree``), so a file that lives only
+inside one statement is still seen. DuckDB's own block
 spill under ``duckdb/`` is DuckDB's, not the engine's, and is excluded (see the module this
 tests). The configured kinds must all be observed, so a route change cannot pass vacuously.
 """
@@ -13,6 +14,7 @@ from __future__ import annotations
 import os
 import shutil
 import stat
+import sys
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -55,8 +57,12 @@ class _Recorder:
 
     def __init__(self, base: Path) -> None:
         self.base = str(base) + os.sep
+        self.real_base = os.path.realpath(base) + os.sep
         self.files: dict[str, int] = {}
         self.dirs: dict[str, int] = {}
+
+    def _keep(self, rel: str, st: os.stat_result) -> None:
+        (self.dirs if stat.S_ISDIR(st.st_mode) else self.files)[rel] = stat.S_IMODE(st.st_mode)
 
     def _note(self, path: Any) -> None:
         p = os.fspath(path)
@@ -66,14 +72,32 @@ class _Recorder:
             st = os.lstat(p)
         except FileNotFoundError:
             return
-        rel = p[len(self.base) :]
-        (self.dirs if stat.S_ISDIR(st.st_mode) else self.files)[rel] = stat.S_IMODE(st.st_mode)
+        self._keep(p[len(self.base) :], st)
+
+    def note_at(self, name: Any, dir_fd: int) -> None:
+        """The arena removes by descriptor (``unlink``/``rmdir`` with ``dir_fd``): the entry's
+        mode is read through that descriptor and its place from the directory it names."""
+        try:
+            st = os.lstat(name, dir_fd=dir_fd)
+        except FileNotFoundError:
+            return
+        here = _fd_path(dir_fd) + os.sep
+        if here.startswith(self.real_base):
+            self._keep(os.path.join(here[len(self.real_base) :], os.fsdecode(name)), st)
 
     def tree(self, top: Any) -> None:
         self._note(top)
         for dirpath, dirnames, filenames in os.walk(top):
             for name in (*dirnames, *filenames):
                 self._note(os.path.join(dirpath, name))
+
+
+def _fd_path(fd: int) -> str:
+    if sys.platform == "darwin":
+        import fcntl
+
+        return os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0"))
+    return os.readlink(f"/proc/self/fd/{fd}")
 
 
 @pytest.fixture
@@ -83,15 +107,23 @@ def recorder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     monkeypatch.setattr(tempfile, "tempdir", str(base))
     rec = _Recorder(base)
     real_unlink, real_os_unlink, real_rmtree = Path.unlink, os.unlink, shutil.rmtree
+    real_rmdir = os.rmdir
 
     def path_unlink(self: Path, *a: Any, **k: Any) -> None:
         rec._note(self)
         real_unlink(self, *a, **k)
 
     def os_unlink(path: Any, *a: Any, **k: Any) -> None:
-        if isinstance(path, (str, os.PathLike)):
+        if k.get("dir_fd") is not None:
+            rec.note_at(path, k["dir_fd"])
+        elif isinstance(path, (str, os.PathLike)):
             rec._note(path)
         real_os_unlink(path, *a, **k)
+
+    def os_rmdir(path: Any, *a: Any, **k: Any) -> None:
+        if k.get("dir_fd") is not None:
+            rec.note_at(path, k["dir_fd"])
+        real_rmdir(path, *a, **k)
 
     def rmtree(path: Any, *a: Any, **k: Any) -> None:
         rec.tree(path)
@@ -100,6 +132,7 @@ def recorder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     monkeypatch.setattr(Path, "unlink", path_unlink)
     monkeypatch.setattr(os, "unlink", os_unlink)
     monkeypatch.setattr(os, "remove", os_unlink)
+    monkeypatch.setattr(os, "rmdir", os_rmdir)
     monkeypatch.setattr(shutil, "rmtree", rmtree)
     return rec
 
