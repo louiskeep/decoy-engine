@@ -41,7 +41,7 @@ from decoy_engine.fileaccess._protected_dir import (
 )
 from decoy_engine.fileaccess._read import keeps_class, read_all, read_checked, read_text, shown
 from decoy_engine.fileaccess._rooted import Root, RootedFileAccess
-from decoy_engine.fileaccess._scratch import ScratchArena, scratch_native
+from decoy_engine.fileaccess._scratch import ScratchArena, scratch_native, scratch_native_iter
 from decoy_engine.fileaccess._scratch_reports import CleanupReport, QuotaReport
 from decoy_engine.fileaccess._types import (
     CONTRACT_VERSION,
@@ -161,6 +161,7 @@ __all__ = [
     "run_in_context",
     "scope",
     "scratch_native",
+    "scratch_native_iter",
     "scrub",
     "shown",
     "write_private",
