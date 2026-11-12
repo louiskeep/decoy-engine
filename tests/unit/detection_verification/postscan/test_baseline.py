@@ -15,6 +15,7 @@ from decoy_engine.config import RelationshipConfig
 from decoy_engine.execution import ExecutionError
 from decoy_engine.fileaccess import FileAccessReadError
 from decoy_engine.verification.postmask import (
+    KeyCounts,
     TableBatches,
     check_keys,
     from_table,
@@ -182,7 +183,7 @@ def test_a_generated_child_has_no_source_and_any_orphan_blocks(tmp_path: Path) -
     source = tables(p={"id": [1]})
     output = tables(p={"id": [1]}, c={"pid": [9]})
     res = results(tmp_path, RELS, source, output)[("c", "foreign")]
-    assert (res.baseline, res.source.orphan_rows) == ("no_source", 0)
+    assert (res.baseline, res.source) == ("no_source", KeyCounts())
     assert names(verdict_of(tmp_path, RELS, source, output).codes) == [
         "foreign_key_orphans_introduced"
     ]
@@ -200,10 +201,15 @@ def test_an_unmeasured_baseline_reports_null_source_counts(tmp_path: Path) -> No
             tables(p={"id": [1]}, c={"pid": [1]}),
         ),
     ]
+    errored = tables(p={"id": [1]}, c={"pid": [1]})
+    errored["c"] = failing(errored["c"], RuntimeError("unreadable"))
+    cases.append((errored, tables(p={"id": [1]}, c={"pid": [1]})))
     seen = set()
     for source, output in cases:
         res = results(tmp_path, RELS, source, output)[("c", "foreign")]
         seen.add(res.baseline)
+        # In process too: an in-process reader must not take an unmeasured zero as measured.
+        assert res.source is None
         assert keys_report([res])[0]["source"] is None
     assert seen == {"key_type_mismatch", "key_column_missing", "not_run", "error"}
 
