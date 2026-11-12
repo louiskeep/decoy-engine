@@ -308,3 +308,44 @@ V2-LOG: `publication/_publish.py::_measure_one` closes the staged file descripto
 `os.close` in a `finally`; a close error there would replace a measurement error or fail a good
 measurement. It is a read-only regular file, not a directory, and was left as is.
 Registry renumbered at merge from 1.24.0 to 1.25.0 by scripts/dev/registry_renumber.py; main was at 1.24.0.
+
+## Merge of main (2026-11-12)
+
+`origin/main` `4bb95063a68c55f229bd6e1ba88fbe2511f9a4aa` merged bottom-up with real merge commits:
+a1a `2201c34c` (clean), a1b `96e8331b` (merges a1a, clean), a2 `dbebb07c` (merges a1b), a3
+`cabff5ee` (merges a2). Conflicts: in a2, `.importlinter` and the `LAYERS` snapshot in
+`tests/sentry/layout/test_import_layers.py` (main added `support` to tier 1, a2 added
+`publication` to tier 2; both kept). In a3, `docs/reasons.md` and
+`tests/unit/test_reason_registry.py` (main's FPE fallback minor and the publication minor claimed
+the same version; both paragraphs and both tests kept). Then `scripts/dev/registry_renumber.py`
+moved the publication codes to the next free minor, 1.25.0: it renamed the pinned fixture to
+`tests/fixtures/f29/reason-manifest-v1.25-f22-publication.json`, rewrote `since`,
+`REGISTRY_VERSION`, the `docs/reasons.md` sentence and the a3 test, and regenerated
+`tests/fixtures/f29/consumer-contract.json`. The tool does not rewrite `changelog.d/`, so the
+fragment's version moved by hand first, in its own commit; the test's `(1, 25, 0)` tuple floor
+also moved by hand. Main's reason codes, fixture and fragment are byte-identical to main.
+`registry_renumber.py --check`: registry consistent.
+
+Environment after `bash scripts/dev/bootstrap.sh` (main changed `uv.lock`): Python 3.10.20,
+PyArrow 24.0.0, DuckDB 1.5.4, polars 1.42.0, pandas 2.3.3; `--check` OK.
+
+| command | head | result | failing ids |
+|---|---|---|---|
+| `.venv/bin/python -m pytest tests/fileaccess tests/sentry -q -p no:cacheprovider -n 2 -rfE` | main `4bb9506` | 6011 passed, 10 failed, 56 errors, 6 skipped | 66 known root/layers ids |
+| same | a1a `2201c34` | 6035 passed, 10 failed, 56 errors, 6 skipped | same 66; diff empty |
+| same | a1b `96e8331` | 6075 passed, 10 failed, 56 errors, 6 skipped | same 66; diff empty |
+| same plus `tests/unit/publication` | a2 `dbebb07` | 6197 passed, 10 failed, 56 errors, 6 skipped | same 66; diff empty |
+| same plus `tests/unit/publication` | a3 `8e28cd6` | 6272 passed, 10 failed, 56 errors, 6 skipped | same 66; diff empty |
+| `.venv/bin/python -m pytest tests/unit/test_fixed_width_writer.py tests/unit/test_quarantine_staging.py -q -p no:cacheprovider` | a1a `2201c34` | 46 passed | none |
+| renumber `--print-tests` set plus `tests/unit/publication tests/unit/test_registry_renumber.py`, `-n 2` | a3 `0ff3083` | 431 passed | none |
+| `.venv/bin/python -m pytest tests/unit/execution tests/integration tests/parity tests/security -q -p no:cacheprovider -n 2 -rfE` | a3 `8e28cd6` | 12230 passed, 6 errors, 2389 skipped, 37 xfailed | the 6 `test_scratch_root_umask.py` (root) |
+| same | main `4bb9506` | 12229 passed, 1 failed, 6 errors, 2389 skipped, 37 xfailed | the same 6, plus `test_byte_estimate_routing.py::TestEndToEndWiring::test_width_change_flips_route_at_a_fixed_budget_and_row_count` (pytest-timeout 300s, main only) |
+| `.venv/bin/python -m pytest tests/unit -q -p no:cacheprovider -n 2 --ignore=tests/unit/execution -rfE` | a3 `8e28cd6` | 13223 passed, 84 skipped, 2 xfailed, 5 xpassed | none |
+| same | main `4bb9506` | 13046 passed, 84 skipped, 2 xfailed, 5 xpassed | none |
+| ruff check, ruff format --check (2258 files), mypy (795 files) | each head | clean | |
+| `GATES_WORKERS=2 bash scripts/dev/gates.sh --keep-going --baseline tests/unit/publication tests/fileaccess/publication tests/unit/test_reason_registry.py` | a3 `8e28cd6` | ruff, format, mypy, sentry (5111 passed, 2 skipped), layers (15), licenses (63), tests (298) PASS; env FAIL on the stale editable install of the project itself after branch switches | branch=0 |
+| `bash scripts/dev/bootstrap.sh`, then `gates.sh --keep-going --baseline --steps env` | a3 `8e28cd6` | env PASS | branch=0 |
+
+No branch-only failing id. The one main-only id is a timeout on main. Collected counts rise only
+by the stack's own tests. `_output.py` 596 LOC, `_local.py` 579. Not run: the full suite, the
+perf suite, the uid 65534 pass.
