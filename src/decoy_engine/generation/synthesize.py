@@ -53,6 +53,7 @@ from decoy_engine.generation.kinds import (
 )
 from decoy_engine.generation.kinds._lookup import lookup_column_values
 from decoy_engine.generation.relational import reference_draw_extras, reference_policies
+from decoy_engine.generation.relational._aggregate import aggregate_values, with_aggregates
 from decoy_engine.generation.relational._self_reference import reference_parents, self_reference
 from decoy_engine.generation.statistical import FanoutSpec, StatisticalSpec
 from decoy_engine.generators.derivation import TABLE_KEY, GenDeriveContext, with_table
@@ -237,7 +238,7 @@ def _generate_tables_from_config(
             )
         pools[name] = tbl
         out[name] = tbl
-    return out
+    return with_aggregates(config, out)
 
 
 def generation_order(config: dict[str, Any]) -> tuple[tuple[str, tuple[str, ...]], ...]:
@@ -374,7 +375,8 @@ def _generate_column(
     elif kind == "derived":
         values = _derived_generate(col, n, generated or {})
     elif kind == "derived_aggregate":
-        values = generate_derived_aggregate_column(col, n, generated or {})
+        # Parity tests wrap the scalar generator by this module's name for it.
+        values = aggregate_values(generate_derived_aggregate_column, col, n, generated or {})
     elif kind in ("grouped_series", "windowed_date", "group_key"):
         from decoy_engine.generation._grouped_windowed_generators import (
             _group_key_generate,

@@ -45,6 +45,8 @@ from decoy_engine.config._generate_option_catalog import (
 from decoy_engine.config._generate_options import refuse_unlisted_generate_families
 from decoy_engine.config._generate_relational import (
     GenerateInputRef,
+    aggregate_problems,
+    is_per_parent_aggregate,
     is_self_reference,
     iter_generate_input_refs,
     parent_key_problem,
@@ -161,11 +163,13 @@ __all__ = [
     "TableConfig",
     "TargetDescriptor",
     "TransformOp",
+    "aggregate_problems",
     "classify_table_kinds",
     "declares_unique",
     "distinct_categories",
     "generate_columns_of",
     "generate_option_catalog",
+    "is_per_parent_aggregate",
     "is_self_reference",
     "iter_generate_input_refs",
     "override_sources",

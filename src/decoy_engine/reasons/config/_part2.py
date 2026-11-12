@@ -6,6 +6,7 @@ from decoy_engine.reasons import _catalog
 from decoy_engine.reasons._types import UNRELEASED
 
 __all__ = [
+    "GENERATE_AGGREGATE_READ_BEFORE_FILL",
     "GENERATE_COLUMN_DUPLICATE",
     "GENERATE_FITTED_REFERENCE_BOUNDS_CONFLICT",
     "GENERATE_FORMULA_INVALID",
@@ -38,6 +39,11 @@ VARIABLE_UNRESOLVED = _d("variable.unresolved", "Variable unresolved.")
 # Summaries double as the refusal text the config layer shows, so they never name a value.
 _d = _catalog.config("PipelineValidationError")
 
+GENERATE_AGGREGATE_READ_BEFORE_FILL = _d(
+    "generate_aggregate_read_before_fill",
+    "Generate column reads a per-parent aggregate, which is filled only after every table exists.",
+    since=UNRELEASED,
+)
 GENERATE_COLUMN_DUPLICATE = _d(
     "generate_column_duplicate",
     "Two generate columns in one table have the same name.",

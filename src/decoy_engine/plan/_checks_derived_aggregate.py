@@ -6,9 +6,11 @@ _checks.py module decomposes into per-strategy sub-modules as new strategies
 land; this is the SP-10b slice.
 
 This module exports exactly one function: ``check_derived_aggregate_refs``,
-which validates that derived_aggregate columns name a valid op and an existing
-source column. It is imported by plan/_compile.py alongside the other check
-functions from plan/_checks.py.
+which validates that every derived_aggregate column names a valid op and that a
+mask-kind one names an existing source column. The input of a generate-kind
+column is resolved and checked by ``plan/checks/_generate_columns.py``. It is
+imported by plan/_compile.py alongside the other check functions from
+plan/_checks.py.
 """
 
 from __future__ import annotations
@@ -31,9 +33,14 @@ def check_derived_aggregate_refs(config: dict[str, Any]) -> None:
        raises PlanCompileError there too, but surfacing it at compile time gives the
        operator a clearer error before a long run.
 
-    2. Missing column ref: the ``column`` key names a source column that is not
-       present in the same table. A missing ref is guaranteed to raise KeyError
-       at execution time; rejecting here surfaces it with the exact missing name.
+    2. Missing column ref (mask-kind columns): the ``column`` key names a source
+       column that is not present in the same table. A missing ref is guaranteed
+       to raise KeyError at execution time; rejecting here surfaces it with the
+       exact missing name.
+
+    The op rule covers generate-kind columns too. A generate-kind ``column`` may
+    live in a child table (``from_table``); the generate-input check owns where
+    it must exist.
 
     Config-only (no profile, no source data): safe to run in both compile
     branches and in ``run_config_only_checks``. Validation never mutates
@@ -112,17 +119,5 @@ def check_derived_aggregate_refs(config: dict[str, Any]) -> None:
                         f"derived_aggregate column {col_name!r} in table "
                         f"{table_name!r} has invalid op {op!r}. "
                         f"Allowed values: {sorted(AGGREGATE_OPS)!r}."
-                    ),
-                )
-            source_col = col_entry.get("column")
-            if source_col and str(source_col) not in all_col_names:
-                raise PlanCompileError(
-                    code=reasons.plan.DERIVED_AGGREGATE_MISSING_COLUMN_REF,
-                    path=(f"tables.{table_name}.generate_columns.{col_name}.column"),
-                    message=(
-                        f"derived_aggregate column {col_name!r} in table "
-                        f"{table_name!r} references source column "
-                        f"{source_col!r} which is not defined in the same "
-                        f"table. Available columns: {sorted(all_col_names)!r}."
                     ),
                 )

@@ -297,6 +297,9 @@ CONDITIONAL_REQUIRED: Mapping[str, Mapping[str, Mapping[str, tuple[str, ...]]]] 
 
 _N = OptionSpec(finite)
 _OUT = OptionSpec(output_type_value)
+_IN_CHILD = OptionSpec(
+    _str, ref_kind="column_in_named_table", ref_context_key="from_table", ref_phase="post_fill"
+)
 
 _BASE_OPTIONS: Mapping[str, TypeOptions] = {
     "faker": TypeOptions(
@@ -369,7 +372,11 @@ _BASE_OPTIONS: Mapping[str, TypeOptions] = {
     "derived_aggregate": TypeOptions(
         {
             "op": _S,
-            "column": OptionSpec(_str, ref_kind="column"),
+            "column": _IN_CHILD,
+            # A child table whose `via` references this one: `op` is then taken per parent row,
+            # after the child exists (`_generate_relational.aggregate_problems`).
+            "from_table": _S,
+            "via": _IN_CHILD,
         },
         plan_required=("op", "column"),
     ),

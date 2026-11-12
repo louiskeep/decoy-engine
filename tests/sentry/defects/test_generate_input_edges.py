@@ -86,7 +86,7 @@ RESOLVER_CALLERS = frozenset(
         ("generation/_numeric_typing.py", "_readers"),
         ("generation/_reproducibility.py", "reproducibility_exclusions"),
         ("generation/_grouped_windowed_generators.py", "_parent_anchor_cells"),
-        ("config/_generate_relational.py", "aggregate_problems"),
+        ("config/_generate_relational.py", "_reads_aggregate"),
         ("generation/relational/_aggregate.py", "_per_parent_values"),
     }
 )

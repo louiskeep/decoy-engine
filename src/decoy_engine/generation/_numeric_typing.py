@@ -9,8 +9,8 @@ answer. A column is a candidate when its values provably fit (a sequence's first
 a faker int provider's declared bounds) and no custom provider overrides its name. It then stays
 numeric only while every reader of it is numeric-safe, per the closed ``READERS`` registry. Who
 reads which column comes resolved from ``config.iter_generate_input_refs``, so a reader in
-another table (a date anchored to a parent column) counts against the column it reads and not
-against a same-named column of its own table:
+another table (a date anchored to a parent column, a parent's aggregate over its children)
+counts against the column it reads and not against a same-named column of its own table:
 
 * formula references, aggregate input, group labels, window anchors and statistical conditioning
   read the cell as text, so they keep it text;
@@ -132,6 +132,9 @@ READERS: dict[str, Reader] = {
     ),
     "derived_aggregate.column": Reader(
         False, "aggregate input coercion is not verified for typed input"
+    ),
+    "derived_aggregate.via": Reader(
+        True, "grouped and matched to the parent key by equality; both ends have one planned type"
     ),
     "grouped_series.order_by": Reader(True, "orders by value, so numeric order is the correct one"),
     "grouped_series.group_by": Reader(False, "the group label is hashed from its text"),

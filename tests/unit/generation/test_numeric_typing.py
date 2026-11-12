@@ -279,6 +279,9 @@ def test_the_aggregate_lookup_key_stays_numeric_on_both_sides() -> None:
     from decoy_engine.generation._numeric_typing import numeric_plan
 
     amount = {"name": "amount", "type": "categorical", "categories": [2, 3]}
-    plan = numeric_plan(config(_order_tables(_seq("amount", start=100), amount)))
-    assert plan[("orders", "id")] == pa.int64()
-    assert plan[("lines", "oid")] == pa.int64()
+    tables = config(_order_tables(_seq("amount", start=100), amount))
+    assert numeric_plan(tables)[("orders", "id")] == pa.int64()
+    out = run_generate_tables(tables)
+    assert out["orders"].schema.field("id").type == pa.int64()
+    assert out["lines"].schema.field("oid").type == pa.int64()
+    assert out["orders"]["total"].null_count == 0

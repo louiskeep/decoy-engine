@@ -147,9 +147,11 @@ def test_at12_the_returned_parent_table_holds_the_typed_filled_values(
 def test_at12_an_output_type_on_the_aggregate_is_applied_to_the_filled_values(
     tmp_path: Path,
 ) -> None:
-    out = run_route("resident", per_parent("sum", output_type="float"), tmp_path)
-    assert out["orders"].schema.field("total").type == pa.float64()
-    assert _same(_totals(out), _oracle(out, "sum"))
+    config = per_parent("sum", output_type="decimal(2)")
+    PipelineConfig.model_validate(config)
+    out = run_route("resident", config, tmp_path)
+    assert pa.types.is_decimal(out["orders"].schema.field("total").type)
+    assert _same([float(v) for v in _totals(out)], _oracle(out, "sum"))
 
 
 def test_at12_the_unrelated_parent_amount_keeps_its_numeric_arrow_type(tmp_path: Path) -> None:

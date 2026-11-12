@@ -35,6 +35,14 @@ that reaches exactly one parent row. `parent_key_problem` is the one rule for su
 column must be a `reference` to another table: the rows of the table being drawn are not
 finished, so a lookup through a self-reference is refused.
 
+A `derived_aggregate` with `from_table` is a per-parent aggregate: `via` names the child's
+`reference` back to this table, and each parent row gets `op` over its own children. The child
+key must reach exactly one parent row, so the referenced key goes through `parent_key_problem`
+as an earlier column. The run fills the column only after every table exists, so any input
+that resolves to one (a same-table reader, a child's anchor, another aggregate, a reference) is
+refused with `config.generate_aggregate_read_before_fill`: it would read the placeholder, not
+the value. `null_probability` on it is refused because the fill would overwrite the nulls.
+
 A problem carries its reason code only: a bound, weight or key never reaches a message.
 """
 
@@ -51,6 +59,8 @@ from decoy_engine.expressions import compile_expr
 
 __all__ = [
     "GenerateInputRef",
+    "aggregate_problems",
+    "is_per_parent_aggregate",
     "is_self_reference",
     "iter_generate_input_refs",
     "parent_key_problem",
@@ -71,6 +81,7 @@ _LOOKUP_KEY = str(reasons.config.GENERATE_PARENT_LOOKUP_KEY_NOT_UNIQUE)
 _LOOKUP_SELF = str(reasons.config.GENERATE_PARENT_LOOKUP_SELF_REFERENCE)
 _RANGE = str(reasons.config.GENERATE_OPTION_RANGE)
 _UNKNOWN = str(reasons.config.GENERATE_OPTION_UNKNOWN)
+_READ_BEFORE_FILL = str(reasons.config.GENERATE_AGGREGATE_READ_BEFORE_FILL)
 
 
 def _positive(value: Any) -> int:
@@ -241,6 +252,90 @@ def parent_lookup_problems(tables: Sequence[Mapping[str, Any]]) -> list[Problem]
             code = _lookup_problem(named[via_name], table.get("name"), by_name)
             if code is not None:
                 problems.append((("tables", t_idx, "generate_columns", c_idx, "anchor_via"), code))
+    return problems
+
+
+def is_per_parent_aggregate(col: Mapping[str, Any]) -> bool:
+    """Whether `col` is a `derived_aggregate` filled per parent row from another table."""
+    return col.get("type") == "derived_aggregate" and col.get("from_table") is not None
+
+
+def _aggregate_problem(
+    col: Mapping[str, Any],
+    table_name: Any,
+    earlier: Sequence[Any],
+    by_name: Mapping[Any, Mapping[str, Any]],
+) -> tuple[str, str] | None:
+    """The first `(option, code)` problem of one `derived_aggregate` column, or None.
+
+    A child table or `via` column that is missing is left to the plan check, which owns where
+    an input must exist.
+    """
+    if not is_per_parent_aggregate(col):
+        return ("via", _UNKNOWN) if col.get("via") is not None else None
+    if col.get("via") is None:
+        return ("via", "missing")
+    if _nulls_on(col.get("null_probability")):
+        return ("null_probability", _NULL_CONFLICT)
+    child = by_name.get(col.get("from_table"))
+    columns = generate_columns_of(child) if child is not None else []
+    via = next((c for c in columns if isinstance(c, Mapping) and c.get("name") == col["via"]), None)
+    if via is None:
+        return None
+    if is_self_reference(child.get("name") if child else None, via):
+        return ("via", _LOOKUP_SELF)
+    if via.get("type") != "reference" or via.get("reference_table") != table_name:
+        return ("via", _LOOKUP_KEY)
+    # The key is the parent table's own column, finished before the post-pass, but the rule is
+    # the one every parent lookup follows: an earlier non-null `sequence`.
+    if parent_key_problem(earlier, via.get("reference_column"), _LOOKUP_KEY):
+        return ("via", _LOOKUP_KEY)
+    return None
+
+
+def _reads_aggregate(
+    table: Mapping[str, Any], col: Mapping[str, Any], filled_late: set[tuple[Any, Any]]
+) -> str | None:
+    """The option of `col` that reads a per-parent aggregate, or None."""
+    for edge in iter_generate_input_refs(table, col):
+        if (edge.source_table, edge.source_column) in filled_late:
+            return edge.option
+    # A reference copies its parent column while drawing, before any post-pass.
+    if col.get("type") == "reference":
+        pair = (col.get("reference_table"), col.get("reference_column"))
+        return "reference_column" if pair in filled_late else None
+    return None
+
+
+def aggregate_problems(tables: Sequence[Mapping[str, Any]]) -> list[Problem]:
+    """Per-parent aggregate problems of every generate column of `tables`.
+
+    `tables` are the config's tables as mappings with `name` and `generate_columns`. Each
+    `derived_aggregate` is checked for its companion keys, nulls and lookup key; every other
+    column, in any table, is checked for an input that resolves to a per-parent aggregate.
+    """
+    by_name = {t.get("name"): t for t in tables}
+    filled_late = {
+        (t.get("name"), c.get("name"))
+        for t in tables
+        for c in generate_columns_of(t)
+        if isinstance(c, Mapping) and is_per_parent_aggregate(c)
+    }
+    problems: list[Problem] = []
+    for t_idx, table in enumerate(tables):
+        columns = generate_columns_of(table)
+        for c_idx, col in enumerate(columns):
+            if not isinstance(col, Mapping):
+                continue
+            where: tuple[str | int, ...] = ("tables", t_idx, "generate_columns", c_idx)
+            found = None
+            if col.get("type") == "derived_aggregate":
+                found = _aggregate_problem(col, table.get("name"), columns[:c_idx], by_name)
+            option = _reads_aggregate(table, col, filled_late) if filled_late else None
+            if found is not None:
+                problems.append(((*where, found[0]), found[1]))
+            elif option is not None:
+                problems.append(((*where, option), _READ_BEFORE_FILL))
     return problems
 
 
