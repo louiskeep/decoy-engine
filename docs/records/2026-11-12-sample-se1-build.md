@@ -48,3 +48,23 @@ Each applied alone to a throwaway checkout of source head `74ec077e`, `tests/uni
 - `sample_refusal_edge` returns a plain tuple `(parent_table, parent_columns, child_table, child_columns)`.
 - `sample_request` raises the invalid-knob code for a generated parent of a masked child; the CLI refuses earlier through `sample_refusal_edge`.
 - `select_subset` still preflights every seed table, so SE2 passes a request without the head seeds of tables it keeps out.
+
+## Fix round 2
+
+Source head `e12bc329`; the commits after it change tests and this record only.
+
+- An unseeded component is always `"upward"`: configured directions survive only in components a config seed is in (`_sample.py`). The docstring paragraph and the "kept" line under the plan-silent choices said the opposite and are gone.
+- `sample_request` checks tables first: the root must be a mask table, then `require_known_endpoints` (new, `_edges.py`) refuses any relationship end that is neither a mask nor a generate table, and only then the generated-parent refusal. `sample_refusal_edge` counts a child only when it is a mask table. `relationships_from_config` never refused an unknown end, for any shape.
+- `reach` (`_edges.py`) is the one walk. `_components` and `scope_for` call it, and a guard test fails when either file grows a `while` loop or stops importing it.
+- Tests: the cycle-plus-child case through `select_subset`, the directions the config may state, a `subset:` block ignored, zero orphans for a composite edge, one relationship with two children and a diamond, the budget and the sorted roots.
+- AT-2 does not hold as "once per table". `select_subset` reads each table's edge columns twice, once in the FK preflight (`_preflight.py`, SUB-RUN E1 on main) and once in the key load. The test pins that list, not a set, and checks that no read asks for the root's own key column. Changing the count means editing a file outside this slice.
+
+| Test | Mutation | Red |
+|---|---|---|
+| unseeded component upward | `setdefault` back | 2 |
+| tables checked first | refusal moved before the root check | 1 |
+| tables checked first | refusal, root check and endpoint check removed | 8 |
+| refusal edge ignores unknown child | any non-generate child counts as masked | 1 |
+| unknown endpoint refused | `require_known_endpoints` call removed | 5 |
+| one walk | own loop in `scope_for` | 1 |
+| one walk | own loop in `_components` | 1 |
