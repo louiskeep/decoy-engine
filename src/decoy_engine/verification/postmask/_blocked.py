@@ -1,10 +1,11 @@
 """The one blocking decision of a post-scan report, its fixed code order and its exception.
 
 A key decides by its codes and its `baseline`, never by `status == "checked"`: a mismatch over a
-mismatched source, or a failure counting the source, only warns. A residual or policy `fail`
-gives `finding_blocked`; an `error` finding or a set `pass_failed_with` gives `check_error`. An
-`fk_preservation` `fail` adds the orphans code (a set, so a key's own copy stays one); an `error`
-adds `check_error` only when no key blocks.
+mismatched source, or a failure counting the source, only warns. A key row whose status, baseline
+and codes are not a combination `_keys` can write is unreadable and blocks with `check_error`.
+A residual or policy `fail` gives `finding_blocked`; an `error` finding or a set
+`pass_failed_with` gives `check_error`. An `fk_preservation` `fail` adds the orphans code (a set,
+so a key's own copy stays one); an `error` adds `check_error` only when no key blocks.
 Nothing here carries a data value.
 """
 
@@ -13,11 +14,12 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast, get_args
 
 from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
-from decoy_engine.reasons import ReasonRef, reason_ref_payload
+from decoy_engine.reasons import MAX_NAME_LEN, ReasonRef, reason_ref_payload
+from decoy_engine.verification.postmask import _keys
 from decoy_engine.verification.postmask.types import SCHEMA_VERSION
 
 __all__ = [
@@ -55,9 +57,9 @@ _CHECK_ERROR, _KEY_TYPE_MISMATCH, _FINDING_BLOCKED = (
 _ORPHANS = _P.FOREIGN_KEY_ORPHANS_INTRODUCED.spec.ref
 _FALLBACK_SUMMARY = "The post-scan integrity check blocked the run."
 _MAX_SPOTS = 3
-_MAX_NAME = 128
-# The status literals of `_keys.Status`; any other value is not the engine's own.
-_STATUSES = frozenset({"checked", "key_type_mismatch", "key_column_missing", "error"})
+# Read from `_keys` so a new status or baseline cannot be missed here.
+_STATUSES = frozenset(get_args(_keys.Status))
+_BASELINES = frozenset(get_args(_keys.Baseline))
 _SEVERITIES = frozenset({"info", "warning", "fail", "error"})
 # A report that cannot be read is a check that could not run, so it blocks.
 _UNREADABLE = object()
@@ -117,26 +119,81 @@ def _post_scan_ref(payload: object) -> ReasonRef | None:
     return None
 
 
+def _reachable_key_shape(
+    status: _keys.Status,
+    baseline: _keys.Baseline,
+    kind: _keys.Kind,
+    refs: tuple[ReasonRef, ...],
+) -> bool:
+    """Whether `_keys.check_keys` can write this row. The code lists come from `_keys.key_codes`
+    itself, run over each count pattern, so there is no second copy of that table."""
+    if status == "error":
+        return baseline == "not_run" and refs == (_CHECK_ERROR,)
+    if status == "key_column_missing":
+        expected = _keys.key_codes(status, kind, baseline, _keys.KeyCounts(), _keys.KeyCounts())
+        return baseline == "not_run" and refs == tuple(code.spec.ref for code in expected)
+    if status == "key_type_mismatch":
+        expected = _keys.key_codes(status, kind, baseline, _keys.KeyCounts(), _keys.KeyCounts())
+        return (
+            kind == "foreign"
+            and baseline not in {"measured", "error"}
+            and refs == tuple(code.spec.ref for code in expected)
+        )
+    if baseline == "not_run" or (kind == "primary" and baseline == "key_type_mismatch"):
+        return False
+    outputs = (
+        (
+            _keys.KeyCounts(),
+            _keys.KeyCounts(null_key_rows=1),
+            _keys.KeyCounts(duplicate_excess=1),
+            _keys.KeyCounts(null_key_rows=1, duplicate_excess=1),
+        )
+        if kind == "primary"
+        else (_keys.KeyCounts(), _keys.KeyCounts(orphan_rows=1))
+    )
+    return refs in {
+        tuple(
+            code.spec.ref
+            for code in _keys.key_codes(status, kind, baseline, _keys.KeyCounts(), out)
+        )
+        for out in outputs
+    }
+
+
 def _key_refs(key: Mapping[str, Any]) -> Iterator[tuple[ReasonRef, bool]]:
-    """Each code of one key result and whether it blocks (4.2.2): decided by the code and the
-    baseline. A `check_error` blocks unless it is the source side's; a `key_type_mismatch` blocks
-    unless the source types were not comparable either. Only a `checked` key may carry no code
-    (`_keys._codes` gives every other status one), so any other shape is unreadable."""
-    baseline, status, payloads = key.get("baseline"), key.get("status"), key.get("codes")
+    """Each code of one key result and whether it blocks (4.2.2). A row the engine cannot have
+    written blocks with `check_error`. On a readable row a `check_error` blocks unless it is the
+    source side's, and a `key_type_mismatch` blocks unless the source types did not compare
+    either."""
+    baseline, status, kind, payloads = (
+        key.get("baseline"),
+        key.get("status"),
+        key.get("kind"),
+        key.get("codes"),
+    )
     if (
         not isinstance(payloads, (list, tuple))
         or not isinstance(status, str)
         or status not in _STATUSES
-        or (status != "checked" and not payloads)
+        or not isinstance(baseline, str)
+        or baseline not in _BASELINES
+        or not isinstance(kind, str)
+        or kind not in get_args(_keys.Kind)
     ):
         yield _CHECK_ERROR, True
         return
-    for payload in payloads:
-        ref = _post_scan_ref(payload)
-        if ref is None:
-            yield _CHECK_ERROR, True
-        elif ref == _CHECK_ERROR:
-            yield ref, baseline != "error" or key.get("status") == "error"
+    refs = tuple(_post_scan_ref(payload) for payload in payloads)
+    if any(ref is None for ref in refs) or not _reachable_key_shape(
+        cast(_keys.Status, status),
+        cast(_keys.Baseline, baseline),
+        cast(_keys.Kind, kind),
+        cast(tuple[ReasonRef, ...], refs),
+    ):
+        yield _CHECK_ERROR, True
+        return
+    for ref in cast(tuple[ReasonRef, ...], refs):
+        if ref == _CHECK_ERROR:
+            yield ref, baseline != "error"
         elif ref == _KEY_TYPE_MISMATCH:
             yield ref, baseline != "key_type_mismatch"
         else:
@@ -195,7 +252,7 @@ def block_location(report: Mapping[str, Any]) -> str:
                 continue
             table, column, detector = f.get("table"), f.get("column"), fixed or f.get("detector_id")
             if all(
-                isinstance(n, str) and 0 < len(n) <= _MAX_NAME for n in (table, column, detector)
+                isinstance(n, str) and 0 < len(n) <= MAX_NAME_LEN for n in (table, column, detector)
             ):
                 spots.append(f"{table}.{column} ({detector})")
     return ", ".join(spots[:_MAX_SPOTS])
