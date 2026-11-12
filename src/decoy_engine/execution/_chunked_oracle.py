@@ -520,9 +520,10 @@ def _mask_pipeline_chunked(
 
     refuse_unapplied_subset(config)
     # Before `chunks` is touched: the table and `source_schema` must be declared (E2d).
-    declared = _chunked_mod.prepare_declared_sources(
+    declared = _chunked_mod.prepare_declared_execution_sources(
         _chunked_mod.DeclarationRequest.for_chunks(config, table, source_schema),
         file_access=file_access,
+        registry=kwargs.get("registry"),
     )
     return _mask_declared(
         config, chunks, table=table, engine_version=engine_version, declared=declared, **kwargs

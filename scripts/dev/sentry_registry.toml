@@ -107,3 +107,7 @@ baseline = "tests/sentry/baselines/package-fanout.json"
 [[sentry]]
 id = "import-layers"
 baseline = "tests/sentry/baselines/import-layers.json"
+
+[[sentry]]
+id = "table-kind-truth-tests"
+baseline = "tests/sentry/baselines/table-kind-truth-tests.json"

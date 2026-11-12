@@ -23,8 +23,8 @@ The context carries RESOLVED values under the plain names (`registry` and `key_p
 the resolved ones; the raw arguments are not kept), so no executor can reach for the unresolved
 form by mistake.
 
-`classify_table_kinds` lives here because the builder needs it and `_pipeline` imports this
-module; `_pipeline` re-exports it, so its public import path is unchanged.
+`classify_table_kinds` is owned by `decoy_engine.config`; it is re-exported here and by
+`_pipeline`, so its public import paths are unchanged.
 """
 
 from __future__ import annotations
@@ -35,12 +35,13 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.config import classify_table_kinds
 from decoy_engine.execution import _guards, _pipeline_auto_chunk, _pipeline_routing
 from decoy_engine.execution._chunked_output_sink import OutputPublish
 from decoy_engine.execution._transforms_admission import out_of_core_declined, routing_profile
 from decoy_engine.execution._transforms_gate import reject_any_per_table_transforms
 from decoy_engine.fileaccess import config_relative
-from decoy_engine.profile import DeclarationRequest, prepare_declared_sources
+from decoy_engine.profile import DeclarationRequest
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
@@ -73,30 +74,6 @@ __all__ = [
     "classify_table_kinds",
     "decide_route",
 ]
-
-
-def classify_table_kinds(config: dict[str, Any]) -> dict[str, str]:
-    """Return `{table_name: "mask" | "generate"}` for every table in the config.
-
-    Per-table kind is inferred from `columns` (mask) vs `generate_columns`
-    (generate) presence on each TableConfig. The schema already enforces
-    XOR at validation time (`_per_table_kind_consistency` + `TableConfig`
-    invariants), so a config that reaches this helper has at most one
-    populated per table. Tables with neither are classified as mask
-    (defensive default; the schema rejects them upstream).
-    """
-    out: dict[str, str] = {}
-    for table in config.get("tables") or []:
-        if not isinstance(table, dict):
-            continue
-        name = table.get("name")
-        if not isinstance(name, str):
-            continue
-        if table.get("generate_columns"):
-            out[name] = "generate"
-        else:
-            out[name] = "mask"
-    return out
 
 
 @dataclass(frozen=True)
@@ -348,7 +325,7 @@ def build_run_context(
         raise ValueError("run_pipeline: source_loader and source_loader_schemas go together.")
     schemas = {n: s.schema for n, s in caller_sources.items()}
     request = DeclarationRequest.for_run(config, schemas, source_loader_schemas)
-    declared = prepare_declared_sources(request)
+    declared = _guards.prepare_declared_execution_sources(request, registry=resolved_registry)
     if source_loader is not None and source_loader_schemas is not None:
         source_loader = declared.checked_loader(source_loader, source_loader_schemas)
 
@@ -357,7 +334,9 @@ def build_run_context(
     _guards.refuse_duplicate_run_sources(config, caller_sources)
     source_loader = _guards.refusing_source_loader(source_loader)
 
-    profile = profile_source(config, seed=job_seed, declared=declared)
+    profile = profile_source(
+        config, seed=job_seed, declared=declared, supplied_sources=caller_sources
+    )
 
     plan = compile_plan(
         config,

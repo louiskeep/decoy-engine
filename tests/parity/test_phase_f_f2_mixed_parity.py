@@ -37,7 +37,7 @@ from tests.parity._f2_mixed_support import (
 )
 
 STRING_KEYS = [str(i % 5) for i in range(40)]
-INT_PARENT = [{"name": "id", "type": "categorical", "categories": [10, 11, 12, 13]}]
+INT_PARENT = [{"name": "id", "type": "sequence", "start": 10, "step": 1}]
 
 
 def _assert_mixed_route(result: Any, *, chunks_at_least: int = 2) -> None:

@@ -506,7 +506,7 @@ def _outcome(config: dict[str, Any], chunks: list[pa.Table]) -> tuple[str | None
     try:
         for _ in run_mask_chunked_below_gate(
             config,
-            list(chunks),
+            iter(chunks),
             table=TABLE,
             engine_version=ENGINE_VERSION,
             key_provider=key_provider(),
