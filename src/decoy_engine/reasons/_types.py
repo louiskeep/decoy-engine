@@ -18,6 +18,10 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from decoy_engine.reasons._identity import ReasonRef
 
+# The `since` or `deprecated_in` of a declaration no release has shipped yet. Release prep stamps
+# each such argument with the version it ships in; until then a manifest reports this text.
+UNRELEASED = "unreleased"
+
 
 class Phase(str, Enum):
     CONFIGURATION = "configuration"
