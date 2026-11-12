@@ -407,7 +407,7 @@ def test_at30_skip_replace_and_bogus_keyword(tmp_path: Path) -> None:
     )
     assert replaced.outputs["customers"].num_rows == 3
     with pytest.raises(ExecutionError) as info:
-        _run(cfg, data, subset_request="bogus")  # type: ignore[arg-type]
+        _run(cfg, data, subset_request="bogus")
     assert info.value.code == "invalid_execution_knob"
 
 
