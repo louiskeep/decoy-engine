@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pyarrow as pa
@@ -57,6 +58,7 @@ def test_three_sources_read_identically(tmp_path: Path, columns: list[str]) -> N
     for name, table in inputs.items():
         got, sizes = _read(table, columns)
         assert got.to_pydict() == expected.to_pydict(), name
+        assert got.schema.equals(pa.schema([(c, pa.string()) for c in columns])), name
         assert table.num_rows == 7, name
         assert sum(sizes) == 7 and max(sizes) <= BATCH, name
 
@@ -69,7 +71,10 @@ def test_missing_columns_and_key_labels(tmp_path: Path) -> None:
         assert keys.schema.names == ["k0", "k1"]
         rows = pa.Table.from_batches(list(keys.batches()), schema=keys.schema)
         assert rows.to_pydict() == {"k0": ROWS["c"], "k1": ROWS["a"]}
-        assert len(list(keys.batches())) == len(list(keys.batches()))  # re-callable
+        for _ in range(2):  # re-callable: every call starts a new read of the same rows
+            again = pa.Table.from_batches(list(keys.batches()), schema=keys.schema)
+            assert again.schema.equals(keys.schema)
+            assert again.to_pydict() == {"k0": ROWS["c"], "k1": ROWS["a"]}
 
 
 def test_resident_is_marked_and_lazy_is_not(tmp_path: Path) -> None:
@@ -121,3 +126,97 @@ def test_changed_file_fails_the_on_open_check(tmp_path: Path) -> None:
     table = from_lazy("t", source, on_open=lambda o: check_opened(o, expected, table="t"))
     with pytest.raises(ExecutionError):
         list(table.read(["a"], BATCH))
+
+
+def _empty_inputs(tmp_path: Path) -> dict[str, TableBatches]:
+    pq_path, csv_path = tmp_path / "e.parquet", tmp_path / "e.csv"
+    pq.write_table(pa.table({"a": pa.array([], pa.string())}), pq_path)
+    csv_path.write_text("a\n")
+    return {
+        "table": from_table("e", pa.table({"a": pa.array([], pa.string())})),
+        "parquet": from_lazy("e", LazySource(pq_path)),
+        "csv": from_lazy("e", CsvLazySource(csv_path, dialect=CsvDialect(), table="e")),
+    }
+
+
+@pytest.mark.parametrize("kind", ["table", "parquet", "csv"])
+def test_empty_column_list_is_refused_at_the_call(tmp_path: Path, kind: str) -> None:
+    """One rule for every shape, raised before any `next()` and without values or paths."""
+    table = _all_three(tmp_path)[kind]
+    with pytest.raises(ValueError, match="^table read: columns names no column$"):
+        table.read([], BATCH)
+    with pytest.raises(ValueError, match="^table read: columns names no column$"):
+        key_batches(table, [])
+
+
+@pytest.mark.parametrize("kind", ["table", "parquet", "csv"])
+def test_zero_row_table_reads_no_rows_with_the_projected_schema(tmp_path: Path, kind: str) -> None:
+    table = _empty_inputs(tmp_path)[kind]
+    batches = list(table.read(["a"], BATCH))
+    assert sum(b.num_rows for b in batches) == 0
+    assert all(b.schema.equals(pa.schema([("a", pa.string())])) for b in batches)
+    keys = key_batches(table, ["a"])
+    assert sum(b.num_rows for b in keys.batches()) == 0
+    assert keys.schema.equals(pa.schema([("k0", pa.string())]))
+
+
+def _open_on(path: Path) -> list[str]:
+    """Descriptors this process holds on `path`; reads /proc so no garbage collection is involved."""
+    held = []
+    for fd in os.listdir("/proc/self/fd"):
+        try:
+            if os.readlink(f"/proc/self/fd/{fd}") == str(path):
+                held.append(fd)
+        except OSError:
+            continue
+    return held
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc/self/fd"), reason="needs /proc")
+class TestProjectedCsvClosesItsFile:
+    @pytest.fixture
+    def csv(self, tmp_path: Path) -> tuple[Path, TableBatches, list[object]]:
+        path = tmp_path / "t.csv"
+        path.write_text("a,b,c\n" + "".join(f"{i},x,y\n" for i in range(7)))
+        # Keeping the opened object alive rules out a close that only refcounting performs.
+        kept: list[object] = []
+        table = from_lazy(
+            "t", CsvLazySource(path, dialect=CsvDialect(), table="t"), on_open=kept.append
+        )
+        return path, table, kept
+
+    def test_normal_exhaustion(self, csv: tuple[Path, TableBatches, list[object]]) -> None:
+        path, table, kept = csv
+        assert sum(b.num_rows for b in table.read(["a"], BATCH)) == 7
+        assert kept and _open_on(path) == []
+
+    def test_early_close(self, csv: tuple[Path, TableBatches, list[object]]) -> None:
+        path, table, kept = csv
+        it = table.read(["a"], BATCH)
+        next(it)
+        assert _open_on(path) != []
+        it.close()  # type: ignore[attr-defined]
+        assert kept and _open_on(path) == []
+
+    def test_on_open_raises(self, tmp_path: Path) -> None:
+        path = tmp_path / "t.csv"
+        path.write_text("a,b\n" + "".join(f"{i},x\n" for i in range(7)))
+
+        def boom(_: object) -> None:
+            raise RuntimeError("stop")
+
+        table = from_lazy("t", CsvLazySource(path, dialect=CsvDialect(), table="t"), on_open=boom)
+        with pytest.raises(RuntimeError):
+            next(table.read(["a"], BATCH))
+        assert _open_on(path) == []
+
+    def test_consumer_raises_mid_iteration(
+        self, csv: tuple[Path, TableBatches, list[object]]
+    ) -> None:
+        path, table, kept = csv
+        it = table.read(["a"], BATCH)
+        with pytest.raises(RuntimeError):
+            for _ in it:
+                raise RuntimeError("consumer failed")
+        it.close()  # type: ignore[attr-defined]
+        assert kept and _open_on(path) == []

@@ -36,7 +36,7 @@ from decoy_engine.config import PipelineConfigError, RelationshipConfig, parse_r
 
 # Small enough that the keys of a large table never sit in memory together.
 MEMORY_LIMIT: Final = "512MB"
-_BATCH_ROWS: Final = 100_000
+KEY_BATCH_ROWS: Final = 100_000
 
 Status = Literal["checked", "key_type_mismatch", "skipped_cloud"]
 
@@ -247,7 +247,7 @@ def _open_keys(
                 dialect,
                 table=name,
                 dtype=str,
-                chunksize=_BATCH_ROWS,
+                chunksize=KEY_BATCH_ROWS,
                 columns=columns,
                 field_key=key,
             )
@@ -266,7 +266,7 @@ def _open_keys(
         )
 
         def parquet_batches() -> Iterator[pa.RecordBatch]:
-            for batch in lazy.iter_batches(_BATCH_ROWS, columns=list(columns)):
+            for batch in lazy.iter_batches(KEY_BATCH_ROWS, columns=list(columns)):
                 arrays = [batch.column(batch.schema.get_field_index(c)) for c in columns]
                 yield pa.RecordBatch.from_arrays(arrays, schema=typed)
 
@@ -279,7 +279,7 @@ def _open_keys(
     del frame
     table = table.rename_columns(labels)
     return KeyBatches(
-        table.schema, lambda: iter(table.to_batches(max_chunksize=_BATCH_ROWS)), bounded=False
+        table.schema, lambda: iter(table.to_batches(max_chunksize=KEY_BATCH_ROWS)), bounded=False
     )
 
 

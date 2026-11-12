@@ -19,6 +19,7 @@ Pre-scan phase: the profiling entrypoint is `profile_columns`, returning a
 """
 
 from decoy_engine.profiling._scan_integrity import (
+    KEY_BATCH_ROWS,
     ChildFacts,
     ChildKeyFacts,
     KeyBatches,
@@ -67,6 +68,7 @@ from decoy_engine.profiling.types import (
 
 __all__ = [
     "DEFAULT_STRATEGY_BY_DETECTOR",
+    "KEY_BATCH_ROWS",
     "MIN_RELEASE_COUNT",
     "POLICY_RAW",
     "POLICY_REDACTED",
