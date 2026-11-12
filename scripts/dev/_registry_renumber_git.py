@@ -24,7 +24,8 @@ CONTRACT_PY = "tests/unit/progress/test_consumer_contract.py"
 _EXTRACTOR = """
 import json, runpy, sys
 from decoy_engine import reasons
-out = {"file": reasons.__file__, "manifest": reasons.manifest()}
+marked = getattr(reasons, "pending_summary_edits", frozenset)()
+out = {"file": reasons.__file__, "manifest": reasons.manifest(), "pending": sorted(map(list, marked))}
 if len(sys.argv) > 1:
     out["contract"] = runpy.run_path(sys.argv[1], run_name="renumber")["build_contract"]()
 print(json.dumps(out))
