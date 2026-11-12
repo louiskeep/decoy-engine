@@ -303,12 +303,13 @@ def test_a_table_absent_from_the_inputs_has_a_zero_baseline(tmp_path: Path) -> N
     assert codes(hit) == {"foreign_key_orphans_introduced"}
 
 
-def test_a_source_side_type_mismatch_gives_a_zero_baseline(tmp_path: Path) -> None:
+def test_a_source_side_type_mismatch_has_no_source_counts(tmp_path: Path) -> None:
     rels = [rel("p", ["id"], ("c", ["pid"]))]
     source = tables(p={"id": [1]}, c={"pid": ["1"]})
     output = tables(p={"id": [1]}, c={"pid": [9]})
     hit = run(tmp_path, rels, source, output)[("c", "foreign")]
-    assert (hit.status, hit.source.orphan_rows, hit.output.orphan_rows) == ("checked", 0, 1)
+    # Not counted, so no zero to misread; the output is still compared with zero below.
+    assert (hit.status, hit.source, hit.output.orphan_rows) == ("checked", None, 1)
     assert hit.baseline == "key_type_mismatch"
     # The unmeasured source rides on the key as a code the verdict only warns on (4.2.2).
     assert codes(hit) == {"foreign_key_orphans_introduced", "key_type_mismatch"}

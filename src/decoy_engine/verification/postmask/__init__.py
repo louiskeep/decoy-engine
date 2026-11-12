@@ -17,8 +17,8 @@ Three net-new check categories ship here:
   the source frames, and output==source identity escalates to
   'fail' -- a silently-failed mask cannot hide behind a PII-like-
   producer strategy.
-- ``fk_preservation``: walks the relationships graph against the
-  masked output; counts orphan FKs, classifies severity.
+- ``fk_preservation``: one finding per declared edge, derived from the
+  declared keys' facts (orphans the run introduced fail).
 - ``policy_validation``: reads the compiled plan; verifies every
   configured mask actually changed the output column vs. the source
   column (catches no-op masks).

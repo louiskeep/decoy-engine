@@ -18,6 +18,7 @@ hook catches that + writes a JobPostScanIntegrityReport with
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict
 from typing import Any
 
@@ -25,7 +26,8 @@ import pandas as pd
 
 from decoy_engine.profiling import passes_through
 from decoy_engine.verification.postmask._blocked import severity_counts
-from decoy_engine.verification.postmask.fk_preservation import check_fk_preservation
+from decoy_engine.verification.postmask._keys import KeyResult
+from decoy_engine.verification.postmask.fk_preservation import fk_findings
 from decoy_engine.verification.postmask.policy_validation import check_policy_validation
 from decoy_engine.verification.postmask.residual_pii import check_residual_pii
 from decoy_engine.verification.postmask.types import (
@@ -42,6 +44,7 @@ def run_post_mask(
     output_frames: dict[str, pd.DataFrame],
     *,
     config: dict[str, Any],
+    keys: Sequence[KeyResult] | None = None,
 ) -> dict[str, Any]:
     """Run all three post-mask check categories + assemble the report.
 
@@ -54,6 +57,8 @@ def run_post_mask(
         config: the validated pipeline config dict (from
             ``PipelineConfig.model_validate(yaml).model_dump()``).
             Used to look up configured masks + relationships.
+        keys: the declared keys' facts (`check_keys`) when the caller has counted them; the
+            FK findings derive from these. None counts them here from the two frame dicts.
 
     Returns:
         A post-scan-integrity/v2 report dict. JSON-serializable (every
@@ -109,7 +114,7 @@ def run_post_mask(
         ]
 
     try:
-        fk_preservation = check_fk_preservation(output_frames, config)
+        fk_preservation = fk_findings(config, source_frames, output_frames, keys)
     except Exception as exc:
         if passes_through(exc):
             raise

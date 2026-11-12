@@ -168,6 +168,21 @@ the guard cannot recognise (a person name, an address) is the stated limit. The 
 cell value. The optional per-table `detail` member of `scan_set_to_dict(detail=True)` is
 the nested `ColumnProfile` dict; it is additive-only within `/v1` and is not part of the core.
 
+`post-scan-integrity/v2` is the report `run_post_mask` returns. Recorded pre-GA semantic change
+(POSTSCAN-STREAM PS-4, 2026-11-12): each `fk_preservation[]` finding now derives from the declared
+keys' facts (`verification/postmask/_keys.py`) and no longer from an orphan rate. `fail` means the run
+introduced orphans; `warning` means every output orphan was already in the source, or the key carries
+only warning codes; `info` means no orphan; `error` means the key has no counts (an output that could
+not be read, a missing key column, or a type mismatch over a comparable source). The 0.1% and 1%
+thresholds and the `orphan_policy: skip` demotion are gone, so one introduced orphan in a large table
+now fails where it used to be `info`. A child tuple declared under several parents is counted once
+against their union, and each of its edges carries those counts. `parent_column` and `child_column`
+join composite names with `", "` (was `","`). Added optional fields: `parent_columns` and
+`child_columns` (the names one by one) and `source_orphan_count` (`null` when the source side was not
+counted). `run_post_mask` gains the keyword-only `keys=` (the facts a caller has already counted);
+without it the facts are counted from the two frame dicts, over the edges whose tables are all in the
+output frames, as before. The tag stays `v2`; the field set only grew.
+
 **Rules:**
 
 - **Never mutate the shape under an existing tag.** If you change what

@@ -94,7 +94,8 @@ def test_orphans_all_inherited_from_the_source_warn() -> None:
 
 
 def test_no_orphan_is_info() -> None:
-    data = frames(p={"id": [1, 2]}, c={"pid": [1, 2, None]})
+    # Nullable, so the null does not turn the key into floats.
+    data = frames(p={"id": [1, 2]}, c={"pid": pd.array([1, 2, None], dtype="Int64")})
     (f,) = fk(data, data)
     assert (f["severity"], f["orphan_count"], f["total_child_rows"]) == ("info", 0, 2)
 
@@ -181,8 +182,8 @@ def test_a_shared_child_tuple_resolves_against_every_parent() -> None:
 
 def test_an_fk_fail_is_the_orphan_code_and_the_tag_stays_v2() -> None:
     report = run_post_mask(
-        frames(p={"id": [1]}, c={"pid": [1]}),
-        frames(p={"id": [1]}, c={"pid": [CANARY]}),
+        frames(p={"id": ["a"]}, c={"pid": ["a"]}),
+        frames(p={"id": ["a"]}, c={"pid": [CANARY]}),
         config=CONFIG,
     )
     assert report["schema_version"] == SCHEMA_VERSION == "post-scan-integrity/v2"
