@@ -210,7 +210,7 @@ def run_pipeline(
 
     `subset_request`: `"config"` applies the config's `subset:` block, `"skip"` masks every row
     (a declared block stamps `{"applied": False}`), a `SubsetRequest` replaces it; else refused
-    before any read. An applied subset stamps `quality_metrics["subset"]`; a `source_loader` is refused.
+    before any read. Applied, it stamps `quality_metrics["subset"]`; refused with a `source_loader`.
 
     Execution routing (`execution_mode`, `sink`, `source_loader`, `auto_chunk`,
     `chunk_size_rows`, `auto_chunk_threshold_rows`, `native_threads`,
