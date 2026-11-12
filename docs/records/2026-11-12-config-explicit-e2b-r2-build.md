@@ -6,10 +6,10 @@ Branch `feat/config-explicit-e2b-reverse`, stacked on #514 (`feat/config-explici
 
 ## Runs
 
-- Red: the tests-only commit (registry plus tests, no behavior) gave 73 assertion failures over the 11 touched files. A second red commit (when and registry cells) gave the two `TestWhenRejection` X ids and `test_a_when_keeps_the_entrys_own_target_claim` red.
-- Green: `tests/unit/profile unit/execution unit/config unit/scripts unit/progress`, `tests/native physical parity acceptance sentry` and the registry test: 12 failed, 26802 passed, 5129 skipped. The 12 are the 10 import-layer ids, `test_live_registry_has_one_complete_fixture_per_minor` (registry unreleased with no 1.25 fixture until that slice merges) and `TestMemCapOom` (passes alone: 2 passed).
+- Red: the tests-only commit (registry plus tests, no behavior) gave 73 assertion failures over the 11 touched files. A second red commit (when and registry cells) gave the two `TestWhenRejection` X ids and `test_a_when_keeps_the_entrys_own_target_claim` red. Fix round 1: five new tests red before the source change (`test_direct_profile_source_applies_only_the_forward_rule` and four derive-chain tests).
+- Green (fix round 1 head, see the SHA below): `tests/unit/profile unit/execution unit/scripts`, `tests/physical native sentry`: 10 failed (the 10 import-layer ids, expected on nodes without import-linter), 20004 passed, 3924 skipped.
 
-## Mutations (final source head, each in a throwaway worktree, assertion failures)
+## Mutations (fix round 1, SHA 04f1f6bf, each in a throwaway detached worktree, assertion failures)
 
 | Mutation | Red test |
 |---|---|
@@ -18,5 +18,7 @@ Branch `feat/config-explicit-e2b-reverse`, stacked on #514 (`feat/config-explici
 | `_creates_from` ignores `reads <= have` | `test_created_target_self_reference_refused` (22) |
 | codemod without the `missing` branch | `test_missing_record_is_hand` |
 | `_with_created` exempts nothing | `test_created_target_route_matrix` (24) |
-| `_with_when` drops the own-target keep | both `TestWhenRejection` X ids and `test_a_when_keeps_the_entrys_own_target_claim` |
+| `_with_when` drops the own-target keep | `test_a_when_keeps_the_entrys_own_target_claim` |
 | `run_pipeline_isolated` skips the boundary | `test_descriptor_routes_refuse_missing_declared_before_rows[isolated, isolated_inproc]` |
+| D1: `created` defaults to an empty frozenset, not None | `test_direct_profile_source_applies_only_the_forward_rule` |
+| D2: drop `\| made` in `_derive_created` | `test_derive_reading_an_earlier_derive_target_counts_as_created`, `test_derive_chain_with_a_masked_target_runs_and_masks_it` |
