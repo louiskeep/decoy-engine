@@ -104,6 +104,27 @@ def reference_policies(config: dict[str, Any]) -> dict[tuple[str, str], str]:
     return found
 
 
+def reference_draw_extras(
+    col: dict[str, Any],
+    table: str,
+    fanouts: dict[tuple[str, str], Any] | None,
+    policy: str | None,
+    on_warning: Callable[[QualityWarning], None] | None,
+) -> dict[str, Any]:
+    """The keyword arguments a reference draw takes beyond its plain five-argument call.
+
+    A `fitted` column carries its pinned fan-out (`None` when the plan has none, which the
+    draw refuses); the orphan policy and warning sink ride along only when either is set, so
+    a column with neither is drawn through the same call shape as before they existed.
+    """
+    extra: dict[str, Any] = {}
+    if col.get("distribution") == "fitted":
+        extra["fanout"] = (fanouts or {}).get((table, str(col.get("name"))))
+    if policy is not None or on_warning is not None:
+        extra = {**extra, "policy": policy, "on_warning": on_warning}
+    return extra
+
+
 def check_reference_pool(
     col: dict[str, Any],
     keys: Sequence[Any],

@@ -51,7 +51,7 @@ from decoy_engine.generation.kinds import (
     parametric_values,
 )
 from decoy_engine.generation.kinds._lookup import lookup_column_values
-from decoy_engine.generation.relational import reference_policies
+from decoy_engine.generation.relational import reference_draw_extras, reference_policies
 from decoy_engine.generation.statistical import FanoutSpec, StatisticalSpec
 from decoy_engine.generators.derivation import TABLE_KEY, GenDeriveContext, with_table
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
@@ -352,11 +352,9 @@ def _generate_column(
         values = _formula(col, n, seed, derive_key)
     elif kind == "reference":
         # A plain call keeps its five-argument shape: parity tests wrap `_reference`.
-        extra: dict[str, Any] = {}
-        if col.get("distribution") == "fitted":
-            extra["fanout"] = (reference_fanouts or {}).get((table_name, str(col.get("name"))))
-        if reference_policy is not None or on_warning is not None:
-            extra = {**extra, "policy": reference_policy, "on_warning": on_warning}
+        extra = reference_draw_extras(
+            col, table_name, reference_fanouts, reference_policy, on_warning
+        )
         values = _reference(col, n, seed, derive_key, pools or {}, **extra)
     elif kind == "constant":
         values = constant_values(col, n)
