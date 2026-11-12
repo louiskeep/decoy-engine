@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import threading
 
-from decoy_engine._progress_events import PhaseEvent, ProgressEvent, RateSample
+from decoy_engine.progress import PhaseEvent, ProgressEvent, RateSample
 from decoy_engine.reasons import approve_name
 from decoy_engine.run_result._project import CollectedFacts
 
