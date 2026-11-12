@@ -3,8 +3,9 @@
 The pipeline profile path (`execution/_pipeline.py`), the plan compiler
 (`plan/_compile.py`), generation (`generation/synthesize.py`), unmask, and
 the vault (which validates the seed but never keys on it) all route their
-config-side `seed` value through these two functions so a `bool`/`float` seed is rejected identically everywhere
-instead of one path coercing `seed: true` to `1` while another raises.
+config-side `seed` value through these two functions so a `bool`/`float`
+seed is rejected identically everywhere instead of one path coercing `seed:
+true` to `1` while another raises.
 
 Lives in its own module rather than inside `_compile.py` so the validator
 has a single import home and `_compile.py` stays within its size budget.
