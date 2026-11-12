@@ -342,7 +342,7 @@ def build_run_context(
 
     profile = profile_source(config, seed=job_seed, declared=declared, supplied_sources=supplied)
     if subset_stage is not None and subset_stage.active:
-        profile = subset_stage.restrict_profile(profile, selection)
+        profile = subset_stage.restrict_profile(profile, selection, subset_stage.head_rows)
 
     plan = compile_plan(
         config,
