@@ -84,6 +84,15 @@ def test_at1d_a_file_target_table_without_an_outcome_raises() -> None:
         plan_delivery(_config(["a", "b"]), {"a": None})
 
 
+def test_at1f_a_target_that_names_no_table_expects_no_outcome() -> None:
+    config = _config(["a", "b"])
+    config["targets"]["orphan"] = {"type": "file", "path": "./out/orphan.csv"}
+    d = plan_delivery(config, {"a": None, "b": None})
+    assert _states(d) == {"a": "delivered", "b": "delivered"}
+    with pytest.raises(PipelineConfigError):
+        plan_delivery(config, {"a": None, "b": None, "orphan": None})
+
+
 @pytest.mark.parametrize("end", ["parent", "child"])
 def test_at1e_a_relationship_end_outside_tables_raises(end: str) -> None:
     edges = [("ghost", "a")] if end == "parent" else [("a", "ghost")]

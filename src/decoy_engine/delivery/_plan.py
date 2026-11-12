@@ -53,11 +53,12 @@ _BAD_GRAPH = "delivery dependency graph names a table not in the config"
 
 def _check_universe(config: Mapping[str, Any], outcomes: Mapping[str, Any]) -> None:
     """Refuse outcomes or edges that name tables the config does not hold; messages are fixed."""
+    names = {t["name"] for t in config.get("tables") or []}
     targets = config.get("targets") or {}
-    file_targets = {n for n, t in targets.items() if t.get("type") == "file"}
+    # Validation does not tie target keys to tables; a target no table owns has no run outcome.
+    file_targets = {n for n, t in targets.items() if n in names and t.get("type") == "file"}
     if set(outcomes) != file_targets:
         raise PipelineConfigError("delivery outcomes do not match the file-target tables")
-    names = {t["name"] for t in config.get("tables") or []}
     try:
         edges = _children(config)
     except ValueError:
