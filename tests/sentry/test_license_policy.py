@@ -182,7 +182,10 @@ def test_committed_notice_content():
     assert entries["python-stdnum"].scope == "runtime"
     assert entries["pandas"].scope == "runtime"
     assert "TODO(release)" not in NOTICE
-    assert "OWNER ITEM" in NOTICE.split("\n")[1]
+    # NOTICE and LICENSE must name the same licensor.
+    copyright_line = f"Copyright 2026 {L.LICENSOR}"
+    assert NOTICE.split("\n")[1] == copyright_line
+    assert copyright_line in (ROOT / "LICENSE").read_text(encoding="utf-8")
 
 
 def test_stale_notice_mutants_are_caught():

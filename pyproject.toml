@@ -11,7 +11,7 @@ version = "0.22.0"
 description = "Data masking and synthetic generation engine. Validates pipeline configs, compiles execution plans, runs masking + generate jobs on a pandas substrate. Used by the decoy-cli CLI and the decoy-platform commercial product."
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
-license = "Apache-2.0"
+license = "FSL-1.1-ALv2"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "louiskeep" }]
 
@@ -23,7 +23,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
     "Intended Audience :: Information Technology",
-    "License :: OSI Approved :: Apache Software License",
+    "License :: Other/Proprietary License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
