@@ -58,6 +58,7 @@ from decoy_engine.relationships import (
     build_relationship_graph,
     check_orphan_fk_policy_completeness,
 )
+from tests._declared_schema import declared_schema
 
 _ENGINE = "test-fk-opt1"
 _REGISTRY = get_default_registry()
@@ -255,7 +256,13 @@ class TestByteParityWithRemapOrphans:
         # Multiple small chunks to exercise chunk-boundary crossing.
         child_chunks = _chunks(["c1", "c2", "c1", "c9"], "customer_id", chunk_size=2)
         chunked_output = list(
-            run_mask_pipeline_chunked(config, child_chunks, table="orders", engine_version=_ENGINE)
+            run_mask_pipeline_chunked(
+                config,
+                child_chunks,
+                table="orders",
+                source_schema=declared_schema(config, "orders"),
+                engine_version=_ENGINE,
+            )
         )
         chunked_child = pa.concat_tables(chunked_output).column("customer_id").to_pylist()
 
@@ -281,7 +288,13 @@ class TestByteParityWithRemapOrphans:
         for chunk_size in (1, 2, 3, 7):
             chunks = _chunks(rows, "customer_id", chunk_size)
             out = list(
-                run_mask_pipeline_chunked(config, chunks, table="orders", engine_version=_ENGINE)
+                run_mask_pipeline_chunked(
+                    config,
+                    chunks,
+                    table="orders",
+                    source_schema=declared_schema(config, "orders"),
+                    engine_version=_ENGINE,
+                )
             )
             results[chunk_size] = pa.concat_tables(out).column("customer_id").to_pylist()
 
@@ -320,7 +333,11 @@ class TestNoRawKeyLeak:
         with pytest.raises(PlanCompileError) as exc:
             list(
                 run_mask_pipeline_chunked(
-                    config, iter(chunks), table="orders", engine_version=_ENGINE
+                    config,
+                    iter(chunks),
+                    table="orders",
+                    source_schema=declared_schema(config, "orders"),
+                    engine_version=_ENGINE,
                 )
             )
 
@@ -350,6 +367,7 @@ class TestNoRawKeyLeak:
                     config,
                     [pa.table({"customer_id": ["c1"]})],
                     table="orders",
+                    source_schema=declared_schema(config, "orders"),
                     engine_version=_ENGINE,
                 )
             )
@@ -371,6 +389,7 @@ class TestNoRawKeyLeak:
                     config,
                     [pa.table({"customer_id": ["c1"]})],
                     table="orders",
+                    source_schema=declared_schema(config, "orders"),
                     engine_version=_ENGINE,
                 )
             )
@@ -520,7 +539,15 @@ class TestFailClosedRejections:
 
         tracker = _LazyTracker()
         with pytest.raises(PlanCompileError) as exc:
-            list(run_mask_pipeline_chunked(config, tracker, table="orders", engine_version=_ENGINE))
+            list(
+                run_mask_pipeline_chunked(
+                    config,
+                    tracker,
+                    table="orders",
+                    source_schema=declared_schema(config, "orders"),
+                    engine_version=_ENGINE,
+                )
+            )
         assert exc.value.code == "chunked_fk_child_key_dtype_mismatch"
         assert tracker.consumed == 0
 
@@ -767,6 +794,7 @@ class TestParentColumnNamespaceIsAuthoritative:
                     config,
                     tracker,
                     table="orders",
+                    source_schema=declared_schema(config, "orders"),
                     engine_version=_ENGINE,
                 )
             )
@@ -909,7 +937,13 @@ class TestByteParityNonDefaultNamespace:
 
         child_chunks = _chunks(["p1", "p3", "orphan_z", "p2"], "customer_id", chunk_size=2)
         chunked_output = list(
-            run_mask_pipeline_chunked(config, child_chunks, table="orders", engine_version=_ENGINE)
+            run_mask_pipeline_chunked(
+                config,
+                child_chunks,
+                table="orders",
+                source_schema=declared_schema(config, "orders"),
+                engine_version=_ENGINE,
+            )
         )
         chunked_child = pa.concat_tables(chunked_output).column("customer_id").to_pylist()
 
@@ -962,6 +996,7 @@ class TestNamespaceAgnosticStrategiesNowRejectedForFkSelfMask:
                     config,
                     _chunks(["c1", "c2", "c1", "c9"], "customer_id", chunk_size=2),
                     table="orders",
+                    source_schema=declared_schema(config, "orders"),
                     engine_version=_ENGINE,
                 )
             )
@@ -985,6 +1020,7 @@ class TestNamespaceAgnosticStrategiesNowRejectedForFkSelfMask:
                     config,
                     _chunks(["c1", "c2", "c1", "c9"], "customer_id", chunk_size=2),
                     table="orders",
+                    source_schema=declared_schema(config, "orders"),
                     engine_version=_ENGINE,
                 )
             )
@@ -1124,7 +1160,15 @@ class TestMultiHopSameKeyCascadeBlocked:
 
         tracker = _LazyTracker()
         with pytest.raises(PlanCompileError) as exc:
-            list(run_mask_pipeline_chunked(config, tracker, table="c", engine_version=_ENGINE))
+            list(
+                run_mask_pipeline_chunked(
+                    config,
+                    tracker,
+                    table="c",
+                    source_schema=declared_schema(config, "c"),
+                    engine_version=_ENGINE,
+                )
+            )
         assert exc.value.code == "chunked_fk_parent_not_root"
         assert tracker.consumed == 0, (
             f"Gate must fire before any chunks are consumed; {tracker.consumed} were pulled"
@@ -1183,7 +1227,15 @@ class TestMultiHopSameKeyCascadeBlocked:
 
         tracker = _LazyTracker()
         with pytest.raises(PlanCompileError) as exc:
-            list(run_mask_pipeline_chunked(config, tracker, table="c", engine_version=_ENGINE))
+            list(
+                run_mask_pipeline_chunked(
+                    config,
+                    tracker,
+                    table="c",
+                    source_schema=declared_schema(config, "c"),
+                    engine_version=_ENGINE,
+                )
+            )
         assert exc.value.code == "chunked_fk_parent_not_root"
         assert tracker.consumed == 0, (
             f"Gate must fire before any chunks are consumed; {tracker.consumed} were pulled"
@@ -1269,7 +1321,13 @@ def _byte_parity_check(
         pa.table({"customer_id": child_column.slice(i, 2)}) for i in range(0, len(child_values), 2)
     ]
     chunked_output = list(
-        run_mask_pipeline_chunked(config, child_chunks, table="orders", engine_version=_ENGINE)
+        run_mask_pipeline_chunked(
+            config,
+            child_chunks,
+            table="orders",
+            source_schema=declared_schema(config, "orders"),
+            engine_version=_ENGINE,
+        )
     )
     chunked_child = pa.concat_tables(chunked_output).column("customer_id").to_pylist()
 

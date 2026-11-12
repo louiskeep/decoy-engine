@@ -22,6 +22,7 @@ from decoy_engine.config import TableConfig
 from decoy_engine.execution import PandasExecutionAdapter, _transforms
 from decoy_engine.execution._transforms import TransformError
 from decoy_engine.plan._errors import PlanCompileError
+from tests._declared_schema import chunked_entry_kwargs, declared_schema
 from tests.unit.execution._transform_testkit import (
     ENGINE_VERSION,
     reference_bindings,
@@ -825,7 +826,13 @@ class TestGuardPlacement:
 
         for fn in (run_mask_pipeline_chunked, run_native_or_oracle_chunked):
             with pytest.raises(PlanCompileError) as exc:
-                fn(single, _Poison(), table="t", engine_version=ENGINE_VERSION)
+                fn(
+                    single,
+                    _Poison(),
+                    table="t",
+                    engine_version=ENGINE_VERSION,
+                    **chunked_entry_kwargs(fn, single, "t"),
+                )
             assert exc.value.code == "per_table_transforms_present"
         assert ev.events == []
 
@@ -855,13 +862,21 @@ class TestGuardPlacement:
         ev = _Events(monkeypatch)
         chunked_calls = [
             lambda: run_mask_pipeline_chunked(
-                cfg, iter([defective]), table="t", engine_version=ENGINE_VERSION
+                cfg,
+                iter([defective]),
+                table="t",
+                source_schema=declared_schema(cfg, "t"),
+                engine_version=ENGINE_VERSION,
             ),
             lambda: run_native_or_oracle_chunked(
                 cfg, iter([defective]), table="t", engine_version=ENGINE_VERSION
             ),
             lambda: MaskPipelineChunkedAdapter().run(
-                cfg, iter([defective]), table="t", engine_version=ENGINE_VERSION
+                cfg,
+                iter([defective]),
+                table="t",
+                engine_version=ENGINE_VERSION,
+                source_schema=declared_schema(cfg, "t"),
             ),
             lambda: NativeOrOracleChunkedAdapter().run(
                 cfg, iter([defective]), table="t", engine_version=ENGINE_VERSION

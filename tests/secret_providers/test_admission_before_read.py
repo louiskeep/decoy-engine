@@ -11,6 +11,7 @@ from decoy_engine.keyprovider import (
     SecretKeyProvider,
     SeedKeyProvider,
 )
+from tests._declared_schema import chunked_entry_kwargs
 from tests.secret_providers._helpers import (
     ENGINE_VERSION,
     FAILURE_CLASSES,
@@ -29,6 +30,7 @@ CHUNKED = [
 
 
 def _drain(entry, cfg, source, **kw):
+    kw = {**chunked_entry_kwargs(entry, cfg, "t"), **kw}
     return list(entry(cfg, source, table="t", engine_version=ENGINE_VERSION, **kw))
 
 

@@ -36,6 +36,7 @@ from decoy_engine.execution._chunked_fk_dtype import (
     reject_mismatched_chunked_fk_declared_dtype,
 )
 from decoy_engine.plan import PlanCompileError
+from tests._declared_schema import declared_schema
 
 _ENGINE = "test-de10-declared-dtype"
 
@@ -99,7 +100,15 @@ def test_declared_int_but_real_string_fk_fails_closed() -> None:
     chunk = pa.table({"customer_id": pa.array(["1", "2", "3"], type=pa.string())})
 
     with pytest.raises(ExecutionError) as exc:
-        list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+        list(
+            run_mask_pipeline_chunked(
+                config,
+                [chunk],
+                table="orders",
+                source_schema=declared_schema(config, "orders"),
+                engine_version=_ENGINE,
+            )
+        )
     assert exc.value.code == "chunked_fk_declared_dtype_mismatch"
     assert "orders.customer_id" in exc.value.message
 
@@ -114,7 +123,15 @@ def test_declared_int_but_real_float_fk_fails_closed() -> None:
     chunk = pa.table({"customer_id": pa.array([1.0, 2.0, 3.0], type=pa.float64())})
 
     with pytest.raises(ExecutionError) as exc:
-        list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+        list(
+            run_mask_pipeline_chunked(
+                config,
+                [chunk],
+                table="orders",
+                source_schema=declared_schema(config, "orders"),
+                engine_version=_ENGINE,
+            )
+        )
     assert exc.value.code == "chunked_fk_declared_dtype_mismatch"
 
 
@@ -131,7 +148,15 @@ def test_declared_dtype_mismatch_raises_on_later_chunk_too() -> None:
         pa.table({"customer_id": pa.array([1, 2], type=pa.int64())}),  # schema drift
     ]
     with pytest.raises(ExecutionError) as exc:
-        list(run_mask_pipeline_chunked(config, chunks, table="orders", engine_version=_ENGINE))
+        list(
+            run_mask_pipeline_chunked(
+                config,
+                chunks,
+                table="orders",
+                source_schema=declared_schema(config, "orders"),
+                engine_version=_ENGINE,
+            )
+        )
     assert exc.value.code == "chunked_fk_declared_dtype_mismatch"
 
 
@@ -144,7 +169,15 @@ def test_parent_side_declared_dtype_also_validated() -> None:
     chunk = pa.table({"id": pa.array(["p1", "p2"], type=pa.string())})  # declared int, real string
 
     with pytest.raises(ExecutionError) as exc:
-        list(run_mask_pipeline_chunked(config, [chunk], table="customers", engine_version=_ENGINE))
+        list(
+            run_mask_pipeline_chunked(
+                config,
+                [chunk],
+                table="customers",
+                source_schema=declared_schema(config, "customers"),
+                engine_version=_ENGINE,
+            )
+        )
     assert exc.value.code == "chunked_fk_declared_dtype_mismatch"
     assert "customers.id" in exc.value.message
 
@@ -167,7 +200,15 @@ def test_correct_declared_dtype_still_runs() -> None:
     )
     chunk = pa.table({"customer_id": pa.array(["1", "2", "3"], type=pa.string())})
 
-    out = list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+    out = list(
+        run_mask_pipeline_chunked(
+            config,
+            [chunk],
+            table="orders",
+            source_schema=declared_schema(config, "orders"),
+            engine_version=_ENGINE,
+        )
+    )
     vals = pa.concat_tables(out).column("customer_id").to_pylist()
     assert len(vals) == 3
     assert all(v is not None for v in vals)
@@ -182,7 +223,15 @@ def test_matching_family_different_width_admitted() -> None:
     config = _fk_config(strategy="hash", parent_dtype="int64", child_dtype="int64", namespace="ns")
     chunk = pa.table({"customer_id": pa.array([1, 2, 3], type=pa.int32())})
 
-    out = list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+    out = list(
+        run_mask_pipeline_chunked(
+            config,
+            [chunk],
+            table="orders",
+            source_schema=declared_schema(config, "orders"),
+            engine_version=_ENGINE,
+        )
+    )
     vals = pa.concat_tables(out).column("customer_id").to_pylist()
     assert len(vals) == 3
     assert all(v is not None for v in vals)
@@ -207,7 +256,15 @@ def test_dictionary_encoded_string_fk_key_rejected_for_hash() -> None:
     chunk = pa.table({"customer_id": pa.array(["a", "b", "a"]).dictionary_encode().cast(dict_type)})
 
     with pytest.raises(ExecutionError) as exc:
-        list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+        list(
+            run_mask_pipeline_chunked(
+                config,
+                [chunk],
+                table="orders",
+                source_schema=declared_schema(config, "orders"),
+                engine_version=_ENGINE,
+            )
+        )
     assert exc.value.code == "chunked_fk_key_dtype_not_cross_adapter_safe"
 
 
@@ -237,7 +294,15 @@ def test_declared_date32_but_real_timestamp_fk_fails_closed() -> None:
     chunk = pa.table({"customer_id": pa.array([1, 2, 3], type=pa.timestamp("us"))})
 
     with pytest.raises(ExecutionError) as exc:
-        list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+        list(
+            run_mask_pipeline_chunked(
+                config,
+                [chunk],
+                table="orders",
+                source_schema=declared_schema(config, "orders"),
+                engine_version=_ENGINE,
+            )
+        )
     assert exc.value.code == "chunked_fk_declared_dtype_mismatch"
     assert "orders.customer_id" in exc.value.message
 
@@ -256,6 +321,7 @@ def test_declared_bare_date_gate_kill() -> None:
                 config,
                 [pa.table({"customer_id": pa.array([1, 2, 3], type=pa.date32())})],
                 table="orders",
+                source_schema=declared_schema(config, "orders"),
                 engine_version=_ENGINE,
             )
         )
@@ -272,7 +338,15 @@ def test_declared_date32_and_real_date32_admitted() -> None:
     )
     chunk = pa.table({"customer_id": pa.array([1, 2, 3], type=pa.date32())})
 
-    out = list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+    out = list(
+        run_mask_pipeline_chunked(
+            config,
+            [chunk],
+            table="orders",
+            source_schema=declared_schema(config, "orders"),
+            engine_version=_ENGINE,
+        )
+    )
     vals = pa.concat_tables(out).column("customer_id").to_pylist()
     assert len(vals) == 3
 
@@ -295,6 +369,7 @@ def test_declared_binary_gate_kill() -> None:
                 config,
                 [pa.table({"customer_id": pa.array([b"abcd", b"efgh"], type=pa.binary(4))})],
                 table="orders",
+                source_schema=declared_schema(config, "orders"),
                 engine_version=_ENGINE,
             )
         )
@@ -383,7 +458,15 @@ def test_null_typed_fk_chunk_streams_end_to_end() -> None:
     green (2026-09-02 cascade-safety plan predicate 12 preserves it)."""
     config = _fk_config(strategy="hash", parent_dtype="int64", child_dtype="int64", namespace="ns")
     chunk = pa.table({"customer_id": pa.array([None, None, None], type=pa.null())})
-    out = list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+    out = list(
+        run_mask_pipeline_chunked(
+            config,
+            [chunk],
+            table="orders",
+            source_schema=declared_schema(config, "orders"),
+            engine_version=_ENGINE,
+        )
+    )
     vals = pa.concat_tables(out).column("customer_id").to_pylist()
     assert vals == [None, None, None]
 
@@ -430,6 +513,7 @@ def test_declared_bare_decimal_gate_kill() -> None:
                     )
                 ],
                 table="orders",
+                source_schema=declared_schema(config, "orders"),
                 engine_version=_ENGINE,
             )
         )
@@ -460,7 +544,15 @@ def test_declared_scaled_decimal_matching_real_admitted() -> None:
         }
     )
 
-    out = list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+    out = list(
+        run_mask_pipeline_chunked(
+            config,
+            [chunk],
+            table="orders",
+            source_schema=declared_schema(config, "orders"),
+            engine_version=_ENGINE,
+        )
+    )
     vals = pa.concat_tables(out).column("customer_id").to_pylist()
     assert len(vals) == 2
 
@@ -487,7 +579,15 @@ def test_declared_scaled_decimal_mismatched_real_scale_fails_closed() -> None:
     )
 
     with pytest.raises(ExecutionError) as exc:
-        list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+        list(
+            run_mask_pipeline_chunked(
+                config,
+                [chunk],
+                table="orders",
+                source_schema=declared_schema(config, "orders"),
+                engine_version=_ENGINE,
+            )
+        )
     assert exc.value.code == "chunked_fk_declared_dtype_mismatch"
 
 
@@ -508,7 +608,11 @@ def test_reproduced_ri_case_bare_decimal_parent_role_still_runtime() -> None:
     with pytest.raises(ExecutionError) as parent_exc:
         list(
             run_mask_pipeline_chunked(
-                config, [parent_chunk], table="customers", engine_version=_ENGINE
+                config,
+                [parent_chunk],
+                table="customers",
+                source_schema=declared_schema(config, "customers"),
+                engine_version=_ENGINE,
             )
         )
     assert parent_exc.value.code == "chunked_fk_declared_dtype_mismatch"
@@ -544,7 +648,11 @@ def test_unsafe_real_dtype_in_parent_role_rejected_by_predicate12(
     with pytest.raises(ExecutionError) as exc:
         list(
             run_mask_pipeline_chunked(
-                config, [parent_chunk], table="customers", engine_version=_ENGINE
+                config,
+                [parent_chunk],
+                table="customers",
+                source_schema=declared_schema(config, "customers"),
+                engine_version=_ENGINE,
             )
         )
     assert exc.value.code == "chunked_fk_key_dtype_not_cross_adapter_safe"
@@ -575,7 +683,11 @@ def test_undeclared_hash_fk_key_still_predicate12_checked(
     if admitted:
         out = list(
             run_mask_pipeline_chunked(
-                config, [parent_chunk], table="customers", engine_version=_ENGINE
+                config,
+                [parent_chunk],
+                table="customers",
+                source_schema=declared_schema(config, "customers"),
+                engine_version=_ENGINE,
             )
         )
         assert out[0].num_rows == 1
@@ -583,7 +695,11 @@ def test_undeclared_hash_fk_key_still_predicate12_checked(
         with pytest.raises(ExecutionError) as exc:
             list(
                 run_mask_pipeline_chunked(
-                    config, [parent_chunk], table="customers", engine_version=_ENGINE
+                    config,
+                    [parent_chunk],
+                    table="customers",
+                    source_schema=declared_schema(config, "customers"),
+                    engine_version=_ENGINE,
                 )
             )
         assert exc.value.code == "chunked_fk_key_dtype_not_cross_adapter_safe"
@@ -603,6 +719,7 @@ def test_undeclared_hash_fk_key_unsafe_on_later_chunk_still_rejected() -> None:
                 config,
                 [safe_chunk, drifted_chunk],
                 table="customers",
+                source_schema=declared_schema(config, "customers"),
                 engine_version=_ENGINE,
             )
         )
