@@ -19,6 +19,14 @@ capability_modules = [
   "decoy_engine/fileaccess/_openat2.py",
 ]
 
+# Public functions in a capability module that take a held descriptor. They are the named creation
+# choke points (F25 S1a-0, plan 4.2): their `dir_fd` parameter counts as held, as for a private
+# helper. Their name parameter is still traced: each must validate it itself.
+capability_creators = [
+  "decoy_engine/fileaccess/_output.py::make_stage_dir_at",
+  "decoy_engine/fileaccess/_output.py::create_output_file_at",
+]
+
 # The only module that may construct `LocalFileAccess`.
 local_constructors = [
   "decoy_engine/fileaccess/_entry.py",
@@ -32,14 +40,18 @@ ambient_only_modules = [
   # F29 commit evidence: called only from _isolated_run.py with its staging_dir, after the guard.
   "decoy_engine/execution/_isolated_reason.py",
   "decoy_engine/execution/_isolated_run.py",
-  "decoy_engine/execution/out_of_core/_scratch.py",
+  # F06 local quarantine store: opens beneath the caller-given root only after the guard.
+  "decoy_engine/declared_casting/_quarantine_local.py",
 ]
 
 # Modules that must call `fileaccess.require_ambient`, the guard the ambient-only entries rely on.
 ambient_guards = [
   "decoy_engine/connectors/postgres_snapshot.py",
   "decoy_engine/execution/_isolated_run.py",
-  "decoy_engine/execution/out_of_core/_scratch.py",
+  # F06 local quarantine store: opens beneath the caller-given root only after the guard.
+  "decoy_engine/declared_casting/_quarantine_local.py",
+  # LIB L0.1 allocator: calls require_ambient for any caller path.
+  "decoy_engine/fileaccess/_protected_dir.py",
 ]
 # Documented exception (owner decision 2026-10-31, A-4 x F13): file paths a third-party library
 # opens that come only from OPERATOR-set process environment, never from a job config or a caller

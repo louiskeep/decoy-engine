@@ -19,6 +19,7 @@ from decoy_engine.execution.out_of_core._duckdb import (
     _threads_for_memory_limit,
     connect_duckdb,
 )
+from decoy_engine.execution.pipeline._host import detect_usable_cpus
 
 
 def _setting(conn, name: str):
@@ -56,12 +57,10 @@ class TestThreadsForMemoryLimit:
             conn.close()
 
     def test_threads_scale_up_with_memory_limit_but_cap_at_cpu_count(self, tmp_path: Path) -> None:
-        import os
-
         # An enormous memory_limit must not exceed the host's CPU count.
         conn = connect_duckdb(temp_dir=tmp_path, memory_limit="1048576MB")  # 1 TiB
         try:
-            assert _setting(conn, "threads") == (os.cpu_count() or 1)
+            assert _setting(conn, "threads") == detect_usable_cpus()
         finally:
             conn.close()
 
@@ -76,10 +75,8 @@ class TestThreadsForMemoryLimit:
     def test_threads_formula_matches_two_gib_per_thread(
         self, memory_limit_mb: int, expected_threads: int
     ) -> None:
-        import os
-
         threads = _threads_for_memory_limit(f"{memory_limit_mb}MB")
-        assert threads == max(1, min(os.cpu_count() or 1, expected_threads))
+        assert threads == max(1, min(detect_usable_cpus(), expected_threads))
 
     def test_unparseable_memory_limit_string_yields_no_override(self) -> None:
         # A memory_limit shape outside _budget.py's "<MiB>MB" contract (e.g. a

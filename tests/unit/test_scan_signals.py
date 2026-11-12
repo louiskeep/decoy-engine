@@ -101,6 +101,14 @@ class TestNumericRangeClass:
         fields = _scan(ratio=[0.1234, 1.5, 3.14159, 0.001, 42.0] * 4)
         assert fields["ratio"].numeric_range_class == "decimal_other"
 
+    def test_inf_cells_do_not_raise(self):
+        fields = _scan(
+            mixed=[1.5, float("inf"), float("-inf"), float("nan"), 2.5] * 4,
+            all_inf=[float("inf"), float("-inf")] * 10,
+        )
+        assert fields["mixed"].numeric_range_class in ("decimal_money", "decimal_other")
+        assert fields["all_inf"].numeric_range_class is None
+
     def test_string_column_has_no_numeric_range(self):
         fields = _scan(name=["alice", "bob", "carol"] * 7)
         assert fields["name"].numeric_range_class is None

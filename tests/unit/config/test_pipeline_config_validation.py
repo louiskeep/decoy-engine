@@ -31,10 +31,12 @@ sources:
   customers:
     type: file
     format: csv
+    has_header: true
     path: ./data/customers.csv
   orders:
     type: file
     format: csv
+    has_header: true
     path: ./data/orders.csv
 tables:
   - name: customers
@@ -238,11 +240,13 @@ class TestOverrideSources:
             "customers": {
                 "type": "file",
                 "format": "csv",
+                "has_header": True,
                 "path": "/runtime/customers_v2.csv",
             },
             "orders": {
                 "type": "file",
                 "format": "csv",
+                "has_header": True,
                 "path": "/runtime/orders_v2.csv",
             },
         }
@@ -260,8 +264,8 @@ class TestOverrideSources:
         cfg = PipelineConfig.model_validate(base_config()).model_dump()
         snapshot = copy.deepcopy(cfg)
         new_sources = {
-            "customers": {"type": "file", "format": "csv", "path": "/x.csv"},
-            "orders": {"type": "file", "format": "csv", "path": "/y.csv"},
+            "customers": {"type": "file", "format": "csv", "has_header": True, "path": "/x.csv"},
+            "orders": {"type": "file", "format": "csv", "has_header": True, "path": "/y.csv"},
         }
         override_sources(cfg, sources=new_sources)
         assert cfg == snapshot
@@ -273,7 +277,12 @@ class TestOverrideSources:
             override_sources(
                 cfg,
                 sources={
-                    "customers": {"type": "file", "format": "csv", "path": "/x.csv"},
+                    "customers": {
+                        "type": "file",
+                        "format": "csv",
+                        "has_header": True,
+                        "path": "/x.csv",
+                    },
                 },
             )
 
@@ -283,9 +292,24 @@ class TestOverrideSources:
             override_sources(
                 cfg,
                 sources={
-                    "customers": {"type": "file", "format": "csv", "path": "/x.csv"},
-                    "orders": {"type": "file", "format": "csv", "path": "/y.csv"},
-                    "ghost_table": {"type": "file", "format": "csv", "path": "/z.csv"},
+                    "customers": {
+                        "type": "file",
+                        "format": "csv",
+                        "has_header": True,
+                        "path": "/x.csv",
+                    },
+                    "orders": {
+                        "type": "file",
+                        "format": "csv",
+                        "has_header": True,
+                        "path": "/y.csv",
+                    },
+                    "ghost_table": {
+                        "type": "file",
+                        "format": "csv",
+                        "has_header": True,
+                        "path": "/z.csv",
+                    },
                 },
             )
 
@@ -296,7 +320,12 @@ class TestOverrideSources:
                 cfg,
                 sources={
                     "customers": {"type": "ftp", "format": "csv", "path": "/x.csv"},
-                    "orders": {"type": "file", "format": "csv", "path": "/y.csv"},
+                    "orders": {
+                        "type": "file",
+                        "format": "csv",
+                        "has_header": True,
+                        "path": "/y.csv",
+                    },
                 },
             )
 
@@ -306,8 +335,13 @@ class TestOverrideSources:
         result = override_sources(
             cfg,
             sources={
-                "customers": {"type": "file", "format": "csv", "path": "/x.csv"},
-                "orders": {"type": "file", "format": "csv", "path": "/y.csv"},
+                "customers": {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": "/x.csv",
+                },
+                "orders": {"type": "file", "format": "csv", "has_header": True, "path": "/y.csv"},
             },
         )
         PipelineConfig.model_validate(result)  # must not raise
@@ -340,8 +374,18 @@ def _acceptance_config(tmp_path: Path) -> dict[str, Any]:
         "version": 2,
         "global_settings": {"seed": 42, "on_pool_exhaustion": "scale_up"},
         "sources": {
-            "customers": {"type": "file", "format": "csv", "path": str(customers_csv)},
-            "orders": {"type": "file", "format": "csv", "path": str(orders_csv)},
+            "customers": {
+                "type": "file",
+                "format": "csv",
+                "has_header": True,
+                "path": str(customers_csv),
+            },
+            "orders": {
+                "type": "file",
+                "format": "csv",
+                "has_header": True,
+                "path": str(orders_csv),
+            },
         },
         "tables": [
             {
@@ -352,9 +396,17 @@ def _acceptance_config(tmp_path: Path) -> dict[str, Any]:
                         "strategy": "faker_name",
                         "provider": "person_name",
                         "cardinality_mode": "reuse",
-                    }
+                    },
+                    {"name": "customer_id", "strategy": "passthrough"},
                 ],
-            }
+            },
+            {
+                "name": "orders",
+                "columns": [
+                    {"name": "order_id", "strategy": "passthrough"},
+                    {"name": "customer_id", "strategy": "passthrough"},
+                ],
+            },
         ],
         "relationships": [
             {
@@ -423,68 +475,59 @@ class TestQaWalksGenF6GenerateColumnConfigTypeParams:
             "targets": {"t": {"type": "file", "format": "csv", "path": "o.csv"}},
         }
 
+    def _only_error(self, col: dict) -> tuple[str, tuple]:
+        """The one (type, location under the column) that validating ``col`` reports."""
+        with pytest.raises(ValidationError) as info:
+            PipelineConfig.model_validate(self._wrap(col))
+        (err,) = info.value.errors()
+        assert tuple(err["loc"][:4]) == ("tables", 0, "generate_columns", 0)
+        return err["type"], tuple(err["loc"][4:])
+
     def test_faker_missing_faker_type_raises(self):
-        cfg = self._wrap({"name": "fk", "type": "faker"})
-        with pytest.raises(ValidationError, match="faker column 'fk' requires `faker_type`"):
-            PipelineConfig.model_validate(cfg)
+        assert self._only_error({"name": "fk", "type": "faker"}) == ("missing", ("faker_type",))
 
     def test_faker_with_typo_raises(self):
         """The audit-named scenario: `fker_type` instead of `faker_type`.
         Pre-fix passed validation + fell back to V1 word generator at
-        generation time."""
-        cfg = self._wrap({"name": "fk", "type": "faker", "fker_type": "email"})
-        with pytest.raises(ValidationError, match="faker column 'fk' requires `faker_type`"):
-            PipelineConfig.model_validate(cfg)
+        generation time. Now both the missing key and the typo are reported."""
+        with pytest.raises(ValidationError) as info:
+            PipelineConfig.model_validate(
+                self._wrap({"name": "fk", "type": "faker", "fker_type": "email"})
+            )
+        spots = {(e["type"], e["loc"][-1]) for e in info.value.errors()}
+        assert spots == {("missing", "faker_type"), ("generate_option_unknown", "fker_type")}
 
     def test_sequence_missing_start_raises(self):
-        cfg = self._wrap({"name": "id", "type": "sequence", "step": 1})
-        with pytest.raises(ValidationError, match="sequence column 'id' requires `start`"):
-            PipelineConfig.model_validate(cfg)
+        col = {"name": "id", "type": "sequence", "step": 1}
+        assert self._only_error(col) == ("missing", ("start",))
 
     def test_categorical_missing_categories_raises(self):
-        cfg = self._wrap({"name": "dept", "type": "categorical"})
-        with pytest.raises(
-            ValidationError, match="categorical column 'dept' requires `categories`"
-        ):
-            PipelineConfig.model_validate(cfg)
+        col = {"name": "dept", "type": "categorical"}
+        assert self._only_error(col) == ("missing", ("categories",))
 
     def test_categorical_empty_categories_raises(self):
-        cfg = self._wrap({"name": "dept", "type": "categorical", "categories": []})
-        with pytest.raises(
-            ValidationError, match="categorical column 'dept' requires `categories`"
-        ):
-            PipelineConfig.model_validate(cfg)
+        col = {"name": "dept", "type": "categorical", "categories": []}
+        assert self._only_error(col) == ("missing", ("categories",))
 
     def test_formula_missing_formula_raises(self):
-        cfg = self._wrap({"name": "x", "type": "formula"})
-        with pytest.raises(ValidationError, match="formula column 'x' requires `formula`"):
-            PipelineConfig.model_validate(cfg)
+        assert self._only_error({"name": "x", "type": "formula"}) == ("missing", ("formula",))
 
     def test_formula_empty_string_raises(self):
-        cfg = self._wrap({"name": "x", "type": "formula", "formula": ""})
-        with pytest.raises(ValidationError, match="formula column 'x' requires `formula`"):
-            PipelineConfig.model_validate(cfg)
+        col = {"name": "x", "type": "formula", "formula": ""}
+        assert self._only_error(col) == ("missing", ("formula",))
 
     def test_pooled_on_non_faker_column_raises(self):
         """GP2 (dennis review): `pooled` is a faker-only knob. Setting it on
         any other type is an operator error -- reject at validation rather
         than accept-then-silently-ignore (and strip from the fingerprint)."""
-        cfg = self._wrap({"name": "id", "type": "sequence", "start": 1, "pooled": True})
-        with pytest.raises(
-            ValidationError, match="sequence column 'id': `pooled` is only valid on"
-        ):
-            PipelineConfig.model_validate(cfg)
+        col = {"name": "id", "type": "sequence", "start": 1, "pooled": True}
+        assert self._only_error(col) == ("generate_option_unknown", ("pooled",))
 
     def test_pooled_false_on_non_faker_column_also_raises(self):
         """`pooled: false` is still faker-only: even the opt-out value is
         meaningless off a faker column, so it must not pass validation."""
-        cfg = self._wrap(
-            {"name": "dept", "type": "categorical", "categories": ["a"], "pooled": False}
-        )
-        with pytest.raises(
-            ValidationError, match="categorical column 'dept': `pooled` is only valid on"
-        ):
-            PipelineConfig.model_validate(cfg)
+        col = {"name": "dept", "type": "categorical", "categories": ["a"], "pooled": False}
+        assert self._only_error(col) == ("generate_option_unknown", ("pooled",))
 
     def test_pooled_on_faker_column_accepted(self):
         """The valid case: `pooled` on a faker column validates cleanly."""
@@ -514,36 +557,16 @@ class TestQaWalksGenF6GenerateColumnConfigTypeParams:
         PipelineConfig.model_validate(validated.model_dump())  # no raise
 
     def test_reference_validator_unchanged_still_raises_on_missing_table(self):
-        """Existing _reference_params_required validator still works
-        alongside the new _type_params_present validator."""
-        cfg = self._wrap(
-            {
-                "name": "fk",
-                "type": "reference",
-                "reference_column": "id",
-            }
-        )
-        with pytest.raises(
-            ValidationError, match="reference column 'fk' requires `reference_table`"
-        ):
-            PipelineConfig.model_validate(cfg)
+        """A reference column still needs its parent table, reported at the key."""
+        col = {"name": "fk", "type": "reference", "reference_column": "id"}
+        assert self._only_error(col) == ("missing", ("reference_table",))
 
-    def test_faker_with_unrelated_extra_still_validates(self):
-        """`extra="allow"` stays in place (Dennis S6-ENG-1 gate
-        Q-S6-1 lock). Unrelated extras like custom markers must still
-        pass through. F6 catches MISSING-required-params, not
-        UNKNOWN-extras."""
-        cfg = self._wrap(
-            {
-                "name": "fk",
-                "type": "faker",
-                "faker_type": "email",
-                "custom_marker": "team-alpha",
-            }
-        )
-        validated = PipelineConfig.model_validate(cfg)
-        col_dump = validated.model_dump()["tables"][0]["generate_columns"][0]
-        assert col_dump.get("custom_marker") == "team-alpha"
+    def test_faker_with_unrelated_extra_is_refused(self):
+        """GEN-STRICT E1 reverses the Q-S6-1 pass-through: `extra="allow"` still carries the
+        flat options, but a key the type does not read (a custom marker) is refused at its name
+        instead of riding along ignored."""
+        col = {"name": "fk", "type": "faker", "faker_type": "email", "custom_marker": "team-alpha"}
+        assert self._only_error(col) == ("generate_option_unknown", ("custom_marker",))
 
     def test_sequence_with_explicit_start_zero_validates(self):
         """`start: 0` is a legitimate sequence start; the `is None`

@@ -1,0 +1,560 @@
+Status: plan
+
+# GEN-FIT-SHAPE: fitted generation keeps nulls, blanks, precision and resolution (roadmap row 24l)
+
+Owner: Cam. Author: claudeworkerbee (Opus). Date: 2026-11-09. Scope: engine plus CLI `fit`,
+`report fidelity` and CSV target typing, V1 (owner decision 2026-11-08). Revision 3.
+
+Rules consulted: `dev-rules/README.md`, `00-universal.md`, `risk-and-exceptions.md`, `development-loop.md`
+(PLAN: choke point, Placement, Design notes, Established solutions), `feature-dev.md`, `architecture.md`,
+`reuse-first.md`, `testing.md` (test depth, escalation triggers), `cross-cutting-concerns.md`,
+`api-and-compatibility.md`, `code-review.md`, `workspace-and-vcs.md`, `scope-discipline.md`,
+`verification.md`, `documentation.md`, `catalogs/recurring-defects.md`; the plan contract
+(`30_Resources/Decoy-Plan-Contract-and-Defect-Catalog.md`); `LOCAL-BUILDER-BRIEF.md`; the V1 bar (a function
+break, data loss or a value leak to non-admins blocks; a second copy of a central mechanism, or a new module in a
+flat folder over 25 modules, always blocks); engine `CLAUDE.md` (cite the established method; modules aim for 600
+lines, hard max 700, census above 600); engine `docs/compatibility-contract.md:132-144` (`distribution-snapshot/v1`
+is a contract; new fields are additive and optional) and `:180-182` (same input plus same seed gives
+byte-identical output within a major); engine `docs/reasons.md` (an addition raises the registry minor, one
+fixture per minor); the additive snapshot-block precedent in `docs/plans/2026-11-08-qa-fk-fanout.md` (branch
+`plan/qa-fk-fanout`, section "The fan-out block"). Code read at engine `main` `f118ee02` (FK-FANOUT E1 merged, so `add_fanout` and `_fanout.py` are on main) and CLI
+`main` `9f75282`. Revision 3 applies review rounds 1 and 2.
+
+Source: first-user generation QA (CLI `docs/records/2026-11-08-cli-qa-generation.md`), High H1: "Nulls and blanks
+are lost from a fit. Source `smoker` 13.8% blank, `note` 50% blank: generated 0% for both. `report fidelity`
+scored them 1.000 and 0.998, so the report is blind to it. Also the `fit` summary does not mention nulls." Medium
+M1: "Fitted numbers lose their shape: source 2 decimals, generated `24.788501599966185`; source date
+`2021-04-26`, generated `2021-04-26 10:28:30.056808`."
+
+Terms: the **null rate** of a column is `null_count / (null_count + non_null_count)` from its snapshot entry. A
+**blank** is a non-null string cell equal to `""` (length 0); a whitespace-only string is a value, not a blank.
+**Decimal places** is the smallest `d` such that every finite source cell equals itself rounded to `d` places.
+**Resolution** is the coarsest calendar unit (day, hour, minute, second, millisecond, microsecond) that every
+source datetime is a whole multiple of.
+
+## 1. FRAME
+
+### Problem
+
+`decoy fit` already writes `null_count` for every column (`quality/snapshot.py:236-258`), but generation does not
+carry it into `StatisticalSpec` (`generation/statistical/_spec.py:78-110,540-552`) and the sampler emits a value for
+every row (`generation/statistical/_sample.py:234-387`). The numeric sampler draws uniformly inside a histogram
+bin and returns the raw float (`_sample.py:265-287`); the datetime sampler draws a uniform instant inside a year
+(`_sample.py:327-361`). The fidelity comparator never looks at null counts (`quality/fidelity.py:293-363`), so a
+column that lost all its nulls scores the same as one that kept them.
+
+### Guarantee (what V1 promises)
+
+For a `type: statistical` column whose snapshot column entry carries the new `cell_format` block (every exact,
+non-DP snapshot `decoy fit` writes after this ships):
+
+1. The generated null fraction converges to the source null rate, unless the column sets `null_probability`,
+   which then wins (including `null_probability: 0`, the opt-out).
+2. A freetext column's generated blank fraction (among non-null cells) converges to the source blank fraction.
+3. A numeric column's generated values have at most the source decimal places. When that is 0 and the range
+   fits in plus or minus 2**53, the values are Python `int` (Arrow `int64`; the CLI CSV shows `23`, never `23.0`, because C1 writes integer
+   columns with nulls through pandas' nullable `Int64`).
+4. A datetime column's generated values are floored to the source resolution. Day resolution emits
+   `datetime.date` (Arrow `date32`, CSV `2021-04-26`).
+5. An all-null source column (kind `empty`) generates all nulls instead of being refused.
+6. `report fidelity` and the generation fidelity gate score null-rate drift, and the score of a column whose
+   null rates match is byte-identical to today's.
+
+For a snapshot without `cell_format` (every file written before this ships, every DP release, and every
+in-memory snapshot a caller computes without the keyword), generation output is byte-identical to today.
+
+### Invariants (as properties)
+
+- **I1 old input, old bytes.** For every (config, snapshot without `cell_format`, seed), generated bytes equal
+  engine `main` `f118ee02`'s bytes.
+- **I2 one null source per column.** Each column has at most one null mechanism acting on it: the existing
+  `null_probability` post-pass (`generation/synthesize.py:446-488`) when the key is set, else the fitted rate
+  inside the sampler, else none.
+- **I3 chunk safety.** Row `i` of a statistical column depends only on `(col_seed, i, spec, parent value)`; a
+  windowed read of any range equals the same range of a full run (the WS4 contract, `_sample.py:30-34`).
+- **I4 value-free block.** Every member of `cell_format` is an `int` count, an `int` place count, or a member of a
+  fixed enum. No member is a source cell literal or secret, so the redacted fit writes it for sensitive columns too.
+- **I5 strict reader.** A malformed `cell_format` block is refused with one registered code before any draw,
+  and the message never echoes the rejected value.
+- **I6 bounds hold.** Every generated numeric value lies inside `[bin_edges[0], bin_edges[-1]]` after rounding,
+  and every generated datetime inside `[min, max]` after flooring.
+
+### Non-goals (V1)
+
+- Joint missingness (two columns null together). synthpop models it by synthesizing a missingness indicator
+  first; V1 draws each column's nulls independently. Follow-up F1.
+- A DP-released `cell_format`. Decimal places and resolution are data-dependent, so a DP fit would need them
+  declared, not learned. `fit_dp_snapshot` writes no block; a block on a DP artifact is refused. Follow-up F2.
+- Keeping a source time zone on output. V1 keeps today's behavior: tz-aware sources are converted to UTC at fit
+  (`quality/snapshot.py:487-501`) and generated naive. Emitting aware values would break `windowed_date`
+  anchored on the column, which refuses a tz-carrying anchor (`transforms/windowed_date.py:237-240`). Follow-up F3.
+- Per-value string formats (phone layouts, zero padding). Not a snapshot concept today.
+- Distinguishing blank from null inside a CSV. CSV has one lexeme for both; `decoy fit` reads it with the pandas
+  NA grammar (CLI `src/decoy/cli/fit.py:402`), so a CSV blank is counted as a null and written back as an empty
+  cell. Blank versus null is only distinct for typed sources (Parquet, a database frame, an API caller).
+
+### Failure modes (each has an acceptance test in section 7)
+
+| Case | Behavior |
+|---|---|
+| DP snapshot | `fit_dp_snapshot` never writes `cell_format`; a `cell_format` block on a snapshot carrying a `dp` block is refused (`plan.statistical_cell_format_invalid`). A DP-declared pipeline already refuses a snapshot without the DP schema (`plan/_checks_dp.py:277-298`, `dp_snapshot_not_dp_fit`), so an exact block cannot reach DP output. |
+| All-null column | Kind `empty`, stats `{}`. With `cell_format` present: every row `None`, no draw, Class A for windowed reads. Without it: refused as today (`_spec.py:62,383-391`, `statistical_kind_unsupported`). |
+| Blank vs null for strings | `null_count` counts nulls only; `cell_format.blank_count` counts `""` among non-null cells, freetext kind only. A categorical `""` is already a `top_values` entry and is reproduced by the weighted draw. |
+| Mixed precision | `decimal_places` is the largest needed (1 and 2 decimals give 2). Cells that had 1 decimal come back with up to 2. No rounding scheme up to 15 places gives `decimal_places: null` (no rounding). |
+| Integer column with nulls | pandas reads it as float64; `decimal_places: 0` plus a range inside plus or minus 2**53 emits `int`. Outside that range values stay rounded floats, so no int64 overflow. |
+| Timezone-aware datetimes | Resolution is learned on the UTC values the stats already use, so a local-midnight column in a non-UTC zone learns `hour`. Output stays naive UTC as today. |
+| Old snapshots without the keys | Byte-identical output (I1), including no fitted nulls although `null_count` was always present. |
+| `null_probability` set on the column | The fitted rate is not applied (I2); the post-pass runs exactly as today. |
+| Parent value null under `condition_on` | `str(None)` has no joint row, so the child draws from its marginal (existing fallback, `_sample.py:321-323`). |
+| `windowed_date` anchored on a fitted column | Null anchor gives a null window (`transforms/windowed_date.py:328-338`); a `datetime.date` anchor is accepted (`:237-249`). |
+| `derived` over a column with fitted nulls | Default `null_propagation: explicit_null` (`generation/_synthesize_derived.py:35-40`) yields `None` (`transforms/derived.py:227-230,293-300`), never a crash. |
+
+## 2. Established solutions
+
+- **Null rate, learned at fit and re-applied at sampling.** SDV RDT `NullTransformer` with
+  `missing_value_generation='random'` (the default for `FloatFormatter`, `UnixTimestampEncoder` and others) "randomly
+  assign[s] missing values in roughly the same proportion as the original data"; `'from_column'` instead models
+  an indicator column (https://docs.sdv.dev/rdt/transformers-glossary/numerical/gaussiannormalizer). V1 takes
+  `'random'`: one independent Bernoulli per row at the fitted rate.
+- **synthpop** treats missing codes as a separate level: for a continuous variable it splits each value into a
+  zero-filled number and a factor that flags missingness, synthesized first (`cont.na`, `padMis.syn`;
+  Nowok, Raab, Dibben, JSS 2016). That is the joint-missingness design V1 defers (F1).
+- **Decimal places.** RDT `FloatFormatter(learn_rounding_scheme=True)` calls `learn_rounding_digits`
+  (`rdt/transformers/utils.py`): drop NaN and inf, cap the search at `sys.float_info.dig` minus the digit count of
+  the largest magnitude, return the smallest `d` from 0 at which `data == data.round(d)`, else `None` (no scheme).
+  Reverse transform rounds to it, and an integer source dtype is rounded to 0 and cast back. V1 reuses that
+  algorithm with one change to the cap: `sys.float_info.dig - max(0, digits)`, so a column whose largest
+  magnitude is below 1 searches 0 to 15, never further. Learner and decoder share that one range
+  (`MAX_DECIMAL_PLACES = 15` in `_cell_format.py`), so every block the learner writes decodes.
+- **Datetime resolution.** RDT `OptimizedTimestampEncoder._find_divider` (`rdt/transformers/datetime.py`) walks
+  multipliers `[10] * 9 + [60, 60, 24]` over the integer nanosecond timestamps and keeps the largest divisor that
+  divides every value, then multiplies it back on reverse. V1 walks the same ladder but stops at the named units
+  Python `datetime` can hold (microsecond, millisecond, second, minute, hour, day), and floors instead of
+  dividing and multiplying back.
+- **Missing-value fidelity.** SDMetrics `MissingValueSimilarity`: `score = 1 - |S_p - R_p|` over the synthetic
+  and real missing proportions (https://docs.sdv.dev/sdmetrics/data-metrics/quality/missingvaluesimilarity).
+  V1 multiplies it into the column similarity, so a column whose null rates match keeps its exact score.
+- **Gretel.** Gretel's public docs describe no separate precision or missingness scheme; its tabular ACTGAN model
+  is derived from SDV's CTGAN and its transformer stack. Nothing beyond the RDT patterns above to borrow.
+- **MOSTLY AI** documents float precision up to 8 decimal places and a fixed list of datetime patterns from
+  date-only to milliseconds (https://mostly.ai/docs/generators/set-column-types). Confirms the per-column
+  precision and resolution model; V1 learns both instead of asking the user.
+
+## 3. Design notes
+
+### Choke points
+
+| Concern | The one place | Why there |
+|---|---|---|
+| Learn and apply cell format | new `generation/statistical/_cell_format.py` (`add_cell_format`, `learn_cell_format`, `decode_cell_format`, `cell_format_from_dict`, `round_numeric`, `floor_datetime`, `cell_format_arrow_type`) | Same concept on both sides, as RDT keeps learn and reverse in one transformer; the fit imports it lazily, the FK fan-out precedent |
+| Decide whether fitted nulls apply | `load_spec` (`_spec.py:283`) | It already sees the column config and the snapshot; both sample call sites (`_statistical_column.py:82`, `generation/window.py:208`) get the decision through the spec, so no route can disagree |
+| Draw the null, the blank and format the value | `sample_column` (`_sample.py:234`) | The single sampler every route calls; the draw stays inside the existing per-row reseed |
+| Compute a snapshot null fraction | public `quality.snapshot_null_fraction`, promoted from `quality/diagnostic.py:232-243` and exported by `quality/__init__.py` | Diagnostic, fidelity and CLI fit use one count and zero-row rule; an AST guard rejects direct null-rate division elsewhere |
+| Score null drift | `_column_similarity` (`quality/fidelity.py:293`) | Every fidelity consumer (CLI report, quality report, generation gate) reads it |
+| Classify the block for redaction | `_cell_format.py`'s shared exact-type member checks, publicly exported from `generation.statistical` and lazily called by `_redact_column` (`profiling/_snapshot_values.py:131-141`) | The decoder and nested default-deny redactor share one descriptor; an unknown member or a known member with the wrong type is nulled |
+| Serialize Arrow integer CSV columns | one `_csv_frame` helper in CLI `io/_targets.py`, used by both CSV writers at current lines 385 and 489 | Matching pandas nullable signed or unsigned dtypes preserve the Arrow integer domain and spelling; an AST guard rejects direct Arrow `to_pandas().to_csv` paths |
+
+### The `cell_format` block (fit side)
+
+An optional per-column key, written when `compute_distribution_snapshot(..., cell_format=True)`:
+
+```json
+"columns": {
+  "price":   {"kind": "numeric", "null_count": 3, "non_null_count": 97, "...": "...",
+              "cell_format": {"decimal_places": 2}},
+  "visited": {"kind": "datetime", "...": "...", "cell_format": {"resolution": "day"}},
+  "note":    {"kind": "freetext", "...": "...", "cell_format": {"blank_count": 12}},
+  "region":  {"kind": "categorical", "...": "...", "cell_format": {}},
+  "unused":  {"kind": "empty", "null_count": 100, "...": "...", "cell_format": {}}
+}
+```
+
+- Presence of the block is the switch for fitted nulls; the counts it uses (`null_count`, `non_null_count`) are
+  already in every snapshot. Members by kind: numeric `decimal_places` (`int` 0 to `MAX_DECIMAL_PLACES`, 15, the learner's own ceiling, or `null` for no scheme);
+  datetime `resolution` (one of the six unit names); freetext `blank_count` (`int`, at most the first length bin's
+  count, and only when `length_bin_edges[0] == 0`). Categorical and empty carry `{}`.
+- The keyword defaults to `False`, so every existing caller (`quality/report.py:140-147`,
+  `generation/_fidelity_gate.py:143`, tests) gets byte-identical snapshots. `decoy fit` (CLI `fit.py:422`) and
+  `distribution_snapshot_document` (`profiling/_snapshot_values.py:172-180`) pass `True`.
+- `quality/snapshot.py` is exactly 600 lines at `f118ee02`. The edit mirrors the fan-out block
+  (`snapshot.py:201-205`): a `cell_format: bool = False` keyword and, after the fan-out call, a guarded lazy
+  `add_cell_format(columns_block, df)`, about 5 lines. `_column_snapshot` (`:228`) is untouched. The offset is
+  cutting the "DPS Scope B history" paragraph of the module docstring (`snapshot.py:50-57`, 8 lines) to a
+  two-line pointer at the CHANGELOG entry that already records it. The file stays at or under 600 with no census
+  entry.
+- The lazy import names the package (`decoy_engine.generation.statistical.add_cell_format`), the second
+  `quality` to `generation.statistical` call after `add_fanout` (`snapshot.py:202-203`). A top-level import would
+  cycle: `generation` already imports `quality` (`_spec.py:60`). CODEMAP records neither call today; the new
+  `generation/statistical/` row (section 10) records both quality calls and the profiling redaction call as the
+  allowed lazy edges.
+- `_redact_column` lazily imports the member descriptor through the public `generation.statistical` API and runs
+  the nested block through the same exact-type checks as the decoder. The column registry allows the `cell_format`
+  container only through that nested pass. Unknown members and known members with the wrong type become `None`,
+  so a hand-edited block cannot use an allowlisted key to carry a source value.
+
+### The sampler
+
+`StatisticalSpec` gains one optional field, `cell_format: CellFormat | None`, a frozen dataclass of
+`null_count`, `row_count`, `apply_nulls`, `decimal_places`, `resolution`, `blank_count`. `spec_to_dict` omits it
+when `None` (the `carrier` precedent, `_spec.py:112-123`), so every serialized Plan and pinned plan for an old
+snapshot is byte-identical. `load_spec` builds it with `decode_cell_format`, which:
+
+- requires a built-in `dict`, exact `type(x) is int` for counts and places (bools, floats and numeric strings
+  refused), a member of the fixed enum for `resolution`, no unknown member, and the kind rules above;
+- requires nonnegative outer `null_count` and `non_null_count`, derives `row_count` as their sum, and requires that
+  sum to equal the snapshot's `row_count`; the stored shape requires `0 <= null_count <= row_count` with exact ints;
+- refuses the block when the snapshot carries a `dp` block;
+- sets `apply_nulls = col_cfg.get("null_probability") is None` (I2; `null_probability` is in
+  `_NONE_MEANS_ABSENT`, `config/_generate_options.py:290-306`).
+
+Every refusal raises `StatisticalSpecError(code=reasons.plan.STATISTICAL_CELL_FORMAT_INVALID)` naming the
+column and the member, never its value.
+
+A stored spec has a different shape: `spec_from_dict` (plan load `_plan_entry.py:110`, pinned
+`_pinned_execute.py:124`) rebuilds the six-field `CellFormat` with `cell_format_from_dict`, which applies the same
+exact-type rules, the same enum and bounds, `apply_nulls` as a real `bool`, and the same code. The snapshot-shaped
+`decode_cell_format` cannot read that shape, so the two decoders sit side by side in `_cell_format.py` and share
+their member checks.
+
+Per row `i` with a `cell_format` (draw order is part of the contract):
+
+1. `rng.seed(col_seed + start + i)` as today.
+2. Freetext with `blank_count > 0`: `u = rng.random()`; `u < blank_count / non_null_count` gives `""`, else the
+   length draw runs over the histogram with `blank_count` taken off the first bin, and its target length is clamped to at least 1 (today's clamp is to `lo_len`,
+   `_sample.py:376-380`, which can be 0), so a non-blank draw never yields `""`. The table builder is one
+   function shared with window admission, as `_categorical_tables` is today (`_sample.py:194`, reused at `_window_admission.py:200-206`).
+3. The value draw exactly as today, then `round_numeric` or `floor_datetime` (no draw). Rounding is Python
+   `round(x, d)` (half-even), then a clamp to the grid points inside `[edges[0], edges[-1]]`; flooring a value in
+   `[min, max]` stays `>= min` because `min` is a whole multiple of the
+   resolution: on an exact snapshot it is a cell, and on a redacted one it is a year start
+   (`profiling/_snapshot_values.py:102-110`), which lies on every grid up to `day`.
+4. When `apply_nulls` and `null_count > 0`: one more `rng.random()`; below the rate gives `None`.
+5. Kind `empty`: no seed, no draw, `None`.
+
+Without a `cell_format` none of steps 2 to 5 run and the draw sequence is today's (I1). The fitted null is a
+draw inside the sampler's own per-row stream, not a second null mechanism: the post-pass still owns
+`null_probability`, and I2 makes the two exclusive. Putting the fitted rate through the post-pass instead would
+make every such column Class B for windowed reads (`generation/_window_admission.py:451`), and `generate_rows`
+refuses a Class B table (`generation/window.py:291-295`), a function break for `generate_rows` callers.
+
+**Arrow type.** With a `cell_format`, a statistical column's Arrow type comes from the spec, not from inference
+over the drawn values, because a window or a small table whose fitted column is all `None` would otherwise infer
+`pa.null()` while a full run infers `int64`. `cell_format_arrow_type(spec)` gives `int64` (numeric, 0 places,
+int range), `float64` (other numeric), `date32` (day), `timestamp[us]` (finer datetimes), `string` (freetext),
+the type of `pa.array(top_values values)` (categorical, computed once from the spec) and `null` (kind `empty`).
+Both table builders use it: the whole-table build (`generation/synthesize.py:176`, via a typed `pa.array` from
+`_statistical_column.py`) and the windowed result (`generation/window.py:321-340`). The whole-table path keeps
+Python lists through sibling-dependent generation and the generic `null_probability` post-pass, then
+`_statistical_column.py` replaces only fitted statistical lists with typed arrays immediately before `pa.table`
+(`generation/synthesize.py:150-176`). This ordering also preserves the type when `null_probability` makes every
+row null. The windowed result uses the declared type for each fitted array, including its zero-row branch.
+Without a `cell_format` both keep inference (I1).
+
+### Fidelity
+
+Each column entry gains `value_similarity` (today's number) and `missing_value_similarity`
+(`1 - |p_src - p_out|` from `snapshot_null_fraction` on each side). If either side has zero rows, the missing
+similarity is `None`. For a comparable column with a missing similarity below 1,
+`similarity = round(value_similarity * missing_value_similarity, 6)`; when the rates match, code returns the
+original `value_similarity` unchanged, so `similarity` is bitwise today's. `empty` and `kind_mismatch` entries stay non-comparable (out of the
+aggregate) but carry `missing_value_similarity`, so a mask strategy that nulls a whole column does not start
+failing a policy floor (`quality/policy.py:330`). The generation gate builds its frame with `pd.to_datetime` on
+columns whose source kind is `datetime`, so a day-resolution column of `datetime.date` values is not scored as
+a kind mismatch (`generation/_fidelity_gate.py:140-143`).
+
+When either snapshot carries a `dp` block, `missing_value_similarity` is reported but not multiplied in: a DP
+`null_count` is `released_rows` minus the noised bins (`quality/dp.py:449-463,505-512`), so a gap there is noise,
+and DP-based generation emits no fitted nulls (no block).
+
+### CLI
+
+- `decoy fit`: pass `cell_format=True`; the summary appends `, N% null` to each column with nulls (H1's "fit
+  summary does not mention nulls"); `--json` gains an additive `null_rates` map. Both use the engine's public
+  `snapshot_null_fraction` rather than recomputing the ratio.
+- `report fidelity`: the per-column table gains a `Nulls (source/output)` column only when some column's
+  `missing_value_similarity` is below 1.
+- CSV output converts an Arrow table through the one `_csv_frame` helper before either whole-table or chunked
+  `to_csv` call. Arrow signed and unsigned integer types use their matching pandas nullable dtype; bool and all
+  non-integer types are unchanged. This prints null-bearing integers without `.0` and does not narrow `uint64`.
+  It does not reuse `_coerce_int_columns` (`io/_targets.py:317-349`): that fixed-width helper changes float and
+  object columns only when a user-declared layout says `int`, while `_csv_frame` preserves an existing Arrow type.
+
+### Native and the draw-site inventory
+
+No native statistical sampler exists. The native capability table only classifies statistical generation as
+row-local and partition-safe (`execution/native/_capabilities.py:407-414`); resident generation calls the Python
+sampler, while streamed generation excludes statistical columns (`generation/_admission.py:38-45`). The `gen.statistical_per_row` catalogue entry
+(`execution/native/_draw_sites_gen.py:117-138`) changes its `call_shape` and `null_draw_behavior` to state steps
+2 and 4, and the pinned digests in `tests/native/test_draw_sites_catalogue_pinned.py` are re-pinned in the same
+commit, after showing the old catalogue reproduces the old digests.
+
+## 4. Behavior
+
+| Input | Today | After |
+|---|---|---|
+| New fit, `smoker` 13.8% null | 0% null | about 13.8% null |
+| New fit, `note` freetext with `""` cells (Parquet source) | blanks smeared into short lorem | `""` at the source blank fraction |
+| New fit, `price` with 2 decimals | `24.788501599966185` | `24.79` |
+| New fit, int column with blanks (float64) | `23.4` | `23` |
+| New fit, `--parse-dates visit` with dates only | `2021-04-26 10:28:30.056808` | `2021-04-26` |
+| New fit, all-null column | compile refusal | all `None` |
+| Any column with `null_probability: 0.2` | post-pass 20% | post-pass 20%, fitted rate ignored |
+| Old snapshot file | today's bytes | today's bytes |
+| `report fidelity`, source 13.8% null, output 0% | similarity 1.000 | 0.862 (1.000 x 0.862) |
+
+## 5. Enumerations (from the code at engine `f118ee02`, CLI `9f75282`)
+
+### 5.1 Routes that produce statistical values
+
+- In-memory generate: `generation/synthesize.py:281-284` to `generation/_statistical_column.py:82`.
+- Pinned execution: `generation/_pinned_execute.py:124` rebuilds specs with `spec_from_dict`, then the same
+  `_generate_column` path.
+- Plan-driven generate: `generation/_plan_entry.py:110` (`spec_from_dict` of the GenerationPlan).
+- Windowed `generate_rows`: `generation/window.py:208`, admission `generation/_window_admission.py:241-293` and
+  `:451`.
+- Streamed generation: N/A, `make_column_stream` has no statistical stream and raises
+  (`generation/_column_streams.py:282-291`), and admission excludes statistical tables
+  (`generation/_admission.py:38-45`).
+- Native: N/A, no native statistical kernel; the resident routes call `sample_column`.
+
+### 5.2 Exit paths
+
+- Compile: `plan/_checks.py:335-401` calls `load_spec`; a bad block raises `StatisticalSpecError` there, before
+  any table is built.
+- Plan load: `generation/_plan_entry.py:110` and `generation/_pinned_execute.py:124` decode a stored spec; a
+  stored `CellFormat` goes through `cell_format_from_dict`, the strict decoder for the stored six-field shape
+  (same rules and code as `decode_cell_format`).
+- Window admission refusals (`_window_admission.py:96-108`) run before any draw.
+- CLI fit: read error, usage error and write error exits (`fit.py:400-503`); the block adds no new exit.
+- No resource is opened or staged by this feature, so no cleanup path is added.
+
+### 5.3 FK shapes
+
+N/A for keys: statistical columns are never FK columns and `reference` generation is untouched. The one
+cross-column read is `condition_on`, whose null-parent fallback is in section 1.
+
+### 5.4 Fields (every key this plan adds)
+
+- Snapshot column `cell_format`: `decimal_places`, `resolution`, `blank_count` (section 3).
+- `StatisticalSpec.cell_format` and its six `CellFormat` fields; serialized only when present.
+- `quality-fidelity/v1` column entry: `value_similarity`, `missing_value_similarity`.
+- CLI `decoy fit --json`: `null_rates`.
+- Reason: `plan.statistical_cell_format_invalid`.
+
+### 5.5 Output surfaces
+
+- Generated cells (CSV, Parquet, in-memory Arrow): nulls, blanks, rounded numbers, floored datetimes, `date32`.
+- Snapshot JSON (`decoy fit`, `distribution_snapshot_document`).
+- Fidelity JSON and the CLI report table; the generation-time fidelity warning text.
+- Error messages: the new code's message names the column and member only.
+- CLI fit stdout (human and `--json`).
+- Logs: none added.
+
+## 6. Class table
+
+| # | Class | Where it applies | Structure that closes it | Proof | Mutation that must turn it red |
+|---|---|---|---|---|---|
+| 1 | Value-bearing output | the block is written for sensitive columns; refusal messages | shared exact-type member descriptor drives learning, decoding and nested default-deny redaction; messages name member, not value | AT-9 marker corpus over raw and redacted fits and every refusal message | M9: write `decimal_places` as the first cell's repr string |
+| 2 | Cleanup missing on an exit path | none | N/A: the feature opens, stages and leases nothing | n/a | n/a |
+| 3 | State machine and concurrency | none | N/A: pure functions over an immutable spec; no shared state or cache | n/a | n/a |
+| 4 | Route parity and silent fallback | in-memory, pinned, plan-load and windowed routes | one decision in `load_spec`, one sampler, one shared freetext table builder for admission | AT-5 route matrix: every route gives equal bytes per kind | M4: compute `apply_nulls` in `_statistical_column.py` only |
+| 5 | Referential integrity | `condition_on` with a null parent | existing marginal fallback, documented | AT-6 | M5: drop the fallback for `None` parents |
+| 6 | Untrusted producer | a hand-edited or hostile snapshot block | strict decoder: exact types, enum, bounds, no unknown member, DP refusal | AT-8 hostile block corpus with value-free messages | M6: accept `True` as `decimal_places` |
+| 7 | Check then use (TOCTOU) | the snapshot path | unchanged: specs come from the read-once pinned bytes (`_spec.py:146-157`) | AT-5 pinned cell | n/a, no new read |
+| 8 | Weak tests | convergence tests that pass at 0% | every rate test asserts both sides of the band and a non-vacuity check that the source has nulls | AT-1 to AT-4 non-vacuity lines | M8: return `None` never (AT-1 red) |
+| 9 | Refactor drift | old snapshots | `cell_format` absent means the old code path, byte for byte | AT-7 golden bytes for old snapshots on every route | M7: always build an empty `CellFormat` |
+| 10 | Frozen contract drift | `distribution-snapshot/v1`, `quality-fidelity/v1`, determinism, Plan serialization, reason registry, draw-site catalogue | additive optional keys; omission when absent; registry minor and fixture; catalogue re-pin | AT-7, AT-10, `test_reason_minor_fixtures.py`, `test_draw_sites_catalogue_pinned.py` | M10: serialize `cell_format: null` for old specs (pinned-plan fingerprint test red) |
+
+## 7. Acceptance tests (red first)
+
+Each is written and recorded red before the slice that turns it green. Each rate test asserts a two-sided band
+(about 4 standard deviations at the row count used) and checks the source side is non-trivial.
+
+- **AT-1 nulls carry (E2).** Fit a 2,000-row frame with a numeric, categorical, datetime and freetext column at
+  null rates 0.10 / 0.25 / 0.40 / 0.50; generate 20,000 rows; each generated rate is within the band. Non-vacuity:
+  the snapshot `null_count` is nonzero for each.
+- **AT-2 blanks carry (E2).** A Parquet-typed object column with 30% `""`, 5% whitespace-only (`" "`, `"\t"`) and 10% null
+  (freetext kind): the learned `blank_count` counts the `""` cells only; generated
+  blank fraction among non-null cells and null rate both in a two-sided band; `""` never appears for a snapshot without
+  `blank_count`. An exact sampler cell with a first length bin containing blanks and length-1 non-blanks asserts
+  every non-blank draw has length at least 1.
+- **AT-3 precision (E1 learn, E2 apply).** Learn table: `[1.5, 2.25]` gives 2; `[1.0, 2.0]` gives 0; `[0.1+0.2]`
+  gives `null`; a 1e300 column gives 0 with the cap; a column with max |x| below 1e-3 and 17
+  significant digits learns `null` or at most 15, and every learned block compiles (learn then compile round
+  trip). `round_numeric(1.239, 2) == 1.24` and `round_numeric(2.5, 0) == 2`. Generated: every value has at most `d` places; a float64
+  int column with NaN emits `int`; a 1e17-range column emits floats; every value inside the edges (I6).
+- **AT-4 resolution (E1 learn, E2 apply).** One column per unit learns that unit; nanosecond data learns
+  `microsecond`; generated values are floored to it; day emits `datetime.date`; written CSV shows `YYYY-MM-DD`;
+  every value inside `[min, max]`; a tz-aware local-midnight column learns `hour`.
+- **AT-5 route matrix (E2).** For each kind, with and without `cell_format`, in-memory, pinned, plan-load and
+  windowed (`generate_rows` over three windows) produce equal bytes and equal Arrow schemas for the same rows.
+  The matrix includes an omitted `null_probability`, explicit `null_probability: 0`, a whole-table slice and
+  window where a fitted column is all `None`, a zero-row window and kind `empty`; windowed admission stays Class A
+  for fitted nulls, explicit zero and kind `empty`. A positive `null_probability` stays Class B for windowed reads
+  as today (`generation/_window_admission.py:439-451`), while the three resident routes have equal values and schemas.
+- **AT-6 interactions (E2).** `condition_on` child of a column with fitted nulls draws marginal values on null
+  parent rows; `windowed_date` over a day-resolution anchor with nulls gives null windows on null rows and valid
+  dates elsewhere; `derived: "price * 2"` over fitted nulls yields `None` on those rows.
+- **AT-7 old bytes (E1, E2, E3).** Golden outputs for every kind from snapshots without `cell_format` are
+  byte-identical to `f118ee02` on every route; the serialized Plan and pinned-plan fingerprint for such a config
+  are unchanged; `compute_distribution_snapshot(df)` without the keyword is byte-identical.
+- **AT-8 hostile block (E2).** Each of: non-dict block, `decimal_places` as `True`, `2.0`, `"2"`, `-1`, `16`;
+  unknown `resolution`; `blank_count` above the first bin or with `length_bin_edges[0] > 0`; unknown member;
+  negative or bool counts, column counts that disagree with snapshot `row_count`, `null_count > row_count` in a
+  stored spec; `decimal_places` on a categorical; any block on a snapshot with a `dp` block. The same corpus, in the stored six-field shape, through
+  `spec_from_dict`. Snapshot forms raise `statistical_cell_format_invalid` at compile and stored forms do so on
+  plan load; no message contains the rejected value (seeded marker).
+- **AT-9 value-free block (E1).** Redacted fit (`distribution_snapshot_document`, sensitive columns flagged):
+  `cell_format` survives for every kind. In both raw `compute_distribution_snapshot(cell_format=True)` and the
+  redacted document, a seeded numeric marker is the first finite cell and appears nowhere in any `cell_format`,
+  and every member has its declared exact type or enum value. In the redacted document, an injected unknown member
+  and a known `decimal_places` member carrying that marker string are both nulled by the nested default-deny writer.
+- **AT-10 fidelity (E3).** Source 13.8% null vs output 0%: `missing_value_similarity` 0.862 and `similarity` =
+  value times that; equal null rates give a `similarity` bitwise equal to today's on the existing fidelity
+  corpus; `empty` versus filled stays non-comparable but reports `missing_value_similarity: 0.0`; a cell with value similarity 0.9 and missing similarity 0.8 gives
+  0.72; a DP source snapshot reports `missing_value_similarity` and leaves `similarity` unchanged; either side at
+  zero rows reports `missing_value_similarity: null` without division by zero; the existing policy corpus
+  (`tests/.../quality/test_policy*.py`) gives the same verdicts.
+- **AT-11 CLI (C1).** `decoy fit` on the QA CSV writes `cell_format`; the summary shows `13.8% null` for
+  `smoker`; `--json` has `null_rates`; `report fidelity` shows the Nulls column for that pair and omits it when
+  rates match; whole-table and chunked CSV writes of Arrow signed integers with nulls show `23`, never `23.0`,
+  and a `uint64` value above 2**63 round-trips as the same decimal text.
+- **AT-12 explicit opt-out (E2).** `null_probability: 0` on a fitted column with 40% source nulls gives 0 nulls;
+  `null_probability: 0.1` gives the post-pass rate and the same null positions as today's post-pass.
+- **AT-13 choke-point guards (E3, C1).** The engine AST sentry rejects arithmetic over both `null_count` and
+  `non_null_count` outside `snapshot_null_fraction`; the CLI AST sentry rejects an Arrow-to-CSV conversion that
+  bypasses `_csv_frame`. A seeded direct division in fidelity and a seeded direct `to_pandas().to_csv` writer are
+  each detected.
+
+Mutations (each must turn the named test red): M1 skip the null draw (AT-1); M2 compare blanks with `strip()`
+(AT-2 whitespace cells); M3 truncate instead of round (AT-3 `round_numeric` cells); M4 decide `apply_nulls` at one call site (AT-5); M5 drop the
+`None` parent fallback (AT-6); M6 accept `True` for `decimal_places` (AT-8); M7 always build an empty
+`CellFormat` (AT-7); M8 ignore `null_count` (AT-1); M9 emit a cell repr into the block (AT-9); M10 serialize
+`cell_format: null` (AT-7 fingerprint); M11 take `min` instead of product in fidelity (AT-10 0.9 x 0.8 cell); M12 clamp the length target to
+`lo_len` again (AT-2 exact non-blank cell); M13 let the learner search past 15 (AT-3 round trip); M14 infer the Arrow type
+(AT-5 all-`None` whole-table slice and window); M15 compute the null fraction directly in fidelity (AT-13 engine
+guard); M16 use default `to_pandas()` in either CSV writer (AT-11 output cells and AT-13 CLI guard).
+
+## 8. Owner questions
+
+1. Fitted shape applies only to snapshots written after this ships (the `cell_format` block is the switch), so
+   users re-run `decoy fit` to get it. Applying fitted nulls to old snapshots too would change output for the
+   same snapshot and seed, which the determinism contract forbids within a major. Re-fitting also changes the snapshot digest, which
+   feeds every statistical column's seed (`generators/derivation.py:139-178`), so every statistical column fed by
+   that file gets new values, including columns whose shape did not change. Recommended: re-fit only.
+2. The missing-value factor applies to mask reports as well as generate reports (one comparator). A mask
+   strategy that preserves nulls scores exactly as today; one that fills nulls scores lower. A DP source never takes the factor (its null counts are noise).
+   Recommended: both.
+   Alternative: only when `report fidelity --generate`.
+3. A day-resolution column emits `datetime.date`, so a Parquet target gets `date32` rather than a timestamp at
+   midnight. Recommended: `date32`.
+4. Time zones stay as today (naive UTC output) in V1; keeping the source zone is follow-up F3 because
+   `windowed_date` refuses tz-carrying anchors. Recommended: defer.
+5. No option turns precision or resolution off; `null_probability: 0` is the only opt-out (nulls). Recommended:
+   no new option key in V1.
+6. C1 writes CSV integer columns with nulls as `Int64` (CLI `src/decoy/cli/io/_targets.py:385` and `:489`), so
+   `23` instead of `23.0`; other Arrow integer widths use their matching nullable signed or unsigned dtype. That
+   also changes the CSV of an existing masked or generated Arrow integer column with nulls, which prints `23.0`
+   today. Engine bytes are unchanged.
+   Recommended: change it for every integer column. Alternative: drop the CSV promise from guarantee 3.
+
+## 9. Reuse inventory
+
+- `null_count` / `non_null_count`, already in every exact and DP snapshot (`quality/snapshot.py:236-258`,
+  `quality/dp.py:449-463,505-512`). Existing `quality/diagnostic.py:232-243` owns their zero-row and ratio rule;
+  E3 promotes it as public `snapshot_null_fraction` instead of copying it.
+- The per-row reseed stream and its catalogue entry (`_sample.py:234`, `_draw_sites_gen.py:117-138`).
+- `null_probability` post-pass and its `_NONE_MEANS_ABSENT` semantics (`synthesize.py:446-488`,
+  `_generate_options.py:290-306`); not copied, only deferred to.
+- `spec_to_dict` omission rule for optional fields (`_spec.py:112-123`).
+- The default-deny snapshot redaction registry (`_value_redaction.py:111-138`) and `_redact_column`
+  (`_snapshot_values.py:131`).
+- `StatisticalSpecError` and the reason registry; one new code.
+- `canonical_dtype_label` keeps the tz suffix in `dtype` (`internal/pandas_compat.py:22-39`), so no zone key is
+  needed.
+- The FK fan-out lazy `quality` to `generation.statistical` call (`quality/snapshot.py:201-205`) as the import
+  and keyword precedent.
+- Window admission's shared-table pattern (`_window_admission.py:200-206` reuses `_categorical_tables`).
+
+## 10. Placement (checked against `CODEMAP.md`)
+
+| Change | File | CODEMAP |
+|---|---|---|
+| Learn, decode, round, floor | new `generation/statistical/_cell_format.py` (about 190 lines; the package holds 4 modules with `_fanout.py`, 5 after) | new row for `generation/statistical/` naming `_spec`, `_sample`, `_fanout`, `_cell_format`, the two lazy `quality` calls and the lazy profiling redaction call |
+| `cell_format` keyword | `quality/snapshot.py` (stays at 600) | existing quality rows unchanged |
+| Shared null fraction | `quality/diagnostic.py`, exported by `quality/__init__.py` | existing quality rows unchanged; no 26th direct module |
+| Spec field, decoder call, `apply_nulls` | `generation/statistical/_spec.py` (552 to about 570) | covered by the new row |
+| Sampler steps 2 to 5 | `generation/statistical/_sample.py` (387 to about 430) | covered by the new row |
+| `empty` kind and shared freetext table | `generation/_window_admission.py` (493 to about 505) | existing GEN-API row |
+| Explicit Arrow type after all post-passes | `generation/_statistical_column.py`, `generation/synthesize.py`, `generation/window.py` | existing generation rows unchanged |
+| Frame typing | `generation/_fidelity_gate.py` | none needed |
+| Fidelity factor | `quality/fidelity.py` (536 to about 560) | line 41 row unchanged |
+| Registry entries, `_redact_column` keeper | `profiling/_value_redaction.py`, `profiling/_snapshot_values.py` | line 100 row gains "and the `cell_format` block" |
+| Reason code | `reasons/plan/_part2.py` (352 lines) plus the registry fixture | n/a |
+| Catalogue entry | `execution/native/_draw_sites_gen.py` plus the pinned digests | n/a |
+| CLI and the one Arrow-to-CSV conversion | `src/decoy/cli/fit.py`, `src/decoy/cli/report.py`, `src/decoy/cli/io/_targets.py` | CLI CODEMAP unchanged |
+
+No module is added to a flat folder over 25 (`quality/` holds 25 and gets none). No file passes 600 except
+those already on the size allowlist.
+
+## 11. Frozen contracts touched
+
+- **`distribution-snapshot/v1`**: one optional per-column key, `cell_format`, written only on request. Additive
+  (`compatibility-contract.md:142-144`); old readers ignore it.
+- **Determinism**: unchanged for every existing input (I1). A snapshot with the block is a new input.
+- **`quality-fidelity/v1`**: two optional per-column fields; `similarity` gains a factor that is exactly 1.0 when
+  null rates match. The top-level shape is unchanged and the column fields are additive; scores change only where
+  null rates differ. Owner question 2.
+- **Serialized Plan / pinned plan**: `StatisticalSpec` gains an optional field omitted when absent; old plans and
+  fingerprints unchanged.
+- **Reason registry**: one code, registry minor plus fixture; renumbered at merge if another slice takes the minor.
+- **Draw-site catalogue**: one entry edited, digests re-pinned.
+- **CLI `fit --json`**: additive `null_rates` key.
+- **CLI CSV output**: a logical Arrow integer with nulls keeps its signedness, width and decimal integer spelling;
+  existing null-bearing Arrow integer columns change from pandas float spelling such as `23.0` to `23`. Owner question 6.
+
+## 12. Slices
+
+| Slice | Repo | Size | Content | Gate |
+|---|---|---|---|---|
+| E0 | engine | S | `plan.statistical_cell_format_invalid` in `reasons/plan/_part2.py`, registry minor and fixture | T1 plus the reason sentries |
+| E1 | engine | M | `_cell_format.py` learn half and shared member descriptor, `compute_distribution_snapshot(cell_format=)`, `distribution_snapshot_document` passes it, nested redaction; AT-3/AT-4 learn cells, AT-7 snapshot cell, AT-9 | T1; full suite (serialization of a frozen artifact) |
+| E2 | engine | M | decoder, spec field, `load_spec`, sampler steps, admission, post-pass Arrow typing, fidelity-gate frame typing, catalogue re-pin; AT-1 to AT-8, AT-12 | full suite (draw-site catalogue, serialization) |
+| E3 | engine | S | promote `snapshot_null_fraction`, fidelity factor and fields, null-fraction guard; AT-10, engine half of AT-13 | T1 plus the fidelity and policy corpora |
+| C1 | CLI | S | fit keyword, summary, `null_rates`, report Nulls column, shared `_csv_frame`, engine pin bump; AT-11, CLI half of AT-13 | full suite (version pin) |
+
+Order: E0, then E1, then E2; E3 any time after E0; C1 after an engine release carries E1 to E3. Each engine slice
+leaves main runnable: after E1 snapshots carry a block that generation ignores; after E2 generation reads it.
+
+Collisions: FK-FANOUT E1 merged as `f118ee02`, the base of this plan. FK-FANOUT E2a and E2b edit
+`generation/statistical/__init__.py`, the reference options and the same draw-site catalogue, but not the sampler
+or `snapshot.py`; whichever of E2b and this plan's E2 merges second recomputes the catalogue digests on the
+merged tree. GEN-UNIQUE
+(row 24m) may also touch the catalogue; same rule. If row 24f moves CLI fit onto `distribution_snapshot_document`,
+C1's keyword change moves with it.
+
+Worker rules for every slice: name the class of each finding and fix the class; write the generated tests first
+and record them red; attack your own diff by mutating each new mechanism once (section 7 list) and show the test
+goes red; run baselines in the same environment as the branch with `uv.lock`; never widen a threshold, skip a
+test or loosen a band to pass; if a new defect of a class already in the catalog appears, stop and report it.
+
+## 13. Pre-mortem
+
+- **The band tests flake.** Rates are drawn per row; a 20,000-row run at p = 0.5 has a standard deviation near
+  0.0035. Bands are 4 sigma and the seeds are fixed, so a flake is a real determinism change.
+- **Old golden outputs move.** Means a code path ran without a block; AT-7 names it before merge.
+- **Window admission regresses.** A reviewer routes fitted nulls through the post-pass for "one mechanism";
+  AT-5's Class A cell goes red. Section 3 records why the sampler owns the draw.
+- **Fidelity policies start failing for mask users.** AT-10's policy corpus is the tripwire; the
+  non-comparable rule for `empty` and kind mismatches keeps whole-column nulling out of the aggregate.
+- **`date32` breaks a consumer.** Owner question 3; flipping to midnight timestamps is a one-line change in
+  `floor_datetime`.
+- **Size pins.** `snapshot.py` must stay at 600. If the planned trim cannot cover the added lines, shrink the
+  implementation; do not raise the census pin or add a new module in `quality/`.
+
+## 14. Follow-ups (recorded, not in V1)
+
+- F1 joint missingness (synthpop indicator-first design).
+- F2 DP-declared cell format (declared precision and resolution in `fit --epsilon`).
+- F3 keep the source time zone on output, with `windowed_date` accepting aware anchors.
+- F4 a `decoy fit` flag to report or suppress `cell_format` per column, if users ask.

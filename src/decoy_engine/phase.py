@@ -47,6 +47,7 @@ from typing import Any, Literal, TypeVar
 
 from decoy_engine.errors import DecoyError
 from decoy_engine.reasons import ReasonRef, UnknownReasonError, require_known
+from decoy_engine.safe_output._exception import safe_error_type
 
 __all__ = [
     "EVENT_SCHEMA",
@@ -551,25 +552,6 @@ def satisfies_required_gate(item: PhaseResult) -> bool:
     return item.status == "passed"
 
 
-# Exact type, never `__name__`: an unlisted or subclassed exception records "Exception".
-_ERROR_KINDS: dict[type[BaseException], str] = {
-    OSError: "OSError",
-    ValueError: "ValueError",
-    TypeError: "TypeError",
-    KeyError: "KeyError",
-    IndexError: "IndexError",
-    RuntimeError: "RuntimeError",
-    MemoryError: "MemoryError",
-    TimeoutError: "TimeoutError",
-    NotImplementedError: "NotImplementedError",
-    ArithmeticError: "ArithmeticError",
-    ZeroDivisionError: "ZeroDivisionError",
-    OverflowError: "OverflowError",
-    UnicodeError: "UnicodeError",
-    AssertionError: "AssertionError",
-}
-
-
 @_contained
 def error_result(
     phase: Phase,
@@ -579,10 +561,11 @@ def error_result(
     reason: ReasonRef,
     exc: BaseException,
 ) -> PhaseResult:
-    """A failed check as evidence: registry reason plus a fixed error kind.
+    """A failed check as evidence: registry reason plus a closed error label.
 
     Raw exception text can carry paths and cell values, and a callee's class name is caller
-    text too, so neither is read: the kind comes from an exact-type table of builtins.
+    text too, so neither is read: the label is chosen by exact type, never `__name__`
+    (`safe_error_type`); an unlisted or subclassed exception records "Exception".
     """
     return PhaseResult(
         phase=phase,
@@ -591,5 +574,5 @@ def error_result(
         method=method,
         method_version=method_version,
         reasons=(reason,),
-        payload=freeze({"error_type": _ERROR_KINDS.get(type(exc), "Exception")}),
+        payload=freeze({"error_type": safe_error_type(exc).value}),
     )

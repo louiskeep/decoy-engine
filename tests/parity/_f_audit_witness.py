@@ -36,13 +36,18 @@ from tests.parity import _f0_witness as w
 
 BOUNDARY_MARK = "⟦F⟧"
 WINDOW_MARK_DAYS = 3
+INT_MARK = 1_000_003
 
 CORE_BOUNDARY_KINDS = frozenset({"sequence", "windowed_date"})
 LEGACY_BOUNDARY_KINDS = frozenset({"derived", "derived_aggregate"})
 
 
 def mark_str(v: Any) -> Any:
-    return None if v is None else f"{BOUNDARY_MARK}{v}"
+    if v is None:
+        return None
+    if isinstance(v, int) and not isinstance(v, bool):
+        return v + INT_MARK  # a numeric column keeps its type, so the mark is an offset
+    return f"{BOUNDARY_MARK}{v}"
 
 
 def mark_date(v: Any) -> Any:

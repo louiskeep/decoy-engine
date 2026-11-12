@@ -1,0 +1,1155 @@
+{
+  "catalog_version": 1,
+  "formats": [
+    {
+      "directions": [
+        "output",
+        "parse"
+      ],
+      "has_inverse": true,
+      "id": "cobol/comp-3/v1",
+      "logical": "decimal",
+      "physical_kind": "binary",
+      "schemas": {
+        "output": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "const": "cobol/comp-3/v1",
+              "title": "Id",
+              "type": "string"
+            },
+            "precision": {
+              "title": "Precision",
+              "type": "integer"
+            },
+            "scale": {
+              "title": "Scale",
+              "type": "integer"
+            },
+            "signed": {
+              "default": true,
+              "title": "Signed",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "precision",
+            "scale",
+            "id"
+          ],
+          "title": "Comp3",
+          "type": "object"
+        },
+        "parse": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "const": "cobol/comp-3/v1",
+              "title": "Id",
+              "type": "string"
+            },
+            "precision": {
+              "title": "Precision",
+              "type": "integer"
+            },
+            "scale": {
+              "title": "Scale",
+              "type": "integer"
+            },
+            "signed": {
+              "default": true,
+              "title": "Signed",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "precision",
+            "scale",
+            "id"
+          ],
+          "title": "Comp3",
+          "type": "object"
+        }
+      },
+      "width": {
+        "output": "exact",
+        "parse": "exact"
+      }
+    },
+    {
+      "directions": [
+        "output",
+        "parse"
+      ],
+      "has_inverse": true,
+      "id": "cobol/overpunch-ascii-trailing/v1",
+      "logical": "decimal",
+      "physical_kind": "text",
+      "schemas": {
+        "output": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "const": "cobol/overpunch-ascii-trailing/v1",
+              "title": "Id",
+              "type": "string"
+            },
+            "precision": {
+              "title": "Precision",
+              "type": "integer"
+            },
+            "scale": {
+              "title": "Scale",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "precision",
+            "scale",
+            "id"
+          ],
+          "title": "Overpunch",
+          "type": "object"
+        },
+        "parse": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "const": "cobol/overpunch-ascii-trailing/v1",
+              "title": "Id",
+              "type": "string"
+            },
+            "precision": {
+              "title": "Precision",
+              "type": "integer"
+            },
+            "scale": {
+              "title": "Scale",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "precision",
+            "scale",
+            "id"
+          ],
+          "title": "Overpunch",
+          "type": "object"
+        }
+      },
+      "width": {
+        "output": "exact",
+        "parse": "exact"
+      }
+    },
+    {
+      "directions": [
+        "output",
+        "parse"
+      ],
+      "has_inverse": true,
+      "id": "cobol/zoned-ebcdic-trailing/v1",
+      "logical": "decimal",
+      "physical_kind": "binary",
+      "schemas": {
+        "output": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "const": "cobol/zoned-ebcdic-trailing/v1",
+              "title": "Id",
+              "type": "string"
+            },
+            "precision": {
+              "title": "Precision",
+              "type": "integer"
+            },
+            "scale": {
+              "title": "Scale",
+              "type": "integer"
+            },
+            "signed": {
+              "default": true,
+              "title": "Signed",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "precision",
+            "scale",
+            "id"
+          ],
+          "title": "Zoned",
+          "type": "object"
+        },
+        "parse": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "const": "cobol/zoned-ebcdic-trailing/v1",
+              "title": "Id",
+              "type": "string"
+            },
+            "precision": {
+              "title": "Precision",
+              "type": "integer"
+            },
+            "scale": {
+              "title": "Scale",
+              "type": "integer"
+            },
+            "signed": {
+              "default": true,
+              "title": "Signed",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "precision",
+            "scale",
+            "id"
+          ],
+          "title": "Zoned",
+          "type": "object"
+        }
+      },
+      "width": {
+        "output": "exact",
+        "parse": "exact"
+      }
+    },
+    {
+      "directions": [
+        "output",
+        "parse"
+      ],
+      "has_inverse": true,
+      "id": "currency/explicit/v1",
+      "logical": "currency",
+      "physical_kind": "text",
+      "schemas": {
+        "output": {
+          "additionalProperties": false,
+          "properties": {
+            "align": {
+              "default": "right",
+              "enum": [
+                "left",
+                "right"
+              ],
+              "title": "Align",
+              "type": "string"
+            },
+            "currency_code": {
+              "title": "Currency Code",
+              "type": "string"
+            },
+            "group": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Group"
+            },
+            "id": {
+              "const": "currency/explicit/v1",
+              "title": "Id",
+              "type": "string"
+            },
+            "pad": {
+              "default": " ",
+              "title": "Pad",
+              "type": "string"
+            },
+            "precision": {
+              "title": "Precision",
+              "type": "integer"
+            },
+            "radix": {
+              "default": ".",
+              "title": "Radix",
+              "type": "string"
+            },
+            "scale": {
+              "title": "Scale",
+              "type": "integer"
+            },
+            "sign_style": {
+              "enum": [
+                "leading_minus",
+                "accounting_parentheses"
+              ],
+              "title": "Sign Style",
+              "type": "string"
+            },
+            "token": {
+              "title": "Token",
+              "type": "string"
+            },
+            "token_position": {
+              "enum": [
+                "prefix",
+                "suffix"
+              ],
+              "title": "Token Position",
+              "type": "string"
+            },
+            "width": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Width"
+            },
+            "width_unit": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "code_points",
+                    "bytes"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Width Unit"
+            }
+          },
+          "required": [
+            "precision",
+            "scale",
+            "id",
+            "currency_code",
+            "token",
+            "token_position",
+            "sign_style"
+          ],
+          "title": "CurrencyOut",
+          "type": "object"
+        },
+        "parse": {
+          "additionalProperties": false,
+          "properties": {
+            "currency_code": {
+              "title": "Currency Code",
+              "type": "string"
+            },
+            "group": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Group"
+            },
+            "id": {
+              "const": "currency/explicit/v1",
+              "title": "Id",
+              "type": "string"
+            },
+            "precision": {
+              "title": "Precision",
+              "type": "integer"
+            },
+            "radix": {
+              "default": ".",
+              "title": "Radix",
+              "type": "string"
+            },
+            "scale": {
+              "title": "Scale",
+              "type": "integer"
+            },
+            "sign_style": {
+              "enum": [
+                "leading_minus",
+                "accounting_parentheses"
+              ],
+              "title": "Sign Style",
+              "type": "string"
+            },
+            "token": {
+              "title": "Token",
+              "type": "string"
+            },
+            "token_position": {
+              "enum": [
+                "prefix",
+                "suffix"
+              ],
+              "title": "Token Position",
+              "type": "string"
+            }
+          },
+          "required": [
+            "precision",
+            "scale",
+            "id",
+            "currency_code",
+            "token",
+            "token_position",
+            "sign_style"
+          ],
+          "title": "Currency",
+          "type": "object"
+        }
+      },
+      "width": {
+        "output": "bounded",
+        "parse": "bounded"
+      }
+    },
+    {
+      "directions": [
+        "output",
+        "parse"
+      ],
+      "has_inverse": true,
+      "id": "date/iso8601/v1",
+      "logical": "date",
+      "physical_kind": "text",
+      "schemas": {
+        "output": {
+          "additionalProperties": false,
+          "properties": {
+            "align": {
+              "default": "right",
+              "enum": [
+                "left",
+                "right"
+              ],
+              "title": "Align",
+              "type": "string"
+            },
+            "id": {
+              "const": "date/iso8601/v1",
+              "title": "Id",
+              "type": "string"
+            },
+            "pad": {
+              "default": " ",
+              "title": "Pad",
+              "type": "string"
+            },
+            "width": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Width"
+            },
+            "width_unit": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "code_points",
+                    "bytes"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Width Unit"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "title": "DateIsoOut",
+          "type": "object"
+        },
+        "parse": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "const": "date/iso8601/v1",
+              "title": "Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "title": "DateIso",
+          "type": "object"
+        }
+      },
+      "width": {
+        "output": "exact",
+        "parse": "exact"
+      }
+    },
+    {
+      "directions": [
+        "output"
+      ],
+      "has_inverse": true,
+      "id": "date/strftime/v1",
+      "logical": "date",
+      "physical_kind": "text",
+      "schemas": {
+        "output": {
+          "additionalProperties": false,
+          "properties": {
+            "align": {
+              "default": "right",
+              "enum": [
+                "left",
+                "right"
+              ],
+              "title": "Align",
+              "type": "string"
+            },
+            "format": {
+              "title": "Format",
+              "type": "string"
+            },
+            "id": {
+              "const": "date/strftime/v1",
+              "title": "Id",
+              "type": "string"
+            },
+            "pad": {
+              "default": " ",
+              "title": "Pad",
+              "type": "string"
+            },
+            "width": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Width"
+            },
+            "width_unit": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "code_points",
+                    "bytes"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Width Unit"
+            }
+          },
+          "required": [
+            "id",
+            "format"
+          ],
+          "title": "DateStrftime",
+          "type": "object"
+        }
+      },
+      "width": {
+        "output": "exact"
+      }
+    },
+    {
+      "directions": [
+        "parse"
+      ],
+      "has_inverse": true,
+      "id": "date/strptime/v1",
+      "logical": "date",
+      "physical_kind": "text",
+      "schemas": {
+        "parse": {
+          "additionalProperties": false,
+          "properties": {
+            "format": {
+              "title": "Format",
+              "type": "string"
+            },
+            "id": {
+              "const": "date/strptime/v1",
+              "title": "Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "format"
+          ],
+          "title": "DateStrptime",
+          "type": "object"
+        }
+      },
+      "width": {
+        "parse": "exact"
+      }
+    },
+    {
+      "directions": [
+        "output",
+        "parse"
+      ],
+      "has_inverse": true,
+      "id": "decimal/grouped/v1",
+      "logical": "decimal",
+      "physical_kind": "text",
+      "schemas": {
+        "output": {
+          "additionalProperties": false,
+          "properties": {
+            "align": {
+              "default": "right",
+              "enum": [
+                "left",
+                "right"
+              ],
+              "title": "Align",
+              "type": "string"
+            },
+            "group": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": ",",
+              "title": "Group"
+            },
+            "id": {
+              "const": "decimal/grouped/v1",
+              "title": "Id",
+              "type": "string"
+            },
+            "pad": {
+              "default": " ",
+              "title": "Pad",
+              "type": "string"
+            },
+            "precision": {
+              "title": "Precision",
+              "type": "integer"
+            },
+            "radix": {
+              "default": ".",
+              "title": "Radix",
+              "type": "string"
+            },
+            "scale": {
+              "title": "Scale",
+              "type": "integer"
+            },
+            "width": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Width"
+            },
+            "width_unit": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "code_points",
+                    "bytes"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Width Unit"
+            }
+          },
+          "required": [
+            "precision",
+            "scale",
+            "id"
+          ],
+          "title": "DecimalGroupedOut",
+          "type": "object"
+        },
+        "parse": {
+          "additionalProperties": false,
+          "properties": {
+            "group": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": ",",
+              "title": "Group"
+            },
+            "id": {
+              "const": "decimal/grouped/v1",
+              "title": "Id",
+              "type": "string"
+            },
+            "precision": {
+              "title": "Precision",
+              "type": "integer"
+            },
+            "radix": {
+              "default": ".",
+              "title": "Radix",
+              "type": "string"
+            },
+            "scale": {
+              "title": "Scale",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "precision",
+            "scale",
+            "id"
+          ],
+          "title": "DecimalGrouped",
+          "type": "object"
+        }
+      },
+      "width": {
+        "output": "bounded",
+        "parse": "bounded"
+      }
+    },
+    {
+      "directions": [
+        "output",
+        "parse"
+      ],
+      "has_inverse": true,
+      "id": "decimal/plain/v1",
+      "logical": "decimal",
+      "physical_kind": "text",
+      "schemas": {
+        "output": {
+          "additionalProperties": false,
+          "properties": {
+            "align": {
+              "default": "right",
+              "enum": [
+                "left",
+                "right"
+              ],
+              "title": "Align",
+              "type": "string"
+            },
+            "id": {
+              "const": "decimal/plain/v1",
+              "title": "Id",
+              "type": "string"
+            },
+            "pad": {
+              "default": " ",
+              "title": "Pad",
+              "type": "string"
+            },
+            "precision": {
+              "title": "Precision",
+              "type": "integer"
+            },
+            "scale": {
+              "title": "Scale",
+              "type": "integer"
+            },
+            "width": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Width"
+            },
+            "width_unit": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "code_points",
+                    "bytes"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Width Unit"
+            }
+          },
+          "required": [
+            "precision",
+            "scale",
+            "id"
+          ],
+          "title": "DecimalPlainOut",
+          "type": "object"
+        },
+        "parse": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "const": "decimal/plain/v1",
+              "title": "Id",
+              "type": "string"
+            },
+            "precision": {
+              "title": "Precision",
+              "type": "integer"
+            },
+            "scale": {
+              "title": "Scale",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "precision",
+            "scale",
+            "id"
+          ],
+          "title": "DecimalPlain",
+          "type": "object"
+        }
+      },
+      "width": {
+        "output": "bounded",
+        "parse": "bounded"
+      }
+    },
+    {
+      "directions": [
+        "output",
+        "parse"
+      ],
+      "has_inverse": true,
+      "id": "integer/ascii/v1",
+      "logical": "integer",
+      "physical_kind": "text",
+      "schemas": {
+        "output": {
+          "additionalProperties": false,
+          "properties": {
+            "align": {
+              "default": "right",
+              "enum": [
+                "left",
+                "right"
+              ],
+              "title": "Align",
+              "type": "string"
+            },
+            "bit_width": {
+              "default": 64,
+              "title": "Bit Width",
+              "type": "integer"
+            },
+            "id": {
+              "const": "integer/ascii/v1",
+              "title": "Id",
+              "type": "string"
+            },
+            "pad": {
+              "default": " ",
+              "title": "Pad",
+              "type": "string"
+            },
+            "signed": {
+              "default": true,
+              "title": "Signed",
+              "type": "boolean"
+            },
+            "width": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Width"
+            },
+            "width_unit": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "code_points",
+                    "bytes"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Width Unit"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "title": "IntegerAsciiOut",
+          "type": "object"
+        },
+        "parse": {
+          "additionalProperties": false,
+          "properties": {
+            "bit_width": {
+              "default": 64,
+              "title": "Bit Width",
+              "type": "integer"
+            },
+            "id": {
+              "const": "integer/ascii/v1",
+              "title": "Id",
+              "type": "string"
+            },
+            "signed": {
+              "default": true,
+              "title": "Signed",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "title": "IntegerAscii",
+          "type": "object"
+        }
+      },
+      "width": {
+        "output": "bounded",
+        "parse": "bounded"
+      }
+    },
+    {
+      "directions": [
+        "output"
+      ],
+      "has_inverse": true,
+      "id": "integer/zero-pad/v1",
+      "logical": "integer",
+      "physical_kind": "text",
+      "schemas": {
+        "output": {
+          "additionalProperties": false,
+          "properties": {
+            "align": {
+              "default": "right",
+              "enum": [
+                "left",
+                "right"
+              ],
+              "title": "Align",
+              "type": "string"
+            },
+            "bit_width": {
+              "default": 64,
+              "title": "Bit Width",
+              "type": "integer"
+            },
+            "id": {
+              "const": "integer/zero-pad/v1",
+              "title": "Id",
+              "type": "string"
+            },
+            "pad": {
+              "default": "0",
+              "title": "Pad",
+              "type": "string"
+            },
+            "signed": {
+              "default": true,
+              "title": "Signed",
+              "type": "boolean"
+            },
+            "width": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Width"
+            },
+            "width_unit": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "code_points",
+                    "bytes"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Width Unit"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "title": "IntegerZeroPad",
+          "type": "object"
+        }
+      },
+      "width": {
+        "output": "bounded"
+      }
+    },
+    {
+      "directions": [
+        "output",
+        "parse"
+      ],
+      "has_inverse": true,
+      "id": "string/exact/v1",
+      "logical": "string",
+      "physical_kind": "text",
+      "schemas": {
+        "output": {
+          "additionalProperties": false,
+          "properties": {
+            "align": {
+              "default": "left",
+              "enum": [
+                "left",
+                "right"
+              ],
+              "title": "Align",
+              "type": "string"
+            },
+            "id": {
+              "const": "string/exact/v1",
+              "title": "Id",
+              "type": "string"
+            },
+            "pad": {
+              "default": " ",
+              "title": "Pad",
+              "type": "string"
+            },
+            "width": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Width"
+            },
+            "width_unit": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "code_points",
+                    "bytes"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Width Unit"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "title": "StringExactOut",
+          "type": "object"
+        },
+        "parse": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "const": "string/exact/v1",
+              "title": "Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "title": "StringExact",
+          "type": "object"
+        }
+      },
+      "width": {
+        "output": "unknown",
+        "parse": "unknown"
+      }
+    }
+  ],
+  "limits": {
+    "max_currency_token_bytes": 32,
+    "max_precision": 38
+  },
+  "sentinel": {
+    "id": "sentinel/exact/v1",
+    "max_bytes": 1024,
+    "max_values": 256
+  }
+}

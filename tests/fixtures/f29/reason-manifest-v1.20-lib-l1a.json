@@ -1,0 +1,248 @@
+{
+  "entries": [
+    {
+      "code": "record_corrupt",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "RecordError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.20.0",
+      "summary": "Record corrupt.",
+      "symbol": "RECORD_CORRUPT"
+    },
+    {
+      "code": "record_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "RecordError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.20.0",
+      "summary": "Record invalid.",
+      "symbol": "RECORD_INVALID"
+    },
+    {
+      "code": "record_kind_reserved",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "RecordError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.20.0",
+      "summary": "Record kind reserved.",
+      "symbol": "RECORD_KIND_RESERVED"
+    },
+    {
+      "code": "job_log_write_failed",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "warning",
+      "namespace": "warning",
+      "owner": "LibraryEvent",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "findings",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "warning"
+        }
+      ],
+      "since": "1.20.0",
+      "summary": "Job log write failed.",
+      "symbol": "JOB_LOG_WRITE_FAILED"
+    },
+    {
+      "code": "library_degraded",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "warning",
+      "namespace": "warning",
+      "owner": "LibraryEvent",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "findings",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "warning"
+        }
+      ],
+      "since": "1.20.0",
+      "summary": "Library degraded.",
+      "symbol": "LIBRARY_DEGRADED"
+    },
+    {
+      "code": "library_delete_skipped",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "warning",
+      "namespace": "warning",
+      "owner": "LibraryEvent",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "findings",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "warning"
+        }
+      ],
+      "since": "1.20.0",
+      "summary": "Library delete skipped.",
+      "symbol": "LIBRARY_DELETE_SKIPPED"
+    },
+    {
+      "code": "library_write_failed",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "warning",
+      "namespace": "warning",
+      "owner": "LibraryEvent",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "findings",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "warning"
+        }
+      ],
+      "since": "1.20.0",
+      "summary": "Library write failed.",
+      "symbol": "LIBRARY_WRITE_FAILED"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.20.0"
+}

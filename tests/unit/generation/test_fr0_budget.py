@@ -197,6 +197,7 @@ def test_no_budget_is_the_explicit_unbounded_mode_and_still_runs_such_a_column()
         run_generation(config, budget_bytes=256 * MIB)
 
 
+@pytest.mark.usefixtures("lenient_generate_checks")
 def test_bounds_are_exact_or_defensible() -> None:
     cfg = prepared_config(
         fx.config(

@@ -1,8 +1,8 @@
 """Deterministic C1 oracle baseline (Task 3.0): staged RSS + pool_quality.
 
 Builds the frozen deterministic C1 recipe's two-table dataset out of band,
-runs it on the PINNED pandas full-frame oracle (`substrate="pandas"`,
-`execution_mode="full_frame"`, `auto_chunk=False`), and attributes peak RSS
+runs it on the PINNED pandas full-frame oracle (`execution_mode="full_frame"`,
+`auto_chunk=False`), and attributes peak RSS
 into four buckets (input load; pool build; selection; publication) via
 FRESH-PROCESS PREFIX runs, per docs/plans/PHASE3-C1-BASELINE.md.
 
@@ -62,6 +62,7 @@ import pyarrow.parquet as pq
 FIXED_SEED = 20260830
 FIXED_MASK_KEY = bytes.fromhex("b7c3d9e1f5a2846913c0d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7")
 POOL_SIZE = 10_000
+_CSV_IN = {"type": "file", "format": "csv", "has_header": True}
 
 NS_FIRST = "first_name_identity"
 NS_LAST = "last_name_identity"
@@ -241,16 +242,8 @@ def build_config(data_dir: Path) -> dict[str, Any]:
         "version": 2,
         "global_settings": {"seed": FIXED_SEED, "post_validation": False},
         "sources": {
-            "patients": {
-                "type": "file",
-                "format": "csv",
-                "path": str(data_dir / "patients_sample.csv"),
-            },
-            "observations": {
-                "type": "file",
-                "format": "csv",
-                "path": str(data_dir / "observations_sample.csv"),
-            },
+            "patients": {**_CSV_IN, "path": str(data_dir / "patients_sample.csv")},
+            "observations": {**_CSV_IN, "path": str(data_dir / "observations_sample.csv")},
         },
         "targets": {
             "patients": {
@@ -481,7 +474,6 @@ def run_stage(stage: str, data_dir: Path) -> dict[str, Any]:
         config,
         sources,
         engine_version="phase3-c1-baseline",
-        substrate="pandas",
         execution_mode="full_frame",
         auto_chunk=False,
         key_provider=key_provider,

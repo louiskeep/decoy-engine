@@ -37,14 +37,23 @@ import pyarrow as pa
 from faker import Faker
 
 from decoy_engine.generation import _faker_pool
-from decoy_engine.generation._statistical_column import statistical_generate
-from decoy_engine.generation.statistical import StatisticalSpec
-from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.generation._numeric_typing import numeric_plan, restore_declared
+from decoy_engine.generation._statistical_column import (
+    arrow_table,
+    statistical_generate,
+    warn_on_unseen_parents,
+)
+from decoy_engine.generation._synthesize_derived import _derived_generate, _formula, _reference
+from decoy_engine.generation.kinds import constant_values, parametric_values
+from decoy_engine.generation.statistical import FanoutSpec, StatisticalSpec
+from decoy_engine.generators.derivation import TABLE_KEY, GenDeriveContext, with_table
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 from decoy_engine.transforms.derived_aggregate import generate_derived_aggregate_column
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping
+    from collections.abc import Callable, Iterable, Iterator, Mapping
+
+    from decoy_engine.generation.pool._events import QualityWarning
 
 # QA-7 F5 (2026-06-01): seed default aligned with plan compiler's _normalize_job_seed default
 # (0). Pre-fix _DEFAULT_SEED = 42 diverged from plan/_compile.py which defaults to 0 when
@@ -81,6 +90,8 @@ def _generate_tables_from_config(
     snapshot_index_for_column: dict[tuple[str, str], int] | None = None,
     snapshot_artifacts: list[dict[str, Any]] | None = None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+    reference_fanouts: dict[tuple[str, str], FanoutSpec] | None = None,
+    on_warning: Callable[[QualityWarning], None] | None = None,
 ) -> dict[str, pa.Table]:
     """The actual generation logic, over a plain config dict recovered
     from ``GenerationPlan.config_json``. Not part of the public surface
@@ -95,6 +106,10 @@ def _generate_tables_from_config(
     artifacts, keyed the same way. ``provider_snapshot`` (5a-faker) forwards
     to every ``_generate_column`` call; ``None`` (the default) resolves
     custom faker providers against the live registry exactly as before.
+    ``reference_fanouts`` is ``{(table_name, column_name): FanoutSpec}`` decoded from the
+    pinned snapshot bytes; a ``distribution: fitted`` reference column reads only this.
+    ``on_warning`` receives each fidelity-gate ``QualityWarning`` as it is raised; it never
+    changes the generated tables.
     """
     statistical_specs = statistical_specs or {}
     snapshot_index_for_column = snapshot_index_for_column or {}
@@ -111,29 +126,9 @@ def _generate_tables_from_config(
     # Generate tables only (mask tables are skipped). Key by name + build the dep
     # graph so a `reference` column can read its already-generated parent's pool.
     generate_by_name = {t["name"]: t for t in tables_list if t.get("generate_columns")}
-    deps: dict[str, set[str]] = {}
-    for name, t in generate_by_name.items():
-        d: set[str] = set()
-        for col in t["generate_columns"]:
-            if col.get("type") == "reference":
-                ref = col["reference_table"]
-                # F-7 fix: validate reference_table resolves to a generate table.
-                # PipelineConfig._reference_graph_valid catches this at validation
-                # time, but generate_tables is documented to accept unvalidated
-                # dicts (V1-parity callers). Surface a typed error here instead
-                # of a downstream KeyError from `pools[ref_table]` in `_reference`.
-                if ref not in generate_by_name:
-                    raise ValueError(
-                        f"table {name!r} column {col.get('name')!r}: "
-                        f"reference_table {ref!r} is not a generate table"
-                    )
-                d.add(ref)
-        deps[name] = d
-    # Topo-sort parents-before-children (PipelineConfig._reference_graph_valid
-    # already pinned this acyclic + every reference_table resolves to a generate
-    # table). V1 iterates in declared order + warns on missing deps; v2 is
-    # stricter without breaking parity for already-orderable configs.
-    ordered = _topo_sort(deps)
+    # Parents-before-children, ties by declaration and first-reference order (never a `set`).
+    ordered = [name for name, _parents in generation_order(config)]
+    numeric = numeric_plan(config, provider_snapshot=provider_snapshot)
     pools: dict[str, pa.Table] = {}
     out: dict[str, pa.Table] = {}
     for name in ordered:
@@ -145,19 +140,48 @@ def _generate_tables_from_config(
         # (WS3 sequential conditional sampling). Iteration order is the
         # same as the prior dict comprehension; parity unaffected.
         data: dict[str, list[Any]] = {}
+        # GEN-UNIQUE pair hook: a `unique_together` entry is drawn at its first-declared member's
+        # turn; the second member's values wait here until the loop reaches it.
+        pair_hooks: dict[str, Any] = {}
+        pending: dict[str, list[Any]] = {}
+        if table.get("unique_together"):
+            from decoy_engine.generation._unique import pair_hooks as _pair_hooks
+
+            pair_hooks = _pair_hooks(table)
         for col in gcols:
-            data[col["name"]] = _generate_column(
-                col,
-                n,
-                seed,
-                derive_key,
-                pools,
-                instance_default_locale,
-                data,
-                table_name=name,
-                statistical_specs=statistical_specs,
-                provider_snapshot=provider_snapshot,
-            )
+            cname = col["name"]
+            if cname in pending:
+                data[cname] = pending.pop(cname)
+            elif cname in pair_hooks:
+                from decoy_engine.generation._unique import unique_pair
+
+                first, second = pair_hooks[cname]
+                data[cname], pending[second["name"]] = unique_pair(
+                    first, second, n, seed, derive_key, pools, table_name=name
+                )
+            else:
+                data[cname] = _generate_column(
+                    col,
+                    n,
+                    seed,
+                    derive_key,
+                    pools,
+                    instance_default_locale,
+                    data,
+                    table_name=name,
+                    statistical_specs=statistical_specs,
+                    provider_snapshot=provider_snapshot,
+                    numeric_type=numeric.get((name, col["name"])),
+                    reference_fanouts=reference_fanouts,
+                )
+                warn_on_unseen_parents(
+                    col,
+                    n,
+                    data,
+                    table_name=name,
+                    statistical_specs=statistical_specs,
+                    on_warning=on_warning,
+                )
         # Cross-column formula post-pass: a `formula` column carrying
         # `references` was filled with None placeholders by `_formula`
         # above (the per-column loop cannot read siblings that may not
@@ -171,8 +195,8 @@ def _generate_tables_from_config(
                 fill_referenced_formula_columns,
             )
 
-            fill_referenced_formula_columns(gcols, data, seed, derive_key)
-        tbl = pa.table(data)
+            fill_referenced_formula_columns(gcols, data, seed, derive_key, table_name=name)
+        tbl = arrow_table(data, table_name=name, statistical_specs=statistical_specs, columns=gcols)
         # Generation-time fidelity warn-gate (deferred follow-up 5,
         # 2026-06-12): score statistical columns against their source
         # snapshot and warn below global_settings.fidelity_warn_threshold.
@@ -192,13 +216,43 @@ def _generate_tables_from_config(
                 statistical_specs=statistical_specs,
                 snapshot_index_for_column=snapshot_index_for_column,
                 snapshot_artifacts=snapshot_artifacts,
+                on_warning=on_warning,
             )
         pools[name] = tbl
         out[name] = tbl
     return out
 
 
-def _topo_sort(deps: dict[str, set[str]]) -> list[str]:
+def generation_order(config: dict[str, Any]) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Each generate table with the generate tables it references, parents first.
+
+    The one order walk for every generation route. Roots are visited in table declaration order
+    and each table's parents in first-reference order (the first `type: reference` column naming
+    each parent, deduplicated), so the result is a function of the config alone and does not
+    depend on `PYTHONHASHSEED`. Takes unvalidated dicts, so a `reference_table` that is not a
+    generate table raises a typed `ValueError` here rather than a `KeyError` downstream.
+    """
+    generate_by_name = {
+        t["name"]: t for t in config.get("tables") or [] if t.get("generate_columns")
+    }
+    deps: dict[str, tuple[str, ...]] = {}
+    for name, t in generate_by_name.items():
+        refs: list[str] = []
+        for col in t["generate_columns"]:
+            if col.get("type") != "reference":
+                continue
+            ref = col["reference_table"]
+            if ref not in generate_by_name:
+                raise ValueError(
+                    f"table {name!r} column {col.get('name')!r}: "
+                    f"reference_table {ref!r} is not a generate table"
+                )
+            refs.append(ref)
+        deps[name] = tuple(dict.fromkeys(refs))
+    return tuple((name, deps[name]) for name in _topo_sort(deps))
+
+
+def _topo_sort(deps: Mapping[str, Iterable[str]]) -> list[str]:
     """Iterative DFS post-order over the reference dep graph. The
     PipelineConfig validator already pinned the graph acyclic, so this
     is order-only; missing nodes (e.g. a parent referenced by name that
@@ -250,6 +304,8 @@ def _generate_column(
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     reference_date: str | None = None,
     pinned: bool = False,
+    numeric_type: pa.DataType | None = None,
+    reference_fanouts: dict[tuple[str, str], FanoutSpec] | None = None,
 ) -> list[Any]:
     """Dispatch a generate column to its generator by ``type`` (mirrors V1
     ``ColumnGenerator.generators``), then apply the V1 ``null_probability``
@@ -261,12 +317,12 @@ def _generate_column(
     no-per-column-locale branch of ``_faker``, mirroring V1 ``ColumnGenerator``.
     ``table_name``/``statistical_specs`` (DPS Scope B) are the pinned-spec
     lookup for the ``statistical`` branch -- no snapshot path is reopened
-    here (guide section 4.8). ``provider_snapshot`` (5a-faker) forwards to
-    the ``faker`` branch only; every other branch ignores it. ``reference_date`` is set only by
-    pinned execution: ``windowed_date`` then resolves ``now``/``today`` anchors against it."""
+    here (guide section 4.8). ``provider_snapshot`` (5a-faker) forwards to the ``faker`` branch
+    only. ``reference_date`` (pinned execution only) anchors ``windowed_date`` ``now``/``today``."""
+    col = with_table(col, table_name)
     kind = col.get("type")
     if kind == "sequence":
-        values: list[Any] = _sequence(col, n)
+        values: list[Any] = _sequence(col, n, numeric_type is not None)
     elif kind == "categorical":
         values = _categorical(col, n, seed, derive_key)
     elif kind == "faker":
@@ -276,7 +332,22 @@ def _generate_column(
     elif kind == "formula":
         values = _formula(col, n, seed, derive_key)
     elif kind == "reference":
-        values = _reference(col, n, seed, derive_key, pools or {})
+        if col.get("distribution") == "fitted":
+            fanout = (reference_fanouts or {}).get((table_name, str(col.get("name"))))
+            values = _reference(col, n, seed, derive_key, pools or {}, fanout=fanout)
+        else:
+            # The non-fitted call keeps its five-argument shape: parity tests wrap `_reference`.
+            values = _reference(col, n, seed, derive_key, pools or {})
+    elif kind == "constant":
+        values = constant_values(col, n)
+    elif kind == "distribution":
+        values = parametric_values(
+            col,
+            n,
+            GenDeriveContext.for_column(
+                derive_key=derive_key, column_config=col, fallback_seed=seed
+            ),
+        )
     elif kind == "statistical":
         values = statistical_generate(
             col, n, seed, derive_key, generated or {}, table_name, statistical_specs or {}
@@ -305,6 +376,7 @@ def _generate_column(
         # at validation; this branch is the defensive fallback for callers that
         # bypass validation (e.g. an unvalidated dict).
         raise ValueError(f"generate column {col.get('name')!r}: unexpected generator type {kind!r}")
+    values = restore_declared(col, values, numeric_type)
     # Pinned plans store `snapshot_file` as `sha256:<digest>`, not a path. Passing the digest keeps
     # for_column from trying to open that string as a file. The ordinary path passes None and
     # derives the null seed exactly as before.
@@ -317,60 +389,24 @@ def _generate_column(
         and pinned_spec.snapshot_digest
         else None
     )
+    if kind == "reference" and col.get("distribution") == "fitted":
+        # The null mask derives its seed through `for_column` too; the pinned digest keeps
+        # it from reopening `snapshot_file`. A missing spec already raised in `_reference`.
+        fanout = (reference_fanouts or {}).get((table_name, str(col.get("name"))))
+        digest = fanout.seed_digest if fanout is not None else None
     return _apply_null_probability(values, col, seed, derive_key, snapshot_content_digest=digest)
 
 
-def _sequence(col: dict[str, Any], n: int) -> list[str]:
-    """Sequential string values, parity-frozen vs V1 ``_generate_sequence_column``
-    (``columns.py:305-319``).
+def _sequence(col: dict[str, Any], n: int, numeric: bool = False) -> list[Any]:
+    """Sequential values, parity-frozen vs V1 ``_generate_sequence_column``
+    (``columns.py:305-319``): the streamed generator's own batch, so both routes agree.
 
-    V1 ALWAYS wraps every value through ``f"{prefix}{value_str}{suffix}"`` (S6-ENG-1
-    gate finding M1: the ENG-1 spine returned ints when unformatted; corrected here).
-    Returns strings in every configuration. ``pad_length`` zero-fills the numeric
-    body; ``prefix`` / ``suffix`` wrap it.
+    A bare counter is ints; a ``prefix`` / ``suffix`` / ``pad_length`` renders every value through
+    ``f"{prefix}{value_str}{suffix}"`` as text.
     """
-    start = int(col.get("start", 1))
-    step = int(col.get("step", 1))
-    prefix = str(col.get("prefix", ""))
-    suffix = str(col.get("suffix", ""))
-    pad = int(col.get("pad_length", 0))
-    out: list[str] = []
-    for i in range(n):
-        value = start + i * step
-        value_str = str(value).zfill(pad) if pad > 0 else str(value)
-        out.append(f"{prefix}{value_str}{suffix}")
-    return out
+    from decoy_engine.generation._column_streams import SequenceStream
 
-
-def _derived_generate(
-    col: dict[str, Any],
-    n: int,
-    generated: dict[str, list[Any]],
-) -> list[Any]:
-    """Evaluate a closed-grammar derived expression against already-generated siblings.
-
-    Processes rows inline in declared order. Row context is built from columns in
-    ``generated`` (those declared before this one). A sibling declared AFTER this
-    column will be absent from the row context and raise at evaluation time;
-    check_derived_column_refs validates ref existence at plan-compile time. The
-    declared-order constraint mirrors the ``statistical / condition_on`` pattern.
-    Deterministic by construction: same generated snapshot -> same output, no RNG.
-    """
-    from decoy_engine.transforms.derived import DerivedConfig, apply_derived
-
-    config = DerivedConfig.from_dict(
-        {
-            "expression": col.get("expression", ""),
-            "bounds": col.get("bounds"),
-            "null_propagation": col.get("null_propagation", "explicit_null"),
-        }
-    )
-    col_name = col.get("name", "?")
-    out: list[Any] = []
-    for i in range(n):
-        row_ctx = {k: vals[i] for k, vals in generated.items() if i < len(vals)}
-        out.append(apply_derived(config, row_ctx, column=col_name, row_index=i))
-    return out
+    return SequenceStream(col, numeric=numeric).next_batch(0, n)
 
 
 def _categorical(col: dict[str, Any], n: int, seed: int, derive_key: Any = None) -> list[Any]:
@@ -384,6 +420,10 @@ def _categorical(col: dict[str, Any], n: int, seed: int, derive_key: Any = None)
     (import V1's helper, do not reinvent), so seed-only output is byte-identical
     to V1's under the same ``seed`` + ``derive_key=None``.
     """
+    if col.get("unique") is True:
+        from decoy_engine.generation._unique import unique_categorical
+
+        return unique_categorical(col, n, seed, derive_key)
     cats = col.get("categories", ["Category A", "Category B"])
     weights = col.get("weights")  # optional; None -> uniform
     col_seed = GenDeriveContext.for_column(
@@ -467,6 +507,18 @@ def _faker(
     # QA-7 F1/C1 lock existed only because the default instance was a process-wide singleton.
     if pre_seed is not None:
         faker_inst.seed_instance(pre_seed)
+    if col.get("unique") is True:
+        from decoy_engine.generation._unique import unique_faker
+
+        return unique_faker(
+            faker_inst,
+            provider_func,
+            faker_kwargs,
+            gen_ctx,
+            n,
+            table=col.get(TABLE_KEY),
+            column=col.get("name"),
+        )
     for i in range(n):
         faker_inst.seed_instance(gen_ctx.row_int("faker", i))
         out.append(provider_func(**faker_kwargs))
@@ -513,138 +565,6 @@ def _apply_null_probability(
         if is_null:
             out[i] = None
     return out
-
-
-def _formula(col: dict[str, Any], n: int, seed: int, derive_key: Any = None) -> list[Any]:
-    """Python-expression-driven values, parity-frozen vs V1
-    ``_generate_formula_column`` (``columns.py:974+``).
-
-    V1's structure (mirrored here):
-      - empty ``formula`` -> None series (we just return Nones).
-      - ``references: [...]`` set -> return ``[None] * n`` placeholders that
-        ``generate_tables``'s ``_referenced_formula.fill_referenced_formula_columns``
-        post-pass overwrites once every sibling column is finalized (the
-        per-column loop can't read siblings that may not be generated yet).
-        No warning is emitted here: the column is filled, not dropped.
-      - else (inline path) -> per-row safe_eval with row-seeded ``random`` /
-        ``faker`` scope.
-
-    For the inline path we DELEGATE to V1 ``ColumnGenerator._eval_formula_inline``
-    (Reading B: pragmatic guaranteed parity; the eval scope is generic Python
-    expression machinery + Faker helpers, not v1-specific). A v2-native rewrite
-    that lifts the eval scope into ``generation/`` can land alongside S9 v1
-    removal. The delegation is the ENG-2 commit-1 of formula; it does not block
-    ENG-2's Reading-B exit gate (parity tests are byte-identical).
-    """
-    formula = col.get("formula") or ""
-    references = col.get("references") or []
-    if not formula:
-        return [None] * n
-    if references:
-        # Cross-column formula: return None placeholders that the
-        # generate_tables post-pass (_referenced_formula.fill_referenced_formula_columns)
-        # overwrites once every sibling column is finalized. The per-column
-        # loop can't read siblings here, so no eval happens at dispatch.
-        return [None] * n
-    from decoy_engine.generators.columns import ColumnGenerator
-
-    cg = ColumnGenerator(seed=seed, derive_key=derive_key)
-    series = cg._eval_formula_inline(n, formula, col.get("name", "unnamed_column"), col)
-    return series.tolist()
-
-
-def _reference(
-    col: dict[str, Any],
-    n: int,
-    seed: int,
-    derive_key: Any = None,
-    pools: dict[str, pa.Table] | None = None,
-) -> list[Any]:
-    """FK / mint-a-pool: sample values from a parent table's already-generated key
-    column. Parity-frozen vs V1 ``_generate_reference_column`` (``columns.py:758-865``).
-
-    Pattern (mirror V1):
-      - Read parent values from ``pools[reference_table].column(reference_column)``.
-      - INSERTION-ORDER unique + dropna (V1 uses pandas ``Series.dropna().unique()``,
-        which is insertion-order; a naive ``set()`` would break parity).
-      - Empty parent pool -> ``[None] * n`` (V1 warns + returns Nones).
-      - Reseed ``random`` from the per-column seed (V1's exact pattern -- the
-        ``categorical`` generator does the same).
-      - Dispatch by ``distribution``: ``random`` (random.choice), ``sequential``
-        (parent_vals[i % len]), ``weighted`` (random.choices with weights;
-        size-mismatch falls back to None for uniform). Unknown -> random
-        (V1 warns; the v2 falls through silently, values match).
-      - Optional cardinality repair via V1 ``_apply_cardinality_bounds`` (~150 LoC
-        repair algorithm) -- DELEGATED to V1 the same way ``_formula`` delegates
-        ``_eval_formula_inline``: Reading B pragmatic guaranteed parity; the
-        repair is generic set-cover-like logic, not v1-specific; v2-native rewrite
-        lifts at S9 alongside v1 removal.
-
-    The PipelineConfig ``_reference_graph_valid`` validator + topo-sort in
-    ``generate_tables`` guarantee the parent is in ``pools`` by the time we get
-    here; this function does not re-check existence.
-    """
-    pools = pools or {}
-    ref_table = col["reference_table"]
-    ref_column = col["reference_column"]
-    distribution = col.get("distribution", "random")
-    min_per = int(col.get("min_per_parent") or 0)
-    max_per = int(col.get("max_per_parent") or 0)
-
-    parent_tbl = pools[ref_table]
-    raw_vals = parent_tbl.column(ref_column).to_pylist()
-    # Insertion-order unique + drop None, matching V1 `dropna().unique()` on a
-    # pandas Series. A naive set() would lose order -> different random.choice
-    # output for the same seed.
-    seen: set = set()
-    ref_vals: list[Any] = []
-    for v in raw_vals:
-        if v is None or v in seen:
-            continue
-        seen.add(v)
-        ref_vals.append(v)
-
-    if not ref_vals:
-        return [None] * n
-
-    col_seed = GenDeriveContext.for_column(
-        derive_key=derive_key, column_config=col, fallback_seed=seed
-    ).base_int("py")
-    # Instance-local Random: parity-preserving, thread-safe (F1 fix).
-    rng = random.Random(col_seed)
-
-    values: list[Any] = []
-    for i in range(n):
-        if distribution == "random":
-            values.append(rng.choice(ref_vals))
-        elif distribution == "sequential":
-            values.append(ref_vals[i % len(ref_vals)])
-        elif distribution == "weighted":
-            weights = col.get("weights")
-            if not weights or len(weights) != len(ref_vals):
-                weights = None  # V1: size-mismatch -> uniform
-            values.append(rng.choices(ref_vals, weights=weights, k=1)[0])
-        else:
-            # V1 unknown -> warn + random; the v2 falls through silently (parity
-            # in values, not in log lines).
-            values.append(rng.choice(ref_vals))
-
-    if min_per > 0 or max_per > 0:
-        from decoy_engine.generators.columns import ColumnGenerator
-
-        # QA-1 H6 carry (2026-06-01): pass the column-scoped rng so the
-        # repair's shuffle/choices stay deterministic without touching
-        # module-global random. The local `rng` above is column-scoped
-        # via col_seed.
-        cg = ColumnGenerator(seed=seed, derive_key=derive_key)
-        values = cg._apply_cardinality_bounds(
-            values,
-            ref_vals,
-            min_per,
-            max_per,
-            rng=rng,
-        )
-    return values
 
 
 # Re-exported at the bottom (not the top) to avoid a real import cycle:

@@ -39,7 +39,7 @@ import pyarrow as pa
 import pyarrow.types as pat
 
 from decoy_engine import reasons
-from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._errors import ExecutionError, lazy_source_changed
 from decoy_engine.profile._readers import FooterFacts, LazySource, OpenedLazyBatches
 
 if TYPE_CHECKING:
@@ -245,18 +245,11 @@ def _slices(source: pa.Table, chunk_size_rows: int) -> Iterator[pa.Table]:
         yield source.slice(start, chunk_size_rows)
 
 
-def _changed(table: str, detail: str) -> ExecutionError:
-    return ExecutionError(
-        code=reasons.runtime.LAZY_SOURCE_CHANGED,
-        message=f"the source of table {table!r} changed between routing and the read: {detail}.",
-    )
-
-
 def check_opened(opened: OpenedLazyBatches, expected: SourceFacts, *, table: str) -> None:
     """Raise `lazy_source_changed` unless the opened handle's footer facts equal the routing
     snapshot. Reads no second handle: the facts come from the handle being read."""
     if not facts_match(facts_from_footer(opened.facts), expected):
-        raise _changed(table, "footer facts differ from the routing snapshot")
+        raise lazy_source_changed(table, "footer facts differ from the routing snapshot")
 
 
 def _guarded(

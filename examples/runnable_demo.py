@@ -77,9 +77,24 @@ config = {
     "version": 2,
     "global_settings": {"seed": 1234567, "post_validation": False},
     "sources": {
-        "members": {"type": "file", "format": "csv", "path": "examples/in/members.csv"},
-        "claims": {"type": "file", "format": "csv", "path": "examples/in/claims.csv"},
-        "providers": {"type": "file", "format": "csv", "path": "examples/in/providers.csv"},
+        "members": {
+            "type": "file",
+            "format": "csv",
+            "has_header": True,
+            "path": "examples/in/members.csv",
+        },
+        "claims": {
+            "type": "file",
+            "format": "csv",
+            "has_header": True,
+            "path": "examples/in/claims.csv",
+        },
+        "providers": {
+            "type": "file",
+            "format": "csv",
+            "has_header": True,
+            "path": "examples/in/providers.csv",
+        },
     },
     "targets": {
         "members": {"type": "file", "format": "csv", "path": "examples/out/members.csv"},

@@ -15,14 +15,16 @@ command -v uv >/dev/null || { echo "LICENSES FAIL: uv not on PATH" >&2; exit 1; 
 PY=${DECOY_VENV:-${UV_PROJECT_ENVIRONMENT:-$ROOT/.venv}}/bin/python
 [ -x "$PY" ] || { echo "LICENSES FAIL: no venv; run scripts/dev/bootstrap.sh" >&2; exit 1; }
 
-mapfile -t EXTRAS < <("$PY" -c '
+# No read-into-array builtin: bash 3.2 compatible.
+EXTRAS=()
+while IFS= read -r e; do EXTRAS+=("$e"); done < <("$PY" -c '
 import json, sys
 for e in json.load(open(sys.argv[1]))["extras"]["runtime"]:
     print("--extra"); print(e)' scripts/dev/license_policy.json)
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/licenses.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
-uv export --no-config --frozen --no-dev --no-emit-project --no-header "${EXTRAS[@]}" >"$TMP/req.txt"
+uv export --no-config --frozen --no-dev --no-emit-project --no-header ${EXTRAS[@]+"${EXTRAS[@]}"} >"$TMP/req.txt"
 SITES=()
 for py in 3.10 3.11 3.12; do
   for plat in x86_64-unknown-linux-gnu x86_64-pc-windows-msvc; do
@@ -32,5 +34,5 @@ for py in 3.10 3.11 3.12; do
     SITES+=(--site "$dir")
   done
 done
-"$PY" scripts/dev/licenses.py --write "${SITES[@]}"
+"$PY" scripts/dev/licenses.py --write ${SITES[@]+"${SITES[@]}"}
 "$PY" scripts/dev/licenses.py --check

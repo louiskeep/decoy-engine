@@ -87,6 +87,7 @@ def _mask_config(tmp_path, n_cols: int) -> dict[str, Any]:
                 "customers": {
                     "type": "file",
                     "format": "csv",
+                    "has_header": True,
                     "path": str(tmp_path / "customers.csv"),
                 },
             },
@@ -185,6 +186,7 @@ def _ineligible_result(route: str, error: str) -> IsolatedRunResult:
 
 
 class TestMonitorDrivesRealKillDecision:
+    @pytest.mark.serial
     def test_vmrss_crossing_threshold_kills_and_reroutes_to_out_of_core(
         self, tmp_path, monkeypatch
     ):
@@ -402,6 +404,7 @@ class TestRerouteLadder:
 
 
 class TestPidExitsMidPoll:
+    @pytest.mark.serial
     def test_monitor_stops_cleanly_when_pid_vanishes(self, monkeypatch):
         reads = iter([50 * _MB, None])
 
@@ -759,6 +762,7 @@ class TestCallContractValidation:
 
 
 class TestRecycledPidKillGuard:
+    @pytest.mark.serial
     def test_ppid_mismatch_never_kills(self, monkeypatch):
         """THE MED-1 fix: a status read whose PPid does NOT match this
         driver's own pid must never trigger os.kill, no matter how far over
@@ -787,6 +791,7 @@ class TestRecycledPidKillGuard:
         # identity guard only gates the KILL, not diagnostic observation.
         assert monitor.peak_observed_bytes == 10**12
 
+    @pytest.mark.serial
     def test_missing_ppid_never_kills(self, monkeypatch):
         """`ppid=None` (no `PPid:` line in the status blob at all) is
         treated the same as an explicit mismatch: identity unconfirmed, so
@@ -805,6 +810,7 @@ class TestRecycledPidKillGuard:
         assert kill_calls == []
         assert monitor.tripped is False
 
+    @pytest.mark.serial
     def test_ppid_match_still_kills(self, monkeypatch):
         """Sanity companion: a genuine PPid match (the common, non-recycled
         case) still kills -- the guard must not be a blanket suppressor."""
@@ -869,6 +875,7 @@ class TestMonitorStopGuardsNeverStartedThread:
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.serial
 class TestRealSubprocessIntegration:
     def test_real_governor_kills_real_child_and_reroutes_to_diagnosed_exhaustion(self, tmp_path):
         cfg = _mask_config(tmp_path, n_cols=6)

@@ -104,12 +104,24 @@ def _config(
     extra_tables: list[dict] | None = None,
 ) -> dict:
     tables = [{"name": table, "columns": columns}]
-    sources = {table: {"type": "file", "format": "csv", "path": str(tmp_path / f"{table}.csv")}}
+    sources = {
+        table: {
+            "type": "file",
+            "format": "csv",
+            "has_header": True,
+            "path": str(tmp_path / f"{table}.csv"),
+        }
+    }
     targets = {table: {"type": "file", "format": "csv", "path": str(tmp_path / f"{table}_out.csv")}}
     for extra in extra_tables or []:
         tables.append(extra)
         name = extra["name"]
-        sources[name] = {"type": "file", "format": "csv", "path": str(tmp_path / f"{name}.csv")}
+        sources[name] = {
+            "type": "file",
+            "format": "csv",
+            "has_header": True,
+            "path": str(tmp_path / f"{name}.csv"),
+        }
         targets[name] = {"type": "file", "format": "csv", "path": str(tmp_path / f"{name}_out.csv")}
     cfg: dict = {
         "version": 2,
@@ -150,6 +162,10 @@ def _install_fake_ner(monkeypatch, spans_by_marker: dict[str, str]) -> None:
     `iter_ner_spans_batch` (what `_text_mask.py` actually calls, Phase 5)."""
     monkeypatch.setattr("decoy_engine.detection.ner.spacy_installed", lambda: True)
     monkeypatch.setattr("decoy_engine.detection.ner.model_installed", lambda model=None: True)
+    monkeypatch.setattr("decoy_engine.detection.ner._import_spacy", lambda: (object(), None))
+    monkeypatch.setattr(
+        "decoy_engine.detection.ner._spacy_incompatible", lambda spacy, model: False
+    )
 
     def _find_spans(text: str) -> list[Span]:
         found = []
@@ -678,6 +694,10 @@ class TestNerDefaultAndVersionGuard:
         run without touching the filesystem."""
         monkeypatch.setattr("decoy_engine.detection.ner.spacy_installed", lambda: True)
         monkeypatch.setattr("decoy_engine.detection.ner.model_installed", lambda model=None: True)
+        monkeypatch.setattr("decoy_engine.detection.ner._import_spacy", lambda: (object(), None))
+        monkeypatch.setattr(
+            "decoy_engine.detection.ner._spacy_incompatible", lambda spacy, model: False
+        )
         monkeypatch.setattr("decoy_engine.detection.ner.iter_ner_spans", lambda *a, **k: [])
         monkeypatch.setattr(
             "decoy_engine.detection.ner.iter_ner_spans_batch",

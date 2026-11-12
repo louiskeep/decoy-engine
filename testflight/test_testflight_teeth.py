@@ -1077,7 +1077,7 @@ class TestValueChangingPassthroughTeeth:
     """Mutation controls for the value-changing-passthrough guard (TH-1.1).
 
     The guard runs for every mask column whose strategy is value-changing
-    (fpe, hash, code_set). Two failure modes:
+    (fpe, hash, code_set, tokenize). Two failure modes:
       - COMPLETE no-op: output value-set equals source value-set (the charset
         covers nothing) -> the set check raises.
       - PARTIAL passthrough (fpe only): a charset that covers *some* characters
@@ -1853,7 +1853,6 @@ class TestMediumThreeGenerateControls:
                 {
                     "name": "amount",
                     "type": "statistical",
-                    "params": {"mean": 100.0, "std": 10.0},
                 }
             ]
         }
@@ -1863,6 +1862,8 @@ class TestMediumThreeGenerateControls:
             ColumnDistributionSpec(
                 table="t",
                 column="amount",
+                mean=100.0,
+                std=10.0,
                 distribution_class="synthetic",
                 tolerance=0.05,
             )
@@ -1892,7 +1893,6 @@ class TestMediumThreeGenerateControls:
                 {
                     "name": "amount",
                     "type": "statistical",
-                    "params": {"mean": 100.0, "std": 10.0},
                 },
             ]
         }
@@ -1906,6 +1906,8 @@ class TestMediumThreeGenerateControls:
             ColumnDistributionSpec(
                 table="t",
                 column="amount",
+                mean=100.0,
+                std=10.0,
                 distribution_class="synthetic",
                 tolerance=0.05,
             ),
@@ -3033,7 +3035,6 @@ class TestJobCGenerateControls:
                     "name": "amount",
                     "type": "formula",
                     "formula": "gauss(50.0, 15.0)",
-                    "params": {"mean": 50.0, "std": 15.0},
                 }
             ]
         }
@@ -3043,6 +3044,8 @@ class TestJobCGenerateControls:
             ColumnDistributionSpec(
                 table="synthetic_events",
                 column="amount",
+                mean=50.0,
+                std=15.0,
                 distribution_class="synthetic",
                 tolerance=0.10,
                 joints_waived=True,
@@ -3085,7 +3088,6 @@ class TestJobCGenerateControls:
                     "name": "amount",
                     "type": "formula",
                     "formula": "gauss(50.0, 15.0)",
-                    "params": {"mean": 50.0, "std": 15.0},
                 },
             ]
         }
@@ -3101,6 +3103,8 @@ class TestJobCGenerateControls:
             ColumnDistributionSpec(
                 table="synthetic_events",
                 column="amount",
+                mean=50.0,
+                std=15.0,
                 distribution_class="synthetic",
                 tolerance=0.10,
                 joints_waived=True,
@@ -3810,10 +3814,25 @@ class TestValueChangingMaskPassthroughTooth:
                 "tooth_test", "orders", "risk_flag", "fpe", source_df, output_df
             )
 
+    def test_tokenize_passthrough_raises(self) -> None:
+        """A tokenize column whose output equals its source (vault bypassed) must raise.
+
+        tokenize is covered by the value-changing guard so a silent no-op cannot
+        ship green; a real tokenized column emits tok_ surrogates, never the plaintext.
+        """
+        vals = ["CASE-0001", "CASE-0002", "CASE-0003"]
+        source_df = pd.DataFrame({"case_ref": vals})
+        output_df = pd.DataFrame({"case_ref": list(vals)})
+
+        with pytest.raises(AssertionError, match="value-changing-mask passthrough"):
+            check_value_changing_not_passthrough(
+                "tooth_test", "cases", "case_ref", "tokenize", source_df, output_df
+            )
+
     def test_non_value_changing_strategy_skipped(self) -> None:
         """A passthrough strategy column must not be checked by this tooth.
 
-        The tooth only fires for _VALUE_CHANGING_STRATEGIES (fpe, hash, code_set).
+        The tooth only fires for _VALUE_CHANGING_STRATEGIES (fpe, hash, code_set, tokenize).
         A passthrough column with identical source and output must NOT raise even
         though the value-sets are equal, because passthrough is not expected to
         change values.

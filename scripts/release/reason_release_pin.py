@@ -13,13 +13,24 @@ no whitespace), the same canonical-JSON-then-hash shape the engine's other pinne
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 from collections import Counter
 from pathlib import Path
 
 from packaging.version import Version
+
+# Scripts run by file path get their own directory on sys.path, not the repo root.
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from scripts.release.reason_manifest_policy import (  # noqa: E402
+    canonical_digest,
+    release_pin_violations,
+)
+
+pin_violations = release_pin_violations  # cut-release.sh and the tests import this name
 
 PIN_PATH = (
     Path(__file__).resolve().parents[2]
@@ -30,40 +41,14 @@ PIN_PATH = (
 )
 
 
-def _digest(manifest: dict) -> str:
-    canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return hashlib.sha256(canonical.encode("ascii")).hexdigest()
-
-
 def release_pin(manifest: dict) -> dict:
     counts = Counter(str(e["since"]) for e in manifest["entries"])
     return {
         "registry_version": manifest["registry_version"],
-        "manifest_sha256": _digest(manifest),
+        "manifest_sha256": canonical_digest(manifest),
         "identities": len(manifest["entries"]),
         "since_counts": {k: counts[k] for k in sorted(counts, key=Version)},
     }
-
-
-def pin_violations(pin: dict, live: dict) -> list[str]:
-    """Why ``live`` breaks the catalog frozen by ``pin``; empty when it honours it."""
-    problems: list[str] = []
-    pinned, current = Version(pin["registry_version"]), Version(live["registry_version"])
-    if current < pinned:
-        problems.append(f"registry_version went backwards ({current} < {pinned})")
-    if current == pinned and _digest(live) != pin["manifest_sha256"]:
-        problems.append(f"the catalog released as {pinned} changed without a registry version bump")
-    counts = Counter(str(e["since"]) for e in live["entries"])
-    for since, n in counts.items():
-        v = Version(since)
-        if v > current:
-            problems.append(f"{n} identities claim since {since}, newer than the registry")
-        elif v <= pinned and n != pin["since_counts"].get(since, 0):
-            problems.append(
-                f"{n} identities claim an already-released since {since} "
-                f"(released with {pin['since_counts'].get(since, 0)})"
-            )
-    return problems
 
 
 def _live() -> dict:

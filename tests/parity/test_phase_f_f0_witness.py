@@ -213,7 +213,9 @@ def test_a_selection_appearing_in_a_no_selection_column_is_flagged(
     with w.end_to_end(monkeypatch) as witness:
         rng_module = synthesize.random
 
-        def drawing_sequence(col: dict[str, Any], n: int) -> list[str]:
+        def drawing_sequence(col: dict[str, Any], n: int, numeric: bool = False) -> list[Any]:
+            if numeric:
+                return rng_module.Random(3).choices([7, 8], k=n)
             return [str(v) for v in rng_module.Random(3).choices(["x", "y"], k=n)]
 
         monkeypatch.setattr(synthesize, "_sequence", drawing_sequence)

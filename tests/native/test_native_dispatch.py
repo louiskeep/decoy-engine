@@ -44,7 +44,9 @@ def _all_admitted_config() -> dict:
     return {
         "version": 2,
         "global_settings": {"seed": 42, "post_validation": False},
-        "sources": {"w": {"type": "file", "format": "csv", "path": "/dev/null"}},
+        "sources": {
+            "w": {"type": "file", "format": "csv", "has_header": True, "path": "/dev/null"}
+        },
         "targets": {"w": {"type": "file", "format": "csv", "path": "/dev/null"}},
         "tables": [
             {
@@ -1022,6 +1024,7 @@ def test_provider_config_values_reach_the_kernels_not_just_the_defaults() -> Non
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.serial
 @_NEEDS_COMPANION
 def test_kernel_evidence_accumulates_across_multiple_chunks() -> None:
     config = {

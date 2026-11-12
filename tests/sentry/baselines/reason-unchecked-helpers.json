@@ -1,0 +1,21 @@
+{
+ "sentry_id": "reason-unchecked-helpers",
+ "created_in": "CLI-DIALECT-E",
+ "entries": {
+  "declared_casting/_quarantine_local.py::_qerror": {
+   "reason": "DESIGN follow-up: callers still pass a literal or a forwarded parameter; route them through registry symbols, then delete the entry"
+  },
+  "execution/native/_crypto_reference.py::_row_error": {
+   "reason": "DESIGN follow-up: callers still pass a literal or a forwarded parameter; route them through registry symbols, then delete the entry"
+  },
+  "generation/_window_admission.py::_refuse": {
+   "reason": "DESIGN follow-up: callers still pass a literal or a forwarded parameter; route them through registry symbols, then delete the entry"
+  },
+  "plan/_checks_declared_casting.py::_fail": {
+   "reason": "DESIGN follow-up: callers still pass a literal or a forwarded parameter; route them through registry symbols, then delete the entry"
+  },
+  "plan/_checks_dp.py::_raise": {
+   "reason": "DESIGN follow-up: callers still pass a literal or a forwarded parameter; route them through registry symbols, then delete the entry"
+  }
+ }
+}

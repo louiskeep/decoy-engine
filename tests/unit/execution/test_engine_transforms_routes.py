@@ -531,6 +531,7 @@ class TestAdmission:
             full = dict(sources)
             sources = {}
             kw["source_loader"] = lambda name: full[name]
+            kw["source_loader_schemas"] = {n: t.schema for n, t in full.items()}
         res = _run(cfg, sources, **kw)
         execution = res.quality_metrics["execution"]
         assert execution["execution_mode"] in ("sequential", "out_of_core")

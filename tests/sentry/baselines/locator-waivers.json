@@ -1,0 +1,9 @@
+{
+ "sentry_id": "locator-waivers",
+ "created_in": "X0a",
+ "entries": {
+  "profile/_fixed_width_reader.py::_resolve_layout::path": {
+   "reason": "initial X0a inventory of test_locator_hygiene.py; existing entry, reviewed by its own sentry"
+  }
+ }
+}

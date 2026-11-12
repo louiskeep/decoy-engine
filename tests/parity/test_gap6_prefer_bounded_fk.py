@@ -35,6 +35,7 @@ import pytest
 from decoy_engine.execution import _pipeline_routing_signals as signals
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pipeline import run_pipeline
+from tests._declared_schema import declare_rest
 from tests.parity import _strict_compare as sc
 
 _GB = 1 << 30
@@ -61,40 +62,46 @@ def _config(
         spec: dict[str, Any] = {"name": name, "strategy": key_strategy}
         if key_strategy == "hash":
             spec["namespace"] = "ns"
-        return spec
+        return declare_rest(spec)
 
-    return {
-        "version": 2,
-        "global_settings": {"job_name": "gap6", "seed": 11},
-        "sources": {
-            "parent": {"type": "file", "path": _write(tmp, parent, "parent"), "format": "parquet"},
-            "child": {"type": "file", "path": _write(tmp, child, "child"), "format": "parquet"},
-        },
-        "targets": {
-            "parent": {
-                "type": "file",
-                "path": str(tmp / "parent.out.parquet"),
-                "format": "parquet",
+    return declare_rest(
+        {
+            "version": 2,
+            "global_settings": {"job_name": "gap6", "seed": 11},
+            "sources": {
+                "parent": {
+                    "type": "file",
+                    "path": _write(tmp, parent, "parent"),
+                    "format": "parquet",
+                },
+                "child": {"type": "file", "path": _write(tmp, child, "child"), "format": "parquet"},
             },
-            "child": {
-                "type": "file",
-                "path": str(tmp / "child.out.parquet"),
-                "format": "parquet",
+            "targets": {
+                "parent": {
+                    "type": "file",
+                    "path": str(tmp / "parent.out.parquet"),
+                    "format": "parquet",
+                },
+                "child": {
+                    "type": "file",
+                    "path": str(tmp / "child.out.parquet"),
+                    "format": "parquet",
+                },
             },
-        },
-        "tables": [
-            {"name": "parent", "columns": [key("id"), *parent_columns]},
-            {"name": "child", "columns": [key("parent_id"), *child_columns]},
-        ],
-        "relationships": [
-            {
-                "parent": {"table": "parent", "columns": ["id"]},
-                "children": [{"table": "child", "columns": ["parent_id"]}],
-                "orphan_policy": orphan_policy,
-                "namespace": "ns",
-            }
-        ],
-    }
+            "tables": [
+                {"name": "parent", "columns": [key("id"), *parent_columns]},
+                {"name": "child", "columns": [key("parent_id"), *child_columns]},
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "parent", "columns": ["id"]},
+                    "children": [{"table": "child", "columns": ["parent_id"]}],
+                    "orphan_policy": orphan_policy,
+                    "namespace": "ns",
+                }
+            ],
+        }
+    )
 
 
 def _sources(config: dict[str, Any]) -> dict[str, pa.Table]:
@@ -540,6 +547,7 @@ def _chain_job(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Table]]:
                 "columns": [
                     {"name": "parent_id", "strategy": "passthrough"},
                     {"name": "tag", "strategy": "passthrough"},
+                    {"name": "id", "strategy": "passthrough"},
                 ],
             },
             {
@@ -565,7 +573,7 @@ def _chain_job(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Table]]:
             },
         ],
     }
-    return config, tables
+    return declare_rest(config), tables
 
 
 class TestT5cChainIntermediateKey:

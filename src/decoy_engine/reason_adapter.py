@@ -6,11 +6,13 @@ identifier rather than the exception message. A consumer reads a :class:`ReasonR
 exception's text, class name or ``.code`` attribute.
 
 Trust model. An exception's ``.code`` is trusted only when the exception's class is one of the
-engine families registered below *and* the code is registered in that family's namespace.
-Character shape is not trust: an exception raised by a parser or a user callback can carry a
-data-derived ``code`` that is still lowercase and underscores, and a third-party class can copy an
-engine code string. Everything else becomes ``decoy.unexpected_error``; the original exception
-is untouched and keeps propagating for direct callers.
+engine families registered below *and* the code is registered in that family's namespace, or,
+when it is not, the code is a :class:`decoy_engine.reasons.ReasonCode` registry symbol registered in its own
+namespace (a family error re-wrapping another family's refusal). Character shape is not trust:
+an exception raised by a parser or a user callback can carry a data-derived ``code`` that is
+still lowercase and underscores, and a third-party class can copy an engine code string.
+Everything else becomes ``decoy.unexpected_error``; the original exception is untouched and keeps
+propagating for direct callers.
 
 This module is the adapter, so it may import the engine's error families; ``decoy_engine.reasons``
 itself stays a leaf (it imports none of them).
@@ -42,6 +44,11 @@ _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.relationships._namespace", "NamespaceConfigError", "config"),
     ("decoy_engine.subset._errors", "SubsetConfigError", "config"),
     ("decoy_engine.plan._errors", "PlanCompileError", "plan"),
+    ("decoy_engine.contracts.declared_casting", "DeclaredCastContractError", "plan"),
+    ("decoy_engine.execution._errors", "DeclaredCastRouteError", "route"),
+    ("decoy_engine.execution._errors", "DeclaredCastValueError", "runtime"),
+    ("decoy_engine.execution._errors", "QuarantineError", "runtime"),
+    ("decoy_engine.errors", "FixedWidthRecordOverlongError", "runtime"),
     ("decoy_engine.plan.validate._consolidator", "PlanCheckError", "plan"),
     ("decoy_engine.generation.statistical._spec", "StatisticalSpecError", "plan"),
     ("decoy_engine.generation.composite._errors", "CompositeError", "plan"),
@@ -70,11 +77,16 @@ _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.execution.native._draw_site_providers", "DrawSiteProtocolError", "runtime"),
     ("decoy_engine.execution.native._pool_quality", "PoolQualityError", "runtime"),
     ("decoy_engine.io.bounded_reader", "BoundedReadError", "runtime"),
+    ("decoy_engine.fileaccess._protected_dir", "ProtectedDirAclFailed", "runtime"),
+    ("decoy_engine.fileaccess._protected_dir", "ProtectedDirUnsafe", "runtime"),
+    ("decoy_engine.records._errors", "RecordError", "runtime"),
     ("decoy_engine.subset._errors", "SubsetError", "subset"),
     ("decoy_engine.subset._errors", "SubsetInternalError", "runtime"),
     ("decoy_engine.providers_v2._errors", "ProviderError", "provider"),
     ("decoy_engine.providers_v2.identifiers._errors", "IdentifierError", "provider"),
+    ("decoy_engine.detection.ner", "NerModelNameError", "config"),
     ("decoy_engine.detection.ner", "NerUnavailableError", "provider"),
+    ("decoy_engine.detection._model_status", "ModelUnavailableError", "provider"),
     ("decoy_engine.quality.carriers", "CarrierError", "quality"),
     ("decoy_engine.quality.dp", "DpError", "quality"),
     ("decoy_engine.quality.dp_budget", "DpBudgetError", "quality"),
@@ -96,6 +108,7 @@ _FIXED: tuple[tuple[str, str, ReasonCode], ...] = (
     ("decoy_engine.sdk", "TransientError", reasons.decoy.CONNECTOR_TRANSIENT_FAILURE),
     ("decoy_engine.sdk", "PermanentError", reasons.decoy.CONNECTOR_PERMANENT_FAILURE),
     ("decoy_engine.fileaccess._types", "FileAccessDenied", reasons.decoy.FILE_ACCESS_DENIED),
+    ("decoy_engine.profiling.scan_set", "ScanSourceError", reasons.runtime.SCAN_SOURCE_FAILED),
 )
 
 
@@ -179,6 +192,12 @@ def _classify(exc: BaseException, phase: Phase, context: ReasonContext | None) -
         code = _read_code(exc)
         if code is not None and reasons.find(namespace, code) is not None:
             return _record((namespace, code), phase, context)
+        # The family record wins for a code registered in both namespaces. On a miss, a registry
+        # symbol re-wrapped by another family (a plan check wrapping a config or provider
+        # refusal) keeps the namespace it was raised with.
+        own = getattr(code, "namespace", None)
+        if isinstance(code, ReasonCode) and reasons.find(str(own), code) is not None:
+            return _record((str(own), str(code)), phase, context)
         return _record(reasons.decoy.UNREGISTERED_REASON, phase, context)
     identity = _first_in_mro(exc, fixed)
     if identity is not None:

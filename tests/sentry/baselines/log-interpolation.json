@@ -1,0 +1,18 @@
+{
+ "sentry_id": "log-interpolation",
+ "created_in": "X0a",
+ "entries": {
+  "disguises/loader.py::_load_from::exc": {
+   "reason": "initial X0a inventory of test_log_interpolation.py; existing entry, reviewed by its own sentry"
+  },
+  "internal/faker_setup.py::make_faker::exc": {
+   "reason": "initial X0a inventory of test_log_interpolation.py; existing entry, reviewed by its own sentry"
+  },
+  "internal/memory.py::MemoryMonitor.monitor_memory_usage::e": {
+   "reason": "initial X0a inventory of test_log_interpolation.py; existing entry, reviewed by its own sentry"
+  },
+  "profiling/model_pack/loader.py::ModelPackLoader.load_with_fallback::exc": {
+   "reason": "initial X0a inventory of test_log_interpolation.py; existing entry, reviewed by its own sentry"
+  }
+ }
+}

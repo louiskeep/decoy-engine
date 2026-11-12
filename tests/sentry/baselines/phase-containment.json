@@ -1,0 +1,42 @@
+{
+ "sentry_id": "phase-containment",
+ "created_in": "X0a",
+ "entries": {
+  "EVENT_SCHEMA": {
+   "reason": "initial X0a inventory of test_phase_containment.py; existing entry, reviewed by its own sentry"
+  },
+  "FrozenScalar": {
+   "reason": "initial X0a inventory of test_phase_containment.py; existing entry, reviewed by its own sentry"
+  },
+  "FrozenValue": {
+   "reason": "initial X0a inventory of test_phase_containment.py; existing entry, reviewed by its own sentry"
+  },
+  "INT_MAX": {
+   "reason": "initial X0a inventory of test_phase_containment.py; existing entry, reviewed by its own sentry"
+  },
+  "INT_MIN": {
+   "reason": "initial X0a inventory of test_phase_containment.py; existing entry, reviewed by its own sentry"
+  },
+  "MAX_DEPTH": {
+   "reason": "initial X0a inventory of test_phase_containment.py; existing entry, reviewed by its own sentry"
+  },
+  "PHASES": {
+   "reason": "initial X0a inventory of test_phase_containment.py; existing entry, reviewed by its own sentry"
+  },
+  "Phase": {
+   "reason": "initial X0a inventory of test_phase_containment.py; existing entry, reviewed by its own sentry"
+  },
+  "PhaseContractError": {
+   "reason": "initial X0a inventory of test_phase_containment.py; existing entry, reviewed by its own sentry"
+  },
+  "RESULT_SCHEMA": {
+   "reason": "initial X0a inventory of test_phase_containment.py; existing entry, reviewed by its own sentry"
+  },
+  "STATUSES": {
+   "reason": "initial X0a inventory of test_phase_containment.py; existing entry, reviewed by its own sentry"
+  },
+  "Status": {
+   "reason": "initial X0a inventory of test_phase_containment.py; existing entry, reviewed by its own sentry"
+  }
+ }
+}

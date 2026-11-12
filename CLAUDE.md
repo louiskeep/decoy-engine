@@ -4,7 +4,7 @@ Engine-specific guidance for Claude and other coding agents working in this repo
 
 Use [CODEMAP.md](CODEMAP.md) for repo navigation before broad searches. Use [CONTRIBUTING.md](CONTRIBUTING.md) for the contributor entrypoint.
 
-**Documentation.** This repo owns the engine-scoped durable docs ([`docs/index.md`](docs/index.md)): reference, `docs/security/` + `docs/decisions/` records, and the API reference. Engine implementation plans live in `docs/plans/` (one per active roadmap item). The single cross-repo roadmap is `decoy-platform/docs/ROADMAP.md`, which indexes engine plans too; do NOT start a separate engine roadmap, next-up, or todo doc. Follow the plan → build → promote-to-reference + archive lifecycle in `/home/cam/dev-rules/documentation.md`.
+**Documentation.** This repo owns the engine-scoped durable docs ([`docs/index.md`](docs/index.md)): reference, `docs/security/` + `docs/decisions/` records, and the API reference. Engine implementation plans live in `docs/plans/` (one per active roadmap item). The single cross-repo roadmap is `docs/ROADMAP.md` in the CLI repo (https://github.com/louiskeep/decoy/blob/main/docs/ROADMAP.md; moved from `decoy-platform` on 2026-11-05), which indexes engine plans too; do NOT start a separate engine roadmap, next-up, or todo doc. Follow the plan → build → promote-to-reference + archive lifecycle in `/home/cam/dev-rules/documentation.md`.
 
 ## Core rule for non-trivial engine work
 
@@ -18,7 +18,7 @@ Engine-specific rules to watch in V2 sprints:
 - Validation never mutates; mutation has a name; reports are frozen; land the assertion test first.
 - `internal/` means internal (regex sentry enforced: `tests/sentry/test_public_import_boundary.py`).
 - Library code does not know its callers. CLI and platform helpers live in their own repos.
-- Modules aim for 600 LOC with a hard max of 700. Over 600 needs a census entry at the exact LOC (`tests/sentry/test_module_size.py`); over-max legacy files may only shrink.
+- Modules aim for 600 LOC with a hard max of 700. Over 600 needs a census entry, a ceiling with up to 20 lines of headroom (`tests/sentry/test_module_size.py`); over-max legacy files stay an exact match and may only shrink.
 - Use established methodology (the rule above).
 - Pre-GA = hard delete (V2.1 framing). The switch is `decoy_engine.RELEASE_PHASE` (`release.py`); `is_pre_ga()` is what the CI gates branch on. Flipping it to `"ga"` at launch makes the [compatibility contract](docs/compatibility-contract.md) binding.
 

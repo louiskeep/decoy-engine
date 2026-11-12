@@ -51,7 +51,12 @@ from decoy_engine import reasons
 from decoy_engine._opaque import OpaqueBox
 from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    option,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.fileaccess import map_in_context
 from decoy_engine.generation.pool._events import QualityWarning
@@ -103,6 +108,13 @@ class FpeStrategyHandler:
     """Format-preserving encryption via NIST SP 800-38G FF1, keyed onto derive."""
 
     name: str = "fpe"
+    namespace_required: bool = True
+    join_safe: bool = True
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("charset", "str", "digits"),
+        option("preserve_separators", "bool", False),
+    )
+    offer_in_wizard: bool = True
 
     def __init__(self, *, chunk_count: int = 4) -> None:
         self._chunk_count = chunk_count

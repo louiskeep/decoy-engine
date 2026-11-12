@@ -27,6 +27,7 @@ from decoy_engine.execution._operator_registry import RUST_COMPANION
 from decoy_engine.execution.out_of_core import _budget as _ooc_budget
 from decoy_engine.execution.out_of_core import _runner
 from decoy_engine.profile._readers import LazySource
+from tests._declared_schema import declare_rest
 
 VERSION = "0.1.0"
 THREADS = 4
@@ -123,7 +124,7 @@ def _config(
             }
         ],
     }
-    return config, paths
+    return declare_rest(config), paths
 
 
 def seq_job(

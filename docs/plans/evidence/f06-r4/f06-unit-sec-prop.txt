@@ -1,0 +1,22 @@
+bringing up nodes...
+bringing up nodes...
+
+........................................................................ [ 16%]
+........................................................................ [ 32%]
+........................sssss........................................... [ 48%]
+........................................................................ [ 64%]
+........................................................................ [ 80%]
+........................................................................ [ 97%]
+.............                                                            [100%]
+=============================== warnings summary ===============================
+tests/property/test_mask_invariants.py::test_date_shift_preserves_nulls_and_emits_valid_dates
+tests/property/test_mask_invariants.py::test_date_shift_preserves_nulls_and_emits_valid_dates
+tests/property/test_mask_invariants.py::test_date_shift_preserves_nulls_and_emits_valid_dates
+tests/property/test_mask_invariants.py::test_date_shift_preserves_nulls_and_emits_valid_dates
+tests/property/test_mask_invariants.py::test_date_shift_preserves_nulls_and_emits_valid_dates
+tests/property/test_mask_invariants.py::test_date_shift_preserves_nulls_and_emits_valid_dates
+  /home/user/decoy-engine/src/decoy_engine/execution/_strategies/_date_shift.py:129: UserWarning: date_shift._detect_format: column matches multiple formats ['%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y/%m/%d', '%m-%d-%Y', '%d-%m-%Y', '%Y%m%d', '%m/%d/%y', '%d/%m/%y', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S']; using the first ('%Y-%m-%d'). Configure date_format explicitly to remove ambiguity.
+    fmt = cfg.get("date_format") or _detect_format(col)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+440 passed, 5 skipped, 6 warnings in 69.61s (0:01:09)

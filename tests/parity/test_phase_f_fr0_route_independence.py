@@ -198,10 +198,12 @@ def test_core_values_equal_the_legacy_whole_table_generator(rows: int, cuts: lis
 
 _CHILD = """
 import json, sys
+from tests._lenient_checks import lenient_generate_checks_lifted
 from tests.parity import _f0_fixtures as fx
 from tests.parity._f0_canonical import table_fingerprint
 out = {}
-with fx.frozen_faker_clock():
+# The fixtures pin the runtime fallback for configs the plan check refuses.
+with lenient_generate_checks_lifted(), fx.frozen_faker_clock():
     for fid in sys.argv[1:]:
         out[fid] = {n: table_fingerprint(t) for n, t in fx.FIXTURES_BY_ID[fid].run().items()}
 print(json.dumps(out, default=list))

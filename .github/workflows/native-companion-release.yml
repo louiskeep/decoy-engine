@@ -133,12 +133,15 @@ jobs:
           test -n "$wheel" || { echo "no wheel produced"; exit 1; }
           python -m zipfile -l "$wheel" | grep -qE 'decoy_engine_native/_kernel[^/]*\.(so|pyd)' \
             || { echo "MISSING compiled _kernel in $wheel"; exit 1; }
+          whl_name="$(basename "$wheel")"
+          PYARROW=$(bash scripts/dev/lock_version.sh pyarrow)
+          test -n "$PYARROW" || { echo "no locked pyarrow"; exit 1; }
           cptag="cp${python_version//./}"
           docker run --rm --platform ${{ matrix.docker-platform }} \
             -v "$PWD/decoy-engine-native:/w" "${{ matrix.smoke-image }}" bash -c "
               set -euo pipefail
               pybin=/opt/python/${cptag}-${cptag}/bin
-              \"\$pybin/pip\" install --quiet \"/w/dist/$(basename "$wheel")\" 'pyarrow>=14'
+              \"\$pybin/pip\" install --quiet \"/w/dist/$whl_name\" \"pyarrow==$PYARROW\"
               \"\$pybin/python\" /w/scripts/parity_smoke.py
             "
         env:
@@ -177,7 +180,9 @@ jobs:
           test -n "$wheel" || { echo "no wheel produced"; exit 1; }
           python -m zipfile -l "$wheel" | grep -qE 'decoy_engine_native/_kernel[^/]*\.(so|pyd)' \
             || { echo "MISSING compiled _kernel in $wheel"; exit 1; }
-          python -m pip install "$wheel" "pyarrow>=14"
+          PYARROW=$(bash scripts/dev/lock_version.sh pyarrow)
+          test -n "$PYARROW" || { echo "no locked pyarrow"; exit 1; }
+          python -m pip install "$wheel" "pyarrow==$PYARROW"
           python decoy-engine-native/scripts/parity_smoke.py
       - uses: actions/upload-artifact@v7
         with:
@@ -212,7 +217,9 @@ jobs:
           test -n "$wheel" || { echo "no wheel produced"; exit 1; }
           python -m zipfile -l "$wheel" | grep -qE 'decoy_engine_native/_kernel[^/]*\.(so|pyd)' \
             || { echo "MISSING compiled _kernel in $wheel"; exit 1; }
-          python -m pip install "$wheel" "pyarrow>=14"
+          PYARROW=$(bash scripts/dev/lock_version.sh pyarrow)
+          test -n "$PYARROW" || { echo "no locked pyarrow"; exit 1; }
+          python -m pip install "$wheel" "pyarrow==$PYARROW"
           python decoy-engine-native/scripts/parity_smoke.py
       - uses: actions/upload-artifact@v7
         with:

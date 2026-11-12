@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 # `decoy-engine`. The CLI dist renamed to `decoy-cli`; the engine
 # library dist did not.
 name = "decoy-engine"
-version = "0.18.0"
+version = "0.22.0"
 description = "Data masking and synthetic generation engine. Validates pipeline configs, compiles execution plans, runs masking + generate jobs on a pandas substrate. Used by the decoy-cli CLI and the decoy-platform commercial product."
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
@@ -168,25 +168,30 @@ dev = [
     # remediation 2026-06-12) is part of the default test run; without
     # this pin CI fails at collection with ModuleNotFoundError.
     "hypothesis>=6.0",
+    # Parallel suite runs: scripts/dev/gates.sh uses `-n N --dist loadfile` for the `tests`
+    # step (ENGINE-PAR P2). Part of `dev` so the lock-synced gate venv has it; the certified DP
+    # fingerprint is re-pinned in the same change (dp_provenance._CERTIFIED_STACKS).
+    "pytest-xdist>=3.5",
+    # Per-test hang guard: one stuck test fails with a stack dump instead of stalling a suite
+    # (a full run hung 70 min on 2026-11-10). The limit is `timeout` in [tool.pytest.ini_options];
+    # tests/sentry/tooling/test_pytest_timeout.py fails if the plugin or the limit goes missing.
+    "pytest-timeout>=2.4",
 ]
 # Test-Quality Program (TQ-0, 2026-07-25): coverage measurement + mutation
 # grading. pytest-cov feeds the TQ-3 diff-coverage ratchet; mutmut grades
 # whether tests catch planted bugs (the objective "adequately tested" bar).
 # Kept OUT of `dev` on purpose: the certified DP profile syncs
-# `dev+lint+vault` and its 77-dist fingerprint (dp_provenance, 895b9a20) must
+# `dev+lint+vault` and its 79-dist fingerprint (dp_provenance) must
 # stay exact, so mutmut/pytest-cov and their transitive deps (libcst, textual,
 # coverage, ...) live in this separate extra that the cert gate never installs.
-mutation = [
-    "pytest-cov>=5.0",
-    "mutmut>=3.0",
-]
-# Parallel local test runs (2026-09-16). Kept OUT of `dev` on purpose, exactly
-# like `mutation` above: the certified DP profile syncs dev+lint+vault and its
-# 77-dist fingerprint (895b9a20) must stay exact, so pytest-xdist and its
-# execnet transitive dep live in this separate extra the cert gate never
-# installs. Install `.[dev,xdist]`, then `pytest tests/ -n auto`: the full suite
-# is parallel-safe and finishes in ~10 min versus over 25 min serial on a
-# 4-core box. Local convenience only; CI still runs the suite serially.
+mutation = ["pytest-cov>=5.0", "mutmut>=3.0"]
+# LAYOUT E3: import-linter for the layer contract in .importlinter. Its own extra, synced only
+# into .venv-layers by gates.sh --steps layers, so the certified profile above stays exact.
+layers = ["import-linter==2.15"]
+# Compatibility alias (2026-11-07): pytest-xdist is part of `dev` now, so `.[dev,xdist]` and
+# `.[dev]` install the same set. Kept so an existing `--extra xdist` still resolves; new
+# callers use `dev`. The suite is parallel-safe through scripts/dev/gates.sh (`GATES_WORKERS`);
+# a bare `pytest -n auto` also works, but it runs the `serial` tests alongside the rest.
 xdist = [
     "pytest-xdist>=3.0",
 ]
@@ -209,10 +214,13 @@ mimesis = [
 ]
 # Capability-gaps WS2 (2026-06-12): spaCy NER backs text_redact's
 # person_name/location span detection (opt-in `ner` config key). The
-# language model is NOT pip-resolvable; install it separately:
-# `python -m spacy download en_core_web_sm`.
+# language model is NOT pip-resolvable; install the pinned wheel listed in
+# NER_MODEL_WHEELS (detection/ner.py), which carries its URL and SHA-256.
+# click is listed explicitly: spaCy still imports it, but typer no longer
+# depends on it, so a fresh install fails at `import spacy` without this line.
 ner = [
     "spacy>=3.7,<4",
+    "click>=8.1,<9",
 ]
 # Deferred follow-up 1 (2026-06-12): the token vault encrypts its
 # source->masked map with Fernet (AES-128-CBC + HMAC-SHA256) from the
@@ -405,6 +413,12 @@ pythonpath = ["src", "scripts"]
 # codec/characterization/driver-unit tests, including the hash-order
 # fail-control); run the marked determinism sweep explicitly via
 # `pytest -m determinism_harness` or `python scripts/faker-determinism/check_determinism.py`.
+# Per-test hang guard (pytest-timeout, `dev` extra): a hung test fails with a stack dump instead of
+# stalling the suite. 300 s is the floor; the one slower test (test_ff1_primitive.py's exhaustive
+# six-digit permutation, 247 s under -n 4) carries its own `@pytest.mark.timeout`. No
+# `timeout_method` on purpose: the plugin default is signal on POSIX and thread on Windows, and an
+# explicit "signal" would make every test error on Windows (no SIGALRM).
+timeout = 300
 addopts = "-m 'not benchmark and not testflight and not packaging and not codspeed and not determinism_harness'"
 markers = [
     "no_default_secret: opt out of the shared throwaway secret (tests/_keyed_secret.py); the test asserts behavior with no secret supplied",
@@ -417,8 +431,10 @@ markers = [
     "regression: a bugfix's regression test; the prove-regression gate re-runs it against the pre-fix baseline and requires it to fail there",
     "testflight: acceptance test-flight suite (deliberately run, multi-job); excluded from the default loop; invoke via pytest testflight -m testflight or python scripts/test_flight.py",
     "ml: Pre-scan field-recognition ML tests needing the [ml] extra (scikit-learn + lightgbm). Run by the ml-gate CI job (pytest -m ml with .[dev,ml] installed); they importorskip in the default gate where the extra is absent. Mark a new ML test module by adding pytestmark = pytest.mark.ml at module top so coverage stays automatic rather than a hand-maintained path list.",
+    "ner: tests that load the real spaCy model (the [ner] extra plus the pinned en_core_web_sm wheel). Run by the ner-gate CI job (pytest -m ner). They skip when spaCy or the model is missing, as in the default gate; with DECOY_REQUIRE_NER=1 (set by ner-gate) a missing install fails instead.",
     "packaging: build-artifact tests that shell out to the wheel build frontend (DE-07 wheel-membership gate). Run by the packaging-gate CI job (pytest -m packaging with `build` installed); importorskip out of the default loop where `build` is absent.",
-    "dp_certified: requires the certified DP proof-stack (fit_dp_snapshot only completes in the 77-dist dev+lint+vault 3.10.20 profile); tests/conftest.py's pytest_collection_modifyitems skips these off that profile. Run by the dp-certified-gate CI job.",
+    "dp_certified: requires the certified DP proof-stack (fit_dp_snapshot only completes in the 79-dist dev+lint+vault 3.10.20 profile); tests/conftest.py's pytest_collection_modifyitems skips these off that profile. Run by the dp-certified-gate CI job.",
+    "serial: needs the whole host (a wall-clock budget, a process or host memory envelope, a CPU speedup ratio, an absolute thread count). scripts/dev/gates.sh runs it in a separate pass without xdist and deselects it from the parallel pass; plain `pytest` runs it like any test. Directory marks come from SERIAL_DIRS in tests/conftest.py.",
 ]
 
 # ── Tooling baseline (V2.0-prep, sprint 1) ──────────────────────────────────
@@ -725,6 +741,11 @@ module = [
     "decoy_engine.generation.pool._sampler",
     "decoy_engine.generation.pool._validate",
     "decoy_engine.generation.pool._value_pool",
+    # GEN-TYPES: constant and parametric distribution generate types.
+    "decoy_engine.generation.kinds",
+    "decoy_engine.generation.kinds._constant",
+    "decoy_engine.generation.kinds._output_type",
+    "decoy_engine.generation.kinds._parametric",
     # engine-v2 S8 (Composite Generators). Spec:
     # docs/v2/sprints/engine-v2/sprint-08-composite-generators.md in decoy-platform.
     # Per best-practices §5.4 + S8 spec §1.

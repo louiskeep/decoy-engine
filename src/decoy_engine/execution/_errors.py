@@ -15,19 +15,14 @@ Codes used in S9:
 
 from __future__ import annotations
 
+from typing import Any
+
 from decoy_engine import reasons
-from decoy_engine.errors import ConfigError, DecoyError
+from decoy_engine._execution_error import ExecutionError as ExecutionError
+from decoy_engine._execution_error import lazy_source_changed as lazy_source_changed
+from decoy_engine.errors import ConfigError
 from decoy_engine.reason_adapter import tag_exception
 from decoy_engine.reasons import Phase, ReasonCode
-
-
-class ExecutionError(DecoyError):
-    """Execution-boundary / runner failure. Carries a machine-readable code."""
-
-    def __init__(self, *, code: str, message: str = "") -> None:
-        self.code = code
-        self.message = message
-        super().__init__(f"[{code}] {message}" if message else f"[{code}]")
 
 
 class StrategyError(ExecutionError):
@@ -36,6 +31,30 @@ class StrategyError(ExecutionError):
     def __init__(self, *, code: str, strategy: str, message: str = "") -> None:
         self.strategy = strategy
         super().__init__(code=code, message=f"strategy={strategy!r}: {message}")
+
+
+class DeclaredCastRouteError(ExecutionError):
+    """A route or sink cannot honour a declared casting contract (F06); refused before any
+    source is read. Its codes live in the ``route`` reason namespace (the adapter maps the class)."""
+
+
+class DeclaredCastValueError(ExecutionError):
+    """A ``fail``-policy parse or format failure (F06). ``declared_casting_counts`` is value-free
+    evidence of how far the run got (`completeness: partial_before_abort`)."""
+
+    def __init__(self, *, code: str, counts: dict[str, Any] | None = None) -> None:
+        self.declared_casting_counts = counts
+        super().__init__(code=code, message="A declared casting contract rejected a value.")
+
+
+class QuarantineError(ExecutionError):
+    """A protected-quarantine write, seal, access or retention failure (F06).
+
+    ``cleanup_state`` reports how partial-artifact cleanup ended, apart from the original code."""
+
+    def __init__(self, *, code: str, message: str = "", cleanup_state: str = "not_needed") -> None:
+        self.cleanup_state = cleanup_state
+        super().__init__(code=code, message=message)
 
 
 def seq_ineligible(message: str) -> ConfigError:

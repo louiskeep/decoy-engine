@@ -18,12 +18,14 @@ from decoy_engine.reasons import (
     decoy,
     physical,
     plan,
+    platform,
     post_scan,
     pre_scan,
     provider,
     quality,
     route,
     runtime,
+    safe_output,
     subset,
     verification,
     warning,
@@ -37,6 +39,9 @@ from decoy_engine.reasons._identity import (
     require_known,
 )
 from decoy_engine.reasons._record import (
+    COUNT_KEYS,
+    MAX_COUNTS,
+    REGISTRY_VERSION_RE,
     CleanupState,
     Operation,
     PublicationState,
@@ -45,6 +50,7 @@ from decoy_engine.reasons._record import (
     approve_name,
     approve_ref,
 )
+from decoy_engine.reasons._record import _is_count as is_count
 from decoy_engine.reasons._registry import (
     EVENT_SCHEMA_VERSION,
     REASON_SCHEMA_VERSION,
@@ -70,11 +76,14 @@ from decoy_engine.reasons._types import (
 )
 
 __all__ = [
+    "COUNT_KEYS",
     "EVENT_SCHEMA_VERSION",
+    "MAX_COUNTS",
     "REASONS",
     "REASON_SCHEMA_VERSION",
     "REGISTRY_SCHEMA",
     "REGISTRY_VERSION",
+    "REGISTRY_VERSION_RE",
     "CleanupState",
     "Kind",
     "Operation",
@@ -99,12 +108,14 @@ __all__ = [
     "find",
     "get",
     "get_reason",
+    "is_count",
     "is_registered",
     "lookup",
     "manifest",
     "namespaces",
     "physical",
     "plan",
+    "platform",
     "post_scan",
     "pre_scan",
     "provider",
@@ -112,6 +123,7 @@ __all__ = [
     "require_known",
     "route",
     "runtime",
+    "safe_output",
     "specs",
     "subset",
     "verification",
