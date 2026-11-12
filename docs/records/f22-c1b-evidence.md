@@ -291,3 +291,52 @@ runs above. Recorded as an environment flake, not a slice failure.
 - `TransactionalSink.commit` is annotated `-> object` so the reference sink's receipt type-checks
   against the protocol; the method set is unchanged.
 - The OpenBLAS-in-isolated-child hang above (environment).
+
+## Merge of main, second pass (2026-11-12)
+
+`origin/main` `a3cb996f` (which contains slice a1a, squash-merged as #488 after its
+review fix round) was merged up the stack with merge commits, never a rebase:
+a1b `d954ce3f` then `40f7870e`, a2 `2d4e7b16`, a3 `1edfa4c9` then `5861cfb5`,
+c1a `ea40c2cc`, c1b `53806a33`.
+
+- a1b: after the merge, its strict test cells take the shared `POLICIES` list from
+  `tests/fileaccess/publication/_dirmode_support.py` (the #488 review form: strict
+  cells are skipped where `openat2` is not usable, which is never the case on Linux).
+- a3: main's #506 replaced per-PR registry minors with release-time stamping. The
+  thirteen publication codes moved to the pending form (`since=UNRELEASED`) with
+  `scripts/dev/registry_renumber.py --to-unreleased`; the branch no longer changes
+  `REGISTRY_VERSION` and its minor fixture is deleted. `registry_renumber.py --check`
+  reports "registry consistent". This supersedes the 1.25.0 renumber recorded earlier.
+- c1a: conflicts only in the `publication/` rows of `CODEMAP.md` and
+  `src/decoy_engine/_MAP.md`; main's rows kept for its packages, the slice's row for
+  `publication/`.
+- c1b: clean merge. `staged_tables()` is on `ParquetTransactionalSink` and
+  `OutputPublish`. LOC: `_transactional_sink.py` 600, `_chunked_output_sink.py` 600,
+  `_sequential.py` 658 (main 660), `_pipeline_context.py` 573, `out_of_core/_runner.py` 339.
+
+Environment: Python 3.10.20, `bootstrap.sh --check` OK after the merge.
+
+Checks on c1b `53806a33` (`.venv/bin/python -m pytest ... -q -p no:cacheprovider -n 2 -rfE`):
+
+| Command | Result | Failing ids |
+|---|---|---|
+| `tests/unit/publication tests/fileaccess tests/sentry` | 6444 passed, 10 failed, 87 errors, 6 skipped | 56 `test_private_creators.py` and 31 `test_scratch_arena.py` errors (both files identical to main; they assert a non-root uid), 10 `test_import_layers.py` (import-linter is only in `.venv-layers`) |
+| `tests/unit/execution tests/integration tests/parity tests/security` | 12398 passed, 6 errors, 2389 skipped, 37 xfailed | 6 `test_scratch_root_umask.py` (non-root uid) |
+| `tests/unit --ignore=tests/unit/execution --ignore=tests/unit/scripts` | 13371 passed, 84 skipped, 2 xfailed, 5 xpassed | none |
+| `ruff check`, `ruff format --check`, `mypy src/decoy_engine` | pass | none |
+
+On a3 `5861cfb5` and c1a `ea40c2cc` the targeted sets (publication, fileaccess, sentry,
+reason registry tests; ruff, format, mypy) show the same known ids only.
+
+Not run or not completed in this pass: a baseline run on `a3cb996f` (the known ids were
+classified by cause and by the files being identical to main, not by a fresh diff);
+`tests/unit/scripts` (its tests clone the repository per case and filled the 25 GB
+volume twice; a run with `tmp_path_retention_policy=none` gave 428 passed and 73
+failures or errors that are artefacts of that option removing the worker temp directory;
+the stack changes nothing under `scripts/` or `tests/unit/scripts/`); `gates.sh`; the
+uid 65534 pass; the full suite; macOS; Windows. `origin/main` has moved past
+`a3cb996f` and was not taken.
+
+Open for review fix lists: later slices' test modules (a3, c1a, c1b) still define their
+own `["strict", "ambient"]` lists rather than the shared `POLICIES`, so their strict
+cells would not be skipped on a host without `openat2`.
