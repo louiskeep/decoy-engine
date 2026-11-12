@@ -9,6 +9,7 @@ is 0600, in both lanes, with a table that has an incoming and an outgoing FK edg
 
 from __future__ import annotations
 
+import gc
 import os
 import stat
 import sys
@@ -330,3 +331,105 @@ def test_ooc_scratch_modes(
     assert any(n.endswith("_key_relation.parquet") for n in names), sorted(names)
     rel = {str(Path(p).relative_to(Path(next(iter(walks[0]))))) for p in dirs}
     assert {"relations/t0000", "relations/t0001", "staged/t0000", "staged/t0001"} <= rel, rel
+
+
+# -- the transitional Path arm owns nothing (plan 3.1.1, arm (d); S2a-1b-ii) ------------------
+
+
+def _key_edge() -> RelationshipEdge:
+    return RelationshipEdge(
+        parent_table="parents",
+        parent_columns=("key",),
+        child_table="children",
+        child_columns=("key",),
+        namespace="rel",
+        orphan_policy=OrphanPolicy.PRESERVE,
+    )
+
+
+@pytest.mark.parametrize(
+    "cell",
+    ["reorder_spill", "relation_survives_gc", "relation_survives_gc_arena", "reclaim_refused"],
+)
+def test_adopted_arena_is_non_owning(tmp_path: Path, cell: str) -> None:
+    """Only the opener's root reclaims: an adopted arena and a `create_dir` child, collected
+    while the root is open, leave every file under them for the run that is still using it."""
+    if os.geteuid() == 0:
+        pytest.fail("run as a non-root user: root ignores directory modes, so this is vacuous")
+    with ScratchArena.open() as root:
+        base = Path(root.local_path())
+        if cell == "reorder_spill":
+            _reorder_spill(base / "joins" / "t0001" / "duckdb")  # the leaf the reorder joiner names
+        elif cell == "reclaim_refused":
+            with ScratchArena._adopt(tmp_path / "adopted") as adopted:
+                with pytest.raises(fileaccess.FileAccessUnavailable):
+                    adopted.reclaim()
+                with pytest.raises(fileaccess.FileAccessUnavailable):
+                    adopted.create_dir("c").reclaim()
+            assert (tmp_path / "adopted" / "c").is_dir()
+        else:
+            _relation_survives(root, base, cell)
+        assert (base / ".decoy-arena").is_file()
+    assert not base.exists()
+
+
+def _reorder_spill(leaf: Path) -> None:
+    from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
+
+    old = os.umask(0o022)
+    try:
+        adopted = ScratchArena._adopt(leaf)  # arm (c)'s shape: a missing leaf made 0700
+        conn = connect_duckdb(temp_dir=Path(adopted.local_path()), memory_limit="16MB")
+        try:
+            del adopted
+            gc.collect()
+            conn.execute("SET preserve_insertion_order = false")
+            conn.execute(
+                "CREATE TEMP TABLE spill AS SELECT range AS i, repeat('x', 96) AS s"
+                " FROM range(600000)"
+            )
+            spilled = [Path(r[0]) for r in conn.execute("FROM duckdb_temporary_files()").fetchall()]
+            assert spilled and {p.parent for p in spilled} == {leaf}, spilled  # non-vacuity
+            assert _mode(leaf) == _mode(leaf.parent) == 0o700
+        finally:
+            conn.close()
+    finally:
+        os.umask(old)
+
+
+def _relation_survives(root: ScratchArena, base: Path, cell: str) -> None:
+    from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
+    from decoy_engine.execution.out_of_core._relation import build_parent_key_relation_aligned
+    from decoy_engine.execution.out_of_core._stage import MaskedKeyStager
+
+    edge = _key_edge()
+    parent = pa.table({"key": ["c1", "c2"]})
+    masked = pa.table({"key": ["m1", "m2"]})
+    stager = MaskedKeyStager(  # the Path arm (arm (d)), adopting staged/t0000
+        base / "staged" / "t0000" / "masked_keys.parquet",
+        columns=("key",),
+        fixed_schema=masked.schema,
+    )
+    batch = masked.to_batches()[0]
+    stager.add(batch, batch)
+    stager.close()
+    holder = (
+        ScratchArena._adopt(base / "relations" / "t0000")
+        if cell == "relation_survives_gc"
+        else root.create_dir("relations").create_dir("t0000")
+    )
+    relation = build_parent_key_relation_aligned(
+        source_parent=parent,
+        masked_parent=stager.source(),
+        edge=edge,
+        temp_dir=Path(holder.local_path()),
+    )
+    del holder, stager
+    gc.collect()
+    assert relation.path.is_file() and relation.path.name.endswith("_key_relation.parquet")
+    child = pa.table({"key": ["c2", "c1", "x"]}).to_batches()[0]
+    with ChildFkBatchJoiner(
+        edge=edge, parent_relation=relation, child_key_types=(pa.string(),), temp_dir=base / "j"
+    ) as joiner:
+        out, orphans = joiner.join_batch(child)
+    assert out.column(0).to_pylist() == ["m2", "m1", "x"] and orphans == 1
