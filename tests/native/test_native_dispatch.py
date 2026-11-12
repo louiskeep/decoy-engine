@@ -1199,7 +1199,7 @@ def test_second_chunk_introducing_an_unconfigured_column_fails_coded_after_first
     chunk2 = pa.table({"p": [3, 4], "surprise": ["a", "b"]})
     sink: list[NativeRouteEvidence] = []
     it = run_native_or_oracle_chunked_below_gate(
-        config, [chunk1, chunk2], table="w", engine_version="test", route_evidence_sink=sink
+        config, iter([chunk1, chunk2]), table="w", engine_version="test", route_evidence_sink=sink
     )
     assert sink[0].native_admitted is True
     first_out = next(it)
