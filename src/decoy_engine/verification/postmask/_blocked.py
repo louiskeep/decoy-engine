@@ -164,6 +164,9 @@ class PostScanBlockedError(DecoyError):
         self.verdict = post_scan_verdict(report) if verdict is None else verdict
         first = self.verdict.codes[0] if self.verdict.codes else None
         self.reason = f"{first.namespace}.{first.code}" if first else ""
+        # The identity of a ref the verdict produced; the adapter trusts it only when registered.
+        registered = first is not None and reasons.find("post_scan", first.code) is not None
+        self.code = first.code if first and registered and first.namespace == "post_scan" else None
         summary = (
             reasons.get(first.namespace, first.code).summary
             if first and reasons.is_registered(first.code, (first.namespace,))

@@ -151,6 +151,10 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("quality/report.py", "_collect_warnings"): (
         "diagnostic check names are registry symbols in `verification`"
     ),
+    ("verification/postmask/_blocked.py", "PostScanBlockedError.__init__"): (
+        "the code is the identity of a ref the verdict produced, set only when that code is "
+        "registered in `post_scan`; the adapter trusts it only on that registration"
+    ),
     ("safe_output/_event.py", "SafeEvent.to_dict"): (
         "exports the identity of a `ReasonRef` that `require_known` resolved against the "
         "registry when the event was validated (an unknown identity fails closed before this "
