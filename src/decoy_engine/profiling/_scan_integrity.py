@@ -428,5 +428,22 @@ def _child_facts(conn: Any, width: int, on: str) -> ChildKeyFacts:
 
 
 def column_distinct(batches: pa.RecordBatchReader, *, scratch: Path, memory_limit: str) -> int:
-    """STUB."""
-    return -1
+    """Exact count of distinct non-null values in the one column `batches` reads.
+
+    The column is relabelled `k0`, so the statement never carries a column name. `scratch` is
+    caller-owned; the connection spills under it and is closed on every exit."""
+    # Imported here because decoy_engine.execution imports the profiling package.
+    from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
+
+    if len(batches.schema) != 1:
+        raise ValueError("column_distinct: the reader must read exactly one column")
+    schema = pa.schema([("k0", batches.schema.field(0).type)])
+    relabelled = pa.RecordBatchReader.from_batches(
+        schema, (b.rename_columns(["k0"]) for b in batches)
+    )
+    conn = connect_duckdb(temp_dir=scratch, memory_limit=memory_limit)
+    try:
+        conn.register("incoming", relabelled)
+        return _count(conn, "SELECT count(DISTINCT k0) FROM incoming")
+    finally:
+        conn.close()

@@ -100,8 +100,16 @@ _COUNTS: ContextVar[list[DetectorCount] | None] = ContextVar("detector_count_sco
 
 @contextmanager
 def counting_scope() -> Iterator[list[DetectorCount]]:
-    """STUB."""
-    yield []
+    """Collect every detector's raw tally in the block, whether or not it fired.
+
+    A caller that streams a column sums hits and n over its batches and applies the
+    threshold itself, so the rate is the whole-column rate and not an average of batch rates."""
+    counts: list[DetectorCount] = []
+    token = _COUNTS.set(counts)
+    try:
+        yield counts
+    finally:
+        _COUNTS.reset(token)
 
 
 def _series_str(series: pd.Series) -> PreparedValues:
@@ -193,8 +201,12 @@ def _evaluate(
             except (TypeError, ValueError):
                 continue
         hit = validated
-    rate = float(int(values.counts[hit].sum())) / values.n
+    hits = int(values.counts[hit].sum())
+    rate = float(hits) / values.n
     threshold = NAME_HINT_MIN_RATE if name_hint else min_rate
+    tally = _COUNTS.get()
+    if tally is not None:
+        tally.append(DetectorCount(detector_id, hits, values.n, threshold, name_hint))
     if rate < threshold:
         return None
     miss_rows = np.flatnonzero(~hit[values.codes])[:SAMPLE_MISS_LIMIT]

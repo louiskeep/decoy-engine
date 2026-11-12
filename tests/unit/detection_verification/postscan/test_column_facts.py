@@ -56,7 +56,9 @@ def _chunked(table: pa.Table, sizes: list[int]) -> pa.Table:
 
 def _frames(table: pa.Table) -> pd.DataFrame:
     # Integers with nulls become Python ints, so a null in one batch cannot retype the column.
-    return pd.DataFrame({c: table[c].to_pandas(integer_object_nulls=True) for c in table.names})
+    return pd.DataFrame(
+        {c: table[c].to_pandas(integer_object_nulls=True) for c in table.column_names}
+    )
 
 
 def _run(src: pa.Table, out: pa.Table, batch_rows: int, tmp_path: Path):
