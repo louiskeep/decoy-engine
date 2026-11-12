@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from tests.fileaccess.publication._dirmode_support import (
+    POLICIES,
     UNIT_BYTES,
     UNIT_FILE,
     run_child,
@@ -24,7 +25,7 @@ from tests.fileaccess.publication._dirmode_support import (
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX directory modes")
 
 
-@pytest.mark.parametrize("policy", ["strict", "ambient"])
+@pytest.mark.parametrize("policy", POLICIES)
 def test_umask_0477_first_attempt_publishes(tmp_path: Path, policy: str) -> None:
     base = tmp_path / "root"
     (base / "out").mkdir(parents=True)
