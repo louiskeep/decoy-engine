@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 EdgeDirection = Literal["both", "downward", "upward", "none"]
-SeedMode = Literal["sample", "filter", "keys"]
+SeedMode = Literal["sample", "filter", "keys", "head"]
 PredicateOp = Literal["eq", "ne", "lt", "le", "gt", "ge", "in", "is_null", "is_not_null"]
 
 
@@ -59,6 +59,7 @@ class SeedSpec:
     count: int | None = None
     predicates: tuple[Predicate, ...] = ()
     keys: tuple[tuple[Any, ...], ...] = ()
+    cap: int | None = None
 
     def __post_init__(self) -> None:
         if self.mode == "sample":

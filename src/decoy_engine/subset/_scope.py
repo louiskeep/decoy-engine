@@ -9,9 +9,13 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from decoy_engine.plan._types import PlanRelationship
 from decoy_engine.subset._types import FanOutPolicy, SeedSpec, SubsetPlan
+
+if TYPE_CHECKING:
+    from decoy_engine.subset._sample import SampleSpec
 
 
 @dataclass(frozen=True)
@@ -21,6 +25,7 @@ class SubsetRequest:
     policy: FanOutPolicy
     # Edges dropped before the request was built (a generate-kind end has no source to read).
     excluded_edges: tuple[str, ...] = ()
+    sample: SampleSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -29,6 +34,7 @@ class SubsetScope:
 
     tables: frozenset[str]
     whole: frozenset[str]
+    head: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)

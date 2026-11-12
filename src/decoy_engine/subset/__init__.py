@@ -17,7 +17,13 @@ from decoy_engine.subset._api import (
     subset_inputs_from_config,
     subset_request_from_config,
 )
-from decoy_engine.subset._edges import relationships_from_config
+from decoy_engine.subset._edges import relationships_from_config, sample_refusal_edge
+from decoy_engine.subset._sample import (
+    SAMPLE_ROWS_MAX,
+    SAMPLE_ROWS_MIN,
+    SampleSpec,
+    sample_request,
+)
 from decoy_engine.subset._errors import (
     SubsetBudgetExceededError,
     SubsetConfigError,
@@ -50,6 +56,9 @@ from decoy_engine.subset._types import (
 )
 
 __all__ = [
+    "SAMPLE_ROWS_MAX",
+    "SAMPLE_ROWS_MIN",
+    "SampleSpec",
     "ClosureResult",
     "EdgeDirection",
     "EdgeStats",
@@ -81,6 +90,8 @@ __all__ = [
     "relationships_from_config",
     "run_subset",
     "run_subset_preflight",
+    "sample_refusal_edge",
+    "sample_request",
     "scope_for",
     "select_subset",
     "subset_inputs_from_config",

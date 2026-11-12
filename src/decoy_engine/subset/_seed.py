@@ -462,6 +462,8 @@ def select_seed_rows(
                 selected, null_excluded = _select_sample(spec, kf, job_seed)
             elif spec.mode == "filter":
                 selected = _select_filter(spec, kf)
+            elif spec.mode == "head":
+                selected = frozenset()
             else:
                 selected = _select_keys(spec, kf)
             seed_rows[spec.table] = selected

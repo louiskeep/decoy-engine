@@ -113,3 +113,11 @@ def relationships_from_config(config: dict) -> tuple[PlanRelationship, ...]:
                 message=str(exc),
             ) from exc
     return tuple(relationships)
+
+
+def mask_relationships(config: dict) -> tuple[tuple[PlanRelationship, ...], tuple[str, ...]]:
+    return relationships_from_config(config), ()
+
+
+def sample_refusal_edge(config: dict) -> None:
+    return None
