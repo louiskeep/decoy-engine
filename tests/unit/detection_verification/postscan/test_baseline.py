@@ -196,7 +196,7 @@ def test_an_unmeasured_baseline_reports_null_source_counts(tmp_path: Path) -> No
         (tables(p={"id": [1]}, c={"other": [1]}), tables(p={"id": [1]}, c={"pid": [1]})),
         (tables(p={"id": [1]}, c={"pid": [1]}), tables(p={"id": [1]}, c={"other": [1]})),
         (
-            failing(tables(p={"id": [1]}, c={"pid": [1]})["c"], RuntimeError("boom")),
+            {**tables(p={"id": [1]}), "c": failing(tables(c={"pid": [1]})["c"], RuntimeError("x"))},
             tables(p={"id": [1]}, c={"pid": [1]}),
         ),
     ]
