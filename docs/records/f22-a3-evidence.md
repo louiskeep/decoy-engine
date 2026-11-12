@@ -276,3 +276,34 @@ before the red-test commit.
   only by the ambient cells.
 - `CommitReceipt` reports this attempt's measured `result_id` on refusals but not the bound unit's;
   a consumer that wants the bound digest reads the descriptor.
+
+## 2026-11-12: the two branch-only ids, fixed below a3
+
+The two branch-only ids of the full-suite run above came from a1a: raw `os.close` on ambient
+directory descriptors in `fileaccess/_local.py` (a close error failed the write, masked the primary
+error and double-closed a descriptor), plus the same class in a1b's durable path (a close error
+after the rename raised `CommitUncertain`). Fixed on `feat/f22-a1a` (`760e53a`, test spy
+`d767bde`) and `feat/f22-a1b` (`816789a`), cause and red tests in `f22-a1a-evidence.md` and
+`f22-a1b-evidence.md`; merged forward into a2 and here (`0a8e1dc`), no conflicts past a1b.
+
+Checks on `0a8e1dc`, baselines in a detached worktree of `origin/main` as fetched, `4bb9506`
+(import confirmed under the worktree; `tests/unit/publication` dropped there, absent on main):
+
+| Command | Tree | Result | Failing ids |
+|---|---|---|---|
+| `.venv/bin/python -m pytest tests/unit/publication tests/fileaccess tests/sentry -q -p no:cacheprovider -n 2 -rfE --tb=no` | `0a8e1dc` | 6151 passed, 10 failed, 56 errors, 7 skipped | 56 `test_private_creators.py` (root), 10 `test_import_layers.py` |
+| same | `4bb9506` | 6008 passed, 12 failed, 56 errors, 7 skipped | the same 66, plus 2 baseline-only `tests/sentry/test_license_policy.py` ids (`test_notice_matches_installed_metadata`, `test_wrong_license_in_notice_is_caught_against_installed_metadata`: main's newer commits against this `.venv`) |
+| `.venv/bin/python -m pytest tests/unit/execution tests/integration tests/parity tests/security -q -p no:cacheprovider -n 2 -rfE --tb=no` | both | 12230 passed, 6 errors, 2389 skipped, 37 xfailed | the 6 `test_scratch_root_umask.py` (root) on both; diff empty |
+| `.venv/bin/python -m pytest tests/unit -q -p no:cacheprovider -n 2 --ignore=tests/unit/execution -rfE --tb=no` | `0a8e1dc` | 12876 passed, 94 skipped, 2 xfailed, 5 xpassed | none |
+| same | `4bb9506` | 12994 passed, 92 skipped, 2 xfailed, 5 xpassed | none |
+| ruff check, ruff format --check (2232 files), mypy (790 files) | `0a8e1dc` | clean | |
+| `GATES_WORKERS=2 bash scripts/dev/gates.sh --keep-going --baseline tests/unit/publication tests/unit/test_reason_registry.py tests/unit/progress/test_consumer_contract.py tests/fileaccess/publication tests/unit/test_fixed_width_writer.py tests/unit/test_quarantine_staging.py` | `0a8e1dc` | exit 0; env, ruff, format, mypy, sentry (4991 passed), layers (15), licenses (63), tests (345 passed) PASS | branch=0 |
+
+No new failing id. The two ids above now pass. The `tests/unit` collected counts differ (12977 vs
+13093) because `origin/main` gained unit tests in commits the stack has not merged; both sides
+have no failures. `_local.py` 579 LOC, `_output.py` 596. Not run: the full suite, the perf suite,
+the uid 65534 pass.
+
+V2-LOG: `publication/_publish.py::_measure_one` closes the staged file descriptor with a raw
+`os.close` in a `finally`; a close error there would replace a measurement error or fail a good
+measurement. It is a read-only regular file, not a directory, and was left as is.
