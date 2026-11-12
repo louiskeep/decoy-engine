@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from types import MappingProxyType
 
 import pyarrow as pa
@@ -211,6 +212,18 @@ def test_collected_facts_copy_their_inputs() -> None:
     assert facts.phases == (("p", 1.0),)
     with pytest.raises(TypeError):
         facts.finished["y"] = 1  # type: ignore[index]
+
+
+def test_delivery_facts_own_their_entries() -> None:
+    # A caller keeps its entries; changing an entry's reason afterwards must not reach the facts.
+    mine = entry("failed", reason=copy.deepcopy(REASON))
+    facts = DeliveryFacts("in_place", "not_used", {"a": mine})
+    before = run(cfg("a"), delivery=facts).tables[0].to_payload()
+    mine.reason["code"] = "zz_changed"
+    mine.reason.setdefault("detail", {})["zz"] = 1
+    assert facts.tables["a"] is not mine
+    assert facts.tables["a"].reason == REASON
+    assert run(cfg("a"), delivery=facts).tables[0].to_payload() == before
 
 
 @pytest.mark.parametrize("bad_state", ["delivered", "failed"])
