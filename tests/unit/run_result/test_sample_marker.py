@@ -83,3 +83,13 @@ def test_every_dump_path_gives_one_wire_form(with_sample: bool) -> None:
     nested = json.loads(_Wrapper(record=record).model_dump_json(by_alias=True))["record"]
     assert nested == doc
     assert _Wrapper(record=record).model_dump(mode="json", by_alias=True)["record"] == doc
+
+
+@pytest.mark.parametrize("model", [RunResult, RunResultRead])
+def test_the_serialization_schema_keeps_the_document_fields(model: Any) -> None:
+    ser = model.model_json_schema(mode="serialization", by_alias=True)
+    val = model.model_json_schema(mode="validation", by_alias=True)
+    assert ser.get("properties"), "the serialization schema lost its property tree"
+    assert set(ser["properties"]) == set(val["properties"])
+    assert "sample" in ser["properties"]
+    assert "sample" not in ser.get("required", [])
