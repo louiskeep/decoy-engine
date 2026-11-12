@@ -652,6 +652,23 @@ class _Visitor(ast.NodeVisitor):
         if sink_pos is not None and sink_pos < len(node.args):
             if not isinstance(node.args[sink_pos], ast.Starred):
                 self._emit(node, "positional", sink_name, node.args[sink_pos])
+        # ``_TABLE.get(key, default)`` on a module-level dict whose values are all registry
+        # symbols returns a code either way, so its default must be one too (``_TABLE[key]``
+        # is classified the same way in ``_classify``).
+        if (
+            isinstance(callee, ast.Attribute)
+            and callee.attr == "get"
+            and isinstance(callee.value, ast.Name)
+            and len(node.args) >= 2
+            and not isinstance(node.args[1], ast.Starred)
+        ):
+            table = self.index.const_exprs.get((self.mod, callee.value.id))
+            if (
+                isinstance(table, ast.Dict)
+                and table.values
+                and all(self.index.is_registry_chain(self.mod, v) for v in table.values)
+            ):
+                self._emit(node, "table_default", f"{callee.value.id}.get", node.args[1])
         self.generic_visit(node)
 
 

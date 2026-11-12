@@ -14,6 +14,7 @@ import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock
 
 import pyarrow as pa
@@ -185,6 +186,67 @@ def test_refuses_unsafe_root(temp_root: Path, monkeypatch: pytest.MonkeyPatch, c
     assert sorted((p.name, os.lstat(p).st_mode) for p in temp_root.iterdir()) == before
 
 
+def _open_fds() -> int:
+    return len(os.listdir("/dev/fd"))
+
+
+@pytest.mark.parametrize("cell", ["symlinked_under", "base_open_fails", "check_fails"])
+def test_open_leaves_nothing_behind(
+    temp_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cell: str
+) -> None:
+    before = _open_fds()
+    if cell == "symlinked_under":
+        real = tmp_path / "real"
+        real.mkdir()
+        (tmp_path / "link").symlink_to(real)
+        with ScratchArena.open(under=tmp_path / "link") as arena:
+            os.close(arena.create_file("f"))
+        assert list(real.iterdir()) == []
+    elif cell == "base_open_fails":
+        real_open = os.open
+
+        def refuse_base(path: str, flags: int, *args: Any, **kwargs: Any) -> int:
+            if kwargs.get("dir_fd") is None and os.fspath(path) == str(temp_root):
+                raise PermissionError(errno.EACCES, os.strerror(errno.EACCES))
+            return real_open(path, flags, *args, **kwargs)
+
+        monkeypatch.setattr(os, "open", refuse_base)
+        with pytest.raises(PermissionError):
+            ScratchArena.open()
+        assert list(temp_root.iterdir()) == []
+    else:
+        failure = OSError(errno.EIO, os.strerror(errno.EIO))
+        monkeypatch.setattr(fileaccess._scratch, "_exact", Mock(side_effect=failure))
+        with pytest.raises(OSError) as info:
+            ScratchArena.open()
+        assert info.value.errno == errno.EIO
+        assert [p for p in temp_root.iterdir() if p.name.startswith("decoy-arena-v1-")] == []
+    assert _open_fds() == before
+
+
+def test_a_child_keeps_its_opener_alive(temp_root: Path) -> None:
+    child = ScratchArena.open().create_dir("d")
+    gc.collect()
+    os.close(child.create_dir("e").create_file("f"))
+    assert os.path.isfile(os.path.join(child.local_path("e"), "f"))
+    del child
+    gc.collect()
+    assert [p for p in temp_root.iterdir() if p.name.startswith("decoy-arena-")] == []
+
+
+def test_remove_takes_a_file_or_an_empty_directory() -> None:
+    with ScratchArena.open() as arena:
+        os.close(arena.create_file("f"))
+        arena.create_dir("d")
+        os.close(arena.create_dir("full").create_file("x"))
+        arena.remove("f")
+        arena.remove("d")
+        with pytest.raises(OSError) as info:
+            arena.remove("full")
+        assert info.value.errno in (errno.ENOTEMPTY, errno.EEXIST)
+        assert sorted(os.listdir(arena.local_path())) == [".decoy-arena", "full"]
+
+
 _EXITS = ["reclaim_twice", "error_in_with", "failed_reclaim", "collection", "adopted", "kill"]
 
 
@@ -333,4 +395,4 @@ def test_report_text_is_value_free(
     for each in texts:
         assert not any(s in f"{each!s} {each!r}" for s in SENTINELS), repr(each)
         if isinstance(each, BaseException):
-            assert each.__context__ is None or each.__suppress_context__
+            assert each.__context__ is None and each.__cause__ is None

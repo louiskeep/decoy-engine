@@ -1,0 +1,82 @@
+{
+  "entries": [
+    {
+      "code": "fpe_checksum_unsupported",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "StrategyError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.24.0",
+      "summary": "The FPE checksum scheme is unsupported or the value's length is invalid for it.",
+      "symbol": "FPE_CHECKSUM_UNSUPPORTED_STRATEGY"
+    },
+    {
+      "code": "fpe_unencryptable_value",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "StrategyError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "generate",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.24.0",
+      "summary": "A value cannot be format-preserving-encrypted without leaking cleartext or losing round-trip.",
+      "symbol": "FPE_UNENCRYPTABLE_VALUE"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.24.0"
+}

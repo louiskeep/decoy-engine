@@ -10,23 +10,34 @@ masking itself is UNCHANGED. `subset_inputs_from_config` converts a validated
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import polars as pl
+import pyarrow as pa
 
 from decoy_engine import reasons
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.fileaccess.adapters import serial
+from decoy_engine.plan import job_seed_for_config
 from decoy_engine.plan._types import PlanRelationship
+from decoy_engine.profile import LazySource
+from decoy_engine.release import __version__
 from decoy_engine.subset._closure import ClosureResult, compute_closure, verify_closure
-from decoy_engine.subset._edges import build_subset_edges, relationships_from_config
+from decoy_engine.subset._edges import (
+    build_subset_edges,
+    mask_relationships,
+    relationships_from_config,
+)
 from decoy_engine.subset._errors import SubsetConfigError, SubsetPreflightError
+from decoy_engine.subset._inputs import TableInput, as_input
 from decoy_engine.subset._keys import load_key_frames
 from decoy_engine.subset._manifest import build_manifest, to_json_dict
 from decoy_engine.subset._materialize import materialize_subset
 from decoy_engine.subset._policy import build_estimate, make_budget_check, resolve_edge_directions
 from decoy_engine.subset._preflight import run_subset_preflight
+from decoy_engine.subset._scope import SubsetRequest, SubsetSelection, scope_for
 from decoy_engine.subset._seed import select_seed_rows
 from decoy_engine.subset._types import (
     EdgeDirection,
@@ -54,18 +65,14 @@ def _seed_spec_public(spec: SeedSpec) -> dict[str, Any]:
     literal was present, so the shape of the filter stays visible without the
     data.
     """
-    if spec.mode == "keys":
-        return {
-            "table": spec.table,
-            "mode": "keys",
-            "key_columns": list(spec.key_columns),
-            "key_count": len(spec.keys),
-        }
-    d: dict[str, Any] = {
-        "table": spec.table,
-        "mode": spec.mode,
-        "key_columns": list(spec.key_columns),
-    }
+    d: dict[str, Any] = {"table": spec.table, "mode": spec.mode}
+    if spec.mode == "head":
+        d["count"] = spec.count
+    elif spec.mode == "keys":
+        d["key_columns"] = list(spec.key_columns)
+        d["key_count"] = len(spec.keys)
+    else:
+        d["key_columns"] = list(spec.key_columns)
     if spec.mode == "sample":
         d["fraction"] = spec.fraction
         d["count"] = spec.count
@@ -74,12 +81,14 @@ def _seed_spec_public(spec: SeedSpec) -> dict[str, Any]:
             {"column": p.column, "op": p.op, "value_redacted": p.value is not None}
             for p in spec.predicates
         ]
+    if spec.cap is not None:
+        d["cap"] = spec.cap
     return d
 
 
 def _compute(
     *,
-    sources: dict[str, SubsetSource],
+    sources: Mapping[str, SubsetSource | pa.Table | LazySource | TableInput],
     relationships: tuple[PlanRelationship, ...],
     seeds: tuple[SeedSpec, ...],
     policy: FanOutPolicy,
@@ -93,14 +102,15 @@ def _compute(
     ClosureResult,
 ]:
     try:
-        report = run_subset_preflight(sources=sources, relationships=relationships, seeds=seeds)
+        inputs = {name: as_input(name, value) for name, value in sources.items()}
+        report = run_subset_preflight(sources=inputs, relationships=relationships, seeds=seeds)
         if not report.passed:
             first = report.failures[0]
             raise SubsetPreflightError(code=first.code, report=report, message=first.message)
 
         edges = build_subset_edges(relationships)
         directions = resolve_edge_directions(edges, policy)
-        key_frames = load_key_frames(sources, edges, seeds)
+        key_frames = load_key_frames(inputs, edges, seeds)
         seed_rows, seed_counts, seed_null_excluded = select_seed_rows(
             seeds=seeds, key_frames=key_frames, job_seed=job_seed
         )
@@ -211,30 +221,58 @@ def run_subset(
         raise
 
 
-def subset_inputs_from_config(
+@entry_point
+def select_subset(
+    request: SubsetRequest,
+    inputs: Mapping[str, pa.Table | LazySource],
+    *,
     config: dict[str, Any],
-) -> tuple[
-    dict[str, SubsetSource], tuple[PlanRelationship, ...], tuple[SeedSpec, ...], FanOutPolicy
-]:
-    """Adapt a validated `PipelineConfig` dump (with a `subset:` block) to `run_subset` kwargs."""
+    file_access: FileAccess | None = None,
+) -> SubsetSelection:
+    """Pick the subset rows of resident or lazy tables. Reads key columns only and writes
+    nothing. `config` is the validated pipeline config dump; the sampling seed is the one
+    `global_settings.seed` resolves to, so this entry never takes or holds seed bytes.
+    `file_access` governs path inputs; a lazy source reads under the policy it captured
+    when it was built, and a resident table reads nothing."""
+    plan, key_frames, edges, directions, closure = _compute(
+        sources=inputs,
+        relationships=request.relationships,
+        seeds=request.seeds,
+        policy=request.policy,
+        job_seed=job_seed_for_config(config),
+        engine_version=__version__,
+    )
+    scope = scope_for(request, key_frames)
+    counts = {
+        name: (
+            frame.height,
+            len(closure.survivors[name]) if name in scope.tables else frame.height,
+        )
+        for name, frame in key_frames.items()
+    }
+    return SubsetSelection(
+        survivors={name: closure.survivors[name] for name in sorted(scope.tables)},
+        counts=counts,
+        scope=scope,
+        excluded_edges=tuple(
+            sorted(
+                {
+                    *request.excluded_edges,
+                    *(e.edge_id for e in edges if directions[e.edge_id] == "none"),
+                }
+            )
+        ),
+        estimate=plan,
+    )
+
+
+def subset_request_from_config(config: dict[str, Any]) -> SubsetRequest | None:
+    """The typed request a validated `PipelineConfig` dump's `subset:` block describes, or
+    `None` when it has no block."""
     subset_block = config.get("subset")
     if subset_block is None:
-        raise SubsetConfigError(
-            code=reasons.config.SUBSET_CONFIG_MISSING,
-            message="config has no `subset:` block; subset_inputs_from_config requires one",
-        )
-
-    sources: dict[str, SubsetSource] = {}
-    for name, src in config.get("sources", {}).items():
-        if src.get("type") != "file":
-            raise SubsetConfigError(
-                code=reasons.config.SUBSET_SOURCE_TYPE_UNSUPPORTED,
-                message=f"table {name!r}: subsetting only supports local file sources "
-                f"(got type={src.get('type')!r}); DB / cloud sources are deferred (GATE-1 #2)",
-            )
-        sources[name] = SubsetSource(path=src["path"], format=src["format"])
-
-    relationships = relationships_from_config(config)
+        return None
+    relationships, excluded = mask_relationships(config)
 
     seeds: list[SeedSpec] = []
     for entry in subset_block.get("seeds", []):
@@ -266,4 +304,38 @@ def subset_inputs_from_config(
         edge_directions=edge_directions,
         allow_dangling=bool(subset_block.get("allow_dangling", False)),
     )
-    return sources, relationships, tuple(seeds), policy
+    return SubsetRequest(
+        relationships=relationships,
+        seeds=tuple(seeds),
+        policy=policy,
+        excluded_edges=excluded,
+    )
+
+
+def subset_inputs_from_config(
+    config: dict[str, Any],
+) -> tuple[
+    dict[str, SubsetSource], tuple[PlanRelationship, ...], tuple[SeedSpec, ...], FanOutPolicy
+]:
+    """Adapt a validated `PipelineConfig` dump (with a `subset:` block) to `run_subset` kwargs."""
+    if config.get("subset") is None:
+        raise SubsetConfigError(
+            code=reasons.config.SUBSET_CONFIG_MISSING,
+            message="config has no `subset:` block; subset_inputs_from_config requires one",
+        )
+
+    sources: dict[str, SubsetSource] = {}
+    for name, src in config.get("sources", {}).items():
+        if src.get("type") != "file":
+            raise SubsetConfigError(
+                code=reasons.config.SUBSET_SOURCE_TYPE_UNSUPPORTED,
+                message=f"table {name!r}: subsetting only supports local file sources "
+                f"(got type={src.get('type')!r}); DB / cloud sources are deferred (GATE-1 #2)",
+            )
+        sources[name] = SubsetSource(path=src["path"], format=src["format"])
+
+    # The block was checked above, so the request is never None. Relationships stay unfiltered:
+    # the generate-table filter belongs to the run path, and standalone subsetting refuses an
+    # edge that touches a generate table in preflight.
+    request = cast(SubsetRequest, subset_request_from_config(config))
+    return sources, relationships_from_config(config), request.seeds, request.policy

@@ -222,6 +222,16 @@ def slices(repo: Path, *slugs: str, version: str | None = None, merged: bool = T
     return m0
 
 
+# The pending-era --check refuses any numeric slice. A slice the numeric
+# renumber left consistent fails with these keys only, so the older carrier checks still hold.
+PENDING_ERA = ("registry-version-bump ", "branch-added-fixture", "numeric-since ")
+
+
+def numeric_only(res: subprocess.CompletedProcess) -> bool:
+    lines = [x for x in res.stdout.splitlines() if x]
+    return res.returncode == 1 and bool(lines) and all(x.startswith(PENDING_ERA) for x in lines)
+
+
 def added_tokens(repo: Path, version: str) -> list[str]:
     diff = git(repo, "diff", "-U0", "main", "HEAD").splitlines()
     pat = re.compile(rf"(?<![\w.]){re.escape(version)}(?!\w|\.\d)")
@@ -257,7 +267,7 @@ def test_second_slice_is_renumbered_and_every_artifact_agrees(repo):  # AT-R1
     assert vt in rec[0] and rec[1].endswith(f"at {vt}.") and rec[-1].startswith(RENUM)
     commit(repo, "renumber")
     assert added_tokens(repo, va) == []
-    assert run(repo, "--check").returncode == 0
+    assert numeric_only(run(repo, "--check"))
 
 
 def test_added_lines_that_look_like_diff_headers_are_still_rewritten(repo):  # AT-R21
@@ -303,8 +313,8 @@ def test_renumber_is_idempotent(repo):  # AT-R2
 def test_a_slice_at_main_plus_one_is_a_noop(repo):  # AT-R3
     git(repo, "checkout", "-q", "-b", "a")
     add_slice(repo, "a", nxt(mver(repo)))
-    for args in ((), ("--check",)):
-        assert run(repo, *args).returncode == 0
+    assert run(repo).returncode == 0
+    assert numeric_only(run(repo, "--check"))
     assert git(repo, "status", "--porcelain") == ""
 
 
@@ -405,7 +415,7 @@ def test_check_fails_closed_on_bad_carriers(repo, break_it, needle):  # AT-R23
     slices(repo, "a", "b")
     assert run(repo).returncode == 0
     commit(repo, "renumber")
-    assert run(repo, "--check").returncode == 0
+    assert numeric_only(run(repo, "--check"))
     break_it(repo, m0)
     res = run(repo, "--check")
     assert res.returncode == 1 and needle in out(res), out(res)
@@ -539,7 +549,7 @@ def test_a_second_renumber_keeps_both_record_lines_true(repo):  # AT-R12
     assert lines[1].startswith(f"{RENUM} {v[1]} to {v[2]} ")
     assert (repo / F29 / fix_name(v[2], "b")).exists()
     commit(repo, "renumber b again")
-    assert run(repo, "--check").returncode == 0
+    assert numeric_only(run(repo, "--check"))
 
 
 @pytest.mark.parametrize("a_names_version", [True, False])
@@ -613,7 +623,7 @@ def test_only_the_first_of_two_green_heads_can_land(repo):  # AT-R16
         git(repo, "checkout", "-q", head)
         fixtures = {p.name: json.loads(p.read_text()) for p in (repo / F29).glob(FIXTURE_GLOB)}
         sentry = minor_fixture_violations(fixtures, live(repo), floor)
-        return run(repo, "--check").returncode == 0 and not sentry
+        return numeric_only(run(repo, "--check")) and not sentry
 
     m0 = mver(repo)
     for slug in ("a", "b"):
@@ -736,7 +746,7 @@ def test_schema_root_changes_are_attributed(repo, root, where, code):  # AT-R18
         )
         assert run(repo, "--check").returncode == 1
     else:
-        assert run(repo, "--check").returncode == 0
+        assert numeric_only(run(repo, "--check"))
 
 
 def test_the_policy_returns_the_branch_owned_root_it_is_given():  # AT-R18 (direct)
@@ -768,4 +778,4 @@ def test_merge_procedure_commands_run_by_file_path(repo, tmp_path):  # AT-R20
     assert script(cwd=repo).returncode == 0
     commit(repo, "renumber")
     res = script("--check", "--repo", str(repo), cwd=tmp_path)
-    assert res.returncode == 0, out(res)
+    assert numeric_only(res), out(res)

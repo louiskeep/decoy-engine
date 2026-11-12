@@ -82,7 +82,7 @@ _FF1_MIN_DOMAIN = _ff1.FF1_MIN_DOMAIN
 
 # Maps the low-level exception's `.code` (dotted) onto the handler-surface
 # `StrategyError` code (underscored) the runner / operator sees. Codes not in
-# this map keep their existing default (`fpe_unencryptable_value` for any
+# this map keep their registered default (`fpe_unencryptable_value` for any
 # `FpeUnencryptableError` whose `.code` isn't listed, matching pre-Task-5.2
 # behavior for the DE-01 guards verbatim).
 _UNENCRYPTABLE_STRATEGY_CODE: dict[str, str] = {
@@ -96,12 +96,12 @@ _CHECKSUM_STRATEGY_CODE: dict[str, str] = {
 
 def strategy_code_for_unencryptable(exc: FpeUnencryptableError) -> str:
     """Map an `FpeUnencryptableError` onto its `StrategyError`/row-error code."""
-    return _UNENCRYPTABLE_STRATEGY_CODE.get(exc.code, "fpe_unencryptable_value")
+    return _UNENCRYPTABLE_STRATEGY_CODE.get(exc.code, reasons.runtime.FPE_UNENCRYPTABLE_VALUE)
 
 
 def strategy_code_for_checksum(exc: FpeChecksumError) -> str:
     """Map an `FpeChecksumError` onto its `StrategyError`/row-error code."""
-    return _CHECKSUM_STRATEGY_CODE.get(exc.code, "fpe_checksum_unsupported")
+    return _CHECKSUM_STRATEGY_CODE.get(exc.code, reasons.runtime.FPE_CHECKSUM_UNSUPPORTED_STRATEGY)
 
 
 class FpeStrategyHandler:

@@ -9,6 +9,9 @@ name: Compat pre-flight
 
 on:
   pull_request:
+    # "edited" so ticking the checklist in the description re-runs the check; a re-run of an
+    # old job reads the description as it was when that job's event fired.
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
