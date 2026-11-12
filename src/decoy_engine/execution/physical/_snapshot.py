@@ -153,8 +153,15 @@ def capture_physical_plan_inputs(
     has_mask_table = any(kind == "mask" for kind in table_kinds.values())
 
     job_seed = _normalize_job_seed_int(config)
-    declared = prepare_declared_execution_sources(DeclarationRequest.for_descriptors(config))
-    profile = profile_source(config, seed=job_seed, declared=declared)
+    # The same request and profile call the live route makes, so a table the caller supplies
+    # without a descriptor is profiled, seeded and planned here as it is there.
+    declared = prepare_declared_execution_sources(
+        DeclarationRequest.for_run(config, {n: s.schema for n, s in caller_sources.items()}),
+        registry=resolved_registry,
+    )
+    profile = profile_source(
+        config, seed=job_seed, declared=declared, supplied_sources=caller_sources
+    )
     plan = compile_plan(config, profile, decoy_engine_version=engine_version, base_dir=base_dir)
 
     ns_registry = build_namespace_registry(config, profile)

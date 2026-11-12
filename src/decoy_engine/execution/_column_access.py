@@ -387,7 +387,7 @@ def created_columns(
     A column entry counts only when its declaration says it creates its own target and every
     column it reads is a source column, so a target that is read, or whose inputs are absent or
     unreadable, is not created. A `derive` target counts the same way against the source
-    columns the whole transform list reads.
+    columns its own expression reads.
     """
     have = frozenset(source_columns)
     created: set[str] = set()
@@ -397,10 +397,23 @@ def created_columns(
         access = column_access(entry, registry)
         if _creates_from(access, have):
             created.add(entry["name"])
-    derived = SURFACE_DECLARATIONS["surface:transforms"](table_entry)
-    if _creates_from(derived, have):
-        created |= derived.writes
-    return frozenset(created)
+    return frozenset(created) | _derive_created(table_entry, have)
+
+
+def _derive_created(table_entry: Mapping[str, Any], have: frozenset[str]) -> frozenset[str]:
+    """`derive` targets whose own expressions read only source columns. A target built from an
+    earlier target is not exempt, since the earlier column does not exist to be read yet when
+    the source lacks it; a target written twice must qualify on every write."""
+    ok: dict[str, bool] = {}
+    for op in table_entry.get("transforms") or []:
+        if not isinstance(op, Mapping) or op.get("op") != "derive":
+            continue
+        target = op.get("column")
+        if not isinstance(target, str):
+            continue
+        names = predicate_names(str(op.get("expression")))
+        ok[target] = ok.get(target, True) and names is not None and names <= have
+    return frozenset(t for t, good in ok.items() if good)
 
 
 def _creates_from(access: ColumnAccess, have: frozenset[str]) -> bool:

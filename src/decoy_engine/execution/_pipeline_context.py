@@ -348,7 +348,7 @@ def build_run_context(
         raise ValueError("run_pipeline: source_loader and source_loader_schemas go together.")
     schemas = {n: s.schema for n, s in caller_sources.items()}
     request = DeclarationRequest.for_run(config, schemas, source_loader_schemas)
-    declared = _guards.prepare_declared_execution_sources(request)
+    declared = _guards.prepare_declared_execution_sources(request, registry=resolved_registry)
     if source_loader is not None and source_loader_schemas is not None:
         source_loader = declared.checked_loader(source_loader, source_loader_schemas)
 

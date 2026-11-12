@@ -40,6 +40,16 @@ Hand-written additions about 494 plus docs and this record; the coordinator acce
 
 Function names in a `derive` expression count as column reads (`execution/_column_access.py`, `_transforms`).
 
+## Review fixes
+
+Capture now builds its declared sources with `DeclarationRequest.for_run` and passes the caller's tables to `profile_source` as `supplied_sources`, the same two calls the live route makes. Before, a table supplied without a descriptor was left out of the captured profile, seed envelope and compiled plan. Guard: `tests/physical/test_capture_supplied_only.py`; dropping `supplied_sources=` turns it red.
+
+`created_columns` now judges each `derive` target on its own expression, so a target built from an earlier derive target is not exempt, matching the named limit above. A target written twice must qualify on every write. Guards: the chained-derive and written-twice tests; restoring the subtraction of earlier writes turns both red.
+
+`prepare_declared_execution_sources` takes the registry the run resolved and `build_run_context` passes it, so a created column is classified as composite or scalar the way the runtime classifies it. The default registry applies when a route has none. Guards: an override in each direction, and a spy that the run hands its registry to the boundary; ignoring the argument or dropping the pass-through turns them red.
+
+`test_extra_resident_source_preserved_and_projection_warning_parity` pinned the old gap: capture accepted a supplied table the config does not declare, which the live route refuses. It now asserts capture and the live route refuse with the same code. Declared, that table is a second mask table, which the full-frame shadow declines, so the echoed-extra-source path has no input left through capture.
+
 ## Not verified
 
 Mac run; X-id behavior under the reverse rule (E2b-r2).

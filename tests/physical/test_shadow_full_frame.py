@@ -35,6 +35,7 @@ from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.execution.physical._shadow_coordinator import ShadowCoordinator, ShadowRunResult
 from decoy_engine.execution.physical._shadow_diff_codes import (
     FULL_FRAME_DISPATCH_MISSING_DEPENDENCY,
+    FULL_FRAME_DRIVER_UNSUPPORTED,
     FULL_FRAME_RUNTIME_FEATURE_UNSUPPORTED,
     FULL_FRAME_SUBSTRATE_UNSUPPORTED,
     GLOBAL_SHUFFLE_DETERMINISM_UNSUPPORTED,
@@ -372,21 +373,13 @@ def test_extra_resident_source_preserved_and_projection_warning_parity(tmp_path:
     config, source = _admitted_table_config(tmp_path)
     extra = pa.table({"note": pa.array(["x", "y"], type=pa.string())})
     sources = {_TABLE: source, "extra": extra}
-    inputs, plan = _capture(config, sources)
-    ctx = _build_ctx(inputs, config)
-    snapshot = capture_shadow_snapshot(sources)
-    shadow_result = _coordinator(inputs, ctx).run(plan, snapshot)
-
-    assert "extra" in shadow_result.outputs
-    assert shadow_result.outputs["extra"].column("note").to_pylist() == ["x", "y"]
-
-    direct_result = _direct_full_frame_result(inputs, sources, ctx)
-    _assert_outputs_and_diagnostics_equal(shadow_result, direct_result)
 
     # The declaration gate (CONFIG-EXPLICIT E2c) refuses a supplied table the config does not
-    # declare, so the oracle run can no longer produce a projection warning to compare against.
-    with pytest.raises(PipelineValidationError) as refused:
-        run_pipeline(
+    # declare. Capture builds its declared sources through the call the live route makes, so
+    # it refuses with the same code and the oracle run has no projection warning to compare.
+    for refused_run in (
+        lambda: _capture(config, sources),
+        lambda: run_pipeline(
             config,
             sources,
             engine_version=ENGINE_VERSION,
@@ -394,8 +387,28 @@ def test_extra_resident_source_preserved_and_projection_warning_parity(tmp_path:
             auto_chunk=False,
             key_provider=None,
             sink=None,
-        )
-    assert refused.value.code == "source_file.undeclared_table"
+        ),
+    ):
+        with pytest.raises(PipelineValidationError) as refused:
+            refused_run()
+        assert refused.value.code == "source_file.undeclared_table"
+
+    # Declared (a supplied-only table the config lists), the extra table is a second mask
+    # table, which the full-frame shadow does not run.
+    config["tables"].append(
+        {"name": "extra", "columns": [{"name": "note", "strategy": "passthrough"}]}
+    )
+    config["targets"]["extra"] = {
+        "type": "file",
+        "format": "parquet",
+        "path": str(tmp_path / "extra.out.parquet"),
+    }
+    inputs, plan = _capture(config, sources)
+    assert {t.table for t in plan.tables} == {_TABLE, "extra"}
+    ctx = _build_ctx(inputs, config)
+    with pytest.raises(ShadowDifference) as unsupported:
+        _coordinator(inputs, ctx).run(plan, capture_shadow_snapshot(sources))
+    assert unsupported.value.code == FULL_FRAME_DRIVER_UNSUPPORTED
 
 
 # ---------------------------------------------------------------------------

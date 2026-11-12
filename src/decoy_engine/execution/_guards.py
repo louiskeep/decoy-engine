@@ -195,17 +195,22 @@ def reject_gated_hash_on_integer(
 
 
 def prepare_declared_execution_sources(
-    request: DeclarationRequest, *, file_access: FileAccess | None = None
+    request: DeclarationRequest,
+    *,
+    file_access: FileAccess | None = None,
+    registry: ProviderRegistry | None = None,
 ) -> PreparedDeclaredSources:
     """The one pre-read boundary every execution route calls instead of `prepare_declared_sources`.
 
     It adds the execution layer's rule for columns the config creates itself (from
     `SURFACE_DECLARATIONS`), which `profile` cannot import. Execution routes build the
-    capability here and nowhere else.
+    capability here and nowhere else. `registry` is the one the run resolves, so a created
+    column is classified as the runtime classifies it; the default registry applies when a
+    route has no caller registry.
     """
     from decoy_engine.providers_v2 import get_default_registry
 
-    registry = get_default_registry()
+    registry = registry if registry is not None else get_default_registry()
     return prepare_declared_sources(
         request,
         file_access=file_access,

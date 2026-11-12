@@ -26,6 +26,7 @@ from decoy_engine.execution._column_access import (
     _union,
     created_columns,
 )
+from decoy_engine.execution._guards import prepare_declared_execution_sources
 from decoy_engine.execution._isolated_run import run_pipeline_isolated
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
 from decoy_engine.execution.physical import _shadow_batch_runner
@@ -33,7 +34,7 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
     NATIVE_COMPANION_UNAVAILABLE,
     ShadowDifference,
 )
-from decoy_engine.profile import profile_source
+from decoy_engine.profile import DeclarationRequest, profile_source
 from decoy_engine.providers_v2 import get_default_registry
 from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 from tests.native.test_column_access_surfaces import (
@@ -303,3 +304,83 @@ def test_union_of_differing_own_targets_reads_the_source() -> None:
     assert _union(creating, reading).own_target == OWN_TARGET_SOURCE
     assert _union(reading, creating).own_target == OWN_TARGET_SOURCE
     assert _union(creating, creating).own_target == OWN_TARGET_CREATES
+
+
+def test_derive_reading_an_earlier_derive_target_is_not_exempt() -> None:
+    ops = [
+        {"op": "derive", "column": "x", "expression": "a + 1"},
+        {"op": "derive", "column": "y", "expression": "x + 1"},
+        {"op": "derive", "column": "z", "expression": "a + b"},
+    ]
+    table = {"name": "t", "columns": PASSTHROUGH, "transforms": ops}
+    assert _created(table) == {"x", "z"}
+
+
+def test_derive_target_written_twice_must_qualify_on_every_write() -> None:
+    ops = [
+        {"op": "derive", "column": "x", "expression": "a + 1"},
+        {"op": "derive", "column": "x", "expression": "x + 1"},
+    ]
+    assert _created({"name": "t", "transforms": ops}) == frozenset()
+
+
+class _FakeRegistry:
+    """Calls `provider` a composite or a scalar, whatever the default registry says."""
+
+    def __init__(self, provider: str, backend_type: str) -> None:
+        self._provider, self._backend = provider, backend_type
+
+    def has(self, name: str) -> bool:
+        return name == self._provider
+
+    def get_capabilities(self, name: str) -> Any:
+        return mock.Mock(backend_type=self._backend)
+
+
+def _created_through_boundary(tmp_path: Path, provider: str, registry: Any) -> frozenset[str]:
+    """The `tgt` a supplied-only table's capability reports as created, under `registry`."""
+    raw = _config(tmp_path, "group_key")
+    raw["tables"].append(_table("group_key", _valid("group_key"), name="s"))
+    raw["targets"]["s"] = {"type": "file", "format": "csv", "path": str(tmp_path / "s.out")}
+    config = PipelineConfig.model_validate(raw).model_dump()
+    for t in config["tables"]:
+        if t["name"] == "s":
+            t["columns"][-1]["provider"] = provider
+    request = DeclarationRequest.for_run(config, {"t": SRC.schema, "s": SRC.schema})
+    declared = prepare_declared_execution_sources(request, registry=registry)
+    return declared.created("s", SRC.column_names)
+
+
+def test_created_column_follows_the_resolved_registry(tmp_path: Path) -> None:
+    """A provider the default registry calls scalar but the override calls composite is not a
+    creating entry, and the reverse."""
+    scalar_by_default = "unregistered_provider"
+    composite_by_default = "composite_person"
+    assert not REG.has(scalar_by_default)
+    assert REG.get_capabilities(composite_by_default).backend_type == "composite"
+
+    as_composite = _FakeRegistry(scalar_by_default, "composite")
+    assert _created_through_boundary(tmp_path, scalar_by_default, None) == {"tgt"}
+    assert _created_through_boundary(tmp_path, scalar_by_default, as_composite) == frozenset()
+
+    as_scalar = _FakeRegistry("other", "scalar")
+    assert _created_through_boundary(tmp_path, composite_by_default, None) == frozenset()
+    assert _created_through_boundary(tmp_path, composite_by_default, as_scalar) == {"tgt"}
+
+
+def test_run_pipeline_hands_its_registry_to_the_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.execution import _guards
+
+    seen: list[Any] = []
+    real = _guards.prepare_declared_execution_sources
+
+    def spy(request: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs.get("registry"))
+        return real(request, **kwargs)
+
+    monkeypatch.setattr(_guards, "prepare_declared_execution_sources", spy)
+    config = PipelineConfig.model_validate(_config(tmp_path, "derive")).model_dump()
+    run_pipeline(config, {"t": SRC}, registry=REG, execution_mode="full_frame", **KW)
+    assert seen == [REG]
