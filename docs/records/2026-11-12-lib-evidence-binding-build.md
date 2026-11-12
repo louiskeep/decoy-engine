@@ -51,3 +51,18 @@ Mutations on the final source head:
 | drop `*rules` from the read bases | 4 decode, 4 read-model, `test_both_validators_run_on_the_read_model`, `test_a_nested_write_models_rules_reach_its_nested_read_model` |
 | drop the fail-closed checks | `test_a_validator_straight_on_a_write_model_is_refused`, `test_a_rules_class_with_a_field_is_refused` |
 | field rule accepts any non-null string | decode and read-model `other_path_base` |
+
+## Fix round 2
+
+Two gaps in the fail-closed check. First, it compared validator names, so a write model (or a non-rules base ahead of the rules class in the MRO) could redefine a rules validator's name and the writer and reader would run different callables. The check now decides by owner: a validator name is shared only when the first class in the MRO that holds it in its own namespace is a rules class. Second, a rules class that set `model_config` would override the read base's `extra="ignore"` and `frozen=True`; it now raises `TypeError`. The module and `derive_read` docstrings say a rules class holds validators only.
+
+Red first on `8a6c076f` plus the new tests (commit `ced`-prefixed test commit before the fix): 3 failed, 6 passed. Red ids: `test_a_write_model_redefining_a_rules_validator_name_is_refused`, `test_a_non_rules_base_before_the_rules_class_cannot_shadow_a_name`, `test_a_rules_class_with_config_is_refused`. The control `test_control_a_rules_owned_shape_derives_ignores_unknown_and_is_frozen` passed throughout.
+
+Green: `tests/unit/test_value_free_rules.py` 9 passed; with `tests/unit/records` and `tests/unit/run_result` 406 passed. The owner check fired on no existing write model.
+
+| Mutation | Red tests |
+|---|---|
+| owner check replaced by the old name subtraction | the redefined-name test and the non-rules-base test |
+| `model_config` check dropped | `test_a_rules_class_with_config_is_refused` |
+
+Pydantic 2.0.x behaviour was not checked; only public Python and the key names of `__pydantic_decorators__` are used.

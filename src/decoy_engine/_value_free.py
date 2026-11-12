@@ -7,9 +7,10 @@ The named leaf types and their one validator factory live in ``run_result/_model
 reviewed site of the fixed error text. :func:`derive_read` turns a strict write model into its
 tolerant read model: unknown fields are ignored at every level and every enum or ``Literal``
 becomes the checked ``Token`` leaf it is given, so a value a later minor added still reads while
-free text does not. A validator both sides must run lives on a :class:`SharedRules` class that
-the write model inherits, and the read model inherits it too; a validator put straight on a write
-model fails the derivation at import instead of being dropped.
+free text does not. A validator both sides must run lives on a :class:`SharedRules` class
+(validators only: no fields, no config) that the write model inherits, and the read model
+inherits it too; a validator put straight on a write model fails the derivation at import
+instead of being dropped.
 """
 
 from __future__ import annotations
@@ -58,6 +59,10 @@ def _validator_names(model: type[BaseModel]) -> set[str]:
     return {name for group in groups for name in group}
 
 
+def _owner(model: type[BaseModel], name: str) -> type:
+    return next(c for c in model.__mro__ if name in vars(c))
+
+
 def _shared_rules(model: type[BaseModel]) -> tuple[type[SharedRules], ...]:
     """The rules classes of ``model`` (MRO order), after a fail-closed check of its validators."""
     rules = tuple(
@@ -66,11 +71,12 @@ def _shared_rules(model: type[BaseModel]) -> tuple[type[SharedRules], ...]:
     for rule in rules:
         if rule.model_fields:
             raise TypeError(f"{rule.__name__} is a rules class and declares fields")
-    unshared = _validator_names(model) - {n for r in rules for n in _validator_names(r)}
+        if rule.model_config:
+            raise TypeError(f"{rule.__name__} is a rules class and sets model_config")
+    # By owner, not name: a same-named validator on the model would run on the write side only.
+    unshared = sorted(n for n in _validator_names(model) if _owner(model, n) not in rules)
     if unshared:
-        raise TypeError(
-            f"{model.__name__} has validators outside a SharedRules class: {sorted(unshared)}"
-        )
+        raise TypeError(f"{model.__name__} has validators outside a SharedRules class: {unshared}")
     return rules
 
 
@@ -160,7 +166,8 @@ def derive_read(
     ``required_kinds`` names ``ValueFree`` kinds that must be present on read even when the writer
     has a default. ``exact_fields`` keeps the named ``Literal`` fields as written, for a schema tag or a
     producer id that a reader must match, not tolerate. The read model also inherits each
-    ``SharedRules`` class of ``model``; ``TypeError`` if ``model`` holds a validator no such class has. ``module`` is the caller's ``__name__``:
+    ``SharedRules`` class of ``model``; ``TypeError`` if ``model`` holds a validator that no such
+    class owns, or a rules class declares fields or config. ``module`` is the caller's ``__name__``:
     derived models are stamped with it so a public read model keeps its import path and pickles.
     """
     return _Deriver(base, token, substitute, required_kinds, exact_fields, module).model(model)
