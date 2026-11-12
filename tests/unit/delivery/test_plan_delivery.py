@@ -28,10 +28,12 @@ def _config(
     mode: str | None = None,
     generate: Mapping[str, list[str]] | None = None,
     remote: tuple[str, ...] = (),
+    untargeted: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """A validated-shape config dict: edges are (parent, child), generate maps child to parents.
 
-    Every table gets a file target except those in `remote`, which get an s3 one.
+    Every table gets a file target, except those in `remote`, which get an s3 one, and those in
+    `untargeted`, which get none.
     """
     generate = generate or {}
     entries: list[dict[str, Any]] = []
@@ -46,7 +48,9 @@ def _config(
     config: dict[str, Any] = {
         "tables": entries,
         "targets": {
-            n: {"type": "s3" if n in remote else "file", "path": f"./out/{n}.csv"} for n in tables
+            n: {"type": "s3" if n in remote else "file", "path": f"./out/{n}.csv"}
+            for n in tables
+            if n not in untargeted
         },
         "relationships": [
             {
@@ -79,13 +83,29 @@ def test_at1b_an_empty_run_delivers(mode: str | None) -> None:
     assert d.deliver is True
 
 
-def test_at1c_an_outcome_for_a_non_file_target_table_raises() -> None:
+def test_at1c_an_outcome_for_a_table_outside_the_universe_raises() -> None:
     unknown = _config(["a"])
     with pytest.raises(PipelineConfigError):
         plan_delivery(unknown, {"a": None, "ghost": None})
-    remote = _config(["a", "b"], remote=("b",))
+    untargeted = _config(["a", "b"], untargeted=("b",))
     with pytest.raises(PipelineConfigError):
-        plan_delivery(remote, {"a": None, "b": None})
+        plan_delivery(untargeted, {"a": None, "b": None})
+
+
+@pytest.mark.parametrize("mode", [None, "best_effort"])
+def test_atc18_cloud_target_tables_are_in_the_universe(mode: str | None) -> None:
+    config = _config(["f", "s", "g"], [("s", "g")], mode, remote=("s", "g"))
+    config["targets"]["g"]["type"] = "gcs"
+    ok = plan_delivery(config, {"f": None, "s": None, "g": None})
+    assert _states(ok) == {"f": "delivered", "s": "delivered", "g": "delivered"}
+    d = plan_delivery(config, {"f": None, "s": FAIL, "g": None})
+    if mode is None:
+        assert _states(d) == {"f": "withheld", "s": "failed", "g": "withheld"}
+    else:
+        assert _states(d) == {"f": "delivered", "s": "failed", "g": "dropped"}
+        assert d.tables["g"].dropped_because == "s"
+    with pytest.raises(PipelineConfigError):
+        plan_delivery(config, {"f": None, "s": None})
 
 
 def test_at1d_a_file_target_table_without_an_outcome_raises() -> None:
@@ -169,9 +189,9 @@ def test_at8_dropped_because_is_the_smallest_failed_name(order: tuple[str, str])
     assert d.tables["d"].dropped_because == "f1"
 
 
-def test_at9_the_walk_passes_through_a_table_without_a_file_target() -> None:
+def test_at9_the_walk_passes_through_a_table_without_a_target() -> None:
     config = _config(
-        ["p", "mid", "g"], [("p", "mid"), ("mid", "g")], "best_effort", remote=("mid",)
+        ["p", "mid", "g"], [("p", "mid"), ("mid", "g")], "best_effort", untargeted=("mid",)
     )
     d = plan_delivery(config, {"p": FAIL, "g": None})
     assert _states(d) == {"p": "failed", "g": "dropped"}
