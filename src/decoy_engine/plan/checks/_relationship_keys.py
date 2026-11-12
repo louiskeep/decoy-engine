@@ -36,7 +36,7 @@ def _key_is_provable(table: dict[str, Any], keys: list[str], generated: dict[str
         return True
     wanted = set(keys)
     return any(
-        isinstance(pair, list) and set(pair) == wanted
+        isinstance(pair, list) and all(isinstance(m, str) for m in pair) and set(pair) == wanted
         for pair in table.get("unique_together") or []
     )
 
@@ -49,19 +49,25 @@ def check_generated_parent_keys(config: dict[str, Any]) -> None:
     tables, relationships = config.get("tables"), config.get("relationships")
     if not isinstance(tables, list) or not isinstance(relationships, list):
         return
-    by_name = {t["name"]: t for t in tables if isinstance(t, dict) and "name" in t}
+    by_name = {
+        t["name"]: t for t in tables if isinstance(t, dict) and isinstance(t.get("name"), str)
+    }
     for relationship in relationships:
         parent = relationship.get("parent") if isinstance(relationship, dict) else None
         if not isinstance(parent, dict):
             continue
-        table = by_name.get(parent.get("table"))
-        keys = parent.get("columns")
+        table_name, keys = parent.get("table"), parent.get("columns")
+        table = by_name.get(table_name) if isinstance(table_name, str) else None
         if table is None:
             continue
         columns = table.get("generate_columns")
         if not isinstance(columns, list) or not isinstance(keys, list) or not keys:
             continue
-        generated = {c["name"]: c for c in columns if isinstance(c, dict) and "name" in c}
+        if not all(isinstance(k, str) for k in keys):
+            continue
+        generated = {
+            c["name"]: c for c in columns if isinstance(c, dict) and isinstance(c.get("name"), str)
+        }
         named = [k for k in keys if k in generated]
         if not named or _key_is_provable(table, keys, generated):
             continue

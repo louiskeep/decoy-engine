@@ -166,3 +166,41 @@ def test_no_relationships_means_no_rule() -> None:
     cfg = config([key_col("faker")])
     cfg["relationships"] = []
     assert_accepted(cfg)
+
+
+def test_a_proving_column_outside_the_key_does_not_count() -> None:
+    assert_refused(config([key_col("faker"), other("code")], key=("id",)))
+
+
+def test_a_parent_key_naming_no_generated_column_is_not_judged() -> None:
+    cfg = config([key_col("faker")], key=("missing",))
+    assert_accepted(cfg)
+
+
+def test_raw_dict_with_unhashable_names_is_skipped_not_raised() -> None:
+    cfg = config([key_col("faker"), {"name": ["y"], "type": "faker"}])
+    cfg["tables"].append({"name": ["x"], "generate_columns": [{"name": ["id"]}]})
+    cfg["relationships"] = [
+        {"parent": {"table": ["p"], "columns": ["id"]}},
+        {"parent": {"table": "p", "columns": [["id"]]}},
+    ]
+    assert_accepted(cfg)
+    cfg["relationships"] = [{"parent": {"table": "p", "columns": ["id"]}}]
+    cfg["tables"][0]["unique_together"] = [[["id"]], ["id", ["x"]], "id"]
+    assert_refused(cfg)
+
+
+def test_the_lenient_paths_keep_the_rule_on(lenient_generate_checks: None) -> None:
+    with pytest.raises(PlanCompileError) as info:
+        _compile(config([key_col("faker")]))
+    assert info.value.code == CODE
+    _compile(config([key_col("faker", unique=True)]))
+
+
+def test_the_lifted_context_keeps_the_rule_on() -> None:
+    from tests._lenient_checks import lenient_generate_checks_lifted
+
+    with lenient_generate_checks_lifted():
+        with pytest.raises(PlanCompileError) as info:
+            _compile(config([key_col("faker")]))
+        assert info.value.code == CODE

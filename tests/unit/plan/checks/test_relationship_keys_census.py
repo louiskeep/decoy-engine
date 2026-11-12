@@ -44,10 +44,12 @@ def _docs_configs() -> list[tuple[str, dict[str, Any]]]:
     return found
 
 
-def test_the_census_names_four_existing_files() -> None:
+def test_the_census_names_four_files_that_declare_a_provable_parent() -> None:
+    # A file that lost its fix would drop every proof token the rule accepts.
     assert len(set(FIXTURE_CENSUS)) == 4
     for name in FIXTURE_CENSUS:
-        assert (ROOT / name).is_file(), name
+        text = (ROOT / name).read_text(encoding="utf-8")
+        assert re.search(r'"unique":\s*True|"type":\s*"sequence"|unique_together', text), name
 
 
 @pytest.mark.parametrize(
@@ -59,5 +61,7 @@ def test_shipped_example_configs_have_no_refused_parent(example: Path) -> None:
 
 
 def test_current_docs_snippets_have_no_refused_parent() -> None:
+    # Guards snippets added later; the docs hold no generated-parent snippet today, so the loop
+    # may run zero times.
     for _name, loaded in _docs_configs():
         check_generated_parent_keys(loaded)
