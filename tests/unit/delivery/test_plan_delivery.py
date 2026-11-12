@@ -126,8 +126,11 @@ def test_at9_the_walk_passes_through_a_table_without_a_file_target() -> None:
 
 
 def test_at2b_an_unknown_mode_raises_instead_of_degrading() -> None:
-    with pytest.raises(PipelineConfigError):
+    with pytest.raises(PipelineConfigError) as info:
         plan_delivery(_config(["a"], mode="bogus"), {"a": FAIL})
+    assert info.value.__cause__ is None
+    assert info.value.__context__ is None
+    assert "bogus" not in str(info.value)
 
 
 def test_plan_reads_the_dump_of_a_validated_pipeline_config() -> None:
