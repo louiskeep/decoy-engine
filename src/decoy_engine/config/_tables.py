@@ -464,3 +464,24 @@ class TableConfig(BaseModel):
                             f"on a missing column and fail mid-run."
                         )
         return self
+
+
+def classify_table_kinds(config: dict[str, Any]) -> dict[str, str]:
+    """Return `{table_name: "mask" | "generate"}` for every table in the config.
+
+    Per-table kind is inferred from `columns` (mask) vs `generate_columns`
+    (generate) presence on each TableConfig. The schema already enforces
+    XOR at validation time (`_per_table_kind_consistency` + `TableConfig`
+    invariants), so a config that reaches this helper has at most one
+    populated per table. Tables with neither are classified as mask
+    (defensive default; the schema rejects them upstream).
+    """
+    out: dict[str, str] = {}
+    for table in config.get("tables") or []:
+        if not isinstance(table, dict):
+            continue
+        name = table.get("name")
+        if not isinstance(name, str):
+            continue
+        out[name] = "generate" if table.get("generate_columns") else "mask"
+    return out

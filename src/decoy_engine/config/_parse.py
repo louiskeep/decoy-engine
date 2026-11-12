@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic_core import ValidationError
 
+from decoy_engine.config._delivery import DeliveryConfig
 from decoy_engine.config._errors import PipelineConfigError
 from decoy_engine.config._pipeline import PipelineConfig
 from decoy_engine.config._relationships import RelationshipConfig
@@ -40,3 +41,13 @@ def parse_relationship_config(raw: Any, *, prefix: str) -> RelationshipConfig:
     except ValidationError as exc:
         problems = validation_problems(exc)
     raise PipelineConfigError.from_problems(problems, prefix=prefix)
+
+
+def parse_delivery_config(raw: Any) -> DeliveryConfig:
+    """Validate the ``delivery`` block by the same value-free route as a whole config."""
+    problems: tuple[ConfigProblem, ...]
+    try:
+        return DeliveryConfig.model_validate(raw)
+    except ValidationError as exc:
+        problems = validation_problems(exc)
+    raise PipelineConfigError.from_problems(problems, prefix="delivery is invalid")

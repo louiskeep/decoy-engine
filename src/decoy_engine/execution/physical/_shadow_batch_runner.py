@@ -215,7 +215,13 @@ def run_shadow_batches(
                             when_mask=batch_when_mask(
                                 when_masks, node.node_id, row_offset, batch.num_rows
                             ),
-                            source_slice=batch.select([column]),
+                            # group_key writes a target the source may not have, so it must
+                            # not select the target; only the faker reads this slice.
+                            source_slice=(
+                                batch.select([column])
+                                if binding.group_key_sibling is None
+                                else None
+                            ),
                         )
                     parts.append(out)
                     row_errors.extend(rebase_row_errors(table.table, batch_errors, row_offset))

@@ -27,8 +27,8 @@ it. The engine observes it and repairs only the owner bits, so:
 - under a umask that strips owner bits (for example `0477`), a new parent is `0700` and the
   first attempt still publishes, where a plain `mkdir` would leave a directory the engine
   itself cannot open;
-- in a set-group-ID parent, a new parent keeps the set-group-ID bit, so files written into a
-  group-shared output tree keep the shared group; a stage never carries it.
+- in a set-group-ID parent, a new parent keeps the bit on Linux (a stage never does); on macOS it
+  takes the parent's group without the bit.
 
 The engine never reads or sets the process umask.
 

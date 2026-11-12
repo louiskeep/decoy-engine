@@ -279,6 +279,8 @@ def test_dirty_tree_is_refused_before_any_write(tmp_path: Path, dirty: str) -> N
     with pytest.raises(sr.FragmentError, match="uncommitted") as info:
         sr.compile_fragments(r.path, "0.3.0", "2026-11-10")
     assert dirty in str(info.value)
+    # An untracked hand-written fragment is the operator's work: the stamp never says to delete it.
+    assert "rm -- " not in str(info.value)
     assert _tracked_state(r) == before
 
 
@@ -323,3 +325,361 @@ def test_refusals_carry_no_exception_context(tmp_path: Path) -> None:
         with pytest.raises(sr.FragmentError) as info:
             sr.compile_fragments(r.path, version, date)
         assert info.value.__context__ is None
+
+
+# AT-8: the release stamp moves pending registry facts to one numeric version in the same
+# transaction as the changelog compile. The cases stamp a git copy of the engine tree.
+import os  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+import sys  # noqa: E402
+from dataclasses import dataclass  # noqa: E402
+
+from scripts.release import reason_manifest_policy as pol  # noqa: E402
+from tests.unit.test_reason_release_pin import (  # noqa: E402
+    CONFIG1,
+    CONFIG2,
+    EMPTY_MARKERS,
+    REGISTRY,
+    add_pending_deprecation,
+    add_pending_identity,
+    add_pending_summary,
+    edit_file,
+    pin_cli,
+)
+
+F29 = "tests/fixtures/f29"
+ENGINE_FILES = (
+    "src", "scripts/release", "scripts/dev/registry_renumber.py",
+    "scripts/dev/_registry_renumber_git.py", F29, PIN,
+    "tests/unit/progress/test_consumer_contract.py", "docs/reasons.md", "CHANGELOG.md",
+    "changelog.d/README.md", "pyproject.toml",
+)  # fmt: skip
+DOCSTRING = '"""Catalog of the ``config`` namespace, part 2."""'
+PENDING_DOC = (
+    '"""Catalog of the ``config`` namespace, part 2: since=UNRELEASED is "unreleased" here."""'
+)
+
+
+def copy_engine(dest: Path) -> None:
+    ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
+    for rel in ENGINE_FILES:
+        (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+        if (REPO / rel).is_dir():
+            shutil.copytree(REPO / rel, dest / rel, ignore=ignore)
+        else:
+            shutil.copy2(REPO / rel, dest / rel)
+
+
+def settle_pending(seed: ScratchRepo) -> None:
+    """Stamp whatever the live tree still holds pending, so the seed registry is always clean.
+
+    The cases below count identities and versions from a clean registry plus their own probes;
+    a pending reason added to the live tree later must not change those counts.
+    """
+    if pin_cli(seed.path, "--release-ready").returncode == 0:
+        return
+    # The policy names every pending identity that no fragment claims, as "namespace.code: ...".
+    unclaimed = pol.pending_fragment_violations(manifest(seed.path), [])
+    pending = [f"`{v.split(':')[0].replace('.', '/', 1)}`" for v in unclaimed]
+    if pending:
+        seed.commit(
+            {"changelog.d/settled.md": fragment("Adds " + ", ".join(pending) + ".")}, "feat: settle"
+        )
+    sr.stamp_release(seed.path, "0.0.1", "2026-01-01")
+    seed.commit({}, "chore: settle the live registry")
+
+
+def make_seed(tmp_path_factory) -> Path:
+    dest = tmp_path_factory.mktemp("engine") / "seed"
+    dest.mkdir()
+    copy_engine(dest)
+    seed = ScratchRepo(dest)
+    seed.commit({}, "chore: base")
+    settle_pending(seed)
+    return dest
+
+
+def bump(version: str, *, minor: int = 0, patch: int = 0) -> str:
+    major, mnr, pat = (int(x) for x in version.split("."))
+    return f"{major}.{mnr + minor}.{0 if minor else pat + patch}"
+
+
+@dataclass(frozen=True)
+class Versions:
+    """The registry facts of a seed; every expectation below is this plus the case's own probes."""
+
+    base: str
+    pin: str
+
+    @property
+    def next(self) -> str:
+        return bump(self.base, minor=1)
+
+    @property
+    def patch1(self) -> str:
+        return bump(self.base, patch=1)
+
+    @property
+    def patch2(self) -> str:
+        return bump(self.base, patch=2)
+
+    @property
+    def next_fixture(self) -> str:
+        major, minor, _ = self.next.split(".")
+        return f"reason-manifest-v{major}.{minor}-release-0-23-0.json"
+
+
+def versions(seed: Path) -> Versions:
+    return Versions(manifest(seed)["registry_version"], _pin(seed)["registry_version"])
+
+
+@pytest.fixture(scope="module")
+def engine_seed(tmp_path_factory) -> Path:
+    return make_seed(tmp_path_factory)
+
+
+def engine_clone(seed: Path, tmp_path: Path) -> ScratchRepo:
+    path = tmp_path / "engine"
+    subprocess.run(["git", "clone", "-q", str(seed), str(path)], check=True)  # noqa: S603, S607
+    clone = ScratchRepo.__new__(ScratchRepo)
+    clone.path = path
+    return clone
+
+
+def manifest(path: Path) -> dict:
+    code = "import json;from decoy_engine import reasons;print(json.dumps(reasons.manifest()))"
+    env = {**os.environ, "PYTHONPATH": str(path / "src"), "PYTHONDONTWRITEBYTECODE": "1"}
+    res = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [sys.executable, "-c", code], capture_output=True, text=True, env=env, cwd=path.parent,
+        check=True,
+    )  # fmt: skip
+    return json.loads(res.stdout)
+
+
+def _fixtures(path: Path) -> set[str]:
+    return {p.name for p in (path / F29).glob(pol.FIXTURE_GLOB)}
+
+
+def _pin(path: Path) -> dict:
+    return json.loads((path / F29 / "reason-registry-release.json").read_text(encoding="utf-8"))
+
+
+PROBES = ("probe_one", "probe_two")
+
+
+def two_identities(r: ScratchRepo) -> None:
+    add_pending_identity(r.path, "probe_one")
+    add_pending_identity(r.path, "probe_two")
+    edit_file(r.path / CONFIG2, DOCSTRING, PENDING_DOC)
+    body = "Adds `config/probe_one` and `config/probe_two`."
+    r.commit({"changelog.d/probe.md": fragment(body)}, "feat: two pending reasons")
+
+
+def deprecation(r: ScratchRepo) -> None:
+    add_pending_deprecation(r.path)
+    r.commit({}, "feat: deprecate a reason")
+
+
+def summary(r: ScratchRepo) -> None:
+    add_pending_summary(r.path)
+    r.commit({}, "fix: correct a summary")
+
+
+def nothing(r: ScratchRepo) -> None:
+    pass
+
+
+CASES = {
+    "identity": two_identities,
+    "deprecation": deprecation,
+    "summary": summary,
+    "noop": nothing,
+}
+
+
+def _stamp(r: ScratchRepo, version: str = "0.23.0") -> str:
+    return sr.stamp_release(r.path, version, "2026-11-12")
+
+
+def _both_gates_pass(r: ScratchRepo) -> None:
+    for mode in ("--check", "--release-ready"):
+        res = pin_cli(r.path, mode)
+        assert res.returncode == 0, (mode, res.stderr[-800:])
+
+
+def test_at8_an_identity_release_stamps_every_pending_code_at_the_next_minor(
+    engine_seed: Path, tmp_path: Path
+) -> None:
+    r = engine_clone(engine_seed, tmp_path)
+    v = versions(engine_seed)
+    before = _fixtures(r.path)
+    two_identities(r)
+    assert _stamp(r) == v.next
+    live = manifest(r.path)
+    assert live["registry_version"] == v.next
+    probes = {e["code"]: e["since"] for e in live["entries"] if e["code"] in PROBES}
+    assert probes == {"probe_one": v.next, "probe_two": v.next}
+    name = v.next_fixture
+    assert _fixtures(r.path) - before == {name}
+    assert pol.parse_fixture_name(name) == (v.next, "release-0-23-0")
+    assert pol.fixture_name(v.next, pol.release_fixture_slug("0.23.0")) == name
+    fixture = json.loads((r.path / F29 / name).read_text(encoding="utf-8"))
+    assert fixture["registry_version"] == v.next
+    assert [e["code"] for e in fixture["entries"]] == ["probe_one", "probe_two"]
+    pin = _pin(r.path)
+    assert (pin["registry_version"], pin["baseline_ceiling"]) == (v.next, v.next)
+    contract = json.loads((r.path / F29 / "consumer-contract.json").read_text(encoding="utf-8"))
+    assert pol.contract_versions(contract) == {v.next}
+    assert f"`registry_version` (`{v.next}`)" in (r.path / "docs/reasons.md").read_text(
+        encoding="utf-8"
+    )
+    text = (r.path / CONFIG2).read_text(encoding="utf-8")
+    assert text.count(f'since="{v.next}")') == 2 and "since=UNRELEASED)" not in text
+    assert "import UNRELEASED" not in text and PENDING_DOC in text
+    log = (r.path / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## [0.23.0] - 2026-11-12" in log and "`config/probe_one`" in log
+    assert not (r.path / "changelog.d" / "probe.md").exists()
+    _both_gates_pass(r)
+
+
+@pytest.mark.parametrize("case", ["deprecation", "summary"])
+def test_at8_a_patch_release_moves_the_registry_and_keeps_the_ceiling(
+    engine_seed: Path, tmp_path: Path, case: str
+) -> None:
+    r = engine_clone(engine_seed, tmp_path)
+    v = versions(engine_seed)
+    before = _fixtures(r.path)
+    CASES[case](r)
+    assert _stamp(r) == v.patch1
+    live = manifest(r.path)
+    assert live["registry_version"] == v.patch1 and _fixtures(r.path) == before
+    pin = _pin(r.path)
+    assert (pin["registry_version"], pin["baseline_ceiling"]) == (v.patch1, v.base)
+    assert EMPTY_MARKERS in (r.path / REGISTRY).read_text(encoding="utf-8")
+    if case == "deprecation":
+        entry = next(e for e in live["entries"] if e["code"] == "pipeline_name_invalid")
+        assert entry["deprecated_in"] == v.patch1
+    _both_gates_pass(r)
+    r.commit({}, "chore: release 0.23.0")
+    edit_file(r.path / CONFIG1, '"Top level bad mode."', '"Top-level mode is not supported."')
+    edit_file(
+        r.path / REGISTRY,
+        EMPTY_MARKERS,
+        EMPTY_MARKERS.replace("frozenset()", 'frozenset({("config", "top_level.bad_mode")})'),
+    )
+    r.commit({}, "fix: correct another summary")
+    assert _stamp(r, "0.24.0") == v.patch2
+    pin = _pin(r.path)
+    assert (pin["registry_version"], pin["baseline_ceiling"]) == (v.patch2, v.base)
+    assert _fixtures(r.path) == before
+    _both_gates_pass(r)
+
+
+def test_at8_a_release_with_nothing_pending_recaptures_the_pin(
+    engine_seed: Path, tmp_path: Path
+) -> None:
+    r = engine_clone(engine_seed, tmp_path)
+    v = versions(engine_seed)
+    before = _fixtures(r.path)
+    assert _pin(r.path)["registry_version"] == v.pin
+    assert _stamp(r) == v.base
+    pin = _pin(r.path)
+    assert (pin["registry_version"], pin["baseline_ceiling"]) == (v.base, v.base)
+    assert manifest(r.path)["registry_version"] == v.base and _fixtures(r.path) == before
+    _both_gates_pass(r)
+
+
+@pytest.mark.parametrize(
+    ("case", "flag", "ok"),
+    [("identity", "next", True), ("identity", "after", False), ("summary", "next", False),
+     ("summary", "auto", True), ("noop", "next", False), ("noop", "auto", True)],
+)  # fmt: skip
+def test_at8_the_cli_accepts_only_the_automatic_registry_minor(
+    engine_seed: Path, tmp_path: Path, case: str, flag: str, ok: bool
+) -> None:
+    r = engine_clone(engine_seed, tmp_path)
+    v = versions(engine_seed)
+    flag = {"next": v.next, "after": bump(v.next, minor=1)}.get(flag, flag)
+    CASES[case](r)
+    args = ["--version", "0.23.0", "--date", "2026-11-12", "--repo", str(r.path)]
+    assert (sr.main([*args, "--registry-minor", flag]) == 0) is ok
+    if not ok:
+        assert r.git("status", "--porcelain", "--untracked-files=all") == ""
+
+
+def test_at8_a_failed_candidate_check_writes_nothing(
+    engine_seed: Path, tmp_path: Path, monkeypatch
+) -> None:
+    r = engine_clone(engine_seed, tmp_path)
+    two_identities(r)
+    monkeypatch.setattr(pol, "release_postcondition_violations", lambda *a, **k: ["forced"])
+    with pytest.raises(sr.FragmentError, match="forced"):
+        _stamp(r)
+    assert r.git("status", "--porcelain", "--untracked-files=all") == ""
+
+
+def test_at8_an_untracked_file_is_listed_for_inspection_never_for_deletion(
+    engine_seed: Path, tmp_path: Path
+) -> None:
+    r = engine_clone(engine_seed, tmp_path)
+    # Matches the fixture pattern, but the test (not the stamp) made it: a person's draft.
+    draft = f"{F29}/reason-manifest-v9.9-release-0-0-1.json"
+    hand_written = "changelog.d/hand-written.md"
+    (r.path / draft).write_text("{}\n", encoding="utf-8")
+    (r.path / hand_written).write_text(fragment(), encoding="utf-8")
+    with pytest.raises(sr.FragmentError, match="uncommitted") as info:
+        _stamp(r)
+    message = str(info.value)
+    assert draft in message and hand_written in message
+    assert "rm " not in message
+
+
+def test_at8_a_created_file_is_removed_even_when_the_restore_fails(
+    engine_seed: Path, tmp_path: Path, monkeypatch
+) -> None:
+    # The stamp never prints a delete command: it removes what it created itself, first, so a
+    # failing restore cannot strand it. No stamp path leaves a created file behind to be named.
+    r = engine_clone(engine_seed, tmp_path)
+    made = f"{F29}/reason-manifest-v9.9-release-0-0-1.json"
+    (r.path / made).write_text("{}\n", encoding="utf-8")
+
+    def broken(*args: object, **kwargs: object) -> str:
+        raise sr.FragmentError("restore failed")
+
+    monkeypatch.setattr(sr, "_git", broken)
+    with pytest.raises(sr.FragmentError, match="restore failed"):
+        sr._rollback(r.path, created=(made,))
+    assert not (r.path / made).exists()
+
+
+@pytest.mark.parametrize("fail_at", [1, 5, 7, 9])
+def test_at8_a_failure_while_applying_restores_every_owned_path(
+    engine_seed: Path, tmp_path: Path, monkeypatch, fail_at: int
+) -> None:
+    r = engine_clone(engine_seed, tmp_path)
+    two_identities(r)
+    _inject(monkeypatch, fail_at)
+    with pytest.raises(OSError, match="injected"):
+        _stamp(r)
+    monkeypatch.undo()
+    assert r.git("status", "--porcelain", "--untracked-files=all") == ""
+
+
+@pytest.mark.parametrize(
+    ("names", "left"),
+    [
+        ("UNRELEASED, Kind", "Kind"),
+        ("KINDS, UNRELEASED", "KINDS"),
+        ("A, UNRELEASED, Kind", "A, Kind"),
+    ],
+)
+def test_stamping_drops_the_unused_unreleased_import_wherever_it_sits(
+    names: str, left: str
+) -> None:
+    head = "from decoy_engine.reasons._types import "
+    src = f'{head}{names}\n\nX = _d("x", "X.", since=UNRELEASED)\n'
+    assert (
+        sr._tools()[2].stamp_source(src, "9.9.0")
+        == f'{head}{left}\n\nX = _d("x", "X.", since="9.9.0")\n'
+    )
