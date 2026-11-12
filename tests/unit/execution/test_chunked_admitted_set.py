@@ -22,6 +22,7 @@ import pytest
 from decoy_engine import run_mask_pipeline_chunked
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution import _chunked_dgrn, run_pipeline
+from tests._declared_schema import declared_schema
 from tests.unit.execution.test_chunked import _chunks, _config
 
 _ENGINE_VERSION = "phase1-admitted-set-test"
@@ -61,6 +62,7 @@ class TestAdmittedSetDiagnosticsFree:
                 cfg,
                 _chunks(df, 4),
                 table="accounts",
+                source_schema=declared_schema(cfg, "accounts"),
                 engine_version=_ENGINE_VERSION,
                 chunk_result_sink=sink,
             )
@@ -103,6 +105,7 @@ class TestBaseRowOffsetCounter:
                 cfg,
                 chunks,
                 table="accounts",
+                source_schema=declared_schema(cfg, "accounts"),
                 engine_version=_ENGINE_VERSION,
                 base_row_offset=100,
             )
@@ -132,6 +135,7 @@ class TestBaseRowOffsetInert:
                     cfg,
                     _chunks(df, 6),
                     table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
                     engine_version=_ENGINE_VERSION,
                     base_row_offset=0,
                 )
@@ -143,6 +147,7 @@ class TestBaseRowOffsetInert:
                     cfg,
                     _chunks(df, 6),
                     table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
                     engine_version=_ENGINE_VERSION,
                     base_row_offset=1_000_000,
                 )
@@ -185,6 +190,7 @@ class TestFailClosedUnchangedWithOffset:
                     cfg,
                     [chunk],
                     table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
                     engine_version=_ENGINE_VERSION,
                     base_row_offset=50,
                 )

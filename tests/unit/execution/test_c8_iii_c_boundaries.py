@@ -26,6 +26,7 @@ from decoy_engine.plan import compile_plan, plan_from_yaml, plan_to_yaml, run_co
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.profile import profile_source
 from decoy_engine.providers_v2 import get_default_registry
+from tests._declared_schema import chunked_entry_kwargs
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     TABLE,
@@ -73,13 +74,15 @@ def _via_config_only(predicate: str, tmp_path: Path) -> None:
 
 
 def _chunked(entry: Any, chunks: list[pa.Table], predicate: str) -> None:
+    config = _chunked_config(predicate)
     list(
         entry(
-            _chunked_config(predicate),
+            config,
             chunks,
             table=TABLE,
             engine_version=ENGINE_VERSION,
             key_provider=key_provider(),
+            **chunked_entry_kwargs(entry, config, TABLE),
         )
     )
 

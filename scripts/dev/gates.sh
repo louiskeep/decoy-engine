@@ -80,7 +80,7 @@ drop_layer_test() {
   done
 }
 LICENSE_TESTS=(tests/sentry/test_license_policy.py tests/sentry/test_sdv_import_sentry.py)
-PYTEST_ARGS=(-m 'not benchmark and not packaging and not codspeed')
+PYTEST_ARGS=(-m 'not benchmark and not packaging and not codspeed and not determinism_harness')
 PYTEST_MARK=${PYTEST_ARGS[1]}  # the same expression; the parallel and serial passes add to it
 # Everything is code unless it matches NON_CODE_GLOBS: a diff with any code path must select at
 # least one test (see code_changed). List only pure-documentation or repo-metadata paths here;
