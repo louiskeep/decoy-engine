@@ -349,9 +349,14 @@ def fk(severity: str) -> dict[str, Any]:
     return {"parent_table": "p", "child_table": "c", "severity": severity, "message": CANARY}
 
 
-def test_an_unrelated_key_block_does_not_swallow_an_fk_fail() -> None:
+def primary_nulls() -> dict[str, Any]:
+    """A primary-key row with nulls: the code is one only a primary key can carry."""
     nulls = row("checked", [code("primary_key_nulls_introduced")])
-    rep = {**with_keys(nulls), "fk_preservation": [fk("fail")]}
+    return {**nulls, "kind": "primary", "parent": []}
+
+
+def test_an_unrelated_key_block_does_not_swallow_an_fk_fail() -> None:
+    rep = {**with_keys(primary_nulls()), "fk_preservation": [fk("fail")]}
     assert names(rep) == ["primary_key_nulls_introduced", "foreign_key_orphans_introduced"]
 
 
@@ -362,8 +367,7 @@ def test_a_key_that_already_carries_the_orphans_code_gives_it_once_beside_an_fk_
 
 
 def test_an_fk_error_adds_check_error_only_when_no_key_blocks() -> None:
-    nulls = row("checked", [code("primary_key_nulls_introduced")])
-    assert names({**with_keys(nulls), "fk_preservation": [fk("error")]}) == [
+    assert names({**with_keys(primary_nulls()), "fk_preservation": [fk("error")]}) == [
         "primary_key_nulls_introduced"
     ]
     assert names({**with_keys(row()), "fk_preservation": [fk("error")]}) == ["check_error"]
