@@ -207,6 +207,25 @@ def test_at15_lazy_and_resident_inputs_agree_with_typed_key_and_null(tmp_path: P
         assert lazy_out.outputs[name].equals(resident.outputs[name]), name
 
 
+def test_at15_typed_integer_keys_and_a_null_survive_staging(tmp_path: Path) -> None:
+    cfg, data, lazy = sup.job(tmp_path, int_keys=True)
+    # Full frame: a lazy FK job otherwise goes out of core, which refuses mixed hash key types.
+    resident = _run(cfg, data, execution_mode="full_frame")
+    lazy_out = _run(cfg, lazy, execution_mode="full_frame")
+    assert resident.outputs["orders"].num_rows > 0
+    for name in data:
+        assert lazy_out.outputs[name].equals(resident.outputs[name]), name
+
+
+def test_at28_zero_row_sources_stage_typed_empty_files(tmp_path: Path) -> None:
+    cfg, data, _ = sup.job(tmp_path)
+    for name, table in data.items():
+        pq.write_table(table.slice(0, 0), cfg["sources"][name]["path"])
+    res = _run(cfg, sup.lazy_sources(cfg))
+    assert {n: t.num_rows for n, t in res.outputs.items()} == dict.fromkeys(data, 0)
+    assert res.quality_metrics["subset"]["tables"]["customers"]["kept_rows"] == 0
+
+
 @pytest.mark.parametrize("fmt", ["parquet", "csv"])
 def test_at17_a_source_changed_between_passes_refuses_and_leaves_no_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fmt: str

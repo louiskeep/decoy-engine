@@ -20,15 +20,18 @@ CANARY = "CANARY91357"
 KEYS = {"customers": "cid", "orders": "oid", "items": "iid"}
 
 
-def tables(*, canary: bool = False) -> dict[str, pa.Table]:
-    cids = [f"C{i}" for i in range(30)]
+def tables(*, canary: bool = False, int_keys: bool = False) -> dict[str, pa.Table]:
+    cids: list[Any] = [f"C{i}" for i in range(30)]
     if canary:
         cids[7] = CANARY
+    if int_keys:
+        cids = list(range(100, 130))
+    order_cids = [cids[i % 30] for i in range(90)]
+    if int_keys:
+        order_cids[3] = None  # a null foreign key
     return {
         "customers": pa.table({"cid": cids, "name": [f"n{i}" for i in range(30)]}),
-        "orders": pa.table(
-            {"oid": [f"O{i}" for i in range(90)], "cid": [cids[i % 30] for i in range(90)]}
-        ),
+        "orders": pa.table({"oid": [f"O{i}" for i in range(90)], "cid": order_cids}),
         "items": pa.table(
             {"iid": [f"I{i}" for i in range(180)], "oid": [f"O{i % 90}" for i in range(180)]}
         ),
@@ -49,10 +52,14 @@ def _rel(parent: str, pcol: str, child: str, ccol: str, ns: str) -> dict[str, An
 
 
 def job(
-    tmp_path: Path, *, fmt: str = "parquet", seed: dict[str, Any] | None = None
+    tmp_path: Path,
+    *,
+    fmt: str = "parquet",
+    seed: dict[str, Any] | None = None,
+    int_keys: bool = False,
 ) -> tuple[dict[str, Any], dict[str, pa.Table], dict[str, Any]]:
     """The validated config dump, the resident tables and the lazy sources (written to disk)."""
-    data = tables(canary=seed is not None and seed.get("mode") == "keys")
+    data = tables(canary=seed is not None and seed.get("mode") == "keys", int_keys=int_keys)
     sources: dict[str, Any] = {}
     for name, table in data.items():
         path = tmp_path / f"{name}.{fmt}"
