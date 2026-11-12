@@ -362,3 +362,9 @@ landed after the push of `a0d4ad08`; no conflict, no execution, post-scan or reg
 touched. After it: `--check` exit 0; `tests/sentry`, the registry, tripwire, consumer-contract, M5
 acceptance, `tests/unit/reasons`, `tests/unit/run_result` and the compat corpus (5 passed, 1
 skipped) rerun, with only the 23 `test_outbound_clients` ids failing.
+
+`88545d67` merges main `c34d251d` (#537, out-of-core shared parent relation), which landed during
+the checks; no conflict. It touches `execution/out_of_core/_multi_parent.py`, not the guarded
+entry. After it: `--check` exit 0; the M5 acceptance file, the route-guard, seam and module-size
+sentries, #537's new test and the out-of-core relation, streaming and FK parity tests rerun: 1677
+passed.
