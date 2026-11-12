@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
@@ -18,7 +18,7 @@ from decoy_engine.profiling._scan_integrity import _BATCH_ROWS
 
 if TYPE_CHECKING:
     # Imported for typing only: decoy_engine.profile imports the profiling package.
-    from decoy_engine.profile._readers import LazySource, OpenedLazyBatches
+    from decoy_engine.profile import LazySource
 
 
 @dataclass(frozen=True)
@@ -47,7 +47,7 @@ def from_lazy(
     name: str,
     source: LazySource,
     *,
-    on_open: Callable[[OpenedLazyBatches], None] | None = None,
+    on_open: Callable[[Any], None] | None = None,
 ) -> TableBatches:
     """Each read opens the source once, calls `on_open` before the first batch (a place to
     compare the opened facts with a routing snapshot) and closes on every exit."""

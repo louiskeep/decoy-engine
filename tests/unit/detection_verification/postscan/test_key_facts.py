@@ -15,7 +15,7 @@ from decoy_engine.profile._lazy_csv import CsvLazySource
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.profiling import KeyBatches, KeyFacts, key_facts
 from decoy_engine.profiling._scan_integrity import declare, relationship_facts
-from decoy_engine.verification.postmask._stream_input import from_lazy, from_table, key_batches
+from decoy_engine.verification.postmask import from_lazy, from_table, key_batches
 
 # Composite (k, j) keys; a row with either part null is incomplete.
 PARENT = [("1", "a"), ("2", "a"), ("2", "a"), ("3", "a"), (None, "a"), ("4", None)]

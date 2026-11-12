@@ -7,19 +7,19 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from decoy_engine.verification.postmask._stream_input import (
-    TableBatches,
-    from_lazy,
-    from_table,
-    key_batches,
-    missing_columns,
-)
 
 from decoy_engine.config._csv_dialect import CsvDialect
 from decoy_engine.execution._chunked_input import check_opened, facts_from_footer
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.profile._lazy_csv import CsvLazySource
 from decoy_engine.profile._readers import LazySource
+from decoy_engine.verification.postmask import (
+    TableBatches,
+    from_lazy,
+    from_table,
+    key_batches,
+    missing_columns,
+)
 
 # String columns only: CSV is read as text, so only text compares equal across formats.
 ROWS = {
