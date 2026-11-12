@@ -27,6 +27,7 @@ BASE = {
     "policy_validation": [],
     "pass_failed_with": None,
 }
+KeyShape = tuple[str, str, str, tuple[str, ...], bool, tuple[str, ...]]
 
 
 def row(status: str = "checked", codes: Any = (), baseline: str = "measured") -> dict[str, Any]:
@@ -91,6 +92,151 @@ def test_a_trouble_status_with_an_empty_codes_list_blocks(status: str) -> None:
 def test_a_status_outside_the_engine_literals_blocks(status: Any) -> None:
     assert "check_error" in names(with_keys(row(status, [])))
     assert "check_error" in names(with_keys(row(status, [code("key_type_mismatch")])))
+
+
+@pytest.mark.parametrize("baseline", [None, 3, ["measured"], "unknown"])
+def test_a_missing_or_invalid_baseline_blocks(baseline: Any) -> None:
+    key = row(baseline=baseline)
+    assert names(with_keys(key)) == ["check_error"]
+    key.pop("baseline")
+    assert names(with_keys(key)) == ["check_error"]
+
+
+@pytest.mark.parametrize(
+    ("status", "baseline", "codes"),
+    [
+        ("error", "not_run", [code("key_column_missing")]),
+        ("error", "not_run", [code("key_type_mismatch")]),
+        ("key_column_missing", "not_run", [code("check_error")]),
+        ("key_column_missing", "not_run", [code("key_type_mismatch")]),
+        ("key_type_mismatch", "not_run", [code("check_error")]),
+        ("key_type_mismatch", "not_run", [code("key_column_missing")]),
+        ("key_type_mismatch", "not_run", [code("key_type_mismatch"), code("check_error")]),
+    ],
+)
+def test_a_non_checked_status_with_the_wrong_code_set_blocks_as_check_error(
+    status: str, baseline: str, codes: list[dict[str, Any]]
+) -> None:
+    assert names(with_keys(row(status, codes, baseline))) == ["check_error"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "baseline", "codes"),
+    [
+        ("primary", "measured", [code("foreign_key_orphans_introduced")]),
+        ("foreign", "measured", [code("primary_key_nulls_introduced")]),
+        ("foreign", "error", [code("foreign_key_orphans_introduced")]),
+        ("foreign", "key_type_mismatch", []),
+        ("primary", "key_type_mismatch", [code("key_type_mismatch")]),
+        (
+            "primary",
+            "measured",
+            [code("primary_key_duplicates_introduced"), code("primary_key_nulls_introduced")],
+        ),
+    ],
+)
+def test_a_checked_status_with_an_unreachable_code_set_blocks_as_check_error(
+    kind: str, baseline: str, codes: list[dict[str, Any]]
+) -> None:
+    key = row("checked", codes, baseline)
+    key["kind"] = kind
+    assert names(with_keys(key)) == ["check_error"]
+
+
+@pytest.mark.parametrize(
+    ("status", "baseline", "codes"),
+    [
+        *(
+            ("error", baseline, [code("check_error")])
+            for baseline in (
+                "measured",
+                "no_source",
+                "key_column_missing",
+                "key_type_mismatch",
+                "error",
+            )
+        ),
+        *(
+            ("key_column_missing", baseline, [code("key_column_missing")])
+            for baseline in (
+                "measured",
+                "no_source",
+                "key_column_missing",
+                "key_type_mismatch",
+                "error",
+            )
+        ),
+        ("key_type_mismatch", "measured", [code("key_type_mismatch")]),
+        ("key_type_mismatch", "error", [code("key_type_mismatch")]),
+        ("checked", "not_run", []),
+    ],
+)
+def test_a_known_but_unreachable_status_and_baseline_pair_blocks_as_check_error(
+    status: str, baseline: str, codes: list[dict[str, Any]]
+) -> None:
+    assert names(with_keys(row(status, codes, baseline))) == ["check_error"]
+
+
+def reachable_key_shapes() -> list[KeyShape]:
+    shapes: list[KeyShape] = [
+        ("error", "not_run", "foreign", ("check_error",), True, ()),
+        ("key_column_missing", "not_run", "foreign", ("key_column_missing",), True, ()),
+    ]
+    for baseline in ("key_type_mismatch", "not_run", "no_source", "key_column_missing"):
+        shapes.append(
+            (
+                "key_type_mismatch",
+                baseline,
+                "foreign",
+                ("key_type_mismatch",),
+                baseline != "key_type_mismatch",
+                ("key_type_mismatch",) if baseline == "key_type_mismatch" else (),
+            )
+        )
+    primary_tails: tuple[tuple[str, ...], ...] = (
+        (),
+        ("primary_key_nulls_introduced",),
+        ("primary_key_duplicates_introduced",),
+        ("primary_key_nulls_introduced", "primary_key_duplicates_introduced"),
+    )
+    for baseline in ("measured", "no_source", "key_column_missing", "error", "key_type_mismatch"):
+        prefix = (
+            ("check_error",)
+            if baseline == "error"
+            else (("key_type_mismatch",) if baseline == "key_type_mismatch" else ())
+        )
+        warnings = prefix
+        kinds_and_tails: tuple[tuple[str, tuple[tuple[str, ...], ...]], ...] = (
+            ("primary", primary_tails),
+            ("foreign", ((), ("foreign_key_orphans_introduced",))),
+        )
+        for kind, tails in kinds_and_tails:
+            if baseline == "key_type_mismatch" and kind == "primary":
+                continue
+            for tail in tails:
+                shapes.append(("checked", baseline, kind, prefix + tail, bool(tail), warnings))
+    return shapes
+
+
+@pytest.mark.parametrize(
+    ("status", "baseline", "kind", "codes", "blocking", "warnings"), reachable_key_shapes()
+)
+def test_every_key_shape_the_engine_can_write_keeps_its_verdict(
+    status: str,
+    baseline: str,
+    kind: str,
+    codes: tuple[str, ...],
+    blocking: bool,
+    warnings: tuple[str, ...],
+) -> None:
+    key = row(status, [code(name) for name in codes], baseline)
+    key["kind"] = kind
+    verdict = post_scan_verdict(with_keys(key))
+    assert verdict.blocking is blocking
+    assert tuple(item.code for item in verdict.codes) == tuple(
+        name for name in codes if name not in warnings
+    )
+    assert tuple(item.code for item in verdict.warnings) == warnings
 
 
 def test_a_checked_key_with_no_codes_is_the_one_clean_key() -> None:

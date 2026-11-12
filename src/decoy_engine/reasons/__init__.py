@@ -42,6 +42,7 @@ from decoy_engine.reasons._identity import (
 from decoy_engine.reasons._record import (
     COUNT_KEYS,
     MAX_COUNTS,
+    MAX_NAME_LEN,
     REGISTRY_VERSION_RE,
     CleanupState,
     Operation,
@@ -82,6 +83,7 @@ __all__ = [
     "COUNT_KEYS",
     "EVENT_SCHEMA_VERSION",
     "MAX_COUNTS",
+    "MAX_NAME_LEN",
     "REASONS",
     "REASON_SCHEMA_VERSION",
     "REGISTRY_SCHEMA",

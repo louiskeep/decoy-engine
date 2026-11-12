@@ -32,7 +32,7 @@ Baseline = Literal[
 ]
 _End = tuple[str, tuple[str, ...]]
 
-__all__ = ["Baseline", "KeyCounts", "KeyResult", "check_keys", "keys_report"]
+__all__ = ["Baseline", "KeyCounts", "KeyResult", "Status", "check_keys", "key_codes", "keys_report"]
 
 
 @dataclass(frozen=True)
@@ -159,7 +159,7 @@ class _Run:
             parent=names,
             status=status,
             bounded=bounded,
-            codes=_codes(status, kind, baseline, base, out),
+            codes=key_codes(status, kind, baseline, base, out),
             source=base,
             output=out,
             baseline=baseline,
@@ -257,7 +257,7 @@ def _union(parts: Sequence[KeyBatches]) -> KeyBatches:
     return KeyBatches(parts[0].schema, batches, all(p.bounded for p in parts))
 
 
-def _codes(
+def key_codes(
     status: Status, kind: Kind, baseline: Baseline, base: KeyCounts | None, out: KeyCounts
 ) -> tuple[ReasonCode, ...]:
     p = reasons.post_scan

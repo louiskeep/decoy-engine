@@ -216,7 +216,6 @@ def test_the_verdict_reads_codes_not_status() -> None:
         ("key_type_mismatch", "not_run", True),
         ("key_type_mismatch", "no_source", True),
         ("key_type_mismatch", "key_column_missing", True),
-        ("key_type_mismatch", "error", True),
     ],
 )
 def test_an_output_mismatch_blocks_or_warns_by_its_baseline(
