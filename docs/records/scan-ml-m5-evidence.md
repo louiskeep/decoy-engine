@@ -356,3 +356,9 @@ post-scan key tests and the compat corpus rerun, with only the 23 `test_outbound
 failing. The full gate selection, mutations, lint and NER gate were not rerun after `6689efce` and
 `e9114bc2`; neither merge touched a file they read beyond the registry and profiling checks rerun
 above.
+
+`c5915831` merges main `885b5b2c` (#535 run-result projection, #536 capacity reason codes), which
+landed after the push of `a0d4ad08`; no conflict, no execution, post-scan or registry-version file
+touched. After it: `--check` exit 0; `tests/sentry`, the registry, tripwire, consumer-contract, M5
+acceptance, `tests/unit/reasons`, `tests/unit/run_result` and the compat corpus (5 passed, 1
+skipped) rerun, with only the 23 `test_outbound_clients` ids failing.
