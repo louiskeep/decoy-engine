@@ -511,6 +511,30 @@ charset), but a custom-charset or mixed-low-alphabet column would fall in this g
 Mitigation: cover the column's full alphabet with the charset (e.g. `ALPHANUM`), the
 same fix as the orphan-remap case above.
 
+## Anonymity enforcement search (library, V2 track): what the chosen node does not cover
+
+`decoy_engine.anonymize.search.search_lattice` finds the full-domain
+generalization with the least information loss whose failing classes fit a
+suppression limit, for k-anonymity, l-diversity and t-closeness models. It is a
+library reached by import only; no run uses it yet. Its guarantee is narrower
+than "the release is anonymous":
+
+- The suppressed rows are not checked against the models (ARX's semantics).
+  `Released.table` removes them; `Released.generalized_including_suppressed`
+  keeps them, generalized only to the chosen node and not protected by any
+  target. Releasing that form publishes a small group the models never saw.
+- t-closeness is measured against the sensitive distribution of all input
+  rows, as ARX does. After the suppressed rows are removed, the remaining rows'
+  distribution differs, so measuring t-closeness on `Released.table` can report
+  a larger distance than the search used.
+- The models are syntactic. Meeting k, l or t says nothing about linkage with
+  outside data, background knowledge, or attacks the models do not describe
+  (homogeneity within a value range, skewness the chosen t allows, composition
+  of several releases).
+- The search is optimal only over the lattice it is given (full-domain global
+  recoding, one level per column), with at most 5,000 nodes; larger lattices
+  are refused. Loss figures use the observed values, not a declared domain.
+
 ## What it does do
 
 To be clear about the other side: Decoy does give you deterministic,

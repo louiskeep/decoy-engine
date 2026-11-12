@@ -307,16 +307,34 @@ _ALLOWED_ANNOTATIONS = {
 }
 
 
+# Exported dataclasses that are not reports: model descriptors (a column name
+# and thresholds) and the integer-array frequency set. Listed, so a new
+# exported dataclass is either a report (and walked) or named here on purpose.
+_NOT_REPORTS = frozenset(
+    {
+        "DistinctLDiversity",
+        "EntropyLDiversity",
+        "EqualTCloseness",
+        "FrequencySet",
+        "KAnonymity",
+        "OrderedTCloseness",
+        "RecursiveCLDiversity",
+    }
+)
+
+
 def _report_classes() -> list[type]:
     return [
         getattr(anonymity, name)
         for name in anonymity.__all__
-        if dataclasses.is_dataclass(getattr(anonymity, name))
+        if dataclasses.is_dataclass(getattr(anonymity, name)) and name not in _NOT_REPORTS
     ]
 
 
 def test_every_report_class_is_found() -> None:
     assert len(_report_classes()) == 3
+    exported = {n for n in anonymity.__all__ if dataclasses.is_dataclass(getattr(anonymity, n))}
+    assert exported >= _NOT_REPORTS
 
 
 @pytest.mark.parametrize("cls", _report_classes(), ids=lambda c: c.__name__)
@@ -522,6 +540,11 @@ def _resolve(node: ast.ImportFrom, package: str) -> str:
     return ".".join(base + ([node.module] if node.module else []))
 
 
+# The one value-identity rule lives at the anonymize package root; that exact
+# module is allowed, nothing below it.
+_ALLOWED_ENGINE_MODULES = frozenset({"decoy_engine.anonymize"})
+
+
 def test_package_imports_only_data_libraries() -> None:
     """``import decoy_engine`` already loads the pipeline, so a sys.modules check
     cannot show darkness; the syntax tree of every module in the package can.
@@ -549,7 +572,20 @@ def test_package_imports_only_data_libraries() -> None:
             for name in names:
                 root = name.split(".")[0]
                 inside = name == package or name.startswith(package + ".")
-                assert root in allowed_roots or inside, (path.name, name)
+                assert root in allowed_roots or inside or name in _ALLOWED_ENGINE_MODULES, (
+                    path.name,
+                    name,
+                )
+
+
+def test_only_the_anonymize_root_is_allowed() -> None:
+    assert "decoy_engine.anonymize" in _ALLOWED_ENGINE_MODULES
+    for name in (
+        "decoy_engine.anonymize.hierarchies",
+        "decoy_engine.anonymize.search",
+        "decoy_engine.anonymize._values",
+    ):
+        assert name not in _ALLOWED_ENGINE_MODULES
 
 
 def test_import_walk_sees_relative_and_dynamic_imports() -> None:

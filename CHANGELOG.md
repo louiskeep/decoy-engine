@@ -9,6 +9,22 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (anonymity enforcement search, V2 track)
+
+V2 track (V2-3.3 slice 1 in `docs/roadmap/v2-sprints.md`, louiskeep/decoy), built ahead, opt-in by
+import only; not merged per owner instruction. `decoy_engine.anonymize.search.search_lattice` finds the
+node of a generalization `Lattice` with the least information loss (Iyengar loss metric by default;
+discernibility or non-uniform entropy on request) whose classes meet every privacy model within a
+record-suppression limit, and returns a frozen, value-free `SearchResult` (chosen node, the three loss
+figures, rows suppressed, nodes evaluated). The search is optimal over lattices of up to 5,000 nodes
+(larger ones are refused) and also when entropy l, recursive (c, l) or t-closeness are not monotone under
+suppression. `apply_search` returns the generalized table with the suppressed rows removed, plus a row
+mask. `decoy_engine.quality.anonymity` gains the privacy models as descriptors (`KAnonymity`,
+`DistinctLDiversity`, `EntropyLDiversity`, `RecursiveCLDiversity`, `EqualTCloseness`,
+`OrderedTCloseness`) and `FrequencySet`, both pre-GA and unstable; the measures' reports are unchanged,
+and `type_family` is now defined once (`decoy_engine.anonymize.type_family`). No config key, strategy,
+catalog row, planner check or reason code is added. Limits: `docs/what-we-cannot-prove.md`.
+
 ### Added (generalization hierarchies, V2 track)
 
 V2 track (V2-3.1 in `docs/roadmap/v2-sprints.md`, louiskeep/decoy), built ahead, opt-in by import only;

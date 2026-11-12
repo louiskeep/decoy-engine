@@ -41,6 +41,14 @@ same way for t-closeness (merging could only lower the distance) and by
 plain equality for l-diversity (merging can only lower l). Timezone-aware
 timestamps for the same instant in different zones are one value.
 
+Enforcement support (pre-GA and unstable; used by
+``decoy_engine.anonymize.search``): privacy models as descriptors
+(``KAnonymity``, ``DistinctLDiversity``, ``EntropyLDiversity``,
+``RecursiveCLDiversity``, ``EqualTCloseness``, ``OrderedTCloseness``), each
+stating which classes fail it with the same rules as the measures, and
+``FrequencySet``, the classes of a table with their sizes and sensitive
+counts, rolled up to coarser generalizations without regrouping rows.
+
 Reports are frozen and value-free: counts, measures, booleans and fixed
 tokens, never a cell value. They describe these syntactic models only and
 prove nothing about linkage with outside data (see
@@ -49,8 +57,18 @@ prove nothing about linkage with outside data (see
 
 from __future__ import annotations
 
+from decoy_engine.quality.anonymity._frequency_set import FrequencySet
 from decoy_engine.quality.anonymity._k_anonymity import KAnonymityReport, measure_k_anonymity
 from decoy_engine.quality.anonymity._l_diversity import LDiversityReport, measure_l_diversity
+from decoy_engine.quality.anonymity._models import (
+    DistinctLDiversity,
+    EntropyLDiversity,
+    EqualTCloseness,
+    KAnonymity,
+    OrderedTCloseness,
+    PrivacyModel,
+    RecursiveCLDiversity,
+)
 from decoy_engine.quality.anonymity._t_closeness import (
     TClosenessReport,
     measure_t_closeness_equal,
@@ -58,8 +76,16 @@ from decoy_engine.quality.anonymity._t_closeness import (
 )
 
 __all__ = [
+    "DistinctLDiversity",
+    "EntropyLDiversity",
+    "EqualTCloseness",
+    "FrequencySet",
+    "KAnonymity",
     "KAnonymityReport",
     "LDiversityReport",
+    "OrderedTCloseness",
+    "PrivacyModel",
+    "RecursiveCLDiversity",
     "TClosenessReport",
     "measure_k_anonymity",
     "measure_l_diversity",

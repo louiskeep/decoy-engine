@@ -200,7 +200,7 @@ def _measure(
     meets: bool | None = None
     if t is not None:
         over = np.zeros(classes.count, dtype=bool)
-        over[measured] = emds > t + _T_TOLERANCE
+        over[measured] = emd_above(emds, t)
         above = int(over.sum())
         above_rows = rows_in(classes, over)
         meets = _verdict(classes, above, int(unmeasured.sum()))
@@ -220,6 +220,11 @@ def _measure(
         rows_above_target=above_rows,
         meets_target=meets,
     )
+
+
+def emd_above(emds: npt.NDArray[np.float64], t: float) -> npt.NDArray[np.bool_]:
+    """Measured classes farther than ``t`` from the table, beyond the tolerance."""
+    return emds > t + _T_TOLERANCE
 
 
 def _verdict(classes: Classes, above: int, unmeasured: int) -> bool | None:

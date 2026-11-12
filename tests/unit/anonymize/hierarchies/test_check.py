@@ -19,7 +19,7 @@ from decoy_engine.anonymize.hierarchies import Hierarchy, check_hierarchy, inter
 
 from ._cols import obj
 
-# Identical to the families V2-3.2's quality.anonymity._classes.type_family assigns.
+# The families quality.anonymity also uses (it imports this same function).
 FAMILIES = [
     (datetime.timedelta(days=1), "timedelta"),
     (np.timedelta64(1, "D"), "timedelta"),

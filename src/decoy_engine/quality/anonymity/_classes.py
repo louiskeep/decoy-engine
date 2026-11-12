@@ -14,11 +14,9 @@ closed, so ``__cause__`` and ``__context__`` are both ``None``.
 
 from __future__ import annotations
 
-import datetime
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from decimal import Decimal
 from typing import Any
 
 import numpy as np
@@ -26,6 +24,8 @@ import numpy.typing as npt
 import pandas as pd
 import pyarrow as pa
 import pyarrow.compute as pc
+
+from decoy_engine.anonymize import type_family
 
 IntArray = npt.NDArray[np.int64]
 
@@ -297,35 +297,6 @@ def null_mask(series: pd.Series) -> npt.NDArray[np.bool_]:
         nan = pc.fill_null(pc.is_nan(pa.array(series)), False)  # type: ignore[attr-defined, unused-ignore]
         mask = mask | nan.to_numpy(zero_copy_only=False)
     return mask
-
-
-def type_family(cell: object) -> str:
-    """Canonical type family; equal cells of one family are one value."""
-    # Temporal checks come first: np.timedelta64 subclasses np.integer.
-    if isinstance(cell, (datetime.timedelta, np.timedelta64)):
-        return "timedelta"
-    if isinstance(cell, (datetime.datetime, np.datetime64)):
-        return "datetime"
-    if isinstance(cell, (bool, np.bool_)):
-        return "bool"
-    if isinstance(cell, (int, np.integer)):
-        return "int"
-    if isinstance(cell, (float, np.floating)):
-        return "float"
-    if isinstance(cell, (complex, np.complexfloating)):
-        return "complex"
-    if isinstance(cell, Decimal):
-        return "decimal"
-    if isinstance(cell, str):
-        return "str"
-    if isinstance(cell, (bytes, np.bytes_)):
-        return "bytes"
-    if isinstance(cell, datetime.date):
-        return "date"
-    if isinstance(cell, datetime.time):
-        return "time"
-    kind = type(cell)
-    return f"{kind.__module__}.{kind.__qualname__}"
 
 
 def _factorize(values: Any) -> IntArray:

@@ -245,6 +245,26 @@ modules:
     pattern: t-closeness EMD (Li, Li and Venkatasubramanian 2007)
     source: Li, Li, Venkatasubramanian, t-Closeness, ICDE 2007 (equal and ordered ground distance); ARX
 
+  - path: src/decoy_engine/quality/anonymity/_models.py
+    pattern: ARX privacy criteria
+    source: ARX criteria package (KAnonymity, DistinctLDiversity, EntropyLDiversity, RecursiveCLDiversity, EqualDistanceTCloseness; Apache-2.0), monotonicity flags
+
+  - path: src/decoy_engine/quality/anonymity/_frequency_set.py
+    pattern: Incognito frequency set and rollup
+    source: LeFevre, DeWitt and Ramakrishnan, Incognito, SIGMOD 2005
+
+  - path: src/decoy_engine/anonymize/search/__init__.py
+    pattern: least-loss lattice search under privacy models with a suppression limit
+    source: ARX (Apache-2.0); LeFevre et al. 2005 (Incognito); Kohlmayer et al. 2012 (Flash)
+
+  - path: src/decoy_engine/anonymize/search/_search.py
+    pattern: optimal full-domain generalization with record suppression and lower-bound pruning
+    source: LeFevre et al. 2005 (Incognito order); Kohlmayer et al. 2012 (Flash pruning by monotone loss); ARX lower bounds for non-monotone criteria (Apache-2.0)
+
+  - path: src/decoy_engine/anonymize/search/_loss.py
+    pattern: discernibility, loss metric and non-uniform entropy with ARX suppression penalties
+    source: Bayardo and Agrawal 2005; Iyengar 2002; Gionis and Tassa, IEEE TKDE 21(2) 2009; ARX MetricSDNMDiscernability and MetricMDNMLoss (Apache-2.0)
+
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
   # RiskFlag) was deleted under the pre-scan-reframe-C clean break

@@ -102,6 +102,13 @@ def _recursive_levels(counts: SensitiveCounts, n_classes: int, c: float) -> npt.
     return np.bincount(cls, weights=holds, minlength=n_classes).astype(np.int64)
 
 
+def entropy_below(
+    entropy: npt.NDArray[np.float64], empty: npt.NDArray[np.bool_], target: int
+) -> npt.NDArray[np.bool_]:
+    """Classes failing entropy l: no non-null value, or ``H < ln l`` beyond the tolerance."""
+    return empty | (entropy < math.log(target) - _ENTROPY_TOLERANCE)
+
+
 def _below(classes: Classes, failing: npt.NDArray[np.bool_]) -> tuple[int, int, bool | None]:
     count = int(failing.sum())
     return count, rows_in(classes, failing), (count == 0) if classes.count else None
@@ -142,7 +149,7 @@ def measure_l_diversity(
     if target is not None:
         failing = {
             "distinct": distinct < target,
-            "entropy": empty | (entropy < math.log(target) - _ENTROPY_TOLERANCE),
+            "entropy": entropy_below(entropy, empty, target),
         }
         if levels is not None:
             failing["recursive"] = levels < target
