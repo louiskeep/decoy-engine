@@ -500,3 +500,21 @@ def test_gen_types_e2_codes_are_registered_with_a_pinned_fixture() -> None:
     )
     assert pinned["registry_version"] == "1.23.0"
     assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 23, 0)
+
+
+SCANML_M5_FIXTURE = "reason-manifest-v1.24-scanml-m5.json"
+
+
+def test_scanml_m5_route_refusal_is_registered_with_a_pinned_fixture() -> None:
+    """SCAN-ML M5: one route refusal owned by PostScanRouteError, `since` 1.24.0."""
+    spec = reasons.find("route", "post_scan_models_unsupported")
+    assert spec is not None
+    assert (spec.owner, spec.since, spec.kind.value) == ("PostScanRouteError", "1.24.0", "failure")
+    assert not re.search(r"[{}%]", spec.summary)
+    assert reasons.route.POST_SCAN_MODELS_UNSUPPORTED == "post_scan_models_unsupported"
+    pinned = _load(SCANML_M5_FIXTURE)
+    assert [(e["namespace"], e["code"]) for e in pinned["entries"]] == [
+        ("route", "post_scan_models_unsupported")
+    ]
+    assert pinned["registry_version"] == "1.24.0"
+    assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 24, 0)
