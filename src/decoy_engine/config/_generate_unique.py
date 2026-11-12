@@ -32,6 +32,7 @@ __all__ = [
     "Problem",
     "column_conflict_problems",
     "cross_table_unique_problems",
+    "declares_unique",
     "distinct_categories",
     "table_unique_problems",
     "unique_flag",
@@ -53,6 +54,14 @@ UNIQUE_FAKER_ATTEMPTS = 1000
 
 # The four types whose domain is enumerable or that are distinct by construction.
 UNIQUE_TYPES = frozenset({"sequence", "categorical", "faker", "reference"})
+
+
+def declares_unique(column: Mapping[str, Any]) -> bool:
+    """True for `unique: true` or a sequence with a non-zero step, which is distinct by construction."""
+    if column.get("unique") is True:
+        return True
+    return column.get("type") == "sequence" and column.get("step", 1) != 0
+
 
 # Unique-capable types whose values an `output_type` cast can merge.
 _LOSSY_OUTPUT_TYPES = frozenset({"categorical", "faker"})
