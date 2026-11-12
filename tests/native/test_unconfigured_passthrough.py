@@ -194,7 +194,7 @@ MISSING = "source_file.declared_column_missing"
 
 @pytest.mark.parametrize("policy", ["warn", "error"])
 @pytest.mark.parametrize("unconfigured", [False, True], ids=["no_extra", "with_extra"])
-def test_configured_column_missing_from_the_source_keeps_todays_reason(
+def test_configured_column_missing_from_the_source_is_refused_as_declared_missing(
     policy: str, unconfigured: bool
 ) -> None:
     config = make_config(

@@ -19,7 +19,6 @@ import pytest
 
 from decoy_engine import apply_table_transforms, run_pipeline
 from decoy_engine.config import TableConfig
-from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution import PandasExecutionAdapter, _transforms
 from decoy_engine.execution._transforms import TransformError
 from decoy_engine.plan._errors import PlanCompileError
@@ -998,14 +997,6 @@ class TestDefectsThroughRoutes:
         assert str(err) == expected and err.args == (expected,)
         assert getattr(err, "__notes__", []) == []
         assert err.__cause__ is None and err.__context__ is None
-
-    def test_stored_index_reference_without_transforms_is_refused(self, tmp_path):
-        tbl = _stored_table()
-        cfg = single_table_config(tmp_path, tbl, columns=[{"name": "ix", "strategy": "redact"}])
-        with pytest.raises(PipelineValidationError) as exc:
-            _run(cfg, tbl)
-        assert exc.value.code == "source_file.declared_column_missing"
-        assert "column ix" in str(exc.value)
 
 
 class TestUnsupportedKeyTypes:

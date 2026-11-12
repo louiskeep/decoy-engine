@@ -33,6 +33,7 @@ from decoy_engine.profile import (
     profile_source,
 )
 from decoy_engine.profile import _source as source_mod
+from decoy_engine.profile._declared_columns import DeclarationInput, declaration_findings
 from decoy_engine.profile._readers_csv import CsvFileSource
 
 COLUMN = "source_file.undeclared_column"
@@ -512,7 +513,17 @@ def test_pipeline_entry_refuses_a_chunk_column_outside_source_schema() -> None:
         )
     assert caught.value.code == MISSING
     assert "column extra" in str(caught.value)
+    assert "add it to source_schema" in str(caught.value)
     assert chunks.nexts == 0
+
+
+def test_a_chunk_column_the_config_lists_but_source_schema_omits_names_the_schema() -> None:
+    """The config declares `extra` and the chunk carries it, but the caller's schema omits it:
+    the finding is an undeclared column whose fix is the schema, not another config entry."""
+    item = DeclarationInput("t", ("id", "extra"), "check", within=("id",), created=frozenset())
+    (finding,) = declaration_findings(_chunk_config("id", "extra"), [item])
+    assert finding.kind == "column"
+    assert "add it to source_schema" in finding.detail
 
 
 def test_a_declared_chunked_run_still_masks() -> None:
@@ -672,6 +683,10 @@ def test_chunked_refuses_a_later_chunk_missing_a_declared_column(
 ) -> None:
     chunks = SpyChunks(_table("id", "x"), _table("id"))
     out = _run_entry(entry, _chunk_config("id", "x"), chunks, _schema("id", "x"))
+    yielded = 0
     with pytest.raises(PipelineValidationError) as caught:
-        list(out)
+        for _ in out:
+            yielded += 1
     assert caught.value.code == MISSING
+    assert yielded == 1  # chunk 0 masked and handed out; the refusal is on chunk index 1
+    assert chunks.nexts == 2  # and no chunk after it was pulled

@@ -107,7 +107,8 @@ class DeclarationInput:
     # A chunk's columns must also be among these (the `source_schema` a chunked caller gave).
     within: tuple[str, ...] | None = None
     # Declared columns the config creates itself on this table, so the source may lack them.
-    created: frozenset[str] = frozenset()
+    # None turns the missing-column stage off: only the execution layer knows what is created.
+    created: frozenset[str] | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -122,13 +123,19 @@ class DeclarationFinding:
     undeclared: tuple[str, ...] = dataclasses.field(default=(), repr=False)
 
 
-def _missing_finding(table: str, lacking: Sequence[str]) -> DeclarationFinding:
-    """`lacking` is in config order, so the name reported is the first one the config lists."""
+def _missing_finding(
+    table: str, lacking: Sequence[str], within: tuple[str, ...] | None
+) -> DeclarationFinding:
+    """`lacking` is in config order, so the name reported is the first one the config lists.
+    When the chunked caller's `source_schema` omits it too, the schema may be what is wrong."""
+    fix = "remove it or fix the name"
+    if within is not None and lacking[0] not in within:
+        fix = "remove it, fix the name, or add it to source_schema"
     return DeclarationFinding(
         "missing",
         table,
         f"column {lacking[0]} is declared but the source has no such column "
-        f"({len(lacking)} missing); remove it or fix the name",
+        f"({len(lacking)} missing); {fix}",
         tuple(lacking),
     )
 
@@ -181,9 +188,13 @@ def declaration_findings(
                         tuple(c for _, c in missing),
                     )
                 )
-            lacking = [c for c in ordered if c not in item.columns and c not in item.created]
+            lacking = (
+                []
+                if item.created is None
+                else [c for c in ordered if c not in item.columns and c not in item.created]
+            )
             if lacking:
-                absent.append(_missing_finding(item.table, lacking))
+                absent.append(_missing_finding(item.table, lacking, item.within))
     return (*tables, *columns, *absent)
 
 
@@ -307,12 +318,15 @@ class PreparedDeclaredSources:
             return frozenset()
         return self._created_targets(_table_entry(self._config, table), tuple(columns))
 
+    def _created_or_none(self, table: str, columns: tuple[str, ...]) -> frozenset[str] | None:
+        return None if self._created_targets is None else self.created(table, columns)
+
     def check_names(self, table: str, names: Iterable[str]) -> None:
         within = self._chunk_columns.get(table)
         have = tuple(names)
         check_columns_declared(
             self._config,
-            [DeclarationInput(table, have, "check", within, self.created(table, have))],
+            [DeclarationInput(table, have, "check", within, self._created_or_none(table, have))],
         )
 
     def checked_chunks(

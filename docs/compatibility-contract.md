@@ -752,7 +752,9 @@ the source's header, footer or schema does not have: `source_file.declared_colum
 on every catalog the routes above already check, so the refusal comes before any data row is read; for the chunked
 entries the catalog is `source_schema` (pipeline entry) or the first chunk, and each later chunk is checked before it
 masks. It names the first missing column and the count (config names, never a value). Order is undeclared table,
-undeclared source column, then missing declared column. Before this, `run` failed late with a bare `KeyError`.
+undeclared source column, then missing declared column. Before this, `run` failed late with a bare `KeyError`. The reverse rule belongs to the execution
+choke point, which knows the columns the config creates: `profile_source`, `prepare_declared_sources`
+and `check_columns_declared` called without a created-column policy apply the forward rule only.
 
 ### 3.5 Disguises
 

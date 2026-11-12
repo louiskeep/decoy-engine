@@ -1154,7 +1154,7 @@ def test_empty_chunk_stream_with_keyed_strategy_and_explicit_key_provider_succee
 # ---------------------------------------------------------------------------
 
 
-def test_configured_column_missing_from_first_chunk_reroutes_and_reports_both_sides() -> None:
+def test_configured_column_missing_from_first_chunk_is_refused_before_a_route_is_chosen() -> None:
     config = {
         "global_settings": {"seed": 42},
         "tables": [
@@ -1235,8 +1235,10 @@ def test_second_chunk_missing_a_configured_column_fails_coded_not_silently_dropp
     chunk1 = pa.table({"p": [1, 2], "q": [10, 20]})
     chunk2 = pa.table({"p": [3, 4]})  # "q" absent on this later chunk only.
     sink: list[NativeRouteEvidence] = []
+    pulled: list[int] = []
+    counted = (pulled.append(i) or c for i, c in enumerate([chunk1, chunk2]))
     it = run_native_or_oracle_chunked(
-        config, [chunk1, chunk2], table="w", engine_version="test", route_evidence_sink=sink
+        config, counted, table="w", engine_version="test", route_evidence_sink=sink
     )
     assert sink[0].native_admitted is True
     first_out = next(it)
@@ -1245,6 +1247,7 @@ def test_second_chunk_missing_a_configured_column_fails_coded_not_silently_dropp
         next(it)
     assert exc_info.value.code == "source_file.declared_column_missing"
     assert "column q" in str(exc_info.value)
+    assert pulled == [0, 1]  # refused on chunk index 1, before any chunk after it was pulled
 
 
 def test_second_chunk_column_type_change_fails_coded() -> None:

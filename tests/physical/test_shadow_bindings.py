@@ -255,9 +255,9 @@ def test_deterministic_reuse_c1_faker_column_binds(tmp_path: Path) -> None:
     assert binding.required_prepasses == ()
 
 
-def test_faker_column_absent_from_source_declines_without_crashing(tmp_path: Path) -> None:
-    """A faker column the resident source lacks declines to bind (like the hash
-    path), never a bare KeyError from the resident-type probe (dennis MEDIUM-1)."""
+def test_faker_column_absent_from_source_is_refused_before_binding(tmp_path: Path) -> None:
+    """A faker column the resident source lacks is refused as a declared-but-missing column
+    before any binding, never a bare KeyError from the resident-type probe."""
     source = pa.table({"other": pa.array(["a", "b", "c"], type=pa.string())})
     with pytest.raises(PipelineValidationError) as caught:
         _plan_for(tmp_path, source, [_faker_column(name="c")])

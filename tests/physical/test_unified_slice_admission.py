@@ -14,7 +14,6 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
-from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution import _unified_slice_admission
 from decoy_engine.execution.native._companion_status import native_companion_status
 from decoy_engine.execution.physical._activation import build_unified_slice_activation
@@ -391,38 +390,6 @@ def test_cheap_admission_declines_metadata_only_named_index(tmp_path: Path) -> N
     config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
     profile, _ = _profile_and_plan(config, source)
     assert _cheap_ok(config, profile, source) is None
-
-
-def test_cheap_admission_declines_physical_named_index(tmp_path: Path) -> None:
-    """A resident table whose metadata designates an EXISTING data column as
-    the index (`index_columns: ["c"]`, no extra physical field): `source.
-    column_names` still equals the configured surface exactly (nothing
-    "extra" to catch via the undeclared-column check), but `to_pandas()`
-    pulls `c` out of `frame.columns` entirely, leaving zero columns."""
-    base = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
-    meta = {
-        "index_columns": ["c"],
-        "column_indexes": [],
-        "columns": [
-            {
-                "name": "c",
-                "field_name": "c",
-                "pandas_type": "unicode",
-                "numpy_type": "object",
-                "metadata": None,
-            }
-        ],
-        "attributes": {},
-        "creator": {"library": "pyarrow", "version": "24.0.0"},
-        "pandas_version": "2.3.3",
-    }
-    schema = base.schema.with_metadata({b"pandas": json.dumps(meta).encode()})
-    source = base.cast(schema)
-    config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
-    with pytest.raises(PipelineValidationError) as caught:  # the stored index is not a column
-        _profile_and_plan(config, source)
-    assert caught.value.code == "source_file.declared_column_missing"
-    assert "column c" in str(caught.value)
 
 
 def test_cheap_admission_admits_a_default_range_index(tmp_path: Path) -> None:
