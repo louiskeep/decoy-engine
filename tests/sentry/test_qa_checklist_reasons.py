@@ -29,9 +29,7 @@ ERROR_CALL = re.compile(r"\b[A-Z][A-Za-z]*Error\(([a-z][a-z0-9_.]*)\)")
 # Codes a check expects that an open engine branch registers. An entry must not be
 # registered yet: once its branch merges, `test_pending_codes_are_not_yet_registered`
 # fails and the entry comes out.
-PENDING: dict[tuple[str, str], str] = {
-    ("runtime", "fpe_unencryptable_value"): "fix/fpe-unregistered-reason",
-}
+PENDING: dict[tuple[str, str], str] = {}
 
 NAMESPACES = frozenset(ns for ns, _ in reasons.REASONS)
 BARE_CODES = frozenset(code for _, code in reasons.REASONS)
