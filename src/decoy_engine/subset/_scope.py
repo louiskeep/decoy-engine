@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from decoy_engine.plan._types import PlanRelationship
+from decoy_engine.subset._edges import linked_neighbours
 from decoy_engine.subset._types import FanOutPolicy, SeedSpec, SubsetPlan
 
 if TYPE_CHECKING:
@@ -55,11 +56,7 @@ def scope_for(request: SubsetRequest, table_names: Iterable[str]) -> SubsetScope
     it does not. Reach ignores `edge_directions`: a table whose only edge is `upward` is still
     narrowed (to no rows), as standalone `plan_subset` reports it, never passed whole."""
     supplied = frozenset(table_names)
-    neighbours: dict[str, set[str]] = {}
-    for rel in request.relationships:
-        for child in rel.children:
-            neighbours.setdefault(rel.parent.table, set()).add(child.table)
-            neighbours.setdefault(child.table, set()).add(rel.parent.table)
+    neighbours = linked_neighbours(request.relationships)
     reached = {seed.table for seed in request.seeds}
     frontier = list(reached)
     while frontier:

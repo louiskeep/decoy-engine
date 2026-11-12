@@ -57,6 +57,38 @@ def build_subset_edges(relationships: tuple[PlanRelationship, ...]) -> tuple[Sub
     return tuple(sorted(edges, key=lambda e: e.edge_id))
 
 
+def linked_neighbours(relationships: tuple[PlanRelationship, ...]) -> dict[str, set[str]]:
+    """Each table named by a relationship mapped to the tables it shares an edge with, either way.
+
+    The one reach walk's graph: `scope_for` and the sample's components both read it, so they
+    cannot disagree on what is linked."""
+    neighbours: dict[str, set[str]] = {}
+    for rel in relationships:
+        for child in rel.children:
+            neighbours.setdefault(rel.parent.table, set()).add(child.table)
+            neighbours.setdefault(child.table, set()).add(rel.parent.table)
+    return neighbours
+
+
+def one_failure_report(failure: PreflightFailure) -> FkPreflightReport:
+    """The report of a preflight that stopped on one failure. Callers pass their own registry
+    code to the error, so each raise site stays a checked literal."""
+    return FkPreflightReport(passed=False, failures=(failure,), warnings=(), edges=())
+
+
+def unknown_table_error(table: str) -> SubsetPreflightError:
+    """The refusal for a table that is not a mask table of the config; names the config key only."""
+    message = f"table {table!r} is not a mask table of the config."
+    failure = PreflightFailure(
+        code=reasons.subset.SUBSET_UNKNOWN_TABLE, relationship=f"<{table}>", message=message
+    )
+    return SubsetPreflightError(
+        code=reasons.subset.SUBSET_UNKNOWN_TABLE,
+        report=one_failure_report(failure),
+        message=message,
+    )
+
+
 def relationships_from_config(config: dict) -> tuple[PlanRelationship, ...]:
     """Build `PlanRelationship` tuples from a validated `PipelineConfig` dump's `relationships` block.
 
@@ -98,21 +130,14 @@ def relationships_from_config(config: dict) -> tuple[PlanRelationship, ...]:
                     break
             else:
                 edge_id = f"<{parent_end.table}>"
-            report = FkPreflightReport(
-                passed=False,
-                failures=(
-                    PreflightFailure(
-                        code=reasons.subset.SUBSET_RELATIONSHIP_COMPOSITE_LENGTH,
-                        relationship=edge_id,
-                        message=str(exc),
-                    ),
-                ),
-                warnings=(),
-                edges=(),
+            failure = PreflightFailure(
+                code=reasons.subset.SUBSET_RELATIONSHIP_COMPOSITE_LENGTH,
+                relationship=edge_id,
+                message=str(exc),
             )
             raise SubsetPreflightError(
                 code=reasons.subset.SUBSET_RELATIONSHIP_COMPOSITE_LENGTH,
-                report=report,
+                report=one_failure_report(failure),
                 message=str(exc),
             ) from exc
     return tuple(relationships)
