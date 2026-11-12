@@ -47,7 +47,7 @@ It runs every test not marked `serial` with `-n N --dist loadfile`, then the `se
 ## Pull requests
 
 - One topic per PR. Smaller diffs land faster.
-- Use `git commit -s` to sign off (Developer Certificate of Origin). The project is licensed Apache-2.0; contributions are accepted under the same license.
+- Use `git commit -s` to sign off (Developer Certificate of Origin). The project is licensed FSL-1.1-ALv2 (see `LICENSE`); contributions are accepted under the same license. TODO(counsel): add a contributor license agreement before accepting outside contributions, so the licensor can keep offering commercial licenses.
 - Public-API changes (`decoy_engine.__init__.__all__`) and YAML-surface changes (new strategy, new transform op, renamed key) need a `CHANGELOG.md` entry under `[Unreleased]`.
 - Capability changes (a new mask/generate strategy, synthetic provider, connector, detector, or disguise) must regenerate the capability matrix: run `python scripts/gen_capability_matrix.py` and commit the updated `docs/capability-matrix.md`. The `tests/sentry/test_capability_matrix.py` guard fails CI if you forget, so a new capability cannot ship without its docs entry.
 - If a change is more than one PR, file an Issue describing the plan first.
