@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from decoy_engine.config import parse_delivery_config
+from decoy_engine.config import PipelineConfigError, parse_delivery_config
 from decoy_engine.generation import generation_order
 from decoy_engine.reasons import ReasonCode
 
@@ -48,6 +48,27 @@ def _children(config: Mapping[str, Any]) -> dict[str, set[str]]:
     return edges
 
 
+_BAD_GRAPH = "delivery dependency graph names a table not in the config"
+
+
+def _check_universe(config: Mapping[str, Any], outcomes: Mapping[str, Any]) -> None:
+    """Refuse outcomes or edges that name tables the config does not hold; messages are fixed."""
+    targets = config.get("targets") or {}
+    file_targets = {n for n, t in targets.items() if t.get("type") == "file"}
+    if set(outcomes) != file_targets:
+        raise PipelineConfigError("delivery outcomes do not match the file-target tables")
+    names = {t["name"] for t in config.get("tables") or []}
+    try:
+        edges = _children(config)
+    except ValueError:
+        # generation_order refuses a reference to a non-generate table and its message names it.
+        edges = None
+    if edges is None:
+        raise PipelineConfigError(_BAD_GRAPH)
+    if not (edges.keys() | {c for kids in edges.values() for c in kids}) <= names:
+        raise PipelineConfigError(_BAD_GRAPH)
+
+
 def _dropped_because(config: Mapping[str, Any], failed: list[str]) -> dict[str, str]:
     """Each table reachable from a failed one, keyed to the smallest failed name reaching it."""
     edges = _children(config)
@@ -70,8 +91,9 @@ def plan_delivery(
     config: Mapping[str, Any], outcomes: Mapping[str, ReasonCode | None]
 ) -> DeliveryDecision:
     """Decide each table's delivery state; `outcomes` holds None for ok, a code for a failure."""
+    _check_universe(config, outcomes)
     failed = [name for name, cause in outcomes.items() if cause is not None]
-    strict = parse_delivery_config(config.get("delivery") or {}).mode == "strict"
+    strict = parse_delivery_config(config.get("delivery", {})).mode == "strict"
     reached = {} if strict or not failed else _dropped_because(config, failed)
     tables: dict[str, TableDelivery] = {}
     for name, cause in outcomes.items():

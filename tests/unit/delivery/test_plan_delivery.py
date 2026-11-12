@@ -18,8 +18,12 @@ def _config(
     edges: list[tuple[str, str]] | None = None,
     mode: str | None = None,
     generate: Mapping[str, list[str]] | None = None,
+    remote: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """A validated-shape config dict: edges are (parent, child), generate maps child to parents."""
+    """A validated-shape config dict: edges are (parent, child), generate maps child to parents.
+
+    Every table gets a file target except those in `remote`, which get an s3 one.
+    """
     generate = generate or {}
     entries: list[dict[str, Any]] = []
     for name in tables:
@@ -32,6 +36,9 @@ def _config(
         entries.append(entry)
     config: dict[str, Any] = {
         "tables": entries,
+        "targets": {
+            n: {"type": "s3" if n in remote else "file", "path": f"./out/{n}.csv"} for n in tables
+        },
         "relationships": [
             {
                 "parent": {"table": p, "columns": ["id"]},
@@ -61,6 +68,33 @@ def test_at1b_an_empty_run_delivers(mode: str | None) -> None:
     d = plan_delivery(_config([], mode=mode), {})
     assert d.tables == {}
     assert d.deliver is True
+
+
+def test_at1c_an_outcome_for_a_non_file_target_table_raises() -> None:
+    unknown = _config(["a"])
+    with pytest.raises(PipelineConfigError):
+        plan_delivery(unknown, {"a": None, "ghost": None})
+    remote = _config(["a", "b"], remote=("b",))
+    with pytest.raises(PipelineConfigError):
+        plan_delivery(remote, {"a": None, "b": None})
+
+
+def test_at1d_a_file_target_table_without_an_outcome_raises() -> None:
+    with pytest.raises(PipelineConfigError):
+        plan_delivery(_config(["a", "b"]), {"a": None})
+
+
+@pytest.mark.parametrize("end", ["parent", "child"])
+def test_at1e_a_relationship_end_outside_tables_raises(end: str) -> None:
+    edges = [("ghost", "a")] if end == "parent" else [("a", "ghost")]
+    with pytest.raises(PipelineConfigError):
+        plan_delivery(_config(["a"], edges, "best_effort"), {"a": None})
+
+
+def test_at1e_a_generate_reference_parent_outside_tables_raises() -> None:
+    config = _config(["a"], generate={"a": ["ghost"]})
+    with pytest.raises(PipelineConfigError):
+        plan_delivery(config, {"a": None})
 
 
 def test_at2_strict_failure_withholds_the_good_tables() -> None:
@@ -118,7 +152,9 @@ def test_at8_dropped_because_is_the_smallest_failed_name(order: tuple[str, str])
 
 
 def test_at9_the_walk_passes_through_a_table_without_a_file_target() -> None:
-    config = _config(["p", "mid", "g"], [("p", "mid"), ("mid", "g")], "best_effort")
+    config = _config(
+        ["p", "mid", "g"], [("p", "mid"), ("mid", "g")], "best_effort", remote=("mid",)
+    )
     d = plan_delivery(config, {"p": FAIL, "g": None})
     assert _states(d) == {"p": "failed", "g": "dropped"}
     assert "mid" not in d.tables
@@ -131,6 +167,14 @@ def test_at2b_an_unknown_mode_raises_instead_of_degrading() -> None:
     assert info.value.__cause__ is None
     assert info.value.__context__ is None
     assert "bogus" not in str(info.value)
+
+
+@pytest.mark.parametrize("bad", [None, False, 0, "", []])
+def test_at2c_a_present_but_falsy_delivery_block_raises(bad: Any) -> None:
+    config = _config(["a"])
+    config["delivery"] = bad
+    with pytest.raises(PipelineConfigError):
+        plan_delivery(config, {"a": FAIL})
 
 
 def test_plan_reads_the_dump_of_a_validated_pipeline_config() -> None:
