@@ -110,6 +110,14 @@ def _weird_names(base: str) -> tuple[str, ...]:
     return (base, f"{base}1", f"{base}2", f"{base}k1", f"{base}k2", f"{base}f1", f"{base}f2")
 
 
+def _fd_path(fd: int) -> str:
+    if os.path.isdir("/proc/self/fd"):
+        return os.readlink(f"/proc/self/fd/{fd}")
+    import fcntl
+
+    return os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0"))  # type: ignore[attr-defined]
+
+
 class _Probe:
     """Records every directory or file the job creates through the Python calls the scratch
     code uses, so a path outside the scratch root can be named."""
@@ -135,7 +143,9 @@ class _Probe:
             return real_makedirs(name, *a, **k)
 
         def os_mkdir(path: Any, *a: Any, **k: Any) -> None:
-            record(path)
+            # A descriptor-relative mkdir names its directory by fd; judge where it really lands.
+            fd = k.get("dir_fd")
+            record(path if fd is None else os.path.join(_fd_path(fd), os.fsdecode(path)))
             return real_os_mkdir(path, *a, **k)
 
         def write_table(table: Any, where: Any, *a: Any, **k: Any) -> None:

@@ -111,3 +111,19 @@ baseline = "tests/sentry/baselines/import-layers.json"
 [[sentry]]
 id = "table-kind-truth-tests"
 baseline = "tests/sentry/baselines/table-kind-truth-tests.json"
+
+[[sentry]]
+id = "post-scan-blocking"
+baseline = "tests/sentry/baselines/post-scan-blocking.json"
+
+[[sentry]]
+id = "post-scan-pass-through"
+baseline = "tests/sentry/baselines/post-scan-pass-through.json"
+
+[[sentry]]
+id = "post-scan-key-core"
+baseline = "tests/sentry/baselines/post-scan-key-core.json"
+
+[[sentry]]
+id = "post-scan-reason-identity"
+baseline = "tests/sentry/baselines/post-scan-reason-identity.json"

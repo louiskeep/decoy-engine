@@ -92,11 +92,13 @@ _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.quality.dp_budget", "DpBudgetError", "quality"),
     ("decoy_engine.quality.dp_provenance", "ProvenanceError", "quality"),
     ("decoy_engine.quality.snapshot", "DistributionSnapshotError", "quality"),
+    ("decoy_engine.verification.postmask._blocked", "PostScanBlockedError", "post_scan"),
     ("decoy_engine.connectors.postgres_snapshot", "PostgresSnapshotError", "connector"),
     ("decoy_engine.execution.physical._shadow_diff_codes", "ShadowDifference", "physical"),
 )
 # Engine exceptions that carry no code but have one fixed meaning: (module, class, reason).
 _FIXED: tuple[tuple[str, str, ReasonCode], ...] = (
+    ("builtins", "MemoryError", reasons.decoy.PROCESS_OUT_OF_MEMORY),
     ("decoy_engine.errors", "EmptyParentPoolError", reasons.config.FK_EMPTY_PARENT_POOL),
     ("decoy_engine.errors", "UnknownFKColumnError", reasons.config.FK_UNKNOWN_COLUMN),
     ("decoy_engine.errors", "ConfigError", reasons.config.UNTAGGED),
@@ -144,12 +146,14 @@ def _first_in_mro(exc: BaseException, table: dict[type, Any]) -> Any:
     return None
 
 
+def is_capacity_oserror(exc: BaseException) -> bool:
+    """True for an OSError whose errno is ENOSPC or EDQUOT; the cause chain is not walked."""
+    return isinstance(exc, OSError) and exc.errno in _CAPACITY_ERRNOS
+
+
 def _capacity_evidence(exc: BaseException) -> bool:
     """Typed ENOSPC/EDQUOT on the exception or its direct cause; a generic OSError is not."""
-    for candidate in (exc, getattr(exc, "__cause__", None)):
-        if isinstance(candidate, OSError) and candidate.errno in _CAPACITY_ERRNOS:
-            return True
-    return False
+    return any(is_capacity_oserror(c) for c in (exc, getattr(exc, "__cause__", None)) if c)
 
 
 def _record(
@@ -229,6 +233,17 @@ def _count_of(report: Any, name: str) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
+def report_unavailable(report: Any) -> bool:
+    """Whether a verification report says its check could not complete: the whole pass failed
+    (``pass_failed_with`` set; its text is never read) or a per-check error was counted."""
+    failed_with = (
+        report.get("pass_failed_with")
+        if isinstance(report, Mapping)
+        else getattr(report, "pass_failed_with", None)
+    )
+    return failed_with is not None or _count_of(report, "error_count") > 0
+
+
 def reasons_from_report(report: Any, *, enforcing: bool = False) -> tuple[ReasonRecord, ...]:
     """The reasons a verification report supports, without serializing the report.
 
@@ -238,15 +253,10 @@ def reasons_from_report(report: Any, *, enforcing: bool = False) -> tuple[Reason
     findings and is listed first; findings are ``findings_reported`` when the check only reports,
     and ``verification_failed`` when ``enforcing`` made the negative verdict binding.
     A clean report yields no reasons. Accepts the `PostMaskReport` object or its dict form."""
-    failed_with = (
-        report.get("pass_failed_with")
-        if isinstance(report, Mapping)
-        else getattr(report, "pass_failed_with", None)
-    )
     errors = _count_of(report, "error_count")
     findings = _count_of(report, "fail_count")
     out: list[ReasonRecord] = []
-    if failed_with is not None or errors > 0:
+    if report_unavailable(report):
         out.append(
             ReasonRecord.for_reason(
                 reasons.decoy.VERIFICATION_UNAVAILABLE,
@@ -445,6 +455,7 @@ __all__ = [
     "capture_failure",
     "current_failure_scope",
     "failure_scope",
+    "is_capacity_oserror",
     "reason_from_exception",
     "reasons_from_report",
     "registered_families",

@@ -17,10 +17,10 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.execution.chunked import observe_chunked
 from decoy_engine.execution.native import _chunked_entry
 from decoy_engine.fileaccess import FileAccess
 from decoy_engine.profile import DeclarationRequest
-from decoy_engine.progress import get_active_channel
 
 if TYPE_CHECKING:
     from decoy_engine.execution.native._dispatch import NativeRouteEvidence
@@ -56,9 +56,9 @@ def mask_chunked(
         file_access=file_access,
         registry=registry,
     )
-    # Progress: account every yielded chunk on the active channel (bound by the
-    # caller, e.g. `run_pipeline(progress=...)`); a no-op when nothing is bound.
-    return get_active_channel().count_rows(
+    # Progress: the table's mask phase and every yielded chunk on the active channel (bound by
+    # the caller, e.g. `run_pipeline(progress=...)`); a no-op when nothing is bound.
+    return observe_chunked(
         table,
         _chunked_entry._run_chunked(
             config,

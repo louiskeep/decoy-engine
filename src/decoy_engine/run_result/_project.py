@@ -100,6 +100,7 @@ class DeliveryFacts:
 class ProjectedTables:
     tables: tuple[TableResult, ...]
     delivery: Delivery
+    run_failed: bool
 
 
 def _rows(
@@ -195,4 +196,4 @@ def project_tables(
     summary = Delivery(
         mode=delivery.mode, outcome=_delivery_outcome(delivery.tables), vault=delivery.vault
     )
-    return ProjectedTables(tuple(rows), summary)
+    return ProjectedTables(tuple(rows), summary, run_failed)

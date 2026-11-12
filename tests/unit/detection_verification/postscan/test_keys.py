@@ -309,7 +309,9 @@ def test_a_source_side_type_mismatch_gives_a_zero_baseline(tmp_path: Path) -> No
     output = tables(p={"id": [1]}, c={"pid": [9]})
     hit = run(tmp_path, rels, source, output)[("c", "foreign")]
     assert (hit.status, hit.source.orphan_rows, hit.output.orphan_rows) == ("checked", 0, 1)
-    assert codes(hit) == {"foreign_key_orphans_introduced"}
+    assert hit.baseline == "key_type_mismatch"
+    # The unmeasured source rides on the key as a code the verdict only warns on (4.2.2).
+    assert codes(hit) == {"foreign_key_orphans_introduced", "key_type_mismatch"}
 
 
 def test_an_empty_table_is_checked_and_clean(tmp_path: Path) -> None:

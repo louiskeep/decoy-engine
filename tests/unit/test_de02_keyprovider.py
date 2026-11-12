@@ -843,8 +843,8 @@ class TestPublicEntryPointsGated:
             )
 
     def test_vault_writer_key_mismatch_fails_closed(self, tmp_path, monkeypatch):
-        # Codex BLOCKER 5: a job_seed-keyed vault writer while masking under a
-        # secret must fail closed (never encrypt PII under the public seed).
+        # Codex BLOCKER 5: a vault writer keyed differently from the run's secret must
+        # fail closed (a writer keyed on the public seed cannot be built at all).
         from decoy_engine.execution import ExecutionError
         from decoy_engine.vault import VaultError, VaultWriter
 
@@ -855,7 +855,7 @@ class TestPublicEntryPointsGated:
         df = _frame(8)[["email"]]
         df.to_csv(tmp_path / "t.csv", index=False)
         sources = {"t": pa.Table.from_pandas(df, preserve_index=False)}
-        bad_writer = VaultWriter((42).to_bytes(8, "big"))  # job_seed-keyed
+        bad_writer = VaultWriter(_SECRET_B.mask_key())  # keyed with a different secret
         with pytest.raises((VaultError, ExecutionError)):
             run_pipeline(
                 cfg,
@@ -932,7 +932,7 @@ class TestVaultIsKeyedSurface:
         df = _frame(8)[["email"]]
         df.to_csv(tmp_path / "t.csv", index=False)
         source = pa.Table.from_pandas(df, preserve_index=False)
-        bad_writer = VaultWriter((42).to_bytes(8, "big"))  # job_seed-keyed
+        bad_writer = VaultWriter(_SECRET_B.mask_key())  # keyed with a different secret
         with pytest.raises(VaultError):
             list(
                 run_mask_pipeline_chunked(
@@ -1110,3 +1110,14 @@ class TestDeriveGuard:
 
     def test_seed_key_provider_is_job_seed(self):
         assert SeedKeyProvider(_JOB_SEED).mask_key() == _JOB_SEED
+
+
+def test_secret_key_provider_freezes_mutable_secret_FAIL_BEFORE():
+    original = b"a-mutable-32B+-secret-for-freeze!!"
+    buffer = bytearray(original)
+    provider = SecretKeyProvider(buffer)  # type: ignore[arg-type]
+    before = provider.mask_key()
+    buffer[0] ^= 0xFF
+    assert type(provider.secret) is bytes
+    assert provider.secret == original
+    assert provider.mask_key() == before == SecretKeyProvider(original).mask_key()

@@ -203,7 +203,7 @@ def _build_streams(
                 derive_key=derive_key,
                 column_config=col,
                 fallback_seed=seed,
-                snapshot_content_digest=digest,
+                content_digests={("statistical", "snapshot_file"): digest} if digest else None,
             ).base_int("np")
 
             def draw_stat(

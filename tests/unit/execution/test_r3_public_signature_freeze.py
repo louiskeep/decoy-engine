@@ -81,6 +81,13 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
     ("quarantine_path", "KEYWORD_ONLY", "None", "str | None"),
     # GEN-CLI E1 (#460): config-relative paths resolve against this folder (compatibility contract).
     ("base_dir", "KEYWORD_ONLY", "None", "str | Path | None"),
+    # SUB-RUN E2: what a `subset:` block does; additive (compatibility contract section 4.1).
+    (
+        "subset_request",
+        "KEYWORD_ONLY",
+        "'config'",
+        "SubsetRequest | Literal['config', 'skip']",
+    ),
 )
 FROZEN_RETURN = "ExecutionResult"
 
@@ -104,7 +111,7 @@ def test_run_pipeline_return_annotation_is_frozen() -> None:
 
 def test_the_frozen_table_covers_every_parameter_once() -> None:
     names = [row[0] for row in FROZEN_PARAMETERS]
-    assert len(names) == len(set(names)) == 45
+    assert len(names) == len(set(names)) == 46
     positional = [r[0] for r in FROZEN_PARAMETERS if r[1] == "POSITIONAL_OR_KEYWORD"]
     assert positional == ["config", "sources"]
 
@@ -112,3 +119,34 @@ def test_the_frozen_table_covers_every_parameter_once() -> None:
 def test_the_public_names_are_the_same_function() -> None:
     assert decoy_engine.run_pipeline is run_pipeline
     assert execution_run_pipeline is run_pipeline
+
+
+# (name, default repr, shown in repr, compared by ==): the public fields of `ExecutionResult`.
+FROZEN_RESULT_FIELDS: tuple[tuple[str, str, bool, bool], ...] = (
+    ("outputs", "<required>", True, True),
+    ("timings", "()", True, True),
+    ("boundary_conversion_ms", "0.0", True, True),
+    ("warnings", "()", True, True),
+    ("quality_metrics", "<factory>", True, True),
+    ("table_kinds", "<factory>", True, True),
+    ("row_errors", "()", True, True),
+    ("quarantine_access", "None", False, True),
+    ("sample_source_rows", "None", False, False),
+)
+
+
+def test_execution_result_fields_are_frozen() -> None:
+    import dataclasses
+
+    from decoy_engine.execution._adapter import ExecutionResult
+
+    observed = []
+    for f in dataclasses.fields(ExecutionResult):
+        if f.default is not dataclasses.MISSING:
+            default = repr(f.default)
+        elif f.default_factory is not dataclasses.MISSING:
+            default = "<factory>"
+        else:
+            default = "<required>"
+        observed.append((f.name, default, f.repr, f.compare))
+    assert tuple(observed) == FROZEN_RESULT_FIELDS

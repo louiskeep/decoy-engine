@@ -33,6 +33,7 @@ from decoy_engine.profile import (
     profile_source,
 )
 from decoy_engine.profile import _source as source_mod
+from decoy_engine.profile._declared_columns import DeclarationInput, declaration_findings
 from decoy_engine.profile._readers_csv import CsvFileSource
 
 COLUMN = "source_file.undeclared_column"
@@ -510,9 +511,19 @@ def test_pipeline_entry_refuses_a_chunk_column_outside_source_schema() -> None:
         run_mask_pipeline_chunked(
             config, chunks, table="t", engine_version="e2d", source_schema=_schema("id")
         )
-    assert caught.value.code == COLUMN
+    assert caught.value.code == MISSING
+    assert "column extra" in str(caught.value)
     assert "add it to source_schema" in str(caught.value)
-    assert chunks.nexts == 1
+    assert chunks.nexts == 0
+
+
+def test_a_chunk_column_the_config_lists_but_source_schema_omits_names_the_schema() -> None:
+    """The config declares `extra` and the chunk carries it, but the caller's schema omits it:
+    the finding is an undeclared column whose fix is the schema, not another config entry."""
+    item = DeclarationInput("t", ("id", "extra"), "check", within=("id",), created=frozenset())
+    (finding,) = declaration_findings(_chunk_config("id", "extra"), [item])
+    assert finding.kind == "column"
+    assert "add it to source_schema" in finding.detail
 
 
 def test_a_declared_chunked_run_still_masks() -> None:
@@ -579,3 +590,103 @@ def test_fixed_schema_capture_survives(monkeypatch: pytest.MonkeyPatch) -> None:
     out = list(run_mask_chunked(_chunk_config("id"), producer, table="t", engine_version="e2d"))
     assert sum(c.num_rows for c in out) == 2
     assert seen["captured"].equals(resident.schema, check_metadata=True)
+
+
+# AT-E2b-2: a declared column the source lacks, on every public route ------------------------
+
+MISSING = "source_file.declared_column_missing"
+
+
+@pytest.mark.parametrize("route", ["run_pipeline", "isolated", "isolated_inproc"])
+def test_descriptor_routes_refuse_missing_declared_before_rows(
+    route: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _write(tmp_path, "t", ["id"])
+    config = _config({"t": _csv(path)}, {"t": ["id", "account_number"]}, tmp_path)
+    spies = RowSpies(monkeypatch)
+    staging = Staging(monkeypatch)
+    with pytest.raises(PipelineValidationError) as caught:
+        if route == "run_pipeline":
+            run_pipeline(config, engine_version="e2b-test")
+        else:
+            # Descriptor-only: nothing is supplied, so preparation must read the header itself.
+            run_pipeline_isolated(
+                config, {}, isolate=route == "isolated", engine_version="e2b-test"
+            )
+    _assert_value_free(caught.value, MISSING)
+    assert "account_number" in str(caught.value)
+    assert spies.calls == []
+    assert staging.calls == []
+    assert not list(tmp_path.glob("out_*.csv"))
+
+
+def test_direct_profile_source_applies_only_the_forward_rule(tmp_path: Path) -> None:
+    """The reverse rule belongs to the execution choke point, which knows which columns the
+    config creates. A direct profile of a config with a created column must not refuse it."""
+    path = _write(tmp_path, "t", ["g"])
+    config = _config({"t": _csv(path)}, {"t": ["g"]}, tmp_path)
+    config["tables"][0]["columns"].append(
+        {
+            "name": "hh",
+            "strategy": "group_key",
+            "provider_config": {"group_by": "g", "length": 16},
+        }
+    )
+    profile_source(config, seed=1)
+    config["tables"][0]["columns"][0]["name"] = "absent"  # the forward rule still applies
+    with pytest.raises(PipelineValidationError) as caught:
+        profile_source(config, seed=1)
+    assert caught.value.code == COLUMN
+
+
+@pytest.mark.parametrize("case", ["supplied", "loader_schema", "loader_table"])
+def test_run_pipeline_refuses_missing_declared_before_rows(
+    case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _write(tmp_path, "t", ["id", "account_number"])
+    config = _config({"t": _csv(path)}, {"t": ["id", "account_number"]}, tmp_path)
+    loader = Loader(_table("id"))
+    kwargs: dict[str, Any]
+    if case == "supplied":
+        kwargs = {"sources": {"t": _table("id")}}
+    elif case == "loader_schema":
+        kwargs = {"source_loader": loader, "source_loader_schemas": {"t": _table("id").schema}}
+    else:
+        both = _table("id", "account_number").schema
+        kwargs = {"source_loader": loader, "source_loader_schemas": {"t": both}}
+    spies = RowSpies(monkeypatch)
+    with pytest.raises(PipelineValidationError) as caught:
+        run_pipeline(config, engine_version="e2b-test", execution_mode="full_frame", **kwargs)
+    _assert_value_free(caught.value, MISSING)
+    assert "adapter.run" not in spies.calls
+    if case == "loader_schema":
+        assert loader.calls == 0
+    assert not list(tmp_path.glob("out_*.csv"))
+
+
+@pytest.mark.parametrize("entry", ENTRIES)
+def test_chunked_refuses_missing_declared_before_profile(
+    entry: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    chunks = SpyChunks(_table("id"), _table("id"))
+    spies = DeepSpies(monkeypatch)
+    schema = _schema("id", "account_number")
+    with pytest.raises(PipelineValidationError) as caught:
+        _run_entry(entry, _chunk_config("id", "account_number"), chunks, schema)
+    _assert_value_free(caught.value, MISSING)
+    assert spies.calls == []
+
+
+@pytest.mark.parametrize("entry", ENTRIES)
+def test_chunked_refuses_a_later_chunk_missing_a_declared_column(
+    entry: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    chunks = SpyChunks(_table("id", "x"), _table("id"))
+    out = _run_entry(entry, _chunk_config("id", "x"), chunks, _schema("id", "x"))
+    yielded = 0
+    with pytest.raises(PipelineValidationError) as caught:
+        for _ in out:
+            yielded += 1
+    assert caught.value.code == MISSING
+    assert yielded == 1  # chunk 0 masked and handed out; the refusal is on chunk index 1
+    assert chunks.nexts == 2  # and no chunk after it was pulled

@@ -18,6 +18,7 @@ import pytest
 
 from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked, run_pipeline
 from decoy_engine.config import PipelineConfig
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution._column_access import (
     OWN_TARGET_CREATES,
     OWN_TARGET_SOURCE,
@@ -34,6 +35,7 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
     NATIVE_COMPANION_UNAVAILABLE,
     ShadowDifference,
 )
+from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.profile import DeclarationRequest, profile_source
 from decoy_engine.providers_v2 import get_default_registry
 from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
@@ -155,8 +157,10 @@ def _expected_refusal(entry: str, route: str) -> str | None:
     return "strategy_not_chunk_safe"
 
 
-def _config(tmp_path: Path, entry: str, *, fk: bool = False) -> dict[str, Any]:
-    table = _table(entry, _valid(entry))
+def _config(
+    tmp_path: Path, entry: str, *, fk: bool = False, refs: tuple[str, ...] | None = None
+) -> dict[str, Any]:
+    table = _table(entry, refs or _valid(entry))
     tables = [table]
     if fk:  # out-of-core needs a relationship
         key = {"strategy": "hash", "namespace": "k"}
@@ -228,6 +232,23 @@ def test_created_target_route_matrix(
     assert VALUES[entry](out["tgt"].to_pylist())
     if route == "native":  # the companion declines the table, so the oracle route ran it
         assert evidence[0].native_admitted is False
+
+
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("entry", ENTRIES)
+def test_created_target_self_reference_refused(entry: str, route: str, tmp_path: Path) -> None:
+    """A target that is its own required input is not created: refused before masking."""
+    # Some routes refuse the entry at admission, before the declaration check runs.
+    code = "source_file.declared_column_missing"
+    if route == "native" and _expected_refusal(entry, "chunked"):
+        code = _expected_refusal(entry, "chunked") or code
+    if entry == "derive" and route == "out_of_core":
+        code = "per_table_transforms_present"
+    refs = ("tgt",) * len(_valid(entry))
+    config = _config(tmp_path, entry, fk=route == "out_of_core", refs=refs)
+    with pytest.raises((PipelineValidationError, PlanCompileError)) as caught:
+        _run(route, config, [])
+    assert caught.value.code == code
 
 
 def _native_group_key_selects_no_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -306,14 +327,49 @@ def test_union_of_differing_own_targets_reads_the_source() -> None:
     assert _union(creating, creating).own_target == OWN_TARGET_CREATES
 
 
-def test_derive_reading_an_earlier_derive_target_is_not_exempt() -> None:
+def test_derive_reading_an_earlier_derive_target_counts_as_created() -> None:
+    """`apply_transforms` runs the ops in order, so a later derive may read an earlier target."""
     ops = [
         {"op": "derive", "column": "x", "expression": "a + 1"},
         {"op": "derive", "column": "y", "expression": "x + 1"},
         {"op": "derive", "column": "z", "expression": "a + b"},
     ]
     table = {"name": "t", "columns": PASSTHROUGH, "transforms": ops}
-    assert _created(table) == {"x", "z"}
+    assert _created(table) == {"x", "y", "z"}
+
+
+def test_derive_chain_with_a_masked_target_runs_and_masks_it(tmp_path: Path) -> None:
+    """A config that ran before the reverse rule must not be refused for a chained derive."""
+    table = {
+        "name": "t",
+        "columns": [
+            *PASSTHROUGH,
+            {"name": "x", "strategy": "passthrough"},
+            {"name": "y", "strategy": "redact"},
+        ],
+        "transforms": [
+            {"op": "derive", "column": "x", "expression": "a + 1"},
+            {"op": "derive", "column": "y", "expression": "x * 2"},
+        ],
+    }
+    config = _config(tmp_path, "derive")
+    config["tables"] = [table]
+    config = PipelineConfig.model_validate(config).model_dump()
+    out = run_pipeline(config, {"t": SRC}, execution_mode="full_frame", **KW).outputs["t"]
+    assert out["x"].to_pylist() == [2, 3, 4, 5]
+    assert out["y"].to_pylist() != [4, 6, 8, 10]
+
+
+@pytest.mark.parametrize("entry", ["derived", "group_key"])
+def test_creating_entry_reading_a_derive_target_counts_as_created(entry: str) -> None:
+    strategy, template, _ = CREATING[entry]
+    config = {k: v.format("x") if isinstance(v, str) else v for k, v in template.items()}
+    table = {
+        "name": "t",
+        "columns": [*PASSTHROUGH, {"name": "tgt", "strategy": strategy, "provider_config": config}],
+        "transforms": [{"op": "derive", "column": "x", "expression": "a + 1"}],
+    }
+    assert "tgt" in _created(table)
 
 
 def test_derive_target_written_twice_must_qualify_on_every_write() -> None:
@@ -337,8 +393,11 @@ class _FakeRegistry:
         return mock.Mock(backend_type=self._backend)
 
 
-def _created_through_boundary(tmp_path: Path, provider: str, registry: Any) -> frozenset[str]:
-    """The `tgt` a supplied-only table's capability reports as created, under `registry`."""
+def _created_through_boundary(
+    tmp_path: Path, provider: str, registry: Any, *, tgt_in_source: bool = False
+) -> frozenset[str]:
+    """The `tgt` a supplied-only table's capability reports as created, under `registry`.
+    A column that is not created must be in the source, or preparing refuses it."""
     raw = _config(tmp_path, "group_key")
     raw["tables"].append(_table("group_key", _valid("group_key"), name="s"))
     raw["targets"]["s"] = {"type": "file", "format": "csv", "path": str(tmp_path / "s.out")}
@@ -346,7 +405,8 @@ def _created_through_boundary(tmp_path: Path, provider: str, registry: Any) -> f
     for t in config["tables"]:
         if t["name"] == "s":
             t["columns"][-1]["provider"] = provider
-    request = DeclarationRequest.for_run(config, {"t": SRC.schema, "s": SRC.schema})
+    schema = SRC.schema.append(pa.field("tgt", pa.string())) if tgt_in_source else SRC.schema
+    request = DeclarationRequest.for_run(config, {"t": SRC.schema, "s": schema})
     declared = prepare_declared_execution_sources(request, registry=registry)
     return declared.created("s", SRC.column_names)
 
@@ -361,11 +421,22 @@ def test_created_column_follows_the_resolved_registry(tmp_path: Path) -> None:
 
     as_composite = _FakeRegistry(scalar_by_default, "composite")
     assert _created_through_boundary(tmp_path, scalar_by_default, None) == {"tgt"}
-    assert _created_through_boundary(tmp_path, scalar_by_default, as_composite) == frozenset()
+    present = _created_through_boundary(
+        tmp_path, scalar_by_default, as_composite, tgt_in_source=True
+    )
+    assert present == frozenset()
 
     as_scalar = _FakeRegistry("other", "scalar")
-    assert _created_through_boundary(tmp_path, composite_by_default, None) == frozenset()
+    assert (
+        _created_through_boundary(tmp_path, composite_by_default, None, tgt_in_source=True)
+        == frozenset()
+    )
     assert _created_through_boundary(tmp_path, composite_by_default, as_scalar) == {"tgt"}
+    # The registry governs the refusal: absent `tgt` is refused where the provider is composite
+    # and accepted where the override calls it scalar (the line above).
+    with pytest.raises(PipelineValidationError) as caught:
+        _created_through_boundary(tmp_path, composite_by_default, None)
+    assert caught.value.code == "source_file.declared_column_missing"
 
 
 def test_run_pipeline_hands_its_registry_to_the_boundary(
@@ -426,3 +497,17 @@ def test_chunked_entries_hand_their_registry_to_the_boundary(
         out = run_mask_chunked(config, [SRC], table="t", registry=REG, **KW)
     list(out)
     assert seen and seen[0] is REG
+
+
+def test_a_when_keeps_the_entrys_own_target_claim() -> None:
+    """The when gate reads the predicate's columns and never the entry's own target."""
+
+    def group_key(when: str, strategy: str = "group_key") -> dict[str, Any]:
+        entry = {"name": "tgt", "strategy": strategy, "when": when}
+        if strategy == "group_key":
+            entry["provider_config"] = {"group_by": "g"}
+        return {"name": "t", "columns": [*PASSTHROUGH, entry]}
+
+    assert _created(group_key("a > 0")) == {"tgt"}
+    assert _created(group_key("tgt != ''")) == frozenset()  # reads its own absent target
+    assert _created(group_key("a > 0", "redact")) == frozenset()

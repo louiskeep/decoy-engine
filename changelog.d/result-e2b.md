@@ -1,0 +1,3 @@
+### Added (run result builder, RESULT E2b, 2026-11-12)
+
+`decoy_engine.run_result.build_run_result` builds the `decoy-run-result/v1` document from the per-table projection, the run's quality metrics, an optional `FailureInput` and the caller's exit map. Status and exit code come from `derive_outcome`, and `blocking` is the caller's `blocking_failed`. The route is a caller fact: pass `decoy_engine.route_summary(quality_metrics)` as `route`. Checks and warnings carry codes and counts only, and warning codes outside the registry read `unregistered_reason`. The input types `FailureInput`, `RouteView`, `RunFacts`, `ConfigRef`, `Links`, `LogLink`, `EvidenceLink`, `BaselineLink` and `NativeRoute` are exported from `decoy_engine.run_result`.

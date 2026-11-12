@@ -1,4 +1,4 @@
-"""Outbound GCS sentries: one client factory (AT-C9), timeout and retry on every call (AT-C10).
+"""Outbound GCS and S3 sentries: one client factory per provider (AT-C9, AT-C41), timeout and retry on every call (AT-C10).
 
 AT-C9: a call resolving to ``google.cloud.storage.Client`` anywhere under
 ``src/decoy_engine`` except ``connectors/_clients.py`` is a finding; so is a
@@ -45,8 +45,24 @@ BASELINE = HERE / "baselines" / "gcs-call-kwargs.json"
 CORPUS = HERE / "fixtures" / "outbound_seeded.py.txt"
 CLIENT_TARGETS = frozenset({"google.cloud.storage.Client", "google.cloud.storage.client.Client"})
 REQUIRED = frozenset({"timeout", "retry"})
+# Canonical spellings of an S3 client or resource build. Calls on a built object print as
+# `Name()`, so `boto3.Session(...).client(...)` reads `boto3.Session().client`.
+S3_BUILDERS = frozenset(
+    {
+        "boto3.client",
+        "boto3.resource",
+        "boto3.Session",
+        "boto3.session.Session",
+        "boto3.Session().client",
+        "boto3.Session().resource",
+        "boto3.session.Session().client",
+        "boto3.session.Session().resource",
+        "botocore.session.get_session().create_client",
+        "botocore.session.Session().create_client",
+    }
+)
 # First-inventory size of the collision walk; lower it together with the baseline.
-WALK_FLOOR = 151
+WALK_FLOOR = 150
 
 
 def gcs_name_set() -> frozenset[str]:
@@ -138,6 +154,19 @@ def _is_client_target(target: object) -> bool:
     )
 
 
+def _chain(node: ast.AST, scope: Scope) -> str | None:
+    """Dotted name of a call target through import aliases, with `()` for each call on the way."""
+    if isinstance(node, ast.Name):
+        return scope.lookup(node.id)
+    if isinstance(node, ast.Attribute):
+        base = _chain(node.value, scope)
+        return f"{base}.{node.attr}" if base else None
+    if isinstance(node, ast.Call):
+        base = _chain(node.func, scope)
+        return f"{base}()" if base else None
+    return None
+
+
 class _ModuleScan:
     def __init__(
         self, rel: str, name: str, tree: ast.Module, index: ProjectIndex, names: frozenset[str]
@@ -178,6 +207,8 @@ class _ModuleScan:
                 _is_client_target(target) or (target == DYNAMIC and self.imports_storage)
             ):
                 self._add("AT-C9", call, qual, "Client", 0)
+            if self.rel != FACTORY and _chain(call.func, scope) in S3_BUILDERS:
+                self._add("AT-C41", call, qual, "S3", 0)
             if not isinstance(call.func, ast.Attribute) or call.func.attr not in self.names:
                 continue
             method = call.func.attr
@@ -271,6 +302,12 @@ def test_no_storage_client_outside_the_factory(tree_scan: Scan) -> None:
     assert not bad, "storage.Client built outside connectors/_clients.py:\n" + "\n".join(bad)
 
 
+def test_no_s3_client_outside_the_factory(tree_scan: Scan) -> None:
+    """AT-C41: the profiler and the connectors build S3 clients only through ``_clients``."""
+    bad = [f.message() for f in tree_scan.findings if f.rule == "AT-C41"]
+    assert not bad, "S3 client built outside connectors/_clients.py:\n" + "\n".join(bad)
+
+
 def test_gcs_calls_carry_timeout_and_retry(tree_scan: Scan) -> None:
     allowed = set(load_baseline())
     found = {f.key: f for f in tree_scan.findings if f.rule == "AT-C10"}
@@ -301,7 +338,7 @@ def test_baseline_rows_are_reviewed() -> None:
         assert method in gcs_name_set(), key
 
 
-MESSAGE = re.compile(r"^AT-C(9|10) [\w/.<>-]+:\d+ [\w.<>]+ \w+$")
+MESSAGE = re.compile(r"^AT-C(9|10|41) [\w/.<>-]+:\d+ [\w.<>]+ \w+$")
 
 
 def test_finding_messages_carry_location_only(tree_scan: Scan) -> None:
@@ -330,6 +367,15 @@ SEEDED: dict[str, set[tuple[str, str]]] = {
     "client_anonymous": {("AT-C9", "Client")},
     "reload_timeout_none": {("AT-C10", "reload")},
     "reload_retry_none": {("AT-C10", "reload")},
+    "s3_client_plain": {("AT-C41", "S3")},
+    "s3_resource_plain": {("AT-C41", "S3")},
+    "s3_session_client": {("AT-C41", "S3")},
+    "s3_session_module_client": {("AT-C41", "S3")},
+    "s3_from_import_client": {("AT-C41", "S3")},
+    "s3_from_import_session": {("AT-C41", "S3")},
+    "s3_alias_client": {("AT-C41", "S3")},
+    "s3_botocore_session": {("AT-C41", "S3")},
+    "s3_session_in_variable": {("AT-C41", "S3")},
 }
 
 
@@ -358,12 +404,22 @@ def test_seeded_case(case: str, seeded: dict[str, set[tuple[str, str]]]) -> None
 LITERAL_FILES = (
     "decoy_engine/connectors/_clients.py",
     "decoy_engine/connectors/gcs.py",
+    "decoy_engine/connectors/s3.py",
     "decoy_engine/profile/_cloud_readers.py",
 )
 ERROR_CLASSES = frozenset({"TransientError", "PermanentError", "ConnectorError"})
 
 
+def _is_str_const(node: ast.AST | None) -> bool:
+    return isinstance(node, ast.Constant) and isinstance(node.value, str)
+
+
 def non_literal_errors(text: str, rel: str) -> list[str]:
+    """Error constructions whose text is not fixed.
+
+    One positional string literal (or a module-level name bound to one) plus at most one
+    ``kind=`` keyword whose value is a string literal.
+    """
     tree = ast.parse(text)
     fixed = {
         t.id
@@ -380,20 +436,52 @@ def non_literal_errors(text: str, rel: str) -> list[str]:
         name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else ""
         if name not in ERROR_CLASSES:
             continue
-        arg = call.args[0] if len(call.args) == 1 and not call.keywords else None
-        ok = (isinstance(arg, ast.Constant) and isinstance(arg.value, str)) or (
-            isinstance(arg, ast.Name) and arg.id in fixed
+        arg = call.args[0] if len(call.args) == 1 else None
+        kind_ok = all(k.arg == "kind" and _is_str_const(k.value) for k in call.keywords) and (
+            len(call.keywords) <= 1
         )
+        ok = kind_ok and (_is_str_const(arg) or (isinstance(arg, ast.Name) and arg.id in fixed))
         if not ok:
             bad.append(f"{rel}:{call.lineno} {name}")
     return bad
 
 
-def test_gcs_connector_errors_are_built_from_literals() -> None:
+def unchained_raise_findings(text: str, rel: str) -> list[str]:
+    """``raise ... from ...`` anywhere, and ``raise <expr>`` inside an ``except`` handler.
+
+    A bare ``raise`` is allowed: it re-raises the in-flight error without adding a cause.
+    """
+    tree = ast.parse(text)
+    in_handler = {
+        id(r)
+        for h in ast.walk(tree)
+        if isinstance(h, ast.ExceptHandler)
+        for stmt in h.body
+        for r in ast.walk(stmt)
+        if isinstance(r, ast.Raise)
+    }
+    return [
+        f"{rel}:{n.lineno} raise"
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Raise)
+        and (n.cause is not None or (n.exc is not None and id(n) in in_handler))
+    ]
+
+
+def test_connector_errors_are_built_from_literals() -> None:
     bad = [
         b
         for rel in LITERAL_FILES
         for b in non_literal_errors((SRC / rel).read_text(encoding="utf-8"), rel)
+    ]
+    assert not bad, bad
+
+
+def test_connector_raises_leave_the_except_block() -> None:
+    bad = [
+        b
+        for rel in LITERAL_FILES
+        for b in unchained_raise_findings((SRC / rel).read_text(encoding="utf-8"), rel)
     ]
     assert not bad, bad
 
@@ -405,13 +493,38 @@ def test_gcs_connector_errors_are_built_from_literals() -> None:
         "PermanentError(message)",
         "TransientError(str(exc))",
         'ConnectorError("a", "b")',
+        "PermanentError(MSG, kind=k)",
+        'PermanentError("m", kind="transient", extra="x")',
+        'PermanentError("m", other="x")',
     ],
-    ids=["f-string", "variable", "str-exc", "two-args"],
+    ids=["f-string", "variable", "str-exc", "two-args", "kind-variable", "two-kw", "other-kw"],
 )
 def test_literal_check_flags_seeded_cases(snippet: str) -> None:
-    assert len(non_literal_errors(snippet, "<seeded>")) == 1
+    assert len(non_literal_errors("MSG = 'x'\n" + snippet, "<seeded>")) == 1
 
 
 def test_literal_check_accepts_literals_and_named_constants() -> None:
     text = 'FIXED = "x"\nPermanentError("y")\nTransientError(FIXED)\n'
+    text += 'PermanentError(FIXED, kind="transient")\n'
     assert non_literal_errors(text, "<seeded>") == []
+
+
+RAISES = {
+    "from-cause": (
+        "try:\n    f()\nexcept Exception as exc:\n    err = e(exc)\nraise e from exc\n",
+        1,
+    ),
+    "raise-in-except": ("try:\n    f()\nexcept Exception as exc:\n    raise e\n", 1),
+    "bare-in-except": ("try:\n    f()\nexcept Exception:\n    raise\n", 0),
+    "after-block": ("try:\n    f()\nexcept Exception as exc:\n    err = e(exc)\nraise err\n", 0),
+}
+
+
+@pytest.mark.parametrize("case", sorted(RAISES))
+def test_raise_check_seeded_cases(case: str) -> None:
+    text, count = RAISES[case]
+    assert len(unchained_raise_findings(text, "<seeded>")) == count
+
+
+def test_s3_connector_is_checked_for_literal_errors() -> None:
+    assert "decoy_engine/connectors/s3.py" in LITERAL_FILES

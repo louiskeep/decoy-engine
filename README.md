@@ -6,8 +6,10 @@ into a frozen plan, and runs that plan against tabular sources (CSV /
 Parquet / Arrow / pandas / Polars) to produce deterministic, masked or
 synthesized output.
 
-The engine is Apache-2.0 licensed and has no network or auth surface of
-its own: it is a library you call from your own code. The companion
+The engine is source-available under the Functional Source License
+(FSL-1.1-ALv2): use it for anything, including production, except
+building a competing product, and each release becomes Apache-2.0 two
+years after it ships. It has no network or auth surface of its own: it is a library you call from your own code. The companion
 `decoy-cli` package is the recommended way to drive it from a shell.
 
 ## Install
@@ -138,4 +140,15 @@ is private and may change without a version bump.
 
 ## License
 
-Apache License 2.0. See `LICENSE` and `NOTICE`.
+Functional Source License, Version 1.1, Apache 2.0 Future License
+(FSL-1.1-ALv2). You may use, modify and redistribute the engine for any
+purpose except a Competing Use: offering it, or something substantially
+similar built from it, to others as a commercial product or service.
+Internal production use is allowed. Each release converts to the Apache
+License 2.0 on the second anniversary of its release. FSL is
+source-available, not OSI open source.
+
+See `LICENSE`, `NOTICE`, `TRADEMARKS.md`, and the plain-English
+[licensing FAQ](https://github.com/louiskeep/decoy/blob/main/LICENSING.md).
+Releases published before the switch to FSL stay under the Apache License
+2.0 they shipped with.
