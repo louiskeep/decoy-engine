@@ -208,11 +208,9 @@ def run_pipeline(
     declares the Arrow schema of every table the loader serves, so the declaration check runs
     before the loader is called. A table the loader returns with other columns is refused.
 
-    `subset_request` says which rows the run masks. `"config"` (the default) applies the config's
-    `subset:` block, if any; `"skip"` ignores the block and masks every row; a `SubsetRequest`
-    replaces the block. Any other value is refused before any read. A subset run stamps
-    `quality_metrics["subset"]`, and `"skip"` over a config with a block stamps
-    `{"applied": False}`. A `source_loader` run cannot apply a subset.
+    `subset_request`: `"config"` applies the config's `subset:` block, `"skip"` masks every row,
+    a `SubsetRequest` replaces the block; any other value is refused before any read. An applied
+    subset stamps `quality_metrics["subset"]`; a `source_loader` run cannot apply one.
 
     Execution routing (`execution_mode`, `sink`, `source_loader`, `auto_chunk`,
     `chunk_size_rows`, `auto_chunk_threshold_rows`, `native_threads`,
@@ -233,11 +231,10 @@ def run_pipeline(
     `"out_of_core"` as an explicit fail-closed force and `"stream"` means "must stream"
     (`execution.pipeline._stream`).
 
-    Sprint B2 (docs/plans/2026-07-10-oom-avoidance-routing-redesign.md
-    §3.3/§11/§13): `use_probe_routing` (TB-5 default `True`; no effect without
-    `use_byte_estimate_routing=True`, also default `True`; force either `False`
-    to roll back) is the two-point micro-probe's fast-path RECOVERY for a job
-    the static estimate over-downgrades. See `decide_execution_route` and
+    Sprint B2 (docs/plans/2026-07-10-oom-avoidance-routing-redesign.md §3.3/§11/§13):
+    `use_probe_routing` (TB-5 default `True`; no effect without `use_byte_estimate_routing=True`,
+    also default `True`; force either `False` to roll back) is the two-point micro-probe's fast-path
+    RECOVERY for a job the static estimate over-downgrades. See `decide_execution_route` and
     `_pipeline_routing_signals.resolve_probe_recovery`.
 
     Execution-substrate knobs (mask-kind tables only; generate tables
@@ -253,14 +250,12 @@ def run_pipeline(
       cross-run cache policy (default: the process registry, cache disabled). The keyed-mask
       secret is admitted before any source is read.
 
-    It forwards to `select_execution_adapter`, which validates it
-    up front: a non-positive-int count knob raises `ExecutionError`
-    ``code='invalid_execution_knob'``, both BEFORE any profiling or plan
-    compilation. When any knob is non-default the selected adapter
-    identity and every knob value are stamped under
-    ``quality_metrics["execution_adapter"]`` so a job's performance mode
-    is reproducible from its manifest; the all-default path stamps
-    nothing, keeping golden fixtures byte-identical.
+    It forwards to `select_execution_adapter`, which validates it up front: a non-positive-int count
+    knob raises `ExecutionError` ``code='invalid_execution_knob'``, both BEFORE any profiling or
+    plan compilation. When any knob is non-default the selected adapter identity and every knob
+    value are stamped under ``quality_metrics["execution_adapter"]`` so a job's performance mode is
+    reproducible from its manifest; the all-default path stamps nothing, keeping golden fixtures
+    byte-identical.
 
     `quarantine_runtime` (F06): a `decoy_engine.declared_casting.ProtectedQuarantineRuntime`
     (sink + owner). Required, and checked before the source is read, by any column with
