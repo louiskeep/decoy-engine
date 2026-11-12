@@ -142,7 +142,7 @@ def _fitted_reference(
         derive_key=derive_key,
         column_config=col,
         fallback_seed=seed,
-        snapshot_content_digest=fanout.seed_digest,
+        content_digests={("reference", "snapshot_file"): fanout.seed_digest},
     ).base_int("py")
     return fitted_reference_values(ref_vals, fanout, n, random.Random(col_seed))
 

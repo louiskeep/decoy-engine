@@ -115,6 +115,7 @@ def test_relationship_parent_that_is_a_reference_column_keeps_the_root_text() ->
                         "type": "reference",
                         "reference_table": "roots",
                         "reference_column": "id",
+                        "unique": True,
                     }
                 ],
             ),

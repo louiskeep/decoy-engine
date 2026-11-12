@@ -1,6 +1,6 @@
 # Declared parsing, casting and quarantine
 
-Status: current (catalog version 1, plan version 3)
+Status: current (catalog version 1, plan version 4)
 
 A column can declare how its text or bytes are read, what to do when a value does not fit, and how the masked value is written back. The engine owns the contract, the format catalog, the reason codes and the counts. The CLI and Studio render and author it; neither re-implements parsing.
 
@@ -115,7 +115,7 @@ See [Protected quarantine](security/protected-quarantine.md).
 
 ## Compatibility
 
-`PLAN_VERSION` is 3. A version-2 plan loads with no declared contracts; a plan naming an unknown format or catalog version never executes. `dtype` remains a legacy route hint and conflicts with a declared `logical_type` are rejected. `date_shift.provider_config.date_format` stays a strategy parameter; declaring a column parse format as well is rejected rather than choosing one. The legacy `quarantine.output_path` writer is unchanged and does not satisfy `error_policy: quarantine`.
+`PLAN_VERSION` is 4 (3 added declared contracts, 4 added pinned `lookup` files). A version-2 plan loads with no declared contracts and a version-3 plan loads with no pinned lookups; a plan naming an unknown format or catalog version never executes. `dtype` remains a legacy route hint and conflicts with a declared `logical_type` are rejected. `date_shift.provider_config.date_format` stays a strategy parameter; declaring a column parse format as well is rejected rather than choosing one. The legacy `quarantine.output_path` writer is unchanged and does not satisfy `error_policy: quarantine`.
 
 ## Not in V1
 

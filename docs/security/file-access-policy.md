@@ -50,7 +50,7 @@ a time can wrap its call so a denial names the field.
 
 A policy decides `FileRequest(role, access, locator, field_key)`:
 
-- `role` says what the file is for (`SOURCE`, `REFERENCE`, `CORPUS`, `SNAPSHOT`, `SECRET`, `VAULT`,
+- `role` says what the file is for (`SOURCE`, `REFERENCE`, `CORPUS`, `SNAPSHOT`, `LOOKUP`, `SECRET`, `VAULT`,
   `CONFIG`, `QUARANTINE_OUTPUT`, `TARGET_OUTPUT`, and the directory roles `CUSTOM_PROVIDER_ROOT`,
   `MODEL_PACK_ROOT` and `DISGUISE_ROOT`).
 - `locator` is the bare string from the config, scheme already stripped (`customer:` and `file:`).

@@ -21,8 +21,6 @@ process that wrote it.
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
 from typing import Any
 
@@ -38,7 +36,9 @@ from decoy_engine.plan._generation import (
     build_generation_plan,
     check_generate_snapshot_columns,
     column_pins_snapshot,
+    pinned_digest_message,
     snapshot_schema_failure,
+    verified_pinned_bytes,
 )
 from decoy_engine.plan._serialize_declared import (
     declared_casting_from_dict,
@@ -60,6 +60,12 @@ from decoy_engine.plan._types import (
     SeedEnvelope,
     TableSeed,
     unfreeze_json,
+)
+from decoy_engine.plan.checks._lookup_tables import (
+    ReadLookup,
+    check_lookup_tables,
+    pinned_lookup_from_dict,
+    require_lookups_pinned,
 )
 
 
@@ -254,6 +260,10 @@ def _generation_plan_to_dict(gp: GenerationPlan) -> dict[str, Any]:
     }
     if gp.dp_verification is not None:
         out["dp_verification"] = _dp_verification_to_dict(gp.dp_verification)
+    # GEN-TYPES E3 (plan_version 4): omitted when empty, so a plan with no lookups differs from
+    # its version-3 form only by the version line.
+    if gp.lookups:
+        out["lookups"] = [_pinned_snapshot_to_dict(s) for s in gp.lookups]
     return out
 
 
@@ -316,18 +326,14 @@ def _pinned_snapshot_from_dict(
     """
     position = f"generation.snapshots[{index}]"
     source_path = data["source_path"]
-    stored_sha256 = data["sha256"]
-    raw = base64.b64decode(data["payload_b64"])
-    if hashlib.sha256(raw).hexdigest() != stored_sha256:
+    raw = verified_pinned_bytes(data)
+    if raw is None:
         raise PlanCompileError(
             code=reasons.plan.DP_PINNED_SNAPSHOT_DIGEST_MISMATCH,
             path=position,
-            message=(
-                f"the embedded snapshot at {position} does not match its recorded sha256. "
-                "A Plan's pinned bytes are verified evidence, not a trusted claim; a mismatch "
-                "means the manifest was edited or corrupted after compile."
-            ),
+            message=pinned_digest_message(position),
         )
+    stored_sha256 = data["sha256"]
     pinned_snapshot = PinnedSnapshot(
         source_path=source_path,
         sha256=stored_sha256,
@@ -438,6 +444,15 @@ def _generation_plan_from_dict(data: dict[str, Any]) -> GenerationPlan:
     ]
     pinned_by_path: dict[str, ReadSnapshot] = {read.path: read for _pinned, read in decoded}
 
+    # Lookups: digest-verified first, then every configured `file` must be pinned before the shared
+    # checker runs, so the checker has no path to fall back to.
+    lookup_decoded = [
+        pinned_lookup_from_dict(s, i) for i, s in enumerate(data.get("lookups", []) or [])
+    ]
+    lookup_pins: dict[str, ReadLookup] = {read.path: read for _pinned, read in lookup_decoded}
+    require_lookups_pinned(config, lookup_pins)
+    checked_lookups = check_lookup_tables(config, lookup_pins, {})
+
     _require_statistical_snapshots_pinned(config, pinned_by_path)
     dp_verified_columns, dp_verification = verify_dp_snapshots(config, pinned_by_path)
     # C-M1: `failures={}` (never `None`) here -- `_require_statistical_
@@ -455,6 +470,7 @@ def _generation_plan_from_dict(data: dict[str, Any]) -> GenerationPlan:
         pinned_by_path,
         column_specs=column_specs,
         dp_verification=dp_verification,
+        lookups=checked_lookups,
     )
     if rebuilt is None:
         # A manifest that serialized a `generation` block in the first

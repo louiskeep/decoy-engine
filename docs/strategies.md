@@ -1260,6 +1260,9 @@ to its keys and lists the same required keys, and it allows `pooled` only on `fa
 types may carry `pooled: null`), so an editor flags a misspelt or misplaced key. A test checks
 this table against `generate_option_catalog()`.
 
+A `lookup` column takes exactly one of `file` and `codeset`: neither is `missing` on `file`, and
+both is `generate_option_value_unknown` on `codeset`. The catalog lists the pair as `one_of`.
+
 `output_type` (`int`, `decimal(n)`, `date` or `bool`) sets the type of the column written.
 `distribution`, `sequence`, `grouped_series` and `derived_aggregate` take `int` or `decimal(n)`
 only, `windowed_date` takes `date` only, and `reference`, `statistical` and `group_key` do not
@@ -1280,6 +1283,7 @@ take it.
 | `group_key` | `group_by` | `length`, `prefix` | |
 | `constant` | `value` | `output_type` | |
 | `distribution` | `family` | `low`, `high`, `min`, `max`, `output_type` | `low`, `high` if `family: uniform` |
+| `lookup` | | `file`, `codeset`, `value_column`, `weight_column`, `output_type` | |
 
 `derived_aggregate` is the one type whose required keys are checked at plan compile, not at
 config parse: its transform refuses a missing `op` or `column` with `derived_aggregate_op_missing`
@@ -1339,7 +1343,11 @@ not run the capacity check. The floor is a lower bound, so a run that passes it 
 out of memory. It is skipped when the run has an explicit memory budget
 (the run then holds itself to that budget), when it streams eligible columns to a bounded sink,
 and when the ceiling cannot be read.
-`CAPACITY_REASON_CODES` in `decoy_engine.errors` lists every code that means the same verdict.
+`CAPACITY_REASON_CODES` in `decoy_engine.errors` lists every code that means the same verdict:
+the generation budget, the out-of-core memory, fan-in, Faker pool and reorder budgets, the pool
+cache budget and the isolated worker running out of memory. `CAPACITY_EXCLUSIONS` in the same
+module names each other memory or budget code with the reason it is not a capacity verdict. The
+full-frame OOM-risk refusals are in it: they are decided before any row is read.
 
 ### sequence
 
@@ -1540,6 +1548,38 @@ Draws numbers from a named family, with no source file. To shape a column like a
 - `low` / `high`: the uniform range (both required, `high` above `low`). The family takes
   only its own keys.
 - `min` / `max`: optional clip applied to each draw (`min` at most `max`).
+
+### lookup
+
+Draws each row from a list in a file or in a shipped code set, optionally weighted.
+
+```yaml
+- name: sku
+  type: lookup
+  file: data/skus.csv        # or: codeset: icd10 (exactly one of file, codeset)
+  value_column: sku          # default: the first column of a file, `code` of a code set
+  weight_column: units_sold  # optional
+```
+
+- `file`: a `.csv` (comma delimiter, a header row, UTF-8) or `.parquet` file. A relative path is
+  read from the config file's folder. Values are the CSV cells as exact text (`NA` stays `NA`, a
+  blank cell is an empty-string entry) or the Parquet column's string, integer, float or bool
+  values; `output_type` casts them. A repeated value is a separate entry, so its weights add.
+- `codeset`: `icd10`, `hcpcs`, `ndc` or `mcc`. The list comes from the corpus the installed
+  engine ships, so the same config can give different output on another engine version. A code set
+  has no numeric column, so a `weight_column` on one is refused.
+- `weight_column`: finite numbers of at least zero with a positive total. A blank, text or
+  negative cell is refused (`lookup_weight_invalid`). The list holds at most 1,000,000 entries.
+
+The file is read once at compile and its bytes are kept in the plan; a run and a reloaded plan use
+those bytes and never open the path again, so editing the file after compile changes nothing. The
+seed follows the file's content, not its path: moving the file keeps the output, editing it
+changes the output. A lookup column runs on the resident route only (a plan with one is not
+streamed) and is refused in pinned mode (`pinned_lookup_unsupported`). `unique` is not taken. A
+refusal names the table and column and a reason (`lookup_file_unreadable`, `lookup_file_too_large`,
+`lookup_file_format_unsupported`, `lookup_column_missing`, `lookup_file_empty`,
+`lookup_weight_invalid`, `lookup_too_many_entries`, and on plan load `lookup_pinned_digest_mismatch`
+and `lookup_not_pinned`), never a cell value or a path.
 
 ## Job-level config: validators and quarantine (SP-05, extended Sprint 2 honesty pack)
 

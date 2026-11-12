@@ -2,8 +2,7 @@
 
 `load_key_frames` builds, per table, a polars DataFrame of the reserved
 row-index column plus every key column any edge end or seed spec needs.
-Projection pushdown (verified: `.select([key_cols]).collect()` on a
-`scan_parquet` reads only those columns) keeps non-key columns unread until
+Each `TableInput` reads only the named columns, so non-key columns stay unread until
 `_materialize.py` re-touches the source files. Every downstream stage (seed
 selection, closure, budget, estimate) operates ONLY on these frames.
 """
@@ -11,12 +10,14 @@ selection, closure, budget, estimate) operates ONLY on these frames.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 import polars as pl
 
-from decoy_engine.fileaccess.adapters import polars as polars_adapter
-from decoy_engine.subset._io import open_input
-from decoy_engine.subset._types import SeedSpec, SubsetEdge, SubsetSource
+if TYPE_CHECKING:
+    from decoy_engine.subset._inputs import TableInput
+
+from decoy_engine.subset._types import SeedSpec, SubsetEdge
 
 # Reserved row-index column name. Preflight fails (code subset_reserved_column)
 # if any table already declares a column with this name.
@@ -42,7 +43,7 @@ def key_columns_needed(
 
 
 def load_key_frames(
-    sources: Mapping[str, SubsetSource],
+    sources: Mapping[str, TableInput],
     edges: tuple[SubsetEdge, ...],
     seeds: tuple[SeedSpec, ...],
 ) -> dict[str, pl.DataFrame]:
@@ -54,7 +55,5 @@ def load_key_frames(
     frames: dict[str, pl.DataFrame] = {}
     for table in sorted(sources):
         cols = key_columns_needed(table, edges, seeds)
-        with open_input(sources[table], table) as handle:
-            lazy = polars_adapter.scan_parquet(handle).with_row_index(RI)
-            frames[table] = polars_adapter.collect(handle, lazy.select([RI, *cols]))
+        frames[table] = sources[table].key_frame(cols)
     return frames

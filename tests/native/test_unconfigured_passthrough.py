@@ -18,6 +18,7 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution import ExecutionError
 from decoy_engine.execution._chunked_profile import first_chunk_profile
 from decoy_engine.execution.native import _chunked_entry
@@ -188,9 +189,12 @@ def test_unset_policy_follows_the_release_phase(
     assert info.value.code == "undeclared_output_columns"
 
 
+MISSING = "source_file.declared_column_missing"
+
+
 @pytest.mark.parametrize("policy", ["warn", "error"])
 @pytest.mark.parametrize("unconfigured", [False, True], ids=["no_extra", "with_extra"])
-def test_configured_column_missing_from_the_source_keeps_todays_reason(
+def test_configured_column_missing_from_the_source_is_refused_as_declared_missing(
     policy: str, unconfigured: bool
 ) -> None:
     config = make_config(
@@ -199,7 +203,7 @@ def test_configured_column_missing_from_the_source_keeps_todays_reason(
     names = ["r", "t"] + (["u"] if unconfigured else [])
     chunks = [_chunk(4, 0).select(names), _chunk(3, 1).select(names)]
     ev: list[Any] = []
-    try:
+    with pytest.raises(PipelineValidationError) as info:
         list(
             run_mask_chunked_below_gate(
                 config,
@@ -210,11 +214,9 @@ def test_configured_column_missing_from_the_source_keeps_todays_reason(
                 route_evidence_sink=ev,
             )
         )
-    except ExecutionError:
-        pass  # under `error` the oracle refuses after the route is decided
-    extra = "['u']" if unconfigured else "[]"
-    assert ev[0].native_admitted is False
-    assert ev[0].reroute_reason == f"uncovered_columns:{extra};missing_configured_columns:['q']"
+    assert info.value.code == MISSING
+    assert "column q" in str(info.value)
+    assert ev == []
 
 
 def _schema_and_profile(config: dict[str, Any], chunk: pa.Table) -> tuple[Any, pa.Schema]:
@@ -552,7 +554,8 @@ def test_drift_in_an_unconfigured_column_raises_on_both_routes(kind: str) -> Non
     else:
         last = _chunk(3, 2, u=pa.array([1, 2, 3], pa.int64())).select(names)
     native, forced = _both_outcomes([redact("r"), truncate("t")], [*base, last])
-    assert native == forced == ("native_chunk_schema_drift", 2, 2)
+    code = MISSING if kind == "dropped" else "native_chunk_schema_drift"
+    assert native == forced == (code, 2, 2)
     assert issubclass(NativeChunkSchemaDriftError, ExecutionError)
 
 
