@@ -42,6 +42,7 @@ ACCEPTS: dict[str, tuple[dict[str, Any], tuple[str, ...]]] = {
     "grouped_series": ({"group_by": "g", "order_by": "o"}, NUMBERS),
     "derived_aggregate": ({"op": "sum", "column": "c"}, NUMBERS),
     "windowed_date": ({"anchor": "d", "max_days": 3}, ("date",)),
+    "lookup": ({"codeset": "hcpcs"}, ALL),
 }
 # Types that cannot carry the key at all: it is an unknown option there.
 NOT_ACCEPTED: dict[str, dict[str, Any]] = {

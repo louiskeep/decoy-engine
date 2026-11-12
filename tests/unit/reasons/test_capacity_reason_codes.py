@@ -18,6 +18,7 @@ EXPECTED = {
     "out_of_core_reorder_budget_too_small",
     "pool_exceeds_cache_budget",
     "isolated_worker_out_of_memory",
+    "process_out_of_memory",
 }
 
 

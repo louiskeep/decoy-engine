@@ -98,6 +98,7 @@ _CODED: tuple[tuple[str, str, str], ...] = (
 )
 # Engine exceptions that carry no code but have one fixed meaning: (module, class, reason).
 _FIXED: tuple[tuple[str, str, ReasonCode], ...] = (
+    ("builtins", "MemoryError", reasons.decoy.PROCESS_OUT_OF_MEMORY),
     ("decoy_engine.errors", "EmptyParentPoolError", reasons.config.FK_EMPTY_PARENT_POOL),
     ("decoy_engine.errors", "UnknownFKColumnError", reasons.config.FK_UNKNOWN_COLUMN),
     ("decoy_engine.errors", "ConfigError", reasons.config.UNTAGGED),

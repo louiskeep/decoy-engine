@@ -6,5 +6,7 @@ when every output orphan was already in the source or the key carries only warni
 `error` only when the key could not be counted. One introduced orphan now fails at any table size.
 Composite keys fill the new `parent_columns` and `child_columns` tuples, and `source_orphan_count`
 is null when the source side was not counted. `run_post_mask` takes an optional `keys=`. A key
-result's `source` is now `None` whenever its baseline was not counted. The report tag stays
-`post-scan-integrity/v2`.
+result's `source` is now `None` whenever its baseline was not counted. A float key column whose
+values are all whole numbers, such as a nullable integer self-reference, is checked as an integer
+key, so `decoy report integrity` still fails on an orphan the run introduced there. The report tag
+stays `post-scan-integrity/v2`.
