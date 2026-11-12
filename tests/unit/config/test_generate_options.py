@@ -617,7 +617,8 @@ def test_the_registered_inputs_are_exactly_these() -> None:
     assert registered == {
         "statistical.condition_on": ("column", None, "inline"),
         "derived.expression": ("expression", None, "inline"),
-        "derived_aggregate.column": ("column", None, "inline"),
+        "derived_aggregate.column": ("column_in_named_table", "from_table", "post_fill"),
+        "derived_aggregate.via": ("column_in_named_table", "from_table", "post_fill"),
         "grouped_series.group_by": ("column", None, "inline"),
         "grouped_series.order_by": ("column", None, "inline"),
         "windowed_date.anchor": ("column_via_reference", "anchor_via", "inline"),
@@ -725,6 +726,46 @@ def test_an_input_in_a_named_table_resolves_to_that_table(monkeypatch: pytest.Mo
     # Without its companion key the option keeps the same-table, earlier, inline rule.
     assert _edges(_kids(), {**column, "from": None}) == [("column", "t", "amount", True, "inline")]
     assert _edges(_kids(), {**column, "from": 5}) == []
+
+
+def test_a_per_parent_aggregate_reads_its_child_table_after_it_is_filled() -> None:
+    total = {"name": "total", "type": "derived_aggregate", "op": "sum", "column": "amount"}
+    per_parent = {**total, "from_table": "lines", "via": "oid"}
+    assert _edges(_kids(), per_parent) == [
+        ("column", "lines", "amount", False, "post_fill"),
+        ("via", "lines", "oid", False, "post_fill"),
+    ]
+    # A same-named column of the aggregate's own table changes nothing.
+    amount = {"name": "amount", "type": "sequence", "start": 1}
+    assert _edges(_kids(amount), per_parent)[0] == ("column", "lines", "amount", False, "post_fill")
+    # Without `from_table` the aggregate reads an earlier column of its own table, as before.
+    assert _edges(_kids(), total) == [("column", "t", "amount", True, "inline")]
+
+
+def _per_parent_config(**options: Any) -> dict[str, Any]:
+    """`p` holds the aggregate over `t`, whose `pid` references `p.id`."""
+    config = _config(
+        {"name": "pid", "type": "reference", "reference_table": "p", "reference_column": "id"},
+        {"name": "amount", "type": "categorical", "categories": [1, 2]},
+    )
+    total = {"name": "total", "type": "derived_aggregate", "op": "sum", "column": "amount"}
+    config["tables"][1]["generate_columns"].append({**total, **options})
+    return config
+
+
+def test_from_table_and_via_are_derived_aggregate_options() -> None:
+    PipelineConfig.model_validate(_per_parent_config(from_table="t", via="pid"))
+    for key, value in (("from_table", 7), ("via", ["pid"])):
+        options = {"from_table": "t", "via": "pid", key: value}
+        with pytest.raises(ValidationError) as info:
+            PipelineConfig.model_validate(_per_parent_config(**options))
+        errs = info.value.errors(include_url=False)
+        assert [(e["type"], tuple(e["loc"])) for e in errs] == [
+            ("generate_option_type", ("tables", 1, "generate_columns", 1, key))
+        ]
+    for key in ("from_table", "via"):
+        errs = _errors(_col("sequence", **{key: "t"}))
+        assert [_spot(e) for e in errs] == [("generate_option_unknown", (key,))]
 
 
 def test_a_column_with_no_registered_input_or_an_unknown_type_has_no_edges() -> None:

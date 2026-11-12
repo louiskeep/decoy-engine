@@ -473,3 +473,47 @@ class TestDerivedAggregateMetadata:
         from decoy_engine.execution._distribution_behavior import distribution_behavior_for
 
         assert distribution_behavior_for("derived_aggregate") == "coarsens"
+
+
+class TestAggregatePlanCheckKeepsOnlyItsOwnRules:
+    """`check_derived_aggregate_refs` keeps the op rule. Where a generate column's input lives is
+    the generate-input check's rule (`plan/checks/_generate_columns.py`): with `from_table` it
+    is a column of the child table, which this table does not have."""
+
+    @staticmethod
+    def _config(**total: object) -> dict:
+        column = {"name": "total", "type": "derived_aggregate", "op": "sum", **total}
+        masked = {
+            "name": "m",
+            "strategy": "derived_aggregate",
+            "provider_config": {"op": "sum", "column": "x"},
+        }
+        return {
+            "tables": [
+                {"name": "t", "columns": [{"name": "x"}, masked], "generate_columns": [column]}
+            ]
+        }
+
+    def test_a_generate_column_input_is_not_this_checks_rule(self) -> None:
+        from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
+
+        check_derived_aggregate_refs(self._config(column="amount", from_table="lines", via="o"))
+        check_derived_aggregate_refs(self._config(column="ghost"))
+
+    def test_a_generate_column_keeps_its_op_rule(self) -> None:
+        from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
+
+        with pytest.raises(PlanCompileError) as exc:
+            check_derived_aggregate_refs(self._config(op="product", column="amount"))
+        assert exc.value.code == "derived_aggregate_op_invalid"
+        assert exc.value.path == "tables.t.generate_columns.total.op"
+
+    def test_a_masked_column_keeps_its_missing_ref_refusal(self) -> None:
+        from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
+
+        config = self._config(column="amount")
+        config["tables"][0]["columns"][1]["provider_config"]["column"] = "ghost"
+        with pytest.raises(PlanCompileError) as exc:
+            check_derived_aggregate_refs(config)
+        assert exc.value.code == "derived_aggregate_missing_column_ref"
+        assert exc.value.path == "tables.t.columns.m.provider_config.column"

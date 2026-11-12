@@ -353,3 +353,40 @@ def test_numeric_typing_takes_every_reader_from_the_one_resolver(
         ("visits", "born"),
         ("visits", "visit"),
     }
+
+
+# ---- a per-parent aggregate is a reader of its child's column ----------------------------------
+
+
+def _totalled(parent_amount: dict[str, Any], child_amount: dict[str, Any]) -> dict[str, Any]:
+    total = {"name": "total", "type": "derived_aggregate", "op": "sum", "column": "amount"}
+    total.update(from_table="lines", via="oid")
+    lines = [
+        {"name": "oid", "type": "reference", "reference_table": "orders", "reference_column": "id"},
+        child_amount,
+    ]
+    return config([table("orders", 4, [SEQ, parent_amount, total]), table("lines", 8, lines)])
+
+
+LINE_AMOUNT = {"name": "amount", "type": "categorical", "categories": [3, 4]}
+
+
+def test_a_per_parent_aggregate_is_a_reader_of_the_child_column_only() -> None:
+    plan = numeric_plan(
+        _totalled(NUMERIC_BORN | {"name": "amount"}, NUMERIC_BORN | {"name": "amount"})
+    )
+    assert ("lines", "amount") not in plan, "the aggregate reads the child column"
+    assert plan[("orders", "amount")] == pa.int64(), "nothing reads the parent's own column"
+
+
+def test_at12_the_unrelated_parent_amount_keeps_its_numeric_arrow_type() -> None:
+    out = run_generate_tables(_totalled(NUMERIC_BORN | {"name": "amount"}, LINE_AMOUNT))
+    assert out["orders"].schema.field("amount").type == pa.int64()
+    assert out["orders"]["amount"].to_pylist() == [100, 101, 102, 103]
+    assert out["orders"].schema.field("id").type == pa.int64()
+    assert out["lines"].schema.field("oid").type == pa.int64()
+    totals = dict.fromkeys(out["orders"]["id"].to_pylist(), 0)
+    lines = zip(out["lines"]["oid"].to_pylist(), out["lines"]["amount"].to_pylist(), strict=True)
+    for oid, amount in lines:
+        totals[oid] += amount
+    assert out["orders"]["total"].to_pylist() == list(totals.values())

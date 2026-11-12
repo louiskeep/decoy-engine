@@ -53,6 +53,7 @@ from tests.unit.generation.relational._support import (
     digest,
     family,
     is_safe,
+    per_parent,
     plan_of,
     relationship,
     run_route,
@@ -1031,3 +1032,102 @@ def test_at1_an_anchored_date_beside_a_family_leaves_the_familys_bytes_alone(
     out = run_route("resident", config, tmp_path)
     assert digest(out["kids"]) == EXPECTED_DIGESTS["resident"]["unbounded_random"]
     assert out["pets"].column("visit").null_count == 0
+
+
+# ---- per-parent aggregates: routes, pinned twins, registry and untouched neighbors -------------
+
+
+def _line_totals(out: dict[str, pa.Table]) -> list[Any]:
+    """The sum of `lines.amount` per order, childless orders 0, from the generated tables."""
+    sums = dict.fromkeys(out["orders"].column("id").to_pylist(), 0)
+    lines = zip(out["lines"]["oid"].to_pylist(), out["lines"]["amount"].to_pylist(), strict=True)
+    for oid, amount in lines:
+        if oid is not None and amount is not None:
+            sums[oid] += amount
+    return list(sums.values())
+
+
+def test_at12_streaming_admission_declines_the_aggregate_and_the_run_stays_resident(
+    tmp_path: Path,
+) -> None:
+    config = per_parent()
+    verdict = classify_plan(_prepared(config))
+    assert not verdict.eligible
+    assert ("orders", "total") in {(c.table, c.column) for c in verdict.declines}
+    out = run_route("resident", config, tmp_path)
+    assert out["orders"].column("total").to_pylist() == _line_totals(out)
+
+
+def test_at10_pinned_compile_refuses_a_per_parent_aggregate() -> None:
+    with pytest.raises(PinnedModeError) as exc:
+        compile_pinned_plan(copy.deepcopy(per_parent()), REF)
+    assert exc.value.code == reasons.plan.PINNED_RELATIONAL_OPTION_UNSUPPORTED
+    assert exc.value.code.namespace == "plan"
+    assert is_safe(exc.value)
+    assert str(exc.value) == (
+        f"[{PINNED_UNSUPPORTED}] {_summary('plan', PINNED_UNSUPPORTED)}"
+        " Table 'orders', column 'total'."
+    )
+
+
+def _hand_built_aggregate_plan() -> tuple[PinnedPlan, PinnedPlan]:
+    """A compiled scalar-aggregate plan, and the same plan with `from_table` and `via` after."""
+    config = per_parent()
+    total = config["tables"][0]["generate_columns"][2]
+    del total["from_table"], total["via"]
+    plan = compile_pinned_plan(copy.deepcopy(config), REF)
+    stored = plan.to_dict()
+    table_ = next(t for t in stored["tables"] if t["name"] == "orders")
+    entry = next(c for c in table_["columns"] if c["name"] == "total")
+    column = json.loads(entry["config_json"])
+    column.update(from_table="lines", via="oid")
+    entry["config_json"] = json.dumps(column, sort_keys=True)
+    return plan, PinnedPlan.from_dict(stored)
+
+
+def test_at10_the_hand_built_aggregate_plan_is_otherwise_executable() -> None:
+    plan, _ = _hand_built_aggregate_plan()
+    out = execute_pinned(plan, 7)
+    assert out["orders"].column("total").null_count == 0
+
+
+def test_at10_pinned_execute_refuses_a_per_parent_aggregate_before_any_draw(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decoy_engine.generation import synthesize
+
+    def no_draw(*args: Any, **kw: Any) -> list[Any]:
+        raise AssertionError("a column was drawn before the refusal")
+
+    monkeypatch.setattr(synthesize, "_generate_column", no_draw)
+    _, tampered = _hand_built_aggregate_plan()
+    with pytest.raises(GenerationError) as exc:
+        execute_pinned(tampered, 7)
+    assert exc.value.code == reasons.runtime.PINNED_RELATIONAL_OPTION_UNSUPPORTED
+    assert exc.value.code.namespace == "runtime"
+    assert is_safe(exc.value)
+    assert str(exc.value) == (
+        f"[{PINNED_UNSUPPORTED}] {_summary('runtime', PINNED_UNSUPPORTED)}"
+        " Table 'orders', column 'total'."
+    )
+
+
+def test_at14_the_read_before_fill_code_is_registered_unreleased_in_the_config_catalog() -> None:
+    spec = reasons.get("config", "generate_aggregate_read_before_fill")
+    assert spec.since == reasons.UNRELEASED
+    assert spec.owner == "PipelineValidationError" and spec.kind is reasons.Kind.FAILURE
+    assert {rule.phase for rule in spec.rules} == {reasons.Phase.CONFIGURATION}
+    assert not any(ch.isdigit() for ch in spec.summary)
+    assert str(reasons.config.GENERATE_AGGREGATE_READ_BEFORE_FILL) == spec.code
+
+
+def test_at1_a_per_parent_aggregate_beside_a_family_leaves_the_familys_bytes_alone(
+    tmp_path: Path,
+) -> None:
+    config = family(5, 40)
+    extra = per_parent()
+    config["tables"] += extra["tables"]
+    config["targets"].update(extra["targets"])
+    out = run_route("resident", config, tmp_path)
+    assert digest(out["kids"]) == EXPECTED_DIGESTS["resident"]["unbounded_random"]
+    assert out["orders"].column("total").to_pylist() == _line_totals(out)

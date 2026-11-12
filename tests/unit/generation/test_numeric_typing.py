@@ -245,3 +245,40 @@ def test_the_lookup_key_stays_numeric_on_both_sides() -> None:
     out = run_generate_tables(config(_anchored_tables(DATE_TEXT)))
     assert out["p"].schema.field("id").type == pa.int64()
     assert out["kids"].schema.field("pid").type == pa.int64()
+
+
+# ---- a per-parent aggregate reads its child's column, never a same-named parent column ---------
+
+
+def _order_tables(parent_amount: dict, child_amount: dict) -> list[dict]:
+    total = {
+        "name": "total",
+        "type": "derived_aggregate",
+        "op": "sum",
+        "column": "amount",
+        "from_table": "lines",
+        "via": "oid",
+    }
+    lines = [
+        _seq("lid"),
+        {"name": "oid", "type": "reference", "reference_table": "orders", "reference_column": "id"},
+        child_amount,
+    ]
+    return [table("orders", 3, [_seq("id"), parent_amount, total]), table("lines", 6, lines)]
+
+
+def test_a_per_parent_aggregate_reads_the_child_column_and_not_the_parents() -> None:
+    from decoy_engine.generation._numeric_typing import numeric_plan
+
+    plan = numeric_plan(config(_order_tables(_seq("amount", start=100), _seq("amount"))))
+    assert plan[("orders", "amount")] == pa.int64(), "nothing reads the parent's own column"
+    assert ("lines", "amount") not in plan, "the aggregate reads the child column as text"
+
+
+def test_the_aggregate_lookup_key_stays_numeric_on_both_sides() -> None:
+    from decoy_engine.generation._numeric_typing import numeric_plan
+
+    amount = {"name": "amount", "type": "categorical", "categories": [2, 3]}
+    plan = numeric_plan(config(_order_tables(_seq("amount", start=100), amount)))
+    assert plan[("orders", "id")] == pa.int64()
+    assert plan[("lines", "oid")] == pa.int64()
