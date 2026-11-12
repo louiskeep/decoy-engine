@@ -1,0 +1,36 @@
+{
+ "sentry_id": "post-scan-route-exempt",
+ "created_in": "SCAN-ML M5",
+ "entries": {
+  "decoy_engine.execution._chunked.check_chunked_compatibility": {
+   "reason": "admission check, masks nothing"
+  },
+  "decoy_engine.execution._governor.run_job_with_governor": {
+   "reason": "runs run_pipeline"
+  },
+  "decoy_engine.execution._isolated_run.run_pipeline_isolated": {
+   "reason": "runs run_pipeline in a child"
+  },
+  "decoy_engine.execution._pipeline.run_pipeline": {
+   "reason": "runs the post-scan on its resident routes and keeps integrity runs off the others"
+  },
+  "decoy_engine.execution._pipeline_context.classify_table_kinds": {
+   "reason": "reads config names only"
+  },
+  "decoy_engine.execution._planner.classify_job": {
+   "reason": "route classification, masks nothing"
+  },
+  "decoy_engine.execution._probe.probe_peak_bytes": {
+   "reason": "memory probe, publishes no output"
+  },
+  "decoy_engine.execution._transforms_table.apply_table_transforms": {
+   "reason": "transforms, not masking"
+  },
+  "decoy_engine.execution.native._dispatch.plan_native_route": {
+   "reason": "routing decision only"
+  },
+  "decoy_engine.execution.out_of_core._spill_estimate.predict_ooc_disk_bytes": {
+   "reason": "disk estimate, masks nothing"
+  }
+ }
+}

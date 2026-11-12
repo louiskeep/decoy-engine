@@ -126,6 +126,7 @@ def execution_telemetry(
 
 def run_sequential_route(
     *,
+    config: Mapping[str, Any],
     plan: Plan,
     loader: Callable[[str], pa.Table],
     registry: ProviderRegistry,
@@ -173,6 +174,7 @@ def run_sequential_route(
         PandasExecutionAdapter(fpe_chunk_count=fpe_chunk_count),
         plan,
         loader,
+        config=config,
         registry=registry,
         relationship_graph=graph,
         namespace_registry=namespace_registry,
@@ -227,7 +229,7 @@ def run_out_of_core_route(
     key_provider: KeyProvider | None = None,
     out_of_core_reorder_threshold_rows: int | None = None,
     vault_writer: Any = None,
-    config: dict[str, Any] | None = None,
+    config: Mapping[str, Any],
     native_threads: int = 1,
     cast_run: Any = None,
 ) -> ExecutionResult:

@@ -201,6 +201,7 @@ def test_run_sequential() -> None:
         PandasExecutionAdapter().run_sequential(
             s.chain_plan(s.hash_seeds(["c"])),
             _raise,
+            config={},
             registry=s.REGISTRY,
             relationship_graph=s.chain_graph(),
             namespace_registry=s.NAMESPACES,

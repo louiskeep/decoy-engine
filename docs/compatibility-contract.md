@@ -697,6 +697,19 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   an installed model only when it is an installed distribution that ships a spaCy `meta.json`; a
   plain importable module (`os`, `json`) is refused with `provider.ner_model_not_installed` and is
   never imported. `ModelPackLoadError` gains a `cause` field (`disabled`, `import` or `pack`).
+  SCAN-ML M5 (2026-11) adds `PostScanRouteError` and one coordinated pre-GA break. The entries
+  that mask without running the post-scan, `run_sequential`, `run_fk_out_of_core`,
+  `run_mask_pipeline_chunked`, `run_mask_chunked` and `run_native_or_oracle_chunked`, now refuse a
+  config whose `post_scan.integrity` is true and whose `post_scan.detectors` holds a model detector
+  or whose `post_scan.ner_findings` is `fail`, before any source is read. The error carries
+  `route.post_scan_models_unsupported` (registry unreleased); `str(error)` and `message` are the fixed
+  registry summary, `route` and `setting` name the route and the config field, and the exception
+  chain is empty. Regex-only `integrity: true` behaves as before on these routes. `run_sequential`
+  and `run_fk_out_of_core` take a required keyword-only `config` (the raw pipeline config), as do
+  the wrappers that forward to them (`PandasExecutionAdapter.run_sequential`, the physical
+  `SequentialAdapter.run` and `OutOfCoreAdapter.run`); a caller that passed none must now pass
+  it. `run_pipeline` is unchanged: its resident auto-chunk lane calls guard-free cores and runs the
+  post-scan itself.
 - **CLI:** verb names, flag names, and the exit-code contract (0 ok, 1
   validation/usage, 2 deprecated-shim, 3 runtime).
 - **Config:** the `pipeline.yaml` schema. An old config must keep validating and

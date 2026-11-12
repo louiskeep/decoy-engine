@@ -165,13 +165,13 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import reasons
-from decoy_engine.config._subset_run import refuse_unapplied_subset
 from decoy_engine.declared_casting._eligibility import declared_route_guard
-from decoy_engine.execution._guards import prepare_declared_execution_sources
-from decoy_engine.execution.chunked import observe_chunked
+from decoy_engine.execution._guards import (  # re-exported: the core's declaration-gate seam
+    prepare_declared_execution_sources as prepare_declared_execution_sources,
+)
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._errors import PlanCompileError
-from decoy_engine.profile import DeclarationRequest
+from decoy_engine.verification.postmask._route_guard import refuse_unchecked_route
 
 from . import _chunked_bucket_perturb as bucket_perturb_gate
 from . import _chunked_categorical as categorical_gate
@@ -433,42 +433,27 @@ def run_mask_pipeline_chunked(
     value-keyed strategy. See `_chunked_dgrn.py` for the domain contract.
 
     Validation and plan compile happen EAGERLY at call time; only the per-chunk masking is lazy.
+    This route runs no post-scan, so a model post-scan config is refused first
+    (`PostScanRouteError`).
     """
+    # Lazy: `_chunked_oracle` imports this module at load time.
     from . import _chunked_oracle
 
-    refuse_unapplied_subset(config)
-    declared = prepare_declared_execution_sources(
-        DeclarationRequest.for_chunks(config, table, source_schema),
-        file_access=file_access,
-        registry=registry,
-    )
-    state = _chunked_oracle._oracle_preflight(
+    refuse_unchecked_route(config, "chunked")
+    return _chunked_oracle._mask_pipeline_chunked(
         config,
         chunks,
         table=table,
         engine_version=engine_version,
-        declared=declared,
+        source_schema=source_schema,
         registry=registry,
         adapter=adapter,
         vault_writer=vault_writer,
+        chunk_result_sink=chunk_result_sink,
         key_provider=key_provider,
         base_row_offset=base_row_offset,
-        pool_cache=None,
+        file_access=file_access,
     )
-    if state.first is None:
-        # Admission cleared (or the plan is unkeyed); there is genuinely nothing to mask.
-        state.close_secret()
-        return observe_chunked(table, iter(()))
-    stream = _chunked_oracle._oracle_masked(
-        state,
-        config=config,
-        table=table,
-        vault_writer=vault_writer,
-        chunk_result_sink=chunk_result_sink,
-        base_row_offset=base_row_offset,
-        on_chunk=None,
-    )
-    return observe_chunked(table, _chunked_oracle.release_when_done(stream, state))
 
 
 def _warm_faker_pools(

@@ -288,6 +288,7 @@ class TestOutOfCoreRoute:
             run_fk_out_of_core(
                 _fk_plan(),
                 _fk_sources(),
+                config={},
                 registry=_REG,
                 relationship_graph=_fk_graph(),
                 unconfigured_column_policy="error",
@@ -299,6 +300,7 @@ class TestOutOfCoreRoute:
         result = run_fk_out_of_core(
             _fk_plan(),
             _fk_sources(),
+            config={},
             registry=_REG,
             relationship_graph=_fk_graph(),
             unconfigured_column_policy="warn",
@@ -322,6 +324,7 @@ class TestSequentialRoute:
                 PandasExecutionAdapter(),
                 _fk_plan(),
                 self._loader(),
+                config={},
                 registry=_REG,
                 relationship_graph=_fk_graph(),
                 namespace_registry=_NS_REG,
@@ -335,6 +338,7 @@ class TestSequentialRoute:
             PandasExecutionAdapter(),
             _fk_plan(),
             self._loader(),
+            config={},
             registry=_REG,
             relationship_graph=_fk_graph(),
             namespace_registry=_NS_REG,

@@ -272,7 +272,12 @@ def _small_job() -> tuple[Any, Any, dict[str, pa.Table]]:
 def _run_small(**kwargs: Any) -> None:
     plan, graph, sources = _small_job()
     run_fk_out_of_core(
-        plan, sources, registry=get_default_registry(), relationship_graph=graph, **kwargs
+        plan,
+        sources,
+        config={},
+        registry=get_default_registry(),
+        relationship_graph=graph,
+        **kwargs,
     )
 
 

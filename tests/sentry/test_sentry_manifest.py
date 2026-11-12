@@ -57,6 +57,7 @@ SENTRIES = (
     "tests/sentry/test_pandas_eval_sites.py",
     "tests/sentry/test_perf_claim_provenance.py",
     "tests/sentry/test_phase_containment.py",
+    "tests/sentry/test_post_scan_route_guard.py",
     "tests/sentry/test_physical_seam_disconnection.py",
     "tests/sentry/test_private_files.py",
     "tests/sentry/test_proof_manifest.py",
