@@ -1,4 +1,4 @@
-"""LIB evidence binding: the optional ``path_base`` / ``project_manifest`` pair a project run writes."""
+"""LIB evidence binding: the optional ``path_base`` / ``project_manifest`` pair of a project run."""
 
 from __future__ import annotations
 
