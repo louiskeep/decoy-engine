@@ -76,6 +76,7 @@ SENTRIES = (
     "tests/sentry/test_secret_provider_semgrep.py",
     "tests/sentry/test_sentry_manifest.py",
     "tests/sentry/test_source_hygiene.py",
+    "tests/sentry/test_support_no_network.py",
     "tests/sentry/test_unified_backend_map.py",
     "tests/sentry/test_validate_no_mutation.py",
     "tests/sentry/test_wave_b_no_registry_version_literal.py",

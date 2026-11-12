@@ -50,7 +50,7 @@ def _parent() -> pa.Table:
 
 
 def _child(*, dup: str | None) -> pa.Table:
-    """`cid, parent_id, qty, <dup or other>, q2`; `dup` names the repeated field."""
+    """`cid, parent_id, qty, other, q2`, then `dup` (the repeated field) when given."""
     n = 12
     cols = {
         "cid": pa.array([f"c{i}" for i in range(n)]),
@@ -59,15 +59,17 @@ def _child(*, dup: str | None) -> pa.Table:
     }
     arrays = list(cols.values())
     names = list(cols)
-    second = (
-        pa.array([f"p{i % 6}" for i in range(n)])
-        if dup == "parent_id"
-        else pa.array([float(-i) for i in range(n)])
-    )
-    arrays.append(second)
-    names.append(dup or "other")
+    arrays.append(pa.array([float(-i) for i in range(n)]))
+    names.append("other")
     arrays.append(pa.array([0.0] * n))
     names.append("q2")
+    if dup:
+        arrays.append(
+            pa.array([f"p{i % 6}" for i in range(n)])
+            if dup == "parent_id"
+            else pa.array([float(-i) for i in range(n)])
+        )
+        names.append(dup)
     return pa.Table.from_arrays(arrays, names=names)
 
 
@@ -487,6 +489,10 @@ def _isolated(
         descriptor, runtime = (_child(dup=dup) if dup else clean), clean
     else:
         descriptor, runtime = clean, (child if child is not None else _child(dup=dup))
+        if child is not None:  # the descriptor must name `iv` too; only names are read
+            descriptor = child.set_column(
+                child.schema.get_field_index("iv"), "iv", pa.array(["x"] * child.num_rows)
+            )
     cfg = _config(tmp_path, cell.work, descriptor)
     tables = {"parent": _parent(), "child": runtime}
     declare_rest(cfg, tables)
