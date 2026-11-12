@@ -251,7 +251,8 @@ untouched, and the four new codes are `since=UNRELEASED`.
 
 ## Line counts
 
-`generation/synthesize.py` 597 (591 at the slice start; goal 600), `generation/_streamed.py`
+`generation/synthesize.py` 597 on `e27b9485` and 595 on the final head `6c1a8691` (591 at the
+slice start; goal 600; see "Forward merges"), `generation/_streamed.py`
 598 (unchanged), `config/_generate_options.py` 523, `config/_pipeline.py` 473,
 `reasons/runtime/_part2.py` 479, `generation/_pinned_compile.py` 389,
 `generation/_admission.py` 312, `execution/_probe_scale.py` 273,
@@ -363,6 +364,79 @@ Every test file the slice adds or changes is inside those paths. The `sentry` st
 `tests/sentry` (`defects/test_generate_option_reads.py`, the pool choke-point sentry,
 module-size, fan-out, table-kind, the seam sentry and the reason registry, pin, fixture and
 policy sentries); the `layers` step runs `tests/sentry/layout/test_import_layers.py`.
+
+## Forward merges
+
+Each total in this record belongs to the head named beside it. The latest section below
+supersedes the sections above it for the final head.
+
+### 2026-11-12, first: `e27b9485`
+
+`origin/feat/gen-rel-e1` `68034ff0` (holding `origin/main` `353d98bf`) merged as `e27b9485`.
+The "Mutations" and "Gates" sections above describe that head: 60 of 60 mutations red; sentry
+5248 passed, tests 6679 passed, layers 15, licenses 63, no failure. Pushed as `a63b6577`.
+
+### 2026-11-12, second: `6c1a8691` (final source head)
+
+`origin/feat/gen-rel-e1` `9b1b78bf` (holding `origin/main` `c0961a17`, which brought GEN-TYPES
+E3 `lookup` columns) merged as `6c1a8691`. Main is not merged into this branch directly.
+
+Conflicts, all resolved as unions:
+
+- `docs/reasons.md`: every paragraph kept (this slice's beside GEN-TYPES E3's).
+- `reasons/plan/_part3.py`: the `lookup` codes and `pinned_relational_option_unsupported` are
+  both kept; the relational code sits in the one `PinnedModeError` section, after
+  `pinned_lookup_unsupported`.
+- `generation/synthesize.py`: both import sets kept. The union was 605 lines, over the 600
+  goal, and no census entry may be added. The reference-parent rule of `generation_order` (the
+  loop that collects each table's parents, skips the self-edge and raises the typed error for
+  a parent that is not a generate table) moved, unchanged, to
+  `generation/relational/_self_reference.py` as `reference_parents`; `generation_order` calls
+  it. `synthesize.py` is 595 lines, `_self_reference.py` 107. The self-reference dispatch, the
+  `lookup` dispatch and slice 1's `reference_draw_extras` call are otherwise as each side
+  wrote them.
+
+Auto-merged files checked for interaction: `_pinned_compile.py` refuses a `lookup` column by
+type before the relational shape test, and a `lookup` column is not a `reference`, so the
+shape predicate, the probe clamp and the streaming decline are unaffected;
+`test_generate_option_reads.py` lists both `plan/checks/_lookup_tables.py` and
+`generation/relational/_self_reference.py`.
+
+Mutations on `6c1a8691` (Python 3.11.18): 62 of 62 red. They are the 60 above, with M2c and
+M2d applied to the moved `reference_parents`, plus two for the move. 61 ran in a detached
+worktree importing its own `src`, removed afterwards. H1 (the helper drops the typed error for
+a non-generate parent) is red there in
+`test_generation_order_raises_for_a_reference_to_a_non_generate_table` and
+`test_every_entry_raises_the_same_error_for_a_forged_plan`. H2 (the helper loses
+first-reference order) is not visible in the worktree: its only witness,
+`test_order_and_result_keys_are_equal_across_seeds_and_routes`, runs a child process that
+imports the installed checkout, not the worktree's `src`, so the worktree run stayed green. H2
+was therefore applied once in the checkout itself, shown red in that test
+(`['p1', 'p2'] == ['p2', 'p1']`), and reverted; the tree was clean before and after.
+
+Gates on `6c1a8691` (the same command and T1 paths, Python 3.10.20, a rebuilt temporary venv):
+
+| Step | Branch (`6c1a8691`) |
+| --- | --- |
+| ruff | pass |
+| format | pass |
+| mypy | pass |
+| sentry | 5286 passed, 0 failed, 2 skipped |
+| layers | 15 passed, 0 failed, 0 skipped |
+| licenses | 63 passed, 0 failed, 0 skipped |
+| tests | 6769 passed, 0 failed, 60 skipped (6759 in the parallel pass, 10 in the serial pass) |
+
+Failure sets: branch 0, main 0, branch-only 0; `origin/main` was not rerun. No digest, golden
+or snapshot moved.
+
+Checks on `6c1a8691`, by exit code, with `origin/main` at `c0961a17`:
+`registry_renumber.py --check --main origin/main` exit 0 (`registry consistent`);
+`ratchet_check.py --base origin/main` exit 0; `check_fragment.py --base origin/main` exit 0;
+`reason_release_pin.py --check` exit 0 (`reason release pin current`);
+`gen_capability_matrix.py` no change.
+
+Not run on this head: the full suite, the gate steps under Python 3.11, a rerun of
+`origin/main`.
 
 ## Not run
 
