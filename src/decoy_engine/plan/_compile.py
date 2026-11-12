@@ -109,7 +109,9 @@ from decoy_engine.profile._types import Profile
 # payload. A plan_version 1 YAML predates `generation` entirely and
 # deserializes with `generation=None` -- the correct pre-GA hard-delete
 # behavior (`generate_tables` raises the moment it's asked to generate).
-PLAN_VERSION = 3
+# GEN-TYPES E3: bumped 3 -> 4 for the pinned `generation.lookups` list (omitted when empty, so a
+# plan without lookups differs from its version-3 form only by the version line).
+PLAN_VERSION = 4
 
 
 @entry_point
@@ -443,6 +445,7 @@ def compile_plan(
         _snapshots.pinned,
         column_specs=_snapshots.column_specs,
         dp_verification=_snapshots.dp_verification,
+        lookups=_snapshots.lookups,
     )
 
     return Plan(

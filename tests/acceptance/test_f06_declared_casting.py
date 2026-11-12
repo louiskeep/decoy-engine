@@ -741,10 +741,10 @@ def test_b6_output_failure_counts_as_output_quarantine(tmp_path: Path) -> None:
 # -- B7 legacy compatibility ------------------------------------------------------------------
 
 
-def test_b7_plan_version_is_3_and_v2_plans_still_load() -> None:
+def test_b7_plan_version_is_4_and_v2_plans_still_load() -> None:
     from decoy_engine.plan._compile import PLAN_VERSION
 
-    assert PLAN_VERSION == 3
+    assert PLAN_VERSION == 4
 
 
 def test_b7_legacy_run_outputs_are_unchanged(tmp_path: Path) -> None:
@@ -773,7 +773,7 @@ def test_b7_legacy_plan_yaml_differs_only_by_the_documented_version_line(tmp_pat
     )
     plan = compile_plan(cfg, profile_source(cfg, seed=7), decoy_engine_version="t")
     text = plan_to_yaml(plan)
-    assert "plan_version: 3" in text
+    assert "plan_version: 4" in text
     assert "declared_casting" not in text  # an empty payload is omitted
 
 
@@ -857,5 +857,5 @@ def test_b7_legacy_config_and_plan_match_the_baseline_fixture(tmp_path: Path) ->
     )
     assert plan.pipeline_config_hash == fixture["pipeline_config_hash"]
     assert plan_to_yaml(plan) == fixture["plan_yaml_at_baseline"].replace(
-        "plan_version: 2", "plan_version: 3", 1
+        "plan_version: 2", "plan_version: 4", 1
     )

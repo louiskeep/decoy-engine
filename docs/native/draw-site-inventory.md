@@ -44,12 +44,12 @@ partitionable.
 
 ## Summary
 
-- 39 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
+- 40 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
   the out-of-core batched path, the delegation handlers, and the 9 identifier
   provider adapters).
-- 23 partitionable, 16 not.
+- 23 partitionable, 17 not.
 - Family breakdown: `source_keyed_hmac` 15, `numpy_pcg64` 9, `faker_seed_instance`
-  5, `python_mt19937` 6, `per_row_reseed` 2, `per_group_stream` 1,
+  5, `python_mt19937` 7, `per_row_reseed` 2, `per_group_stream` 1,
   `gen_derive_context` 1.
 - GP2 (2026-09-17) added `gen.faker_pool_build` / `gen.faker_pool_selection`: a
   generation-local pool bridge for a closed allowlist of scalar `faker_type`
@@ -326,7 +326,7 @@ before sampling. Build-side, not per output row. Mirrors: `_name_email.py:134`,
 
 ---
 
-## Family: python_mt19937 (6 sites)
+## Family: python_mt19937 (7 sites)
 
 Draws from a stdlib `random.Random`. All three advance one stream across the
 column (whole-column `choices(k=n)` or a per-row `choice`/`choices` loop on a
@@ -337,6 +337,12 @@ RNG mid-stream.
 `generation/synthesize.py:388`.
 `random.Random(GenDeriveContext.for_column(...).base_int("py")).choices(cats, weights=weights, k=n)`:
 one whole-column call. V1 mirror at `generators/columns.py:412`.
+
+### gen.lookup
+`generation/kinds/_lookup.py:254`. The `gen.categorical` call over a pinned lookup list:
+`random.Random(GenDeriveContext.for_column(...).base_int("py")).choices(values, weights=weights, k=n)`,
+one whole-column call. The seed fingerprint holds the file's content digest from the plan, never its
+path. NOT partitionable.
 
 ### gen.reference
 `generation/_synthesize_derived.py:156`. `random.Random(col_seed)` then per row
@@ -580,8 +586,8 @@ The `unit_float_from_bits53(raw_u64)` primitive extracts the upper 53 bits of a
 FULL 64-bit value (`(raw_u64 >> 11) / 2**53`), matching NumPy's own `random()`
 construction and always `< 1.0` (the all-ones input maps to `(2**53 - 1) / 2**53`).
 
-Registry: exactly one provider per catalogued `draw_site_id` (39 sites; 23
-partitionable, 16 not). An import-time invariant fails if the registry drifts
+Registry: exactly one provider per catalogued `draw_site_id` (40 sites; 23
+partitionable, 17 not). An import-time invariant fails if the registry drifts
 from `DRAW_SITES`.
 
 | draw_site_id                      | family              | partitionable | provider_version |
@@ -606,6 +612,7 @@ from `DRAW_SITES`.
 | gen.statistical_per_row           | per_row_reseed      | yes           | CPython Mersenne Twister (no numpy; bit-stable inverse-CDF) |
 | gen.categorical                   | python_mt19937      | no            | seed_protocol_v7 (GenDeriveContext); CPython Mersenne Twister |
 | gen.reference                     | python_mt19937      | no            | seed_protocol_v7 (GenDeriveContext); CPython Mersenne Twister |
+| gen.lookup                        | python_mt19937      | no            | seed_protocol_v7 (GenDeriveContext); CPython Mersenne Twister |
 | gen.categorical_unique            | python_mt19937      | no            | seed_protocol_v7 (GenDeriveContext); CPython Mersenne Twister |
 | gen.reference_unique              | python_mt19937      | no            | seed_protocol_v7 (GenDeriveContext); CPython Mersenne Twister |
 | gen.unique_pair                   | python_mt19937      | no            | seed_protocol_v7 (GenDeriveContext); CPython Mersenne Twister |

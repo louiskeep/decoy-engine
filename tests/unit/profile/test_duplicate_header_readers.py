@@ -113,7 +113,7 @@ def _stub_cloud(monkeypatch: pytest.MonkeyPatch, data: bytes, kind: str) -> None
     from decoy_engine.profile import _cloud_readers
 
     if kind == "s3":
-        monkeypatch.setattr(_cloud_readers, "_s3_client", lambda descriptor: _FakeS3(data))
+        monkeypatch.setattr(_cloud_readers._clients, "s3_client", lambda **_kw: _FakeS3(data))
         return
     storage = pytest.importorskip("google.cloud.storage")
     monkeypatch.setattr(storage, "Client", lambda *a, **k: _FakeGcsClient(data))
