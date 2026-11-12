@@ -299,8 +299,12 @@ class ScratchArena:
             return
         except (IsADirectoryError, PermissionError) as exc:
             failed = exc  # macOS refuses to unlink a directory with EPERM, Linux with EISDIR
-        found = _call(os.stat, component, dir_fd=self._fd.fd, follow_symlinks=False)
-        if not stat.S_ISDIR(found.st_mode):
+        directory = True
+        try:
+            _close(_open(component, self._fd.fd))  # opens a real directory, never a link to one
+        except OSError:
+            directory = False
+        if not directory:
             raise failed
         _rmdir(component, self._fd.fd)
 
