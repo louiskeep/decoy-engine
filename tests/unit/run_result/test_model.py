@@ -137,7 +137,11 @@ def _model_problems(model: type[BaseModel], path: str, seen: set[type]) -> list[
     for name, computed in model.model_computed_fields.items():
         problems += _annotation_problems(computed.return_type, (), f"{path}.{name}()", seen)
     decorators = model.__pydantic_decorators__
-    if decorators.field_serializers or decorators.model_serializers:
+    # The one allowed model serializer only drops an unset optional key; it adds no value.
+    custom = [
+        d for d in decorators.model_serializers.values() if d.cls_var_name != "_omit_when_none"
+    ]
+    if decorators.field_serializers or custom:
         problems.append(f"{path}: custom serializer")
     if model.model_config.get("json_encoders"):
         problems.append(f"{path}: json_encoders")

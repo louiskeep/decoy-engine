@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from typing import Annotated, Any, Final, Literal
+from typing import Annotated, Any, ClassVar, Final, Literal
 
 from annotated_types import Ge, Le, MaxLen
 from packaging.version import InvalidVersion
@@ -34,7 +34,9 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    SerializerFunctionWrapHandler,
     Strict,
+    model_serializer,
 )
 
 from decoy_engine._value_free import (
@@ -226,11 +228,17 @@ class _Base(BaseModel):
 
     model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
 
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
-        dumped = super().model_dump(**kwargs)
-        if dumped.get("sample", 0) is None:
-            del dumped["sample"]
-        return dumped
+    # Optional fields left off the wire while unset, so a record that never set one keeps its
+    # old bytes on every dump path (dict, JSON, nested).
+    _OMIT_WHEN_NONE: ClassVar[frozenset[str]] = frozenset()
+
+    @model_serializer(mode="wrap")
+    def _omit_when_none(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        for name in self._OMIT_WHEN_NONE:
+            if data.get(name, 0) is None:
+                del data[name]
+        return data
 
     def to_payload(self) -> dict[str, Any]:
         """The JSON dict written to ``--result`` and stored as the record payload."""
@@ -396,6 +404,8 @@ class RunResult(_Model):
     # Optional under /v1 (compatibility contract section 3.1): a record that never set it keeps
     # its old wire form, so the key is left out until a sample sets it.
     sample: SampleMarker | None = None
+
+    _OMIT_WHEN_NONE: ClassVar[frozenset[str]] = frozenset({"sample"})
 
 
 # --- read model, derived -----------------------------------------------------------------------
