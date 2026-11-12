@@ -104,6 +104,8 @@ def _safe_registered_code(code: str | None) -> str | None:
     return code if reasons.is_registered(code) else str(reasons.decoy.UNREGISTERED_REASON)
 
 
+safe_registered_code = _safe_registered_code
+
 # ---------------------------------------------------------------------------
 # Typed groups
 # ---------------------------------------------------------------------------
