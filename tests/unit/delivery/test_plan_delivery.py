@@ -11,11 +11,15 @@ from decoy_engine.config import PipelineConfig, PipelineConfigError
 from decoy_engine.delivery import plan_delivery
 from decoy_engine.reasons.decoy import (
     DELIVERY_DEPENDENT_DROPPED,
+    DELIVERY_POINTER_MOVED,
+    DELIVERY_ROLLED_BACK,
     DELIVERY_WITHHELD,
     PUBLICATION_FAILED,
 )
 
-FAIL: Any = "failed"  # any non-None value is a failure cause; the plan never reads its text
+# The plan accepts only failure-kind reason codes as a table's cause.
+FAIL = PUBLICATION_FAILED
+_NOT_A_FAILURE = "delivery outcome is not a failure reason code"
 
 
 def _config(
@@ -252,3 +256,20 @@ def test_at10_each_state_carries_its_code(mode: str | None) -> None:
 def test_at10b_an_all_ok_run_has_no_codes() -> None:
     d = plan_delivery(_config(["a", "b"]), {"a": None, "b": None})
     assert [t.code for t in d.tables.values()] == [None, None]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [DELIVERY_WITHHELD, DELIVERY_DEPENDENT_DROPPED, DELIVERY_ROLLED_BACK, "failed", object()],
+    ids=["withheld", "dependent_dropped", "warning", "string", "object"],
+)
+def test_at11_a_non_failure_outcome_is_refused_with_a_fixed_message(bad: Any) -> None:
+    with pytest.raises(PipelineConfigError) as err:
+        plan_delivery(_config(["a", "b"]), {"a": bad, "b": None})
+    assert str(err.value) == _NOT_A_FAILURE
+
+
+def test_at11b_a_real_failure_code_still_plans_as_failed() -> None:
+    d = plan_delivery(_config(["a"]), {"a": DELIVERY_POINTER_MOVED})
+    assert d.tables["a"].state == "failed"
+    assert d.tables["a"].code is DELIVERY_POINTER_MOVED
