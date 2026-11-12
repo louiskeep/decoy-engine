@@ -26,6 +26,7 @@ import pyarrow as pa
 
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation._streamed import GenerationResult, run_generation
+from decoy_engine.generation.kinds import LookupList
 from decoy_engine.generation.statistical import (
     FanoutSpec,
     fanout_spec_from_snapshot,
@@ -33,6 +34,7 @@ from decoy_engine.generation.statistical import (
 )
 from decoy_engine.plan._generation import column_pins_snapshot
 from decoy_engine.plan._types import unfreeze_json
+from decoy_engine.plan.checks import ReadLookup, checked_lookup, lookup_columns
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -126,6 +128,7 @@ def _prepare_generation(generation: GenerationPlan | None, caller: str) -> _Prep
     # reads only these already-pinned bytes.
     snapshot_artifacts = [json.loads(base64.b64decode(s.payload_b64)) for s in generation.snapshots]
     reference_fanouts = _decode_fanouts(config, generation, snapshot_artifacts)
+    lookup_lists = _decode_lookups(config, generation)
     return _PreparedPlan(
         config,
         {
@@ -133,6 +136,7 @@ def _prepare_generation(generation: GenerationPlan | None, caller: str) -> _Prep
             "snapshot_index_for_column": snapshot_index_for_column,
             "snapshot_artifacts": snapshot_artifacts,
             "reference_fanouts": reference_fanouts,
+            "lookup_lists": lookup_lists,
         },
     )
 
@@ -159,6 +163,24 @@ def _decode_fanouts(
                 artifacts[i], source, digest=generation.snapshots[i].sha256
             )
     return out
+
+
+def _decode_lookups(
+    config: dict[str, Any], generation: GenerationPlan
+) -> dict[tuple[str, str], LookupList]:
+    """Parse each `lookup` column's list from the plan's pinned bytes (or its shipped code set).
+
+    Runs the plan-load checker, so a hand-built plan whose pins do not cover or satisfy a lookup
+    column is refused (`lookup_not_pinned`, `lookup_*`) rather than read from disk.
+    """
+    pins = {
+        s.source_path: ReadLookup(s.source_path, s.sha256, base64.b64decode(s.payload_b64))
+        for s in generation.lookups
+    }
+    return {
+        (table, str(col["name"])): checked_lookup(table, col, pins, {})[0]
+        for table, col in lookup_columns(config)
+    }
 
 
 def _prepare_pinned(generation_plan: Any, caller: str) -> _PreparedPlan:

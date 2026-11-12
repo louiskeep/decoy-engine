@@ -43,6 +43,27 @@ GEN_KIND_DRAW_SITES: tuple[DrawSite, ...] = (
             "does not change values, but a partition cannot resume mid-stream."
         ),
     ),
+    DrawSite(
+        draw_site_id="gen.lookup",
+        family="python_mt19937",
+        call_site="generation/kinds/_lookup.py:254",
+        entropy_root="job_seed",
+        seed_derivation=(
+            'random.Random(GenDeriveContext.for_column(derive_key, col, seed, content_digests).base_int("py"))'
+        ),
+        api_operation="random.Random(col_seed).choices",
+        call_shape="rng.choices(values, weights=weights, k=n)  # single whole-column call",
+        consumes_variable_draws=False,
+        identity="column",
+        null_draw_behavior="null_probability applied as a separate post-pass",
+        partitionable=False,
+        config_fingerprint_source="strategy_config_fingerprint(column_config)+file content digest",
+        provider_version=f"{_V6} (GenDeriveContext); CPython Mersenne Twister",
+        notes=(
+            "The categorical call over a pinned lookup list; the seed fingerprint holds the "
+            "file's content digest, never its path."
+        ),
+    ),
 )
 
 GEN_DRAW_SITES: tuple[DrawSite, ...] = (

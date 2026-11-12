@@ -150,6 +150,7 @@ READER_KEYS: dict[str, tuple[tuple[str, str], ...]] = {
     "categorical": (),
     "constant": (),
     "distribution": (),
+    "lookup": (),
     "formula": (("references", "formula.references"),),
     "reference": (),
     "statistical": (("condition_on", "statistical.condition_on"),),

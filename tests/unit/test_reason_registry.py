@@ -500,3 +500,34 @@ def test_gen_types_e2_codes_are_registered_with_a_pinned_fixture() -> None:
     )
     assert pinned["registry_version"] == "1.23.0"
     assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 23, 0)
+
+
+GEN_TYPES_E3_FIXTURE = "reason-manifest-v1.24-gen-types-e3.json"
+
+
+def test_gen_types_e3_codes_are_registered_with_a_pinned_fixture() -> None:
+    """GEN-TYPES E3: nine `lookup_*` plan codes and the pinned-mode refusal, all `since` 1.24.0."""
+    expected = [
+        ("plan", "lookup_column_missing", "PlanCompileError"),
+        ("plan", "lookup_file_empty", "PlanCompileError"),
+        ("plan", "lookup_file_format_unsupported", "PlanCompileError"),
+        ("plan", "lookup_file_too_large", "PlanCompileError"),
+        ("plan", "lookup_file_unreadable", "PlanCompileError"),
+        ("plan", "lookup_not_pinned", "PlanCompileError"),
+        ("plan", "lookup_pinned_digest_mismatch", "PlanCompileError"),
+        ("plan", "lookup_too_many_entries", "PlanCompileError"),
+        ("plan", "lookup_weight_invalid", "PlanCompileError"),
+        ("plan", "pinned_lookup_unsupported", "PinnedModeError"),
+    ]
+    for ns, code, owner in expected:
+        spec = reasons.find(ns, code)
+        assert spec is not None
+        assert (spec.owner, spec.since) == (owner, "1.24.0")
+        assert not re.search(r"[{}%]", spec.summary)
+        assert getattr(getattr(reasons, ns), code.upper()) == code
+    pinned = _load(GEN_TYPES_E3_FIXTURE)
+    assert sorted((e["namespace"], e["code"]) for e in pinned["entries"]) == sorted(
+        (n, c) for n, c, _ in expected
+    )
+    assert pinned["registry_version"] == "1.24.0"
+    assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 24, 0)

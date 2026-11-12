@@ -661,6 +661,7 @@ module = [
     "decoy_engine.plan._checks",
     "decoy_engine.plan._compile",
     "decoy_engine.plan._serialize",
+    "decoy_engine.plan.checks._lookup_tables",
     # engine-v2 S10 (Validator: compile consolidator + post-validation). Spec:
     # docs/v2/sprints/engine-v2/sprint-10-validator.md in decoy-platform.
     "decoy_engine.plan.validate",
@@ -744,6 +745,7 @@ module = [
     # GEN-TYPES: constant and parametric distribution generate types.
     "decoy_engine.generation.kinds",
     "decoy_engine.generation.kinds._constant",
+    "decoy_engine.generation.kinds._lookup",
     "decoy_engine.generation.kinds._output_type",
     "decoy_engine.generation.kinds._parametric",
     # engine-v2 S8 (Composite Generators). Spec:

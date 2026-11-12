@@ -85,7 +85,7 @@ def statistical_generate(
         derive_key=derive_key,
         column_config=col,
         fallback_seed=seed,
-        snapshot_content_digest=digest,
+        content_digests={("statistical", "snapshot_file"): digest} if digest else None,
     ).base_int("np")
     return sample_column(spec, n, col_seed=col_seed, parent_values=parent_values)
 

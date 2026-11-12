@@ -65,7 +65,8 @@ def test_surface_counts_match_capability_matrix():
     # SP-10c (2026-06-29): grouped_series, windowed_date, group_key -> 9 + 3 = 12.
     # GEN-TYPES E1 (2026-11-10): constant -> 12 + 1 = 13 (distribution was already listed as a
     # legacy ColumnGenerator key).
-    assert surface["generate"] == 13
+    # GEN-TYPES E3 (2026-11-12): lookup -> 13 + 1 = 14.
+    assert surface["generate"] == 14
     assert surface["providers"] == 34
 
 
