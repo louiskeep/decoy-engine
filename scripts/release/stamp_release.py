@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import fnmatch
 import hashlib
 import json
 import os
@@ -249,11 +248,12 @@ def _dirty(root: Path, owned: list[str]) -> list[str]:
 def _rollback(root: Path, owned: list[str] | None = None, created: tuple[str, ...] = ()) -> None:
     """Put the owned paths (by default CHANGELOG.md, the pin and `changelog.d/`, deleted fragments
     included) back to HEAD and remove the files this run created."""
+    # Created files go first: they are the one thing the restore cannot undo if it fails.
+    for rel in created:
+        (root / rel).unlink(missing_ok=True)
     _git(
         root, "restore", "--source=HEAD", "--staged", "--worktree", "--", *(owned or _owned_paths())
     )
-    for rel in created:
-        (root / rel).unlink(missing_ok=True)
 
 
 def _apply(root: Path, writes: dict[str, str], removes: list[str], owned=None, created=()) -> None:
@@ -291,19 +291,13 @@ def _preflight(root: Path, version: str, date: str, owned: list[str]) -> None:
         raise FragmentError("date must be a real YYYY-MM-DD date")
     dirty = _dirty(root, owned)
     if dirty:
-        # `git restore` leaves untracked files alone; a stamp that died mid-write can leave some.
+        # `git restore` leaves untracked files alone. A killed run cannot say which it created, so
+        # none is named for deletion: a file that matches a pattern may still be the operator's draft.
         untracked = _git(root, "ls-files", "--others", "--exclude-standard", "--", *owned).split()
-        # Only the fixture a stamp writes is its own; any other untracked file is the operator's.
-        glob = _tools()[0].FIXTURE_GLOB
-        new = [
-            p
-            for p in untracked
-            if p.startswith(f"{F29}/") and fnmatch.fnmatch(p[len(F29) + 1 :], glob)
-        ]
-        rm = f"; a killed stamp's untracked leftovers go with: rm -- {' '.join(new)}" * bool(new)
+        inspect = f"; untracked, inspect before removing: {' '.join(untracked)}" * bool(untracked)
         raise FragmentError(
             f"uncommitted changes in {', '.join(dirty)}; restore them with: git restore "
-            f"--source=HEAD --staged --worktree -- {' '.join(owned)}{rm}"
+            f"--source=HEAD --staged --worktree -- {' '.join(owned)}{inspect}"
         )
 
 

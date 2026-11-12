@@ -35,6 +35,7 @@ ships the real binding).
 
 from __future__ import annotations
 
+from decoy_engine.config._delivery import DeliveryConfig
 from decoy_engine.config._errors import PipelineConfigError
 from decoy_engine.config._fixed_width import FixedWidthColumn, FixedWidthLayout
 from decoy_engine.config._generate_option_catalog import (
@@ -55,7 +56,11 @@ from decoy_engine.config._generate_unique import (
 from decoy_engine.config._global_settings import DpGenerateSettings, GlobalSettings
 from decoy_engine.config._namespaces import NamespaceConfig
 from decoy_engine.config._override import override_sources
-from decoy_engine.config._parse import parse_pipeline_config, parse_relationship_config
+from decoy_engine.config._parse import (
+    parse_delivery_config,
+    parse_pipeline_config,
+    parse_relationship_config,
+)
 from decoy_engine.config._pipeline import PipelineConfig
 from decoy_engine.config._post_scan import (
     Dismissal,
@@ -83,7 +88,7 @@ from decoy_engine.config._subset import (
     SubsetPredicateConfig,
     SubsetSeedConfig,
 )
-from decoy_engine.config._tables import ColumnConfig, TableConfig
+from decoy_engine.config._tables import ColumnConfig, TableConfig, classify_table_kinds
 from decoy_engine.config._targets import (
     FileTarget,
     GCSTarget,
@@ -107,6 +112,7 @@ __all__ = [
     "UNIQUE_FAKER_ATTEMPTS",
     "ColumnConfig",
     "DedupeOp",
+    "DeliveryConfig",
     "DeriveOp",
     "Dismissal",
     "DpGenerateSettings",
@@ -140,9 +146,11 @@ __all__ = [
     "TableConfig",
     "TargetDescriptor",
     "TransformOp",
+    "classify_table_kinds",
     "distinct_categories",
     "generate_option_catalog",
     "override_sources",
+    "parse_delivery_config",
     "parse_output_type",
     "parse_pipeline_config",
     "parse_relationship_config",

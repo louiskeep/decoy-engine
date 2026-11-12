@@ -99,8 +99,10 @@ CARRIERS = (
     (r"tests/.*\.json", "json"),
     (r"(docs/.*|CHANGELOG|changelog\.d/[^/]*)\.md", "markdown"),
 )
-# The registry version itself is never pending: outside the two anchors a carrier of it is refused.
-VERSION_KEY = r"registry_version['\"]?[\])]*\s*(?::|==?|!=)\s*(['\"]){}\1"
+# The registry version itself is never pending: outside the two anchors a line that names the key
+# next to the claimed literal is refused whatever its shape, so a new spelling cannot slip past.
+KEY_WORD = "registry_version"
+KEY_WINDOW = 4
 FIXTURE_DIR = "tests/fixtures/f29"
 RENUMBER_LINE = "Registry renumbered at merge from"
 BASE_TESTS = (
@@ -279,6 +281,8 @@ def carrier(path: str) -> str:
 def unreleased_text(kind: str, old: str, text: str) -> str:
     """One branch-added line of a ``kind`` carrier with the claimed ``old`` version made pending."""
     v = re.escape(old)
+    if KEY_WORD in text and kind != "markdown":
+        return text
     if kind == "catalog":
         return re.sub(rf"\bsince=(['\"]){v}\1", "since=UNRELEASED", text)
     if kind == "python":
@@ -291,23 +295,27 @@ def unreleased_text(kind: str, old: str, text: str) -> str:
 def plan_unreleased(hunks, old: str, fixture: str | None):
     """Line edits {path: {line: text}} and refusals for --to-unreleased; nothing is written."""
     pat, prefix = token(old), fixture_prefix(old)
-    keyed = re.compile(VERSION_KEY.format(re.escape(old)))
     edits: dict[str, dict[int, str]] = {}
     refuse: list[str] = []
     for h in hunks:
         if h.path in (CONTRACT, fixture):
             continue
         kind, anchor = carrier(h.path), ANCHORS.get(h.path)
+        added = dict(h.added)
         for no, text in h.added:
-            if (anchor and anchor.search(text)) or not (pat.search(text) or prefix in text):
+            if anchor and anchor.search(text):
                 continue
-            new = unreleased_text(kind, old, text)
-            if kind in ("python", "json") and keyed.search(text):
+            window = "\n".join(added.get(n, "") for n in range(no, no + KEY_WINDOW))
+            if kind != "markdown" and KEY_WORD in text and pat.search(window):
                 refuse.append(f"unconverted {h.path}:{no}")
-            elif pat.search(new) or prefix in new:
-                refuse.append(f"{kind if new == text else 'unconverted'} {h.path}:{no}")
+            elif not (pat.search(text) or prefix in text):
+                continue
             else:
-                edits.setdefault(h.path, {})[no] = new
+                new = unreleased_text(kind, old, text)
+                if pat.search(new) or prefix in new:
+                    refuse.append(f"{kind if new == text else 'unconverted'} {h.path}:{no}")
+                else:
+                    edits.setdefault(h.path, {})[no] = new
     return edits, refuse
 
 

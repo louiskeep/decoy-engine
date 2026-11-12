@@ -43,6 +43,7 @@ from pydantic import (
 from pydantic_core import PydanticCustomError, ValidationError
 
 from decoy_engine import reasons
+from decoy_engine.config._delivery import DeliveryConfig
 from decoy_engine.config._generate_options import problem_details
 from decoy_engine.config._generate_relational import per_parent_problems
 from decoy_engine.config._generate_unique import cross_table_unique_problems
@@ -144,6 +145,9 @@ class PipelineConfig(BaseModel):
     # column with `error_policy: quarantine`; there is deliberately no path or key here, because
     # the store is a runtime capability. Unset stays out of dumps (legacy hashes are unchanged).
     protected_quarantine: ProtectedQuarantineConfig | None = None
+    # How the run's outputs become visible. Equal to the default it stays out of dumps and
+    # hashes, so a legacy config is unchanged.
+    delivery: DeliveryConfig = Field(default_factory=DeliveryConfig)
 
     @classmethod
     def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> Any:
@@ -161,6 +165,8 @@ class PipelineConfig(BaseModel):
         # By value, not by what was written: a pre_scan equal to the default is the legacy shape.
         if self.pre_scan == PreScanConfig():
             data.pop("pre_scan", None)
+        if self.delivery == DeliveryConfig():
+            data.pop("delivery", None)
         return data
 
     @field_validator("name", mode="before")
