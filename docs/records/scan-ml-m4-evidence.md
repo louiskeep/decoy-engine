@@ -282,3 +282,8 @@ the M5 acceptance file, `tests/sentry`, `tests/unit/progress`, `tests/unit/reaso
 `tests/unit/run_result` and the compat corpus rerun: only the 23 `test_outbound_clients` ids fail.
 The mutations, the full gate selection, lint and the `-m ner` run are from `f7c1ccab`; the merge
 changed no file they read except through main's unrelated run-result and capacity modules.
+
+`666cd245` merges the M5 branch at `d862aab9` (main `c34d251d`, #537, out-of-core shared
+parent relation); no conflict. After it: `--check` exit 0; the M4 files, the M5 acceptance file,
+#537's test, the seam and module-size sentries and the compat corpus rerun in the NER venv: 1178 passed, 1
+skipped (the compat pre-GA capture skip).
