@@ -119,12 +119,6 @@ def _post_scan_ref(payload: object) -> ReasonRef | None:
     return None
 
 
-def _walk_base(baseline: _keys.Baseline) -> _keys.KeyCounts | None:
-    """The source counts `check_keys` hands `key_codes`: zeros stand for a counted baseline, and
-    an unmeasured one has none."""
-    return _keys.KeyCounts() if baseline in ("measured", "no_source") else None
-
-
 def _reachable_key_shape(
     status: _keys.Status,
     baseline: _keys.Baseline,
@@ -136,10 +130,10 @@ def _reachable_key_shape(
     if status == "error":
         return baseline == "not_run" and refs == (_CHECK_ERROR,)
     if status == "key_column_missing":
-        expected = _keys.key_codes(status, kind, baseline, _walk_base(baseline), _keys.KeyCounts())
+        expected = _keys.key_codes(status, kind, baseline, _keys.KeyCounts(), _keys.KeyCounts())
         return baseline == "not_run" and refs == tuple(code.spec.ref for code in expected)
     if status == "key_type_mismatch":
-        expected = _keys.key_codes(status, kind, baseline, _walk_base(baseline), _keys.KeyCounts())
+        expected = _keys.key_codes(status, kind, baseline, _keys.KeyCounts(), _keys.KeyCounts())
         return (
             kind == "foreign"
             and baseline not in {"measured", "error"}
@@ -160,7 +154,7 @@ def _reachable_key_shape(
     return refs in {
         tuple(
             code.spec.ref
-            for code in _keys.key_codes(status, kind, baseline, _walk_base(baseline), out)
+            for code in _keys.key_codes(status, kind, baseline, _keys.KeyCounts(), out)
         )
         for out in outputs
     }
