@@ -7,10 +7,17 @@ seed reaches: it passes through whole.
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
+import json
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, cast
 
+import polars as pl
+import pyarrow as pa
+
+from decoy_engine._execution_error import lazy_source_changed
 from decoy_engine.plan._types import PlanRelationship
 from decoy_engine.subset._edges import linked_neighbours, reach
 from decoy_engine.subset._types import FanOutPolicy, SeedSpec, SubsetPlan
@@ -28,6 +35,12 @@ class SubsetRequest:
     excluded_edges: tuple[str, ...] = ()
     sample: SampleSpec | None = None
 
+    def fingerprint(self) -> str:
+        """SHA-256 over the canonical dump: the subset half of a run's identity. The run config
+        drops the `subset` block, so this fingerprint is what covers the seed literals."""
+        canonical = json.dumps(dataclasses.asdict(self), sort_keys=True, default=repr)
+        return hashlib.sha256(canonical.encode()).hexdigest()
+
 
 @dataclass(frozen=True)
 class SubsetScope:
@@ -37,6 +50,40 @@ class SubsetScope:
     tables: frozenset[str]
     whole: frozenset[str]
     head: frozenset[str] = frozenset()
+
+
+class MaterializationCheck:
+    """The first pass's kept key columns, held to compare with what materialization reads.
+
+    Opaque on purpose: the cells are never returned, repr'd, serialized or logged, so a
+    selection can be shown without exposing a key."""
+
+    __slots__ = ("_names", "_rows")
+
+    def __init__(self, rows: Mapping[str, pl.DataFrame]) -> None:
+        self._rows = dict(rows)
+        self._names = {name: tuple(frame.columns) for name, frame in self._rows.items()}
+
+    def __repr__(self) -> str:
+        return "MaterializationCheck()"
+
+    def columns(self, table: str) -> tuple[str, ...]:
+        """The key column names to collect for `table`, in comparison order (names only)."""
+        return self._names[table]
+
+    def verify(self, table: str, actual: pa.Table) -> None:
+        """Raise `lazy_source_changed` unless `actual` equals the first pass exactly: Arrow
+        types, null placement and row order. Raised outside any handler so the refusal carries
+        no cause or context."""
+        expected = self._rows[table]
+        different = False
+        try:
+            found = cast("pl.DataFrame", pl.from_arrow(actual))
+            different = found.schema != expected.schema or not found.equals(expected)
+        except Exception:
+            different = True
+        if different:
+            raise lazy_source_changed(table, "the kept key columns differ between the two passes")
 
 
 @dataclass(frozen=True)
@@ -49,6 +96,10 @@ class SubsetSelection:
     scope: SubsetScope
     excluded_edges: tuple[str, ...]
     estimate: SubsetPlan
+    # Stage-transfer state, never an output: no value is exposed (see `MaterializationCheck`).
+    materialization_check: MaterializationCheck | None = field(
+        default=None, repr=False, compare=False
+    )
 
 
 def scope_for(request: SubsetRequest, table_names: Iterable[str]) -> SubsetScope:

@@ -15,9 +15,13 @@ from typing import Any, Literal
 
 from decoy_engine.config import PipelineConfigError, parse_delivery_config
 from decoy_engine.generation import generation_order
-from decoy_engine.reasons import ReasonCode
+from decoy_engine.reasons import Kind, ReasonCode
+from decoy_engine.reasons.decoy import DELIVERY_DEPENDENT_DROPPED, DELIVERY_WITHHELD
 
 DeliveryState = Literal["delivered", "failed", "withheld", "dropped"]
+
+# Target types whose tables a run delivers, so every one of them needs an outcome.
+DELIVERABLE_TARGET_TYPES = frozenset({"file", "s3", "gcs"})
 
 
 @dataclass(frozen=True)
@@ -25,11 +29,13 @@ class TableDelivery:
     state: DeliveryState
     # The smallest failed table name the dropped table is reachable from; None unless dropped.
     dropped_because: str | None = None
+    # The failure cause for failed, the delivery decision code for withheld and dropped.
+    code: ReasonCode | None = None
 
 
 @dataclass(frozen=True)
 class DeliveryDecision:
-    # Only tables with a file target appear; a table without one has no delivery state.
+    # Only tables with a deliverable target appear; any other table has no delivery state.
     tables: Mapping[str, TableDelivery]
     deliver: bool
 
@@ -49,16 +55,25 @@ def _children(config: Mapping[str, Any]) -> dict[str, set[str]]:
 
 
 _BAD_GRAPH = "delivery dependency graph names a table not in the config"
+_BAD_OUTCOME = "delivery outcome is not a failure reason code"
 
 
 def _check_universe(config: Mapping[str, Any], outcomes: Mapping[str, Any]) -> None:
     """Refuse outcomes or edges that name tables the config does not hold; messages are fixed."""
+    # A decision or warning code, or a non-code, would be recorded as a failed table's cause.
+    for cause in outcomes.values():
+        if cause is not None and not (
+            isinstance(cause, ReasonCode) and cause.spec.kind is Kind.FAILURE
+        ):
+            raise PipelineConfigError(_BAD_OUTCOME)
     names = {t["name"] for t in config.get("tables") or []}
     targets = config.get("targets") or {}
     # Validation does not tie target keys to tables; a target no table owns has no run outcome.
-    file_targets = {n for n, t in targets.items() if n in names and t.get("type") == "file"}
-    if set(outcomes) != file_targets:
-        raise PipelineConfigError("delivery outcomes do not match the file-target tables")
+    deliverable = {
+        n for n, t in targets.items() if n in names and t.get("type") in DELIVERABLE_TARGET_TYPES
+    }
+    if set(outcomes) != deliverable:
+        raise PipelineConfigError("delivery outcomes do not match the deliverable tables")
     try:
         edges = _children(config)
     except ValueError:
@@ -99,13 +114,13 @@ def plan_delivery(
     tables: dict[str, TableDelivery] = {}
     for name, cause in outcomes.items():
         if cause is not None:
-            tables[name] = TableDelivery("failed")
+            tables[name] = TableDelivery("failed", code=cause)
         elif failed and strict:
-            tables[name] = TableDelivery("withheld")
+            tables[name] = TableDelivery("withheld", code=DELIVERY_WITHHELD)
         elif name in reached:
-            tables[name] = TableDelivery("dropped", reached[name])
+            tables[name] = TableDelivery("dropped", reached[name], DELIVERY_DEPENDENT_DROPPED)
         else:
             tables[name] = TableDelivery("delivered")
-    # No file-target table means nothing failed or was withheld, so the run still goes on.
+    # No deliverable table means nothing failed or was withheld, so the run still goes on.
     deliver = not outcomes or any(t.state == "delivered" for t in tables.values())
     return DeliveryDecision(tables, deliver)

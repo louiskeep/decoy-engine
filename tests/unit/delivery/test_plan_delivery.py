@@ -9,8 +9,17 @@ import pytest
 
 from decoy_engine.config import PipelineConfig, PipelineConfigError
 from decoy_engine.delivery import plan_delivery
+from decoy_engine.reasons.decoy import (
+    DELIVERY_DEPENDENT_DROPPED,
+    DELIVERY_POINTER_MOVED,
+    DELIVERY_ROLLED_BACK,
+    DELIVERY_WITHHELD,
+    PUBLICATION_FAILED,
+)
 
-FAIL: Any = "failed"  # any non-None value is a failure cause; the plan never reads its text
+# The plan accepts only failure-kind reason codes as a table's cause.
+FAIL = PUBLICATION_FAILED
+_NOT_A_FAILURE = "delivery outcome is not a failure reason code"
 
 
 def _config(
@@ -19,10 +28,12 @@ def _config(
     mode: str | None = None,
     generate: Mapping[str, list[str]] | None = None,
     remote: tuple[str, ...] = (),
+    untargeted: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """A validated-shape config dict: edges are (parent, child), generate maps child to parents.
 
-    Every table gets a file target except those in `remote`, which get an s3 one.
+    Every table gets a file target, except those in `remote`, which get an s3 one, and those in
+    `untargeted`, which get none.
     """
     generate = generate or {}
     entries: list[dict[str, Any]] = []
@@ -37,7 +48,9 @@ def _config(
     config: dict[str, Any] = {
         "tables": entries,
         "targets": {
-            n: {"type": "s3" if n in remote else "file", "path": f"./out/{n}.csv"} for n in tables
+            n: {"type": "s3" if n in remote else "file", "path": f"./out/{n}.csv"}
+            for n in tables
+            if n not in untargeted
         },
         "relationships": [
             {
@@ -70,13 +83,29 @@ def test_at1b_an_empty_run_delivers(mode: str | None) -> None:
     assert d.deliver is True
 
 
-def test_at1c_an_outcome_for_a_non_file_target_table_raises() -> None:
+def test_at1c_an_outcome_for_a_table_outside_the_universe_raises() -> None:
     unknown = _config(["a"])
     with pytest.raises(PipelineConfigError):
         plan_delivery(unknown, {"a": None, "ghost": None})
-    remote = _config(["a", "b"], remote=("b",))
+    untargeted = _config(["a", "b"], untargeted=("b",))
     with pytest.raises(PipelineConfigError):
-        plan_delivery(remote, {"a": None, "b": None})
+        plan_delivery(untargeted, {"a": None, "b": None})
+
+
+@pytest.mark.parametrize("mode", [None, "best_effort"])
+def test_atc18_cloud_target_tables_are_in_the_universe(mode: str | None) -> None:
+    config = _config(["f", "s", "g"], [("s", "g")], mode, remote=("s", "g"))
+    config["targets"]["g"]["type"] = "gcs"
+    ok = plan_delivery(config, {"f": None, "s": None, "g": None})
+    assert _states(ok) == {"f": "delivered", "s": "delivered", "g": "delivered"}
+    d = plan_delivery(config, {"f": None, "s": FAIL, "g": None})
+    if mode is None:
+        assert _states(d) == {"f": "withheld", "s": "failed", "g": "withheld"}
+    else:
+        assert _states(d) == {"f": "delivered", "s": "failed", "g": "dropped"}
+        assert d.tables["g"].dropped_because == "s"
+    with pytest.raises(PipelineConfigError):
+        plan_delivery(config, {"f": None, "s": None})
 
 
 def test_at1d_a_file_target_table_without_an_outcome_raises() -> None:
@@ -160,9 +189,9 @@ def test_at8_dropped_because_is_the_smallest_failed_name(order: tuple[str, str])
     assert d.tables["d"].dropped_because == "f1"
 
 
-def test_at9_the_walk_passes_through_a_table_without_a_file_target() -> None:
+def test_at9_the_walk_passes_through_a_table_without_a_target() -> None:
     config = _config(
-        ["p", "mid", "g"], [("p", "mid"), ("mid", "g")], "best_effort", remote=("mid",)
+        ["p", "mid", "g"], [("p", "mid"), ("mid", "g")], "best_effort", untargeted=("mid",)
     )
     d = plan_delivery(config, {"p": FAIL, "g": None})
     assert _states(d) == {"p": "failed", "g": "dropped"}
@@ -217,3 +246,50 @@ def test_plan_reads_the_dump_of_a_validated_pipeline_config() -> None:
     d = plan_delivery(config, {"p": FAIL, "c": None})
     assert _states(d) == {"p": "failed", "c": "dropped"}
     assert d.tables["c"].dropped_because == "p"
+
+
+@pytest.mark.parametrize("mode", [None, "best_effort"])
+def test_at10_each_state_carries_its_code(mode: str | None) -> None:
+    cfg = _config(["a", "b", "c", "d"], edges=[("a", "b")], mode=mode)
+    d = plan_delivery(cfg, {"a": PUBLICATION_FAILED, "b": None, "c": None, "d": None})
+    codes = {n: t.code for n, t in d.tables.items()}
+    if mode is None:
+        assert codes == {
+            "a": PUBLICATION_FAILED,
+            "b": DELIVERY_WITHHELD,
+            "c": DELIVERY_WITHHELD,
+            "d": DELIVERY_WITHHELD,
+        }
+    else:
+        assert codes == {
+            "a": PUBLICATION_FAILED,
+            "b": DELIVERY_DEPENDENT_DROPPED,
+            "c": None,
+            "d": None,
+        }
+    # ReasonCode compares as its bare string, so the namespace is pinned separately.
+    assert {n: getattr(c, "namespace", None) for n, c in codes.items() if c} == {
+        n: "decoy" for n, c in codes.items() if c
+    }
+
+
+def test_at10b_an_all_ok_run_has_no_codes() -> None:
+    d = plan_delivery(_config(["a", "b"]), {"a": None, "b": None})
+    assert [t.code for t in d.tables.values()] == [None, None]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [DELIVERY_WITHHELD, DELIVERY_DEPENDENT_DROPPED, DELIVERY_ROLLED_BACK, "failed", object()],
+    ids=["withheld", "dependent_dropped", "warning", "string", "object"],
+)
+def test_at11_a_non_failure_outcome_is_refused_with_a_fixed_message(bad: Any) -> None:
+    with pytest.raises(PipelineConfigError) as err:
+        plan_delivery(_config(["a", "b"]), {"a": bad, "b": None})
+    assert str(err.value) == _NOT_A_FAILURE
+
+
+def test_at11b_a_real_failure_code_still_plans_as_failed() -> None:
+    d = plan_delivery(_config(["a"]), {"a": DELIVERY_POINTER_MOVED})
+    assert d.tables["a"].state == "failed"
+    assert d.tables["a"].code is DELIVERY_POINTER_MOVED

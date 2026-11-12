@@ -2,9 +2,14 @@
 
 Paths are plain paths relative to the CWD, symlinks are followed, `display` is the path, and
 every open is lazy so a missing file fails inside the library call with the same text it
-always had. Output transactions use ordinary path calls (`tempfile.mkdtemp` in the target's
+always had. Output transactions use ordinary path calls (a stage directory in the target's
 parent, one `os.replace`), which is exactly what the sinks did before the policy existed.
 This module is the one place ambient opens of caller or config paths are allowed.
+
+On POSIX, directories on an output chain come from the creators in `_output.py` (F22 5.0
+rule 1): the deepest existing ancestor is opened by path, links followed as before, and each
+missing component is made under it by `make_parent_dir_at`; stage directories come from
+`make_stage_dir_at`. The win32 arm keeps the plain path calls.
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ import logging.handlers
 import os
 import secrets
 import shutil
+import sys
 import tempfile
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -26,6 +32,10 @@ from decoy_engine.fileaccess._output import (
     PRIVATE_LABELS,
     STAGE_PREFIX,
     STAGE_SUFFIX,
+    _call,
+    _close,
+    make_parent_dir_at,
+    make_stage_dir_at,
 )
 from decoy_engine.fileaccess._types import (
     FileAccessUnavailable,
@@ -161,7 +171,14 @@ class _LocalStageDir:
 
     def create_dir(self, component: str) -> _LocalStageDir:
         self._check(component)
-        (self._dir / component).mkdir()
+        if sys.platform == "win32":
+            (self._dir / component).mkdir()
+        else:
+            parent = _open_dir(self._dir)
+            try:
+                _close(make_stage_dir_at(parent, component))
+            finally:
+                _close(parent)
         return _LocalStageDir(self._dir / component, self._display)
 
     def remove(self, component: str) -> None:
@@ -198,8 +215,56 @@ def _sync_dir(directory: Path) -> None:
             pass
 
 
+def _open_dir(directory: Path) -> int:
+    """Open an existing directory by path, following links as the ambient policy always has.
+    A failure keeps only its errno: the stock text names the path."""
+    return _call(os.open, directory, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+
+
+def _open_dir_creating(directory: Path) -> int:
+    """Open `directory`, making each missing component under the open descriptor of the one
+    above it; the replacement for `mkdir(parents=True, exist_ok=True)` (F22 5.0 rule 1). Nothing
+    is created unless the deepest existing ancestor opened."""
+    missing: list[str] = []
+    current = directory
+    while True:
+        try:
+            fd = _open_dir(current)
+            break
+        except FileNotFoundError:
+            if current.parent == current:
+                raise
+            missing.append(current.name)
+            current = current.parent
+    try:
+        for name in reversed(missing):
+            child = make_parent_dir_at(fd, name)
+            _close(fd)
+            fd = child
+    except BaseException:
+        _close(fd)
+        raise
+    return fd
+
+
+def _ensure_dirs(directory: Path) -> None:
+    _close(_open_dir_creating(directory))
+
+
+def _make_stage_dir(parent: Path, prefix: str, *, create_parents: bool) -> Path:
+    """A new private stage directory beside the target, made by `make_stage_dir_at`."""
+    parent_fd = _open_dir_creating(parent) if create_parents else _open_dir(parent)
+    name = f"{prefix}{secrets.token_hex(6)}"
+    try:
+        _close(make_stage_dir_at(parent_fd, name))
+    finally:
+        _close(parent_fd)
+    return parent / name
+
+
 class LocalOutputTxn(_LocalStageDir):
-    """The legacy stage: a `mkdtemp` directory (or one `mkstemp` file) in the target's parent."""
+    """The legacy stage: a private stage directory (or one `mkstemp` file) in the target's
+    parent."""
 
     def __init__(
         self,
@@ -216,9 +281,14 @@ class LocalOutputTxn(_LocalStageDir):
         self._direct = False
         stage: Path | None = None
         if kind == "dir":
-            if label in CREATES_PARENTS:
-                target.parent.mkdir(parents=True, exist_ok=True)
-            stage = Path(tempfile.mkdtemp(prefix=STAGE_PREFIX[label], dir=target.parent))
+            if sys.platform == "win32":
+                if label in CREATES_PARENTS:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                stage = Path(tempfile.mkdtemp(prefix=STAGE_PREFIX[label], dir=target.parent))
+            else:
+                stage = _make_stage_dir(
+                    target.parent, STAGE_PREFIX[label], create_parents=label in CREATES_PARENTS
+                )
         super().__init__(stage if stage is not None else target.parent, str(target))
         self._stage = stage
 
@@ -235,7 +305,10 @@ class LocalOutputTxn(_LocalStageDir):
                 self._staged_file = self._target
                 return os.open(self._target, _CREATE_IN_PLACE, 0o666)
             if self._label in CREATES_PARENTS:
-                self._target.parent.mkdir(parents=True, exist_ok=True)
+                if sys.platform == "win32":
+                    self._target.parent.mkdir(parents=True, exist_ok=True)
+                else:
+                    _ensure_dirs(self._target.parent)
             private = self._label in PRIVATE_LABELS
             # A private stage never writes through: publish replaces a symlink, not its target.
             if self._mode == "replace" and not private and self._writes_through():
@@ -276,7 +349,10 @@ class LocalOutputTxn(_LocalStageDir):
         if self._kind == "dir":
             if self._stage is None:  # pragma: no cover - a dir stage always has one
                 raise FileAccessUnavailable("output transaction is finished")
-            self._target.parent.mkdir(parents=True, exist_ok=True)
+            if sys.platform == "win32":
+                self._target.parent.mkdir(parents=True, exist_ok=True)
+            else:
+                _ensure_dirs(self._target.parent)
             os.replace(self._stage, self._target)
             self._stage = None
             self._finished = True
@@ -352,8 +428,11 @@ class LocalOutputDir:
         return LocalOutputTxn(self._target, kind, mode, label)
 
     def ensure_dir(self) -> None:
-        self._target.parent.mkdir(parents=True, exist_ok=True)
-        self._target.mkdir(exist_ok=True)
+        if sys.platform == "win32":
+            self._target.parent.mkdir(parents=True, exist_ok=True)
+            self._target.mkdir(exist_ok=True)
+        else:
+            _ensure_dirs(self._target)
 
     def is_empty_or_absent(self) -> bool:
         return not self._target.exists() or not any(self._target.iterdir())

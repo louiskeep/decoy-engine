@@ -100,6 +100,8 @@ def estimate_job(
 
 
 def _estimate(config_dump: dict[str, Any], base_dir: Path | str) -> JobEstimate:
+    if config_dump.get("subset") is not None:
+        return JobEstimate(route="subset", priceable=False, notes=("not applicable: subset",))
     from decoy_engine.execution._guards import prepare_declared_execution_sources
     from decoy_engine.execution._mem_estimate import estimate_peak_bytes, raw_data_bytes
     from decoy_engine.execution._pipeline_context import classify_table_kinds
