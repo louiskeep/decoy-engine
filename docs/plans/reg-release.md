@@ -5,7 +5,7 @@ Status: E1 built in engine #450 (`5c24a75e`); E2 ready to build
 Rules consulted: 00-universal, risk-and-exceptions, development-loop (including Proportion),
 local-operations, workspace-and-vcs, reuse-first, exploration, scope-discipline, verification,
 code-review, testing, architecture, cross-cutting-concerns, api-and-compatibility,
-release-and-rollback, documentation, catalogs/recurring-defects
+data-and-migrations, release-and-rollback, documentation, catalogs/recurring-defects
 
 Planning base: engine main `79d5ded7`. E2 was re-derived from `origin/main` at `c96e2855` on
 2026-11-11. Before building, fetch and rebase on the then-current `origin/main`, read every cited
@@ -80,6 +80,17 @@ naming, extractor, contract builder and token-boundary machinery named above.
 - A code-adding PR does not edit `REGISTRY_VERSION`, a historical minor fixture,
   `consumer-contract.json`, or the version sentence in `docs/reasons.md`. It adds a valid E1
   fragment that names every new identity.
+- The one identity spelling in fragments is a Markdown code span containing
+  `namespace/code`, with the live manifest's namespace and code bytes on each side of one ASCII
+  slash. For example, identity `("config", "generate_output_type_unsupported")` is named only by
+  `` `config/generate_output_type_unsupported` ``. Matching is case-sensitive and compares the
+  whole code-span payload to the exact pending-identity set. Plain prose, a dotted spelling, a
+  prefix such as `` `config/generate_output_type_unsupported_extra` ``, a suffix, whitespace
+  inside the span, or a span with more than one slash does not name that identity. A pending
+  identity may be named in more than one fragment, but every pending identity must have at least
+  one exact match. The extraction of these claims lives beside the pending-identity policy in
+  `reason_manifest_policy.py`; E1's `parse_fragment()` remains the sole fragment grammar and the
+  checker passes only each already-parsed `Fragment.block` to that extractor.
 
 ### Numeric ceiling and fixtures
 
@@ -127,17 +138,75 @@ pending deprecation to the selected numeric version, keeps the edited summary, c
 
 ### Versioned release pin
 
-- Migrate `reason-registry-release.json` to strict format version 2. The required roots are
-  `format_version`, `registry_version`, `baseline_ceiling`, `identities`, `since_counts`, and the
-  per-identity, per-field SHA-256 baselines. The loader rejects missing or extra roots, unknown or
-  missing format versions, duplicate identities or fields, booleans where integers are required,
-  numeric strings, free-form field names, malformed identities and digests, and wrong container
+- Migrate `reason-registry-release.json` to strict format version 2. Its root is an object with
+  exactly five keys: `format_version`, `registry_version`, `baseline_ceiling`, `identities`, and
+  `since_counts`. `format_version` is the strict integer `2`; the two versions are strict strings;
+  `identities` is a JSON array; and `since_counts` is an object from a numeric version string to a
+  strict non-negative integer. It counts the numeric `since` values of exactly the captured
+  identity records, so its values sum to the array length. Each identity array item is an object
+  with exactly `namespace`, `code`, and `fields`. `namespace` and `code` are separate non-empty
+  strict strings and encode the identity without a joined or escaped form. The policy checker
+  requires each tuple to equal one numeric live-manifest identity; the loader itself does not add
+  a second identity regex beside the registry.
+  `fields` is an object with exactly the eleven manifest-entry field names shown below. Its values
+  are lowercase 64-character SHA-256 hex strings. Identity items are unique and sorted by the
+  `(namespace, code)` string tuple. There is no count in place of the identities array and no
+  parallel baseline container.
+- This is the normative one-entry shape and exact writer output after removing the two spaces of
+  Markdown list indentation. `test_reason_release_pin.py` holds the resulting bytes plus the final
+  newline as a golden, and the migrated checked-in pin is the full-catalog golden fixture.
+
+  ```json
+  {
+    "format_version": 2,
+    "registry_version": "1.22.0",
+    "baseline_ceiling": "1.23.0",
+    "identities": [
+      {
+        "namespace": "config",
+        "code": "example",
+        "fields": {
+          "code": "2e23250164957d519115f2dd253384e487806e87cb3557eb1372b937dff93959",
+          "context": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "deprecated_in": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+          "kind": "3045b5c998d76c75f480b2e91388b6adef07205004129c0b8dffee745b4aa77e",
+          "namespace": "48882ab48bfdf3bef2fe65e3304e91ccfd8f74e357c183367ad6fe903fe0e697",
+          "owner": "8f92c9a8acd15b4719b1d1e3ace2a7d07618948904ae2ebc4c99f4f18fe02281",
+          "replaced_by": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+          "rules": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "since": "dd89545194911b5b0e3ddbc7285adf096b7196163c2fbf42e2a382cab8fc6c23",
+          "summary": "cc6db7b8b4b774cc4f1743881776cb076e906271caa9dd3958db760598b9c304",
+          "symbol": "81d3380871cf9d1c4db281c5f5f051a708922e920e0e8d0b80d40fc9fa3b0b2d"
+        }
+      }
+    ],
+    "since_counts": {
+      "1.23.0": 1
+    }
+  }
+  ```
+
+  `canonical-json(value)` is exactly
+  `json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")`.
+  A field digest is `hashlib.sha256(canonical-json(entry[field])).hexdigest()`. Object keys are
+  sorted recursively and array order is preserved, so nested `rules`, `context`, and
+  `replaced_by` have one digest on every supported interpreter. The writer constructs root keys in
+  the order in the example, sorts identity records by `(namespace, code)`, sorts every `fields`
+  object's keys lexically, sorts `since_counts` by `packaging.version.Version`, and emits exactly
+  `json.dumps(pin, indent=2, ensure_ascii=True) + "\n"`. The loader treats JSON object order as
+  insignificant, but the checked-in golden pins the writer's bytes.
+- The loader rejects missing or extra roots, unknown or missing format versions, duplicate
+  identities or fields, empty identity parts, inconsistent `since_counts`, booleans where integers
+  are required, numeric strings, free-form field names, malformed digests, and wrong container
   types. Messages name identities and fields only, never catalog values.
 - `registry_version` means the registry version in the last package release. The one-time E2
   migration preserves `1.22.0`. `baseline_ceiling` means the greatest numeric `since` captured by
-  the field baseline; the E2 migration sets it to `1.23.0` and captures every numeric live identity
-  through that ceiling. Later release writes set both values to the stamped or unchanged live
-  registry version.
+  the field baseline, not the live registry version. The E2 migration sets it to `1.23.0` and
+  captures every numeric live identity through that ceiling. Every later writer computes it as
+  `max(Version(entry["since"]))` over the numeric identities actually written. Therefore a
+  summary-only or deprecation-only release at live `1.23.1` keeps `baseline_ceiling` at `1.23.0`;
+  a release that stamps new identities at `1.24.0` advances it to `1.24.0`. An empty numeric
+  baseline is invalid.
 - The field baseline covers every manifest-entry field. Identity membership is checked separately.
   The pending descriptor can waive only the one summary hash or the two initially-null deprecation
   hashes described above. New `UNRELEASED` identities are absent from the pin and allowed until
@@ -204,9 +273,45 @@ python scripts/dev/registry_renumber.py --check --main origin/main
 `--to-unreleased` compares the branch to main and accepts exactly one branch-claimed numeric minor.
 It sets the branch's `REGISTRY_VERSION` and `docs/reasons.md` anchor back to main's allowed version,
 rewrites branch-added reason declarations to `since=UNRELEASED`, inserts the sibling `_types`
-import when needed, rewrites branch-added numeric carriers in tests, docs, records, and
-`changelog.d/*.md` to the token `UNRELEASED`, and deletes the branch-added minor fixture. It does
-not touch historical fixtures, the v2 release pin, or main-owned lines.
+import when needed, rewrites branch-added numeric carriers, and deletes the branch-added minor
+fixture. The exact replacement depends on the surface:
+
+| Branch-added surface | Required replacement bytes |
+|---|---|
+| Catalog declaration argument | Unquoted identifier `since=UNRELEASED`; `deprecated_in` is outside this conversion's supported workflow |
+| Python expected manifest data or other Python string carrier | Quoted lowercase string `"unreleased"`, preserving the file's existing quote style |
+| JSON carrier other than a `registry_version` anchor, including a branch-owned consumer-contract fact | JSON string `"unreleased"` |
+| Markdown docs, records, and `changelog.d/*.md` | Lowercase text `unreleased` in the original delimiters, so `` `1.24.0` `` becomes `` `unreleased` `` and a quoted version remains quoted |
+| `REGISTRY_VERSION` and the `docs/reasons.md` registry anchor | Main's numeric allowed version, never either unreleased spelling |
+| Branch-added numeric minor fixture | Delete the file; do not rewrite its contents or name |
+
+No emitted carrier contains the uppercase string value `"UNRELEASED"`, and no catalog declaration
+uses the quoted literal `since="unreleased"`. `UNRELEASED` is a Python source constant only;
+`"unreleased"` is its stored and displayed value. The tool does not touch historical fixtures, the
+v2 release pin, or main-owned lines.
+
+`--to-unreleased` supports identity-addition branches only. It refuses before candidate creation
+if the branch edits any identity present on main, including a first deprecation, a marked summary
+correction, or either edit combined with a new identity. Those shapes retain the existing
+`edited-existing <identity>` refusal; an edit-only numeric bump also retains
+`version-without-identity`. Supporting those workflows would require distinguishing and rewriting
+existing-identity fields, so E2 does not add that second conversion mode.
+
+To migrate an in-flight edit-only or mixed branch safely, create a clean branch from E2-enabled
+`origin/main`; do not run `--to-unreleased` and do not cherry-pick a commit that carries the old
+numeric bump. Reapply only the intended allowed source edits: use
+`deprecated_in=UNRELEASED` plus `replaced_by` for a first deprecation, and add a
+`PENDING_SUMMARY_EDITS` marker for a summary correction. Reapply new identities with
+`since=UNRELEASED` if the old branch was mixed, and add or update a valid fragment with the exact
+identity code spans specified above. Do not copy the old branch's `REGISTRY_VERSION`,
+`docs/reasons.md` version anchor, minor fixture, consumer contract, or release pin. Compare the new
+branch's intended catalog diff with the old branch, then run ordinary pin, fixture, policy,
+fragment, and `registry_renumber.py --check --main origin/main` checks. Before replacing the old
+branch, compare the `REGISTRY_VERSION` assignment and `docs/reasons.md` version anchor directly
+with `git show origin/main:<path>`; require no diff for the release pin or consumer contract; and
+require `git diff --name-status origin/main...HEAD -- 'tests/fixtures/f29/reason-manifest-v*.json'`
+to print nothing. This selective reapplication is the prescribed migration; release prep later
+stamps it through the normal E2 transaction.
 
 The conversion uses the existing hunk walk and token boundaries, applies to a temporary archive
 first, then rebuilds `consumer-contract.json` from the converted branch with
@@ -228,10 +333,17 @@ E2 does not need to preserve it as an advertised workflow.
   renumber tool fails. Named guard mutation: add a deprecation-only branch to `stamp_release.py`.
 - `pending_summary_edits()` is the one registry-owned declaration surface. No script reads the
   private constant directly.
+- Exact fragment identity claims are extracted once in `reason_manifest_policy.py` from E1-parsed
+  fragment bodies. The fixture sentry and release postconditions consume that result; neither owns
+  another identity spelling or Markdown parser. Guard mutation: make the fixture sentry accept a
+  plain-text or prefix-collision claim.
 - E1 remains the sole fragment grammar, compiler, file-replace, and rollback mechanism. E2 adds no
   second parser, writer, or transaction helper.
-- No new Python module or package is needed. Current files are below the repository's 700-line hard
-  cap; E2 must keep them below it and must not raise a size or fan-out allowance.
+- No new Python module or package is needed. `tests/unit/test_registry_renumber.py` is 771 lines on
+  `c96e2855`; all other currently scoped files are below 700 lines. The 771-line test file is a
+  V2 cleanup item under the owner size rule, not a reason to move this acceptance coverage or raise
+  an allowance. E2 must not grow a hand-written source file past the repository cap and must not
+  raise a size or fan-out allowance.
 - Recurring-defect checks: use `fullmatch` for every new token, slug, version, identity, and digest
   parser; strictly validate v2 stored primitives; do not surface raw exception text; do not import
   another package's private module; keep CI and shell failures blocking; run every mutation on the
@@ -270,14 +382,14 @@ AT-6, AT-7, and AT-9 belong to built E1 and are not repeated.
 
 | ID | Acceptance test and fail-before evidence | Named mutation that must turn it red on the final head |
 |---|---|---|
-| AT-1 | In `test_reason_manifest_policy.py` and `test_reason_release_pin.py`, one `UNRELEASED` identity passes append-only, floor, window, fixture, and pin checks while live registry stays `1.23.0`. The strict v2 reader rejects each missing or extra root, unknown format, bool-as-int, numeric string, wrong container, malformed digest, duplicate identity, and unknown field. Migration preserves shipped `1.22.0`, sets ceiling `1.23.0`, baselines numeric identities through that ceiling, and refuses a seeded v1 or full-fixture mismatch before writing. Current code fails on `Version("unreleased")`, demands a minor bump, and has no v2 reader. | Remove the v2 format check; baseline only identities at or below `1.22.0`; skip the legacy preflight. |
-| AT-1b | Start from v2 plus a historical fixture. A first `deprecated_in=UNRELEASED` with replacement and a marked summary edit pass the actual pin CLI, fixture gate, and release-check policy before stamping. The same edits without markers fail; changing `kind`, `rules`, `owner`, `context`, `since`, or `symbol` under either marker fails; retargeting a numeric tombstone fails. Stamp deprecation-only and summary-only cases to `1.23.1`, clear markers, recapture, then rerun all gates green. Current aggregate pin and full-entry fixture comparison reject the legal cases. | Exempt every field of a pending identity; allow a non-null tombstone baseline; leave the summary marker after stamping. |
-| AT-2 | An unmarked summary change or rules change to a numeric identity fails per-field pin verification; adding an `UNRELEASED` identity does not. Current pin has only one aggregate digest. | Skip numeric entries in the checker; digest all entries including `UNRELEASED`. |
+| AT-1 | In `test_reason_manifest_policy.py` and `test_reason_release_pin.py`, one `UNRELEASED` identity passes append-only, floor, window, fixture, and pin checks while live registry stays `1.23.0`. The strict v2 reader accepts only the five-root schema and exact identity and field records specified above, and rejects each missing or extra root or record key, unknown format, bool-as-int, numeric string, wrong container, malformed digest, empty identity part, duplicate or unsorted identity, unknown or missing field, and `since_counts` with a missing bucket, extra bucket, wrong count, or sum unequal to the identities length. A one-entry golden equals the normative JSON bytes above; the migrated checked-in pin round-trips byte for byte. Tests independently recompute each field hash from canonical JSON, including reversed object-key order, preserved list order, `null`, and a non-ASCII string. Migration preserves shipped `1.22.0`, sets ceiling `1.23.0`, baselines numeric identities through that ceiling, and refuses a seeded v1 or full-fixture mismatch before writing. Current code fails on `Version("unreleased")`, demands a minor bump, and has no v2 reader. | Remove the v2 format check; replace the identities array with a count; accept an empty code; ignore a wrong `since_counts` total; baseline only identities at or below `1.22.0`; hash pretty JSON instead of the specified canonical bytes; flip one nibble of the golden summary digest; skip the legacy preflight. |
+| AT-1b | Start from v2 plus a historical fixture. A first `deprecated_in=UNRELEASED` with replacement and a marked summary edit pass the ordinary pin CLI `--check`, fixture gate, append-only checks, and pending-edit policy before stamping. They must fail `reason_release_pin.py --release-ready` and the real `release_checks.sh` path before stamping. The same edits without markers fail ordinary validation; changing `kind`, `rules`, `owner`, `context`, `since`, or `symbol` under either marker fails; retargeting a numeric tombstone fails. Stamp deprecation-only and summary-only cases to live `1.23.1`, clear markers, recapture with `registry_version=1.23.1` and `baseline_ceiling=1.23.0`, then rerun both ordinary and release-ready gates green. Current aggregate pin and full-entry fixture comparison reject the legal cases. | Exempt every field of a pending identity; allow a non-null tombstone baseline; route ordinary `--check` through release-ready refusal; make release-ready pass before stamping; set `baseline_ceiling` to live `1.23.1`; leave the summary marker after stamping. |
+| AT-2 | An unmarked summary change or rules change to a numeric identity fails per-field pin verification; adding an `UNRELEASED` identity does not. Changing a numeric field value while retaining its old digest, and changing one digest nibble while retaining the live value, both fail the actual pin CLI. Current pin has only one aggregate digest. | Skip numeric entries in the checker; digest all entries including `UNRELEASED`; compare only field names without checking their digests. |
 | AT-3 | Table-test `allowed_registry_version` with shipped pin `1.22.0` and ceiling `1.23.0`. A numeric `since` above `1.23.0`, a live `REGISTRY_VERSION` other than `1.23.0`, or a branch-added numeric fixture fails; an `UNRELEASED` addition passes. Current code accepts the old numeric workflow. | Remove `unreleased_violations`; compute allowed version from the pin alone. |
 | AT-4 | In `test_reason_release_pin.py`, `--release-ready` fails for one pending identity, one pending deprecation, and one pending summary marker. In `test_release_checks_fragments.py`, the real shell path invokes that mode and retains E1's pre-`uv` fragment refusal. After each stamp both checks pass. | Drop the `--release-ready` invocation; make that mode ignore each pending class in turn; bypass the central policy with shell parsing. |
-| AT-5 | In `test_reason_minor_fixtures.py`, every `UNRELEASED` identity must be named in at least one valid E1 fragment; numeric historical identities need no fragment. | Remove the pending-code fragment check; search only `CHANGELOG.md`. |
-| AT-8 | In `test_stamp_release_compile.py`, table-test the four transitions, including the current-base no-op. A candidate with two pending identities stamps both to `1.24.0`, writes exactly `reason-manifest-v1.24-release-0-23-0.json` for package `0.23.0`, round-trips its name, rebuilds contract and docs, captures v2, compiles fragments, and passes all postconditions. Patch and no-op cases write no fixture; the no-op recaptures shipped pin `1.23.0`. A docstring containing `"unreleased"` is unchanged. Forced verification and mid-apply failures restore all owned paths. | Make deprecation-only unchanged; use the dotted package version as the fixture slug; rewrite every matching string; omit no-op pin capture; disable rollback for the created fixture. |
-| AT-10 | In `test_registry_renumber.py`, a temporary branch owns a reason, consumer-contract fact, minor fixture, and fragment naming `1.24.0`. `--to-unreleased` adds the constant import, converts source and every branch-added carrier, removes only that fixture, preserves the branch contract fact in the rebuilt contract, and makes `--check` pass. A forced candidate verification failure leaves the real worktree byte-identical. | Omit `changelog.d/*.md`; copy main's contract; skip constant-import insertion; apply before candidate verification. |
+| AT-5 | In `test_reason_minor_fixtures.py`, every `UNRELEASED` identity must have an exact, case-sensitive `` `namespace/code` `` code-span claim in at least one valid E1 fragment; numeric historical identities need no fragment. The parser accepts the fragment grammar but the identity check rejects plain text, dotted or wrong-case spellings, whitespace or an extra slash, and both shorter and longer prefix collisions. | Remove the pending-code fragment check; search only `CHANGELOG.md`; use substring matching so `` `config/code_extra` `` satisfies `config/code`; accept a dotted spelling. |
+| AT-8 | In `test_stamp_release_compile.py`, table-test the four transitions, including the current-base no-op. A candidate with two pending identities stamps both to `1.24.0`, writes exactly `reason-manifest-v1.24-release-0-23-0.json` for package `0.23.0`, round-trips its name, rebuilds contract and docs, captures v2 with both `registry_version` and `baseline_ceiling` at `1.24.0`, compiles fragments, and passes all postconditions. Deprecation-only and summary-only transitions set `registry_version=1.23.1` but keep `baseline_ceiling=1.23.0`; no-op keeps both at `1.23.0`. Patch and no-op cases write no fixture, and the no-op still recaptures the pin. A docstring containing `"unreleased"` is unchanged. Forced verification and mid-apply failures restore all owned paths. | Make deprecation-only unchanged; set a patch transition's ceiling to live `1.23.1`; leave the ceiling at `1.23.0` after stamping new identities; use the dotted package version as the fixture slug; rewrite every matching string; omit no-op pin capture; disable rollback for the created fixture. |
+| AT-10 | In `test_registry_renumber.py`, a temporary identity-addition branch owns a reason, Python expected-data carrier, JSON carrier, Markdown doc and record, consumer-contract fact, minor fixture, and fragment naming `1.24.0`. `--to-unreleased` adds the constant import; emits unquoted `since=UNRELEASED` only in the catalog; emits lowercase `"unreleased"` in Python and JSON data; emits lowercase `unreleased` inside the existing Markdown delimiters; resets only version anchors to main's numeric version; removes only the branch fixture; preserves the branch contract fact in the rebuilt contract; and makes `--check` pass. Separate edit-only first-deprecation and marked-summary branches, plus a mixed new-identity and existing-edit branch, refuse before candidate creation with `edited-existing` and, where applicable, `version-without-identity`; every real-tree byte remains unchanged. A forced candidate verification failure also leaves the real worktree byte-identical. | Emit JSON value `"UNRELEASED"`; emit quoted catalog `since="unreleased"`; emit bare uppercase `UNRELEASED` in Markdown; omit `changelog.d/*.md`; allow a marked existing-identity edit through conversion; copy main's contract; skip constant-import insertion; apply before candidate verification. |
 
 Run every named mutation after the final source change and record the exact head. A test-only fix
 after a mutation requires rerunning the affected mutation; any source fix requires rerunning all E2
