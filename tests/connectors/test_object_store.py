@@ -230,6 +230,39 @@ def test_read_small_never_truncates_an_over_limit_object(admin: Any) -> None:
     assert _kind(info) == "pointer_invalid"
 
 
+class _ShortReadBody:
+    """A body that returns at most 32 bytes per read, as ``StreamingBody.read(n)`` may."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = io.BytesIO(data)
+        self.closed = False
+
+    def read(self, n: int = -1) -> bytes:
+        return self._data.read(32 if n < 0 else min(n, 32))
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.parametrize(("size", "over"), [(65, False), (66, True), (500, True)])
+def test_read_small_reads_through_short_reads(size: int, over: bool) -> None:
+    body = _ShortReadBody(b"r" * size)
+
+    class Client:
+        def get_object(self, **kw: Any) -> dict[str, Any]:
+            return {"Body": body, "ETag": '"e"'}
+
+    store = _store()
+    store._built[False] = Client()
+    if over:
+        with pytest.raises(ConnectorError) as info:
+            store.read_small(KEY, 65)
+        assert _kind(info) == "pointer_invalid"
+    else:
+        assert store.read_small(KEY, 65) == (b"r" * 65, '"e"')
+    assert body.closed
+
+
 # AT-C38 -----------------------------------------------------------------------------------
 
 
