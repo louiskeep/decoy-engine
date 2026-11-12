@@ -586,7 +586,7 @@ def test_fixed_schema_capture_survives(monkeypatch: pytest.MonkeyPatch) -> None:
 MISSING = "source_file.declared_column_missing"
 
 
-@pytest.mark.parametrize("route", ["profile_source", "run_pipeline", "isolated", "isolated_inproc"])
+@pytest.mark.parametrize("route", ["run_pipeline", "isolated", "isolated_inproc"])
 def test_descriptor_routes_refuse_missing_declared_before_rows(
     route: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -595,9 +595,7 @@ def test_descriptor_routes_refuse_missing_declared_before_rows(
     spies = RowSpies(monkeypatch)
     staging = Staging(monkeypatch)
     with pytest.raises(PipelineValidationError) as caught:
-        if route == "profile_source":
-            profile_source(config, seed=1)
-        elif route == "run_pipeline":
+        if route == "run_pipeline":
             run_pipeline(config, engine_version="e2b-test")
         else:
             # Descriptor-only: nothing is supplied, so preparation must read the header itself.
@@ -609,6 +607,25 @@ def test_descriptor_routes_refuse_missing_declared_before_rows(
     assert spies.calls == []
     assert staging.calls == []
     assert not list(tmp_path.glob("out_*.csv"))
+
+
+def test_direct_profile_source_applies_only_the_forward_rule(tmp_path: Path) -> None:
+    """The reverse rule belongs to the execution choke point, which knows which columns the
+    config creates. A direct profile of a config with a created column must not refuse it."""
+    path = _write(tmp_path, "t", ["g"])
+    config = _config({"t": _csv(path)}, {"t": ["g"]}, tmp_path)
+    config["tables"][0]["columns"].append(
+        {
+            "name": "hh",
+            "strategy": "group_key",
+            "provider_config": {"group_by": "g", "length": 16},
+        }
+    )
+    profile_source(config, seed=1)
+    config["tables"][0]["columns"][0]["name"] = "absent"  # the forward rule still applies
+    with pytest.raises(PipelineValidationError) as caught:
+        profile_source(config, seed=1)
+    assert caught.value.code == COLUMN
 
 
 @pytest.mark.parametrize("case", ["supplied", "loader_schema", "loader_table"])

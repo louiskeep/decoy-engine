@@ -327,14 +327,49 @@ def test_union_of_differing_own_targets_reads_the_source() -> None:
     assert _union(creating, creating).own_target == OWN_TARGET_CREATES
 
 
-def test_derive_reading_an_earlier_derive_target_is_not_exempt() -> None:
+def test_derive_reading_an_earlier_derive_target_counts_as_created() -> None:
+    """`apply_transforms` runs the ops in order, so a later derive may read an earlier target."""
     ops = [
         {"op": "derive", "column": "x", "expression": "a + 1"},
         {"op": "derive", "column": "y", "expression": "x + 1"},
         {"op": "derive", "column": "z", "expression": "a + b"},
     ]
     table = {"name": "t", "columns": PASSTHROUGH, "transforms": ops}
-    assert _created(table) == {"x", "z"}
+    assert _created(table) == {"x", "y", "z"}
+
+
+def test_derive_chain_with_a_masked_target_runs_and_masks_it(tmp_path: Path) -> None:
+    """A config that ran before the reverse rule must not be refused for a chained derive."""
+    table = {
+        "name": "t",
+        "columns": [
+            *PASSTHROUGH,
+            {"name": "x", "strategy": "passthrough"},
+            {"name": "y", "strategy": "redact"},
+        ],
+        "transforms": [
+            {"op": "derive", "column": "x", "expression": "a + 1"},
+            {"op": "derive", "column": "y", "expression": "x * 2"},
+        ],
+    }
+    config = _config(tmp_path, "derive")
+    config["tables"] = [table]
+    config = PipelineConfig.model_validate(config).model_dump()
+    out = run_pipeline(config, {"t": SRC}, execution_mode="full_frame", **KW).outputs["t"]
+    assert out["x"].to_pylist() == [2, 3, 4, 5]
+    assert out["y"].to_pylist() != [4, 6, 8, 10]
+
+
+@pytest.mark.parametrize("entry", ["derived", "group_key"])
+def test_creating_entry_reading_a_derive_target_counts_as_created(entry: str) -> None:
+    strategy, template, _ = CREATING[entry]
+    config = {k: v.format("x") if isinstance(v, str) else v for k, v in template.items()}
+    table = {
+        "name": "t",
+        "columns": [*PASSTHROUGH, {"name": "tgt", "strategy": strategy, "provider_config": config}],
+        "transforms": [{"op": "derive", "column": "x", "expression": "a + 1"}],
+    }
+    assert "tgt" in _created(table)
 
 
 def test_derive_target_written_twice_must_qualify_on_every_write() -> None:
