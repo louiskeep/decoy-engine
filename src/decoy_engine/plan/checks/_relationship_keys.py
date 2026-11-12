@@ -65,11 +65,10 @@ def check_generated_parent_keys(config: dict[str, Any]) -> None:
         named = [k for k in keys if k in generated]
         if not named or _key_is_provable(table, keys, generated):
             continue
-        code = str(reasons.plan.RELATIONSHIP_PARENT_NOT_UNIQUE)
-        summary = reasons.lookup(code)[0].summary
+        summary = reasons.lookup(str(reasons.plan.RELATIONSHIP_PARENT_NOT_UNIQUE))[0].summary
         shown = ", ".join(repr(k) for k in keys)
         raise PlanCompileError(
-            code=code,
+            code=str(reasons.plan.RELATIONSHIP_PARENT_NOT_UNIQUE),
             path=f"tables.{parent['table']}.generate_columns.{named[0]}",
             message=(
                 f"{summary} At table {parent['table']!r}, key columns {shown}. "
