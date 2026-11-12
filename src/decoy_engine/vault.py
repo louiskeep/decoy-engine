@@ -156,22 +156,26 @@ _WEAK_KEY_MESSAGE = (
 )
 
 
-def _require_vault_key(key: OpaqueBox) -> None:
-    """Refuse the boxed key with `weak_mask_secret` unless it is bytes at the floor or longer.
+def _key_size(key: object) -> int:
+    # A `str` or any other non-bytes key counts as size 0, so it fails the floor like a short key.
+    return len(key) if isinstance(key, (bytes, bytearray)) else 0
 
-    The floor is `SecretKeyProvider`'s (`MIN_SECRET_BYTES`); the exact-type check keeps a
-    32-character `str` or a caller-held view from passing `len`. The key is read from the box
-    and never bound to a name, so a traceback of this frame shows only the box's fixed repr. The
-    refusal text is fixed.
+
+def _require_vault_key(size: int) -> None:
+    """Refuse with `weak_mask_secret` unless the vault key's size (`_key_size`) meets the floor.
+
+    The floor is `SecretKeyProvider`'s (`MIN_SECRET_BYTES`). Callers pass only the size, so the
+    key never becomes a local of this frame. The refusal text is fixed.
     """
-    if not isinstance(key.open()[0], (bytes, bytearray)) or len(key.open()[0]) < MIN_SECRET_BYTES:
+    if size < MIN_SECRET_BYTES:
         raise VaultError(code=reasons.runtime.WEAK_MASK_SECRET, message=_WEAK_KEY_MESSAGE)
 
 
-def _fernet(mask_key: OpaqueBox) -> Any:
-    # The Fernet key derives from the run's mask root; the floor is rechecked here, so every
-    # write and load refuses a short key before any file is touched. The IKM arrives boxed and
-    # the derived key is never a local (`_opaque`).
+def _fernet(mask_key: OpaqueBox, size: int) -> Any:
+    # The Fernet key derives from the run's mask root. The floor is checked after the crypto
+    # import and before the derive, so every write and load refuses a short key before any file
+    # is touched. The IKM arrives boxed with its size beside it, so the key is opened once, in
+    # the derive call, and the derived key is never a local (`_opaque`).
     try:
         from cryptography.fernet import Fernet
     except ImportError as exc:
@@ -182,7 +186,7 @@ def _fernet(mask_key: OpaqueBox) -> Any:
                 f"vault extra: {_INSTALL_HINT}"
             ),
         ) from exc
-    _require_vault_key(mask_key)
+    _require_vault_key(size)
     return Fernet(
         base64.urlsafe_b64encode(derive(mask_key.open()[0], VAULT_NAMESPACE, VAULT_KEY_LABEL))
     )
@@ -256,7 +260,7 @@ class VaultWriter:
         # Stored as a `bytes` copy so a caller-held buffer cannot change the key after
         # admission. The policy lookup below can raise; this frame must not hold the key then.
         try:
-            _require_vault_key(OpaqueBox(mask_key))
+            _require_vault_key(_key_size(mask_key))
             self._mask_key = bytes(mask_key)
             self._entries: set[tuple[str, str, str]] = set()
             # The writer writes after the entry point that built it returned, so it keeps the
@@ -281,8 +285,8 @@ class VaultWriter:
         code a weak writer gets, not as a key mismatch.
         """
         try:
-            _require_vault_key(OpaqueBox(self._mask_key))
-            _require_vault_key(OpaqueBox(mask_key))
+            _require_vault_key(_key_size(self._mask_key))
+            _require_vault_key(_key_size(mask_key))
             if not hmac.compare_digest(self._mask_key, mask_key):
                 raise VaultError(
                     code=reasons.runtime.VAULT_KEY_MISMATCH,
@@ -388,7 +392,7 @@ class VaultWriter:
         return len(rows)
 
     def _fernet(self) -> Any:
-        return _fernet(OpaqueBox(self._mask_key))
+        return _fernet(OpaqueBox(self._mask_key), _key_size(self._mask_key))
 
 
 def assert_vault_writer_keyed(vault_writer: object, mask_key: bytes) -> None:
@@ -482,10 +486,11 @@ def load_vault(
     # Build the Fernet first so a missing cryptography extra fails with
     # vault_crypto_not_installed even when the file is absent (preserves the
     # pre-streaming ordering the absent-dep contract test pins). Building the
-    # object only derives the key; it does not decrypt.
-    key = OpaqueBox(mask_key)
+    # object only derives the key; it does not decrypt. The key's size is read inside the
+    # boxing statement, because the key must be boxed and dropped before anything else runs.
+    key = OpaqueBox(mask_key, size := _key_size(mask_key))
     del mask_key  # a traceback keeps this frame: the key must not be among its locals
-    fernet = _fernet(key)
+    fernet = _fernet(key, size)
     handle = vault
     if handle is None:
         if path is None or not fileaccess.is_ambient():
