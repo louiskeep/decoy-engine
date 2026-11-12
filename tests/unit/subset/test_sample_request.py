@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
@@ -300,3 +302,106 @@ def test_a_sample_request_leaves_the_config_hash_alone() -> None:
     before = pipeline_config_hash(dump)
     sample_request(dump, rows=3, use_config_subset=False)
     assert pipeline_config_hash(dump) == before == pipeline_config_hash(raw)
+
+
+def _two_components(allow_dangling: bool) -> dict[str, Any]:
+    """Component 1 is seeded by the block; both components configure every edge `downward`."""
+    cfg = config(
+        {"p": "mask", "c": "mask", "p2": "mask", "c2": "mask"},
+        [FK, ("p2", "id", "c2", "pid")],
+        seeds=[{"table": "p", "mode": "keys", "key_columns": ["id"], "keys": [["p1"]]}],
+    )
+    cfg["subset"]["edge_directions"] = {
+        "p.id -> c.pid": "downward",
+        "p2.id -> c2.pid": "downward",
+    }
+    cfg["subset"]["allow_dangling"] = allow_dangling
+    return cfg
+
+
+@pytest.mark.parametrize("allow_dangling", [False, True])
+def test_an_unseeded_component_is_upward_whatever_the_config_says(allow_dangling: bool) -> None:
+    req = sample_request(_two_components(allow_dangling), rows=2)
+    assert _directions(req) == {"p.id -> c.pid": "downward", "p2.id -> c2.pid": "upward"}
+    tables = {**parent_child("p", "c"), **parent_child("p2", "c2")}
+    chosen = select_subset(req, tables, config=JOB_SEED_CONFIG)
+    assert chosen.survivors["c2"]
+    assert orphans(tables, dict(chosen.survivors), [("p2", "id", "c2", "pid")]) == 0
+
+
+def _outcome(cfg: dict[str, Any], **kwargs: Any) -> tuple[str, str, str]:
+    """The refusal a call raises as (class, code, message); a call that returns is a bug."""
+    try:
+        sample_request(cfg, rows=2, **kwargs)
+    except Exception as exc:  # the test reads whichever refusal comes back
+        return type(exc).__name__, getattr(exc, "code", ""), str(exc)
+    return "returned", "", ""
+
+
+_GEN_TO_MASK = ("g", "id", "m", "gid")
+_UNKNOWN_TABLE_CELLS = [
+    pytest.param(
+        {"g": "generate", "m": "mask"}, [_GEN_TO_MASK], {"root": "g"}, "g", id="generate-root"
+    ),
+    pytest.param(
+        {"p": "mask", "g": "generate"},
+        [("g", "id", "ghost", "gid")],
+        {},
+        "ghost",
+        id="unknown-child-of-generated-parent",
+    ),
+    pytest.param(
+        {"p": "mask", "g": "generate"},
+        [("ghost", "id", "g", "gid")],
+        {},
+        "ghost",
+        id="unknown-parent-of-generated-child",
+    ),
+    pytest.param(
+        {"p": "mask", "c": "mask"},
+        [("ghost", "id", "c", "gid")],
+        {},
+        "ghost",
+        id="unknown-parent-of-mask-child",
+    ),
+    pytest.param(
+        {"p": "mask", "c": "mask"},
+        [("p", "id", "ghost", "pid")],
+        {},
+        "ghost",
+        id="unknown-child-of-mask-parent",
+    ),
+]
+
+
+@pytest.mark.parametrize(("kinds", "edges", "kwargs", "named"), _UNKNOWN_TABLE_CELLS)
+def test_tables_are_checked_before_any_structural_decision(
+    kinds: dict[str, str],
+    edges: list[tuple[str, str, str, str]],
+    kwargs: dict[str, Any],
+    named: str,
+) -> None:
+    cls, code, message = _outcome(config(kinds, edges), **kwargs)
+    assert (cls, code) == ("SubsetPreflightError", reasons.subset.SUBSET_UNKNOWN_TABLE)
+    assert repr(named) in message
+
+
+def test_the_refusal_edge_does_not_count_an_unknown_child_as_masked() -> None:
+    assert sample_refusal_edge(config({"g": "generate"}, [("g", "id", "ghost", "gid")])) is None
+
+
+def _walks(path: str) -> tuple[bool, bool]:
+    tree = ast.parse((Path(__file__).parents[3] / path).read_text())
+    loops = any(isinstance(n, ast.While) for n in ast.walk(tree))
+    imports = any(
+        isinstance(n, ast.ImportFrom) and any(a.name == "reach" for a in n.names)
+        for n in ast.walk(tree)
+    )
+    return loops, imports
+
+
+@pytest.mark.parametrize(
+    "path", ["src/decoy_engine/subset/_sample.py", "src/decoy_engine/subset/_scope.py"]
+)
+def test_reach_is_the_only_walk(path: str) -> None:
+    assert _walks(path) == (False, True)
