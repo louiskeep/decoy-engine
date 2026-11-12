@@ -39,7 +39,7 @@ def approximate_columns(config: dict[str, Any]) -> list[tuple[str, str]]:
     for table in config.get("tables") or []:
         name = table["name"]
         if kinds.get(name) == "generate":
-            found.extend((name, col["name"]) for col in table.get("generate_columns") or [])
+            found.extend((name, col["name"]) for col in table["generate_columns"])
             continue
         for col in table.get("columns") or []:
             if col.get("cardinality_mode") in _WHOLE_COLUMN_MODES or not is_sample_exact(
