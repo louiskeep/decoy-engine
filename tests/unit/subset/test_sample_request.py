@@ -391,6 +391,61 @@ def test_tables_are_checked_before_any_structural_decision(
     assert repr(named) in message
 
 
+def test_unknown_endpoint_precedes_width_mismatch_in_the_same_relationship() -> None:
+    cfg = config({"p": "mask", "c": "mask"}, [FK])
+    cfg["relationships"] = [
+        {
+            "parent": {"table": "p", "columns": ["a", "b"]},
+            "children": [{"table": "ghost", "columns": ["pid"]}],
+            "orphan_policy": "preserve",
+        }
+    ]
+
+    cls, code, message = _outcome(cfg)
+
+    assert (cls, code) == ("SubsetPreflightError", reasons.subset.SUBSET_UNKNOWN_TABLE)
+    assert repr("ghost") in message
+
+
+def test_later_unknown_endpoint_precedes_earlier_width_mismatch() -> None:
+    cfg = config({"p": "mask", "c": "mask"}, [FK])
+    cfg["relationships"] = [
+        {
+            "parent": {"table": "p", "columns": ["a", "b"]},
+            "children": [{"table": "c", "columns": ["pid"]}],
+            "orphan_policy": "preserve",
+        },
+        {
+            "parent": {"table": "p", "columns": ["id"]},
+            "children": [{"table": "ghost", "columns": ["pid"]}],
+            "orphan_policy": "preserve",
+        },
+    ]
+
+    cls, code, message = _outcome(cfg)
+
+    assert (cls, code) == ("SubsetPreflightError", reasons.subset.SUBSET_UNKNOWN_TABLE)
+    assert repr("ghost") in message
+
+
+def test_width_mismatch_between_known_tables_keeps_its_refusal() -> None:
+    cfg = config({"p": "mask", "c": "mask"}, [FK])
+    cfg["relationships"] = [
+        {
+            "parent": {"table": "p", "columns": ["a", "b"]},
+            "children": [{"table": "c", "columns": ["pid"]}],
+            "orphan_policy": "preserve",
+        }
+    ]
+
+    cls, code, _ = _outcome(cfg)
+
+    assert (cls, code) == (
+        "SubsetPreflightError",
+        reasons.subset.SUBSET_RELATIONSHIP_COMPOSITE_LENGTH,
+    )
+
+
 def test_the_refusal_edge_does_not_count_an_unknown_child_as_masked() -> None:
     assert sample_refusal_edge(config({"g": "generate"}, [("g", "id", "ghost", "gid")])) is None
 

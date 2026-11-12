@@ -162,13 +162,14 @@ def _generated_tables(config: dict) -> set[str]:
 
 
 def require_known_endpoints(config: dict) -> None:
-    """Refuse a relationship end that names no table of the config, mask or generate.
+    """Refuse the first relationship end that names no table of the config.
 
-    Read before the generate-edge drop: that drop discards an edge by its generated end and would
-    hide an unknown table on the other one."""
+    Scan raw entries so every end is checked before relationship structures are built."""
     known = classify_table_kinds(config)
-    for rel in relationships_from_config(config):
-        for table in (rel.parent.table, *(c.table for c in rel.children)):
+    for entry in config.get("relationships", []):
+        parent = entry["parent"]
+        for end in (parent, *entry["children"]):
+            table = end["table"]
             if table not in known:
                 raise unknown_table_error(table)
 
