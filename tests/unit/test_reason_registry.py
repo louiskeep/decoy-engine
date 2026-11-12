@@ -547,6 +547,7 @@ def _blocked_report(**parts: object) -> dict[str, object]:
 
 def _blocked_key(code: str, status: str, baseline: str) -> dict[str, object]:
     return {
+        "kind": "primary",
         "status": status,
         "baseline": baseline,
         "codes": [{"namespace": "post_scan", "code": code}],
