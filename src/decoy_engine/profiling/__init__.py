@@ -57,6 +57,7 @@ from decoy_engine.profiling.scan_set import (
     ScanSetCoreRead,
     ScanSourceError,
     TableScan,
+    passes_through,
     scan_set_to_dict,
     scan_sources,
 )
@@ -100,6 +101,7 @@ __all__ = [
     "key_facts",
     "keys_comparable",
     "known_detector_ids",
+    "passes_through",
     "profile_columns",
     "profile_document",
     "redact_profile_dict",
