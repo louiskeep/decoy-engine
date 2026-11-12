@@ -33,3 +33,5 @@ Breaking: a vault writer is refused with a sink or a chunked entry, a `TokenVaul
   in place, writing through hard links). A write, fsync or link failure is
   `runtime/vault_commit_failed`. Both texts are fixed and name no path. No failure path removes a
   published vault. The ambient in-place write (the `vault_direct` stage label) is deleted.
+- The `cryptography` floor rises from 42 to 49: the HKDF extract step uses `HKDF.extract`, which
+  PyCA added in 49.

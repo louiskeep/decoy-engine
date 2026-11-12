@@ -633,7 +633,7 @@ xdist = [
 requires-dist = [
     { name = "boto3", marker = "extra == 'cloud'", specifier = ">=1.43.36" },
     { name = "click", marker = "extra == 'ner'", specifier = ">=8.1,<9" },
-    { name = "cryptography", specifier = ">=42" },
+    { name = "cryptography", specifier = ">=49" },
     { name = "decoy-engine", extras = ["cloud"], marker = "extra == 'gcs'" },
     { name = "dp-accounting", specifier = "==0.6.0" },
     { name = "duckdb", specifier = ">=0.10.0" },

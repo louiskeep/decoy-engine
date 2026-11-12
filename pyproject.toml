@@ -170,7 +170,8 @@ dependencies = [
     # unchanged, only its promotion to base. `[vault]` stays as a
     # compatibility alias (see below) so an existing `pip install .[vault]`
     # still resolves.
-    "cryptography>=42",
+    # HKDF.extract (determinism/_hkdf.py) needs 49.
+    "cryptography>=49",
 ]
 
 [project.optional-dependencies]

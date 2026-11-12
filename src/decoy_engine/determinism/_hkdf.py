@@ -4,7 +4,7 @@ Pattern: RFC 5869 HKDF-SHA256 (PyCA cryptography, Apache-2.0/BSD). See:
 https://datatracker.ietf.org/doc/html/rfc5869 and
 https://cryptography.io/en/latest/hazmat/primitives/key-derivation-functions/#hkdf
 
-The arithmetic is PyCA's `HKDF` / `HKDFExpand` / `HMAC`; this module only keeps the engine's
+The arithmetic is PyCA's `HKDF` / `HKDFExpand` (`HKDF.extract` for the extract step); this module only keeps the engine's
 three entry points and one application rule over the primitive: an empty salt is refused
 (QA-10 F12). RFC 5869 §2.2 and PyCA both treat `salt=b""` as `HashLen` zero bytes, which would
 let a quietly failed salt step degrade to the all-zero salt; a caller that wants that salt passes
@@ -19,7 +19,6 @@ implementation (`tests/fixtures/hkdf/engine-vectors.json`), so every derived key
 from __future__ import annotations
 
 from cryptography.hazmat.primitives.hashes import SHA256
-from cryptography.hazmat.primitives.hmac import HMAC
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF, HKDFExpand
 
 _HASH_LEN = 32  # SHA-256 output length in bytes
@@ -53,9 +52,7 @@ def hkdf_extract(salt: bytes, ikm: bytes) -> bytes:
     try:
         if not salt:
             raise ValueError(_EMPTY_SALT_MESSAGE)
-        mac = HMAC(salt, SHA256())
-        mac.update(ikm)
-        return mac.finalize()
+        return HKDF.extract(SHA256(), bytes(salt), ikm)
     except BaseException:
         del ikm
         raise
