@@ -231,3 +231,12 @@ found), or keep it and restore creators. Nothing else in the slice depends on it
   out-of-core routes (`_pipeline_route_exec.py`, c1b's note); inside the isolated child it does
   not matter (the child publishes nothing).
 - `run_pipeline_isolated` with a `request` and no `output_dir` ignores the request.
+
+## Owner decision (2026-11-12): creator floor
+
+`tests/sentry/protected_dir/test_protected_dir.py::test_the_walk_is_not_vacuous`
+asserted at least 15 raw directory creators under `src/`. This slice deletes the
+plan-mandated creators (`atomic_commit`, `stage_tables`, the worker's
+`_stage_outputs`, the payload `sources/` mkdir), leaving 12. The owner ruled to
+lower the floor to 12. The floor is a non-vacuity guard (the scan still finds
+creators); the test's other non-vacuity lines are unchanged.

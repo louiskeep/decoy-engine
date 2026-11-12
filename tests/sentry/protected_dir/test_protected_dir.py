@@ -115,7 +115,7 @@ def test_the_walk_is_not_vacuous(engine_sites: list[Site]) -> None:
         assert any(s.endswith(name) for s in CREATING), name
     entries = load_registry(REGISTRY)
     creators = [s for s in engine_sites if s.sink in CREATING and s.module not in FD_RELATIVE]
-    assert len(creators) >= 15
+    assert len(creators) >= 12  # c2 deleted atomic_commit, stage_tables and the worker stagers
     assert CATEGORIES - {"non_row"} <= {e.get("dir_category") for e in entries}
     assert any(
         e["module"] == ALLOCATOR and e.get("dir_category") == "protected_root" for e in entries
