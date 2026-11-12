@@ -21,6 +21,12 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 import yaml
+from scripts.dev.required_checks import (
+    DerivationError,
+    job_check_names,
+    workflow_events,
+    workflow_on,
+)
 
 from tests.sentry.ci_scan._shell_tokens import base, commands
 from tests.sentry.parallel._resources import parse_marker_expr
@@ -85,20 +91,6 @@ def load(root: Path = ROOT) -> Tree:
         tomllib.loads((root / "ci/unlaned.toml").read_text()),
         tomllib.loads((root / "ci/required-jobs.toml").read_text()),
     )
-
-
-def _on(doc: dict[Any, Any]) -> Any:
-    return doc[True] if True in doc else doc.get("on")  # YAML 1.1 reads a bare `on:` key as True
-
-
-def workflow_events(doc: dict[Any, Any]) -> set[str]:
-    """The trigger names of a workflow: the scalar, list and mapping forms of `on`."""
-    on = _on(doc)
-    if isinstance(on, str):
-        return {on}
-    if isinstance(on, (list, dict)):
-        return set(on)
-    raise ValueError("workflow has no readable `on` trigger")
 
 
 def job_events(events: set[str], job: dict[str, Any]) -> set[str]:
@@ -319,6 +311,7 @@ def registry_findings(tree: Tree) -> list[str]:
             out.append(f"R2 {wf}: merge workflow has no pull_request trigger")
         for key in jobs:
             out += _merge_job_findings(wf, key, doc["jobs"].get(key), jobs)
+    out += _context_findings(tree.workflows, merge)
     for wf, doc in tree.workflows.items():
         events = workflow_events(doc)
         for key, job in doc["jobs"].items():
@@ -333,6 +326,34 @@ def registry_findings(tree: Tree) -> list[str]:
     return out
 
 
+def _context_findings(
+    workflows: dict[str, dict[Any, Any]], merge: dict[str, list[str]]
+) -> list[str]:
+    """R2: merge jobs have derivable check names, and no name is reported by two jobs of the
+    workflows that report on pushes or pull requests (a push-only job must not satisfy a required
+    PR check). The derivation is `required_checks.job_check_names`, shared with the verifier."""
+    out: list[str] = []
+    seen: dict[str, list[str]] = {}
+    for wf, doc in workflows.items():
+        if not workflow_events(doc) & {"push", "pull_request", "pull_request_target"}:
+            continue
+        for key, job in doc["jobs"].items():
+            try:
+                names = job_check_names(key, job)
+            except DerivationError as e:
+                if key in merge.get(wf, []):  # others cannot be compared, only merge jobs matter
+                    out.append(f"R2 {wf}:{e}")
+                continue
+            for name in names:
+                seen.setdefault(name, []).append(f"{wf}:{key}")
+    out += [
+        f"R2 check name {n!r} is reported by {' and '.join(sorted(jobs))}"
+        for n, jobs in sorted(seen.items())
+        if len(jobs) > 1
+    ]
+    return out
+
+
 def _merge_job_findings(
     wf: str, key: str, job: dict[str, Any] | None, tier: list[str]
 ) -> list[str]:
@@ -344,7 +365,6 @@ def _merge_job_findings(
         "has an `if` (a skipped job reports success)": "if" in job,
         "needs a job outside the merge tier": bool(set(needs) - set(tier)),
         "is self-hosted": "self-hosted" in str(job.get("runs-on", "")),
-        "has a templated name": "${{" in str(job.get("name", "")),
     }
     return [f"R2 {wf}:{key}: merge job {why}" for why, bad in checks.items() if bad]
 
@@ -362,7 +382,7 @@ def trigger_findings(tree: Tree) -> list[str]:
             out.append(f"T1 {name}: no automatic trigger and not in ci/unlaned.toml")
         if auto and name in unlaned:
             out.append(f"T1 {name}: has an automatic trigger but is still in ci/unlaned.toml")
-        on = _on(doc)
+        on = workflow_on(doc)
         for event, spec in on.items() if isinstance(on, dict) else []:
             if isinstance(spec, dict) and {"paths", "paths-ignore"} & set(spec):
                 out.append(f"T2 {name}: path filter on {event}")

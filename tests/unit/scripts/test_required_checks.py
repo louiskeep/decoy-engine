@@ -135,9 +135,7 @@ def green_pr() -> FakeGitHub:
     return gh
 
 
-def run_main(
-    argv: list[str], gh: FakeGitHub, git: FakeGit | None = None
-) -> int:
+def run_main(argv: list[str], gh: FakeGitHub, git: FakeGit | None = None) -> int:
     return rc.main(argv, fetch=gh, git=git or FakeGit(), now=NOW)
 
 
@@ -198,7 +196,8 @@ def test_include_that_only_adds_keys_keeps_the_names() -> None:
 def test_derivation_error_exits_two_with_the_job(capsys: pytest.CaptureFixture[str]) -> None:
     class Git(FakeGit):
         def __call__(self, args: Any) -> str:
-            if list(args)[0] == "show" and list(args)[1].endswith("native-companion.yml"):
+            argv = list(args)
+            if argv[0] == "show" and argv[1].endswith("native-companion.yml"):
                 doc = workflow("native-companion.yml")
                 doc["jobs"]["companion-wheel-macos"]["strategy"]["matrix"]["exclude"] = [{}]
                 return yaml.safe_dump(doc)
@@ -212,7 +211,7 @@ def test_contexts_prints_the_merge_tier_as_json(capsys: pytest.CaptureFixture[st
     assert run_main(["contexts", "--ref", MAIN], FakeGitHub()) == 0
     out = capsys.readouterr().out
     got = json.loads(out)
-    assert sorted(got) == sorted(sum(MERGE.values(), []))
+    assert sorted(got) == sorted(n for names in MERGE.values() for n in names)
     assert len(got) == len(set(got)) == 24
 
 
@@ -247,7 +246,10 @@ def test_a_missing_name_is_red() -> None:
 
 
 def test_a_missing_matrix_leg_is_red() -> None:
-    assert verify(drop(green_pr(), "native-companion.yml", "companion-wheel-linux (3.11, aarch64)")) == 1
+    assert (
+        verify(drop(green_pr(), "native-companion.yml", "companion-wheel-linux (3.11, aarch64)"))
+        == 1
+    )
 
 
 def test_a_missing_workflow_run_is_red() -> None:
@@ -325,7 +327,13 @@ def test_stale_origin_main_exits_two_and_prints_the_api_sha(
 
 # --- AT-22: verify --tier nightly -----------------------------------------------------------
 
-SCHEDULED = ["ci.yml", "native-companion.yml", "testflight.yml", "dps-dependency-matrix.yml", "security.yml"]
+SCHEDULED = [
+    "ci.yml",
+    "native-companion.yml",
+    "testflight.yml",
+    "dps-dependency-matrix.yml",
+    "security.yml",
+]
 
 
 def scheduled_names(wf: str) -> list[str]:
@@ -335,7 +343,7 @@ def scheduled_names(wf: str) -> list[str]:
 def nightly(**over: Any) -> FakeGitHub:
     gh = FakeGitHub()
     for wf in SCHEDULED:
-        gh.add(wf, scheduled_names(wf), event="schedule", sha=MAIN, **over)
+        gh.add(wf, scheduled_names(wf), **{"event": "schedule", "sha": MAIN, **over})
     return gh
 
 

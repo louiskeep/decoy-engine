@@ -59,7 +59,9 @@ def find_proof(repo: str, tree: str, fetch: Fetch) -> dict[str, Any] | None:
     return None
 
 
-def _api(token: str) -> Fetch:
+def github_fetch(token: str) -> Fetch:
+    """GET `path` on api.github.com as JSON; shared with required_checks.py."""
+
     def fetch(path: str) -> Any:
         req = urllib.request.Request(
             f"https://api.github.com/{path}",
@@ -92,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--repo", required=True)
     ap.add_argument("--tree", required=True)
     args = ap.parse_args(argv)
-    lines = decide(args.repo, args.tree, _api(os.environ.get("GH_TOKEN", "")))
+    lines = decide(args.repo, args.tree, github_fetch(os.environ.get("GH_TOKEN", "")))
     print("\n".join(lines))
     return 0
 

@@ -309,6 +309,26 @@ def test_required_list_rules() -> None:
     assert has(_r(t), "R3 codspeed.yml:benchmarks")
 
 
+def test_push_only_job_cannot_reuse_a_required_check_name() -> None:
+    t = seeded()
+    t.workflows["gate-selfhosted.yml"]["jobs"]["extra"] = {
+        "name": "docs-build",
+        "runs-on": "ubuntu-latest",
+        "timeout-minutes": 1,
+    }
+    found = _r(t)
+    assert has(found, "R2 check name 'docs-build' is reported by")
+    assert has(found, "docs.yml:build") and has(found, "gate-selfhosted.yml:extra")
+
+
+def test_merge_job_with_an_unsupported_matrix_is_a_finding() -> None:
+    t = seeded()
+    job(t, "native-companion.yml", "companion-wheel-macos")["strategy"]["matrix"]["exclude"] = [
+        {"python-version": "3.10"}
+    ]
+    assert has(_r(t), "R2 native-companion.yml:companion-wheel-macos: matrix exclude")
+
+
 def test_job_in_a_schedule_only_workflow_needs_no_listing() -> None:
     t = seeded()
     t.workflows["security.yml"]["jobs"]["extra"] = {
