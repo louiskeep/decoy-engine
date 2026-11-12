@@ -30,13 +30,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 import polars as pl
+import pyarrow as pa
 
 from decoy_engine import reasons
 from decoy_engine.fileaccess import FileAccess, entry_point
-from decoy_engine.fileaccess.adapters import polars as polars_adapter
 from decoy_engine.plan._types import PlanRelationship
+from decoy_engine.profile import LazySource
 from decoy_engine.subset._edges import build_subset_edges
-from decoy_engine.subset._io import open_input
+from decoy_engine.subset._inputs import ParquetPathInput, TableInput, as_input
 from decoy_engine.subset._keys import RI
 from decoy_engine.subset._types import (
     FkPreflightEdgeReport,
@@ -58,7 +59,7 @@ def _key_dtypes_compatible(pdt: pl.DataType, cdt: pl.DataType) -> bool:
 @entry_point
 def run_subset_preflight(
     *,
-    sources: Mapping[str, SubsetSource],
+    sources: Mapping[str, SubsetSource | pa.Table | LazySource | TableInput],
     relationships: tuple[PlanRelationship, ...],
     seeds: tuple[SeedSpec, ...] = (),
     file_access: FileAccess | None = None,
@@ -104,7 +105,11 @@ def run_subset_preflight(
                 )
             )
             continue
-        fmt = sources[table].format
+        source = sources[table]
+        # Only path inputs name a format; resident and lazy inputs are already read.
+        if isinstance(source, ParquetPathInput):
+            source = source.source
+        fmt = source.format if isinstance(source, SubsetSource) else "parquet"
         if fmt != "parquet":
             failures.append(
                 PreflightFailure(
@@ -121,12 +126,8 @@ def run_subset_preflight(
             passed=False, failures=tuple(failures), warnings=tuple(warnings), edges=()
         )
 
-    schemas: dict[str, pl.Schema] = {}
-    for table in tables_referenced:
-        with open_input(sources[table], table) as handle:
-            schemas[table] = polars_adapter.collect_schema(
-                handle, polars_adapter.scan_parquet(handle)
-            )
+    inputs = {table: as_input(table, sources[table]) for table in tables_referenced}
+    schemas: dict[str, pl.Schema] = {t: inp.polars_schema for t, inp in inputs.items()}
 
     # 5.1: dangling column / duplicate column / reserved column, per edge end.
     schema_ok_edges: list[SubsetEdge] = []
@@ -215,18 +216,10 @@ def run_subset_preflight(
     # 5.4: key-level source-orphan pre-scan. The `run_fk_validity` reuse.
     edge_reports: list[FkPreflightEdgeReport] = []
     for edge in compat_edges:
-        with open_input(sources[edge.child_table], edge.child_table) as child_handle:
-            child_keys = polars_adapter.collect(
-                child_handle,
-                polars_adapter.scan_parquet(child_handle).select(list(edge.child_columns)),
-            )
+        child_keys = inputs[edge.child_table].key_frame(list(edge.child_columns)).drop(RI)
         child_row_count = child_keys.height
         non_null = child_keys.drop_nulls()  # any-null component = null key, per P3.
-        with open_input(sources[edge.parent_table], edge.parent_table) as parent_handle:
-            parent_frame = polars_adapter.collect(
-                parent_handle,
-                polars_adapter.scan_parquet(parent_handle).select(list(edge.parent_columns)),
-            )
+        parent_frame = inputs[edge.parent_table].key_frame(list(edge.parent_columns)).drop(RI)
         parent_keys = parent_frame.drop_nulls().unique()
         orphans = non_null.join(
             parent_keys,

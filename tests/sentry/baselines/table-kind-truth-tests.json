@@ -1,0 +1,118 @@
+{
+ "sentry_id": "table-kind-truth-tests",
+ "created_in": "SUB-RUN-E1",
+ "entries": {
+  "config/_generate_type_checks.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 1
+  },
+  "config/_generate_unique.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 1
+  },
+  "config/_tables.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 1
+  },
+  "execution/_chunked.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 1
+  },
+  "execution/_probe_scale.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 2
+  },
+  "execution/_transforms_gate.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 1
+  },
+  "execution/_transforms_table.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 1
+  },
+  "execution/native/_plan.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 1
+  },
+  "generation/_admission.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 1
+  },
+  "generation/_bounds.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 3
+  },
+  "generation/_numeric_typing.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 1
+  },
+  "generation/_plan_entry.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 2
+  },
+  "generation/_reproducibility.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 2
+  },
+  "generation/_streamed.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 1
+  },
+  "generation/_window_admission.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 1
+  },
+  "generation/synthesize.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 2
+  },
+  "plan/_checks.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 3
+  },
+  "plan/_checks_declared_casting.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 1
+  },
+  "plan/_checks_derived_aggregate.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 2
+  },
+  "plan/_checks_dp.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 2
+  },
+  "plan/_checks_group_key.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 2
+  },
+  "plan/_checks_grouped_series.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 2
+  },
+  "plan/_checks_windowed_date.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 2
+  },
+  "plan/_generation.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 3
+  },
+  "plan/_serialize.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 1
+  },
+  "plan/checks/_generate_columns.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 2
+  },
+  "secret_providers/_requirements.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 1
+  },
+  "unmask.py": {
+   "reason": "inline `.get(\"generate_columns\")` truth tests existing when the table-kind owner moved to config; count may only go down, new modules call config.classify_table_kinds",
+   "max": 1
+  }
+ }
+}
