@@ -56,9 +56,6 @@
   "entry::decoy_engine/execution/out_of_core/_scratch.py::open_private::os.open::0": {
    "reason": "the scratch private-file primitive itself: O_CREAT|O_NOFOLLOW 0600 plus fchmod in a 0700 scratch root"
   },
-  "entry::decoy_engine/execution/out_of_core/_stage.py::MaskedKeyStager.__init__::pyarrow.parquet.ParquetWriter::0": {
-   "reason": "writes into an open_private file (O_CREAT|O_NOFOLLOW 0600 plus fchmod) under a private_dir 0700 scratch root; the create is open_private, not this call"
-  },
   "entry::decoy_engine/fileaccess/_local.py::LocalOutputTxn.create_file::os.open::0": {
    "reason": "ambient vault_direct rewrite in place keeps the legacy Path.write_bytes mode (0666 minus umask); row chunks are Fernet-encrypted, the header holds only versions and counts. V1 found, out of scope (X7b)"
   },

@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.execution.out_of_core._relation import ParentKeyRelation, ParentSource
+    from decoy_engine.fileaccess import ScratchArena
     from decoy_engine.plan._types import Plan
     from decoy_engine.relationships._graph import RelationshipEdge
 
@@ -62,7 +63,7 @@ def emit_to_sink(
     outgoing_edges: tuple[RelationshipEdge, ...],
     parent_relations: dict[RelationshipEdge, ParentKeyRelation],
     relation_dir: Path,
-    staging_path: Path,
+    staging_path: ScratchArena | Path,
     memory_limit: str | None,
     batch_rows: int,
     sink: TransactionalSink,
@@ -90,6 +91,9 @@ def emit_to_sink(
     the linear chain at one full-budget instance at a time. `_relation_masked_types`
     reads only the joiners' Python-side observed/output types, which survive the
     connection close, so the relation build below is unaffected.
+
+    `staging_path` is the arena the staged copy goes in, or its file path (transition arm (d),
+    adopted by the stager, until S2b-3).
 
     `masked_observed_types` (default None): the driver's own pre-reconciliation
     per-column type observations (see `MaskedKeyStager`'s docstring for why the

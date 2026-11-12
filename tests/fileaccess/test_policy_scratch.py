@@ -10,9 +10,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from decoy_engine.execution.out_of_core import _scratch
 from decoy_engine.execution.out_of_core._stage import MaskedKeyStager
-from decoy_engine.fileaccess import FileAccessDenied
+from decoy_engine.fileaccess import FileAccessDenied, ScratchArena
 from decoy_engine.fileaccess._scratch import ScratchAccess
 from decoy_engine.profile._readers import LazySource
 from tests.fileaccess.support import RootRelative
@@ -48,12 +47,12 @@ def test_the_stager_source_reads_its_own_file_and_nothing_else(tmp_path: Path) -
     pq.write_table(pa.table({"k": [9]}), elsewhere)
     with pytest.raises(FileAccessDenied):
         LazySource(
-            elsewhere, access=_scratch.scratch_access_for(tmp_path / "staged"), field_key="x"
+            elsewhere, access=ScratchArena._adopt(tmp_path / "staged").reader(), field_key="x"
         ).to_table()
     with pytest.raises(FileAccessDenied):
         LazySource(
             tmp_path / "staged" / ".." / "elsewhere.parquet",
-            access=_scratch.scratch_access_for(tmp_path / "staged"),
+            access=ScratchArena._adopt(tmp_path / "staged").reader(),
         ).to_table()
 
 
@@ -74,8 +73,6 @@ def test_the_path_arm_reads_back_a_component_not_a_released_path(tmp_path: Path)
 
 
 def test_the_stager_stages_on_an_arena(tmp_path: Path) -> None:
-    from decoy_engine.fileaccess import ScratchArena
-
     schema = pa.schema([pa.field("k", pa.int64())])
     with ScratchArena.open() as arena:
         staged = arena.create_dir("staged")

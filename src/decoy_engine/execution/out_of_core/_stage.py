@@ -19,22 +19,21 @@ does.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 
-from decoy_engine.execution.out_of_core._scratch import (
-    close_private,
-    open_private,
-    private_dir,
-    scratch_access_for,
-)
 from decoy_engine.execution.out_of_core._source import LazySource
+from decoy_engine.fileaccess import ScratchArena
+from decoy_engine.fileaccess.adapters.arrow import parquet_writer
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from pathlib import Path
+
+    from decoy_engine.fileaccess._scratch import ScratchAccess
+
+_COMPONENT = "masked_keys.parquet"
 
 
 class MaskedKeyStager:
@@ -43,7 +42,12 @@ class MaskedKeyStager:
     `add` takes each (pre-reconcile, reconciled) batch pair as it flows to the
     sink: the reconciled key columns are appended to one narrow Parquet file,
     and the pre-reconcile chunk types are recorded in `observed` per column.
-    After `close`, `source()` re-reads the staged copy as a `LazySource`.
+    After `close`, `source()` re-reads the staged copy as a `LazySource` over the arena's reader,
+    by component: no path is released.
+
+    `staging` is the arena the copy goes in (as `masked_keys.parquet`), or, transitionally (arm
+    (d), until S2b-3), the file's path: its directory is adopted, never owned, so the run's own
+    cleanup still removes it.
 
     `masked_observed_types` (the single-source-read reorder driver): when the
     batches this stager sees have ALREADY been reconciled onto a stable schema
@@ -59,7 +63,7 @@ class MaskedKeyStager:
 
     def __init__(
         self,
-        path: Path,
+        staging: ScratchArena | Path,
         *,
         columns: tuple[str, ...],
         fixed_schema: pa.Schema,
@@ -67,17 +71,12 @@ class MaskedKeyStager:
     ) -> None:
         self._columns = columns
         self._indexes = tuple(fixed_schema.get_field_index(col) for col in columns)
-        schema = pa.schema([fixed_schema.field(idx) for idx in self._indexes])
-        private_dir(path.parent)
-        self._path = path
-        self._schema = schema
-        self._sink = open_private(path)
-        try:
-            self._writer = pq.ParquetWriter(self._sink, schema)
-        except BaseException:
-            self._sink.close()
-            raise
-        self._reader = scratch_access_for(path.parent)
+        self._schema = pa.schema([fixed_schema.field(idx) for idx in self._indexes])
+        if isinstance(staging, ScratchArena):
+            self._open(staging, _COMPONENT)
+        else:
+            with ScratchArena._adopt(staging.parent) as adopted:
+                self._open(adopted, staging.name)
         if masked_observed_types is None:
             self.observed: dict[str, set[pa.DataType]] = {col: set() for col in columns}
             self._track_observed = True
@@ -85,6 +84,15 @@ class MaskedKeyStager:
             self.observed = {col: set(masked_observed_types.get(col, set())) for col in columns}
             self._track_observed = False
         self.rows = 0
+
+    def _open(self, arena: ScratchArena, component: str) -> None:
+        self._component = component
+        self._writer = parquet_writer(arena, component, self._schema)
+        try:
+            self._reader: ScratchAccess = arena.reader()
+        except BaseException:
+            self._writer.close()
+            raise
 
     def add(self, rewritten: pa.RecordBatch, reconciled: pa.RecordBatch) -> None:
         if self._track_observed:
@@ -99,10 +107,10 @@ class MaskedKeyStager:
         self.rows += reconciled.num_rows
 
     def close(self) -> None:
-        close_private(self._writer, self._sink)
+        self._writer.close()
 
     def source(self) -> LazySource:
-        return LazySource(self._path, access=self._reader, field_key="engine.scratch")
+        return LazySource(Path(self._component), access=self._reader, field_key="engine.scratch")
 
 
 __all__ = ["MaskedKeyStager"]

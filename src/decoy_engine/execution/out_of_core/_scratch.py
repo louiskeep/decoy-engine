@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, BinaryIO
+from typing import BinaryIO
 
-from decoy_engine.fileaccess import ScratchArena, open_protected_dir
-
-if TYPE_CHECKING:
-    from decoy_engine.fileaccess._scratch import ScratchAccess
+from decoy_engine.fileaccess import open_protected_dir
 
 
 def open_private(path: Path) -> BinaryIO:
@@ -52,12 +49,3 @@ def precreate_private(path: Path) -> str:
 def private_dir(path: Path) -> Path:
     """``mkdir -p`` in which every level it creates is 0700, whatever the umask."""
     return open_protected_dir(path, create=True, parents=True)
-
-
-def scratch_access_for(directory: Path) -> ScratchAccess:
-    """The reader for files the engine wrote under `directory`, a directory it created.
-
-    Transitional, for the key stager until it takes an arena (S2a-1b-ii deletes it); the reader
-    itself is issued only by `ScratchArena.reader`."""
-    with ScratchArena._adopt(directory) as adopted:  # non-owning: exit closes only its descriptor
-        return adopted.reader()
