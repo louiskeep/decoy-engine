@@ -50,6 +50,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.config import classify_table_kinds
 from decoy_engine.validators._types import ValidatorFinding
 
 # ---------------------------------------------------------------------------
@@ -111,21 +112,6 @@ def _is_identical(src: Any, out: Any) -> bool:
         return float(src) == float(out)
     except (TypeError, ValueError):
         return False
-
-
-def _classify_table_kinds(config: dict[str, Any]) -> dict[str, str]:
-    """Mirror `execution._pipeline.classify_table_kinds` without importing
-    the execution package (validators sit below execution in the layering;
-    importing it here would invert the dependency direction)."""
-    out: dict[str, str] = {}
-    for table in config.get("tables") or []:
-        if not isinstance(table, dict):
-            continue
-        name = table.get("name")
-        if not isinstance(name, str):
-            continue
-        out[name] = "generate" if table.get("generate_columns") else "mask"
-    return out
 
 
 def _fk_child_columns(config: dict[str, Any]) -> set[tuple[str, str]]:
@@ -207,7 +193,7 @@ def validate_leak_check(
         (table, col) for table, cols in exempt.items() for col in cols
     }
 
-    table_kinds = _classify_table_kinds(config)
+    table_kinds = classify_table_kinds(config)
     fk_children = _fk_child_columns(config)
     col_entries = _column_entries(config)
     sources = sources or {}

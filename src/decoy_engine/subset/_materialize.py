@@ -21,14 +21,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-import polars as pl
-
 from decoy_engine import fileaccess, reasons
 from decoy_engine.fileaccess import FileRequest, FileRole, OutputTxn
 from decoy_engine.fileaccess.adapters import polars as polars_adapter
 from decoy_engine.subset._errors import SubsetConfigError, SubsetInternalError
-from decoy_engine.subset._io import open_input
-from decoy_engine.subset._keys import RI
+from decoy_engine.subset._inputs import ParquetPathInput
 from decoy_engine.subset._types import SubsetSource
 
 
@@ -62,14 +59,7 @@ def materialize_subset(
         written: list[tuple[str, str]] = []
         for table in sorted(survivors):
             idx = sorted(survivors[table])
-            with open_input(sources[table], table) as handle:
-                frame = polars_adapter.collect(
-                    handle,
-                    polars_adapter.scan_parquet(handle)
-                    .with_row_index(RI)
-                    .filter(pl.col(RI).is_in(idx))
-                    .drop(RI),
-                )
+            frame = ParquetPathInput(table, sources[table]).filtered_frame(idx)
             if frame.height != len(idx):
                 raise SubsetInternalError(
                     code=reasons.runtime.SUBSET_MATERIALIZE_COUNT_MISMATCH,
