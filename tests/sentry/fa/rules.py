@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 from tests.sentry.fa import sinks
+from tests.sentry.fa.resolve import module_name
 from tests.sentry.fa.scan import CAPABILITY_ANNOTATIONS, FunctionInfo, Site
 
 try:  # pragma: no cover - interpreter dependent
@@ -319,3 +321,150 @@ def creator_problems(
         if not any(isinstance(n, ast.FunctionDef) and n.name == function for n in tree.body):
             problems.append(f"{entry}: no such module-level function")
     return problems
+
+
+# -- F25 plan 4.1: the scratch path release key and the scratch-native rule ----------------
+
+RELEASE_OWNERS = frozenset({"decoy_engine/fileaccess/_scratch.py"})
+# Exclusions, fixed here and changed only by a plan amendment (plan 4.1).
+NATIVE_OWNERS = RELEASE_OWNERS | {"decoy_engine/fileaccess/__init__.py"}
+NATIVE_OWN_MAPPING = frozenset(
+    {
+        # runs inside a caller's wrapped `connect_internal` or `untrusted_session`
+        "decoy_engine/fileaccess/adapters/duckdb.py",
+        # code-only `PostgresSnapshotError` raised from None
+        "decoy_engine/connectors/postgres_snapshot.py",
+        # code-only `DiscoverySqlError` raised after the handler
+        "decoy_engine/data_discovery.py",
+    }
+)
+NATIVE_EXCLUDED = NATIVE_OWNERS | NATIVE_OWN_MAPPING
+# Where a bare scratch file read is a finding, beside every member and every release module. An
+# entry ending in "/" covers every module under it.
+SCRATCH_READ_SCOPE = frozenset(
+    {
+        "decoy_engine/execution/out_of_core/",
+        "decoy_engine/execution/_isolated_run.py",
+        "decoy_engine/execution/_isolated_worker.py",
+        "decoy_engine/execution/_isolated_commit.py",
+    }
+)
+# Pulls on what a scratch read form returns (`RecordBatchFileReader.get_batch` and the rest).
+READER_METHODS = frozenset({"get_batch", "read_next_batch", "read_all"})
+# Every module with a bare native call or scratch read, exactly; the set may only shrink
+# (`test_pending_set_only_shrinks`). The slice that clears each name is beside it.
+SCRATCH_NATIVE_PENDING = frozenset(
+    {
+        "decoy_engine/execution/out_of_core/_relation.py",  # S2a-1c-ii
+        "decoy_engine/execution/out_of_core/_multi_parent.py",  # S2a-1c-ii
+        "decoy_engine/execution/out_of_core/_duckdb.py",  # S2a-1c-i
+        "decoy_engine/execution/out_of_core/_batch_join.py",  # S2a-2
+        "decoy_engine/execution/out_of_core/_join.py",  # S2a-2
+        "decoy_engine/execution/out_of_core/_stream_join.py",  # S2b-2
+        "decoy_engine/execution/out_of_core/_stream_join_plan.py",  # S2b-2
+        "decoy_engine/execution/out_of_core/_route_policy.py",  # S2a-1c-ii
+        "decoy_engine/execution/out_of_core/_payload_store.py",  # S2b-1
+        "decoy_engine/execution/out_of_core/_external_sort.py",  # S2b-2
+        "decoy_engine/execution/out_of_core/_external_sort_run.py",  # S2b-2
+        "decoy_engine/execution/_isolated_run.py",  # S3a
+        "decoy_engine/execution/_isolated_worker.py",  # S3a
+        "decoy_engine/execution/native/_pool_quality.py",  # S4b-0
+        "decoy_engine/profiling/_scan_integrity.py",  # S2a-1c-iii
+    }
+)
+
+
+def source_modules(root: Path, package: str) -> dict[str, str]:
+    """Dotted module name to the posix path relative to `root`."""
+    files = sorted((root / package).rglob("*.py"))
+    return {module_name(f, root): f.relative_to(root).as_posix() for f in files}
+
+
+def bare_native(
+    root: Path,
+    package: str,
+    *,
+    release: frozenset[str] = frozenset(),
+    scope: frozenset[str] = SCRATCH_READ_SCOPE,
+    excluded: frozenset[str] = NATIVE_EXCLUDED,
+) -> dict[str, list[str]]:
+    """S1b-i rule (PR #500 at 1ffcabcd): a module is checked only when it names `scratch_native`,
+    and a bare call is a DuckDB method name not wrapped by a call named `scratch_native`."""
+    native_methods = sinks.DUCKDB_CONNECTION_METHODS | {"register", "unregister", "arrow", "df"}
+    out: dict[str, list[str]] = {}
+    for path in sorted((root / package).rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        if rel in excluded or not _uses(tree, "scratch_native"):
+            continue
+        wrapped = {
+            id(node.args[0])
+            for _q, node in _qualified(tree)
+            if isinstance(node, ast.Call)
+            and getattr(node.func, "id", getattr(node.func, "attr", None)) == "scratch_native"
+            and node.args
+        }
+        found = []
+        for qual, node in _qualified(tree):
+            method = node.attr if isinstance(node, ast.Attribute) else None
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                method = node.value
+            if method is None or id(node) in wrapped:
+                continue
+            if method in native_methods or (method.startswith("fetch") and method.isidentifier()):
+                found.append(f"{qual}:0: a bare native call .{method}")
+        if found:
+            out[rel] = found
+    return out
+
+
+def native_findings(
+    bare: dict[str, list[str]], pending: frozenset[str], modules: set[str]
+) -> list[str]:
+    """The modules with a bare finding must equal `pending` exactly."""
+    out = [f"pending: {rel} is not a module" for rel in sorted(pending - modules)]
+    out += [f"{rel}::{f} (not pending)" for rel in sorted(set(bare) - pending) for f in bare[rel]]
+    out += [
+        f"pending: {rel} has no bare call or read (stale)" for rel in sorted(pending - set(bare))
+    ]
+    return out
+
+
+def _qualified(tree: ast.Module) -> Iterator[tuple[str, ast.AST]]:
+    def visit(body: list[ast.stmt], qual: str) -> Iterator[tuple[str, ast.AST]]:
+        for stmt in body:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                yield from visit(
+                    stmt.body, stmt.name if qual == "<module>" else f"{qual}.{stmt.name}"
+                )
+            else:
+                yield from ((qual, node) for node in ast.walk(stmt))
+
+    return visit(tree.body, "<module>")
+
+
+def _uses(tree: ast.Module, name: str) -> list[str]:
+    """Where `name` is read as an attribute or name, imported, or looked up by string."""
+    return [
+        qual
+        for qual, node in _qualified(tree)
+        if (isinstance(node, ast.Attribute) and node.attr == name)
+        or (isinstance(node, ast.Name) and node.id == name)
+        or (isinstance(node, ast.alias) and name in (node.name, node.asname))
+        or (isinstance(node, ast.Constant) and node.value == name)
+    ]
+
+
+def release_findings(trees: dict[str, ast.Module], listed: set[str]) -> list[str]:
+    """Why the `scratch_path_release` key does not match the `local_path` callers exactly."""
+    key = "scratch_path_release"
+    out = [f"{key}: {rel} is not a module" for rel in sorted(listed - set(trees))]
+    for rel, tree in sorted(trees.items()):
+        if rel in RELEASE_OWNERS:
+            continue
+        uses = _uses(tree, "local_path")
+        if uses and rel not in listed:
+            out += [f"{key}: {rel}::{qual} is not listed" for qual in uses]
+        if rel in listed and not uses:
+            out.append(f"{key}: {rel} is listed but makes no such call")
+    return out

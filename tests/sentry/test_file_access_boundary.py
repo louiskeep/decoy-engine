@@ -11,18 +11,24 @@ re-exports, assignment and bound-method aliases, `functools.partial`, `getattr`,
 from __future__ import annotations
 
 import ast
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
-from tests.sentry.fa import sinks
 from tests.sentry.fa.classify import Roles, classify, registry_index
 from tests.sentry.fa.rules import (
+    NATIVE_OWN_MAPPING,
+    NATIVE_OWNERS,
+    SCRATCH_NATIVE_PENDING,
+    SCRATCH_READ_SCOPE,
+    bare_native,
     creator_problems,
     load_modules_config,
     load_registry,
+    native_findings,
     registry_problems,
+    release_findings,
+    source_modules,
 )
 from tests.sentry.fa.scan import scan_tree
 
@@ -327,82 +333,7 @@ def test_chmod_without_dir_fd_is_still_flagged(fixture_scan) -> None:  # type: i
     assert flagged and "dir_fd" in flagged[0].reason
 
 
-# -- F25 S1b: the scratch path release and native-boundary keys (plan 4.1) ------------------
-
-RELEASE_OWNERS = frozenset({"decoy_engine/fileaccess/_scratch.py"})
-NATIVE_OWNERS = RELEASE_OWNERS | {"decoy_engine/fileaccess/__init__.py"}
-# A DuckDB connection or result call; `fetch*` is matched by prefix.
-NATIVE_METHODS = sinks.DUCKDB_CONNECTION_METHODS | {"register", "unregister", "arrow", "df"}
-
-
-def _qualified(tree: ast.Module) -> Iterator[tuple[str, ast.AST]]:
-    def visit(body: list[ast.stmt], qual: str) -> Iterator[tuple[str, ast.AST]]:
-        for stmt in body:
-            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                yield from visit(
-                    stmt.body, stmt.name if qual == "<module>" else f"{qual}.{stmt.name}"
-                )
-            else:
-                yield from ((qual, node) for node in ast.walk(stmt))
-
-    return visit(tree.body, "<module>")
-
-
-def _uses(tree: ast.Module, name: str) -> list[str]:
-    """Where `name` is read as an attribute or name, imported, or looked up by string."""
-    return [
-        qual
-        for qual, node in _qualified(tree)
-        if (isinstance(node, ast.Attribute) and node.attr == name)
-        or (isinstance(node, ast.Name) and node.id == name)
-        or (isinstance(node, ast.alias) and name in (node.name, node.asname))
-        or (isinstance(node, ast.Constant) and node.value == name)
-    ]
-
-
-def _bare_native_calls(tree: ast.Module) -> list[str]:
-    """Connection and result methods reached other than as `scratch_native(conn.method, ...)`."""
-    wrapped = {
-        id(node.args[0])
-        for _q, node in _qualified(tree)
-        if isinstance(node, ast.Call)
-        and getattr(node.func, "id", getattr(node.func, "attr", None)) == "scratch_native"
-        and node.args
-    }
-    found = []
-    for qual, node in _qualified(tree):
-        method = node.attr if isinstance(node, ast.Attribute) else None
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            method = node.value  # `getattr(conn, "execute")`
-        if method is None or id(node) in wrapped:
-            continue
-        if method in NATIVE_METHODS or (method.startswith("fetch") and method.isidentifier()):
-            found.append(qual)
-    return found
-
-
-def release_findings(trees: dict[str, ast.Module], keys: dict[str, list[str]]) -> list[str]:
-    """Why the `scratch_path_release` and `scratch_native` keys do not match the code exactly."""
-    out: list[str] = []
-    for key, name, owners in (
-        ("scratch_path_release", "local_path", RELEASE_OWNERS),
-        ("scratch_native", "scratch_native", NATIVE_OWNERS),
-    ):
-        listed = set(keys[key])
-        out += [f"{key}: {rel} is not a module" for rel in sorted(listed - set(trees))]
-        for rel, tree in sorted(trees.items()):
-            if rel in owners:
-                continue
-            uses = _uses(tree, name)
-            if uses and rel not in listed:
-                out += [f"{key}: {rel}::{qual} is not listed" for qual in uses]
-            if rel in listed and not uses:
-                out.append(f"{key}: {rel} is listed but makes no such call")
-            if key == "scratch_native" and rel in listed:
-                out += [
-                    f"{key}: {rel}::{q} calls a connection bare" for q in _bare_native_calls(tree)
-                ]
-    return out
+# -- F25 plan 4.1: the scratch path release key and the scratch-native rule ------------------
 
 
 def _source_trees(root: Path, package: str) -> dict[str, ast.Module]:
@@ -414,28 +345,17 @@ def _source_trees(root: Path, package: str) -> dict[str, ast.Module]:
 
 _EVASIONS = "fx/plain/scratch_release_evasions.py"
 _RELEASE_CELLS = {
-    # cell: (fixture keys, findings it must include)
+    # cell: (listed modules, findings it must include)
     "unlisted_caller_evasions": (
-        {"scratch_path_release": [], "scratch_native": [_EVASIONS]},
+        set(),
         {
             f"scratch_path_release: {_EVASIONS}::{f} is not listed"
             for f in ("release_by_alias", "release_by_getattr", "release_by_bound_method")
         },
     ),
     "listed_without_call": (
-        {"scratch_path_release": ["fx/plain/direct_open.py"], "scratch_native": [_EVASIONS]},
+        {_EVASIONS, "fx/plain/direct_open.py"},
         {"scratch_path_release: fx/plain/direct_open.py is listed but makes no such call"},
-    ),
-    "bare_native_call_evasions": (
-        {"scratch_path_release": [_EVASIONS], "scratch_native": [_EVASIONS]},
-        {
-            f"scratch_native: {_EVASIONS}::{f} calls a connection bare"
-            for f in ("native_bare", "native_by_getattr", "native_by_bound_method")
-        },
-    ),
-    "unlisted_native_caller": (
-        {"scratch_path_release": [_EVASIONS], "scratch_native": []},
-        {f"scratch_native: {_EVASIONS}::{q} is not listed" for q in ("<module>", "native_wrapped")},
     ),
 }
 
@@ -443,12 +363,191 @@ _RELEASE_CELLS = {
 @pytest.mark.parametrize("cell", ["engine", *_RELEASE_CELLS])
 def test_local_path_callers_are_allowlisted(cell: str) -> None:
     if cell == "engine":
-        assert release_findings(_source_trees(SRC, "decoy_engine"), MODULES) == []
+        listed = set(MODULES["scratch_path_release"])
+        assert release_findings(_source_trees(SRC, "decoy_engine"), listed) == []
         return
-    keys, expected = _RELEASE_CELLS[cell]
-    findings = set(release_findings(_source_trees(FIXTURES, "fx"), keys))
+    listed, expected = _RELEASE_CELLS[cell]
+    findings = set(release_findings(_source_trees(FIXTURES, "fx"), listed))
     assert expected <= findings, sorted(expected - findings)
-    assert not [f for f in findings if "native_wrapped calls" in f], "a wrapped call was flagged"
+
+
+_DERIVED = "fx/plain/scratch_native_derived.py"
+_READS = "fx/plain/scratch_read_evasions.py"
+_ISOLATED_RUN = "decoy_engine/execution/_isolated_run.py"
+
+
+@pytest.fixture(scope="module")
+def engine_bare() -> dict[str, list[str]]:
+    return bare_native(SRC, "decoy_engine", release=frozenset(MODULES["scratch_path_release"]))
+
+
+@pytest.fixture(scope="module")
+def fixture_bare() -> dict[str, list[str]]:
+    return bare_native(FIXTURES, "fx")
+
+
+def _flagged(bare: dict[str, list[str]], module: str, function: str, what: str = "") -> bool:
+    return any(f.startswith(f"{function}:") and what in f for f in bare.get(module, []))
+
+
+_DERIVED_CELLS = {
+    # cell: (fixture, function, text of the finding); `_READS` never names the wrapper
+    "connect_site_unlisted": (_READS, "connect_site_unlisted", "conn.execute"),
+    "helper_receives_connection": (_READS, "_load", "conn.execute"),
+    "class_attribute_connection": (_DERIVED, "ClassAttributeConnection.run", ".execute"),
+    "method_returns_connection": (_DERIVED, "MethodReturnsConnection.query", "conn.execute"),
+    "attr_from_local_connection": (_DERIVED, "AttrFromLocalConnection.drop", ".unregister"),
+    "annotated_assignment_connection": (_DERIVED, "annotated_assignment_connection", ".execute"),
+    "wrapper_resolved_not_by_name": (_DERIVED, "wrapper_resolved_not_by_name", ".execute"),
+}
+
+
+@pytest.mark.parametrize(
+    "cell",
+    [
+        "engine",
+        *_DERIVED_CELLS,
+        "pending_bare_ok",
+        "pending_entry_stale",
+        "pending_set_exact",
+        "own_mapping_fixed",
+    ],
+)
+def test_native_key_membership_is_derived(cell: str, engine_bare, fixture_bare) -> None:  # type: ignore[no-untyped-def]
+    """Membership follows the scanner's connection flow, never a module naming the wrapper."""
+    fixture_modules = set(source_modules(FIXTURES, "fx").values())
+    if cell == "engine":
+        modules = set(source_modules(SRC, "decoy_engine").values())
+        assert native_findings(engine_bare, SCRATCH_NATIVE_PENDING, modules) == []
+        stream = "decoy_engine/execution/out_of_core/_stream_join.py"
+        assert _flagged(engine_bare, stream, "StreamFkJoiner.total_orphans", "_ensure_conn")
+        assert any("self._conn.unregister" in f for f in engine_bare[stream])
+    elif cell in _DERIVED_CELLS:
+        module, function, what = _DERIVED_CELLS[cell]
+        assert _flagged(fixture_bare, module, function, what), fixture_bare.get(module)
+        if cell == "method_returns_connection":
+            assert _flagged(fixture_bare, _DERIVED, "_returned_helper", ".fetchall")
+            assert _flagged(fixture_bare, _DERIVED, "MethodReturnsConnection.query", "bare through")
+    elif cell == "pending_bare_ok":
+        findings = native_findings(fixture_bare, frozenset(fixture_bare), fixture_modules)
+        assert findings == [], findings
+    elif cell == "pending_entry_stale":
+        pending = frozenset(fixture_bare) | {_EVASIONS}
+        findings = native_findings(fixture_bare, pending, fixture_modules)
+        assert findings == [f"pending: {_EVASIONS} has no bare call or read (stale)"], findings
+        assert _flagged(fixture_bare, _DERIVED, "by_getattr_and_bound_method", "getattr")
+        assert _flagged(fixture_bare, _DERIVED, "by_getattr_and_bound_method", ".fetchall")
+    elif cell == "pending_set_exact":
+        pending = frozenset(fixture_bare) - {_DERIVED}
+        findings = native_findings(fixture_bare, pending, fixture_modules)
+        assert findings and all(f.startswith(f"{_DERIVED}::") for f in findings), findings
+    else:
+        assert {
+            "decoy_engine/fileaccess/_scratch.py",
+            "decoy_engine/fileaccess/__init__.py",
+        } == NATIVE_OWNERS
+        assert {
+            "decoy_engine/fileaccess/adapters/duckdb.py",
+            "decoy_engine/connectors/postgres_snapshot.py",
+            "decoy_engine/data_discovery.py",
+        } == NATIVE_OWN_MAPPING
+
+
+def _pending_literal(text: str) -> frozenset[str] | None:
+    for node in ast.parse(text).body:
+        if isinstance(node, ast.Assign) and any(
+            getattr(t, "id", "") == "SCRATCH_NATIVE_PENDING" for t in node.targets
+        ):
+            assert isinstance(node.value, ast.Call)
+            return frozenset(ast.literal_eval(node.value.args[0]))
+    return None
+
+
+def test_pending_set_only_shrinks() -> None:
+    """Against the nearest ancestor literal that differs from this one: no name added or swapped
+    (exact keys, `_ratchet.growth`). The first literal has no ancestor and is allowed."""
+    import subprocess
+
+    from tests.sentry._ratchet import _git_show, growth
+
+    rules = "tests/sentry/fa/rules.py"
+    repo = HERE.parents[1]
+    current = _pending_literal((repo / rules).read_text(encoding="utf-8"))
+    assert current is not None
+    log = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        ["git", "-C", str(repo), "log", "--format=%H", "HEAD", "--", rules],  # noqa: S607
+        capture_output=True,
+        text=True,
+    )
+    for sha in log.stdout.split():
+        text = _git_show(repo, sha, rules)
+        ancestor = _pending_literal(text) if text is not None else None
+        if ancestor is None:
+            break
+        if ancestor != current:
+            grown, _ = growth(current, ancestor, per_site=False)
+            assert not grown, f"SCRATCH_NATIVE_PENDING gained {sorted(grown)} over {sha[:12]}"
+            break
+
+
+_LAZY_CELLS = {
+    "to_arrow_reader_bare": ("to_arrow_reader_bare", ".to_arrow_reader"),
+    "reader_for_loop": ("reader_for_loop", "pull"),
+    "yield_from_reader": ("yield_from_reader", "pull"),
+    "next_on_reader": ("next_on_reader", "pull"),
+    "read_next_batch": ("read_next_batch", ".read_next_batch"),
+    "bare_connect_duckdb": ("bare_connect_duckdb", "bare through connect_duckdb"),
+}
+
+
+@pytest.mark.parametrize("cell", [*_LAZY_CELLS, "iter_wrapped_passes"])
+def test_lazy_native_reads_are_wrapped(cell: str, fixture_bare) -> None:  # type: ignore[no-untyped-def]
+    """`scratch_native` for each call and `scratch_native_iter` for each pull (plan 4.1)."""
+    if cell == "iter_wrapped_passes":
+        assert not _flagged(fixture_bare, _DERIVED, "iter_wrapped_passes")
+        return
+    assert _flagged(fixture_bare, _DERIVED, *_LAZY_CELLS[cell]), fixture_bare.get(_DERIVED)
+
+
+_READ_CELLS = {
+    "read_metadata_bare": "read_metadata_bare",
+    "read_table_bare": "read_table_bare",
+    "ipc_open_stream_bare": "ipc_open_stream_bare",
+    "osfile_bare": "osfile_bare",
+    "get_batch_bare": "get_batch_bare",
+}
+_READ_PASSES = ["wrapped_passes", "reader_access_passes", "read_parquet_in_sql_passes"]
+
+
+@pytest.mark.parametrize(
+    "cell",
+    [
+        *_READ_CELLS,
+        *_READ_PASSES,
+        "pending_entry_stale",
+        "isolated_run_in_scope",
+        "out_of_scope_passes",
+    ],
+)
+def test_scratch_file_reads_are_wrapped(cell: str, fixture_bare) -> None:  # type: ignore[no-untyped-def]
+    """A pyarrow read of a scratch file by path is a native call too (plan 4.1)."""
+    bare = fixture_bare
+    if cell in _READ_CELLS:
+        assert _flagged(bare, _READS, _READ_CELLS[cell]), bare.get(_READS)
+        if cell == "get_batch_bare":
+            assert _flagged(bare, _READS, "get_batch_bare", ".get_batch")
+    elif cell in _READ_PASSES:
+        assert not _flagged(bare, _DERIVED, cell), bare.get(_DERIVED)
+    elif cell == "pending_entry_stale":
+        pending = frozenset(bare) | {"fx/plain/helpers_pq_read.py"}
+        findings = native_findings(bare, pending, set(source_modules(FIXTURES, "fx").values()))
+        assert findings == ["pending: fx/plain/helpers_pq_read.py has no bare call or read (stale)"]
+    elif cell == "isolated_run_in_scope":
+        stand_in = "fx/plain/helpers_pq_read.py"
+        scope = frozenset(stand_in if e == _ISOLATED_RUN else e for e in SCRATCH_READ_SCOPE)
+        assert _flagged(bare_native(FIXTURES, "fx", scope=scope), stand_in, "read_it")
+    else:
+        assert "fx/plain/helpers_pq_read.py" not in fixture_bare
 
 
 def test_a_listed_creator_that_does_not_validate_its_name_is_still_flagged(fixture_scan) -> None:  # type: ignore[no-untyped-def]
