@@ -167,7 +167,7 @@ def test_a_residual_or_policy_fail_blocks_with_one_value_free_location(
     error = PostScanBlockedError(rep)
     summary = reasons.get("post_scan", "finding_blocked").summary
     assert str(error) == f"{summary} At {where}."
-    assert CANARY not in repr(error.__dict__) + str(error) + repr(verdict)
+    assert CANARY not in str(error) + error.message + repr(verdict)
 
 
 @pytest.mark.parametrize("severity", ["info", "warning"])

@@ -1,15 +1,58 @@
-"""The one blocking decision of a post-scan report (stub: filled in by the next commit)."""
+"""The one blocking decision of a post-scan report, its fixed code order and its exception.
+
+A key decides by its codes and its `baseline`, never by `status == "checked"`: a mismatch over a
+mismatched source, or a failure counting the source, only warns. A residual or policy `fail`
+gives `finding_blocked`; an `error` finding or a set `pass_failed_with` gives `check_error`. An
+`fk_preservation` finding is the same fact as a key code, so it adds one only when no key blocks.
+Nothing here carries a data value.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections import Counter
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
+from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
-from decoy_engine.reasons import ReasonRef
+from decoy_engine.reasons import ReasonRef, reason_ref_payload
 
-__all__ = ["PostScanBlockedError", "PostScanVerdict", "post_scan_verdict", "severity_counts"]
+__all__ = [
+    "PostScanBlockedError",
+    "PostScanVerdict",
+    "block_location",
+    "post_scan_verdict",
+    "severity_counts",
+]
+
+_P = reasons.post_scan
+# Not registered here: the NER block belongs to the model-findings slice, which supplies the code.
+_NER_BLOCKED = ReasonRef("post_scan", "ner_blocked")
+# Inability to check first, then structure, then data.
+_ORDER: tuple[ReasonRef, ...] = (
+    *(
+        c.spec.ref
+        for c in (
+            _P.CHECK_ERROR,
+            _P.KEY_COLUMN_MISSING,
+            _P.KEY_TYPE_MISMATCH,
+            _P.PRIMARY_KEY_NULLS_INTRODUCED,
+            _P.PRIMARY_KEY_DUPLICATES_INTRODUCED,
+            _P.FOREIGN_KEY_ORPHANS_INTRODUCED,
+            _P.FINDING_BLOCKED,
+        )
+    ),
+    _NER_BLOCKED,
+)
+_CHECK_ERROR, _KEY_TYPE_MISMATCH, _FINDING_BLOCKED = (
+    _P.CHECK_ERROR.spec.ref,
+    _P.KEY_TYPE_MISMATCH.spec.ref,
+    _P.FINDING_BLOCKED.spec.ref,
+)
+_ORPHANS = _P.FOREIGN_KEY_ORPHANS_INTRODUCED.spec.ref
+_FALLBACK_SUMMARY = "The post-scan integrity check blocked the run."
+_MAX_SPOTS = 3
 
 
 class SeverityCounts(NamedTuple):
@@ -19,27 +62,116 @@ class SeverityCounts(NamedTuple):
     error: int
 
 
+def severity_counts(severities: Iterable[str]) -> SeverityCounts:
+    """The one tally of finding severities; `info` counts as passed."""
+    tally = Counter(severities)
+    return SeverityCounts(tally["info"], tally["warning"], tally["fail"], tally["error"])
+
+
 @dataclass(frozen=True)
 class PostScanVerdict:
+    """`codes` are the blocking reasons in the documented order, `warnings` the key codes that
+    stay on a key without blocking. `blocking` is true exactly when `codes` is not empty."""
+
     blocking: bool
     codes: tuple[ReasonRef, ...]
     warnings: tuple[ReasonRef, ...]
 
     def as_dict(self) -> dict[str, Any]:
-        return {"blocking": self.blocking, "codes": [], "warnings": []}
+        return {
+            "blocking": self.blocking,
+            "codes": [reason_ref_payload(c) for c in self.codes],
+            "warnings": [reason_ref_payload(c) for c in self.warnings],
+        }
+
+
+def _rows(report: Mapping[str, Any], section: str) -> Iterator[Mapping[str, Any]]:
+    for row in report.get(section) or ():
+        if isinstance(row, Mapping):
+            yield row
+
+
+def _key_refs(key: Mapping[str, Any]) -> Iterator[tuple[ReasonRef, bool]]:
+    """Each code of one key result and whether it blocks (4.2.2): decided by the code and the
+    baseline. A `check_error` blocks unless it is the source side's; a `key_type_mismatch` blocks
+    unless the source types were not comparable either."""
+    baseline = key.get("baseline")
+    for payload in key.get("codes") or ():
+        ref = ReasonRef(str(payload.get("namespace")), str(payload.get("code")))
+        if ref == _CHECK_ERROR:
+            yield ref, baseline != "error"
+        elif ref == _KEY_TYPE_MISMATCH:
+            yield ref, baseline != "key_type_mismatch"
+        else:
+            yield ref, True
 
 
 def post_scan_verdict(report: Mapping[str, Any], *, ner_blocked: bool = False) -> PostScanVerdict:
-    return PostScanVerdict(False, (), ())
+    """Whether `report` blocks, and why. `ner_blocked` is the model-findings predicate."""
+    blocked: set[ReasonRef] = set()
+    warned: set[ReasonRef] = set()
+    for key in _rows(report, "keys"):
+        for ref, blocks in _key_refs(key):
+            (blocked if blocks else warned).add(ref)
+    keyed = bool(blocked)
+    for section in ("residual_pii", "policy_validation"):
+        for finding in _rows(report, section):
+            severity = finding.get("severity")
+            if severity == "fail":
+                blocked.add(_FINDING_BLOCKED)
+            elif severity == "error":
+                blocked.add(_CHECK_ERROR)
+    for finding in _rows(report, "fk_preservation"):
+        severity = finding.get("severity")
+        if not keyed and severity == "fail":
+            blocked.add(_ORPHANS)
+        elif not keyed and severity == "error":
+            blocked.add(_CHECK_ERROR)
+    if report.get("pass_failed_with"):
+        blocked.add(_CHECK_ERROR)
+    if ner_blocked:
+        blocked.add(_NER_BLOCKED)
+    rank = {ref: n for n, ref in enumerate(_ORDER)}
+
+    def ordered(refs: set[ReasonRef]) -> tuple[ReasonRef, ...]:
+        return tuple(sorted(refs, key=lambda r: (rank.get(r, len(rank)), r.namespace, r.code)))
+
+    codes = ordered(blocked)
+    return PostScanVerdict(bool(codes), codes, ordered(warned))
 
 
-def severity_counts(severities: Iterable[str]) -> SeverityCounts:
-    return SeverityCounts(0, 0, 0, 0)
+def block_location(report: Mapping[str, Any]) -> str:
+    """Table, column and detector id of the first failing findings, and nothing else. A policy
+    finding has no detector, so it carries the fixed id `policy_validation`."""
+    spots = []
+    for section, fixed in (("residual_pii", None), ("policy_validation", "policy_validation")):
+        for f in _rows(report, section):
+            if f.get("severity") == "fail":
+                spots.append(
+                    f"{f.get('table')}.{f.get('column')} ({fixed or f.get('detector_id')})"
+                )
+    return ", ".join(spots[:_MAX_SPOTS])
 
 
 class PostScanBlockedError(DecoyError):
+    """A post-scan report blocked the run; the outputs are withheld.
+
+    `report` is the value-free report dict, `verdict` the decision on it. `str(error)` and
+    `message` are the first blocking code's registry summary plus the safe block location."""
+
     def __init__(self, report: Mapping[str, Any], verdict: PostScanVerdict | None = None) -> None:
         self.report = dict(report)
-        self.verdict = verdict or post_scan_verdict(report)
-        self.reason = ""
-        super().__init__("")
+        self.verdict = post_scan_verdict(report) if verdict is None else verdict
+        first = self.verdict.codes[0] if self.verdict.codes else None
+        self.reason = f"{first.namespace}.{first.code}" if first else ""
+        summary = (
+            reasons.get(first.namespace, first.code).summary
+            if first and reasons.is_registered(first.code, (first.namespace,))
+            else _FALLBACK_SUMMARY
+        )
+        where = block_location(report)
+        self.message = f"{summary} At {where}." if where else summary
+        super().__init__(self.message)
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (type(self), (self.report, self.verdict))

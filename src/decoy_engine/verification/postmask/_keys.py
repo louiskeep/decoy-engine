@@ -9,15 +9,15 @@ Results hold counts, table names, column names and reason codes, never a key val
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
 from decoy_engine import reasons
 from decoy_engine.config import RelationshipConfig
-from decoy_engine.profiling import KeyBatches, key_facts, passes_through
+from decoy_engine.profiling import KeyBatches, key_facts, keys_comparable, passes_through
 from decoy_engine.progress import safe_error_class
-from decoy_engine.reasons import ReasonCode
+from decoy_engine.reasons import ReasonCode, reason_ref_payload
 from decoy_engine.verification.postmask._stream_input import (
     TableBatches,
     key_batches,
@@ -26,9 +26,14 @@ from decoy_engine.verification.postmask._stream_input import (
 
 Kind = Literal["primary", "foreign"]
 Status = Literal["checked", "key_type_mismatch", "key_column_missing", "error"]
+# How the source side was counted (4.2.2). Only a measured or no_source baseline has counts.
+Baseline = Literal[
+    "measured", "no_source", "key_column_missing", "key_type_mismatch", "error", "not_run"
+]
+_COUNTED = ("measured", "no_source")
 _End = tuple[str, tuple[str, ...]]
 
-__all__ = ["KeyCounts", "KeyResult", "check_keys", "keys_report"]
+__all__ = ["Baseline", "KeyCounts", "KeyResult", "check_keys", "keys_report"]
 
 
 @dataclass(frozen=True)
@@ -59,8 +64,8 @@ class KeyResult:
     codes: tuple[ReasonCode, ...]
     source: KeyCounts
     output: KeyCounts
+    baseline: Baseline
     error_class: str | None = None
-    baseline: str = "measured"
     baseline_error_class: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
@@ -71,12 +76,16 @@ class KeyResult:
             "parent": list(self.parent),
             "status": self.status,
             "bounded": self.bounded,
-            "codes": [asdict(c.spec.ref) for c in self.codes],
-            "source": self.source.as_dict(self.kind),
+            "baseline": self.baseline,
+            "codes": [reason_ref_payload(c.spec.ref) for c in self.codes],
+            # A zero from an uncounted source is not a measured zero, so it is reported as null.
+            "source": self.source.as_dict(self.kind) if self.baseline in _COUNTED else None,
             "output": self.output.as_dict(self.kind),
         }
         if self.error_class is not None:
             out["error_class"] = self.error_class
+        if self.baseline_error_class is not None:
+            out["baseline_error_class"] = self.baseline_error_class
         return out
 
 
@@ -124,19 +133,12 @@ class _Run:
     def check(self, end: _End, parents: tuple[_End, ...]) -> KeyResult:
         kind: Kind = "foreign" if parents else "primary"
         names = tuple(dict.fromkeys(t for t, _ in parents))
-        failed: str | None = None
+        table, columns = end
         try:
             status, bounded, out = self._measure("output", end, parents)
-            base = KeyCounts()
-            if status == "checked":
-                base = self._measure("source", end, parents)[2]
         except Exception as exc:
             if passes_through(exc):
                 raise
-            # The class name only: a DuckDB or reader message can quote key values.
-            failed = safe_error_class(type(exc).__name__) or "Exception"
-        table, columns = end
-        if failed is not None:
             return KeyResult(
                 table=table,
                 columns=columns,
@@ -147,8 +149,10 @@ class _Run:
                 codes=(reasons.post_scan.CHECK_ERROR,),
                 source=KeyCounts(),
                 output=KeyCounts(),
-                error_class=failed,
+                baseline="not_run",
+                error_class=_class_of(exc),
             )
+        baseline, base, failed = self._baseline(end, parents, status)
         return KeyResult(
             table=table,
             columns=columns,
@@ -156,24 +160,61 @@ class _Run:
             parent=names,
             status=status,
             bounded=bounded,
-            codes=_codes(status, kind, base, out),
+            codes=_codes(status, kind, baseline, base, out),
             source=base,
             output=out,
+            baseline=baseline,
+            baseline_error_class=failed,
         )
 
-    def _keys(self, side: str, end: _End) -> KeyBatches | None:
+    def _baseline(
+        self, end: _End, parents: tuple[_End, ...], out_status: Status
+    ) -> tuple[Baseline, KeyCounts, str | None]:
+        if out_status == "key_column_missing":
+            return "not_run", KeyCounts(), None
+        got = self._resolve("source", end, parents)
+        if isinstance(got, str):
+            return ("no_source" if got == "no_source" else "key_column_missing"), KeyCounts(), None
+        own, found = got
+        if parents and not keys_comparable(found[0], [*found[1:], own]):
+            return "key_type_mismatch", KeyCounts(), None
+        if out_status == "key_type_mismatch":
+            return "not_run", KeyCounts(), None
+        try:
+            counts = self._measure("source", end, parents)[2]
+        except Exception as exc:
+            if passes_through(exc):
+                raise
+            return "error", KeyCounts(), _class_of(exc)
+        return "measured", counts, None
+
+    def _lookup(self, side: str, end: _End) -> KeyBatches | str:
         table = self._sides[side].get(end[0])
-        if table is None or missing_columns(table, end[1]):
-            return None
+        if table is None:
+            return "no_source"
+        if missing_columns(table, end[1]):
+            return "key_column_missing"
         return key_batches(table, end[1])
+
+    def _resolve(
+        self, side: str, end: _End, parents: tuple[_End, ...]
+    ) -> tuple[KeyBatches, list[KeyBatches]] | str:
+        """The key batches of the key and of each parent, or why one cannot be read: a table that
+        is not there (`no_source`, a generated table) before a column that is not."""
+        got = [self._lookup(side, e) for e in (end, *parents)]
+        for reason in ("no_source", "key_column_missing"):
+            if reason in got:
+                return reason
+        keys = [k for k in got if isinstance(k, KeyBatches)]
+        return keys[0], keys[1:]
 
     def _measure(
         self, side: str, end: _End, parents: tuple[_End, ...]
     ) -> tuple[Status, bool, KeyCounts]:
-        own = self._keys(side, end)
-        found = [self._keys(side, p) for p in parents]
-        if own is None or any(k is None for k in found):
-            return ("key_column_missing" if side == "output" else "checked"), True, KeyCounts()
+        got = self._resolve(side, end, parents)
+        if isinstance(got, str):
+            return "key_column_missing", True, KeyCounts()
+        own, found = got
         if not parents:
             facts = key_facts(own, (), scratch=self._scratch, memory_limit=self._limit)
             counts = KeyCounts(
@@ -182,11 +223,11 @@ class _Run:
                 duplicate_excess=facts.parent_duplicate_excess,
             )
             return facts.status, facts.bounded, counts
-        union = _union([k for k in found if k is not None])
         # Every extra parent rides along as a child so key_facts compares its types with the
         # first parent's; its own counts are dropped.
-        extras = [k for k in found[1:] if k is not None]
-        facts = key_facts(union, [*extras, own], scratch=self._scratch, memory_limit=self._limit)
+        facts = key_facts(
+            _union(found), [*found[1:], own], scratch=self._scratch, memory_limit=self._limit
+        )
         if facts.status != "checked":
             return facts.status, facts.bounded, KeyCounts()
         c = facts.children[-1]
@@ -197,6 +238,11 @@ class _Run:
             orphan_distinct_keys=c.orphan_distinct_keys,
         )
         return "checked", facts.bounded, counts
+
+
+def _class_of(exc: Exception) -> str:
+    # The class name only: a DuckDB or reader message can quote key values.
+    return safe_error_class(type(exc).__name__) or "Exception"
 
 
 def _union(parts: Sequence[KeyBatches]) -> KeyBatches:
@@ -210,13 +256,21 @@ def _union(parts: Sequence[KeyBatches]) -> KeyBatches:
     return KeyBatches(parts[0].schema, batches, all(p.bounded for p in parts))
 
 
-def _codes(status: Status, kind: Kind, base: KeyCounts, out: KeyCounts) -> tuple[ReasonCode, ...]:
+def _codes(
+    status: Status, kind: Kind, baseline: Baseline, base: KeyCounts, out: KeyCounts
+) -> tuple[ReasonCode, ...]:
     p = reasons.post_scan
     if status == "key_column_missing":
         return (p.KEY_COLUMN_MISSING,)
     if status == "key_type_mismatch":
         return (p.KEY_TYPE_MISMATCH,)
+    # A source side that could not be counted rides on the key as a code the verdict only warns
+    # on; `base` is zero then, so any output count above it still blocks.
     found: list[ReasonCode] = []
+    if baseline == "error":
+        found.append(p.CHECK_ERROR)
+    elif baseline == "key_type_mismatch":
+        found.append(p.KEY_TYPE_MISMATCH)
     if kind == "primary":
         if out.null_key_rows > base.null_key_rows:
             found.append(p.PRIMARY_KEY_NULLS_INTRODUCED)
