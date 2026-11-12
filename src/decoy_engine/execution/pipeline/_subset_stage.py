@@ -24,8 +24,7 @@ from decoy_engine.execution._chunked_input import check_opened, source_facts
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pipeline_route_exec import resolve_temp_disk_budget
 from decoy_engine.execution.out_of_core._scratch import engine_scratch_root
-from decoy_engine.profile import Profile, TableProfile
-from decoy_engine.profile._readers import LazySource
+from decoy_engine.profile import LazySource, Profile, TableProfile
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
@@ -91,20 +90,27 @@ class SubsetStageScope:
                 opened.close()
 
         root = self._stack.enter_context(engine_scratch_root(None))
-        staged = stage_typed_sources(
-            sorted(survivors),
-            sources,
-            batch_fn=batch_fn,
-            empty_fn=lambda _table, src: src.schema.empty_table(),
-            resident_fn=lambda table, value: value.take(
-                pa.array(survivors[table], type=pa.int64())
-            ),
-            root=root,
-            batch_rows=_BATCH_ROWS,
-            max_bytes=resolve_temp_disk_budget(),
-            stem=_STEM,
-            open_fn=open_fn,
-        )
+        try:
+            staged = stage_typed_sources(
+                sorted(survivors),
+                sources,
+                batch_fn=batch_fn,
+                empty_fn=lambda _table, src: src.schema.empty_table(),
+                resident_fn=lambda table, value: value.take(
+                    pa.array(survivors[table], type=pa.int64())
+                ),
+                root=root,
+                batch_rows=_BATCH_ROWS,
+                max_bytes=resolve_temp_disk_budget(),
+                stem=_STEM,
+                open_fn=open_fn,
+            )
+        except OSError as exc:
+            # The OS text can carry a path, so it stays on the cause and out of the message.
+            raise SubsetInternalError(
+                code=reasons.runtime.OUT_OF_CORE_TEMP_DISK_EXCEEDED,
+                message="subset staging could not write its scratch files",
+            ) from exc
         for table, parts in kept_keys.items():
             src = sources[table]
             if check is not None and check.columns(table):
