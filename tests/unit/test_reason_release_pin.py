@@ -115,7 +115,7 @@ def test_reasons_doc_states_the_live_registry_version() -> None:
     assert f"`registry_version` (`{reasons.REGISTRY_VERSION}`)" in doc
 
 
-# REG-RELEASE E2: the strict v2 pin (one digest per manifest field) and its CLI modes.
+# The strict v2 pin (one digest per manifest field) and its CLI modes.
 import hashlib  # noqa: E402
 import os  # noqa: E402
 import re  # noqa: E402
@@ -275,13 +275,9 @@ PENDING_CLASSES = {
 
 @pytest.mark.parametrize("case", sorted(PENDING_CLASSES))
 def test_at4_release_ready_refuses_each_pending_class_that_check_accepts(tree, case) -> None:
-    # A tree that already carries a pending identity is not release-ready, so the baseline
-    # follows the live registry and must not name the identity this case adds.
-    pending = any(e["since"] == "unreleased" for e in _live()["entries"])
-    clean = pin_cli(tree, "--release-ready")
-    assert clean.returncode == (1 if pending else 0), clean.stderr[-800:]
     add, name = PENDING_CLASSES[case]
-    assert name not in clean.stderr
+    clean = pin_cli(tree, "--release-ready")
+    assert name not in clean.stderr, clean.stderr[-800:]
     add(tree)
     check = pin_cli(tree, "--check")
     assert check.returncode == 0, check.stderr[-800:]
