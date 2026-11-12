@@ -9,6 +9,11 @@ import pytest
 
 from decoy_engine.config import PipelineConfig, PipelineConfigError
 from decoy_engine.delivery import plan_delivery
+from decoy_engine.reasons.decoy import (
+    DELIVERY_DEPENDENT_DROPPED,
+    DELIVERY_WITHHELD,
+    PUBLICATION_FAILED,
+)
 
 FAIL: Any = "failed"  # any non-None value is a failure cause; the plan never reads its text
 
@@ -217,3 +222,33 @@ def test_plan_reads_the_dump_of_a_validated_pipeline_config() -> None:
     d = plan_delivery(config, {"p": FAIL, "c": None})
     assert _states(d) == {"p": "failed", "c": "dropped"}
     assert d.tables["c"].dropped_because == "p"
+
+
+@pytest.mark.parametrize("mode", [None, "best_effort"])
+def test_at10_each_state_carries_its_code(mode: str | None) -> None:
+    cfg = _config(["a", "b", "c", "d"], edges=[("a", "b")], mode=mode)
+    d = plan_delivery(cfg, {"a": PUBLICATION_FAILED, "b": None, "c": None, "d": None})
+    codes = {n: t.code for n, t in d.tables.items()}
+    if mode is None:
+        assert codes == {
+            "a": PUBLICATION_FAILED,
+            "b": DELIVERY_WITHHELD,
+            "c": DELIVERY_WITHHELD,
+            "d": DELIVERY_WITHHELD,
+        }
+    else:
+        assert codes == {
+            "a": PUBLICATION_FAILED,
+            "b": DELIVERY_DEPENDENT_DROPPED,
+            "c": None,
+            "d": None,
+        }
+    # ReasonCode compares as its bare string, so the namespace is pinned separately.
+    assert {n: getattr(c, "namespace", None) for n, c in codes.items() if c} == {
+        n: "decoy" for n, c in codes.items() if c
+    }
+
+
+def test_at10b_an_all_ok_run_has_no_codes() -> None:
+    d = plan_delivery(_config(["a", "b"]), {"a": None, "b": None})
+    assert [t.code for t in d.tables.values()] == [None, None]
