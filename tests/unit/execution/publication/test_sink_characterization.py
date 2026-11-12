@@ -4,7 +4,7 @@ is split into a write half (`StagedParquetWriter`) and a state table (plan 5.6, 
 Probes P1 to P6 (plan 1.3) on both POSIX policies, plus the write half's own contract: a table
 written twice replaces its staged file, names are single components, the stored size is the
 closed file's size, and a failing write records which boundary failed. Only cells the state
-table changes on purpose are updated, and each update is named where it happens.
+table changes on purpose are updated (P6), and each update is named where it happens.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from decoy_engine.publication import PublicationRefused
 from decoy_engine.reasons import Operation
 from tests.unit.execution.publication._sink_support import (
     POLICIES,
@@ -111,21 +112,21 @@ def test_p4_an_empty_commit_leaves_an_empty_directory_a_later_sink_replaces(
 
 
 @pytest.mark.parametrize("policy", POLICIES)
-def test_p6_after_a_commit_the_sink_still_accepts_a_write_into_a_new_stage(
-    policy: str, tmp_path: Path
-) -> None:
+def test_p6_after_a_commit_the_sink_is_sealed(policy: str, tmp_path: Path) -> None:
+    """Updated on purpose by the state table (plan 5.6): the pinned behaviour was a second
+    `commit()` returning silently, a `write` accepted into a new stage and its commit failing
+    `OSError` 39. Now a sealed sink returns its result and refuses the write."""
     with sink_factory(policy, tmp_path) as make:
         sink = make()
         sink.write("customers", table("A"))
         sink.commit()
         before = tree(tmp_path / "out")
         assert sink.commit() is None
-        sink.write("orders", table("B"))
-        assert len(stages(tmp_path)) == 1
-        with pytest.raises(OSError) as info:
-            sink.commit()
+        with pytest.raises(PublicationRefused) as info:
+            sink.write("orders", table("B"))
+        assert info.value.code == "publication_attempt_sealed"
+        assert stages(tmp_path) == []
         sink.abort()
-    assert info.value.errno in _REFUSED_ERRNOS
     assert tree(tmp_path / "out") == before
     assert stages(tmp_path) == []
 
