@@ -7,6 +7,7 @@ unguarded, or a `subset:` block is silently ignored again.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 import textwrap
 from collections.abc import Callable
@@ -23,6 +24,15 @@ GUARDED = {
     "run_mask_chunked",
     "run_native_or_oracle_chunked",
     "compile_plan",
+}
+# Guarded entries whose pre-read sequence lives once, in the guard-free core they return (the
+# resident auto-chunk lane calls the same core): the entry calls the core, the core the guard.
+IN_CORE = {
+    "run_mask_pipeline_chunked": (
+        "decoy_engine.execution._chunked_oracle",
+        "_mask_pipeline_chunked",
+    ),
+    "run_mask_chunked": ("decoy_engine.execution.native.chunked._core", "mask_chunked"),
 }
 # Entries that delegate to a guarded one before any read or spawn.
 DELEGATING = {
@@ -51,11 +61,29 @@ def _calls_guard(fn: Callable[..., object]) -> bool:
     return False
 
 
+def _guard_holder(name: str, fn: Callable[..., object]) -> Callable[..., object]:
+    """The function that must call the guard: the entry itself, or the core it returns."""
+    if name not in IN_CORE:
+        return fn
+    module, core = IN_CORE[name]
+    source = textwrap.dedent(inspect.getsource(inspect.unwrap(fn)))
+    returned = [
+        n.value.func
+        for n in ast.walk(ast.parse(source))
+        if isinstance(n, ast.Return) and isinstance(n.value, ast.Call)
+    ]
+    assert any(isinstance(f, ast.Attribute) and f.attr == core for f in returned), (
+        f"{name} does not return its core {core}"
+    )
+    return getattr(importlib.import_module(module), core)
+
+
 def test_every_guarded_entry_calls_the_guard() -> None:
     entries = _public_callables()
     for name in sorted(GUARDED):
         assert name in entries, f"{name} is no longer exported; update GUARDED"
-        assert _calls_guard(entries[name]), f"{name} does not call refuse_unapplied_subset"
+        holder = _guard_holder(name, entries[name])
+        assert _calls_guard(holder), f"{name} does not call refuse_unapplied_subset"
 
 
 def test_no_public_run_entry_is_unclassified() -> None:

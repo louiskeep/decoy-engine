@@ -46,6 +46,7 @@ from ._row_error_summary import chunk_row_error_summary
 from ._transforms import reject_config_references_stored_index
 
 if TYPE_CHECKING:
+    from decoy_engine.fileaccess import FileAccess
     from decoy_engine.profile import PreparedDeclaredSources
 
 
@@ -510,23 +511,40 @@ def _mask_pipeline_chunked(
     table: str,
     engine_version: str,
     source_schema: pa.Schema,
-    file_access: Any = None,
-    **kwargs: Any,
+    registry: Any = None,
+    adapter: Any = None,
+    vault_writer: Any = None,
+    chunk_result_sink: list[Any] | None = None,
+    key_provider: Any = None,
+    base_row_offset: int = 0,
+    file_access: FileAccess | None = None,
 ) -> Iterator[pa.Table]:
-    """`run_mask_pipeline_chunked` without the post-scan route guard: `run_pipeline`'s resident
-    auto-chunk lane calls this, because that run does its own post-scan. It runs the same subset
-    check and declaration gate as the entry, through the entry module's gate seam."""
+    """`run_mask_pipeline_chunked` without the post-scan route guard. The entry runs the guard and
+    returns this core, and `run_pipeline`'s resident auto-chunk lane, which does its own post-scan,
+    calls it directly, so the pre-read sequence lives here only. The gate is reached through the
+    entry module's seam."""
     from decoy_engine.config._subset_run import refuse_unapplied_subset
+    from decoy_engine.profile import DeclarationRequest
 
     refuse_unapplied_subset(config)
     # Before `chunks` is touched: the table and `source_schema` must be declared (E2d).
     declared = _chunked_mod.prepare_declared_execution_sources(
-        _chunked_mod.DeclarationRequest.for_chunks(config, table, source_schema),
+        DeclarationRequest.for_chunks(config, table, source_schema),
         file_access=file_access,
-        registry=kwargs.get("registry"),
+        registry=registry,
     )
     return _mask_declared(
-        config, chunks, table=table, engine_version=engine_version, declared=declared, **kwargs
+        config,
+        chunks,
+        table=table,
+        engine_version=engine_version,
+        declared=declared,
+        registry=registry,
+        adapter=adapter,
+        vault_writer=vault_writer,
+        chunk_result_sink=chunk_result_sink,
+        key_provider=key_provider,
+        base_row_offset=base_row_offset,
     )
 
 
