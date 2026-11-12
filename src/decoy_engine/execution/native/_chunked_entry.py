@@ -39,10 +39,10 @@ from decoy_engine.execution import _chunked_text_mask as text_mask_gate
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._chunked import _chain_first
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._guards import (
-    prepare_declared_execution_sources,
-    run_chunk_ingest_guards,
+from decoy_engine.execution._guards import (  # re-exported: the core's declaration-gate seam
+    prepare_declared_execution_sources as prepare_declared_execution_sources,
 )
+from decoy_engine.execution._guards import run_chunk_ingest_guards
 from decoy_engine.execution._output_projection import (
     enforce_output_projection,
     known_output_columns,
@@ -90,11 +90,7 @@ from decoy_engine.execution.native._when_mask import plan_when_masks
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation.pool import PoolCache, ValuePool
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
-from decoy_engine.profile import (
-    DeclarationRequest,
-    PreparedDeclaredSources,
-)
-from decoy_engine.progress import get_active_channel
+from decoy_engine.profile import PreparedDeclaredSources
 
 # Matches `MAX_NATIVE_THREADS` in decoy-engine-native/src/threads.rs: the compiled
 # kernels refuse a larger request, so the entry point refuses it before any work.
@@ -649,39 +645,26 @@ def run_mask_chunked(
     chunk and typed later raises `ExecutionError(code="chunked_leading_null_type")`. This route
     runs no post-scan, so a model post-scan config is refused first (`PostScanRouteError`).
     """
-    # Local imports: a top-level one shifts the line the secret-material census pins.
-    from decoy_engine.config._subset_run import refuse_unapplied_subset
+    # Local imports: the core imports this module at load time.
+    from decoy_engine.execution.native.chunked import _core
     from decoy_engine.verification.postmask._route_guard import refuse_unchecked_route
 
     refuse_unchecked_route(config, "native_chunked")
-    refuse_unapplied_subset(config)
-    _validate_native_threads(native_threads)
-    # Config-level check before `chunks` is touched; the first chunk is checked in preflight.
-    declared = prepare_declared_execution_sources(
-        DeclarationRequest.for_chunks(config, table, None),
-        file_access=file_access,
+    return _core.mask_chunked(
+        config,
+        chunks,
+        table=table,
+        engine_version=engine_version,
         registry=registry,
-    )
-    # Progress: account every yielded chunk on the active channel (bound by the
-    # caller, e.g. `run_pipeline(progress=...)`); a no-op when nothing is bound.
-    return get_active_channel().count_rows(
-        table,
-        _run_chunked(
-            config,
-            chunks,
-            table=table,
-            engine_version=engine_version,
-            declared=declared,
-            registry=registry,
-            adapter=adapter,
-            vault_writer=vault_writer,
-            chunk_result_sink=chunk_result_sink,
-            key_provider=key_provider,
-            base_row_offset=base_row_offset,
-            native_threads=native_threads,
-            route_evidence_sink=route_evidence_sink,
-            pool_cache=pool_cache,
-        ),
+        adapter=adapter,
+        vault_writer=vault_writer,
+        chunk_result_sink=chunk_result_sink,
+        key_provider=key_provider,
+        base_row_offset=base_row_offset,
+        native_threads=native_threads,
+        route_evidence_sink=route_evidence_sink,
+        pool_cache=pool_cache,
+        file_access=file_access,
     )
 
 
