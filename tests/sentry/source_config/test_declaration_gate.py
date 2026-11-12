@@ -49,7 +49,7 @@ ROUTES: dict[tuple[str, str], frozenset[str]] = {
         {"_write_payload", "_run_in_process", "_run_isolated"}
     ),
     ("execution/_chunked_oracle.py", "mask_pipeline_chunked"): frozenset({"_oracle_preflight"}),
-    ("execution/native/_chunked_entry.py", "run_mask_chunked"): frozenset({"_run_chunked"}),
+    ("execution/native/_chunked_entry.py", "count_chunked"): frozenset({"_run_chunked"}),
     ("execution/native/_dispatch.py", "run_native_or_oracle_chunked"): frozenset({"_run_chunked"}),
 }
 
