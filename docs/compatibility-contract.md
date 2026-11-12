@@ -696,7 +696,7 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   cannot run refuses the run with `ModelUnavailableError` before any row is masked, and runs each
   model over every output table after the regex pass. Under `post_scan.ner_findings: fail` an NER
   finding at `fail`, or an NER pass that raised, makes `run_pipeline` raise `PostScanBlockedError`
-  (`post_scan.ner_blocked`, registry 1.26.0) before it returns: `str(error)` and `message` are the
+  (`post_scan.ner_blocked`, registry unreleased) before it returns: `str(error)` and `message` are the
   fixed registry summary, `report` is the value-free report, and the exception chain is empty. A
   `post_scan.dismissed` entry now lowers the `warning` it names to `info`. `classify_frame` gains a
   keyword `subsample` (default `False`, so `classify_fields` is unchanged): `True` classifies a

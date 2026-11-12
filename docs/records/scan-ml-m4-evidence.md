@@ -81,7 +81,7 @@ Commit `e6a19865` (tests only) on `91a52eaa`, every failure an `AssertionError`:
   `residual-PII findings carry no source` (AT-M4e classifier, after a setup fix below), the
   registry fixture test (`post_scan.ner_blocked` not registered), `test_public_api`
   (`PostScanBlockedError` missing), the M1 tripwire `test_scan_ml_reasons` (now asserting the M4
-  code is registered at 1.26.0), and the minor-fixture sentry (a fixture above the live minor).
+  code is registered at unreleased), and the minor-fixture sentry (a fixture above the live minor).
 - NER venv, `DECOY_REQUIRE_NER=1`: the same 29 plus the 13 NER tests, 42 failed, 108 passed,
   0 skipped (`run_post_mask takes no detectors`, `residual-PII findings carry no source`,
   `decoy_engine exports no PostScanBlockedError`).
@@ -175,8 +175,8 @@ ruff PASS, format PASS, mypy the same 4 errors on branch and main (google stubs,
 branch-only error.
 
 `scripts/dev/registry_renumber.py --check --main origin/main` reports `several-minors`: the branch
-stacks on unmerged M5 (1.25.0) and adds 1.26.0. Once M5 merges, the check against main sees one
-minor; if main takes 1.26.0 first, the tool renumbers this slice at merge.
+stacks on unmerged M5 (1.25.0) and adds unreleased. Once M5 merges, the check against main sees one
+minor; if main takes unreleased first, the tool renumbers this slice at merge.
 
 ## NER tests
 
@@ -191,7 +191,7 @@ model and the real classifier pack.
 ## Existing tests changed
 
 - `tests/unit/config/test_scan_ml_reasons.py`: the M1 tripwire asserted `post_scan.ner_blocked`
-  was absent; it now asserts it is registered with `since` 1.26.0, as M5 did for its code.
+  was absent; it now asserts it is registered with `since` unreleased, as M5 did for its code.
 - `tests/unit/test_reason_registry.py`, `tests/unit/test_public_api.py`: one test and one name added.
 - `tests/unit/execution/test_scanml_m5_route_guard.py::test_run_pipeline_auto_chunk_lane_runs_model_post_scan_configs_as_on_main`:
   `run_pipeline` now loads its post-scan models first, which needs spaCy for `[regex, ner]`. The
@@ -211,7 +211,7 @@ Named tests: tests/unit/detection_verification/test_scanml_m4_{regex_baseline,re
 Selection:   scripts/dev/gates.sh --baseline
 Plus:        git grep hits in tests/ for the changed signatures (50 paths, tests/perf excluded)
 Sentries:    tests/sentry (module size, reason registry, minor fixtures, string targets, seam)
-Triggers:    public engine export, run_pipeline raise, registry minor 1.26.0
+Triggers:    public engine export, run_pipeline raise, registry minor unreleased
 Mutations:   M-M4a, M-M4b, M-M4b2, M-M4b3, M-M4c, M-M4d, M-M4e, M-M4f, M-M4g, M-M4g2, M-M4g3,
              M-M4sub, each red (see Mutations)
 Full suite:  trigger engine exports plus reason registry, orchestrator runs it

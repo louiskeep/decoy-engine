@@ -12,5 +12,5 @@ finding and keeps the regex findings. `post_scan.dismissed` entries lower the ex
 name to `info`; a stale one is counted in the `post_scan.models` log line. Under
 `post_scan.ner_findings: fail` an NER warning becomes `fail` (`promoted`), and an NER `fail` or
 `error` makes `run_pipeline` raise the new public `PostScanBlockedError` (reason
-`post_scan.ner_blocked`, `since` 1.26.0) before it returns, so no output is published. The report
+`post_scan.ner_blocked`, `since` unreleased) before it returns, so no output is published. The report
 gains `detectors`, `tables_checked` and `config_sha256`; the tag stays `post-scan-integrity/v2`.

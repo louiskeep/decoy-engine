@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import RetryClass
+from decoy_engine.reasons._types import UNRELEASED, RetryClass
 
 __all__ = [
     "CHECK_ERROR",
@@ -22,5 +22,5 @@ NER_BLOCKED = _catalog.post_scan("PostScanBlockedError")(
     "ner_blocked",
     "An NER post-scan finding blocked this run under ner_findings: fail, so no output was published.",
     retry=RetryClass.CONFIGURATION_REPAIR,
-    since="1.26.0",
+    since=UNRELEASED,
 )

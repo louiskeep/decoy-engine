@@ -43,7 +43,7 @@ def test_the_slice_adds_exactly_these_identities_and_no_later_slice_code() -> No
     }
     assert added == set(IDENTITIES)
     m4 = reasons.find("post_scan", "ner_blocked")  # M4's, in its own later minor
-    assert m4 is not None and m4.since == "1.26.0"
+    assert m4 is not None and m4.since == "unreleased"
     m5 = reasons.find("route", "post_scan_models_unsupported")  # M5's, in its own later minor
     assert m5 is not None and m5.since == "unreleased"
 
