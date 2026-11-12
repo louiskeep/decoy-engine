@@ -113,7 +113,7 @@ class EvidencePayload(_Model):
     timings: tuple[Timing, ...]
     strategies: tuple[Strategy, ...]
     manifest_hash: Sha256
-    # Additive to cli-local-1 (CLI #200): written together inside a decoy.yaml project, else absent.
+    # Additive to cli-local-1: written together inside a decoy.yaml project, else absent.
     # Absent must stay absent for the manifest_hash, so these are never given a stored default.
     path_base: Literal["project"] | None = None
     project_manifest: RelPath | None = None
