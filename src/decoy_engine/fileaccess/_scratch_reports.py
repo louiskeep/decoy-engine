@@ -42,6 +42,10 @@ class QuotaReport:
     observed_bytes: int | None = None
     disposition: Disposition = Disposition.RETAINED
 
+    def __post_init__(self) -> None:
+        if self.route not in get_args(Route) or self.dimension not in get_args(Dimension):
+            raise ValueError("a quota report takes only its closed route and dimension codes")
+        _check(self.disposition, self.effective_bytes_cap, self.observed_bytes)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -52,6 +56,8 @@ class CleanupReport:
     retained_bytes: int | None = 0
     retained_inodes: int | None = 0
 
+    def __post_init__(self) -> None:
+        _check(self.disposition, self.retained_bytes, self.retained_inodes)
 
 
 __all__ = ["CleanupReport", "Disposition", "QuotaReport"]

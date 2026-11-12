@@ -5,7 +5,7 @@
 # `dir_category` (protected_root, protected_child, output_parent, published_output, non_row) and
 # `dir_test` (an existing pytest node id; every category but protected_root) mark directory
 # creators for tests/sentry/protected_dir (G-ONE-PROTECTED-DIR).
-# Count: 190 (asserted by the sentry).
+# Count: 195 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -1834,3 +1834,50 @@ ordinal = 0
 rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one (an issued root runs under every policy)"
 owner = "cam"
 reason = "the allocator removes a directory it issued, or one it created that failed its own check"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_scratch.py"
+function = "_open"
+sink = "os.open"
+ordinal = 0
+disposition = "read"
+rule = "O_RDONLY|O_DIRECTORY|O_NOFOLLOW: by path, the directory `_parent_base` returned (the system temp directory, a live issued root, or a caller path after `require_ambient`) and, in `_adopt`, an ambient caller path; otherwise the fresh pending root under its held base descriptor"
+owner = "cam"
+reason = "the scratch arena opens its base and its fresh root by descriptor; it creates nothing (F25 S1a, plan 4.2)"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_scratch.py"
+function = "_open"
+sink = "os.open"
+ordinal = 1
+disposition = "read"
+rule = "O_RDONLY|O_NOFOLLOW: a validated component under a held arena descriptor"
+owner = "cam"
+reason = "`StageDir.open_file`: reads a file the arena holds, by descriptor"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_scratch.py"
+function = "_rename"
+sink = "os.rename"
+ordinal = 0
+rule = "two names under one held directory descriptor: the pending root to `decoy-arena-v1-<token>` in its base, or two validated components inside an arena"
+owner = "cam"
+reason = "pending-then-rename publishes an arena only once it is marked and locked; `StageDir.rename` inside it"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_scratch.py"
+function = "_unlink"
+sink = "os.unlink"
+ordinal = 0
+rule = "a validated component under a held arena descriptor; never the marker"
+owner = "cam"
+reason = "`StageDir.remove`, and removal of a file the arena just made that failed its mode check"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_scratch.py"
+function = "_rmdir"
+sink = "os.rmdir"
+ordinal = 0
+rule = "a validated component under a held arena descriptor, or the arena's own root name under its held base descriptor"
+owner = "cam"
+reason = "`StageDir.remove` of a directory, removal of a child that failed its mode check, and the root at reclaim"

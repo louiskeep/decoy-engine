@@ -1,8 +1,14 @@
-"""NEUTERED CONTROL for the F25 S1a red record; the next commit replaces this module.
+"""Engine scratch as one A-4 capability: a held, owner-only directory, private under any umask.
 
-Each plan section 5 fail-before is applied: raw creators with no chmod (root, children, `_adopt`)
-and A-4's 0o666 file mode, a raw 0600 marker `os.open`, no `fstat` read-back, no `_register`, no
-reserved-name check, a reclaim that swallows errors as REMOVED, and a release under every policy.
+Pattern: `cap-std` `Dir` and WASI preopens (operations relative to a held directory descriptor);
+`flock(2)` on the root's open file description, the liveness lock `systemd-tmpfiles(8)` honours;
+Maildir's pending-then-rename (`tmp/` then `new/`), with a marker inside proving the creator.
+
+The arena creates nothing itself: roots and missing `under=` levels come from L0.1's allocator,
+children and private files from A-4's named creators in `_output.py`. Each new descriptor is read
+back with `fstat`; anything but an owner-only 0700 directory or 0600 file is refused and removed.
+Creator errno failures pass through unchanged. `local_path` is the one path release. Named limits:
+a crash inside `open` leaves an empty pending directory (L4); same-user interference (L6).
 """
 
 from __future__ import annotations
@@ -14,6 +20,7 @@ import stat
 import sys
 import weakref
 from collections.abc import Callable
+from contextlib import suppress
 from typing import Any
 
 from decoy_engine.fileaccess._component import validate_component
@@ -26,13 +33,14 @@ from decoy_engine.fileaccess._output import (
     create_private_at,
     make_stage_dir_at,
 )
-from decoy_engine.fileaccess._protected_dir import ProtectedDirUnsafe, _parent_base
-
-
-def _allocate(base: str, prefix: str) -> str:
-    path = os.path.join(base, prefix + secrets.token_hex(8))
-    os.mkdir(path, 0o700)  # control: no chmod, so the umask narrows it
-    return path
+from decoy_engine.fileaccess._protected_dir import (
+    ProtectedDirUnsafe,
+    _allocate,
+    _owned_private,
+    _parent_base,
+    _register,
+    _unregister,
+)
 from decoy_engine.fileaccess._scratch_reports import CleanupReport, Disposition
 from decoy_engine.fileaccess._types import FileAccessUnavailable
 
@@ -74,21 +82,19 @@ def _rmdir(name: str, dir_fd: int) -> None:
 
 
 def _quietly(fn: Callable[..., object], *args: object) -> None:
-    try:
+    with suppress(OSError):
         fn(*args)
-    except OSError:
-        pass
 
 
 def _exact(fd: int, kind: int, mode: int) -> bool:
     """The descriptor is of `kind`, owned by the effective user, with exactly `mode`."""
     found = os.fstat(fd)
-    return True  # control: no read-back
+    same = stat.S_IFMT(found.st_mode) == kind and stat.S_IMODE(found.st_mode) == mode
+    return same and _owned_private(found)
 
 
 def _write_marker(fd: int, token: str) -> None:
-    data = _MAGIC + token.encode("ascii") + b"\n"
-    if os.pwrite(fd, data, 0) != len(data):  # a short write leaves no provable marker
+    if os.pwrite(fd, data := _MAGIC + token.encode("ascii") + b"\n", 0) != len(data):
         raise OSError(errno.EIO, os.strerror(errno.EIO))
 
 
@@ -114,6 +120,7 @@ class _Root:  # what an arena tree shares, held apart from the arenas so collect
 def _reclaim(root: _Root) -> CleanupReport:
     """Remove the arena by descriptor, then its name; any failure is RETAINED, never success."""
     if root.report is None:
+        _unregister(root.path)
         failed = False
         try:
             _rmtree_fd(root.fd.fd)
@@ -125,7 +132,7 @@ def _reclaim(root: _Root) -> CleanupReport:
         retained = CleanupReport(
             disposition=Disposition.RETAINED, retained_bytes=None, retained_inodes=None
         )
-        root.report = CleanupReport(disposition=Disposition.REMOVED)  # control: swallowed
+        root.report = retained if failed else CleanupReport(disposition=Disposition.REMOVED)
     return root.report
 
 
@@ -137,10 +144,6 @@ def _release(root: _Root, *, keep_base: bool = False) -> None:
 
 
 def _open_dir(name: str, dir_fd: int | None = None) -> int:
-    return os.open(name, os.O_RDONLY | os.O_DIRECTORY, dir_fd=dir_fd)  # control: follows links
-
-
-def _unused_open_dir(name: str, dir_fd: int | None = None) -> int:
     """Open a directory; a symlink or non-directory at the name is unsafe, not an I/O error."""
     try:
         return _open(name, dir_fd)
@@ -152,7 +155,7 @@ def _unused_open_dir(name: str, dir_fd: int | None = None) -> int:
 
 def _mark_and_publish(fd: int, base_fd: int, pending: str) -> str:
     """Write the marker, take the shared lock, then rename to the final name; return it."""
-    marker = os.open(_MARKER, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=fd)
+    marker = create_private_at(fd, _MARKER)
     try:
         if not _exact(marker, stat.S_IFREG, 0o600):
             raise ProtectedDirUnsafe
@@ -194,12 +197,10 @@ class ScratchArena:
 
     @classmethod
     def open(cls, *, under: str | os.PathLike[str] | None = None) -> ScratchArena:
-        """A fresh arena in the system temp directory, or a fresh child of `under` (ambient
-        only, unless `under` is a live issued root)."""
+        """A fresh arena in the temp directory, or under `under` (ambient or a live issued root)."""
         if sys.platform == "win32":
             raise FileAccessUnavailable("the scratch arena needs a POSIX host in this release")
         base = _parent_base(under)
-        releases = under is None or is_ambient()
         pending = os.path.basename(_allocate(base, _PENDING_PREFIX))
         base_fd = _open(base)
         try:
@@ -218,20 +219,18 @@ class ScratchArena:
             _quietly(_rmdir, pending, base_fd)
             _close(base_fd)
             raise
-        path = os.path.join(base, final)
-        root = _Root(fd, base_fd, final, path, owning=True)
-        root.releases = releases
+        root = _Root(fd, base_fd, final, os.path.join(base, final), owning=True)
+        _register(root.path)
+        root.releases = under is None or is_ambient()  # the release rule is fixed at open
         return cls(_ISSUER, root, root.fd, ())
 
     @classmethod
     def _adopt(cls, path: str | os.PathLike[str]) -> ScratchArena:
-        """Transitional `Path` arm: a non-owning arena over `path` under the ambient policy.
-        Missing levels are made and checked as `create_dir` makes them; an existing leaf must
-        already be owner-only (it is checked, never chmodded). Ended in a later slice."""
+        """Transitional non-owning `Path` arm (ambient only): missing levels made as `create_dir`
+        makes them; an existing leaf must already be owner-only, checked and never chmodded."""
         require_ambient("a scratch directory named by path")
         target = os.path.abspath(os.fspath(path))
-        missing: list[str] = []
-        current = target
+        missing, current = [], target
         while True:  # up to the deepest existing ancestor
             try:
                 fd = _open_dir(current)
@@ -241,25 +240,29 @@ class ScratchArena:
                     raise
             missing.append(os.path.basename(current))
             current = os.path.dirname(current)
-        _close(fd)
-        os.makedirs(target, 0o700, exist_ok=True)  # control: umask-narrowed levels
-        fd = _open_dir(target)
-        root = _Root(fd, -1, os.path.basename(target), target, owning=False)
-        return cls(_ISSUER, root, root.fd, ())
+        if not missing and not _exact(fd, stat.S_IFDIR, 0o700):
+            _close(fd)
+            raise ProtectedDirUnsafe
+        for name in reversed(missing):
+            try:
+                child = _make_dir(fd, name)
+            finally:
+                _close(fd)
+            fd = child
+        adopted = _Root(fd, -1, os.path.basename(target), target, owning=False)
+        return cls(_ISSUER, adopted, adopted.fd, ())
 
-    def _check(self, *components: str) -> None:
+    def _check(self, *components: str, writes: bool = False) -> None:
         if self._root.finished:
             raise FileAccessUnavailable("the scratch arena is reclaimed")
         for component in components:
             validate_component(component, _DISPLAY)
-
-    def _check_writable(self, *components: str) -> None:
-        self._check(*components)
-        assert deny  # control: no reserved-name check
+        if writes and _MARKER in components:
+            raise deny(_DISPLAY)  # the marker is the sweep's proof of ownership
 
     def create_file(self, component: str) -> int:
-        self._check_writable(component)
-        fd = os.open(component, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666, dir_fd=self._fd.fd)
+        self._check(component, writes=True)
+        fd = create_private_at(self._fd.fd, component)
         if not _exact(fd, stat.S_IFREG, 0o600):
             _close(fd)
             _quietly(_unlink, component, self._fd.fd)
@@ -271,20 +274,20 @@ class ScratchArena:
         return _open(component, self._fd.fd, directory=False)
 
     def create_dir(self, component: str) -> ScratchArena:
-        self._check_writable(component)
+        self._check(component, writes=True)
         child = _Fd(_make_dir(self._fd.fd, component))
         self._root.children.append(child)
         return ScratchArena(_ISSUER, self._root, child, (*self._rel, component))
 
     def remove(self, component: str) -> None:
-        self._check_writable(component)
+        self._check(component, writes=True)
         try:
             _unlink(component, self._fd.fd)
         except IsADirectoryError:
             _rmdir(component, self._fd.fd)
 
     def rename(self, src: str, dst: str) -> None:
-        self._check_writable(src, dst)
+        self._check(src, dst, writes=True)
         _rename(src, dst, self._fd.fd)
 
     def local_stage_path(self) -> str:
@@ -294,7 +297,7 @@ class ScratchArena:
         """A path for a library that takes only a path; an `under=` arena needs the ambient policy."""
         names = (component,) if component is not None else ()
         self._check(*names)
-        if False:  # control: releases under every policy
+        if not self._root.releases:
             raise FileAccessUnavailable("an under= scratch arena releases paths only when ambient")
         return os.path.join(self._root.path, *self._rel, *names)
 
@@ -319,8 +322,7 @@ class ScratchArena:
 
 def _make_dir(parent_fd: int, name: str) -> int:
     """A new 0700 child through A-4's creator, read back; refused and removed if not exact."""
-    os.mkdir(name, 0o700, dir_fd=parent_fd)  # control: no chmod
-    fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY, dir_fd=parent_fd)
+    fd = make_stage_dir_at(parent_fd, name)
     if not _exact(fd, stat.S_IFDIR, 0o700):
         _close(fd)
         _quietly(_rmdir, name, parent_fd)
