@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from decoy_engine.config import parse_delivery_config
 from decoy_engine.generation import generation_order
 from decoy_engine.reasons import ReasonCode
 
@@ -52,8 +53,8 @@ def _dropped_because(config: Mapping[str, Any], failed: list[str]) -> dict[str, 
     edges = _children(config)
     reached: dict[str, str] = {}
     visited: set[str] = set()
-    # Sorted starts and a shared visited set: a table first reached from the smallest failed
-    # name is also reachable from every larger one, so the first claim is the answer.
+    # Sorted starts: after each start the visited set is closed under reachability, so a later
+    # start never revisits it and the first claim comes from the smallest failed name.
     for start in sorted(failed):
         queue = deque([start])
         while queue:
@@ -70,7 +71,7 @@ def plan_delivery(
 ) -> DeliveryDecision:
     """Decide each table's delivery state; `outcomes` holds None for ok, a code for a failure."""
     failed = [name for name, cause in outcomes.items() if cause is not None]
-    strict = (config.get("delivery") or {}).get("mode", "strict") == "strict"
+    strict = parse_delivery_config(config.get("delivery") or {}).mode == "strict"
     reached = {} if strict or not failed else _dropped_because(config, failed)
     tables: dict[str, TableDelivery] = {}
     for name, cause in outcomes.items():
@@ -82,5 +83,6 @@ def plan_delivery(
             tables[name] = TableDelivery("dropped", reached[name])
         else:
             tables[name] = TableDelivery("delivered")
-    deliver = any(t.state == "delivered" for t in tables.values())
+    # No file-target table means nothing failed or was withheld, so the run still goes on.
+    deliver = not outcomes or any(t.state == "delivered" for t in tables.values())
     return DeliveryDecision(tables, deliver)

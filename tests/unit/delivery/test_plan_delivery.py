@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import signal
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
 
+from decoy_engine.config import PipelineConfig, PipelineConfigError
 from decoy_engine.delivery import plan_delivery
 
 FAIL: Any = "failed"  # any non-None value is a failure cause; the plan never reads its text
@@ -37,7 +36,7 @@ def _config(
             {
                 "parent": {"table": p, "columns": ["id"]},
                 "children": [{"table": c, "columns": ["pid"]}],
-                "orphan_policy": "error",
+                "orphan_policy": "fail",
             }
             for p, c in (edges or [])
         ],
@@ -51,23 +50,16 @@ def _states(decision: Any) -> dict[str, str]:
     return {name: t.state for name, t in decision.tables.items()}
 
 
-@contextmanager
-def _within(seconds: int) -> Iterator[None]:
-    def _raise(*_: object) -> None:
-        raise TimeoutError("plan_delivery did not return")
-
-    old = signal.signal(signal.SIGALRM, _raise)
-    signal.alarm(seconds)
-    try:
-        yield
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old)
-
-
 def test_at1_all_ok_strict_delivers_everything() -> None:
     d = plan_delivery(_config(["a", "b", "c"]), {"a": None, "b": None, "c": None})
     assert _states(d) == {"a": "delivered", "b": "delivered", "c": "delivered"}
+    assert d.deliver is True
+
+
+@pytest.mark.parametrize("mode", [None, "best_effort"])
+def test_at1b_an_empty_run_delivers(mode: str | None) -> None:
+    d = plan_delivery(_config([], mode=mode), {})
+    assert d.tables == {}
     assert d.deliver is True
 
 
@@ -100,10 +92,10 @@ def test_at5_self_edges_are_ignored() -> None:
     assert _states(d) == {"t": "delivered"}
 
 
+@pytest.mark.timeout(2)
 def test_at6_a_table_level_cycle_terminates_and_drops_the_component() -> None:
     config = _config(["A", "B", "U"], [("A", "B"), ("B", "A")], "best_effort")
-    with _within(2):
-        d = plan_delivery(config, {"A": FAIL, "B": None, "U": None})
+    d = plan_delivery(config, {"A": FAIL, "B": None, "U": None})
     assert _states(d) == {"A": "failed", "B": "dropped", "U": "delivered"}
     assert d.tables["B"].dropped_because == "A"
 
@@ -131,3 +123,41 @@ def test_at9_the_walk_passes_through_a_table_without_a_file_target() -> None:
     assert _states(d) == {"p": "failed", "g": "dropped"}
     assert "mid" not in d.tables
     assert d.tables["g"].dropped_because == "p"
+
+
+def test_at2b_an_unknown_mode_raises_instead_of_degrading() -> None:
+    with pytest.raises(PipelineConfigError):
+        plan_delivery(_config(["a"], mode="bogus"), {"a": FAIL})
+
+
+def test_plan_reads_the_dump_of_a_validated_pipeline_config() -> None:
+    raw = {
+        "version": 2,
+        "global_settings": {"seed": 1, "post_validation": False},
+        "sources": {
+            n: {"type": "file", "format": "csv", "has_header": True, "path": f"./{n}.csv"}
+            for n in ("p", "c")
+        },
+        "tables": [
+            {
+                "name": "p",
+                "columns": [{"name": "id", "strategy": "preserve_format_id", "provider": "uuid"}],
+            },
+            {"name": "c", "columns": [{"name": "pid", "strategy": "from_parent"}]},
+        ],
+        "relationships": [
+            {
+                "parent": {"table": "p", "columns": ["id"]},
+                "children": [{"table": "c", "columns": ["pid"]}],
+                "orphan_policy": "fail",
+            }
+        ],
+        "targets": {
+            n: {"type": "file", "format": "csv", "path": f"./out/{n}.csv"} for n in ("p", "c")
+        },
+        "delivery": {"mode": "best_effort"},
+    }
+    config = PipelineConfig.model_validate(raw).model_dump(mode="python")
+    d = plan_delivery(config, {"p": FAIL, "c": None})
+    assert _states(d) == {"p": "failed", "c": "dropped"}
+    assert d.tables["c"].dropped_because == "p"

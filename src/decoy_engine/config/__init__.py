@@ -55,7 +55,11 @@ from decoy_engine.config._generate_unique import (
 from decoy_engine.config._global_settings import DpGenerateSettings, GlobalSettings
 from decoy_engine.config._namespaces import NamespaceConfig
 from decoy_engine.config._override import override_sources
-from decoy_engine.config._parse import parse_pipeline_config, parse_relationship_config
+from decoy_engine.config._parse import (
+    parse_delivery_config,
+    parse_pipeline_config,
+    parse_relationship_config,
+)
 from decoy_engine.config._pipeline import PipelineConfig
 from decoy_engine.config._post_scan import (
     Dismissal,
@@ -144,6 +148,7 @@ __all__ = [
     "distinct_categories",
     "generate_option_catalog",
     "override_sources",
+    "parse_delivery_config",
     "parse_output_type",
     "parse_pipeline_config",
     "parse_relationship_config",

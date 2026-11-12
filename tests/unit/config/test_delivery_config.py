@@ -15,7 +15,7 @@ from decoy_engine.config import DeliveryConfig, PipelineConfig
 from decoy_engine.plan._compile import compile_plan
 from decoy_engine.profile._source import profile_source
 
-FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 BASELINE = json.loads((FIXTURES / "f06" / "legacy-compat-baseline.json").read_text())
 # The frozen F06 config predates the required csv has_header; the old default keeps its read.
 LEGACY_RAW: dict[str, Any] = {
