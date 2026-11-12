@@ -351,11 +351,15 @@ def _key_edge() -> RelationshipEdge:
     "cell",
     ["reorder_spill", "relation_survives_gc", "relation_survives_gc_arena", "reclaim_refused"],
 )
-def test_adopted_arena_is_non_owning(tmp_path: Path, cell: str) -> None:
+def test_adopted_arena_is_non_owning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cell: str
+) -> None:
     """Only the opener's root reclaims: an adopted arena and a `create_dir` child, collected
     while the root is open, leave every file under them for the run that is still using it."""
     if os.geteuid() == 0:
         pytest.fail("run as a non-root user: root ignores directory modes, so this is vacuous")
+    (tmp_path / "tmp").mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "tmp"))
     with ScratchArena.open() as root:
         base = Path(root.local_path())
         if cell == "reorder_spill":
@@ -381,8 +385,6 @@ def _reorder_spill(leaf: Path) -> None:
         adopted = ScratchArena._adopt(leaf)  # arm (c)'s shape: a missing leaf made 0700
         conn = connect_duckdb(temp_dir=Path(adopted.local_path()), memory_limit="16MB")
         try:
-            del adopted
-            gc.collect()
             conn.execute("SET preserve_insertion_order = false")
             conn.execute(
                 "CREATE TEMP TABLE spill AS SELECT range AS i, repeat('x', 96) AS s"
@@ -390,6 +392,11 @@ def _reorder_spill(leaf: Path) -> None:
             )
             spilled = [Path(r[0]) for r in conn.execute("FROM duckdb_temporary_files()").fetchall()]
             assert spilled and {p.parent for p in spilled} == {leaf}, spilled  # non-vacuity
+            del adopted
+            gc.collect()  # the spill must outlive the adopted arena object
+            assert all(p.is_file() for p in spilled), spilled
+            total = conn.execute("SELECT count(*), sum(length(s)) FROM spill").fetchone()
+            assert total == (600000, 600000 * 96)
             assert _mode(leaf) == _mode(leaf.parent) == 0o700
         finally:
             conn.close()
@@ -413,10 +420,11 @@ def _relation_survives(root: ScratchArena, base: Path, cell: str) -> None:
     batch = masked.to_batches()[0]
     stager.add(batch, batch)
     stager.close()
+    relations = None if cell == "relation_survives_gc" else root.create_dir("relations")
     holder = (
         ScratchArena._adopt(base / "relations" / "t0000")
-        if cell == "relation_survives_gc"
-        else root.create_dir("relations").create_dir("t0000")
+        if relations is None
+        else relations.create_dir("t0000")
     )
     relation = build_parent_key_relation_aligned(
         source_parent=parent,
@@ -424,7 +432,7 @@ def _relation_survives(root: ScratchArena, base: Path, cell: str) -> None:
         edge=edge,
         temp_dir=Path(holder.local_path()),
     )
-    del holder, stager
+    del holder, relations, stager
     gc.collect()
     assert relation.path.is_file() and relation.path.name.endswith("_key_relation.parquet")
     child = pa.table({"key": ["c2", "c1", "x"]}).to_batches()[0]
