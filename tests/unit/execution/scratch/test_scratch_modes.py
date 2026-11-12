@@ -2,7 +2,9 @@
 `temp_dir` (ambient only, the caller directory's own mode untouched), an engine-rooted arena when
 none is named, or the arena a caller hands in, which the route uses and never reclaims.
 
-The root is observed at the run's per-table budget walk, while the run is live.
+The root is observed at the run's per-table budget walk, while the run is live. There the whole
+tree is walked too (T-MODES): under any umask every directory is 0700 and every file Python created
+is 0600, in both lanes, with a table that has an incoming and an outgoing FK edge.
 """
 
 from __future__ import annotations
@@ -10,6 +12,8 @@ from __future__ import annotations
 import os
 import stat
 import sys
+import tempfile
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -20,9 +24,12 @@ from decoy_engine import fileaccess
 from decoy_engine.execution.out_of_core import _runner, run_fk_out_of_core
 from decoy_engine.fileaccess import ProtectedDirUnsafe, ScratchArena
 from decoy_engine.fileaccess._scratch import ARENA_PREFIX
+from decoy_engine.plan._types import TableSeed
 from decoy_engine.providers_v2 import get_default_registry
-from decoy_engine.relationships._graph import RelationshipGraph
+from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 from tests.fileaccess.protected_dir.test_protected_dir import _Strict
+from tests.parity.test_out_of_core_fk_parity import _plan as _seeded_plan
+from tests.parity.test_out_of_core_fk_parity import _seed_for
 from tests.unit.execution.test_out_of_core_join_chunked import _edge, _plan
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Windows lane is L0.1w")
@@ -123,3 +130,202 @@ def test_handed_arena_is_the_route_root(monkeypatch: pytest.MonkeyPatch) -> None
         assert root.is_dir() and (root / ".decoy-arena").is_file(), "the route reclaimed it"
         assert sorted(p.name for p in root.iterdir()) == [".decoy-arena"]
     assert not root.exists()
+
+
+# -- T-MODES (T01-T05): the scratch tree under any umask, both lanes ---------------------------
+
+
+def fd_path(fd: int) -> str:
+    """The path a directory descriptor names, to place a `dir_fd`-relative creation."""
+    if sys.platform == "darwin":
+        import fcntl
+
+        return fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0").decode()
+    return os.readlink(f"/proc/self/fd/{fd}")
+
+
+class _Created:
+    """Every directory `os.mkdir` makes and every file `os.open` creates, as absolute paths kept
+    current across `os.rename` (the arena is renamed from its pending name).
+
+    Recorded, not judged at the call: a creator restores the mode on the new descriptor after
+    the umask-masked call returns, so the mode is read on the tree while the run is live."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.dirs: set[str] = set()
+        self.files: set[str] = set()
+        real_mkdir, real_open = os.mkdir, os.open
+
+        def at(path: Any, dir_fd: int | None) -> str:
+            name = os.fsdecode(path)
+            return (
+                os.path.join(fd_path(dir_fd), name) if dir_fd is not None else os.path.abspath(name)
+            )
+
+        def mkdir(path: Any, mode: int = 0o777, *, dir_fd: int | None = None) -> None:
+            real_mkdir(path, mode, dir_fd=dir_fd)
+            self.dirs.add(at(path, dir_fd))
+
+        def open_(path: Any, flags: int, mode: int = 0o777, *, dir_fd: int | None = None) -> int:
+            fd = real_open(path, flags, mode, dir_fd=dir_fd)
+            if flags & os.O_CREAT:
+                self.files.add(at(path, dir_fd))
+            return fd
+
+        def rename(src: Any, dst: Any, **fds: int | None) -> None:
+            real_rename(src, dst, **fds)
+            old, new = at(src, fds.get("src_dir_fd")), at(dst, fds.get("dst_dir_fd"))
+
+            def moved(p: str) -> str:
+                return new + p[len(old) :] if p == old or p.startswith(old + "/") else p
+
+            self.dirs, self.files = {moved(p) for p in self.dirs}, {moved(p) for p in self.files}
+
+        real_rename = os.rename
+        monkeypatch.setattr(os, "mkdir", mkdir)
+        monkeypatch.setattr(os, "open", open_)
+        monkeypatch.setattr(os, "rename", rename)
+
+
+class _MemorySink:
+    """Keeps the output in memory: under umask 0777 an output stage is born 0000 (L8), and the
+    sink is not what this test observes."""
+
+    def __init__(self) -> None:
+        self.tables: dict[str, pa.Table] = {}
+
+    def write(self, table: str, data: pa.Table) -> None:
+        self.tables[table] = data
+
+    def write_batches(
+        self, table: str, batches: Iterable[pa.RecordBatch], *, schema: pa.Schema
+    ) -> None:
+        self.tables[table] = pa.Table.from_batches(list(batches), schema=schema)
+
+    def commit(self) -> None:
+        pass
+
+    def abort(self) -> None:
+        pass
+
+
+def _chain() -> tuple[Any, dict[str, pa.Table], RelationshipGraph]:
+    """customers -> orders -> items: `orders` has an incoming and an outgoing FK edge."""
+
+    def seed(*columns: tuple[str, str]) -> TableSeed:
+        return TableSeed(
+            per_column=tuple((c, _seed_for("hash", ns)) for c, ns in columns), per_group=()
+        )
+
+    def edge(parent: str, child: str, column: str, ns: str) -> RelationshipEdge:
+        return RelationshipEdge(
+            parent_table=parent,
+            parent_columns=(column,),
+            child_table=child,
+            child_columns=(column,),
+            namespace=ns,
+            orphan_policy=OrphanPolicy.PRESERVE,
+        )
+
+    plan = _seeded_plan(
+        (
+            ("customers", seed(("customer_id", "c"))),
+            ("orders", seed(("order_id", "o"), ("customer_id", "c"))),
+            ("items", seed(("order_id", "o"))),
+        )
+    )
+    graph = RelationshipGraph(
+        edges=(
+            edge("customers", "orders", "customer_id", "c"),
+            edge("orders", "items", "order_id", "o"),
+        ),
+        ordering=(),
+    )
+    sources = {
+        "customers": pa.table({"customer_id": [f"c{i}" for i in range(8)]}),
+        "orders": pa.table(
+            {
+                "order_id": [f"o{i}" for i in range(12)],
+                "customer_id": [f"c{i % 9}" for i in range(12)],
+            }
+        ),
+        "items": pa.table({"order_id": [f"o{i % 13}" for i in range(20)]}),
+    }
+    return plan, sources, graph
+
+
+def _walk(root: Path) -> dict[str, os.stat_result]:
+    """Every entry beneath `root`, and `root`, by descriptor."""
+    seen = {str(root): os.stat(root, follow_symlinks=False)}
+    for top, dirs, files, top_fd in os.fwalk(root):
+        for name in (*dirs, *files):
+            seen[os.path.join(top, name)] = os.stat(name, dir_fd=top_fd, follow_symlinks=False)
+    return seen
+
+
+@pytest.mark.parametrize("umask", [0o000, 0o077, 0o777], ids=lambda m: f"umask{m:04o}")
+@pytest.mark.parametrize("lane", ["batch", "reorder"])
+def test_ooc_scratch_modes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, lane: str, umask: int
+) -> None:
+    if os.geteuid() == 0:
+        pytest.fail("run as a non-root user: root ignores directory modes, so this is vacuous")
+    temp_root = tmp_path / "tmp"
+    temp_root.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp_root))
+    lanes: dict[str, str] = {}
+    for attr, name in (("_stream_table", "batch"), ("stream_table", "reorder")):
+        real = getattr(_runner, attr)
+
+        def driver(*a: Any, _real: Any = real, _name: str = name, **k: Any) -> Any:
+            lanes[k["table_name"]] = _name
+            return _real(*a, **k)
+
+        monkeypatch.setattr(_runner, attr, driver)
+    walks: list[dict[str, os.stat_result]] = []
+    real_walk = _runner.check_temp_disk_budget
+
+    def walk(root: Path, **kw: Any) -> None:
+        walks.append(_walk(Path(root)))  # before the run removes its subtrees and the arena
+        real_walk(root, **kw)
+
+    monkeypatch.setattr(_runner, "check_temp_disk_budget", walk)
+    plan, sources, graph = _chain()
+    sink = _MemorySink()
+    created = _Created(monkeypatch)
+    old = os.umask(umask)
+    try:
+        run_fk_out_of_core(
+            plan,
+            sources,
+            registry=get_default_registry(),
+            relationship_graph=graph,
+            sink=sink,
+            budget_bytes=1 << 30,
+            temp_disk_budget_bytes=1 << 40,
+            out_of_core_reorder_threshold_rows=0 if lane == "reorder" else None,
+        )
+    finally:
+        os.umask(old)
+        monkeypatch.undo()
+    assert lanes["orders"] == lane and lanes["customers"] == "batch", lanes
+    assert set(sink.tables) == {"customers", "orders", "items"}
+    assert len(walks) == 3, len(walks)  # non-vacuity: one walk per table
+    seen = {path: st for w in walks for path, st in w.items()}
+    euid = os.geteuid()
+    dirs = {p: stat.S_IMODE(st.st_mode) for p, st in seen.items() if stat.S_ISDIR(st.st_mode)}
+    files = {p: stat.S_IMODE(st.st_mode) for p, st in seen.items() if stat.S_ISREG(st.st_mode)}
+    assert set(seen) == set(dirs) | set(files), "only directories and regular files"
+    assert {p for p, st in seen.items() if st.st_uid != euid} == set()
+    assert {p: oct(m) for p, m in dirs.items() if m != 0o700} == {}, oct(umask)
+    python = {p: m for p, m in files.items() if p in created.files}
+    assert {p: oct(m) for p, m in python.items() if m != 0o600} == {}, oct(umask)
+    # The rest are DuckDB's own files, inside its temp directory (named limit L1).
+    native = set(files) - set(python)
+    assert {p for p in native if "duckdb" not in Path(p).parts} == set(), native
+    # Non-vacuity: the subtrees of every row this test covers were walked with Python files in them.
+    names = {Path(p).name for p in python}
+    assert {".decoy-arena", "masked_keys.parquet"} <= names, sorted(names)
+    assert any(n.endswith("_key_relation.parquet") for n in names), sorted(names)
+    rel = {str(Path(p).relative_to(Path(next(iter(walks[0]))))) for p in dirs}
+    assert {"relations/t0000", "relations/t0001", "staged/t0000", "staged/t0001"} <= rel, rel
