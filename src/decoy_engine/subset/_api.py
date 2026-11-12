@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -19,7 +18,6 @@ import polars as pl
 import pyarrow as pa
 
 from decoy_engine import reasons
-from decoy_engine.config import classify_table_kinds
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.fileaccess.adapters import serial
 from decoy_engine.plan import job_seed_for_config
@@ -27,7 +25,11 @@ from decoy_engine.plan._types import PlanRelationship
 from decoy_engine.profile import LazySource
 from decoy_engine.release import __version__
 from decoy_engine.subset._closure import ClosureResult, compute_closure, verify_closure
-from decoy_engine.subset._edges import build_subset_edges, relationships_from_config
+from decoy_engine.subset._edges import (
+    build_subset_edges,
+    mask_relationships,
+    relationships_from_config,
+)
 from decoy_engine.subset._errors import SubsetConfigError, SubsetPreflightError
 from decoy_engine.subset._inputs import TableInput, as_input
 from decoy_engine.subset._keys import load_key_frames
@@ -63,18 +65,14 @@ def _seed_spec_public(spec: SeedSpec) -> dict[str, Any]:
     literal was present, so the shape of the filter stays visible without the
     data.
     """
-    if spec.mode == "keys":
-        return {
-            "table": spec.table,
-            "mode": "keys",
-            "key_columns": list(spec.key_columns),
-            "key_count": len(spec.keys),
-        }
-    d: dict[str, Any] = {
-        "table": spec.table,
-        "mode": spec.mode,
-        "key_columns": list(spec.key_columns),
-    }
+    d: dict[str, Any] = {"table": spec.table, "mode": spec.mode}
+    if spec.mode == "head":
+        d["count"] = spec.count
+    elif spec.mode == "keys":
+        d["key_columns"] = list(spec.key_columns)
+        d["key_count"] = len(spec.keys)
+    else:
+        d["key_columns"] = list(spec.key_columns)
     if spec.mode == "sample":
         d["fraction"] = spec.fraction
         d["count"] = spec.count
@@ -83,6 +81,8 @@ def _seed_spec_public(spec: SeedSpec) -> dict[str, Any]:
             {"column": p.column, "op": p.op, "value_redacted": p.value is not None}
             for p in spec.predicates
         ]
+    if spec.cap is not None:
+        d["cap"] = spec.cap
     return d
 
 
@@ -272,23 +272,7 @@ def subset_request_from_config(config: dict[str, Any]) -> SubsetRequest | None:
     subset_block = config.get("subset")
     if subset_block is None:
         return None
-    # A generate table has no source to read, so an edge touching one cannot be subset.
-    generated = {n for n, kind in classify_table_kinds(config).items() if kind == "generate"}
-    relationships: list[PlanRelationship] = []
-    excluded: list[str] = []
-    for rel in relationships_from_config(config):
-        # Drop per edge: a mask child of a mask parent keeps its edge even when a sibling
-        # child is generated, or its rows would point at parents the subset removed.
-        kept = (
-            ()
-            if rel.parent.table in generated
-            else tuple(c for c in rel.children if c.table not in generated)
-        )
-        if len(kept) != len(rel.children):
-            dropped = replace(rel, children=tuple(c for c in rel.children if c not in kept))
-            excluded.extend(e.edge_id for e in build_subset_edges((dropped,)))
-        if kept:
-            relationships.append(replace(rel, children=kept))
+    relationships, excluded = mask_relationships(config)
 
     seeds: list[SeedSpec] = []
     for entry in subset_block.get("seeds", []):
@@ -321,11 +305,10 @@ def subset_request_from_config(config: dict[str, Any]) -> SubsetRequest | None:
         allow_dangling=bool(subset_block.get("allow_dangling", False)),
     )
     return SubsetRequest(
-        relationships=tuple(relationships),
+        relationships=relationships,
         seeds=tuple(seeds),
         policy=policy,
-        # a config may repeat a relationship; the record names each edge once
-        excluded_edges=tuple(sorted(set(excluded))),
+        excluded_edges=excluded,
     )
 
 

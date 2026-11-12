@@ -50,6 +50,7 @@ from decoy_engine.config._generate_type_checks import (
 )
 from decoy_engine.config._generate_unique import (
     UNIQUE_FAKER_ATTEMPTS,
+    declares_unique,
     distinct_categories,
     value_key,
 )
@@ -147,6 +148,7 @@ __all__ = [
     "TargetDescriptor",
     "TransformOp",
     "classify_table_kinds",
+    "declares_unique",
     "distinct_categories",
     "generate_option_catalog",
     "override_sources",

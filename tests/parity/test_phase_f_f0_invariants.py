@@ -43,7 +43,6 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.generation import (
-    _column_streams,
     _faker_pool,
     _referenced_formula,
     _streamed,
@@ -697,7 +696,9 @@ def test_parent_truncated_to_its_first_batch_is_caught(monkeypatch: pytest.Monke
 
 
 def test_perturbed_parent_keys_are_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The fixture's parent key is `unique: true`, so it is drawn by the unique categorical sampler.
     monkeypatch.setattr(
-        _column_streams.CategoricalStream, "next_batch", lambda self, offset, size: ["x"] * size
+        "decoy_engine.generation._unique.unique_categorical",
+        lambda col, n, seed, derive_key=None: ["x"] * n,
     )
     _trips(lambda: _check_fk_coupling(fx.run_mixed_fk()), match="values differ|digest differs")
