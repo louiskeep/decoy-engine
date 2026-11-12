@@ -174,3 +174,49 @@ class TestIfTypesLikeTernary:
     def test_missing_ref_in_either_branch_is_visible_to_the_ref_check(self) -> None:
         refs = _get_column_refs(compile_expr("if(c, x, if(d, y, z))"))
         assert refs == frozenset({"c", "x", "d", "y", "z"})
+
+
+class TestDeepNesting:
+    """Evaluation is stack-safe up to the compiler's nesting bound (50 parens)."""
+
+    @staticmethod
+    def _parens(depth: int) -> str:
+        return "(" * depth + "a" + ")" * depth
+
+    @staticmethod
+    def _nested_if(depth: int) -> str:
+        expr = "a"
+        for _ in range(depth):
+            expr = f"if(c, {expr}, 0)"
+        return expr
+
+    @staticmethod
+    def _nested_ternary(depth: int) -> str:
+        expr = "a"
+        for _ in range(depth):
+            expr = f"({expr} if c else 0)"
+        return expr
+
+    @pytest.mark.parametrize("depth", [30, 50])
+    def test_plain_parens(self, depth: int) -> None:
+        assert _ev(self._parens(depth), {"a": 7}) == 7
+
+    @pytest.mark.parametrize("depth", [30, 50])
+    def test_nested_if(self, depth: int) -> None:
+        assert _ev(self._nested_if(depth), {"a": 7, "c": True}) == 7
+        assert _ev(self._nested_if(depth), {"a": 7, "c": False}) == 0
+
+    @pytest.mark.parametrize("depth", [30, 49])
+    def test_nested_ternary(self, depth: int) -> None:
+        assert _ev(self._nested_ternary(depth), {"a": 7, "c": True}) == 7
+        assert _ev(self._nested_ternary(depth), {"a": 7, "c": False}) == 0
+
+    def test_over_the_bound_is_refused_at_compile(self) -> None:
+        with pytest.raises(ValidationError):
+            compile_expr(self._parens(51))
+
+
+class TestConditionFirst:
+    def test_condition_error_wins_over_branch_error(self) -> None:
+        with pytest.raises(ZeroDivisionError):
+            _ev('"x" + 1 if 1 // a else 2', {"a": 0})

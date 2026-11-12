@@ -246,73 +246,105 @@ def evaluate(compiled: CompiledExpression, row_context: dict[str, Any]) -> Any:
         KeyError: A column reference is not in ``row_context``.
         ValidationError: A dunder identifier was referenced.
     """
-    evaluator = _LazyEvaluator(_ExprTransformer(row_context))
-    try:
-        return evaluator.visit(compiled.tree)
-    except lark.exceptions.VisitError as exc:
-        # Lark wraps transformer exceptions in VisitError; unwrap so
-        # callers see KeyError / ValidationError directly.
-        ctx = exc.__context__
-        if ctx is not None:
-            raise ctx from ctx
-        raise
+    # The operator methods are called directly (not through lark's Transformer
+    # driver), so KeyError / ValidationError reach the caller unwrapped.
+    return _LazyEvaluator(_ExprTransformer(row_context)).visit(compiled.tree)
 
 
-class _LazyEvaluator(lark.visitors.Interpreter):  # type: ignore[type-arg]
-    """Top-down evaluation so a conditional runs only the branch it chooses.
+class _LazyEvaluator:
+    """Iterative top-down evaluation so a conditional runs only the branch it chooses.
 
-    ``ternary``, ``case_when_op``, ``or_expr`` and ``and_expr`` visit the
+    ``ternary``, ``case_when_op``, ``or_expr`` and ``and_expr`` evaluate the
     condition first and skip the operands they do not need; every other rule
     evaluates its children and hands the values to the same-named
     :class:`_ExprTransformer` method, so operator semantics live in one place.
     A skipped operand is never evaluated, so it cannot raise.
+
+    The walk uses an explicit task stack, not Python recursion, so any tree the
+    compiler admits (paren depth up to ``_MAX_NESTING_DEPTH``, each level adding
+    several grammar wrappers) evaluates without a RecursionError.
     """
 
     def __init__(self, ops: _ExprTransformer) -> None:
-        super().__init__()
         self._ops = ops
 
-    def _value(self, child: Any) -> Any:
-        return self.visit(child) if isinstance(child, lark.Tree) else child
+    def visit(self, root: lark.Tree[Any]) -> Any:
+        tasks: list[tuple[Any, ...]] = [("eval", root)]
+        vals: list[Any] = []
+        while tasks:
+            kind, node, *rest = tasks.pop()
+            if kind == "eval":
+                self._eval(node, tasks, vals)
+            elif kind == "apply":
+                n = rest[0]
+                items = vals[len(vals) - n :]
+                del vals[len(vals) - n :]
+                vals.append(getattr(self._ops, str(node.data))(items))
+            elif kind == "ternary":
+                then, _, other = node.children
+                tasks.append(("eval", then if vals.pop() else other))
+            elif kind == "case_when":
+                self._case_when_step(node, rest[0], vals.pop(), tasks)
+            else:  # "or" / "and": vals[-1] is the running result
+                self._logic_step(kind, node, rest[0], tasks, vals)
+        return vals[0]
 
-    def __default__(self, tree: lark.Tree[Any]) -> Any:
-        items = [self._value(c) for c in tree.children]
-        return getattr(self._ops, str(tree.data))(items)
+    def _eval(self, node: Any, tasks: list[tuple[Any, ...]], vals: list[Any]) -> None:
+        if not isinstance(node, lark.Tree):
+            vals.append(node)
+            return
+        kids = node.children
+        name = node.data
+        if name == "ternary" and len(kids) == 3:
+            tasks.append(("ternary", node))
+            tasks.append(("eval", kids[1]))
+        elif name == "case_when_op":
+            tasks.append(("case_when", node, 0))
+            tasks.append(("eval", kids[0]))
+        elif name in ("or_expr", "and_expr") and len(kids) > 1:
+            kind = "or" if name == "or_expr" else "and"
+            tasks.append((kind, node, 1))
+            tasks.append(("eval", kids[0]))
+        elif name in ("ternary", "or_expr", "and_expr"):
+            tasks.append(("eval", kids[0]))
+        else:
+            tasks.append(("apply", node, len(kids)))
+            tasks.extend(("eval", child) for child in reversed(kids))
 
-    def ternary(self, tree: lark.Tree[Any]) -> Any:
-        if len(tree.children) == 1:
-            return self._value(tree.children[0])
-        then, condition, other = tree.children
-        return self._value(then) if self._value(condition) else self._value(other)
+    @staticmethod
+    def _case_when_step(
+        node: lark.Tree[Any], i: int, cond: Any, tasks: list[tuple[Any, ...]]
+    ) -> None:
+        """Consume the value of condition ``i``: take its value or try the next pair.
 
-    def case_when_op(self, tree: lark.Tree[Any]) -> Any:
-        """SQL-style CASE WHEN conditional expression (SP-10b / ISO/IEC 9075-2).
-
-        Conditions are tried left to right; the first truthy one returns its
-        value, else the mandatory default (the last child). The grammar
-        guarantees an odd child count: (cond, val) pairs then the default.
+        (cond, val) pairs come first and the mandatory default is the last child;
+        the grammar guarantees an odd child count.
         """
-        *pairs, default = tree.children
-        for i in range(0, len(pairs), 2):
-            if self._value(pairs[i]):
-                return self._value(pairs[i + 1])
-        return self._value(default)
+        kids = node.children
+        if cond:
+            tasks.append(("eval", kids[2 * i + 1]))
+        elif 2 * i + 3 < len(kids):
+            tasks.append(("case_when", node, i + 1))
+            tasks.append(("eval", kids[2 * i + 2]))
+        else:
+            tasks.append(("eval", kids[-1]))
 
-    def or_expr(self, tree: lark.Tree[Any]) -> Any:
-        result = self._value(tree.children[0])
-        for operand in tree.children[1:]:
-            if result:
-                return result
-            result = self._value(operand)
-        return result
-
-    def and_expr(self, tree: lark.Tree[Any]) -> Any:
-        result = self._value(tree.children[0])
-        for operand in tree.children[1:]:
-            if not result:
-                return result
-            result = self._value(operand)
-        return result
+    @staticmethod
+    def _logic_step(
+        kind: str,
+        node: lark.Tree[Any],
+        i: int,
+        tasks: list[tuple[Any, ...]],
+        vals: list[Any],
+    ) -> None:
+        """Short-circuit ``or`` / ``and``: keep the result or replace it by operand ``i``."""
+        result = vals[-1]
+        decided = bool(result) if kind == "or" else not result
+        if decided or i >= len(node.children):
+            return
+        vals.pop()
+        tasks.append((kind, node, i + 1))
+        tasks.append(("eval", node.children[i]))
 
 
 class _ExprTransformer(lark.Transformer):  # type: ignore[type-arg]

@@ -1789,7 +1789,7 @@ Two safety bounds are checked before parsing:
 | Substring | `slice(s, start[, end])` (Python-native 0-indexed, half-open, negative-from-end slicing; out-of-range indices clamp rather than error, e.g. `slice(firstname, -4)` for the last 4 characters) |
 | Date | `days_between(start, end)` (integer days; accepts `datetime.date` or ISO-8601 strings) |
 | Conditional | `case_when(cond1, val1, ..., condN, valN, default)` -- lazy: only the conditions up to the first true one and the chosen value are evaluated, so an unchosen `100 // a` cannot raise |
-| Ternary | `value if condition else other`, or the call form `if(condition, value, other)` (same node; lazy like `case_when`, and `or` / `and` short-circuit) |
+| Ternary | `value if condition else other`, or the call form `if(condition, value, other)` (same node; lazy like `case_when`, and `or` / `and` short-circuit; the condition is evaluated first, so a failing condition is reported before a failing branch) |
 | Literals | integers, floats, double-quoted strings, `True`, `False`, `None` |
 | Column refs | bare identifiers (no dots, no dunders) |
 
