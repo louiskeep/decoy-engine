@@ -187,6 +187,37 @@ def test_at12_subset_equals_full_run_restricted_to_kept_rows(
             assert sub.outputs[name].column(column).equals(want.column(column)), (name, column)
 
 
+class _MemVault:
+    """In-memory token vault: the token comes from key, namespace and plaintext, not the vault."""
+
+    def __init__(self) -> None:
+        self._m: dict[tuple[str, str], str] = {}
+
+    def lookup_existing(self, namespace: str, plaintext: str) -> str | None:
+        return self._m.get((namespace, plaintext))
+
+    def put(self, namespace: str, plaintext: str, token: str) -> str:
+        return self._m.setdefault((namespace, plaintext), token)
+
+
+def test_at12_tokenize_column_agrees_with_the_full_run(tmp_path: Path) -> None:
+    from decoy_engine.keyprovider import SecretKeyProvider
+
+    cfg, data, _ = sup.job(tmp_path, tokenize=True)
+
+    def run(**kw: Any) -> Any:
+        provider = SecretKeyProvider(secret=bytes(range(32)), key_version="v1")
+        return _run(cfg, data, key_provider=provider, token_vault_writer=_MemVault(), **kw)
+
+    full = run(subset_request="skip")
+    sub = run()
+    rows = sup.kept(cfg, data)["customers"]
+    assert rows != list(range(rows[0], rows[0] + len(rows)))
+    want = full.outputs["customers"].column("pan").take(pa.array(rows, type=pa.int64()))
+    assert sub.outputs["customers"].column("pan").equals(want)
+    assert want.to_pylist() != data["customers"].column("pan").take(rows).to_pylist()
+
+
 def test_at13_profile_has_kept_counts_and_clamped_columns(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -90,27 +90,20 @@ class SubsetStageScope:
                 opened.close()
 
         root = self._stack.enter_context(engine_scratch_root(None))
-        try:
-            staged = stage_typed_sources(
-                sorted(survivors),
-                sources,
-                batch_fn=batch_fn,
-                empty_fn=lambda _table, src: src.schema.empty_table(),
-                resident_fn=lambda table, value: value.take(
-                    pa.array(survivors[table], type=pa.int64())
-                ),
-                root=root,
-                batch_rows=_BATCH_ROWS,
-                max_bytes=resolve_temp_disk_budget(),
-                stem=_STEM,
-                open_fn=open_fn,
-            )
-        except OSError as exc:
-            # The OS text can carry a path, so it stays on the cause and out of the message.
-            raise SubsetInternalError(
-                code=reasons.runtime.OUT_OF_CORE_TEMP_DISK_EXCEEDED,
-                message="subset staging could not write its scratch files",
-            ) from exc
+        staged = stage_typed_sources(
+            sorted(survivors),
+            sources,
+            batch_fn=batch_fn,
+            empty_fn=lambda _table, src: src.schema.empty_table(),
+            resident_fn=lambda table, value: value.take(
+                pa.array(survivors[table], type=pa.int64())
+            ),
+            root=root,
+            batch_rows=_BATCH_ROWS,
+            max_bytes=resolve_temp_disk_budget(),
+            stem=_STEM,
+            open_fn=open_fn,
+        )
         for table, parts in kept_keys.items():
             src = sources[table]
             if check is not None and check.columns(table):

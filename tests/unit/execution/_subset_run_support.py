@@ -118,11 +118,16 @@ def job(
     seed: dict[str, Any] | None = None,
     int_keys: bool = False,
     wide: bool = False,
+    tokenize: bool = False,
 ) -> tuple[dict[str, Any], dict[str, pa.Table], dict[str, Any]]:
-    """The validated config dump, the resident tables and the lazy sources (written to disk)."""
+    """The validated config dump, the resident tables and the lazy sources (written to disk).
+    ``tokenize`` adds a tokenized ``pan`` column to customers (the run then needs a vault)."""
     data = tables(
         canary=seed is not None and seed.get("mode") == "keys", int_keys=int_keys, wide=wide
     )
+    if tokenize:
+        pans = pa.array([f"pan{i}" for i in range(30)])
+        data["customers"] = data["customers"].append_column("pan", pans)
     sources: dict[str, Any] = {}
     for name, table in data.items():
         path = tmp_path / f"{name}.{fmt}"
@@ -140,7 +145,11 @@ def job(
         "tables": [
             {
                 "name": "customers",
-                "columns": [_col("cid", "cust"), *(WIDE_COLUMNS if wide else [])],
+                "columns": [
+                    _col("cid", "cust"),
+                    *(WIDE_COLUMNS if wide else []),
+                    *([{"name": "pan", "strategy": "tokenize", "namespace": "tok"}] * tokenize),
+                ],
             },
             {"name": "orders", "columns": [_col("oid", "ord"), _col("cid", "cust")]},
             {"name": "items", "columns": [_col("oid", "ord")]},

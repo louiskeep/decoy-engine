@@ -9,14 +9,20 @@ chunk is still produced when nothing else is, so a table with no surviving rows 
 
 from __future__ import annotations
 
+import errno
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
+from decoy_engine._execution_error import ExecutionError
 from decoy_engine.declared_casting._boundary import CastBatch, DeclaredCastRun
+
+_CAPACITY_ERRNOS = frozenset({errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)})
 
 
 class CastPairing:
@@ -76,6 +82,21 @@ def format_stream(
         yield run.rendered_schema(table, schema_in).empty_table()
 
 
+@contextmanager
+def _scratch_write() -> Iterator[None]:
+    """A full scratch disk is the capacity failure the budget check raises; any other error,
+    and anything the source read raises, keeps its own type. The message holds no path."""
+    try:
+        yield
+    except OSError as exc:
+        if exc.errno not in _CAPACITY_ERRNOS:
+            raise
+        raise ExecutionError(
+            code=reasons.runtime.OUT_OF_CORE_TEMP_DISK_EXCEEDED,
+            message="out-of-core staging could not write its scratch files: the disk is full.",
+        ) from exc
+
+
 def stage_typed_sources(
     names: Sequence[str],
     sources: Mapping[str, Any],
@@ -124,27 +145,37 @@ def stage_typed_sources(
         path = root / f"s{index:04d}.{stem}.parquet"
         writer: Any = None
         offset = 0
-        sink = open_private(path)
+        with _scratch_write():
+            sink = open_private(path)
+        batches: Any = None
         try:
             batches = open_fn(table, src) if open_fn is not None else src.iter_batches(batch_rows)
             for batch in batches:
                 cast = batch_fn(table, batch, offset)
                 offset += batch.num_rows
-                if writer is None:
-                    writer = pq.ParquetWriter(sink, cast.schema)
-                writer.write_table(cast)
+                with _scratch_write():
+                    if writer is None:
+                        writer = pq.ParquetWriter(sink, cast.schema)
+                    writer.write_table(cast)
                 if max_bytes is not None:
                     check_temp_disk_budget(root, max_bytes=max_bytes)
             if writer is None:  # a zero-row source still needs a typed, readable file
                 empty = empty_fn(table, src)
-                writer = pq.ParquetWriter(sink, empty.schema)
-                writer.write_table(empty)
+                with _scratch_write():
+                    writer = pq.ParquetWriter(sink, empty.schema)
+                    writer.write_table(empty)
         finally:
             try:
-                if writer is not None:
-                    writer.close()
+                # Closed here, not left to garbage collection: the handle behind it is the source file.
+                if hasattr(batches, "close"):
+                    batches.close()
             finally:
-                sink.close()
+                try:
+                    with _scratch_write():
+                        if writer is not None:
+                            writer.close()
+                finally:
+                    sink.close()
         if max_bytes is not None:
             check_temp_disk_budget(root, max_bytes=max_bytes)
         if reader is None:

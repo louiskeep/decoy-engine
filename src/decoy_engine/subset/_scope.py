@@ -36,8 +36,8 @@ class SubsetRequest:
     sample: SampleSpec | None = None
 
     def fingerprint(self) -> str:
-        """SHA-256 over the canonical dump: the subset half of a run's identity. It holds no
-        value beyond the seed literals the config hash already covers."""
+        """SHA-256 over the canonical dump: the subset half of a run's identity. The run config
+        drops the `subset` block, so this fingerprint is what covers the seed literals."""
         canonical = json.dumps(dataclasses.asdict(self), sort_keys=True, default=repr)
         return hashlib.sha256(canonical.encode()).hexdigest()
 

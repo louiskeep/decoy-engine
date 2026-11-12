@@ -208,9 +208,9 @@ def run_pipeline(
     declares the Arrow schema of every table the loader serves, so the declaration check runs
     before the loader is called. A table the loader returns with other columns is refused.
 
-    `subset_request`: `"config"` applies the config's `subset:` block, `"skip"` masks every row,
-    a `SubsetRequest` replaces the block; any other value is refused before any read. An applied
-    subset stamps `quality_metrics["subset"]`; a `source_loader` run cannot apply one.
+    `subset_request`: `"config"` applies the config's `subset:` block, `"skip"` masks every row
+    (a declared block stamps `{"applied": False}`), a `SubsetRequest` replaces it; else refused
+    before any read. An applied subset stamps `quality_metrics["subset"]`; a `source_loader` is refused.
 
     Execution routing (`execution_mode`, `sink`, `source_loader`, `auto_chunk`,
     `chunk_size_rows`, `auto_chunk_threshold_rows`, `native_threads`,
