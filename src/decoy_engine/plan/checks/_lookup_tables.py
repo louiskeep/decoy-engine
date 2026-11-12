@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from decoy_engine import reasons
+from decoy_engine.config import classify_table_kinds
 from decoy_engine.fileaccess import FileRole
 from decoy_engine.generation.kinds import LookupList, parse_lookup_bytes
 from decoy_engine.generation.kinds._lookup import lookup_from_codeset
@@ -62,11 +63,13 @@ class ReadLookup:
 def lookup_columns(config: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     """`(table name, column)` for each `type: lookup` generate column, in declared order."""
     found: list[tuple[str, dict[str, Any]]] = []
+    kinds = classify_table_kinds(config)
     tables = config.get("tables")
     for table in tables if isinstance(tables, list) else []:
-        if not isinstance(table, dict):
+        if not isinstance(table, dict) or kinds.get(str(table.get("name"))) != "generate":
             continue
-        for col in table.get("generate_columns") or []:
+        columns = table["generate_columns"]
+        for col in columns if isinstance(columns, list) else []:
             if isinstance(col, dict) and col.get("type") == "lookup":
                 found.append((str(table.get("name")), col))
     return found

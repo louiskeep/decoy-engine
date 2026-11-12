@@ -18,9 +18,10 @@ file after compile changes nothing, and the seed hashes the file's content diges
 A saved plan re-checks every stored digest and re-runs the lookup checks on load; a plan that lacks a
 configured lookup, or whose bytes were edited, is refused. Code sets are versioned with the engine.
 
-New reasons, all in the `plan` namespace and `since` unreleased: `lookup_not_pinned`,
-`lookup_pinned_digest_mismatch`, `lookup_file_unreadable`, `lookup_file_format_unsupported`,
-`lookup_file_empty`, `lookup_file_too_large`, `lookup_column_missing`, `lookup_too_many_entries`,
-`lookup_weight_invalid` and `pinned_lookup_unsupported`. A refusal names the table and column and
+New reasons, all in the `plan` namespace and `since` unreleased: `plan/lookup_not_pinned`,
+`plan/lookup_pinned_digest_mismatch`, `plan/lookup_file_unreadable`,
+`plan/lookup_file_format_unsupported`, `plan/lookup_file_empty`, `plan/lookup_file_too_large`,
+`plan/lookup_column_missing`, `plan/lookup_too_many_entries`, `plan/lookup_weight_invalid` and
+`plan/pinned_lookup_unsupported`. A refusal names the table and column and
 never a cell, a weight or a path. `FileRole.LOOKUP` is the role a lookup file is read under, and
 `decoy_engine.profile.read_csv_bytes` is the one CSV reader for bytes already in memory.
