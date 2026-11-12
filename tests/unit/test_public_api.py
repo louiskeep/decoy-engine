@@ -49,7 +49,15 @@ def test_all_lists_every_public_name():
         # surface; submodule-only import was an unintentional gap.
         "compile_plan",
         "generate_tables",
+        "generated_table_to_pandas",
         "run_pipeline",
+        # RUN-STREAM E1b: host CPU probe and the conservative CLI auto memory budget.
+        "detect_usable_cpus",
+        "resolve_conservative_ooc_budget_bytes",
+        # RUN-STREAM E3: the frozen route and resources view of a run's quality_metrics.
+        "route_summary",
+        # GEN-COND-CAP E1: fit-side warning for a joint whose cell cap dropped combinations.
+        "snapshot_joint_warnings",
         # Audit H5 (2026-06-12): profile-free compile-check subset for
         # config-only callers (decoy validate).
         "run_config_only_checks",
@@ -72,6 +80,10 @@ def test_all_lists_every_public_name():
         "select_execution_adapter",
         # engine-v2 S1 (Pipeline config schema, the validation choke-point).
         "PipelineConfig",
+        # VALUE-FREE-ERRORS A1: the value-free config parse route and its error vocabulary.
+        "parse_pipeline_config",
+        "ConfigProblem",
+        "ConfigRuleError",
         # S9: Masker + DataGenerator removed from the public surface. The
         # platform mask + generate paths run through the v2 ExecutionAdapter +
         # generation.synthesize directly; graph-mode keeps the run_graph /
@@ -114,6 +126,10 @@ def test_all_lists_every_public_name():
         "ValidationMessage",
         "ValidationResult",
         "profile_columns",
+        "profile_document",
+        "distribution_snapshot_document",
+        "redact_profile_dict",
+        "is_value_sensitive",
         "ColumnProfile",
         "FieldStats",
         "DetectorMatch",
@@ -205,6 +221,10 @@ def test_all_lists_every_public_name():
         "PandasExecutionAdapter",
         "StrategyError",
         "get_default_executor",
+        # Public strategy catalog: one row per scalar strategy handler.
+        "StrategyInfo",
+        "StrategyOption",
+        "strategy_catalog",
         # engine-v2 S10 (Validator: compile consolidator + post-validation).
         "PlanCheckError",
         "PlanValidationResult",
@@ -232,6 +252,9 @@ def test_all_lists_every_public_name():
         "SecretProviderRegistry",
         "SecretRef",
         "register_secret_provider",
+        # Init wizard E3 (2026-11-08): keyed columns of a config, beside the secret requirement.
+        "KeyedColumn",
+        "keyed_columns_for_config",
         "SecretKeyProvider",
         "SeedKeyProvider",
         "MaskSecretError",
@@ -246,6 +269,15 @@ def test_all_lists_every_public_name():
         "estimate_job_capacity",
         "CapacityEstimate",
         "CapacityVerdict",
+        # Optional ML detectors (model status, loading, config blocks).
+        "Dismissal",
+        "ModelRef",
+        "ModelStatus",
+        "ModelUnavailableError",
+        "PreScanConfig",
+        "classifier_status",
+        "load_detectors",
+        "ner_status",
         # Job-time estimator: the advisory estimate_job primitive + its result type.
         "estimate_job",
         "JobEstimate",
@@ -267,8 +299,72 @@ def test_all_lists_every_public_name():
         # can be materialized without importing the private
         # `profile._fixed_width_writer` module.
         "write_fixed_width",
+        # decoy-run-result/v1 model and outcome (RESULT E1).
+        "RUN_RESULT_SCHEMA",
+        "RunResult",
+        "RunResultRead",
+        "derive_outcome",
+        "pipeline_config_hash",
+        # CLI-DIALECT (2026-11): the one CSV source reader, its dialect type and
+        # the descriptor-to-dialect resolver.
+        "CsvDialect",
+        "read_csv_source",
+        "resolve_csv_dialect",
+        # LIB L1a: the record envelope and its decode results (functions: decoy_engine.records).
+        "DecodedRecord",
+        "OpaqueRecord",
+        "RecordError",
+        "RecordNeedsNewer",
+        # LIB L0.1: the protected directory allocator.
+        "open_protected_dir",
+        "protected_scratch_dir",
+        # CONFIG-EXPLICIT E1: the FileSource fields that name a file.
+        "FILE_SOURCE_PATH_FIELDS",
+        # CONFIG-EXPLICIT E2a: the declared-columns boundary.
+        "DeclarationRequest",
+        "PreparedDeclaredSources",
+        "check_columns_declared",
+        "declared_columns",
+        "prepare_declared_sources",
+        "source_columns",
+        # SCAN-MULTI S1a: the multi-table scan and its scan-set/v1 document.
+        "ScanSet",
+        "ScanSetCore",
+        "TableScan",
+        "scan_set_to_dict",
+        "scan_sources",
+        # PROJECT-LAYOUT E1: the one pipeline-name rule the CLI shares.
+        "is_valid_pipeline_name",
     }
     assert set(decoy_engine.__all__) == expected
+
+
+def test_quality_facade_exports_the_dp_request_check():
+    from decoy_engine import quality
+    from decoy_engine.quality import dp
+
+    assert "check_dp_fit_request" in quality.__all__
+    assert quality.check_dp_fit_request is dp.check_dp_fit_request
+
+
+def test_generation_cli_names_export_from_their_packages_not_the_root():
+    """GEN-CLI E1 (AT-33): the root facade is at its line budget, so the new names live in
+    their own packages."""
+    from pathlib import Path
+
+    from decoy_engine import config, fileaccess, generation
+
+    root = Path(decoy_engine.__file__)
+    assert len(root.read_text(encoding="utf-8").splitlines()) <= 600
+    for package, name in (
+        (generation, "generation_order"),
+        (config, "generate_option_catalog"),
+        (config, "GenerateTypeOptions"),
+        (fileaccess, "config_relative"),
+    ):
+        assert name in package.__all__
+        assert callable(getattr(package, name))
+        assert name not in decoy_engine.__all__
 
 
 def test_version_attribute_exists():
@@ -392,7 +488,7 @@ class TestV2BehaviorRegressionPinsS11:
         """Q8 regression pin: V2 faker calls PoolSampler.sample once per
         column (vectorized), not per row. The V1 carrier was
         `transforms/faker_based.py`'s `column.apply(fake_for)`. V2
-        `execution/_strategies/_faker.py:57` calls `PoolSampler().sample(...)`
+        `execution/_strategies/_faker.py:69` calls `PoolSampler().sample(...)`
         once, then assigns the materialized list to the column.
         """
         import pandas as pd
@@ -500,3 +596,11 @@ class TestV2BehaviorRegressionPinsS11:
         assert "mask" not in hash_namespaces and "mask" not in ds_namespaces, (
             "V2 strategies must NOT derive with a shared 'mask' label; Q9 regression."
         )
+
+
+def test_quality_facade_exports_the_joint_cell_cap():
+    from decoy_engine import quality
+    from decoy_engine.quality import snapshot
+
+    assert "MAX_CONTINGENCY_TOP_K" in quality.__all__
+    assert quality.MAX_CONTINGENCY_TOP_K == snapshot.MAX_CONTINGENCY_TOP_K == 1000

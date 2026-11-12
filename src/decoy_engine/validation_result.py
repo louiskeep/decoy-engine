@@ -275,8 +275,13 @@ class CODES:
     SOURCE_FILE_FILE_NOT_FOUND = reasons.config.SOURCE_FILE_FILE_NOT_FOUND
     SOURCE_FILE_UNSUPPORTED_FORMAT = reasons.config.SOURCE_FILE_UNSUPPORTED_FORMAT
     SOURCE_FILE_BAD_HAS_HEADER_TYPE = reasons.config.SOURCE_FILE_BAD_HAS_HEADER_TYPE
+    # CONFIG-EXPLICIT E1: a csv source must say whether row one is a header.
+    SOURCE_FILE_HAS_HEADER_REQUIRED = reasons.config.SOURCE_FILE_HAS_HEADER_REQUIRED
     SOURCE_FILE_NO_HEADER_COLUMNS = reasons.config.SOURCE_FILE_NO_HEADER_COLUMNS
     SOURCE_FILE_COLUMN_NAMES_WITH_HEADER = reasons.config.SOURCE_FILE_COLUMN_NAMES_WITH_HEADER
+    SOURCE_FILE_COLUMN_NAMES_SOURCE_CONFLICT = (
+        reasons.config.SOURCE_FILE_COLUMN_NAMES_SOURCE_CONFLICT
+    )
     SOURCE_FILE_BAD_DELIMITER = reasons.config.SOURCE_FILE_BAD_DELIMITER
     SOURCE_FILE_BAD_ROW_LIMIT = reasons.config.SOURCE_FILE_BAD_ROW_LIMIT
     SOURCE_FILE_MISSING_FW_COLUMNS = reasons.config.SOURCE_FILE_MISSING_FW_COLUMNS
@@ -285,6 +290,13 @@ class CODES:
     # declared column_names (a short/ragged row, an over-wide row, or an empty
     # file). Raised at read time by the profiler, never with a cell value.
     SOURCE_FILE_COLUMN_COUNT_MISMATCH = reasons.config.SOURCE_FILE_COLUMN_COUNT_MISMATCH
+    # A source column the config does not list (or a source with no `tables` entry), found
+    # before any data row is read. The message names a position, never a column.
+    SOURCE_FILE_UNDECLARED_COLUMN = reasons.config.SOURCE_FILE_UNDECLARED_COLUMN
+    SOURCE_FILE_UNDECLARED_TABLE = reasons.config.SOURCE_FILE_UNDECLARED_TABLE
+    # A `column_names_file` that is not a one-record UTF-8 header file. Raised at
+    # read time with a fixed phrase, never a name, path or cell value.
+    SOURCE_FILE_COLUMN_NAMES_FILE_INVALID = reasons.config.SOURCE_FILE_COLUMN_NAMES_FILE_INVALID
     # A headerless delimited file containing a NUL byte. NUL is not valid in a
     # text delimited file; the csv width scan and pandas tokenize it differently
     # (pandas keeps it, csv rejects it), so the two cannot be reconciled. Fail
@@ -306,7 +318,8 @@ class CODES:
 
     # ── FK preservation codes ──
     #
-    # Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG;
+    # Pattern: SDV HMA1 method (Patki et al., IEEE DSAA 2016; method only, no
+    # SDV code: SDV is BUSL-1.1). Parent-first DAG;
     # materialize parent pool; child samples with replacement.
     #
     # Codes split into validation-time (validator stage 9) and runtime

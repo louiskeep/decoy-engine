@@ -1,0 +1,50 @@
+{
+  "allowed": [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSD-family-unspecified-clause",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "PSF-2.0",
+    "Unlicense"
+  ],
+  "exceptions": {
+    "certifi": {
+      "license": "MPL-2.0",
+      "scope": "extra",
+      "reason": "Optional (cloud, gcs, hashicorp-vault, ner extras), used unmodified, pip-installed as the CA bundle. MPL-2.0 copyleft is file-level and binds only changes to certifi's own files; none are made, and vendored or modified copies are forbidden."
+    },
+    "numpy": {
+      "license": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+      "scope": "runtime",
+      "reason": "NumPy's own SPDX expression for the 3.11 and 3.12 lock pins (3.10's numpy 2.2.6 is plain BSD): BSD-3-Clause plus permissive bundled components (0BSD, MIT, Zlib, CC0-1.0). Used unmodified, pip-installed."
+    },
+    "paramiko": {
+      "license": "LGPL-2.1",
+      "scope": "extra",
+      "reason": "Optional (sftp extra) only, used unmodified, pip-installed as a separate library the user can replace with their own build. Vendored or modified copies are forbidden."
+    },
+    "python-stdnum": {
+      "license": "LGPL-2.0-or-later",
+      "scope": "runtime",
+      "reason": "Check-digit library (LGPL v2 or later per its package metadata), used unmodified, pip-installed as a separate library the user can replace with their own build. Vendored or modified copies are forbidden. Same exception as decoy-platform's license policy."
+    },
+    "tqdm": {
+      "license": "MPL-2.0 AND MIT",
+      "scope": "extra",
+      "reason": "Optional (ner extra, pulled by spaCy) only, used unmodified, pip-installed. MPL-2.0 copyleft is file-level and binds only changes to tqdm's own files; none are made, and vendored or modified copies are forbidden."
+    }
+  },
+  "overrides": {
+    "google-crc32c==1.8.0": {
+      "license": "Apache-2.0",
+      "evidence": "The wheel's METADATA has no License, License-Expression or license classifier; its License-File (google_crc32c-1.8.0.dist-info/licenses/LICENSE) is the Apache License, Version 2.0 text."
+    }
+  },
+  "extras": {
+    "runtime": ["cloud", "gcs", "geo", "hashicorp-vault", "mimesis", "ner", "sftp", "vault"],
+    "tooling": ["dev", "docs", "layers", "lint", "mutation", "perf", "xdist"]
+  }
+}

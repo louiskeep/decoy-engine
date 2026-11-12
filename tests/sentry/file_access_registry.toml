@@ -2,7 +2,10 @@
 # `ordinal` is the index of the call among identical sinks in the function. An entry may be
 # removed freely; adding one needs a `rule` (how the path is built), an `owner` and a `reason`.
 # `ambient_only` marks a caller-derived path that is reached only after `require_ambient`.
-# Count: 192 (asserted by the sentry).
+# `dir_category` (protected_root, protected_child, output_parent, published_output, non_row) and
+# `dir_test` (an existing pytest node id; every category but protected_root) mark directory
+# creators for tests/sentry/protected_dir (G-ONE-PROTECTED-DIR).
+# Count: 190 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -18,6 +21,7 @@ module = "decoy_engine/data_discovery.py"
 function = "run_discovery_sql"
 sink = "duckdb.connection.execute"
 ordinal = 0
+disposition = "read"
 rule = "connection yielded by `untrusted_session`: external access off, configuration locked, SQL checked to be exactly one SELECT"
 owner = "cam"
 reason = "the discovery query runs on the locked in-memory connection"
@@ -45,6 +49,7 @@ module = "decoy_engine/execution/_governor_monitor.py"
 function = "_read_child_status"
 sink = "open"
 ordinal = 0
+disposition = "read"
 rule = "`/proc/<pid>/status` or `/proc/self/status`, a constant procfs path"
 owner = "cam"
 reason = "process memory readout for the governor; no caller or config value reaches the path"
@@ -73,6 +78,8 @@ module = "decoy_engine/execution/_isolated_commit.py"
 function = "stage_tables"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "output_parent"
+dir_test = "tests/unit/execution/test_isolated_run.py::TestInProcessFallbackHonorsOutputDir::test_isolate_false_honors_output_dir_and_commits_atomically"
 rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
 reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
@@ -83,6 +90,7 @@ module = "decoy_engine/execution/_isolated_commit.py"
 function = "stage_tables"
 sink = "pyarrow.parquet.write_table"
 ordinal = 0
+disposition = "public"
 rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
 reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
@@ -93,6 +101,8 @@ module = "decoy_engine/execution/_isolated_commit.py"
 function = "atomic_commit"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "output_parent"
+dir_test = "tests/unit/execution/test_isolated_run.py::TestCommitFailureIsClassified::test_pre_existing_non_empty_target_is_classified_not_a_raw_oserror"
 rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
 reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
@@ -149,39 +159,11 @@ ambient_only = true
 
 [[entry]]
 module = "decoy_engine/execution/_isolated_run.py"
-function = "_run_isolated"
-sink = "tempfile.mkdtemp"
-ordinal = 0
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_run.py"
-function = "_run_isolated"
-sink = "Path.mkdir"
-ordinal = 0
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_run.py"
-function = "_run_isolated"
-sink = "shutil.rmtree"
-ordinal = 0
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_run.py"
 function = "_write_payload"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "protected_child"
+dir_test = "tests/unit/execution/test_isolated_run.py::TestPayloadFilePermissions::test_payload_json_is_written_0600"
 rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
 reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
@@ -192,26 +174,7 @@ module = "decoy_engine/execution/_isolated_run.py"
 function = "_write_payload"
 sink = "pyarrow.parquet.write_table"
 ordinal = 0
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_run.py"
-function = "_write_payload"
-sink = "Path.write_text"
-ordinal = 0
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_run.py"
-function = "_write_payload"
-sink = "os.chmod"
-ordinal = 0
+disposition = "private"
 rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
 reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
@@ -292,6 +255,7 @@ module = "decoy_engine/execution/_isolated_worker.py"
 function = "_write_envelope_file"
 sink = "Path.write_text"
 ordinal = 0
+disposition = "private"
 rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
 owner = "cam"
 reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
@@ -310,6 +274,8 @@ module = "decoy_engine/execution/_isolated_worker.py"
 function = "_stage_outputs"
 sink = "os.makedirs"
 ordinal = 0
+dir_category = "protected_child"
+dir_test = "tests/unit/execution/test_isolated_run.py::TestNormalJobCompletes::test_small_job_completes_with_correct_artifacts_and_plausible_peak"
 rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
 owner = "cam"
 reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
@@ -319,6 +285,7 @@ module = "decoy_engine/execution/_isolated_worker.py"
 function = "_stage_outputs"
 sink = "pyarrow.parquet.write_table"
 ordinal = 0
+disposition = "private"
 rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
 owner = "cam"
 reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
@@ -337,6 +304,7 @@ module = "decoy_engine/execution/_isolated_worker.py"
 function = "_stage_row_errors"
 sink = "open"
 ordinal = 0
+disposition = "private"
 rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
 owner = "cam"
 reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
@@ -346,6 +314,7 @@ module = "decoy_engine/execution/_isolated_worker.py"
 function = "main"
 sink = "open"
 ordinal = 0
+disposition = "read"
 rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
 owner = "cam"
 reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
@@ -373,7 +342,8 @@ module = "decoy_engine/execution/native/_pool_quality.py"
 function = "measure_pool_quality"
 sink = "pyarrow.parquet.write_table"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "private"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -382,7 +352,8 @@ module = "decoy_engine/execution/native/_pool_quality.py"
 function = "measure_pool_quality"
 sink = "duckdb.connection.execute"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "read"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -391,7 +362,7 @@ module = "decoy_engine/execution/native/_pool_quality.py"
 function = "measure_pool_quality"
 sink = "Path.unlink"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -400,7 +371,7 @@ module = "decoy_engine/execution/out_of_core/_batch_join.py"
 function = "ChildFkBatchJoiner.__init__"
 sink = "pyarrow.parquet.read_metadata"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -409,9 +380,19 @@ module = "decoy_engine/execution/out_of_core/_batch_join.py"
 function = "ChildFkBatchJoiner.__init__"
 sink = "duckdb.connection.execute"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "read"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/pipeline/_host.py"
+function = "_read"
+sink = "Path.read_text"
+ordinal = 0
+rule = "constant `/proc/self` or cgroup mount path under the `fs_root` argument"
+owner = "cam"
+reason = "usable CPU detection; no caller or config value reaches the path"
 
 [[entry]]
 module = "decoy_engine/execution/out_of_core/_budget.py"
@@ -436,6 +417,15 @@ module = "decoy_engine/execution/out_of_core/_budget.py"
 function = "_cgroup_leaf_dir"
 sink = "Path.read_text"
 ordinal = 0
+rule = "constant `/proc` or `/sys/fs/cgroup` path"
+owner = "cam"
+reason = "host memory limit detection; no caller or config value reaches the path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_budget.py"
+function = "_cgroup_leaf_dir"
+sink = "Path.read_text"
+ordinal = 1
 rule = "constant `/proc` or `/sys/fs/cgroup` path"
 owner = "cam"
 reason = "host memory limit detection; no caller or config value reaches the path"
@@ -488,36 +478,9 @@ reason = "disk-budget accounting over the engine's own spill space"
 [[entry]]
 module = "decoy_engine/execution/out_of_core/_duckdb.py"
 function = "connect_duckdb"
-sink = "Path.mkdir"
-ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
-owner = "cam"
-reason = "engine-owned spill and relation files; never a caller or config path"
-
-[[entry]]
-module = "decoy_engine/execution/out_of_core/_duckdb.py"
-function = "connect_duckdb"
 sink = "os.chmod"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
-owner = "cam"
-reason = "engine-owned spill and relation files; never a caller or config path"
-
-[[entry]]
-module = "decoy_engine/execution/out_of_core/_external_sort.py"
-function = "BoundedExternalSorter.__init__"
-sink = "Path.mkdir"
-ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
-owner = "cam"
-reason = "engine-owned spill and relation files; never a caller or config path"
-
-[[entry]]
-module = "decoy_engine/execution/out_of_core/_external_sort.py"
-function = "BoundedExternalSorter._write_run"
-sink = "pyarrow.OSFile"
-ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -526,7 +489,8 @@ module = "decoy_engine/execution/out_of_core/_external_sort.py"
 function = "BoundedExternalSorter._write_run"
 sink = "pyarrow.ipc.new_file"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "private"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -535,16 +499,7 @@ module = "decoy_engine/execution/out_of_core/_external_sort.py"
 function = "BoundedExternalSorter.finish"
 sink = "Path.unlink"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
-owner = "cam"
-reason = "engine-owned spill and relation files; never a caller or config path"
-
-[[entry]]
-module = "decoy_engine/execution/out_of_core/_external_sort.py"
-function = "BoundedExternalSorter._merge_group"
-sink = "pyarrow.OSFile"
-ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -553,7 +508,8 @@ module = "decoy_engine/execution/out_of_core/_external_sort.py"
 function = "BoundedExternalSorter._merge_group"
 sink = "pyarrow.ipc.new_file"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "private"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -562,7 +518,8 @@ module = "decoy_engine/execution/out_of_core/_external_sort.py"
 function = "BoundedExternalSorter.iter_ordered"
 sink = "pyarrow.OSFile"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "read"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -571,7 +528,7 @@ module = "decoy_engine/execution/out_of_core/_external_sort.py"
 function = "BoundedExternalSorter.iter_ordered"
 sink = "pyarrow.ipc.open_file"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -580,7 +537,7 @@ module = "decoy_engine/execution/out_of_core/_external_sort.py"
 function = "BoundedExternalSorter.close"
 sink = "Path.unlink"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -589,7 +546,8 @@ module = "decoy_engine/execution/out_of_core/_external_sort_run.py"
 function = "_RunHead.__init__"
 sink = "pyarrow.OSFile"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "read"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -598,7 +556,7 @@ module = "decoy_engine/execution/out_of_core/_external_sort_run.py"
 function = "_RunHead.__init__"
 sink = "pyarrow.ipc.open_file"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -607,7 +565,8 @@ module = "decoy_engine/execution/out_of_core/_join.py"
 function = "mask_child_fk"
 sink = "duckdb.connection.execute"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "read"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -616,7 +575,8 @@ module = "decoy_engine/execution/out_of_core/_join.py"
 function = "mask_child_fk"
 sink = "duckdb.connection.execute"
 ordinal = 1
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "read"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -625,7 +585,8 @@ module = "decoy_engine/execution/out_of_core/_join.py"
 function = "mask_child_fk"
 sink = "duckdb.connection.execute"
 ordinal = 2
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "read"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -634,16 +595,8 @@ module = "decoy_engine/execution/out_of_core/_join.py"
 function = "mask_child_fk"
 sink = "duckdb.connection.execute"
 ordinal = 3
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
-owner = "cam"
-reason = "engine-owned spill and relation files; never a caller or config path"
-
-[[entry]]
-module = "decoy_engine/execution/out_of_core/_payload_store.py"
-function = "SpillPayloadStore.append"
-sink = "Path.mkdir"
-ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "read"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -652,7 +605,8 @@ module = "decoy_engine/execution/out_of_core/_payload_store.py"
 function = "SpillPayloadStore.append"
 sink = "pyarrow.ipc.new_stream"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "private"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -661,16 +615,7 @@ module = "decoy_engine/execution/out_of_core/_payload_store.py"
 function = "SpillPayloadStore.iter_batches"
 sink = "pyarrow.ipc.open_stream"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
-owner = "cam"
-reason = "engine-owned spill and relation files; never a caller or config path"
-
-[[entry]]
-module = "decoy_engine/execution/out_of_core/_payload_store.py"
-function = "RawParentKeySpill.__init__"
-sink = "Path.mkdir"
-ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -679,7 +624,8 @@ module = "decoy_engine/execution/out_of_core/_payload_store.py"
 function = "RawParentKeySpill.__init__"
 sink = "pyarrow.ipc.new_stream"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "private"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -688,16 +634,7 @@ module = "decoy_engine/execution/out_of_core/_payload_store.py"
 function = "RawParentKeySpill.__iter__"
 sink = "pyarrow.ipc.open_stream"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
-owner = "cam"
-reason = "engine-owned spill and relation files; never a caller or config path"
-
-[[entry]]
-module = "decoy_engine/execution/out_of_core/_payload_store.py"
-function = "SpillChildKeys.__init__"
-sink = "Path.mkdir"
-ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -706,7 +643,8 @@ module = "decoy_engine/execution/out_of_core/_payload_store.py"
 function = "SpillChildKeys.__init__"
 sink = "pyarrow.ipc.new_stream"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "private"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -715,16 +653,7 @@ module = "decoy_engine/execution/out_of_core/_payload_store.py"
 function = "SpillChildKeys.open_reader"
 sink = "pyarrow.ipc.open_stream"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
-owner = "cam"
-reason = "engine-owned spill and relation files; never a caller or config path"
-
-[[entry]]
-module = "decoy_engine/execution/out_of_core/_relation.py"
-function = "_build_relation"
-sink = "Path.mkdir"
-ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -733,7 +662,8 @@ module = "decoy_engine/execution/out_of_core/_relation.py"
 function = "_build_relation"
 sink = "duckdb.connection.execute"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "private"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -742,7 +672,8 @@ module = "decoy_engine/execution/out_of_core/_relation.py"
 function = "_build_relation"
 sink = "duckdb.connection.execute"
 ordinal = 1
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "private"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -751,7 +682,8 @@ module = "decoy_engine/execution/out_of_core/_relation.py"
 function = "_build_relation"
 sink = "duckdb.connection.execute"
 ordinal = 2
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "private"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -760,7 +692,7 @@ module = "decoy_engine/execution/out_of_core/_relation.py"
 function = "_build_relation"
 sink = "Path.unlink"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -769,7 +701,7 @@ module = "decoy_engine/execution/out_of_core/_relation.py"
 function = "_build_relation"
 sink = "Path.unlink"
 ordinal = 1
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -778,7 +710,7 @@ module = "decoy_engine/execution/out_of_core/_relation.py"
 function = "_build_relation"
 sink = "Path.unlink"
 ordinal = 2
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -787,7 +719,7 @@ module = "decoy_engine/execution/out_of_core/_route_policy.py"
 function = "_parent_key_count"
 sink = "pyarrow.parquet.read_metadata"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -796,7 +728,7 @@ module = "decoy_engine/execution/out_of_core/_runner.py"
 function = "run_fk_out_of_core"
 sink = "shutil.rmtree"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -805,7 +737,7 @@ module = "decoy_engine/execution/out_of_core/_runner.py"
 function = "run_fk_out_of_core"
 sink = "shutil.rmtree"
 ordinal = 1
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -814,54 +746,16 @@ module = "decoy_engine/execution/out_of_core/_runner.py"
 function = "run_fk_out_of_core"
 sink = "shutil.rmtree"
 ordinal = 2
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
-
-[[entry]]
-module = "decoy_engine/execution/out_of_core/_runner.py"
-function = "run_fk_out_of_core"
-sink = "shutil.rmtree"
-ordinal = 3
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
-owner = "cam"
-reason = "engine-owned spill and relation files; never a caller or config path"
-
-[[entry]]
-module = "decoy_engine/execution/out_of_core/_scratch.py"
-function = "scratch_root"
-sink = "tempfile.mkdtemp"
-ordinal = 0
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/out_of_core/_scratch.py"
-function = "scratch_root"
-sink = "Path.mkdir"
-ordinal = 0
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/out_of_core/_scratch.py"
-function = "scratch_root"
-sink = "os.chmod"
-ordinal = 0
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
 
 [[entry]]
 module = "decoy_engine/execution/out_of_core/_scratch.py"
 function = "ScratchAccess.__init__"
 sink = "os.open"
 ordinal = 0
+disposition = "read"
 rule = "a directory the out-of-core stager created under the engine's own scratch root; ScratchAccess is built only by scratch_access_for (issuer token) and serves reads beneath that one descriptor"
 owner = "cam"
 reason = "opens the engine's own staging directory once so staged key files are read through a descriptor-confined policy instead of an ambient path"
@@ -871,16 +765,7 @@ module = "decoy_engine/execution/out_of_core/_spill_estimate.py"
 function = "_output_shares_temp_filesystem"
 sink = "os.stat"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
-owner = "cam"
-reason = "engine-owned spill and relation files; never a caller or config path"
-
-[[entry]]
-module = "decoy_engine/execution/out_of_core/_stage.py"
-function = "MaskedKeyStager.__init__"
-sink = "Path.mkdir"
-ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -889,7 +774,8 @@ module = "decoy_engine/execution/out_of_core/_stage.py"
 function = "MaskedKeyStager.__init__"
 sink = "pyarrow.parquet.ParquetWriter"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "private"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -898,7 +784,7 @@ module = "decoy_engine/execution/out_of_core/_stream_driver.py"
 function = "stream_table"
 sink = "shutil.rmtree"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -907,7 +793,7 @@ module = "decoy_engine/execution/out_of_core/_stream_join.py"
 function = "StreamFkJoiner.__init__"
 sink = "pyarrow.parquet.read_metadata"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -916,7 +802,8 @@ module = "decoy_engine/execution/out_of_core/_stream_join.py"
 function = "StreamFkJoiner._ensure_conn"
 sink = "duckdb.connection.execute"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "read"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -925,7 +812,8 @@ module = "decoy_engine/execution/out_of_core/_stream_join.py"
 function = "StreamFkJoiner._ensure_conn"
 sink = "duckdb.connection.execute"
 ordinal = 1
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "read"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -952,6 +840,7 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalHandle.fileno"
 sink = "os.open"
 ordinal = 0
+disposition = "read"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -979,6 +868,7 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalHandle.read_all"
 sink = "open"
 ordinal = 0
+disposition = "read"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -988,6 +878,7 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalHandle.open_binary"
 sink = "open"
 ordinal = 0
+disposition = "read"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -997,6 +888,7 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalHandle.open_text"
 sink = "open"
 ordinal = 0
+disposition = "read"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1015,6 +907,7 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "_LocalStageDir.create_file"
 sink = "os.open"
 ordinal = 0
+disposition = "public"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1024,6 +917,7 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "_LocalStageDir.open_file"
 sink = "os.open"
 ordinal = 0
+disposition = "read"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1033,6 +927,8 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "_LocalStageDir.create_dir"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "published_output"
+dir_test = "tests/fileaccess/test_char_sink_publish.py::test_committed_table_path_and_spill_parent"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1087,6 +983,8 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputTxn.__init__"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "output_parent"
+dir_test = "tests/fileaccess/test_char_sink_publish.py::test_publish_into_absent_target"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1096,6 +994,8 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputTxn.__init__"
 sink = "tempfile.mkdtemp"
 ordinal = 0
+dir_category = "published_output"
+dir_test = "tests/fileaccess/test_char_sink_publish.py::test_publish_into_absent_target"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1105,6 +1005,7 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputTxn.create_file"
 sink = "os.open"
 ordinal = 0
+disposition = "private"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1114,6 +1015,8 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputTxn.create_file"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "output_parent"
+dir_test = "tests/fileaccess/test_char_sink_publish.py::test_publish_into_absent_target"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1123,6 +1026,7 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputTxn.create_file"
 sink = "os.open"
 ordinal = 1
+disposition = "public"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1132,6 +1036,7 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputTxn.create_file"
 sink = "tempfile.mkstemp"
 ordinal = 0
+disposition = "private"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1141,6 +1046,7 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputTxn.create_file"
 sink = "os.open"
 ordinal = 2
+disposition = "public"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1177,6 +1083,8 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputTxn.publish"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "output_parent"
+dir_test = "tests/fileaccess/test_char_sink_publish.py::test_publish_into_absent_target"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1204,6 +1112,7 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "_sync_dir"
 sink = "os.open"
 ordinal = 0
+disposition = "read"
 rule = "the parent directory of a FileRequest.locator served by LocalFileAccess, opened read-only after the replace to fsync it"
 owner = "cam"
 reason = "ambient CLI semantics: best-effort directory fsync after a published replace (main's fixed-width writer did it)"
@@ -1258,6 +1167,8 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputDir.ensure_dir"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "output_parent"
+dir_test = "tests/fileaccess/test_char_sink_publish.py::test_publish_into_empty_directory"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1267,6 +1178,8 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputDir.ensure_dir"
 sink = "Path.mkdir"
 ordinal = 1
+dir_category = "published_output"
+dir_test = "tests/fileaccess/test_char_sink_publish.py::test_publish_into_empty_directory"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1303,6 +1216,8 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalFileAccess.log_handler"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "output_parent"
+dir_test = "tests/fileaccess/test_char_cli_logging.py::test_custom_file_setting_is_honored"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1312,6 +1227,7 @@ module = "decoy_engine/fileaccess/_local.py"
 function = "LocalFileAccess.log_handler"
 sink = "logging.handlers.RotatingFileHandler"
 ordinal = 0
+disposition = "public"
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1402,6 +1318,7 @@ module = "decoy_engine/profile/_fixed_width_reader.py"
 function = "_parse_records"
 sink = "open"
 ordinal = 0
+disposition = "read"
 rule = "the builtin `open` handed to `handle.open_binary`, which calls it with the handle's own path under the ambient policy and ignores it under a strict one"
 owner = "cam"
 reason = "keeps the module-level `open` seam an existing test patches, with no path of its own"
@@ -1434,6 +1351,16 @@ owner = "cam"
 reason = "package data"
 
 [[entry]]
+module = "decoy_engine/profiling/_scan_integrity.py"
+function = "_check"
+sink = "duckdb.connection.execute"
+ordinal = 0
+disposition = "read"
+rule = "statement over in-memory key tables loaded from policy-issued reads; the connection's only file path is its spill directory, a child of the `protected_scratch_dir` root the pass created"
+owner = "cam"
+reason = "drops the per-child key table so the spill holds one child at a time; no caller or config path reaches the statement"
+
+[[entry]]
 module = "decoy_engine/profiling/model_pack/classify.py"
 function = "_default_pack_dir"
 sink = "Path.is_dir"
@@ -1453,7 +1380,7 @@ reason = "locating the shipped default model pack"
 
 [[entry]]
 module = "decoy_engine/profiling/model_pack/classify.py"
-function = "classify_fields"
+function = "default_pack_loader"
 sink = "engine_dir_handle"
 ordinal = 0
 rule = "package data: `importlib.resources.files(\"decoy_engine\")` or `Path(__file__).parents[4]`"
@@ -1474,6 +1401,7 @@ module = "decoy_engine/profiling/model_pack/trainer.py"
 function = "train_and_evaluate"
 sink = "joblib.dump"
 ordinal = 0
+disposition = "read"
 rule = "`io.BytesIO` of bytes already read through a capability and SHA-256 checked (or about to be written through one)"
 owner = "cam"
 reason = "joblib over an in-memory buffer; the file itself goes through the pack directory capability"
@@ -1519,6 +1447,7 @@ module = "decoy_engine/vault.py"
 function = "VaultWriter.write"
 sink = "pyarrow.parquet.write_table"
 ordinal = 0
+disposition = "read"
 rule = "in-memory Arrow buffer (`pa.BufferOutputStream` or `pa.BufferReader`) of one encrypted chunk"
 owner = "cam"
 reason = "serializes a chunk to bytes; the file itself goes through the OutputDir or FileHandle"
@@ -1534,29 +1463,11 @@ reason = "serializes a chunk to bytes; the file itself goes through the OutputDi
 
 [[entry]]
 module = "decoy_engine/connectors/postgres_snapshot.py"
-function = "_open_connection"
-sink = "Path.mkdir"
-ordinal = 0
-rule = "path derived from the caller's dest_dir or the config's temp_directory; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the Postgres snapshot child stages Parquet beside a platform-chosen destination and cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/connectors/postgres_snapshot.py"
-function = "_open_connection"
-sink = "os.chmod"
-ordinal = 0
-rule = "path derived from the caller's dest_dir or the config's temp_directory; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the Postgres snapshot child stages Parquet beside a platform-chosen destination and cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/connectors/postgres_snapshot.py"
 function = "snapshot_tables_to_parquet"
 sink = "Path.mkdir"
 ordinal = 0
+dir_category = "output_parent"
+dir_test = "tests/connectors/test_postgres_snapshot.py::test_guarantee2_same_state_gives_byte_identical_parquet"
 rule = "path derived from the caller's dest_dir or the config's temp_directory; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
 reason = "the Postgres snapshot child stages Parquet beside a platform-chosen destination and cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
@@ -1567,6 +1478,8 @@ module = "decoy_engine/connectors/postgres_snapshot.py"
 function = "snapshot_tables_to_parquet"
 sink = "Path.mkdir"
 ordinal = 1
+dir_category = "published_output"
+dir_test = "tests/connectors/test_postgres_snapshot.py::test_guarantee2_same_state_gives_byte_identical_parquet"
 rule = "path derived from the caller's dest_dir or the config's temp_directory; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
 owner = "cam"
 reason = "the Postgres snapshot child stages Parquet beside a platform-chosen destination and cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
@@ -1617,6 +1530,7 @@ module = "decoy_engine/execution/_isolated_memwatch.py"
 function = "read_vm_fields"
 sink = "open"
 ordinal = 0
+disposition = "read"
 rule = "`/proc/<pid>/status` for an integer pid, a constant procfs path; the sampler thread reads nothing else"
 owner = "cam"
 reason = "process memory readout for the isolated run; no caller or config value reaches the path"
@@ -1626,16 +1540,7 @@ module = "decoy_engine/execution/out_of_core/_multi_parent.py"
 function = "resolve_incoming"
 sink = "Path.unlink"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
-owner = "cam"
-reason = "engine-owned spill and relation files; never a caller or config path"
-
-[[entry]]
-module = "decoy_engine/execution/out_of_core/_multi_parent.py"
-function = "merge_parent_relations"
-sink = "Path.mkdir"
-ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -1644,7 +1549,8 @@ module = "decoy_engine/execution/out_of_core/_multi_parent.py"
 function = "merge_parent_relations"
 sink = "duckdb.connection.execute"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "private"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -1653,7 +1559,8 @@ module = "decoy_engine/execution/out_of_core/_multi_parent.py"
 function = "merge_parent_relations"
 sink = "duckdb.connection.execute"
 ordinal = 1
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "private"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -1662,7 +1569,8 @@ module = "decoy_engine/execution/out_of_core/_multi_parent.py"
 function = "merge_parent_relations"
 sink = "duckdb.connection.execute"
 ordinal = 2
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "private"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -1671,7 +1579,7 @@ module = "decoy_engine/execution/out_of_core/_multi_parent.py"
 function = "merge_parent_relations"
 sink = "Path.unlink"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -1680,7 +1588,7 @@ module = "decoy_engine/execution/out_of_core/_multi_parent.py"
 function = "merge_parent_relations"
 sink = "Path.unlink"
 ordinal = 1
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -1689,7 +1597,7 @@ module = "decoy_engine/execution/out_of_core/_multi_parent.py"
 function = "merge_parent_relations"
 sink = "Path.unlink"
 ordinal = 2
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -1698,7 +1606,7 @@ module = "decoy_engine/execution/out_of_core/_multi_parent.py"
 function = "_masked_types"
 sink = "pyarrow.parquet.read_metadata"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -1707,7 +1615,8 @@ module = "decoy_engine/execution/out_of_core/_payload_store.py"
 function = "SpillPayloadStore.iter_batches"
 sink = "pyarrow.OSFile"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "read"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -1716,7 +1625,8 @@ module = "decoy_engine/execution/out_of_core/_payload_store.py"
 function = "RawParentKeySpill.__iter__"
 sink = "pyarrow.OSFile"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "read"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -1725,7 +1635,8 @@ module = "decoy_engine/execution/out_of_core/_payload_store.py"
 function = "SpillChildKeys.open_reader"
 sink = "pyarrow.OSFile"
 ordinal = 0
-rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+disposition = "read"
+rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
@@ -1764,3 +1675,162 @@ ordinal = 0
 rule = "in-memory bytes buffer (`io.BytesIO` of records the framer already read through a policy handle); the option constructors name no file"
 owner = "cam"
 reason = "the CSV chunk parse never opens a path; the source file is opened through `open_read` above it"
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "_discard_partial"
+sink = "os.unlink"
+ordinal = 0
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "LocalProtectedQuarantineSink._open_artifact"
+sink = "os.open"
+ordinal = 0
+disposition = "private"
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "LocalProtectedQuarantineSink._publish_atomic"
+sink = "os.replace"
+ordinal = 0
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "LocalProtectedQuarantineSink._publish_atomic"
+sink = "os.open"
+ordinal = 0
+disposition = "read"
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "LocalProtectedQuarantineSink.discard"
+sink = "os.unlink"
+ordinal = 0
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "LocalProtectedQuarantineSink._remove_partial"
+sink = "os.unlink"
+ordinal = 0
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "LocalProtectedQuarantineSink._read_header"
+sink = "os.open"
+ordinal = 0
+disposition = "read"
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_quarantine_local.py"
+function = "LocalProtectedQuarantineSink.purge_expired"
+sink = "os.unlink"
+ordinal = 0
+rule = "the `root` a caller handed `LocalProtectedQuarantineSink`, joined only with engine-made names (a SHA-256 owner hash, a random hex run id); reached only after `fileaccess.require_ambient` in `_prepare_root` / `_locate` refused every policy but the ambient one"
+owner = "cam"
+reason = "F06 local protected-quarantine store (Fernet artifacts, 0700/0600); a strict policy gets `arena_needs_ambient_policy` before any source is read. A policy-issued store is the follow-up"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/declared_casting/_stream.py"
+function = "stage_typed_sources"
+sink = "pyarrow.parquet.ParquetWriter"
+ordinal = 0
+disposition = "private"
+rule = "path under the per-run root `engine_scratch_root` created by `protected_scratch_dir`, named by an opaque per-run counter (s0000), never by a table, column or edge name"
+owner = "cam"
+reason = "F06 typed staging copy of a declared out-of-core source; engine-owned scratch, read back only through `scratch_access_for`"
+
+[[entry]]
+module = "decoy_engine/declared_casting/_stream.py"
+function = "stage_typed_sources"
+sink = "pyarrow.parquet.ParquetWriter"
+ordinal = 1
+disposition = "private"
+rule = "path under the per-run root `engine_scratch_root` created by `protected_scratch_dir`, named by an opaque per-run counter (s0000), never by a table, column or edge name"
+owner = "cam"
+reason = "F06 typed staging copy of a declared out-of-core source; engine-owned scratch, read back only through `scratch_access_for`"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_scratch.py"
+function = "open_private"
+sink = "os.open"
+ordinal = 0
+disposition = "private"
+rule = "a path under an engine-created scratch root (`scratch_root` / `engine_scratch_root`), named by an opaque per-run id, never by a table, column or edge name; O_NOFOLLOW, mode set to 0600 on the descriptor"
+owner = "cam"
+reason = "engine-owned staging and spill files hold source values, so they are created 0600 on their own descriptor whatever the umask"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_protected_dir.py"
+function = "_lstat"
+sink = "os.lstat"
+ordinal = 0
+rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one (an issued root runs under every policy)"
+owner = "cam"
+reason = "the single check-before and check-after lookup of the protected directory allocator"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_protected_dir.py"
+function = "_mkdir"
+sink = "os.mkdir"
+ordinal = 0
+dir_category = "protected_root"
+rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one (an issued root runs under every policy)"
+owner = "cam"
+reason = "the allocator creates each protected directory 0700; the one place a directory holding Decoy rows is made"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_protected_dir.py"
+function = "_chmod_private"
+sink = "os.chmod"
+ordinal = 0
+rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one (an issued root runs under every policy)"
+owner = "cam"
+reason = "the allocator sets 0700 whatever the umask, so a directory is never left wider than owner-only"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_protected_dir.py"
+function = "_is_empty"
+sink = "os.listdir"
+ordinal = 0
+rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one (an issued root runs under every policy)"
+owner = "cam"
+reason = "the allocator tightens an existing open directory only when it is empty"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_protected_dir.py"
+function = "_remove"
+sink = "shutil.rmtree"
+ordinal = 0
+rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one (an issued root runs under every policy)"
+owner = "cam"
+reason = "the allocator removes a directory it issued, or one it created that failed its own check"

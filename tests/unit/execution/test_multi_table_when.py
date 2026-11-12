@@ -241,6 +241,7 @@ def _hand_over(
     elif case.kind == "loader":
         del handed["tbl"]
         extra["source_loader"] = lambda name: sources[name]
+        extra["source_loader_schemas"] = {n: t.schema for n, t in sources.items()}
     return handed, extra
 
 
@@ -248,6 +249,9 @@ def _single_alone(case: Case, cfg: dict[str, Any], sources: dict[str, Any], tmp_
     handed, extra = _hand_over(case, cfg, sources, tmp_path)
     only = mt.restrict(cfg, "tbl")
     only_sources = {"tbl": handed["tbl"]} if "tbl" in handed else {}
+    if "source_loader_schemas" in extra:
+        extra = {**extra, "source_loader_schemas": {"tbl": extra["source_loader_schemas"]["tbl"]}}
+    only = {**only, "sources": {"tbl": only["sources"]["tbl"]}}
     return run_pipeline(only, sources=only_sources, **mt.kw(explain_plan=True, **extra))
 
 

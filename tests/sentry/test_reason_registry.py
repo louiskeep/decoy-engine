@@ -22,6 +22,7 @@ code table, and a newly added module.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 import textwrap
@@ -32,6 +33,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _reason_scan as scan
+from _reason_sinks import discover_function_sinks
 
 FIXTURES = scan.ROOT / "tests" / "fixtures" / "f29"
 
@@ -40,17 +42,40 @@ _HELPER = "private helper; every caller passes a registry symbol, checked at the
 _REWRAP = "re-wraps the already-registered code of the exception it catches"
 _KERNEL = "forwards a compiled-kernel code only after an `in` guard against known codes"
 
+_FIRST_CODE = "re-raises the registered reason taken from a pydantic error type (membership-checked in first_code)"
+_KERNEL_REASON = "forwards the ReasonCode a casting kernel returned for the failed cell"
+_DECISION_REASON = "forwards the rejection ReasonCode of the central route decision"
+
 ADAPTERS: dict[tuple[str, str], str] = {
+    # -- F06 declared casting ----------------------------------------------------------------
+    ("contracts/_declared_base.py", "DeclaredCastContractError.__init__"): _CTOR,
+    ("execution/pipeline/_route_summary.py", "route_summary"): (
+        "copies the route reason code the engine recorded in quality_metrics into the summary record"
+    ),
+    ("execution/_errors.py", "DeclaredCastValueError.__init__"): _CTOR,
+    ("execution/_errors.py", "QuarantineError.__init__"): _CTOR,
+    ("contracts/_declared_formats.py", "validate_format_spec"): _FIRST_CODE,
+    ("contracts/declared_casting.py", "build_contract"): _FIRST_CODE,
+    ("contracts/declared_casting.py", "validate_sentinel_spec"): _FIRST_CODE,
+    ("declared_casting/_boundary.py", "DeclaredCastRun._disposition"): _KERNEL_REASON,
+    ("declared_casting/_eligibility.py", "declared_route_guard"): _DECISION_REASON,
+    ("declared_casting/_eligibility.py", "preflight_declared_casting"): _DECISION_REASON,
+    ("declared_casting/_refusals.py", "note"): _DECISION_REASON,
+    ("declared_casting/_quarantine_local.py", "_qerror"): _HELPER,
+    ("plan/_checks_declared_casting.py", "_fail"): _HELPER,
+    ("plan/_serialize_declared.py", "declared_casting_from_dict"): _REWRAP,
     # -- constructors that store the caller's code -------------------------------------------
     ("_reference_date.py", "PinnedModeError.__init__"): _CTOR,
     ("connectors/postgres_snapshot.py", "PostgresSnapshotError.__init__"): _CTOR,
+    ("detection/_model_status.py", "ModelUnavailableError.__init__"): _CTOR,
     ("detection/ner.py", "NerUnavailableError.__init__"): _CTOR,
     ("determinism/_derive.py", "DeterminismError.__init__"): _CTOR,
     ("errors.py", "FpeChecksumError.__init__"): _CTOR,
+    ("records/_errors.py", "RecordError.__init__"): _CTOR,
     ("errors.py", "FpeUnencryptableError.__init__"): _CTOR,
     ("errors.py", "PipelineValidationError.__init__"): _CTOR,
     ("errors.py", "ValidationError.__init__"): _CTOR,
-    ("execution/_errors.py", "ExecutionError.__init__"): _CTOR,
+    ("_execution_error.py", "ExecutionError.__init__"): _CTOR,
     ("execution/_errors.py", "StrategyError.__init__"): _CTOR,
     ("execution/_mixed_admission.py", "MixedDeclineError.__init__"): _CTOR,
     ("execution/_transforms.py", "TransformError.__init__"): _CTOR,
@@ -90,6 +115,7 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("generation/_pinned_compile.py", "_reject_column"): _HELPER,
     ("generation/_window_admission.py", "_refuse"): _HELPER,
     ("plan/_checks_dp.py", "_raise"): _HELPER,
+    ("profile/_csv_reader.py", "source_refusal"): _HELPER,
     ("plan/_checks_top_code.py", "_reject_unusable_bound"): _HELPER,
     # -- re-wraps of an already-registered exception code ------------------------------------
     ("execution/_chunked_when_guard.py", "PositionalWhenGuard.check_schema"): _REWRAP,
@@ -100,6 +126,12 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("execution/physical/_shadow_mixed.py", "_as_shadow_difference"): _REWRAP,
     ("plan/_checks.py", "_check_ner_available_for_strategy"): _REWRAP,
     ("plan/_checks.py", "check_statistical_columns"): _REWRAP,
+    ("plan/checks/_generate_columns.py", "_located"): (
+        "re-wraps the registered code of the ref check or parse rule it caught, with fixed text; "
+        "its other callers pass a registry symbol"
+    ),
+    ("plan/_generation.py", "check_fitted_references"): _REWRAP,
+    ("plan/_serialize.py", "_pinned_snapshot_from_dict"): _REWRAP,
     ("plan/validate/_consolidator.py", "validate_plan"): _REWRAP,
     ("subset/_api.py", "_compute"): _REWRAP,
     ("unmask.py", "unmask_pipeline"): _REWRAP,
@@ -120,9 +152,45 @@ ADAPTERS: dict[tuple[str, str], str] = {
         "exports the identity of a `ReasonRef` that `require_known` has just resolved against "
         "the registry (an unknown identity fails closed before this dict is built)"
     ),
+    ("safe_output/_event.py", "SafeEvent.to_dict"): (
+        "exports the identity of a `ReasonRef` that `require_known` resolved against the "
+        "registry when the event was validated (an unknown identity fails closed before this "
+        "dict is built)"
+    ),
+}
+# Forwarding helpers: the scanner treats them as code sinks and checks every caller's argument,
+# so the `_HELPER` rationale ("every caller passes a registry symbol") is enforced, not assumed.
+# A helper is its exact `(path, function)` identity, and a call resolves to the helper defined in
+# or imported into the calling module, so a same-named function elsewhere is not a sink.
+HELPER_IDENTITIES = frozenset(key for key, why in ADAPTERS.items() if why == _HELPER)
+# Helpers whose callers still pass a literal or a forwarded parameter, found when callers began
+# to be checked (2026-11-06). Registered as `reason-unchecked-helpers` and shrink-only: each
+# entry is a DESIGN follow-up (route its callers through registry symbols, then delete it).
+UNCHECKED_HELPERS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("plan/_checks_dp.py", "_raise"),
+        ("declared_casting/_quarantine_local.py", "_qerror"),
+        ("execution/native/_crypto_reference.py", "_row_error"),
+        ("plan/_checks_declared_casting.py", "_fail"),
+        ("generation/_window_admission.py", "_refuse"),
+    }
+)
+HELPER_SINKS = HELPER_IDENTITIES - UNCHECKED_HELPERS
+# Helpers that are not positional-`code` sinks, and why: the scanner sees their codes another way.
+_KW_CODE = "`code` is keyword-only, so every caller is checked as a `code=` keyword site"
+NOT_POSITIONAL_SINKS: dict[tuple[str, str], str] = {
+    ("execution/_positional_keys.py", "row_positions"): _KW_CODE,
+    ("execution/_positional_keys.py", "positional_key_array"): _KW_CODE,
+    ("execution/_transforms.py", "_reject_nested_keys"): _KW_CODE,
+    ("plan/_checks_top_code.py", "_reject_unusable_bound"): _KW_CODE,
+    ("generation/_pinned_compile.py", "_reject_column"): (
+        "takes no code: it raises registry-coded errors itself, so its raise sites are the scanned ones"
+    ),
 }
 # Functions whose return value is a registry symbol chosen from a table of registry symbols.
-REGISTRY_HELPERS = frozenset({"strategy_code_for_unencryptable", "strategy_code_for_checksum"})
+REGISTRY_HELPERS = frozenset(
+    {"strategy_code_for_unencryptable", "strategy_code_for_checksum", "registered_model_reason"}
+)
 
 Key = tuple[str, str, str, str, str]
 
@@ -153,6 +221,12 @@ def _is_violation(site: scan.Site) -> bool:
     return True
 
 
+def _scan(
+    src: Path = scan.SRC, helpers: frozenset[tuple[str, str]] | None = None
+) -> list[scan.Site]:
+    return scan.scan(src, HELPER_SINKS if helpers is None else helpers)
+
+
 def violations(sites: list[scan.Site]) -> Counter[Key]:
     return Counter(
         (s.file, s.function, s.kind, s.family, s.value_class) for s in sites if _is_violation(s)
@@ -160,7 +234,7 @@ def violations(sites: list[scan.Site]) -> Counter[Key]:
 
 
 def test_no_ad_hoc_reason_codes() -> None:
-    found = violations(scan.scan())
+    found = violations(_scan())
     assert not found, (
         "ad-hoc reason code sites (use a decoy_engine.reasons symbol, or list a forwarding "
         "adapter with its rationale):\n" + "\n".join(f"  {k}" for k in sorted(found))
@@ -168,7 +242,7 @@ def test_no_ad_hoc_reason_codes() -> None:
 
 
 def test_adapters_exist_and_are_used() -> None:
-    sites = scan.scan()
+    sites = _scan()
     used = {(s.file, s.function) for s in sites if s.value_class in ("forward", "dynamic")}
     unused = sorted(set(ADAPTERS) - used)
     assert not unused, f"adapters that no longer forward a code: {unused}"
@@ -260,6 +334,13 @@ _MUTANTS: dict[str, str] = {
     "module_constant": """
         MY_CODE = "adhoc_constant"
     """,
+    # The fallback of a registry-backed code table (the FPE handler's unregistered default).
+    "code_table_default": """
+        from decoy_engine import reasons
+        _ROUTES = {"a": reasons.runtime.CYCLIC_WORK_ORDERING}
+        def f(key):
+            return _ROUTES.get(key, "adhoc_default")
+    """,
     "unchecked_forward": """
         from decoy_engine.errors import ExecutionError
         def f(code):
@@ -320,6 +401,9 @@ _CLEAN = """
         raise ExecutionError(code=MY_CODE)
     def h():
         return {"code": reasons.runtime.CYCLIC_WORK_ORDERING}
+    _ROUTES = {"a": reasons.runtime.CYCLIC_WORK_ORDERING}
+    def k(key):
+        return _ROUTES.get(key, reasons.runtime.CYCLIC_WORK_ORDERING)
 """
 
 
@@ -336,7 +420,7 @@ def _tree(tmp_path: Path, name: str, body: str) -> Path:
 @pytest.mark.parametrize("name", sorted(_MUTANTS))
 def test_each_smuggling_route_is_caught(tmp_path: Path, name: str) -> None:
     root = _tree(tmp_path, f"new_module_{name}", _MUTANTS[name])
-    found = violations(scan.scan(root))
+    found = violations(_scan(root))
     assert any(k[0] == f"new_module_{name}.py" for k in found), (name, dict(found))
 
 
@@ -349,14 +433,14 @@ def test_route_decider_registry_returns_are_clean(tmp_path: Path) -> None:
             return make(route_reason=f"{reasons.route.MIXED_RUNTIME_DECLINED}:{why}")
     """
     root = _tree(tmp_path, "route_clean", body)
-    found = violations(scan.scan(root))
+    found = violations(_scan(root))
     # Only the composite's forwarding site remains, and it needs a named adapter.
     assert [k[:3] for k in found if k[0] == "route_clean.py"] == [("route_clean.py", "wrap", "kw")]
 
 
 def test_registry_backed_code_is_clean(tmp_path: Path) -> None:
     root = _tree(tmp_path, "clean_module", _CLEAN)
-    found = violations(scan.scan(root))
+    found = violations(_scan(root))
     assert not [k for k in found if k[0] == "clean_module.py"], dict(found)
 
 
@@ -365,7 +449,7 @@ def test_a_newly_added_module_is_scanned(tmp_path: Path) -> None:
     (root / "pkg").mkdir()
     (root / "pkg" / "__init__.py").write_text("")
     (root / "pkg" / "deep.py").write_text(textwrap.dedent(_MUTANTS["f_string"]))
-    files = {k[0] for k in violations(scan.scan(root))}
+    files = {k[0] for k in violations(_scan(root))}
     assert {"brand_new.py", "pkg/deep.py"} <= files
 
 
@@ -378,7 +462,7 @@ def test_code_namespace_matches_the_raising_family() -> None:
     import _reason_baseline as baseline
 
     mismatched = []
-    for site in scan.scan():
+    for site in _scan():
         if site.kind not in ("kw", "positional") or site.value_class != "registry":
             continue
         expected = baseline.FAMILY_NAMESPACE.get(site.family.split("(")[0])
@@ -428,7 +512,7 @@ UNCLASSIFIED: dict[str, str] = {
     "FixedWidthWriteError": "data-derived layout errors; no stable code",
     "CsvRecordTooLarge": "input-shape error raised inside the CSV framer; no stable code yet",
     "CsvUnterminatedQuote": "input-shape error raised inside the CSV framer; no stable code yet",
-    "DiscoverySqlError": "data-discovery SQL failures can echo statements; no stable code",
+    "DiscoverySqlError": "data-discovery SQL failures carry fixed per-class text; no stable code",
     "NameHintLoaderError": "a reference-data load error; no stable code",
     "ModelPackLoadError": "a model-pack load error; no stable code",
     "Ff1Error": "an FF1 primitive error; surfaces as FpeUnencryptable/Checksum where it matters",
@@ -452,6 +536,10 @@ UNCLASSIFIED: dict[str, str] = {
     # A-4 x F13: an internal carrier between the file provider and the admission boundary, which
     # rebuilds it into one closed-set class; it never reaches a caller.
     "KeptFileFailure": "internal carrier; the admission boundary rebuilds it, never raised to callers",
+    # F34: fixed canary signals with no message; the consumer sees a REJECTED report or a 500.
+    "CanarySpanReportInvalid": "F34 report-integrity signal; carries no message",
+    "CanaryPolicyInputError": "F34 policy-input type signal; carries no message",
+    "CanaryArtifactReadFailure": "F34 reader-to-scan carrier; its only arg is a closed outcome",
 }
 
 
@@ -628,3 +716,150 @@ def test_unobserved_publication_mutants_are_caught(tmp_path: Path, body: str) ->
     root.mkdir()
     (root / "route.py").write_text(body)
     assert unobserved_publication_calls(root)
+
+
+# -- forwarding helpers are code sinks: their callers' arguments are checked --------------------
+
+_HELPER_BODY = """
+    from decoy_engine import reasons
+    from decoy_engine.errors import ExecutionError
+    def _refusal(code, detail):
+        raise ExecutionError(code=code)
+    def bad_literal():
+        raise _refusal("adhoc_caller", "x")
+    def bad_fstring(k):
+        raise _refusal(f"adhoc_{k}", "x")
+    def bad_keyword():
+        raise _refusal(code="adhoc_kw", detail="x")
+    def good():
+        raise _refusal(reasons.runtime.CYCLIC_WORK_ORDERING, "x")
+"""
+
+
+def test_forwarding_helper_callers_are_checked(tmp_path: Path) -> None:
+    root = _tree(tmp_path, "helper_callers", _HELPER_BODY)
+    helpers = frozenset({("helper_callers.py", "_refusal")})
+    found = {k[:2] for k in violations(_scan(root, helpers)) if k[0] == "helper_callers.py"}
+    assert ("helper_callers.py", "bad_literal") in found
+    assert ("helper_callers.py", "bad_fstring") in found
+    assert ("helper_callers.py", "bad_keyword") in found
+    assert ("helper_callers.py", "good") not in found
+
+
+def test_the_csv_reader_refusals_are_scanned_and_registry_backed() -> None:
+    sites = [s for s in _scan() if s.file == "profile/_csv_reader.py" and s.family == "source_refusal"]  # fmt: skip
+    assert len(sites) >= 6
+    assert {s.value_class for s in sites} == {"registry"}
+
+
+def _write(root: Path, name: str, body: str) -> None:
+    (root / name).write_text(textwrap.dedent(body))
+
+
+_HELPER_DEF = """
+    from decoy_engine.errors import ExecutionError
+    def _refusal(code, detail):
+        raise ExecutionError(code=code)
+"""
+
+
+def _collision_tree(tmp_path: Path) -> Path:
+    """Two modules define `_refusal`; one caller imports each; only `a.py` is registered."""
+    root = _tree(tmp_path, "unused", "")
+    _write(root, "a.py", _HELPER_DEF)
+    _write(root, "b.py", _HELPER_DEF)
+    caller = """
+        from decoy_engine.{mod} import _refusal
+        def call():
+            raise _refusal("adhoc_literal", "x")
+    """
+    _write(root, "uses_a.py", caller.format(mod="a"))
+    _write(root, "uses_b.py", caller.format(mod="b"))
+    _write(
+        root,
+        "uses_local.py",
+        textwrap.dedent(_HELPER_DEF) + '\ndef call():\n    raise _refusal("adhoc_local", "x")\n',
+    )
+    return root
+
+
+def test_same_name_helpers_in_other_modules_are_not_sinks(tmp_path: Path) -> None:
+    """Mutant: a bare-name match would check (or skip) the wrong module's `_refusal`."""
+    root = _collision_tree(tmp_path)
+
+    def callers(helper: tuple[str, str]) -> set[str]:
+        found = violations(_scan(root, frozenset({helper})))
+        return {k[0] for k in found if k[1] == "call"}  # the `call` functions, not the definitions
+
+    assert callers(("a.py", "_refusal")) == {"uses_a.py"}  # imported from the registered module
+    assert callers(("uses_local.py", "_refusal")) == {"uses_local.py"}  # its own definition
+
+
+def _ratchet_drift(
+    live: frozenset[tuple[str, str]], recorded: frozenset[str]
+) -> dict[str, set[str]]:
+    flat = {"::".join(k) for k in live}
+    return {"gained": flat - recorded, "stale": recorded - flat}
+
+
+def _recorded_unchecked() -> frozenset[str]:
+    path = scan.ROOT / "tests" / "sentry" / "baselines" / "reason-unchecked-helpers.json"
+    return frozenset(json.loads(path.read_text(encoding="utf-8"))["entries"])
+
+
+def test_unchecked_helpers_match_the_registered_baseline_exactly() -> None:
+    assert _ratchet_drift(UNCHECKED_HELPERS, _recorded_unchecked()) == {
+        "gained": set(),
+        "stale": set(),
+    }
+
+
+def test_the_unchecked_ratchet_fails_swap_regrowth_and_collision() -> None:
+    recorded = _recorded_unchecked()
+    one = sorted(UNCHECKED_HELPERS)[0]
+    other = ("execution/_positional_keys.py", "row_positions")
+    swap = (UNCHECKED_HELPERS - {one}) | {other}
+    regrow = UNCHECKED_HELPERS | {other}
+    collide = (UNCHECKED_HELPERS - {one}) | {("elsewhere/other.py", one[1])}  # same bare name
+    assert _ratchet_drift(swap, recorded)["gained"] == {"::".join(other)}
+    assert _ratchet_drift(swap, recorded)["stale"] == {"::".join(one)}
+    assert _ratchet_drift(regrow, recorded)["gained"] == {"::".join(other)}
+    assert _ratchet_drift(collide, recorded)["gained"] == {"elsewhere/other.py::" + one[1]}
+
+
+def test_every_forwarding_helper_is_checked_or_a_listed_follow_up() -> None:
+    assert UNCHECKED_HELPERS <= HELPER_IDENTITIES, UNCHECKED_HELPERS - HELPER_IDENTITIES
+    assert ("profile/_csv_reader.py", "source_refusal") in HELPER_SINKS
+    assert len(UNCHECKED_HELPERS) <= 5  # in-suite floor; the registered baseline is the ratchet
+
+
+def test_every_helper_sink_is_discovered_or_has_a_recorded_rationale() -> None:
+    """A helper that the scanner cannot see as a sink would be vouched for and never checked."""
+    index = scan._Index()
+    discovered = discover_function_sinks(index.trees, scan.SRC)
+    for ident in sorted(HELPER_SINKS):
+        assert ident in discovered or NOT_POSITIONAL_SINKS.get(ident), ident
+    assert set(NOT_POSITIONAL_SINKS) <= HELPER_IDENTITIES
+    # a rationale is not a place to park a helper the scanner does see
+    assert not set(NOT_POSITIONAL_SINKS) & set(discovered)
+
+
+def test_baseline_script_runs_standalone(tmp_path: Path) -> None:
+    """The documented ``python tests/sentry/_reason_baseline.py`` entry point imports cleanly.
+
+    Run from an unrelated directory so neither the repo root nor tests/sentry is on the path
+    except through the script's own setup.
+    """
+    import subprocess
+
+    script = Path(__file__).resolve().parent / "_reason_baseline.py"
+    proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [sys.executable, str(script)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert "identities" in proc.stdout

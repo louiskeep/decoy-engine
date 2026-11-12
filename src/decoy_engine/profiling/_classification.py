@@ -8,6 +8,7 @@ decoy_engine.profiling.profiler._detect_casing / _classify_* paths are unchanged
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 # Plan B-2 - column-shape signals.
@@ -17,6 +18,29 @@ import pandas as pd
 # already pulls, so the profiler stays O(rows) per column.
 
 _B2_ALPHABET_SAMPLE = 200
+_HEAD_CHUNK = 2_000
+
+
+def _head_nonempty_stripped(series: pd.Series, limit: int) -> pd.Series:
+    """First `limit` non-null, stripped, non-empty strings of a column.
+
+    Same rows as stringifying the whole column and slicing, but only as many
+    chunks as it takes to fill `limit` are converted, so a million-row column
+    costs a few thousand conversions instead of a million.
+    """
+    non_null = series.dropna()
+    parts: list[pd.Series] = []
+    found = 0
+    for start in range(0, len(non_null), _HEAD_CHUNK):
+        chunk = non_null.iloc[start : start + _HEAD_CHUNK].astype(str).str.strip()
+        chunk = chunk[chunk != ""]
+        parts.append(chunk)
+        found += len(chunk)
+        if found >= limit:
+            break
+    if not parts:
+        return pd.Series([], dtype=object)
+    return pd.concat(parts).iloc[:limit]
 
 
 def _classify_alphabet(series: pd.Series) -> str | None:
@@ -39,12 +63,9 @@ def _classify_alphabet(series: pd.Series) -> str | None:
     # F-4 fix: vectorized regex tests replace the O(rows * chars) Python
     # double loop. ``str.fullmatch`` runs in pandas/numpy native code and
     # is ~50x faster on wide tables.
-    non_null = series.dropna().astype(str).str.strip()
-    non_null = non_null[non_null != ""]
+    non_null = _head_nonempty_stripped(series, _B2_ALPHABET_SAMPLE)
     if len(non_null) == 0:
         return None
-    if len(non_null) > _B2_ALPHABET_SAMPLE:
-        non_null = non_null.iloc[:_B2_ALPHABET_SAMPLE]
     total = len(non_null)
     is_digits = non_null.str.fullmatch(r"\d+").fillna(False)
     is_alpha = non_null.str.fullmatch(r"[A-Za-z]+").fillna(False)
@@ -134,6 +155,8 @@ def _classify_numeric_range(
         numeric = pd.to_numeric(non_null, errors="coerce").dropna()
     except Exception:
         return None
+    # inf makes round() raise OverflowError and carries no magnitude.
+    numeric = numeric[np.isfinite(numeric.to_numpy(dtype=float))]
     if len(numeric) == 0:
         return None
     abs_max = float(numeric.abs().max())
@@ -207,12 +230,9 @@ def _detect_casing(series: pd.Series) -> str | None:
     # _profile_column wall-time for wide string tables.
     if len(series) == 0:
         return None
-    non_null = series.dropna().astype(str).str.strip()
-    non_null = non_null[non_null != ""]
+    non_null = _head_nonempty_stripped(series, 200)
     if len(non_null) == 0:
         return None
-    if len(non_null) > 200:
-        non_null = non_null.iloc[:200]
     total = len(non_null)
     has_alpha = non_null.str.contains(r"[A-Za-z]", regex=True).fillna(False)
     is_upper = non_null.str.isupper().fillna(False) & has_alpha

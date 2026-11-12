@@ -21,581 +21,66 @@ The leakage guard (§A.3, disjoint value spaces per column) and the
 checksum-digit generators / ``LabeledFixture`` dataclass this corpus
 builds on live in ``decoy_engine.profiling.eval.fixtures`` -- see that
 module's docstring for the invariant this corpus must uphold.
+
+The header pools and fixture helpers live in ``_corpus_base.py`` and the
+per-type value generators in ``_corpus_values.py`` (H-1 Wave B E3). This
+module keeps the "none" fixtures and the three build_* functions.
 """
 
 from __future__ import annotations
 
-import string
-from datetime import date, timedelta
-
-import pandas as pd
-
-from decoy_engine.profiling.eval.fixtures import (
-    NO_DETECTOR,
-    LabeledFixture,
-    _luhn_check_digit,
-    make_iban,
-    make_npi,
+from decoy_engine.profiling.eval._corpus_base import (
+    _CVV_ABBREV,
+    _CVV_CLEAR,
+    _CVV_CRYPTIC,
+    _EMAIL_ABBREV,
+    _EMAIL_CLEAR,
+    _EMAIL_CRYPTIC,
+    _EXT_ROWS,
+    _HP_ABBREV,
+    _HP_CLEAR,
+    _HP_CRYPTIC,
+    _IBAN_ABBREV,
+    _IBAN_CLEAR,
+    _IBAN_CRYPTIC,
+    _ICD10_ABBREV,
+    _ICD10_CLEAR,
+    _ICD10_CRYPTIC,
+    _ISO_DATE_ABBREV,
+    _ISO_DATE_CLEAR,
+    _ISO_DATE_CRYPTIC,
+    _MRN_ABBREV,
+    _MRN_CLEAR,
+    _MRN_CRYPTIC,
+    _NPI_ABBREV,
+    _NPI_CLEAR,
+    _NPI_CRYPTIC,
+    _PAN_ABBREV,
+    _PAN_CLEAR,
+    _PAN_CRYPTIC,
+    _SSN_ABBREV,
+    _SSN_CLEAR,
+    _SSN_CRYPTIC,
+    _make_fixture,
+    _pick_header,
 )
-
-# ===========================================================================
-# Extended corpus -- ML2 LightGBM training (ml-benchmarking-and-privacy.md §B.3)
-# Phase B rebaseline: ~2960 columns, diversified value formats + header styles.
-# ===========================================================================
-# Kept for provenance/documentation; corpus generation below is purely
-# deterministic via col_idx-derived offsets (no RNG), so calling any of the
-# build_* functions twice yields byte-identical output with no seed needed.
-_EXT_SEED = 20260627
-_EXT_ROWS = 60  # rows per extended-corpus column
-
-
-def _make_fixture(name: str, col_name: str, values: list[str], label: str) -> LabeledFixture:
-    """Build a single-column LabeledFixture."""
-    return LabeledFixture(name, pd.DataFrame({col_name: values}), {col_name: label})
-
-
-# ── header pools: clear canonical names / realistic abbreviations / cryptic ──
-# Each type gets 3 short hand-written pools (clear, abbrev) plus a
-# programmatically generated cryptic pool (_cryptic_headers) -- opaque
-# single/double-char and "col_x"/"fNN" headers don't need hand-listing,
-# they're a small closed pattern space. _pick_header rotates a column's
-# header through the 3 style bands across its type's column range so the
-# model sees clear AND cryptic headers for every type during training.
-
-
-def _cryptic_headers(tag: str, count: int) -> list[str]:
-    """Deterministically generate ``count`` opaque column-header strings.
-
-    Cheap synthetic stand-ins for real-world opaque exports (col_a, f07,
-    single/double-char headers) -- generated, not hand-listed, so scaling
-    the corpus doesn't require ever-longer literal lists.
-    """
-    letters = string.ascii_lowercase
-    out: list[str] = []
-    i = 0
-    while len(out) < count:
-        bucket = i % 4
-        if bucket == 0:
-            out.append(f"{letters[i % 26]}{(i // 26) % 10}")
-        elif bucket == 1:
-            out.append(f"col_{letters[i % 26]}")
-        elif bucket == 2:
-            out.append(f"f{i:02d}")
-        else:
-            out.append(f"{tag}{i}")
-        i += 1
-    return out
-
-
-def _pick_header(
-    clear: list[str], abbrev: list[str], cryptic: list[str], col_idx: int, total: int
-) -> str:
-    """Rotate a column's header through 3 style bands across ``[0, total)``.
-
-    Roughly the first third of a type's columns get clear canonical names,
-    the next third realistic abbreviations, the last third cryptic/opaque
-    headers.
-    """
-    band = (col_idx * 3) // max(total, 1)
-    pool = (clear, abbrev, cryptic)[min(band, 2)]
-    return pool[col_idx % len(pool)]
-
-
-_SSN_CLEAR = [
-    "ssn",
-    "social_security_no",
-    "social_security_number",
-    "ss_number",
-    "ssn_number",
-    "tax_id",
-    "taxpayer_id",
-    "social_sec",
-]
-_SSN_ABBREV = ["ss_no", "ssn_num", "taxid", "soc_sec", "ss_id", "natl_id", "fed_id", "tin"]
-_SSN_CRYPTIC = _cryptic_headers("s", 14)
-
-_EMAIL_CLEAR = [
-    "email",
-    "email_address",
-    "contact_email",
-    "user_email",
-    "primary_email",
-    "work_email",
-    "home_email",
-    "e_mail",
-]
-_EMAIL_ABBREV = [
-    "em_addr",
-    "eml",
-    "usr_email",
-    "cust_email",
-    "addr_email",
-    "email_id",
-    "mail_addr",
-    "em",
-]
-_EMAIL_CRYPTIC = _cryptic_headers("e", 14)
-
-_PAN_CLEAR = [
-    "pan",
-    "card_number",
-    "credit_card_no",
-    "cc_number",
-    "card_no",
-    "debit_card_no",
-    "payment_card_number",
-    "card_account_no",
-]
-_PAN_ABBREV = [
-    "cc_no",
-    "card_num",
-    "pmt_card",
-    "cardnbr",
-    "acct_pan",
-    "card_ref",
-    "cc_num",
-    "pay_card",
-]
-_PAN_CRYPTIC = _cryptic_headers("p", 14)
-
-_IBAN_CLEAR = [
-    "iban",
-    "iban_number",
-    "bank_account_no",
-    "account_iban",
-    "international_account",
-    "bank_iban",
-    "sepa_iban",
-    "wire_iban",
-]
-_IBAN_ABBREV = [
-    "iban_no",
-    "bank_acct",
-    "acct_no_intl",
-    "bban",
-    "routing_iban",
-    "acct_iban",
-    "iban_ref",
-    "bnk_iban",
-]
-_IBAN_CRYPTIC = _cryptic_headers("i", 14)
-
-_ICD10_CLEAR = [
-    "icd10",
-    "icd10_code",
-    "diagnosis_code",
-    "dx_code",
-    "primary_dx",
-    "icd_code",
-    "diag_code",
-    "clinical_code",
-]
-_ICD10_ABBREV = [
-    "dx",
-    "dx_cd",
-    "icd_cd",
-    "primary_diag",
-    "diag",
-    "icd10cm",
-    "condition_cd",
-    "cpt_icd",
-]
-_ICD10_CRYPTIC = _cryptic_headers("d", 14)
-
-_ISO_DATE_CLEAR = [
-    "service_date",
-    "event_date",
-    "record_date",
-    "entry_date",
-    "visit_date",
-    "discharge_date",
-    "admit_date",
-    "encounter_date",
-]
-_ISO_DATE_ABBREV = ["svc_dt", "evt_dt", "rec_dt", "ent_dt", "vis_dt", "dis_dt", "adm_dt", "enc_dt"]
-_ISO_DATE_CRYPTIC = _cryptic_headers("t", 14)
-
-_NPI_CLEAR = [
-    "npi",
-    "npi_number",
-    "provider_npi",
-    "physician_npi",
-    "billing_npi",
-    "rendering_npi",
-    "clinician_npi",
-    "npi_code",
-]
-_NPI_ABBREV = [
-    "npi_no",
-    "prov_npi",
-    "phys_npi",
-    "bill_npi",
-    "rend_npi",
-    "clin_npi",
-    "npi_num",
-    "prv_npi",
-]
-_NPI_CRYPTIC = _cryptic_headers("n", 14)
-
-_CVV_CLEAR = [
-    "cvv",
-    "cvc",
-    "cvv_code",
-    "security_code",
-    "card_cvv",
-    "cvv2",
-    "cvc2",
-    "card_verification",
-]
-_CVV_ABBREV = ["cvv_no", "sec_cd", "cvn", "cv_code", "cvc_no", "verif_cd", "cvv_num", "sc"]
-_CVV_CRYPTIC = _cryptic_headers("v", 8)
-
-_MRN_CLEAR = [
-    "mrn",
-    "patient_mrn",
-    "medical_record_no",
-    "med_rec_num",
-    "mrn_number",
-    "hospital_mrn",
-    "chart_number",
-    "record_number",
-]
-_MRN_ABBREV = ["pt_mrn", "mr_no", "med_rec", "rec_no", "pt_no", "chart_no", "emr_no", "hsp_mrn"]
-_MRN_CRYPTIC = _cryptic_headers("m", 18)
-
-_HP_CLEAR = [
-    "health_plan_id",
-    "plan_id",
-    "insurance_id",
-    "payer_id",
-    "hmo_id",
-    "carrier_id",
-    "plan_number",
-    "insurance_number",
-]
-_HP_ABBREV = [
-    "hp_id",
-    "ins_no",
-    "plan_no",
-    "mbr_plan",
-    "payer_no",
-    "cov_id",
-    "hplan_id",
-    "ins_plan",
-]
-_HP_CRYPTIC = _cryptic_headers("h", 18)
-
-
-# ── SSN: mixed-radix (area, group, serial) encoding of a global index k ─────
-# Injective for any k < 800*90*9000 (~648M), far beyond corpus scale, so no
-# two (col_idx, row) pairs can ever collide -- regardless of how many format
-# variants (dashed / no-dash / spaced) reuse the same digits.
-
-
-def _ssn_digits_from_k(k: int) -> tuple[str, str, str]:
-    serial = 1000 + (k % 9000)
-    rem = k // 9000
-    group = 10 + (rem % 90)
-    rem2 = rem // 90
-    area = 100 + (rem2 % 799)  # dodges the reserved 900+ block
-    return f"{area:03d}", f"{group:02d}", f"{serial:04d}"
-
-
-def _format_ssn(area: str, group: str, serial: str, variant: int) -> str:
-    if variant == 0:
-        return f"{area}-{group}-{serial}"
-    if variant == 1:
-        return f"{area}{group}{serial}"
-    return f"{area} {group} {serial}"
-
-
-def _ssn_values_for_col(col_idx: int, n: int) -> list[str]:
-    variant = col_idx % 3
-    base = col_idx * n
-    out = []
-    for row in range(n):
-        area, group, serial = _ssn_digits_from_k(base + row)
-        out.append(_format_ssn(area, group, serial, variant))
-    return out
-
-
-# ── EMAIL: username embeds a global k directly -> trivially unique ──────────
-
-_EMAIL_DOMAIN_POOLS: list[list[str]] = [
-    ["example.com", "test.org"],
-    ["sample.net", "demo.co"],
-    ["mail.example", "users.test"],
-    ["corp.net", "work.org"],
-    ["example.co.uk", "sample.org.uk"],
-    ["firma.de", "beispiel.de"],
-    ["exemple.fr", "test.fr"],
-    ["example.io", "sample.io"],
-    ["agency.edu", "campus.edu"],
-    ["dept.gov", "state.gov"],
-    ["global.com", "intl.net"],
-    ["example.com.au", "sample.co.jp"],
-]
-
-
-def _email_values_for_col(col_idx: int, n: int) -> list[str]:
-    domains = _EMAIL_DOMAIN_POOLS[col_idx % len(_EMAIL_DOMAIN_POOLS)]
-    style = col_idx % 4
-    base = col_idx * n
-    out = []
-    for row in range(n):
-        k = base + row
-        domain = domains[row % len(domains)]
-        if style == 0:
-            local = f"user{k:06d}"
-        elif style == 1:
-            local = f"person.{k:06d}"
-        elif style == 2:
-            local = f"contact{k:06d}+acct"
-        else:
-            local = f"n{k:06d}.doe"
-        out.append(f"{local}@{domain}")
-    return out
-
-
-# ── PAN: network-prefixed base + Luhn check digit, k padded into the base ───
-
-_PAN_NETWORKS: list[tuple[str, int]] = [
-    ("4111", 16),
-    ("4000", 16),
-    ("4532", 16),
-    ("4716", 16),  # visa
-    ("51", 16),
-    ("52", 16),
-    ("53", 16),
-    ("55", 16),  # mastercard (BIN range)
-    ("2221", 16),
-    ("2720", 16),  # mastercard 2-series
-    ("6011", 16),
-    ("6500", 16),  # discover
-    ("34", 15),
-    ("37", 15),  # amex (15-digit)
-]
-
-
-def _pan_from_k(prefix: str, total_len: int, k: int) -> str:
-    base_len = total_len - 1 - len(prefix)
-    base = f"{prefix}{k:0{base_len}d}"
-    return base + _luhn_check_digit(base)
-
-
-def _format_pan(digits: str, variant: int) -> str:
-    if variant == 0:
-        return digits
-    groups = [digits[i : i + 4] for i in range(0, len(digits), 4)]
-    sep = "-" if variant == 1 else " "
-    return sep.join(groups)
-
-
-def _pan_values_for_col(col_idx: int, n: int) -> list[str]:
-    prefix, total_len = _PAN_NETWORKS[col_idx % len(_PAN_NETWORKS)]
-    variant = col_idx % 3
-    base = col_idx * n
-    out = []
-    for row in range(n):
-        digits = _pan_from_k(prefix, total_len, base + row)
-        out.append(_format_pan(digits, variant))
-    return out
-
-
-# ── IBAN: country-specific BBAN length, k padded into the BBAN suffix ───────
-
-_IBAN_COUNTRY_CONFIGS: list[tuple[str, int, str]] = [
-    # (country, iban_total_len, bank_prefix)
-    ("GB", 22, "WEST"),
-    ("DE", 22, "DEUT"),
-    ("FR", 27, "BNPA"),
-    ("NL", 18, "ABNA"),
-    ("ES", 24, "CAIX"),
-    ("IT", 27, "UNCR"),
-    ("BE", 16, "GEBA"),
-    ("CH", 21, "UBSW"),
-    ("IE", 22, "AIBK"),
-    ("PT", 25, "BPIP"),
-    ("AT", 20, "GIBA"),
-    ("SE", 24, "ESSE"),
-    ("NO", 15, "DNBA"),
-    ("DK", 18, "DABA"),
-    ("FI", 18, "NDEA"),
-    ("PL", 28, "PKOP"),
-]
-
-
-def _iban_bban_from_k(country: str, total_len: int, bank_prefix: str, k: int) -> str:
-    bban_len = total_len - 4
-    suffix_len = bban_len - len(bank_prefix)
-    if suffix_len < 5:
-        bank_prefix = bank_prefix[: max(bban_len - 5, 1)]
-        suffix_len = bban_len - len(bank_prefix)
-    return f"{bank_prefix}{k:0{suffix_len}d}"[:bban_len]
-
-
-def _format_iban(iban: str, variant: int) -> str:
-    if variant == 0:
-        return iban
-    return " ".join(iban[i : i + 4] for i in range(0, len(iban), 4))
-
-
-def _iban_values_for_col(col_idx: int, n: int) -> list[str]:
-    country, total_len, bank_prefix = _IBAN_COUNTRY_CONFIGS[col_idx % len(_IBAN_COUNTRY_CONFIGS)]
-    variant = col_idx % 2
-    base = col_idx * n
-    out = []
-    for row in range(n):
-        bban = _iban_bban_from_k(country, total_len, bank_prefix, base + row)
-        out.append(_format_iban(make_iban(country, bban), variant))
-    return out
-
-
-# ── ICD-10 pool: full A-Z chapter-range table (independent of detectors.py,
-# same public ICD-10-CM structure) x many subcodes -- comfortably covers
-# the training slice (240*60) plus the reserved OOD/cryptic regions below.
-
-_ICD10_EXT_CHAPTER_RANGES: dict[str, tuple[int, int]] = {
-    "A": (0, 99),
-    "B": (0, 99),
-    "C": (0, 99),
-    "D": (0, 89),
-    "E": (0, 89),
-    "F": (1, 99),
-    "G": (0, 99),
-    "H": (0, 95),
-    "I": (0, 99),
-    "J": (0, 99),
-    "K": (0, 95),
-    "L": (0, 99),
-    "M": (0, 99),
-    "N": (0, 99),
-    "O": (0, 99),
-    "P": (0, 96),
-    "Q": (0, 99),
-    "R": (0, 99),
-    "S": (0, 99),
-    "T": (0, 88),
-    "U": (0, 85),
-    "V": (0, 99),
-    "W": (0, 99),
-    "X": (0, 99),
-    "Y": (0, 99),
-    "Z": (0, 99),
-}
-
-
-def _gen_ext_icd10_pool() -> list[str]:
-    pool: list[str] = []
-    for ch in sorted(_ICD10_EXT_CHAPTER_RANGES):
-        cat_lo, cat_hi = _ICD10_EXT_CHAPTER_RANGES[ch]
-        for cat in range(cat_lo, cat_hi + 1):
-            for sub in range(1, 26):  # 25 subcodes/category -- ample headroom
-                pool.append(f"{ch}{cat:02d}.{sub}")
-    return pool
-
-
-_EXT_ICD10_POOL: list[str] = _gen_ext_icd10_pool()
-
-
-# ── ISO date: real calendar arithmetic from a base date + global k ──────────
-# Distinct bases per corpus slice keep the (base, k-range) windows from ever
-# overlapping, while every date stays inside the _iso_date_valid 1900-2100
-# bound.
-
-_ISO_DATE_TRAIN_BASE = date(1970, 1, 1)  # k up to 14399 -> ~2009-06
-_ISO_DATE_OOD_BASE = date(2012, 1, 1)  # k up to ~120 -> ~2012-04
-_ISO_DATE_CRYPTIC_BASE = date(2020, 1, 1)  # k up to ~1320 -> ~2023-08
-
-
-def _iso_date_values_from_base(base: date, offset_days: int, n: int) -> list[str]:
-    return [(base + timedelta(days=offset_days + j)).isoformat() for j in range(n)]
-
-
-# ── NPI: 9-digit body embeds a global k, Luhn-style check digit appended ────
-
-
-def _npi_values_for_col(col_idx: int, n: int) -> list[str]:
-    base = col_idx * n
-    return [make_npi(f"{100000000 + base + row:09d}") for row in range(n)]
-
-
-# ── CVV: realistic 3-4 digit space (~9900 values) -- fully disjoint up to
-# ~120 columns (120*80=9600 < 9800); wraps (and may overlap) beyond that,
-# which is the documented exemption from the disjointness invariant.
-
-
-def _cvv_values_for_col(col_idx: int, n: int, width: int = 80, start: int = 100) -> list[str]:
-    lo = start + (col_idx * width) % 9800
-    return [str(lo + (row % width)) for row in range(n)]
-
-
-# ── MRN / health_plan_id: prefix + k-derived numeric suffix, several
-# separator styles. The numeric suffix alone is unique per (col_idx, row)
-# across the WHOLE label (not just within a prefix), so two columns can
-# reuse the same institutional prefix and still never collide.
-
-_MRN_PREFIXES = [
-    "MRN",
-    "MR",
-    "PT",
-    "REC",
-    "EMR",
-    "EHR",
-    "CHT",
-    "HSI",
-    "FHIR",
-    "EPIC",
-    "MED",
-    "PAT",
-    "HOSP",
-    "CLIN",
-    "VISIT",
-    "ENC",
-    "ADM",
-    "DISCH",
-    "REGID",
-    "CASE",
-]
-_HP_PREFIXES = [
-    "HP",
-    "PLN",
-    "HMO",
-    "INS",
-    "BP",
-    "MEDPLAN",
-    "BEN",
-    "COV",
-    "HPLAN",
-    "PAYER",
-    "CARR",
-    "MCARE",
-    "MCAID",
-    "GRP",
-    "SUB",
-    "POL",
-    "CERT",
-    "RXBIN",
-    "NETWK",
-    "TIER",
-]
-
-
-def _institutional_values_for_col(col_idx: int, n: int, prefixes: list[str]) -> list[str]:
-    prefix = prefixes[col_idx % len(prefixes)]
-    style = col_idx % 3
-    base = col_idx * n
-    out = []
-    for row in range(n):
-        k = base + row
-        if style == 0:
-            out.append(f"{prefix}-{k:07d}")
-        elif style == 1:
-            out.append(f"{prefix}{k:07d}")
-        else:
-            out.append(f"{prefix}-{(k // 10000) % 100:02d}-{k % 10000:04d}")
-    return out
-
+from decoy_engine.profiling.eval._corpus_values import (
+    _EXT_ICD10_POOL,
+    _HP_PREFIXES,
+    _ISO_DATE_CRYPTIC_BASE,
+    _ISO_DATE_OOD_BASE,
+    _ISO_DATE_TRAIN_BASE,
+    _MRN_PREFIXES,
+    _cvv_values_for_col,
+    _email_values_for_col,
+    _iban_values_for_col,
+    _institutional_values_for_col,
+    _iso_date_values_from_base,
+    _npi_values_for_col,
+    _pan_values_for_col,
+    _ssn_values_for_col,
+)
+from decoy_engine.profiling.eval.fixtures import NO_DETECTOR, LabeledFixture
 
 # ── NONE: the richest label. 22 high-cardinality "families" (k embedded in
 # a family-exclusive numeric block -> globally disjoint by construction,

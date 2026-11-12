@@ -39,6 +39,7 @@ STUB_CHECKS = """#!/usr/bin/env bash
 set -eu
 echo "checks ran for $1" >> "$CHECKS_LOG"
 if [ -n "${STUB_DIRTY:-}" ]; then echo x > "$(git rev-parse --show-toplevel)/$STUB_DIRTY"; fi
+if [ -n "${STUB_PUSHURL:-}" ]; then git config remote.origin.pushurl "$STUB_PUSHURL"; fi
 exit "${STUB_EXIT:-0}"
 """
 
@@ -277,3 +278,69 @@ def test_refuses_index_flags_that_hide_a_modified_file(repo: Repo, flag: str) ->
     _refused(repo.run(sha=repo.head, apply=True), "hides")
     assert not repo.checks_ran()
     _nothing_happened(repo)
+
+
+# --- push destination: every URL a push can reach is the engine repository -------------------
+
+
+def _fork(tmp_path: Path) -> Path:
+    fork = tmp_path / "fork.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "main", str(fork))
+    return fork
+
+
+def _fork_untouched(fork: Path) -> None:
+    assert _git(fork, "for-each-ref", "refs/tags") == ""
+
+
+def test_refuses_a_pushurl_to_another_repository(repo: Repo, tmp_path: Path) -> None:
+    # Fetch still reads the real origin, so every fetch-side check passes.
+    fork = _fork(tmp_path)
+    _git(repo.work, "config", "remote.origin.pushurl", str(fork))
+    _refused(repo.run(sha=repo.head, apply=True), "push URL")
+    assert not repo.checks_ran()
+    _nothing_happened(repo)
+    _fork_untouched(fork)
+
+
+def test_refuses_a_push_insteadof_rewrite_to_another_repository(repo: Repo, tmp_path: Path) -> None:
+    fork = _fork(tmp_path)
+    _git(repo.work, "config", f"url.{fork}.pushInsteadOf", str(repo.origin))
+    _refused(repo.run(sha=repo.head, apply=True), "push URL")
+    _nothing_happened(repo)
+    _fork_untouched(fork)
+
+
+def test_refuses_a_second_push_url_to_another_repository(repo: Repo, tmp_path: Path) -> None:
+    # A remote with several push URLs pushes to all of them.
+    fork = _fork(tmp_path)
+    _git(repo.work, "config", "--add", "remote.origin.pushurl", str(repo.origin))
+    _git(repo.work, "config", "--add", "remote.origin.pushurl", str(fork))
+    _refused(repo.run(sha=repo.head, apply=True), "push URL")
+    _nothing_happened(repo)
+    _fork_untouched(fork)
+
+
+def test_refuses_a_second_fetch_url_to_another_repository(repo: Repo, tmp_path: Path) -> None:
+    # Without a pushurl, push goes to every `url` of the remote.
+    fork = _fork(tmp_path)
+    _git(repo.work, "config", "--add", "remote.origin.url", str(fork))
+    _refused(repo.run(sha=repo.head, apply=True), "does not match")
+    _nothing_happened(repo)
+    _fork_untouched(fork)
+
+
+def test_refuses_a_pushurl_the_checks_install(repo: Repo, tmp_path: Path) -> None:
+    # The checks run code from the tree, so the destination is verified again after them.
+    fork = _fork(tmp_path)
+    _refused(repo.run(sha=repo.head, apply=True, STUB_PUSHURL=str(fork)), "push URL")
+    assert repo.checks_ran()
+    _nothing_happened(repo)
+    _fork_untouched(fork)
+
+
+def test_accepts_a_matching_pushurl(repo: Repo) -> None:
+    _git(repo.work, "config", "remote.origin.pushurl", str(repo.origin))
+    proc = repo.run(sha=repo.head, apply=True)
+    assert proc.returncode == 0, proc.stderr
+    assert repo.remote_tag("v0.2.0^{}").split()[0] == repo.head

@@ -182,6 +182,11 @@ nitpick_ignore = [
     ("py:class", "faker.Faker"),
     ("py:class", "numpy.random.Generator"),
     ("py:class", "numpy.ndarray"),
+    # numpy.dtype and numpy.float64 come from the np.ndarray[Any,
+    # np.dtype[np.float64]] annotations in quality.snapshot; the numpy
+    # inventory does not list them as py:class.
+    ("py:class", "numpy.dtype"),
+    ("py:class", "numpy.float64"),
     ("py:class", "pydantic.BaseModel"),
     ("py:obj", "pydantic.BaseModel"),
     ("py:class", "pydantic.SecretStr"),
@@ -192,6 +197,41 @@ nitpick_ignore = [
     # explicitly so the resolution doesn't depend on which role the
     # autoapi version of the day decides to emit.
     ("py:obj", "abc.ABC"),
+    # CI-E1: re-exported engine names. A package `__init__.py` matches the
+    # `*/_*.py` pattern in `autoapi_ignore`, so the package page is never
+    # rendered and a name defined in a private module is not registered under
+    # the public name that re-exports it. Widening `autoapi_ignore` was
+    # measured at 117 warnings with the same targets still missing, so each
+    # target is listed here instead. This clears the warning; it does not
+    # give these public classes a page.
+    ("py:obj", "decoy_engine.errors.DecoyError"),
+    ("py:class", "decoy_engine.fileaccess.FileAccess"),
+    ("py:class", "decoy_engine.fileaccess.FileHandle"),
+    ("py:class", "decoy_engine.fileaccess.OutputTxn"),
+    ("py:class", "decoy_engine.fileaccess.OutputDir"),
+    ("py:class", "decoy_engine.fileaccess.DirHandle"),
+    ("py:class", "decoy_engine.reasons.ReasonRecord"),
+    ("py:class", "decoy_engine.reasons.ReasonContext"),
+    ("py:class", "decoy_engine.reasons.ReasonRef"),
+    ("py:class", "decoy_engine.reasons.Phase"),
+    ("py:class", "decoy_engine.reasons.ReasonCode"),
+    # CI-E1: bare aliases and a Literal that autoapi renders as a class.
+    ("py:class", "ReasonRecord"),
+    ("py:class", "Phase"),
+    ("py:class", "Status"),
+    ("py:class", "FrozenValue"),
+    ("py:class", "CodeSetConfig"),
+    ("py:class", "encrypted"),
+    # Literal aliases (detection.types, profiling.scan_set) that autoapi
+    # renders as classes; their defining pages register no class target.
+    ("py:class", "DetectorSource"),
+    ("py:class", "Strategy"),
+    # CI-E1: third-party names the intersphinx inventories do not index as
+    # classes (polars lists members, duckdb ships no inventory).
+    ("py:class", "polars.LazyFrame"),
+    ("py:class", "polars.DataFrame"),
+    ("py:class", "polars.Schema"),
+    ("py:class", "duckdb.DuckDBPyConnection"),
     # Type aliases and TypeVars defined inside the engine that autoapi
     # rendering exposes as bare class references but doesn't link to a
     # documented page.
@@ -385,5 +425,7 @@ exclude_patterns = [
     "decisions/**",
     "v2/**",
     "review-notes/**",
+    # The QA checklist is a working doc for QA passes, not product reference.
+    "qa/**",
     "remediation-source.md",
 ]

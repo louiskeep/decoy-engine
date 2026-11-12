@@ -53,6 +53,7 @@ from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
+from tests._declared_schema import declared_schema
 
 _REG = get_default_registry()
 _GRAPH = RelationshipGraph(edges=(), ordering=())
@@ -205,7 +206,14 @@ class TestChunkSafety:
         cfg = {
             "version": 2,
             "global_settings": {"seed": 42},
-            "sources": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
+            "sources": {
+                "t": {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": str(tmp_path / "in.csv"),
+                }
+            },
             "tables": [{"name": "t", "columns": self._CFG_COLUMNS}],
             "targets": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
         }
@@ -230,7 +238,15 @@ class TestChunkSafety:
         full = run_pipeline(cfg, sources={"t": src}, engine_version="hc3b-test").outputs["t"]
         chunks = [src.slice(i, boundary) for i in range(0, src.num_rows, boundary)]
         chunked = pa.concat_tables(
-            list(run_mask_pipeline_chunked(cfg, chunks, table="t", engine_version="hc3b-test"))
+            list(
+                run_mask_pipeline_chunked(
+                    cfg,
+                    chunks,
+                    table="t",
+                    source_schema=declared_schema(cfg, "t"),
+                    engine_version="hc3b-test",
+                )
+            )
         )
         assert chunked.column("age").to_pylist() == full.column("age").to_pylist()
 
@@ -254,7 +270,14 @@ class TestChunkSafety:
         cfg = {
             "version": 2,
             "global_settings": {"seed": 42},
-            "sources": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
+            "sources": {
+                "t": {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": str(tmp_path / "in.csv"),
+                }
+            },
             "tables": [
                 {
                     "name": "t",
@@ -274,7 +297,15 @@ class TestChunkSafety:
         full = run_pipeline(cfg, sources={"t": src}, engine_version="hc3b-test").outputs["t"]
         chunks = [src.slice(i, boundary) for i in range(0, src.num_rows, boundary)]
         chunked = pa.concat_tables(
-            list(run_mask_pipeline_chunked(cfg, chunks, table="t", engine_version="hc3b-test"))
+            list(
+                run_mask_pipeline_chunked(
+                    cfg,
+                    chunks,
+                    table="t",
+                    source_schema=declared_schema(cfg, "t"),
+                    engine_version="hc3b-test",
+                )
+            )
         )
         assert chunked.column("n").to_pylist() == full.column("n").to_pylist()
         # and the large in-range value is preserved EXACTLY (not float-rounded).

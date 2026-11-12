@@ -194,3 +194,42 @@ def decoy(owner: str) -> Declarer:
         outcome=Outcome.EXECUTION,
         retry=RetryClass.UNKNOWN,
     )
+
+
+def platform(owner: str) -> Declarer:
+    """A Platform job-lifecycle, response or notification reason; Platform keeps no registry."""
+    return Declarer(
+        "platform",
+        owner,
+        kind=Kind.FAILURE,
+        phases=(_P.UNKNOWN,),
+        severity=Severity.ERROR,
+        outcome=Outcome.EXECUTION,
+        retry=RetryClass.UNKNOWN,
+    )
+
+
+def platform_config(owner: str) -> Declarer:
+    """A Platform pipeline-configuration validation reason, repaired by fixing the config."""
+    return Declarer(
+        "platform",
+        owner,
+        kind=Kind.FAILURE,
+        phases=(_P.CONFIGURATION,),
+        severity=Severity.ERROR,
+        outcome=Outcome.CONFIGURATION,
+        retry=RetryClass.CONFIGURATION_REPAIR,
+    )
+
+
+def safe_output(owner: str) -> Declarer:
+    """A placeholder the safe-output boundary stores in place of a line it could not record."""
+    return Declarer(
+        "safe_output",
+        owner,
+        kind=Kind.CONTROL,
+        phases=(_P.UNKNOWN,),
+        severity=Severity.WARNING,
+        outcome=Outcome.EXECUTION,
+        retry=RetryClass.NEVER,
+    )

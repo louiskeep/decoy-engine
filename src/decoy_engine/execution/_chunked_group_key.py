@@ -154,7 +154,7 @@ def _static_group_by_source_type(node: WorkNode, source_type: pa.DataType) -> pa
     if strategy == "text_redact":
         # text_redact is a no-op passthrough that keeps the source value + type
         # under EITHER of `TextRedactHandler.run`'s two early returns: a
-        # non-string `token` (`_strategies/_text_redact.py:68`) OR a malformed
+        # non-string `token` (`_strategies/_text_redact.py:82`) OR a malformed
         # `detectors` that is not None / list / tuple (line 125). provider_config
         # is free-form, so `detectors: 123` survives model_validate and reaches
         # the handler. Mirror BOTH conditions, fail-closed (a superset of the

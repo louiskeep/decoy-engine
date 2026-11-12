@@ -1,0 +1,12 @@
+{
+ "sentry_id": "eval-sites",
+ "created_in": "X0a",
+ "entries": {
+  "expressions/_safe_eval.py": {
+   "reason": "initial X0a inventory of test_source_hygiene.py; existing entry, reviewed by its own sentry"
+  },
+  "transforms/formula.py": {
+   "reason": "initial X0a inventory of test_source_hygiene.py; existing entry, reviewed by its own sentry"
+  }
+ }
+}

@@ -25,7 +25,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine.errors import ConfigError
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.relationships._graph import OrphanPolicy
 from tests.parity import _d2b_shapes as d2b
@@ -217,25 +217,35 @@ def test_unseeded_parent_through_the_pipeline_matches_full_frame(
     mode: str,
     tmp_path: Path,
 ) -> None:
-    """A parent key left out of the config is unseeded. The pipeline routes such a job to
-    sequential before the dtype router (it is not out-of-core compatible): every auto gate and
-    mode completes equal to full-frame on a bounded route, and the forced gate refuses up front."""
+    """A parent key left out of the config is no longer a reachable state: the declaration gate
+    (CONFIG-EXPLICIT E2c) refuses it on every gate, mode and value before any route is chosen."""
+    parent, child = _keys(unit, value, in_ns, "warn")
+    config, sources = tf.job(tmp_path, parent, child, policy="warn")
+    parent_table = config["tables"][0]
+    parent_table["columns"] = [c for c in parent_table["columns"] if c["name"] != "id"]
+    with pytest.raises(PipelineValidationError) as refused:
+        tf.run(config, sources, gate=gate, mode=mode, tmp=tmp_path)
+    assert refused.value.code == "source_file.undeclared_column"
+
+
+def test_a_declared_passthrough_parent_key_matches_full_frame(tmp_path: Path) -> None:
+    """With every column declared (the parent key as a passthrough, so it carries no seed) the
+    job completes and equals the full-frame run. This keeps the parity check the gate-refused
+    cells above used to make."""
+    unit, _label, value, in_ns = CELLS[0]
     parent, child = _keys(unit, value, in_ns, "warn")
     ref_dir, run_dir = tmp_path / "ref", tmp_path / "run"
     configs = []
     for directory in (ref_dir, run_dir):
         config, sources = tf.job(directory, parent, child, policy="warn")
-        parent_table = config["tables"][0]
-        parent_table["columns"] = [c for c in parent_table["columns"] if c["name"] != "id"]
+        table = config["tables"][0]
+        table["columns"] = [
+            {"name": "id", "strategy": "passthrough"} if c["name"] == "id" else c
+            for c in table["columns"]
+        ]
         configs.append((config, sources))
     reference = tf.run(*configs[0], gate="full_frame")
-    if gate == "forced":
-        # Forcing out-of-core on a job it cannot run is a config error before any write.
-        with pytest.raises(ConfigError, match="out_of_core_parent_seed_missing"):
-            tf.run(*configs[1], gate=gate, mode=mode, tmp=run_dir)
-        return
-    run = tf.run(*configs[1], gate=gate, mode=mode, tmp=run_dir)
-    assert run.mode[0] != "out_of_core", run.mode
+    run = tf.run(*configs[1], gate="large_fk", mode="resident", tmp=run_dir)
     ref_child = reference.outputs["child"].column("parent_id").combine_chunks()
     got_child = run.outputs["child"].column("parent_id").combine_chunks()
     assert got_child.equals(ref_child.cast(got_child.type)), run.mode

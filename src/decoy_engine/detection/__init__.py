@@ -4,6 +4,14 @@ Detection is the base layer shared by the Pre-scan (profiling) and Post-scan
 (verification) phases: both depend on it, never the reverse.
 """
 
+from decoy_engine.detection._model_status import (
+    ModelStatus,
+    ModelUnavailableError,
+    ner_model_state,
+    ner_status,
+    qualified,
+    refuse,
+)
 from decoy_engine.detection.detectors import REGISTERED_DETECTORS, Span
 from decoy_engine.detection.domains import DOMAIN_BY_DETECTOR, Domain, domain_for
 from decoy_engine.detection.name_hints.loader import load_name_hint_terms
@@ -17,8 +25,14 @@ __all__ = [
     "DetectionSignal",
     "DetectorMatch",
     "Domain",
+    "ModelStatus",
+    "ModelUnavailableError",
     "NerUnavailableError",
     "Span",
     "domain_for",
     "load_name_hint_terms",
+    "ner_model_state",
+    "ner_status",
+    "qualified",
+    "refuse",
 ]

@@ -389,6 +389,16 @@ def maybe_run_unified_slice(
     populated only on the admitted-and-executed path), so there is no
     second value for a report object to carry.
     """
+    from decoy_engine.declared_casting._eligibility import declared_route_guard
+    from decoy_engine.declared_casting._refusals import note_declined
+
+    # F06: a job whose declared contracts this lane cannot honour declines to the full-frame lane,
+    # and the registered refusal is carried to the run's evidence when the lane was on offer.
+    declared = declared_route_guard("unified_slice", plan=ctx.plan)
+    if not declared.admitted:
+        if ctx.has_mask_table and ctx.unified_slice_enabled:
+            note_declined("unified_slice", declared)
+        return None
     # D1: checked before this module reaches for anything under
     # `decoy_engine.execution.physical` -- that package's `__init__.py`
     # imports eagerly, so even a "just import one submodule" reach would

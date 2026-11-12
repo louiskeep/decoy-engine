@@ -38,7 +38,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from decoy_engine.quality.snapshot import _CATEGORICAL_DISTINCT_CAP
+from decoy_engine.quality.snapshot import CATEGORICAL_DISTINCT_CAP
 
 _log = logging.getLogger(__name__)
 
@@ -93,7 +93,7 @@ def score_categorical_retention(
                 warnings.append(
                     f"categorical_retention_cardinality_cliff: column={name!r} score=0.0 "
                     f"threshold={threshold} distinct_count={col.get('distinct_count')} "
-                    f"cardinality_cap={_CATEGORICAL_DISTINCT_CAP} "
+                    f"cardinality_cap={CATEGORICAL_DISTINCT_CAP} "
                     f"(column exceeded the cap and fell to freetext; its real vocabulary "
                     f"is not in the snapshot)"
                 )

@@ -13,6 +13,21 @@ from decoy_engine.fileaccess import FileAccessUnavailable, LocalFileAccess
 # Create a module-level logger instance
 _LOGGER_INSTANCE = None
 
+# Marker set on each handler `_configure_logger` creates, so a reconfigure removes and closes
+# only its own handlers and never one a host program attached to the same logger.
+_OWNED_ATTR = "_decoy_engine_owned"
+
+
+def _new_engine_handler(kind, formatter, *args):
+    """The one place an engine-owned handler is built, so none can skip the ownership mark.
+
+    `kind` is "console" or a callable that builds the handler (the file path).
+    """
+    handler = logging.StreamHandler() if kind == "console" else kind(*args)
+    handler.setFormatter(formatter)
+    setattr(handler, _OWNED_ATTR, True)
+    return handler
+
 
 def get_logger(config: dict[str, Any] | None = None):
     """
@@ -70,9 +85,18 @@ def _configure_logger(logger, config: dict[str, Any]):
         logger: Logger instance to configure
         config: Dictionary with logging configuration
     """
-    # Clear any existing handlers to avoid duplicates
-    if logger.handlers:
-        logger.handlers.clear()
+    # Replace only the handlers this module created from an earlier config (closing them). The
+    # package NullHandler is kept (one only, extras dropped; the package __init__ is the sole
+    # place that creates it), and handlers a host program attached are left alone.
+    kept_null = False
+    for handler in list(logger.handlers):
+        if isinstance(handler, logging.NullHandler):
+            if kept_null:
+                logger.removeHandler(handler)
+            kept_null = True
+        elif getattr(handler, _OWNED_ATTR, False):
+            logger.removeHandler(handler)
+            handler.close()
 
     # Set default level
     level_name = config.get("level", "info").lower()
@@ -95,20 +119,18 @@ def _configure_logger(logger, config: dict[str, Any]):
 
     # Default to no console output (console: False by default)
     if config.get("console", False):
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
+        logger.addHandler(_new_engine_handler("console", formatter))
 
-    # File handler - default to a log file if not specified.
+    # File handler - off unless the caller passes `file`, so a bare run leaves no log file in the
+    # current folder.
     # QA-internal-synth-providers F3 (2026-06-01, HIGH reliability):
     # the whole file-handler creation now lives behind a try/except.
     # Pre-fix Docker/K8s pods with a read-only filesystem crashed at
     # logger configuration time: mkdir raised PermissionError on a
     # read-only fs, killing the whole process before any masking work
-    # ran. Honour explicit opt-out (`file: null` / empty string)
-    # AND degrade gracefully on OSError/PermissionError, falling back
+    # ran. Degrade gracefully on OSError/PermissionError, falling back
     # to console-only logging with a warning.
-    log_file = config.get("file", "logs/decoy_engine.log")
+    log_file = config.get("file")
     # A log file is a path from config, so it is only opened under the ambient CLI policy.
     # Under any other policy, or once the process forbade ambient access, the setting is
     # ignored and the platform logs through its own handlers.
@@ -117,9 +139,15 @@ def _configure_logger(logger, config: dict[str, Any]):
         try:
             max_size_mb = config.get("max_size_mb", 10)
             backup_count = config.get("backup_count", 5)
-            file_handler = ambient.log_handler(log_file, max_size_mb * 1024 * 1024, backup_count)
-            file_handler.setFormatter(formatter)
-            logger.addHandler(file_handler)
+            logger.addHandler(
+                _new_engine_handler(
+                    ambient.log_handler,
+                    formatter,
+                    log_file,
+                    max_size_mb * 1024 * 1024,
+                    backup_count,
+                )
+            )
         except (OSError, PermissionError) as exc:
             # Read-only or unwritable fs (common on container deploys).
             # Promote console logging so the operator still sees output.
@@ -132,13 +160,13 @@ def _configure_logger(logger, config: dict[str, Any]):
                 for h in logger.handlers
             )
             if not has_console:
-                console_fallback = logging.StreamHandler()
-                console_fallback.setFormatter(formatter)
-                logger.addHandler(console_fallback)
+                logger.addHandler(_new_engine_handler("console", formatter))
+            # Exception text can echo a path or value, and preserved caller handlers may back a
+            # user-visible log, so only the exception class name is logged.
             logger.warning(
                 "Could not open log file %s (%s); using console-only logging",
                 log_file,
-                exc,
+                type(exc).__name__,
             )
 
     # Only log this to file, not to console (unless the F3 fallback above kicked in).

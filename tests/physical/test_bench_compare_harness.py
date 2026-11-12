@@ -1085,6 +1085,7 @@ def test_arm_order_alternates_by_rep_parity() -> None:
     assert bc._arm_order_for_rep(3) == ("on", "off")
 
 
+@pytest.mark.serial
 def test_warmups_excluded_from_stats_and_pairing_preserved() -> None:
     n_rows = 500
     # 1 warmup + 4 timed reps, each contributing one off/on pair; per-arm
@@ -1134,6 +1135,7 @@ def _write_helper(tmp_path: Path, name: str, source: str) -> Path:
     return path
 
 
+@pytest.mark.serial
 def test_child_lifecycle_drains_both_pipes_beyond_buffer_size(tmp_path: Path) -> None:
     script = _write_helper(
         tmp_path,
@@ -1164,6 +1166,7 @@ def test_child_lifecycle_preserves_nonzero_exit_code(tmp_path: Path) -> None:
     assert result.timed_out is False
 
 
+@pytest.mark.serial
 def test_child_lifecycle_timeout_group_kills_and_reaps(tmp_path: Path) -> None:
     script = _write_helper(tmp_path, "sleep_forever.py", "import time\ntime.sleep(30)\n")
     t0 = time.monotonic()
@@ -1240,6 +1243,7 @@ def test_child_lifecycle_exit_between_poll_and_kill_race_is_swallowed(
     not native_companion_status().ok,
     reason="compiled decoy-engine-native companion unavailable",
 )
+@pytest.mark.serial
 def test_real_worker_tier_smoke(tmp_path: Path) -> None:
     """Acceptance smoke against the REAL frozen worker: `--tiers 20000 --reps 2
     --warmup 1`. The tier is large enough that the unified lane's wall-time

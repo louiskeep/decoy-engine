@@ -43,7 +43,16 @@ def test_matrix_has_a_row_for_every_generator_kind() -> None:
 def test_only_the_prefix_stable_families_are_admitted() -> None:
     admitted = {k for k, (ok, _) in ADMISSION_MATRIX.items() if ok}
     # windowed_date joins in FR1 as the one CHANGED-semantics family (see test_fr1_windowed_date).
-    assert admitted == {"sequence", "categorical", "faker", "reference", "windowed_date"}
+    # constant and distribution join in GEN-TYPES E1: no draw, and one persistent Generator.
+    assert admitted == {
+        "sequence",
+        "categorical",
+        "faker",
+        "reference",
+        "windowed_date",
+        "constant",
+        "distribution",
+    }
     assert "CHANGED" in ADMISSION_MATRIX["windowed_date"][1]
 
 
@@ -67,13 +76,17 @@ def test_declined_families_are_declined_with_a_reason(col: dict[str, Any]) -> No
 @pytest.mark.parametrize(
     ("col", "arrow_type"),
     [
-        ({"type": "sequence", "start": 1}, pa.string()),
+        ({"type": "sequence", "start": 1}, pa.int64()),
+        ({"type": "sequence", "start": 1, "prefix": "ID-"}, pa.string()),
+        ({"type": "sequence", "start": 1, "pad_length": 4}, pa.string()),
         ({"type": "categorical", "categories": ["a", "b"]}, pa.string()),
         ({"type": "categorical", "categories": [1, 2, 3]}, pa.int64()),
         ({"type": "categorical", "categories": [1.5, 2.0]}, pa.float64()),
         ({"type": "categorical", "categories": [True, False]}, pa.bool_()),
         ({"type": "faker", "faker_type": "city"}, pa.string()),
-        ({"type": "faker", "faker_type": "pyint", "faker_kwargs": {"min_value": 1}}, pa.string()),
+        ({"type": "faker", "faker_type": "pyint", "faker_kwargs": {"min_value": 1}}, pa.int64()),
+        ({"type": "faker", "faker_type": "pyfloat"}, pa.float64()),
+        ({"type": "faker", "faker_type": "zipcode"}, pa.string()),
         ({"type": "faker", "faker_type": "no_such_provider"}, pa.string()),
     ],
 )

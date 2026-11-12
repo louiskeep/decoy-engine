@@ -67,6 +67,7 @@ from decoy_engine.execution._strategies._text_mask import TextMaskHandler
 from decoy_engine.plan import PlanCompileError
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.providers_v2 import get_default_registry
+from tests._declared_schema import declared_schema
 
 _ENGINE_VERSION = "p4-slice3-text-mask-test"
 _LOW_THRESHOLD = 10
@@ -104,12 +105,24 @@ def _config(
     extra_tables: list[dict] | None = None,
 ) -> dict:
     tables = [{"name": table, "columns": columns}]
-    sources = {table: {"type": "file", "format": "csv", "path": str(tmp_path / f"{table}.csv")}}
+    sources = {
+        table: {
+            "type": "file",
+            "format": "csv",
+            "has_header": True,
+            "path": str(tmp_path / f"{table}.csv"),
+        }
+    }
     targets = {table: {"type": "file", "format": "csv", "path": str(tmp_path / f"{table}_out.csv")}}
     for extra in extra_tables or []:
         tables.append(extra)
         name = extra["name"]
-        sources[name] = {"type": "file", "format": "csv", "path": str(tmp_path / f"{name}.csv")}
+        sources[name] = {
+            "type": "file",
+            "format": "csv",
+            "has_header": True,
+            "path": str(tmp_path / f"{name}.csv"),
+        }
         targets[name] = {"type": "file", "format": "csv", "path": str(tmp_path / f"{name}_out.csv")}
     cfg: dict = {
         "version": 2,
@@ -150,6 +163,10 @@ def _install_fake_ner(monkeypatch, spans_by_marker: dict[str, str]) -> None:
     `iter_ner_spans_batch` (what `_text_mask.py` actually calls, Phase 5)."""
     monkeypatch.setattr("decoy_engine.detection.ner.spacy_installed", lambda: True)
     monkeypatch.setattr("decoy_engine.detection.ner.model_installed", lambda model=None: True)
+    monkeypatch.setattr("decoy_engine.detection.ner._import_spacy", lambda: (object(), None))
+    monkeypatch.setattr(
+        "decoy_engine.detection.ner._spacy_incompatible", lambda spacy, model: False
+    )
 
     def _find_spans(text: str) -> list[Span]:
         found = []
@@ -500,6 +517,7 @@ class TestFkSelfMaskRI:
                     cfg,
                     _pa_chunks(child_table, 2),
                     table="orders",
+                    source_schema=declared_schema(cfg, "orders"),
                     engine_version=_ENGINE_VERSION,
                 )
             )
@@ -606,7 +624,11 @@ class TestOutputDtypeInvariance:
         cfg = _config(tmp_path, columns)
         chunks = list(
             run_mask_pipeline_chunked(
-                cfg, _pa_chunks(table, 3), table="records", engine_version=_ENGINE_VERSION
+                cfg,
+                _pa_chunks(table, 3),
+                table="records",
+                source_schema=declared_schema(cfg, "records"),
+                engine_version=_ENGINE_VERSION,
             )
         )
         assert len(chunks) == 3  # the first is entirely null
@@ -678,6 +700,10 @@ class TestNerDefaultAndVersionGuard:
         run without touching the filesystem."""
         monkeypatch.setattr("decoy_engine.detection.ner.spacy_installed", lambda: True)
         monkeypatch.setattr("decoy_engine.detection.ner.model_installed", lambda model=None: True)
+        monkeypatch.setattr("decoy_engine.detection.ner._import_spacy", lambda: (object(), None))
+        monkeypatch.setattr(
+            "decoy_engine.detection.ner._spacy_incompatible", lambda spacy, model: False
+        )
         monkeypatch.setattr("decoy_engine.detection.ner.iter_ner_spans", lambda *a, **k: [])
         monkeypatch.setattr(
             "decoy_engine.detection.ner.iter_ner_spans_batch",
@@ -713,7 +739,11 @@ class TestNerDefaultAndVersionGuard:
         with pytest.raises(StrategyError) as exc:
             list(
                 run_mask_pipeline_chunked(
-                    cfg, _pa_chunks(table, 2), table="records", engine_version=_ENGINE_VERSION
+                    cfg,
+                    _pa_chunks(table, 2),
+                    table="records",
+                    source_schema=declared_schema(cfg, "records"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         assert exc.value.code == "ner_model_version_mismatch"
@@ -777,7 +807,11 @@ class TestWhenRejection:
         with pytest.raises(PlanCompileError) as exc:
             list(
                 run_mask_pipeline_chunked(
-                    cfg, _pa_chunks(table, 1), table="records", engine_version=_ENGINE_VERSION
+                    cfg,
+                    _pa_chunks(table, 1),
+                    table="records",
+                    source_schema=declared_schema(cfg, "records"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         assert exc.value.code == "chunked_text_mask_when_not_supported"
@@ -903,7 +937,11 @@ class TestSourceDtypeGate:
         with pytest.raises(PlanCompileError) as exc:
             list(
                 run_mask_pipeline_chunked(
-                    cfg, _pa_chunks(table, 1), table="records", engine_version=_ENGINE_VERSION
+                    cfg,
+                    _pa_chunks(table, 1),
+                    table="records",
+                    source_schema=declared_schema(cfg, "records"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         assert exc.value.code == "chunked_text_mask_source_dtype_unsupported"
@@ -919,7 +957,11 @@ class TestSourceDtypeGate:
         with pytest.raises(PlanCompileError) as exc:
             list(
                 run_mask_pipeline_chunked(
-                    cfg, [chunk1, chunk2], table="records", engine_version=_ENGINE_VERSION
+                    cfg,
+                    [chunk1, chunk2],
+                    table="records",
+                    source_schema=declared_schema(cfg, "records"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         assert exc.value.code == "chunked_text_mask_source_dtype_unsupported"
@@ -1094,7 +1136,11 @@ class TestAdmissionSurfaces:
         cfg = _config(tmp_path, columns)
         out = list(
             run_mask_pipeline_chunked(
-                cfg, _pa_chunks(table, 2), table="records", engine_version=_ENGINE_VERSION
+                cfg,
+                _pa_chunks(table, 2),
+                table="records",
+                source_schema=declared_schema(cfg, "records"),
+                engine_version=_ENGINE_VERSION,
             )
         )
         assert sum(c.num_rows for c in out) == 5

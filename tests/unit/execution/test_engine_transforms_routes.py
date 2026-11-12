@@ -20,6 +20,7 @@ from decoy_engine.execution import PandasExecutionAdapter, _transforms
 from decoy_engine.execution._sequential import run_sequential
 from decoy_engine.execution._transforms import TransformError
 from decoy_engine.plan._errors import PlanCompileError
+from tests._declared_schema import declared_schema
 from tests._keyed_secret import THROWAWAY_KEY_PROVIDER, THROWAWAY_SECRET
 from tests.unit.execution._transform_testkit import (
     ENGINE_VERSION,
@@ -296,7 +297,11 @@ class TestDirectChunkedEntryPointsReject:
         cfg, _ = self._cfg(tmp_path)
         with pytest.raises(PlanCompileError) as exc:
             run_mask_pipeline_chunked(
-                cfg, _poisoned_iterable(), table="t", engine_version=ENGINE_VERSION
+                cfg,
+                _poisoned_iterable(),
+                table="t",
+                source_schema=declared_schema(cfg, "t"),
+                engine_version=ENGINE_VERSION,
             )
         assert exc.value.code == _NEEDS_TRANSFORMS
 
@@ -329,9 +334,15 @@ class TestDirectChunkedEntryPointsReject:
         )
 
         cfg, _ = self._cfg(tmp_path)
-        for adapter in (MaskPipelineChunkedAdapter(), NativeOrOracleChunkedAdapter()):
+        schema = declared_schema(cfg, "t")
+        for adapter, extra in (
+            (MaskPipelineChunkedAdapter(), {"source_schema": schema}),
+            (NativeOrOracleChunkedAdapter(), {}),
+        ):
             with pytest.raises(PlanCompileError) as exc:
-                adapter.run(cfg, _poisoned_iterable(), table="t", engine_version=ENGINE_VERSION)
+                adapter.run(
+                    cfg, _poisoned_iterable(), table="t", engine_version=ENGINE_VERSION, **extra
+                )
             assert exc.value.code == _NEEDS_TRANSFORMS
 
     def test_resident_aggregator_rejects_before_slicing(self, tmp_path):
@@ -379,12 +390,22 @@ class TestDirectChunkedEntryPointsReject:
         cfg, tbl = self._cfg(tmp_path, transforms=False)
         chunks = [tbl.slice(0, 20), tbl.slice(20)]
         out = list(
-            run_mask_pipeline_chunked(cfg, iter(chunks), table="t", engine_version=ENGINE_VERSION)
+            run_mask_pipeline_chunked(
+                cfg,
+                iter(chunks),
+                table="t",
+                source_schema=declared_schema(cfg, "t"),
+                engine_version=ENGINE_VERSION,
+            )
         )
         assert sum(c.num_rows for c in out) == 40
         out = list(
             MaskPipelineChunkedAdapter().run(
-                cfg, iter(chunks), table="t", engine_version=ENGINE_VERSION
+                cfg,
+                iter(chunks),
+                table="t",
+                engine_version=ENGINE_VERSION,
+                source_schema=declared_schema(cfg, "t"),
             )
         )
         assert sum(c.num_rows for c in out) == 40
@@ -531,6 +552,7 @@ class TestAdmission:
             full = dict(sources)
             sources = {}
             kw["source_loader"] = lambda name: full[name]
+            kw["source_loader_schemas"] = {n: t.schema for n, t in full.items()}
         res = _run(cfg, sources, **kw)
         execution = res.quality_metrics["execution"]
         assert execution["execution_mode"] in ("sequential", "out_of_core")

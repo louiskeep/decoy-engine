@@ -25,8 +25,8 @@ Methodology:
   Per-group sequential indexing mirrors the pandas cumcount() pattern
   (pandas 2.x, Apache-2.0; https://pandas.pydata.org/docs/reference/
   api/pandas.core.groupby.GroupBy.cumcount.html). Group partitioning
-  follows SDV-style per-group sequencing (SDV, MIT License;
-  https://sdv.dev). Monotone walk uses a seeded numpy RNG for
+  follows SDV-style per-group sequencing (SDV PAR method, Zhang et al.,
+  arXiv:2207.14406, 2022; method only, no SDV code: SDV is BUSL-1.1). Monotone walk uses a seeded numpy RNG for
   non-decreasing integer steps per row, keeping output deterministic
   under the same seed.
 

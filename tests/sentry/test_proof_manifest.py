@@ -63,7 +63,9 @@ def test_surface_counts_match_capability_matrix():
     # SP-10 remediation (2026-06-28): derived wired into generate path -> 7 + 1 = 8.
     # SP-10b (2026-06-28): derived_aggregate wired into generate path -> 8 + 1 = 9.
     # SP-10c (2026-06-29): grouped_series, windowed_date, group_key -> 9 + 3 = 12.
-    assert surface["generate"] == 12
+    # GEN-TYPES E1 (2026-11-10): constant -> 12 + 1 = 13 (distribution was already listed as a
+    # legacy ColumnGenerator key).
+    assert surface["generate"] == 13
     assert surface["providers"] == 34
 
 

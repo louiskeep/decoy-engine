@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextvars
+import gc
 import subprocess
 import sys
 import textwrap
@@ -190,6 +191,175 @@ def test_bound_iterator_closes_the_generator_under_its_policy() -> None:
     assert next(it) == 1
     it.close()  # type: ignore[attr-defined]
     assert closed == ["a"]
+
+
+_HELD: contextvars.ContextVar[str] = contextvars.ContextVar("test_held", default="default")
+
+
+@pytest.mark.parametrize("ending", ["collected", "closed"])
+def test_a_token_held_across_a_yield_resets_when_the_iterator_ends_unconsumed(
+    ending: str,
+) -> None:
+    events: list[tuple[str, str, str]] = []
+
+    def gen() -> Iterator[int]:
+        token = _HELD.set("inner")
+        try:
+            yield 1
+            yield 2
+        finally:
+            events.append(("before-reset", _HELD.get(), current().name))  # type: ignore[attr-defined]
+            _HELD.reset(token)
+            events.append(("after-reset", _HELD.get(), current().name))  # type: ignore[attr-defined]
+
+    it = bind_iterator(_Marker("bound"), gen())  # type: ignore[arg-type]
+    assert next(it) == 1
+    assert _HELD.get() == "default", "the iterator's own value stays in its context"
+    if ending == "closed":
+        it.close()  # type: ignore[attr-defined]
+    else:
+        cycle: list[Any] = [it]
+        cycle.append(cycle)
+        del it, cycle
+        gc.collect()
+    assert events == [("before-reset", "inner", "bound"), ("after-reset", "default", "bound")]
+    assert _HELD.get() == "default"
+
+
+def test_a_bound_iterator_sees_the_context_it_was_bound_in() -> None:
+    def gen() -> Iterator[str]:
+        while True:
+            yield _HELD.get()
+
+    token = _HELD.set("at-bind")
+    try:
+        it = bind_iterator(_Marker("bound"), gen())  # type: ignore[arg-type]
+    finally:
+        _HELD.reset(token)
+    token = _HELD.set("at-step")
+    try:
+        assert next(it) == "at-bind"
+    finally:
+        _HELD.reset(token)
+
+
+def test_a_collected_bound_iterator_closes_without_touching_the_current_context() -> None:
+    # The collector runs `__del__` at any allocation, including the node allocations inside
+    # another `ContextVar.set`. A finalizer that set and reset a variable on the current
+    # context there freed the map that set was still reading (a segfault on CPython 3.10).
+    # Each pass leaves one bound iterator in a cycle and lowers the gen-0 threshold so the
+    # collection lands at a different allocation of the next `set`; the sweep crosses the
+    # node allocation. Runs in a child so a crash fails this test, not the worker.
+    code = textwrap.dedent(
+        """
+        import gc
+
+        from decoy_engine.fileaccess import _entry
+
+        class Marker:
+            def __init__(self, name):
+                self.name = name
+
+        def gen():
+            yield 1
+            yield 2
+
+        outer = Marker("outer")
+        for n in range(600):
+            gc.disable()
+            it = _entry.bind_iterator(Marker("bound"), gen())
+            next(it)
+            cycle = [it]
+            cycle.append(cycle)
+            del it, cycle
+            gc.set_threshold(1 + n % 60)
+            gc.enable()
+            token = _entry._CURRENT.set(outer)
+            assert _entry._CURRENT.get() is outer
+            _entry._CURRENT.reset(token)
+            gc.set_threshold(700)
+        gc.collect()
+        assert _entry._CURRENT.get() is None
+        assert not _entry._ANCHORS, len(_entry._ANCHORS)
+        print("ok")
+        """
+    )
+    out = subprocess.run(  # noqa: S603 - runs this interpreter on a fixed script
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=120
+    )
+    assert out.returncode == 0 and out.stdout.strip() == "ok", (out.returncode, out.stderr)
+
+
+def _two() -> Iterator[int]:
+    yield 1
+    yield 2
+
+
+def _raises() -> Iterator[int]:
+    yield 1
+    raise ValueError("boom")
+
+
+def test_every_way_a_bound_iterator_ends_releases_its_anchor() -> None:
+    from decoy_engine.fileaccess import _entry
+
+    exhausted = bind_iterator(_Marker("p"), _two())
+    assert list(exhausted) == [1, 2]
+    assert id(exhausted) not in _entry._ANCHORS
+
+    closed = bind_iterator(_Marker("p"), _two())
+    next(closed)
+    closed.close()  # type: ignore[attr-defined]
+    assert id(closed) not in _entry._ANCHORS
+
+    raised = bind_iterator(_Marker("p"), _raises())
+    next(raised)
+    with pytest.raises(ValueError):
+        next(raised)
+    held = id(raised)
+    del raised
+    gc.collect()
+    assert held not in _entry._ANCHORS
+
+    dropped = bind_iterator(_Marker("p"), _two())
+    next(dropped)
+    held = id(dropped)
+    del dropped
+    gc.collect()
+    assert held not in _entry._ANCHORS
+
+
+def _bind_self_holding(closed: list[int]) -> None:
+    box: list[Any] = []
+
+    def gen() -> Iterator[Any]:
+        try:
+            yield 1
+            yield box[0]
+        finally:
+            closed.append(1)
+
+    it = bind_iterator(_Marker("p"), gen())  # type: ignore[arg-type]
+    box.append(it)  # the generator's frame now reaches its own wrapper
+    next(it)
+
+
+def test_a_generator_that_holds_its_own_wrapper_is_never_collected() -> None:
+    # Known limit, pinned so a change to it is deliberate: the anchor keeps the generator
+    # reachable, so a cycle through the generator's own frame back to its wrapper never dies
+    # and the generator's `finally` never runs. No engine caller has this shape.
+    from decoy_engine.fileaccess import _entry
+
+    closed: list[int] = []
+    before = set(_entry._ANCHORS)
+    _bind_self_holding(closed)
+    gc.collect()
+    gc.collect()
+    leaked = [key for key in _entry._ANCHORS if key not in before]
+    assert closed == [] and len(leaked) == 1
+    for key in leaked:
+        _entry._ANCHORS.pop(key).close()  # type: ignore[attr-defined]
+    assert closed == [1]
 
 
 def test_entry_point_generator_keeps_its_policy(nothing_installed: None) -> None:

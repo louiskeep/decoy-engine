@@ -30,37 +30,17 @@
 name: native-companion
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "decoy-engine-native/**"
-      - "src/decoy_engine/execution/native/**"
-      # Whole native test tree, not an enumerated file list: a per-file list
-      # silently failed to trigger (and failed to run) new native tests once
-      # before, which is exactly the gap that let an unrun proof through. The
-      # companion-dependent route/parity tests live under tests/parity/native.
-      - "tests/native/**"
-      - "tests/parity/native/**"
-      # Both the worker smoke test and the D9 harness's own real-worker
-      # integration test are companion-present-only cases run by this
-      # workflow (job below, step "Physical shadow corpus + unified-slice hash equivalence"); a change to anything under the harness
-      # directory, or to either test, must trigger this workflow too.
-      - "scripts/bench-unified-slice/**"
-      - "tests/physical/test_bench_unified_slice_harness_smoke.py"
-      - "tests/physical/test_bench_compare_harness.py"
-      - "pyproject.toml"
-      - ".github/workflows/native-companion.yml"
   pull_request:
-    paths:
-      - "decoy-engine-native/**"
-      - "src/decoy_engine/execution/native/**"
-      - "tests/native/**"
-      - "tests/parity/native/**"
-      - "scripts/bench-unified-slice/**"
-      - "tests/physical/test_bench_unified_slice_harness_smoke.py"
-      - "tests/physical/test_bench_compare_harness.py"
-      - "pyproject.toml"
-      - ".github/workflows/native-companion.yml"
+  schedule:
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 jobs:
   # companion-wheel-linux: builds the companion across the self-hosted single-org
@@ -81,6 +61,7 @@ jobs:
   # time (the cross image is a build tool, not the compatibility baseline).
   companion-wheel-linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -130,13 +111,16 @@ jobs:
         run: |
           set -euo pipefail
           wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
+          whl_name="$(basename "$wheel")"
+          PYARROW=$(bash scripts/dev/lock_version.sh pyarrow)
+          test -n "$PYARROW" || { echo "no locked pyarrow"; exit 1; }
           cptag="cp${python_version//./}"
           docker run --rm --platform ${{ matrix.docker-platform }} \
             -v "$PWD/decoy-engine-native:/w" \
             "${{ matrix.smoke-image }}" bash -c "
               set -euo pipefail
               pybin=/opt/python/${cptag}-${cptag}/bin
-              \"\$pybin/pip\" install --quiet \"/w/dist/$(basename "$wheel")\" 'pyarrow>=14'
+              \"\$pybin/pip\" install --quiet \"/w/dist/$whl_name\" \"pyarrow==$PYARROW\"
               \"\$pybin/python\" /w/scripts/parity_smoke.py
             "
         env:
@@ -154,6 +138,7 @@ jobs:
   # Windows-specific binary name. Same shared parity_smoke.py as every other target.
   companion-wheel-windows:
     runs-on: windows-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -184,7 +169,9 @@ jobs:
         run: |
           set -euo pipefail
           wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
-          python -m pip install "$wheel" "pyarrow>=14"
+          PYARROW=$(bash scripts/dev/lock_version.sh pyarrow)
+          test -n "$PYARROW" || { echo "no locked pyarrow"; exit 1; }
+          python -m pip install "$wheel" "pyarrow==$PYARROW"
           python decoy-engine-native/scripts/parity_smoke.py
       - uses: actions/upload-artifact@v7
         with:
@@ -199,6 +186,7 @@ jobs:
   # parity_smoke.py as every other target.
   companion-wheel-macos:
     runs-on: macos-15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -227,7 +215,9 @@ jobs:
         run: |
           set -euo pipefail
           wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
-          python -m pip install "$wheel" "pyarrow>=14"
+          PYARROW=$(bash scripts/dev/lock_version.sh pyarrow)
+          test -n "$PYARROW" || { echo "no locked pyarrow"; exit 1; }
+          python -m pip install "$wheel" "pyarrow==$PYARROW"
           python decoy-engine-native/scripts/parity_smoke.py
       - uses: actions/upload-artifact@v7
         with:
@@ -240,6 +230,7 @@ jobs:
   # same 1.98.0 as rust-toolchain.toml so CI and local builds agree.
   companion-rust-lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - name: Install pinned Rust with rustfmt + clippy
@@ -268,18 +259,18 @@ jobs:
   # already covers.
   core-companion-present:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: ./.github/actions/lock-env
         with:
-          python-version: "3.10"
-          cache: pip
+          extras: "dev"
       - name: Install stable Rust (companion build only; the core needs none)
         uses: dtolnay/rust-toolchain@stable
-      - name: Install engine + dev extras
-        run: pip install -e ".[dev]"
       - name: Build and install the companion (maturin, same-platform)
-        run: pip install ./decoy-engine-native
+        # Build backends are not in uv.lock: --build-constraint pins maturin inside uv's isolated
+        # build env (.github/build-constraints.txt), the version the wheel jobs pin.
+        run: uv pip install --python "$RUNNER_TEMP/venv/bin/python" --build-constraint .github/build-constraints.txt ./decoy-engine-native
       # Every test below skips when the companion is absent, so a companion that
       # builds but fails to load would otherwise leave this job green with nothing run.
       - name: Assert the companion loads
@@ -349,6 +340,7 @@ jobs:
   # plain std). A crash, a sanitizer report, or an unexpected process exit fails the job.
   companion-fuzz-sanitizer:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - name: Install nightly Rust with rust-src (build-std needs it)
@@ -405,13 +397,11 @@ jobs:
   # regression-gate for no new signal).
   core-companion-absent:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: ./.github/actions/lock-env
         with:
-          python-version: "3.10"
-          cache: pip
-      - name: Install engine + dev extras (companion NOT installed)
-        run: pip install -e ".[dev]"
+          extras: "dev"
       - name: Native ABI test (companion-absent case)
         run: pytest tests/native/test_native_ext_abi.py -v --tb=short

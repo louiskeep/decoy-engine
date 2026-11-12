@@ -153,6 +153,7 @@ def _supervise(code: str, tmp_path: Path, **kw: object) -> sup.WorkerOutcome:
     )
 
 
+@pytest.mark.serial
 def test_supervisor_reports_a_killed_worker(tmp_path: Path) -> None:
     out = _supervise("import os,signal;os.kill(os.getpid(),signal.SIGKILL)", tmp_path)
     failure = sup.classify_failure(out)
@@ -191,6 +192,7 @@ def test_supervisor_nonzero_exit_after_a_good_result_still_fails(tmp_path: Path)
     assert failure is not None and failure["kind"] == "nonzero_exit_after_result"
 
 
+@pytest.mark.serial
 def test_supervisor_times_out_a_hung_worker(tmp_path: Path) -> None:
     out = _supervise("import time;time.sleep(60)", tmp_path, timeout_s=0.6)
     failure = sup.classify_failure(out)
@@ -226,6 +228,7 @@ def small_chain(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return out
 
 
+@pytest.mark.serial
 def test_worker_emits_a_complete_record_at_small_n(small_chain: Path, tmp_path: Path) -> None:
     rc, rec = _worker(
         small_chain, tmp_path, "--budget-mb", "512", "--reorder", "100", "--rss-ceiling-mb", "4096"
@@ -266,6 +269,7 @@ def test_worker_reorder_off_and_forced_route_are_recorded(
     assert rec["reorder"]["threshold_rows"] == max(_COUNTS.values()) + 1
 
 
+@pytest.mark.serial
 def test_worker_forced_oom_is_not_a_silent_pass(small_chain: Path, tmp_path: Path) -> None:
     # A tight RLIMIT_DATA cap forces a resource failure on brk-based allocators; where
     # large allocations go through mmap (seen on some CI runners) the cap does not bite,

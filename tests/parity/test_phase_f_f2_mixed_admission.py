@@ -15,7 +15,7 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.config import PipelineConfig
-from decoy_engine.errors import ConfigError
+from decoy_engine.errors import ConfigError, PipelineValidationError
 from decoy_engine.execution import _mixed_static
 from decoy_engine.generation import synthesize
 from decoy_engine.providers_v2 import get_default_registry
@@ -29,7 +29,6 @@ from tests.parity._f2_mixed_support import (
     mixed_config,
     oracle,
     run,
-    warning_signature,
 )
 
 KEYS = [str(i % 5) for i in range(40)]
@@ -537,7 +536,7 @@ def test_an_unparseable_sibling_when_declines_rather_than_guessing() -> None:
 
 
 @pytest.mark.parametrize("policy", ["warn", "error"])
-def test_an_extra_unconfigured_caller_source_declines_to_the_oracle(
+def test_an_extra_unconfigured_caller_source_is_refused_at_the_gate(
     tmp_path: Path, static_reasons: list[str], policy: str
 ) -> None:
     child = child_table(pa.array(KEYS, pa.string()))
@@ -545,18 +544,10 @@ def test_an_extra_unconfigured_caller_source_declines_to_the_oracle(
     config["global_settings"]["unconfigured_column_policy"] = policy
     sources = {CHILD: child, "extra": pa.table({"x": pa.array([1, 2, 3])})}
 
-    def outcome(mode: str) -> Any:
-        try:
-            return run(config, sources, mode=mode)
-        except Exception as exc:
-            return exc
-
-    got, want = outcome("auto"), outcome("full_frame")
-    assert static_reasons and "unconfigured_extra_source_present" in static_reasons[-1]
-    if isinstance(want, Exception):
-        assert type(got) is type(want) and str(got) == str(want)
-    else:
-        assert got.quality_metrics["execution"]["execution_mode"] == "full_frame"
-        assert "mixed_route" not in got.quality_metrics
-        assert_outputs_identical(got.outputs, want.outputs)
-        assert warning_signature(got) == warning_signature(want)
+    # The declaration gate refuses the table-less source before static admission is reached.
+    for mode in ("auto", "full_frame"):
+        with pytest.raises(PipelineValidationError) as raised:
+            run(config, sources, mode=mode)
+        assert raised.value.code == "source_file.undeclared_table"
+        assert "source extra " in str(raised.value)
+    assert static_reasons == []

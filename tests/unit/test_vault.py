@@ -32,6 +32,7 @@ from decoy_engine.vault import (
     load_vault,
     vault_writer_for_config,
 )
+from tests._declared_schema import declared_schema
 from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 
 _ENGINE_VERSION = "vault-test"
@@ -58,6 +59,7 @@ def _config(tmp_path, columns: list[dict], seed: int = 42) -> dict:
                 "accounts": {
                     "type": "file",
                     "format": "csv",
+                    "has_header": True,
                     "path": str(tmp_path / "accounts.csv"),
                 },
             },
@@ -202,6 +204,7 @@ class TestChunkedParity:
                 cfg,
                 chunks,
                 table="accounts",
+                source_schema=declared_schema(cfg, "accounts"),
                 engine_version=_ENGINE_VERSION,
                 vault_writer=chunked_writer,
             )

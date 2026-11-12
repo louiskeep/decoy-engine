@@ -1,0 +1,10 @@
+$ ruff check src tests testflight scripts
+All checks passed!
+$ ruff format --check src tests testflight scripts
+1797 files already formatted
+$ mypy src/decoy_engine testflight  (mypy 2.3.0, CI extras installed)
+Found 16 errors in 7 files (checked 671 source files)
+$ git diff --check origin/main..HEAD
+clean
+$ git diff e7f0c93..HEAD --stat | tail -1
+ 31 files changed, 1783 insertions(+), 430 deletions(-)

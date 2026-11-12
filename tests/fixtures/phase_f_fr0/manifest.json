@@ -1,137 +1,163 @@
 {
-  "engine_minor": "0.17",
+  "engine_minor": "0.22",
   "fixtures": {
     "categorical": {
-      "envelope_digest": "06261977bf6cfc8571b02e606193795bd9990d6ea87be4ed174cab4faf975381",
+      "envelope_digest": "ce75bd87072200a60073987383f82843d53849eda49f3ffaeb255e1b54b41a98",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
-        "cat": "4b55d8edeba3b78e55c4df7eed549e6b7e7e00a5ec9ca69cd35c843eea6aa317"
+        "cat": "ea82adeaa2af1ebc7aecb6cab8636442b4e15bd46d43cd10ee3642e59eb8f91a"
       }
     },
     "conditional": {
-      "envelope_digest": "ea7d300bd165e0b7dd276d416e4aab873ab6b9e7ed01d9f430c5284fae0352be",
+      "envelope_digest": "2df3895c851bdc4759d9c4ac45360deaf0b276eade123191f134ed9cf15f9819",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
-        "cond": "a256949efcae44979028c9421912a4fb511bbb02cb106d2c54eb57e314011b64"
+        "cond": "cbceefabccf5a1ad482c8dcf8a61c33f9dcc757f777dccdbbd7adf0e3ec939f0"
       }
     },
     "derived": {
-      "envelope_digest": "c2663183ca3e1bf7aa3507cc126c383d7ba94a610d7e4200e856a5075fd0fe9d",
+      "envelope_digest": "48d2006124888ef42d34bd194992ec2409bbc1467187acf6689b6c2822ab5451",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
-        "derived": "d0e134747083e7e67a66f7d07d706569e5e569d7fe86443d18c404e0b552383f"
+        "derived": "5783979b2c135d3a9671de24d11226ad3564a97bb31d42870a1efed8dc2948d7"
       }
     },
     "derived_aggregate": {
-      "envelope_digest": "c3b7949712fbb76763453f69ffec23e97210243fa0d9153640621db1fadc42f4",
+      "envelope_digest": "558cabb159fcb2cc60f0b118a0af6a6d2b7297dfc08a5bd6dcb31a74a63b48d9",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
-        "agg": "61acfeac32544546e11f199764fe152cde035be6c26bbad285c2055ca0f331aa"
+        "agg": "7a01939e2db67304f0e22f38d97538ad597e87ecbea46574652653b28aea0c1a"
       }
     },
     "formula": {
-      "envelope_digest": "cdb7cccbe7f640bf9bdceb5bf239737af94e60c532479b6f3051c469b900907f",
+      "envelope_digest": "231fadb94408ee01cf480243aa7e99d4abdccffd55184e5b2d27629baff6a7fd",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
-        "formula": "3942827b9e13d99d3257e17d0443d2905425d90bd3a35b36c0779e04d5f8b1ba"
+        "formula": "1e934ccf90c1bc2211fdfe9f6171fdde380146d65a8f0d10aefe274e312dfdcb"
       }
     },
     "grouped_windowed": {
-      "envelope_digest": "6f5dd4c0db0b9e601ec8bccbbe9df70c7236194e1c45ca06516038834cb46425",
+      "envelope_digest": "31f9aeffc2cf075446429b0ffdc4261892b98aa1848491e4b3325e2b3e8e6ad3",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
-        "gw": "38d60aecec60ba4eec009d36b13b1e7a04ac423fcda1dbe829aa310d04d5117a"
+        "gw": "42e36d728df63493caf355c0e9603f09aed5f35961d251fd1a94bd671651ee34"
       }
     },
     "keyed_derive": {
-      "envelope_digest": "84fdb685abbc7524eb36f8b6f86869e74f145a6f68b879ffe07275c19ef121ed",
+      "envelope_digest": "286e9c6978d54f5a7656433b22575f652c2f9c93728018493f0bfc11834510a2",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
-        "keyed": "5fc5490f068d0d40cd4322f23d7ecc04b13ab84c4e2455483de74d60f6b5f9e1"
+        "keyed": "804855ce5453a6123e93f42d1c394abd4824705604fa4204c8b88b0e029a4bf9"
       }
     },
     "live_faker": {
-      "envelope_digest": "2a173066f0a1701f67d9bc5dc35f7e4976682cb358bc003d3d729c2ee5a8a204",
-      "excluded_columns": [],
-      "status": "unchanged",
-      "tables": {
-        "live": "571f2ecd49f43a7cfbb6d37f979bc25008fdef09ac2e9abdc73fdb57c969ed79"
-      }
-    },
-    "live_faker_default_locale": {
-      "envelope_digest": "9a86258a99ca926e0efc8a10415f7b556973f2d84292730d9f948f54c529946d",
-      "excluded_columns": [],
-      "status": "unchanged",
-      "tables": {
-        "live_loc": "ea3e1d889e9c68f3bcbfe32c5a122ae2961ceca384eede566f53e3669ad03073"
-      }
-    },
-    "nulls": {
-      "envelope_digest": "9baa8e83533419376ddb5e94c530af5f57fcb9927466cf5f5885e9b0980594a1",
+      "envelope_digest": "87d89562a99b15850e57f1745ed93e13833f1ac67538277eaa68d64d8ab3ce92",
       "excluded_columns": [],
       "status": "refrozen",
       "tables": {
-        "empty": "2445c1c0db89b65b0be8c6c6f88cf5befd76dd3251e7a8f9701fffe9db6872fd",
-        "nulls": "232902afc3faf49c772ad7bd6cddaba7846f58599e9e1c5b8c7f533d229cd271"
+        "live": "138be283ade86ae610b3be41dbd782f9ece18cc89c286257b3daf1f2790b9f91"
+      }
+    },
+    "live_faker_default_locale": {
+      "envelope_digest": "7934ae0e57a761af4fe21d391c1414f9c25c178918f2b9a4fbbe194b375c15c7",
+      "excluded_columns": [],
+      "status": "unchanged",
+      "tables": {
+        "live_loc": "e8f47e28ec52dad4cd488b3192634a844b344516e078d724fb887b163293dc6c"
+      }
+    },
+    "nulls": {
+      "envelope_digest": "ee02f49ff13a9a6f14dc45985e76391693ee913ba1b5d842720955b48776cde6",
+      "excluded_columns": [],
+      "status": "refrozen",
+      "tables": {
+        "empty": "ce940f92e39e5478efccdb62a91b30ed86cc61e167838bc2ceda3539859a3626",
+        "nulls": "b50fc72af868f3b4939885213bdabc243221ba63dda6df3b3be46e9e46edebc8"
       }
     },
     "pooled_faker": {
-      "envelope_digest": "8f49b47fcd87f9ec8812ea1c3160d898a0a8270b638a5f563e113128651324fa",
+      "envelope_digest": "68122b3ffe5a68da7f1aadfb861feeef798b13921e8b56ef6db07f0d018c6d1a",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
-        "pooled": "7515cc948560fda6092680426cac4ff73a5cba3047cf79a07c446262654aa0cd"
+        "pooled": "fb96cde1164db481af66db9100f66236973ccfce9d9f75c2a73401c3054d7666"
       }
     },
     "reference": {
-      "envelope_digest": "3858e89e8266d2c0b968d6a41014e31fc746f2e2c6f33f120a40ccc418d0e6a5",
+      "envelope_digest": "b2ad90f5025d1ef77354fe4425a8ba6b77231e029ded0a851a04885903c88f0b",
       "excluded_columns": [],
-      "status": "unchanged",
+      "status": "refrozen",
       "tables": {
-        "ref_child": "81619e14f5bc9f70a517ca6e21d4ff21080b701dd15494f9123f83f8e98861ef",
-        "ref_parent": "5bd260410af58db6e28aa25502fe8865da080149765f8f97fa1e6bb839bb2371"
+        "ref_child": "da6831948c5b95121f50ada166d22ccb7188661de0c811fa435e6c0a0ea75d2f",
+        "ref_parent": "e61822720e498b0467325d7ecc3bbe360ddc05f0fb7fd0c81c63f3591c1a0f12"
       }
     },
     "referenced_formula": {
-      "envelope_digest": "26dbf8ae4ab45724f69db3604a13aac0087953bfcac7e35f9653058a62b1f880",
+      "envelope_digest": "2b5972e1383ab5da0acc0dc1b6fade841041541e5a61615ca1f09b251f2966b7",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
-        "rf": "d2c5f13e8900138664e150a18e15363f077729b402afa4ec87e824f50da8e57a"
+        "rf": "02138b8efd76de7c3e85835886ddcb1bb6a044e2fe1d6f89146c0a2a0d86b533"
       }
     },
     "sequence": {
-      "envelope_digest": "6e63ba73fde435ab1c2f3ef8b7bbd9f4fb30e58c2d3323459e7c0a546e6d1f42",
+      "envelope_digest": "f705ef9af97d98b71be5a1c99aa17bff29d61f7ed91aa9ec0650a2b44abd56d0",
+      "excluded_columns": [],
+      "status": "refrozen",
+      "tables": {
+        "seq": "60c7d93fd8cea3692dc4b842110a50054bd993a02ee6c55eddd5caabacf69e82"
+      }
+    },
+    "source_free": {
+      "envelope_digest": "ab833b09014d07bb659602b9e57d2c237aa092421860bfe5bf7812eddee62df8",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
-        "seq": "3df0c6047f7783128b54df894c8f737792708e97a3fb318223c710a621d3698b"
+        "source_free": "62e95273151b5286452a137c75186489eb772ac07c2548f0e173ef75951e88b1"
       }
     },
     "statistical": {
-      "envelope_digest": "33337f0fb94164e36f4f15b374dca111c1b5d74759c8f5e70bbb2714ce77f2b0",
+      "envelope_digest": "d75c2cf4d49d8c12acb932eb11f24606b9c0c1946113a925cce498ac8ee11578",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
-        "stat": "3543ce7ade1f386db08ba44fa1d3e01a790d27636d65649ed554edcded44937d"
+        "stat": "f37b5fca801949f050665dbb0def7a9e7ea1dbcf54b6ba2982dff10b6042c8b0"
       }
     }
   },
-  "re_frozen_on": "2026-10-18",
+  "re_frozen_on": "2026-11-08",
   "refrozen": {
+    "live_faker": {
+      "previous_tables": {
+        "live": "8aba04ab3f97f3d163a41609c45e4cad07b93e724a9fddf4b5d199240a2e83b7"
+      },
+      "reason": "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row; 2026-11-10: the `fallback` column (an unknown faker type, now refused at compile) was removed from the fixture"
+    },
     "nulls": {
       "previous_tables": {
-        "empty": "6fb55c2d1210f8fb8e4ac79c3ff6fca06158df62f07e768834f439eaec685322",
-        "nulls": "85588c66a32d807e060337af1abc3c12a9369902c91a6528943b81c02ceb0855"
+        "empty": "2445c1c0db89b65b0be8c6c6f88cf5befd76dd3251e7a8f9701fffe9db6872fd",
+        "nulls": "0049feb16d5d0bcbd64050769c50fe3fcaaad68a17414b7bd53ab054a06a311b"
       },
-      "reason": "schema only: the all-null categorical column and the zero-row table now carry their declared string type instead of Arrow's inferred null type; every value digest is unchanged"
+      "reason": "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row (also the 2026-10-18 null-type change, see _f0_expected.py)"
+    },
+    "reference": {
+      "previous_tables": {
+        "ref_child": "adf4fc4788230dd109a649b6278057e5438d272a84f7720b6ae616d9526d0790"
+      },
+      "reason": "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row"
+    },
+    "sequence": {
+      "previous_tables": {
+        "seq": "3df0c6047f7783128b54df894c8f737792708e97a3fb318223c710a621d3698b"
+      },
+      "reason": "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row"
     }
   }
 }

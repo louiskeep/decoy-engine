@@ -46,6 +46,7 @@ _LOG = logging.getLogger(__name__)
 
 # Supported bucket names and their corresponding date-truncation strategies.
 _VALID_BUCKETS = frozenset({"week", "month", "quarter"})
+VALID_BUCKETS = _VALID_BUCKETS  # public alias for the strategy catalog
 
 # strftime directives by what they write back. bucket_perturb perturbs the
 # calendar date, so only DATE directives let a date survive the round trip; the

@@ -1,0 +1,71 @@
+# Seeded bypasses for tests/sentry/test_outbound_clients.py. Never imported or run.
+# Each function holds one case; the test names the expected finding per function.
+import google.cloud.storage as gcs
+from google.cloud import storage as _s
+from google.cloud.storage import Client as C
+
+
+def client_module_alias():
+    return _s.Client()
+
+
+def client_name_alias():
+    return C(project="p")
+
+
+def client_context_manager():
+    with gcs.Client() as c:
+        return c
+
+
+def download_plain(blob):
+    return blob.download_as_bytes()
+
+
+def copy_blob_call(bucket, src, n):
+    return bucket.copy_blob(src, bucket, new_name=n)
+
+
+class Holder:
+    def reload_attribute(self):
+        self._blob.reload()
+
+
+def helper_return(name):
+    return _get_blob(name).download_as_bytes()
+
+
+def open_plain(blob):
+    return blob.open("rb")
+
+
+def reload_missing_retry(blob):
+    blob.reload(timeout=5)
+
+
+def reload_kwargs_unpack(blob, kw):
+    blob.reload(**kw)
+
+
+def reload_both(blob, T, R):
+    blob.reload(timeout=T, retry=R)
+
+
+def client_from_json_file(path):
+    return gcs.Client.from_service_account_json(path)
+
+
+def client_from_info(info):
+    return _s.Client.from_service_account_info(info)
+
+
+def client_anonymous():
+    return C.create_anonymous_client()
+
+
+def reload_timeout_none(blob, R):
+    blob.reload(timeout=None, retry=R)
+
+
+def reload_retry_none(blob, T):
+    blob.reload(timeout=T, retry=None)

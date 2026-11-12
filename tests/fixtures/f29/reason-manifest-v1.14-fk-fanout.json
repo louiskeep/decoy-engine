@@ -1,0 +1,132 @@
+{
+  "entries": [
+    {
+      "code": "dp_generate_fitted_fanout_unsupported",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.14.0",
+      "summary": "DP generate fitted fan-out unsupported.",
+      "symbol": "DP_GENERATE_FITTED_FANOUT_UNSUPPORTED"
+    },
+    {
+      "code": "reference_fanout_conflict",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.14.0",
+      "summary": "Reference fan-out conflict.",
+      "symbol": "REFERENCE_FANOUT_CONFLICT"
+    },
+    {
+      "code": "reference_fanout_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.14.0",
+      "summary": "Reference fan-out invalid.",
+      "symbol": "REFERENCE_FANOUT_INVALID"
+    },
+    {
+      "code": "reference_fanout_missing",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "PlanCompileError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.14.0",
+      "summary": "Reference fan-out missing.",
+      "symbol": "REFERENCE_FANOUT_MISSING"
+    },
+    {
+      "code": "reference_parent_pool_empty",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "StatisticalSpecError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.14.0",
+      "summary": "Reference parent pool empty.",
+      "symbol": "REFERENCE_PARENT_POOL_EMPTY"
+    },
+    {
+      "code": "fanout_column_unknown",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "quality",
+      "owner": "DistributionSnapshotError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "verify",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.14.0",
+      "summary": "Fan-out column unknown.",
+      "symbol": "FANOUT_COLUMN_UNKNOWN"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.14.0"
+}

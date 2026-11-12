@@ -140,9 +140,9 @@ def reproducibility_exclusions(
 
 
 def engine_minor_version() -> str:
-    import decoy_engine
+    from decoy_engine.release import __version__ as engine_version
 
-    major, minor, *_ = str(decoy_engine.__version__).split(".")
+    major, minor, *_ = str(engine_version).split(".")
     return f"{major}.{minor}"
 
 

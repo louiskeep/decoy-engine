@@ -23,6 +23,7 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from decoy_engine.config import PipelineConfig
+from tests._declared_schema import declare_rest
 
 ENGINE_VERSION = "a8-engine-transforms-test"
 
@@ -39,7 +40,7 @@ _NULLABLE = {
 
 
 def validated(cfg: dict[str, Any]) -> dict[str, Any]:
-    return PipelineConfig.model_validate(cfg).model_dump()
+    return PipelineConfig.model_validate(declare_rest(cfg)).model_dump()
 
 
 def write_parquet(tmp_path: Path, table: pa.Table, name: str) -> str:
@@ -184,6 +185,7 @@ def reference_run(
         cfg["sources"][name] = dict(
             cfg["sources"][name], path=write_parquet(tmp_path, table, f"{name}_reference")
         )
+    declare_rest(cfg)
     return run_pipeline(cfg, tables, engine_version=ENGINE_VERSION, **kwargs)
 
 

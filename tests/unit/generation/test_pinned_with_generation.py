@@ -46,6 +46,9 @@ FIXED_IDENTITY = (
 # Captured from the pre-refactor `compile_pinned_plan` (origin/main c0e2fb51) on `_main_config()`
 # under FIXED_IDENTITY, before `compile_pinned_plan_with_generation` existed.
 PRE_REFACTOR_FINGERPRINT = "a704276678f6d621957472739410f2a341b8e0cd33ea4dc74272ba4748a5e369"
+# The plan now also records which columns are numeric. Taking that field away must give back the
+# pre-refactor bytes exactly; with it, the fingerprint is this value.
+NUMERIC_FINGERPRINT = "1f9ffa1db60e1174f017eb7df309a562524b62dbfa469b88aebf844eddc7f237"
 PRE_REFACTOR_TO_DICT = json.loads(
     '{"reference_date": "2026-10-22T09:30:00Z", "runtime_identity": {"engine": "0.0.0-test", '
     '"numpy": "1.0.0", "pandas": "2.0.0", "pyarrow": "3.0.0", "python": "3.12.0", "tz": "UTC"}, '
@@ -344,13 +347,20 @@ def test_wrapper_delegates_to_the_new_entry(fixed_identity: None) -> None:
     assert fingerprint(via_wrapper) == fingerprint(via_new)
 
 
+def _without_numeric(plan: PinnedPlan) -> PinnedPlan:
+    return dataclasses.replace(plan, numeric_types=())
+
+
 def test_pinned_output_matches_pre_refactor_values(fixed_identity: None) -> None:
     for plan in (
         compile_pinned_plan(_main_config(), REF),
         compile_pinned_plan_with_generation(_main_config(), REF).pinned,
     ):
-        assert fingerprint(plan) == PRE_REFACTOR_FINGERPRINT
-        assert plan.to_dict() == PRE_REFACTOR_TO_DICT
+        assert plan.numeric_types
+        assert fingerprint(plan) == NUMERIC_FINGERPRINT
+        bare = _without_numeric(plan)
+        assert fingerprint(bare) == PRE_REFACTOR_FINGERPRINT
+        assert bare.to_dict() == PRE_REFACTOR_TO_DICT
 
 
 def test_reference_date_omitted_positional_and_keyword(fixed_identity: None) -> None:
@@ -359,13 +369,13 @@ def test_reference_date_omitted_positional_and_keyword(fixed_identity: None) -> 
     positional = compile_pinned_plan(_main_config(), REF)
     keyword = compile_pinned_plan(_main_config(), reference_date=REF)
     for plan in (omitted, positional, keyword):
-        assert fingerprint(plan) == PRE_REFACTOR_FINGERPRINT
+        assert fingerprint(plan) == NUMERIC_FINGERPRINT
     for entry in (
         compile_pinned_plan_with_generation(from_config).pinned,
         compile_pinned_plan_with_generation(_main_config(), REF).pinned,
         compile_pinned_plan_with_generation(_main_config(), reference_date=REF).pinned,
     ):
-        assert fingerprint(entry) == PRE_REFACTOR_FINGERPRINT
+        assert fingerprint(entry) == NUMERIC_FINGERPRINT
 
 
 def test_explicit_reference_date_beats_the_config_field() -> None:
@@ -382,7 +392,7 @@ def test_pinned_plan_is_seed_free(fixed_identity: None) -> None:
     a = compile_pinned_plan_with_generation(_main_config(seed=1), REF).pinned
     b = compile_pinned_plan_with_generation(_main_config(seed=999999), REF).pinned
     assert a == b and a.to_dict() == b.to_dict()
-    assert fingerprint(a) == fingerprint(b) == PRE_REFACTOR_FINGERPRINT
+    assert fingerprint(a) == fingerprint(b) == NUMERIC_FINGERPRINT
 
 
 # 6. refusal parity, sequence and guard lifecycle -------------------------------------------

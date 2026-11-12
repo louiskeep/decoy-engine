@@ -1,0 +1,67 @@
+# Test-flight Job F: reversible tokenization through a token vault
+# Topology: mixed (one standalone mask table, no FK; the schema has no "standalone" value)
+#
+# WHY THIS JOB EXISTS: the `tokenize` strategy (MG-5) fails closed without a
+# platform-injected vault, so it needs a vault-backed run. The runner injects an
+# in-memory vault only for jobs that declare a tokenize column, because a vault
+# forces full-frame execution and would otherwise drop the production route of
+# jobs A-E.
+#
+# PLANTED SHAPES (fixture.py): repeated plaintexts (vault reuse), one null, and a
+# sentinel plaintext that must be absent from the output.
+#
+# Strategies exercised (strategy_coverage below): tokenize.
+
+job_name: f_tokenize_vault
+topology: mixed
+seed: 47
+master_key_label: testflight
+
+tables:
+  - name: cases
+    kind: mask
+    row_count: 80
+    source_builder: "fixture.build_cases"
+
+config:
+  version: 2
+  global_settings:
+    seed: 47
+
+  sources:
+    cases: {type: file, format: parquet, path: "__PLACEHOLDER_cases__"}
+
+  targets:
+    cases: {type: file, format: parquet, path: "__PLACEHOLDER_out_cases__"}
+
+  tables:
+    - name: cases
+      columns:
+        - name: case_ref
+          strategy: tokenize
+          namespace: case_ref_ns
+
+invariants:
+  determinism: true
+  grade_floor_enabled: false
+
+  distribution:
+    # Tokens are opaque and do not preserve the source value shape.
+    - table: cases
+      column: case_ref
+      distribution_class: synthetic
+      strategy: tokenize
+      tolerance: 0.10
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        case_ref is the only column in the table; there is no joint to preserve.
+
+  sentinels:
+    - table: cases
+      column: case_ref
+      value: "CASE-SENTINEL-TOKENIZE-0001"
+
+  strategy_coverage:
+    - tokenize

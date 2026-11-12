@@ -48,6 +48,7 @@ from decoy_engine.execution.physical import (
 from decoy_engine.execution.physical._plan import PhysicalTable, RejectedAlternative
 from decoy_engine.execution.physical._reasons import FORCED_MODE_BRANCH_IDENTITIES
 from decoy_engine.profile._readers import LazySource
+from tests._declared_schema import declare_rest
 
 
 class _DriverMarkerError(Exception):
@@ -118,15 +119,21 @@ def _single_table_config(
 ) -> dict[str, Any]:
     path = _write(tmp_path, source, "t")
     return PipelineConfig.model_validate(
-        {
-            "version": 2,
-            "global_settings": {"seed": 1},
-            "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
-            "targets": {
-                "t": {"type": "file", "format": "parquet", "path": str(tmp_path / "t.out.parquet")}
-            },
-            "tables": [{"name": "t", "columns": [{"name": "note", "strategy": strategy}]}],
-        }
+        declare_rest(
+            {
+                "version": 2,
+                "global_settings": {"seed": 1},
+                "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
+                "targets": {
+                    "t": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(tmp_path / "t.out.parquet"),
+                    }
+                },
+                "tables": [{"name": "t", "columns": [{"name": "note", "strategy": strategy}]}],
+            }
+        )
     ).model_dump()
 
 
@@ -134,44 +141,46 @@ def _fk_config(tmp_path: Path, parent: pa.Table, child: pa.Table) -> dict[str, A
     parent_path = _write(tmp_path, parent, "parent")
     child_path = _write(tmp_path, child, "child")
     return PipelineConfig.model_validate(
-        {
-            "version": 2,
-            "global_settings": {"seed": 1},
-            "sources": {
-                "parent": {"type": "file", "format": "parquet", "path": str(parent_path)},
-                "child": {"type": "file", "format": "parquet", "path": str(child_path)},
-            },
-            "targets": {
-                "parent": {
-                    "type": "file",
-                    "format": "parquet",
-                    "path": str(tmp_path / "parent.out.parquet"),
+        declare_rest(
+            {
+                "version": 2,
+                "global_settings": {"seed": 1},
+                "sources": {
+                    "parent": {"type": "file", "format": "parquet", "path": str(parent_path)},
+                    "child": {"type": "file", "format": "parquet", "path": str(child_path)},
                 },
-                "child": {
-                    "type": "file",
-                    "format": "parquet",
-                    "path": str(tmp_path / "child.out.parquet"),
+                "targets": {
+                    "parent": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(tmp_path / "parent.out.parquet"),
+                    },
+                    "child": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(tmp_path / "child.out.parquet"),
+                    },
                 },
-            },
-            "tables": [
-                {
-                    "name": "parent",
-                    "columns": [{"name": "id", "strategy": "hash", "namespace": "n"}],
-                },
-                {
-                    "name": "child",
-                    "columns": [{"name": "pid", "strategy": "hash", "namespace": "n"}],
-                },
-            ],
-            "relationships": [
-                {
-                    "parent": {"table": "parent", "columns": ["id"]},
-                    "children": [{"table": "child", "columns": ["pid"]}],
-                    "orphan_policy": "preserve",
-                    "namespace": "n",
-                }
-            ],
-        }
+                "tables": [
+                    {
+                        "name": "parent",
+                        "columns": [{"name": "id", "strategy": "hash", "namespace": "n"}],
+                    },
+                    {
+                        "name": "child",
+                        "columns": [{"name": "pid", "strategy": "hash", "namespace": "n"}],
+                    },
+                ],
+                "relationships": [
+                    {
+                        "parent": {"table": "parent", "columns": ["id"]},
+                        "children": [{"table": "child", "columns": ["pid"]}],
+                        "orphan_policy": "preserve",
+                        "namespace": "n",
+                    }
+                ],
+            }
+        )
     ).model_dump()
 
 
@@ -493,31 +502,37 @@ def test_generate_and_mask_full_frame(tmp_path: Path, monkeypatch: pytest.Monkey
     mask_source = pa.table({"note": pa.array(["s1", "s2"], type=pa.string())})
     mask_path = _write(tmp_path, mask_source, "masked")
     config = PipelineConfig.model_validate(
-        {
-            "version": 2,
-            "global_settings": {"seed": 1},
-            "sources": {"masked": {"type": "file", "format": "parquet", "path": str(mask_path)}},
-            "targets": {
-                "masked": {
-                    "type": "file",
-                    "format": "parquet",
-                    "path": str(tmp_path / "masked.out.parquet"),
+        declare_rest(
+            {
+                "version": 2,
+                "global_settings": {"seed": 1},
+                "sources": {
+                    "masked": {"type": "file", "format": "parquet", "path": str(mask_path)}
                 },
-                "people": {
-                    "type": "file",
-                    "format": "csv",
-                    "path": str(tmp_path / "people.out.csv"),
+                "targets": {
+                    "masked": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(tmp_path / "masked.out.parquet"),
+                    },
+                    "people": {
+                        "type": "file",
+                        "format": "csv",
+                        "path": str(tmp_path / "people.out.csv"),
+                    },
                 },
-            },
-            "tables": [
-                {"name": "masked", "columns": [{"name": "note", "strategy": "redact"}]},
-                {
-                    "name": "people",
-                    "row_count": 3,
-                    "generate_columns": [{"name": "id", "type": "sequence", "start": 1, "step": 1}],
-                },
-            ],
-        }
+                "tables": [
+                    {"name": "masked", "columns": [{"name": "note", "strategy": "redact"}]},
+                    {
+                        "name": "people",
+                        "row_count": 3,
+                        "generate_columns": [
+                            {"name": "id", "type": "sequence", "start": 1, "step": 1}
+                        ],
+                    },
+                ],
+            }
+        )
     ).model_dump()
     inputs = capture_physical_plan_inputs(
         config, {"masked": mask_source}, engine_version="d4-corpus"
@@ -555,36 +570,52 @@ def test_reject_before_read_large_fk_no_bounded_route(
     a_path = _write(tmp_path, a, "a")
     b_path = _write(tmp_path, b, "b")
     config = PipelineConfig.model_validate(
-        {
-            "version": 2,
-            "global_settings": {"seed": 1},
-            "sources": {
-                "a": {"type": "file", "format": "parquet", "path": str(a_path)},
-                "b": {"type": "file", "format": "parquet", "path": str(b_path)},
-            },
-            "targets": {
-                "a": {"type": "file", "format": "parquet", "path": str(tmp_path / "a.out.parquet")},
-                "b": {"type": "file", "format": "parquet", "path": str(tmp_path / "b.out.parquet")},
-            },
-            "tables": [
-                {"name": "a", "columns": [{"name": "id", "strategy": "hash", "namespace": "n"}]},
-                {"name": "b", "columns": [{"name": "id", "strategy": "hash", "namespace": "n"}]},
-            ],
-            "relationships": [
-                {
-                    "parent": {"table": "a", "columns": ["id"]},
-                    "children": [{"table": "b", "columns": ["aid"]}],
-                    "orphan_policy": "preserve",
-                    "namespace": "n",
+        declare_rest(
+            {
+                "version": 2,
+                "global_settings": {"seed": 1},
+                "sources": {
+                    "a": {"type": "file", "format": "parquet", "path": str(a_path)},
+                    "b": {"type": "file", "format": "parquet", "path": str(b_path)},
                 },
-                {
-                    "parent": {"table": "b", "columns": ["id"]},
-                    "children": [{"table": "a", "columns": ["bid"]}],
-                    "orphan_policy": "preserve",
-                    "namespace": "n",
+                "targets": {
+                    "a": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(tmp_path / "a.out.parquet"),
+                    },
+                    "b": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(tmp_path / "b.out.parquet"),
+                    },
                 },
-            ],
-        }
+                "tables": [
+                    {
+                        "name": "a",
+                        "columns": [{"name": "id", "strategy": "hash", "namespace": "n"}],
+                    },
+                    {
+                        "name": "b",
+                        "columns": [{"name": "id", "strategy": "hash", "namespace": "n"}],
+                    },
+                ],
+                "relationships": [
+                    {
+                        "parent": {"table": "a", "columns": ["id"]},
+                        "children": [{"table": "b", "columns": ["aid"]}],
+                        "orphan_policy": "preserve",
+                        "namespace": "n",
+                    },
+                    {
+                        "parent": {"table": "b", "columns": ["id"]},
+                        "children": [{"table": "a", "columns": ["bid"]}],
+                        "orphan_policy": "preserve",
+                        "namespace": "n",
+                    },
+                ],
+            }
+        )
     ).model_dump()
     sources = {"a": a, "b": b}
     kwargs: dict[str, Any] = dict(
@@ -670,25 +701,29 @@ def test_forced_sequential_ineligible_no_relationships(
 def test_forced_out_of_core_no_mask_table(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A pure-generate job forced to out_of_core: no mask table exists."""
     config = PipelineConfig.model_validate(
-        {
-            "version": 2,
-            "global_settings": {"seed": 1},
-            "sources": {},
-            "targets": {
-                "people": {
-                    "type": "file",
-                    "format": "csv",
-                    "path": str(tmp_path / "people.out.csv"),
+        declare_rest(
+            {
+                "version": 2,
+                "global_settings": {"seed": 1},
+                "sources": {},
+                "targets": {
+                    "people": {
+                        "type": "file",
+                        "format": "csv",
+                        "path": str(tmp_path / "people.out.csv"),
+                    },
                 },
-            },
-            "tables": [
-                {
-                    "name": "people",
-                    "row_count": 3,
-                    "generate_columns": [{"name": "id", "type": "sequence", "start": 1, "step": 1}],
-                },
-            ],
-        }
+                "tables": [
+                    {
+                        "name": "people",
+                        "row_count": 3,
+                        "generate_columns": [
+                            {"name": "id", "type": "sequence", "start": 1, "step": 1}
+                        ],
+                    },
+                ],
+            }
+        )
     ).model_dump()
     _assert_forced_mode_equivalent(
         monkeypatch,
@@ -730,47 +765,49 @@ def test_forced_out_of_core_incompatible_recipe(
     parent_path = _write(tmp_path, parent, "parent")
     child_path = _write(tmp_path, child, "child")
     config = PipelineConfig.model_validate(
-        {
-            "version": 2,
-            "global_settings": {"seed": 1},
-            "sources": {
-                "parent": {"type": "file", "format": "parquet", "path": str(parent_path)},
-                "child": {"type": "file", "format": "parquet", "path": str(child_path)},
-            },
-            "targets": {
-                "parent": {
-                    "type": "file",
-                    "format": "parquet",
-                    "path": str(tmp_path / "parent.out.parquet"),
+        declare_rest(
+            {
+                "version": 2,
+                "global_settings": {"seed": 1},
+                "sources": {
+                    "parent": {"type": "file", "format": "parquet", "path": str(parent_path)},
+                    "child": {"type": "file", "format": "parquet", "path": str(child_path)},
                 },
-                "child": {
-                    "type": "file",
-                    "format": "parquet",
-                    "path": str(tmp_path / "child.out.parquet"),
+                "targets": {
+                    "parent": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(tmp_path / "parent.out.parquet"),
+                    },
+                    "child": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(tmp_path / "child.out.parquet"),
+                    },
                 },
-            },
-            "tables": [
-                {
-                    "name": "parent",
-                    "columns": [
-                        {"name": "id", "strategy": "hash", "namespace": "n"},
-                        {"name": "extra", "strategy": "synthetic"},
-                    ],
-                },
-                {
-                    "name": "child",
-                    "columns": [{"name": "pid", "strategy": "hash", "namespace": "n"}],
-                },
-            ],
-            "relationships": [
-                {
-                    "parent": {"table": "parent", "columns": ["id"]},
-                    "children": [{"table": "child", "columns": ["pid"]}],
-                    "orphan_policy": "preserve",
-                    "namespace": "n",
-                }
-            ],
-        }
+                "tables": [
+                    {
+                        "name": "parent",
+                        "columns": [
+                            {"name": "id", "strategy": "hash", "namespace": "n"},
+                            {"name": "extra", "strategy": "synthetic"},
+                        ],
+                    },
+                    {
+                        "name": "child",
+                        "columns": [{"name": "pid", "strategy": "hash", "namespace": "n"}],
+                    },
+                ],
+                "relationships": [
+                    {
+                        "parent": {"table": "parent", "columns": ["id"]},
+                        "children": [{"table": "child", "columns": ["pid"]}],
+                        "orphan_policy": "preserve",
+                        "namespace": "n",
+                    }
+                ],
+            }
+        )
     ).model_dump()
     _assert_forced_mode_equivalent(
         monkeypatch,
@@ -799,36 +836,52 @@ def test_forced_sequential_cyclic_fk_graph(tmp_path: Path, monkeypatch: pytest.M
     a_path = _write(tmp_path, a, "a")
     b_path = _write(tmp_path, b, "b")
     config = PipelineConfig.model_validate(
-        {
-            "version": 2,
-            "global_settings": {"seed": 1},
-            "sources": {
-                "a": {"type": "file", "format": "parquet", "path": str(a_path)},
-                "b": {"type": "file", "format": "parquet", "path": str(b_path)},
-            },
-            "targets": {
-                "a": {"type": "file", "format": "parquet", "path": str(tmp_path / "a.out.parquet")},
-                "b": {"type": "file", "format": "parquet", "path": str(tmp_path / "b.out.parquet")},
-            },
-            "tables": [
-                {"name": "a", "columns": [{"name": "id", "strategy": "hash", "namespace": "n"}]},
-                {"name": "b", "columns": [{"name": "id", "strategy": "hash", "namespace": "n"}]},
-            ],
-            "relationships": [
-                {
-                    "parent": {"table": "a", "columns": ["id"]},
-                    "children": [{"table": "b", "columns": ["aid"]}],
-                    "orphan_policy": "preserve",
-                    "namespace": "n",
+        declare_rest(
+            {
+                "version": 2,
+                "global_settings": {"seed": 1},
+                "sources": {
+                    "a": {"type": "file", "format": "parquet", "path": str(a_path)},
+                    "b": {"type": "file", "format": "parquet", "path": str(b_path)},
                 },
-                {
-                    "parent": {"table": "b", "columns": ["id"]},
-                    "children": [{"table": "a", "columns": ["bid"]}],
-                    "orphan_policy": "preserve",
-                    "namespace": "n",
+                "targets": {
+                    "a": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(tmp_path / "a.out.parquet"),
+                    },
+                    "b": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(tmp_path / "b.out.parquet"),
+                    },
                 },
-            ],
-        }
+                "tables": [
+                    {
+                        "name": "a",
+                        "columns": [{"name": "id", "strategy": "hash", "namespace": "n"}],
+                    },
+                    {
+                        "name": "b",
+                        "columns": [{"name": "id", "strategy": "hash", "namespace": "n"}],
+                    },
+                ],
+                "relationships": [
+                    {
+                        "parent": {"table": "a", "columns": ["id"]},
+                        "children": [{"table": "b", "columns": ["aid"]}],
+                        "orphan_policy": "preserve",
+                        "namespace": "n",
+                    },
+                    {
+                        "parent": {"table": "b", "columns": ["id"]},
+                        "children": [{"table": "a", "columns": ["bid"]}],
+                        "orphan_policy": "preserve",
+                        "namespace": "n",
+                    },
+                ],
+            }
+        )
     ).model_dump()
     _assert_forced_mode_equivalent(
         monkeypatch,

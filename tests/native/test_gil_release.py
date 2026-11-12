@@ -126,6 +126,7 @@ def _elapsed(fn: Callable[[], object], workers: int, concurrent: bool) -> float:
     not _gil_enabled(),
     reason="free-threaded build: the pure-Python GIL-held control is invalid, needs separate proof",
 )
+@pytest.mark.serial
 def test_native_compute_releases_gil_for_wallclock_parallelism() -> None:
     """Discriminating GIL-release proof by wall-clock parallel speedup, self-calibrated.
 

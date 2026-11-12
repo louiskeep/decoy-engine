@@ -18,11 +18,13 @@ import pytest
 
 from decoy_engine.execution import run_pipeline
 from decoy_engine.execution.native import _operator_step
+from tests._declared_schema import declare_rest
 from tests.native._c8_i_support import (
     CHUNKINGS,
     PREDICATES,
     chunk_by_sizes,
     run_native,
+    run_native_below_gate,
     run_oracle_leg,
     source_table,
     when_config,
@@ -51,6 +53,7 @@ def _whole_frame(config: dict[str, Any], source: pa.Table, tmp_path: Path) -> pa
     config = copy.deepcopy(config)
     config["sources"][TABLE] = {"type": "file", "format": "parquet", "path": path}
     config["targets"][TABLE] = {"type": "file", "format": "parquet", "path": path + ".out"}
+    declare_rest(config)
     result = run_pipeline(
         config,
         {TABLE: source},
@@ -78,10 +81,10 @@ def test_native_chunked_equals_the_oracle_leg_and_the_whole_frame_run(
     whole = _whole_frame(config, source, tmp_path)
     for name, sizes in CHUNKINGS.items():
         chunks = chunk_by_sizes(source, sizes)
-        native, evidence = run_native(config, chunks)
+        native, evidence = run_native_below_gate(config, chunks)
         assert evidence.native_admitted is True, (name, evidence.reroute_reason)
         assert {r.column: r.route for r in evidence.node_routes}["s"] == "native_kernel"
-        oracle, oracle_evidence = run_oracle_leg(config, chunks, monkeypatch)
+        oracle, oracle_evidence = run_oracle_leg(config, chunks, monkeypatch, below_gate=True)
         assert oracle_evidence.native_admitted is False
         assert len(native) == len(oracle) == len(chunks), name
         for got, want in zip(native, oracle, strict=True):
@@ -110,9 +113,9 @@ def test_degenerate_chunks_keep_the_string_type_and_values(
     chunks = [base.slice(0, 0), all_null, base.slice(6, 1), all_null_pred, base.slice(0, 0)]
     for predicate in ("p == 'x'", "p != 'x'", "s == 'red'", "p == 'zzz'"):
         config = when_config(kind, predicate)
-        native, evidence = run_native(config, chunks)
+        native, evidence = run_native_below_gate(config, chunks)
         assert evidence.native_admitted is True, evidence.reroute_reason
-        oracle, _ = run_oracle_leg(config, chunks, monkeypatch)
+        oracle, _ = run_oracle_leg(config, chunks, monkeypatch, below_gate=True)
         assert [t.schema.field("s").type for t in native] == [pa.string()] * len(chunks)
         assert [t.schema.field("s").type for t in oracle] == [pa.string()] * len(chunks)
         assert [t.to_pydict() for t in native] == [t.to_pydict() for t in oracle], predicate
@@ -122,7 +125,7 @@ def test_degenerate_chunks_keep_the_string_type_and_values(
 def test_unselected_rows_keep_their_source_value_and_selected_rows_change(kind: str) -> None:
     source = source_table()
     config = when_config(kind, "p == 'x'")
-    out, _ = run_native(config, chunk_by_sizes(source, [4, 4, 3]))
+    out, _ = run_native_below_gate(config, chunk_by_sizes(source, [4, 4, 3]))
     got = _values(out, "s")
     want = source.column("s").to_pylist()
     selected = [v == "x" for v in source.column("p").to_pylist()]
@@ -174,7 +177,7 @@ def test_a_zero_match_chunk_makes_no_kernel_call_and_counts_nothing(
     config = when_config("redact", "p == 'x'")
     calls = _spy(monkeypatch, "native_redact")
     sink: list[Any] = []
-    out, evidence = run_native(config, chunk_by_sizes(source, [3, 3, 2, 3]), sink=sink)
+    out, evidence = run_native_below_gate(config, chunk_by_sizes(source, [3, 3, 2, 3]), sink=sink)
     assert evidence.native_admitted is True
     # [6:8) holds p = [None, 'y']: no selected row. Each call sees only its chunk's selected rows.
     assert calls == [1, 2, 2]
@@ -187,7 +190,7 @@ def test_an_all_zero_match_run_counts_no_kernel_call_at_all(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = _spy(monkeypatch, "native_redact")
-    out, evidence = run_native(
+    out, evidence = run_native_below_gate(
         when_config("redact", "p == 'zzz'"), chunk_by_sizes(source_table(), [4, 4, 3])
     )
     assert calls == []
@@ -197,7 +200,7 @@ def test_an_all_zero_match_run_counts_no_kernel_call_at_all(
 
 def test_a_zero_row_chunk_is_a_zero_match_chunk(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _spy(monkeypatch, "native_truncate")
-    _out, evidence = run_native(
+    _out, evidence = run_native_below_gate(
         when_config("truncate", "p == 'x'"), chunk_by_sizes(source_table(), [0, 5, 0, 6])
     )
     assert calls == [2, 3]

@@ -27,6 +27,8 @@ from decoy_engine import run_mask_pipeline_chunked
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import run_pipeline
 from decoy_engine.plan import PlanCompileError
+from tests._declared_schema import declared_schema
+from tests.native._b8_support import run_mask_pipeline_chunked_below_gate
 
 _ENGINE_VERSION = "ws4-test"
 
@@ -35,7 +37,14 @@ def _config(tmp_path, columns: list[dict], table: str = "accounts") -> dict:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
+        "sources": {
+            table: {
+                "type": "file",
+                "format": "csv",
+                "has_header": True,
+                "path": str(tmp_path / "in.csv"),
+            }
+        },
         "tables": [{"name": table, "columns": columns}],
         "targets": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
     }
@@ -126,6 +135,7 @@ class TestChunkParity:
                 cfg,
                 _chunks(df, chunk_size),
                 table="accounts",
+                source_schema=declared_schema(cfg, "accounts"),
                 engine_version=_ENGINE_VERSION,
             )
         )
@@ -143,7 +153,11 @@ class TestChunkParity:
         out = pa.concat_tables(
             list(
                 run_mask_pipeline_chunked(
-                    cfg, _chunks(df, 4), table="accounts", engine_version=_ENGINE_VERSION
+                    cfg,
+                    _chunks(df, 4),
+                    table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         )
@@ -159,14 +173,22 @@ class TestChunkParity:
         a = pa.concat_tables(
             list(
                 run_mask_pipeline_chunked(
-                    cfg, _chunks(df, 7), table="accounts", engine_version=_ENGINE_VERSION
+                    cfg,
+                    _chunks(df, 7),
+                    table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         )
         b = pa.concat_tables(
             list(
                 run_mask_pipeline_chunked(
-                    cfg, _chunks(df, 7), table="accounts", engine_version=_ENGINE_VERSION
+                    cfg,
+                    _chunks(df, 7),
+                    table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         )
@@ -215,7 +237,11 @@ class TestChunkParityGroupBy:
 
         out_chunks = list(
             run_mask_pipeline_chunked(
-                cfg, _chunks(df, chunk_size), table="accounts", engine_version=_ENGINE_VERSION
+                cfg,
+                _chunks(df, chunk_size),
+                table="accounts",
+                source_schema=declared_schema(cfg, "accounts"),
+                engine_version=_ENGINE_VERSION,
             )
         )
         chunked = pa.concat_tables(out_chunks)
@@ -237,7 +263,11 @@ class TestChunkParityGroupBy:
             pa.concat_tables(
                 list(
                     run_mask_pipeline_chunked(
-                        cfg, _chunks(df, 2), table="accounts", engine_version=_ENGINE_VERSION
+                        cfg,
+                        _chunks(df, 2),
+                        table="accounts",
+                        source_schema=declared_schema(cfg, "accounts"),
+                        engine_version=_ENGINE_VERSION,
                     )
                 )
             )
@@ -257,7 +287,13 @@ class TestChunkedCompatibility:
         cfg = _config(tmp_path, [{"name": "ssn", "strategy": "shuffle"}])
         with pytest.raises(PlanCompileError) as exc:
             list(
-                run_mask_pipeline_chunked(cfg, [], table="accounts", engine_version=_ENGINE_VERSION)
+                run_mask_pipeline_chunked(
+                    cfg,
+                    [],
+                    table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
+                    engine_version=_ENGINE_VERSION,
+                )
             )
         assert exc.value.code == "strategy_not_chunk_safe"
         assert "shuffle" in str(exc.value)
@@ -279,7 +315,13 @@ class TestChunkedCompatibility:
         )
         with pytest.raises(PlanCompileError) as exc:
             list(
-                run_mask_pipeline_chunked(cfg, [], table="accounts", engine_version=_ENGINE_VERSION)
+                run_mask_pipeline_chunked(
+                    cfg,
+                    [],
+                    table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
+                    engine_version=_ENGINE_VERSION,
+                )
             )
         assert exc.value.code == "chunked_strategy_conditions_unmet"
         assert "pool_size" in str(exc.value)
@@ -299,7 +341,13 @@ class TestChunkedCompatibility:
         )
         with pytest.raises(PlanCompileError) as exc:
             list(
-                run_mask_pipeline_chunked(cfg, [], table="accounts", engine_version=_ENGINE_VERSION)
+                run_mask_pipeline_chunked(
+                    cfg,
+                    [],
+                    table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
+                    engine_version=_ENGINE_VERSION,
+                )
             )
         assert exc.value.code == "chunked_strategy_conditions_unmet"
         assert "deterministic" in str(exc.value)
@@ -321,7 +369,13 @@ class TestChunkedCompatibility:
         )
         with pytest.raises(PlanCompileError) as exc:
             list(
-                run_mask_pipeline_chunked(cfg, [], table="accounts", engine_version=_ENGINE_VERSION)
+                run_mask_pipeline_chunked(
+                    cfg,
+                    [],
+                    table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
+                    engine_version=_ENGINE_VERSION,
+                )
             )
         assert exc.value.code == "chunked_strategy_conditions_unmet"
         assert "cardinality_mode" in str(exc.value)
@@ -341,7 +395,13 @@ class TestChunkedCompatibility:
         )
         with pytest.raises(PlanCompileError) as exc:
             list(
-                run_mask_pipeline_chunked(cfg, [], table="accounts", engine_version=_ENGINE_VERSION)
+                run_mask_pipeline_chunked(
+                    cfg,
+                    [],
+                    table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
+                    engine_version=_ENGINE_VERSION,
+                )
             )
         assert exc.value.code == "chunked_strategy_conditions_unmet"
         assert "from_profile" in str(exc.value)
@@ -361,7 +421,13 @@ class TestChunkedCompatibility:
         ]
         with pytest.raises(PlanCompileError) as exc:
             list(
-                run_mask_pipeline_chunked(cfg, [], table="accounts", engine_version=_ENGINE_VERSION)
+                run_mask_pipeline_chunked(
+                    cfg,
+                    [],
+                    table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
+                    engine_version=_ENGINE_VERSION,
+                )
             )
         assert exc.value.code == "chunked_fk_orphan_policy_not_remap"
 
@@ -377,20 +443,42 @@ class TestChunkedCompatibility:
             ],
         }
         with pytest.raises(PlanCompileError) as exc:
-            list(run_mask_pipeline_chunked(cfg, [], table="synth", engine_version=_ENGINE_VERSION))
+            list(
+                run_mask_pipeline_chunked(
+                    cfg,
+                    [],
+                    table="synth",
+                    source_schema=declared_schema(cfg, "synth"),
+                    engine_version=_ENGINE_VERSION,
+                )
+            )
         assert exc.value.code == "chunked_generate_unsupported"
 
     def test_unknown_table_rejected(self, tmp_path) -> None:
         cfg = _config(tmp_path, [{"name": "ssn", "strategy": "hash", "namespace": "n"}])
         with pytest.raises(PlanCompileError) as exc:
-            list(run_mask_pipeline_chunked(cfg, [], table="nope", engine_version=_ENGINE_VERSION))
+            list(
+                run_mask_pipeline_chunked_below_gate(
+                    cfg,
+                    [],
+                    table="nope",
+                    engine_version=_ENGINE_VERSION,
+                    source_schema=declared_schema(cfg, "nope"),
+                )
+            )
         assert exc.value.code == "chunked_table_unknown"
 
     def test_empty_iterator_yields_nothing(self, tmp_path) -> None:
         cfg = _config(tmp_path, [{"name": "ssn", "strategy": "hash", "namespace": "n"}])
         assert (
             list(
-                run_mask_pipeline_chunked(cfg, [], table="accounts", engine_version=_ENGINE_VERSION)
+                run_mask_pipeline_chunked(
+                    cfg,
+                    [],
+                    table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
+                    engine_version=_ENGINE_VERSION,
+                )
             )
             == []
         )
@@ -425,7 +513,11 @@ class TestConditionalStrategies:
         chunked = pa.concat_tables(
             list(
                 run_mask_pipeline_chunked(
-                    cfg, _chunks(df, 9), table="accounts", engine_version=_ENGINE_VERSION
+                    cfg,
+                    _chunks(df, 9),
+                    table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         )
@@ -511,7 +603,11 @@ class TestChunkedRowErrorsFailClosed:
         with pytest.raises(RowErrorsFailedError) as exc_info:
             list(
                 run_mask_pipeline_chunked(
-                    cfg, [chunk], table="accounts", engine_version=_ENGINE_VERSION
+                    cfg,
+                    [chunk],
+                    table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         assert exc_info.value.records[0].trigger == "format_error"
@@ -524,7 +620,11 @@ class TestChunkedRowErrorsFailClosed:
         chunk = pa.table({"age": pa.array(["23", "47"], type=pa.string())})
         out = list(
             run_mask_pipeline_chunked(
-                cfg, [chunk], table="accounts", engine_version=_ENGINE_VERSION
+                cfg,
+                [chunk],
+                table="accounts",
+                source_schema=declared_schema(cfg, "accounts"),
+                engine_version=_ENGINE_VERSION,
             )
         )
         assert pa.concat_tables(out).column("age").to_pylist() == ["20", "40"]

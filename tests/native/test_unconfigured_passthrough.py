@@ -25,17 +25,20 @@ from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route
 from decoy_engine.execution.native._dispatch import (
     NativeChunkSchemaDriftError,
     plan_native_route,
-    run_native_or_oracle_chunked,
 )
 from decoy_engine.execution.native._real_type_admission import real_type_rejection
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.vault import VaultWriter
+from tests._declared_schema import declared_schema
 from tests.native._b8_support import (
     FORCE,
     assert_same_as_oracle,
     identical,
     policy_settings,
+    run_mask_chunked_below_gate,
+    run_mask_pipeline_chunked_below_gate,
+    run_native_or_oracle_chunked_below_gate,
     run_one,
     run_pair,
     strings,
@@ -131,6 +134,7 @@ def test_error_policy_keeps_the_oracle_route_and_raises_as_today() -> None:
                 config,
                 list(chunks),
                 table=TABLE,
+                source_schema=declared_schema(config, TABLE),
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
             )
@@ -169,7 +173,7 @@ def test_unset_policy_follows_the_release_phase(
         assert run.ev[0].native_admitted is True and run.ev[0].reroute_reason is None
         return
     ev: list[Any] = []
-    gen = run_mask_chunked(
+    gen = run_mask_chunked_below_gate(
         config,
         chunks,
         table=TABLE,
@@ -197,7 +201,7 @@ def test_configured_column_missing_from_the_source_keeps_todays_reason(
     ev: list[Any] = []
     try:
         list(
-            run_mask_chunked(
+            run_mask_chunked_below_gate(
                 config,
                 chunks,
                 table=TABLE,
@@ -263,7 +267,7 @@ def test_legacy_entry_keeps_the_veto() -> None:
     config = make_config([redact("r")])
     ev: list[Any] = []
     list(
-        run_native_or_oracle_chunked(
+        run_native_or_oracle_chunked_below_gate(
             config,
             [_chunk(4, 0).select(["r", "u"])],
             table=TABLE,
@@ -404,7 +408,7 @@ def test_native_route_computes_the_warning_with_no_sink_given() -> None:
     try:
         mp.setattr(_chunked_entry, "enforce_output_projection", spy)
         out = list(
-            run_mask_chunked(
+            run_mask_chunked_below_gate(
                 config,
                 chunks,
                 table=TABLE,
@@ -477,10 +481,11 @@ def test_cross_check_downgrades_when_the_two_unconfigured_sets_disagree(
     assert run.ev[0].native_admitted is False
     assert run.ev[0].reroute_reason == "unconfigured_set_mismatch:['t', 'u']:['u']"
     public = list(
-        run_mask_pipeline_chunked(
+        run_mask_pipeline_chunked_below_gate(
             config,
             list(chunks),
             table=TABLE,
+            source_schema=declared_schema(config, TABLE),
             engine_version=ENGINE_VERSION,
             key_provider=key_provider(),
         )
@@ -499,7 +504,7 @@ def _outcome(config: dict[str, Any], chunks: list[pa.Table]) -> tuple[str | None
     yielded = 0
     code: str | None = None
     try:
-        for _ in run_mask_chunked(
+        for _ in run_mask_chunked_below_gate(
             config,
             list(chunks),
             table=TABLE,
@@ -596,7 +601,7 @@ def test_later_all_null_chunk_of_a_type_with_no_cast_from_null(name: str) -> Non
         sink: list[Any] = []
         with pytest.raises(pa.ArrowNotImplementedError) as info:
             list(
-                run_mask_chunked(
+                run_mask_chunked_below_gate(
                     config,
                     src,
                     table=TABLE,
@@ -662,7 +667,7 @@ def test_native_route_refuses_through_the_projection_call_if_admitted_under_erro
     chunks = [_chunk(4, 0).select(["r", "u"]), _chunk(3, 1).select(["r", "u"])]
     sink: list[Any] = []
     ev: list[Any] = []
-    gen = run_mask_chunked(
+    gen = run_mask_chunked_below_gate(
         config,
         chunks,
         table=TABLE,

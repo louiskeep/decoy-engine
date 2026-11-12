@@ -154,6 +154,35 @@ def build_key_resolver(manifest: FlightManifest) -> Any:
     return make_key_resolver(_MASTER_KEY, manifest.master_key_label)
 
 
+class InMemoryTokenVault:
+    """In-memory TokenVaultWriter for jobs that use the tokenize strategy.
+
+    tokenize fails closed without a vault. A fresh instance per run keeps the
+    two determinism runs independent: the token is derived from key, namespace
+    and plaintext, not from vault state, so they must still agree.
+    """
+
+    def __init__(self) -> None:
+        self._m: dict[tuple[str, str], str] = {}
+
+    def lookup_existing(self, namespace: str, plaintext: str) -> str | None:
+        return self._m.get((namespace, plaintext))
+
+    def put(self, namespace: str, plaintext: str, token: str) -> str:
+        return self._m.setdefault((namespace, plaintext), token)
+
+
+def _declares_tokenize(node: Any) -> bool:
+    """True when any column in the (nested) config declares strategy: tokenize."""
+    if isinstance(node, dict):
+        return node.get("strategy") == "tokenize" or any(
+            _declares_tokenize(v) for v in node.values()
+        )
+    if isinstance(node, list):
+        return any(_declares_tokenize(v) for v in node)
+    return False
+
+
 def run_pipeline_twice(
     config: dict[str, Any],
     sources: dict[str, pa.Table],
@@ -187,8 +216,19 @@ def run_pipeline_twice(
         "fidelity_report": True,
         "now_iso": FIXED_TS,
     }
-    result_a = run_pipeline(config, sources, **run_kwargs)
-    result_b = run_pipeline(config, sources, **run_kwargs)
+    # A vault forces full-frame execution (auto_chunk off, see run_pipeline), so inject
+    # one only for jobs that actually tokenize; every other job keeps its production
+    # (auto-chunked / FK / mixed) route.
+    needs_vault = _declares_tokenize(config)
+
+    def _run() -> Any:
+        kwargs: dict[str, Any] = dict(run_kwargs)
+        if needs_vault:
+            kwargs["token_vault_writer"] = InMemoryTokenVault()
+        return run_pipeline(config, sources, **kwargs)
+
+    result_a = _run()
+    result_b = _run()
     return result_a, result_b
 
 

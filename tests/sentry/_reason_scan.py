@@ -17,13 +17,16 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-SRC = ROOT / "src" / "decoy_engine"
-PACKAGE = "decoy_engine"
+from _reason_sinks import CODE_ARG_NAMES, discover_families, discover_function_sinks
+
+from tests.sentry.defects import _defect_scan as _defect
+
+PACKAGE = _defect.PACKAGE
+ROOT = _defect.ROOT
+SRC = _defect.SRC
 # The registry's own catalog files are where literal code definitions legitimately live.
 REGISTRY_PREFIX = "reasons/"
 
-CODE_ARG_NAMES = frozenset({"code", "reason_code", "route_reason"})
 # Module- and class-level constants that hold a reason code by naming convention.
 CONST_NAME = re.compile(r"(^|_)(CODE|CODES|REASON)(_|$)|^code$|^reason_code$", re.IGNORECASE)
 # A wire code is a lowercase snake/dotted/namespaced identifier (the registry's wire grammar,
@@ -66,71 +69,23 @@ class Site:
     arg: str = field(default="", compare=False)
 
 
-def source_files(src: Path = SRC) -> Iterator[Path]:
-    yield from sorted(p for p in src.rglob("*.py"))
+source_files = _defect.source_files
+module_name = _defect.module_name
+_is_str_const = _defect.is_str_const
+_chain = _defect.attr_chain
 
 
-def module_name(path: Path, src: Path = SRC) -> str:
-    rel = path.relative_to(src.parent).with_suffix("")
-    parts = list(rel.parts)
-    if parts[-1] == "__init__":
-        parts.pop()
-    return ".".join(parts)
-
-
-def _is_str_const(node: ast.AST | None) -> bool:
-    return isinstance(node, ast.Constant) and isinstance(node.value, str)
-
-
-def _chain(node: ast.AST) -> list[str] | None:
-    parts: list[str] = []
-    while isinstance(node, ast.Attribute):
-        parts.append(node.attr)
-        node = node.value
-    if isinstance(node, ast.Name):
-        parts.append(node.id)
-        return parts[::-1]
-    return None
-
-
-class _Index:
-    """Project-wide constant and import tables, built once per scan."""
+class _Index(_defect.ModuleIndex):
+    """The shared import and constant tables plus the reason-registry views over them."""
 
     def __init__(self, src: Path = SRC) -> None:
-        self.src = src
-        self.trees: dict[Path, ast.Module] = {}
-        self.consts: dict[tuple[str, str], str] = {}  # (module, name) -> literal
-        self.const_exprs: dict[tuple[str, str], ast.expr] = {}
-        self.imports: dict[
-            tuple[str, str], tuple[str, str]
-        ] = {}  # (module, local) -> (module, name)
         self.class_consts: dict[tuple[str, str, str], ast.expr] = {}
-        self.const_defs: dict[tuple[str, str], tuple[Path, ast.AST]] = {}
         self.reasons_aliases: dict[str, set[str]] = {}  # module -> names bound to the reasons pkg
-        for path in source_files(src):
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            self.trees[path] = tree
-            self._index(path, tree)
+        super().__init__(src)
 
-    def _index(self, path: Path, tree: ast.Module) -> None:
+    def index_module(self, path: Path, tree: ast.Module) -> None:
+        super().index_module(path, tree)
         mod = module_name(path, self.src)
-        is_pkg = path.name == "__init__.py"
-        aliases: set[str] = set()
-        for node in tree.body:
-            if isinstance(node, ast.Assign) and len(node.targets) == 1:
-                tgt = node.targets[0]
-                if isinstance(tgt, ast.Name):
-                    self.const_exprs[(mod, tgt.id)] = node.value
-                    if _is_str_const(node.value):
-                        self.consts[(mod, tgt.id)] = node.value.value  # type: ignore[attr-defined]
-                        self.const_defs[(mod, tgt.id)] = (path, node)
-            elif (
-                isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value
-            ):
-                self.const_exprs[(mod, node.target.id)] = node.value
-                if _is_str_const(node.value):
-                    self.consts[(mod, node.target.id)] = node.value.value  # type: ignore[attr-defined]
-                    self.const_defs[(mod, node.target.id)] = (path, node)
         for node in tree.body:
             if isinstance(node, ast.ClassDef):
                 for item in node.body:
@@ -146,12 +101,12 @@ class _Index:
                         and item.value is not None
                     ):
                         self.class_consts[(mod, node.name, item.target.id)] = item.value
+        aliases: set[str] = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
-                base = self._resolve_from(mod, is_pkg, node)
+                base = _defect.resolve_from(mod, path.name == "__init__.py", node)
                 for alias in node.names:
                     local = alias.asname or alias.name
-                    self.imports[(mod, local)] = (base, alias.name)
                     if base == f"{PACKAGE}.reasons" or base.startswith(f"{PACKAGE}.reasons."):
                         aliases.add(local)
                     if base == PACKAGE and alias.name == "reasons":
@@ -162,17 +117,18 @@ class _Index:
                         aliases.add(alias.asname or alias.name.split(".")[0])
         self.reasons_aliases[mod] = aliases
 
-    @staticmethod
-    def _resolve_from(mod: str, is_pkg: bool, node: ast.ImportFrom) -> str:
-        if node.level == 0:
-            return node.module or ""
-        parts = mod.split(".")
-        if not is_pkg:
-            parts = parts[:-1]
-        if node.level > 1:
-            parts = parts[: len(parts) - (node.level - 1)]
-        base = ".".join(parts)
-        return f"{base}.{node.module}" if node.module else base
+    def resolve_function(self, mod: str, name: str) -> tuple[str, str]:
+        """The ``(path, name)`` of the function that ``name`` refers to inside ``mod``.
+
+        An import is followed to the module that defines the name, so a call resolves to the
+        helper defined in or imported into the calling module, never to a same-named function
+        elsewhere.
+        """
+        seen: set[tuple[str, str]] = set()
+        while (mod, name) in self.imports and (mod, name) not in seen:
+            seen.add((mod, name))
+            mod, name = self.imports[(mod, name)]
+        return self.module_paths.get(mod, ""), name
 
     def resolve_def(
         self, mod: str, name: str, seen: frozenset[tuple[str, str]] = frozenset()
@@ -186,19 +142,6 @@ class _Index:
         if key in self.imports:
             src_mod, src_name = self.imports[key]
             return self.resolve_def(src_mod, src_name, seen | {key})
-        return None
-
-    def resolve_literal(
-        self, mod: str, name: str, seen: frozenset[tuple[str, str]] = frozenset()
-    ) -> str | None:
-        key = (mod, name)
-        if key in seen:
-            return None
-        if key in self.consts:
-            return self.consts[key]
-        if key in self.imports:
-            src_mod, src_name = self.imports[key]
-            return self.resolve_literal(src_mod, src_name, seen | {key})
         return None
 
     def class_const(self, mod: str, cls: str, attr: str) -> tuple[str, str]:
@@ -374,61 +317,6 @@ def _expr(node: ast.AST) -> str:
     return text if len(text) <= 100 else text[:97] + "..."
 
 
-def _discover_families(index: _Index) -> dict[str, tuple[int | None, bool]]:
-    """Classes that accept a code: name -> (positional index of the code param, keyword-only).
-
-    A class is code-bearing when its ``__init__`` (or dataclass body) has a ``code`` or
-    ``reason_code`` parameter, or it declares a ``code`` class attribute; subclasses inherit.
-    """
-    own: dict[str, tuple[int | None, bool]] = {}
-    bases: dict[str, list[str]] = {}
-    for tree in index.trees.values():
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ClassDef):
-                continue
-            bases.setdefault(node.name, []).extend(
-                b.id
-                if isinstance(b, ast.Name)
-                else (b.attr if isinstance(b, ast.Attribute) else "")
-                for b in node.bases
-            )
-            pos: int | None = None
-            found = False
-            for item in node.body:
-                if isinstance(item, ast.FunctionDef) and item.name == "__init__":
-                    args = item.args
-                    plain = [a.arg for a in args.posonlyargs + args.args]
-                    kwonly = [a.arg for a in args.kwonlyargs]
-                    for nm in CODE_ARG_NAMES:
-                        if nm in plain:
-                            pos, found = plain.index(nm) - 1, True
-                        elif nm in kwonly:
-                            pos, found = None, True
-                elif isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
-                    if item.target.id in CODE_ARG_NAMES:
-                        found = True
-                elif isinstance(item, ast.Assign):
-                    if any(
-                        isinstance(t, ast.Name) and t.id in CODE_ARG_NAMES for t in item.targets
-                    ):
-                        found = True
-            if found:
-                own[node.name] = (pos, pos is None)
-    # Inheritance closure by simple class name.
-    changed = True
-    while changed:
-        changed = False
-        for name, parents in bases.items():
-            if name in own:
-                continue
-            for parent in parents:
-                if parent in own:
-                    own[name] = own[parent]
-                    changed = True
-                    break
-    return own
-
-
 def _target_names(target: ast.AST) -> Iterator[str]:
     if isinstance(target, ast.Name):
         yield target.id
@@ -484,9 +372,18 @@ def _reason_literals(node: ast.AST) -> Iterator[ast.expr]:
             yield from _reason_literals(value)
 
 
-def scan(src: Path = SRC) -> list[Site]:
+def scan(src: Path = SRC, helpers: frozenset[tuple[str, str]] = frozenset()) -> list[Site]:
+    """``helpers`` are exact ``(path, function)`` identities, not bare names."""
     index = _Index(src)
-    families = _discover_families(index)
+    trees = list(index.trees.values())
+    families = discover_families(trees)
+    # Only the forwarding helpers the caller names are sinks: a bare `code` parameter on any
+    # other function (`get`, `lookup`) is not a reason sink.
+    func_sinks = {
+        ident: pos
+        for ident, pos in discover_function_sinks(index.trees, src).items()
+        if ident in helpers
+    }
     bearing = _reason_bearing(index)
     sites: list[Site] = []
     used: set[tuple[str, str]] = set()
@@ -495,7 +392,7 @@ def scan(src: Path = SRC) -> list[Site]:
         if rel.startswith(REGISTRY_PREFIX):
             continue
         mod = module_name(path, src)
-        visitor = _Visitor(index, mod, rel, families, sites, bearing)
+        visitor = _Visitor(index, mod, rel, families, sites, bearing, func_sinks)
         visitor.visit(tree)
         used.update(visitor.used_consts)
     # A plain-named constant (``MIXED_DRIVER_UNSUPPORTED = "..."``) is a code once it is passed to a
@@ -533,9 +430,11 @@ class _Visitor(ast.NodeVisitor):
         families: dict[str, tuple[int | None, bool]],
         out: list[Site],
         bearing: frozenset[str] = frozenset(),
+        func_sinks: dict[tuple[str, str], int] | None = None,
     ):
         self.index, self.mod, self.rel, self.families, self.out = index, mod, rel, families, out
         self.bearing = bearing
+        self.func_sinks = func_sinks or {}
         self.used_consts: set[tuple[str, str]] = set()
         self.funcs: list[tuple[str, frozenset[str]]] = []
         self.classes: list[tuple[str, bool]] = []  # (name, is_enum)
@@ -742,6 +641,34 @@ class _Visitor(ast.NodeVisitor):
             pos = fam[0]
             if pos < len(node.args) and not isinstance(node.args[pos], ast.Starred):
                 self._emit(node, "positional", origin[1] if origin else name, node.args[pos])
+        # A plain function that takes a code (a forwarding helper) is a sink too: its callers
+        # are checked, so the helper's registry row cannot hide an unregistered code.
+        sink_name = origin[1] if origin else name
+        sink_pos = (
+            self.func_sinks.get(self.index.resolve_function(self.mod, callee.id))
+            if isinstance(callee, ast.Name)
+            else None
+        )
+        if sink_pos is not None and sink_pos < len(node.args):
+            if not isinstance(node.args[sink_pos], ast.Starred):
+                self._emit(node, "positional", sink_name, node.args[sink_pos])
+        # ``_TABLE.get(key, default)`` on a module-level dict whose values are all registry
+        # symbols returns a code either way, so its default must be one too (``_TABLE[key]``
+        # is classified the same way in ``_classify``).
+        if (
+            isinstance(callee, ast.Attribute)
+            and callee.attr == "get"
+            and isinstance(callee.value, ast.Name)
+            and len(node.args) >= 2
+            and not isinstance(node.args[1], ast.Starred)
+        ):
+            table = self.index.const_exprs.get((self.mod, callee.value.id))
+            if (
+                isinstance(table, ast.Dict)
+                and table.values
+                and all(self.index.is_registry_chain(self.mod, v) for v in table.values)
+            ):
+                self._emit(node, "table_default", f"{callee.value.id}.get", node.args[1])
         self.generic_visit(node)
 
 

@@ -27,6 +27,13 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.generation._numeric_typing import numeric_plan
+from decoy_engine.generation.kinds import (
+    constant_arrow_type,
+    output_arrow_type,
+    parametric_arrow_type,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
@@ -40,6 +47,11 @@ ADMISSION_MATRIX: dict[str, tuple[bool, str]] = {
     "categorical": (True, "one persistent random.Random stream; homogeneous scalar categories"),
     "faker": (True, "built-in providers only; per-row seeded or one persistent pooled stream"),
     "reference": (True, "without min/max_per_parent repair; parent key set built once"),
+    "constant": (True, "no draw; the one configured value; prefix-stable"),
+    "distribution": (
+        True,
+        "one persistent numpy Generator from the dist family; n draws equal batched draws",
+    ),
     "formula": (False, "whole-column pandas coercion"),
     "statistical": (False, "whole-column fit/condition_on, pinned-snapshot sampler"),
     "derived": (False, "reads sibling columns row by row; no sibling-input seam yet"),
@@ -65,6 +77,9 @@ class ColumnAdmission:
     eligible: bool
     reason: str
     arrow_type: pa.DataType | None = None
+    # The type of the values the generator draws, before any `output_type` cast. `arrow_type` is
+    # what is emitted. They differ only for a column with an `output_type`.
+    generated_type: pa.DataType | None = None
 
 
 @dataclass(frozen=True)
@@ -88,6 +103,10 @@ class PlanAdmission:
         return pa.schema(
             [pa.field(c.column, c.arrow_type) for c in self.columns if c.table == table]
         )
+
+    def generated_types(self, table: str) -> list[pa.DataType | None]:
+        """Per column of `table`, the type the generator draws (before any `output_type` cast)."""
+        return [c.generated_type for c in self.columns if c.table == table]
 
 
 def _categorical_type(col: dict[str, Any]) -> tuple[pa.DataType | None, str]:
@@ -164,6 +183,13 @@ def classify_plan(
         if has_windowed
         else {}
     )
+    numeric = numeric_plan(config, provider_snapshot=provider_snapshot)
+    pair_members = {
+        (name, member)
+        for name, t in tables.items()
+        for pair in t.get("unique_together") or []
+        for member in pair
+    }
     memo: dict[tuple[str, str], ColumnAdmission] = {}
     in_progress: set[tuple[str, str]] = set()
 
@@ -171,13 +197,22 @@ def classify_plan(
         return ColumnAdmission(table, col["name"], str(col.get("type")), False, reason)
 
     def admit(table: str, col: dict[str, Any], arrow_type: pa.DataType) -> ColumnAdmission:
+        # A declared `output_type` is the emitted type; the cast itself runs at the batch boundary.
         return ColumnAdmission(
-            table, col["name"], str(col.get("type")), True, "eligible", arrow_type
+            table,
+            col["name"],
+            str(col.get("type")),
+            True,
+            "eligible",
+            output_arrow_type(col) or arrow_type,
+            arrow_type,
         )
 
     def classify_reference(table: str, col: dict[str, Any]) -> ColumnAdmission:
         if int(col.get("min_per_parent") or 0) > 0 or int(col.get("max_per_parent") or 0) > 0:
             return decline(table, col, "reference_cardinality_repair")
+        if col.get("distribution") == "fitted":
+            return decline(table, col, "reference_fitted_fanout")
         parent_name = col.get("reference_table")
         parent = tables.get(parent_name) if isinstance(parent_name, str) else None
         parent_col = next(
@@ -224,19 +259,28 @@ def classify_plan(
         kind = col.get("type")
         if col.get("determinism") == "fresh":
             result = decline(table, col, "determinism_fresh")
+        elif col.get("unique") is True and kind != "sequence":
+            # A sequence is distinct by construction, so it stays on the streamed core.
+            result = decline(table, col, "unique")
+        elif (table, col["name"]) in pair_members:
+            result = decline(table, col, "unique_pair")
         elif not ADMISSION_MATRIX.get(str(kind), (False, ""))[0]:
             result = decline(table, col, f"family_declined:{kind}")
         elif kind == "sequence":
-            result = admit(table, col, pa.string())
+            result = admit(table, col, numeric.get((table, col["name"])) or pa.string())
         elif kind == "categorical":
             arrow_type, reason = _categorical_type(col)
             result = admit(table, col, arrow_type) if arrow_type else decline(table, col, reason)
+        elif kind == "constant":
+            result = admit(table, col, constant_arrow_type(col))
+        elif kind == "distribution":
+            result = admit(table, col, parametric_arrow_type(col))
         elif kind == "windowed_date":
             result = classify_windowed_date(table, col)
         elif kind == "faker":
             faker_type = col.get("faker_type", "word")
             if isinstance(faker_type, str) and faker_is_built_in(faker_type, provider_snapshot):
-                result = admit(table, col, pa.string())
+                result = admit(table, col, numeric.get((table, col["name"])) or pa.string())
             else:
                 result = decline(table, col, "faker_custom_or_unresolved_provider")
         else:

@@ -9,14 +9,15 @@ overall aggregate. Pure dict-in / dict-out, like D1b.
 
 This is the layer that operators actually look at to answer "how
 much shape did the masking job preserve?" The numbers are bounded
-(1.0 = identical, 0.0 = completely disjoint), symmetric (swap source
-and output and the score is unchanged), and per-column so the worst
+(1.0 = identical, 0.0 = completely disjoint) and per-column so the worst
 columns surface immediately.
 
 Method per kind:
 
   - numeric: normalized RMSE on the p05/p25/p50/p75/p95 quantile
-    grid, similarity = 1 - min(1, RMSE / source_range). Quantile
+    grid, similarity = 1 - min(1, RMSE / scale). The scale is the
+    source IQR (RPIQ, Bellon-Maurel 2010), so one extreme value cannot
+    stretch it; see `_quantile_scale` for the unit-free fallbacks. Quantile
     comparison is honest across independent histograms (which have
     different bin edges per snapshot); comparing bin counts directly
     would be apples-to-oranges because each snapshot's bins are
@@ -128,6 +129,7 @@ from decoy_engine.quality._distribution_gof import (
     chi_square_cramers_v,
     ks_complement_binned,
 )
+from decoy_engine.quality.diagnostic import snapshot_null_fraction
 
 QUALITY_FIDELITY_SCHEMA_VERSION = "quality-fidelity/v1"
 
@@ -164,9 +166,13 @@ def compute_fidelity(
     out_cols = output_snapshot.get("columns", {})
     shared_columns = sorted(set(src_cols.keys()) & set(out_cols.keys()))
 
+    # A DP null_count is released-rows minus noised bins, so a rate gap there is
+    # noise; report it, never score it.
+    score_missing = "dp" not in source_snapshot and "dp" not in output_snapshot
+
     column_results: list[dict[str, Any]] = []
     for col in shared_columns:
-        result = _column_similarity(src_cols[col], out_cols[col])
+        result = _column_similarity(src_cols[col], out_cols[col], score_missing=score_missing)
         column_results.append({"column": col, **result})
 
     comparable_cols = [c for c in column_results if c["comparable"]]
@@ -293,6 +299,38 @@ def _length_histogram(stats: dict[str, Any]) -> dict[str, Any]:
 def _column_similarity(
     src_col: dict[str, Any],
     out_col: dict[str, Any],
+    *,
+    score_missing: bool = True,
+) -> dict[str, Any]:
+    """Value similarity times the missing-value similarity (SDMetrics
+    `MissingValueSimilarity`, `1 - |p_src - p_out|`).
+
+    The factor applies only when the rates differ, so a column whose null rates
+    match keeps the exact value score. Non-comparable entries (`empty`,
+    `kind_mismatch`) still report the missing similarity but stay out of the
+    aggregate.
+    """
+    result = _value_similarity(src_col, out_col)
+    value = result["similarity"]
+    missing = _missing_value_similarity(src_col, out_col)
+    result["value_similarity"] = value
+    result["missing_value_similarity"] = missing
+    if score_missing and result["comparable"] and missing is not None and missing < 1.0:
+        result["similarity"] = round(value * missing, _SCORE_PRECISION)
+    return result
+
+
+def _missing_value_similarity(src_col: dict[str, Any], out_col: dict[str, Any]) -> float | None:
+    src_rate = snapshot_null_fraction(src_col)
+    out_rate = snapshot_null_fraction(out_col)
+    if src_rate is None or out_rate is None:
+        return None
+    return round(1.0 - abs(src_rate - out_rate), _SCORE_PRECISION)
+
+
+def _value_similarity(
+    src_col: dict[str, Any],
+    out_col: dict[str, Any],
 ) -> dict[str, Any]:
     src_kind = src_col.get("kind")
     out_kind = out_col.get("kind")
@@ -363,6 +401,21 @@ def _column_similarity(
     }
 
 
+def _quantile_scale(src_stats: dict[str, Any], src_min: float, src_max: float) -> float | None:
+    """Source spread for the numeric score: IQR, then p95-p05, then max-min, else None.
+
+    Every rule is in the column's own units, so the score is unit-free.
+    """
+    q = src_stats.get("quantiles") or {}
+    for lo, hi in (("p25", "p75"), ("p05", "p95")):
+        if lo in q and hi in q:
+            spread = float(q[hi]) - float(q[lo])
+            if spread > 0:
+                return spread
+    full = src_max - src_min
+    return full if full > 0 else None
+
+
 def _numeric_similarity(
     src_stats: dict[str, Any],
     out_stats: dict[str, Any],
@@ -384,13 +437,18 @@ def _numeric_similarity(
             "method": "no_range",
             "comparable": False,
         }
-    # Avoid division by zero when source has zero range; the quantile
-    # absolute differences still tell us if output drifted off the
-    # constant value.
-    src_range = max(float(src_max) - float(src_min), 1.0)
+    scale = _quantile_scale(src_stats, float(src_min), float(src_max))
+    if scale is None:
+        # True constant source: the output matches only if every shared quantile equals it.
+        same = all(float(src_q[k]) == float(out_q[k]) for k in shared)
+        return {
+            "similarity": 1.0 if same else 0.0,
+            "method": "quantile_rmse",
+            "comparable": True,
+        }
     diffs_sq = []
     for key in shared:
-        diff = (float(src_q[key]) - float(out_q[key])) / src_range
+        diff = (float(src_q[key]) - float(out_q[key])) / scale
         diffs_sq.append(diff * diff)
     rmse = math.sqrt(sum(diffs_sq) / len(diffs_sq))
     similarity = max(0.0, 1.0 - min(1.0, rmse))

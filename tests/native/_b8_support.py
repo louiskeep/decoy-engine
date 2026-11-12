@@ -11,12 +11,28 @@ and the route each side took.
 
 from __future__ import annotations
 
+import copy
+import functools
+import inspect
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
+from types import ModuleType
 from typing import Any
+from unittest import mock
 
 import pyarrow as pa
 
-from decoy_engine import run_mask_chunked
+from decoy_engine.execution import _chunked
+from decoy_engine.execution._chunked import run_mask_pipeline_chunked
+from decoy_engine.execution.native import _chunked_entry, _dispatch
+from decoy_engine.execution.native._chunked_entry import run_mask_chunked
+from decoy_engine.execution.native._dispatch import run_native_or_oracle_chunked
+from decoy_engine.profile import (
+    DeclarationRequest,
+    PreparedDeclaredSources,
+    prepare_declared_sources,
+)
+from decoy_engine.profile._declared_columns import arrow_columns
 from decoy_engine.vault import VaultWriter
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
@@ -30,6 +46,78 @@ from tests.native._chunked_entry_support import (
 
 FORCE = "cat_force"
 FORCE_REASON = f"fallback_policy_not_native:{FORCE}:python_only"
+
+
+def _declare_columns(entry: dict[str, Any], schema: pa.Schema) -> None:
+    have = {c["name"] for c in entry.get("columns") or []}
+    for name in arrow_columns(schema):
+        if name not in have:
+            entry.setdefault("columns", []).append({"name": name, "strategy": "passthrough"})
+
+
+def below_gate(
+    config: dict[str, Any], table: str, chunks: Iterable[pa.Table]
+) -> tuple[PreparedDeclaredSources, Iterable[pa.Table]]:
+    """A real capability over a copy of `config` that declares every column `chunks` carry,
+    and the chunks to feed the layer below the gate.
+
+    The B8 tests observe how an *unconfigured* column is carried, which the declaration gate
+    now refuses at the public entry. They run the public entry with this capability standing in
+    for its gate; the run config keeps the columns unconfigured, so the B8 carry is still what
+    they observe.
+    A list and a fixed-schema producer are declared from without being consumed. Any other
+    iterable is wrapped so each chunk declares its columns just before it is handed on, which
+    keeps "no chunk was pulled" assertions meaningful.
+    """
+    from decoy_engine.execution._chunked_input import _FixedSchemaChunks
+
+    declared = copy.deepcopy(config)
+    entry = next((t for t in declared["tables"] if t.get("name") == table), None)
+    if entry is None:
+        # An unknown table is the compatibility check's refusal, which runs below the gate.
+        entry = {"name": table, "columns": []}
+        declared["tables"].append(entry)
+    capability = prepare_declared_sources(DeclarationRequest.for_chunks(declared, table, None))
+    if isinstance(chunks, _FixedSchemaChunks):
+        _declare_columns(entry, chunks.source_schema)
+        return capability, chunks
+    if isinstance(chunks, list):
+        for chunk in chunks:
+            _declare_columns(entry, chunk.schema)
+        return capability, chunks
+
+    def declaring() -> Iterator[pa.Table]:
+        for chunk in chunks:
+            _declare_columns(entry, chunk.schema)
+            yield chunk
+
+    return capability, declaring()
+
+
+def _below_gate_entry(entry: Callable[..., Any], module: ModuleType) -> Callable[..., Any]:
+    """`entry` with the declaration gate answered by a `below_gate` capability.
+
+    The public entry itself runs, so its file-access binding, subset refusal, thread check,
+    progress accounting and signature are the production ones. Only the `prepare_declared_sources`
+    its module calls at entry is replaced, for the duration of the (eager) call; the iterator it
+    returns keeps the capability it was given. The arguments are bound against the entry's own
+    signature, so a call the entry would reject is rejected here too.
+    """
+    signature = inspect.signature(entry)
+
+    @functools.wraps(entry)
+    def run(config: dict[str, Any], chunks: Iterable[pa.Table], **kw: Any) -> Any:
+        table = signature.bind(config, chunks, **kw).arguments["table"]
+        capability, fed = below_gate(config, table, chunks)
+        with mock.patch.object(module, "prepare_declared_sources", return_value=capability):
+            return entry(config, fed, **kw)
+
+    return run
+
+
+run_mask_chunked_below_gate = _below_gate_entry(run_mask_chunked, _chunked_entry)
+run_native_or_oracle_chunked_below_gate = _below_gate_entry(run_native_or_oracle_chunked, _dispatch)
+run_mask_pipeline_chunked_below_gate = _below_gate_entry(run_mask_pipeline_chunked, _chunked)
 
 
 @dataclass
@@ -54,7 +142,7 @@ def run_one(
     ev: list[Any] = route_evidence_sink if route_evidence_sink is not None else []
     writer = VaultWriter(vault_key()) if vault else None
     out = list(
-        run_mask_chunked(
+        run_mask_chunked_below_gate(
             config,
             list(chunks),
             table=TABLE,

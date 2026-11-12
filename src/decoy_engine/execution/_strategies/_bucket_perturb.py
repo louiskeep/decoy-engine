@@ -18,11 +18,17 @@ from __future__ import annotations
 import pandas as pd
 
 from decoy_engine import reasons
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    option,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.transforms.bucket_perturb import (
+    VALID_BUCKETS,
     apply_bucket_perturb,
     validate_bucket_perturb_config,
 )
@@ -64,6 +70,13 @@ class BucketPerturbStrategyHandler:
     """
 
     name: str = "bucket_perturb"
+    namespace_required: bool = True
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("bucket", "str", "quarter", choices=tuple(sorted(VALID_BUCKETS))),
+        option("date_format", "str", "%Y-%m-%d"),
+    )
+    offer_in_wizard: bool = True
 
     def preflight(self, plan: ColumnSeed, ctx: StrategyContext) -> None:
         """Validate the config even when a `when:` gate selects no row.

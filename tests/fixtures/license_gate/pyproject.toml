@@ -1,0 +1,8 @@
+[project]
+name = "fixture-root"
+version = "0.1.0"
+dependencies = ["okpkg", "evilpkg", "winonly; sys_platform == 'win32'"]
+
+[project.optional-dependencies]
+dev = ["devonly"]
+sftp = ["lgplpkg"]

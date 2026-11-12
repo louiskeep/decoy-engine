@@ -40,7 +40,14 @@ def _config(tmp_path, columns: list[dict], table: str = "people") -> dict:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
+        "sources": {
+            table: {
+                "type": "file",
+                "format": "csv",
+                "has_header": True,
+                "path": str(tmp_path / "in.csv"),
+            }
+        },
         "tables": [{"name": table, "columns": columns}],
         "targets": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
     }
@@ -480,7 +487,14 @@ class TestDeterministicSoftModeCapacityBypass:
         cfg = {
             "version": 2,
             "global_settings": {"seed": 42, "on_pool_exhaustion": "fail"},
-            "sources": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
+            "sources": {
+                table: {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": str(tmp_path / "in.csv"),
+                }
+            },
             "tables": [{"name": table, "columns": columns}],
             "targets": {
                 table: {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}

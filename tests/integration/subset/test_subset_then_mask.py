@@ -14,6 +14,7 @@ from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import run_pipeline
 from decoy_engine.subset._api import run_subset
 from decoy_engine.subset._types import FanOutPolicy, SeedSpec, SubsetSource
+from tests._declared_schema import declare_rest
 from tests.unit.subset.conftest import make_parquet, rel
 
 _SUBSET_JOB_SEED = b"\x11\x22\x33\x44\x55\x66\x77\x88"
@@ -56,7 +57,7 @@ def _mask_config(customers_path: str, orders_path: str, out_dir, seed: int) -> d
             },
         },
     }
-    return PipelineConfig.model_validate(raw).model_dump()
+    return PipelineConfig.model_validate(declare_rest(raw)).model_dump()
 
 
 def test_subset_then_mask_counts_fk_propagation_and_cross_job_determinism(tmp_path) -> None:

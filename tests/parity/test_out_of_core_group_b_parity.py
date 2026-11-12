@@ -32,6 +32,7 @@ from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
+from tests._ner import needs_ner
 
 _REG = get_default_registry()
 _NS = NamespaceRegistry(bindings=())
@@ -313,6 +314,7 @@ def test_text_redact_non_string_token_passthrough_parity() -> None:
         _assert_value_equal(oracle.outputs[table], ooc.outputs[table], f"nonstr_token:{table}")
 
 
+@needs_ner
 @pytest.mark.parametrize("batch_rows", [None, 2, 1])
 def test_text_redact_ner_path_parity(batch_rows: int | None) -> None:
     """SC4 carry-forward (SC3 MEDIUM): the NER-augmented text_redact path. Skipped
@@ -321,10 +323,6 @@ def test_text_redact_ner_path_parity(batch_rows: int | None) -> None:
     `iter_ner_spans_batch` the oracle does (Phase 5), so parity must hold --
     including at small batch sizes, which is where a non-batch-local port would
     diverge (mirrors `test_out_of_core_group_c_parity.test_text_mask_ner_path_parity`)."""
-    from decoy_engine.detection.ner import model_installed, spacy_installed
-
-    if not (spacy_installed() and model_installed()):
-        pytest.skip("NER spaCy model not installed; text_redact NER path not exercisable here")
     seed = _seed("text_redact", provider_config=(("ner", {"model": "en_core_web_sm"}),))
     plan, sources, graph = _payload_edge_job(
         seed,

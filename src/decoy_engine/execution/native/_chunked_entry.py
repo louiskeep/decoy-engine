@@ -87,6 +87,11 @@ from decoy_engine.execution.native._when_mask import plan_when_masks
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation.pool import PoolCache, ValuePool
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
+from decoy_engine.profile import (
+    DeclarationRequest,
+    PreparedDeclaredSources,
+    prepare_declared_sources,
+)
 from decoy_engine.progress import get_active_channel
 
 # Matches `MAX_NATIVE_THREADS` in decoy-engine-native/src/threads.rs: the compiled
@@ -410,6 +415,7 @@ def _run_chunked(
     *,
     table: str,
     engine_version: str,
+    declared: PreparedDeclaredSources,
     registry: Any = None,
     adapter: Any = None,
     vault_writer: Any = None,
@@ -434,6 +440,7 @@ def _run_chunked(
         chunks,
         table=table,
         engine_version=engine_version,
+        declared=declared,
         registry=registry,
         adapter=adapter,
         vault_writer=vault_writer,
@@ -639,7 +646,15 @@ def run_mask_chunked(
     produced it before it is brought to the first chunk's type. A column that is `null`-typed in the first
     chunk and typed later raises `ExecutionError(code="chunked_leading_null_type")`.
     """
+    # Local import: a top-level one shifts the line the secret-material census pins.
+    from decoy_engine.config._subset_run import refuse_unapplied_subset
+
+    refuse_unapplied_subset(config)
     _validate_native_threads(native_threads)
+    # Config-level check before `chunks` is touched; the first chunk is checked in preflight.
+    declared = prepare_declared_sources(
+        DeclarationRequest.for_chunks(config, table, None), file_access=file_access
+    )
     # Progress: account every yielded chunk on the active channel (bound by the
     # caller, e.g. `run_pipeline(progress=...)`); a no-op when nothing is bound.
     return get_active_channel().count_rows(
@@ -649,6 +664,7 @@ def run_mask_chunked(
             chunks,
             table=table,
             engine_version=engine_version,
+            declared=declared,
             registry=registry,
             adapter=adapter,
             vault_writer=vault_writer,

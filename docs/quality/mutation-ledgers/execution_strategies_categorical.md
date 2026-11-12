@@ -29,6 +29,11 @@ exact `.code` and `.strategy` attributes instead of matching the rendered string
 
 Bugs found in `_categorical.py`: none introduced or newly exposed by this pass.
 
+Superseded in part (2026-11-01): `_build_cdf` was rewritten to exact integer arithmetic
+(`fix/cdf-exact-arithmetic`). The `_build_cdf` mutant ids below, including the
+message-only arithmetic rows, describe the float builder graded here and no longer
+exist; its replacement is pinned by `tests/unit/execution/test_categorical_cdf_exact.py`.
+
 Superseded rows (2026-10-04): the table rows for `run__mutmut_135` through `run__mutmut_142`
 and `run__mutmut_160` graded the earlier numpy draw in the non-deterministic branch. That
 branch now draws through `derive_index` keyed by the row ordinal, so those mutants no longer

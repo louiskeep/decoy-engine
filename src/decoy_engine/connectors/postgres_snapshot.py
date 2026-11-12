@@ -56,6 +56,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from decoy_engine import fileaccess, reasons
+from decoy_engine.fileaccess import open_protected_dir
 from decoy_engine.sdk import PermanentError
 
 __all__ = [
@@ -70,7 +71,7 @@ _log = logging.getLogger(__name__)
 # Strict on purpose: unquoted-safe Postgres identifiers. Names needing quoted
 # oddities (spaces, quotes, unicode) are rejected rather than escaped, so the
 # validation boundary and the quoting boundary cannot disagree.
-_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]{0,62}$")
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]{0,62}\Z")
 
 # Alias for the attached database. Fixed, never caller-derived.
 _ATTACH_ALIAS = "decoy_pg_src"
@@ -108,8 +109,8 @@ _PLAIN_TYPES = frozenset(
 )
 _DATE = "date"
 _TIMESTAMPS = frozenset({"timestamp without time zone", "timestamp with time zone"})
-_NUMERIC_RE = re.compile(r"^numeric\((\d+),(\d+)\)$")
-_LEN_SUFFIX_RE = re.compile(r"\(\d+\)$")
+_NUMERIC_RE = re.compile(r"^numeric\((\d+),(\d+)\)\Z")
+_LEN_SUFFIX_RE = re.compile(r"\(\d+\)\Z")
 
 
 class PostgresSnapshotError(PermanentError):
@@ -214,8 +215,7 @@ def _lit(text: str) -> str:
 
 
 def _open_connection(config: PostgresSnapshotConfig, spill_dir: Path) -> Any:
-    spill_dir.mkdir(parents=True, exist_ok=True)
-    os.chmod(spill_dir, 0o700)
+    open_protected_dir(spill_dir, create=True, parents=True)
     try:
         from decoy_engine.fileaccess.adapters import duckdb as duckdb_adapter
 
