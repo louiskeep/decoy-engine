@@ -61,9 +61,10 @@ def resolve_incoming(
     (`graph.edges` order, the oracle's precedence). The group's first edge represents it:
     `parent_relations[first]` is rebound to the merged relation, so every downstream
     consumer (REMAP seeds, the WARN and FAIL identity, the per-column component map) reads
-    the first parent exactly as the oracle does, and the other members' entries are removed
-    together with their files, which no later table reads (a relation is keyed by its edge,
-    and each edge serves one child). A singleton group passes through untouched. A group whose
+    the first parent exactly as the oracle does, and the other members' entries are removed. A
+    member file is removed only when no remaining entry still points at it: every edge from the
+    same parent columns shares one file, which a sibling child, another column of this child or
+    a second group may still read. A singleton group passes through untouched. A group whose
     edges disagree on the orphan policy is refused with the planner's own code,
     `orphan_policy_conflict`, before anything is merged.
     """
@@ -97,11 +98,14 @@ def resolve_incoming(
             memory_limit=memory_limit,
         )
         merged_count += 1
-        for edge, relation in zip(members, member_relations, strict=True):
-            if edge is not first:
-                del parent_relations[edge]
-            # The merged copy supersedes the member on disk; keep the spill footprint to one.
-            relation.path.unlink(missing_ok=True)
+        for edge in members[1:]:
+            del parent_relations[edge]
+        # The merged copy supersedes the members, but edges from one parent's columns share one
+        # file (`_relation._edge_stem`); the runner's teardown removes a file still in use here.
+        in_use = {relation.path for relation in parent_relations.values()}
+        for relation in member_relations:
+            if relation.path not in in_use:
+                relation.path.unlink(missing_ok=True)
     return tuple(representatives)
 
 
