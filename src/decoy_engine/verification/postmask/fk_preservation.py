@@ -63,9 +63,9 @@ def _frame_keys(
         out = {}
         for name, frame in frames.items():
             if name in wanted:
-                cols = [c for c in frame.columns if c in wanted[name]]
+                key = frame[[c for c in frame.columns if c in wanted[name]]]
                 out[name] = from_table(
-                    name, pa.Table.from_pandas(frame[cols], preserve_index=False)
+                    name, pa.Table.from_pandas(_whole(key), preserve_index=False)
                 )
         return out
 
@@ -78,6 +78,17 @@ def _frame_keys(
             # The key scan's own cap; a caller that holds its run's limit passes `keys` instead.
             memory_limit=MEMORY_LIMIT,
         )
+
+
+def _whole(key: pd.DataFrame) -> pd.DataFrame:
+    """pandas reads a nullable integer column as float64, so read a float key column whose non-null
+    values are all whole numbers (over the whole column) as Int64. Only float columns are passed:
+    `convert_dtypes` would turn a bool column into Int64 too."""
+    floats = key.select_dtypes("floating")
+    whole = floats.convert_dtypes(
+        infer_objects=False, convert_string=False, convert_boolean=False, convert_floating=False
+    )
+    return key.astype(whole.dtypes.to_dict()) if len(whole.columns) else key
 
 
 def _finding(
