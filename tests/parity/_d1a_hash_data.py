@@ -200,6 +200,7 @@ def run_chain(
     result = run_fk_out_of_core(
         chain_plan(payload_seeds),
         srcs,
+        config={},
         registry=get_default_registry(),
         relationship_graph=chain_graph(hk_policy),
         sink=sink or (ParquetTransactionalSink(out_dir) if out_dir is not None else None),

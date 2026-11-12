@@ -932,6 +932,7 @@ class TestRunSequentialThreading:
         seq = adapter.run_sequential(
             fx.plan,
             _loader(fx.sources),
+            config={},
             registry=fx.registry,
             relationship_graph=graph,
             namespace_registry=fx.namespace_registry,
@@ -957,6 +958,7 @@ class TestRunSequentialThreading:
         res = PandasExecutionAdapter().run_sequential(
             _composite_plan_single(),
             _loader(sources),
+            config={},
             registry=_REG,
             relationship_graph=_EMPTY_GRAPH,
             namespace_registry=_composite_ns(),
@@ -971,6 +973,7 @@ class TestRunSequentialThreading:
         unkeyed = adapter.run_sequential(
             fx.plan,
             _loader(fx.sources),
+            config={},
             registry=fx.registry,
             relationship_graph=graph,
             namespace_registry=fx.namespace_registry,
@@ -978,6 +981,7 @@ class TestRunSequentialThreading:
         keyed = adapter.run_sequential(
             fx.plan,
             _loader(fx.sources),
+            config={},
             registry=fx.registry,
             relationship_graph=graph,
             namespace_registry=fx.namespace_registry,
@@ -997,6 +1001,7 @@ class TestRunSequentialThreading:
         res = adapter.run_sequential(
             fx.plan,
             _loader(fx.sources),
+            config={},
             registry=fx.registry,
             relationship_graph=fx.graph(OrphanPolicy.PRESERVE),
             namespace_registry=fx.namespace_registry,
@@ -1074,6 +1079,7 @@ class TestRunSequentialThreading:
         res = PandasExecutionAdapter().run_sequential(
             plan,
             _loader(_sources(config)),
+            config={},
             registry=registry,
             relationship_graph=graph,
             namespace_registry=ns,
@@ -1115,6 +1121,7 @@ class TestRunSequentialThreading:
             PandasExecutionAdapter().run_sequential(
                 plan,
                 _loader(sources),
+                config={},
                 registry=_REG,
                 relationship_graph=graph,
                 namespace_registry=_NS,

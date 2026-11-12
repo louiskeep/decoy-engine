@@ -381,6 +381,7 @@ def test_no_raising_boundary_renders_the_predicate(boundary: str, tmp_path: Path
             PandasExecutionAdapter().run_sequential(
                 sup.plan_with_when(job.plan, "a", "s", LEAKY),
                 lambda name: job.sources[name],
+                config={},
                 registry=job.registry,
                 relationship_graph=job.graph,
                 namespace_registry=job.namespaces,

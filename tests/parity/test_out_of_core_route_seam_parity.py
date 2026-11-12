@@ -108,6 +108,7 @@ def _run_sink(
         result = run_fk_out_of_core(
             plan,
             sources,
+            config={},
             registry=_REG,
             relationship_graph=graph,
             sink=ParquetTransactionalSink(target),

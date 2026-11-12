@@ -399,6 +399,10 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/out_of_core/__init__.py",
             "src/decoy_engine/execution/pipeline/_cgroup.py",
             "src/decoy_engine/execution/pipeline/_host.py",
+            # SCAN-ML M5: the guard-free core of native `run_mask_chunked` that `run_pipeline`'s
+            # auto-chunk lane calls (new private sub-package). Neither imports `execution.physical`.
+            "src/decoy_engine/execution/native/chunked/__init__.py",
+            "src/decoy_engine/execution/native/chunked/_core.py",
             # SUB-RUN E2: the subset stage imports the public `decoy_engine.subset` surface only.
             "src/decoy_engine/execution/pipeline/_subset_stage.py",
             # SAMPLE SE2: the sample's exact/approximate column label reads config and the

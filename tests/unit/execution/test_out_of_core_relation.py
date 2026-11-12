@@ -266,6 +266,7 @@ def test_run_fk_out_of_core_matches_pandas_outputs(tmp_path) -> None:
     out = run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         temp_dir=tmp_path / "work",
@@ -295,6 +296,7 @@ def test_run_fk_out_of_core_transactional_sink_publishes_on_success(tmp_path) ->
     res = run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),
@@ -320,6 +322,7 @@ def test_run_fk_out_of_core_transactional_sink_aborts_on_orphan(tmp_path) -> Non
         run_fk_out_of_core(
             plan,
             sources,
+            config={},
             registry=_REG,
             relationship_graph=graph,
             sink=ParquetTransactionalSink(target),
@@ -390,6 +393,7 @@ def test_run_fk_out_of_core_sink_writes_interleaved_in_topo_order(tmp_path, monk
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=RecordingSink(),
@@ -414,6 +418,7 @@ def test_run_fk_out_of_core_sink_output_matches_in_memory_output(tmp_path) -> No
     in_memory = run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         temp_dir=tmp_path / "work-mem",
@@ -421,6 +426,7 @@ def test_run_fk_out_of_core_sink_output_matches_in_memory_output(tmp_path) -> No
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),
@@ -458,6 +464,7 @@ def test_run_fk_out_of_core_sink_aborts_leaves_nothing_after_upstream_staged(tmp
         run_fk_out_of_core(
             plan,
             sources,
+            config={},
             registry=_REG,
             relationship_graph=graph,
             sink=ParquetTransactionalSink(target),
@@ -484,6 +491,7 @@ def test_run_fk_out_of_core_orphan_policies_match_pandas(tmp_path, policy: Orpha
     out = run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         temp_dir=tmp_path / "work",
@@ -530,6 +538,7 @@ def test_run_fk_out_of_core_chain_matches_pandas(tmp_path) -> None:
     out = run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         temp_dir=tmp_path / "work",
@@ -571,6 +580,7 @@ def test_run_fk_out_of_core_fanout_matches_pandas(tmp_path) -> None:
     out = run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         temp_dir=tmp_path / "work",
@@ -616,6 +626,7 @@ def test_run_fk_out_of_core_sink_fanout_output_matches_in_memory(tmp_path) -> No
     in_memory = run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         temp_dir=tmp_path / "work-mem",
@@ -623,6 +634,7 @@ def test_run_fk_out_of_core_sink_fanout_output_matches_in_memory(tmp_path) -> No
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(target),
@@ -658,6 +670,7 @@ def test_run_fk_out_of_core_distinct_multi_parent_child_matches_pandas(tmp_path)
     out = run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         temp_dir=tmp_path / "work",
@@ -740,6 +753,7 @@ def test_run_fk_out_of_core_composite_fk_matches_pandas(tmp_path, policy: Orphan
     out = run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         temp_dir=tmp_path / "work",
@@ -801,6 +815,7 @@ def test_run_fk_out_of_core_namespace_agnostic_parent_strategies_match_pandas(
     out = run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         temp_dir=tmp_path / "work",
@@ -867,6 +882,7 @@ def test_run_fk_out_of_core_rejects_when_predicate(tmp_path) -> None:
         run_fk_out_of_core(
             plan,
             sources,
+            config={},
             registry=_REG,
             relationship_graph=graph,
             temp_dir=tmp_path / "work",
@@ -1027,6 +1043,7 @@ def test_run_fk_out_of_core_self_referential_fk_fails_closed(tmp_path) -> None:
         run_fk_out_of_core(
             plan,
             sources,
+            config={},
             registry=_REG,
             relationship_graph=graph,
             temp_dir=tmp_path / "work",
@@ -1083,7 +1100,12 @@ def test_run_fk_out_of_core_same_column_multi_parent_matches_the_oracle(tmp_path
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
     ooc = run_fk_out_of_core(
-        plan, sources, registry=_REG, relationship_graph=graph, temp_dir=tmp_path / "work"
+        plan,
+        sources,
+        config={},
+        registry=_REG,
+        relationship_graph=graph,
+        temp_dir=tmp_path / "work",
     )
     for table in oracle.outputs:
         assert ooc.outputs[table].to_pydict() == oracle.outputs[table].to_pydict(), table
@@ -1128,6 +1150,7 @@ def test_run_fk_out_of_core_orphan_preserves_normalized_float_key(
     out = run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         temp_dir=tmp_path / "work",
@@ -1163,6 +1186,7 @@ def test_run_fk_out_of_core_wipes_staging_subtrees_for_caller_temp_dir(tmp_path)
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         temp_dir=work_dir,

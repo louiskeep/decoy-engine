@@ -148,6 +148,7 @@ def run(mode: str) -> dict[str, Any]:
         result = PandasExecutionAdapter().run_sequential(
             plan,
             lambda name: sources[name],
+            config={},
             registry=get_default_registry(),
             relationship_graph=graph,
             namespace_registry=NamespaceRegistry(bindings=()),

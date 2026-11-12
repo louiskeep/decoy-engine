@@ -535,6 +535,21 @@ def test_fpe_handler_fallback_codes_are_registered_with_a_pinned_fixture() -> No
     assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 24, 0)
 
 
+def test_scanml_m5_route_refusal_is_registered_as_pending() -> None:
+    """SCAN-ML M5: one route refusal owned by PostScanRouteError, pending its release stamp."""
+    from decoy_engine.reasons._types import UNRELEASED
+
+    spec = reasons.find("route", "post_scan_models_unsupported")
+    assert spec is not None
+    assert (spec.owner, spec.since, spec.kind.value) == (
+        "PostScanRouteError",
+        UNRELEASED,
+        "failure",
+    )
+    assert not re.search(r"[{}%]", spec.summary)
+    assert reasons.route.POST_SCAN_MODELS_UNSUPPORTED == "post_scan_models_unsupported"
+
+
 def _blocked_report(**parts: object) -> dict[str, object]:
     return {
         "schema_version": "post-scan-integrity/v2",
