@@ -81,7 +81,8 @@ Commit `e6a19865` (tests only) on `91a52eaa`, every failure an `AssertionError`:
   `residual-PII findings carry no source` (AT-M4e classifier, after a setup fix below), the
   registry fixture test (`post_scan.ner_blocked` not registered), `test_public_api`
   (`PostScanBlockedError` missing), the M1 tripwire `test_scan_ml_reasons` (now asserting the M4
-  code is registered at unreleased), and the minor-fixture sentry (a fixture above the live minor).
+  code is registered; it was 1.26.0 then, now the pending value), and the minor-fixture sentry
+  (a fixture above the live minor).
 - NER venv, `DECOY_REQUIRE_NER=1`: the same 29 plus the 13 NER tests, 42 failed, 108 passed,
   0 skipped (`run_post_mask takes no detectors`, `residual-PII findings carry no source`,
   `decoy_engine exports no PostScanBlockedError`).
@@ -174,9 +175,8 @@ GATES_WORKERS=2 scripts/dev/gates.sh --baseline --steps ruff,format,mypy tests/u
 ruff PASS, format PASS, mypy the same 4 errors on branch and main (google stubs, `tomli`), no
 branch-only error.
 
-`scripts/dev/registry_renumber.py --check --main origin/main` reports `several-minors`: the branch
-stacks on unmerged M5 (1.25.0) and adds unreleased. Once M5 merges, the check against main sees one
-minor; if main takes unreleased first, the tool renumbers this slice at merge.
+At this first build `scripts/dev/registry_renumber.py --check` reported `several-minors` (two
+numbered minors stacked on main). The unreleased conversion below removed that; `--check` now exits 0.
 
 ## NER tests
 
@@ -191,7 +191,7 @@ model and the real classifier pack.
 ## Existing tests changed
 
 - `tests/unit/config/test_scan_ml_reasons.py`: the M1 tripwire asserted `post_scan.ner_blocked`
-  was absent; it now asserts it is registered with `since` unreleased, as M5 did for its code.
+  was absent; it now asserts it is registered with `since` equal to the pending value `"unreleased"`.
 - `tests/unit/test_reason_registry.py`, `tests/unit/test_public_api.py`: one test and one name added.
 - `tests/unit/execution/test_scanml_m5_route_guard.py::test_run_pipeline_auto_chunk_lane_runs_model_post_scan_configs_as_on_main`:
   `run_pipeline` now loads its post-scan models first, which needs spaCy for `[regex, ner]`. The
@@ -211,7 +211,7 @@ Named tests: tests/unit/detection_verification/test_scanml_m4_{regex_baseline,re
 Selection:   scripts/dev/gates.sh --baseline
 Plus:        git grep hits in tests/ for the changed signatures (50 paths, tests/perf excluded)
 Sentries:    tests/sentry (module size, reason registry, minor fixtures, string targets, seam)
-Triggers:    public engine export, run_pipeline raise, registry minor unreleased
+Triggers:    public engine export, run_pipeline raise, new pending reason code
 Mutations:   M-M4a, M-M4b, M-M4b2, M-M4b3, M-M4c, M-M4d, M-M4e, M-M4f, M-M4g, M-M4g2, M-M4g3,
              M-M4sub, each red (see Mutations)
 Full suite:  trigger engine exports plus reason registry, orchestrator runs it
@@ -223,3 +223,54 @@ Full suite:  trigger engine exports plus reason registry, orchestrator runs it
 - ruff and mypy in the exact `--extra dev` sync (not installed there); run with `--extra lint`.
 - Tests needing google, paramiko, hvac or mimesis.
 - The platform hook and the CLI (P1, C2a): not this part.
+
+## Merge with M5 and main (2026-11-12, second round)
+
+`4cca4058` merges `origin/feat/scanml-m5` at `a0d4ad08`, which contains main `9e451dac` (#506
+release-stamped registry, #514, #517, #524, #525, #526, #528, #534 and others). Conflicts, all in
+registry carriers: `docs/reasons.md`, `reasons/_registry.py` and `consumer-contract.json` take the
+M5 side, which equals main (1.24.0, no SCAN-ML fixture paragraph); `tests/unit/test_reason_registry.py`
+takes the M5 side plus the M4 test rewritten by hand to the pending form
+(`test_scanml_m4_post_scan_block_is_registered_as_pending`, no fixture). No conflict around
+`compute_post_scan_integrity`: on main #517, #525 and #526 add library modules
+(`postmask/_keys.py`, `_column_facts.py`, `_stream_input.py`) that nothing in the run calls yet, and
+main's `_pipeline_context.py` change (a shorter module, 575 lines) merged beside the
+`post_scan_detectors` field. Main's regex detector changes (`detection/detectors.py`,
+`_scoring.py`) leave the AT-M4a golden byte-equal: AT-M4a passes on the merged head.
+
+Unreleased conversion: `registry_renumber.py --to-unreleased --main origin/main` first refused one
+line of this record naming the numbered fixture (rewritten by hand, `2bda97bd`), then converted
+`post_scan.ner_blocked` to `since=UNRELEASED`, the tripwire, the contract doc and the fragment, and
+deleted the fixture (`214928a8`). `--check --main origin/main`: "registry consistent", exit 0. The
+fragment names `post_scan/ner_blocked` and states that the regex-only hook honours dismissals.
+
+Owner conditions, checked in code:
+
+- `PipelineRunContext.post_scan_detectors` is read in one place (`_pipeline_full_frame.py`, passed
+  to `compute_post_scan_integrity`). Nothing dumps the context (`git grep` finds no `asdict`,
+  `repr` or `vars` of it), and `ExecutionResult` does not carry it. The dataclass repr would have
+  shown it, so `f7c1ccab` declares it `field(default=None, repr=False, compare=False)`.
+  `DetectorSet` itself keeps `classifier_pack` out of repr; its repr shows sources and the NER
+  `ModelRef` (ids and versions). The report's `detectors` key carries only `{source, model:
+  {id, version}}`. Pinned by `tests/unit/execution/test_scanml_m4_run.py::test_the_run_context_never_shows_its_detector_set`.
+- `classify_frame(..., subsample=False)` stays default off; only the M4 classifier pass passes
+  `True`.
+- The regex-only hook honouring dismissals is pinned by
+  `tests/unit/detection_verification/test_scanml_m4_dismissals.py::test_the_regex_only_hook_honours_dismissals`.
+
+Reruns on `f7c1ccab`:
+
+- Mutations: M-M4a 2 red (the AT-M4a platform test and the new hook-dismissal test), M-M4b 5,
+  M-M4b2 5, M-M4b3 5, M-M4c 2, M-M4d 2, M-M4e 2, M-M4f 8, M-M4g 2, M-M4g2 4, M-M4g3 4, M-M4sub 1;
+  the same ids as under "Mutations" plus the new hook test.
+- `GATES_WORKERS=2 scripts/dev/gates.sh --baseline --steps ruff,format,mypy,sentry,layers,licenses,tests <50 paths>`
+  against main `9e451dac` (same recipe, plus `post_scan_detectors` and `configured_columns`):
+  sentry 5192 passed, 3 failed, 21 errors (main 5157, 3, 21); layers 15; licenses 63; tests 6136
+  passed, 2 failed, 21 errors, 73 skipped (main 6030, 2, 21, 60). Failing ids identical, 24 each
+  (`test_serial_resources::test_the_required_serial_registry_is_marked` and the
+  `test_outbound_clients` set), no branch-only id, no main failure passing. Collected 6232 against
+  6113 (+119: the M4 and M5 tests in this selection). ruff, format, mypy rc 127 in the dev sync;
+  with `--extra lint`: ruff PASS, format PASS, mypy the same 4 errors as main.
+- NER gate: `DECOY_REQUIRE_NER=1 pytest -m ner -n 2`: 52 passed, 10 skipped (import skips for
+  other extras only).
+- `pytest tests/integration/compat_corpus`: 5 passed, 1 skipped (pre-GA real-artifact capture).
