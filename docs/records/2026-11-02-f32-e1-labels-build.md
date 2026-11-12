@@ -59,3 +59,7 @@ Results: `tests/sentry tests/unit/support tests/unit/test_reason_registry.py` on
 Mutations on this head (each applied once, run against `tests/unit/support` and the no-network sentry, reverted; tree clean after): L6, L7, L8 and S1 to S10 all red, each on the test named in the table above. L7 and L6 also trip three other `test_labels.py` cells.
 
 Not run: the full suite.
+
+## 6. Review round 2
+
+Merged the round 2 fixes of `feat/f32-e1-types` (record `2026-11-02-f32-e1-types-build.md`, section 7): `support.ReasonRef` is gone and the bundle types carry `decoy_engine.reasons.ReasonRef`. In this half, `test_labels.py` and `test_shape_cells.py` import nothing named `ReasonRef` from `support` and take their reason from `route.FK_RELATIONSHIP.spec.ref` (plain `str` fields). `_labels.py` is unchanged. One conflict, in the `CODEMAP.md` support row: kept this half's row without `ReasonRef`.

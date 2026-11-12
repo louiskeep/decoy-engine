@@ -27,7 +27,6 @@ from decoy_engine.support import (
     PhaseTiming,
     PlatformFamily,
     RatioBucket,
-    ReasonRef,
     RetryClass,
     RouteDeclineCode,
     RouteFact,
@@ -47,7 +46,7 @@ A = LabelAllocator()
 T1, T2 = A.table("a"), A.table("b")
 C1, C2, D1 = A.column("a", "x"), A.column("a", "y"), A.column("b", "z")
 N1 = A.node("n")
-REASON = ReasonRef("route", route.FK_RELATIONSHIP)
+REASON = route.FK_RELATIONSHIP.spec.ref
 
 
 def _col(label: object) -> ColumnShape:

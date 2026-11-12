@@ -28,7 +28,7 @@ Red: the tests-only commit, run at base `9eec6123`: `ModuleNotFoundError: No mod
 |---|---|---|---|
 | M1 | add `name: str` to `TableShape` (reviewed head) | `test_no_free_str_field` | red |
 | M2 | drop the token check in `Label.__new__` (reviewed head) | `test_label_rejects_name` | red: `DID NOT RAISE` |
-| M3 | skip the registry lookup in `ReasonRef` (reviewed head) | `test_reason_ref_rejects_unregistered` | red |
+| M3 | skip the registry lookup in `ReasonRef` (reviewed head; re-run in section 7 against `_check`) | `test_reason_ref_rejects_unregistered` | red |
 | M4, M5 | three-part-only regex; `Version` accepts any `str` (reviewed head) | `test_versions_from_live_constants`, `test_version_rejects_free_text` | red |
 | M9 | accept any dataclass annotation (`hasattr(tp, "__dataclass_fields__")`) | `test_nested_plain_dataclass_is_refused` | red |
 | M10 | rename `Label.__reduce__` | `test_label_survives_pickle_copy_asdict` | red |
@@ -57,7 +57,7 @@ Edits the main-side rules forced, no behavior change:
 - Placement: `support` is appended to the top tier of the layers contract in `.importlinter` and in the `LAYERS` snapshot of `tests/sentry/layout/test_import_layers.py`. No `ignore_imports` line was added. Row added to `src/decoy_engine/_MAP.md` and to `CODEMAP.md` (package table and a "Support bundles" row in "Where Things Go"). The row names `tests/unit/support/` and no sentry yet: the no-network sentry lives in the labels half, and the package-map path sentry fails on a path that does not exist on this branch, so the labels half adds that cell.
 - Mirrored enum `StrategyKind` gained `CONSTANT = "constant"` and `DISTRIBUTION = "distribution"` (new `GenerateColumnConfig.type` members on main). `test_mirrored_enums_match_engine` is unchanged. `CountKey`, `NativeStatus` and `OrphanPolicy` already matched. `_shape.py` is 429 lines.
 - Facade rule (`tests/sentry/defects/test_exception_context.py`, "no private import behind a public facade"): `support/__init__.py` and `support/_shape.py` imported `decoy_engine.reasons._types` and `._registry`. They now import `Outcome`, `ReasonSpec`, `RetryClass`, `Severity` and `find` from `decoy_engine.reasons`; the objects are the same.
-- Reason scanner (`tests/sentry/test_reason_registry.py`): the scanner resolves classes by bare name, so `support.ReasonRef(namespace, code)` made the existing call in `profiling/scan_set.py` (`WarningRefCore._known`) look like an unregistered code site. Added one `ADAPTERS` row for it, with the reason that `require_known` resolves the ref against the registry first. No ratchet or cap changed.
+- Reason scanner: the `ADAPTERS` row first added here was removed again in review round 2 (section 7); see there.
 - Fragment `changelog.d/f32-e1-types.md`; `check_fragment.py --base origin/main` exits 0.
 - `REGISTRY_VERSION` is unchanged, so the renumber check did not apply.
 
@@ -73,3 +73,23 @@ Mutations on the final code (each applied once, run, reverted):
 | M12 | `Version` parts `[0-9]+` | red: `test_version_rejects_free_text` |
 
 Not run: the full suite.
+
+## 7. Review round 2 fixes
+
+Review H1, L1, L2 (report `f32-e1-dennis-r2`).
+
+- H1: `support.ReasonRef` was a second copy of `decoy_engine.reasons.ReasonRef`. It is deleted. The bundle types carry the central `reasons.ReasonRef`, and `_check` refuses one unless `namespace` and `code` are exactly `str` and `find(namespace, code)` is not `None`. The error names the class and field only. `support` no longer exports `ReasonRef`; the name has one home. The `ADAPTERS` row for `profiling/scan_set.py` `WarningRefCore._known` is removed, because the name clash that forced it is gone. A `ReasonCode` (the str subclass behind `route.FK_RELATIONSHIP`) is refused as a field; build the ref from `spec.ref` or `str(code)`.
+- L1: new cells for `Label("MARKER_T_ab12", token)` and for a `_Checked` holder with a `str` field.
+- L2: `PIIClass` now comes from the `decoy_engine.profile` facade. `RouteDeclineCode` stays on its private module (no public export).
+- Plan deviation: the F32 plan (section 1.3, "`ReasonRef(namespace, code)` is a leaf: its constructor and `from_json` check the pair against the registry") predates `decoy_engine.reasons.ReasonRef`. The registry check now runs when a bundle type is constructed, not in a `ReasonRef` constructor. The guarantee is the same: no bundle can hold an unregistered reason.
+
+Replaced tests: `test_reason_ref_rejects_unregistered` (old class constructor raises, registry text, immutability) became `test_reason_ref_rejects_unregistered`, `test_reason_ref_fields_must_be_exact_str`, `test_reason_ref_registered_is_accepted` and `test_reason_ref_error_names_no_value`, all at bundle level. New: `test_str_field_is_not_a_leaf`, and a `Label` cell in `test_label_rejects_name`.
+
+Red first: the new tests ran against the old code. 5 failed (`test_no_free_str_field`, `test_reason_ref_rejects_unregistered`, `test_reason_ref_fields_must_be_exact_str`, `test_reason_ref_registered_is_accepted`, `test_reason_ref_error_names_no_value`), 8 passed. Green after the fix: 13 passed in `tests/unit/support`.
+
+| # | Mutation | Result |
+|---|---|---|
+| M3 | skip the `find` call in the `ReasonRef` branch of `_check` | red: `test_reason_ref_rejects_unregistered`, `test_reason_ref_error_names_no_value` |
+| M13 | drop the exact-`str` checks on `namespace` and `code` | red: `test_reason_ref_fields_must_be_exact_str` |
+| L1a | drop the `_LABEL.fullmatch` test in `Label.__new__` | red: `test_label_rejects_name` |
+| L1b | add `str` to `_LEAVES` | red: `test_str_field_is_not_a_leaf` |

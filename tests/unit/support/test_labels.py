@@ -11,7 +11,6 @@ from decoy_engine.support import (
     ErrorFact,
     LabelAllocator,
     Outcome,
-    ReasonRef,
     RetryClass,
     RouteFact,
     RouteKind,
@@ -42,7 +41,7 @@ def test_same_table_same_label_across_sections() -> None:
     err = ErrorFact(
         node=alloc.node("MARKER_N_beef"),
         table=alloc.table(MARKERS[0]),
-        reason=ReasonRef("route", route.FK_RELATIONSHIP),
+        reason=route.FK_RELATIONSHIP.spec.ref,
         outcome=Outcome.EXECUTION,
         retry_class=RetryClass.NEVER,
     )

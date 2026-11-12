@@ -11,7 +11,7 @@ The engine enums a bundle carries (`RouteDeclineCode`, `PIIClass`, `Severity`, `
 from __future__ import annotations
 
 from decoy_engine.execution.native._route_decline_codes import RouteDeclineCode
-from decoy_engine.profile._types import PIIClass
+from decoy_engine.profile import PIIClass
 from decoy_engine.reasons import Outcome, RetryClass, Severity
 from decoy_engine.support._labels import LabelAllocator
 from decoy_engine.support._shape import (
@@ -31,7 +31,6 @@ from decoy_engine.support._shape import (
     PhaseTiming,
     PlatformFamily,
     RatioBucket,
-    ReasonRef,
     RouteFact,
     RouteKind,
     StrategyKind,
@@ -63,7 +62,6 @@ __all__ = [
     "PhaseTiming",
     "PlatformFamily",
     "RatioBucket",
-    "ReasonRef",
     "RetryClass",
     "RouteDeclineCode",
     "RouteFact",
