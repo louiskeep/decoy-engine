@@ -24,6 +24,10 @@ minimum engine version it was tested against via its
 - `run_mask_pipeline_chunked` requires the keyword `source_schema`, and the three chunked entries refuse an undeclared table or column before masking.
 - a source column or table the config does not declare is now refused by `profile_source`, `run_pipeline` and `run_pipeline_isolated` before any data row is read; list such columns as `passthrough`.
 
+### Added (S3 object store, CLI-CLOUD EC2b, 2026-11-12)
+
+`decoy_engine.connectors` exports `S3ObjectStore`, `ObjectStore`, `PutResult`, `Version` and `GCSObjectStore`. The S3 store creates objects that must not exist (`put_new`), swaps a small pointer object only if its version is unchanged (`put_if`, one request, no SDK retry, result `won`, `rejected`, `conflict` or `unknown`), deletes only the object a run made (`delete_created`), reads a pointer with a hard size limit (`read_small`) and checks the bucket's region against the client's (`check_region`). Errors carry fixed text and a `kind`. `GCSObjectStore` only streams an object; its writes are not built.
+
 ### Changed (engine license moves to FSL-1.1-ALv2, LICENSE-FSL, 2026-11-10)
 
 `decoy-engine` and `decoy-engine-native` are now licensed under the Functional Source License,
