@@ -64,5 +64,5 @@ POST_SCAN_MODELS_UNSUPPORTED = _catalog.route("PostScanRouteError")(
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
     phases=(Phase.RESOLVE, Phase.COMPILE),
-    since="1.24.0",
+    since="1.25.0",
 )
