@@ -28,6 +28,7 @@ from decoy_engine.plan._checks_group_key import check_group_key_refs
 from decoy_engine.plan._checks_grouped_series import check_grouped_series_refs
 from decoy_engine.plan._checks_windowed_date import check_windowed_date_refs
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.plan.checks._relationship_keys import check_generated_parent_keys
 
 __all__ = ["DEFERRED", "check_faker_default_locale", "check_generate_columns"]
 
@@ -116,6 +117,7 @@ def check_generate_columns(
         cols = [c for c in columns if isinstance(c, dict) and isinstance(c.get("name"), str)]
         for index in range(len(cols)):
             _check_column(table_name, cols, index, by_name, fakers, default_locale)
+    check_generated_parent_keys(config)
 
 
 def _check_column(
