@@ -274,6 +274,7 @@ def test_all_lists_every_public_name():
         "ModelRef",
         "ModelStatus",
         "ModelUnavailableError",
+        "PostScanBlockedError",
         "PostScanRouteError",
         "PreScanConfig",
         "classifier_status",

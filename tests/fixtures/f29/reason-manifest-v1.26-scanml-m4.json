@@ -1,0 +1,25 @@
+{
+  "entries": [
+    {
+      "code": "ner_blocked",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "post_scan",
+      "owner": "PostScanBlockedError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "verification",
+          "phase": "verify",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.26.0",
+      "summary": "An NER post-scan finding blocked this run under ner_findings: fail, so no output was published.",
+      "symbol": "NER_BLOCKED"
+    }
+  ],
+  "registry_version": "1.26.0"
+}
