@@ -159,7 +159,7 @@ class _CallableSinkAdapter:
         pass
 
 
-def validate_table_name(table: str) -> None:
+def _validate_table_name(table: str) -> None:
     """A table name is one path component: no separator, no ``..``."""
     if (
         os.sep in table
@@ -205,7 +205,7 @@ class StagedParquetWriter:
                 file cannot be written.
             pa.lib.ArrowInvalid: If ``data`` cannot be serialized as Parquet.
         """
-        validate_table_name(table)
+        _validate_table_name(table)
         txn = self._stage()
         component = f"{table}.parquet"
         _replace_staged(txn, component)
@@ -254,7 +254,7 @@ class StagedParquetWriter:
         On the success path a close() failure (for example a footer flush
         hitting ENOSPC) is a real write error and does surface.
         """
-        validate_table_name(table)
+        _validate_table_name(table)
         txn = self._stage()
         component = f"{table}.parquet"
         _replace_staged(txn, component)
@@ -386,7 +386,7 @@ class ParquetTransactionalSink:
             PublicationRefused: If the sink is busy, sealed, failed or aborted.
             OSError, pa.lib.ArrowInvalid: As `StagedParquetWriter.write`; the attempt fails.
         """
-        validate_table_name(table)
+        _validate_table_name(table)
         self._writing(lambda: self._writer.write(table, data))
 
     def write_batches(
@@ -394,7 +394,7 @@ class ParquetTransactionalSink:
     ) -> None:
         """Stream-append one masked table (`StagedParquetWriter.write_batches`); the same
         state rules as write(), and the same atomic commit/abort contract."""
-        validate_table_name(table)
+        _validate_table_name(table)
         self._writing(lambda: self._writer.write_batches(table, batches, schema=schema))
 
     def _writing(self, write: Callable[[], None]) -> None:
@@ -428,7 +428,7 @@ class ParquetTransactionalSink:
         artifact this same run just published (DE-08 re-gate HIGH #1). A pure
         function of `table` and `self._target`; valid before or after commit.
         """
-        validate_table_name(table)
+        _validate_table_name(table)
         return self._target / f"{table}.parquet"
 
     def _stage(self) -> OutputTxn:
