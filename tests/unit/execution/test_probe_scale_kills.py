@@ -162,9 +162,16 @@ class TestDownscalePerParentBoundKills:
 
     def test_the_rewrite_does_not_touch_the_original_config(self) -> None:
         config = _bounded(25, 50, min_per_parent=2, max_per_parent=2)
-        downscale_config(config, 0.1, floor_rows=0)
+        # A categorical key would be rewritten to the widest bounds at any size.
+        config["tables"][0]["generate_columns"][0] = {
+            "name": "id",
+            "type": "categorical",
+            "categories": ["a", "b"],
+        }
+        scaled = downscale_config(config, 0.1, floor_rows=0)
         ref = config["tables"][1]["generate_columns"][2]
         assert (ref["min_per_parent"], ref["max_per_parent"]) == (2, 2)
+        assert scaled["tables"][1]["generate_columns"][2]["max_per_parent"] == 5
 
     def test_a_full_size_probe_loosens_nothing(self) -> None:
         full = downscale_config(_bounded(25, 50, min_per_parent=2, max_per_parent=2), 1.0)

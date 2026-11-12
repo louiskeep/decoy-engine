@@ -154,6 +154,7 @@ def test_at6f_fitted_without_a_positive_bound_validates() -> None:
     fitted = {"distribution": "fitted", "snapshot_file": "snap.json"}
     assert validate(_tables(10, 20, **fitted))
     assert validate(_tables(10, 20, min_per_parent=0, max_per_parent=0, **fitted))
+    assert config_api.per_parent_problems(_tables(10, 20, **fitted)) == []
 
 
 def test_the_refusal_order_is_conflict_then_fitted_then_nulls_then_ceiling() -> None:

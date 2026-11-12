@@ -12,6 +12,7 @@ import random
 import subprocess
 import sys
 import textwrap
+import tracemalloc
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -70,19 +71,21 @@ def _col(**options: Any) -> dict[str, Any]:
 
 # ---- AT-1: the move alone changes no byte ------------------------------------------------------
 
-EXPECTED_OVER_MAX = ["c", "a", "a", "a", "b", "b"]
-EXPECTED_DONOR = ["a", "a", "a", "c", "a", "b"]
+FIVE = ["a", "b", "c", "d", "e"]
+# (drawn, min, max, expected): recorded on the slice base through the same V1 thin call. Each
+# cell frees exactly as many slots as the deficits need, so the fill step never runs and every
+# shuffle of the moved repair (over-max slots, donors, the queue) is exercised.
+MOVE_ONLY_WITNESSES = {
+    "over_max": ("abaaaaaab", 1, 4, ["a", "b", "e", "a", "c", "a", "a", "d", "b"]),
+    "donors": ("aabaaaaab", 1, 0, ["a", "a", "b", "e", "a", "a", "d", "a", "c"]),
+    "over_max_and_donors": ("aaaabbbbcd", 2, 3, ["e", "a", "c", "a", "b", "e", "d", "b", "c", "d"]),
+}
 
 
-def test_at1_repair_without_a_fill_is_byte_identical_to_the_base() -> None:
-    """Both cells free exactly as many slots as the deficits need, so the fill step never runs.
-
-    The expected lists were recorded on the slice base through the same V1 thin call.
-    """
-    over_max = _v1(["a", "a", "a", "a", "b", "b"], ["a", "b", "c"], 1, 3)
-    assert over_max == EXPECTED_OVER_MAX
-    donor = _v1(["a", "a", "a", "a", "a", "b"], ["a", "b", "c"], 1, 0)
-    assert donor == EXPECTED_DONOR
+@pytest.mark.parametrize("name", sorted(MOVE_ONLY_WITNESSES))
+def test_at1_repair_without_a_fill_is_byte_identical_to_the_base(name: str) -> None:
+    drawn, lo, hi, expected = MOVE_ONLY_WITNESSES[name]
+    assert _v1(list(drawn), FIVE, lo, hi) == expected
 
 
 def test_at1_unbounded_reference_never_enters_the_repair(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -220,12 +223,27 @@ def test_at4_min_and_max_hold_together_over_200_seeds() -> None:
 
 
 def test_at4_a_very_large_max_allocates_nothing_proportional_to_it() -> None:
-    """A fill that listed every free slot would need 3 * 10**12 entries and never return."""
+    """A repair that listed every slot up front would need 3 * 10**12 entries and never return."""
     parents = ["a", "b", "c"]
     rng = random.Random(3)
     drawn = [rng.choice(parents) for _ in range(20)]
     out = _repair(drawn, parents, 6, 10**12, rng)
     assert sorted(Counter(out).values())[0] in (6, 7)
+
+
+@pytest.mark.serial
+def test_at4_the_fill_allocates_by_rows_and_parents_not_by_max_times_parents() -> None:
+    """15_000 freed slots over 2_000 parents: a list of every free slot would hold 10**7 keys."""
+    parents = list(range(2_000))
+    drawn = [0] * 20_000
+    tracemalloc.start()
+    try:
+        out = _repair(drawn, parents, 0, 5_000, random.Random(4))
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert Counter(out)[0] == 5_000 and len(out) == 20_000
+    assert peak < 8_000_000
 
 
 @pytest.mark.parametrize("keys", [LIST_KEYS, DICT_KEYS], ids=["list", "dict"])
