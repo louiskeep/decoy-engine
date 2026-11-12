@@ -10,7 +10,9 @@ identity, and every carrier agrees. ``--to-unreleased`` converts an identity-add
 claimed one numeric minor under the old per-PR process: catalog declarations become
 ``since=UNRELEASED``, Python and JSON carriers the string ``"unreleased"``, Markdown the text
 ``unreleased``; the version anchors return to main's, the branch fixture is deleted and the
-consumer contract is rebuilt from the converted tree. Without a mode it renumbers the claimed
+consumer contract is rebuilt from the converted tree. It refuses a claim that is not above main's
+version, and a Python or JSON ``registry_version`` value naming the claim (``unconverted``): set
+that line to main's version by hand and rerun. Without a mode it renumbers the claimed
 minor to main + 1 (the retiring numeric workflow). It never runs pytest (``--print-tests``
 prints the list for ``vm-run``) and holds no comparison logic of its own: every decision comes
 from scripts/release/reason_manifest_policy.py.
@@ -61,6 +63,7 @@ from scripts.release.reason_manifest_policy import (  # noqa: E402
     renumber_classification,
     renumber_target,
     restamp,
+    since_window_violations,
     unreleased_violations,
     version_of,
 )
@@ -96,6 +99,8 @@ CARRIERS = (
     (r"tests/.*\.json", "json"),
     (r"(docs/.*|CHANGELOG|changelog\.d/[^/]*)\.md", "markdown"),
 )
+# The registry version itself is never pending: outside the two anchors a carrier of it is refused.
+VERSION_KEY = r"registry_version['\"]?\]?\s*(?::|==?)\s*(['\"]){}\1"
 FIXTURE_DIR = "tests/fixtures/f29"
 RENUMBER_LINE = "Registry renumbered at merge from"
 BASE_TESTS = (
@@ -287,6 +292,7 @@ def unreleased_text(kind: str, old: str, text: str) -> str:
 def plan_unreleased(hunks, old: str, fixture: str | None):
     """Line edits {path: {line: text}} and refusals for --to-unreleased; nothing is written."""
     pat, prefix = token(old), fixture_prefix(old)
+    keyed = re.compile(VERSION_KEY.format(re.escape(old)))
     edits: dict[str, dict[int, str]] = {}
     refuse: list[str] = []
     for h in hunks:
@@ -297,7 +303,9 @@ def plan_unreleased(hunks, old: str, fixture: str | None):
             if (anchor and anchor.search(text)) or not (pat.search(text) or prefix in text):
                 continue
             new = unreleased_text(kind, old, text)
-            if pat.search(new) or prefix in new:
+            if kind in ("python", "json") and keyed.search(text):
+                refuse.append(f"unconverted {h.path}:{no}")
+            elif pat.search(new) or prefix in new:
                 refuse.append(f"{kind if new == text else 'unconverted'} {h.path}:{no}")
             else:
                 edits.setdefault(h.path, {})[no] = new
@@ -446,6 +454,10 @@ def run(repo: Path, main: str, check: bool, to_unreleased: bool = False) -> int:
 def unreleased(repo, w, manifests, old, hunks, repo_facts) -> int:
     b, m, h = manifests
     version = version_of(m)
+    if since_window_violations([("claim", old)], version, old):
+        # Main already holds this minor, so a branch line naming it may mean main's version.
+        how = "renumber the slice above main first (run without a mode), then convert it"
+        raise rg.Refusal(3, f"claim-not-above-main {old} (main is at {version}): {how}")
     for rel, rx in ANCHORS.items():
         if len(rx.findall(read(repo, rel))) != 1:
             raise rg.Refusal(3, f"anchor-missing {rel}")
