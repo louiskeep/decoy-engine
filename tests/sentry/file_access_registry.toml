@@ -1361,16 +1361,6 @@ owner = "cam"
 reason = "drops the per-child key table so the spill holds one child at a time; no caller or config path reaches the statement"
 
 [[entry]]
-module = "decoy_engine/profiling/_scan_integrity.py"
-function = "column_distinct"
-sink = "duckdb.connection.execute"
-ordinal = 0
-disposition = "read"
-rule = "statement over one in-memory column read by the caller through a policy-issued reader; the connection's only file path is its spill directory, caller-owned scratch"
-owner = "cam"
-reason = "fixed text with the column relabelled k0; no caller or config path reaches the statement"
-
-[[entry]]
 module = "decoy_engine/profiling/model_pack/classify.py"
 function = "_default_pack_dir"
 sink = "Path.is_dir"

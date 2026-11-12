@@ -29,8 +29,8 @@ def _pair(n: int) -> tuple[pa.Table, pa.Table]:
     src_code = [f"c{k % 50}" for k in ks]
     out_code = [src_code[k] if k % 4 else f"d{k % 7}" for k in ks]
     # Nulls only from row 7 on, so a batch of 7 sees none in its first batch.
-    src_num = [k for k in ks]
-    out_num = [None if k % 13 == 8 else k + (k % 5 == 0) for k in ks]
+    src_num = [10_000 + k for k in ks]
+    out_num = [None if k % 13 == 8 else 10_000 + k + (k % 5 == 0) for k in ks]
     same = [f"s{k % 9}" for k in ks]
     const = ["z"] * n
     src = pa.table(
@@ -119,6 +119,8 @@ def test_batch_layout_changes_nothing(tmp_path: Path) -> None:
     )
     assert split == whole
     assert whole["num"].comparable_rows < 100  # nulls exist, so the second-batch case is real
+    # Five-digit ints read as zip codes only while they are rendered without a ".0" suffix.
+    assert [d.detector_id for d in whole["num"].detectors] == ["us_zip"]
 
 
 def test_unaligned_row_counts_skip_identity(tmp_path: Path) -> None:

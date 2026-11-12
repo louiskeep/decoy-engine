@@ -99,17 +99,15 @@ def _hint(terms: list[str]) -> re.Pattern[str]:
     return re.compile(rf"(?i)^(.*[._-])?({body})([._-].*)?\Z")
 
 
-# The 26 built-in detectors' column-name hint patterns live in YAML
-# under decoy_engine.detection.name_hints.v1/; the loader returns a flat
-# dict {detector_id: [term, ...]} and we apply `_hint(terms)` here to
-# build the actual re.Pattern objects. Keeping regex construction in
-# this module means there's exactly one implementation; the loader is
-# a pure data layer.
+# The 26 built-in detectors' column-name hint patterns live in YAML under
+# decoy_engine.detection.name_hints.v1/; the loader returns a flat dict
+# {detector_id: [term, ...]} and we apply `_hint(terms)` here to build the actual
+# re.Pattern objects. Keeping regex construction in this module means there's exactly
+# one implementation; the loader is a pure data layer.
 #
-# Behavior matches the pre-extraction hard-coded dict bit-for-bit;
-# this is verified by tests/snapshots/test_name_hints_baseline.py.
-# Any YAML edit that changes coverage breaks the snapshot and forces
-# an explicit re-baseline commit.
+# Behavior matches the pre-extraction hard-coded dict bit-for-bit; this is verified by
+# tests/snapshots/test_name_hints_baseline.py. Any YAML edit that changes coverage breaks
+# the snapshot and forces an explicit re-baseline commit.
 #
 # See decoy_engine.detection.name_hints.v1/README.md for the YAML format
 # + contribution conventions.
