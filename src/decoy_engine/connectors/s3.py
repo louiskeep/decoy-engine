@@ -30,6 +30,7 @@ from typing import ClassVar
 
 from pydantic import Field, SecretStr
 
+from decoy_engine.connectors import _clients
 from decoy_engine.sdk import (
     CAP_INTROSPECTION,
     CAP_MULTIPART,
@@ -41,8 +42,6 @@ from decoy_engine.sdk import (
     FileMeta,
     FileSink,
     FileSource,
-    PermanentError,
-    TransientError,
     WriteResult,
 )
 
@@ -58,55 +57,6 @@ _MULTIPART_MIN_PART_BYTES = 5 * 1024 * 1024
 _DEFAULT_READ_CHUNK_BYTES = 1 * 1024 * 1024
 
 
-# Error codes from botocore that indicate a permanent (do-not-retry) failure.
-# Anything else falls into the transient bucket so the engine's retry policy
-# decides whether to back off and try again.
-_PERMANENT_S3_ERROR_CODES = frozenset(
-    {
-        "NoSuchBucket",
-        "NoSuchKey",
-        "404",
-        "403",
-        "AccessDenied",
-        "InvalidAccessKeyId",
-        "SignatureDoesNotMatch",
-        "AllAccessDisabled",
-    }
-)
-
-
-def _wrap_client_error(exc: Exception) -> Exception:
-    """Translate a botocore ClientError into a typed SDK error.
-
-    Permanent codes (bucket/key missing, auth) raise `PermanentError`.
-    Transient network conditions (endpoint unreachable, connect timeout,
-    read timeout) raise `TransientError` so the engine retries.
-
-    QA 2026-05-31 session2 F1 (HIGH) closure: ConnectTimeoutError +
-    ReadTimeoutError are subclasses of BotoCoreError -- NOT
-    EndpointConnectionError or ClientError -- so the prior code
-    classified them as ``PermanentError`` and immediately aborted jobs
-    that could have succeeded on retry. Now they fall through the
-    transient branch.
-    """
-    from botocore.exceptions import (
-        ClientError,
-        ConnectTimeoutError,
-        EndpointConnectionError,
-        ReadTimeoutError,
-    )
-
-    if isinstance(exc, (EndpointConnectionError, ConnectTimeoutError, ReadTimeoutError)):
-        return TransientError(f"S3 transient connection error: {exc}")
-    if isinstance(exc, ClientError):
-        code = exc.response.get("Error", {}).get("Code", "")
-        if code in _PERMANENT_S3_ERROR_CODES:
-            return PermanentError(f"S3 {code}: {exc.response.get('Error', {}).get('Message', '')}")
-        return TransientError(f"S3 transient error {code}: {exc}")
-    # Anything else: assume permanent so callers don't loop on programmer error.
-    return PermanentError(f"Unexpected S3 error: {exc}")
-
-
 class S3Config(ConnectorConfig):
     """Config shared by `S3FileSource` and `S3FileSink`.
 
@@ -118,7 +68,7 @@ class S3Config(ConnectorConfig):
 
     bucket: str = Field(..., min_length=1, max_length=255)
     prefix: str = ""
-    region: str = "us-east-1"
+    region: str | None = None
     # Credentials are optional so the SDK supports the AWS default-chain
     # auth modes that real shops use: EC2 instance profile, ECS task role,
     # EKS IRSA, IAM Identity Center, env vars (AWS_ACCESS_KEY_ID etc.),
@@ -137,32 +87,15 @@ class S3Config(ConnectorConfig):
 
 
 def _build_s3_client(config: S3Config):
-    """Construct a boto3 client with bounded timeouts.
-
-    Modest timeouts so a misconfigured endpoint doesn't hang for 10 minutes
-    waiting on TCP. The engine's retry logic provides the backoff layer
-    above; we don't double up here.
-    """
-    import boto3
-    from botocore.config import Config as BotoConfig
-
-    # Only pass static creds when explicitly configured. Passing None
-    # would override the default chain with "no credentials" and cause
-    # auth failures on hosts that rely on instance profiles or env vars.
-    kwargs: dict = {
-        "region_name": config.region,
-        "endpoint_url": config.endpoint_url,
-        "config": BotoConfig(
-            connect_timeout=5,
-            read_timeout=60,
-            retries={"max_attempts": 1, "mode": "standard"},
+    """Build the client through the one factory (``_clients.s3_client``)."""
+    return _clients.s3_client(
+        region=config.region,
+        endpoint_url=config.endpoint_url,
+        access_key_id=config.access_key_id.get_secret_value() if config.access_key_id else None,
+        secret_access_key=(
+            config.secret_access_key.get_secret_value() if config.secret_access_key else None
         ),
-    }
-    if config.access_key_id is not None:
-        kwargs["aws_access_key_id"] = config.access_key_id.get_secret_value()
-    if config.secret_access_key is not None:
-        kwargs["aws_secret_access_key"] = config.secret_access_key.get_secret_value()
-    return boto3.client("s3", **kwargs)
+    )
 
 
 def _join_key(prefix: str, path: str) -> str:
@@ -206,7 +139,7 @@ class S3FileSource(FileSource[S3Config]):
         try:
             client.head_bucket(Bucket=self.config.bucket)
         except Exception as exc:
-            return CheckResult(ok=False, detail=str(_wrap_client_error(exc)))
+            return CheckResult(ok=False, detail=str(_clients.s3_error(exc)))
         return CheckResult(ok=True)
 
     def list(self, prefix: str | None = None) -> Iterator[FileMeta]:
@@ -218,23 +151,20 @@ class S3FileSource(FileSource[S3Config]):
         """
         client = self._client_or_build()
         effective_prefix = _join_key(self.config.prefix, prefix or "")
-        try:
-            paginator = client.get_paginator("list_objects_v2")
-            for page in paginator.paginate(
-                Bucket=self.config.bucket,
-                Prefix=effective_prefix,
-            ):
-                for item in page.get("Contents", []):
-                    # `LastModified` is a datetime; ISO format for FileMeta.
-                    modified = item.get("LastModified")
-                    yield FileMeta(
-                        path=item["Key"],
-                        size=item.get("Size"),
-                        content_type=None,  # list_objects doesn't return content-type
-                        modified=modified.isoformat() if modified else None,
-                    )
-        except Exception as exc:
-            raise _wrap_client_error(exc) from exc
+        paginator = _clients.s3_call(client.get_paginator, "list_objects_v2")
+        # Pages are fetched lazily, so each `next` is a network call that needs translating.
+        pages = iter(paginator.paginate(Bucket=self.config.bucket, Prefix=effective_prefix))
+        done = object()
+        while (page := _clients.s3_call(next, pages, done)) is not done:
+            for item in page.get("Contents", []):
+                # `LastModified` is a datetime; ISO format for FileMeta.
+                modified = item.get("LastModified")
+                yield FileMeta(
+                    path=item["Key"],
+                    size=item.get("Size"),
+                    content_type=None,  # list_objects doesn't return content-type
+                    modified=modified.isoformat() if modified else None,
+                )
 
     def head(self, path: str) -> FileMeta:
         """Native S3 HEAD: one RPC, returns size and content-type.
@@ -244,10 +174,7 @@ class S3FileSource(FileSource[S3Config]):
         the semantics of `open()`.
         """
         client = self._client_or_build()
-        try:
-            response = client.head_object(Bucket=self.config.bucket, Key=path)
-        except Exception as exc:
-            raise _wrap_client_error(exc) from exc
+        response = _clients.s3_call(client.head_object, Bucket=self.config.bucket, Key=path)
         modified = response.get("LastModified")
         return FileMeta(
             path=path,
@@ -264,10 +191,7 @@ class S3FileSource(FileSource[S3Config]):
         a key, pass it to open. Re-joining would double-prefix.
         """
         client = self._client_or_build()
-        try:
-            response = client.get_object(Bucket=self.config.bucket, Key=path)
-        except Exception as exc:
-            raise _wrap_client_error(exc) from exc
+        response = _clients.s3_call(client.get_object, Bucket=self.config.bucket, Key=path)
 
         body = response["Body"]
         try:
@@ -308,7 +232,7 @@ class S3FileSink(FileSink[S3Config]):
         try:
             client.head_bucket(Bucket=self.config.bucket)
         except Exception as exc:
-            return CheckResult(ok=False, detail=str(_wrap_client_error(exc)))
+            return CheckResult(ok=False, detail=str(_clients.s3_error(exc)))
         return CheckResult(ok=True)
 
     def write(self, path: str, chunks: Iterator[bytes]) -> WriteResult:
@@ -358,14 +282,9 @@ class S3FileSink(FileSink[S3Config]):
             if upload_id is None:
                 # Whole body fits under the multipart threshold: single PUT.
                 payload = bytes(buffer)
-                try:
-                    client.put_object(
-                        Bucket=self.config.bucket,
-                        Key=key,
-                        Body=payload,
-                    )
-                except Exception as exc:
-                    raise _wrap_client_error(exc) from exc
+                _clients.s3_call(
+                    client.put_object, Bucket=self.config.bucket, Key=key, Body=payload
+                )
                 total_bytes += len(payload)
             else:
                 # Multipart in flight; upload remaining buffer as the
@@ -399,10 +318,9 @@ class S3FileSink(FileSink[S3Config]):
     # ----- multipart helpers ---------------------------------------------
 
     def _initiate_multipart(self, client, key: str) -> str:
-        try:
-            response = client.create_multipart_upload(Bucket=self.config.bucket, Key=key)
-        except Exception as exc:
-            raise _wrap_client_error(exc) from exc
+        response = _clients.s3_call(
+            client.create_multipart_upload, Bucket=self.config.bucket, Key=key
+        )
         return response["UploadId"]
 
     def _upload_part(
@@ -413,16 +331,14 @@ class S3FileSink(FileSink[S3Config]):
         part_number: int,
         body: bytes,
     ) -> str:
-        try:
-            response = client.upload_part(
-                Bucket=self.config.bucket,
-                Key=key,
-                UploadId=upload_id,
-                PartNumber=part_number,
-                Body=body,
-            )
-        except Exception as exc:
-            raise _wrap_client_error(exc) from exc
+        response = _clients.s3_call(
+            client.upload_part,
+            Bucket=self.config.bucket,
+            Key=key,
+            UploadId=upload_id,
+            PartNumber=part_number,
+            Body=body,
+        )
         return response["ETag"]
 
     def _complete_multipart(
@@ -432,12 +348,10 @@ class S3FileSink(FileSink[S3Config]):
         upload_id: str,
         parts: list[dict],
     ) -> None:
-        try:
-            client.complete_multipart_upload(
-                Bucket=self.config.bucket,
-                Key=key,
-                UploadId=upload_id,
-                MultipartUpload={"Parts": parts},
-            )
-        except Exception as exc:
-            raise _wrap_client_error(exc) from exc
+        _clients.s3_call(
+            client.complete_multipart_upload,
+            Bucket=self.config.bucket,
+            Key=key,
+            UploadId=upload_id,
+            MultipartUpload={"Parts": parts},
+        )

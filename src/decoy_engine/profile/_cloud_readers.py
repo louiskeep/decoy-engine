@@ -151,63 +151,30 @@ def _csv_sample_from_window(
 # ---------------------------------------------------------------------
 
 
-def _s3_client(descriptor: dict[str, Any]) -> Any:
-    """Construct a per-call boto3 S3 client (no shared global; QA Q1/Q10).
+def _s3_for(descriptor: dict[str, Any]) -> Any:
+    """A per-call S3 client from the shared factory (no shared global; QA Q1/Q10).
 
-    Connect + read timeouts so a black-holed endpoint cannot hang the worker
-    (QA-7 F2). Region + `endpoint_url` (MinIO/R2/moto) come from the descriptor.
+    Region and `endpoint_url` (MinIO/R2/moto) come from the descriptor; credentials come
+    from the SDK default chain.
     """
-    import boto3
-    from botocore.config import Config as BotoConfig
-
-    client_kwargs: dict[str, Any] = {}
     region = descriptor.get("region")
-    if isinstance(region, str) and region:
-        client_kwargs["region_name"] = region
     endpoint_url = descriptor.get("endpoint_url")
-    if isinstance(endpoint_url, str) and endpoint_url:
-        client_kwargs["endpoint_url"] = endpoint_url
-    client_kwargs["config"] = BotoConfig(
-        connect_timeout=5,
-        read_timeout=60,
-        retries={"max_attempts": 1, "mode": "standard"},
+    return _clients.s3_client(
+        region=region if isinstance(region, str) and region else None,
+        endpoint_url=endpoint_url if isinstance(endpoint_url, str) and endpoint_url else None,
+        access_key_id=None,
+        secret_access_key=None,
     )
-    return boto3.client("s3", **client_kwargs)
-
-
-def _s3_wrapped(call: Callable[[], Any]) -> Any:
-    """Run an S3 SDK call, wrapping SDK errors so no raw metadata leaks.
-
-    Network-class errors surface only their exception type name; client errors
-    surface only the error CODE (NoSuchKey, AccessDenied, ...). The raw request
-    metadata / access key ID stays out of the message (QA-7 F2).
-    """
-    from botocore.exceptions import (
-        ClientError,
-        ConnectTimeoutError,
-        EndpointConnectionError,
-        ReadTimeoutError,
-    )
-
-    try:
-        return call()
-    except (EndpointConnectionError, ConnectTimeoutError, ReadTimeoutError) as exc:
-        raise RuntimeError(
-            f"profile_source s3: transient network error ({type(exc).__name__})"
-        ) from exc
-    except ClientError as exc:
-        code = exc.response.get("Error", {}).get("Code", "Unknown")
-        raise RuntimeError(f"profile_source s3: client error {code}") from exc
 
 
 def _s3_size(client: Any, bucket: str, key: str) -> int:
-    head = _s3_wrapped(lambda: client.head_object(Bucket=bucket, Key=key))
+    head = _clients.s3_call(client.head_object, Bucket=bucket, Key=key)
     return int(head["ContentLength"])
 
 
 def _s3_range(client: Any, bucket: str, key: str, start: int, end_inclusive: int) -> bytes:
-    response = _s3_wrapped(
-        lambda: client.get_object(Bucket=bucket, Key=key, Range=f"bytes={start}-{end_inclusive}")
+    response = _clients.s3_call(
+        client.get_object, Bucket=bucket, Key=key, Range=f"bytes={start}-{end_inclusive}"
     )
     # Q17: draining .read() does not release the socket; close the body so the
     # connection returns to the pool (multi-range parquet reads reuse it).
@@ -216,7 +183,7 @@ def _s3_range(client: Any, bucket: str, key: str, start: int, end_inclusive: int
 
 
 def _s3_full(client: Any, bucket: str, key: str) -> bytes:
-    response = _s3_wrapped(lambda: client.get_object(Bucket=bucket, Key=key))
+    response = _clients.s3_call(client.get_object, Bucket=bucket, Key=key)
     with response["Body"] as stream:
         return bytes(stream.read())
 
@@ -230,7 +197,7 @@ class S3ParquetSource:
         self._key = _require_str(descriptor, "key", "s3")
 
     def _bind(self) -> tuple[Any, int, Callable[[int, int], bytes]]:
-        client = _s3_client(self._descriptor)
+        client = _s3_for(self._descriptor)
         size = _s3_size(client, self._bucket, self._key)
 
         def fetch(start: int, end_inclusive: int) -> bytes:
@@ -251,7 +218,7 @@ class S3ParquetSource:
         return _read_parquet_sample(size, fetch, sample_rows)
 
     def to_frame(self) -> pd.DataFrame:
-        client = _s3_client(self._descriptor)
+        client = _s3_for(self._descriptor)
         return pd.read_parquet(io.BytesIO(_s3_full(client, self._bucket, self._key)))
 
 
@@ -264,7 +231,7 @@ class S3CsvSource:
         self._key = _require_str(descriptor, "key", "s3")
 
     def _size_and_window(self) -> tuple[int, bytes]:
-        client = _s3_client(self._descriptor)
+        client = _s3_for(self._descriptor)
         size = _s3_size(client, self._bucket, self._key)
         end = min(_CSV_SAMPLE_WINDOW_BYTES, size) - 1
         window = _s3_range(client, self._bucket, self._key, 0, end) if size > 0 else b""
@@ -288,7 +255,7 @@ class S3CsvSource:
         return _csv_sample_from_window(window, size, sample_rows, self._descriptor.get(LEXEME_KEY))
 
     def to_frame(self) -> pd.DataFrame:
-        client = _s3_client(self._descriptor)
+        client = _s3_for(self._descriptor)
         return pd.read_csv(
             io.BytesIO(_s3_full(client, self._bucket, self._key)),
             **pandas_lexeme_kwargs(self._descriptor.get(LEXEME_KEY)),

@@ -45,6 +45,20 @@ BASELINE = HERE / "baselines" / "gcs-call-kwargs.json"
 CORPUS = HERE / "fixtures" / "outbound_seeded.py.txt"
 CLIENT_TARGETS = frozenset({"google.cloud.storage.Client", "google.cloud.storage.client.Client"})
 REQUIRED = frozenset({"timeout", "retry"})
+# Canonical spellings of an S3 client or resource build. Calls on a built object print as
+# `Name()`, so `boto3.Session(...).client(...)` reads `boto3.Session().client`.
+S3_BUILDERS = frozenset(
+    {
+        "boto3.client",
+        "boto3.resource",
+        "boto3.Session().client",
+        "boto3.Session().resource",
+        "boto3.session.Session().client",
+        "boto3.session.Session().resource",
+        "botocore.session.get_session().create_client",
+        "botocore.session.Session().create_client",
+    }
+)
 # First-inventory size of the collision walk; lower it together with the baseline.
 WALK_FLOOR = 151
 
@@ -138,6 +152,19 @@ def _is_client_target(target: object) -> bool:
     )
 
 
+def _chain(node: ast.AST, scope: Scope) -> str | None:
+    """Dotted name of a call target through import aliases, with `()` for each call on the way."""
+    if isinstance(node, ast.Name):
+        return scope.lookup(node.id)
+    if isinstance(node, ast.Attribute):
+        base = _chain(node.value, scope)
+        return f"{base}.{node.attr}" if base else None
+    if isinstance(node, ast.Call):
+        base = _chain(node.func, scope)
+        return f"{base}()" if base else None
+    return None
+
+
 class _ModuleScan:
     def __init__(
         self, rel: str, name: str, tree: ast.Module, index: ProjectIndex, names: frozenset[str]
@@ -178,6 +205,8 @@ class _ModuleScan:
                 _is_client_target(target) or (target == DYNAMIC and self.imports_storage)
             ):
                 self._add("AT-C9", call, qual, "Client", 0)
+            if self.rel != FACTORY and _chain(call.func, scope) in S3_BUILDERS:
+                self._add("AT-C41", call, qual, "S3", 0)
             if not isinstance(call.func, ast.Attribute) or call.func.attr not in self.names:
                 continue
             method = call.func.attr
