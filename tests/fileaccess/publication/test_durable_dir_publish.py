@@ -29,10 +29,9 @@ from tests.fileaccess.publication._chain_support import (
     output_dir,
     stage_unit,
 )
+from tests.fileaccess.publication._dirmode_support import POLICIES
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX durable publish")
-
-POLICIES = ["strict", "ambient"]
 
 
 def _fileaccess() -> object:

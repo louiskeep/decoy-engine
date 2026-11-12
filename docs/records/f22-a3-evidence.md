@@ -35,7 +35,7 @@ Six production files: plan 9 row a3 names four, plus `reason_adapter.py` (owner 
 
 Registry procedure (`docs/reasons.md`, `scripts/release/reason_manifest_policy.py`), additive
 only: the slice builds at the next minor of its base (1.25.0); one pinned fixture for the minor,
-`tests/fixtures/f29/reason-manifest-v1.25-f22-publication.json` (13 entries, generated from
+the publication minor fixture under `tests/fixtures/f29/` (13 entries, generated from
 `reasons.manifest()` with the formatting that reproduces the 1.23 fixture byte for byte);
 `tests/fixtures/f29/consumer-contract.json` regenerated with
 `python tests/unit/progress/test_consumer_contract.py` (only `registry_version` moves, 27 lines);
@@ -319,7 +319,7 @@ a1a `2201c34c` (clean), a1b `96e8331b` (merges a1a, clean), a2 `dbebb07c` (merge
 `tests/unit/test_reason_registry.py` (main's FPE fallback minor and the publication minor claimed
 the same version; both paragraphs and both tests kept). Then `scripts/dev/registry_renumber.py`
 moved the publication codes to the next free minor, 1.25.0: it renamed the pinned fixture to
-`tests/fixtures/f29/reason-manifest-v1.25-f22-publication.json`, rewrote `since`,
+the publication minor fixture under `tests/fixtures/f29/`, rewrote `since`,
 `REGISTRY_VERSION`, the `docs/reasons.md` sentence and the a3 test, and regenerated
 `tests/fixtures/f29/consumer-contract.json`. The tool does not rewrite `changelog.d/`, so the
 fragment's version moved by hand first, in its own commit; the test's `(1, 25, 0)` tuple floor
