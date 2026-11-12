@@ -502,6 +502,9 @@ def test_at11_a_lookup_through_a_column_that_is_not_a_reference_is_refused() -> 
     codes, locs = _refused(tables)
     assert codes == [LOOKUP_KEY]
     assert locs == VIA_LOC
+    # Keys that would make it a reference do not: only a `reference` column has a parent.
+    dressed = {**ref("pid", "parents"), "type": "sequence", "start": 1}
+    assert config_api.parent_lookup_problems(_anchored(fk=dressed)) == [(VIA_LOC[0], LOOKUP_KEY)]
 
 
 def test_at11_a_missing_or_later_lookup_column_is_left_to_the_plan_check() -> None:
