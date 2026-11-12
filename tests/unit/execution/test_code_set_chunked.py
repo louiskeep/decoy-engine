@@ -57,6 +57,7 @@ from decoy_engine.execution._chunked_code_set import (
 )
 from decoy_engine.plan import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
+from tests._declared_schema import declared_schema
 
 _ENGINE_VERSION = "p4-slice4-code-set-test"
 _LOW_THRESHOLD = 10
@@ -223,7 +224,11 @@ class TestByteParity:
         cfg = _config(tmp_path, columns)
         out = list(
             run_mask_pipeline_chunked(
-                cfg, _pa_chunks(table, 1), table="records", engine_version=_ENGINE_VERSION
+                cfg,
+                _pa_chunks(table, 1),
+                table="records",
+                source_schema=declared_schema(cfg, "records"),
+                engine_version=_ENGINE_VERSION,
             )
         )
         combined = concat_masked_chunks(out, table="records")
@@ -382,11 +387,14 @@ class TestOutOfCoreSharedShapeParity:
         # table's own key-column participation, and "parent" has none here).
         cfg_parent_only = {k: v for k, v in cfg.items() if k != "relationships"}
         cfg_parent_only["tables"] = [t for t in cfg["tables"] if t["name"] == "parent"]
+        # The gate needs a tables entry for every source, so the child source goes too.
+        cfg_parent_only["sources"] = {"parent": cfg["sources"]["parent"]}
         chunked_out = list(
             run_mask_pipeline_chunked(
                 cfg_parent_only,
                 _pa_chunks(parent, 3),
                 table="parent",
+                source_schema=declared_schema(cfg_parent_only, "parent"),
                 engine_version=_ENGINE_VERSION,
             )
         )
@@ -428,7 +436,11 @@ class TestCorpusPinning:
         monkeypatch.setattr(code_set_module, "resolve_corpus_record", _spy)
         out = list(
             run_mask_pipeline_chunked(
-                cfg, _pa_chunks(table, 1), table="records", engine_version=_ENGINE_VERSION
+                cfg,
+                _pa_chunks(table, 1),
+                table="records",
+                source_schema=declared_schema(cfg, "records"),
+                engine_version=_ENGINE_VERSION,
             )
         )
         assert sum(c.num_rows for c in out) == 4
@@ -449,7 +461,11 @@ class TestCorpusPinning:
         table = pa.table({"code": pa.array(["A01", "A02", "A03", "A04"], type=pa.string())})
 
         gen = run_mask_pipeline_chunked(
-            cfg, _pa_chunks(table, 1), table="records", engine_version=_ENGINE_VERSION
+            cfg,
+            _pa_chunks(table, 1),
+            table="records",
+            source_schema=declared_schema(cfg, "records"),
+            engine_version=_ENGINE_VERSION,
         )
         first_chunk = next(gen)
         assert first_chunk.column("code")[0].as_py() in v1_codes
@@ -491,7 +507,11 @@ class TestCorpusPinning:
         # itself must raise (proving eager resolution, not lazy-on-first-chunk).
         with pytest.raises(PlanCompileError) as exc:
             run_mask_pipeline_chunked(
-                cfg, _pa_chunks(table, 1), table="records", engine_version=_ENGINE_VERSION
+                cfg,
+                _pa_chunks(table, 1),
+                table="records",
+                source_schema=declared_schema(cfg, "records"),
+                engine_version=_ENGINE_VERSION,
             )
         assert exc.value.code == "code_set_corpus_version_mismatch"
 
@@ -509,7 +529,11 @@ class TestCorpusPinning:
         cfg = _config(tmp_path, columns)
         with pytest.raises(PlanCompileError) as exc:
             run_mask_pipeline_chunked(
-                cfg, iter(()), table="records", engine_version=_ENGINE_VERSION
+                cfg,
+                iter(()),
+                table="records",
+                source_schema=declared_schema(cfg, "records"),
+                engine_version=_ENGINE_VERSION,
             )
         assert exc.value.code == "code_set_corpus_path_not_found"
 
@@ -811,7 +835,11 @@ class TestAdmissionBoundary:
         with pytest.raises(PlanCompileError) as exc:
             list(
                 run_mask_pipeline_chunked(
-                    cfg, _pa_chunks(table, 1), table="records", engine_version=_ENGINE_VERSION
+                    cfg,
+                    _pa_chunks(table, 1),
+                    table="records",
+                    source_schema=declared_schema(cfg, "records"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         assert exc.value.code == "chunked_code_set_when_not_supported"
@@ -847,7 +875,11 @@ class TestAdmissionBoundary:
         with pytest.raises(PlanCompileError) as exc:
             list(
                 run_mask_pipeline_chunked(
-                    cfg, _pa_chunks(table, 1), table="records", engine_version=_ENGINE_VERSION
+                    cfg,
+                    _pa_chunks(table, 1),
+                    table="records",
+                    source_schema=declared_schema(cfg, "records"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         assert exc.value.code == "chunked_code_set_source_dtype_unsupported"
@@ -861,7 +893,11 @@ class TestAdmissionBoundary:
         with pytest.raises(PlanCompileError) as exc:
             list(
                 run_mask_pipeline_chunked(
-                    cfg, [chunk1, chunk2], table="records", engine_version=_ENGINE_VERSION
+                    cfg,
+                    [chunk1, chunk2],
+                    table="records",
+                    source_schema=declared_schema(cfg, "records"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         assert exc.value.code == "chunked_code_set_source_dtype_unsupported"
@@ -1019,7 +1055,13 @@ class TestEmptyChunkParity:
         cfg = _config(tmp_path, columns)
         chunks = [table.slice(0, 0), table.slice(0, 2), table.slice(2, 2)]
         out = list(
-            run_mask_pipeline_chunked(cfg, chunks, table="records", engine_version=_ENGINE_VERSION)
+            run_mask_pipeline_chunked(
+                cfg,
+                chunks,
+                table="records",
+                source_schema=declared_schema(cfg, "records"),
+                engine_version=_ENGINE_VERSION,
+            )
         )
         assert len(out) == 3
         for chunk in out:
@@ -1035,7 +1077,11 @@ class TestEmptyChunkParity:
         cfg = _config(tmp_path, columns)
         out = list(
             run_mask_pipeline_chunked(
-                cfg, [empty, empty], table="records", engine_version=_ENGINE_VERSION
+                cfg,
+                [empty, empty],
+                table="records",
+                source_schema=declared_schema(cfg, "records"),
+                engine_version=_ENGINE_VERSION,
             )
         )
         for chunk in out:
@@ -1126,6 +1172,7 @@ class TestEvidenceAggregation:
                 cfg,
                 _pa_chunks(table, 1),
                 table="records",
+                source_schema=declared_schema(cfg, "records"),
                 engine_version=_ENGINE_VERSION,
                 chunk_result_sink=sink,
             )
@@ -1150,7 +1197,11 @@ class TestAdmissionSurfaces:
         cfg = _config(tmp_path, columns)
         out = list(
             run_mask_pipeline_chunked(
-                cfg, _pa_chunks(table, 2), table="records", engine_version=_ENGINE_VERSION
+                cfg,
+                _pa_chunks(table, 2),
+                table="records",
+                source_schema=declared_schema(cfg, "records"),
+                engine_version=_ENGINE_VERSION,
             )
         )
         assert sum(c.num_rows for c in out) == 5

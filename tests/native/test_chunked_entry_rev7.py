@@ -14,6 +14,10 @@ from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution.native._dispatch import NativeRouteEvidence
 from decoy_engine.generation.pool import PoolCache
 from decoy_engine.providers_v2 import get_default_registry
+from tests._declared_schema import chunked_entry_kwargs
+from tests.native._b8_support import (
+    below_gate,
+)
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     NEEDS_COMPANION,
@@ -79,6 +83,7 @@ def _run(fn: Any, config: dict[str, Any], chunks: list[pa.Table], **kw: Any) -> 
             table=TABLE,
             engine_version=ENGINE_VERSION,
             key_provider=key_provider(),
+            **chunked_entry_kwargs(fn, config, TABLE),
             **kw,
         )
     )
@@ -148,11 +153,13 @@ def _oracle_with_cache(config: dict[str, Any], cache: PoolCache, registry: Any) 
 
     `run_mask_pipeline_chunked` takes no cache, so the stale-cache check drives
     the shared helpers it is built from."""
+    chunks = split(_source(), 2)
     state = _chunked_oracle._oracle_preflight(
         config,
-        split(_source(), 2),
+        chunks,
         table=TABLE,
         engine_version=ENGINE_VERSION,
+        declared=below_gate(config, TABLE, chunks)[0],
         registry=registry,
         key_provider=key_provider(),
         pool_cache=cache,

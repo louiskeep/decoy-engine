@@ -48,6 +48,7 @@ from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships import RelationshipGraph
 from decoy_engine.transforms.group_key import GroupKeyConfig, apply_group_key
+from tests._declared_schema import declared_schema
 from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 
 _ENGINE_VERSION = "p4-slice2-group-key-test"
@@ -332,7 +333,11 @@ class TestIntNullGroupBy:
         chunked = pa.concat_tables(
             list(
                 run_mask_pipeline_chunked(
-                    cfg, _pa_chunks(table, 3), table="people", engine_version=_ENGINE_VERSION
+                    cfg,
+                    _pa_chunks(table, 3),
+                    table="people",
+                    source_schema=declared_schema(cfg, "people"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         ).combine_chunks()
@@ -393,7 +398,11 @@ class TestNullSentinelPerDtype:
         chunked = pa.concat_tables(
             list(
                 run_mask_pipeline_chunked(
-                    cfg, _pa_chunks(table, 4), table="people", engine_version=_ENGINE_VERSION
+                    cfg,
+                    _pa_chunks(table, 4),
+                    table="people",
+                    source_schema=declared_schema(cfg, "people"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         ).combine_chunks()
@@ -515,6 +524,7 @@ class TestCacheCollisionFloatSignedZero:
                     cfg,
                     _pa_chunks(table, 3),
                     table="people",
+                    source_schema=declared_schema(cfg, "people"),
                     engine_version=_ENGINE_VERSION,
                 )
             )
@@ -648,6 +658,7 @@ class TestCacheCollisionDecimalSignedZero:
                     cfg,
                     _pa_chunks(table, 2),
                     table="people",
+                    source_schema=declared_schema(cfg, "people"),
                     engine_version=_ENGINE_VERSION,
                 )
             )
@@ -925,7 +936,11 @@ class TestOrderingRegressions:
         with pytest.raises(PlanCompileError) as exc2:
             list(
                 run_mask_pipeline_chunked(
-                    cfg, _pa_chunks(table, 2), table="people", engine_version=_ENGINE_VERSION
+                    cfg,
+                    _pa_chunks(table, 2),
+                    table="people",
+                    source_schema=declared_schema(cfg, "people"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         assert exc2.value.code == "chunked_group_key_group_by_dtype_unsupported"
@@ -1433,6 +1448,7 @@ class TestFkExclusion:
                     cfg_with_fk,
                     _pa_chunks(table, 7),
                     table="customers",
+                    source_schema=declared_schema(cfg_with_fk, "customers"),
                     engine_version=_ENGINE_VERSION,
                 )
             )
@@ -1531,7 +1547,11 @@ class TestWhenRejection:
         with pytest.raises(PlanCompileError) as exc:
             list(
                 run_mask_pipeline_chunked(
-                    cfg, _pa_chunks(table, 2), table="people", engine_version=_ENGINE_VERSION
+                    cfg,
+                    _pa_chunks(table, 2),
+                    table="people",
+                    source_schema=declared_schema(cfg, "people"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         assert exc.value.code == "chunked_group_key_when_not_supported"
@@ -1632,7 +1652,11 @@ class TestOutputDtypeInvariance:
         cfg = _config(tmp_path, columns)
         chunks = list(
             run_mask_pipeline_chunked(
-                cfg, _pa_chunks(table, 3), table="people", engine_version=_ENGINE_VERSION
+                cfg,
+                _pa_chunks(table, 3),
+                table="people",
+                source_schema=declared_schema(cfg, "people"),
+                engine_version=_ENGINE_VERSION,
             )
         )
         assert len(chunks) == 3

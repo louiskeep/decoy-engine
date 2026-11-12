@@ -63,7 +63,7 @@ import numpy as np
 if TYPE_CHECKING:
     import pandas as pd  # predict_column signature only; pandas imported lazily at call-time
 
-# ── Lazy sklearn / lightgbm imports (require [ml] extra) ─────────────────────
+# ── sklearn / lightgbm imports (base dependencies) ───────────────────────────
 try:
     # joblib is used ONLY to serialise the trained sklearn Pipeline to a local
     # file that we ourselves generate (train_and_evaluate writes it; load_pack
@@ -79,10 +79,10 @@ try:
         balanced_accuracy_score,
         brier_score_loss,
     )
-except ImportError as _err:
+except (ImportError, OSError) as _err:  # OSError: lightgbm dlopen fails without libomp/libgomp
     raise ImportError(
-        "scikit-learn and lightgbm are required for the model trainer. "
-        "Install them via: pip install -e '.[ml]'"
+        "scikit-learn and lightgbm failed to import. They are base dependencies: reinstall "
+        "decoy-engine. On macOS run `brew install libomp`; on Linux install `libgomp1`."
     ) from _err
 
 from decoy_engine.profiling.eval.corpus import build_extended_fixtures, build_ood_fixtures
