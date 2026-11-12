@@ -97,7 +97,9 @@ def test_a_checked_key_with_no_codes_is_the_one_clean_key() -> None:
     assert post_scan_verdict(with_keys(row("checked", []))).blocking is False
 
 
-@pytest.mark.parametrize("section", ["keys", "residual_pii", "fk_preservation", "policy_validation"])
+@pytest.mark.parametrize(
+    "section", ["keys", "residual_pii", "fk_preservation", "policy_validation"]
+)
 def test_an_explicit_none_section_blocks_but_an_absent_one_does_not(section: str) -> None:
     # The engine writes a list for every section or leaves the key out (runner._report_to_dict).
     assert names({**BASE, section: None}) == ["check_error"]

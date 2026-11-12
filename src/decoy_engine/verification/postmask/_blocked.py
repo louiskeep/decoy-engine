@@ -3,7 +3,8 @@
 A key decides by its codes and its `baseline`, never by `status == "checked"`: a mismatch over a
 mismatched source, or a failure counting the source, only warns. A residual or policy `fail`
 gives `finding_blocked`; an `error` finding or a set `pass_failed_with` gives `check_error`. An
-`fk_preservation` finding is the same fact as a key code, so it adds one only when no key blocks.
+`fk_preservation` `fail` adds the orphans code (a set, so a key's own copy stays one); an `error`
+adds `check_error` only when no key blocks.
 Nothing here carries a data value.
 """
 
@@ -54,6 +55,9 @@ _CHECK_ERROR, _KEY_TYPE_MISMATCH, _FINDING_BLOCKED = (
 _ORPHANS = _P.FOREIGN_KEY_ORPHANS_INTRODUCED.spec.ref
 _FALLBACK_SUMMARY = "The post-scan integrity check blocked the run."
 _MAX_SPOTS = 3
+_MAX_NAME = 128
+# The status literals of `_keys.Status`; any other value is not the engine's own.
+_STATUSES = frozenset({"checked", "key_type_mismatch", "key_column_missing", "error"})
 _SEVERITIES = frozenset({"info", "warning", "fail", "error"})
 # A report that cannot be read is a check that could not run, so it blocks.
 _UNREADABLE = object()
@@ -92,9 +96,9 @@ class PostScanVerdict:
 def _rows(report: Mapping[str, Any], section: str) -> Iterator[Mapping[str, Any] | object]:
     """The rows of one section; a present section that is not a list, or a row that is not a
     mapping, comes out as `_UNREADABLE` so the caller can block on it."""
-    rows = report.get(section)
-    if rows is None:
+    if section not in report:
         return
+    rows = report[section]
     if not isinstance(rows, (list, tuple)):
         yield _UNREADABLE
         return
@@ -102,21 +106,36 @@ def _rows(report: Mapping[str, Any], section: str) -> Iterator[Mapping[str, Any]
         yield row if isinstance(row, Mapping) else _UNREADABLE
 
 
+def _post_scan_ref(payload: object) -> ReasonRef | None:
+    """The ref of one code mapping, only when it names a registered `post_scan` reason. The
+    caller never sees a raw string from the report."""
+    if not isinstance(payload, Mapping) or payload.get("namespace") != "post_scan":
+        return None
+    code = payload.get("code")
+    if isinstance(code, str) and reasons.find("post_scan", code) is not None:
+        return ReasonRef("post_scan", code)
+    return None
+
+
 def _key_refs(key: Mapping[str, Any]) -> Iterator[tuple[ReasonRef, bool]]:
     """Each code of one key result and whether it blocks (4.2.2): decided by the code and the
     baseline. A `check_error` blocks unless it is the source side's; a `key_type_mismatch` blocks
-    unless the source types were not comparable either."""
-    baseline = key.get("baseline")
-    payloads = key.get("codes") or ()
-    if not isinstance(payloads, (list, tuple)):
+    unless the source types were not comparable either. Only a `checked` key may carry no code
+    (`_keys._codes` gives every other status one), so any other shape is unreadable."""
+    baseline, status, payloads = key.get("baseline"), key.get("status"), key.get("codes")
+    if (
+        not isinstance(payloads, (list, tuple))
+        or not isinstance(status, str)
+        or status not in _STATUSES
+        or (status != "checked" and not payloads)
+    ):
         yield _CHECK_ERROR, True
         return
     for payload in payloads:
-        if not isinstance(payload, Mapping):
+        ref = _post_scan_ref(payload)
+        if ref is None:
             yield _CHECK_ERROR, True
-            continue
-        ref = ReasonRef(str(payload.get("namespace")), str(payload.get("code")))
-        if ref == _CHECK_ERROR:
+        elif ref == _CHECK_ERROR:
             yield ref, baseline != "error" or key.get("status") == "error"
         elif ref == _KEY_TYPE_MISMATCH:
             yield ref, baseline != "key_type_mismatch"
@@ -149,9 +168,9 @@ def post_scan_verdict(report: Mapping[str, Any], *, ner_blocked: bool = False) -
         severity = finding.get("severity") if isinstance(finding, Mapping) else None
         if severity not in _SEVERITIES:
             blocked.add(_CHECK_ERROR)
-        elif not keyed and severity == "fail":
+        elif severity == "fail":
             blocked.add(_ORPHANS)
-        elif not keyed and severity == "error":
+        elif severity == "error" and not keyed:
             blocked.add(_CHECK_ERROR)
     if report.get("pass_failed_with"):
         blocked.add(_CHECK_ERROR)
@@ -172,10 +191,13 @@ def block_location(report: Mapping[str, Any]) -> str:
     spots = []
     for section, fixed in (("residual_pii", None), ("policy_validation", "policy_validation")):
         for f in _rows(report, section):
-            if isinstance(f, Mapping) and f.get("severity") == "fail":
-                spots.append(
-                    f"{f.get('table')}.{f.get('column')} ({fixed or f.get('detector_id')})"
-                )
+            if not (isinstance(f, Mapping) and f.get("severity") == "fail"):
+                continue
+            table, column, detector = f.get("table"), f.get("column"), fixed or f.get("detector_id")
+            if all(
+                isinstance(n, str) and 0 < len(n) <= _MAX_NAME for n in (table, column, detector)
+            ):
+                spots.append(f"{table}.{column} ({detector})")
     return ", ".join(spots[:_MAX_SPOTS])
 
 
