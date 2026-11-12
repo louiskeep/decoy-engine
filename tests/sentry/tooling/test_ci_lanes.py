@@ -57,6 +57,19 @@ def test_real_tree_has_no_findings() -> None:
 # --- AT-1: a marker without a lane ---------------------------------------------------------
 
 
+def test_load_reads_both_workflow_suffixes(tmp_path: Path) -> None:
+    copied = ("pyproject.toml", "scripts/dev/gates.sh", "ci/unlaned.toml", "ci/required-jobs.toml")
+    for rel in copied:
+        dest = tmp_path / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes((lanes.ROOT / rel).read_bytes())
+    folder = tmp_path / ".github/workflows"
+    folder.mkdir(parents=True)
+    (folder / "a.yml").write_text("on: push\njobs: {}\n")
+    (folder / "b.yaml").write_text("on: push\njobs: {}\n")
+    assert sorted(lanes.load(tmp_path).workflows) == ["a.yml", "b.yaml"]
+
+
 def test_new_marker_without_lane_is_a_finding_until_registered_unlaned() -> None:
     t = seeded()
     ini = t.pyproject["tool"]["pytest"]["ini_options"]

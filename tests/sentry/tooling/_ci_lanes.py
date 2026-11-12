@@ -80,10 +80,10 @@ class Lane(NamedTuple):
 
 
 def load(root: Path = ROOT) -> Tree:
-    flows = {
-        p.name: yaml.safe_load(p.read_text())
-        for p in sorted((root / ".github/workflows").glob("*.yml"))
-    }
+    folder = root / ".github/workflows"
+    # GitHub runs both suffixes, so a `.yaml` workflow must not escape the rules.
+    files = sorted(p for pattern in ("*.yml", "*.yaml") for p in folder.glob(pattern))
+    flows = {p.name: yaml.safe_load(p.read_text()) for p in files}
     return Tree(
         flows,
         tomllib.loads((root / "pyproject.toml").read_text()),
