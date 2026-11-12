@@ -99,8 +99,13 @@ class S3ObjectStore:
                 raise
             return None
         body = response["Body"]
+        data = b""
         try:
-            data = _clients.s3_call(body.read, limit + 1)
+            # read(n) returns at most n bytes, so one call can stop short of a longer object.
+            while len(data) <= limit and (
+                part := _clients.s3_call(body.read, limit + 1 - len(data))
+            ):
+                data += part
         finally:
             body.close()
         if len(data) > limit:
