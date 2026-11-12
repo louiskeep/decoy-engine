@@ -38,6 +38,7 @@ from decoy_engine.run_result._project import ExecutionFacts, ProjectedTables
 _MODES = tuple(m for m in get_args(ExecutionMode) if m != "other")
 _MAX_CODES = 64
 _MAX_WARNINGS = 256
+_Key = tuple[str, str | None, str | None]
 
 
 class RunFacts(ExecutionFacts, Protocol):
@@ -61,23 +62,15 @@ class FailureInput:
 
 def _route(result: RunFacts | None, chunked: bool, native: NativeRoute | None) -> Route:
     telemetry = result.quality_metrics.get("execution") if result is not None else None
-    mode = telemetry.get("execution_mode") if isinstance(telemetry, Mapping) else None
-    kind: ExecutionMode | None
-    if chunked:
-        kind = "chunked"
-    elif mode is None:
-        kind = None
-    else:
-        # A route the model has no name for (mixed, a later one) reads "other", never raises.
-        kind = next((m for m in _MODES if m == mode), "other")
-    raw = telemetry.get("route_reason") if isinstance(telemetry, Mapping) else None
-    route_reason = approve_ref(raw)
-    return Route(
-        execution_mode=kind,
-        route_reason=route_reason,
-        chunked=chunked,
-        native=native,
+    telemetry = telemetry if isinstance(telemetry, Mapping) else {}
+    mode = telemetry.get("execution_mode")
+    # A route the model has no name for (mixed, a later one) reads "other", never raises.
+    kind: ExecutionMode | None = next(
+        (m for m in _MODES if m == mode), None if mode is None else "other"
     )
+    kind = "chunked" if chunked else kind
+    route_reason = approve_ref(telemetry.get("route_reason") if telemetry else None)
+    return Route(execution_mode=kind, route_reason=route_reason, chunked=chunked, native=native)
 
 
 def _count(report: Mapping[str, Any], key: str) -> int:
@@ -125,8 +118,19 @@ def _checks(result: RunFacts | None, blocking: bool) -> tuple[Check, ...]:
     return tuple(found)
 
 
+def _refold(seen: dict[_Key, int], keep: int) -> dict[_Key, int]:
+    """Sum counts over the first ``keep`` key parts, in first-seen order; the rest become null."""
+    out: dict[_Key, int] = {}
+    for (code, table, _column), count in seen.items():
+        short: _Key = (code, table if keep > 1 else None, None)
+        out[short] = out.get(short, 0) + count
+    return out
+
+
 def _warnings(result: RunFacts | None) -> tuple[WarningEntry, ...]:
-    seen: dict[tuple[str, str | None, str | None], int] = {}
+    """Warnings by (code, table, column). Past the model's cap the key coarsens to (code, table),
+    then to code alone, summing counts, so no count is lost. Order is first-seen at each level."""
+    seen: dict[_Key, int] = {}
     for item in result.warnings if result is not None else ():
         code = approve_ref(getattr(item, "code", None))
         if code is None:
@@ -135,16 +139,17 @@ def _warnings(result: RunFacts | None) -> tuple[WarningEntry, ...]:
         table = approve_name(detail.get("table") if isinstance(detail, Mapping) else None)
         key = (code, table, approve_name(getattr(item, "column", None)))
         seen[key] = seen.get(key, 0) + 1
-    entries = [
-        WarningEntry(code=c, table=t, column=col, count=n) for (c, t, col), n in seen.items()
-    ]
-    if len(entries) > _MAX_WARNINGS:
-        rest = sum(e.count for e in entries[_MAX_WARNINGS - 1 :])
-        entries = [
-            *entries[: _MAX_WARNINGS - 1],
-            WarningEntry(code="truncated", table=None, column=None, count=rest),
-        ]
-    return tuple(entries)
+    for keep in (2, 1):
+        if len(seen) > _MAX_WARNINGS:
+            seen = _refold(seen, keep)
+    # Unreachable while the registry holds fewer warning codes than the cap.
+    ranked = sorted(seen.items(), key=lambda kv: (-kv[1], kv[0][0]))[:_MAX_WARNINGS]
+    kept = {k for k, _ in ranked}
+    return tuple(
+        WarningEntry(code=c, table=t, column=col, count=n)
+        for (c, t, col), n in seen.items()
+        if (c, t, col) in kept
+    )
 
 
 def build_run_result(

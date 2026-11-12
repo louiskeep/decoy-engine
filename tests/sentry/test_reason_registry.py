@@ -65,8 +65,7 @@ ADAPTERS: dict[tuple[str, str], str] = {
         "stores the failure ReasonCode the caller passed in `outcomes` on the failed table"
     ),
     ("run_result/_build.py", "_warnings"): (
-        "copies the warning codes the engine recorded on the run into the result record; the "
-        "fold marker is the builder's own fixed value"
+        "copies the warning codes the engine recorded on the run into the result record"
     ),
     ("declared_casting/_quarantine_local.py", "_qerror"): _HELPER,
     ("plan/_checks_declared_casting.py", "_fail"): _HELPER,

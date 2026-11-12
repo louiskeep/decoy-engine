@@ -174,11 +174,34 @@ def test_warnings_fold_and_stay_value_free() -> None:
         {"code": "w_one", "table": "t", "column": "email", "count": 2},
         {"code": "w_two", "table": None, "column": None, "count": 1},
     ]
-    many = [warn(f"w_{i}") for i in range(300)]
-    folded = build(result=fake(warnings=many)).to_payload()["warnings"]
-    assert len(folded) == 256
-    assert folded[-1] == {"code": "truncated", "table": None, "column": None, "count": 45}
     assert "zz_marker" not in json.dumps(payload)
+
+
+def _fold(items):
+    payload = build(result=fake(warnings=items)).to_payload()
+    return payload["warnings"]
+
+
+def _warn(code, column=None, table=None):
+    return SimpleNamespace(code=code, column=column, detail={"table": table})
+
+
+def test_fold_levels_keep_every_count() -> None:
+    # Level 1: 256 distinct keys fit unchanged.
+    fits = [_warn("w_a", f"c{i}", "t") for i in range(256)]
+    assert len(_fold(fits)) == 256
+    # Level 2: over 256 columns of one code and table collapse to one entry.
+    columns = [_warn("w_a", f"c{i}", "t") for i in range(300)]
+    assert _fold(columns) == [{"code": "w_a", "table": "t", "column": None, "count": 300}]
+    # Level 3: over 256 tables collapse by code alone.
+    tables = [_warn("w_a", "c", f"t{i}") for i in range(300)] + [_warn("w_b", "c", "t")]
+    got = _fold(tables)
+    assert got == [
+        {"code": "w_a", "table": None, "column": None, "count": 300},
+        {"code": "w_b", "table": None, "column": None, "count": 1},
+    ]
+    for items in (fits, columns, tables):
+        assert sum(w["count"] for w in _fold(items)) == len(items)
 
 
 def test_paths_and_native() -> None:
