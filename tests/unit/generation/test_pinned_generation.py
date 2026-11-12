@@ -343,6 +343,7 @@ class TestRejections:
                 "pinned_faker_unsupported",
             ),
             ({"name": "f", "type": "formula", "formula": "1 + 1"}, "pinned_formula_unsupported"),
+            ({"name": "l", "type": "lookup", "codeset": "hcpcs"}, "pinned_lookup_unsupported"),
             (
                 {"name": "c", "type": "categorical", "categories": ["a"], "determinism": "fresh"},
                 "pinned_determinism_fresh",

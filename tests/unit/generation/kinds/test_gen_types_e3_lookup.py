@@ -164,6 +164,9 @@ def test_an_unknown_codeset_is_refused() -> None:
         ("v,w\na,0\n", {"weight_column": "w"}, reasons.plan.LOOKUP_WEIGHT_INVALID),
         ("v,w\na,nan\n", {"weight_column": "w"}, reasons.plan.LOOKUP_WEIGHT_INVALID),
         ("v,w\na,\n", {"weight_column": "w"}, reasons.plan.LOOKUP_WEIGHT_INVALID),
+        ("v,w\na,-1\nb,5\n", {"weight_column": "w"}, reasons.plan.LOOKUP_WEIGHT_INVALID),
+        ("v,w\na,\nb,1\n", {"weight_column": "w"}, reasons.plan.LOOKUP_WEIGHT_INVALID),
+        ("v\na\n", {"weight_column": "w"}, reasons.plan.LOOKUP_COLUMN_MISSING),
     ],
 )
 def test_a_bad_file_is_refused_with_its_own_code(

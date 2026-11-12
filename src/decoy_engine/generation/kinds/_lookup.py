@@ -229,7 +229,8 @@ def lookup_from_codeset(
     of the corpus, not of storage). A corpus has text columns only, so a `weight_column` that names
     one is refused as an invalid weight and one that names nothing as a missing column.
     """
-    from decoy_engine.transforms._codeset_loader import load_corpus
+    # Imported here: transforms reaches plan and execution, which import this package at load.
+    from decoy_engine.transforms.code_set import load_corpus
 
     rows = load_corpus(name)
     names = list(rows[0]) if rows else []

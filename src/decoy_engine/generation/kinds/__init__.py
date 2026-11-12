@@ -19,6 +19,7 @@ from decoy_engine.generation.kinds._lookup import (
     LookupOutcome,
     lookup_digests,
     lookup_file_format,
+    lookup_from_codeset,
     lookup_values,
     parse_lookup_bytes,
 )
@@ -53,6 +54,7 @@ __all__ = [
     "constant_values",
     "lookup_digests",
     "lookup_file_format",
+    "lookup_from_codeset",
     "lookup_values",
     "output_arrow_type",
     "output_payload_bound",

@@ -34,8 +34,7 @@ from decoy_engine.generation.statistical import (
 )
 from decoy_engine.plan._generation import column_pins_snapshot
 from decoy_engine.plan._types import unfreeze_json
-from decoy_engine.plan.checks import ReadLookup, lookup_columns
-from decoy_engine.plan.checks._lookup_tables import checked_lookup
+from decoy_engine.plan.checks import ReadLookup, checked_lookup, lookup_columns
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping

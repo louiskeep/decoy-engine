@@ -19,6 +19,12 @@
   },
   "decoy_engine.execution.physical._snapshot.capture_physical_plan_inputs": {
    "reason": "initial X0a inventory of test_file_access_entry_points.py; existing entry, reviewed by its own sentry"
+  },
+  "decoy_engine.generation.kinds._lookup.lookup_from_codeset": {
+   "reason": "public export of the lookup package; reaches the policy only through the shipped code set loader, which reads engine data and no user file"
+  },
+  "decoy_engine.plan.checks._lookup_tables.checked_lookup": {
+   "reason": "public export of the plan checks package; a step of plan compile, load and run, which install the policy for the pinned lookup read"
   }
  }
 }

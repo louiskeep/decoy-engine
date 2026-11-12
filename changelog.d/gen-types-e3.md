@@ -1,4 +1,4 @@
-Breaking: `PLAN_VERSION` is 4 (was 3). A plan this engine writes carries `plan_version: 4`, which an engine without GEN-TYPES E3 cannot load; this engine still loads version 2 and 3 plans. A plan with no `lookup` column differs from its version-3 form only by the version line.
+Breaking: `PLAN_VERSION` is 4 (was 3). A plan this engine writes carries `plan_version: 4`, and an older engine does not check the version at load: it loads the plan and fails when a run reaches a `lookup` column. This engine still loads version 2 and 3 plans. A plan with no `lookup` column differs from its version-3 form only by the version line.
 
 ### Added (`lookup` generate type, GEN-TYPES E3, 2026-11-12)
 
