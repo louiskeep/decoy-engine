@@ -36,6 +36,7 @@ MINIMAL: dict[str, dict[str, Any]] = {
     "group_key": {"group_by": "g"},
     "constant": {"value": "US"},
     "distribution": {"family": "uniform", "low": 0, "high": 3},
+    "lookup": {"codeset": "icd10"},
 }
 
 
@@ -436,7 +437,8 @@ def test_shipped_generate_configs_keep_dump_and_fingerprints(key: str) -> None:
     assert dump == IDENTITY[key]["dump"]
     fingerprints = {
         f"{t['name']}.{c['name']}": strategy_config_fingerprint(
-            {**c, "_table": t["name"]}, snapshot_content_digest="sha256:0"
+            {**c, "_table": t["name"]},
+            content_digests={("*", "snapshot_file"): "sha256:0"},
         )
         for t in dump["tables"]
         for c in t.get("generate_columns", [])

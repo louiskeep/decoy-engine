@@ -41,9 +41,9 @@ This inventory lists strategies and provider capabilities, not route eligibility
 
 `nested` is an internal wrapper, not a user-facing strategy.
 
-## Generation strategies (13)
+## Generation strategies (14)
 
-`categorical`, `constant`, `derived`, `derived_aggregate`, `distribution`, `faker`, `formula`, `group_key`, `grouped_series`, `reference`, `sequence`, `statistical`, `windowed_date`
+`categorical`, `constant`, `derived`, `derived_aggregate`, `distribution`, `faker`, `formula`, `group_key`, `grouped_series`, `lookup`, `reference`, `sequence`, `statistical`, `windowed_date`
 
 This enumeration combines V2 configuration types and legacy ColumnGenerator keys.
 

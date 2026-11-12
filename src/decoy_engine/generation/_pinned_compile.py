@@ -55,6 +55,10 @@ PINNABLE_TYPES = frozenset(
 )
 
 REJECTED_TYPES = {
+    "lookup": (
+        str(reasons.plan.PINNED_LOOKUP_UNSUPPORTED),
+        "lookup columns are not available in pinned mode",
+    ),
     "faker": (
         "pinned_faker_unsupported",
         "faker columns are not available in pinned mode",

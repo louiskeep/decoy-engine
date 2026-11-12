@@ -1,8 +1,9 @@
 # GEN-REL E1 build evidence
 
 Status: built on `feat/gen-rel-e1`. Both stop conditions are closed (see "Stop conditions" and
-"Owner rulings (2026-11-12)"). The final source head is `27858cc3`; the mutation table and the
-gate totals that describe it are in the owner-rulings section.
+"Owner rulings (2026-11-12)"). The source head after the owner rulings is `27858cc3`; the mutation table and the
+gate totals that describe it are in the owner-rulings section. Two later merges of `origin/main`
+moved the final source head to `87d8f8a6`; see "Main merges (2026-11-12)".
 
 Spec: `docs/plans/gen-rel.md` on `origin/plan/gen-rel` (`26a83542`), slice row 1. The plan stays
 on the plan branch.
@@ -459,6 +460,93 @@ Not run for the rulings: the full suite; the paths the "Not run" section lists; 
 under Python 3.11 (the mutation rerun used 3.11, the gates 3.10); a rerun of `origin/main`
 (no branch step failed).
 
+## Main merges (2026-11-12)
+
+Two merges of `origin/main` into the branch, each made once for one reported conflict. Every
+total below names the head it was measured on.
+
+### First merge: head `68034ff0` (main `353d98bf`)
+
+T1 gates on `68034ff0`, Python 3.10.20:
+
+| Step | Branch (`68034ff0`) |
+| --- | --- |
+| ruff | pass |
+| format | pass |
+| mypy | pass |
+| sentry | 5241 passed, 0 failed, 2 skipped |
+| layers | 15 passed, 0 failed, 0 skipped |
+| licenses | 63 passed, 0 failed, 0 skipped |
+| tests | 11765 passed, 0 failed, 62 skipped |
+
+`registry_renumber.py --check --main origin/main`, `ratchet_check.py --base origin/main` and
+`check_fragment.py --base origin/main` each exited 0 on that head.
+
+### Second merge: head `7cf17860` (main `c0961a17`)
+
+`origin/main` `c0961a17` brought GEN-TYPES E3 (`lookup` columns). Two files conflicted:
+
+- `docs/reasons.md`: both paragraphs are kept, each on its own, in the order GEN-REL E1,
+  GEN-TYPES E3, CONFIG-EXPLICIT E2b-r.
+- `src/decoy_engine/generation/synthesize.py`: four regions, each resolved as the union. The
+  imports hold main's `LookupList`, `lookup_digests` and `lookup_column_values` beside
+  `reference_policies`; the docstring keeps main's `lookup_lists` paragraph and this branch's
+  `on_warning` wording; the `_generate_column` call and signature take `lookup_lists`, then
+  `reference_policy` and `on_warning`. Main's `lookup` branch, its `content_digests` hand-off
+  to the null mask and this branch's reference keyword assembly merged without conflict and
+  are unchanged.
+
+Auto-merged files that both sides touch were read against both parents: `_admission.py`,
+`_pinned_compile.py`, `_numeric_typing.py`, `_synthesize_derived.py`, `config/_tables.py`,
+`config/_generate_options.py` and `CODEMAP.md`. A `lookup` column is resident-only in the
+admission matrix and refused by the pinned compile, so it never reaches the streamed or
+pinned reference routes; it has no parent pool and adds no caller of `_reference`,
+`_generate_column` or `check_reference_pool`. `_plan_entry.py` passes `lookup_lists` through
+`legacy_kwargs`, which `_streamed.py` forwards unchanged. No semantic adaptation was needed.
+
+Follow-up commit `87d8f8a6` (`refactor(generation): move reference draw arguments to
+relational`): the union left `synthesize.py` at 601 lines, one over the 600-line goal, and
+main records no census entry for it. The keyword assembly for the reference draw (the fitted
+fan-out, and the policy and warning sink when either is set) moved unchanged into
+`generation/relational/_cardinality.py` as `reference_draw_extras`. `synthesize.py` is now 599
+lines and `_cardinality.py` 299; `_streamed.py` is untouched by main and stays at 598. No
+census number, cap, baseline or allowlist was added or raised.
+
+Final source head: `87d8f8a6`.
+
+Mutation rerun on `87d8f8a6` (detached worktree importing its own `src`, Python 3.10.20, removed
+after): 55 of 55 red. The 54 recorded mutations kept their anchors (each matched exactly once)
+and their red counts equal the previous run's. One new mutation covers the moved helper:
+
+| Id | Mutation | File | Red tests |
+| --- | --- | --- | --- |
+| X1 | the whole-table route drops the policy from the reference draw arguments | `generation/relational/_cardinality.py` | 3: `test_at6_fail_refuses_an_empty_parent`, `test_at6_warn_keeps_nulls_and_emits_exactly_one_warning` |
+
+T1 gates on `87d8f8a6`, Python 3.10.20, `GATES_WORKERS=4`, the 59 T1 paths plus
+`tests/unit/reasons` (main's new reason tests); main's lookup tests sit inside
+`tests/unit/generation`, `tests/unit/plan` and `tests/unit/config`:
+
+| Step | Branch (`87d8f8a6`) |
+| --- | --- |
+| ruff | pass |
+| format | pass |
+| mypy | pass |
+| sentry | 5279 passed, 0 failed, 2 skipped |
+| layers | 15 passed, 0 failed, 0 skipped |
+| licenses | 63 passed, 0 failed, 0 skipped |
+| tests | 11909 passed, 0 failed, 62 skipped |
+
+Failure sets: branch 0, main 0, branch-only 0; no step failed, so `origin/main` was not rerun.
+
+Checks on `87d8f8a6` with `origin/main` at `c0961a17`:
+
+- `python scripts/dev/registry_renumber.py --check --main origin/main`: exit 0.
+- `python scripts/dev/ratchet_check.py --base origin/main`: exit 0.
+- `python scripts/dev/check_fragment.py --base origin/main`: exit 0.
+- `python scripts/release/reason_release_pin.py --check`: exit 0.
+
+Not run for this merge: the full suite and the paths the "Not run" section lists.
+
 ## Not run
 
 - The full suite. Before the merges, a wider sweep of `tests/unit/{generation, generators, config,
@@ -479,8 +567,9 @@ under Python 3.11 (the mutation rerun used 3.11, the gates 3.10); a rerun of `or
 - A hand-built pinned plan with a malformed `reference_policies` entry is refused with the
   existing `plan.pinned_plan_malformed` at execute. The plan's AT-10 cell asks for the runtime
   twin, whose code is registered in E2.
-- `generation/synthesize.py` is at 591 lines and `generation/_streamed.py` at 598; E2 and E3
-  add to `synthesize.py` and will need to move code out to stay at or under 600.
+- `generation/synthesize.py` is at 599 lines after the second main merge and
+  `generation/_streamed.py` at 598; E2 and E3 add to `synthesize.py` and will need to move code
+  out to stay at or under 600.
 - `config/_generate_unique.py` still reaches the capacity rule through the pool facade (see
   above); switching it to the foundation leaf would also retire one `.importlinter` ignore.
 - Runtime reference refusals use the `runtime` catalog defaults (outcome `execution`, retry

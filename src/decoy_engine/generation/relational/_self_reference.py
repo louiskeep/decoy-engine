@@ -17,6 +17,9 @@ each new row joins once its own parent is chosen. The array is never empty: befo
 the earlier rows hold `i - root_count` children against `i * max` slots. Each pick is constant
 time and nothing is sized by the cap.
 
+`reference_parents` holds the matching rule for the table order: a table waits for the tables
+its references name, and never for itself.
+
 The key is read from the table's own columns generated so far, not from a finished parent
 table, which is why this is not `_reference`. Config validation requires the key to be an
 earlier `sequence` column with no nulls and refuses every option this draw would drop.
@@ -25,11 +28,37 @@ earlier `sequence` column with no nulls and refuses every option this draw would
 from __future__ import annotations
 
 import random
+from collections.abc import Container, Iterable
 from typing import Any
 
+from decoy_engine.config import is_self_reference
 from decoy_engine.generators.derivation import GenDeriveContext
 
-__all__ = ["self_reference"]
+__all__ = ["reference_parents", "self_reference"]
+
+
+def reference_parents(
+    name: str, columns: Iterable[dict[str, Any]], generate_tables: Container[str]
+) -> tuple[str, ...]:
+    """The generate tables that table `name` must wait for, in first-reference order.
+
+    One entry per parent, at the first `reference` column that names it. A reference to the
+    table's own key is a tree inside the table, not a parent, so it adds no entry. A
+    `reference_table` that is not a generate table raises a typed `ValueError` here rather
+    than a `KeyError` in the draw.
+    """
+    refs: list[str] = []
+    for col in columns:
+        if col.get("type") != "reference" or is_self_reference(name, col):
+            continue
+        ref = col["reference_table"]
+        if ref not in generate_tables:
+            raise ValueError(
+                f"table {name!r} column {col.get('name')!r}: "
+                f"reference_table {ref!r} is not a generate table"
+            )
+        refs.append(ref)
+    return tuple(dict.fromkeys(refs))
 
 
 def _root_rows(col: dict[str, Any], n: int) -> int:

@@ -167,6 +167,15 @@ MATRIX: tuple[MatrixRow, ...] = (
         "Generator per column, prefix-stable across batches. Recorded under numpy 2.2.6.",
     ),
     MatrixRow(
+        "lookup",
+        DEFERRED,
+        (),
+        ("lookup",),
+        "GEN-TYPES E3: one random.Random(base_int('py')).choices over a list pinned in the plan; "
+        "resident only (the streamed route declines it), so no F0 fixture pins it. Value equality "
+        "is covered by tests/unit/generation/kinds/test_gen_types_e3_lookup.py.",
+    ),
+    MatrixRow(
         "conditional-sampling",
         SUPPORTED,
         ("conditional",),

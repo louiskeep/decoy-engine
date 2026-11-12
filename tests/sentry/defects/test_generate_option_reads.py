@@ -43,6 +43,7 @@ READER_FILES = (
     "generation/_grouped_windowed_generators.py",
     "generation/kinds/_constant.py",
     "generation/kinds/_output_type.py",
+    "plan/checks/_lookup_tables.py",
     "generation/kinds/_parametric.py",
     "generation/_referenced_formula.py",
     "generation/relational/_self_reference.py",

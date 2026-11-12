@@ -1,0 +1,53 @@
+"""Profiler S3 failures are classified connector errors with fixed text (AT-C41)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+botocore_exc = pytest.importorskip("botocore.exceptions")
+
+from decoy_engine.connectors import _clients  # noqa: E402
+from decoy_engine.profile._cloud_readers import S3CsvSource  # noqa: E402
+from decoy_engine.sdk import PermanentError, TransientError  # noqa: E402
+
+MSG = "arn:aws:iam::123456789012:user/zz_marker_user zz_marker_bkt/zz_marker_key"
+
+
+class _Failing:
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    def head_object(self, **_kw: Any) -> dict:
+        raise self._exc
+
+
+def _source(monkeypatch: pytest.MonkeyPatch, exc: BaseException) -> S3CsvSource:
+    monkeypatch.setattr(_clients, "s3_client", lambda **_kw: _Failing(exc))
+    return S3CsvSource({"bucket": "zz_marker_bkt", "key": "zz_marker_key", "format": "csv"})
+
+
+@pytest.mark.parametrize(
+    ("exc", "cls"),
+    [
+        (
+            botocore_exc.ClientError({"Error": {"Code": "AccessDenied", "Message": MSG}}, "Head"),
+            PermanentError,
+        ),
+        (
+            botocore_exc.EndpointConnectionError(endpoint_url="https://zz-marker-host"),
+            TransientError,
+        ),
+    ],
+)
+def test_profiler_s3_errors_are_fixed_text_and_unchained(
+    monkeypatch: pytest.MonkeyPatch, exc: BaseException, cls: type
+) -> None:
+    with pytest.raises(cls) as info:
+        _source(monkeypatch, exc).row_count()
+    err = info.value
+    assert type(err) is cls
+    for marker in ("zz_marker", "zz-marker-host", "123456789012"):
+        assert marker not in str(err) + repr(err)
+    assert err.__cause__ is None and err.__context__ is None

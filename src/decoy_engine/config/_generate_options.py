@@ -88,12 +88,17 @@ class TypeOptions:
     transform refuses a missing one at plan compile with its own code (for example
     ``derived_aggregate_op_missing``), and moving that refusal to config parse would change the
     code a caller sees. The catalog and the editor schema still list them as required.
+
+    ``one_of`` names keys of which exactly one must be given (a `lookup` column's `file` or
+    `codeset`): none is ``missing`` on the first, and each one after the first given is
+    ``generate_option_value_unknown``.
     """
 
     keys: Mapping[str, OptionSpec]
     required: tuple[str, ...] = ()
     closed_by: str | None = None
     plan_required: tuple[str, ...] = ()
+    one_of: tuple[str, ...] = ()
 
 
 def _is_int(value: Any) -> bool:
@@ -382,6 +387,13 @@ _BASE_OPTIONS: Mapping[str, TypeOptions] = {
         required=("group_by",),
     ),
     "constant": TypeOptions({"value": OptionSpec(constant_value)}, required=("value",)),
+    # GEN-TYPES E3: a weighted list from a file (pinned at compile) or a shipped code set. The
+    # code set's name is checked at plan time (`plan.checks._lookup_tables`): config sits below
+    # `transforms` in the import layers and so cannot read its registry.
+    "lookup": TypeOptions(
+        {"file": _S, "codeset": _S, "value_column": _S, "weight_column": _S},
+        one_of=("file", "codeset"),
+    ),
     "distribution": TypeOptions(
         {
             "family": OptionSpec(_family),
@@ -490,6 +502,10 @@ def option_problems(type_: str, extras: Mapping[str, Any]) -> list[Problem]:
     given_missing = [k for k in spec.required if _missing(k, extras.get(k))]
     found.extend(((k,), "missing") for k in given_missing)
     found.extend(((k,), "missing") for k in family_required if extras.get(k) is None)
+    given = [k for k in spec.one_of if extras.get(k) is not None]
+    if spec.one_of and not given:
+        found.append(((spec.one_of[0],), "missing"))
+    found.extend(((k,), _VALUE) for k in given[1:])
     return found
 
 
