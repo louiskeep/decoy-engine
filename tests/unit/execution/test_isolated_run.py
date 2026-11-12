@@ -283,6 +283,8 @@ class TestNormalJobCompletes:
 
 
 class TestMemCapOom:
+    # The child runs within megabytes of its RLIMIT_DATA cap, so it needs the host to itself.
+    @pytest.mark.serial
     def test_low_mem_cap_classifies_oom_cleanly_not_an_opaque_crash(self, tmp_path):
         # The cap sits ABOVE the child's import floor on purpose. A worker that
         # imports duckdb + polars reserves close to half a GB of RLIMIT_DATA in
