@@ -471,3 +471,25 @@ def test_connect_duckdb_spills_into_its_directory(
         finally:
             conn.close()
         assert Path(setting) == spill and _mode(spill) == 0o700, (setting, oct(_mode(spill)))
+
+
+def test_connect_duckdb_refuses_a_loose_spill_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An existing spill directory others can enter is refused, value-free, and left as it was:
+    a directory the engine did not create is checked, never chmodded (plan 4.2, arm (c))."""
+    from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
+
+    if os.geteuid() == 0:
+        pytest.fail("run as a non-root user: root ignores directory modes, so this is vacuous")
+    (tmp_path / "tmp").mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "tmp"))
+    with ScratchArena.open() as root:
+        loose = Path(root.local_path()) / "patients_tbl"
+        loose.mkdir()
+        os.chmod(loose, 0o755)  # noqa: S103 - the loose directory under test
+        with pytest.raises(ProtectedDirUnsafe) as info:
+            connect_duckdb(temp_dir=loose, memory_limit="64MB")
+        assert "patients_tbl" not in f"{info.value!s} {info.value!r}", repr(info.value)
+        assert _mode(loose) == 0o755, oct(_mode(loose))
+        assert list(loose.iterdir()) == []
