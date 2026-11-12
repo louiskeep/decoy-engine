@@ -187,18 +187,21 @@ class S3FileSource(FileSource[S3Config]):
         This matches what `list()` returned: callers iterate list, pick
         a key, pass it to open. Re-joining would double-prefix.
         """
-        client = self._client_or_build()
-        response = _clients.s3_call(client.get_object, Bucket=self.config.bucket, Key=path)
+        yield from _stream_object(self._client_or_build(), self.config.bucket, path)
 
-        body = response["Body"]
-        try:
-            # Each `next` reads from the network, so it needs translating like any call.
-            chunks, done = body.iter_chunks(chunk_size=_DEFAULT_READ_CHUNK_BYTES), object()
-            while (chunk := _clients.s3_call(next, chunks, done)) is not done:
-                if chunk:
-                    yield chunk
-        finally:
-            body.close()
+
+def _stream_object(client, bucket: str, key: str) -> Iterator[bytes]:
+    """The one S3 object read loop, shared by the source and the object store."""
+    response = _clients.s3_call(client.get_object, Bucket=bucket, Key=key)
+    body = response["Body"]
+    try:
+        # Each `next` reads from the network, so it needs translating like any call.
+        chunks, done = body.iter_chunks(chunk_size=_DEFAULT_READ_CHUNK_BYTES), object()
+        while (chunk := _clients.s3_call(next, chunks, done)) is not done:
+            if chunk:
+                yield chunk
+    finally:
+        body.close()
 
 
 class S3FileSink(FileSink[S3Config]):

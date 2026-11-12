@@ -261,7 +261,7 @@ def test_iter_object_streams_the_object(admin: Any) -> None:
 
 def test_gcs_iter_object_streams_through_the_gcs_open_path(monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("google.cloud.storage")
-    from decoy_engine.connectors import gcs
+    from decoy_engine.connectors import object_store
     from decoy_engine.connectors.gcs import GCSConfig
 
     class Blob:
@@ -277,5 +277,5 @@ def test_gcs_iter_object_streams_through_the_gcs_open_path(monkeypatch: pytest.M
         def bucket(self, name: str) -> Bucket:
             return Bucket()
 
-    monkeypatch.setattr(gcs, "_build_gcs_client", lambda config: Client())
+    monkeypatch.setattr(object_store, "_build_gcs_client", lambda config: Client())
     assert b"".join(GCSObjectStore(GCSConfig(bucket="b")).iter_object("k")) == b"gcs-bytes"

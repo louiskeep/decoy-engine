@@ -23,8 +23,8 @@ from collections.abc import Iterator
 from typing import Any, BinaryIO, Literal, Protocol
 
 from decoy_engine.connectors import _clients
-from decoy_engine.connectors.gcs import GCSConfig, GCSFileSource
-from decoy_engine.connectors.s3 import S3Config, S3FileSource, _build_s3_client
+from decoy_engine.connectors.gcs import GCSConfig, _build_gcs_client, _stream_blob
+from decoy_engine.connectors.s3 import S3Config, _build_s3_client, _stream_object
 from decoy_engine.sdk import ConnectorError, PermanentError
 
 Version = str
@@ -125,8 +125,8 @@ class S3ObjectStore:
         _clients.s3_call(client.delete_object, Bucket=self._config.bucket, Key=key, IfMatch=version)
 
     def iter_object(self, key: str) -> Iterator[bytes]:
-        """The S3 source's own read path, so a read fix lands in one place."""
-        return S3FileSource(self._config).open(key)
+        """The S3 source's read loop, so a read fix lands in one place."""
+        yield from _stream_object(self._client(single_request=False), self._config.bucket, key)
 
     def check_region(self) -> None:
         """Refuse a bucket whose own region header differs from the client's region."""
@@ -144,5 +144,6 @@ class GCSObjectStore:
         self._config = config
 
     def iter_object(self, key: str) -> Iterator[bytes]:
-        """The GCS source's own read path."""
-        return GCSFileSource(self._config).open(key)
+        """The GCS source's read loop."""
+        config = self._config
+        yield from _stream_blob(lambda: _build_gcs_client(config).bucket(config.bucket), key)
