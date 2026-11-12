@@ -87,9 +87,18 @@ def validate_plan(
     without a try/except at every call site. `base_dir` is the config file's folder, as for
     `compile_plan`.
     """
+    from decoy_engine.subset import SubsetError, split_subset_config
+
+    try:
+        # Imported here: `subset._edges` imports `plan._types`, so a top-level import would cycle.
+        run_config = split_subset_config(config).run_config
+    except SubsetError as exc:
+        return PlanValidationResult(
+            ok=False, error=PlanCheckError(code=exc.code, path="subset", message=str(exc))
+        )
     try:
         plan = compile_plan(
-            config,
+            run_config,
             profile,
             decoy_engine_version=decoy_engine_version,
             no_profile=no_profile,

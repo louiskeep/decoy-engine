@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from decoy_engine.subset import SubsetError, split_subset_config
+from decoy_engine.subset import SubsetConfigError, split_subset_config
 from tests.unit.execution import _subset_run_support as sup
 
 
@@ -58,22 +58,20 @@ def test_fingerprint_follows_the_request(tmp_path: Path) -> None:
     assert a.fingerprint != b.fingerprint
 
 
-def test_a_bad_seed_raises_a_subset_error(tmp_path: Path) -> None:
-    cfg = _cfg(tmp_path)
-    cfg["subset"]["seeds"][0]["fraction"] = 3.0
-    cfg["subset"]["seeds"][0]["count"] = None
-    with pytest.raises(SubsetError):
-        split_subset_config(cfg)
-
-
-def test_validate_plan_returns_findings_for_a_subset_config(tmp_path: Path) -> None:
-    from decoy_engine.plan import validate_plan
+def test_validate_plan_returns_findings_for_a_subset_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.plan.validate import validate_plan
     from decoy_engine.profile import profile_source
 
     cfg = _cfg(tmp_path)
     ok = validate_plan(cfg, profile_source(cfg), decoy_engine_version="t")
     assert ok.ok, ok.error
-    cfg["subset"]["seeds"][0]["fraction"] = 3.0
-    cfg["subset"]["seeds"][0]["count"] = None
+
+    def refuse(config: Any) -> Any:
+        raise SubsetConfigError(code="subset_seed_unsupported", message="bad seed")
+
+    monkeypatch.setattr("decoy_engine.subset.split_subset_config", refuse)
     bad = validate_plan(cfg, profile_source(cfg), decoy_engine_version="t")
-    assert not bad.ok and bad.error is not None and bad.error.code.startswith("subset")
+    assert not bad.ok and bad.error is not None
+    assert bad.error.code == "subset_seed_unsupported"

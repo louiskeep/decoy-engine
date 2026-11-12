@@ -10,7 +10,7 @@ chunk is still produced when nothing else is, so a table with no surviving rows 
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -77,25 +77,34 @@ def format_stream(
 
 
 def stage_typed_sources(
-    run: DeclaredCastRun,
+    names: Sequence[str],
     sources: Mapping[str, Any],
+    *,
+    batch_fn: Callable[[str, pa.RecordBatch, int], pa.Table],
+    empty_fn: Callable[[str, Any], pa.Table],
+    resident_fn: Callable[[str, Any], Any],
     root: Path,
     batch_rows: int,
     max_bytes: int | None = None,
+    stem: str = "typed",
+    open_fn: Callable[[str, Any], Iterable[pa.RecordBatch]] | None = None,
 ) -> dict[str, Any]:
-    """Cast each declared source once, up front, into a typed source the route then treats as an
-    ordinary one.
+    """Stage each named source once, up front, into a source the route then treats as an
+    ordinary one. The one staging writer: declared casting and the subset stage both call it.
 
-    A resident table is cast in place. A ``LazySource`` is streamed batch by batch into a typed
-    Parquet file under ``root`` (bounded memory), because a route that re-reads its sources in
-    several passes must not count or quarantine twice and must see one stable, already-compacted
-    row set on every pass. ``max_bytes`` bounds the footprint of ``root``, checked per batch.
+    A resident table goes through ``resident_fn`` in place. A ``LazySource`` is streamed batch
+    by batch, each batch through ``batch_fn(table, batch, absolute_offset)``, into a Parquet
+    file under ``root`` (bounded memory), because a route that re-reads its sources in several
+    passes must see one stable, already-reduced row set on every pass. ``empty_fn`` gives the
+    typed table for a zero-row source. ``open_fn`` replaces ``iter_batches`` when the caller must
+    check the handle it reads. ``max_bytes`` bounds the footprint of ``root``, checked per batch.
 
-    ``root`` is an engine-made directory. Each file is named by a per-run counter, never by the
-    table name, so no config value shapes a path (the out-of-core runner's opaque ``t0000``
-    scratch names follow the same rule), and it is read back only through a reader issued over
-    ``root`` (``scratch_access_for``), as the out-of-core key stager does. Each file is created
-    0600 on its own descriptor (``open_private``) before any row lands, whatever the umask.
+    ``root`` is an engine-made directory. Each file is named by a per-run counter and ``stem``,
+    never by the table name, so no config value shapes a path (the out-of-core runner's opaque
+    ``t0000`` scratch names follow the same rule), and it is read back only through a reader
+    issued over ``root`` (``scratch_access_for``), as the out-of-core key stager does. Each file
+    is created 0600 on its own descriptor (``open_private``) before any row lands, whatever the
+    umask.
     """
     import pyarrow.parquet as pq
 
@@ -105,28 +114,29 @@ def stage_typed_sources(
 
     out = dict(sources)
     reader: Any = None
-    for index, table in enumerate(run.tables()):
+    for index, table in enumerate(names):
         src = sources.get(table)
         if src is None:
             continue
         if not isinstance(src, LazySource):
-            out[table] = run.pre_mask({table: src})[table]
+            out[table] = resident_fn(table, src)
             continue
-        path = root / f"s{index:04d}.typed.parquet"
+        path = root / f"s{index:04d}.{stem}.parquet"
         writer: Any = None
         offset = 0
         sink = open_private(path)
         try:
-            for batch in src.iter_batches(batch_rows):
-                cast = run.cast_batch(table, batch, offset=offset)
+            batches = open_fn(table, src) if open_fn is not None else src.iter_batches(batch_rows)
+            for batch in batches:
+                cast = batch_fn(table, batch, offset)
                 offset += batch.num_rows
                 if writer is None:
-                    writer = pq.ParquetWriter(sink, cast.table.schema)
-                writer.write_table(cast.table)
+                    writer = pq.ParquetWriter(sink, cast.schema)
+                writer.write_table(cast)
                 if max_bytes is not None:
                     check_temp_disk_budget(root, max_bytes=max_bytes)
             if writer is None:  # a zero-row source still needs a typed, readable file
-                empty = run.cast_batch(table, src.schema.empty_table(), offset=0).table
+                empty = empty_fn(table, src)
                 writer = pq.ParquetWriter(sink, empty.schema)
                 writer.write_table(empty)
         finally:
@@ -141,6 +151,26 @@ def stage_typed_sources(
             reader = scratch_access_for(root)
         out[table] = LazySource(path, access=reader, field_key="engine.scratch")
     return out
+
+
+def stage_declared_sources(
+    run: DeclaredCastRun,
+    sources: Mapping[str, Any],
+    root: Path,
+    batch_rows: int,
+    max_bytes: int | None = None,
+) -> dict[str, Any]:
+    """Cast each declared source once, up front, through the shared staging writer."""
+    return stage_typed_sources(
+        list(run.tables()),
+        sources,
+        batch_fn=lambda table, batch, offset: run.cast_batch(table, batch, offset=offset).table,
+        empty_fn=lambda table, src: run.cast_batch(table, src.schema.empty_table(), offset=0).table,
+        resident_fn=lambda table, value: run.pre_mask({table: value})[table],
+        root=root,
+        batch_rows=batch_rows,
+        max_bytes=max_bytes,
+    )
 
 
 def render_batches(
@@ -200,7 +230,7 @@ def run_staged(fn: Callable[..., Any], call: dict[str, Any], default_batch_rows:
     call.pop("_staged", None)
     with engine_scratch_root(call.get("temp_dir")) as root:
         batch_rows = call.get("batch_rows") or default_batch_rows
-        staged = stage_typed_sources(
+        staged = stage_declared_sources(
             run, sources, root, batch_rows, call.get("temp_disk_budget_bytes")
         )
         call["temp_dir"] = root

@@ -30,12 +30,17 @@ from decoy_engine.subset._closure import ClosureResult, compute_closure, verify_
 from decoy_engine.subset._edges import build_subset_edges, relationships_from_config
 from decoy_engine.subset._errors import SubsetConfigError, SubsetPreflightError
 from decoy_engine.subset._inputs import TableInput, as_input
-from decoy_engine.subset._keys import load_key_frames
+from decoy_engine.subset._keys import RI, load_key_frames
 from decoy_engine.subset._manifest import build_manifest, to_json_dict
 from decoy_engine.subset._materialize import materialize_subset
 from decoy_engine.subset._policy import build_estimate, make_budget_check, resolve_edge_directions
 from decoy_engine.subset._preflight import run_subset_preflight
-from decoy_engine.subset._scope import SubsetRequest, SubsetSelection, scope_for
+from decoy_engine.subset._scope import (
+    MaterializationCheck,
+    SubsetRequest,
+    SubsetSelection,
+    scope_for,
+)
 from decoy_engine.subset._seed import select_seed_rows
 from decoy_engine.subset._types import (
     EdgeDirection,
@@ -263,6 +268,14 @@ def select_subset(
             )
         ),
         estimate=plan,
+        materialization_check=MaterializationCheck(
+            {
+                name: key_frames[name]
+                .filter(pl.col(RI).is_in(sorted(closure.survivors[name])))
+                .drop(RI)
+                for name in scope.tables
+            }
+        ),
     )
 
 

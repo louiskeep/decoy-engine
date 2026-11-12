@@ -70,16 +70,19 @@ docstring describes.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
-from decoy_engine.config._subset_run import refuse_unapplied_subset
+from decoy_engine import reasons
+from decoy_engine.config._subset_run import refuse_subset_source_loader
 from decoy_engine.declared_casting._refusals import collect_refusals
 from decoy_engine.execution import _pipeline_context as _ctx
 from decoy_engine.execution import _pipeline_finalize
 from decoy_engine.execution import _pipeline_route_dispatch as _dispatch
 from decoy_engine.execution._adapter import ExecutionResult
+from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pipeline_context import classify_table_kinds
 from decoy_engine.execution._planner import (
     FULL_FRAME_REJECT_ROWS_DEFAULT,
@@ -87,10 +90,12 @@ from decoy_engine.execution._planner import (
 )
 from decoy_engine.execution._substrate import require_optional_nonempty_str
 from decoy_engine.execution._transforms_prepare import prepare_transform_sources
+from decoy_engine.execution.pipeline._subset_stage import SubsetStageScope
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.progress import ProgressChannel, ProgressSink, use_progress
 from decoy_engine.secret_providers import AdmissionScope
+from decoy_engine.subset import SubsetRequest, split_subset_config
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -158,6 +163,7 @@ def run_pipeline(
     file_access: FileAccess | None = None,
     quarantine_path: str | None = None,
     base_dir: str | Path | None = None,
+    subset_request: SubsetRequest | Literal["config", "skip"] = "config",
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -272,6 +278,12 @@ def run_pipeline(
     refusal. An undeclared job has no such key, and a forced `execution_mode` still refuses
     instead of falling back.
 
+    `subset_request` decides what a `subset:` block does. `"config"` (default) applies the
+    block: the closed subset is selected first and only its rows are masked and generated.
+    `"skip"` runs the full sources and stamps `quality_metrics["subset"] = {"applied": False}`.
+    A `SubsetRequest` replaces the block. Anything else is refused before any read. The run
+    identity of a subset run is `(pipeline_config_hash, quality_metrics["subset"]["fingerprint"])`.
+
     `unified_slice_enabled` (default True since 2026-09-20; admission is the safety
     gate, pass False for legacy): see `_unified_slice.maybe_run_unified_slice`.
 
@@ -282,7 +294,24 @@ def run_pipeline(
     oracle call to the SAME registry snapshot as its own coordinator-side call.
     `None` (every real caller) resolves against the live registry.
     """
-    refuse_unapplied_subset(config)  # `subset:` is refused first, before any source is read
+    if subset_request not in ("config", "skip") and not isinstance(subset_request, SubsetRequest):
+        raise ExecutionError(
+            code=reasons.runtime.INVALID_EXECUTION_KNOB,
+            message="subset_request must be 'config', 'skip' or a SubsetRequest.",
+        )
+    split = split_subset_config(config)
+    config = split.run_config
+    request, fingerprint = split.request, split.fingerprint
+    if subset_request == "skip":
+        request = None
+    elif isinstance(subset_request, SubsetRequest):
+        request = subset_request
+        fingerprint = request.fingerprint()
+    if request is not None and source_loader is not None:
+        refuse_subset_source_loader()
+    stage = (
+        None if request is None or fingerprint is None else SubsetStageScope(request, fingerprint)
+    )
     stream_required = execution_mode == "stream"
     execution_mode = "auto" if stream_required else execution_mode
     require_optional_nonempty_str("quarantine_path", quarantine_path)
@@ -298,6 +327,7 @@ def run_pipeline(
         AdmissionScope() as secret_scope,
         use_progress(progress, interval_s=progress_interval_s) as _progress,
         _progress.run_scope(),
+        stage if stage is not None else nullcontext(),
     ):
         with _progress.phase("resolve"):
             ctx = _ctx.build_run_context(
@@ -345,12 +375,18 @@ def run_pipeline(
                 secret_registry=secret_registry,
                 secret_cache_policy=secret_cache_policy,
                 base_dir=base_dir,
+                subset_stage=stage,
             )
         ctx = _ctx.with_quarantine_path(ctx, quarantine_path, base_dir)
         with collect_refusals() as refusals:
             decision = _ctx.decide_route(ctx)
             _emit_route(_progress, decision)
-            return _dispatch.execute_route(ctx, decision, refusals)
+            result = _dispatch.execute_route(ctx, decision, refusals)
+        if stage is not None:
+            result.quality_metrics["subset"] = stage.metrics()
+        elif split.request is not None:
+            result.quality_metrics["subset"] = {"applied": False}
+        return result
 
 
 def _emit_route(channel: ProgressChannel, decision: Any) -> None:

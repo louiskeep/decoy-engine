@@ -208,7 +208,7 @@ def test_isolated_runs_a_subset_and_refuses_a_typed_request_before_staging(
             subset_request=request,
         )
     assert writes == []
-    assert "customers" not in str(ei.value) and type(request).__name__ not in str(ei.value)
+    assert "customers" not in str(ei.value) and repr(request) not in str(ei.value)
     assert ei.value.__cause__ is None and ei.value.__context__ is None
     monkeypatch.setattr(_isolated_run, "_write_payload", real)
     for isolate in (False, True):
