@@ -33,8 +33,8 @@ def _artifacts() -> list[dict]:
     return manifest["artifacts"]
 
 
-def _vault_mapping_as_manifest_keys(path: Path, seed: bytes) -> dict[str, str]:
-    mapping, _ambiguous = load_vault(path, seed)
+def _vault_mapping_as_manifest_keys(path: Path, mask_key: bytes) -> dict[str, str]:
+    mapping, _ambiguous = load_vault(path, mask_key)
     # JSON has no tuple keys; the manifest joins (namespace, masked) with US (\x1f).
     return {f"{ns}\x1f{masked}": source for (ns, masked), source in mapping.items()}
 
@@ -50,8 +50,8 @@ def test_corpus_artifact_round_trips(artifact: dict) -> None:
     """Every locked artifact must still read back to its recorded content."""
     if artifact["kind"] == "vault":
         path = HERE / artifact["path"]
-        seed = bytes.fromhex(artifact["job_seed_hex"])
-        got = _vault_mapping_as_manifest_keys(path, seed)
+        mask_key = bytes.fromhex(artifact["mask_key_hex"])
+        got = _vault_mapping_as_manifest_keys(path, mask_key)
         assert got == artifact["expected_mapping"], (
             f"{artifact['tag']} written by engine "
             f"{artifact['produced_by_engine_version']} no longer reads back to its "
@@ -111,8 +111,9 @@ def test_harness_bites_on_corruption(tmp_path: Path) -> None:
     blob[-1] ^= 0xFF  # flip the last byte of the ciphertext
     tampered = tmp_path / "tampered.vault"
     tampered.write_bytes(bytes(blob))
-    with pytest.raises(VaultError):
-        load_vault(tampered, bytes.fromhex(art["job_seed_hex"]))
+    with pytest.raises(VaultError) as exc:
+        load_vault(tampered, bytes.fromhex(art["mask_key_hex"]))
+    assert exc.value.code == "vault_key_mismatch"
 
 
 def test_harness_bites_on_corruption_snapshot(tmp_path: Path) -> None:

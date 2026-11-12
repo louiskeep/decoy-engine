@@ -336,7 +336,7 @@ def test_a_delayed_vault_writer_writes_through_the_policy_it_was_built_under(
     policy_a = RootRelative(root_a)
     policy_b = RootRelative(root_b)
     try:
-        writer = VaultWriter(b"12345678", file_access=policy_a)
+        writer = VaultWriter(b"12345678" * 4, file_access=policy_a)
         writer.add([("ns", "m", "s")])
         out_a = policy_a.output_dir(
             FileRequest(FileRole.VAULT, "write", str(root_a / "job_1.dcyvault"), "vault")

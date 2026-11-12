@@ -1043,10 +1043,10 @@ def test_fpe_with_vault_is_still_a_config_reject(tmp_path: Path) -> None:
     assert exc.value.code == "vault_strategy_reversible"
 
 
-def test_an_unkeyed_vault_writer_is_still_rejected_on_the_ooc_route(tmp_path: Path) -> None:
+def test_a_vault_writer_on_another_key_is_rejected_on_the_ooc_route(tmp_path: Path) -> None:
     cfg, tables = standard(tmp_path)
     with pytest.raises(Exception) as exc:
-        run(cfg, tables, writer=VaultWriter(b"\x00" * 8))
+        run(cfg, tables, writer=VaultWriter(b"\x00" * 32))
     assert getattr(exc.value, "code", None) == "vault_key_mismatch"
 
 
@@ -1054,12 +1054,12 @@ def test_direct_callers_of_the_runner_get_the_same_vault_guards() -> None:
     # `run_fk_out_of_core` is public; callers that skip `run_pipeline` skip its DE-02 guard.
     from decoy_engine.execution.out_of_core._vault_collect import assert_vault_inputs
 
-    key = b"\x01" * 8
+    key = b"\x01" * 32
     assert_vault_inputs(None, None, key)  # no writer: nothing to guard
     assert_vault_inputs(VaultWriter(key), {"tables": []}, key)
     with pytest.raises(ExecutionError) as no_config:
         assert_vault_inputs(VaultWriter(key), None, key)
     assert no_config.value.code == "out_of_core_vault_config_required"
     with pytest.raises(Exception) as unkeyed:
-        assert_vault_inputs(VaultWriter(b"\x02" * 8), {"tables": []}, key)
+        assert_vault_inputs(VaultWriter(b"\x02" * 32), {"tables": []}, key)
     assert getattr(unkeyed.value, "code", None) == "vault_key_mismatch"
