@@ -232,3 +232,62 @@ def test_the_in_run_report_keeps_fk_findings_without_keys(
     compute_post_scan_integrity(result, config=_pipeline_config(tmp_path), sources=sources)
     (f,) = result.quality_metrics["post_scan_integrity"]["fk_preservation"]
     assert (f["parent_table"], f["child_table"], f["severity"]) == ("p", "c", severity)
+
+
+SELF = {"relationships": [rel_dict("e", ["id"], ("e", ["manager_id"]))]}
+NAN = float("nan")
+
+
+def test_a_float_self_reference_with_a_null_root_fails_on_an_introduced_orphan() -> None:
+    # pandas reads a nullable integer key as float64; the whole-number column is still a key.
+    source = frames(e={"id": [1, 2, 3], "manager_id": [NAN, 1, 1]})
+    output = frames(e={"id": [1, 2, 3], "manager_id": [NAN, 1, 9]})
+    (f,) = fk(source, output, SELF)
+    assert (f["severity"], f["orphan_count"], f["total_child_rows"]) == ("fail", 1, 2)
+    assert f["source_orphan_count"] == 0
+
+
+def test_a_float_self_reference_with_only_inherited_orphans_warns() -> None:
+    data = frames(e={"id": [1, 2, 3], "manager_id": [NAN, 1, 9]})
+    (f,) = fk(data, data, SELF)
+    assert (f["severity"], f["orphan_count"], f["source_orphan_count"]) == ("warning", 1, 1)
+
+
+def test_a_non_whole_float_key_against_an_integer_parent_stays_a_mismatch() -> None:
+    # One fraction at the end of the column decides it: the whole column is read, not a sample.
+    whole = [1.0] * 2000
+    source = frames(p={"id": [1, 2]}, c={"pid": [1] * 2001})
+    output = frames(p={"id": [1, 2]}, c={"pid": [*whole, 1.5]})
+    (f,) = fk(source, output)
+    assert (f["severity"], f["orphan_count"]) == ("error", 0)
+
+
+@pytest.mark.parametrize("source_side", ["error", "key_type_mismatch"])
+def test_an_introduced_orphan_over_an_unusable_source_still_fails(
+    tmp_path: Path, source_side: str
+) -> None:
+    if source_side == "error":
+        source = batches(p={"id": [1]}, c={"pid": [1]})
+        source["c"] = failing(source["c"])
+    else:
+        source = batches(p={"id": [1]}, c={"pid": ["1"]})
+    keys = keys_of(tmp_path, source, batches(p={"id": [1]}, c={"pid": [1, 9]}))
+    (f,) = fk({}, {}, keys=keys)
+    assert (f["severity"], f["orphan_count"], f["source_orphan_count"]) == ("fail", 1, None)
+    assert CANARY not in repr(f)
+
+
+@pytest.mark.parametrize("source_child", [{"other": [1]}, None])
+def test_an_output_mismatch_over_an_unmeasured_baseline_is_an_error(
+    tmp_path: Path, source_child: dict[str, list[Any]] | None
+) -> None:
+    # `key_column_missing` when the source lacks the column, `no_source` when it lacks the table.
+    source = batches(p={"id": [1]}) | ({} if source_child is None else batches(c=source_child))
+    keys = keys_of(tmp_path, source, batches(p={"id": [1]}, c={"pid": ["1"]}))
+    (key,) = (k for k in keys if k.kind == "foreign")
+    assert (key.status, key.baseline) == (
+        "key_type_mismatch",
+        "no_source" if source_child is None else "key_column_missing",
+    )
+    (f,) = fk({}, {}, keys=keys)
+    assert (f["severity"], f["orphan_count"], f["total_child_rows"]) == ("error", 0, 0)
