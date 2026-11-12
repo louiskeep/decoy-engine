@@ -267,6 +267,68 @@ def test_severity_counts_tally_the_four_severities() -> None:
     assert (counts.passed, counts.warning, counts.fail, counts.error) == (2, 1, 1, 2)
 
 
+# ----- an unreadable report fails closed ---------------------------------------------------
+
+
+class _Row:
+    """A caller-shape mistake: a result object where the report holds a dict."""
+
+
+@pytest.mark.parametrize(
+    "rep",
+    [
+        report(keys=[_Row()]),  # type: ignore[list-item]
+        report(res=(_Row(),)),
+        report(pol=("not a mapping",)),
+        report(fks=(["row"],)),
+        report(keys={"a": "b"}),  # type: ignore[arg-type]
+        {**report(), "residual_pii": {"t": 1}},
+        {**report(), "fk_preservation": "oops"},
+        report(keys=[{**key(), "codes": "check_error"}]),
+        report(keys=[{**key(), "codes": ["check_error"]}]),
+        report(keys=[{**key(), "codes": {"namespace": "post_scan"}}]),
+    ],
+)
+def test_a_section_or_row_the_verdict_cannot_read_blocks_on_check_error(
+    rep: dict[str, Any],
+) -> None:
+    verdict = post_scan_verdict(rep)
+    assert verdict.blocking is True
+    assert "check_error" in [c.code for c in verdict.codes]
+
+
+@pytest.mark.parametrize("version", ["post-scan-integrity/v3", "post-scan-integrity/v1", None, 2])
+def test_a_report_of_another_schema_major_blocks_on_check_error(version: Any) -> None:
+    rep = report()
+    if version is None:
+        del rep["schema_version"]
+    else:
+        rep["schema_version"] = version
+    assert blocking(rep) == ["check_error"]
+    assert post_scan_verdict(report()).blocking is False
+
+
+@pytest.mark.parametrize("section", ["residual_pii", "policy_validation", "fk_preservation"])
+@pytest.mark.parametrize("severity", ["critical", "FAIL", None, 3])
+def test_an_unknown_severity_in_a_blocking_section_blocks_on_check_error(
+    section: str, severity: Any
+) -> None:
+    rep = {**report(), section: [{"table": "t", "column": "c", "severity": severity}]}
+    assert blocking(rep) == ["check_error"]
+
+
+def test_a_source_side_check_error_on_an_errored_key_still_blocks() -> None:
+    assert blocking(report(keys=[key("error", "error", "check_error")])) == ["check_error"]
+
+
+def test_a_verdict_blocked_only_by_a_key_code_names_no_findings_location() -> None:
+    keyed = report(keys=[key("checked", "measured", "foreign_key_orphans_introduced")])
+    leaky = report(res=(residual("fail", "users", "email"),))
+    error = PostScanBlockedError(leaky, post_scan_verdict(keyed))
+    assert str(error) == reasons.get("post_scan", "foreign_key_orphans_introduced").summary
+    assert "users" not in str(error) and " At " not in str(error)
+
+
 # ----- the exception ------------------------------------------------------------------------
 
 

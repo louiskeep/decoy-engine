@@ -46,13 +46,14 @@ def results(tmp_path: Path, rels: Any, source: Any, output: Any) -> dict[tuple[s
 
 def verdict_of(tmp_path: Path, rels: Any, source: Any, output: Any) -> Any:
     found = check_keys(rels, source, output, scratch=tmp_path / "s", memory_limit="64MB")
-    return post_scan_verdict({"keys": keys_report(found)})
+    return post_scan_verdict({**VERSION, "keys": keys_report(found)})
 
 
 def names(refs: Any) -> list[str]:
     return [r.code for r in refs]
 
 
+VERSION = {"schema_version": "post-scan-integrity/v2"}
 RELS = [rel("p", ["id"], ("c", ["pid"]))]
 
 
@@ -171,7 +172,7 @@ def test_an_uncoded_source_side_error_warns_and_blocks_only_on_an_orphan(
     )
     found = check_keys(RELS, source, output, scratch=tmp_path / "t", memory_limit="64MB")
     assert CANARY not in repr(keys_report(found))
-    verdict = post_scan_verdict({"keys": keys_report(found)})
+    verdict = post_scan_verdict({**VERSION, "keys": keys_report(found)})
     assert verdict.blocking is blocks
     assert names(verdict.codes) == (["foreign_key_orphans_introduced"] if blocks else [])
     assert names(verdict.warnings) == ["check_error"]
@@ -194,13 +195,17 @@ def test_an_unmeasured_baseline_reports_null_source_counts(tmp_path: Path) -> No
         (tables(p={"id": [1]}, c={"pid": ["1"]}), tables(p={"id": [1]}, c={"pid": [1]})),
         (tables(p={"id": [1]}, c={"other": [1]}), tables(p={"id": [1]}, c={"pid": [1]})),
         (tables(p={"id": [1]}, c={"pid": [1]}), tables(p={"id": [1]}, c={"other": [1]})),
+        (
+            failing(tables(p={"id": [1]}, c={"pid": [1]})["c"], RuntimeError("boom")),
+            tables(p={"id": [1]}, c={"pid": [1]}),
+        ),
     ]
     seen = set()
     for source, output in cases:
         res = results(tmp_path, RELS, source, output)[("c", "foreign")]
         seen.add(res.baseline)
         assert keys_report([res])[0]["source"] is None
-    assert seen == {"key_type_mismatch", "key_column_missing", "not_run"}
+    assert seen == {"key_type_mismatch", "key_column_missing", "not_run", "error"}
 
 
 def test_every_code_in_the_report_is_a_namespace_and_code_mapping(tmp_path: Path) -> None:
@@ -208,6 +213,6 @@ def test_every_code_in_the_report_is_a_namespace_and_code_mapping(tmp_path: Path
     output = tables(p={"id": [1]}, c={"pid": [9]})
     found = check_keys(RELS, source, output, scratch=tmp_path / "s", memory_limit="64MB")
     report = {"keys": keys_report(found)}
-    verdict = post_scan_verdict(report).as_dict()
+    verdict = post_scan_verdict({**VERSION, **report}).as_dict()
     coded = [c for k in report["keys"] for c in k["codes"]] + verdict["codes"] + verdict["warnings"]
     assert coded and all(set(c) == {"namespace", "code"} for c in coded)
