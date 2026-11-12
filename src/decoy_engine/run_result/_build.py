@@ -131,8 +131,9 @@ def _checks(result: RunFacts | None, blocking: bool) -> tuple[Check, ...]:
         rows = list(metrics.get("failed_checks") or ())
         refs = (approve_ref(r.get("code")) for r in rows if isinstance(r, Mapping))
         codes = [c for c in refs if c is not None][:_MAX_CODES]
-        # A row that is not a mapping has no code to read but is still a failed check.
-        failed = len(codes) + sum(not isinstance(r, Mapping) for r in rows)
+        # Every row is one failed check. A row whose code cannot be shown, or that falls
+        # past the code cap, is still counted.
+        failed = len(rows)
         status: CheckStatus = "failed" if failed else "passed"
         found.append(_check("post_validation", status, blocking, (0, 0, failed, 0), codes))
     scan = metrics.get("post_scan_integrity")
