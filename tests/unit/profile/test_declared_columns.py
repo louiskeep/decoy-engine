@@ -51,7 +51,7 @@ def _csv(path: Path, **extra: Any) -> dict[str, Any]:
 
 
 def _inputs(table: str, *columns: str) -> list[DeclarationInput]:
-    return [DeclarationInput(table, tuple(columns), "test")]
+    return [DeclarationInput(table, tuple(columns), "test", created=frozenset())]
 
 
 # AT-E2a-1 -----------------------------------------------------------------------------------

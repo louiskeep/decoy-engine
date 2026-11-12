@@ -392,6 +392,36 @@ def test_cheap_admission_declines_metadata_only_named_index(tmp_path: Path) -> N
     assert _cheap_ok(config, profile, source) is None
 
 
+def test_cheap_admission_declines_physical_named_index(tmp_path: Path) -> None:
+    """A resident table whose metadata designates an EXISTING data column as
+    the index (`index_columns: ["c"]`, no extra physical field): `source.
+    column_names` still equals the configured surface exactly (nothing
+    "extra" to catch via the undeclared-column check), but `to_pandas()`
+    pulls `c` out of `frame.columns` entirely, leaving zero columns."""
+    base = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    meta = {
+        "index_columns": ["c"],
+        "column_indexes": [],
+        "columns": [
+            {
+                "name": "c",
+                "field_name": "c",
+                "pandas_type": "unicode",
+                "numpy_type": "object",
+                "metadata": None,
+            }
+        ],
+        "attributes": {},
+        "creator": {"library": "pyarrow", "version": "24.0.0"},
+        "pandas_version": "2.3.3",
+    }
+    schema = base.schema.with_metadata({b"pandas": json.dumps(meta).encode()})
+    source = base.cast(schema)
+    config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
+    profile, _ = _profile_and_plan(config, source)
+    assert _cheap_ok(config, profile, source) is None
+
+
 def test_cheap_admission_admits_a_default_range_index(tmp_path: Path) -> None:
     """The positive control for the two decline tests above: an ordinary
     resident table (no pandas index metadata at all) must still admit."""

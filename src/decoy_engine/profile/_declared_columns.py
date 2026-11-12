@@ -123,13 +123,13 @@ class DeclarationFinding:
     undeclared: tuple[str, ...] = dataclasses.field(default=(), repr=False)
 
 
-def _missing_finding(
-    table: str, lacking: Sequence[str], within: tuple[str, ...] | None
-) -> DeclarationFinding:
+def _missing_finding(item: DeclarationInput, lacking: Sequence[str]) -> DeclarationFinding:
     """`lacking` is in config order, so the name reported is the first one the config lists.
-    When the chunked caller's `source_schema` omits it too, the schema may be what is wrong."""
+    When the catalog is the chunked caller's `source_schema`, or a chunk its schema also omits,
+    the schema may be what is wrong."""
+    table = item.table
     fix = "remove it or fix the name"
-    if within is not None and lacking[0] not in within:
+    if item.origin == "chunk" or (item.within is not None and lacking[0] not in item.within):
         fix = "remove it, fix the name, or add it to source_schema"
     return DeclarationFinding(
         "missing",
@@ -194,7 +194,7 @@ def declaration_findings(
                 else [c for c in ordered if c not in item.columns and c not in item.created]
             )
             if lacking:
-                absent.append(_missing_finding(item.table, lacking, item.within))
+                absent.append(_missing_finding(item, lacking))
     return (*tables, *columns, *absent)
 
 
