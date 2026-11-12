@@ -1,469 +1,658 @@
-# POSTSCAN-STREAM: post-scan integrity streams on every route, with output key checks
+Status: plan (revision 2, 2026-11-12, not built). Engine only. Roadmap row 60 (CLI `docs/ROADMAP.md`).
 
-Status: plan (2026-11-12, not built). Engine only. Roadmap row 60 (CLI `docs/ROADMAP.md`).
+# POSTSCAN-STREAM: post-scan integrity on every run route, with output key checks
 
-Base: engine `origin/main` `a001f4d7` (#510). Plan branch `plan/postscan-stream` from that head.
+Repo `louiskeep/decoy-engine`, plan branch `plan/postscan-stream`. Base: engine `origin/main`
+`a001f4d7` (#510). Code citations are checked at that head.
 
-Risk: R2. It changes routing for `post_scan.integrity: true` jobs, adds a check that can block
-a run before its output commits, and touches the commit choke point every route uses. No public
-API removal, no schema major, no lock change.
+Risk: R2. It adds a check that blocks a run before its output commits, puts that check inside the
+commit choke point every engine sink uses, and changes routing for relationship and
+`post_scan.integrity: true` jobs. No public API removal, no schema major, no lock change.
 
-Rules consulted: `~/dev-rules/README.md` (routing table), `00-universal.md`,
-`risk-and-exceptions.md` (R2 gates), `development-loop.md` (PLAN: guarantee, design notes, choke
-point, placement, established solutions), `testing.md` (Test depth, full-suite escalation),
-`cross-cutting-concerns.md` (choke point plus a guard that walks the real artifact, seeded
-bypass), `catalogs/recurring-defects.md` (classes 1, 3, 4, 5, 6, 8, 9, 11 bind this plan).
+Rules consulted: `~/dev-rules/README.md`, `00-universal.md`, `risk-and-exceptions.md`,
+`development-loop.md` (PLAN), `testing.md` (Test depth, escalation triggers),
+`cross-cutting-concerns.md`, `catalogs/recurring-defects.md` (classes 1 to 11), engine `CLAUDE.md`
+and `CODEMAP.md` ("Where things go").
 
-Also read: CLI `docs/ROADMAP.md` (section 2 "Integrity checks are standard", 5.2 item 8
-publication chain, rows 31, 58, 59, 61, 76); engine `docs/plans/2026-10-30-f22-publication-replan.md`
-(rev 11, slices c1a, c1b, c2); `plan/f25-4c-consumer-capabilities` (ScratchArena I1, I2, T05,
-G5); the SCAN-ML plan (M4 `PostScanBlockedError`, M5 route guard, PR #508);
-`docs/relationships.md`; `docs/reasons.md`; `docs/compatibility-contract.md` section 3.1;
-`CODEMAP.md`; `.importlinter`.
+Also read: CLI `docs/ROADMAP.md` (rows 57, 58, 60 to 63); F22 rev 11 (5.6, 5.7, slices); SUB-RUN
+(4.2, 4.3, 10); SCAN-ML (`plan/scan-ml` 4.5, 11, 13; M5 is #508); DELIV (4, 7.4);
+`docs/compatibility-contract.md` 3.1; `docs/reasons.md`.
+
+## Revision 2
+
+Dennis r1 was NO-GO (8 V1, 9 DESIGN, 4 V2-LOG). Changes by finding: F1 gate inside
+`observed_commit`, no-sink post-condition, relationship jobs resident until the streamed gate
+(4.5, 8); F2 resident call only without a sink; F3 streamed generation exempt (1, 15); F4
+child-side gate, outcome `blocked`; F5 unreadable sink stays resident; F6 Parquet identity via
+`check_opened`, loader tee (4.3); F7 PS-1 interfaces (4.1), staged Parquet in PS-10; F8 FK
+severity from the keys verdict; F9 one model predicate (4.7); F10 one exception and code order
+(4.8); F11, F12 Placement (11); F13 unified-slice call (4.5); F14 exact counts (4.4); F15
+plan-time uniqueness (4.9); F16 SUB-RUN (4.3); F21 `staged_tables()` (4.6); F17 to F20 text,
+V2-LOG (15), F20 answer (4.3); main claims corrected (2); decisions (14); slices re-cut (8). Row
+61 addendum: one blocking decision for all severities (4.8), CLI delivery contract (4.10), Q4.
 
 ## 1. Guarantee and non-goals
 
 The change promises:
 
-1. One post-scan implementation. It reads each table as bounded batches and never builds a whole
-   table in memory beyond what the route already holds. It runs on every route `run_pipeline`
-   can take: `full_frame`, `sequential`, `chunked`, `out_of_core`, `mixed`, `unified_slice`
-   (the `declared_casting/_eligibility.py:26` `ROUTES` tuple), streamed generation, and the
-   isolated worker.
-2. When relationships are declared, the output is checked before it commits: every declared
-   primary key is unique and non-null, and every child key (MATCH SIMPLE) is present in the
-   parent's output keys. A breach that masking introduced blocks the run: nothing commits.
-3. Results hold counts, table names, column names and reason codes only. No key value, row
-   value or DuckDB message text reaches the report, an exception, a log line or a reason record.
-4. The verdict reaches the run result under the existing check id `post_scan_integrity`
-   (`run_result/_model.py:182`) and as one blocking exception, so F22's publish and the CLI
-   delivery row consume one seam. This plan builds the seam, not delivery.
+1. Every `run_pipeline` route runs the post-scan gate before its output becomes visible: the six
+   `ROUTES` (`declared_casting/_eligibility.py:26`; full-frame resident and streamed lanes both),
+   stream mode, and `run_pipeline_isolated` (in the child, or in-process on the fallback).
+2. When relationships are declared, every declared primary key in the output is unique and
+   non-null and every complete child key (MATCH SIMPLE) is in the parent's output keys, measured
+   against the same facts over the run's inputs. A breach the run introduced blocks: nothing
+   commits and the caller gets no outputs.
+3. A required gate that cannot run refuses the commit (fail closed).
+4. Results hold counts, table names, column names and reason codes only. No key value, row value
+   or DuckDB message text reaches the report, an exception, a log line or a reason record.
+5. One function decides "post-scan blocks delivery": `post_scan_verdict` (4.8), covering key
+   breaches and every finding whose severity blocks. The verdict lands in
+   `quality_metrics["post_scan_integrity"]` (tag `post-scan-integrity/v2`) on every route and, when
+   blocking, in one `PostScanBlockedError` carrying the report (4.10).
+6. The column suite (residual PII, policy validation) gives exact counts on every route, equal to
+   the resident pandas runner today.
 
-Non-goals (V2-LOG unless said otherwise): model (NER) post-scan on streamed routes (M5's guard
-stays and model asks keep the resident route); post-scan on direct primitives (`run_sequential`,
-`run_fk_out_of_core`, the chunked entries); exact per-row "introduced" attribution; a
-`tables[].primary_key` config field (Owner question Q3); streaming the A1 post-validation suite;
-the composite-key bug in `validation/post/_checks/_pk_uniqueness.py`; moving
-`validators/_fk_validators.py` onto the key core.
+Named exemptions (gate not run):
 
-## 2. Measured today
+- `generate_tables_streamed` and `generate_tables_streamed_from_generation_plan`
+  (`generation/_plan_entry.py:254`, `:326`): direct primitives that never reach `execute_route`.
+  The CLI calls `run_pipeline` instead. V2-LOG POSTSCAN-GEN-STREAMED.
+- Direct mask primitives (`run_sequential`, `run_fk_out_of_core`, the chunked entries): M5 keeps
+  refusing model asks; regex and key checks there are V2-LOG. CLI `--chunked` reaches `_chunked.py`
+  until RUN-STREAM C2 moves it to stream mode, which this plan covers. Safe meanwhile through a
+  dependency on row 61: the delivery plan refuses `decoy run --chunked` when post-scan integrity is
+  requested, and CLI delivery treats a requested post-scan with no report as a block.
+- F22 `publish_tables`: it publishes tables a caller already holds from a gated run.
 
-All on `origin/main` `a001f4d7`.
+Non-goals (V2-LOG, section 15): NER post-scan on streamed routes; exact per-row attribution; a
+`tables[].primary_key` field (Q3); streaming A1 post-validation; the composite-key bug in
+`validation/post/_checks/_pk_uniqueness.py`; `validators/_fk_validators.py` on the key core.
 
-| Route | What post-scan does today | Where |
+## 2. Measured today (`a001f4d7`)
+
+| Route | Post-scan today | Where |
 |---|---|---|
-| full_frame (incl. resident auto-chunk lane) | Whole-table `to_pandas()` of every mask source and output, then `run_post_mask` in pandas. Generate tables skipped. Report only, never blocks. No PK check. FK check is `set(parent.tolist())` plus `isin` in Python | `execution/_pipeline_finalize.py:470-503` `compute_post_scan_integrity`, called at `execution/_pipeline_full_frame.py:308` before `publish.commit()` at 316; `verification/postmask/fk_preservation.py` |
-| sequential | Declined: integrity makes the job ineligible, so it runs full-frame, or is refused before read (`FK_FULL_FRAME_OOM_RISK_REJECTED`) when too big; explicit sequential is rejected | `execution/_pipeline_routing.py:87-143` `_sequential_eligible`, code at 140-142 |
-| chunked (output lane) | Output forced resident | `execution/_chunked_output_sink.py:105-131` `decide_output_mode`, 124-130 |
-| out_of_core | Declined; explicit `out_of_core` raises `out_of_core_ineligible` | `execution/_pipeline_routing.py` `decide_execution_route` |
-| mixed | Declined | `execution/_pipeline_routing.py:328-329` |
-| unified_slice | Declined, falls to full-frame | `execution/_unified_slice_admission.py:252-257` |
-| stream mode | Refused `runtime.streaming_unavailable` because output stays resident | `execution/pipeline/_stream.py:187-188` |
-| streamed generation | No post-scan (the suite covers mask tables only) | `generation/_streamed.py:524` commits with no check |
-| isolated | Same as the child's route (the child runs `run_pipeline`) | `execution/_isolated_worker.py` |
-| direct primitives | No post-scan; M5 (PR #508) refuses model asks only | `verification/postmask/_route_guard.py` on `feat/scanml-m5` |
+| full_frame | Whole-table `to_pandas()` of each mask source and output, `run_post_mask` in pandas, report only, no PK check, FK via `set(...)` and `isin` | `execution/_pipeline_finalize.py:470-503`, called at `execution/_pipeline_full_frame.py:308`; `publish.commit()` at `:316` |
+| sequential | Declined when integrity is asked; the route needs relationships at all (`:130-131`) | `execution/_pipeline_routing.py:140-142` |
+| chunked output lane | Output forced resident | `execution/_chunked_output_sink.py:124-130` |
+| out_of_core, mixed | Declined | `execution/_pipeline_routing.py:328-329` |
+| unified_slice | Declined; its return path skips line 308 | `execution/_unified_slice_admission.py:252-257`; `execution/_pipeline_full_frame.py:156-162` |
+| stream mode | Refused `runtime.streaming_unavailable` | `execution/pipeline/_stream.py:187-188` |
+| isolated | Child runs `run_pipeline`; the parent publishes with `atomic_commit`, not `observed_commit`; a child failure becomes `crashed` and drops `quality_metrics` | `execution/_isolated_run.py:330`, `:655`, `:575-590`; `execution/_isolated_worker.py:222-228` |
+| streamed generation | Not a route: only the public `generate_tables_streamed*` entries reach `generation/_streamed.py:524` | `generation/_plan_entry.py:254`, `:326` |
 
-Routing also prices the resident route for integrity jobs at `execution/physical/_compiler.py:437`,
-`execution/physical/_shadow_generation.py:422`, `execution/capacity.py:364,426`,
-`execution/_job_estimate.py:161`, `execution/_transforms_admission.py:101` and
-`execution/_pipeline_routing_signals.py:579`.
+Commit sites: `observed_commit` (`execution/_publication_observer.py:99-111`) is called by
+`_sequential.py:603`, `out_of_core/_runner.py:306` and `OutputPublish.commit`
+(`_chunked_output_sink.py:164`, used by full-frame `:316`, mixed `_pipeline_mixed_route.py:300`
+and streamed generation). The isolated parent uses `atomic_commit`.
 
-A streamed key-integrity core already exists, for pre-scan: `profiling/_scan_integrity.py`
-(368 lines). `_check` (line 304) loads parent and child key columns as Arrow batches
-(`_BATCH_ROWS` 100,000) into DuckDB (`MEMORY_LIMIT` 512MB, spill under
-`fileaccess.protected_scratch_dir`). It counts parent null-key rows, duplicate excess (complete
-rows minus `DISTINCT`), and per child the null-key rows and `NOT EXISTS` orphans
-(`_child_facts`, line 358). It reads only local file descriptors (`_open_keys`, line 201).
+Corrections to the first revision (Dennis r1 section 1):
 
-"Declared" keys today (CONFIG-EXPLICIT): there is no `primary_key` field. A key is declared only
-through `relationships:` (`config/_relationships.py`: `RelationshipEnd(table, columns)`,
-`RelationshipConfig(parent, children, orphan_policy, namespace)`). `profile/_source.py`
-`_derive_pk_cols` marks every column in a `parent.columns` list as `declared_pk`.
+- Parquet `LazySource` has no file-identity check (`profile/_readers.py:214-330`); only
+  `CsvLazySource` does (`profile/_lazy_csv.py:185-233`). Parquet relies on the routing snapshot:
+  `capture_source_facts` (`execution/_chunked_input.py:123`) and `check_opened` (`:248-252`).
+- CSV has column projection (`profile/_lazy_csv.py:204`). `Status` is at
+  `profiling/_scan_integrity.py:41`. `resolve_ooc_memory_limit` returns an `OutOfCoreBudget`
+  (`out_of_core/_budget.py:410`) whose `memory_limit` is the string used.
+- F22: #488, #489, #496 are a1a, a1b, a2; c1a, c1b, c2 are unbuilt; rev 11 is on main. SCAN-ML M4
+  has no code and `PostScanBlockedError` is on no ref. REG-RELEASE E2 is open as #506.
+
+The pre-scan key core: `_check` (`profiling/_scan_integrity.py:304`) loads key columns as Arrow
+batches (`_BATCH_ROWS` 100,000) into DuckDB (`MEMORY_LIMIT` 512MB, spill under
+`protected_scratch_dir`) and counts parent null-key rows, duplicate excess, and per child null-key
+rows and `NOT EXISTS` orphans (`_child_facts`, `:358`). Keys are declared only in `relationships:`.
 
 ## 3. Established solutions
 
-Searches run 2026-11-12: DuckDB larger-than-memory joins and aggregates; dbt `unique`,
-`not_null`, `relationships`; Great Expectations compound uniqueness; Polars streaming anti joins.
+Searched 2026-11-12: DuckDB larger-than-memory joins and aggregates; dbt `unique`, `not_null`,
+`relationships`; Great Expectations compound uniqueness; Polars streaming anti joins.
 
-- DuckDB spills hash joins and hash aggregates to `temp_directory` once intermediates pass
-  `memory_limit` ([Memory Management in DuckDB](https://duckdb.org/2024/07/09/memory-management),
-  [tuning guide](https://duckdb.org/docs/current/guides/performance/how_to_tune_workloads),
-  [Saving Private Hash Join](https://duckdb.org/library/saving-private-hash-join-vldb/),
-  [external hash aggregation](https://duckdb.org/library/robust-external-hash-aggregation/)).
-  The engine already relies on this (`out_of_core/_duckdb.py`). Taken: the key checks stay in
-  DuckDB, through the existing `connect_duckdb`, with a capped `memory_limit`.
-- dbt's generic tests compile to queries that return failing rows: `not_null`, `unique`
-  (group and count), `relationships` (child keys absent from the parent)
-  ([dbt data tests](https://docs.getdbt.com/docs/build/data-tests)). The existing `_check`
-  already has these shapes; nulls are counted by the null check, not by uniqueness.
-- Great Expectations checks composite keys as one tuple with
-  `expect_compound_columns_to_be_unique`
-  ([GX expectation](https://greatexpectations.io/expectations/expect_compound_columns_to_be_unique),
-  [GX uniqueness guide](https://docs.greatexpectations.io/docs/reference/learn/data_quality_use_cases/uniqueness)).
-  Taken: a composite key is one tuple, never checked per column.
-- Polars 2.0 streams by default, but sources disagree on whether its joins and group-bys spill
-  ([Polars 2 announcement](https://pola.rs/posts/announcing-polars-2/),
-  [runtimewire summary](https://runtimewire.com/article/polars-2-ritchie-vink-streaming-out-of-core)).
-  Rejected: no proven out-of-core anti join, and the engine keeps Polars off the mask path.
-- Sampling detectors: the engine's pre-scan samples 10,000 rows with a fixed seed
-  (`profiling/scan_set.py::scan_sources`). Taken for the detector part only.
+- DuckDB spills joins and aggregates to `temp_directory` past `memory_limit`
+  ([memory management](https://duckdb.org/2024/07/09/memory-management)). Taken: key checks and
+  exact distinct counts run in DuckDB through `connect_duckdb`.
+- dbt generic tests compile to queries that return failing rows
+  ([data tests](https://docs.getdbt.com/docs/build/data-tests)); `_check` already has them.
+- Great Expectations checks a composite key as one tuple
+  ([compound unique](https://greatexpectations.io/expectations/expect_compound_columns_to_be_unique)).
+  Taken.
+- Polars streaming joins: spill behavior not settled. Rejected; Polars stays off the mask path.
+- A detector rate is hits over non-null values, so per-batch sums are exact
+  (`detection/_scoring.py:175`). Taken; no sampling.
 
-Custom code left: batch readers over the engine's own input kinds, the source-versus-output
-verdict, and the streamed column facts. No library covers "compare a masked output with its
-input" for these engine types.
+Custom code left: the batch readers, the source-versus-output verdict and the hit collector. No
+library compares a masked output with its input for these types.
 
-## 4. Behavior after POSTSCAN-STREAM
+## 4. Behavior
 
-### Two parts, one gate
+### 4.1 PS-1 interfaces (fixed; the builder makes no design choice)
 
-The gate runs two parts over the same batch inputs:
+In `profiling/_scan_integrity.py`, exported from `profiling/__init__.py`:
 
-- **Key checks.** Run whenever the config declares at least one relationship (Q1). Exact.
-- **Column suite** (residual PII, policy validation). Runs only under `post_scan.integrity: true`,
-  as today.
+```python
+@dataclass(frozen=True)
+class KeyBatches:  # public rename of _Keys (:104-110), fields unchanged
+    schema: pa.Schema                                # key columns labelled k0..kn, declared order
+    batches: Callable[[], Iterator[pa.RecordBatch]]  # re-callable: each call starts a new read
+    bounded: bool = True
 
-### Inputs: bounded batch readers
+@dataclass(frozen=True)
+class ChildKeyFacts: rows: int; null_key_rows: int; orphan_rows: int; orphan_distinct_keys: int
 
-`verification/postmask/_stream_input.py` gives each table a `TableBatches` (schema, row count,
-`batches(columns, rows)` callable, `bounded` flag), built from one of:
+@dataclass(frozen=True)
+class KeyFacts:
+    status: Literal["checked", "key_type_mismatch"]
+    parent_rows: int; parent_null_key_rows: int; parent_duplicate_excess: int
+    children: tuple[ChildKeyFacts, ...]  # one per `children` argument, same order
+    bounded: bool
 
-1. A resident `pa.Table` (full-frame outputs, caller sources): `to_batches(max_chunksize=)`.
-2. A `LazySource` (Parquet or CSV): `iter_batches`. Its file identity check raises
-   `runtime.lazy_source_changed` when the file changed after the route read it (reused code).
-3. A staged engine output: the Parquet file a `ParquetTransactionalSink` staged, opened through
-   the sink's stage handle (`txn.open_file`, the handle F22 measures by), read by row group.
-4. A platform `source_loader` callable: one table at a time, the same bound the sequential
-   route accepts today; `bounded=False` is recorded.
+def key_facts(parent: KeyBatches, children: Sequence[KeyBatches] = (), *,
+              scratch: Path, memory_limit: str) -> KeyFacts: ...
+```
 
-Key checks read only key columns. The column suite reads one configured column pair (source,
-output) at a time from Parquet, and all configured columns per batch from CSV (CSV has no column
-projection). Memory is batch rows times columns read, independent of table length.
+Rules:
 
-### Key checks
+- `children=()` gives the parent facts only (PS-2a checks each primary key once).
+- A type mismatch (`_comparable` differs) returns `status="key_type_mismatch"`, zero counts and
+  `children=()`, and opens no connection. Pre-scan maps it to `SCAN_KEY_TYPE_MISMATCH` as today
+  (`:321-324`); post-scan to `post_scan.key_type_mismatch`.
+- `batches()` is called once per load; a self-reference passes two `KeyBatches` over one table and
+  reads it twice. Stated, not optimized.
+- `scratch` is caller-owned; `key_facts` spills under it and closes the connection in `finally`.
+  Exceptions propagate; callers strip them with `safe_error_class` (`_progress_events.py:85`), as
+  pre-scan does (`profiling/scan_set.py:296-303`). No second sanitizer.
+- `_check` becomes `_open_keys`, then `key_facts`, then a map to `RelationshipFacts` (each
+  `ChildKeyFacts` plus the child's table and columns becomes a `ChildFacts`; `exact=True`).
 
-Declared primary keys: each distinct `(parent.table, set(parent.columns))` across
-`relationships:`. Declared foreign keys: each `(child.table, child.columns)` of each relationship.
+`LazySource.open_batches` (`profile/_readers.py:257`) and `CsvLazySource.open_batches`
+(`profile/_lazy_csv.py:214`) gain `columns: Sequence[str] | None = None`, forwarded to the existing
+projection (pyarrow `iter_batches(columns=)`, CSV `_chunks(batch_rows, columns)`).
 
-For every declared key the gate computes the same facts twice, over the run's input sources and
-over the output, with one shared function (section 10, "One key core"):
+In `verification/postmask/_stream_input.py`:
 
-- PK: rows, null-key rows (any part null, as SQL requires for a primary key), duplicate excess
-  (complete rows minus distinct complete tuples).
-- FK: rows, null-key rows, orphan rows (a complete child tuple with no matching parent tuple;
-  MATCH SIMPLE, so a child tuple with any null part is not checked), orphan distinct keys.
+```python
+@dataclass(frozen=True)
+class TableBatches:
+    name: str
+    schema: pa.Schema
+    num_rows: int
+    read: Callable[[Sequence[str], int], Iterator[pa.RecordBatch]]  # (columns, batch_rows), re-callable
+    bounded: bool = True
+    resident: pa.Table | None = None  # set only by from_table (M4 model passes read it)
 
-Verdict, per key:
+def from_table(name: str, table: pa.Table) -> TableBatches: ...
+def from_lazy(name: str, source: LazySource, *,
+              on_open: Callable[[OpenedLazyBatches], None] | None = None) -> TableBatches: ...
+def missing_columns(table: TableBatches, columns: Sequence[str]) -> tuple[str, ...]: ...
+def key_batches(table: TableBatches, columns: Sequence[str]) -> KeyBatches: ...  # labels k0..kn
+```
+
+- `from_lazy` covers Parquet and CSV `LazySource`: each `read` opens with
+  `open_batches(batch_rows, columns=...)`, calls `on_open(opened)` before the first batch (the
+  gate passes `check_opened`, 4.3) and closes on every exit. `key_batches` needs the columns to
+  exist (callers check `missing_columns` first).
+- Post-scan input kinds are what `run_pipeline` holds: `pa.Table` and `LazySource`. Fixed width
+  and cloud are pre-scan descriptor kinds and keep today's pre-scan handling (`:248-257`,
+  `skipped_cloud`). Staged Parquet is PS-10; loader baselines are scratch Parquet (PS-11).
+
+### 4.2 Key checks
+
+Run whenever relationships are declared (Q1), from the parsed `RelationshipConfig`s
+(`parse_relationship_config`). Primary keys: each distinct `(parent.table, tuple(parent.columns))`;
+foreign keys: each child end. `key_facts` runs over the inputs (baseline) and the output. Per key:
 
 | Fact | Blocks when | Code |
 |---|---|---|
-| PK duplicate excess | output > source | `post_scan.primary_key_duplicates_introduced` |
-| PK null-key rows | output > source | `post_scan.primary_key_nulls_introduced` |
-| FK orphan rows | output > source | `post_scan.foreign_key_orphans_introduced` |
-| FK null-key rows | never; reported as a count | none |
-| key column absent from output | always | `post_scan.key_column_missing` |
-| parent and child output key types not comparable (`_comparable`) | always | `post_scan.key_type_mismatch` |
-| DuckDB or read error during key checks | always | `post_scan.check_error` (reused) |
+| PK duplicate excess | output > baseline | `post_scan.primary_key_duplicates_introduced` |
+| PK null-key rows (any part null) | output > baseline | `post_scan.primary_key_nulls_introduced` |
+| FK orphan rows (complete tuple, no parent tuple) | output > baseline | `post_scan.foreign_key_orphans_introduced` |
+| FK null-key rows | never; reported | none |
+| declared key column absent from output | always | `post_scan.key_column_missing` |
+| output parent and child key types not comparable | always | `post_scan.key_type_mismatch` |
+| read, DuckDB or spill error in key checks | always | `post_scan.check_error` (reused) |
 
-The source comparison keeps valid runs valid: `orphan_policy: preserve` and `warn` keep source
-orphans, `remap` gives them fresh values that are still orphans, and a source that already has
-duplicate parent keys is not the run's fault. A table with no source (a generate table, or a
-mask child whose parent is generated) has baseline 0. `orphan_policy: fail` aborted earlier, so
-the gate never sees those orphans.
+The baseline keeps valid runs valid: `preserve` and `warn` keep source orphans, `remap` gives them
+fresh values that stay orphans, inherited duplicates are not the run's fault. A generate table has
+baseline 0. `orphan_policy: fail` aborts earlier. Shapes: single column; composite (one tuple);
+nullable FK (a tuple with a null part is counted, never an orphan); self-reference (two reads);
+cross-table cycles refused before the run (`relationships/_graph.py`).
 
-V1 key shapes:
+### 4.3 Baselines and identity (F6, F16, F20)
 
-| Shape | Behavior |
+- Resident inputs: the gate reads the sources the route masked from, after the pre-mask cast
+  (full-frame `step.sources`; unified slice `caller_sources` after `cast_run.pre_mask`).
+- Parquet `LazySource` inputs: re-read through `from_lazy` with `on_open` calling
+  `check_opened(h, facts[name], table=name)` against the run's `capture_source_facts` snapshot. A
+  changed file refuses with `runtime.lazy_source_changed`, the check chunked and mixed already
+  trust (row count, schema with metadata, null counts, row-group layout).
+- `CsvLazySource` inputs: re-read through `from_lazy`; its identity check refuses a change.
+- Loader inputs (`source_loader`): the baseline is taken in the read the route already does
+  (PS-11). Until PS-11, and for any loader the tee cannot wrap, the run keeps the resident route.
+- SUB-RUN: with `subset:` the inputs are the post-subset scratch sources (`field_key=
+  "engine.scratch"`, SUB-RUN 4.2), which outlive the gate (`SubsetStageScope` wraps `run_pipeline`).
+  Orphans kept across `excluded_edges` are in the baseline (AT-24). SUB-RUN refuses a subset with
+  a `source_loader`.
+
+F20 answer: every run path reads CSV as text (`profile/_lazy_csv.py:134`,
+`profile/_csv_reader.py:506-507`), and so does pre-scan. Output keys differ from text only where
+declared casting types a key column, so the baseline reads through the same cast: resident routes
+use the cast sources; a streamed re-read applies `CastRun.cast_batch(table, batch, record=False)`
+(`declared_casting/_boundary.py:210`) over the key and cast columns. Quarantined rows drop from both
+sides alike.
+
+### 4.4 Column suite (exact, F14)
+
+Runs under `post_scan.integrity: true`, as today. `verification/postmask/_column_facts.py`
+computes per configured column, in one pass over aligned batches: row counts, comparable and
+identical rows (the positional comparison of `residual_pii.py:241-247`), `bytes_identical`, a
+constant-source flag, and exact distinct counts through `profiling.column_distinct(batches, *,
+scratch, memory_limit) -> int` (DuckDB `count(DISTINCT ...)` over a `RecordBatchReader`).
+
+Detector rates are exact: `detection/_scoring.py` gains `counting_scope()`, a context variable to
+which `_evaluate` reports `(detector_id, hits, n, threshold, name_hint)` before its threshold test.
+The suite runs `run_all_detectors` per batch inside the scope, sums hits and `n`, and decides with
+the same threshold and `_confidence_bucket`. `sample_misses` stays empty here (it holds values).
+
+`residual_pii.py` and `policy_validation.py` keep their decision tables and take these facts.
+`run_post_mask(source_frames, output_frames, *, config, keys=None)` stays the public adapter.
+Model passes (SCAN-ML M4) need resident values; the model predicate keeps those runs resident and
+the passes read `TableBatches.resident`.
+
+### 4.5 The gate
+
+`execution/pipeline/_post_scan.py`:
+
+```python
+class PostScanGate:
+    required: bool  # keys declared, or post_scan.integrity true
+    ran: bool
+    def run_resident(self, outputs: Mapping[str, pa.Table], sources: Mapping[str, pa.Table],
+                     table_kinds: Mapping[str, str]) -> None: ...
+    def before_commit(self, sink: Any) -> None: ...  # called by observed_commit
+def bind_gate(ctx: PipelineRunContext) -> ContextManager[PostScanGate]: ...  # context variable
+def active_gate() -> PostScanGate | None: ...
+```
+
+1. `execute_route` binds one gate per run (precedent `bind_duckdb_run`,
+   `_pipeline_route_dispatch.py:113`).
+2. Full-frame: at `_pipeline_full_frame.py:308`, `gate.run_resident(...)` runs only when
+   `ctx.publish.active_sink is None`; `compute_post_scan_integrity` is deleted (F2).
+3. Unified slice (PS-12, F13): `_render_and_seal` runs `gate.run_resident(outputs, caller_sources,
+   ...)` between `cast_run.post_mask` and `cast_run.finish`; with no cast run, on
+   `unified_slice_result.outputs` before the return at `:162`. Relationships already decline this
+   route (`_unified_slice_admission.py:259`).
+4. Commit: `observed_commit(sink)` calls `active_gate().before_commit(sink)` before `sink.commit()`.
+   Not required, or already ran: return. Sink has `staged_tables()` (4.6): run over the staged
+   files. Otherwise raise `post_scan.check_error`; the commit does not happen (F1). Routing keeps
+   such runs resident (4.7); this is the backstop.
+5. No sink: after the route returns, `execute_route` runs the gate over `result.outputs` if it has
+   not run, then raises `post_scan.check_error` if a required gate still has not run.
+6. Exactly once: `ran` is set when a run completes; later calls are no-ops.
+7. Errors: caught per part, kept as `safe_error_class(type(exc).__name__)`, the coded error raised
+   after the `except` block (no cause, no context).
+8. Blocking: `post_scan_verdict` blocking raises `PostScanBlockedError` before `sink.commit()`; the
+   route's failure path aborts the sink (`out_of_core/_runner.py:314-316`, `_sequential.py`,
+   `OutputPublish.__exit__`).
+9. Memory: DuckDB `memory_limit` is the smaller of `MEMORY_LIMIT` and
+   `resolve_ooc_memory_limit(...).memory_limit`. Spill goes to the F25 `ScratchArena` once S2a has
+   merged, else `fileaccess.protected_scratch_dir`.
+
+Isolated (PS-9, F4). The gate runs in the child's `run_pipeline` (`_isolated_worker.py:217`) and
+in `_run_in_process`. A block must not read as a crash:
+
+- `_isolated_worker._run` catches `PostScanBlockedError` before its generic handler and returns
+  `{"outcome": "blocked", "reason": ..., "error": <safe text>, "quality_metrics":
+  {"post_scan_integrity": exc.report}}`.
+- `IsolatedRunOutcome` (`_isolated_common.py:86`) gains `"blocked"`; `_result_from_envelope` and
+  `_run_in_process` keep report and reason with `outputs=None` and commit nothing, through one
+  helper in `_isolated_reason.py` (`_isolated_run.py` grows at most 8 lines).
+- `run_job_with_governor` treats `blocked` as terminal, no reroute (an unknown outcome raises
+  today, `_governor.py:396-406`); `GovernorResult.outcome` gains `blocked`.
+
+### 4.6 Staged output and the F22 seam (PS-10, F21)
+
+`ParquetTransactionalSink.staged_tables() -> Mapping[str, Callable[[], int]]`: before commit, each
+staged table maps to an opener returning a new read-only descriptor of its staged file through the
+public `OutputTxn.open_file(component)` (`fileaccess/_output.py:247`); names are recorded in
+`write` and `write_batches`. `from_staged` reads by row group; schema and row count come from the
+footer. Main's sink is the base, so this row is off F22's critical path. A sink without
+`staged_tables` (`_CallableSinkAdapter`, `_transactional_sink.py:107`, third-party) is unreadable:
+routing keeps the resident route (4.7, F5).
+
+Contract F22 c1a keeps (to post on the F22 PRs): "`ParquetTransactionalSink` and
+`StagedParquetWriter` keep `staged_tables() -> Mapping[str, Callable[[], int]]`, each opener
+returning a new read-only descriptor of that table's staged Parquet file before commit, and every
+route still commits them through `observed_commit`."
+
+### 4.7 Routing (F5, F9)
+
+`config/_post_scan.py` holds the one model predicate `post_scan_model_setting(config) -> str |
+None` (`post_scan.detectors` other than `regex`, or `post_scan.ner_findings: fail`) and the helper
+`post_scan_resident_reason(config, *, output_readable: bool) -> ReasonRef | None`:
+
+| Slice state | Returns |
 |---|---|
-| Single column | one label `k0` |
-| Composite | one tuple `k0..kn`, never per column |
-| Nullable FK | a tuple with a null part passes (not an orphan) and is counted in null-key rows |
-| Self-reference | the table is read twice: parent columns, then child columns |
-| Cross-table cycle | each edge is checked alone, so order does not matter; cycles already run full-frame |
+| PS-8 to PS-11 | `route.post_scan_integrity_requested` when integrity is asked; else `route.post_scan_keys_resident` when keys are declared and the output cannot be read back for the check |
+| PS-12 on | `route.post_scan_models_resident` when `post_scan_model_setting` is set; else the keys clause |
 
-### Column suite
+`output_readable` is false for every streamed route in PS-8; from PS-10 true when the sink has
+`staged_tables()`, from PS-11 also when the loader can be teed. Estimator and capacity sites
+(`capacity.py:364`, `:426`, `_job_estimate.py:161`, `physical/_compiler.py:437`,
+`physical/_shadow_generation.py:422`, `_transforms_admission.py:101`) pass `True` (they price the
+engine sink). Run-time sites (`_pipeline_routing_signals.py:579`, `_chunked_output_sink.py:124`,
+`_unified_slice_admission.py:256`) pass the real value. `decide_execution_route` takes
+`post_scan_resident: ReasonRef | None` in place of the bool.
 
-`verification/postmask/_column_facts.py` streams, per configured column, one pass over aligned
-source and output batches: row counts, comparable rows, identical rows (positional, exact),
-`bytes_identical` (exact: every batch equal under the existing object comparison), and a
-"constant source" flag (exact; holds at most one value in memory, never reported). When the row
-counts differ, the identity facts are `None` and the existing row-count finding is emitted, as
-today.
+`route.post_scan_keys_resident` keeps one meaning in every slice: keys must be checked and this
+route cannot read its output back. At PS-12 `route.post_scan_integrity_requested` retires with
+`replaced_by=("route", "post_scan_models_resident")`. M5 (#508): if it merges before PS-8, PS-8
+moves `_asks_for_models` and the `ner_findings` test from `_route_guard.py` into
+`post_scan_model_setting`; if PS-8 merges first, #508 rebases onto it. One copy either way.
 
-Detectors and distinct counts run on a deterministic positional sample: up to 10,000 rows per
-table, positions drawn with the pre-scan seed from the known row count (Parquet footer, CSV
-facts pass, resident length). The same positions are read on every route, so every route gives
-the same report. A table of 10,000 rows or fewer is read whole and the result is exact. The
-report names the sampled tables (`sample: {rows, of_rows}` per table, additive).
+### 4.8 Verdict, report and exception (F8, F10)
 
-`residual_pii.py` and `policy_validation.py` keep their decision tables and take these facts
-instead of frames. `run_post_mask(source_frames, output_frames, config=)` stays as a thin public
-adapter that wraps frames as `TableBatches`, so its callers and tests keep working. The
-`fk_preservation` report field is filled from the key facts; its pandas checker is deleted.
+`quality_metrics["post_scan_integrity"]` gains `keys` (per key: `table`, `columns`, `kind`,
+`parent`, `status`, `bounded`, `codes`, and `source` and `output` counts) and `verdict: {blocking,
+codes}`. Fields are additive under `post-scan-integrity/v2`.
 
-### Where the gate runs (the seam)
+`PostScanBlockedError(DecoyError)` is SCAN-ML M4's class (4.5 there): the value-free report in a
+field, the registry's fixed summary as `str(error)`, raised with an empty chain. Whichever of M4 and
+PS-2b builds first defines it in `verification/postmask/_blocked.py`; the other uses it.
 
-1. `execute_route` (`execution/_pipeline_route_dispatch.py:35`) binds one gate per run for the
-   route's duration (context variable; precedent `bind_duckdb_run`).
-2. Readable sink (`ParquetTransactionalSink`, or F22's staged writer): `observed_commit`
-   (`execution/_publication_observer.py:99`) runs the bound gate over the staged tables before
-   `sink.commit()`. Every route's commit already goes through it (`_sequential.py:603`,
-   `out_of_core/_runner.py:306`, `_chunked_output_sink.py:164` for full-frame, mixed and
-   streamed generation).
-3. Full-frame route: the call at `_pipeline_full_frame.py:308` becomes `gate.run_resident(outputs)`
-   over the resident tables, and `compute_post_scan_integrity` is deleted. The commit hook then
-   sees that the gate has run.
-4. No sink: `execute_route` runs the gate over `result.outputs` after the route returns.
-5. Exactly once: the gate records that it ran; a second call is a no-op. After the route returns,
-   `execute_route` raises `post_scan.check_error` if a required gate did not run (fail closed).
-6. A foreign sink (`_CallableSinkAdapter`, a third-party `TransactionalSink`) cannot be read
-   back. With the column suite asked, routing keeps the resident route (today's behavior,
-   existing code `route.post_scan_integrity`). Key checks alone on a streamed route record status
-   `skipped_unreadable_output` with `warning.post_scan_output_unreadable` and do not block.
-7. A blocking verdict raises `PostScanBlockedError` (SCAN-ML M4's class, with the new codes)
-   before `sink.commit()`. It carries the value-free report. Each route's existing failure path
-   aborts the sink (`out_of_core/_runner.py:315`; the sequential and `OutputPublish` paths the
-   same way), so nothing commits. With no sink, the caller receives no outputs.
-8. Non-blocking results land in `quality_metrics["post_scan_integrity"]` with a new `keys`
-   section and `verdict: {blocking, codes}`. The RunResult builder (RESULT row 62) maps that to
-   `Check(id="post_scan_integrity", status, blocking, counts, codes)`; no new `CheckId`.
+`post_scan_verdict(report) -> PostScanVerdict` in `_blocked.py` is the one blocking decision; the
+gate calls it and raises on `blocking`. The report blocks when any of these holds: a key code
+(4.2); a finding of severity `fail` in `residual_pii`, `policy_validation` or `fk_preservation`;
+a finding of severity `error`, or a set `pass_failed_with`; an M4 NER block. Severities are the
+`Severity` literals (`verification/postmask/types.py:20`: `info`, `warning`, `fail`, `error`);
+`info` and `warning` never block. An `fk_preservation` `fail` is the same fact as
+`foreign_key_orphans_introduced` and adds no second code.
 
-F22 seam: `publish_unit` binds the unit inside commit, after the gate. CLI delivery (row 61) reads
-the verdict from the result or catches `PostScanBlockedError`. Isolated route: after F22 c2 the
-parent is the only publisher, so the parent's commit runs the gate over the child's staged files.
+One code goes on the record, by this order (first present wins); `verdict.codes` lists every
+blocking code in the same order:
 
-### Routing after the lift
+1. `post_scan.check_error` (also an `error` finding or `pass_failed_with`)
+2. `post_scan.key_column_missing`
+3. `post_scan.key_type_mismatch`
+4. `post_scan.primary_key_nulls_introduced`
+5. `post_scan.primary_key_duplicates_introduced`
+6. `post_scan.foreign_key_orphans_introduced`
+7. `post_scan.finding_blocked` (a column-suite `fail`)
+8. `post_scan.ner_blocked` (M4)
 
-`config/_post_scan.py` gains `post_scan_needs_resident(config)`: true only when a model detector
-is asked (whatever SCAN-ML treats as a model in `post_scan.detectors`). The routing call sites in
-section 2 switch from `post_scan_integrity_requested` to it, and their keyword is renamed
-`post_scan_models`. Code `route.post_scan_integrity_requested` retires with
-`replaced_by=("route", "post_scan_models_resident")`, because its meaning narrows and codes never
-change meaning (`docs/reasons.md`). `route.post_scan_integrity` keeps its meaning.
+Inability to check comes first, then structure, then data. An NER block and a key block make one
+exception with both codes in `verdict.codes`. M4's block predicate feeds the verdict instead of
+raising its own exception.
 
-Memory: the gate's DuckDB `memory_limit` is the smaller of `MEMORY_LIMIT` (512MB) and the run's
-own DuckDB share (`resolve_ooc_memory_limit(ctx.out_of_core_budget_bytes)`); no cap rises. Spill
-goes to the run's scratch: the `ScratchArena` when F25 S2a has merged (I2), otherwise
-`fileaccess.protected_scratch_dir` as pre-scan does today, which F25's census then moves.
+`fk_preservation` (frozen v2 field) derives from the keys facts: `fail` when orphans were
+introduced, `warning` when all output orphans are inherited, `info` when none, `error` when
+unchecked. A composite fills the additive `parent_columns` and `child_columns` tuples;
+`parent_column` and `child_column` hold the single name, or the names joined by `", "` for display.
+The rate thresholds (`fk_preservation.py:165-195`) and the dead `orphan_policy == "skip"` branch go.
+PS-4 records this pre-GA semantic change in `docs/compatibility-contract.md` 3.1 and updates on
+purpose `tests/unit/detection_verification/test_bf4_fk_preservation.py`,
+`test_postmask_runner.py` and `test_postmask_batch_b.py`. Per-table blame stays in the findings for
+display; V1 delivery does not act on it (4.10).
+
+### 4.9 Generated relationship parents (F15, PS-3)
+
+A relationship whose parent table is generated needs a key the plan can show is unique: a
+`sequence` with non-zero `step`, `unique: true`, a composite with one such column, or
+`unique_together`. Otherwise `check_generated_parent_keys(config)` (`plan/checks/_relationship_keys.py`)
+refuses with `plan.relationship_parent_not_unique`, naming table, columns and the fix ("set `unique:
+true` on the key column or use a `sequence`"). `check_generate_columns` calls it last, so
+`decoy validate` and `decoy run` refuse alike (`plan/_compile.py:212`, `:532`); `_compile.py` does
+not grow. No generated output changes.
+
+### 4.10 Contract for CLI delivery (row 61)
+
+The verdict carries `blocking`, `codes` (4.8 order) and the value-free report (keys, column
+findings with `table`, `child_table`, `severity`). On a block the engine raises
+`PostScanBlockedError` (`reason` is the first code, `report` the full report) and nothing has
+committed. It is raised inside `observed_commit` before `sink.commit()` on a sink route, in
+`execute_route` after the route returns on a no-sink route, and in the isolated child (or the
+in-process fallback), which surfaces as `IsolatedRunResult` outcome `blocked` with the same reason
+and report. CLI delivery keeps no severity rule: it maps the exception or a `blocked` outcome to
+"nothing delivered, exit 4". V1 withholds the whole run in strict and best-effort modes alike
+(Q4), so the gate takes no delivery mode. A requested post-scan with no report is a block on the
+CLI side; no engine route returns without one (4.5 steps 4 and 5).
 
 ## 5. Failure modes
 
-| Failure | Result | Code (one owner) |
+| Failure | Result | Code (owner module) |
 |---|---|---|
-| Output PK duplicates above source | block, nothing commits | `post_scan.primary_key_duplicates_introduced` (new) |
-| Output PK nulls above source | block | `post_scan.primary_key_nulls_introduced` (new) |
-| Output FK orphans above source | block | `post_scan.foreign_key_orphans_introduced` (new) |
-| Declared key column missing from output | block | `post_scan.key_column_missing` (new) |
-| Parent and child output key types differ | block | `post_scan.key_type_mismatch` (new) |
-| DuckDB error, spill disk full, read error in key checks | block; message names the exception type only | `post_scan.check_error` (reused) |
-| Column-suite check raises | finding with severity error, run continues (today's best-effort rule) | `post_scan.check_error` (reused) |
-| Source file changed before the gate re-read it | refuse | `runtime.lazy_source_changed` (reused) |
-| Foreign sink, key checks on a streamed route | skipped, warning in report | `warning.post_scan_output_unreadable` (new) |
-| Gate required but did not run | refuse after the route | `post_scan.check_error` (reused) |
-| Model detectors asked | resident route kept | `route.post_scan_models_resident` (new; retires `route.post_scan_integrity_requested`) |
+| Output PK duplicates above baseline | block, nothing commits | `post_scan.primary_key_duplicates_introduced` (new, `verification.postmask._keys`) |
+| Output PK nulls above baseline | block | `post_scan.primary_key_nulls_introduced` (new, same) |
+| Output FK orphans above baseline | block | `post_scan.foreign_key_orphans_introduced` (new, same) |
+| Declared key column missing from output | block | `post_scan.key_column_missing` (new, same) |
+| Output key types not comparable | block | `post_scan.key_type_mismatch` (new, same) |
+| Read, DuckDB or spill error in key checks | block, type name only | `post_scan.check_error` (reused) |
+| Column-suite check raises (`error` finding, `pass_failed_with`) | block, type name only | `post_scan.check_error` (reused) |
+| Column-suite finding of severity `fail` | block | `post_scan.finding_blocked` (new, `verification.postmask._blocked`) |
+| Required gate cannot run at commit | commit refused | `post_scan.check_error` (reused) |
+| Required gate did not run (no sink) | refused after the route | `post_scan.check_error` (reused) |
+| Source file changed before the re-read | refuse | `runtime.lazy_source_changed` (reused) |
+| Keys declared, output unreadable | resident route | `route.post_scan_keys_resident` (new, `config._post_scan`) |
+| Model detectors or `ner_findings: fail` | resident route (PS-12) | `route.post_scan_models_resident` (new; retires `route.post_scan_integrity_requested`) |
+| Generated parent key not provably unique | refused at plan time | `plan.relationship_parent_not_unique` (new, `plan.checks._relationship_keys`) |
+| Isolated child blocked | outcome `blocked`, report kept, nothing committed | the blocking `post_scan` code |
 
-New codes go in `reasons/post_scan/_part1.py` (17 lines today), `reasons/warning/` and
-`reasons/route/_added.py`; the retirement in `reasons/route/_retired.py`. Each code has one
-owner module. The builder takes the next free registry minor with
-`scripts/dev/registry_renumber.py` at merge and adds the reason-manifest fixture.
+Retry classes: the six new `post_scan` codes are `CONFIGURATION_REPAIR` (fix the strategy, keys
+or source); the plan code takes the plan default `CONFIGURATION_REPAIR`; route codes keep `NEVER`;
+`check_error` stays `UNKNOWN`. Files: `reasons/post_scan/_part2.py` (new), `reasons/plan/_part3.py`,
+`reasons/route/_added.py`, `_retired.py`. Registry version: `since=UNRELEASED` if #506 has merged
+when the slice builds, else the next free minor via `scripts/dev/registry_renumber.py` with its
+manifest fixture. Code-adding slices: PS-2a, PS-2b, PS-3, PS-8, PS-12.
 
 ## 6. Choke points, guards and red mutations
 
-| Rule | Choke point | Guard (walks the real artifact) | Mutation that must turn it red |
+| Rule | Choke point | Guard (walks the real artifact) | Mutation that turns it red |
 |---|---|---|---|
-| No commit without the gate | `observed_commit` | AST sentry over `src/decoy_engine/execution/` and `generation/`: every sink `.commit()` call sits inside `observed_commit` or F22's `publish_unit`, aliases resolved | Call `sink.commit()` directly in `_sequential.py` |
-| Gate ran on every route | `execute_route` post-condition | route-coverage sentry (AT-17), keyed on the imported `ROUTES` tuple | Return early from the gate when the route is `mixed` |
-| One key core | `profiling.key_facts` | AST sentry: no `NOT EXISTS` key SQL outside `profiling/_scan_integrity.py` | Copy `_child_facts` into `_keys.py` |
-| Value-free results | facts types hold ints, names and `ReasonRef` only | AT-14 canary | Put a duplicate key value in a finding |
-| No whole-table read in the gate | `TableBatches` | AT-15 spies | Read a staged file with `pq.read_table` |
+| No commit without the gate | `observed_commit` | AST sentry over `execution/` and `generation/`: every sink `.commit()` sits inside `observed_commit`; `OutputPublish.commit` is the one wrapper; `atomic_commit` only in `_isolated_run.py` `_commit` and `_run_in_process` (named, until F22 c2 deletes it); aliases and `getattr` resolved | call `sink.commit()` directly in `_sequential.py`; add an `atomic_commit` call elsewhere |
+| Gate ran on every route | gate binding plus post-condition | route-coverage sentry (AT-17), keyed on the imported `ROUTES` plus `stream` and `isolated` | drop the `mixed` entry |
+| One key core | `profiling.key_facts` | import sentry: no module under `verification/` or `execution/pipeline/_post_scan.py` imports `duckdb` or `connect_duckdb` | add `import duckdb` to `_keys.py` |
+| One model predicate | `config._post_scan.post_scan_model_setting` | AST sentry: no other module reads `ner_findings` or compares `detectors` with `"regex"` | inline the test in `_route_guard.py` |
+| One blocking decision | `verification.postmask._blocked.post_scan_verdict` | AST sentry: outside `_blocked.py`, nothing under `src/decoy_engine/` constructs `PostScanBlockedError` or compares a post-scan `severity` with `"fail"` or `"error"` | raise `PostScanBlockedError` from `_keys.py` |
+| Value-free results | facts types hold ints, names and `ReasonRef` only | AT-14 canary | add a key value to a finding |
+| No whole-table read in the gate | `TableBatches` | AT-15 spies | read a staged file with `pq.read_table` |
 
-The coverage sentry derives its route list from `ROUTES`; the two entries outside that tuple
-(`generate_streamed`, `isolated`) are named exemptions with reasons, as `cross-cutting-concerns.md`
-asks. Each sentry is shown red on its seeded mutation in the slice record.
+Each sentry is shown red on its seeded mutation in the slice record. The blocking-decision sentry lands in
+PS-2b.
 
 ## 7. Acceptance tests
 
-Red first: each slice's first commit adds its tests on the base, red; the record keeps the output.
+Red first: each slice's first commit adds its tests, red on the base.
 
-| AT | Behavior | Failure guarded | Red mutation |
+| AT | Slice | Input and expected result | Red mutation |
 |---|---|---|---|
-| AT-1 | `key_facts` over Arrow batches gives the same counts as pre-scan `_check` on the same files | drift in the shared core | change `_complete` to `OR` |
-| AT-2 | `TableBatches` from resident, Parquet `LazySource`, CSV `LazySource`, staged Parquet and loader give identical batches and row counts | an input kind reads differently | drop the last partial batch |
-| AT-3 | Pre-scan scan-integrity tests pass unchanged after PS-1 | pre-scan behavior change | swap null-key rows and duplicate excess |
-| AT-4 | Masking that collapses two parent keys into one blocks with `primary_key_duplicates_introduced`; source duplicates alone do not block | false pass, false block | compare output with 0 instead of source |
-| AT-5 | A nulled PK part blocks with `primary_key_nulls_introduced`; composite `(a, b)` with `b` null counts as null | per-column null logic | check only `k0` |
-| AT-6 | Child keys remapped outside the parent block with `foreign_key_orphans_introduced`; source orphans under `preserve`, `warn` and `remap` do not block | baseline ignored | drop the source baseline |
-| AT-7 | Composite FK: child `(1, 2)` against parents `(1, 3)` and `(4, 2)` is an orphan | per-column membership | join on `k0` only |
-| AT-8 | Nullable FK: a child with any null part is neither an orphan nor blocking; the null count is reported | MATCH FULL by mistake | remove the completeness filter |
-| AT-9 | Self-reference `employees.manager_id -> employees.id` reads both ends | one read reused for both ends | load parent columns as the child |
-| AT-10 | Cycle A->B->A: both edges checked, same verdict for either config order | order dependence | stop after the first edge per table |
-| AT-11 | Missing output key column blocks with `key_column_missing`; parent `int64` with child `string` blocks with `key_type_mismatch` | silent skip | return `checked` on a mismatch |
-| AT-12 | DuckDB failure (injected at `_before_fetch`) blocks with `check_error`; the message has the type name only; `__cause__` and `__context__` are `None` | DuckDB text with values leaks | raise inside the `except` block |
-| AT-13 | Column suite: `bytes_identical`, identity counts and the row-count finding equal the old pandas runner on tables under 10,000 rows; above that the report names the sample, and two routes give the same report | sampling changes small tables, or routes differ | seed from the wall clock |
-| AT-14 | Canary values (key `CANARY-7f3a` duplicated, orphaned, and inside a forced DuckDB error) appear in no report, exception `str`, `ReasonRecord`, captured log or `quality_metrics` dump | value leak | add an example value to a finding |
-| AT-15 | Bounded memory, one cell per route (sequential, chunked, out_of_core, mixed, unified_slice, streamed generation, isolated; full_frame asserts no second copy): the gate calls no `pq.read_table`, `ParquetFile.read`, `materialize_source` or whole-table `to_pandas`; the Arrow peak during the gate (`pa.total_allocated_bytes`, sampled per batch) stays under 4 times the batch bytes; the DuckDB `memory_limit` recorded by `DuckDBRunRecorder` is at most 512MB; with the limit forced to 8MB, spill files appear at `_before_fetch` | a route reads whole tables | read staged output with `read_table` |
-| AT-16 | A blocking verdict commits nothing: the output dir holds no table, the sink evidence state is aborted, OOC and sequential temp files are gone | partial publish | run the gate after `sink.commit()` |
-| AT-17 | Route-coverage sentry: a `GATE_TESTS` map keyed on every `ROUTES` entry plus `generate_streamed` and `isolated` names a test that proves the gate ran and stamped `keys`; a missing key or a missing test node fails | a new route without the gate | delete the `mixed` entry |
-| AT-18 | `post_scan.integrity: true` with regex detectors takes sequential and out_of_core when eligible; model detectors keep the resident route with `post_scan_models_resident`; stream mode no longer refuses for regex | the lift misses a call site | leave `_unified_slice_admission.py:252` on the old predicate |
-| AT-19 | Foreign sink: key checks report `skipped_unreadable_output` and warn; with the column suite asked the route stays resident with `route.post_scan_integrity` | a foreign sink read as empty passes | treat unreadable as zero rows |
-| AT-20 | The gate runs exactly once (full-frame with sink, OOC with sink, no sink); a required gate that never ran raises `check_error` | double counting, silent skip | reset the `ran` flag in `observed_commit` |
-| AT-21 | The verdict sits at `quality_metrics["post_scan_integrity"]["verdict"]` as `{blocking, codes}`; the tag stays `post-scan-integrity/v2`; the `run_post_mask` adapter equals the old runner on existing fixtures | frozen tag drift | bump the tag |
-| AT-22 | A source file edited between the route read and the gate read refuses with `lazy_source_changed` | stale baseline | skip the identity check |
+| AT-1 | PS-1 | Parquet and CSV files with nulls, duplicates and orphans: `key_facts` counts equal pre-scan `relationship_facts` on the same files | `_complete` joins with `OR` |
+| AT-2 | PS-1 | One table as `pa.Table`, Parquet `LazySource`, CSV `LazySource`: `from_*` reads give identical concatenated tables and row counts, with and without `columns` | drop the last partial batch |
+| AT-3 | PS-1 | Existing pre-scan scan-integrity tests pass unchanged; `children=()` gives parent facts; a mismatch returns `key_type_mismatch` and opens no connection | swap null-key rows and duplicate excess |
+| AT-4 | PS-2a | Masking collapses two parent keys: `primary_key_duplicates_introduced`; source duplicates alone: no block | compare output with 0 |
+| AT-5 | PS-2a | A nulled PK part blocks; composite `(a, b)` with `b` null counts as null | check `k0` only |
+| AT-6 | PS-2a | Child keys remapped outside the parent block; source orphans under `preserve`, `warn`, `remap` do not | drop the baseline |
+| AT-7 | PS-2a | Child `(1, 2)` against parents `(1, 3)` and `(4, 2)` is an orphan | join on `k0` only |
+| AT-8 | PS-2a | A child with any null part: not an orphan, counted, no block | remove the completeness filter |
+| AT-9 | PS-2a | `employees.manager_id -> employees.id`: both ends read, two `batches()` calls | reuse one read |
+| AT-10 | PS-2a | Two relationships over one parent: PK checked once; verdict independent of config order | stop after the first edge |
+| AT-11 | PS-2a | Missing output key column: `key_column_missing`; `int64` parent with `string` child: `key_type_mismatch` | return `checked` |
+| AT-12 | PS-2a | DuckDB failure at `_before_fetch`: `check_error`, message is the type name, `__cause__` and `__context__` are `None` | raise inside `except` |
+| AT-13 | PS-2b | Breaches of several kinds plus an NER fail stub: reason is the first code in 4.8 order; `verdict.codes` has all, in order | sort codes alphabetically |
+| AT-32 | PS-2b | `post_scan_verdict` on reports: one `residual_pii` `fail` blocks with `finding_blocked`; only `warning` and `info` findings do not block; an `error` finding or a set `pass_failed_with` blocks with `check_error`; an FK `fail` with its orphan code gives one code | block on key codes only |
+| AT-14 | PS-2a, PS-6, PS-8 | Canary `CANARY-7f3a` duplicated, orphaned, in a column hit and in a forced DuckDB error: absent from the report, `str(exc)`, `ReasonRecord`, logs and the `quality_metrics` dump | add a value to a finding |
+| AT-23 | PS-3 | Generated parent `id` of type `faker` without `unique`: refused before any read with `plan.relationship_parent_not_unique` naming the fix; with `unique: true`, a `sequence` or `unique_together`: accepted, output bytes unchanged | accept a non-unique faker key |
+| AT-21 | PS-4 | FK findings: introduced orphans `fail`, inherited only `warning`, none `info`, unchecked `error`; a composite fills the tuples; tag stays `post-scan-integrity/v2`; the three named fixtures change as listed | keep the 1% threshold |
+| AT-19 | PS-5 | Column facts on tables of 10, 10,000 and 250,000 rows over batches of 7 and 100,000: identity counts, `bytes_identical`, distinct counts and every detector rate equal the resident pandas values exactly | average per-batch rates instead of summing hits |
+| AT-22 | PS-6 | `run_post_mask` adapter equals the old runner on every existing fixture; a column near `min_rate` escalates exactly as on the resident path | read only the first batch |
+| AT-31 | PS-7 | Unit: `run_resident` stamps `keys` and `verdict`; a second call is a no-op; `before_commit` on a required, unrun gate with a sink lacking `staged_tables` raises `check_error` | reset `ran` in `before_commit` |
+| AT-16 | PS-8, PS-10 | A blocking verdict commits nothing on full-frame, sequential and out-of-core (from PS-10 also chunked and mixed): no output table, sink evidence aborted, temp files gone. At PS-8, sequential and out-of-core relationship jobs route resident with `post_scan_keys_resident` | run the gate after `sink.commit()` |
+| AT-20 | PS-8, PS-10 | Gate runs once (full-frame no sink, full-frame streamed, out-of-core with sink); an active sink skips `run_resident`; at PS-8 a forced streamed lane refuses at commit with `check_error`; at PS-10 an introduced orphan on the full-frame streamed lane blocks | call `run_resident` unconditionally |
+| AT-25 | PS-8 | A no-sink run whose gate never ran raises `check_error` after the route | delete the post-condition |
+| AT-26 | PS-9 | Isolated child (subprocess and in-process fallback) with an introduced orphan: outcome `blocked`, reason `foreign_key_orphans_introduced`, report present, output dir absent; the governor returns terminal `blocked` | map the block to `crashed` |
+| AT-15 | PS-10, PS-12 | One cell per route (sequential, chunked, out_of_core, mixed, unified_slice, stream, isolated; full_frame asserts no second copy): no `pq.read_table`, `ParquetFile.read`, `materialize_source` or whole-table `to_pandas` in the gate; Arrow peak under 4 times the batch bytes; DuckDB `memory_limit` at most 512MB; at an 8MB limit spill files appear | read staged output with `read_table` |
+| AT-27 | PS-10 | A Parquet input rewritten between routing and the gate re-read refuses `lazy_source_changed`; CSV the same | skip `check_opened` |
+| AT-28 | PS-10 | `_CallableSinkAdapter` with keys declared: run stays resident with `post_scan_keys_resident`, the gate runs and blocks an introduced orphan | treat an unreadable sink as zero rows |
+| AT-29 | PS-10 | Declared-cast key column (`"01"` and `"1"` cast to `int64`) on a streamed route: baseline counts equal the resident route's | re-read without `cast_batch` |
+| AT-30 | PS-11 | `source_loader` on the sequential route: the tee baseline equals the resident baseline; the loader is called once per table; a loader table without the key columns keeps the run resident | call the loader twice |
+| AT-17 | PS-12 | Route-coverage sentry: `GATE_TESTS` keyed on every `ROUTES` entry plus `stream` and `isolated` names a test that proves the gate ran and stamped `keys` | delete an entry |
+| AT-18 | PS-12 | `integrity: true` with regex detectors takes sequential and out_of_core when eligible; model asks stay resident with `post_scan_models_resident`; stream mode no longer refuses for regex; the unified slice runs the gate on its return | leave `_unified_slice_admission.py:256` on the old predicate |
+| AT-24 | PS-8 or SUB-RUN E2, whichever merges second | `subset:` with an excluded edge leaving orphan children: no block; the same run with a key remapped outside the parent: block; the baseline is read from the `engine.scratch` sources | read the pre-subset sources |
 
 ## 8. Slices
 
-| Slice | Content | Size (hand-written) | Tier | Depends on | Build |
+Sizes are hand-written lines, source plus tests. "Today": buildable from main, no open decision.
+
+| Slice | Content | Size | Tier | Waits on | Start |
 |---|---|---|---|---|---|
-| PS-1 | Public `KeyBatches` and `key_facts(parent, children, *, scratch, memory_limit)` extracted from `_check` in `profiling/_scan_integrity.py`, re-exported from `profiling/__init__.py`; pre-scan calls it; `verification/postmask/_stream_input.py` `TableBatches` for the five input kinds; AT-1 to AT-3 | src about 170, tests about 230 | R1 (behavior-preserving split plus a new reader) | none | today |
-| PS-2 | `verification/postmask/_keys.py`: declared PK and FK sets, source and output facts, verdict, report section; five `post_scan` codes and the warning code; AT-4 to AT-12, AT-14 (keys part) | src about 190, tests about 260 | R2 | PS-1 | today |
-| PS-3 | `verification/postmask/_column_facts.py` (streamed facts, seeded sample); `residual_pii.py`, `policy_validation.py`, `runner.py` take facts; `run_post_mask` adapter; `fk_preservation` field from PS-2 facts; AT-13, AT-14 (suite part), AT-21 | src about 230 (plus about 120 deleted), tests about 200 | R2 (report numbers change above 10,000 rows) | PS-2, SCAN-ML M4 merged (both edit `runner.py`) | after M4 |
-| PS-4 | `execution/pipeline/_post_scan.py`: the gate, per-run binding, exactly-once, fail-closed post-condition; `execute_route` binds it; the full-frame call replaces `compute_post_scan_integrity`; no-sink path; `PostScanBlockedError` raised with the new codes; AT-16 (full-frame), AT-20, AT-14 (end to end) | src about 170 (plus about 35 deleted), tests about 220 | R2 | PS-3, M4 | after M4 |
-| PS-5 | Commit-time gate in `observed_commit` over staged outputs through F22's staged handle; foreign-sink skip; AT-15 for sequential, out_of_core, chunked and streamed generation; AT-16 streamed; AT-19; AT-22 | src about 110, tests about 280 | R2 | PS-4, F22 c1b | waits for F22 c1b |
-| PS-6 | Routing lift: `post_scan_needs_resident`, the routing call sites and keyword rename, route code retire and add, stream-mode refusal lifted; AT-15 for mixed, unified_slice and isolated; AT-17; AT-18; commit AST sentry; docs (`docs/relationships.md`, `docs/reasons.md`, CODEMAP rows) | src about 120 (mostly mechanical), tests about 260 | R2 | PS-5, F22 c2 (isolated cell) | waits for F22 c2 |
+| PS-1 | 4.1 interfaces: `KeyBatches`, `KeyFacts`, `ChildKeyFacts`, `key_facts`; `_check` on it; `open_batches(columns=)`; `_stream_input.py` (`from_table`, `from_lazy`, `missing_columns`, `key_batches`); registry entry rename; AT-1 to AT-3 | 150 + 230 | R1 | none | today |
+| PS-2a | `verification/postmask/_keys.py`: declared keys, baseline and output facts, per-key codes, the `keys` report section; five key codes; AT-4 to AT-12, AT-14 keys part | 170 + 230 | R2 | PS-1 | after PS-1 |
+| PS-2b | `_blocked.py`: `post_scan_verdict` (key codes plus finding severities, 4.8), the code order, the `verdict` section, `PostScanBlockedError` (M4 reuses both), `post_scan.finding_blocked`, blocking-decision sentry; AT-13, AT-32 | 90 + 170 | R2 | PS-2a | after PS-2a |
+| PS-3 | Generated-parent uniqueness plan check (4.9), one plan code; AT-23 | 60 + 120 | R2 | none | today |
+| PS-4 | FK finding from the keys facts (4.8), composite tuples, `run_post_mask(keys=)`, contract note, fixtures, pandas FK checker deleted; AT-21 | 90 + 200 (about 250 deleted) | R2 | PS-2a | after PS-2a |
+| PS-5 | `_column_facts.py`, `profiling.column_distinct`, `detection/_scoring.py` `counting_scope`; AT-19 | 190 + 230 | R2 | PS-1 | after PS-1 |
+| PS-6 | `residual_pii.py`, `policy_validation.py`, `runner.py` on facts; adapter; AT-22, AT-14 suite part | 150 + 220 | R2 | PS-4, PS-5; rebases with M4 (section 10) | after PS-5 |
+| PS-7 | `execution/pipeline/_post_scan.py` gate core, not yet wired: `PostScanGate`, `run_resident` (keys via PS-2a, verdict via PS-2b, column suite via `run_post_mask`), `before_commit`, exactly-once, error stripping, memory limit; physical-seam entry; AT-31 | 200 + 230 | R2 | PS-2b, PS-4 | after PS-4 |
+| PS-8 | Wiring: bind in `execute_route`, full-frame call (no active sink), `compute_post_scan_integrity` deleted, `observed_commit` hook, post-condition, `config/_post_scan.py` predicates, routing call sites, `route.post_scan_keys_resident`, M5 adoption, commit and import sentries; AT-16, AT-20, AT-25, AT-14 end to end | 110 + 300 | R2 | PS-7, PS-3 | after PS-7 |
+| PS-9 | Isolated `blocked` outcome (4.5), governor terminal, `atomic_commit` sentry case; AT-26 | 60 + 180 | R2 | PS-8 | after PS-8 |
+| PS-10 | `staged_tables()` on main's sink, `from_staged`, commit-time gate over staged files, `check_opened` and CSV re-reads, cast baseline, `output_readable` for readable sinks; AT-15 streamed cells, AT-16 and AT-20 streamed cells, AT-27 to AT-29 | 150 + 270 | R2 | PS-8 | after PS-8 |
+| PS-11 | Loader tee (key and cast columns to scratch Parquet in the route's own read, read back with `from_lazy`); loader runs leave the resident route; AT-30 | 70 + 150 | R2 | PS-10 | after PS-10 |
+| PS-12 | Lift: model predicate in routing, keyword rename, route code retire and add, stream refusal lifted, unified-slice gate call; AT-15 remaining cells, AT-17, AT-18; docs (`docs/relationships.md`, `docs/reasons.md`, CODEMAP rows) | 120 + 280 | R2 | PS-6, PS-9, PS-11 | after those |
 
-Each slice merges alone and leaves main correct. After PS-4, full-frame runs (the only route that
-runs the suite today) get key checks and blocking, and the column suite streams. After PS-5, key
-checks run on every streamed route. After PS-6, `post_scan.integrity: true` stops forcing the
-resident route.
+Total about 4,300 lines (about 1,580 source). PS-1 and PS-3 can start today in parallel; PS-5 after
+PS-1, beside PS-2a.
 
-PS-4 scratch: if F25 S2a has merged, the gate takes the run's `arena` (I2); otherwise it uses
-`fileaccess.protected_scratch_dir` like pre-scan, and F25's G5 sentry flags it for the census.
+Merge train and release hold (F1): from PS-8 until PS-10 and PS-11, relationship jobs stay
+resident, so one above `full_frame_reject_rows` is refused (`FK_FULL_FRAME_OOM_RISK_REJECTED`)
+instead of running sequential or out of core. PS-8, PS-10 and PS-11 merge on one train (stacked
+PRs, one full suite on the top) and no engine release is cut between them. Every slice leaves main
+fail-closed. After PS-8 full-frame and no-sink runs are gated; PS-10 staged sinks; PS-11 loader
+runs stream again; PS-12 covers guarantee 1 fully.
 
-Commits per slice: (1) red tests; (2) code; (3) docs and record. Conventional Commits, at most 72
-characters, final line `cam`, no other trailers.
+Commits per slice: red tests, code, docs and record. Conventional Commits, at most 72 characters,
+no body unless it explains why, final line `cam`.
 
 ## 9. Test scope and full-suite triggers
 
 ```text
-Tiers:        T0, T1 [, T3 because reason registry (frozen contract) on PS-2 to PS-6]
-Named tests:  tests/unit/detection_verification/test_postscan_*.py,
-              tests/unit/execution/test_postscan_gate.py, test_postscan_bounded_memory.py,
-              tests/sentry/test_post_scan_route_coverage.py, the pre-scan scan-integrity tests,
-              tests/unit/test_reason_registry.py, tests/unit/test_reason_release_pin.py
-Selection:    scripts/dev/gates.sh --baseline (impact selection) on each commit
-Guards:       route-coverage sentry, commit AST sentry, key-SQL sentry, import-linter
-Triggers:     PS-2 to PS-6 add reason codes; PS-6 changes routing for every integrity job
-Mutations:    the red mutations in sections 6 and 7, on the final head
-Full suite:   once per merge head from PS-2 on, against the saved main baseline (decoy-vm-t3)
+Tiers:      T0 per edit; T1 impact-selected per commit and slice head; T2 on the exact head
+            with the section 6 and 7 mutations
+Named:      tests/unit/detection_verification/postscan/, tests/unit/execution/post_scan/,
+            tests/sentry/post_scan/, pre-scan scan-integrity tests, reason registry tests
+Triggers:   reason registry (PS-2a, PS-2b, PS-3, PS-8, PS-12); frozen field meaning (PS-4); routing
+            (PS-8, PS-12); public execution types (PS-9). Full suite once per trigger head,
+            diffed against the saved main baseline (decoy-vm-t3); Mac first, else vm-run.
 ```
 
-Run on the Mac first, a VM through `~/bin/vm-run` if it is busy; never on the devbox.
+## 10. Design notes and seams
 
-## 10. Design notes
-
-Principles applied: one choke point for a rule with many sites (the commit hook, not a helper
-each route calls); one place per fact (the key SQL lives only in `_scan_integrity.py`; the route
-list comes from `ROUTES`); typed context objects (`TableBatches`, the gate bound per run) instead
-of long parameter lists. No flag arguments: the gate's two parts are chosen by config facts read
-once.
-
-**One key core.** The pre-scan module already holds the right SQL. `key_facts` takes
-`KeyBatches` (schema plus a batch callable), so the pre-scan file opener and the post-scan readers
-feed one function. The DuckDB import stays inside `_scan_integrity.py`, covered by the one
-existing import-linter ignore (`profiling._scan_integrity -> execution.out_of_core._duckdb`); no
-ignore is added. `verification` (tier 2) may import `profiling` (tier 4).
-
-**Why compare with the run's sources.** A blind "output keys must be unique" rule would block runs
-whose source already has duplicate or orphan keys, which `preserve` and `warn` exist to allow.
-One more key-column pass over the input flags only what masking changed.
-
-**Count rule limit.** Counts can hide an introduced orphan when quarantine drops another orphan
-row from the same table. Exact attribution needs row alignment, which quarantine breaks. V2-LOG.
-
-**Why sample only the detectors.** Identity and byte equality are exact in one pass, and they
-decide leak escalation. Detector match rates only decide whether a column looks like PII, at
-thresholds of 0.4 and 0.5; a 10,000-row sample estimates that within about one point. Sampling on
-every route keeps route parity. Exact streaming would need per-batch detector state that
-`detection/_scoring.py` does not expose.
-
-**Why `observed_commit`.** It is the one place every route's output passes while staged and not
-yet visible. With the gate there, F22's `publish_unit` and CLI delivery never see output that
-failed. The full-frame call stays before `cast_run.finish`, where it is today.
-
-**Model post-scan stays resident.** NER over streamed batches needs M4's model path to take
-batches. V2-LOG; M5's guard summary is reworded then.
+- One choke point for publication (`observed_commit`), one key core (`key_facts`), one model
+  predicate, one blocking decision (`post_scan_verdict`) and exception, one route list (`ROUTES`);
+  typed inputs (`TableBatches`, the bound gate) over long parameter lists. A baseline, not a blind
+  "keys must be unique" rule, because `preserve` and `warn` allow inherited breaches.
+- SCAN-ML: its shared-file rules ("`residual_pii.py` by M4 only", "`config/_post_scan.py` by M1
+  only") need amending for PS-6 and PS-8; the second to merge rebases.
+- F22: c1b edits `_pipeline_full_frame.py`, `_publication_observer.py`, `_chunked_output_sink.py`
+  as PS-8 and PS-10 do (mechanical conflicts); `test_route_outcome_matrix` and AT-17 name each
+  other; after c2 `StagedParquetWriter` keeps `staged_tables()` and the `atomic_commit` case goes.
+- DELIV (row 61): 4.10. The vault is safe on a block: the CLI commits it only after `run_pipeline`
+  returns. SUB-RUN: both plans add one file to `execution/pipeline/` (5 to 7 modules).
 
 ## 11. Placement
 
-| New file | Directory | CODEMAP "Where Things Go" row | Sits beside |
+New files (CODEMAP "Where things go"):
+
+| File | Directory | CODEMAP row | Sits beside |
 |---|---|---|---|
-| `_stream_input.py` | `src/decoy_engine/verification/postmask/` | `detection/`, `profiling/`, `verification/` (line 106) | `runner.py` |
-| `_keys.py` | same | same | `fk_preservation.py` (deleted in PS-3) |
-| `_column_facts.py` | same | same | `residual_pii.py` |
-| `_post_scan.py` | `src/decoy_engine/execution/pipeline/` | execution pipeline cluster | `_stream.py`, `_route_summary.py` |
-| `test_postscan_keys.py`, `test_postscan_stream_input.py`, `test_postscan_column_facts.py` | `tests/unit/detection_verification/` | Unit tests | `test_bf4_fk_preservation.py` |
-| `test_postscan_gate.py`, `test_postscan_bounded_memory.py` | `tests/unit/execution/` | Unit tests | the routing tests |
-| `test_post_scan_route_coverage.py` | `tests/sentry/` | Sentry test | `test_f06_route_matrix.py` (same `PARITY_TESTS` pattern) |
+| `_stream_input.py`, `_keys.py`, `_column_facts.py`, `_blocked.py` | `src/decoy_engine/verification/postmask/` | Directory Map `verification/` row (`CODEMAP.md:106`) | `runner.py`, `residual_pii.py` |
+| `_post_scan.py` | `src/decoy_engine/execution/pipeline/` | "Pipeline spine and routes" (`CODEMAP.md:238`) | `_stream.py`, `_route_summary.py` |
+| `_relationship_keys.py` | `src/decoy_engine/plan/checks/` | "Plan compile and checks" (`CODEMAP.md:237`) | `_generate_columns.py` |
+| `_part2.py` | `src/decoy_engine/reasons/post_scan/` | "Reason codes" | `_part1.py` |
+| tests | `tests/unit/detection_verification/postscan/`, `tests/unit/execution/post_scan/` (parents hold 26 and 233 entries) | "Unit tests" | `tests/unit/execution/derived_visibility/` |
+| sentries | `tests/sentry/post_scan/` (parent holds 80) | "Sentry test" (`CODEMAP.md:254`) | `tests/sentry/profiling/` |
 
-`execution/` stays at 110 top-level modules (the new module goes under `pipeline/`).
-`verification/postmask/` goes from 6 modules (7 with M5) to 9, under the 25 limit.
+Changed modules (layer, size now, after; no ceiling, pin or allowlist rises):
 
-Sizes after: `_scan_integrity.py` about 400 (from 368); `runner.py` about 200 (from 190);
-`residual_pii.py` and `policy_validation.py` shrink; `_pipeline_finalize.py` about 470 (from 503);
-`_publication_observer.py` about 175 (from 158); `_pipeline_route_dispatch.py` about 170 (from
-151). New modules stay under 300 lines each. `_pipeline_context.py` (594) and
-`_pipeline_routing_signals.py` (613) do not grow: the gate reads existing context fields and the
-routing edit is a rename. No size pin, ceiling, ratchet or allowlist rises.
+| Module | Layer | Now | After |
+|---|---|---|---|
+| `verification/postmask/_stream_input.py`, `_keys.py`, `_column_facts.py`, `_blocked.py` | verification | 0 | about 140, 220, 190, 90 |
+| `execution/pipeline/_post_scan.py` | execution | 0 | about 300 (gate plus loader tee) |
+| `plan/checks/_relationship_keys.py` | plan | 0 | about 60 |
+| `profiling/_scan_integrity.py` | profiling | 368 | about 440 |
+| `profile/_readers.py`, `profile/_lazy_csv.py`; `detection/_scoring.py` | profile; detection | 568, 246; 192 | about 575, 250; 220 |
+| `verification/postmask/residual_pii.py`, `policy_validation.py`, `fk_preservation.py`, `runner.py`, `types.py` | verification | 398, 221, 337, 190, 148 | about 360, 200, 90, 210, 160 |
+| `config/_post_scan.py`; `plan/checks/_generate_columns.py` | config; plan | 135; 515 | about 175; 517 |
+| `execution/_pipeline_full_frame.py`, `_pipeline_finalize.py`, `_pipeline_route_dispatch.py`, `_publication_observer.py`, `_transactional_sink.py` | execution | 317, 503, 151, 158, 438 | about 330, 470, 170, 165, 460 |
+| `execution/_chunked_output_sink.py` | execution | 598 | at most 600 (call swap only) |
+| `execution/_sequential.py` | execution | 660 | at most 660 (ceiling 680; the tee lives in `_post_scan.py`) |
+| `execution/_isolated_run.py` | execution | 659 | at most 667 (ceiling 672; SUB-RUN E2 lowers it) |
+| `execution/_isolated_worker.py`, `_isolated_common.py`, `_isolated_reason.py` | execution | 271, 388, 52 | about 285, 389, 75 |
+| `execution/_governor.py`, `_unified_slice_admission.py`, `_pipeline_routing.py` | execution | 588, 571, 486 | about 596, 571, 490 |
+| `execution/_pipeline_routing_signals.py` | execution | 613 | at most 613 (census entry, ceiling 633; swap only) |
+| `execution/_pipeline_context.py` | execution | 594 | at most 596 |
+| `generation/_streamed.py` | generation | 594 | unchanged (exemption) |
+
+`verification/postmask/` goes from 6 modules (7 with M5) to 11, under 25. `execution/pipeline/`
+goes from 5 to 6 (7 with SUB-RUN). `execution/` top level stays at its freeze.
+
+Registries:
+
+- Physical-seam sentry: `execution/pipeline/_post_scan.py` joins `GUARDED_MODULES`
+  (`tests/sentry/test_physical_seam_disconnection.py:64`) in PS-7.
+- File-access registry (`tests/sentry/file_access_registry.toml`): the `_scan_integrity.py` entry
+  at `:1354` moves from `_check` to `key_facts` (PS-1); new entries for `column_distinct` (PS-5),
+  the gate's staged-file reads through `txn.open_file` (PS-10) and the loader tee's scratch Parquet
+  writes and reads (PS-11), each with disposition, rule and owner `cam`.
+- Reason codes: section 5 (retry class, owner module, file, registry version).
 
 ## 12. Recurring-defect coverage
 
-- 1 (anchored validation): reason identities compare as `ReasonRef` equality, never by substring
-  or regex.
-- 3 (no exception context): every DuckDB or reader error in the gate is saved as its type name
-  and the safe error is raised after the `except` block closes; AT-12 asserts `__cause__` and
-  `__context__` are `None`.
-- 4 (versioned read models): the report tag stays `post-scan-integrity/v2` and fields are
-  additive; `status` values are a closed `Literal`.
-- 5 (normalized guard scanners): the commit AST sentry covers `sink.commit()`, an aliased bound
-  method (`c = sink.commit; c()`), and `getattr(sink, "commit")()`; other spellings are V2-LOG.
-- 6 (no private modules): `KeyBatches` and `key_facts` are exported from `profiling/__init__.py`;
-  `verification` imports the package.
-- 8 (one trust class): staged files and re-read sources are read as untrusted input; schema and
-  row count come from the file, never from the route's claim.
-- 9 (mutations on the final head): every mutation in sections 6 and 7 reruns on the merge head,
-  which the record names.
-- 11 (no raised caps): `MEMORY_LIMIT` and `_BATCH_ROWS` are unchanged; no size pin or allowlist
-  grows.
+Classes 1 to 10: the class table in section 16, each with its proof and mutation. Class 11: no
+limit, pin or ceiling rises (`MEMORY_LIMIT`, `_BATCH_ROWS` unchanged).
 
 ## 13. Pre-mortem
 
-- "Valid runs started failing." The source baseline covers inherited breaches; AT-6 covers each
-  orphan policy. A generate parent with repeated keys now blocks; GEN-UNIQUE made generated keys
-  unique, so that is a defect if seen.
-- "Runs got slower." Key checks read key columns only (columnar on Parquet); CSV sources pay a
-  re-read. PS-5's record measures the 10M laptop demo with and without the gate.
-- "F22 rebased over PS-5." PS-5 waits for F22 c1b by design.
-- "M4 and PS-3 both edited `runner.py`." PS-3 starts from M4's merged head.
-- "Report numbers moved." Above 10,000 rows the detector rates are sampled; the report says so
-  (AT-13).
+- "Valid runs started failing." The baseline covers inherited breaches (AT-6); non-unique
+  generated parents are refused at plan time with the fix named (AT-23).
+- "Big FK jobs got refused." Only inside the PS-8 to PS-11 train, which no release cuts.
+- "Runs got slower." Key checks read key columns only; exact distinct counts add one DuckDB pass
+  per configured column. PS-10's record times the 10M laptop demo with and without the gate.
+- "F22 moved the sink." The `staged_tables()` contract (4.6) is posted on the F22 PRs.
+- "Report numbers moved." The column suite is exact (AT-19, AT-22); FK severities move on purpose
+  (AT-21).
+- "`integrity: true` runs stopped writing." A column-suite `fail` now blocks before commit (row 61
+  ruling); today it only reports. The release note names it.
 
-## 14. Owner questions
+## 14. Recorded decisions
 
-Each changes what a customer gets from a run.
+Taken as recommended under the standing rule; the owner may overturn.
 
-**Q1. When do key checks run?**
-- A. Whenever relationships are declared, with or without `post_scan.integrity` (recommended:
-  the roadmap says integrity checks are standard, and the cost is one key-column pass).
-- B. Only under `post_scan.integrity: true`.
-- C. A, plus an opt-out `post_scan.keys: false`.
+- Q1: key checks run whenever relationships are declared, with or without `post_scan.integrity`.
+- Q2: an introduced key breach, or any finding `post_scan_verdict` calls blocking, blocks before commit.
+- Q3: no `tables[].primary_key` field in V1; keys are declared only in `relationships:` (V2-LOG).
+- Q4 (row 61): a post-scan block withholds the whole run in strict and best-effort delivery; the
+  gate takes no delivery mode.
 
-**Q2. Do introduced key breaches block?**
-- A. Yes, before commit, as specified (recommended: a broken foreign key in a test database is a
-  function break under the V1 bar).
-- B. Report only in V1, block in V2.
+## 15. V2-LOG entries (backlog-ready)
 
-**Q3. Declare primary keys for tables that no relationship references?**
-- A. No in V1; a key is declared only through `relationships:` (recommended: V2-LOG, no new
-  config surface before release).
-- B. Add `tables[].primary_key` now.
+- **POSTSCAN-GEN-STREAMED.** Run the gate on `generate_tables_streamed` and
+  `generate_tables_streamed_from_generation_plan`, which commit through `OutputPublish` with no
+  bound gate, so their output is not key-checked. Fix: bind a gate in `run_generation` from the
+  `GenerationPlan` relationships. Not a V1 path: the CLI generates through `run_pipeline`.
+- **POSTSCAN-PRIMITIVES.** Regex and key post-scan on the direct mask primitives
+  (`run_sequential`, `run_fk_out_of_core`, the chunked entries); M5 refuses only model asks there.
+- **POSTSCAN-NER-STREAM.** NER post-scan on streamed routes (M4 model passes over batches); M5's
+  guard summary is reworded then.
+- **POSTSCAN-ATTRIBUTION.** Exact per-row introduced orphans when quarantine drops rows.
+- **CONFIG-PK.** `tables[].primary_key` for tables no relationship references (Q3).
+- **POSTVAL-STREAM.** Stream the A1 post-validation suite.
+- **PK-COMPOSITE-BUG.** `validation/post/_checks/_pk_uniqueness.py` checks composite keys per column.
+- **FK-VALIDATORS-CORE.** Move `validators/_fk_validators.py` onto `key_facts`.
+- **POSTSCAN-PER-TABLE-DELIVERY.** Under best-effort delivery, drop only the tables a post-scan
+  finding names (and their FK children) instead of the whole run (Q4). Needs per-table outcomes
+  from the verdict and a CLI delivery change.
+- **SENTRY-SPELLINGS.** Commit and import sentries cover direct, aliased and `getattr` calls;
+  dispatch through other containers is not covered.
 
-## 15. Follow-ups
-
-V2-LOG: model post-scan on streamed routes; post-scan on direct primitives; exact per-row
-introduced orphans; `tables[].primary_key` (if Q3 is A); streaming A1 post-validation; the
-composite-PK bug in `validation/post/_checks/_pk_uniqueness.py`; `validators/_fk_validators.py`
-onto `key_facts`; the dead `orphan_policy == "skip"` branch goes with `fk_preservation.py` in PS-3.
-CLI rows: `src/decoy/_native_gate.py:236-250` still says post-scan integrity disqualifies native;
-SCAN-ML-4 (`run --chunked` skips regex post-scan, `run.py:856`).
+CLI follow-ups: `src/decoy/_native_gate.py:236-250` still says post-scan integrity disqualifies
+native; SCAN-ML-4 (`run --chunked` skips regex post-scan) closes when RUN-STREAM C2 lands.
 
 ## 16. Plan contract
 
@@ -471,84 +660,69 @@ SCAN-ML-4 (`run --chunked` skips regex post-scan, `run.py:856`).
 
 | # | Class | Applies? | Closing structure | Proof and mutation |
 |---|---|---|---|---|
-| 1 | Value-bearing output | Yes: key and column values pass through the gate | facts and verdict types hold ints, names and `ReasonRef` only; DuckDB errors kept as type names | AT-12, AT-14; mutation: add an example value |
-| 2 | Cleanup on an exit path | Yes: DuckDB connection, spill dir, staged files on block | `try/finally` close inside `key_facts`; scratch through the arena or `protected_scratch_dir`; route abort paths unchanged | AT-16; mutation: skip `conn.close()` and assert the spill dir is gone |
-| 3 | State machine and concurrency | Yes: gate state `bound`, `ran` per run | context variable per run; exactly-once flag; post-condition | AT-20; mutation: reset the flag |
-| 4 | Route parity and silent fallback | Yes: the reason for this row | gate in `observed_commit` plus the `execute_route` post-condition; coverage sentry keyed on `ROUTES` | AT-15, AT-17, AT-18; mutation: drop a route entry |
-| 5 | Referential integrity | Yes | `key_facts` PK and MATCH SIMPLE FK over output, baseline over source | AT-4 to AT-11 |
-| 6 | Untrusted producer | Yes: staged files, foreign sinks | schema and counts read from the file; a foreign sink is skipped and the report says so | AT-19; mutation: trust the route's row count |
-| 7 | Check then use (TOCTOU) | Yes: sources re-read after masking; staged files read, then committed | `LazySource` identity check; the gate reads the staged handle that commit renames | AT-22; mutation: skip the identity check |
-| 8 | Weak tests and overclaimed evidence | Yes: memory tests can pass on tiny data | AT-15 forces an 8MB DuckDB limit and asserts spill files exist | mutation: a whole read turns AT-15 red |
-| 9 | Behavior-preserving refactor drift | Yes: `_check` split, runner adapter | AT-1, AT-3, AT-21 against the old outputs | mutation in AT-1 |
-| 10 | Frozen contract drift | Yes: report tag, reason registry | additive fields; one code retired with `replaced_by`; manifest fixture | AT-21; registry tests |
+| 1 | Value-bearing output | Yes: key and column values pass through the gate | facts types hold ints, names and `ReasonRef` only; errors kept as type names via `safe_error_class` | AT-12, AT-14; mutation: add a value to a finding |
+| 2 | Cleanup on an exit path | Yes: DuckDB connection, spill dir, staged files on block | `finally` close in `key_facts`; scratch owned by the arena or `protected_scratch_dir`; route abort paths unchanged | AT-16; mutation: skip `conn.close()` and assert the spill dir is gone |
+| 3 | State machine and concurrency | Yes: gate `required` and `ran` per run | context variable per run; exactly-once flag; commit refusal; post-condition | AT-20, AT-25, AT-31; mutation: reset the flag in `before_commit` |
+| 4 | Route parity and silent fallback | Yes: the reason for this row | gate inside `observed_commit`; unreadable output keeps the resident route; coverage sentry on `ROUTES` | AT-15 to AT-18, AT-28; mutation: drop a route entry |
+| 5 | Referential integrity | Yes | `key_facts` PK and MATCH SIMPLE FK over output, baseline over inputs | AT-4 to AT-11; mutation: join on `k0` only |
+| 6 | Untrusted producer | Yes: staged files, foreign sinks, loaders | schema and counts from the file; a foreign sink is never read, the run stays resident | AT-28, AT-30; mutation: trust the route's row count |
+| 7 | Check then use (TOCTOU) | Yes: inputs re-read after masking | `check_opened` against the routing snapshot; CSV identity check | AT-27; mutation: skip the check |
+| 8 | Weak tests and overclaimed evidence | Yes: memory tests can pass on tiny data | AT-15 forces an 8MB DuckDB limit and asserts spill files; AT-19 uses multi-batch tables | mutation: a whole read turns AT-15 red |
+| 9 | Behavior-preserving refactor drift | Yes: `_check` split, runner adapter | AT-1, AT-3, AT-22 against the old outputs | mutation in AT-1 |
+| 10 | Frozen contract drift | Yes: report tag, `fk_preservation` meaning, registry | additive fields; one recorded semantic change; one retirement with `replaced_by`; manifest fixtures | AT-21; registry tests; mutation: bump the tag |
 
 ### Enumerations
 
 #### Exit paths
 
-- Gate passes: report stamped, commit continues (`execution/_publication_observer.py:103`).
-- Gate blocks: `PostScanBlockedError` before commit; the route aborts the sink
-  (`execution/out_of_core/_runner.py:315`).
-- Gate errors: `post_scan.check_error`, blocks (`reasons/post_scan/_part1.py:15`).
-- Gate skipped for a foreign sink: `warning.post_scan_output_unreadable`, run continues.
-- Gate never ran: `post_scan.check_error` raised after the route
-  (`execution/_pipeline_route_dispatch.py:35`).
-- Source changed: `runtime.lazy_source_changed` (`reasons/runtime/_part1.py:216`).
+- Pass: commit continues (`execution/_publication_observer.py:103`). Block: `PostScanBlockedError`,
+  sink aborted (`execution/out_of_core/_runner.py:315`). Error: `post_scan.check_error`
+  (`reasons/post_scan/_part1.py:15`).
+- Gate cannot run at commit (`execution/_publication_observer.py:99`); no-sink gate never ran
+  (`execution/_pipeline_route_dispatch.py:35`); source changed (`execution/_chunked_input.py:251`);
+  isolated `blocked` (`execution/_isolated_worker.py:222`).
 
 #### Routes
 
-- `full_frame`, `sequential`, `chunked`, `out_of_core`, `mixed`, `unified_slice`
-  (`declared_casting/_eligibility.py:26`).
-- Streamed generation (`generation/_streamed.py:524`).
-- Isolated worker (`execution/_isolated_worker.py:113`, `_stage_outputs`).
-- Stream mode (`execution/pipeline/_stream.py:187`).
-- Direct primitives: out of scope (section 1).
+- The six `ROUTES` (`declared_casting/_eligibility.py:26`), stream mode
+  (`execution/pipeline/_stream.py:187`), isolated child and fallback (`execution/_isolated_run.py:304`).
+- Exempt: streamed generation entries (`generation/_plan_entry.py:254`); direct primitives.
 
 #### FK shapes
 
-- Single column.
-- Composite tuple (`profiling/_scan_integrity.py:300`, `_complete`).
-- Nullable FK (MATCH SIMPLE).
-- Self-reference.
-- Cross-table cycle (each edge alone).
-- Generated parent with a mask child: baseline 0.
+- Single column; composite tuple (`profiling/_scan_integrity.py:300`); nullable FK; self-reference.
+- Generated parent (4.9); subset with excluded edges (AT-24); cross-table cycle refused earlier.
 
 #### Fields
 
-- `keys[]`: `table`, `columns`, `kind` (`primary`, `foreign`), `parent` (foreign only), `bounded`,
-  `codes`.
-- `keys[].status`: `checked`, `key_type_mismatch`, `key_column_missing`,
-  `skipped_unreadable_output` (extends `Status` at `profiling/_scan_integrity.py:40`).
-- `keys[].source` and `keys[].output`: `rows`, `null_key_rows`, `duplicate_excess` or
-  `orphan_rows`, `orphan_distinct_keys`.
-- `sample` per table: `rows`, `of_rows`.
-- `verdict`: `blocking`, `codes`.
+- `keys[]`: `table`, `columns`, `kind`, `parent`, `bounded`, `codes`, `status`, and `source` and
+  `output` counts (`rows`, `null_key_rows`, `duplicate_excess` or `orphan_rows`,
+  `orphan_distinct_keys`).
+- `verdict`: `blocking`, `codes` (4.8 order), from `post_scan_verdict`; `fk_preservation[]` adds
+  `parent_columns`, `child_columns`, `source_orphan_count`.
 
 #### Output surfaces
 
-- `quality_metrics["post_scan_integrity"]` (stamped today at `execution/_pipeline_finalize.py:503`).
-- `PostScanBlockedError` message and attributes.
-- `ReasonRecord`s.
-- Publication evidence state (`execution/_publication_observer.py:110`).
-- RunResult `Check` (`run_result/_model.py:182`, through RESULT row 62).
-- Log lines: none added that carry data.
+- `quality_metrics["post_scan_integrity"]` (`execution/_pipeline_finalize.py:503`);
+  `PostScanBlockedError` (`reason`, `report`); `ReasonRecord`s and publication evidence
+  (`execution/_publication_observer.py:110`).
+- `IsolatedRunResult` and `GovernorResult` outcome `blocked`; RunResult
+  `Check(id="post_scan_integrity")` (`run_result/_model.py:182`). No new log line carries data.
 
 ### Reuse inventory
 
-- `profiling/_scan_integrity.py` `_check`, `_child_facts`, `_comparable`, `_labels`,
-  `_before_fetch` (they become `key_facts`).
-- `execution/out_of_core/_duckdb.py` `connect_duckdb`, `DuckDBRunRecorder`;
-  `out_of_core/_budget.py` `resolve_ooc_memory_limit`.
-- `fileaccess.protected_scratch_dir` now, F25 `ScratchArena` later.
-- `profile/_readers.py` `LazySource.iter_batches` and its file identity check; `CsvLazySource`.
-- `execution/_publication_observer.py` `observed_commit`; the `_transactional_sink.py` stage handle.
-- `verification/postmask/residual_pii.py` and `policy_validation.py` decision tables.
-- SCAN-ML M4 `PostScanBlockedError`; M5 route guard unchanged.
-- `tests/sentry/test_f06_route_matrix.py` pattern for the coverage sentry.
-- `scripts/dev/registry_renumber.py` for registry minors.
+`profiling/_scan_integrity.py` (`_check`, `_child_facts`, `_comparable`, `_labels`,
+`_before_fetch`, `_open_keys`); `parse_relationship_config`; `out_of_core/_duckdb.py`
+(`connect_duckdb`, `DuckDBRunRecorder`, the `bind_duckdb_run` pattern); `resolve_ooc_memory_limit`;
+`_chunked_input.py` (`capture_source_facts`, `check_opened`, `facts_match`);
+`LazySource.open_batches` and the `CsvLazySource` identity check; `CastRun.cast_batch`;
+`OutputTxn.open_file`, `protected_scratch_dir`, F25 `ScratchArena`; `safe_error_class`;
+`observed_commit`; `_evaluate`, `_confidence_bucket`; SCAN-ML M5 `refuse_unchecked_route`;
+`check_generate_columns`; the `test_f06_route_matrix.py` pattern; `registry_renumber.py`.
 
 ### Frozen contracts
 
-`post-scan-integrity/v2` (additive fields only, `docs/compatibility-contract.md` section 3.1);
-the reason registry (append-only, one retirement with `replaced_by`, a new manifest fixture);
-the `run_post_mask` signature; `CheckId`.
+`post-scan-integrity/v2` (additive fields plus the recorded `fk_preservation` change, compat 3.1);
+the reason registry (append-only, one retirement with `replaced_by`); `run_post_mask` (one keyword
+added); `CheckId` (unchanged); `IsolatedRunOutcome` and `GovernorResult.outcome` (one value added,
+pre-GA).
