@@ -41,10 +41,10 @@ INSTALL = (
 # Reviewed snapshot of the tiers in .importlinter, top to bottom; `:` siblings may import each
 # other. Edit it in the same diff as the config.
 LAYERS: tuple[str, ...] = (
-    "unmask : subset : walks : identifiers : providers : records : support",
+    "unmask : walks : identifiers : providers : records : support",
     "execution : kernel : quarantine : validation : verification : vault",
     "plan : generation : generators : transforms : declared_casting : secret_providers"
-    " : keyprovider : relationships : providers_v2 : reference_tables : quality",
+    " : keyprovider : relationships : providers_v2 : reference_tables : quality : subset",
     "profile : profiling : detection : internal : progress : context : config : determinism"
     " : contracts : connectors : expressions : validators : sdk : run_result",
     "io : data_discovery : disguises : phase : telemetry : safe_output : fileaccess",

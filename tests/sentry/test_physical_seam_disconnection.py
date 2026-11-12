@@ -63,6 +63,7 @@ REPO_ROOT = ENGINE_ROOT.parents[1]
 # never got added here.
 GUARDED_MODULES: tuple[str, ...] = (
     "execution/_pipeline.py",
+    "execution/pipeline/_subset_stage.py",
     "execution/_pipeline_routing.py",
     "execution/_pipeline_routing_signals.py",
     "execution/_pipeline_chunk_route.py",
@@ -395,6 +396,8 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/out_of_core/__init__.py",
             "src/decoy_engine/execution/pipeline/_cgroup.py",
             "src/decoy_engine/execution/pipeline/_host.py",
+            # SUB-RUN E2: the subset stage imports the public `decoy_engine.subset` surface only.
+            "src/decoy_engine/execution/pipeline/_subset_stage.py",
             # RUN-STREAM E3: `route_summary` reads recorded quality_metrics blocks and imports
             # nothing from `execution.physical`.
             "src/decoy_engine/execution/pipeline/_route_summary.py",
