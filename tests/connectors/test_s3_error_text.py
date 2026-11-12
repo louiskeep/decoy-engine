@@ -72,6 +72,52 @@ KINDS: dict[str, tuple[Callable[[], BaseException], str]] = {
     "ConnectTimeoutError": (_net("ConnectTimeoutError"), "transient"),
     "ReadTimeoutError": (_net("ReadTimeoutError"), "transient"),
     "ConnectionClosedError": (_net("ConnectionClosedError"), "transient"),
+    "RequestTimeoutException": (lambda: client_error("RequestTimeoutException", 400), "transient"),
+    "PriorRequestNotComplete": (lambda: client_error("PriorRequestNotComplete", 400), "transient"),
+    "Throttling": (lambda: client_error("Throttling", 400), "transient"),
+    "ThrottlingException": (lambda: client_error("ThrottlingException", 400), "transient"),
+    "ThrottledException": (lambda: client_error("ThrottledException", 400), "transient"),
+    "RequestThrottledException": (
+        lambda: client_error("RequestThrottledException", 400),
+        "transient",
+    ),
+    "TooManyRequests": (lambda: client_error("TooManyRequests", 400), "transient"),
+    "TooManyRequestsException": (
+        lambda: client_error("TooManyRequestsException", 400),
+        "transient",
+    ),
+    "ProvisionedThroughputExceededException": (
+        lambda: client_error("ProvisionedThroughputExceededException", 400),
+        "transient",
+    ),
+    "TransactionInProgressException": (
+        lambda: client_error("TransactionInProgressException", 400),
+        "transient",
+    ),
+    "RequestLimitExceeded": (lambda: client_error("RequestLimitExceeded", 400), "transient"),
+    "BandwidthLimitExceeded": (lambda: client_error("BandwidthLimitExceeded", 400), "transient"),
+    "LimitExceededException": (lambda: client_error("LimitExceededException", 400), "transient"),
+    "RequestThrottled": (lambda: client_error("RequestThrottled", 400), "transient"),
+    "EC2ThrottledException": (lambda: client_error("EC2ThrottledException", 400), "transient"),
+    "429-code": (lambda: client_error("429"), "transient"),
+    "509-code": (lambda: client_error("509"), "transient"),
+    "unlisted-429": (lambda: client_error("Whatever", 429), "transient"),
+    "unlisted-509": (lambda: client_error("Whatever", 509), "transient"),
+    "RequestTimeTooSkewed": (lambda: client_error("RequestTimeTooSkewed", 403), "access_denied"),
+    "PartialCredentialsError": (
+        lambda: botocore_exc.PartialCredentialsError(provider="p", cred_var="v"),
+        "credentials",
+    ),
+    "CredentialRetrievalError": (
+        lambda: botocore_exc.CredentialRetrievalError(provider="p", error_msg=MSG),
+        "credentials",
+    ),
+    "TokenRetrievalError": (
+        lambda: botocore_exc.TokenRetrievalError(provider="p", error_msg=MSG),
+        "credentials",
+    ),
+    "UnauthorizedSSOTokenError": (lambda: botocore_exc.UnauthorizedSSOTokenError(), "credentials"),
+    "SSOTokenLoadError": (lambda: botocore_exc.SSOTokenLoadError(error_msg=MSG), "credentials"),
     "unlisted-4xx": (lambda: client_error("EntityTooLarge", 400), "rejected"),
     "no-status": (lambda: client_error("Whatever"), "unexpected"),
     "RuntimeError": (lambda: RuntimeError(MSG), "unexpected"),
@@ -109,6 +155,26 @@ def test_conditional_and_redirect_codes_are_not_retried(code: str) -> None:
     """These three fell into the transient bucket before the kind table."""
     err = _clients.s3_error(client_error(code))
     assert type(err) is PermanentError
+
+
+def test_every_botocore_retryable_code_is_transient() -> None:
+    """Drift guard: the SDK retry is off, so botocore's own retry lists must all be transient.
+
+    Reads the private names ``ThrottledRetryableChecker._THROTTLED_ERROR_CODES``,
+    ``TransientRetryableChecker._TRANSIENT_ERROR_CODES`` and
+    ``TransientRetryableChecker._TRANSIENT_STATUS_CODES`` from
+    ``botocore.retries.standard``.
+    """
+    from botocore.retries import standard
+
+    throttled = standard.ThrottledRetryableChecker._THROTTLED_ERROR_CODES
+    transient = standard.TransientRetryableChecker._TRANSIENT_ERROR_CODES
+    statuses = standard.TransientRetryableChecker._TRANSIENT_STATUS_CODES
+    assert throttled and transient and statuses
+    for code in (*throttled, *transient):
+        assert _clients._s3_kind(client_error(code, 400)) == "transient", code
+    for status in statuses:
+        assert _clients._s3_kind(client_error("Unlisted", status)) == "transient", status
 
 
 def test_every_kind_the_tables_can_build_is_in_the_closed_set() -> None:

@@ -189,6 +189,22 @@ def test_engine_errors_pass_through_unchanged(cls: type, install: Callable[..., 
     assert info.value is original
 
 
+@pytest.mark.parametrize("raised", [ValueError("upstream"), PermanentError("upstream engine")])
+def test_write_passes_an_upstream_iterator_error_through(
+    raised: Exception, install: Callable[..., Recorder]
+):
+    """M3: an error from the caller's chunk iterator is not relabelled as a GCS error."""
+    install(CSV_BODY, fail={})
+
+    def chunks():
+        yield b"x"
+        raise raised
+
+    with pytest.raises(type(raised)) as info:
+        GCSFileSink(CFG).write("zz_marker_obj", chunks())
+    assert info.value is raised
+
+
 # ----- direct checks of the factory's file-object and fallback translation --------
 
 

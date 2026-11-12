@@ -210,23 +210,29 @@ class GCSFileSink(FileSink[GCSConfig]):
             return CheckResult(ok=False, detail=str(_clients.gcs_error(exc)))
         return CheckResult(ok=True)
 
-    def write(self, path: str, chunks: Iterator[bytes]) -> WriteResult:
-        key = _join_key(self.config.prefix, path)
-        bytes_written = 0
+    def _blob(self, key: str):
         try:
-            blob = self._bucket_or_build().blob(key)
-            # google-cloud-storage's Blob.open("wb") streams the upload
-            # and handles resumable session negotiation internally for
-            # large writes. We don't need to manage parts ourselves.
-            with _clients.gcs_open(blob, "wb") as remote:
-                for chunk in chunks:
-                    if not chunk:
-                        continue
-                    remote.write(chunk)
-                    bytes_written += len(chunk)
-            return WriteResult(path=key, bytes_written=bytes_written)
+            return self._bucket_or_build().blob(key)
         except ConnectorError:
             raise
         except Exception as exc:
             err = _clients.gcs_error(exc)
         raise err
+
+    def write(self, path: str, chunks: Iterator[bytes]) -> WriteResult:
+        key = _join_key(self.config.prefix, path)
+        bytes_written = 0
+        # Only the setup is translated. The remote I/O below is covered by
+        # _TranslatingFile, and an error from the caller's `chunks` iterator must reach
+        # the caller as raised, not relabelled "Unexpected GCS error".
+        blob = self._blob(key)
+        # google-cloud-storage's Blob.open("wb") streams the upload
+        # and handles resumable session negotiation internally for
+        # large writes. We don't need to manage parts ourselves.
+        with _clients.gcs_open(blob, "wb") as remote:
+            for chunk in chunks:
+                if not chunk:
+                    continue
+                remote.write(chunk)
+                bytes_written += len(chunk)
+        return WriteResult(path=key, bytes_written=bytes_written)

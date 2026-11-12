@@ -106,3 +106,8 @@ def s3_alias_client():
 
 def s3_botocore_session():
     return botocore.session.get_session().create_client("s3")
+
+
+def s3_session_in_variable():
+    s = boto3.Session()
+    return s.client("s3")

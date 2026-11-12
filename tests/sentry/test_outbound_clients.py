@@ -51,6 +51,8 @@ S3_BUILDERS = frozenset(
     {
         "boto3.client",
         "boto3.resource",
+        "boto3.Session",
+        "boto3.session.Session",
         "boto3.Session().client",
         "boto3.Session().resource",
         "boto3.session.Session().client",
@@ -373,6 +375,7 @@ SEEDED: dict[str, set[tuple[str, str]]] = {
     "s3_from_import_session": {("AT-C41", "S3")},
     "s3_alias_client": {("AT-C41", "S3")},
     "s3_botocore_session": {("AT-C41", "S3")},
+    "s3_session_in_variable": {("AT-C41", "S3")},
 }
 
 

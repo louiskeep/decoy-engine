@@ -234,8 +234,33 @@ _S3_KINDS: dict[str, ConnectorErrorKind] = {
     **dict.fromkeys(("PreconditionFailed", "412"), "precondition_failed"),
     **dict.fromkeys(("ConditionalRequestConflict", "409"), "conflict"),
     **dict.fromkeys(("PermanentRedirect", "301", "AuthorizationHeaderMalformed"), "wrong_region"),
+    # The SDK retry is off, so the engine retries what botocore's standard retry mode
+    # retries (retries/standard.py throttled and transient codes, 429 and 509 in _retry.json).
     **dict.fromkeys(
-        ("SlowDown", "InternalError", "ServiceUnavailable", "RequestTimeout"), "transient"
+        (
+            "SlowDown",
+            "InternalError",
+            "ServiceUnavailable",
+            "RequestTimeout",
+            "RequestTimeoutException",
+            "PriorRequestNotComplete",
+            "Throttling",
+            "ThrottlingException",
+            "ThrottledException",
+            "RequestThrottledException",
+            "TooManyRequests",
+            "TooManyRequestsException",
+            "ProvisionedThroughputExceededException",
+            "TransactionInProgressException",
+            "RequestLimitExceeded",
+            "BandwidthLimitExceeded",
+            "LimitExceededException",
+            "RequestThrottled",
+            "EC2ThrottledException",
+            "429",
+            "509",
+        ),
+        "transient",
     ),
 }
 
@@ -278,7 +303,17 @@ def _s3_kind(exc: BaseException) -> ConnectorErrorKind:
         from botocore import exceptions as bce
     except ImportError:
         return "unexpected"
-    if isinstance(exc, bce.NoCredentialsError):
+    # BotoCoreError has no credentials base class, so the sibling families are listed.
+    if isinstance(
+        exc,
+        (
+            bce.NoCredentialsError,
+            bce.PartialCredentialsError,
+            bce.CredentialRetrievalError,
+            bce.TokenRetrievalError,
+            bce.SSOError,
+        ),
+    ):
         return "credentials"
     if isinstance(exc, (bce.ConnectionError, bce.HTTPClientError)):
         return "transient"
