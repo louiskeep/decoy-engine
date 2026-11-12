@@ -97,6 +97,7 @@ SENTRIES = (
     "tests/sentry/source_config/test_declaration_gate.py",
     "tests/sentry/source_config/test_source_dialect_choke_point.py",
     "tests/sentry/tooling/test_ci_lanes.py",
+    "tests/sentry/tooling/test_ml_base_install.py",
     "tests/sentry/tooling/test_pytest_timeout.py",
     # Named sentries that live outside tests/sentry/.
     "tests/secret_providers/test_leak_sentry.py",

@@ -23,6 +23,7 @@ from decoy_engine.execution.native import _operator_step
 from decoy_engine.execution.native._chunked_schema_rule import build_schema_rule
 from decoy_engine.execution.native._group_key_kernel import native_group_key
 from decoy_engine.providers_v2 import get_default_registry
+from tests._declared_schema import declared_schema
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     NEEDS_COMPANION,
@@ -529,6 +530,7 @@ def test_a_non_admissible_group_key_keeps_the_type_its_leg_produces() -> None:
             [table],
             table=TABLE,
             engine_version=ENGINE_VERSION,
+            source_schema=declared_schema(make_config(cols), TABLE),
             key_provider=key_provider(),
         )
     )

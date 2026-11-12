@@ -23,7 +23,11 @@ from decoy_engine.execution.native._dispatch import NativeRouteEvidence
 from decoy_engine.execution.native._plan import native_route_eligibility
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
-from tests.native._b8_support import identical, run_one
+from tests._declared_schema import chunked_entry_kwargs
+from tests.native._b8_support import (
+    identical,
+    run_one,
+)
 from tests.native._chunked_categorical_support import (
     FORCE,
     cat_col,
@@ -100,13 +104,15 @@ def test_non_deterministic_categorical_fails_before_any_chunk_is_read(entry: str
     consumed: list[int] = []
     chunks = split(source(["a", "b", "c", "a"]), 2)
     run = run_mask_chunked if entry == "run_mask_chunked" else run_mask_pipeline_chunked
+    config = make_config([cat_col(mode=None, namespace=None), passthrough("p")])
     with pytest.raises(PlanCompileError) as info:
         run(
-            make_config([cat_col(mode=None, namespace=None), passthrough("p")]),
+            config,
             _chunk_stream(chunks, consumed),
             table=TABLE,
             engine_version=ENGINE_VERSION,
             key_provider=key_provider(),
+            **chunked_entry_kwargs(run, config, TABLE),
         )
     assert info.value.code == NONDET
     assert consumed == []
@@ -138,13 +144,15 @@ def test_missing_namespace_fails_eagerly_on_both_entries() -> None:
     consumed: list[int] = []
     chunks = split(source(["a", "b", "c", "a"]), 2)
     for run in (run_mask_chunked, run_mask_pipeline_chunked):
+        config = make_config([cat_col(namespace=None), passthrough("p")])
         with pytest.raises(PlanCompileError) as info:
             run(
-                make_config([cat_col(namespace=None), passthrough("p")]),
+                config,
                 _chunk_stream(chunks, consumed),
                 table=TABLE,
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
+                **chunked_entry_kwargs(run, config, TABLE),
             )
         assert info.value.code == "chunked_strategy_conditions_unmet"
     assert consumed == []

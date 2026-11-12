@@ -103,6 +103,7 @@ def test_chunked_entries_refuse_derived_at_admission(entry: str) -> None:
     # CHARACTERIZATION: both refusals exist on main and must not change.
     import decoy_engine
     from decoy_engine.plan._errors import PlanCompileError
+    from tests._declared_schema import chunked_entry_kwargs
     from tests.native._chunked_entry_support import key_provider, make_config
 
     cfg = make_config(
@@ -112,10 +113,16 @@ def test_chunked_entries_refuse_derived_at_admission(entry: str) -> None:
         ]
     )
     chunk = pa.table({"first name": ["9"], "_1": ["1"], "q2": ["0"]})
+    fn = getattr(decoy_engine, entry)
     with pytest.raises(PlanCompileError) as exc:
         list(
-            getattr(decoy_engine, entry)(
-                cfg, iter([chunk]), table="t", engine_version="t4", key_provider=key_provider()
+            fn(
+                cfg,
+                iter([chunk]),
+                table="t",
+                engine_version="t4",
+                key_provider=key_provider(),
+                **chunked_entry_kwargs(fn, cfg, "t"),
             )
         )
     assert exc.value.code == "strategy_not_chunk_safe"

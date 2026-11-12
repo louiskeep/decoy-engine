@@ -22,6 +22,7 @@ import pytest
 from decoy_engine import fileaccess
 from decoy_engine.data_discovery import SQL_FAILED, DiscoverySqlError, run_discovery_sql
 from decoy_engine.fileaccess.adapters import duckdb as duckdb_adapter
+from tests._ml import require_ml_stack
 from tests.fileaccess.x_support import (
     LOCATOR_SENTINEL,
     XWorld,
@@ -360,8 +361,7 @@ def test_trainer_load_pack_names_no_locator(
     resource failure keeps its class and errno (no translating handler swallows it)."""
     import errno
 
-    pytest.importorskip("lightgbm")  # trainer is import-gated on the [ml] extra
-    pytest.importorskip("sklearn")
+    require_ml_stack()  # the trainer imports lightgbm at module load
 
     from decoy_engine.execution._isolated_common import is_memory_failure
     from decoy_engine.profiling.model_pack import _packio, trainer

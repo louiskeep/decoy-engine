@@ -19,7 +19,7 @@ upgrade that changes a pin fails the test and is re-pinned by review.
 from __future__ import annotations
 
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -27,6 +27,12 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
+from tests._declared_schema import declared_schema
+from tests.native._b8_support import (
+    run_mask_chunked_below_gate,
+    run_mask_pipeline_chunked_below_gate,
+)
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     TABLE,
@@ -258,15 +264,13 @@ def same_column(a: Any, b: Any) -> bool:
     return nulls_a == pc.is_null(b).to_pylist() and ipc_bytes(a) == ipc_bytes(b)
 
 
-def run_entry(
-    config: dict[str, Any], chunks: list[pa.Table], **kw: Any
+def _run_entry(
+    entry: Callable[..., Any], config: dict[str, Any], chunks: list[pa.Table], **kw: Any
 ) -> tuple[list[pa.Table], list[Any], list[Any]]:
-    from decoy_engine import run_mask_chunked
-
     sink: list[Any] = []
     ev: list[Any] = []
     out = list(
-        run_mask_chunked(
+        entry(
             config,
             list(chunks),
             table=TABLE,
@@ -280,16 +284,41 @@ def run_entry(
     return out, sink, ev
 
 
-def run_public(config: dict[str, Any], chunks: list[pa.Table], **kw: Any) -> list[pa.Table]:
-    from decoy_engine import run_mask_pipeline_chunked
+def run_entry(
+    config: dict[str, Any], chunks: list[pa.Table], **kw: Any
+) -> tuple[list[pa.Table], list[Any], list[Any]]:
+    return _run_entry(run_mask_chunked, config, chunks, **kw)
 
+
+def run_entry_below_gate(
+    config: dict[str, Any], chunks: list[pa.Table], **kw: Any
+) -> tuple[list[pa.Table], list[Any], list[Any]]:
+    """`run_entry` for a test whose subject is how an unconfigured column is carried."""
+    return _run_entry(run_mask_chunked_below_gate, config, chunks, **kw)
+
+
+def _run_public(
+    entry: Callable[..., Any], config: dict[str, Any], chunks: list[pa.Table], **kw: Any
+) -> list[pa.Table]:
     return list(
-        run_mask_pipeline_chunked(
+        entry(
             config,
             list(chunks),
             table=TABLE,
             engine_version=ENGINE_VERSION,
+            source_schema=chunks[0].schema if chunks else declared_schema(config, TABLE),
             key_provider=key_provider(),
             **kw,
         )
     )
+
+
+def run_public(config: dict[str, Any], chunks: list[pa.Table], **kw: Any) -> list[pa.Table]:
+    return _run_public(run_mask_pipeline_chunked, config, chunks, **kw)
+
+
+def run_public_below_gate(
+    config: dict[str, Any], chunks: list[pa.Table], **kw: Any
+) -> list[pa.Table]:
+    """`run_public` for a test whose subject is how an unconfigured column is carried."""
+    return _run_public(run_mask_pipeline_chunked_below_gate, config, chunks, **kw)

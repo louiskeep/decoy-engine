@@ -68,6 +68,7 @@ def test_duck_typed_provider_runs_keyed_work_through_admission(tmp_path):
             [one_chunk()],
             table="t",
             engine_version=ENGINE_VERSION,
+            source_schema=one_chunk().schema,
             key_provider=DuckProvider(),
         )
     )
@@ -107,6 +108,7 @@ def test_unkeyed_config_ignores_a_supplied_seed_provider(tmp_path):
             TouchedSource(),
             table="t",
             engine_version=ENGINE_VERSION,
+            source_schema=one_chunk().schema,
             key_provider=SeedKeyProvider(b"12345678"),
         )
     )

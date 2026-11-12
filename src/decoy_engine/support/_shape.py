@@ -29,7 +29,8 @@ _LABEL_TOKEN = object()
 _LABEL = re.compile(r"(t[0-9]{1,4}(\.c[0-9]{1,4})?|n[0-9]{1,4})")
 _LABEL_KIND = {"table": re.compile(r"t[0-9]{1,4}"), "node": re.compile(r"n[0-9]{1,4}")}
 _LABEL_KIND["column"] = re.compile(r"t[0-9]{1,4}\.c[0-9]{1,4}")
-_VERSION = re.compile(r"[0-9]{1,6}(\.[0-9]{1,6}){1,2}([.-][0-9A-Za-z]{1,16})?")
+# The tag is a closed word list, so no part of a version string is free text.
+_VERSION = re.compile(r"[0-9]{1,6}(\.[0-9]{1,6}){1,2}([.-]?(a|b|rc|dev|post)[0-9]{1,4})?")
 # Closed ranges [low, end) by field name; an `int` field with no entry is refused.
 _RANGES = {"ms": (0, 2**53), "arity": (1, 9)}
 _RANGES |= dict.fromkeys(("rows_log2", "length_log2", "counts_log2"), (0, 64))
@@ -67,7 +68,7 @@ def _relabel(value: str) -> Label:
 
 
 class Version(str):
-    """A dotted version string: two or three numeric parts and one optional suffix."""
+    """A dotted version: two or three numeric parts and one optional numbered release tag."""
 
     __slots__ = ()
 

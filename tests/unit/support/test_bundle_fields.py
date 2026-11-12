@@ -218,9 +218,16 @@ def test_version_rejects_free_text() -> None:
         "1.0.0-",
         "",
         "1" * 7 + ".0",
+        "1.0-MARKERSECRET",
+        "1.0.0-abc123",
+        "1.0.0.x1",
+        "1.0.0rc",
+        "1.0.0rc1.dev2",
     ):
         with pytest.raises(ValueError):
             Version(text)
+    for text in ("1.0", "0.23.0", "1.0.0rc1", "0.23.0.dev3", "1.2-b2", "3.13.0a1", "1.0.post1"):
+        assert Version(text) == text
     for kw in (
         {"seed_protocol": "7"},
         {"seed_protocol": True},
