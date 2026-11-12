@@ -1,0 +1,3 @@
+### Changed (out-of-core DuckDB connections on the scratch arena, F25 S2a-1c-i, 2026-11-12)
+
+`connect_duckdb` now spills into a scratch arena directory: an arena child it is handed, or (transitionally) a path it adopts as one, made 0700 where missing and checked, never chmodded, where it exists. Building the connection goes through the scratch native boundary, so a DuckDB failure while connecting now raises the value-free `FileAccessReadError("engine.scratch")` instead of DuckDB's own error with its text; memory and resource-errno failures keep their class. An existing spill directory that is not owner-only is now refused (`ProtectedDirUnsafe`) instead of being chmodded to 0700. Output bytes are unchanged.

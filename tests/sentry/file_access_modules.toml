@@ -59,13 +59,16 @@ ambient_guards = [
 # Modules that release a scratch arena path (`ScratchArena.local_path`, the one path release).
 scratch_path_release = [
   "decoy_engine/declared_casting/_stream.py",
+  "decoy_engine/execution/out_of_core/_duckdb.py",
   "decoy_engine/execution/out_of_core/_runner.py",
   # Transitional (arm (a)): hands unconverted callees a released path; S2b-3 removes it.
   "decoy_engine/execution/out_of_core/_rewrite_pass.py",
 ]
 # Modules that call `scratch_native`; in each, every DuckDB connection or result call must go
 # through it (no bare `conn.execute(...)`, bound-method or `getattr` call).
-scratch_native = []
+scratch_native = [
+  "decoy_engine/execution/out_of_core/_duckdb.py",
+]
 
 # Documented exception (owner decision 2026-10-31, A-4 x F13): file paths a third-party library
 # opens that come only from OPERATOR-set process environment, never from a job config or a caller

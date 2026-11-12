@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
-import os
 import re
 import threading
 from collections.abc import Iterator
@@ -13,8 +12,9 @@ from pathlib import Path
 
 from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution.out_of_core._scratch import private_dir
+from decoy_engine.execution.out_of_core._scratch import scratch_arena
 from decoy_engine.execution.pipeline import detect_usable_cpus
+from decoy_engine.fileaccess import ScratchArena, scratch_native
 
 # `_budget.py` (`resolve_budget` / `resolve_ooc_memory_limit`) is the only
 # producer of the `memory_limit` string this module consumes, and it always
@@ -78,8 +78,9 @@ def bind_duckdb_run(thread_cap: int | None) -> Iterator[DuckDBRunRecorder]:
         _RUN.reset(token)
 
 
-def connect_duckdb(*, temp_dir: Path, memory_limit: str | None = None):
-    """Open an in-memory DuckDB connection with a restricted temp directory."""
+def connect_duckdb(*, temp_dir: ScratchArena | Path, memory_limit: str | None = None):
+    """Open an in-memory DuckDB connection that spills into ``temp_dir``: an arena child, or a
+    path adopted as one (transition arm (c)). Building it goes through the native boundary."""
     try:
         from decoy_engine.fileaccess.adapters import duckdb as duckdb_adapter
     except ModuleNotFoundError as exc:  # pragma: no cover - covered in no-duckdb envs
@@ -88,11 +89,10 @@ def connect_duckdb(*, temp_dir: Path, memory_limit: str | None = None):
             message="DuckDB is required for the out-of-core relationship route.",
         ) from exc
 
-    private_dir(temp_dir)
-    os.chmod(temp_dir, 0o700)
+    spill = scratch_arena(temp_dir)
     # duckdb.connect's config maps str keys to a union value type; widen the
     # annotation to that surface even though every value here is a str/bool/int.
-    config: dict[str, str | bool | int | float | list[str]] = {"temp_directory": str(temp_dir)}
+    config: dict[str, str | bool | int | float | list[str]] = {"temp_directory": spill.local_path()}
     # preserve_insertion_order=False lets DuckDB's window/sort/aggregate
     # operators spill their state instead of pinning it all in memory to
     # preserve row order it does not need to guarantee on its own -- SAFE
@@ -111,7 +111,7 @@ def connect_duckdb(*, temp_dir: Path, memory_limit: str | None = None):
     threads = _threads_for_memory_limit(memory_limit, thread_cap=run.thread_cap if run else None)
     if threads is not None:
         config["threads"] = threads
-    conn = duckdb_adapter.connect_internal(config)
+    conn = scratch_native(duckdb_adapter.connect_internal, config)
     if run is not None:
         run.record(AppliedConnection(_memory_limit_bytes(memory_limit), threads))
     return conn

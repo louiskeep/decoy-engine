@@ -5,7 +5,7 @@
 # `dir_category` (protected_root, protected_child, output_parent, published_output, non_row) and
 # `dir_test` (an existing pytest node id; every category but protected_root) mark directory
 # creators for tests/sentry/protected_dir (G-ONE-PROTECTED-DIR).
-# Count: 191 (asserted by the sentry).
+# Count: 190 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -474,15 +474,6 @@ ordinal = 0
 rule = "scratch root the out-of-core runner created (`tempfile.mkdtemp`) or `tempfile.gettempdir()`"
 owner = "cam"
 reason = "disk-budget accounting over the engine's own spill space"
-
-[[entry]]
-module = "decoy_engine/execution/out_of_core/_duckdb.py"
-function = "connect_duckdb"
-sink = "os.chmod"
-ordinal = 0
-rule = "path under the scratch root the out-of-core runner created by `protected_scratch_dir`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
-owner = "cam"
-reason = "engine-owned spill and relation files; never a caller or config path"
 
 [[entry]]
 module = "decoy_engine/execution/out_of_core/_external_sort.py"

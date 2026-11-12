@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import BinaryIO
 
-from decoy_engine.fileaccess import open_protected_dir
+from decoy_engine.fileaccess import ScratchArena, open_protected_dir
 
 
 def open_private(path: Path) -> BinaryIO:
@@ -44,6 +44,13 @@ def precreate_private(path: Path) -> str:
     renames over it with an umask-derived mode)."""
     open_private(path).close()
     return str(path)
+
+
+def scratch_arena(where: ScratchArena | Path) -> ScratchArena:
+    """The arena a DuckDB connection spills into. A caller still on a path (transition arm (c))
+    has that directory adopted: missing levels made 0700, an existing one checked, nothing
+    owned, so its cleanup stays where it is."""
+    return where if isinstance(where, ScratchArena) else ScratchArena._adopt(where)
 
 
 def private_dir(path: Path) -> Path:
