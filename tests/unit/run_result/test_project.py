@@ -8,8 +8,8 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.delivery import TableDelivery as PlanTableDelivery
-from decoy_engine.errors import ExecutionError
-from decoy_engine.execution._adapter import ExecutionResult
+from decoy_engine import ExecutionError
+from decoy_engine.execution import ExecutionResult
 from decoy_engine.reason_adapter import reason_from_exception
 from decoy_engine.run_result import (
     CollectedFacts,
