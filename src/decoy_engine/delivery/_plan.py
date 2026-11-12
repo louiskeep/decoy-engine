@@ -16,6 +16,7 @@ from typing import Any, Literal
 from decoy_engine.config import PipelineConfigError, parse_delivery_config
 from decoy_engine.generation import generation_order
 from decoy_engine.reasons import ReasonCode
+from decoy_engine.reasons.decoy import DELIVERY_DEPENDENT_DROPPED, DELIVERY_WITHHELD
 
 DeliveryState = Literal["delivered", "failed", "withheld", "dropped"]
 
@@ -25,6 +26,7 @@ class TableDelivery:
     state: DeliveryState
     # The smallest failed table name the dropped table is reachable from; None unless dropped.
     dropped_because: str | None = None
+    # The failure cause for failed, the delivery decision code for withheld and dropped.
     code: ReasonCode | None = None
 
 
@@ -100,11 +102,11 @@ def plan_delivery(
     tables: dict[str, TableDelivery] = {}
     for name, cause in outcomes.items():
         if cause is not None:
-            tables[name] = TableDelivery("failed")
+            tables[name] = TableDelivery("failed", code=cause)
         elif failed and strict:
-            tables[name] = TableDelivery("withheld")
+            tables[name] = TableDelivery("withheld", code=DELIVERY_WITHHELD)
         elif name in reached:
-            tables[name] = TableDelivery("dropped", reached[name])
+            tables[name] = TableDelivery("dropped", reached[name], DELIVERY_DEPENDENT_DROPPED)
         else:
             tables[name] = TableDelivery("delivered")
     # No file-target table means nothing failed or was withheld, so the run still goes on.
