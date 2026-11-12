@@ -181,7 +181,7 @@ def cloud_reader(monkeypatch: pytest.MonkeyPatch) -> Any:
     def build(kind: str) -> Any:
         descriptor = profile_descriptors(validate(_cloud_cfg(kind)))["t"]
         if kind == "s3":
-            monkeypatch.setattr(cr, "_s3_client", lambda _descriptor: _FakeS3())
+            monkeypatch.setattr(cr._clients, "s3_client", lambda **_kw: _FakeS3())
             reader = cr.build_s3_profile_source(descriptor)
             assert isinstance(reader, cr.S3CsvSource)
             return reader

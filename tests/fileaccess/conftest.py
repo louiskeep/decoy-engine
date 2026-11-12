@@ -17,6 +17,7 @@ READ_ROLES = frozenset(
         FileRole.REFERENCE,
         FileRole.CORPUS,
         FileRole.SNAPSHOT,
+        FileRole.LOOKUP,
         FileRole.SECRET,
         FileRole.VAULT,
         FileRole.CONFIG,

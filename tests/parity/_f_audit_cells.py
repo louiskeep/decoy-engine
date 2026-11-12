@@ -262,6 +262,11 @@ def cfg_derived_aggregate() -> dict[str, Any]:
     return fx.config([_t("t", 40, [_FM, agg])])
 
 
+def cfg_lookup() -> dict[str, Any]:
+    """A shipped code set: the column needs no file, so the cell stays self-contained."""
+    return fx.config([_t("t", 30, [{"name": "x", "type": "lookup", "codeset": "hcpcs"}])])
+
+
 def cfg_fresh() -> dict[str, Any]:
     cols = [
         {"name": "cat", "type": "categorical", "categories": ["a", "b"], "determinism": "fresh"}
@@ -674,6 +679,7 @@ def legacy_cells(unmarked_windowed: Callable[..., list[Any]]) -> tuple[Cell, ...
         Cell("statistical", fx.cfg_statistical, {}, admission_key=("stat", "amount")),
         Cell("grouped-series", fx.cfg_grouped_windowed, {}, admission_key=("gw", "cum")),
         Cell("group-key", fx.cfg_grouped_windowed, {}, admission_key=("gw", "gkey")),
+        Cell("lookup", cfg_lookup, {}, admission_key=("t", "x")),
         Cell(
             "determinism-fresh",
             cfg_fresh,

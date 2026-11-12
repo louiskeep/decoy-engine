@@ -75,7 +75,7 @@ def test_f06_baseline_dump_hash_and_plan_are_unchanged(tmp_path: Path) -> None:
     plan = _compile(_raw(tmp_path))
     assert plan.pipeline_config_hash == BASELINE["pipeline_config_hash"]
     assert plan_to_yaml(plan) == BASELINE["plan_yaml_at_baseline"].replace(
-        "plan_version: 2", "plan_version: 3", 1
+        "plan_version: 2", "plan_version: 4", 1
     )
     with_models = _compile(
         _raw(tmp_path, post_scan={**FAIL_POST_SCAN, "dismissed": [NER_DISMISSAL]})
