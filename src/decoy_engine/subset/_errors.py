@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal
 
 from decoy_engine import reasons
+from decoy_engine._execution_error import ExecutionError
 from decoy_engine.errors import DecoyError
 
 if TYPE_CHECKING:
@@ -29,6 +30,11 @@ class SubsetError(DecoyError):
 
 class SubsetConfigError(SubsetError):
     """A subset input (policy, seed spec, config block) is malformed."""
+
+
+def invalid_knob(message: str) -> ExecutionError:
+    """The one constructor of the `runtime.invalid_execution_knob` refusal for a subset knob."""
+    return ExecutionError(code=reasons.runtime.INVALID_EXECUTION_KNOB, message=message)
 
 
 class SubsetInternalError(SubsetError):
