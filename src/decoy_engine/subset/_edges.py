@@ -20,7 +20,10 @@ the estimate).
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from decoy_engine import reasons
+from decoy_engine.config import classify_table_kinds
 from decoy_engine.plan._types import PlanRelationship
 from decoy_engine.subset._errors import SubsetPreflightError
 from decoy_engine.subset._types import FkPreflightReport, PreflightFailure, SubsetEdge
@@ -115,9 +118,50 @@ def relationships_from_config(config: dict) -> tuple[PlanRelationship, ...]:
     return tuple(relationships)
 
 
-def mask_relationships(config: dict) -> tuple[tuple[PlanRelationship, ...], tuple[str, ...]]:
-    return relationships_from_config(config), ()
+def _generated_tables(config: dict) -> set[str]:
+    return {n for n, kind in classify_table_kinds(config).items() if kind == "generate"}
 
 
-def sample_refusal_edge(config: dict) -> None:
+def mask_relationships(
+    config: dict,
+) -> tuple[tuple[PlanRelationship, ...], tuple[str, ...]]:
+    """The relationships a run can subset, and the sorted ids of the edges dropped.
+
+    A generate table has no source to read, so an edge touching one is dropped, per edge: a mask
+    child of a mask parent keeps its edge even when a sibling child is generated, or its rows
+    would point at parents the subset removed. The one drop for `subset_request_from_config` and
+    `sample_request`.
+    """
+    generated = _generated_tables(config)
+    kept_relationships: list[PlanRelationship] = []
+    excluded: list[str] = []
+    for rel in relationships_from_config(config):
+        kept = (
+            ()
+            if rel.parent.table in generated
+            else tuple(c for c in rel.children if c.table not in generated)
+        )
+        if len(kept) != len(rel.children):
+            dropped = replace(rel, children=tuple(c for c in rel.children if c not in kept))
+            excluded.extend(e.edge_id for e in build_subset_edges((dropped,)))
+        if kept:
+            kept_relationships.append(replace(rel, children=kept))
+    # a config may repeat a relationship; the record names each edge once
+    return tuple(kept_relationships), tuple(sorted(set(excluded)))
+
+
+def sample_refusal_edge(config: dict) -> tuple[str, tuple[str, ...], str, tuple[str, ...]] | None:
+    """The first edge from a generated parent to a masked child, as `(parent_table,
+    parent_columns, child_table, child_columns)`, or `None`.
+
+    Read before `mask_relationships` drops it: a sample scales the generated parent down while
+    the masked child keeps its source keys, so the child would point at parents that are gone.
+    """
+    generated = _generated_tables(config)
+    for rel in relationships_from_config(config):
+        if rel.parent.table not in generated:
+            continue
+        for child in rel.children:
+            if child.table not in generated:
+                return rel.parent.table, rel.parent.columns, child.table, child.columns
     return None

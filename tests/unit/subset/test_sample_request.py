@@ -9,12 +9,13 @@ from typing import Any
 import pytest
 
 from decoy_engine import reasons
+from decoy_engine._execution_error import ExecutionError
 from decoy_engine.config import PipelineConfig
 from decoy_engine.plan import pipeline_config_hash
 from decoy_engine.subset import (
     SampleSpec,
     SeedSpec,
-    SubsetConfigError,
+    SubsetPreflightError,
     SubsetRequest,
     sample_refusal_edge,
     sample_request,
@@ -136,7 +137,7 @@ def test_refusal_edge_sees_a_generated_parent_before_the_drop() -> None:
     cfg = config({"g": "generate", "m": "mask"}, [("g", "id", "m", "gid")])
     assert sample_refusal_edge(cfg) == ("g", ("id",), "m", ("gid",))
     assert sample_refusal_edge(config({"p": "mask", "c": "mask"}, [FK])) is None
-    with pytest.raises(SubsetConfigError) as excinfo:
+    with pytest.raises(ExecutionError) as excinfo:
         sample_request(cfg, rows=2)
     assert excinfo.value.code == KNOB
     assert "'g'" in str(excinfo.value) and "'m'" in str(excinfo.value)
@@ -158,7 +159,7 @@ def test_out_of_range_knobs_and_root_with_a_block_are_refused(kwargs: dict[str, 
         [FK],
         seeds=[{"table": "p", "mode": "keys", "key_columns": ["id"], "keys": [["p1"]]}],
     )
-    with pytest.raises(SubsetConfigError) as excinfo:
+    with pytest.raises(ExecutionError) as excinfo:
         sample_request(cfg, **kwargs)
     assert excinfo.value.code == KNOB
 
@@ -181,14 +182,14 @@ def test_strict_int_for_rows_and_display_rows(bad: Any) -> None:
         lambda: sample_request(cfg, rows=bad),
         lambda: sample_request(cfg, rows=5, display_rows=bad),
     ):
-        with pytest.raises(SubsetConfigError) as excinfo:
+        with pytest.raises(ExecutionError) as excinfo:
             call()
         assert excinfo.value.code == KNOB
 
 
 @pytest.mark.parametrize("bad", [True, False, "5", 5.0, 0, -1])
 def test_seed_cap_is_a_strict_positive_int_or_unset(bad: Any) -> None:
-    with pytest.raises(SubsetConfigError) as excinfo:
+    with pytest.raises(ExecutionError) as excinfo:
         SeedSpec(table="t", mode="head", count=3, cap=bad)
     assert excinfo.value.code == KNOB
     assert SeedSpec(table="t", mode="head", count=3, cap=None).cap is None
@@ -197,7 +198,7 @@ def test_seed_cap_is_a_strict_positive_int_or_unset(bad: Any) -> None:
 @pytest.mark.parametrize("root", ["g", "nope"])
 def test_generate_or_unknown_root_is_an_unknown_table(root: str) -> None:
     cfg = config({"p": "mask", "c": "mask", "g": "generate"}, [FK])
-    with pytest.raises(SubsetConfigError) as excinfo:
+    with pytest.raises(SubsetPreflightError) as excinfo:
         sample_request(cfg, rows=2, root=root)
     assert excinfo.value.code == reasons.subset.SUBSET_UNKNOWN_TABLE
 

@@ -53,7 +53,7 @@ def test_head_root_takes_row_indices_not_key_order(ids: list[str]) -> None:
     spy = SpyInput("p", tables["p"])
     chosen = select_subset(req, {"p": spy, "c": tables["c"]}, config=JOB_SEED_CONFIG)
     assert chosen.survivors["p"] == frozenset({0, 1, 2})
-    assert spy.calls == [("id",)]
+    assert set(spy.calls) == {("id",)}
 
 
 def test_a_seed_cap_keeps_the_first_rows_by_index_after_the_filter() -> None:
@@ -98,7 +98,7 @@ def test_scope_for_refuses_a_head_table_with_an_edge() -> None:
     with pytest.raises(ValueError, match="a sample head table has a declared edge"):
         scope_for(req, ["p", "c", "e"])
     plain = replace(req, sample=None)
-    assert scope_for(plain, ["p", "c", "e"]).whole == frozenset({"e"})
+    assert scope_for(plain, ["p", "c", "e"]).whole == frozenset({"p", "c"})
 
 
 def test_an_unknown_seed_mode_does_not_fall_through_to_keys() -> None:

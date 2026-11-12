@@ -463,9 +463,13 @@ def select_seed_rows(
             elif spec.mode == "filter":
                 selected = _select_filter(spec, kf)
             elif spec.mode == "head":
-                selected = frozenset()
-            else:
+                selected = frozenset(range(min(spec.count or 0, kf.height)))
+            elif spec.mode == "keys":
                 selected = _select_keys(spec, kf)
+            else:
+                raise ValueError("unknown seed mode")
+            if spec.cap is not None:
+                selected = frozenset(sorted(selected)[: spec.cap])
             seed_rows[spec.table] = selected
             seed_null_excluded[spec.table] = null_excluded
 

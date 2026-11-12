@@ -30,7 +30,8 @@ class SubsetRequest:
 
 @dataclass(frozen=True)
 class SubsetScope:
-    """`tables` are reachable from a seed; `whole` were supplied and no seed reaches them."""
+    """`tables` are reachable from a seed; `whole` were supplied and no seed reaches them. A sample
+    has no `whole`: `head` holds its edgeless tables, read as their first rows."""
 
     tables: frozenset[str]
     whole: frozenset[str]
@@ -66,4 +67,13 @@ def scope_for(request: SubsetRequest, table_names: Iterable[str]) -> SubsetScope
             if nxt not in reached:
                 reached.add(nxt)
                 frontier.append(nxt)
-    return SubsetScope(tables=supplied & reached, whole=supplied - reached)
+    if request.sample is None:
+        return SubsetScope(tables=supplied & reached, whole=supplied - reached)
+    # A sample never passes a table whole: what no seed closes over is read head-first, and a
+    # head table with an edge would skip the closure that keeps its links whole.
+    head_seeded = {s.table for s in request.seeds if s.mode == "head" and s.table not in neighbours}
+    tables = supplied & (reached - head_seeded)
+    head = supplied - tables
+    if head & neighbours.keys():
+        raise ValueError("a sample head table has a declared edge")
+    return SubsetScope(tables=tables, whole=frozenset(), head=head)
