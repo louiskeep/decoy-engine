@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import fnmatch
 import hashlib
 import json
 import os
@@ -291,7 +292,14 @@ def _preflight(root: Path, version: str, date: str, owned: list[str]) -> None:
     dirty = _dirty(root, owned)
     if dirty:
         # `git restore` leaves untracked files alone; a stamp that died mid-write can leave some.
-        new = _git(root, "ls-files", "--others", "--exclude-standard", "--", *owned).split()
+        untracked = _git(root, "ls-files", "--others", "--exclude-standard", "--", *owned).split()
+        # Only the fixture a stamp writes is its own; any other untracked file is the operator's.
+        glob = _tools()[0].FIXTURE_GLOB
+        new = [
+            p
+            for p in untracked
+            if p.startswith(f"{F29}/") and fnmatch.fnmatch(p[len(F29) + 1 :], glob)
+        ]
         rm = f"; a killed stamp's untracked leftovers go with: rm -- {' '.join(new)}" * bool(new)
         raise FragmentError(
             f"uncommitted changes in {', '.join(dirty)}; restore them with: git restore "
