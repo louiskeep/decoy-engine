@@ -13,10 +13,10 @@ from decoy_engine.fileaccess import FileAccessReadError
 from decoy_engine.verification.postmask import runner
 
 CANARY = "CANARY-6a0f"
-CHECKS = ["check_residual_pii", "check_fk_preservation", "check_policy_validation"]
+CHECKS = ["check_residual_pii", "fk_findings", "check_policy_validation"]
 SECTIONS = {
     "check_residual_pii": "residual_pii",
-    "check_fk_preservation": "fk_preservation",
+    "fk_findings": "fk_preservation",
     "check_policy_validation": "policy_validation",
 }
 
