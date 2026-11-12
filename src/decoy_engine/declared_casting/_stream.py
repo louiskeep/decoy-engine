@@ -9,7 +9,6 @@ chunk is still produced when nothing else is, so a table with no surviving rows 
 
 from __future__ import annotations
 
-import errno
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -21,8 +20,7 @@ import pyarrow as pa
 from decoy_engine import reasons
 from decoy_engine._execution_error import ExecutionError
 from decoy_engine.declared_casting._boundary import CastBatch, DeclaredCastRun
-
-_CAPACITY_ERRNOS = frozenset({errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)})
+from decoy_engine.reason_adapter import is_capacity_oserror
 
 
 class CastPairing:
@@ -89,7 +87,7 @@ def _scratch_write() -> Iterator[None]:
     try:
         yield
     except OSError as exc:
-        if exc.errno not in _CAPACITY_ERRNOS:
+        if not is_capacity_oserror(exc):
             raise
         raise ExecutionError(
             code=reasons.runtime.OUT_OF_CORE_TEMP_DISK_EXCEEDED,
@@ -175,7 +173,8 @@ def stage_typed_sources(
                         if writer is not None:
                             writer.close()
                 finally:
-                    sink.close()
+                    with _scratch_write():
+                        sink.close()
         if max_bytes is not None:
             check_temp_disk_budget(root, max_bytes=max_bytes)
         if reader is None:
