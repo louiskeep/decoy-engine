@@ -20,7 +20,6 @@ from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.pipeline import _subset_stage as stage_mod
 from decoy_engine.subset import (
     SubsetError,
-    SubsetInternalError,
     SubsetRequest,
     plan_subset,
     run_subset,
