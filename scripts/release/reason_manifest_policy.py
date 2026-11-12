@@ -25,9 +25,8 @@ from packaging.version import Version
 
 _SEMANTIC_FIELDS = ("namespace", "code", "kind", "rules", "owner", "context", "since")
 SCHEMA_ROOTS = ("reason_schema_version", "event_schema_version")
-# A bare X.Y.Z in a summary goes stale when a slice is renumbered. Not preceded by a word
-# character or dot, not followed by a word character or ".<digit>" (so "9.9.0." ends a sentence
-# while "9.9.0.1" and "9.9.0beta" are not versions).
+# A bare X.Y.Z in a summary goes stale when a slice is renumbered. No word character or dot before
+# it, no word character or ".<digit>" after ("9.9.0." ends a sentence; "9.9.0.1" is no version).
 VERSION_LITERAL = re.compile(r"(?<![\w.])\d+\.\d+\.\d+(?!\w|\.\d)")
 _FIXTURE_NAME = re.compile(r"reason-manifest-v(\d+)\.(\d+)-([a-z0-9-]+)\.json")
 FIXTURE_GLOB = "reason-manifest-v*-*." + "json"  # built apart: a sentry scans for .json literals
@@ -35,6 +34,7 @@ FIXTURE_FLOOR = "1.5.0"  # fixed: the last minor that shipped without a fixture 
 
 UNRELEASED = "unreleased"  # decoy_engine.reasons.UNRELEASED: a `since` no release stamped yet
 LAST_PER_PR_MINOR = "1.24.0"  # the last minor the old per-PR process made; not a moving version
+_FIX = "; run scripts/dev/registry_renumber.py --to-unreleased"  # the fix for a numeric bump
 PENDING_ARGUMENTS = ("since", "deprecated_in")  # catalog arguments that may be UNRELEASED
 # The two accepted pending edits to a released reason and the fields each may change before the
 # release stamp. Every pin, stamp and renumber decision reads this one descriptor.
@@ -459,11 +459,11 @@ def allowed_registry_version(pin: Mapping) -> str:
 
 def unreleased_violations(live: dict, pin: Mapping, fixture_names: Iterable[str] = ()) -> list[str]:
     allowed = Version(allowed_registry_version(pin))
-    out = [f"registry_version {live['registry_version']} is not the allowed {allowed}"] * (
+    out = [f"registry_version {live['registry_version']} is not the allowed {allowed}{_FIX}"] * (
         Version(live["registry_version"]) != allowed
     )
     out += [
-        f"{e['namespace']}.{e['code']}: since {e['since']} is above the allowed {allowed}"
+        f"{e['namespace']}.{e['code']}: since {e['since']} is above the allowed {allowed}{_FIX}"
         for e in live["entries"]
         if not is_pending(e["since"]) and Version(e["since"]) > allowed
     ]
