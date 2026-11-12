@@ -368,3 +368,87 @@ the checks; no conflict. It touches `execution/out_of_core/_multi_parent.py`, no
 entry. After it: `--check` exit 0; the M5 acceptance file, the route-guard, seam and module-size
 sentries, #537's new test and the out-of-core relation, streaming and FK parity tests rerun: 1677
 passed.
+
+## Fix round 1 (review of `d862aab9`, 2026-11-12)
+
+The three MEDIUM items of the "Fix round 1 for #508" list, on top of `d862aab9`, with no merge of
+main. The four LOW items are logged for V2 by the reviewer and are not touched here (LOW-4, the
+untyped `**kwargs` on the cores, closes with item 1).
+
+Red first: `870082e1` (tests only). Every failure an `AssertionError`:
+
+- Item 1, `tests/unit/execution/test_scanml_m5_single_preread.py`:
+  `test_a_pre_read_step_added_to_the_core_runs_on_the_public_entry[run_mask_chunked]` and
+  `[run_mask_pipeline_chunked]` (a probe wrapped around the core records whether the public entry
+  reached it before a chunk was pulled; the entries ran their own copy, so the probe saw nothing),
+  and `test_the_core_takes_exactly_the_public_entry_parameters[...]` for both (each core took
+  `**kwargs`).
+- Item 2, `tests/sentry/source_config/test_declaration_gate.py`:
+  `test_each_route_calls_a_read_it_guards` (the `run_mask_pipeline_chunked` row named
+  `_oracle_preflight`, which that function no longer calls), and the seeded
+  `test_moving_the_read_above_the_gate_in_a_lane_core_makes_the_walk_fail[...]` and
+  `test_dropping_the_gate_from_a_lane_core_makes_the_walk_fail[...]` for both cores ("the lane core
+  ... is not in ROUTES").
+- Item 3, `tests/sentry/test_post_scan_route_guard.py`:
+  `test_caller_checker_resolves_each_spelling[import_as]`,
+  `test_resident_lane_checker_resolves_each_spelling[import_as]` and
+  `test_checkers_follow_a_re_binding_of_an_alias`. The `attribute`, `module_import_as` and
+  `from_import` spellings already passed on the bare-name matcher and stay as seeded cases.
+
+Fixes:
+
+- `7680a078`, item 1. `run_mask_chunked` is the route guard and `return _core.mask_chunked(...)`;
+  `run_mask_pipeline_chunked` is the route guard and `return
+  _chunked_oracle._mask_pipeline_chunked(...)`, each with a lazy import (each core module imports
+  its entry module at load time). The subset check, the thread check (native) and the declaration
+  gate now exist only in the cores, which take the entry's exact typed parameters. The cores still
+  reach the gate through the entry modules (`_chunked_entry.prepare_declared_execution_sources`,
+  `_chunked.prepare_declared_execution_sources`), the seam #495's and #514's tests patch; both
+  entry modules keep that name as an explicit `as` re-export so ruff does not drop it.
+  `test_subset_run_guard_entries.py` required `refuse_unapplied_subset` in the body of both
+  entries; it now maps each to its core (`IN_CORE`) and checks that the entry returns that core and
+  the core calls the guard, so the check is as strict as before. The secret-material census,
+  re-derived with `--write`, moves two line numbers only (`_chunked_entry.py` 266 to 262,
+  `_chunked_oracle.py` 264 to 265); no entry is added or removed.
+- `ebd7945f`, item 2. `ROUTES` drops the vacuous `run_mask_pipeline_chunked` and the
+  `run_mask_chunked` rows (neither entry calls the gate any more) and lists the two cores:
+  `("execution/_chunked_oracle.py", "_mask_pipeline_chunked"): {"_mask_declared"}` and
+  `("execution/native/chunked/_core.py", "mask_chunked"): {"_run_chunked"}`. The
+  `run_native_or_oracle_chunked` row is unchanged. A classification change, no count moved. The
+  alias resolver moves from this file to `tests/sentry/_call_resolution.py`, unchanged.
+- `cbd52d4a`, item 3. The guard sentry's caller and resident-lane checks use the same resolver
+  (import aliases, plain re-bindings, attribute calls). `_run_sequential` leaves `CONFIG_CALLEES`:
+  it was the `_pandas_adapter.py` alias of `run_sequential`, which the resolver now follows. With
+  aliases resolved, no new caller is flagged: `physical/drivers/_chunked.py:33` aliases
+  `run_mask_chunked`, which is a guarded public entry, not a `CONFIG_CALLEES` name, and that module
+  is not a `run_pipeline` module, so neither check applies to it. No `EXEMPT` row was added.
+
+`run_native_or_oracle_chunked` has no guard-free core and no second copy of its steps: nothing
+else runs its sequence (subset check, transforms refusal, its declaration gate without
+`file_access`, `_run_chunked` with `enforce_schema_rule=False`), so it is unchanged.
+
+Checks on `cbd52d4a` (the fix head before this record; this record commit changes docs only):
+
+- `uv sync --frozen --extra dev --extra lint`, `GATES_WORKERS=2 scripts/dev/gates.sh --baseline
+  --steps ruff,format,mypy`: ruff PASS, format PASS, mypy 4 errors, the same 4 on main, no
+  branch-only error.
+- `python scripts/dev/ratchet_check.py --base c34d251d` (the merge base with `origin/main`): exit
+  0, no finding. `python scripts/dev/check_fragment.py --base c34d251d`: exit 0.
+- `GATES_WORKERS=2 scripts/dev/gates.sh --baseline --steps sentry,layers,licenses,tests <186
+  paths>` (the recipe above), baseline origin/main `75b81efe`: sentry 5205 passed, 3 failed, 21
+  errors (main 5256, 3, 31); layers 15 passed; licenses 63 passed; tests 14957 passed, 2 failed,
+  21 errors, 2717 skipped (main 15034, 2, 31, 2717). Failing ids: branch 24, main 34, branch-only
+  0. The 10 main-only ids are `test_outbound_clients.py` s3 cases that main added after this
+  branch's merge base (no `google`); none is a main failure that passes here. Collected: branch
+  17697, main 17784; main is ahead of this branch by #539, #531, #529, #488 and #540, so the
+  counts do not compare one to one.
+- Mutations (command as under "Mutations", plus
+  `tests/unit/execution/test_scanml_m5_single_preread.py`): M-M5a 4 red, M-M5a2 2 red, M-M5a3 11
+  red, the same ids as before. M-M5a4, re-expressed for the entry and core shape (the dispatcher
+  lane calls the public entry, which now runs the guard and returns the same core:
+  `_core.mask_chunked(` to `_core._chunked_entry.run_mask_chunked(` in `_run_dispatcher`): 2 red,
+  `test_run_pipeline_auto_chunk_lane_runs_model_post_scan_configs_as_on_main[dispatcher]` and
+  `test_run_pipeline_modules_never_call_a_guarded_chunked_entry`. M-M5a4b, the same lane fault
+  through the core (the route guard moved into `_core.mask_chunked`): 1 red, the dispatcher test.
+
+The V2-LOG line about the cores repeating their entries' pre-read steps is closed by item 1.
