@@ -63,8 +63,10 @@ from decoy_engine.detection._scoring import (  # noqa: F401  re-exported constan
     NAME_HINT_MIN_RATE,
     SAMPLE_MISS_LIMIT,
     PreparedValues,
+    _confidence_bucket,
     _evaluate,
     _series_str,
+    counting_scope,
     prepared_scope,
 )
 from decoy_engine.detection._validators import (

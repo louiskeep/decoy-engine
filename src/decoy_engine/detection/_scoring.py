@@ -14,6 +14,7 @@ import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -82,6 +83,25 @@ def prepared_scope(series: pd.Series) -> Iterator[None]:
         yield
     finally:
         _SCOPE.reset(token)
+
+
+class DetectorCount(NamedTuple):
+    """One detector's tally over one column before the threshold test."""
+
+    detector_id: str
+    hits: int
+    n: int
+    threshold: float
+    name_hint: bool
+
+
+_COUNTS: ContextVar[list[DetectorCount] | None] = ContextVar("detector_count_scope", default=None)
+
+
+@contextmanager
+def counting_scope() -> Iterator[list[DetectorCount]]:
+    """STUB."""
+    yield []
 
 
 def _series_str(series: pd.Series) -> PreparedValues:

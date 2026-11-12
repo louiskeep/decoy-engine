@@ -425,3 +425,8 @@ def _child_facts(conn: Any, width: int, on: str) -> ChildKeyFacts:
     keys = ", ".join(f"c.{label}" for label in _labels(width))
     orphan_keys = _count(conn, f"SELECT count(*) FROM (SELECT DISTINCT {keys} {orphans})")
     return ChildKeyFacts(rows, rows - complete_rows, orphan_rows, orphan_keys)
+
+
+def column_distinct(batches: pa.RecordBatchReader, *, scratch: Path, memory_limit: str) -> int:
+    """STUB."""
+    return -1
