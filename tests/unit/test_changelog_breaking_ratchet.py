@@ -32,6 +32,9 @@ _KEY_CHARS = 60
 
 # (release, the entry's first 60 normalized characters) -> why it is not a separate break.
 TRIAGED: dict[tuple[str, str], str] = {
+    ("0.23.0", "`decoy_engine.connectors` exports `S3ObjectStore`, `ObjectSt"): (
+        "new classes; the match is `rejected` as a put_if result name, not a refusal"
+    ),
     ("0.23.0", "- `VaultWriter`, `load_vault` and the run-entry key-match gu"): (
         "Breaking: a vault opens and writes only under the 32-byte mask root"
     ),
