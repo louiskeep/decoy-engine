@@ -5,7 +5,7 @@
 # `dir_category` (protected_root, protected_child, output_parent, published_output, non_row) and
 # `dir_test` (an existing pytest node id; every category but protected_root) mark directory
 # creators for tests/sentry/protected_dir (G-ONE-PROTECTED-DIR).
-# Count: 202 (asserted by the sentry).
+# Count: 190 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -75,61 +75,6 @@ reason = "F29 cleanup evidence: after abort the sink confirms by looking that it
 
 [[entry]]
 module = "decoy_engine/execution/_isolated_commit.py"
-function = "stage_tables"
-sink = "Path.mkdir"
-ordinal = 0
-dir_category = "output_parent"
-dir_test = "tests/unit/execution/test_isolated_run.py::TestInProcessFallbackHonorsOutputDir::test_isolate_false_honors_output_dir_and_commits_atomically"
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_commit.py"
-function = "stage_tables"
-sink = "pyarrow.parquet.write_table"
-ordinal = 0
-disposition = "public"
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_commit.py"
-function = "atomic_commit"
-sink = "Path.mkdir"
-ordinal = 0
-dir_category = "output_parent"
-dir_test = "tests/unit/execution/test_isolated_run.py::TestCommitFailureIsClassified::test_pre_existing_non_empty_target_is_classified_not_a_raw_oserror"
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_commit.py"
-function = "atomic_commit"
-sink = "os.replace"
-ordinal = 0
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_commit.py"
-function = "read_staged_row_errors"
-sink = "Path.read_text"
-ordinal = 0
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_commit.py"
 function = "read_envelope"
 sink = "Path.read_text"
 ordinal = 0
@@ -146,39 +91,6 @@ ordinal = 0
 rule = "`/proc/<pid>/status` or `/proc/self/status`, a constant procfs path"
 owner = "cam"
 reason = "process memory readout for the governor; no caller or config value reaches the path"
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_run.py"
-function = "_run_in_process"
-sink = "shutil.rmtree"
-ordinal = 0
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_run.py"
-function = "_write_payload"
-sink = "Path.mkdir"
-ordinal = 0
-dir_category = "protected_child"
-dir_test = "tests/unit/execution/test_isolated_run.py::TestPayloadFilePermissions::test_payload_json_is_written_0600"
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_run.py"
-function = "_write_payload"
-sink = "pyarrow.parquet.write_table"
-ordinal = 0
-disposition = "private"
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
 
 [[entry]]
 module = "decoy_engine/execution/_isolated_run.py"
@@ -221,90 +133,10 @@ reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail
 ambient_only = true
 
 [[entry]]
-module = "decoy_engine/execution/_isolated_run.py"
-function = "_commit"
-sink = "pyarrow.parquet.read_table"
-ordinal = 0
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_run.py"
-function = "_commit"
-sink = "shutil.rmtree"
-ordinal = 0
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_run.py"
-function = "_commit"
-sink = "shutil.rmtree"
-ordinal = 1
-rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
-owner = "cam"
-reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
-ambient_only = true
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_worker.py"
-function = "_write_envelope_file"
-sink = "Path.write_text"
-ordinal = 0
-disposition = "private"
-rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
-owner = "cam"
-reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
-
-[[entry]]
 module = "decoy_engine/execution/_isolated_worker.py"
 function = "_load_sources"
 sink = "pyarrow.parquet.read_table"
 ordinal = 0
-rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
-owner = "cam"
-reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_worker.py"
-function = "_stage_outputs"
-sink = "os.makedirs"
-ordinal = 0
-dir_category = "protected_child"
-dir_test = "tests/unit/execution/test_isolated_run.py::TestNormalJobCompletes::test_small_job_completes_with_correct_artifacts_and_plausible_peak"
-rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
-owner = "cam"
-reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_worker.py"
-function = "_stage_outputs"
-sink = "pyarrow.parquet.write_table"
-ordinal = 0
-disposition = "private"
-rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
-owner = "cam"
-reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_worker.py"
-function = "_finalize_outputs"
-sink = "Path.glob"
-ordinal = 0
-rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
-owner = "cam"
-reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
-
-[[entry]]
-module = "decoy_engine/execution/_isolated_worker.py"
-function = "_stage_row_errors"
-sink = "open"
-ordinal = 0
-disposition = "private"
 rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
 owner = "cam"
 reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
@@ -1946,3 +1778,45 @@ ordinal = 0
 rule = "a validated component under a held arena descriptor, or the arena's own root name under its held base descriptor"
 owner = "cam"
 reason = "`StageDir.remove` of a directory, removal of a child that failed its mode check, and the root at reclaim"
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_commit.py"
+function = "_own"
+sink = "os.open"
+ordinal = 0
+disposition = "read"
+rule = "the publication stage this parent opened beside the caller's output_dir (`OutputTxn.local_stage_path()` of its own `begin`), or the engine-made staging under its work root, or a payload source file it just wrote there; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "F22 class 6 and V1-b: the parent repairs the mode of what it admits from the untrusted child through the entry's own descriptor (no link followed) and reads the admitted tables back; a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_commit.py"
+function = "collect"
+sink = "pyarrow.parquet.read_table"
+ordinal = 0
+rule = "the publication stage this parent opened beside the caller's output_dir (`OutputTxn.local_stage_path()` of its own `begin`), or the engine-made staging under its work root, or a payload source file it just wrote there; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "F22 class 6 and V1-b: the parent repairs the mode of what it admits from the untrusted child through the entry's own descriptor (no link followed) and reads the admitted tables back; a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_run.py"
+function = "_result_from_envelope"
+sink = "shutil.rmtree"
+ordinal = 1
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_worker.py"
+function = "_StagingSink.__init__"
+sink = "os.makedirs"
+ordinal = 0
+dir_category = "protected_child"
+dir_test = "tests/unit/execution/test_isolated_run.py::TestNormalJobCompletes::test_small_job_completes_with_correct_artifacts_and_plausible_peak"
+rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
+owner = "cam"
+reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"

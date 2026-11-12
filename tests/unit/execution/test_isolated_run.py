@@ -470,7 +470,7 @@ class TestInProcessFallbackHonorsOutputDir:
         assert output_dir.exists()
         assert (output_dir / "customers.parquet").exists()
         # No leftover staging directory next to the committed target.
-        assert not list(output_dir.parent.glob("_decoy_isolated_stage_*"))
+        assert not list(output_dir.parent.glob("._decoy_publication_pending_*"))
 
 
 # --------------------------------------------------------------------------
@@ -525,7 +525,7 @@ class TestCommitFailureIsClassified:
         # survive completely untouched.
         assert (output_dir / "preexisting.txt").read_text() == "do not clobber me"
         # No orphaned staging directory left outside work_root.
-        assert not list(output_dir.parent.glob("_decoy_isolated_stage_*"))
+        assert not list(output_dir.parent.glob("._decoy_publication_pending_*"))
 
 
 # --------------------------------------------------------------------------
@@ -635,7 +635,7 @@ class TestGovernorKillAfterStagingLeavesNoPartialOutput:
 
         def _kill_after_staged(pid: int) -> None:
             deadline = time.monotonic() + 20.0
-            staging_glob = str(output_dir.parent / "_decoy_isolated_stage_*")
+            staging_glob = str(output_dir.parent / "._decoy_publication_pending_*")
             while time.monotonic() < deadline and not staged_seen.is_set():
                 for match in glob.glob(staging_glob):
                     if list(Path(match).glob("*.parquet")):
@@ -660,7 +660,7 @@ class TestGovernorKillAfterStagingLeavesNoPartialOutput:
         assert result.outcome != "completed"
         assert result.committed_output_dir is None
         assert not output_dir.exists()
-        assert not list(output_dir.parent.glob("_decoy_isolated_stage_*"))
+        assert not list(output_dir.parent.glob("._decoy_publication_pending_*"))
 
 
 # --------------------------------------------------------------------------

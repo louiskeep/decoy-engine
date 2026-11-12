@@ -42,6 +42,8 @@ from decoy_engine.validation_result import CODES
 if TYPE_CHECKING:
     import pyarrow as pa
 
+    from decoy_engine.publication import CommitReceipt
+
 __all__ = [
     "ISOLATED_WORKER_ENV",
     "RESULT_FILENAME",
@@ -250,13 +252,11 @@ def exception_error_text(exc: BaseException) -> str:
     return head
 
 
-def commit_error_text(exc: BaseException) -> str:
-    """Safe text for a failed output commit; the message holds the output path and OS text."""
-    cause = exc.__cause__
-    code = cause.errno if isinstance(cause, OSError) else None
-    errno_name = errno.errorcode.get(code, "") if code is not None else ""
-    detail = f" (errno={errno_name})" if errno_name else ""
-    return f"{type(exc).__name__}: staged output could not be committed{detail}"
+def commit_error_text(receipt: CommitReceipt) -> str:
+    """Safe text for an output publication that did not commit: the receipt's outcome, its
+    registered code and errno name, never a path, table name or OS message (F22 G5)."""
+    detail = f" (errno={receipt.os_error})" if receipt.os_error else ""
+    return f"publication {receipt.outcome}: {receipt.reason_code}{detail}"
 
 
 def abnormal_exit_reason(returncode: int, stderr: str) -> str:
@@ -383,6 +383,9 @@ class IsolatedRunResult:
     # The structured reason of a failed run (F29): validated registry identity, phase, retry class,
     # outcome and closed context. `None` for a completed run. Carries no message or class name.
     reason: ReasonRecord | None = None
+    # F22: the publication receipt when `output_dir` was given (published, already committed, or
+    # the outcome that kept the run from completing); None otherwise.
+    publication_receipt: CommitReceipt | None = None
     # Driver-side memory sampling of a capped isolated run; a suspicion beside an unchanged
     # outcome, never a verdict. None for uncapped and in-process runs. Stays the last field.
     memory_evidence: MemoryEvidence | None = None

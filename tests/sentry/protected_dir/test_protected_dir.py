@@ -130,10 +130,7 @@ def test_no_protected_root_row_is_pending() -> None:
 
 def test_the_other_rows_have_their_expected_categories() -> None:
     expect = {
-        "decoy_engine/execution/_isolated_run.py::_write_payload::Path.mkdir::0": "protected_child",
-        "decoy_engine/execution/_isolated_worker.py::_stage_outputs::os.makedirs::0": "protected_child",
-        "decoy_engine/execution/_isolated_commit.py::stage_tables::Path.mkdir::0": "output_parent",
-        "decoy_engine/execution/_isolated_commit.py::atomic_commit::Path.mkdir::0": "output_parent",
+        "decoy_engine/execution/_isolated_worker.py::_StagingSink.__init__::os.makedirs::0": "protected_child",
         "decoy_engine/connectors/postgres_snapshot.py::snapshot_tables_to_parquet::Path.mkdir::0": "output_parent",
         "decoy_engine/connectors/postgres_snapshot.py::snapshot_tables_to_parquet::Path.mkdir::1": "published_output",
         "decoy_engine/fileaccess/_local.py::_LocalStageDir.create_dir::Path.mkdir::0": "published_output",

@@ -69,8 +69,8 @@ elif plant == "symlink":
     os.symlink(stage.parent / "elsewhere.parquet", stage / "t.parquet")
 elif plant == "missing_table":
     os.unlink(stage / "t.parquet")
-elif plant == "bad_name":
-    pass
+elif plant == "broad_mode":
+    os.chmod(stage / "t.parquet", 0o644)  # readable, but wider than a unit file may be
 marker = os.environ.get("DECOY_TEST_F22_MARKER")
 if marker:
     Path(marker).write_text(plant or "none")
@@ -118,7 +118,7 @@ def umask_isolated_case(spec_path: str) -> None:
     if spec.get("fake_dir"):
         existing = os.environ.get("PYTHONPATH", "")
         os.environ["PYTHONPATH"] = spec["fake_dir"] + (os.pathsep + existing if existing else "")
-        os.environ[PLANT_ENV] = ""
+        os.environ[PLANT_ENV] = "broad_mode"
         _isolated_run._WORKER_MODULE = "f22_fake_worker"
     try:
         result = run_pipeline_isolated(

@@ -1,11 +1,13 @@
 """`test_umask_0477_first_attempt_publishes`, isolated part (plan 5.7, 7.2 V1-b; slice c2).
 
 Under umask `0o477` a plain new file is born `0o200`: unreadable to its owner. One attempt of
-the isolated route, the child under the same umask, publishes: the parent repairs each staged
-entry it admits to `0600` (and the stage to `0700`) before it measures, so the bound unit's
-files are `0600` and its directory `0700`. Two children: the real worker, and a fake that
-stages by a plain path write (an untrusted producer's file keeps the umask's `0o200`). Runs
-under any uid; as root the mode assertions carry the case.
+the isolated route, the child under the same umask, publishes: the parent writes the payload
+sources owner-only, the real child stages owner-only files, and the parent sets each staged
+entry it admits to `0600` (and the stage to `0700`) through the entry's own descriptor before it
+measures, so the bound unit's files are `0600` and its directory `0700`. The second child is a
+fake producer that leaves its table `0644` (readable, wider than a unit file may be): the
+parent narrows it. A producer file its owner cannot read is refused, not repaired
+(`test_isolated_parent_measures`). Run under uid 0 and uid 65534.
 
 Red before c2 (start commit `f9054196`): the unit holds the child's files with the child's
 modes and no descriptor, and the parent has no receipt.

@@ -59,6 +59,9 @@ def test_isolated_parent_measures(
     assert receipt is not None
     assert (receipt.outcome, receipt.reason_code) == ("failed", "publication_failed")
     assert (receipt.visible, receipt.durable) == (False, False)
+    # refused by the parent's admission, before anything was measured or a descriptor written
+    assert receipt.result_id is None and receipt.artifacts == ()
+    assert receipt.os_error == ("ELOOP" if plant == "symlink" else None)
     assert result.reason is not None and result.reason.code == "publication_failed"
     assert stages_left(out.parent) == []
 
