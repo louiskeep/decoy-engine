@@ -98,6 +98,7 @@ ENTRY_POINTS: tuple[str, ...] = (
     "decoy_engine.reference_tables._loader.load_table",
     "decoy_engine.subset._api.plan_subset",
     "decoy_engine.subset._api.run_subset",
+    "decoy_engine.subset._api.select_subset",
     "decoy_engine.subset._preflight.run_subset_preflight",
     "decoy_engine.transforms._codeset_loader.load_corpus",
     "decoy_engine.transforms._codeset_loader.load_corpus_provenance",
