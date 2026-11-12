@@ -16,9 +16,9 @@ vaulted source value. A vault is never keyed on the public job seed:
 every key that writes, opens or is matched against a vault must be at
 least `keyprovider.MIN_SECRET_BYTES` (the 32-byte mask root), checked at
 construction and again at every write, load and key-match, because an
-8-byte public seed gives a KDF nothing to amplify. Store the vault and the config separately,
-with the handling the source data itself would get; never ship a
-vault alongside its masked output. The encryption is
+8-byte public seed gives a KDF nothing to amplify. Store the vault and
+the config separately, with the handling the source data itself would
+get; never ship a vault alongside its masked output. The encryption is
 Fernet from the `cryptography` package (AES-128-CBC + HMAC-SHA256,
 encrypt-then-MAC, per the published Fernet spec) -- an audited AEAD
 construction rather than anything hand-rolled, per the engine's
@@ -30,17 +30,17 @@ The function-local imports below predate that promotion and stay as
 defense in depth against a future split, not a live degrade path.
 
 Key model. One key per job, domain-separated from every other engine
-derivation by a fresh label: `derive(mask_key, "vault",
-b"vault-key/v1")` (HKDF-style HMAC-SHA256 expansion, RFC 5869 model;
-the same envelope FPE keys use with their own label). `mask_key` is
-the run's keyed-mask IKM -- the 32-byte `SecretKeyProvider` HKDF root
-of the configured secret (DE-02) -- so the vault is bound to the run's
-masking key, never the public seed. A vault written by an older engine
-under the 8-byte `job_seed` no longer opens and is regenerated, together
-with its masked output, under a secret (pre-GA hard delete; no migration). `derive` mixes `SEED_PROTOCOL_VERSION` into the
-key, so a vault written under one protocol version is undecryptable
-under another. The `decoy-vault/v2` file format stamps that version in
-its unencrypted header, so a cross-version load fails with a clear
+derivation by a fresh label: `derive(mask_key, "vault", b"vault-key/v1")`
+(HKDF-style HMAC-SHA256 expansion, RFC 5869 model; the same envelope FPE
+keys use with their own label). `mask_key` is the run's keyed-mask IKM --
+the 32-byte `SecretKeyProvider` HKDF root of the configured secret (DE-02)
+-- so the vault is bound to the run's masking key, never the public seed. A
+vault written by an older engine under the 8-byte `job_seed` no longer opens
+and is regenerated, together with its masked output, under a secret (pre-GA
+hard delete; no migration). `derive` mixes `SEED_PROTOCOL_VERSION` into the
+key, so a vault written under one protocol version is undecryptable under
+another. The `decoy-vault/v2` file format stamps that version in its
+unencrypted header, so a cross-version load fails with a clear
 `vault_protocol_version_mismatch` rather than an opaque key error.
 
 File format (`decoy-vault/v2`). Magic, then a length-prefixed
@@ -278,11 +278,14 @@ class VaultWriter:
         secret. `run_pipeline` calls this against the run's resolved `mask_key`
         before any masking. Constant-time compare; never echoes the key bytes.
 
-        The writer's own key is revalidated first: a non-keyed run's key is the
-        8-byte `job_seed`, and a writer whose key drifted to it would otherwise match.
+        Both keys are held to the floor first: a non-keyed run's key is the 8-byte
+        `job_seed`, so a writer whose key drifted to it would otherwise match, and a
+        strong writer checked against it is refused as `weak_mask_secret`, the same
+        code a weak writer gets, not as a key mismatch.
         """
         try:
             _require_vault_key(self._mask_key)
+            _require_vault_key(mask_key)
             if not hmac.compare_digest(self._mask_key, mask_key):
                 raise VaultError(
                     code=reasons.runtime.VAULT_KEY_MISMATCH,
@@ -562,8 +565,8 @@ def load_vault(
             raise VaultError(
                 code=reasons.runtime.VAULT_KEY_MISMATCH,
                 message=(
-                    "the config's seed does not decrypt this vault; pass the SAME "
-                    "pipeline config the mask run that wrote the vault used."
+                    "the key does not decrypt this vault; open it with the mask secret "
+                    "of the run that wrote it."
                 ),
             ) from exc
         chunk = pq.read_table(pa.BufferReader(payload))
