@@ -16,24 +16,25 @@
 name: docs
 
 on:
-  # Manual dispatch only. gate-selfhosted.yml is the merge gate; the paid runners
-  # fire on demand so they stop failing every push (X0a). Old triggers: git history.
+  # No push trigger while deploy is off (vars.DOCS_DEPLOY unset): a main push would only rebuild
+  # the tree the PR already built. Enabling deploy re-adds push to main (docs/ci-regression-gate.md).
+  pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # The build job gets read-only contents; only deploy holds the Pages scopes.
 permissions:
   contents: read
 
-# Serialize concurrent deploys; cancel-in-progress=false so an in-flight
-# deploy isn't aborted mid-write (which can leave Pages in a half-deployed
-# state).
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
 jobs:
   build:
+    # A literal name: the PR check context must not collide with a push-only job's.
+    name: docs-build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -61,6 +62,12 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DOCS_DEPLOY == 'true'
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Serialize deploys; cancel-in-progress=false so an in-flight deploy is not aborted mid-write
+    # (which can leave Pages half-deployed). Only deploy holds the group, so PR builds never queue.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     permissions:
       pages: write
       id-token: write

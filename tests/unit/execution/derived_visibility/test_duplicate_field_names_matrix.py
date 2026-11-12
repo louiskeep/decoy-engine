@@ -31,7 +31,7 @@ from decoy_engine.execution import _guards
 from decoy_engine.execution._transforms import TransformError
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.reason_adapter import reason_from_exception
-from tests._declared_schema import declare_rest
+from tests._declared_schema import chunked_entry_kwargs, declare_rest
 from tests._keyed_secret import THROWAWAY_SECRET
 from tests.unit.execution._transform_testkit import ENGINE_VERSION, fk_config
 
@@ -50,7 +50,7 @@ def _parent() -> pa.Table:
 
 
 def _child(*, dup: str | None) -> pa.Table:
-    """`cid, parent_id, qty, <dup or other>, q2`; `dup` names the repeated field."""
+    """`cid, parent_id, qty, other, q2`, then `dup` (the repeated field) when given."""
     n = 12
     cols = {
         "cid": pa.array([f"c{i}" for i in range(n)]),
@@ -59,15 +59,17 @@ def _child(*, dup: str | None) -> pa.Table:
     }
     arrays = list(cols.values())
     names = list(cols)
-    second = (
-        pa.array([f"p{i % 6}" for i in range(n)])
-        if dup == "parent_id"
-        else pa.array([float(-i) for i in range(n)])
-    )
-    arrays.append(second)
-    names.append(dup or "other")
+    arrays.append(pa.array([float(-i) for i in range(n)]))
+    names.append("other")
     arrays.append(pa.array([0.0] * n))
     names.append("q2")
+    if dup:
+        arrays.append(
+            pa.array([f"p{i % 6}" for i in range(n)])
+            if dup == "parent_id"
+            else pa.array([float(-i) for i in range(n)])
+        )
+        names.append(dup)
     return pa.Table.from_arrays(arrays, names=names)
 
 
@@ -487,6 +489,10 @@ def _isolated(
         descriptor, runtime = (_child(dup=dup) if dup else clean), clean
     else:
         descriptor, runtime = clean, (child if child is not None else _child(dup=dup))
+        if child is not None:  # the descriptor must name `iv` too; only names are read
+            descriptor = child.set_column(
+                child.schema.get_field_index("iv"), "iv", pa.array(["x"] * child.num_rows)
+            )
     cfg = _config(tmp_path, cell.work, descriptor)
     tables = {"parent": _parent(), "child": runtime}
     declare_rest(cfg, tables)
@@ -639,17 +645,22 @@ def test_isolated_loader_is_config_first(isolate: bool, tmp_path: Path, spies: S
 # ---------------------------------------------------------------- E4 / E5 chunked entries
 
 
+def _passthrough(*names: str) -> list[dict[str, Any]]:
+    """Passthrough entries for the columns of the chunks that the work column leaves out."""
+    return [{"name": n, "strategy": "passthrough"} for n in names]
+
+
 def _chunked_config(work: str) -> dict[str, Any]:
     from tests.native._chunked_entry_support import make_config, redact, truncate
 
     cols: dict[str, list[dict[str, Any]]] = {
-        "redact": [redact("qty")],
-        "truncate": [truncate("s")],
+        "redact": [redact("qty"), *_passthrough("s", "q2")],
+        "truncate": [truncate("s"), *_passthrough("qty", "q2")],
         "derived": [
             {"name": "qty", "strategy": "passthrough"},
             {"name": "q2", "strategy": "derived", "provider_config": {"expression": "qty * 2"}},
         ],
-        "transform": [redact("qty")],
+        "transform": [redact("qty"), *_passthrough("s", "q2")],
     }
     cfg = make_config(cols[work])
     if work == "transform":
@@ -690,8 +701,14 @@ def _entry(entry: str) -> Any:
 def _drive(entry: str, cfg: dict[str, Any], chunks: Any, sink: list[pa.Table]) -> None:
     from tests.native._chunked_entry_support import key_provider
 
-    out = _entry(entry)(
-        cfg, chunks, table="t", engine_version=ENGINE_VERSION, key_provider=key_provider()
+    fn = _entry(entry)
+    out = fn(
+        cfg,
+        chunks,
+        table="t",
+        engine_version=ENGINE_VERSION,
+        key_provider=key_provider(),
+        **chunked_entry_kwargs(fn, cfg, "t"),
     )
     for chunk in out:
         sink.append(chunk)

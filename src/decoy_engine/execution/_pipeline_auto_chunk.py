@@ -257,6 +257,7 @@ def _run_legacy(
                 chunks_in,
                 table=table,
                 engine_version=engine_version,
+                source_schema=source.schema,
                 registry=registry,
                 adapter=adapter,
                 vault_writer=vault_writer,

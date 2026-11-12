@@ -334,6 +334,13 @@ _MUTANTS: dict[str, str] = {
     "module_constant": """
         MY_CODE = "adhoc_constant"
     """,
+    # The fallback of a registry-backed code table (the FPE handler's unregistered default).
+    "code_table_default": """
+        from decoy_engine import reasons
+        _ROUTES = {"a": reasons.runtime.CYCLIC_WORK_ORDERING}
+        def f(key):
+            return _ROUTES.get(key, "adhoc_default")
+    """,
     "unchecked_forward": """
         from decoy_engine.errors import ExecutionError
         def f(code):
@@ -394,6 +401,9 @@ _CLEAN = """
         raise ExecutionError(code=MY_CODE)
     def h():
         return {"code": reasons.runtime.CYCLIC_WORK_ORDERING}
+    _ROUTES = {"a": reasons.runtime.CYCLIC_WORK_ORDERING}
+    def k(key):
+        return _ROUTES.get(key, reasons.runtime.CYCLIC_WORK_ORDERING)
 """
 
 
