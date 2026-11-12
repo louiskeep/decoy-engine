@@ -147,6 +147,7 @@ class StrategyKind(str, Enum):
     GROUPED_SERIES = "grouped_series"
     HASH = "hash"
     JOINT_MASK = "joint_mask"
+    LOOKUP = "lookup"
     NESTED = "nested"
     PASSTHROUGH = "passthrough"
     REDACT = "redact"

@@ -276,7 +276,7 @@ def require_disk(
     mandatory_staging_bytes: int,
     estimated_output_bytes: int,
 ) -> None:
-    """Fail closed (`out_of_core_reorder_budget_too_small`) unless
+    """Fail closed (`out_of_core_reorder_disk_budget_too_small`) unless
     `budgets.remaining_disk_bytes` can cover this edge's full disk ledger.
 
     Required disk = `mandatory_staging_bytes` (caller-measured: child keys +
@@ -291,7 +291,7 @@ def require_disk(
     required_bytes = mandatory_staging_bytes + 3 * estimated_output_bytes
     if required_bytes > budgets.remaining_disk_bytes:
         raise ExecutionError(
-            code=reasons.runtime.OUT_OF_CORE_REORDER_BUDGET_TOO_SMALL,
+            code=reasons.runtime.OUT_OF_CORE_REORDER_DISK_BUDGET_TOO_SMALL,
             message=(
                 f"this edge needs {required_bytes} bytes of disk "
                 f"(staging={mandatory_staging_bytes} + 3x estimated output "

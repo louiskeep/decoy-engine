@@ -228,6 +228,17 @@ def _count_of(report: Any, name: str) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
+def report_unavailable(report: Any) -> bool:
+    """Whether a verification report says its check could not complete: the whole pass failed
+    (``pass_failed_with`` set; its text is never read) or a per-check error was counted."""
+    failed_with = (
+        report.get("pass_failed_with")
+        if isinstance(report, Mapping)
+        else getattr(report, "pass_failed_with", None)
+    )
+    return failed_with is not None or _count_of(report, "error_count") > 0
+
+
 def reasons_from_report(report: Any, *, enforcing: bool = False) -> tuple[ReasonRecord, ...]:
     """The reasons a verification report supports, without serializing the report.
 
@@ -237,15 +248,10 @@ def reasons_from_report(report: Any, *, enforcing: bool = False) -> tuple[Reason
     findings and is listed first; findings are ``findings_reported`` when the check only reports,
     and ``verification_failed`` when ``enforcing`` made the negative verdict binding.
     A clean report yields no reasons. Accepts the `PostMaskReport` object or its dict form."""
-    failed_with = (
-        report.get("pass_failed_with")
-        if isinstance(report, Mapping)
-        else getattr(report, "pass_failed_with", None)
-    )
     errors = _count_of(report, "error_count")
     findings = _count_of(report, "fail_count")
     out: list[ReasonRecord] = []
-    if failed_with is not None or errors > 0:
+    if report_unavailable(report):
         out.append(
             ReasonRecord.for_reason(
                 reasons.decoy.VERIFICATION_UNAVAILABLE,

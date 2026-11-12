@@ -69,7 +69,7 @@ def test_discard_is_idempotent_and_none_is_a_no_op(tmp_path: Path) -> None:
 
 
 def test_vault_write_overwrites_and_round_trips(tmp_path: Path) -> None:
-    key = b"12345678"
+    key = b"12345678" * 4
     path = tmp_path / "v.dcyvault"
     first = VaultWriter(key)
     first.add([("ns", "m1", "s1")])
@@ -82,7 +82,7 @@ def test_vault_write_overwrites_and_round_trips(tmp_path: Path) -> None:
 
 
 def test_vault_write_into_a_missing_directory_fails_with_the_os_error(tmp_path: Path) -> None:
-    writer = VaultWriter(b"12345678")
+    writer = VaultWriter(b"12345678" * 4)
     writer.add([("ns", "m", "s")])
     with pytest.raises(FileNotFoundError):
         writer.write(tmp_path / "nope" / "v.dcyvault")
@@ -90,9 +90,9 @@ def test_vault_write_into_a_missing_directory_fails_with_the_os_error(tmp_path: 
 
 def test_vault_wrong_key_is_a_typed_error(tmp_path: Path) -> None:
     path = tmp_path / "v.dcyvault"
-    writer = VaultWriter(b"12345678")
+    writer = VaultWriter(b"12345678" * 4)
     writer.add([("ns", "m", "s")])
     writer.write(path)
     with pytest.raises(VaultError) as info:
-        load_vault(path, b"87654321")
+        load_vault(path, b"87654321" * 4)
     assert info.value.code == "vault_key_mismatch"

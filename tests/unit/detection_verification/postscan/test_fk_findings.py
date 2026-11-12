@@ -291,3 +291,34 @@ def test_an_output_mismatch_over_an_unmeasured_baseline_is_an_error(
     )
     (f,) = fk({}, {}, keys=keys)
     assert (f["severity"], f["orphan_count"], f["total_child_rows"]) == ("error", 0, 0)
+
+
+FLOATS = ["float32", "Float32", "Float64"]
+
+
+def floats(values: list[float | None], dtype: str) -> pd.Series:
+    return pd.Series(values, dtype=dtype)
+
+
+@pytest.mark.parametrize("dtype", FLOATS)
+def test_a_whole_float_key_of_any_float_dtype_is_an_integer_key(dtype: str) -> None:
+    # Nullable extension floats hold a null as NA, NumPy floats as NaN; both decide the same way.
+    source = frames(p={"id": [1, 2]}, c={"pid": floats([1.0, 2.0, None], dtype)})
+    output = frames(p={"id": [1, 2]}, c={"pid": floats([1.0, 9.0, None], dtype)})
+    (f,) = fk(source, output)
+    assert (f["severity"], f["orphan_count"], f["total_child_rows"]) == ("fail", 1, 2)
+
+
+@pytest.mark.parametrize("dtype", FLOATS)
+def test_a_non_whole_float_key_of_any_float_dtype_stays_a_mismatch(dtype: str) -> None:
+    source = frames(p={"id": [1, 2]}, c={"pid": [1, 2]})
+    output = frames(p={"id": [1, 2]}, c={"pid": floats([1.0, 1.5, None], dtype)})
+    (f,) = fk(source, output)
+    assert (f["severity"], f["orphan_count"]) == ("error", 0)
+
+
+@pytest.mark.parametrize("dtype", FLOATS)
+def test_an_all_null_float_key_of_any_float_dtype_has_nothing_to_check(dtype: str) -> None:
+    data = frames(p={"id": [1, 2]}, c={"pid": floats([None, None], dtype)})
+    (f,) = fk(data, data)
+    assert (f["severity"], f["orphan_count"], f["total_child_rows"]) == ("info", 0, 0)

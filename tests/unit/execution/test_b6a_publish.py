@@ -453,14 +453,16 @@ def test_a_vault_writer_keyed_differently_is_rejected_before_anything_is_staged(
 
     cfg, src = _vault_job(tmp_path)
     sink, target = b6a.real_sink(tmp_path)
-    with pytest.raises((VaultError, ExecutionError)):
+    # A floor-valid key that is not the run's mask root, so the route's key-match guard refuses it.
+    with pytest.raises(VaultError) as err:
         b6a.run_streamed(
             cfg,
             src,
             sink,
-            vault_writer=VaultWriter((42).to_bytes(8, "big")),
+            vault_writer=VaultWriter(b"\x42" * 32),
             key_provider=SecretKeyProvider(secret=bytes(range(32)), key_version="v1"),
         )
+    assert err.value.code == "vault_key_mismatch"
     assert sink.calls == []
     _assert_clean(tmp_path, target)
 

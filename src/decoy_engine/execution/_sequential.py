@@ -391,12 +391,14 @@ def run_sequential(
     try:
         with use_collector(collector):
             for table in table_order:
+                # Started before the load so a table that fails loading reads failed, not not_run;
+                # its row count rides on the finish event.
+                _pg = get_active_channel()
+                _pg_started = _pg.phase_start("mask", table=table)
                 src = source_loader(table)
                 if cast_run is not None:
                     src = cast_run.load_table(table, src)
-                _pg = get_active_channel()
                 _pg_rows_in = src.num_rows
-                _pg_started = _pg.phase_start("mask", table=table, rows_in=_pg_rows_in)
                 # The same guard list as run(), table-local (FK children exempt via graph).
                 run_chunk_ingest_guards(plan, {table: src}, registry, graph)
                 t0 = time.perf_counter()

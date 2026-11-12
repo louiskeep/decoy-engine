@@ -9,8 +9,10 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
+from pandas.api.types import is_float_dtype
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine.config import RelationshipConfig, RelationshipEnd, parse_relationship_config
@@ -81,14 +83,18 @@ def _frame_keys(
 
 
 def _whole(key: pd.DataFrame) -> pd.DataFrame:
-    """pandas reads a nullable integer column as float64, so read a float key column whose non-null
-    values are all whole numbers (over the whole column) as Int64. Only float columns are passed:
-    `convert_dtypes` would turn a bool column into Int64 too."""
-    floats = key.select_dtypes("floating")
-    whole = floats.convert_dtypes(
-        infer_objects=False, convert_string=False, convert_boolean=False, convert_floating=False
-    )
-    return key.astype(whole.dtypes.to_dict()) if len(whole.columns) else key
+    """pandas reads a nullable integer column as float, so read a float key column (NumPy or
+    nullable extension) whose non-null values are all whole and in the Int64 range as Int64. The
+    whole column decides; every other column keeps its dtype."""
+    whole = {c: "Int64" for c, col in key.items() if is_float_dtype(col.dtype) and _integral(col)}
+    return key.astype(whole) if whole else key
+
+
+def _integral(column: pd.Series) -> bool:
+    # One NumPy view for every float dtype; a null is NaN there and is left out.
+    values = column.to_numpy(dtype="float64", na_value=np.nan)
+    values = values[~np.isnan(values)]
+    return bool(np.all((values == np.trunc(values)) & (values >= -(2.0**63)) & (values < 2.0**63)))
 
 
 def _finding(
