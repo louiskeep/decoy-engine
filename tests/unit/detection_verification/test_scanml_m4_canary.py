@@ -47,7 +47,7 @@ class _EngineLogFile:
     """`logs/decoy_engine.log` under the working directory, as the engine's file handler writes it."""
 
     def __init__(self, root: Path) -> None:
-        self.path = root / "logs" / "decoy_engine.log"
+        self.path = root / Path("logs", "decoy_engine").with_suffix(".log")
         self.path.parent.mkdir(parents=True)
         self.handler = logging.FileHandler(self.path, encoding="utf-8")
         self.handler.setLevel(logging.DEBUG)

@@ -59,7 +59,7 @@ def _columns() -> dict[str, tuple[dict[str, Any] | None, list[str], str | None]]
 def _run(mode: str) -> tuple[dict[str, Any], dict[str, Any]]:
     columns = _columns()
     out = pd.DataFrame({name: cells for name, (_, cells, _) in columns.items()})
-    out["memo"] = [f"write to user{i}@example.com" for i in range(s.CELLS)]
+    out["memo"] = [f"user{i}@example.com" for i in range(s.CELLS)]
     entries = [{"name": n, **entry} for n, (entry, _, _) in columns.items() if entry is not None]
     entries.append({"name": "memo", "strategy": "redact"})
     detectors = s.detector_set("ner")

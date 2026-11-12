@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -20,8 +21,12 @@ ALL = ("regex", "classifier", "ner")
 
 
 @pytest.fixture(autouse=True)
-def _clean(monkeypatch: pytest.MonkeyPatch) -> None:
+def _clean(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv("DECOY_ML_DISABLED", raising=False)
+    ms._CACHE.clear()  # type: ignore[attr-defined]
+    det._CACHE.clear()  # type: ignore[attr-defined]
+    yield
+    # The fake packs cached here must not serve a later test in the same process.
     ms._CACHE.clear()  # type: ignore[attr-defined]
     det._CACHE.clear()  # type: ignore[attr-defined]
 
