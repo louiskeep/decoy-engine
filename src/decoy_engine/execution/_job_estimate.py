@@ -100,6 +100,7 @@ def estimate_job(
 
 
 def _estimate(config_dump: dict[str, Any], base_dir: Path | str) -> JobEstimate:
+    from decoy_engine.execution._guards import prepare_declared_execution_sources
     from decoy_engine.execution._mem_estimate import estimate_peak_bytes, raw_data_bytes
     from decoy_engine.execution._pipeline_context import classify_table_kinds
     from decoy_engine.execution._pipeline_routing import decide_execution_route
@@ -111,7 +112,7 @@ def _estimate(config_dump: dict[str, Any], base_dir: Path | str) -> JobEstimate:
     from decoy_engine.execution.capacity import _resolved_config_copy
     from decoy_engine.plan import compile_plan
     from decoy_engine.plan._seed import _normalize_job_seed_int
-    from decoy_engine.profile import profile_source
+    from decoy_engine.profile import DeclarationRequest, profile_source
     from decoy_engine.providers_v2 import get_default_registry
     from decoy_engine.relationships import (
         build_namespace_registry,
@@ -125,7 +126,8 @@ def _estimate(config_dump: dict[str, Any], base_dir: Path | str) -> JobEstimate:
     has_mask = any(k == "mask" for k in table_kinds.values())
     has_generate = any(k == "generate" for k in table_kinds.values())
 
-    profile = profile_source(config, seed=_normalize_job_seed_int(config))
+    prepared = prepare_declared_execution_sources(DeclarationRequest.for_descriptors(config))
+    profile = profile_source(config, seed=_normalize_job_seed_int(config), declared=prepared)
     registry = get_default_registry()
     plan = compile_plan(
         config, profile, decoy_engine_version=engine_version, base_dir=Path(base_dir)
