@@ -60,6 +60,8 @@ ambient_guards = [
 scratch_path_release = [
   "decoy_engine/declared_casting/_stream.py",
   "decoy_engine/execution/out_of_core/_runner.py",
+  # Transitional (arm (a)): hands unconverted callees a released path; S2b-3 removes it.
+  "decoy_engine/execution/out_of_core/_rewrite_pass.py",
 ]
 # Modules that call `scratch_native`; in each, every DuckDB connection or result call must go
 # through it (no bare `conn.execute(...)`, bound-method or `getattr` call).

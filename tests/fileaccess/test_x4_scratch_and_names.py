@@ -22,6 +22,7 @@ from decoy_engine.plan._types import TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 from tests.parity.test_out_of_core_fk_parity import _plan, _seed_for
+from tests.unit.execution.scratch.test_scratch_modes import fd_path
 
 _REG = get_default_registry()
 WEIRD = ["/abs", "../up", "a/b", ".", "..", "é" * 300]
@@ -135,7 +136,9 @@ class _Probe:
             return real_makedirs(name, *a, **k)
 
         def os_mkdir(path: Any, *a: Any, **k: Any) -> None:
-            record(path)
+            # A descriptor-relative name is placed under the directory its `dir_fd` holds.
+            dir_fd = k.get("dir_fd")
+            record(path if dir_fd is None else os.path.join(fd_path(dir_fd), path))
             return real_os_mkdir(path, *a, **k)
 
         def write_table(table: Any, where: Any, *a: Any, **k: Any) -> None:
@@ -191,8 +194,10 @@ def test_scratch_stays_inside_its_root_and_the_output_is_unchanged(
     # Nothing was created beside the scratch root, and every probed path is beneath it.
     assert {p for p in _listing(tmp_path) - before if not p.startswith("outer/work")} == set()
     for path in probe.paths:
-        resolved = Path(os.path.abspath(path))
-        assert str(resolved).startswith(str(work)), f"{path} is outside the scratch root"
+        resolved = Path(os.path.realpath(path))
+        assert str(resolved).startswith(os.path.realpath(work)), (
+            f"{path} is outside the scratch root"
+        )
     # No scratch name is derived from a logical name.
     for entry in _listing(work):
         for name in weird:
@@ -249,8 +254,10 @@ def test_the_reorder_driver_names_nothing_from_a_column_or_edge(
     created = {p for p in _listing(tmp_path) - before if not p.startswith(("outer/work", "out"))}
     assert created == set()
     for path in probe.paths:
-        resolved = Path(os.path.abspath(path))
-        assert str(resolved).startswith((str(work), str(tmp_path / "out"))), path
+        resolved = Path(os.path.realpath(path))
+        assert str(resolved).startswith(tuple(map(os.path.realpath, (work, tmp_path / "out")))), (
+            path
+        )
     for entry in _listing(work):
         for name in names[3:]:
             assert name not in entry, entry

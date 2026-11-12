@@ -255,7 +255,8 @@ def _chain() -> tuple[Any, dict[str, pa.Table], RelationshipGraph]:
 
 
 def _walk(root: Path) -> dict[str, os.stat_result]:
-    """Every entry beneath `root`, and `root`, by descriptor."""
+    """Every entry beneath `root`, and `root`, by descriptor, named as `fd_path` names them."""
+    root = Path(os.path.realpath(root))
     seen = {str(root): os.stat(root, follow_symlinks=False)}
     for top, dirs, files, top_fd in os.fwalk(root):
         for name in (*dirs, *files):
