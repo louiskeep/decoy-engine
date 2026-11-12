@@ -736,6 +736,8 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_isolated_common.py",
             # The driver removes staging on a self-reported failure and scrubs in-process error text.
             "src/decoy_engine/execution/_isolated_run.py",
+            # SUB-RUN E2: `probe_peak_bytes` refuses a subset config; no `execution.physical` import.
+            "src/decoy_engine/execution/_probe.py",
             # F29: `_governor.py` reroutes on the typed route-ineligibility reason identity carried in
             # `IsolatedRunResult.reason`, never on error text. No `execution.physical` import.
             "src/decoy_engine/execution/_governor.py",

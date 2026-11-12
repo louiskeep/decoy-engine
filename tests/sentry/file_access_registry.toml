@@ -330,7 +330,7 @@ reason = "the isolated child reads its payload and writes its staged output; the
 
 [[entry]]
 module = "decoy_engine/execution/_pipeline_route_exec.py"
-function = "run_out_of_core_route"
+function = "resolve_temp_disk_budget"
 sink = "shutil.disk_usage"
 ordinal = 0
 rule = "`default_ooc_temp_root()`, `tempfile.gettempdir()`"

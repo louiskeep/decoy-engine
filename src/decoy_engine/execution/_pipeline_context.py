@@ -336,11 +336,11 @@ def build_run_context(
     _guards.refuse_duplicate_run_sources(config, caller_sources)
     source_loader = _guards.refusing_source_loader(source_loader)
 
-    if subset_stage is not None:
+    if subset_stage is not None and subset_stage.active:
         caller_sources, selection = subset_stage.apply(caller_sources, config)
 
     profile = profile_source(config, seed=job_seed, declared=declared)
-    if subset_stage is not None:
+    if subset_stage is not None and subset_stage.active:
         profile = subset_stage.restrict_profile(profile, selection)
 
     plan = compile_plan(

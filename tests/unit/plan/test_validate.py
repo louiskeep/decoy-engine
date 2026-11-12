@@ -115,14 +115,17 @@ class TestValidatePlanFailurePaths:
         assert isinstance(result, PlanValidationResult)
 
 
-class TestSubsetRefusalIsReturned:
-    def test_subset_block_returns_a_failed_result_not_a_raise(self) -> None:
+class TestSubsetBlockIsSplitOff:
+    def test_subset_block_is_split_off_and_the_run_config_compiles(self) -> None:
         config = _valid_config()
-        config["subset"] = {"seeds": [{"table": "t", "mode": "sample", "count": 1}]}
+        config["subset"] = {
+            "seeds": [{"table": "t", "mode": "sample", "key_columns": ["id"], "count": 1}]
+        }
         result = validate_plan(config, _profile(), decoy_engine_version=_VERSION)
-        assert result.ok is False
-        assert result.plan is None
-        assert result.error is not None
-        assert result.error.code == "subset_run_unsupported"
-        assert result.error.path == "subset"
-        assert result.error.message.startswith("subset: is not applied by a pipeline run yet")
+        assert result.ok is True and result.plan is not None
+        assert (
+            result.plan.pipeline_config_hash
+            == validate_plan(
+                _valid_config(), _profile(), decoy_engine_version=_VERSION
+            ).plan.pipeline_config_hash
+        )

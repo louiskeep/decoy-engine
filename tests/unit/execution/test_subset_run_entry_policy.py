@@ -68,7 +68,10 @@ def test_every_refusing_entry_calls_the_guard() -> None:
 
 def test_splitting_and_applying_entries_call_the_split() -> None:
     entries = _public_callables()
-    assert _calls(entries["run_pipeline"], "split_subset_config")
+    from decoy_engine.execution.pipeline import _subset_stage
+
+    assert _calls(entries["run_pipeline"], "resolve_subset")
+    assert _calls(_subset_stage.resolve_subset, "split_subset_config")
     assert _calls(entries["validate_plan"], "split_subset_config")
 
 

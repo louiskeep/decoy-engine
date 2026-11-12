@@ -12,32 +12,45 @@ from __future__ import annotations
 from bisect import bisect_left
 from contextlib import ExitStack
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine.config._subset_run import refuse_subset_source_loader
 from decoy_engine.declared_casting import stage_typed_sources
+from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._chunked_input import check_opened, source_facts
+from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pipeline_route_exec import resolve_temp_disk_budget
 from decoy_engine.execution.out_of_core._scratch import engine_scratch_root
 from decoy_engine.profile import Profile, TableProfile
 from decoy_engine.profile._readers import LazySource
-from decoy_engine.subset import SubsetInternalError, SubsetRequest, SubsetSelection, select_subset
+from decoy_engine.subset import (
+    SubsetInternalError,
+    SubsetRequest,
+    SubsetSelection,
+    select_subset,
+    split_subset_config,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Callable, Iterator, Mapping
 
 _BATCH_ROWS = 65_536
 _STEM = "subset"
 
 
 class SubsetStageScope:
-    """One run's subset stage. Enter it around the run; `apply` selects and stages."""
+    """One run's subset stage. Enter it around the run; `apply` selects and stages. With no
+    request the scope is inert, so a run without a subset takes the same path."""
 
-    def __init__(self, request: SubsetRequest, fingerprint: str) -> None:
+    def __init__(
+        self, request: SubsetRequest | None, fingerprint: str | None, declared: bool = False
+    ) -> None:
         self._request = request
         self.fingerprint = fingerprint
+        self.declared = declared  # the config has a `subset:` block, applied or skipped
         self._stack = ExitStack()
         self.selection: SubsetSelection | None = None
 
@@ -53,7 +66,8 @@ class SubsetStageScope:
     ) -> tuple[dict[str, pa.Table | LazySource], SubsetSelection]:
         # Facts first: for a CSV this also records the file identity the read checks.
         expected = {n: source_facts(s) for n, s in sources.items() if isinstance(s, LazySource)}
-        selection = select_subset(self._request, sources, config=config)
+        # Callers test `active` first, so a request is set.
+        selection = select_subset(cast(SubsetRequest, self._request), sources, config=config)
         self.selection = selection
         check = selection.materialization_check
         survivors = {n: sorted(v) for n, v in selection.survivors.items()}
@@ -105,11 +119,21 @@ class SubsetStageScope:
                 )
         return staged, selection
 
-    def metrics(self) -> dict[str, Any]:
-        """The value-free `quality_metrics["subset"]` block for an applied subset."""
-        sel = self.selection
-        if sel is None:  # no `apply` ran: nothing was selected
-            return {"applied": False}
+    @property
+    def active(self) -> bool:
+        return self._request is not None
+
+    def stamp(self, result: ExecutionResult) -> ExecutionResult:
+        """Record the evidence block: counts and the fingerprint when applied, `applied: false`
+        when the block was skipped, nothing when the config has no block."""
+        if self.active:
+            result.quality_metrics["subset"] = self._metrics()
+        elif self.declared:
+            result.quality_metrics["subset"] = {"applied": False}
+        return result
+
+    def _metrics(self) -> dict[str, Any]:
+        sel = cast(SubsetSelection, self.selection)  # `apply` ran before the route
         return {
             "applied": True,
             "fingerprint": self.fingerprint,
@@ -149,4 +173,29 @@ class SubsetStageScope:
         return replace(profile, tables=tuple(narrowed))
 
 
-__all__ = ["SubsetStageScope"]
+def resolve_subset(
+    config: dict[str, Any],
+    subset_request: object,
+    source_loader: Callable[[str], pa.Table] | None,
+) -> tuple[dict[str, Any], SubsetStageScope]:
+    """The run config (its `subset` block split off) and the stage that applies the request.
+
+    Refuses before any read: an unknown `subset_request` value, and a subset on a
+    `source_loader` run. `"skip"` leaves the stage inert; a `SubsetRequest` replaces the block."""
+    if not (isinstance(subset_request, SubsetRequest) or subset_request in ("config", "skip")):
+        raise ExecutionError(
+            code=reasons.runtime.INVALID_EXECUTION_KNOB,
+            message="subset_request must be 'config', 'skip' or a SubsetRequest.",
+        )
+    split = split_subset_config(config)
+    request, fingerprint = split.request, split.fingerprint
+    if subset_request == "skip":
+        request = None
+    elif isinstance(subset_request, SubsetRequest):
+        request, fingerprint = subset_request, subset_request.fingerprint()
+    if request is not None and source_loader is not None:
+        refuse_subset_source_loader()
+    return split.run_config, SubsetStageScope(request, fingerprint, split.request is not None)
+
+
+__all__ = ["SubsetStageScope", "resolve_subset"]
