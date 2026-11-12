@@ -38,6 +38,7 @@ from decoy_engine.fileaccess._output import (
     STAGE_PREFIX,
     STAGE_SUFFIX,
     _call,
+    _close,
     create_private_child_at,
     make_parent_dir_at,
     make_stage_dir_at,
@@ -189,9 +190,9 @@ class _LocalStageDir:
         else:
             parent = _open_dir(self._dir)
             try:
-                os.close(make_stage_dir_at(parent, component))
+                _close(make_stage_dir_at(parent, component))
             finally:
-                os.close(parent)
+                _close(parent)
         return _LocalStageDir(self._dir / component, self._display, private=self._private)
 
     def remove(self, component: str) -> None:
@@ -253,10 +254,10 @@ def _open_dir_creating(directory: Path, created: list[str] | None = None) -> int
     try:
         for name in reversed(missing):
             child = make_parent_dir_at(fd, name)
-            os.close(fd)
+            _close(fd)
             fd = child
     except BaseException:
-        os.close(fd)
+        _close(fd)
         raise
     if created is not None:
         created.extend(missing)
@@ -264,7 +265,7 @@ def _open_dir_creating(directory: Path, created: list[str] | None = None) -> int
 
 
 def _ensure_dirs(directory: Path) -> None:
-    os.close(_open_dir_creating(directory))
+    _close(_open_dir_creating(directory))
 
 
 def _make_stage_dir(
@@ -274,9 +275,9 @@ def _make_stage_dir(
     parent_fd = _open_dir_creating(parent, created) if create_parents else _open_dir(parent)
     name = f"{prefix}{secrets.token_hex(6)}"
     try:
-        os.close(make_stage_dir_at(parent_fd, name))
+        _close(make_stage_dir_at(parent_fd, name))
     finally:
-        os.close(parent_fd)
+        _close(parent_fd)
     return parent / name
 
 

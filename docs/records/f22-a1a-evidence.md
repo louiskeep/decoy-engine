@@ -219,3 +219,61 @@ the environment.
   two entry points pass literal values.
 - `docs/index.md` gained a link and a toctree entry for `docs/publication.md`, outside the plan's
   file list, so the docs build does not warn about an orphan page.
+
+## 2026-11-12: ambient directory close fault (found by the a3 suite run)
+
+Two tests passed on `9878d17` and failed on `126fa46` and every branch stacked on it:
+
+- `tests/unit/test_fixed_width_writer.py::test_fsync_dir_survives_close_error[fsync_and_close_fail-ambient]`
+- `tests/unit/test_quarantine_staging.py::TestFdopenFailureDoesNotLeakRawFd::test_fdopen_failure_closes_the_raw_mkstemp_fd`
+
+Cause. a1a made the ambient arm open the directories on an output chain (`_open_dir_creating`,
+`_ensure_dirs`, `_make_stage_dir`, `_LocalStageDir.create_dir` in `fileaccess/_local.py`) and
+closed them with a raw `os.close`, where the strict arm closes through the best-effort `_close`
+of `_output.py`. That is a production defect, not only a test artifact:
+
+- a `close(2)` error on a directory descriptor opened only to make a parent failed a write that
+  had nothing wrong with it (the fixed-width ambient case: the strict case of the same test passed);
+- in `_open_dir_creating`, a close error inside the loop reached `except BaseException:
+  os.close(fd)`, which closed the same descriptor number a second time (`EBADF`, or another
+  thread's descriptor) and leaked the child just opened;
+- in `_make_stage_dir` and `create_dir` the `finally: os.close(...)` replaced the primary error.
+
+Fix (`760e53a`): those closes go through `_close`. No new mechanism. The quarantine test was the
+other kind: its `os.close` spy counted every close in the process, and the ambient arm now
+legitimately opens and closes the parent directory it creates (`[12, 13, 12]`: the root, the made
+`out`, then the mkstemp fd reusing 12). Its spy now skips directory descriptors (`d767bde`); the
+assertion `len(closed_fds) == 1` and its message are unchanged. The fixed-width test is unchanged.
+
+Red first (`5775f95`, run on `126fa46` + that test file):
+`tests/fileaccess/publication/test_ambient_dir_close_fault.py` 4 failed: the three
+`test_directory_close_fault_does_not_fail_the_call[publish|ensure_dir|create_dir]` cases raised
+the injected `EIO` (with an `EBADF` from the double close in the chain), and
+`test_directory_close_fault_does_not_mask_the_primary_error` got errno 9 (`EBADF`) instead of
+`EACCES`. After the fix: 4 passed. Each case asserts the fault was injected (non-vacuity). On
+`9878d17` the `ensure_dir` case would fail its non-vacuity line (no directory descriptor is opened
+there), so the file is a1a-onward only.
+
+Why a1a's checks missed it: its pytest commands covered `tests/fileaccess`, `tests/sentry`,
+`tests/unit/execution`, `tests/integration`, `tests/parity` and `tests/security`, and its signature
+grep looked for the new helper names. Neither reached `tests/unit` outside `execution`, where the
+sinks' `os.close` fault tests live.
+
+Runs (lock profile, Python 3.10.20, `-n 2`):
+
+| Command | Tree | Result | Failing ids |
+|---|---|---|---|
+| `.venv/bin/python -m pytest tests/unit -q -p no:cacheprovider -n 2 --ignore=tests/unit/execution -rfE` | `d767bde` | 12699 passed, 94 skipped, 2 xfailed, 5 xpassed | none |
+| same, detached worktree, `PYTHONPATH=<wt>/src` (import confirmed under the worktree) | `9878d17` | 12699 passed, 94 skipped, 2 xfailed, 5 xpassed | none |
+| `.venv/bin/python -m pytest tests/unit/publication tests/fileaccess tests/sentry -q -p no:cacheprovider -n 2 -rfE` | `f6756d3` | 5914 passed, 10 failed, 56 errors, 7 skipped | the known 56 `test_private_creators.py` (root) + 10 `test_import_layers.py` (no import-linter in `.venv`); +4 passed over `04ff3d7` are the new tests |
+| `.venv/bin/python -m pytest tests/unit/execution tests/integration tests/parity tests/security -q -p no:cacheprovider -n 2 -rfE` | `f6756d3` | 12230 passed, 6 errors, 2389 skipped, 37 xfailed | the known 6 `test_scratch_root_umask.py` (root) |
+| `.venv/bin/ruff check src tests`, `ruff format --check src tests`, `mypy src/decoy_engine` | `f6756d3` | pass, 2211 files formatted, 785 source files clean | |
+| `GATES_WORKERS=2 bash scripts/dev/gates.sh --keep-going --baseline tests/fileaccess tests/unit/test_fixed_width_writer.py tests/unit/test_quarantine_staging.py` | `f6756d3`, baseline `9878d17` | exit 0; env, ruff, format, mypy, sentry (4965 passed), layers (15), licenses (63) PASS; tests branch 1026 passed, 56 errors, 5 skipped vs baseline 1005 passed, 56 errors | branch=56 baseline=56 branch-only=0 |
+
+Failing-id diff for `tests/unit --ignore=tests/unit/execution`: empty on both sides; collected count
+identical. The two ids above now pass. `tests/unit/publication` does not exist on a1a; pytest ran
+the other two paths. Not run: the uid 65534 pass for the new file (it checks no mode).
+
+V2-LOG: `LocalOutputTxn.create_file`'s private `mkstemp` branch (main's code) still closes with a
+raw `os.close` before `abort()` when `fchmod` fails; a close error there would replace the
+`fchmod` error. Pre-existing, not touched.
