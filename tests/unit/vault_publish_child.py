@@ -22,7 +22,7 @@ import sys
 ROUTE, POINT, DIRECTORY = sys.argv[1], sys.argv[2], sys.argv[3]
 LEAF = "v.dcyvault"
 STAGE_PREFIX = "_decoy_vault_stage_"
-KEY = b"12345678"
+KEY = b"12345678" * 4
 ENTRIES = [("ns", f"m{i}", f"s{i}") for i in range(50)]
 
 _real = {name: getattr(os, name) for name in ("open", "write", "fsync", "link", "unlink")}

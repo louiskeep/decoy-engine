@@ -17,7 +17,7 @@ TOKENIZE_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="mask.tokenize",
         family="source_keyed_hmac",
-        call_site="execution/_strategies/_tokenize_key.py:80",
+        call_site="execution/_strategies/_tokenize.py:124",
         entropy_root="mask_key",
         seed_derivation=(
             "derive(K_tok, namespace, nfc_normalize(str(value)).encode()); K_tok = "

@@ -108,7 +108,7 @@ emitted as `.hex()[:truncate]`. Joinability-preserving. Null/NaN rows emit null
 and consume no derivation.
 
 ### mask.tokenize
-`execution/_strategies/_tokenize_key.py:80` (MG-5 reversible tokenization). V0 is
+`execution/_strategies/_tokenize.py:124` (MG-5 reversible tokenization). V0 is
 string-only: a coded, value-free `tokenize_requires_string_dtype` preflight rejects
 any source column that is not string/object dtype, which sidesteps every OTHER
 `mask.hash` canonicalization branch (int-null-widening, float, tz-naive datetime)

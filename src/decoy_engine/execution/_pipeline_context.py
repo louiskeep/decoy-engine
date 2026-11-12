@@ -284,7 +284,7 @@ def build_run_context(
     if token_vault_writer is not None:
         # B-6 D2: a token vault without a derivation scope predates vault-scoped tokens; refuse
         # it before any source is profiled or read.
-        from decoy_engine.execution._strategies._tokenize_key import require_derivation_scope
+        from decoy_engine.execution._strategies._tokenize import require_derivation_scope
 
         require_derivation_scope(token_vault_writer)
 

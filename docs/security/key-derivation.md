@@ -154,7 +154,7 @@ corpus captured from the stdlib function (`tests/fixtures/hkdf/engine-vectors.js
 
 The `tokenize` strategy does not use `derive(mask_key, namespace, ...)` directly,
 which is `hash`'s derivation. It first derives a per-vault subkey and then the
-per-value token under it (`execution/_strategies/_tokenize_key.py`):
+per-value token under it (`execution/_strategies/_tokenize.py`):
 
 ```
 K_tok = derive(mask_key, namespace, b"tokenize-key/v1" || len(scope) || scope)

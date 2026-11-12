@@ -41,6 +41,7 @@ SENTRIES = (
     "tests/sentry/test_file_access_boundary.py",
     "tests/sentry/test_file_access_entry_points.py",
     "tests/sentry/test_ga_stub_exports.py",
+    "tests/sentry/test_hkdf_is_pyca.py",
     "tests/sentry/test_license_policy.py",
     "tests/sentry/test_locator_hygiene.py",
     "tests/sentry/test_log_interpolation.py",

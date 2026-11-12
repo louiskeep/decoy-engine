@@ -31,7 +31,7 @@ from decoy_engine import reasons
 from decoy_engine.fileaccess import FileRequest, FileRole, Root, RootedFileAccess
 from decoy_engine.vault import VaultError, VaultWriter, load_vault
 
-KEY = b"12345678"
+KEY = b"12345678" * 4
 LEAF = "v.dcyvault"
 STAGE_PREFIX = "_decoy_vault_stage_"
 CHILD = Path(__file__).with_name("vault_publish_child.py")

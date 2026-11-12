@@ -88,9 +88,12 @@ def test_chunked_entries_refuse_a_vault_writer_before_the_first_chunk(
     entry: str, tmp_path: Path
 ) -> None:
     import decoy_engine
+    from tests._declared_schema import declared_schema
 
     cfg, _src = _vault_cfg(tmp_path)
     writer = _writer()
+    # The pipeline entry takes the declared schema as a required argument, bound before the call.
+    extra = {"source_schema": declared_schema(cfg, support.TABLE)}
     with pytest.raises(ExecutionError) as exc:
         getattr(decoy_engine, entry)(
             cfg,
@@ -98,6 +101,7 @@ def test_chunked_entries_refuse_a_vault_writer_before_the_first_chunk(
             table=support.TABLE,
             engine_version=support.ENGINE_VERSION,
             vault_writer=writer,
+            **(extra if entry == "run_mask_pipeline_chunked" else {}),
         )
     _assert_refused(exc)
     assert writer._entries == set()

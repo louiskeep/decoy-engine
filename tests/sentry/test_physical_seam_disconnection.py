@@ -936,10 +936,6 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # `native/_draw_site_providers.py`. Pure moves; none imports `execution.physical`.
             "src/decoy_engine/execution/_fk_key_compat.py",
             "src/decoy_engine/execution/native/_draw_sites_tokenize.py",
-            # B-6 vault crypto core: the tokenize key helper split out of `_tokenize.py` (vault-
-            # scoped derivation, D2), and the B0 boundary refusal shared by `run_pipeline`, the
-            # chunked entries and `run_fk_out_of_core`. None imports `execution.physical`.
-            "src/decoy_engine/execution/_strategies/_tokenize_key.py",
             # E1: opaque scratch identifiers for config-derived table/edge/relation names
             # (X4). The reorder/batch relation paths are built from per-run ids, not names,
             # and import nothing from execution.physical.

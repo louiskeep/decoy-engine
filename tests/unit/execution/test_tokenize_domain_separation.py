@@ -11,6 +11,7 @@ and nothing from the job.
 from __future__ import annotations
 
 import unicodedata
+from types import SimpleNamespace
 from typing import Any
 
 import pandas as pd
@@ -101,10 +102,10 @@ def test_hash_and_tokenize_differ_for_the_same_input_and_parameters() -> None:
 
 def token_for(mask_key: bytes, namespace: str, scope: bytes, plaintext: str) -> str:
     """One proposed token, built the way the strategy builds it (context once, then the token)."""
-    from decoy_engine._opaque import OpaqueBox
-    from decoy_engine.execution._strategies._tokenize_key import token_from, tokenize_context
+    from decoy_engine.execution._strategies._tokenize import token_from, tokenize_context
 
-    return token_from(tokenize_context(OpaqueBox(mask_key), namespace, scope), namespace, plaintext)
+    ctx = SimpleNamespace(mask_key=mask_key)
+    return token_from(tokenize_context(ctx, namespace, scope), namespace, plaintext)
 
 
 @settings(max_examples=200, deadline=None)
@@ -122,7 +123,7 @@ def test_tokenize_subkey_vector() -> None:
     assert token_for(MASK_KEY, "pan_ns", SCOPE_A, "4111111111111111") == TOKEN_VECTOR
 
 
-# Recomputed outside the engine (stdlib HMAC/HKDF from the formula in `_tokenize_key`'s docstring,
+# Recomputed outside the engine (stdlib HMAC/HKDF from the formula in `_tokenize`'s docstring,
 # SEED_PROTOCOL_VERSION 7, salt b"decoy-engine/determinism/v1") and equal to the engine's output.
 TOKEN_VECTOR = "tok_3bf686adbfcebf14cb06a52c0b3a9e38"
 
