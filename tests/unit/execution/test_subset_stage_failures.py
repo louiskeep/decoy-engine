@@ -28,8 +28,11 @@ def _secret(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(sup.VAR, "ab" * 32)
 
 
-def _run(tmp_path: Path) -> Any:
+def _run(tmp_path: Path, patch: Any = None) -> Any:
+    """Run the job; ``patch`` applies once the source files are written, so only the run sees it."""
     cfg, _, lazy = sup.job(tmp_path)
+    if patch is not None:
+        patch()
     return run_pipeline(cfg, lazy, engine_version="t")
 
 
@@ -55,9 +58,9 @@ def test_a_source_read_error_is_not_a_capacity_failure(
 def test_a_full_scratch_disk_is_the_capacity_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, number: int
 ) -> None:
-    monkeypatch.setattr(pq.ParquetWriter, "write_table", _raising(OSError(number, "no room")))
+    boom = _raising(OSError(number, "no room"))
     with pytest.raises(ExecutionError) as info:
-        _run(tmp_path)
+        _run(tmp_path, lambda: monkeypatch.setattr(pq.ParquetWriter, "write_table", boom))
     assert info.value.code == CAPACITY
     text = str(info.value)
     assert str(tmp_path) not in text and "no room" not in text and "customers" not in text

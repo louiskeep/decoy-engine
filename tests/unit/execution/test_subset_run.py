@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import errno
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -411,10 +412,9 @@ def _small_budget(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _io_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail(*a: Any, **k: Any) -> Any:
-        (k["root"] / "s0000.subset.parquet").write_bytes(b"x")
-        raise OSError("os-detail-text")
+        raise OSError(errno.ENOSPC, "os-detail-text")
 
-    monkeypatch.setattr(stage_mod, "stage_typed_sources", fail)
+    monkeypatch.setattr(pq.ParquetWriter, "write_table", fail)
 
 
 @pytest.mark.parametrize("case", ["success", "route", "budget", "io", "count"])
@@ -434,7 +434,7 @@ def test_at26_no_staged_file_survives_any_exit(
             res = _run(cfg, lazy)
             assert not any(isinstance(v, stage_mod.LazySource) for v in res.outputs.values())
         elif case == "io":
-            with pytest.raises(SubsetInternalError) as info:
+            with pytest.raises(ExecutionError) as info:
                 _run(cfg, lazy)
             assert info.value.code == reasons.runtime.OUT_OF_CORE_TEMP_DISK_EXCEEDED
             assert isinstance(info.value.__cause__, OSError)
