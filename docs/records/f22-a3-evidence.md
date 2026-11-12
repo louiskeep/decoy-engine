@@ -26,7 +26,7 @@ receipts, `publish_tables`, and the registry codes.
 | `publication/_types.py` | 180 to 235 | `PublicationRefused`, `PublicationFailed`, `raise_for_outcome`; `CommitReceipt.reason_code` checked against the registry (`decoy` namespace) instead of by shape |
 | `publication/__init__.py` | 48 to 58 | exports |
 | `reasons/decoy/_core.py` | 158 to 268 | thirteen `decoy.publication_*` codes, owner `decoy_engine.publication`, outcome `publication`, `since` 1.25.0 |
-| `reasons/_registry.py` | 198 | `REGISTRY_VERSION` 1.23.0 to 1.24.0 (renumbered to 1.25.0 at merge) |
+| `reasons/_registry.py` | 198 | `REGISTRY_VERSION` 1.23.0 to 1.25.0 |
 | `reason_adapter.py` | 446 to 462 | `_CODED`: `PublicationRefused`, `PublicationFailed` (namespace `decoy`); `_FIXED`: `CommitUncertain`, `LockUnavailable`, `LockTimeout` to their publication codes, `LeafTooLarge` to `decoy.publication_failed` |
 
 Six production files: plan 9 row a3 names four, plus `reason_adapter.py` (owner decision
