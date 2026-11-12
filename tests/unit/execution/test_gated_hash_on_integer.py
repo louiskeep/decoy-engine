@@ -106,6 +106,7 @@ def _run_seq(plan: Any, sources: dict[str, pa.Table], sink: Any = None) -> None:
     PandasExecutionAdapter().run_sequential(
         plan,
         lambda t: sources[t],
+        config={},
         registry=_REGISTRY,
         relationship_graph=_GRAPH,
         namespace_registry=NamespaceRegistry(bindings=()),

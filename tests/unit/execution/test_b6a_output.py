@@ -346,7 +346,7 @@ def test_a_later_chunk_with_a_disagreeing_non_null_type_is_a_schema_mismatch(
     from decoy_engine.execution.native import _chunked_entry
 
     cfg, src = _late_typed_job(tmp_path)
-    real = _chunked_entry.run_mask_chunked
+    real = _chunked_entry._mask_chunked
 
     def drifting(config: Any, chunks: Any, **kwargs: Any) -> Any:
         for index, chunk in enumerate(real(config, chunks, **kwargs)):
@@ -358,7 +358,7 @@ def test_a_later_chunk_with_a_disagreeing_non_null_type_is_a_schema_mismatch(
                 )
             yield chunk
 
-    monkeypatch.setattr(_chunked_entry, "run_mask_chunked", drifting)
+    monkeypatch.setattr(_chunked_entry, "_mask_chunked", drifting)
     sink, target = b6a.real_sink(tmp_path)
     with pytest.raises(ExecutionError) as err:
         b6a.run_streamed(cfg, src, sink)
@@ -500,7 +500,7 @@ def test_a_later_chunk_with_different_column_names_is_a_schema_mismatch(
     from decoy_engine.execution.native import _chunked_entry
 
     cfg, src = _native_job(tmp_path, 160)
-    real = _chunked_entry.run_mask_chunked
+    real = _chunked_entry._mask_chunked
 
     def renaming(config: Any, chunks: Any, **kwargs: Any) -> Any:
         for index, chunk in enumerate(real(config, chunks, **kwargs)):
@@ -508,7 +508,7 @@ def test_a_later_chunk_with_different_column_names_is_a_schema_mismatch(
                 chunk = chunk.rename_columns(["r", "z", "other"])
             yield chunk
 
-    monkeypatch.setattr(_chunked_entry, "run_mask_chunked", renaming)
+    monkeypatch.setattr(_chunked_entry, "_mask_chunked", renaming)
     sink, target = b6a.real_sink(tmp_path)
     with pytest.raises(ExecutionError) as err:
         b6a.run_streamed(cfg, src, sink)

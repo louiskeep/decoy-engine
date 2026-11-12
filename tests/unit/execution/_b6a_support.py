@@ -174,14 +174,14 @@ class ChunkSpy:
         self.fail_at = fail_at
         self.exc = exc if exc is not None else RuntimeError("injected kernel failure")
         self.before_pull = before_pull
-        real = _chunked_entry.run_mask_chunked
+        real = _chunked_entry._mask_chunked
 
         def spy(config: Any, chunks: Any, *, table: str, **kwargs: Any) -> Iterator[pa.Table]:
             self.result_lists[table] = kwargs.get("chunk_result_sink")
             inner = real(config, chunks, table=table, **kwargs)
             return self._wrap(table, inner)
 
-        monkeypatch.setattr(_chunked_entry, "run_mask_chunked", spy)
+        monkeypatch.setattr(_chunked_entry, "_mask_chunked", spy)
 
     def _wrap(self, table: str, inner: Iterator[pa.Table]) -> Iterator[pa.Table]:
         index = 0

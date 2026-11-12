@@ -169,6 +169,7 @@ from decoy_engine.config._subset_run import refuse_unapplied_subset
 from decoy_engine.declared_casting._eligibility import declared_route_guard
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.verification.postmask._route_guard import refuse_unchecked_route
 
 from . import _chunked_bucket_perturb as bucket_perturb_gate
 from . import _chunked_categorical as categorical_gate
@@ -428,12 +429,14 @@ def run_mask_pipeline_chunked(
     value-keyed strategy. See `_chunked_dgrn.py` for the domain contract.
 
     Validation and plan compile happen EAGERLY at call time; only the
-    per-chunk masking is lazy.
+    per-chunk masking is lazy. This route runs no post-scan, so a model post-scan config is
+    refused first (`PostScanRouteError`).
     """
     from . import _chunked_oracle
 
+    refuse_unchecked_route(config, "chunked")
     refuse_unapplied_subset(config)
-    state = _chunked_oracle._oracle_preflight(
+    return _chunked_oracle._mask_pipeline_chunked(
         config,
         chunks,
         table=table,
@@ -441,25 +444,9 @@ def run_mask_pipeline_chunked(
         registry=registry,
         adapter=adapter,
         vault_writer=vault_writer,
+        chunk_result_sink=chunk_result_sink,
         key_provider=key_provider,
         base_row_offset=base_row_offset,
-        pool_cache=None,
-    )
-    if state.first is None:
-        # Admission cleared (or the plan is unkeyed); there is genuinely nothing to mask.
-        state.close_secret()
-        return iter(())
-    return _chunked_oracle.release_when_done(
-        _chunked_oracle._oracle_masked(
-            state,
-            config=config,
-            table=table,
-            vault_writer=vault_writer,
-            chunk_result_sink=chunk_result_sink,
-            base_row_offset=base_row_offset,
-            on_chunk=None,
-        ),
-        state,
     )
 
 

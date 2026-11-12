@@ -511,6 +511,7 @@ class TestRunnerBatchRows:
         run_fk_out_of_core(
             make_plan(),
             lazy_sources(paths),
+            config={},
             registry=get_default_registry(),
             relationship_graph=make_graph(OrphanPolicy.PRESERVE),
             sink=ParquetTransactionalSink(target),

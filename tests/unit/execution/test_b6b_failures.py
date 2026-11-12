@@ -86,7 +86,7 @@ class Probes:
             lambda owner: (self.closes.append(owner), real_close(owner))[1],
         )
         self.pulled: list[int] = []
-        real_mask = _chunked_entry.run_mask_chunked
+        real_mask = _chunked_entry._mask_chunked
 
         def counted(config: Any, chunks: Any, **kwargs: Any) -> Any:
             def tap() -> Any:
@@ -96,7 +96,7 @@ class Probes:
 
             return real_mask(config, tap(), **kwargs)
 
-        monkeypatch.setattr(_chunked_entry, "run_mask_chunked", counted)
+        monkeypatch.setattr(_chunked_entry, "_mask_chunked", counted)
 
     def readers(self) -> list[Any]:
         return [

@@ -100,7 +100,7 @@ def _sources(values: list[Any], arrow_type: pa.DataType) -> dict[str, pa.Table]:
 
 def _ooc_code(plan: Any, sources: Any, graph: Any, **kw: Any) -> str | None:
     try:
-        run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph, **kw)
+        run_fk_out_of_core(plan, sources, config={}, registry=_REG, relationship_graph=graph, **kw)
     except (
         Exception
     ) as exc:  # other-route failures (e.g. float canonicalization) are not this guard's
@@ -129,6 +129,7 @@ def test_t1_direct_runner_rejects_and_matches_full_frame_and_publishes_nothing(
         run_fk_out_of_core(
             plan,
             sources,
+            config={},
             registry=_REG,
             relationship_graph=graph,
             sink=sink,
@@ -214,7 +215,7 @@ def test_t2_parent_side_non_fk_payload_also_rejected() -> None:
 def test_t4_clean_job_still_runs() -> None:
     plan, graph = _job("truncate")
     res = run_fk_out_of_core(
-        plan, _sources([12, 33, 34], pa.int64()), registry=_REG, relationship_graph=graph
+        plan, _sources([12, 33, 34], pa.int64()), config={}, registry=_REG, relationship_graph=graph
     )
     assert res.outputs["child"].num_rows == 3
 

@@ -163,14 +163,14 @@ def test_routed_job_calls_run_mask_chunked_once_with_the_run_context(
     from decoy_engine.execution.native import _chunked_entry
 
     seen_keys: list[tuple[bytes, str]] = []
-    spied_entry = _chunked_entry.run_mask_chunked
+    spied_entry = _chunked_entry._mask_chunked
 
     def record_key(*args: Any, **kwargs: Any) -> Any:
         received = kwargs["key_provider"]
         seen_keys.append((received.mask_key(), received.key_version))
         return spied_entry(*args, **kwargs)
 
-    monkeypatch.setattr(_chunked_entry, "run_mask_chunked", record_key)
+    monkeypatch.setattr(_chunked_entry, "_mask_chunked", record_key)
     result = support.run_default(
         cfg, src, native_threads=3, vault_writer=writer, key_provider=provider
     )

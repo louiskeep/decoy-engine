@@ -22,6 +22,7 @@ import pytest
 from decoy_engine import reasons
 from decoy_engine.config import PipelineConfig
 from tests.unit.execution import _auto_chunk_support as support
+from tests.unit.execution import _b6a_support as b6a
 
 _GUARD_MODULE = "decoy_engine.verification.postmask._route_guard"
 _CODE = "post_scan_models_unsupported"
@@ -450,17 +451,19 @@ def test_run_pipeline_auto_chunk_lane_runs_model_post_scan_configs_as_on_main(
     extra = {"chunked_dispatcher_enabled": False} if lane == "oracle" else {}
 
     def run(post_scan: dict[str, Any]) -> Any:
+        # A sink, so the resident decision is the post-scan's (the pinned chunked-sink case).
         cfg, src = _pipeline_cfg(tmp_path, post_scan)
-        return run_pipeline(
-            cfg, sources={"t": src}, **support.run_kwargs(chunk_size_rows=2, **extra)
-        )
+        sink = b6a.RecordingSink()
+        kwargs = support.run_kwargs(auto_chunk_threshold_rows=1, chunk_size_rows=2, **extra)
+        result = run_pipeline(cfg, sources={"t": src}, sink=sink, **kwargs)
+        assert sink.calls == []
+        return result
 
     got = run(NER_FAIL["post_scan"])
     assert calls == ["t"]
     want = run({"integrity": True})
-    assert got.quality_metrics["auto_chunk"]["output"] == {
-        "mode": "resident",
-        "reason": "post_scan_integrity",
-    }
+    # The legacy lane is always resident; the dispatcher lane is resident for the post-scan.
+    reason = {"dispatcher": "post_scan_integrity", "oracle": "legacy_lane"}[lane]
+    assert got.quality_metrics["auto_chunk"]["output"] == {"mode": "resident", "reason": reason}
     assert "post_scan_integrity" in got.quality_metrics
     assert got.outputs["t"].equals(want.outputs["t"])

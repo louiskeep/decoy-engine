@@ -12,6 +12,7 @@ __all__ = [
     "MIXED_RUNTIME_DECLINED",
     "OUT_OF_CORE_INELIGIBLE",
     "POST_SCAN_INTEGRITY_REQUESTED",
+    "POST_SCAN_MODELS_UNSUPPORTED",
     "POST_VALIDATION_REQUESTED",
     "SEQUENTIAL_INELIGIBLE",
 ]
@@ -53,4 +54,15 @@ OUT_OF_CORE_INELIGIBLE = _d(
     "out_of_core_ineligible",
     "An explicit out-of-core route was requested for a job that is not eligible for it.",
     **_FAIL,
+)
+# SCAN-ML: a route that runs no post-scan refuses a config asking for a model post-scan check.
+POST_SCAN_MODELS_UNSUPPORTED = _catalog.route("PostScanRouteError")(
+    "post_scan_models_unsupported",
+    "This route runs no post-scan, so it refuses model post-scan detectors and ner_findings: fail.",
+    kind=Kind.FAILURE,
+    severity=Severity.ERROR,
+    outcome=Outcome.CONFIGURATION,
+    retry=RetryClass.CONFIGURATION_REPAIR,
+    phases=(Phase.RESOLVE, Phase.COMPILE),
+    since="1.24.0",
 )

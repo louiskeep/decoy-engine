@@ -6,7 +6,9 @@ lane (default) masks the resident table in `chunk_size_rows`-row slices through
 B1's `run_mask_chunked`, which picks the native or the oracle route once for the
 whole table, and joins the chunks with `join_dispatcher_chunks`. The kill switch
 `dispatcher_enabled=False` runs the previous lane unchanged
-(`run_mask_pipeline_chunked` plus `concat_masked_chunks`).
+(`run_mask_pipeline_chunked` plus `concat_masked_chunks`). Both lanes call the entries'
+guard-free cores (`_mask_chunked`, `_mask_pipeline_chunked`): this run does its own post-scan,
+so the post-scan route guard on the public entries does not apply here.
 
 Output contract of the dispatcher lane (plan 2026-10-01-dispatcher-auto-chunk,
 guarantee 3): masked columns keep their values, string-output columns (hash,
@@ -245,14 +247,14 @@ def _run_legacy(
     preresolved: PreResolvedColumn | None = None,
     cast_run: Any = None,
 ) -> pa.Table:
-    from decoy_engine.execution import _chunked
+    from decoy_engine.execution import _chunked, _chunked_oracle
 
     if preresolved is not None:  # pragma: no cover - the mixed route requires the dispatcher lane
         raise AssertionError("a pre-resolved column reaches only the dispatcher lane")
     chunks_in, render = _declared_wrap(cast_run, table, _slices(source, chunk_size_rows))
     masked_chunks = list(
         render(
-            _chunked.run_mask_pipeline_chunked(
+            _chunked_oracle._mask_pipeline_chunked(
                 config,
                 chunks_in,
                 table=table,
@@ -284,7 +286,7 @@ def _run_dispatcher(
     preresolved: PreResolvedColumn | None = None,
     cast_run: Any = None,
 ) -> pa.Table:
-    # Looked up through the module so a spy on the public entry sees the call.
+    # Looked up through the module so a spy on the core sees the call.
     from decoy_engine.execution.native import _chunked_entry
 
     # The C5c-ii producer: resident slices carry the resident schema metadata-inclusive,
@@ -295,7 +297,7 @@ def _run_dispatcher(
     )
     chunks = list(
         render(
-            _chunked_entry.run_mask_chunked(
+            _chunked_entry._mask_chunked(
                 config,
                 chunks_in,
                 table=table,
@@ -353,7 +355,7 @@ def _run_streamed(
         # The columns B1's schema rule pins resolve from chunk 0, so only the rest can hold
         # the stream back (`_chunked_output_sink` module docstring).
         rule = build_schema_rule(config, table=table, first=first, registry=registry)
-        chunks = _chunked_entry.run_mask_chunked(
+        chunks = _chunked_entry._mask_chunked(
             config,
             stream,
             table=table,

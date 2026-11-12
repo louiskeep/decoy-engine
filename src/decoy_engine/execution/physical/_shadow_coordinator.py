@@ -248,6 +248,8 @@ class ShadowCoordinator:
         result = adapter.run(
             seed_plan,
             {t: snapshot.tables[t] for t in snapshot.tables},
+            # A resident compare that publishes nothing; the run it shadows owns the post-scan.
+            config={},
             registry=registry,
             relationship_graph=graph,
             sink=None,  # resident compare only, never publication (C1/C7)

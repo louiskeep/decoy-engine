@@ -86,6 +86,7 @@ from decoy_engine.execution.out_of_core._stream_driver_support import (  # noqa:
 )
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.progress import get_active_channel
+from decoy_engine.verification.postmask._route_guard import refuse_unchecked_route
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -120,7 +121,7 @@ def run_fk_out_of_core(
     key_provider: KeyProvider | None = None,
     out_of_core_reorder_threshold_rows: int | None = None,
     vault_writer: Any = None,
-    config: Mapping[str, Any] | None = None,
+    config: Mapping[str, Any],
     native_threads: int = 1,
     file_access: FileAccess | None = None,
     cast_run: Any = None,
@@ -174,7 +175,11 @@ def run_fk_out_of_core(
     pairs to the writer at their mask step. Routing admits only jobs whose vaulted columns
     are route-stable (`_vault_collect.vault_ooc_safe`); persisting is the caller's, after a
     successful return.
+
+    `config` is the raw pipeline config and is required: this route runs no post-scan, so a
+    model post-scan config is refused before any source is read (`PostScanRouteError`).
     """
+    refuse_unchecked_route(config, "out_of_core")
     declared_route_guard("out_of_core", plan=plan, raise_on_decline=True)
     if cast_run is not None and not _staged and cast_run.tables() & set(sources):
         # F06: declared sources are cast once into typed sources (see `run_staged`), then this

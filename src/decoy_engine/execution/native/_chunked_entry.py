@@ -637,9 +637,42 @@ def run_mask_chunked(
     raises `NativeChunkSchemaDriftError` (an `ExecutionError`), except an
     all-null `null`-typed chunk, which the ingest guards see as the source
     produced it before it is brought to the first chunk's type. A column that is `null`-typed in the first
-    chunk and typed later raises `ExecutionError(code="chunked_leading_null_type")`.
+    chunk and typed later raises `ExecutionError(code="chunked_leading_null_type")`. This route
+    runs no post-scan, so a model post-scan config is refused first (`PostScanRouteError`).
     """
-    # Local import: a top-level one shifts the line the secret-material census pins.
+    # Local imports: a top-level one shifts the line the secret-material census pins.
+    from decoy_engine.config._subset_run import refuse_unapplied_subset
+    from decoy_engine.verification.postmask._route_guard import refuse_unchecked_route
+
+    refuse_unchecked_route(config, "native_chunked")
+    refuse_unapplied_subset(config)
+    return _mask_chunked(
+        config,
+        chunks,
+        table=table,
+        engine_version=engine_version,
+        registry=registry,
+        adapter=adapter,
+        vault_writer=vault_writer,
+        chunk_result_sink=chunk_result_sink,
+        key_provider=key_provider,
+        base_row_offset=base_row_offset,
+        native_threads=native_threads,
+        route_evidence_sink=route_evidence_sink,
+        pool_cache=pool_cache,
+    )
+
+
+def _mask_chunked(
+    config: dict[str, Any],
+    chunks: Iterable[pa.Table],
+    *,
+    table: str,
+    native_threads: int = 1,
+    **kwargs: Any,
+) -> Iterator[pa.Table]:
+    """`run_mask_chunked` without the post-scan route guard: `run_pipeline`'s resident auto-chunk
+    lane calls this, because that run does its own post-scan."""
     from decoy_engine.config._subset_run import refuse_unapplied_subset
 
     refuse_unapplied_subset(config)
@@ -648,21 +681,7 @@ def run_mask_chunked(
     # caller, e.g. `run_pipeline(progress=...)`); a no-op when nothing is bound.
     return get_active_channel().count_rows(
         table,
-        _run_chunked(
-            config,
-            chunks,
-            table=table,
-            engine_version=engine_version,
-            registry=registry,
-            adapter=adapter,
-            vault_writer=vault_writer,
-            chunk_result_sink=chunk_result_sink,
-            key_provider=key_provider,
-            base_row_offset=base_row_offset,
-            native_threads=native_threads,
-            route_evidence_sink=route_evidence_sink,
-            pool_cache=pool_cache,
-        ),
+        _run_chunked(config, chunks, table=table, native_threads=native_threads, **kwargs),
     )
 
 

@@ -130,7 +130,9 @@ def test_reorder_matches_batch_join_single_edge(
     if not _gate_admits(plan, graph):
         return
     try:
-        batch_join_res = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+        batch_join_res = run_fk_out_of_core(
+            plan, sources, config={}, registry=_REG, relationship_graph=graph
+        )
     except Exception:
         return  # a fail-closed rejection on this shape is out of this test's scope
     driver_res = run_stream_driver(plan, sources, graph, temp_dir=_tmp_for(label))
@@ -156,7 +158,9 @@ def test_reorder_matches_batch_join_chain(
     if not _gate_admits(plan, graph):
         return
     try:
-        batch_join_res = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+        batch_join_res = run_fk_out_of_core(
+            plan, sources, config={}, registry=_REG, relationship_graph=graph
+        )
     except Exception:
         return
     driver_res = run_stream_driver(plan, sources, graph, temp_dir=_tmp_for(label))
@@ -182,7 +186,9 @@ def test_reorder_matches_batch_join_fanout(
     if not _gate_admits(plan, graph):
         return
     try:
-        batch_join_res = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+        batch_join_res = run_fk_out_of_core(
+            plan, sources, config={}, registry=_REG, relationship_graph=graph
+        )
     except Exception:
         return
     driver_res = run_stream_driver(plan, sources, graph, temp_dir=_tmp_for(label))
@@ -476,6 +482,7 @@ def test_all_null_redact_outgoing_key_sink_matches_batch_join(tmp_path: Any) -> 
     run_fk_out_of_core(
         plan,
         sources,
+        config={},
         registry=_REG,
         relationship_graph=graph,
         sink=ParquetTransactionalSink(batch_join_target),

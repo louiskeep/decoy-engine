@@ -124,6 +124,7 @@ def _run_sequential(plan, sources, graph) -> pa.Table:
     result = PandasExecutionAdapter().run_sequential(
         plan,
         _loader(sources),
+        config={},
         registry=_REG,
         relationship_graph=graph,
         namespace_registry=_NS,
@@ -132,7 +133,7 @@ def _run_sequential(plan, sources, graph) -> pa.Table:
 
 
 def _run_out_of_core(plan, sources, graph) -> pa.Table:
-    result = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+    result = run_fk_out_of_core(plan, sources, config={}, registry=_REG, relationship_graph=graph)
     return result.outputs["child"].column("fk")
 
 
@@ -164,6 +165,7 @@ def _run_sequential_table(plan, sources, graph, *, table: str, column: str) -> p
     result = PandasExecutionAdapter().run_sequential(
         plan,
         _loader(sources),
+        config={},
         registry=_REG,
         relationship_graph=graph,
         namespace_registry=_NS,
@@ -172,7 +174,7 @@ def _run_sequential_table(plan, sources, graph, *, table: str, column: str) -> p
 
 
 def _run_out_of_core_table(plan, sources, graph, *, table: str, column: str) -> pa.Array:
-    result = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+    result = run_fk_out_of_core(plan, sources, config={}, registry=_REG, relationship_graph=graph)
     return result.outputs[table].column(column)
 
 
