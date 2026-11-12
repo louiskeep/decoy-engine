@@ -158,7 +158,7 @@ def test_conditional_and_redirect_codes_are_not_retried(code: str) -> None:
 
 
 def test_every_botocore_retryable_code_is_transient() -> None:
-    """Drift guard: the SDK retry is off, so botocore's own retry lists must all be transient.
+    """Drift guard: botocore's own retry lists must all classify as transient.
 
     Reads the private names ``ThrottledRetryableChecker._THROTTLED_ERROR_CODES``,
     ``TransientRetryableChecker._TRANSIENT_ERROR_CODES`` and
@@ -330,17 +330,41 @@ def _built(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> dict[str, Any]:
         "endpoint_url": None,
         "access_key_id": None,
         "secret_access_key": None,
+        "single_request": False,
     }
     _clients.s3_client(**{**base, **kwargs})
     return seen
 
 
-def test_client_sends_one_request_with_no_sdk_retry(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen = _built(monkeypatch)
+def test_ordinary_client_keeps_the_sdk_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = _built(monkeypatch, single_request=False)
     cfg = seen["config"]
     assert seen["service"] == "s3"
-    assert cfg.retries == {"total_max_attempts": 1, "mode": "standard"}
+    assert cfg.retries == {"total_max_attempts": 2, "mode": "standard"}
     assert (cfg.connect_timeout, cfg.read_timeout) == (5, 60)
+
+
+def test_single_request_client_never_resends(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = _built(monkeypatch, single_request=True)
+    assert seen["config"].retries == {"total_max_attempts": 1, "mode": "standard"}
+
+
+def test_connector_and_profiler_build_the_two_attempt_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decoy_engine.connectors.s3 import _build_s3_client
+    from decoy_engine.profile import _cloud_readers
+
+    built: list[Any] = []
+
+    def fake_client(service: str, **kw: Any) -> object:
+        built.append(kw["config"].retries["total_max_attempts"])
+        return object()
+
+    monkeypatch.setattr(boto3, "client", fake_client)
+    _build_s3_client(S3Config(bucket="b"))
+    _cloud_readers._s3_for({"bucket": "b"})
+    assert built == [2, 2]
 
 
 def test_client_omits_region_credentials_and_endpoint_when_unset(
