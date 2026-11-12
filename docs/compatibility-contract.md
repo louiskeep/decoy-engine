@@ -83,6 +83,12 @@ value raises `ExecutionError` (`invalid_execution_knob`) before any read. `decoy
 `materialization_check` stage-transfer field (never an output). A config with no `subset:` block behaves
 exactly as before.
 
+**Pre-GA additive fields with SAMPLE SE2 (2026-11-12).** `ExecutionResult.sample_source_rows: dict[str, pa.Table] | None`
+(default `None`, hidden from `repr`, not compared) holds the first kept source rows per table, only for a sample
+request with `display_rows > 0`. `RunResult.sample: SampleMarker | None` (`rows`, `roots`, `head_tables`,
+`scratch`) is optional under `decoy-run-result/v1`; it is left out of the written payload when unset, so an old
+record reads unchanged. A sample stamps `quality_metrics["subset"]["sample"]`. `run_pipeline` is unchanged.
+
 **Pre-GA correction (main health, 2026-10-31).** `RESERVED_NAMES` of the `when` closed grammar gains `type`
 (additive to the list, breaking for a config whose `when:` references a column named `type`, which now fails
 with `when_outside_closed_grammar`). It is listed on every interpreter rather than derived from

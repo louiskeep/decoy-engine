@@ -398,6 +398,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/pipeline/_host.py",
             # SUB-RUN E2: the subset stage imports the public `decoy_engine.subset` surface only.
             "src/decoy_engine/execution/pipeline/_subset_stage.py",
+            # SAMPLE SE2: the sample's exact/approximate column label reads config and the
+            # strategy vocabulary only.
+            "src/decoy_engine/execution/pipeline/_sample.py",
             # RUN-STREAM E3: `route_summary` reads recorded quality_metrics blocks and imports
             # nothing from `execution.physical`.
             "src/decoy_engine/execution/pipeline/_route_summary.py",
