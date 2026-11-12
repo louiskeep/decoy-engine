@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
+from types import MappingProxyType
 from typing import Any
 
 import pytest
@@ -27,7 +29,7 @@ def _bound(**edit: Any) -> dict[str, Any]:
     return _manifest(**{"path_base": "project", "project_manifest": "out/run.json", **edit})
 
 
-def _refused(manifest: dict[str, Any]) -> RecordError:
+def _refused(manifest: Mapping[str, Any]) -> RecordError:
     with pytest.raises(RecordError) as caught:
         make("evidence", manifest, labels={})
     return caught.value
@@ -81,6 +83,17 @@ def test_eb_pair_refuses_project_manifest_alone() -> None:
     for value in ("out/run.json", None):
         err = _refused(_manifest(project_manifest=value))
         assert err.fields == ("payload.path_base",)
+
+
+def test_eb_pair_refuses_a_half_pair_in_a_read_only_mapping() -> None:
+    err = _refused(MappingProxyType(_manifest(path_base="project")))
+    assert err.fields == ("payload.project_manifest",)
+
+
+@pytest.mark.parametrize("bad", ["", "a\x00b", "a\nb", "x" * 1025])
+def test_eb_project_manifest_keeps_the_path_text_rules(bad: str) -> None:
+    err = _refused(_manifest(path_base="project", project_manifest=bad))
+    assert err.fields == ("payload.project_manifest",)
 
 
 def _export_payload(manifest: dict[str, Any], **kw: Any) -> dict[str, Any]:

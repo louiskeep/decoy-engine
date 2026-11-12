@@ -8,6 +8,7 @@ words, no free text and no cell value.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Annotated, Any, Literal
 
 from pydantic import (
@@ -23,7 +24,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from pydantic_core import PydanticCustomError
+from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from decoy_engine._value_free import Count
 from decoy_engine.run_result import SafeName, Sha256
@@ -129,14 +130,14 @@ class EvidencePayload(_Model):
     @model_validator(mode="before")
     @classmethod
     def _binding_pair(cls, data: Any) -> Any:
-        if isinstance(data, dict) and ("path_base" in data) != ("project_manifest" in data):
+        if isinstance(data, Mapping) and ("path_base" in data) != ("project_manifest" in data):
             missing = "project_manifest" if "path_base" in data else "path_base"
-            detail = {
+            detail: InitErrorDetails = {
                 "type": PydanticCustomError("binding_pair", "path_base and project_manifest pair"),
                 "loc": (missing,),
                 "input": None,
             }
-            raise ValidationError.from_exception_data(cls.__name__, [detail])  # type: ignore[list-item]
+            raise ValidationError.from_exception_data(cls.__name__, [detail])
         return data
 
 
