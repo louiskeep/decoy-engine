@@ -102,12 +102,38 @@ class DeclaredRelationship:
 
 
 @dataclass(frozen=True)
-class _Keys:
-    """The key columns of one table as Arrow batches labelled `k0..kn`."""
+class KeyBatches:
+    """The key columns of one table as Arrow batches labelled `k0..kn`, in declared order.
+
+    `batches` can be called again: each call starts a new read."""
 
     schema: pa.Schema
     batches: Callable[[], Iterator[pa.RecordBatch]]
     bounded: bool = True
+
+
+@dataclass(frozen=True)
+class ChildKeyFacts:
+    """Counts for one child of `key_facts`: rows, null-key rows and orphans."""
+
+    rows: int
+    null_key_rows: int
+    orphan_rows: int
+    orphan_distinct_keys: int
+
+
+@dataclass(frozen=True)
+class KeyFacts:
+    """Counts for one parent key and its children, in the order the children were passed.
+
+    A `key_type_mismatch` carries zero counts and no children."""
+
+    status: Literal["checked", "key_type_mismatch"]
+    parent_rows: int
+    parent_null_key_rows: int
+    parent_duplicate_excess: int
+    children: tuple[ChildKeyFacts, ...]
+    bounded: bool
 
 
 def declare(
@@ -200,7 +226,7 @@ def _missing(position: int, table: str) -> PipelineConfigError:
 
 def _open_keys(
     position: int, name: str, descriptor: Mapping[str, Any], columns: Sequence[str]
-) -> _Keys:
+) -> KeyBatches:
     # Imported here because decoy_engine.profile imports the profiling package.
     from decoy_engine import profile as src
 
@@ -229,7 +255,7 @@ def _open_keys(
                 chunk.columns = labels
                 yield pa.RecordBatch.from_pandas(chunk, schema=text_schema, preserve_index=False)
 
-        return _Keys(text_schema, csv_batches)
+        return KeyBatches(text_schema, csv_batches)
     if fmt == "parquet":
         lazy = src.LazySource(Path(descriptor["path"]), field_key=key)
         file_schema = lazy.schema
@@ -244,7 +270,7 @@ def _open_keys(
                 arrays = [batch.column(batch.schema.get_field_index(c)) for c in columns]
                 yield pa.RecordBatch.from_arrays(arrays, schema=typed)
 
-        return _Keys(typed, parquet_batches)
+        return KeyBatches(typed, parquet_batches)
     # Fixed width: no bounded iterator exists, so the key columns are read whole.
     frame = src.build_declared_source(name, dict(descriptor)).to_frame()
     if any(c not in frame.columns for c in columns):
@@ -252,7 +278,7 @@ def _open_keys(
     table = pa.Table.from_pandas(frame[list(columns)], preserve_index=False)
     del frame
     table = table.rename_columns(labels)
-    return _Keys(
+    return KeyBatches(
         table.schema, lambda: iter(table.to_batches(max_chunksize=_BATCH_ROWS)), bounded=False
     )
 
@@ -280,7 +306,7 @@ def _before_fetch(conn: Any) -> None:
     lets a test see the spill files while the loaded tables still exist."""
 
 
-def _load(conn: Any, table: str, keys: _Keys) -> None:
+def _load(conn: Any, table: str, keys: KeyBatches) -> None:
     # The empty first table fixes the column types; each batch is then appended.
     conn.register("incoming", pa.Table.from_batches([], schema=keys.schema))
     conn.execute(f"CREATE TABLE {table} AS SELECT * FROM incoming")
@@ -301,63 +327,96 @@ def _complete(alias: str, width: int) -> str:
     return " AND ".join(f"{alias}.{label} IS NOT NULL" for label in _labels(width))
 
 
-def _check(
-    sources: Mapping[str, Mapping[str, Any]],
-    rel: DeclaredRelationship,
-    duck_dir: Path,
+def key_facts(
+    parent: KeyBatches,
+    children: Sequence[KeyBatches] = (),
+    *,
+    scratch: Path,
     memory_limit: str,
-) -> RelationshipFacts:
+) -> KeyFacts:
+    """Counts for `parent` and each of `children`, computed in a DuckDB connection that spills
+    under `scratch` (caller-owned) and is closed on every exit. Exceptions propagate."""
     # Imported here because decoy_engine.execution imports the profiling package.
     from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 
-    config, parent = rel.config, rel.config.parent
-    width = len(parent.columns)
-    parent_keys = _open_keys(rel.position, parent.table, sources[parent.table], parent.columns)
-    child_keys = [
-        _open_keys(rel.position, c.table, sources[c.table], c.columns) for c in config.children
-    ]
-    bounded = parent_keys.bounded and all(k.bounded for k in child_keys)
-    wanted = _comparable(parent_keys.schema)
-    if any(_comparable(k.schema) != wanted for k in child_keys):
-        return _unchecked(
-            config, "key_type_mismatch", bounded, reasons.warning.SCAN_KEY_TYPE_MISMATCH.spec.ref
-        )
+    bounded = parent.bounded and all(k.bounded for k in children)
+    wanted = _comparable(parent.schema)
+    if any(_comparable(k.schema) != wanted for k in children):
+        return KeyFacts("key_type_mismatch", 0, 0, 0, (), bounded)
 
+    width = len(parent.schema)
     labels = _labels(width)
     cols = ", ".join(labels)
     on = " AND ".join(f"p.{label} = c.{label}" for label in labels)
-    conn = connect_duckdb(temp_dir=duck_dir, memory_limit=memory_limit)
+    conn = connect_duckdb(temp_dir=scratch, memory_limit=memory_limit)
     try:
-        _load(conn, "parent", parent_keys)
+        _load(conn, "parent", parent)
         complete = _complete("p", width)
         parent_rows = _count(conn, "SELECT count(*) FROM parent")
         complete_rows = _count(conn, f"SELECT count(*) FROM parent p WHERE {complete}")
         distinct = _count(
             conn, f"SELECT count(*) FROM (SELECT DISTINCT {cols} FROM parent p WHERE {complete})"
         )
-        children = []
-        for child, keys in zip(config.children, child_keys, strict=True):
+        counted = []
+        for keys in children:
             _load(conn, "child", keys)
-            children.append(_child_facts(conn, child.table, tuple(child.columns), width, on))
+            counted.append(_child_facts(conn, width, on))
             conn.execute("DROP TABLE child")
     finally:
         conn.close()
-    return RelationshipFacts(
-        parent=parent.table,
-        parent_columns=tuple(parent.columns),
-        children=tuple(children),
-        status="checked",
-        parent_rows=parent_rows,
-        parent_null_key_rows=parent_rows - complete_rows,
-        parent_duplicate_excess=complete_rows - distinct,
-        exact=True,
-        bounded=bounded,
+    return KeyFacts(
+        "checked",
+        parent_rows,
+        parent_rows - complete_rows,
+        complete_rows - distinct,
+        tuple(counted),
+        bounded,
     )
 
 
-def _child_facts(
-    conn: Any, table: str, columns: tuple[str, ...], width: int, on: str
-) -> ChildFacts:
+def _check(
+    sources: Mapping[str, Mapping[str, Any]],
+    rel: DeclaredRelationship,
+    duck_dir: Path,
+    memory_limit: str,
+) -> RelationshipFacts:
+    config, parent = rel.config, rel.config.parent
+    parent_keys = _open_keys(rel.position, parent.table, sources[parent.table], parent.columns)
+    child_keys = [
+        _open_keys(rel.position, c.table, sources[c.table], c.columns) for c in config.children
+    ]
+    facts = key_facts(parent_keys, child_keys, scratch=duck_dir, memory_limit=memory_limit)
+    if facts.status == "key_type_mismatch":
+        return _unchecked(
+            config,
+            "key_type_mismatch",
+            facts.bounded,
+            reasons.warning.SCAN_KEY_TYPE_MISMATCH.spec.ref,
+        )
+    return RelationshipFacts(
+        parent=parent.table,
+        parent_columns=tuple(parent.columns),
+        children=tuple(
+            ChildFacts(
+                c.table,
+                tuple(c.columns),
+                f.rows,
+                f.null_key_rows,
+                f.orphan_rows,
+                f.orphan_distinct_keys,
+            )
+            for c, f in zip(config.children, facts.children, strict=True)
+        ),
+        status="checked",
+        parent_rows=facts.parent_rows,
+        parent_null_key_rows=facts.parent_null_key_rows,
+        parent_duplicate_excess=facts.parent_duplicate_excess,
+        exact=True,
+        bounded=facts.bounded,
+    )
+
+
+def _child_facts(conn: Any, width: int, on: str) -> ChildKeyFacts:
     complete = _complete("c", width)
     rows = _count(conn, "SELECT count(*) FROM child")
     complete_rows = _count(conn, f"SELECT count(*) FROM child c WHERE {complete}")
@@ -365,4 +424,4 @@ def _child_facts(
     orphan_rows = _count(conn, f"SELECT count(*) {orphans}", probe=True)
     keys = ", ".join(f"c.{label}" for label in _labels(width))
     orphan_keys = _count(conn, f"SELECT count(*) FROM (SELECT DISTINCT {keys} {orphans})")
-    return ChildFacts(table, columns, rows, rows - complete_rows, orphan_rows, orphan_keys)
+    return ChildKeyFacts(rows, rows - complete_rows, orphan_rows, orphan_keys)

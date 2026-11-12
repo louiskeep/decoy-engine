@@ -8,7 +8,6 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from decoy_engine.verification.postmask._stream_input import from_lazy, from_table, key_batches
 
 from decoy_engine.config._csv_dialect import CsvDialect
 from decoy_engine.execution.out_of_core import _duckdb
@@ -16,21 +15,24 @@ from decoy_engine.profile._lazy_csv import CsvLazySource
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.profiling import KeyBatches, KeyFacts, key_facts
 from decoy_engine.profiling._scan_integrity import declare, relationship_facts
+from decoy_engine.verification.postmask._stream_input import from_lazy, from_table, key_batches
 
-PARENT = ["1", "2", "2", "3", None]
-CHILD = ["1", "2", "9", None, "9", "3"]
+# Composite (k, j) keys; a row with either part null is incomplete.
+PARENT = [("1", "a"), ("2", "a"), ("2", "a"), ("3", "a"), (None, "a"), ("4", None)]
+CHILD = [("1", "a"), ("2", "a"), ("9", "a"), (None, "a"), ("9", "a"), ("3", "a"), ("1", None)]
 
 
 def _files(tmp_path: Path, kind: str, parent: list[Any], child: list[Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    for name, values in (("parent", parent), ("child", child)):
+    for name, rows in (("parent", parent), ("child", child)):
         if kind == "parquet":
             path = tmp_path / f"{name}.parquet"
-            pq.write_table(pa.table({"k": pa.array(values, pa.string())}), path)
+            cols = {c: pa.array([r[i] for r in rows], pa.string()) for i, c in enumerate("kj")}
+            pq.write_table(pa.table(cols), path)
             out[name] = {"type": "file", "format": "parquet", "path": str(path)}
         else:
             path = tmp_path / f"{name}.csv"
-            path.write_text("k\n" + "".join(f"{'' if v is None else v}\n" for v in values))
+            path.write_text("k,j\n" + "".join(",".join(v or "" for v in r) + "\n" for r in rows))
             out[name] = {"type": "file", "format": "csv", "path": str(path), "has_header": True}
     return out
 
@@ -46,15 +48,15 @@ def _source(descriptor: dict[str, Any], name: str) -> LazySource:
 def test_key_facts_equal_pre_scan_counts(tmp_path: Path, kind: str) -> None:
     sources = _files(tmp_path, kind, PARENT, CHILD)
     rel = {
-        "parent": {"table": "parent", "columns": ["k"]},
-        "children": [{"table": "child", "columns": ["k"]}],
+        "parent": {"table": "parent", "columns": ["k", "j"]},
+        "children": [{"table": "child", "columns": ["k", "j"]}],
         "orphan_policy": "warn",
     }
     (pre,) = relationship_facts(
         sources, declare(sources, [rel]), spill_dir=tmp_path / "pre", memory_limit="64MB"
     )
-    parent = key_batches(from_lazy("parent", _source(sources["parent"], "parent")), ["k"])
-    child = key_batches(from_lazy("child", _source(sources["child"], "child")), ["k"])
+    parent = key_batches(from_lazy("parent", _source(sources["parent"], "parent")), ["k", "j"])
+    child = key_batches(from_lazy("child", _source(sources["child"], "child")), ["k", "j"])
     got = key_facts(parent, [child], scratch=tmp_path / "kf", memory_limit="64MB")
 
     assert got.status == "checked" and pre.status == "checked"
@@ -71,8 +73,8 @@ def test_key_facts_equal_pre_scan_counts(tmp_path: Path, kind: str) -> None:
         pc.orphan_distinct_keys,
     )
     # Non-trivial values, so a swapped or wrong-joined count cannot pass by coincidence.
-    assert (c.rows, c.null_key_rows, c.orphan_rows, c.orphan_distinct_keys) == (6, 1, 2, 1)
-    assert (got.parent_rows, got.parent_null_key_rows, got.parent_duplicate_excess) == (5, 1, 1)
+    assert (c.rows, c.null_key_rows, c.orphan_rows, c.orphan_distinct_keys) == (7, 2, 2, 1)
+    assert (got.parent_rows, got.parent_null_key_rows, got.parent_duplicate_excess) == (6, 2, 1)
 
 
 def _keys(values: list[Any], type_: pa.DataType | None = None) -> KeyBatches:
