@@ -15,7 +15,7 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.execution.out_of_core import _duckdb
-from decoy_engine.profiling import KeyBatches, KeyFacts, key_facts
+from decoy_engine.profiling import KeyBatches, KeyFacts, _scan_integrity, key_facts, keys_comparable
 
 INTS = [
     pa.int8(),
@@ -84,11 +84,53 @@ def test_integer_pairs_count_like_one_common_type(
     assert _shape(got) == _shape(want)
 
 
-def test_typed_empty_load_uses_schema_types_only(tmp_path: Path) -> None:
+def test_typed_empty_load_uses_schema_types_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[list[tuple[str, str]]] = []
+
+    def read_columns(conn: Any) -> None:
+        seen.append(
+            conn.execute(
+                "SELECT table_name, data_type FROM duckdb_columns() WHERE column_name = 'k0'"
+            ).fetchall()
+        )
+
+    monkeypatch.setattr(_scan_integrity, "_before_fetch", read_columns)
     parent = _keys(pa.array([], pa.int32()))
     child = _keys(pa.array([], pa.uint64()))
     facts = _run(tmp_path, parent, child)
     assert _shape(facts) == ("checked", 0, 0, 0, ((0, 0, 0, 0),))
+    assert seen
+    for columns in seen:
+        assert {data_type for _, data_type in columns} == {"HUGEINT"}
+        assert {name.split("_")[0] for name, _ in columns} >= {"parent", "child"}
+
+
+STRINGS = [
+    pa.string(),
+    pa.large_string(),
+    pa.dictionary(pa.int32(), pa.string()),
+    pa.dictionary(pa.int8(), pa.large_string()),
+]
+
+
+def _schema_only(type_: pa.DataType) -> KeyBatches:
+    return KeyBatches(pa.schema([("k0", type_)]), lambda: iter(()))
+
+
+@pytest.mark.parametrize(
+    ("ptype", "ctype"),
+    list(itertools.product(INTS + STRINGS, INTS + STRINGS)),
+    ids=lambda t: str(t),
+)
+def test_comparable_pair_never_falls_back_to_the_declared_type(
+    ptype: pa.DataType, ctype: pa.DataType
+) -> None:
+    parent, child = _schema_only(ptype), _schema_only(ctype)
+    if not keys_comparable(parent, [child]) or ptype.equals(ctype):
+        pytest.skip("not a comparable pair of different types")
+    assert _scan_integrity._duck_types(parent, [child]) != [None]
 
 
 def test_uint64_never_wraps_onto_int64(tmp_path: Path) -> None:
