@@ -1,9 +1,10 @@
 """The one builder of a ``RunResult``: facts in, a validated frozen document out.
 
 Pure and I/O free. Status and exit code come from ``derive_outcome`` called once with the
-caller's ``blocking_failed``; the builder never decides blocking itself. Checks, route and
-warnings are read from the run's quality metrics as codes and counts only, so no message,
-sampled value or exception text reaches the document.
+caller's ``blocking_failed``; the builder never decides blocking itself. Checks and warnings are
+read from the run's quality metrics as codes and counts only; the route arrives as a caller fact
+(``route_summary``), so the metrics' route block has one reader. No message, sampled value or
+exception text reaches the document.
 """
 
 from __future__ import annotations
@@ -12,8 +13,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, get_args
 
-from decoy_engine.progress import EVENT_SCHEMA_VERSION, safe_error_class
-from decoy_engine.reasons import REGISTRY_VERSION, ReasonRecord, approve_name, approve_ref
+from decoy_engine.progress import EVENT_SCHEMA_VERSION, safe_error_class, safe_registered_code
+from decoy_engine.reason_adapter import report_unavailable
+from decoy_engine.reasons import REGISTRY_VERSION, ReasonRecord, approve_name, approve_ref, decoy
 from decoy_engine.release import __version__
 from decoy_engine.run_result._model import (
     Check,
@@ -35,11 +37,18 @@ from decoy_engine.run_result._model import (
 from decoy_engine.run_result._outcome import derive_outcome
 from decoy_engine.run_result._project import ExecutionFacts, ProjectedTables
 
-_MODES = tuple(m for m in get_args(ExecutionMode) if m != "other")
 _MAX_CODES = 64
 _MAX_WARNINGS = 256
 _Key = tuple[str, str | None, str | None]
-_ROUTE_MODE: dict[str, ExecutionMode | None] = {}
+# The route vocabulary of ``route_summary`` against the model's ``ExecutionMode``. A route the
+# table lacks (a later one) reads "other", never raises; the exhaustiveness test keeps every
+# route the engine writes listed here on purpose.
+_ROUTE_MODE: dict[str, ExecutionMode | None] = {
+    **{m: m for m in get_args(ExecutionMode) if m != "other"},
+    "auto_chunk": "chunked",
+    "mixed": "other",
+    "unknown": None,
+}
 
 
 class RunFacts(ExecutionFacts, Protocol):
@@ -71,17 +80,23 @@ class FailureInput:
     error_class: str | None
 
 
-def _route(result: RunFacts | None, chunked: bool, native: NativeRoute | None) -> Route:
-    telemetry = result.quality_metrics.get("execution") if result is not None else None
-    telemetry = telemetry if isinstance(telemetry, Mapping) else {}
-    mode = telemetry.get("execution_mode")
-    # A route the model has no name for (mixed, a later one) reads "other", never raises.
-    kind: ExecutionMode | None = next(
-        (m for m in _MODES if m == mode), None if mode is None else "other"
+def _registered(raw: Any) -> str:
+    """A code the registry knows, else the fixed ``unregistered_reason``; a count is never lost."""
+    return safe_registered_code(raw if isinstance(raw, str) else None) or str(
+        decoy.UNREGISTERED_REASON
     )
-    kind = "chunked" if chunked else kind
-    route_reason = approve_ref(telemetry.get("route_reason") if telemetry else None)
-    return Route(execution_mode=kind, route_reason=route_reason, chunked=chunked, native=native)
+
+
+def _route(view: RouteView | None, chunked: bool, native: NativeRoute | None) -> Route:
+    kind = None if view is None else _ROUTE_MODE.get(view.route, "other")
+    chunked = chunked or kind == "chunked"
+    reason = None if view is None or view.reason_code is None else _registered(view.reason_code)
+    return Route(
+        execution_mode="chunked" if chunked else kind,
+        route_reason=reason,
+        chunked=chunked,
+        native=native,
+    )
 
 
 def _count(report: Mapping[str, Any], key: str) -> int:
@@ -102,30 +117,43 @@ def _check(
     )
 
 
+def _fidelity_warned(report: Any) -> bool:
+    """A table whose report carries warnings, grades F or is unavailable. Codes only."""
+    if not isinstance(report, Mapping):
+        return True
+    return bool(report.get("warnings")) or report.get("grade") in ("F", "unavailable")
+
+
 def _checks(result: RunFacts | None, blocking: bool) -> tuple[Check, ...]:
     metrics = result.quality_metrics if result is not None else {}
     found: list[Check] = []
     if "quality_summary" in metrics:
-        refs = (approve_ref(c.get("code")) for c in metrics.get("failed_checks") or ())
+        rows = list(metrics.get("failed_checks") or ())
+        refs = (approve_ref(r.get("code")) for r in rows if isinstance(r, Mapping))
         codes = [c for c in refs if c is not None][:_MAX_CODES]
-        found.append(
-            _check(
-                "post_validation",
-                "failed" if codes else "passed",
-                blocking,
-                (0, 0, len(codes), 0),
-                codes,
-            )
-        )
+        # A row that is not a mapping has no code to read but is still a failed check.
+        failed = len(codes) + sum(not isinstance(r, Mapping) for r in rows)
+        status: CheckStatus = "failed" if failed else "passed"
+        found.append(_check("post_validation", status, blocking, (0, 0, failed, 0), codes))
     scan = metrics.get("post_scan_integrity")
     if isinstance(scan, Mapping):
         n = tuple(_count(scan, f"{k}_count") for k in ("pass", "warning", "fail", "error"))
-        status: CheckStatus = (
-            "error" if n[3] else "failed" if n[2] else "warned" if n[1] else "passed"
+        scan_status: CheckStatus = (
+            "error"
+            if report_unavailable(scan)
+            else "failed"
+            if n[2]
+            else "warned"
+            if n[1]
+            else "passed"
         )
-        found.append(_check("post_scan_integrity", status, blocking, n, ()))
-    if metrics.get("fidelity_reports"):
-        found.append(_check("fidelity", "passed", False, (0, 0, 0, 0), ()))
+        # Post-scan only reports in this slice, so it never blocks the run.
+        found.append(_check("post_scan_integrity", scan_status, False, n, ()))
+    reports = metrics.get("fidelity_reports")
+    if isinstance(reports, Mapping) and reports:
+        warned = sum(_fidelity_warned(r) for r in reports.values())
+        status = "warned" if warned else "passed"
+        found.append(_check("fidelity", status, False, (len(reports) - warned, warned, 0, 0), ()))
     return tuple(found)
 
 
@@ -143,9 +171,7 @@ def _warnings(result: RunFacts | None) -> tuple[WarningEntry, ...]:
     then to code alone, summing counts, so no count is lost. Order is first-seen at each level."""
     seen: dict[_Key, int] = {}
     for item in result.warnings if result is not None else ():
-        code = approve_ref(getattr(item, "code", None))
-        if code is None:
-            continue
+        code = _registered(getattr(item, "code", None))
         detail = getattr(item, "detail", None)
         table = approve_name(detail.get("table") if isinstance(detail, Mapping) else None)
         key = (code, table, approve_name(getattr(item, "column", None)))
@@ -182,7 +208,12 @@ def build_run_result(
     elapsed_s: float,
     phases: Sequence[tuple[str, float]],
 ) -> RunResult:
-    """``producer`` is the CLI version; the engine and registry versions are the builder's own."""
+    """``producer`` is the CLI version; the engine and registry versions are the builder's own.
+
+    ``route`` is ``route_summary(quality_metrics)``, read once by the caller; ``chunked`` is the
+    caller's own fact that the ``--chunked`` entry ran, which leaves no route in the metrics."""
+    if tables.run_failed != (failure is not None):
+        raise ValueError("tables.run_failed disagrees with failure")
     outcome = derive_outcome(
         category=None if failure is None else failure.category,
         delivery_mode=tables.delivery.mode,
@@ -203,7 +234,7 @@ def build_run_result(
             event_schema=EVENT_SCHEMA_VERSION,
         ),
         config=config_ref,
-        route=_route(execution_result, chunked, native),
+        route=_route(route, chunked, native),
         delivery=tables.delivery,
         tables=tables.tables,
         checks=_checks(execution_result, blocking_failed),

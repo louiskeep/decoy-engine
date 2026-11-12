@@ -23,6 +23,7 @@ BUILD = (
     "Links",
     "LogLink",
     "NativeRoute",
+    "RouteView",
     "RunFacts",
     "build_run_result",
 )

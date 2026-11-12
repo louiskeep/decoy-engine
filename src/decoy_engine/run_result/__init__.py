@@ -7,7 +7,7 @@ them; they are not part of the top-level API. The per-table projection lives in
 ``_project.py``; the builder is ``_build.py``; the collector arrives in a later slice of the same package.
 """
 
-from decoy_engine.run_result._build import FailureInput, RunFacts, build_run_result
+from decoy_engine.run_result._build import FailureInput, RouteView, RunFacts, build_run_result
 from decoy_engine.run_result._model import (
     RUN_RESULT_SCHEMA,
     BaselineLink,
@@ -50,6 +50,7 @@ __all__ = [
     "NativeRoute",
     "ProjectedTables",
     "RelPath",
+    "RouteView",
     "RunFacts",
     "RunResult",
     "RunResultRead",
