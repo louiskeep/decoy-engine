@@ -552,7 +552,7 @@ def test_gen_types_e3_codes_are_registered() -> None:
     for ns, code, owner in expected:
         spec = reasons.find(ns, code)
         assert spec is not None
-        assert (spec.owner, spec.since) == (owner, "1.25.0")
+        assert (spec.owner, spec.since) == (owner, "unreleased")
         assert not re.search(r"[{}%]", spec.summary)
         assert getattr(getattr(reasons, ns), code.upper()) == code
     assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 24, 0)

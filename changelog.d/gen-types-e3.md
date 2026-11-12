@@ -18,7 +18,7 @@ file after compile changes nothing, and the seed hashes the file's content diges
 A saved plan re-checks every stored digest and re-runs the lookup checks on load; a plan that lacks a
 configured lookup, or whose bytes were edited, is refused. Code sets are versioned with the engine.
 
-New reasons, all in the `plan` namespace and `since` 1.25.0: `lookup_not_pinned`,
+New reasons, all in the `plan` namespace and `since` unreleased: `lookup_not_pinned`,
 `lookup_pinned_digest_mismatch`, `lookup_file_unreadable`, `lookup_file_format_unsupported`,
 `lookup_file_empty`, `lookup_file_too_large`, `lookup_column_missing`, `lookup_too_many_entries`,
 `lookup_weight_invalid` and `pinned_lookup_unsupported`. A refusal names the table and column and
