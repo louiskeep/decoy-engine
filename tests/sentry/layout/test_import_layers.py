@@ -281,7 +281,11 @@ def test_a_downward_tier_move_goes_green_only_with_its_snapshot(
     cfg = tree / ".importlinter"
     before = ignore_keys(cfg.read_text(encoding="utf-8"))
     _edit(cfg, " : verification : vault\n", " : verification\n")
-    _edit(cfg, " : reference_tables : quality\n", " : reference_tables : quality : vault\n")
+    _edit(
+        cfg,
+        " : reference_tables : quality : subset\n",
+        " : reference_tables : quality : subset : vault\n",
+    )
     assert lint_scratch(tree)
     text = cfg.read_text(encoding="utf-8")
     assert ignore_keys(text) == before
