@@ -291,7 +291,9 @@ def test_the_isolated_source_scratch_names_are_opaque(tmp_path: Path) -> None:
         rlimit_kind="data",
         staging_output_dir=staging,
     )
-    files = sorted(p.name for p in (work / "sources").iterdir())
+    # The source copies sit directly in the private work root, owner-only from creation.
+    files = sorted(p.name for p in work.iterdir() if p.name != "payload.json")
+    assert len(files) == 2  # non-vacuity: both sources were written
     assert all(name.startswith("s") and name.endswith(".parquet") for name in files)
     assert not (tmp_path / "x.parquet").exists()
 

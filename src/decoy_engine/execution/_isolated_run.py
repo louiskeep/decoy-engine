@@ -359,7 +359,7 @@ def _run_isolated(
     on_spawn: Callable[[int], None] | None,
     timeout_s: float | None,
     run_pipeline_kwargs: dict[str, Any],
-    request: PublicationRequest | None,
+    request: PublicationRequest | None = None,
 ) -> IsolatedRunResult:
     scratch = ExitStack()  # removes an engine-made work root; a caller-named one is left alone
     work_root = (
