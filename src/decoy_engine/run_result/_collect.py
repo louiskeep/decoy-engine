@@ -10,13 +10,18 @@ from __future__ import annotations
 
 import threading
 
-from decoy_engine.progress import PhaseEvent, ProgressEvent, RateSample
-from decoy_engine.reasons import approve_name
+from decoy_engine.progress import PhaseEvent, ProgressEvent, RateSample, RouteEvent
+from decoy_engine.reasons import Phase, approve_name
 from decoy_engine.run_result._project import CollectedFacts
 
 # Only these phases change per-table facts. ``resolve`` ran no table (its failure must read as
 # every table not run) and ``publish`` is delivery's fact, so both are timing only.
-_TABLE_WORK = frozenset({"mask", "generate"})
+_TABLE_WORK = frozenset({Phase.MASK.value, Phase.GENERATE.value})
+_PHASES = frozenset(p.value for p in Phase)
+# These two routes emit one mask phase per table. Every other route (full frame, and the mixed
+# route when it falls back to the full-frame lane) runs one whole-run mask phase, so a table-less
+# error there means the run's mask step failed as a whole.
+_PER_TABLE_ROUTES = frozenset({"sequential", "out_of_core"})
 
 
 def _count(value: object) -> int | None:
@@ -41,6 +46,7 @@ class RunResultCollector:
         self._rate_rows: dict[str, int] = {}
         self._elapsed: dict[str, float] = {}
         self._aggregate_error = False
+        self._per_table_route = False
         self._phases: dict[str, float] = {}
 
     def on_event(self, event: ProgressEvent) -> None:
@@ -49,13 +55,18 @@ class RunResultCollector:
                 self._phase(event)
             elif isinstance(event, RateSample):
                 self._rate(event)
+            elif isinstance(event, RouteEvent):
+                route = event.route
+                with self._lock:
+                    self._per_table_route = route in _PER_TABLE_ROUTES
         except Exception:
-            # Counted as nothing. Every read happens before the lock, so a failed read leaves
-            # the counters as they were.
+            # Counted as nothing. Every event field is read before the lock is taken, so a bad
+            # event is dropped before any counter changes.
             return
 
     def _phase(self, event: PhaseEvent) -> None:
         name, status, raw_table = event.name, event.status, event.table
+        name = name if name in _PHASES else Phase.UNKNOWN.value
         table = None if raw_table is None else approve_name(raw_table)
         if raw_table is not None and table is None:
             return
@@ -67,8 +78,10 @@ class RunResultCollector:
             if not work:
                 return
             if table is None:
-                # The full-frame mask phase spans the run: its rows are never split across tables.
-                self._aggregate_error |= status == "error"
+                # A whole-run mask phase spans every table: its rows are never split across them.
+                # On a per-table route a table-less error is a table whose name was refused, so it
+                # marks no table.
+                self._aggregate_error |= status == "error" and not self._per_table_route
                 return
             if status == "start":
                 self._started.add(table)

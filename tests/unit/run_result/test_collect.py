@@ -12,7 +12,7 @@ import pytest
 
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import run_pipeline
-from decoy_engine.progress import PhaseEvent, RateSample
+from decoy_engine.progress import PhaseEvent, RateSample, RouteEvent
 from decoy_engine.run_result import CollectedFacts, RunResultCollector, project_tables
 
 _VERSION = "collect-test"
@@ -140,7 +140,7 @@ def test_per_table_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(_sequential, "run_chunk_ingest_guards", boom)
     cfg, sources = _job(tmp_path, ("t1", "t2", "t3"), fk=True)
     collector = RunResultCollector()
-    with pytest.raises(Exception):
+    with pytest.raises(RuntimeError):
         run_pipeline(
             cfg,
             sources=sources,
@@ -163,7 +163,7 @@ def test_full_frame_mask_failure_fails_every_mask_table(
     monkeypatch.setattr(PandasExecutionAdapter, "run", boom)
     cfg, sources = _job(tmp_path, ("t1", "t2"))
     collector = RunResultCollector()
-    with pytest.raises(Exception):
+    with pytest.raises(RuntimeError):
         run_pipeline(cfg, sources=sources, engine_version=_VERSION, progress=collector)
     tables = _project(cfg, collector, run_failed=True)
     assert [tables[n].outcome for n in ("t1", "t2")] == ["failed", "failed"]
@@ -262,3 +262,53 @@ def test_rule_table_for_synthetic_events():
     assert dict(collector.snapshot().finished) == {"t2": None}
     collector.on_event(_phase("finalize", "finish", "t3", rows_out=1, elapsed_s=0.0))
     assert "t3" not in collector.snapshot().finished
+
+
+def _three_tables() -> dict:
+    cols = [{"name": "a", "strategy": "hash"}]
+    return {
+        "version": 2,
+        "tables": [{"name": n, "columns": cols} for n in ("a", "b", "c")],
+        "sources": {n: {"type": "file", "format": "csv", "path": f"{n}.csv"} for n in "abc"},
+    }
+
+
+def _outcomes(collector: RunResultCollector) -> list[str]:
+    rows = project_tables(
+        config=_three_tables(),
+        execution_result=None,
+        facts=collector.snapshot(),
+        delivery=None,
+        run_failed=True,
+    ).tables
+    return [r.outcome for r in rows]
+
+
+def test_refused_table_name_on_a_per_table_route_marks_no_table():
+    collector = RunResultCollector()
+    collector.on_event(RouteEvent("sequential"))
+    collector.on_event(_phase("mask", "start", "a"))
+    collector.on_event(_phase("mask", "finish", "a", rows_out=3, elapsed_s=0.1))
+    # PhaseEvent drops a table name that approve_name refuses, so the error arrives table-less.
+    collector.on_event(_phase("mask", "start", "orders@2024"))
+    collector.on_event(_phase("mask", "error", "orders@2024", elapsed_s=0.1))
+    assert collector.snapshot().aggregate_error is False
+    assert _outcomes(collector) == ["succeeded", "not_run", "not_run"]
+
+
+@pytest.mark.parametrize("route", ["full_frame", "mixed"])
+def test_table_less_mask_error_on_a_whole_run_route_fails_the_run(route: str):
+    collector = RunResultCollector()
+    collector.on_event(RouteEvent(route))
+    collector.on_event(_phase("mask", "start"))
+    collector.on_event(_phase("mask", "error", elapsed_s=0.1))
+    assert collector.snapshot().aggregate_error is True
+    assert _outcomes(collector) == ["failed", "failed", "failed"]
+
+
+def test_a_phase_name_outside_the_vocabulary_is_timed_as_unknown():
+    collector = RunResultCollector()
+    collector.on_event(_phase("zz_new_phase", "finish", "t1", rows_out=4, elapsed_s=1.5))
+    facts = collector.snapshot()
+    assert facts.phases == (("unknown", 1.5),)
+    assert not facts.finished
