@@ -75,6 +75,10 @@ SENTRIES = (
     "tests/sentry/test_secret_provider_semgrep.py",
     "tests/sentry/test_sentry_manifest.py",
     "tests/sentry/test_source_hygiene.py",
+    "tests/sentry/test_staging_writer_choke_point.py",
+    "tests/sentry/test_subset_inputs.py",
+    "tests/sentry/test_support_no_network.py",
+    "tests/sentry/test_table_kind_classifier.py",
     "tests/sentry/test_unified_backend_map.py",
     "tests/sentry/test_validate_no_mutation.py",
     "tests/sentry/test_wave_b_no_registry_version_literal.py",
@@ -97,6 +101,7 @@ SENTRIES = (
     "tests/sentry/source_config/test_declaration_gate.py",
     "tests/sentry/source_config/test_source_dialect_choke_point.py",
     "tests/sentry/tooling/test_ci_lanes.py",
+    "tests/sentry/tooling/test_ml_base_install.py",
     "tests/sentry/tooling/test_pytest_timeout.py",
     # Named sentries that live outside tests/sentry/.
     "tests/secret_providers/test_leak_sentry.py",

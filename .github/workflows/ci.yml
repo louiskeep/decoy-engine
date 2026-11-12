@@ -181,33 +181,42 @@ jobs:
       - name: Import layers (isolated venv)
         run: bash scripts/dev/gates.sh --steps layers
 
-  # ml-gate: activates the ML field-recognition tests that importorskip
-  # themselves out of the regression-gate above (which installs .[dev] only,
-  # so scikit-learn + lightgbm are absent and the retrain gate silently
-  # skips). This job installs .[dev,ml] and runs every test marked `ml` so the
-  # frozen golden pack (docs/v2/ml/packs/lgbm-v1) is actually reproduced in CI:
-  # test_lightgbm_regression_retrain re-trains under the EXACT-pinned
-  # scikit-learn/lightgbm (see the [ml] extra in pyproject.toml) and asserts
-  # the metrics match the committed baseline within 1e-4. Kept separate from
-  # regression-gate so an ML failure is legible at a glance and the pinned ML
-  # deps do not slow the main gate.
+  # ml-gate: reproduces the frozen lgbm-v1 golden pack. scikit-learn and lightgbm are base
+  # dependencies (SCAN-ML M2), so `dev` alone installs them; this job stays separate so an ML
+  # failure is legible at a glance. test_lightgbm_regression_retrain re-trains under the EXACT
+  # pins in pyproject.toml and asserts the metrics match the committed baseline within 1e-4.
   #
-  # Selection is by the `ml` marker (pytest -m ml overrides the addopts -m),
-  # NOT a hand-maintained path list: a new ML test module joins the gate by
-  # adding `pytestmark = pytest.mark.ml`, so coverage cannot silently shrink
-  # the way an unlisted path would. The `ml`-marked tests still run in
-  # regression-gate too (ml is not benchmark), importorskip-skipping there
-  # without the extra.
+  # Selection is by the `ml` marker (pytest -m ml overrides the addopts -m), NOT a
+  # hand-maintained path list: a new ML test module joins the gate by adding
+  # `pytestmark = pytest.mark.ml`, so coverage cannot silently shrink. The `ml`-marked tests
+  # also run in regression-gate, where they skip only if the ML stack cannot load.
   ml-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # An unloadable stack (no libgomp1, broken wheel) fails the ml tests instead of skipping.
+      DECOY_REQUIRE_ML: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/lock-env
         with:
-          extras: "dev ml"
+          extras: "dev"
       - name: ML gate (golden retrain + provenance + privacy + classify)
         run: pytest -m ml --tb=short
+
+  # base-install: AT-M2a. A venv synced with NO extras (the engine's base dependencies only)
+  # loads the bundled classifier pack and classifies a frame. This is the proof that moving
+  # scikit-learn and lightgbm into the base list left a plain install working. Linux only.
+  # macOS without libomp was run on the Mac mini; macOS with libomp and Windows are not
+  # checked. See docs/records/2026-11-12-scan-ml-m2-build.md.
+  base-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/lock-env
+      - name: Classifier runs from the base install
+        run: python scripts/dev/base_install_smoke.py
 
   # ner-gate: regression-gate installs .[dev] only, so every NER test skips there
   # and a broken `ner` install (spaCy imports click, which typer no longer pulls

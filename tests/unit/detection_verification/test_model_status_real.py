@@ -11,6 +11,7 @@ from decoy_engine.detection import _model_status as ms
 from decoy_engine.detection import ner
 from decoy_engine.detection.types import DetectorRun, ModelRef
 from decoy_engine.profiling.model_pack import _detectors as det
+from tests._ml import require_ml_stack
 from tests._ner import needs_ner
 from tests.unit.detection_verification._fake_ner_model import make_fake_model
 
@@ -37,7 +38,7 @@ def test_ner_status_matches_the_installed_model_and_the_pin() -> None:
 
 @needs_ner
 def test_load_detectors_with_everything_on_the_real_models() -> None:
-    pytest.importorskip("lightgbm")
+    require_ml_stack()
     found = det.load_detectors(("ner", "classifier", "regex"), ner_model=ner.DEFAULT_NER_MODEL)
     assert found.runs() == (
         DetectorRun("regex", None),

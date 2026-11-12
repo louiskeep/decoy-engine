@@ -24,6 +24,11 @@ if TYPE_CHECKING:
 
 _TOKEN = object()
 
+# The execution layer's rule for which declared columns the config creates itself: a table entry
+# and the source's columns in, the created column names out. `profile` cannot import `execution`,
+# so the policy crosses the boundary as this callable.
+CreatedTargets = Callable[[Mapping[str, Any], Sequence[str]], frozenset[str]]
+
 
 def is_declared_column(entry: Mapping[str, Any]) -> bool:
     """A column entry counts as declared when it has a non-empty name and strategy."""
@@ -101,29 +106,52 @@ class DeclarationInput:
     origin: str
     # A chunk's columns must also be among these (the `source_schema` a chunked caller gave).
     within: tuple[str, ...] | None = None
+    # Declared columns the config creates itself on this table, so the source may lack them.
+    # None turns the missing-column stage off: only the execution layer knows what is created.
+    created: frozenset[str] | None = None
 
 
 @dataclasses.dataclass(frozen=True)
 class DeclarationFinding:
-    """One undeclared table or column set. `detail` is public; `undeclared` is for the fixture
-    codemod only and stays out of `repr`."""
+    """One undeclared table, undeclared column set or declared-but-missing column set. `detail`
+    is public; `undeclared` (the names behind it, whichever kind) is for the fixture codemod
+    only and stays out of `repr`."""
 
-    kind: Literal["table", "column"]
+    kind: Literal["table", "column", "missing"]
     table: str
     detail: str
     undeclared: tuple[str, ...] = dataclasses.field(default=(), repr=False)
 
 
+def _missing_finding(item: DeclarationInput, lacking: Sequence[str]) -> DeclarationFinding:
+    """`lacking` is in config order, so the name reported is the first one the config lists.
+    When the catalog is the chunked caller's `source_schema`, or a chunk its schema also omits,
+    the schema may be what is wrong."""
+    table = item.table
+    fix = "remove it or fix the name"
+    if item.origin == "chunk" or (item.within is not None and lacking[0] not in item.within):
+        fix = "remove it, fix the name, or add it to source_schema"
+    return DeclarationFinding(
+        "missing",
+        table,
+        f"column {lacking[0]} is declared but the source has no such column "
+        f"({len(lacking)} missing); {fix}",
+        tuple(lacking),
+    )
+
+
 def declaration_findings(
     config: Mapping[str, Any], inputs: Sequence[DeclarationInput]
 ) -> tuple[DeclarationFinding, ...]:
-    """Every finding, table findings first, each group in input order."""
+    """Every finding: undeclared tables, then undeclared columns, then declared-but-missing
+    columns, each group in input order."""
     from decoy_engine.execution._pipeline_context import classify_table_kinds
 
     known = {e.get("name") for e in config.get("tables") or [] if isinstance(e, Mapping)}
     kinds = classify_table_kinds(dict(config))
     tables: list[DeclarationFinding] = []
     columns: list[DeclarationFinding] = []
+    absent: list[DeclarationFinding] = []
     for item in inputs:
         if item.table not in known:
             width = "" if item.columns is None else f" ({len(item.columns)} columns)"
@@ -137,7 +165,8 @@ def declaration_findings(
                 )
             )
         elif item.columns is not None and kinds.get(item.table) == "mask":
-            in_config = frozenset(declared_columns(config, item.table))
+            ordered = declared_columns(config, item.table)
+            in_config = frozenset(ordered)
             declared = in_config
             if item.within is not None:
                 declared &= frozenset(item.within)
@@ -159,7 +188,14 @@ def declaration_findings(
                         tuple(c for _, c in missing),
                     )
                 )
-    return (*tables, *columns)
+            lacking = (
+                []
+                if item.created is None
+                else [c for c in ordered if c not in item.columns and c not in item.created]
+            )
+            if lacking:
+                absent.append(_missing_finding(item, lacking))
+    return (*tables, *columns, *absent)
 
 
 def check_columns_declared(config: Mapping[str, Any], inputs: Sequence[DeclarationInput]) -> None:
@@ -173,6 +209,8 @@ def check_columns_declared(config: Mapping[str, Any], inputs: Sequence[Declarati
         raise source_refusal(CODES.SOURCE_FILE_UNDECLARED_TABLE, first.table, first.detail)
     if kind == "column":
         raise source_refusal(CODES.SOURCE_FILE_UNDECLARED_COLUMN, first.table, first.detail)
+    if kind == "missing":
+        raise source_refusal(CODES.SOURCE_FILE_DECLARED_COLUMN_MISSING, first.table, first.detail)
     raise AssertionError("unreachable finding kind")
 
 
@@ -252,11 +290,16 @@ class PreparedDeclaredSources:
     """
 
     def __init__(
-        self, token: object, config: Mapping[str, Any], inputs: tuple[DeclarationInput, ...]
+        self,
+        token: object,
+        config: Mapping[str, Any],
+        inputs: tuple[DeclarationInput, ...],
+        created_targets: CreatedTargets | None = None,
     ) -> None:
         if token is not _TOKEN:
             raise TypeError("PreparedDeclaredSources is built by prepare_declared_sources")
         self._config = config
+        self._created_targets = created_targets
         self._config_id = id(config)
         self.inputs = inputs
         # `for_chunks` with a schema: the columns a chunk of that table may carry.
@@ -268,10 +311,22 @@ class PreparedDeclaredSources:
         """True when `config` is the object this capability was prepared for."""
         return id(config) == self._config_id
 
+    def created(self, table: str, columns: Iterable[str]) -> frozenset[str]:
+        """Columns of `table` the config creates itself, given the source's `columns`; none
+        unless the route's policy says so."""
+        if self._created_targets is None:
+            return frozenset()
+        return self._created_targets(_table_entry(self._config, table), tuple(columns))
+
+    def _created_or_none(self, table: str, columns: tuple[str, ...]) -> frozenset[str] | None:
+        return None if self._created_targets is None else self.created(table, columns)
+
     def check_names(self, table: str, names: Iterable[str]) -> None:
         within = self._chunk_columns.get(table)
+        have = tuple(names)
         check_columns_declared(
-            self._config, [DeclarationInput(table, tuple(names), "check", within)]
+            self._config,
+            [DeclarationInput(table, have, "check", within, self._created_or_none(table, have))],
         )
 
     def checked_chunks(
@@ -314,11 +369,26 @@ class PreparedDeclaredSources:
         return load
 
 
+def _with_created(
+    config: Mapping[str, Any], item: DeclarationInput, policy: CreatedTargets
+) -> DeclarationInput:
+    if item.columns is None:
+        return item
+    created = policy(_table_entry(config, item.table), item.columns)
+    return dataclasses.replace(item, created=created)
+
+
 @fileaccess.entry_point
 def prepare_declared_sources(
-    request: DeclarationRequest, *, file_access: FileAccess | None = None
+    request: DeclarationRequest,
+    *,
+    file_access: FileAccess | None = None,
+    created_targets: CreatedTargets | None = None,
 ) -> PreparedDeclaredSources:
-    """Resolve the request into ordered inputs, check them once, and return the capability."""
+    """Resolve the request into ordered inputs, check them once, and return the capability.
+
+    `created_targets` is the execution layer's policy for columns the config creates; an
+    execution route gets it through `prepare_declared_execution_sources`."""
     resolved = [
         DeclarationInput(
             name, source_columns(descriptor, table=name, file_access=file_access), "descriptor"
@@ -326,8 +396,10 @@ def prepare_declared_sources(
         for name, descriptor in request._descriptors
     ]
     inputs = (*resolved, *request._inputs)
+    if created_targets is not None:
+        inputs = tuple(_with_created(request._config, i, created_targets) for i in inputs)
     check_columns_declared(request._config, inputs)
-    return PreparedDeclaredSources(_TOKEN, request._config, inputs)
+    return PreparedDeclaredSources(_TOKEN, request._config, inputs, created_targets)
 
 
 __all__ = [

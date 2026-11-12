@@ -61,6 +61,9 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("declared_casting/_eligibility.py", "declared_route_guard"): _DECISION_REASON,
     ("declared_casting/_eligibility.py", "preflight_declared_casting"): _DECISION_REASON,
     ("declared_casting/_refusals.py", "note"): _DECISION_REASON,
+    ("delivery/_plan.py", "plan_delivery"): (
+        "stores the failure ReasonCode the caller passed in `outcomes` on the failed table"
+    ),
     ("declared_casting/_quarantine_local.py", "_qerror"): _HELPER,
     ("plan/_checks_declared_casting.py", "_fail"): _HELPER,
     ("plan/_serialize_declared.py", "declared_casting_from_dict"): _REWRAP,
@@ -334,6 +337,13 @@ _MUTANTS: dict[str, str] = {
     "module_constant": """
         MY_CODE = "adhoc_constant"
     """,
+    # The fallback of a registry-backed code table (the FPE handler's unregistered default).
+    "code_table_default": """
+        from decoy_engine import reasons
+        _ROUTES = {"a": reasons.runtime.CYCLIC_WORK_ORDERING}
+        def f(key):
+            return _ROUTES.get(key, "adhoc_default")
+    """,
     "unchecked_forward": """
         from decoy_engine.errors import ExecutionError
         def f(code):
@@ -394,6 +404,9 @@ _CLEAN = """
         raise ExecutionError(code=MY_CODE)
     def h():
         return {"code": reasons.runtime.CYCLIC_WORK_ORDERING}
+    _ROUTES = {"a": reasons.runtime.CYCLIC_WORK_ORDERING}
+    def k(key):
+        return _ROUTES.get(key, reasons.runtime.CYCLIC_WORK_ORDERING)
 """
 
 

@@ -23,13 +23,20 @@ import pyarrow as pa
 
 from decoy_engine import reasons
 from decoy_engine._field_names import repeated_names
+from decoy_engine.execution._column_access import created_columns
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._runner import build_work_list
 from decoy_engine.execution._transforms import TransformError
 from decoy_engine.plan._checks import _INT_NULL_REJECTED_STRATEGIES
+from decoy_engine.profile import (
+    DeclarationRequest,
+    PreparedDeclaredSources,
+    prepare_declared_sources,
+)
 
 if TYPE_CHECKING:
     from decoy_engine.execution._runner import WorkNode
+    from decoy_engine.fileaccess import FileAccess
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
@@ -187,6 +194,30 @@ def reject_gated_hash_on_integer(
         )
 
 
+def prepare_declared_execution_sources(
+    request: DeclarationRequest,
+    *,
+    file_access: FileAccess | None = None,
+    registry: ProviderRegistry | None = None,
+) -> PreparedDeclaredSources:
+    """The one pre-read boundary every execution route calls instead of `prepare_declared_sources`.
+
+    It adds the execution layer's rule for columns the config creates itself (from
+    `SURFACE_DECLARATIONS`), which `profile` cannot import. Execution routes build the
+    capability here and nowhere else. `registry` is the one the run resolves, so a created
+    column is classified as the runtime classifies it; the default registry applies when a
+    route has no caller registry.
+    """
+    from decoy_engine.providers_v2 import get_default_registry
+
+    registry = registry if registry is not None else get_default_registry()
+    return prepare_declared_sources(
+        request,
+        file_access=file_access,
+        created_targets=lambda entry, columns: created_columns(entry, columns, registry),
+    )
+
+
 def run_chunk_ingest_guards(
     plan: Plan,
     sources: Mapping[str, pa.Table],
@@ -212,6 +243,7 @@ def run_chunk_ingest_guards(
 __all__ = [
     "null_bearing_int_candidates",
     "null_bearing_int_error",
+    "prepare_declared_execution_sources",
     "refuse_duplicate_field_names",
     "refuse_duplicate_run_sources",
     "refused_per_chunk",
