@@ -1,0 +1,125 @@
+# Binds each sentry id to exactly one baseline file under tests/sentry/baselines/.
+# scripts/dev/ratchet_check.py compares every baseline with its merge-base copy and fails
+# when keys are added. A new sentry adds its row here in the slice that introduces it.
+# Engine has no plan-format baseline yet; the F29 reason baseline is frozen by
+# tests/sentry/test_reason_baseline_frozen.py and stays outside this registry.
+
+[[sentry]]
+id = "f29-reason-baseline"
+baseline = "tests/sentry/baselines/f29-reason-baseline.json"
+
+[[sentry]]
+id = "f29-producer-inventory"
+baseline = "tests/sentry/baselines/f29-producer-inventory.json"
+
+[[sentry]]
+id = "f29-consumer-inventory"
+baseline = "tests/sentry/baselines/f29-consumer-inventory.json"
+
+[[sentry]]
+id = "secret-material-census"
+baseline = "tests/sentry/baselines/secret-material-census.json"
+
+[[sentry]]
+id = "module-size"
+baseline = "tests/sentry/baselines/module-size.json"
+
+[[sentry]]
+id = "public-import-boundary"
+baseline = "tests/sentry/baselines/public-import-boundary.json"
+
+[[sentry]]
+id = "exception-hierarchy"
+baseline = "tests/sentry/baselines/exception-hierarchy.json"
+
+[[sentry]]
+id = "file-access-entry-seams"
+baseline = "tests/sentry/baselines/file-access-entry-seams.json"
+
+[[sentry]]
+id = "locator-waivers"
+baseline = "tests/sentry/baselines/locator-waivers.json"
+
+[[sentry]]
+id = "log-interpolation"
+baseline = "tests/sentry/baselines/log-interpolation.json"
+
+[[sentry]]
+id = "eval-sites"
+baseline = "tests/sentry/baselines/eval-sites.json"
+
+[[sentry]]
+id = "phase-containment"
+baseline = "tests/sentry/baselines/phase-containment.json"
+
+[[sentry]]
+id = "validate-no-mutation"
+baseline = "tests/sentry/baselines/validate-no-mutation.json"
+
+[[sentry]]
+id = "physical-seam-connected"
+baseline = "tests/sentry/baselines/physical-seam-connected.json"
+
+[[sentry]]
+id = "wave-b-string-target-exempt"
+baseline = "tests/sentry/baselines/wave-b-string-target-exempt.json"
+
+[[sentry]]
+id = "wave-b-e0-test-files"
+baseline = "tests/sentry/baselines/wave-b-e0-test-files.json"
+
+[[sentry]]
+id = "private-file-sinks"
+baseline = "tests/sentry/baselines/private-file-sinks.json"
+
+[[sentry]]
+id = "gcs-call-kwargs"
+baseline = "tests/sentry/baselines/gcs-call-kwargs.json"
+
+[[sentry]]
+id = "serial-resources"
+baseline = "tests/sentry/baselines/serial-resources.json"
+
+[[sentry]]
+id = "reason-policy-single-source"
+baseline = "tests/sentry/baselines/reason-policy-single-source.json"
+
+[[sentry]]
+id = "reason-unchecked-helpers"
+baseline = "tests/sentry/baselines/reason-unchecked-helpers.json"
+
+[[sentry]]
+id = "exception-context"
+baseline = "tests/sentry/baselines/exception-context.json"
+
+[[sentry]]
+id = "validation-name-messages"
+baseline = "tests/sentry/baselines/validation-name-messages.json"
+
+[[sentry]]
+id = "package-fanout"
+baseline = "tests/sentry/baselines/package-fanout.json"
+
+[[sentry]]
+id = "import-layers"
+baseline = "tests/sentry/baselines/import-layers.json"
+
+[[sentry]]
+id = "table-kind-truth-tests"
+baseline = "tests/sentry/baselines/table-kind-truth-tests.json"
+
+[[sentry]]
+id = "post-scan-blocking"
+baseline = "tests/sentry/baselines/post-scan-blocking.json"
+
+[[sentry]]
+id = "post-scan-pass-through"
+baseline = "tests/sentry/baselines/post-scan-pass-through.json"
+
+[[sentry]]
+id = "post-scan-key-core"
+baseline = "tests/sentry/baselines/post-scan-key-core.json"
+
+[[sentry]]
+id = "post-scan-reason-identity"
+baseline = "tests/sentry/baselines/post-scan-reason-identity.json"

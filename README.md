@@ -6,8 +6,10 @@ into a frozen plan, and runs that plan against tabular sources (CSV /
 Parquet / Arrow / pandas / Polars) to produce deterministic, masked or
 synthesized output.
 
-The engine is Apache-2.0 licensed and has no network or auth surface of
-its own: it is a library you call from your own code. The companion
+The engine is source-available under the Functional Source License
+(FSL-1.1-ALv2): use it for anything, including production, except
+building a competing product, and each release becomes Apache-2.0 two
+years after it ships. It has no network or auth surface of its own: it is a library you call from your own code. The companion
 `decoy-cli` package is the recommended way to drive it from a shell.
 
 ## Install
@@ -36,7 +38,7 @@ config_dict = {
     "version": 2,
     "global_settings": {"seed": 42},
     "sources": {
-        "people": {"type": "file", "format": "csv", "path": "./people.csv"},
+        "people": {"type": "file", "format": "csv", "has_header": True, "path": "./people.csv"},
     },
     "tables": [
         {
@@ -65,6 +67,30 @@ masked = result.outputs["people"]
 A more complete, runnable end-to-end shape lives in
 `tests/integration/golden/test_execution_e2e.py` (the `_run` helper is
 the canonical caller pattern).
+
+## Declared parsing and casting
+
+A mask column can declare how its text or bytes are read and written back, and what happens when a
+value does not fit. Parsing is strict and exact (no float, rounding or locale), applied before the
+masking strategy; formatting is applied after it:
+
+```yaml
+- name: age
+  strategy: bucketize
+  provider_config: {width: 10, format: lower}
+  logical_type: integer
+  parse_format: {id: integer/ascii/v1}
+  sentinel_to_null: {id: sentinel/exact/v1, values: [""]}
+  error_policy: fail            # or null, or quarantine (needs a protected quarantine store)
+  output_format: {id: integer/zero-pad/v1, width: 3, width_unit: code_points}
+```
+
+`042` reaches the strategy as the integer 42 and is written back as exactly three characters.
+Substitutions and failures are counted without values under `quality_metrics["declared_casting"]`.
+The same boundary runs on the full-frame, chunked, sequential, out-of-core, mixed and unified-slice
+routes; a route that cannot honour a contract (for example row quarantine on the out-of-core route)
+is refused before any source is read with a registered code, and `auto` routing never picks one. The engine owns the contract, catalog and reason codes; CLI and Studio controls are
+consumer work and are not part of this engine change. See `docs/declared-casting.md`.
 
 ## Public API at a glance
 
@@ -114,4 +140,15 @@ is private and may change without a version bump.
 
 ## License
 
-Apache License 2.0. See `LICENSE` and `NOTICE`.
+Functional Source License, Version 1.1, Apache 2.0 Future License
+(FSL-1.1-ALv2). You may use, modify and redistribute the engine for any
+purpose except a Competing Use: offering it, or something substantially
+similar built from it, to others as a commercial product or service.
+Internal production use is allowed. Each release converts to the Apache
+License 2.0 on the second anniversary of its release. FSL is
+source-available, not OSI open source.
+
+See `LICENSE`, `NOTICE`, `TRADEMARKS.md`, and the plain-English
+[licensing FAQ](https://github.com/louiskeep/decoy/blob/main/LICENSING.md).
+Releases published before the switch to FSL stay under the Apache License
+2.0 they shipped with.

@@ -20,15 +20,18 @@ swap (guide section 7.4's TOCTOU test).
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
 from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine.fileaccess import FileRole
+from decoy_engine.plan._checks_dp import verify_dp_snapshots
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import (
     DpVerification,
@@ -74,9 +77,19 @@ class ReadSnapshot:
         )
 
 
+def column_pins_snapshot(col: dict[str, Any]) -> bool:
+    """True when a generate column's `snapshot_file` is read once and pinned into the Plan:
+    a `statistical` column, or a `reference` column with `distribution: fitted`. The one
+    predicate for the read-once pass and the load-time pin check."""
+    col_type = col.get("type")
+    return col_type == "statistical" or (
+        col_type == "reference" and col.get("distribution") == "fitted"
+    )
+
+
 def _iter_statistical_snapshot_paths(config: dict[str, Any]) -> list[str]:
-    """Every distinct `snapshot_file` path referenced by a `type:
-    statistical` generate column, in declared order (tables then columns),
+    """Every distinct `snapshot_file` path referenced by a pinning generate
+    column (`column_pins_snapshot`), in declared order (tables then columns),
     de-duplicated by path string while preserving first-seen order."""
     return list(_snapshot_field_keys(config))
 
@@ -90,7 +103,7 @@ def _snapshot_field_keys(config: dict[str, Any]) -> dict[str, str]:
         if not isinstance(table_entry, dict):
             continue
         for col_entry in table_entry.get("generate_columns", []) or []:
-            if not isinstance(col_entry, dict) or col_entry.get("type") != "statistical":
+            if not isinstance(col_entry, dict) or not column_pins_snapshot(col_entry):
                 continue
             path = col_entry.get("snapshot_file")
             if path:
@@ -99,8 +112,134 @@ def _snapshot_field_keys(config: dict[str, Any]) -> dict[str, str]:
     return seen
 
 
+def snapshot_schema_failure(parsed: Any, shown: str) -> Any:
+    """The one snapshot schema-version check, for compile (`read_and_pin_snapshots`) and plan
+    load. Returns a `StatisticalSpecError` or `None`. The message names the field and the
+    expected version only: the stored text is untrusted and never echoed."""
+    from decoy_engine.generation.statistical._spec import StatisticalSpecError
+
+    if (
+        isinstance(parsed, dict)
+        and parsed.get("schema_version") == DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
+    ):
+        return None
+    return StatisticalSpecError(
+        code=reasons.plan.STATISTICAL_SNAPSHOT_SCHEMA_MISMATCH,
+        message=(
+            f"snapshot_file {shown!r} does not declare 'schema_version' "
+            f"{DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION!r}; this engine consumes only that version."
+        ),
+    )
+
+
+def _unreadable_message(
+    shown: str, locator: str, declared: str, base_dir: str | Path | None, cause: str
+) -> str:
+    """The unreadable-snapshot text. With a `base_dir` and a relative value it names where the
+    read went and the rule; the resolved path is displayed through `fileaccess.shown`."""
+    if locator == declared:
+        return f"snapshot_file {shown!r} could not be read: {cause}"
+    where = fileaccess.shown(locator, "snapshot_file")
+    return (
+        f"snapshot_file {shown!r} could not be read at {where!r} "
+        f"(a relative path is read from the config file's folder): {cause}"
+    )
+
+
+@dataclass(frozen=True)
+class PinnedRead:
+    """One artifact read: its bytes and digest, or (`raw` is None) why it could not be read.
+
+    `cause` is the error text a snapshot report carries (the locator redacted under a strict
+    policy); `cause_type` is the exception class name alone, for a report that must carry no text.
+    """
+
+    raw: bytes | None
+    sha256: str = ""
+    cause: str = ""
+    cause_type: str = ""
+    # Byte size of a file over the cap (then `raw` is None and nothing was kept).
+    oversize: int = 0
+
+
+def read_pinned_artifact(
+    role: FileRole,
+    declared: str,
+    field_key: str,
+    base_dir: str | Path | None,
+    cap: int,
+) -> PinnedRead:
+    """Read one declared file once under `role`: the one read step snapshots and lookups share.
+
+    Resolves a relative path from `base_dir`, reads through the file policy, and keeps the
+    strict/ambient failure split (a strict policy's own errors propagate; the failure is recorded
+    after the handler closes so no library error is attached). A file over `cap` comes back with
+    `oversize` set and is not kept: the caller raises its own coded refusal. Nothing is truncated.
+    """
+    shown = fileaccess.shown(declared, field_key)
+    locator = fileaccess.config_relative(declared, base_dir)
+    failure: tuple[str, str] | None = None
+    try:
+        raw = fileaccess.read_all(role, locator, field_key)
+    except OSError as exc:
+        if fileaccess.keeps_class(exc):
+            raise
+        if fileaccess.is_ambient():
+            return PinnedRead(None, cause=str(exc), cause_type=type(exc).__name__)
+        failure = (
+            fileaccess.redact_locators(str(exc), [(declared, shown), (locator, shown)]),
+            type(exc).__name__,
+        )
+    if failure is not None:
+        return PinnedRead(None, cause=failure[0], cause_type=failure[1])
+    if len(raw) > cap:
+        return PinnedRead(None, oversize=len(raw))
+    return PinnedRead(raw, sha256=hashlib.sha256(raw).hexdigest())
+
+
+def oversize_message(label: str, shown: str, size: int, cap: int) -> str:
+    """The closed text of an over-cap pinned artifact: the shown name and the two sizes."""
+    return (
+        f"{label} {shown!r} is {size} bytes, exceeding the "
+        f"{cap} byte (16 MiB) embedded-artifact cap "
+        "(HC-5 high-cardinality precedent, quality/snapshot.py). Pinning the "
+        "full artifact bytes into the Plan is required for generation to never "
+        "reopen a path; a bounded format change is a separate, reviewed "
+        "escalation, not a silent truncation or a runtime path-read fallback."
+    )
+
+
+def verified_pinned_bytes(data: dict[str, Any]) -> bytes | None:
+    """The bytes of one stored pinned artifact, or `None` when they do not match the recorded sha256.
+
+    A stored plan is untrusted input and its `sha256` is a claim, so it is recomputed from
+    `payload_b64`. Snapshots and lookups both decode through here, then raise their own coded
+    refusal with `pinned_digest_message`. A payload that is not base64 counts as a mismatch.
+    """
+    raw = b""
+    undecodable = False
+    try:
+        raw = base64.b64decode(data["payload_b64"], validate=True)
+    except (binascii.Error, ValueError, TypeError):
+        undecodable = True  # reported by the caller, outside any handler, so nothing is chained
+    if undecodable or hashlib.sha256(raw).hexdigest() != data["sha256"]:
+        return None
+    return raw
+
+
+def pinned_digest_message(position: str) -> str:
+    """The closed text of a digest mismatch: the manifest position, never the stored path."""
+    return (
+        f"the embedded artifact at {position} does not match its recorded sha256. "
+        "A Plan's pinned bytes are verified evidence, not a trusted claim; a mismatch "
+        "means the manifest was edited or corrupted after compile."
+    )
+
+
 def read_and_pin_snapshots(
     config: dict[str, Any],
+    *,
+    base_dir: str | Path | None = None,
 ) -> tuple[dict[str, ReadSnapshot], dict[str, Any]]:
     """The single read pass (guide section 4.7 item 1): open every distinct
     referenced snapshot path exactly once, hash it, parse it, and return
@@ -118,6 +257,10 @@ def read_and_pin_snapshots(
     claims. Classifying the failure HERE, during the one read this pass
     ever performs, and handing the classification (not the path) to the
     caller closes that reopen structurally rather than by convention.
+
+    `base_dir` is the folder holding the config file: a relative `snapshot_file` is read from
+    there (`fileaccess.config_relative`). Both result maps stay keyed by the declared string,
+    so the plan bytes and the config hash never see the resolved path.
     """
     from decoy_engine.generation.statistical._spec import StatisticalSpecError
 
@@ -125,41 +268,30 @@ def read_and_pin_snapshots(
     failures: dict[str, Any] = {}
     for path, field_key in _snapshot_field_keys(config).items():
         shown = fileaccess.shown(path, field_key)
-        failure: str | None = None
-        try:
-            raw = fileaccess.read_all(FileRole.SNAPSHOT, path, field_key)
-        except OSError as exc:
-            if fileaccess.keeps_class(exc):
-                raise
-            if fileaccess.is_ambient():
-                failures[path] = StatisticalSpecError(
-                    code=reasons.plan.STATISTICAL_SNAPSHOT_UNREADABLE,
-                    message=f"snapshot_file {shown!r} could not be read: {exc}",
-                )
-                continue
-            failure = fileaccess.redact_locators(str(exc), [(path, shown)])
-        if failure is not None:
-            # Strict: the failure is recorded after the handler closes, with no library error
-            # attached (its text can name the file).
-            failures[path] = StatisticalSpecError(
-                code=reasons.plan.STATISTICAL_SNAPSHOT_UNREADABLE,
-                message=f"snapshot_file {shown!r} could not be read: {failure}",
-            )
-            continue
-        if len(raw) > EMBEDDED_SNAPSHOT_MAX_BYTES:
+        locator = fileaccess.config_relative(path, base_dir)
+        read = read_pinned_artifact(
+            FileRole.SNAPSHOT,
+            path,
+            field_key,
+            base_dir,
+            EMBEDDED_SNAPSHOT_MAX_BYTES,
+        )
+        if read.oversize:
             raise PlanCompileError(
                 code=reasons.plan.DP_SNAPSHOT_EMBEDDED_ARTIFACT_TOO_LARGE,
                 path=f"<snapshot_file={shown}>",
-                message=(
-                    f"snapshot_file {shown!r} is {len(raw)} bytes, exceeding the "
-                    f"{EMBEDDED_SNAPSHOT_MAX_BYTES} byte (16 MiB) embedded-artifact cap "
-                    "(HC-5 high-cardinality precedent, quality/snapshot.py). Pinning the "
-                    "full artifact bytes into the Plan is required for generation to never "
-                    "reopen a snapshot path; a bounded format change is a separate, reviewed "
-                    "escalation, not a silent truncation or a runtime path-read fallback."
+                message=oversize_message(
+                    "snapshot_file", shown, read.oversize, EMBEDDED_SNAPSHOT_MAX_BYTES
                 ),
             )
-        digest = hashlib.sha256(raw).hexdigest()
+        if read.raw is None:
+            failures[path] = StatisticalSpecError(
+                code=reasons.plan.STATISTICAL_SNAPSHOT_UNREADABLE,
+                message=_unreadable_message(shown, locator, path, base_dir, read.cause),
+            )
+            continue
+        raw = read.raw
+        digest = read.sha256
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError as exc:
@@ -171,15 +303,9 @@ def read_and_pin_snapshots(
         guard = snapshot_content_guard.get()
         if guard is not None:
             guard(parsed)
-        version = parsed.get("schema_version") if isinstance(parsed, dict) else None
-        if not isinstance(parsed, dict) or version != DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION:
-            failures[path] = StatisticalSpecError(
-                code=reasons.plan.STATISTICAL_SNAPSHOT_SCHEMA_MISMATCH,
-                message=(
-                    f"snapshot_file {shown!r} declares schema {version!r}; this engine "
-                    f"consumes {DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION!r}."
-                ),
-            )
+        mismatch = snapshot_schema_failure(parsed, shown)
+        if mismatch is not None:
+            failures[path] = mismatch
             continue
         pinned[path] = ReadSnapshot(path=path, sha256=digest, parsed=parsed, raw=raw)
     return pinned, failures
@@ -231,6 +357,7 @@ def build_generation_plan(
     *,
     column_specs: list[tuple[str, str, str, dict[str, Any]]],
     dp_verification: DpVerification | None,
+    lookups: tuple[PinnedSnapshot, ...] = (),
 ) -> GenerationPlan | None:
     """Assemble the frozen `GenerationPlan` from the read-once pass's
     output plus the already-validated statistical specs.
@@ -241,6 +368,8 @@ def build_generation_plan(
             that compiled successfully (in declared order). The parsed
             spec dict is the `StatisticalSpec` shape `load_spec` already
             validated; it is frozen here, not re-validated.
+        lookups: the pinned `type: lookup` files `check_lookup_tables` verified. Compile and plan
+            load both pass them here, so neither can build a plan that drops them.
 
     Returns:
         `None` when the config has no `generate_columns` at all (a pure
@@ -283,4 +412,116 @@ def build_generation_plan(
         snapshots=tuple(snapshots),
         statistical_specs=statistical_specs,
         dp_verification=dp_verification,
+        lookups=lookups,
+    )
+
+
+_FITTED_CONFLICT_KEYS = ("weights", "min_per_parent", "max_per_parent")
+
+
+def check_fitted_references(
+    config: dict[str, Any],
+    pinned: dict[str, ReadSnapshot],
+    failures: dict[str, Any] | None,
+) -> None:
+    """Refuse a `reference` column with `distribution: fitted` whose pinned snapshot cannot
+    drive it: no `snapshot_file`, a failed read, a conflicting knob, or a missing or invalid
+    fan-out block. Reads only the read-once pass's bytes (`resolve_pinned_snapshot`, never
+    the path) and decodes with the same reader generation uses. Messages carry structure
+    names only, and the decoder error is not chained."""
+    from decoy_engine.generation.statistical import StatisticalSpecError, fanout_spec_from_snapshot
+
+    tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
+    for table_entry in tables:
+        if not isinstance(table_entry, dict):
+            continue
+        table_name = table_entry.get("name", "?")
+        for col in table_entry.get("generate_columns", []) or []:
+            if not isinstance(col, dict) or col.get("type") != "reference":
+                continue
+            if col.get("distribution") != "fitted":
+                continue
+            name = col.get("name", "?")
+            where = f"tables.{table_name}.generate_columns.{name}"
+            snapshot_file = col.get("snapshot_file")
+            if not snapshot_file:
+                raise PlanCompileError(
+                    code=reasons.plan.REFERENCE_FANOUT_MISSING,
+                    path=f"{where}.snapshot_file",
+                    message=(
+                        f"reference column {name!r} uses distribution: fitted and needs "
+                        "`snapshot_file`. Run `decoy fit <source> --fanout <column>`, or use "
+                        "distribution: random."
+                    ),
+                )
+            snapshot_file = str(snapshot_file)
+            outcome: tuple[str, str] | None = None
+            try:
+                # `{}` rather than None: a fitted check never falls back to reading the path.
+                snap = resolve_pinned_snapshot(
+                    snapshot_file, pinned, failures if failures is not None else {}
+                )
+                conflict = [k for k in _FITTED_CONFLICT_KEYS if col.get(k) is not None]
+                if conflict:
+                    outcome = (
+                        reasons.plan.REFERENCE_FANOUT_CONFLICT,
+                        f"reference column {name!r} sets {conflict[0]!r} with distribution: "
+                        "fitted, which already fixes the per-parent counts. Remove it, or use "
+                        "another distribution.",
+                    )
+                else:
+                    source = str(col.get("source_column") or name)
+                    fanout_spec_from_snapshot(snap, source, digest=pinned[snapshot_file].sha256)
+            except StatisticalSpecError as exc:
+                outcome = (exc.code, exc.message)
+            if outcome is not None:
+                raise PlanCompileError(code=outcome[0], path=where, message=outcome[1])
+
+
+def check_generate_snapshot_columns(
+    config: dict[str, Any],
+    pinned: dict[str, ReadSnapshot] | None,
+    dp_verified_columns: frozenset[tuple[str, str]],
+    failures: dict[str, Any] | None = None,
+) -> list[tuple[str, str, str, dict[str, Any]]]:
+    """The one snapshot-column check for compile, config-only checks and plan load: the
+    statistical checks, then the fitted-reference checks. Returns the statistical
+    column-spec list unchanged for `build_generation_plan`."""
+    from decoy_engine.plan._checks import check_statistical_columns
+
+    specs = check_statistical_columns(config, pinned, dp_verified_columns, failures=failures)
+    check_fitted_references(config, pinned or {}, failures)
+    return specs
+
+
+@dataclass(frozen=True)
+class SnapshotPass:
+    """What one compile's snapshot pass produced: the pins, the classified read failures, the
+    DP verification verdicts and receipt, the statistical column specs and the pinned lookup files."""
+
+    pinned: dict[str, ReadSnapshot]
+    failures: dict[str, Any]
+    dp_verified_columns: frozenset[tuple[str, str]]
+    dp_verification: DpVerification | None
+    column_specs: list[tuple[str, str, str, dict[str, Any]]]
+    lookups: tuple[PinnedSnapshot, ...] = ()
+
+
+def pin_and_check_snapshots(
+    config: dict[str, Any], *, base_dir: str | Path | None = None
+) -> SnapshotPass:
+    """The one snapshot pass for a compile: read and pin every snapshot once, verify DP
+    snapshots, then run the statistical and fitted-reference checks against the pinned bytes.
+    `compile_plan` and `run_config_only_checks` both call it, so the two cannot drift."""
+    pinned, failures = read_and_pin_snapshots(config, base_dir=base_dir)
+    dp_verified_columns, dp_verification = verify_dp_snapshots(config, pinned)
+    column_specs = check_generate_snapshot_columns(
+        config, pinned, dp_verified_columns, failures=failures
+    )
+    # Lazy: the lookup checks live in `plan.checks`, which imports this module.
+    from decoy_engine.plan.checks._lookup_tables import pin_and_check_lookups
+
+    lookups = pin_and_check_lookups(config, base_dir=base_dir)
+    return SnapshotPass(
+        pinned, failures, dp_verified_columns, dp_verification, column_specs, lookups
     )

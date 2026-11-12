@@ -581,3 +581,8 @@ def _cascade_one_latlng_row(
         if count >= k:
             return cell, level
     return _SUPPRESS_VALUE, _SUPPRESS_LABEL
+
+
+# Public, immutable views of the valid config values for callers outside `transforms/`.
+SUPPORTED_TYPES: tuple[str, ...] = tuple(sorted(_SUPPORTED_TYPES))
+CASCADE_LEVELS: tuple[str, ...] = tuple(sorted(_ZIP_LEVELS | _H3_LEVELS))

@@ -26,14 +26,23 @@ import pyarrow as pa
 
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation._streamed import GenerationResult, run_generation
-from decoy_engine.generation.statistical import spec_from_dict
+from decoy_engine.generation.kinds import LookupList
+from decoy_engine.generation.statistical import (
+    FanoutSpec,
+    fanout_spec_from_snapshot,
+    spec_from_dict,
+)
+from decoy_engine.plan._generation import column_pins_snapshot
 from decoy_engine.plan._types import unfreeze_json
+from decoy_engine.plan.checks import ReadLookup, lookup_columns
+from decoy_engine.plan.checks._lookup_tables import checked_lookup
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
     from faker import Faker
 
+    from decoy_engine.generation.pool._events import QualityWarning
     from decoy_engine.plan._types import GenerationPlan
 
 
@@ -63,6 +72,15 @@ class _PreparedPlan:
 
     config: dict[str, Any]
     legacy_kwargs: dict[str, Any]
+    generation: GenerationPlan
+
+    def run_kwargs(self) -> dict[str, Any]:
+        """`legacy_kwargs` plus the lookup lists a run draws from.
+
+        Decoded here and not in `_prepare_generation`: a code set loads its corpus, and the
+        classifiers that share the prepare step never run a draw.
+        """
+        return {**self.legacy_kwargs, "lookup_lists": _decode_lookups(self.config, self.generation)}
 
 
 def _prepare(plan: Any, caller: str) -> _PreparedPlan:
@@ -119,14 +137,59 @@ def _prepare_generation(generation: GenerationPlan | None, caller: str) -> _Prep
     # `statistical_specs` above, and the fidelity gate via this list)
     # reads only these already-pinned bytes.
     snapshot_artifacts = [json.loads(base64.b64decode(s.payload_b64)) for s in generation.snapshots]
+    reference_fanouts = _decode_fanouts(config, generation, snapshot_artifacts)
     return _PreparedPlan(
         config,
         {
             "statistical_specs": statistical_specs,
             "snapshot_index_for_column": snapshot_index_for_column,
             "snapshot_artifacts": snapshot_artifacts,
+            "reference_fanouts": reference_fanouts,
         },
+        generation,
     )
+
+
+def _decode_fanouts(
+    config: dict[str, Any], generation: GenerationPlan, artifacts: list[dict[str, Any]]
+) -> dict[tuple[str, str], FanoutSpec]:
+    """Decode each `distribution: fitted` reference column's fan-out from the pinned bytes.
+
+    A column whose snapshot the plan did not pin is left out, so generation refuses it
+    (`reference_fanout_missing`) instead of reopening the path.
+    """
+    index = {s.source_path: i for i, s in enumerate(generation.snapshots)}
+    out: dict[tuple[str, str], FanoutSpec] = {}
+    for table in config.get("tables") or []:
+        for col in table.get("generate_columns") or []:
+            if not column_pins_snapshot(col) or col.get("type") != "reference":
+                continue
+            i = index.get(str(col.get("snapshot_file")))
+            if i is None:
+                continue
+            source = str(col.get("source_column") or col["name"])
+            out[(table["name"], col["name"])] = fanout_spec_from_snapshot(
+                artifacts[i], source, digest=generation.snapshots[i].sha256
+            )
+    return out
+
+
+def _decode_lookups(
+    config: dict[str, Any], generation: GenerationPlan
+) -> dict[tuple[str, str], LookupList]:
+    """Parse each `lookup` column's list from the plan's pinned bytes (or its shipped code set).
+
+    Runs the plan-load checker, so a hand-built plan whose pins do not cover or satisfy a lookup
+    column is refused (`lookup_not_pinned`, `lookup_*`) rather than read from disk.
+    """
+    pins = {
+        s.source_path: ReadLookup(s.source_path, s.sha256, base64.b64decode(s.payload_b64))
+        for s in generation.lookups
+    }
+    return {
+        (table, str(col["name"])): checked_lookup(table, col, pins, {})[0]
+        for table, col in lookup_columns(config)
+    }
 
 
 def _prepare_pinned(generation_plan: Any, caller: str) -> _PreparedPlan:
@@ -152,6 +215,7 @@ def generate_tables(
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     budget_bytes: int | None = None,
     file_access: FileAccess | None = None,
+    on_warning: Callable[[QualityWarning], None] | None = None,
 ) -> dict[str, pa.Table]:
     """Build one Arrow table per generate table in the compiled ``Plan``.
 
@@ -193,6 +257,10 @@ def generate_tables(
     enforces itself (see ``generate_tables_streamed``). ``None`` is the explicit unbounded mode
     every pre-existing caller uses, with no bounded-memory guarantee.
 
+    ``on_warning`` (additive, default ``None``) receives each fidelity-gate ``QualityWarning``
+    (code ``warning.generation_fidelity_below_threshold``) as it is raised. It never changes
+    the generated tables.
+
     Raises:
         TypeError: ``plan`` is not a compiled ``Plan``, or the Plan has no
             ``generation`` payload (a Plan compiled without any
@@ -207,7 +275,8 @@ def generate_tables(
         instance_default_locale=instance_default_locale,
         budget_bytes=budget_bytes,
         provider_snapshot=provider_snapshot,
-        legacy_kwargs=prepared.legacy_kwargs,
+        legacy_kwargs=prepared.run_kwargs(),
+        on_warning=on_warning,
     )
     assert result.tables is not None  # noqa: S101 -- sink=None can only run resident
     return result.tables
@@ -222,6 +291,7 @@ def generate_tables_streamed(
     budget_bytes: int | None = None,
     batch_rows: int | None = None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+    on_warning: Callable[[QualityWarning], None] | None = None,
 ) -> GenerationResult:
     """Generate a Plan's tables into a bounded transactional ``sink`` when the plan and budget
     allow, else in memory.
@@ -245,7 +315,8 @@ def generate_tables_streamed(
         budget_bytes=budget_bytes,
         batch_rows=batch_rows,
         provider_snapshot=provider_snapshot,
-        legacy_kwargs=prepared.legacy_kwargs,
+        legacy_kwargs=prepared.run_kwargs(),
+        on_warning=on_warning,
     )
 
 
@@ -256,6 +327,7 @@ def generate_tables_from_generation_plan(
     *,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     budget_bytes: int | None = None,
+    on_warning: Callable[[QualityWarning], None] | None = None,
 ) -> dict[str, pa.Table]:
     """`generate_tables` for an already-pinned `GenerationPlan`, byte-identical to calling it on
     the full `Plan` that embeds the same payload.
@@ -275,7 +347,8 @@ def generate_tables_from_generation_plan(
         instance_default_locale=instance_default_locale,
         budget_bytes=budget_bytes,
         provider_snapshot=provider_snapshot,
-        legacy_kwargs=prepared.legacy_kwargs,
+        legacy_kwargs=prepared.run_kwargs(),
+        on_warning=on_warning,
     )
     assert result.tables is not None  # noqa: S101 -- sink=None can only run resident
     return result.tables
@@ -290,6 +363,7 @@ def generate_tables_streamed_from_generation_plan(
     budget_bytes: int | None = None,
     batch_rows: int | None = None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+    on_warning: Callable[[QualityWarning], None] | None = None,
 ) -> GenerationResult:
     """`generate_tables_streamed` for an already-pinned `GenerationPlan`; see
     `generate_tables_from_generation_plan` for the trust contract."""
@@ -302,5 +376,6 @@ def generate_tables_streamed_from_generation_plan(
         budget_bytes=budget_bytes,
         batch_rows=batch_rows,
         provider_snapshot=provider_snapshot,
-        legacy_kwargs=prepared.legacy_kwargs,
+        legacy_kwargs=prepared.run_kwargs(),
+        on_warning=on_warning,
     )

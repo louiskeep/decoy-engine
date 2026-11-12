@@ -35,7 +35,11 @@ from decoy_engine.execution.native._draw_site_types import (
     IDENTITIES,
     DrawSite,
 )
-from decoy_engine.execution.native._draw_sites_gen import GEN_DRAW_SITES, GEN_SUBSTRATE_DRAW_SITES
+from decoy_engine.execution.native._draw_sites_gen import (
+    GEN_DRAW_SITES,
+    GEN_KIND_DRAW_SITES,
+    GEN_SUBSTRATE_DRAW_SITES,
+)
 from decoy_engine.execution.native._draw_sites_gen_pool import GEN_POOL_DRAW_SITES
 from decoy_engine.execution.native._draw_sites_mask import MASK_DRAW_SITES, MASK_FORMULA_DRAW_SITE
 from decoy_engine.execution.native._draw_sites_provider_backed import PROVIDER_BACKED_DRAW_SITES
@@ -57,6 +61,7 @@ DRAW_SITES: tuple[DrawSite, ...] = (
     MASK_FORMULA_DRAW_SITE,
     *GEN_POOL_DRAW_SITES,
     *TOKENIZE_DRAW_SITES,
+    *GEN_KIND_DRAW_SITES,
 )
 
 # ---------------------------------------------------------------------------
@@ -96,6 +101,9 @@ MASK_STRATEGY_TO_SITE: dict[str, str] = {
 
 GEN_KIND_TO_SITE: dict[str, str] = {
     "sequence": DETERMINISTIC_NO_DRAW,
+    "constant": DETERMINISTIC_NO_DRAW,
+    "distribution": "gen.distribution",
+    "lookup": "gen.lookup",
     "derived": DETERMINISTIC_NO_DRAW,
     "derived_aggregate": DETERMINISTIC_NO_DRAW,
     "group_key": "mask.group_key",  # group_key generation reuses the same derive()

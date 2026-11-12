@@ -8,7 +8,7 @@ the per-chunk loop; `on_chunk` lets the new entry point normalize each chunk's
 output and record evidence without a second copy of the loop.
 
 Preflight order is part of the contract: offset domain, chunked compatibility,
-first-chunk pull, profile, compile, key resolution, vault key guard, registry
+first-chunk pull, declaration check of the first chunk, profile, compile, key resolution, vault key guard, registry
 default, corpus pinning, bucket namespace, then the zero-chunk return. Checks
 that need a first chunk run after it, and per-chunk checks stay in the loop.
 """
@@ -18,9 +18,15 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
+
+from decoy_engine.config._subset_run import refuse_unapplied_subset
+from decoy_engine.execution._guards import prepare_declared_execution_sources
+from decoy_engine.execution.chunked import observe_chunked
+from decoy_engine.fileaccess import FileAccess
+from decoy_engine.profile import DeclarationRequest
 
 from . import _chunked as _chunked_mod
 from . import _chunked_bucket_perturb as bucket_perturb_gate
@@ -28,6 +34,7 @@ from . import _chunked_code_set as code_set_gate
 from . import _chunked_dgrn as dgrn
 from . import _chunked_group_key as group_key
 from . import _chunked_text_mask as text_mask_gate
+from . import _guards
 from ._chunked_adapter_gate import chunked_adapter_touches_pandas_ingestion
 from ._chunked_carry import adapter_fk_safe_columns, plan_carry
 from ._chunked_fk import (
@@ -43,6 +50,9 @@ from ._chunked_profile import profile_input
 from ._guards import reject_gated_hash_on_integer
 from ._row_error_summary import chunk_row_error_summary
 from ._transforms import reject_config_references_stored_index
+
+if TYPE_CHECKING:
+    from decoy_engine.profile import PreparedDeclaredSources
 
 
 @dataclass
@@ -88,6 +98,7 @@ def _oracle_preflight(
     *,
     table: str,
     engine_version: str,
+    declared: PreparedDeclaredSources,
     registry: Any = None,
     adapter: Any = None,
     vault_writer: Any = None,
@@ -125,6 +136,7 @@ def _oracle_preflight(
             chunks,
             table=table,
             engine_version=engine_version,
+            declared=declared,
             registry=registry,
             adapter=adapter,
             vault_writer=vault_writer,
@@ -163,6 +175,7 @@ def _oracle_preflight_admitted(
     *,
     table: str,
     engine_version: str,
+    declared: PreparedDeclaredSources,
     registry: Any,
     adapter: Any,
     vault_writer: Any,
@@ -196,6 +209,13 @@ def _oracle_preflight_admitted(
     chunk_iter = iter(chunks)
     first = next(chunk_iter, None)
     if first is not None:
+        # Duplicate field names first: every check below looks fields up by name. On later
+        # chunks the declaration check (innermost wrap) runs before the duplicate-name refusal.
+        _guards.refuse_duplicate_field_names(table, first.schema.names)
+        # Every column must be declared (CONFIG-EXPLICIT E2d): the first chunk now, each later
+        # chunk lazily before it masks. Nothing is profiled, compiled or masked before this.
+        chunk_iter = declared.checked_stream(table, first, chunk_iter)
+        chunk_iter = _guards.refused_per_chunk(chunk_iter, table=table)
         # Before the carry plan, the profile and the compile: pandas would consume the
         # stored index field, so a config naming it could not resolve (or raise a raw
         # KeyError) after the work above had started.
@@ -495,20 +515,29 @@ def mask_pipeline_chunked(
     *,
     table: str,
     engine_version: str,
+    source_schema: pa.Schema,
     registry: Any = None,
     adapter: Any = None,
     vault_writer: Any = None,
     chunk_result_sink: list[Any] | None = None,
     key_provider: Any = None,
     base_row_offset: int = 0,
+    file_access: FileAccess | None = None,
 ) -> Iterator[pa.Table]:
     """`run_mask_pipeline_chunked` with a `vault_writer`, for `run_pipeline`'s auto-chunk lane
     only: that lane returns resident output, so the caller writes the vault before publishing."""
+    refuse_unapplied_subset(config)
+    declared = prepare_declared_execution_sources(
+        DeclarationRequest.for_chunks(config, table, source_schema),
+        file_access=file_access,
+        registry=registry,
+    )
     state = _oracle_preflight(
         config,
         chunks,
         table=table,
         engine_version=engine_version,
+        declared=declared,
         registry=registry,
         adapter=adapter,
         vault_writer=vault_writer,
@@ -519,16 +548,14 @@ def mask_pipeline_chunked(
     if state.first is None:
         # Admission cleared (or the plan is unkeyed); there is genuinely nothing to mask.
         state.close_secret()
-        return iter(())
-    return release_when_done(
-        _oracle_masked(
-            state,
-            config=config,
-            table=table,
-            vault_writer=vault_writer,
-            chunk_result_sink=chunk_result_sink,
-            base_row_offset=base_row_offset,
-            on_chunk=None,
-        ),
+        return observe_chunked(table, iter(()))
+    stream = _oracle_masked(
         state,
+        config=config,
+        table=table,
+        vault_writer=vault_writer,
+        chunk_result_sink=chunk_result_sink,
+        base_row_offset=base_row_offset,
+        on_chunk=None,
     )
+    return observe_chunked(table, release_when_done(stream, state))

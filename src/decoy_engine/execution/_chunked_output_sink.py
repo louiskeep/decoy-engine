@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine import fileaccess, reasons
+from decoy_engine._lexeme import lexeme_columns_by_table
 from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
@@ -108,6 +109,10 @@ def decide_output_mode(
             return "resident", reasons.route.SPLIT_FULL_FRAME_PRESENT
         if any(name not in split.dispatched for name in resident_names):
             return "resident", reasons.route.SPLIT_EXTRA_SOURCES_PRESENT
+    if lexeme_columns_by_table(config):
+        # F06: the rendered rows of a declared table are published after the whole run is known
+        # to have passed, and a quarantine seal must follow every other failure-capable step.
+        return "resident", reasons.route.DECLARED_CASTING
     if config.get("validators"):
         return "resident", reasons.route.VALIDATORS_PRESENT
     if (config.get("quarantine") or {}).get("enabled"):
@@ -413,8 +418,20 @@ def _take_rows(buf: _Buffer, count: int) -> pa.Table:
     return _combine(taken)
 
 
-def _feed(buf: _Buffer, chunk: pa.Table, stats: StreamStats) -> Iterator[pa.RecordBatch]:
-    """Add one cast chunk; yield a record batch per completed row group."""
+def _feed(
+    buf: _Buffer, chunk: pa.Table, stats: StreamStats, *, aligned: bool = False
+) -> Iterator[pa.RecordBatch]:
+    """Add one cast chunk; yield a record batch per completed row group.
+
+    `aligned` (a run that requires streaming) keeps one row group per chunk, split only at
+    pyarrow's writer cap, the grouping `ParquetWriter.write_table` gives a chunk written on
+    its own. Nothing is buffered across chunks and the byte cut does not apply."""
+    if aligned:
+        for start in range(0, chunk.num_rows, ROW_GROUP_ROWS):
+            stats.row_groups += 1
+            piece = chunk.slice(start, ROW_GROUP_ROWS)
+            yield from piece.combine_chunks().replace_schema_metadata(None).to_batches()
+        return
     buf.tables.append(chunk)
     buf.rows += chunk.num_rows
     buf.nbytes += chunk.nbytes
@@ -526,29 +543,40 @@ def _row_group_batches(
     resolver: _Resolver,
     schema: pa.Schema,
     stats: StreamStats,
+    aligned: bool = False,
 ) -> Iterator[pa.RecordBatch]:
     """Replay spilled chunks, then the in-memory ones, then the live stream, as row groups."""
     buf = _Buffer()
     for chunk in spill.replay():
-        yield from _feed(buf, _cast(chunk, schema), stats)
+        yield from _feed(buf, _cast(chunk, schema), stats, aligned=aligned)
     while pending:
-        yield from _feed(buf, _cast(pending.pop(0), schema), stats)
+        yield from _feed(buf, _cast(pending.pop(0), schema), stats, aligned=aligned)
     for chunk in chunks:
         resolver.observe(chunk)
-        yield from _feed(buf, _cast(chunk, schema), stats)
+        yield from _feed(buf, _cast(chunk, schema), stats, aligned=aligned)
     if buf.rows > 0:
         stats.row_groups += 1
         yield from _take_rows(buf, buf.rows).to_batches()
 
 
 def stream_table(
-    sink: Any, table: str, chunks: Iterable[pa.Table], *, fixed_columns: frozenset[str]
+    sink: Any,
+    table: str,
+    chunks: Iterable[pa.Table],
+    *,
+    fixed_columns: frozenset[str],
+    align_row_groups: bool = False,
+    empty_schema: pa.Schema | None = None,
 ) -> StreamStats:
     """Stream one routed table's masked chunks into `sink.write_batches`.
 
     Masking runs inside the sink's batch loop, so an error in chunk k propagates through
     `write_batches`. Raises `chunked_schema_mismatch` as `join_dispatcher_chunks` does,
-    but at the offending chunk."""
+    but at the offending chunk.
+
+    `align_row_groups` keeps one row group per chunk (see `_feed`). `empty_schema` is the
+    source schema of a zero-row table: with no chunk to join, an empty table of that schema
+    is written, as base `--chunked` writes it. Without it a table with no chunks is an error."""
     stats = StreamStats()
     resolver = _Resolver(table, fixed_columns)
     spill = _Spill(stats, sink, table)
@@ -556,9 +584,14 @@ def stream_table(
     try:
         pending = _hold_back(live, resolver, spill, stats)
         if resolver.names is None:
-            raise _mismatch(table, "no chunks to join")
+            if empty_schema is None:
+                raise _mismatch(table, "no chunks to join")
+            sink.write_batches(table, iter(()), schema=empty_schema.remove_metadata())
+            return stats
         schema = resolver.schema()
-        batches = _row_group_batches(spill, pending, live, resolver, schema, stats)
+        batches = _row_group_batches(
+            spill, pending, live, resolver, schema, stats, aligned=align_row_groups
+        )
         sink.write_batches(table, batches, schema=schema)
     finally:
         spill.close()

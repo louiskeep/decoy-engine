@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import Outcome, RetryClass
+from decoy_engine.reasons._types import UNRELEASED, Outcome, RetryClass
 
 __all__ = [
     "BOUNDED_READ_ERROR",
@@ -26,6 +26,8 @@ __all__ = [
     "CSV_MALFORMED",
     "CSV_RECORD_EXCEEDS_MAX_ROW_BYTES",
     "CYCLIC_WORK_ORDERING",
+    "DERIVED_EVALUATION_FAILED",
+    "DERIVED_REF_MISSING",
     "FK_FULL_FRAME_OOM_RISK_REJECTED",
     "FK_FULL_FRAME_OOM_RISK_REJECTED_ESTIMATED",
     "FPE_CHARSET_DEGENERATE",
@@ -48,6 +50,7 @@ __all__ = [
     "ORPHAN_FK_VIOLATION",
     "ORPHAN_POLICY_CONFLICT",
     "ORPHAN_REMAP_PARENT_MISSING",
+    "OUTPUT_TYPE_CAST_FAILED",
     "OUT_OF_CORE_BACKEND_UNAVAILABLE",
     "OUT_OF_CORE_BATCH_ROWS_INVALID",
     "OUT_OF_CORE_BUCKET_PERTURB_AUTODETECT_UNSUPPORTED",
@@ -99,6 +102,7 @@ __all__ = [
     "OUT_OF_CORE_REMAP_VALUES_MISSING",
     "OUT_OF_CORE_REORDER_BUDGET_TOO_SMALL",
     "OUT_OF_CORE_REORDER_DISK_BUDGET_INVALID",
+    "OUT_OF_CORE_REORDER_DISK_BUDGET_TOO_SMALL",
     "OUT_OF_CORE_REORDER_FAN_IN_INVALID",
     "OUT_OF_CORE_REORDER_HEAD_FIT_INVALID",
     "POOL_SIZE_INVALID",
@@ -180,6 +184,10 @@ COMPOSITE_OUTPUT_COLUMN_MISSING = _d(
     "composite_output_column_missing", "Composite output column missing."
 )
 CYCLIC_WORK_ORDERING = _d("cyclic_work_ordering", "Cyclic work ordering.")
+DERIVED_EVALUATION_FAILED = _d(
+    "derived_evaluation_failed", "Derived evaluation failed.", since="1.9.0"
+)
+DERIVED_REF_MISSING = _d("derived_ref_missing", "Derived reference missing.", since="1.9.0")
 FK_FULL_FRAME_OOM_RISK_REJECTED = _d(
     "fk_full_frame_oom_risk_rejected", "FK full frame OOM risk rejected."
 )
@@ -212,7 +220,7 @@ VAULT_REQUIRES_RESIDENT_OUTPUT = _d(
     "A vault writer needs resident output: pass no sink, and use run_pipeline, not a chunked entry.",
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
-    since="1.3.0",
+    since=UNRELEASED,
 )
 INVALID_NATIVE_THREADS = _d("invalid_native_threads", "Invalid native threads.")
 LAZY_SOURCE_CHANGED = _d("lazy_source_changed", "Lazy source changed.")
@@ -227,6 +235,11 @@ NULL_BEARING_INT_UNSUPPORTED = _d("null_bearing_int_unsupported", "Null bearing 
 ORPHAN_FK_VIOLATION = _d("orphan_fk_violation", "Orphan FK violation.")
 ORPHAN_POLICY_CONFLICT = _d("orphan_policy_conflict", "Orphan policy conflict.")
 ORPHAN_REMAP_PARENT_MISSING = _d("orphan_remap_parent_missing", "Orphan remap parent missing.")
+OUTPUT_TYPE_CAST_FAILED = _d(
+    "output_type_cast_failed",
+    "A generated value could not be cast to its output type.",
+    since="1.23.0",
+)
 OUT_OF_CORE_BACKEND_UNAVAILABLE = _d(
     "out_of_core_backend_unavailable", "Out of core backend unavailable."
 )
@@ -376,6 +389,11 @@ OUT_OF_CORE_REORDER_BUDGET_TOO_SMALL = _d(
 )
 OUT_OF_CORE_REORDER_DISK_BUDGET_INVALID = _d(
     "out_of_core_reorder_disk_budget_invalid", "Out of core reorder disk budget invalid."
+)
+OUT_OF_CORE_REORDER_DISK_BUDGET_TOO_SMALL = _d(
+    "out_of_core_reorder_disk_budget_too_small",
+    "Out of core reorder disk budget too small.",
+    since=UNRELEASED,
 )
 OUT_OF_CORE_REORDER_FAN_IN_INVALID = _d(
     "out_of_core_reorder_fan_in_invalid", "Out of core reorder fan in invalid."

@@ -97,6 +97,7 @@ from decoy_engine.execution._sequential_native_text_mask import (
     TextMaskCall,
     text_mask_op,
 )
+from decoy_engine.execution._strategies import strategy_catalog
 from decoy_engine.execution._strategies._faker_positional import resolve_selection_namespace
 from decoy_engine.execution.native._bucket_perturb_ext import native_range_exceeded
 from decoy_engine.execution.native._chunk_masking import pool_values_are_strings
@@ -124,9 +125,8 @@ INHERITED = "inherited"
 REASON_REMAP_PARENT_PYTHON = reasons.route.REMAP_PARENT_STAYS_PYTHON
 REASON_REMAP_INPUT_NOT_ARROW = reasons.route.REMAP_INPUT_NOT_ARROW
 REASON_KEY_NOT_INJECTIVE = reasons.route.SEQUENTIAL_FK_KEY_INJECTIVITY_NOT_GUARANTEED
-# Injective per-value maps: a masked FK key stays unique and joinable. Everything else native
-# is deterministic but may collide, so it is not accelerated as a key.
-_KEY_STRATEGIES = (HASH, FPE)
+# Injective per-value maps (the catalog's join_safe rows); the rest may collide, so not keys.
+_KEY_STRATEGIES = tuple(info.name for info in strategy_catalog() if info.join_safe)
 REASON_BUCKET_OUT_OF_RANGE = reasons.route.SEQUENTIAL_BUCKET_PERTURB_DATE_OUT_OF_NATIVE_RANGE
 _CONVERSION_ERRORS = (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError)
 

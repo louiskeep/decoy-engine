@@ -4,12 +4,18 @@ that `_draw_site_providers` still re-exports the same objects."""
 from __future__ import annotations
 
 from decoy_engine.execution.native import _draw_site_providers as providers
-from decoy_engine.execution.native.protocol import providers_base, providers_gen, providers_mask
+from decoy_engine.execution.native.protocol import (
+    providers_base,
+    providers_gen,
+    providers_gen_unique,
+    providers_mask,
+)
 
 _REGISTRY_MODULE = "decoy_engine.execution.native._draw_site_providers"
 _ALLOWED_MODULES = {
     providers_base.__name__,
     providers_gen.__name__,
+    providers_gen_unique.__name__,
     providers_mask.__name__,
     _REGISTRY_MODULE,
     "decoy_engine.execution.native._draw_site_providers_gen_pool",

@@ -153,6 +153,7 @@ def _mask_config(tmp_path, n_cols: int) -> dict:
                 "customers": {
                     "type": "file",
                     "format": "csv",
+                    "has_header": True,
                     "path": str(tmp_path / "customers.csv"),
                 },
             },
@@ -191,6 +192,7 @@ def _row_error_config(tmp_path) -> dict:
                 "customers": {
                     "type": "file",
                     "format": "csv",
+                    "has_header": True,
                     "path": str(tmp_path / "customers.csv"),
                 },
             },
@@ -235,6 +237,7 @@ def _row_error_sources(tmp_path) -> dict[str, pa.Table]:
 
 
 class TestNormalJobCompletes:
+    @pytest.mark.serial
     def test_small_job_completes_with_correct_artifacts_and_plausible_peak(self, tmp_path):
         cfg = _mask_config(tmp_path, n_cols=2)
         sources = _mask_sources(tmp_path, n_rows=50, n_cols=2)
@@ -280,6 +283,8 @@ class TestNormalJobCompletes:
 
 
 class TestMemCapOom:
+    # The child runs within megabytes of its RLIMIT_DATA cap, so it needs the host to itself.
+    @pytest.mark.serial
     def test_low_mem_cap_classifies_oom_cleanly_not_an_opaque_crash(self, tmp_path):
         # The cap sits ABOVE the child's import floor on purpose. A worker that
         # imports duckdb + polars reserves close to half a GB of RLIMIT_DATA in
@@ -359,6 +364,7 @@ class TestMemCapOom:
 
 
 class TestHwmContaminationGuard:
+    @pytest.mark.serial
     def test_parent_inflated_peak_does_not_leak_into_child_result(self, tmp_path):
         cfg = _mask_config(tmp_path, n_cols=2)
         sources = _mask_sources(tmp_path, n_rows=50, n_cols=2)
@@ -537,6 +543,7 @@ class TestTimeoutHasSaneDefault:
 
 
 class TestHangingChildHitsTimeout:
+    @pytest.mark.serial
     def test_hanging_child_is_killed_and_classified_cleanly(self, tmp_path, monkeypatch):
         _install_fake_worker(tmp_path, monkeypatch, "hanging_worker", _HANGING_WORKER_SRC)
         cfg = _mask_config(tmp_path, n_cols=1)
@@ -618,6 +625,7 @@ class TestRowErrorsCarried:
 
 
 class TestGovernorKillAfterStagingLeavesNoPartialOutput:
+    @pytest.mark.serial
     def test_sigkill_after_staging_but_before_commit_never_commits(self, tmp_path):
         cfg = _mask_config(tmp_path, n_cols=6)
         sources = _mask_sources(tmp_path, n_rows=300_000, n_cols=6)
@@ -719,6 +727,25 @@ class TestPayloadFilePermissions:
         assert payload_path.exists()
         mode = stat.S_IMODE(payload_path.stat().st_mode)
         assert mode == 0o600
+
+    def test_payload_is_0600_at_creation_on_a_caller_staging_dir(self, tmp_path, monkeypatch):
+        from decoy_engine.execution._isolated_run import _write_payload
+
+        staging_dir = tmp_path / "work_root"
+        staging_dir.mkdir()
+        staging_dir.chmod(0o777)
+        chmod_calls: list[tuple[object, ...]] = []
+        monkeypatch.setattr(os, "chmod", lambda *a, **k: chmod_calls.append(a))
+        old = os.umask(0)
+        try:
+            payload_path = _write_payload(
+                staging_dir, {"dsn": "secret"}, None, {}, None, "none", staging_dir / "out"
+            )
+        finally:
+            os.umask(old)
+            monkeypatch.undo()
+        assert stat.S_IMODE(payload_path.stat().st_mode) == 0o600
+        assert chmod_calls == []
 
 
 # --------------------------------------------------------------------------

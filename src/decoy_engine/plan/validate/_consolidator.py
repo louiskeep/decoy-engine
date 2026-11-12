@@ -22,8 +22,10 @@ post-execution scan suite lives in `decoy_engine.validation.post` (later slices)
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation.pool._errors import PoolCapacityError
 from decoy_engine.plan._compile import compile_plan
@@ -74,6 +76,7 @@ def validate_plan(
     decoy_engine_version: str,
     no_profile: bool = False,
     file_access: FileAccess | None = None,
+    base_dir: str | Path | None = None,
 ) -> PlanValidationResult:
     """Run every compile-time check (via `compile_plan`) and report the result.
 
@@ -81,15 +84,41 @@ def validate_plan(
     it. Returns a `PlanValidationResult` rather than raising: a failing check
     yields `ok=False` + a `PlanCheckError`; a clean compile yields `ok=True` with
     the `Plan` attached. This is the keystone S11-S13 consume to validate a plan
-    without a try/except at every call site.
+    without a try/except at every call site. `base_dir` is the config file's folder, as for
+    `compile_plan`.
+
+    `config` is the validated `PipelineConfig` dump. A malformed `subset:` seed (empty
+    `key_columns`, a fraction outside (0, 1], both or neither of fraction and count) never
+    reaches the split: `SubsetSeedConfig` mirrors `SeedSpec.__post_init__` exactly, so
+    `PipelineConfig` validation refuses it first (`tests/unit/plan/test_validate.py`).
     """
+    from decoy_engine.subset import SubsetError, split_subset_config
+
+    try:
+        # Imported here: `subset._edges` imports `plan._types`, so a top-level import would cycle.
+        run_config = split_subset_config(config).run_config
+    except SubsetError as exc:
+        return PlanValidationResult(
+            ok=False, error=PlanCheckError(code=exc.code, path="subset", message=str(exc))
+        )
     try:
         plan = compile_plan(
-            config, profile, decoy_engine_version=decoy_engine_version, no_profile=no_profile
+            run_config,
+            profile,
+            decoy_engine_version=decoy_engine_version,
+            no_profile=no_profile,
+            base_dir=base_dir,
         )
     except PlanCompileError as exc:
         return PlanValidationResult(
             ok=False, error=PlanCheckError(code=exc.code, path=exc.path, message=exc.message)
+        )
+    except PipelineValidationError as exc:
+        # The `subset:` refusal from `compile_plan` (config.subset_run_unsupported).
+        if exc.code is None:
+            raise
+        return PlanValidationResult(
+            ok=False, error=PlanCheckError(code=exc.code, path=exc.path, message=str(exc))
         )
     except PoolCapacityError as exc:
         return PlanValidationResult(

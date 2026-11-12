@@ -1,0 +1,39 @@
+## site: chunked
+file: src/decoy_engine/execution/_pipeline_chunk_route.py
+mutation: call replaced with `pass`
+=================================== FAILURES ===================================
+=========================== short test summary info ============================
+FAILED tests/acceptance/test_f06_fallback_reasons.py::test_declared_relationship_keys_report_the_refused_chunked_route
+1 failed, 7 passed in 0.82s
+
+## site: mixed
+file: src/decoy_engine/execution/_mixed_static.py
+mutation: call replaced with `pass`
+=================================== FAILURES ===================================
+=========================== short test summary info ============================
+FAILED tests/acceptance/test_f06_fallback_reasons.py::test_mixed_with_row_quarantine_reports_the_refused_mixed_route
+1 failed, 7 passed in 0.63s
+
+## site: unified_slice
+file: src/decoy_engine/execution/_unified_slice.py
+mutation: call replaced with `pass`
+=================================== FAILURES ===================================
+=========================== short test summary info ============================
+FAILED tests/acceptance/test_f06_fallback_reasons.py::test_declared_relationship_keys_report_the_declined_unified_slice
+1 failed, 7 passed in 0.68s
+
+## site: out_of_core
+file: src/decoy_engine/execution/out_of_core/_compat.py
+mutation: call replaced with `pass`
+=================================== FAILURES ===================================
+=========================== short test summary info ============================
+FAILED tests/acceptance/test_f06_fallback_reasons.py::test_auto_relationship_routing_reports_the_refused_out_of_core_route
+1 failed, 7 passed in 0.57s
+
+## site: multi_table_split
+file: src/decoy_engine/execution/_pipeline_multi_table.py
+mutation: call replaced with `pass`
+=================================== FAILURES ===================================
+=========================== short test summary info ============================
+FAILED tests/acceptance/test_f06_fallback_reasons.py::test_declared_multi_table_split_exclusion_names_the_registered_refusal
+1 failed, 7 passed in 0.65s

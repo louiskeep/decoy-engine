@@ -6,7 +6,7 @@ The engine reads and writes files named by a config or a caller: sources, snapsh
 tables, corpora, secrets, vaults, quarantine sidecars, target directories. This page is the
 contract for an integrator (the platform, a service, a test harness) that must decide which of
 those files an engine call may touch. Plan and build record:
-[plan](../plans/2026-10-02-file-access-authz-engine-platform.md),
+[plan](https://github.com/louiskeep/decoy-engine/blob/main/docs/plans/2026-10-02-file-access-authz-engine-platform.md),
 [E1 build record](../records/2026-10-07-file-access-e1-build.md).
 
 ## The guarantee
@@ -50,7 +50,7 @@ a time can wrap its call so a denial names the field.
 
 A policy decides `FileRequest(role, access, locator, field_key)`:
 
-- `role` says what the file is for (`SOURCE`, `REFERENCE`, `CORPUS`, `SNAPSHOT`, `SECRET`, `VAULT`,
+- `role` says what the file is for (`SOURCE`, `REFERENCE`, `CORPUS`, `SNAPSHOT`, `LOOKUP`, `SECRET`, `VAULT`,
   `CONFIG`, `QUARANTINE_OUTPUT`, `TARGET_OUTPUT`, and the directory roles `CUSTOM_PROVIDER_ROOT`,
   `MODEL_PACK_ROOT` and `DISGUISE_ROOT`).
 - `locator` is the bare string from the config, scheme already stripped (`customer:` and `file:`).
@@ -166,8 +166,9 @@ Exactly two behavior changes, both listed in the CHANGELOG:
 2. Discovery SQL (`run_discovery_sql`) runs on a locked in-memory DuckDB connection with external
    access off, accepts exactly one `SELECT`, and reads only the tables it was given.
 
-Everything else is preserved: the default log file, output file names, accepted and rejected table
-names, publish and failure semantics of the table sink, error text.
+Everything else is preserved: output file names, accepted and rejected table names, publish and
+failure semantics of the table sink, error text. The one exception is the engine log: with no `file`
+in the logging config, no log file is written any more (project-layout E2).
 
 ## Routes a strict policy does not serve
 
@@ -176,7 +177,13 @@ names, publish and failure semantics of the table sink, error text.
   raises `FileAccessUnavailable` before any I/O if it would spawn a child or is given a `staging_dir`
   or `output_dir`; `isolate=False` without those runs in process under the policy.
 - `run_fk_out_of_core(temp_dir=...)` with a caller-named scratch directory needs the ambient policy for
-  the same reason. Without `temp_dir` the engine uses its own scratch space.
+  the same reason. Without `temp_dir` the engine uses its own scratch space. The F06 typed staging copy
+  of a declared source lives in that same engine-made root, under engine-generated names (`s0000`),
+  and is read back only through a reader issued over that root.
+- `LocalProtectedQuarantineSink(root)` (F06) opens files beneath a caller-named root directly, so it
+  serves only the ambient policy: under any other its `capability` is unqualified
+  (`arena_needs_ambient_policy`) and the run refuses with `protected_quarantine_unavailable` before
+  reading a source. A strict-policy deployment supplies its own `ProtectedQuarantineSink`.
 - `load_vault(path)`, `VaultWriter.write(path)` and `unmask_pipeline(vault_path=)` accept a path string
   only under the ambient policy; under any other, pass a `FileHandle` or `OutputDir`.
 - The log file setting is ignored unless the ambient policy is installed.

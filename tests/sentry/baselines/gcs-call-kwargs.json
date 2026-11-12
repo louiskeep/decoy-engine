@@ -1,0 +1,456 @@
+{
+  "sentry_id": "gcs-call-kwargs",
+  "created_in": "X4d",
+  "entries": {
+    "decoy_engine/_opaque.py::validate_after_init.init::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/_opaque.py::validate_after_init.init::open::1": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/connectors/sftp.py::SFTPFileSink.write::open::0": {
+      "reason": "paramiko SFTPClient.open, not a GCS Blob"
+    },
+    "decoy_engine/connectors/sftp.py::SFTPFileSource.open::open::0": {
+      "reason": "paramiko SFTPClient.open, not a GCS Blob"
+    },
+    "decoy_engine/connectors/sftp.py::_open_sftp::exists::0": {
+      "reason": "os.path.exists on a local path"
+    },
+    "decoy_engine/context.py::make_key_resolver.resolver::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/context.py::make_key_resolver::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/context.py::make_key_resolver::open::1": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/context.py::make_key_resolver::open::2": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/declared_casting/_eligibility.py::relationship_endpoints::update::0": {
+      "reason": "set.update on a local set of names"
+    },
+    "decoy_engine/declared_casting/_quarantine_local.py::LocalProtectedQuarantineSink._append_chunk::update::0": {
+      "reason": "hashlib sha256 digest update"
+    },
+    "decoy_engine/declared_casting/_quarantine_local.py::LocalProtectedQuarantineSink._open_artifact::open::0": {
+      "reason": "os.open on a local path, not a GCS Blob"
+    },
+    "decoy_engine/declared_casting/_quarantine_local.py::LocalProtectedQuarantineSink._publish_atomic::open::0": {
+      "reason": "os.open on a local path, not a GCS Blob"
+    },
+    "decoy_engine/declared_casting/_quarantine_local.py::LocalProtectedQuarantineSink._read_header::open::0": {
+      "reason": "os.open on a local path, not a GCS Blob"
+    },
+    "decoy_engine/determinism/_derive.py::DeriveContext.derive_sources::update::0": {
+      "reason": "hmac HMAC-SHA256 object update"
+    },
+    "decoy_engine/execution/_chunked_fk_dtype.py::fk_declared_dtypes_for_table::update::0": {
+      "reason": "set.update on a local set of names"
+    },
+    "decoy_engine/execution/_chunked_fk_dtype.py::fk_declared_dtypes_for_table::update::1": {
+      "reason": "set.update on a local set of names"
+    },
+    "decoy_engine/execution/_chunked_fk_runtime.py::_fk_columns_on_table::update::0": {
+      "reason": "set.update on a local set of names"
+    },
+    "decoy_engine/execution/_chunked_fk_runtime.py::_fk_columns_on_table::update::1": {
+      "reason": "set.update on a local set of names"
+    },
+    "decoy_engine/execution/_chunked_oracle.py::_oracle_preflight_admitted::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/execution/_exact_int_sources.py::exact_int_faker_sources::update::0": {
+      "reason": "set.update on a local set of names"
+    },
+    "decoy_engine/execution/_exact_int_sources.py::register_exact_int_sources::update::0": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/execution/_faker_degenerate_pin.py::_fk_child_columns::update::0": {
+      "reason": "set.update on a local set of names"
+    },
+    "decoy_engine/execution/_faker_degenerate_pin.py::deterministic_faker_pin_columns_from_plan::update::0": {
+      "reason": "set.update on a local set of names"
+    },
+    "decoy_engine/execution/_fk_keys.py::fk_columns_for_table::update::0": {
+      "reason": "set.update on a local set of names"
+    },
+    "decoy_engine/execution/_fk_keys.py::fk_columns_for_table::update::1": {
+      "reason": "set.update on a local set of names"
+    },
+    "decoy_engine/execution/_isolated_reason.py::commit_reason::exists::0": {
+      "reason": "pathlib Path.exists on a local path"
+    },
+    "decoy_engine/execution/_output_projection.py::known_output_columns::update::0": {
+      "reason": "set.update on a local set of names"
+    },
+    "decoy_engine/execution/_pandas_adapter.py::PandasExecutionAdapter.run::update::0": {
+      "reason": "set.update on a set held in a dict of sets"
+    },
+    "decoy_engine/execution/_pipeline_finalize.py::_filter_sampled_values_source_equality::update::0": {
+      "reason": "set.update on a set held in a dict of sets"
+    },
+    "decoy_engine/execution/_pipeline_generate_mask.py::run_generate_and_mask_steps::open::0": {
+      "reason": "chunked OutputPublish.open, not a GCS Blob"
+    },
+    "decoy_engine/execution/_pipeline_generate_mask.py::run_generate_and_mask_steps::update::0": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/execution/_pipeline_generate_mask.py::run_generate_and_mask_steps::update::1": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/execution/_pipeline_mixed_route.py::_run_admitted::open::0": {
+      "reason": "chunked OutputPublish.open, not a GCS Blob"
+    },
+    "decoy_engine/execution/_pipeline_mixed_route.py::_run_admitted::update::0": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/execution/_pipeline_multi_table.py::_table_entry::update::0": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/execution/_runner.py::source_anchor_columns::update::0": {
+      "reason": "set.update on a set held in a dict of sets"
+    },
+    "decoy_engine/execution/_sequential_composite_chain.py::composite_chain_offender::update::0": {
+      "reason": "set.update on a set held in a dict of sets"
+    },
+    "decoy_engine/execution/_sequential_composite_chain.py::composite_chain_offender::update::1": {
+      "reason": "set.update on a set held in a dict of sets"
+    },
+    "decoy_engine/execution/_stitch.py::stitch_generate_mask_outputs::update::0": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/execution/_strategies/_fpe.py::FpeStrategyHandler.run.encrypt_one::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/execution/_strategies/_nested.py::NestedStrategyHandler.run::update::0": {
+      "reason": "jsonpath_ng JSONPath.update on a parsed document"
+    },
+    "decoy_engine/execution/_transactional_sink.py::ParquetTransactionalSink._cleanup_staging::exists::0": {
+      "reason": "pathlib Path.exists on a local path"
+    },
+    "decoy_engine/execution/_transforms.py::_structured_references::update::0": {
+      "reason": "set.update on a local set of names"
+    },
+    "decoy_engine/execution/_transforms_admission.py::_distinct_counts::update::0": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/execution/native/_chunked_entry.py::_native_route._masked::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/execution/native/_crypto_reference.py::_ReferenceFpe._run::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/execution/native/_text_mask_native_fpe.py::mask_cell_hybrid::update::0": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/execution/native/_text_mask_native_fpe.py::plan_native_fpe::update::0": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/execution/native/_text_mask_native_splice.py::plan_native_splice::update::0": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/execution/out_of_core/_budget.py::_nearest_existing_ancestor::exists::0": {
+      "reason": "pathlib Path.exists on a local path"
+    },
+    "decoy_engine/execution/out_of_core/_budget.py::temp_disk_bytes::exists::0": {
+      "reason": "pathlib Path.exists on a local path"
+    },
+    "decoy_engine/execution/out_of_core/_compat.py::_composite_group_join_covered::update::0": {
+      "reason": "set.update on a local set of names"
+    },
+    "decoy_engine/execution/out_of_core/_compat.py::check_out_of_core_compatibility::update::0": {
+      "reason": "set.update on a set held in a dict of sets"
+    },
+    "decoy_engine/execution/out_of_core/_mask_group_b.py::fpe_array::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/execution/out_of_core/_preflight.py::run_preflight::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/execution/out_of_core/_relation.py::build_parent_key_relation.masked_batch_fn::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/execution/out_of_core/_relation.py::build_parent_key_relation.masked_batch_fn::open::1": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/execution/out_of_core/_runner.py::run_fk_out_of_core::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/execution/out_of_core/_runner.py::run_fk_out_of_core::open::1": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/execution/out_of_core/_scratch.py::ScratchAccess.__init__::open::0": {
+      "reason": "os.open on a local path, not a GCS Blob"
+    },
+    "decoy_engine/execution/out_of_core/_scratch.py::open_private::open::0": {
+      "reason": "os.open on a local path, not a GCS Blob"
+    },
+    "decoy_engine/execution/physical/_activation.py::_compute_activation_hash::update::0": {
+      "reason": "hashlib sha256 digest update"
+    },
+    "decoy_engine/execution/physical/_activation.py::_compute_activation_hash::update::1": {
+      "reason": "hashlib sha256 digest update"
+    },
+    "decoy_engine/execution/physical/_inputs.py::compute_plan_hash::update::0": {
+      "reason": "hashlib sha256 digest update"
+    },
+    "decoy_engine/execution/physical/_inputs.py::compute_plan_hash::update::1": {
+      "reason": "hashlib sha256 digest update"
+    },
+    "decoy_engine/execution/physical/_shadow_snapshot.py::snapshot_identity::update::0": {
+      "reason": "hashlib sha256 digest update"
+    },
+    "decoy_engine/execution/physical/_shadow_snapshot.py::snapshot_identity::update::1": {
+      "reason": "hashlib sha256 digest update"
+    },
+    "decoy_engine/execution/physical/_shadow_snapshot.py::snapshot_identity::update::2": {
+      "reason": "hashlib sha256 digest update"
+    },
+    "decoy_engine/execution/physical/_shadow_snapshot.py::snapshot_identity::update::3": {
+      "reason": "hashlib sha256 digest update"
+    },
+    "decoy_engine/execution/physical/_shadow_snapshot.py::snapshot_identity::update::4": {
+      "reason": "hashlib sha256 digest update"
+    },
+    "decoy_engine/expressions/_safe_eval.py::safe_eval::update::0": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/fileaccess/_local.py::LocalHandle.fileno::open::0": {
+      "reason": "os.open on a local path, not a GCS Blob"
+    },
+    "decoy_engine/fileaccess/_local.py::LocalOutputDir.is_empty_or_absent::exists::0": {
+      "reason": "pathlib Path.exists on a local path"
+    },
+    "decoy_engine/fileaccess/_local.py::LocalOutputTxn._writes_through::exists::0": {
+      "reason": "pathlib Path.exists on a local path"
+    },
+    "decoy_engine/fileaccess/_local.py::LocalOutputTxn.create_file::open::0": {
+      "reason": "os.open on a local path, not a GCS Blob"
+    },
+    "decoy_engine/fileaccess/_local.py::LocalOutputTxn.create_file::open::1": {
+      "reason": "os.open on a local path, not a GCS Blob"
+    },
+    "decoy_engine/fileaccess/_local.py::LocalOutputTxn.create_file::open::2": {
+      "reason": "os.open on a local path, not a GCS Blob"
+    },
+    "decoy_engine/fileaccess/_local.py::_LocalStageDir.create_file::open::0": {
+      "reason": "os.open on a local path, not a GCS Blob"
+    },
+    "decoy_engine/fileaccess/_local.py::_LocalStageDir.open_file::open::0": {
+      "reason": "os.open on a local path, not a GCS Blob"
+    },
+    "decoy_engine/fileaccess/_local.py::_sync_dir::open::0": {
+      "reason": "os.open on a local path, not a GCS Blob"
+    },
+    "decoy_engine/fileaccess/_openat2.py::_confined_open::open::0": {
+      "reason": "os.open on a local path, not a GCS Blob"
+    },
+    "decoy_engine/fileaccess/_openat2.py::_confined_open::open::1": {
+      "reason": "os.open on a local path, not a GCS Blob"
+    },
+    "decoy_engine/fileaccess/_output.py::_rmtree_fd::open::0": {
+      "reason": "os.open on a local path, not a GCS Blob"
+    },
+    "decoy_engine/generation/_streamed.py::run_generation::open::0": {
+      "reason": "chunked OutputPublish.open, not a GCS Blob"
+    },
+    "decoy_engine/generation/composite/_city_state_zip.py::load_locality_table::open::0": {
+      "reason": "pathlib Path.open on a packaged CSV"
+    },
+    "decoy_engine/internal/faker_setup.py::atomic_swap_db_providers::update::0": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/plan/_seed_envelope.py::_build_seed_envelope::update::0": {
+      "reason": "set.update on a set held in a dict of sets"
+    },
+    "decoy_engine/profile/_source.py::_derive_pk_cols::update::0": {
+      "reason": "set.update on a set held in a dict of sets"
+    },
+    "decoy_engine/profiling/model_pack/loader.py::ModelPackLoader._check_signature::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/profiling/model_pack/loader.py::ModelPackLoader._check_signature::open::1": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/profiling/model_pack/loader.py::ModelPackLoader._check_signature::open::2": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/profiling/model_pack/provenance.py::load_signing_key_from_env::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/profiling/model_pack/provenance.py::load_signing_key_from_env::open::1": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/profiling/model_pack/provenance.py::load_signing_key_from_env::open::2": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/providers_v2/_faker_adapter.py::FakerAdapter._faker_call::update::0": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/providers_v2/_registry.py::get_default_registry::update::0": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/quality/dp_budget.py::_compose::compose::0": {
+      "reason": "dp_accounting PrivacyLossDistribution.compose, not a GCS Blob"
+    },
+    "decoy_engine/reasons/_record.py::ReasonContext.merged::update::0": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/secret_providers/_buffer.py::SecretBuffer.__init__::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/_preflight.py::_admit_boxed::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/_preflight.py::_legacy_boxed::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/_preflight.py::_prepare_boxed::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/_preflight.py::_ref_boxed::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/_requirements.py::_explicit_or_none::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/_requirements.py::_legacy_or_none::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/_requirements.py::_prepare_aes_gcm::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/_requirements.py::_prepare_aes_gcm::open::1": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/_requirements.py::_prepare_aes_gcm::open::2": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/_requirements.py::_prepare_fernet::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/_requirements.py::_prepare_fernet::open::1": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/_requirements.py::_prepare_mask_root::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/vault.py::client_from_env::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/vault.py::client_from_env::open::1": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/vault.py::client_from_env::open::2": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/vault.py::client_from_env::open::3": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/vault.py::client_from_env::open::4": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/vault.py::client_from_env::open::5": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/secret_providers/vault.py::client_from_env::open::6": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/subset/_keys.py::key_columns_needed::update::0": {
+      "reason": "set.update on a local set of names"
+    },
+    "decoy_engine/subset/_keys.py::key_columns_needed::update::1": {
+      "reason": "set.update on a local set of names"
+    },
+    "decoy_engine/subset/_keys.py::key_columns_needed::update::2": {
+      "reason": "set.update on a local set of names"
+    },
+    "decoy_engine/subset/_keys.py::key_columns_needed::update::3": {
+      "reason": "set.update on a local set of names"
+    },
+    "decoy_engine/transforms/_codeset_loader.py::_resolve_read_path::exists::0": {
+      "reason": "pathlib Path.exists on a local path"
+    },
+    "decoy_engine/transforms/_ff1.py::_ciph::update::0": {
+      "reason": "cryptography AES CipherContext.update"
+    },
+    "decoy_engine/transforms/_ff1.py::_prf::update::0": {
+      "reason": "cryptography AES CipherContext.update"
+    },
+    "decoy_engine/transforms/date_shift.py::DateShiftStrategy.apply::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/transforms/date_shift.py::DateShiftStrategy.apply::open::1": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/transforms/joint_mask.py::_pick_rows_mask::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/transforms/text_mask.py::_mask_fpe::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/transforms/text_mask.py::_mask_fpe::open::1": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/transforms/text_mask.py::_mask_fpe::open::2": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/transforms/text_mask.py::_mask_span::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/transforms/text_mask.py::_mask_span::open::1": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/transforms/text_mask.py::mask_cell_with_spans::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/transforms/text_mask.py::mask_cell_with_spans::update::0": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/unmask.py::unmask_pipeline::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/unmask.py::unmask_pipeline::open::1": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/unmask.py::unmask_pipeline::open::2": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/validation/post/_runner.py::_merge::update::0": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/validation/post/_runner.py::_merge::update::1": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/validation/post/_runner.py::_merge::update::2": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/validation/post/_runner.py::_merge::update::3": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/validation/post/_runner.py::_merge::update::4": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/validation/post/_runner.py::_merge::update::5": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/vault.py::VaultWriter.add::update::0": {
+      "reason": "set.update on the VaultWriter entry set"
+    },
+    "decoy_engine/vault.py::_fernet::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/vault.py::assert_vault_writer_keyed::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    },
+    "decoy_engine/vault.py::load_vault::update::0": {
+      "reason": "dict.update on a plain dict"
+    },
+    "decoy_engine/vault.py::vault_writer_for_config::open::0": {
+      "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
+    }
+  }
+}

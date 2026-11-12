@@ -14,6 +14,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   prove-regression:
     if: contains(github.event.pull_request.labels.*.name, 'bugfix')
@@ -25,15 +29,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: ./.github/actions/lock-env
         with:
-          python-version: "3.10"
-          cache: pip
-
-      - name: Install
-        run: pip install -e ".[dev]"
-
+          extras: "dev"
       - name: Fetch base branch
         run: git fetch origin "$BASE_REF"
         env:

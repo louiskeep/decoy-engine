@@ -25,6 +25,7 @@ import pytest
 
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import run_pipeline
+from tests._declared_schema import declare_rest
 from tests.unit.execution import _auto_chunk_support as support
 
 ENGINE_VERSION = "b7-multi-table-test"
@@ -96,7 +97,7 @@ def build_job(
         raw["targets"][name] = {"type": "file", "format": "parquet", "path": "/dev/null"}
         sources[name] = table
     raw.update(extra or {})
-    return PipelineConfig.model_validate(raw).model_dump(), sources
+    return PipelineConfig.model_validate(declare_rest(raw)).model_dump(), sources
 
 
 def restrict(cfg: dict[str, Any], table: str) -> dict[str, Any]:

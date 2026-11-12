@@ -51,7 +51,12 @@ import numpy as np
 import pandas as pd
 
 from decoy_engine import reasons
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    option,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.generation.pool._events import QualityWarning
@@ -129,6 +134,15 @@ class TopCodeStrategyHandler:
     """Generalize the rare tail(s) of a numeric column into an aggregate label."""
 
     name: str = "top_code"
+    namespace_required: bool = False
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("cap", "int", 89, required=True),
+        option("over_label", "str", "90+", required=True),
+        option("floor", "int", 40),
+        option("under_label", "str", "under 40"),
+    )
+    offer_in_wizard: bool = True
 
     def run(
         self,

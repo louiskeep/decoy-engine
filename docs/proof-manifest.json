@@ -1,9 +1,9 @@
 {
-  "engine_version": "0.17.0",
+  "engine_version": "0.22.0",
   "generated_at": "2026-06-14",
   "surface": {
     "mask": 24,
-    "generate": 12,
+    "generate": 14,
     "providers": 34
   },
   "hero": {
@@ -225,27 +225,27 @@
     "audit_log": [
       {
         "event_id": "1",
-        "actor": "rossnicole",
-        "action": "edit"
-      },
-      {
-        "event_id": "2",
-        "actor": "waterscassandra",
+        "actor": "phuang",
         "action": "export"
       },
       {
+        "event_id": "2",
+        "actor": "rhonda75",
+        "action": "edit"
+      },
+      {
         "event_id": "3",
-        "actor": "aewing",
+        "actor": "ugoodman",
         "action": "edit"
       },
       {
         "event_id": "4",
-        "actor": "christopher72",
+        "actor": "mario09",
         "action": "view"
       },
       {
         "event_id": "5",
-        "actor": "fbell",
+        "actor": "geoffreycabrera",
         "action": "edit"
       }
     ],
@@ -1242,6 +1242,7 @@
   ],
   "generation_strategies": [
     "categorical",
+    "constant",
     "derived",
     "derived_aggregate",
     "distribution",
@@ -1249,6 +1250,7 @@
     "formula",
     "group_key",
     "grouped_series",
+    "lookup",
     "reference",
     "sequence",
     "statistical",

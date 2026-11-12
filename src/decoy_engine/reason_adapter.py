@@ -6,11 +6,13 @@ identifier rather than the exception message. A consumer reads a :class:`ReasonR
 exception's text, class name or ``.code`` attribute.
 
 Trust model. An exception's ``.code`` is trusted only when the exception's class is one of the
-engine families registered below *and* the code is registered in that family's namespace.
-Character shape is not trust: an exception raised by a parser or a user callback can carry a
-data-derived ``code`` that is still lowercase and underscores, and a third-party class can copy an
-engine code string. Everything else becomes ``decoy.unexpected_error``; the original exception
-is untouched and keeps propagating for direct callers.
+engine families registered below *and* the code is registered in that family's namespace, or,
+when it is not, the code is a :class:`decoy_engine.reasons.ReasonCode` registry symbol registered in its own
+namespace (a family error re-wrapping another family's refusal). Character shape is not trust:
+an exception raised by a parser or a user callback can carry a data-derived ``code`` that is
+still lowercase and underscores, and a third-party class can copy an engine code string.
+Everything else becomes ``decoy.unexpected_error``; the original exception is untouched and keeps
+propagating for direct callers.
 
 This module is the adapter, so it may import the engine's error families; ``decoy_engine.reasons``
 itself stays a leaf (it imports none of them).
@@ -42,6 +44,11 @@ _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.relationships._namespace", "NamespaceConfigError", "config"),
     ("decoy_engine.subset._errors", "SubsetConfigError", "config"),
     ("decoy_engine.plan._errors", "PlanCompileError", "plan"),
+    ("decoy_engine.contracts.declared_casting", "DeclaredCastContractError", "plan"),
+    ("decoy_engine.execution._errors", "DeclaredCastRouteError", "route"),
+    ("decoy_engine.execution._errors", "DeclaredCastValueError", "runtime"),
+    ("decoy_engine.execution._errors", "QuarantineError", "runtime"),
+    ("decoy_engine.errors", "FixedWidthRecordOverlongError", "runtime"),
     ("decoy_engine.plan.validate._consolidator", "PlanCheckError", "plan"),
     ("decoy_engine.generation.statistical._spec", "StatisticalSpecError", "plan"),
     ("decoy_engine.generation.composite._errors", "CompositeError", "plan"),
@@ -70,21 +77,28 @@ _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.execution.native._draw_site_providers", "DrawSiteProtocolError", "runtime"),
     ("decoy_engine.execution.native._pool_quality", "PoolQualityError", "runtime"),
     ("decoy_engine.io.bounded_reader", "BoundedReadError", "runtime"),
+    ("decoy_engine.fileaccess._protected_dir", "ProtectedDirAclFailed", "runtime"),
+    ("decoy_engine.fileaccess._protected_dir", "ProtectedDirUnsafe", "runtime"),
+    ("decoy_engine.records._errors", "RecordError", "runtime"),
     ("decoy_engine.subset._errors", "SubsetError", "subset"),
     ("decoy_engine.subset._errors", "SubsetInternalError", "runtime"),
     ("decoy_engine.providers_v2._errors", "ProviderError", "provider"),
     ("decoy_engine.providers_v2.identifiers._errors", "IdentifierError", "provider"),
+    ("decoy_engine.detection.ner", "NerModelNameError", "config"),
     ("decoy_engine.detection.ner", "NerUnavailableError", "provider"),
+    ("decoy_engine.detection._model_status", "ModelUnavailableError", "provider"),
     ("decoy_engine.quality.carriers", "CarrierError", "quality"),
     ("decoy_engine.quality.dp", "DpError", "quality"),
     ("decoy_engine.quality.dp_budget", "DpBudgetError", "quality"),
     ("decoy_engine.quality.dp_provenance", "ProvenanceError", "quality"),
     ("decoy_engine.quality.snapshot", "DistributionSnapshotError", "quality"),
+    ("decoy_engine.verification.postmask._blocked", "PostScanBlockedError", "post_scan"),
     ("decoy_engine.connectors.postgres_snapshot", "PostgresSnapshotError", "connector"),
     ("decoy_engine.execution.physical._shadow_diff_codes", "ShadowDifference", "physical"),
 )
 # Engine exceptions that carry no code but have one fixed meaning: (module, class, reason).
 _FIXED: tuple[tuple[str, str, ReasonCode], ...] = (
+    ("builtins", "MemoryError", reasons.decoy.PROCESS_OUT_OF_MEMORY),
     ("decoy_engine.errors", "EmptyParentPoolError", reasons.config.FK_EMPTY_PARENT_POOL),
     ("decoy_engine.errors", "UnknownFKColumnError", reasons.config.FK_UNKNOWN_COLUMN),
     ("decoy_engine.errors", "ConfigError", reasons.config.UNTAGGED),
@@ -96,6 +110,7 @@ _FIXED: tuple[tuple[str, str, ReasonCode], ...] = (
     ("decoy_engine.sdk", "TransientError", reasons.decoy.CONNECTOR_TRANSIENT_FAILURE),
     ("decoy_engine.sdk", "PermanentError", reasons.decoy.CONNECTOR_PERMANENT_FAILURE),
     ("decoy_engine.fileaccess._types", "FileAccessDenied", reasons.decoy.FILE_ACCESS_DENIED),
+    ("decoy_engine.profiling.scan_set", "ScanSourceError", reasons.runtime.SCAN_SOURCE_FAILED),
 )
 
 
@@ -126,12 +141,14 @@ def _first_in_mro(exc: BaseException, table: dict[type, Any]) -> Any:
     return None
 
 
+def is_capacity_oserror(exc: BaseException) -> bool:
+    """True for an OSError whose errno is ENOSPC or EDQUOT; the cause chain is not walked."""
+    return isinstance(exc, OSError) and exc.errno in _CAPACITY_ERRNOS
+
+
 def _capacity_evidence(exc: BaseException) -> bool:
     """Typed ENOSPC/EDQUOT on the exception or its direct cause; a generic OSError is not."""
-    for candidate in (exc, getattr(exc, "__cause__", None)):
-        if isinstance(candidate, OSError) and candidate.errno in _CAPACITY_ERRNOS:
-            return True
-    return False
+    return any(is_capacity_oserror(c) for c in (exc, getattr(exc, "__cause__", None)) if c)
 
 
 def _record(
@@ -179,6 +196,12 @@ def _classify(exc: BaseException, phase: Phase, context: ReasonContext | None) -
         code = _read_code(exc)
         if code is not None and reasons.find(namespace, code) is not None:
             return _record((namespace, code), phase, context)
+        # The family record wins for a code registered in both namespaces. On a miss, a registry
+        # symbol re-wrapped by another family (a plan check wrapping a config or provider
+        # refusal) keeps the namespace it was raised with.
+        own = getattr(code, "namespace", None)
+        if isinstance(code, ReasonCode) and reasons.find(str(own), code) is not None:
+            return _record((str(own), str(code)), phase, context)
         return _record(reasons.decoy.UNREGISTERED_REASON, phase, context)
     identity = _first_in_mro(exc, fixed)
     if identity is not None:
@@ -205,6 +228,17 @@ def _count_of(report: Any, name: str) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
+def report_unavailable(report: Any) -> bool:
+    """Whether a verification report says its check could not complete: the whole pass failed
+    (``pass_failed_with`` set; its text is never read) or a per-check error was counted."""
+    failed_with = (
+        report.get("pass_failed_with")
+        if isinstance(report, Mapping)
+        else getattr(report, "pass_failed_with", None)
+    )
+    return failed_with is not None or _count_of(report, "error_count") > 0
+
+
 def reasons_from_report(report: Any, *, enforcing: bool = False) -> tuple[ReasonRecord, ...]:
     """The reasons a verification report supports, without serializing the report.
 
@@ -214,15 +248,10 @@ def reasons_from_report(report: Any, *, enforcing: bool = False) -> tuple[Reason
     findings and is listed first; findings are ``findings_reported`` when the check only reports,
     and ``verification_failed`` when ``enforcing`` made the negative verdict binding.
     A clean report yields no reasons. Accepts the `PostMaskReport` object or its dict form."""
-    failed_with = (
-        report.get("pass_failed_with")
-        if isinstance(report, Mapping)
-        else getattr(report, "pass_failed_with", None)
-    )
     errors = _count_of(report, "error_count")
     findings = _count_of(report, "fail_count")
     out: list[ReasonRecord] = []
-    if failed_with is not None or errors > 0:
+    if report_unavailable(report):
         out.append(
             ReasonRecord.for_reason(
                 reasons.decoy.VERIFICATION_UNAVAILABLE,
@@ -421,6 +450,7 @@ __all__ = [
     "capture_failure",
     "current_failure_scope",
     "failure_scope",
+    "is_capacity_oserror",
     "reason_from_exception",
     "reasons_from_report",
     "registered_families",

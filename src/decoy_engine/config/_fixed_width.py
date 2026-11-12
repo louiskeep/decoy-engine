@@ -54,9 +54,18 @@ Known gaps -- documented, not fixed here (S4 scope; flagged for S7):
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
+
+from decoy_engine.errors import ConfigRuleError
 
 
 class FixedWidthColumn(BaseModel):
@@ -96,6 +105,24 @@ class FixedWidthLayout(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     columns: list[FixedWidthColumn] = Field(..., min_length=1)
+    # F06: when true a record must be EXACTLY `record_width` long. The default keeps the
+    # documented "trailing bytes are tolerated" behaviour for every existing layout; a layout
+    # feeding a declared-casting column opts in so an over-length record is a framing error, not a
+    # value that bleeds into the next field.
+    exact_record_width: bool = False
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> Any:
+        from decoy_engine.config._declared_casting import recover_serialization_schema
+
+        return recover_serialization_schema(core_schema, handler)
+
+    @model_serializer(mode="wrap")
+    def _omit_default_exact_width(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if data.get("exact_record_width") is False:
+            data.pop("exact_record_width", None)
+        return data
 
     @property
     def record_width(self) -> int:
@@ -109,10 +136,10 @@ class FixedWidthLayout(BaseModel):
         prev_end = 0
         for column in self.columns:
             if column.name in seen_names:
-                raise ValueError(f"fixed_width layout: duplicate column name {column.name!r}")
+                raise ConfigRuleError(f"fixed_width layout: duplicate column name {column.name!r}")
             seen_names.add(column.name)
             if column.start < prev_end:
-                raise ValueError(
+                raise ConfigRuleError(
                     f"fixed_width layout: column {column.name!r} (start={column.start}) "
                     f"overlaps a preceding column or is out of order (preceding column "
                     f"ends at {prev_end}); columns must be listed in ascending, "

@@ -11,9 +11,11 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.config import PipelineConfig
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution.physical._compiler import compile_physical_plan
 from decoy_engine.execution.physical._plan import KeyBinding
 from decoy_engine.execution.physical._snapshot import capture_physical_plan_inputs
+from tests._declared_schema import declare_rest
 
 _ENGINE_VERSION = "shadow-bindings-test"
 
@@ -27,15 +29,21 @@ def _write(tmp_path: Path, table: pa.Table, name: str) -> Path:
 def _plan_for(tmp_path: Path, source: pa.Table, columns: list[dict]):
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
-        {
-            "version": 2,
-            "global_settings": {"seed": 1},
-            "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
-            "targets": {
-                "t": {"type": "file", "format": "parquet", "path": str(tmp_path / "t.out.parquet")}
-            },
-            "tables": [{"name": "t", "columns": columns}],
-        }
+        declare_rest(
+            {
+                "version": 2,
+                "global_settings": {"seed": 1},
+                "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
+                "targets": {
+                    "t": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(tmp_path / "t.out.parquet"),
+                    }
+                },
+                "tables": [{"name": "t", "columns": columns}],
+            }
+        )
     ).model_dump()
     inputs = capture_physical_plan_inputs(config, {"t": source}, engine_version=_ENGINE_VERSION)
     return compile_physical_plan(inputs)
@@ -165,15 +173,21 @@ def test_hash_without_namespace_is_not_bound(tmp_path: Path) -> None:
     source = pa.table({"c": pa.array(["a", "b"], type=pa.string())})
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
-        {
-            "version": 2,
-            "global_settings": {"seed": 1},
-            "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
-            "targets": {
-                "t": {"type": "file", "format": "parquet", "path": str(tmp_path / "t.out.parquet")}
-            },
-            "tables": [{"name": "t", "columns": [{"name": "c", "strategy": "passthrough"}]}],
-        }
+        declare_rest(
+            {
+                "version": 2,
+                "global_settings": {"seed": 1},
+                "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
+                "targets": {
+                    "t": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(tmp_path / "t.out.parquet"),
+                    }
+                },
+                "tables": [{"name": "t", "columns": [{"name": "c", "strategy": "passthrough"}]}],
+            }
+        )
     ).model_dump()
     inputs = capture_physical_plan_inputs(config, {"t": source}, engine_version=_ENGINE_VERSION)
     # A hand-built node bypassing schema validation, to exercise the guard directly.
@@ -241,13 +255,14 @@ def test_deterministic_reuse_c1_faker_column_binds(tmp_path: Path) -> None:
     assert binding.required_prepasses == ()
 
 
-def test_faker_column_absent_from_source_declines_without_crashing(tmp_path: Path) -> None:
-    """A faker column the resident source lacks declines to bind (like the hash
-    path), never a bare KeyError from the resident-type probe (dennis MEDIUM-1)."""
+def test_faker_column_absent_from_source_is_refused_before_binding(tmp_path: Path) -> None:
+    """A faker column the resident source lacks is refused as a declared-but-missing column
+    before any binding, never a bare KeyError from the resident-type probe."""
     source = pa.table({"other": pa.array(["a", "b", "c"], type=pa.string())})
-    plan = _plan_for(tmp_path, source, [_faker_column(name="c")])
-    node = plan.tables[0].nodes[0]
-    assert node.execution is None
+    with pytest.raises(PipelineValidationError) as caught:
+        _plan_for(tmp_path, source, [_faker_column(name="c")])
+    assert caught.value.code == "source_file.declared_column_missing"
+    assert "column c" in str(caught.value)
 
 
 def test_deterministic_faker_when_binds_but_the_table_still_declines(tmp_path: Path) -> None:
@@ -262,15 +277,21 @@ def test_deterministic_faker_when_binds_but_the_table_still_declines(tmp_path: P
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
-        {
-            "version": 2,
-            "global_settings": {"seed": 1},
-            "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
-            "targets": {
-                "t": {"type": "file", "format": "parquet", "path": str(tmp_path / "t.out.parquet")}
-            },
-            "tables": [{"name": "t", "columns": [_faker_column()]}],
-        }
+        declare_rest(
+            {
+                "version": 2,
+                "global_settings": {"seed": 1},
+                "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
+                "targets": {
+                    "t": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(tmp_path / "t.out.parquet"),
+                    }
+                },
+                "tables": [{"name": "t", "columns": [_faker_column()]}],
+            }
+        )
     ).model_dump()
     config["tables"][0]["columns"][0]["when"] = "c == 'a'"
     inputs = capture_physical_plan_inputs(config, {"t": source}, engine_version=_ENGINE_VERSION)
@@ -320,17 +341,23 @@ def test_faker_non_poolable_provider_hand_built_node_is_unbound(tmp_path: Path) 
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     plan_inputs_source = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
-        {
-            "version": 2,
-            "global_settings": {"seed": 1},
-            "sources": {
-                "t": {"type": "file", "format": "parquet", "path": str(plan_inputs_source)}
-            },
-            "targets": {
-                "t": {"type": "file", "format": "parquet", "path": str(tmp_path / "t.out.parquet")}
-            },
-            "tables": [{"name": "t", "columns": [{"name": "c", "strategy": "passthrough"}]}],
-        }
+        declare_rest(
+            {
+                "version": 2,
+                "global_settings": {"seed": 1},
+                "sources": {
+                    "t": {"type": "file", "format": "parquet", "path": str(plan_inputs_source)}
+                },
+                "targets": {
+                    "t": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(tmp_path / "t.out.parquet"),
+                    }
+                },
+                "tables": [{"name": "t", "columns": [{"name": "c", "strategy": "passthrough"}]}],
+            }
+        )
     ).model_dump()
     inputs = capture_physical_plan_inputs(config, {"t": source}, engine_version=_ENGINE_VERSION)
     seed = ColumnSeed(
@@ -407,38 +434,40 @@ def _fk_plan_for(tmp_path: Path, *, parent_columns: list[dict], child_columns: l
     pp = _write(tmp_path, parent, "parent")
     cp = _write(tmp_path, child, "child")
     config = PipelineConfig.model_validate(
-        {
-            "version": 2,
-            "global_settings": {"seed": 1},
-            "sources": {
-                "parent": {"type": "file", "format": "parquet", "path": str(pp)},
-                "child": {"type": "file", "format": "parquet", "path": str(cp)},
-            },
-            "targets": {
-                "parent": {
-                    "type": "file",
-                    "format": "parquet",
-                    "path": str(tmp_path / "parent.out.parquet"),
+        declare_rest(
+            {
+                "version": 2,
+                "global_settings": {"seed": 1},
+                "sources": {
+                    "parent": {"type": "file", "format": "parquet", "path": str(pp)},
+                    "child": {"type": "file", "format": "parquet", "path": str(cp)},
                 },
-                "child": {
-                    "type": "file",
-                    "format": "parquet",
-                    "path": str(tmp_path / "child.out.parquet"),
+                "targets": {
+                    "parent": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(tmp_path / "parent.out.parquet"),
+                    },
+                    "child": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(tmp_path / "child.out.parquet"),
+                    },
                 },
-            },
-            "tables": [
-                {"name": "parent", "columns": parent_columns},
-                {"name": "child", "columns": child_columns},
-            ],
-            "relationships": [
-                {
-                    "parent": {"table": "parent", "columns": ["id"]},
-                    "children": [{"table": "child", "columns": ["pid"]}],
-                    "orphan_policy": "preserve",
-                    "namespace": "fk_ns",
-                }
-            ],
-        }
+                "tables": [
+                    {"name": "parent", "columns": parent_columns},
+                    {"name": "child", "columns": child_columns},
+                ],
+                "relationships": [
+                    {
+                        "parent": {"table": "parent", "columns": ["id"]},
+                        "children": [{"table": "child", "columns": ["pid"]}],
+                        "orphan_policy": "preserve",
+                        "namespace": "fk_ns",
+                    }
+                ],
+            }
+        )
     ).model_dump()
     inputs = capture_physical_plan_inputs(
         config, {"parent": parent, "child": child}, engine_version=_ENGINE_VERSION

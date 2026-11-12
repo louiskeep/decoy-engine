@@ -55,6 +55,7 @@ from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
 from decoy_engine.secret_providers import admit_mask_key
+from tests._declared_schema import declare_rest, declared_schema
 
 _EV = "de02-accept"
 _JOB_SEED = (42).to_bytes(8, "big")
@@ -149,7 +150,14 @@ def _config(tmp_path, columns=None, seed: int = 42, mask_secret_ref=None) -> dic
         {
             "version": 2,
             "global_settings": gs,
-            "sources": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "t.csv")}},
+            "sources": {
+                "t": {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": str(tmp_path / "t.csv"),
+                }
+            },
             "tables": [{"name": "t", "columns": columns or _KEYED_COLUMNS}],
             "targets": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "o.csv")}},
         }
@@ -159,6 +167,7 @@ def _config(tmp_path, columns=None, seed: int = 42, mask_secret_ref=None) -> dic
 def _run(tmp_path, cfg, *, key_provider=None, **kwargs):
     df = _frame()
     df.to_csv(tmp_path / "t.csv", index=False)
+    declare_rest(cfg)
     sources = {"t": pa.Table.from_pandas(df, preserve_index=False)}
     result = run_pipeline(
         cfg, sources=sources, engine_version=_EV, key_provider=key_provider, **kwargs
@@ -756,7 +765,15 @@ class TestPublicEntryPointsGated:
         df.to_csv(tmp_path / "t.csv", index=False)
         source = pa.Table.from_pandas(df, preserve_index=False)
         with pytest.raises(KeyedStrategyRequiresSecret):
-            list(run_mask_pipeline_chunked(cfg, [source], table="t", engine_version=_EV))
+            list(
+                run_mask_pipeline_chunked(
+                    cfg,
+                    [source],
+                    table="t",
+                    source_schema=declared_schema(cfg, "t"),
+                    engine_version=_EV,
+                )
+            )
 
     def test_chunked_entry_point_gated_on_empty_input(self, tmp_path, phase):
         """Codex-found: a chunked source with ZERO chunks used to return `[]`
@@ -768,7 +785,11 @@ class TestPublicEntryPointsGated:
 
         cfg = self._keyed_cfg(tmp_path)
         with pytest.raises(KeyedStrategyRequiresSecret):
-            list(run_mask_pipeline_chunked(cfg, [], table="t", engine_version=_EV))
+            list(
+                run_mask_pipeline_chunked(
+                    cfg, [], table="t", source_schema=declared_schema(cfg, "t"), engine_version=_EV
+                )
+            )
 
     def test_chunked_entry_point_empty_input_unkeyed_still_runs(self, tmp_path, phase):
         """The empty-input gate fix must not over-gate: a non-keyed plan with
@@ -777,7 +798,14 @@ class TestPublicEntryPointsGated:
         from decoy_engine import run_mask_pipeline_chunked
 
         cfg = _config(tmp_path, columns=[{"name": "email", "strategy": "redact"}])
-        assert list(run_mask_pipeline_chunked(cfg, [], table="t", engine_version=_EV)) == []
+        assert (
+            list(
+                run_mask_pipeline_chunked(
+                    cfg, [], table="t", source_schema=declared_schema(cfg, "t"), engine_version=_EV
+                )
+            )
+            == []
+        )
 
     def test_chunked_entry_point_empty_input_with_secret_still_runs(self, tmp_path, phase):
         """A keyed plan with zero chunks but a real secret still clears the
@@ -787,7 +815,16 @@ class TestPublicEntryPointsGated:
         cfg = self._keyed_cfg(tmp_path)
         kp = SecretKeyProvider(b"x" * 32)
         assert (
-            list(run_mask_pipeline_chunked(cfg, [], table="t", engine_version=_EV, key_provider=kp))
+            list(
+                run_mask_pipeline_chunked(
+                    cfg,
+                    [],
+                    table="t",
+                    source_schema=declared_schema(cfg, "t"),
+                    engine_version=_EV,
+                    key_provider=kp,
+                )
+            )
             == []
         )
 
@@ -805,8 +842,8 @@ class TestPublicEntryPointsGated:
             )
 
     def test_vault_writer_key_mismatch_fails_closed(self, tmp_path, monkeypatch):
-        # Codex BLOCKER 5: a job_seed-keyed vault writer while masking under a
-        # secret must fail closed (never encrypt PII under the public seed).
+        # Codex BLOCKER 5: a vault writer keyed differently from the run's secret must
+        # fail closed (a writer keyed on the public seed cannot be built at all).
         from decoy_engine.execution import ExecutionError
         from decoy_engine.vault import VaultError, VaultWriter
 
@@ -817,7 +854,7 @@ class TestPublicEntryPointsGated:
         df = _frame(8)[["email"]]
         df.to_csv(tmp_path / "t.csv", index=False)
         sources = {"t": pa.Table.from_pandas(df, preserve_index=False)}
-        bad_writer = VaultWriter((42).to_bytes(8, "big"))  # job_seed-keyed
+        bad_writer = VaultWriter(_SECRET_B.mask_key())  # keyed with a different secret
         with pytest.raises((VaultError, ExecutionError)):
             run_pipeline(
                 cfg,
@@ -872,7 +909,15 @@ class TestVaultIsKeyedSurface:
         df.to_csv(tmp_path / "t.csv", index=False)
         source = pa.Table.from_pandas(df, preserve_index=False)
         with pytest.raises(KeyedStrategyRequiresSecret):
-            list(run_mask_pipeline_chunked(cfg, [source], table="t", engine_version=_EV))
+            list(
+                run_mask_pipeline_chunked(
+                    cfg,
+                    [source],
+                    table="t",
+                    source_schema=declared_schema(cfg, "t"),
+                    engine_version=_EV,
+                )
+            )
 
     @needs_crypto
     def test_chunked_mismatched_vault_writer_under_secret_fails_closed(self, tmp_path):
@@ -885,7 +930,7 @@ class TestVaultIsKeyedSurface:
         df = _frame(8)[["email"]]
         df.to_csv(tmp_path / "t.csv", index=False)
         source = pa.Table.from_pandas(df, preserve_index=False)
-        bad_writer = VaultWriter((42).to_bytes(8, "big"))  # job_seed-keyed
+        bad_writer = VaultWriter(_SECRET_B.mask_key())  # keyed with a different secret
         # The internal oracle entry: the public one refuses any vault writer first (B-6 B0).
         from decoy_engine.execution._chunked_oracle import mask_pipeline_chunked
 
@@ -895,6 +940,7 @@ class TestVaultIsKeyedSurface:
                     cfg,
                     [source],
                     table="t",
+                    source_schema=declared_schema(cfg, "t"),
                     engine_version=_EV,
                     vault_writer=bad_writer,
                     key_provider=_SECRET,
@@ -922,6 +968,7 @@ class TestVaultIsKeyedSurface:
                 cfg,
                 [source],
                 table="t",
+                source_schema=declared_schema(cfg, "t"),
                 engine_version=_EV,
                 vault_writer=writer,
                 key_provider=_SECRET,
@@ -1067,3 +1114,14 @@ class TestDeriveGuard:
 
     def test_seed_key_provider_is_job_seed(self):
         assert SeedKeyProvider(_JOB_SEED).mask_key() == _JOB_SEED
+
+
+def test_secret_key_provider_freezes_mutable_secret_FAIL_BEFORE():
+    original = b"a-mutable-32B+-secret-for-freeze!!"
+    buffer = bytearray(original)
+    provider = SecretKeyProvider(buffer)  # type: ignore[arg-type]
+    before = provider.mask_key()
+    buffer[0] ^= 0xFF
+    assert type(provider.secret) is bytes
+    assert provider.secret == original
+    assert provider.mask_key() == before == SecretKeyProvider(original).mask_key()

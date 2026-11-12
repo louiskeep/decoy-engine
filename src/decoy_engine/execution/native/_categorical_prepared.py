@@ -19,7 +19,7 @@ import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
-from decoy_engine.execution._strategies._categorical import _build_cdf
+from decoy_engine.execution._strategies._categorical import _admit_weights, _build_cdf
 
 
 @dataclass(frozen=True)
@@ -65,12 +65,14 @@ def prepare_categorical(
     if weights is not None:
         if not isinstance(weights, (list, tuple)) or len(weights) != len(categories):
             return None, f"categorical_weights_shape:{name}"
-        if any(isinstance(w, bool) or not isinstance(w, (int, float)) for w in weights):
+        try:
+            admitted = _admit_weights(weights)
+        except StrategyError:
             return None, f"categorical_weights_not_numeric:{name}"
-        if any(w < 0 for w in weights):
+        if any(w < 0 for w in admitted):
             return None, f"categorical_weights_negative:{name}"
         try:
-            cdf = tuple(_build_cdf([float(w) for w in weights]))
+            cdf = tuple(_build_cdf(admitted))
         except StrategyError:
             return None, f"categorical_weights_unbuildable_cdf:{name}"
     return PreparedCategorical(tuple(categories), cdf), None

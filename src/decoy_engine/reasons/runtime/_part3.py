@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import Outcome, Phase, RetryClass
+from decoy_engine.reasons._types import UNRELEASED, Outcome, Phase, RetryClass
 
 __all__ = [
     "CATEGORICAL_POSITION_OUT_OF_DOMAIN",
@@ -33,8 +33,10 @@ __all__ = [
     "FILTER_EXPRESSION_ERROR",
     "FILTER_EXPRESSION_NOT_BOOLEAN",
     "FPE_CHECKSUM_INVALID_SOURCE",
+    "FPE_CHECKSUM_UNSUPPORTED_STRATEGY",
     "FPE_UNENCRYPTABLE_DOMAIN",
     "FPE_UNENCRYPTABLE_LENGTH",
+    "FPE_UNENCRYPTABLE_VALUE",
     "GENERATION_NOT_REPRODUCIBLE",
     "INVALID_SUBSTRATE",
     "JOINT_MASK_KEY_BY_SNAPSHOT_MISALIGNED",
@@ -49,6 +51,12 @@ __all__ = [
     "NESTED_TARGET_UNSET",
     "NESTED_TARGET_UNWRITABLE_CONTAINER",
     "NUMEXPR_REQUIRED",
+    "RECORD_CORRUPT",
+    "RECORD_INVALID",
+    "RECORD_KIND_RESERVED",
+    "SCAN_SOURCE_FAILED",
+    "SCRATCH_ACL_FAILED",
+    "SCRATCH_UNSAFE",
     "SHUFFLE_REQUIRES_NAMESPACE",
     "SORT_ASCENDING_LENGTH_MISMATCH",
     "SORT_COLUMN_MISSING",
@@ -127,6 +135,18 @@ FAKER_POSITIONAL_TABLE_UNKNOWN = _d(
     "faker_positional_table_unknown", "Faker positional table unknown."
 )
 FPE_UNENCRYPTABLE_DOMAIN = _d("fpe_unencryptable_domain", "FPE unencryptable domain.")
+FPE_UNENCRYPTABLE_VALUE = _d(
+    "fpe_unencryptable_value",
+    "A value cannot be format-preserving-encrypted without leaking cleartext or losing round-trip.",
+    since="1.24.0",
+)
+# The plain symbol FPE_CHECKSUM_UNSUPPORTED is the low-level `fpe.checksum_unsupported`.
+FPE_CHECKSUM_UNSUPPORTED_STRATEGY = _d(
+    "fpe_checksum_unsupported",
+    "The FPE checksum scheme is unsupported or the value's length is invalid for it.",
+    symbol="FPE_CHECKSUM_UNSUPPORTED_STRATEGY",
+    since="1.24.0",
+)
 JOINT_MASK_KEY_BY_SNAPSHOT_MISALIGNED = _d(
     "joint_mask_key_by_snapshot_misaligned", "Joint mask key by snapshot misaligned."
 )
@@ -167,14 +187,14 @@ TOKENIZE_VAULT_SCOPE_REQUIRED = _d(
     "The token vault writer has no valid derivation scope (16 to 64 bytes).",
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
-    since="1.3.0",
+    since=UNRELEASED,
 )
 TOKEN_VAULT_DERIVATION_UNSUPPORTED = _d(
     "token_vault_derivation_unsupported",
     "The token vault was created before vault-scoped token derivation; use a new vault.",
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
-    since="1.3.0",
+    since=UNRELEASED,
 )
 TOP_CODE_BOUNDS_UNRESOLVABLE = _d("top_code_bounds_unresolvable", "Top code bounds unresolvable.")
 TOP_CODE_NON_INTEGRAL_OBJECT_COLUMN = _d(
@@ -254,14 +274,14 @@ VAULT_KEY_MISMATCH = _d(
 VAULT_COMMIT_FAILED = _d(
     "vault_commit_failed",
     "The vault could not be written durably; publish no output that it would reverse.",
-    since="1.3.0",
+    since=UNRELEASED,
 )
 VAULT_EXISTS = _d(
     "vault_exists",
     "A vault already exists at the target; choose a new path or remove it with its outputs.",
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
-    since="1.3.0",
+    since=UNRELEASED,
 )
 VAULT_PROTOCOL_VERSION_MISMATCH = _d(
     "vault_protocol_version_mismatch",
@@ -342,3 +362,21 @@ _d = _catalog.runtime("decoy_engine.transforms.text_mask")
 
 CHECKSUM_INVALID = _d("checksum_invalid", "Checksum invalid.")
 SUB_MINIMUM_DOMAIN = _d("sub_minimum_domain", "Sub minimum domain.")
+
+_d = _catalog.runtime("ProtectedDirAclFailed")
+
+SCRATCH_ACL_FAILED = _d("scratch_acl_failed", "Scratch ACL failed.", since="1.7.0")
+
+_d = _catalog.runtime("ProtectedDirUnsafe")
+
+SCRATCH_UNSAFE = _d("scratch_unsafe", "Scratch unsafe.", since="1.7.0")
+
+_d = _catalog.runtime("RecordError")
+
+RECORD_CORRUPT = _d("record_corrupt", "Record corrupt.", since="1.20.0")
+RECORD_INVALID = _d("record_invalid", "Record invalid.", since="1.20.0")
+RECORD_KIND_RESERVED = _d("record_kind_reserved", "Record kind reserved.", since="1.20.0")
+
+_d = _catalog.runtime("ScanSourceError")
+
+SCAN_SOURCE_FAILED = _d("scan_source_failed", "A table could not be scanned.", since="1.10.0")

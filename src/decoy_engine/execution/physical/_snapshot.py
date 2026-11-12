@@ -1,8 +1,8 @@
 """`capture_physical_plan_inputs`: builds a real `PhysicalPlanInputs` (D1) by
-running the SAME preflight sequence `run_pipeline` runs before it ever
-dispatches to a driver (`profile_source` -> `compile_plan` ->
-`build_namespace_registry`/`build_relationship_graph` -> the routing-signal
-resolvers).
+running the preflight sequence `run_pipeline` runs before it ever dispatches to a driver
+(`profile_source` -> `compile_plan` -> `build_namespace_registry`/`build_relationship_graph` ->
+the routing-signal resolvers). It profiles from the config's descriptors only and does not
+pass the caller's supplied tables to the profile.
 
 This function is the concrete "how" behind D1's snapshot -- and the D4
 harness's way of building a real, non-synthesized input snapshot from a real
@@ -33,6 +33,8 @@ from decoy_engine.execution.physical._inputs import (
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.providers_v2 import ProviderRegistry
 
@@ -67,12 +69,15 @@ def capture_physical_plan_inputs(
     use_probe_routing: bool = True,
     out_of_core_reorder_threshold_rows: int | None = None,
     vault_writer: Any = None,
+    base_dir: str | Path | None = None,
 ) -> PhysicalPlanInputs:
     """Build a `PhysicalPlanInputs` snapshot for `config`/`sources` by running
     the real preflight sequence. Argument defaults mirror `run_pipeline`'s own
     (`_pipeline_finalize` / `_planner` constants) so an unspecified knob here
-    captures the same routing facts an unspecified `run_pipeline` kwarg would.
+    captures the same routing facts an unspecified `run_pipeline` kwarg would. `base_dir` is the
+    config file's folder, as for `run_pipeline`.
     """
+    from decoy_engine.execution._guards import prepare_declared_execution_sources
     from decoy_engine.execution._pipeline import classify_table_kinds
     from decoy_engine.execution._pipeline_routing_fk_dtype import fk_out_of_core_dtype_hazard
     from decoy_engine.execution._pipeline_routing_signals import out_of_core_routing_signals
@@ -93,7 +98,7 @@ def capture_physical_plan_inputs(
     )
     from decoy_engine.plan import compile_plan
     from decoy_engine.plan._seed import _normalize_job_seed_int
-    from decoy_engine.profile import profile_source
+    from decoy_engine.profile import DeclarationRequest, profile_source
     from decoy_engine.providers_v2 import get_default_registry
     from decoy_engine.relationships import (
         RelationshipGraph,
@@ -148,8 +153,16 @@ def capture_physical_plan_inputs(
     has_mask_table = any(kind == "mask" for kind in table_kinds.values())
 
     job_seed = _normalize_job_seed_int(config)
-    profile = profile_source(config, seed=job_seed)
-    plan = compile_plan(config, profile, decoy_engine_version=engine_version)
+    # The same request and profile call the live route makes, so a table the caller supplies
+    # without a descriptor is profiled, seeded and planned here as it is there.
+    declared = prepare_declared_execution_sources(
+        DeclarationRequest.for_run(config, {n: s.schema for n, s in caller_sources.items()}),
+        registry=resolved_registry,
+    )
+    profile = profile_source(
+        config, seed=job_seed, declared=declared, supplied_sources=caller_sources
+    )
+    plan = compile_plan(config, profile, decoy_engine_version=engine_version, base_dir=base_dir)
 
     ns_registry = build_namespace_registry(config, profile)
     if profile.relationships:

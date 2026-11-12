@@ -160,6 +160,36 @@ register_secret_provider(VaultKV2Provider(client_from_env()))
   envelope. The five live tests in `tests/secret_providers/test_vault_live.py` are skipped
   without a Vault service and have not been run.
 
+## Consumers
+
+The engine resolves references; callers decide which providers exist. Two callers ship or are
+planned.
+
+**CLI** (the `decoy` package, which pins this engine). Every keyed surface, `decoy run` (with or
+without `--vault`), `decoy tokenize`, `decoy unmask`, `decoy report vault` and `decoy.mask()`,
+takes the secret from exactly one place: `--mask-secret REF` (`mask_secret=` for `decoy.mask()`)
+or `global_settings.mask_secret_ref` in the YAML. Setting both is a usage error. The command
+admits the secret once through `admit_mask_key` inside an `AdmissionScope`. It hands the admitted
+provider to the engine entries it calls; `report vault` passes the admitted provider's mask key to
+`load_vault`. A run and its vault therefore see one read and one key.
+
+- `file:` is the recommended form. With Vault, let Vault Agent (or a Kubernetes secret volume with
+  `defaultMode: 0400`) render the key to an owner-only file and point `file:` at it; the engine
+  never talks to Vault in this setup.
+- `env:` suits CI, where the runner injects a masked variable.
+- `vault://` is refused with `secret_provider_unknown`: the CLI registers no Vault provider in V1.
+  The refusal text is constant, never repeats the reference, and no output, vault or evidence file
+  is written. Direct Vault, AWS, GCP and Azure adapters in the CLI are roadmap row 83.
+
+The CLI may report a usage or source error before it admits the secret, so a bad flag or a
+missing input file can surface first. Admission still comes before output, vault and evidence
+publication. The CLI test that pins the `vault://` case is
+`tests/sentry/test_mask_secret_ref_shape.py::test_vault_ref_is_refused_without_echo`; it lands
+with CLI PR #204.
+
+**Platform.** Provider injection for platform jobs and `POST /unmask` (F13 slice 3a) is parked
+with platform V1. Nothing in this engine depends on it.
+
 ## Not shipped
 
 AWS Secrets Manager, Google Secret Manager, Azure Key Vault, 1Password, systemd credentials and

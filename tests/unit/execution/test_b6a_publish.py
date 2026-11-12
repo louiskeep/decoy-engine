@@ -429,12 +429,13 @@ def test_a_vault_writer_keyed_differently_is_rejected_before_anything_is_staged(
     # tests/unit/execution/test_vault_boundary.py), so this pins the keying refusal alone.
     cfg, src = _vault_job(tmp_path)
     before = sorted(p.name for p in tmp_path.iterdir())
+    # A floor-valid key that is not the run's mask root, so the route's key-match guard refuses it.
     with pytest.raises(VaultError) as exc:
         b6a.run_streamed(
             cfg,
             src,
             None,
-            vault_writer=VaultWriter((42).to_bytes(8, "big")),
+            vault_writer=VaultWriter(b"\x42" * 32),
             key_provider=SecretKeyProvider(secret=bytes(range(32)), key_version="v1"),
         )
     assert exc.value.code == "vault_key_mismatch"

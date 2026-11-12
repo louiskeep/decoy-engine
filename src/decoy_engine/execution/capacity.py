@@ -1,5 +1,5 @@
 """`estimate_job_capacity`: the estimate-only entrypoint for the out-of-core-FK
-memory capacity gate (v1 CLI capacity checker, `decoy preflight` / `decoy run`).
+memory capacity gate (v1 CLI capacity checker, `decoy validate preflight` / `decoy run`).
 
 R4 (Codex plan-review, docs/plans/2026-07-24-oom-checker-cli-v1.md): this is an
 "OOC-FK engine-gate capacity checker", NOT a whole-job OOM guarantee. The CLI
@@ -64,13 +64,12 @@ Two deliberate, documented simplifications versus a real `decoy run`:
 Source-path resolution matches `decoy run`'s own convention (R2): relative
 `sources[*].path` entries resolve against the caller-supplied `base_dir` (the
 pipeline YAML's directory, exactly like `run.py`'s `_resolve_path`), not the
-process's current working directory -- so a `decoy preflight` run from a
+process's current working directory -- so a `decoy validate preflight` run from a
 different directory than `decoy run` still evaluates the identical files.
 """
 
 from __future__ import annotations
 
-import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -78,7 +77,7 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import fileaccess, reasons
-from decoy_engine.config import post_scan_integrity_requested
+from decoy_engine.config import FILE_SOURCE_PATH_FIELDS, post_scan_integrity_requested
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pipeline import classify_table_kinds
 from decoy_engine.execution._pipeline_route_exec import (
@@ -90,18 +89,20 @@ from decoy_engine.execution._pipeline_routing_signals import (
     largest_mask_table_rows_from_profile,
     out_of_core_admission,
 )
-from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit
+from decoy_engine.execution.out_of_core import resolve_budget, resolve_ooc_memory_limit
 from decoy_engine.execution.out_of_core._capacity_eval import (
     CapacityEstimate,
     CapacityInputs,
     CapacityVerdict,
     evaluate_capacity,
 )
-from decoy_engine.fileaccess import FileAccess, entry_point
+from decoy_engine.fileaccess import FileAccess, config_relative, entry_point
+from decoy_engine.generation import detected_memory_bytes, resident_floor_shortfall
 
 __all__ = ["estimate_job_capacity"]
 
 _OUT_OF_CORE_ROUTE = "out_of_core"
+_GENERATE_ROUTE = "generate"
 
 # The mid-run gate raises `out_of_core_parent_rows_unresolved`
 # (`_pipeline_route_exec._parent_table_row_counts`) when a parent table has no
@@ -151,20 +152,10 @@ _ROUTING_REJECT_CODES = frozenset(
 )
 
 
-def _resolve_source_path(raw_path: str, base_dir: Path) -> Path:
-    """Mirror the CLI's `run.py:_resolve_path`: a relative path resolves
-    against `base_dir` (the pipeline YAML's directory); an absolute path
-    passes through unchanged. Kept as a private mirror rather than an
-    import across repos -- the CLI and engine are separate packages."""
-    p = Path(raw_path)
-    # Lexical, not `Path.resolve()`: making the path absolute needs no file-system access, and
-    # which file is read is decided later, at the open, by the file-access policy.
-    return p if p.is_absolute() else Path(os.path.abspath(base_dir / p))
-
-
 def _resolved_config_copy(config_dump: dict[str, Any], base_dir: Path) -> dict[str, Any]:
-    """A shallow copy of `config_dump` with every file-type source's `path`
-    resolved to an absolute string against `base_dir`.
+    """A shallow copy of `config_dump` with every file-type source's path fields
+    (`FILE_SOURCE_PATH_FIELDS`: `path`, `column_names_file`) resolved to an absolute string
+    against `base_dir`.
 
     Needed because `profile_source`'s file readers (`_build_file_source`)
     open `descriptor["path"]` verbatim, with no base-directory concept of
@@ -180,13 +171,12 @@ def _resolved_config_copy(config_dump: dict[str, Any], base_dir: Path) -> dict[s
         return config_dump
     resolved_sources: dict[str, Any] = {}
     for name, descriptor in sources.items():
-        if (
-            isinstance(descriptor, dict)
-            and descriptor.get("type") == "file"
-            and isinstance(descriptor.get("path"), str)
-        ):
+        if isinstance(descriptor, dict) and descriptor.get("type") == "file":
             descriptor = dict(descriptor)
-            descriptor["path"] = str(_resolve_source_path(descriptor["path"], base_dir))
+            for field in FILE_SOURCE_PATH_FIELDS:
+                value = descriptor.get(field)
+                if isinstance(value, str) and value:
+                    descriptor[field] = config_relative(value, base_dir)
         resolved_sources[name] = descriptor
     resolved = dict(config_dump)
     resolved["sources"] = resolved_sources
@@ -201,6 +191,42 @@ def _not_applicable(route: str, message: str) -> CapacityEstimate:
         available_bytes=None,
         route=route,
         message=message,
+    )
+
+
+def _generation_floor_estimate(
+    config: dict[str, Any], budget_bytes: int | None
+) -> CapacityEstimate | None:
+    """The floor verdict for a config with generate tables, or `None` when it does not refuse.
+
+    `decoy run` generates resident (no sink), so the floor always applies. An explicit override is
+    resolved exactly as `run_generation` resolves it (validated, raised to the route's minimum);
+    otherwise the detected ceiling is used, and an undetectable host is UNKNOWN.
+    """
+    if budget_bytes is not None:
+        available: int | None = resolve_budget(budget_bytes).budget_bytes
+    else:
+        available = detected_memory_bytes()
+    if available is None:
+        return CapacityEstimate(
+            verdict=CapacityVerdict.UNKNOWN,
+            code=None,
+            needed_bytes=None,
+            available_bytes=None,
+            route=_GENERATE_ROUTE,
+            message="the memory ceiling could not be detected, so the generated output "
+            "cannot be checked against it; pass an explicit budget_bytes.",
+        )
+    shortfall = resident_floor_shortfall(config, available)
+    if shortfall is None:
+        return None
+    return CapacityEstimate(
+        verdict=CapacityVerdict.INSUFFICIENT,
+        code=reasons.runtime.GENERATION_BUDGET_EXCEEDED,
+        needed_bytes=shortfall.needed_bytes,
+        available_bytes=shortfall.available_bytes,
+        route=_GENERATE_ROUTE,
+        message=shortfall.message,
     )
 
 
@@ -219,9 +245,11 @@ def estimate_job_capacity(
     `warned=True` and a recommended host size when the predicted relation-build
     floor exceeds the cap it would receive (relation-build only -- it excludes
     resident inputs, accumulated outputs, and ingestion peak), and the job is
-    NOT refused for that. `INSUFFICIENT` is returned only for a fan-in
+    NOT refused for that. `INSUFFICIENT` is returned for a fan-in
     impossibility (more co-live DuckDB joiners than the budget can seat a 1 MB
-    minimum apiece).
+    minimum apiece), and for a config with generate tables whose output alone
+    cannot fit the memory ceiling (`generation_budget_exceeded`, checked first,
+    before any source is profiled; `UNKNOWN` when the ceiling cannot be detected).
 
     `config_dump` MUST be `PipelineConfig.model_validate(raw).model_dump()`
     (the same normalized shape `run_pipeline` takes) -- no re-validation
@@ -233,7 +261,7 @@ def estimate_job_capacity(
     -- the SAME call, with the SAME `max_concurrent_instances` derivation,
     the real out-of-core route makes at its own one call site, so a job with
     no explicit override resolves to byte-for-byte the same budget in both
-    `decoy preflight` and `decoy run`.
+    `decoy validate preflight` and `decoy run`.
 
     Returns a `CapacityEstimate` whose `verdict` is `NOT_APPLICABLE` when this
     job would not take the out-of-core route at all (no relationships, an
@@ -252,23 +280,32 @@ def estimate_job_capacity(
     swallowing it into a verdict (R3): an unexpected failure here is a real
     problem the caller needs to see, not a silent "capacity unknown".
     """
-    from decoy_engine import __version__ as engine_version
+    from decoy_engine.execution._guards import prepare_declared_execution_sources
     from decoy_engine.plan import compile_plan
     from decoy_engine.plan._seed import _normalize_job_seed_int
-    from decoy_engine.profile import profile_source
+    from decoy_engine.profile import DeclarationRequest, profile_source
     from decoy_engine.providers_v2 import get_default_registry
     from decoy_engine.relationships import (
         build_namespace_registry,
         build_relationship_graph,
         check_orphan_fk_policy_completeness,
     )
+    from decoy_engine.release import __version__ as engine_version
 
     base_dir_path = Path(base_dir)
     config = _resolved_config_copy(config_dump, base_dir_path)
+    if config.get("subset") is not None:
+        return _not_applicable(
+            "subset", "this job has a subset: block; the capacity check does not price it."
+        )
 
     table_kinds = classify_table_kinds(config)
     has_mask_table = any(kind == "mask" for kind in table_kinds.values())
     has_generate_table = any(kind == "generate" for kind in table_kinds.values())
+    if has_generate_table:
+        floor_estimate = _generation_floor_estimate(config, budget_bytes)
+        if floor_estimate is not None:
+            return floor_estimate
 
     job_seed = _normalize_job_seed_int(config)
     # Bounded residency (the default): cheap row-count metadata plus a
@@ -278,7 +315,10 @@ def estimate_job_capacity(
     # row counts this function prices are the identical numbers the real run
     # would compute for the same config.
     try:
-        profile = profile_source(config, seed=job_seed)
+        # The capability the run builds, so a config the run admits is not refused here; inside
+        # the try because it reads each file's header or footer, as the profile read did.
+        declared = prepare_declared_execution_sources(DeclarationRequest.for_descriptors(config))
+        profile = profile_source(config, seed=job_seed, declared=declared)
     except (pa.lib.ArrowException, OSError, ValueError) as exc:
         if fileaccess.keeps_class(exc):
             raise
@@ -304,7 +344,9 @@ def estimate_job_capacity(
         )
 
     registry = get_default_registry()
-    plan = compile_plan(config, profile, decoy_engine_version=engine_version)
+    plan = compile_plan(
+        config, profile, decoy_engine_version=engine_version, base_dir=base_dir_path
+    )
     ns_registry = build_namespace_registry(config, profile)
     orphan_lookup = check_orphan_fk_policy_completeness(config, profile.relationships)
     graph = build_relationship_graph(

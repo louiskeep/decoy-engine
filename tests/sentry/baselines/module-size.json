@@ -1,0 +1,99 @@
+{
+ "sentry_id": "module-size",
+ "created_in": "X0a",
+ "entries": {
+  "scripts/audit/probe.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "scripts/bench-generation-pool/bench_compare_gen.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "scripts/bench-unified-slice/bench_compare.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "scripts/build_golden_fixtures.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "scripts/faker-determinism/check_determinism.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "scripts/fk_memory_probe.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "scripts/gen_proof_manifest.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "scripts/native-baseline/bench_c1_oracle.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "scripts/tb3_cgroup_validation.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "scripts/tq_mutate.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/detection/detectors.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/execution/_isolated_run.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/execution/_pandas_adapter.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/execution/_pipeline_route_exec.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/execution/_pipeline_routing_signals.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/execution/_sequential.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/execution/_sequential_native.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/execution/native/_chunked_entry.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/execution/native/_dispatch.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/execution/native/_requirements.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/execution/out_of_core/_budget.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/execution/out_of_core/_spill_estimate.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/execution/out_of_core/_stream_join.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/generators/columns.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/internal/faker_setup.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/plan/_checks.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/plan/_compile.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/profiling/model_pack/trainer.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/quarantine.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/transforms/_codeset_loader.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  },
+  "src/decoy_engine/transforms/text_mask.py": {
+   "reason": "initial X0a inventory of test_module_size.py; existing entry, reviewed by its own sentry"
+  }
+ }
+}

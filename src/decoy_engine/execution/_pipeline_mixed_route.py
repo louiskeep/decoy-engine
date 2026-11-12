@@ -42,6 +42,8 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine.declared_casting._boundary import open_cast_run
+from decoy_engine.declared_casting._eligibility import declared_route_guard
 from decoy_engine.execution import (
     _chunked_input,
     _pipeline_auto_chunk,
@@ -66,15 +68,19 @@ __all__ = ["run_mixed_route"]
 ROUTE_NAME = "mixed"
 
 
-def _generate(ctx: PipelineRunContext) -> dict[str, pa.Table]:
+def _generate(ctx: PipelineRunContext) -> tuple[dict[str, pa.Table], tuple[Any, ...]]:
+    """The generate tables and the warnings generation raised."""
     from decoy_engine.generation.synthesize import generate_tables
 
-    return generate_tables(
+    raised: list[Any] = []
+    tables = generate_tables(
         ctx.plan,
         derive_key=ctx.derive_key,
         instance_default_locale=ctx.instance_default_locale,
         provider_snapshot=ctx.provider_snapshot,
+        on_warning=raised.append,
     )
+    return tables, tuple(raised)
 
 
 def _runtime_decline(
@@ -101,6 +107,7 @@ def _fall_back(
     ctx: PipelineRunContext,
     decision: RouteDecision,
     generate_outputs: dict[str, pa.Table],
+    generate_warnings: tuple[Any, ...],
     reason: str,
 ) -> ExecutionResult:
     """Continue on the full-frame path, reusing the generate outputs already built."""
@@ -112,7 +119,9 @@ def _fall_back(
         route_reason=f"{reasons.route.MIXED_RUNTIME_DECLINED}:{reason}",
         mixed=None,
     )
-    return _pipeline_full_frame.run_full_frame_route(ctx, declined, pregenerated=generate_outputs)
+    return _pipeline_full_frame.run_full_frame_route(
+        ctx, declined, pregenerated=generate_outputs, pregenerated_warnings=generate_warnings
+    )
 
 
 def _read_key_column(source: pa.Table | LazySource, column: str) -> pa.Array:
@@ -145,14 +154,32 @@ def _build_carrier(
 
 
 def run_mixed_route(ctx: PipelineRunContext, decision: RouteDecision) -> ExecutionResult:
+    declared_route_guard("mixed", plan=ctx.plan, raise_on_decline=True)
     static = decision.mixed
     if static is None:  # pragma: no cover - the router sets both together
         raise AssertionError("run_mixed_route reached without a static admission")
 
-    generate_outputs = _generate(ctx)
+    generate_outputs, generate_warnings = _generate(ctx)
     declined = _runtime_decline(static, ctx, generate_outputs)
     if declined is not None:
-        return _fall_back(ctx, decision, generate_outputs, declined)
+        return _fall_back(ctx, decision, generate_outputs, generate_warnings, declined)
+    cast_run = open_cast_run(ctx.plan, ctx.quarantine_runtime)
+    try:
+        return _run_admitted(ctx, decision, static, generate_outputs, generate_warnings, cast_run)
+    except BaseException as failure:
+        if cast_run is not None:
+            cast_run.abort(failure)
+        raise
+
+
+def _run_admitted(
+    ctx: PipelineRunContext,
+    decision: RouteDecision,
+    static: MixedStaticPlan,
+    generate_outputs: dict[str, pa.Table],
+    generate_warnings: tuple[Any, ...],
+    cast_run: Any,
+) -> ExecutionResult:
 
     publish = ctx.publish
     mode, mode_reason = _output_sink.decide_output_mode(
@@ -181,7 +208,7 @@ def run_mixed_route(ctx: PipelineRunContext, decision: RouteDecision) -> Executi
         mask_outputs: dict[str, pa.Table] = {}
         per_table: dict[str, Any] = {}
         timings: list[Any] = []
-        warnings: list[Any] = list(fk_warnings)
+        warnings: list[Any] = [*generate_warnings, *fk_warnings]
         conversion_ms = 0.0
         for name in write_order(ctx.plan, ctx.graph, ctx.table_kinds):
             if name in generate_outputs:
@@ -206,6 +233,7 @@ def run_mixed_route(ctx: PipelineRunContext, decision: RouteDecision) -> Executi
                     sink=publish.active_sink,
                     expected=static.source_facts.get(name),
                     preresolved=carrier if carrier and carrier.table == name else None,
+                    cast_run=cast_run,
                 )
             )
             mask_outputs.update(outputs)
@@ -253,6 +281,10 @@ def run_mixed_route(ctx: PipelineRunContext, decision: RouteDecision) -> Executi
                 "rejections": {},
             }
         stamp_out_of_core_declined(quality_metrics, decision.ooc_declined)
+        quarantine_token = None
+        if cast_run is not None:
+            # Seal last: only the publish itself remains.
+            quality_metrics["declared_casting"], quarantine_token = cast_run.finish()
         result = ExecutionResult(
             outputs={}
             if streamed
@@ -263,6 +295,7 @@ def run_mixed_route(ctx: PipelineRunContext, decision: RouteDecision) -> Executi
             quality_metrics=quality_metrics,
             table_kinds=ctx.table_kinds,
             row_errors=(),
+            quarantine_access=quarantine_token,
         )
         publish.commit()
         return result

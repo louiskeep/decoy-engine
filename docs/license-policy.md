@@ -1,7 +1,9 @@
 # License policy
 
 What installing `decoy-engine` may pull in, and how `NOTICE` (shipped in the wheel as a
-license file) is kept true. The engine itself is Apache-2.0.
+license file) is kept true. The engine itself is FSL-1.1-ALv2 (`LICENSE`); this policy covers
+third-party packages only, so the FSL entry under "Not allowed" below is about dependencies, not
+the engine or `decoy-engine-native`, which are first party.
 
 ## Scope
 
@@ -11,7 +13,7 @@ version and platform the lock covers. Which extras count as runtime and which as
 is recorded in `scripts/dev/license_policy.json` (`extras`); a new extra that is in
 neither list fails the gate.
 
-- Runtime extras: `cloud`, `gcs`, `geo`, `hashicorp-vault`, `mimesis`, `ml`, `ner`,
+- Runtime extras: `cloud`, `gcs`, `geo`, `hashicorp-vault`, `mimesis`, `ner`,
   `sftp`, `vault`.
 - Tooling extras, out of scope: `dev`, `docs`, `lint`, `mutation`, `perf`, `xdist`.
 - Not covered: the separate `decoy-engine-native` companion (its Rust crates), system

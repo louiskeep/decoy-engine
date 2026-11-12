@@ -11,6 +11,7 @@ Docs: docs/security/file-access-policy.md. Pattern: object capabilities (see `_t
 
 from __future__ import annotations
 
+from decoy_engine.fileaccess._config_path import config_relative
 from decoy_engine.fileaccess._entry import (
     ambient_forbidden,
     at_position,
@@ -31,8 +32,17 @@ from decoy_engine.fileaccess._entry import (
 from decoy_engine.fileaccess._errors import encode_field_key, redact_locators, scrub
 from decoy_engine.fileaccess._local import LocalFileAccess, engine_dir_handle, engine_handle
 from decoy_engine.fileaccess._preopened import PreopenedFileAccess
+from decoy_engine.fileaccess._private import write_private
+from decoy_engine.fileaccess._protected_dir import (
+    ProtectedDirAclFailed,
+    ProtectedDirUnsafe,
+    open_protected_dir,
+    protected_scratch_dir,
+)
 from decoy_engine.fileaccess._read import keeps_class, read_all, read_checked, read_text, shown
 from decoy_engine.fileaccess._rooted import Root, RootedFileAccess
+from decoy_engine.fileaccess._scratch import ScratchArena
+from decoy_engine.fileaccess._scratch_reports import CleanupReport, QuotaReport
 from decoy_engine.fileaccess._types import (
     CONTRACT_VERSION,
     DirHandle,
@@ -75,14 +85,22 @@ ENTRY_POINTS: tuple[str, ...] = (
     "decoy_engine.plan._compile.run_config_only_checks",
     "decoy_engine.plan._serialize.plan_from_yaml",
     "decoy_engine.plan.validate._consolidator.validate_plan",
+    "decoy_engine.profile._csv_reader.read_csv_source",
+    "decoy_engine.profile._csv_reader.resolve_csv_dialect",
+    "decoy_engine.profile._declared_columns.prepare_declared_sources",
+    "decoy_engine.profile._declared_columns.source_columns",
     "decoy_engine.profile._fixed_width_reader.read_fixed_width",
     "decoy_engine.profile._fixed_width_writer.write_fixed_width",
+    "decoy_engine.profile._readers.build_declared_source",
+    "decoy_engine.profile._readers.build_profile_source",
     "decoy_engine.profile._source.profile_source",
     "decoy_engine.profiling.profiler.profile_columns",
+    "decoy_engine.profiling.scan_set.scan_sources",
     "decoy_engine.quarantine.apply_quarantine",
     "decoy_engine.reference_tables._loader.load_table",
     "decoy_engine.subset._api.plan_subset",
     "decoy_engine.subset._api.run_subset",
+    "decoy_engine.subset._api.select_subset",
     "decoy_engine.subset._preflight.run_subset_preflight",
     "decoy_engine.transforms._codeset_loader.load_corpus",
     "decoy_engine.transforms._codeset_loader.load_corpus_provenance",
@@ -97,6 +115,7 @@ ENTRY_POINTS: tuple[str, ...] = (
 __all__ = [
     "CONTRACT_VERSION",
     "ENTRY_POINTS",
+    "CleanupReport",
     "DirHandle",
     "FileAccess",
     "FileAccessDenied",
@@ -109,12 +128,17 @@ __all__ = [
     "OutputDir",
     "OutputTxn",
     "PreopenedFileAccess",
+    "ProtectedDirAclFailed",
+    "ProtectedDirUnsafe",
+    "QuotaReport",
     "Root",
     "RootedFileAccess",
+    "ScratchArena",
     "ambient_forbidden",
     "at_position",
     "bind_iterator",
     "capture",
+    "config_relative",
     "current",
     "encode_field_key",
     "engine_dir_handle",
@@ -125,7 +149,9 @@ __all__ = [
     "is_ambient",
     "keeps_class",
     "map_in_context",
+    "open_protected_dir",
     "position_key",
+    "protected_scratch_dir",
     "read_all",
     "read_checked",
     "read_text",
@@ -136,4 +162,5 @@ __all__ = [
     "scope",
     "scrub",
     "shown",
+    "write_private",
 ]

@@ -12,6 +12,7 @@ from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution._chunked_oracle import mask_pipeline_chunked
 from decoy_engine.execution.native._chunked_entry import count_chunked
 from decoy_engine.vault import VaultWriter
+from tests._declared_schema import declared_schema
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     TABLE,
@@ -44,7 +45,7 @@ def _start(route: str, config: dict[str, Any], chunks: list[pa.Table], **kw: Any
     oracle = mask_pipeline_chunked if vault else run_mask_pipeline_chunked
     entry = count_chunked if vault else run_mask_chunked
     if route == "public_oracle":
-        return _call(oracle, config, chunks, **kw)
+        return _call(oracle, config, chunks, source_schema=declared_schema(config, TABLE), **kw)
     if route == "forced_oracle":
         return _call(entry, config, chunks, adapter=_DelegatingAdapter(), **kw)
     return _call(entry, config, chunks, **kw)

@@ -55,8 +55,23 @@ from tests.parity._f2_mixed_support import (
 
 N = 41  # 5 full 7-row chunks plus a partial final chunk of 6
 PARENT_ROWS = 12
-INT_PARENT = [{"name": "id", "type": "categorical", "categories": [10, 11, 12, 13]}]
-STR_PARENT = [{"name": "id", "type": "categorical", "categories": ["k0", "k1", "k2", "k3"]}]
+# Generated parent keys must be provably unique, so each domain holds at least PARENT_ROWS values.
+INT_PARENT = [
+    {
+        "name": "id",
+        "type": "categorical",
+        "categories": [10 + i for i in range(PARENT_ROWS)],
+        "unique": True,
+    }
+]
+STR_PARENT = [
+    {
+        "name": "id",
+        "type": "categorical",
+        "categories": [f"k{i}" for i in range(PARENT_ROWS)],
+        "unique": True,
+    }
+]
 INT_KEYS = [10 + i % 4 for i in range(N)]
 STR_KEYS = [f"k{i % 4}" for i in range(N)]
 MATRIX: list[dict[str, Any]] = []
@@ -218,10 +233,10 @@ def _no_raw_survives(
     MATRIX[-1]["raw_leaks"] = 0
 
 
-def _int_ids(tmp_path: Path, parent_columns: list[dict[str, Any]]) -> list[Any]:
+def _coupled_parent_ids(tmp_path: Path, parent_columns: list[dict[str, Any]]) -> list[Any]:
     """The generated parent keys (via the oracle), so child keys can hit real parents."""
     child = child_table(pa.array(["x"] * 7, pa.string()))
-    config = mixed_config(tmp_path, child, parent_columns=parent_columns, coupled=False)
+    config = mixed_config(tmp_path, child, parent_columns=parent_columns, coupled=True)
     return oracle(config, {CHILD: child}).outputs[PARENT].column("id").to_pylist()
 
 
@@ -345,11 +360,21 @@ KEY_FAMILIES: dict[str, tuple[dict[str, Any], str]] = {
     ),
     "categorical_str": (STR_PARENT[0], "mixed"),
     "categorical_int": (INT_PARENT[0], "mixed"),
-    "faker_uuid_str": ({"name": "id", "type": "faker", "faker_type": "uuid4"}, "mixed"),
-    "faker_pyint": ({"name": "id", "type": "faker", "faker_type": "pyint"}, "mixed"),
-    "formula_int": ({"name": "id", "type": "formula", "formula": "i * 3"}, "mixed"),
+    "faker_uuid_str": (
+        {"name": "id", "type": "faker", "faker_type": "uuid4", "unique": True},
+        "mixed",
+    ),
+    "faker_pyint": (
+        {"name": "id", "type": "faker", "faker_type": "pyint", "unique": True},
+        "mixed",
+    ),
+    # A formula key cannot be shown unique at plan time, so the int family is a stepped sequence.
+    "sequence_int_step_three": (
+        {"name": "id", "type": "sequence", "start": 0, "step": 3},
+        "mixed",
+    ),
     "faker_date_of_birth": (
-        {"name": "id", "type": "faker", "faker_type": "date_of_birth"},
+        {"name": "id", "type": "faker", "faker_type": "date_of_birth", "unique": True},
         "mixed",
     ),
 }
@@ -360,7 +385,7 @@ def test_family_as_the_coupled_fk_parent_key(
     tmp_path: Path, family: str, static_reasons: list[str], generate_calls: list[int]
 ) -> None:
     column, expect = KEY_FAMILIES[family]
-    ids = _int_ids(tmp_path, [column])
+    ids = _coupled_parent_ids(tmp_path, [column])
     keys = pa.array([ids[i % len(ids)] for i in range(N)])
     config, child = _family_job(tmp_path, [column], coupled=True, keys=keys)
     _, got = _compare(
@@ -840,7 +865,12 @@ def test_composite_fk_declines_and_matches_the_oracle(
         tmp_path,
         child,
         parent_columns=[
-            {"name": "id", "type": "categorical", "categories": ["k0", "k1", "k2", "k3"]},
+            {
+                "name": "id",
+                "type": "categorical",
+                "categories": ["k0", "k1", "k2", "k3", "k4"],
+                "unique": True,
+            },
             {"name": "id2", "type": "categorical", "categories": ["0", "1", "2"]},
         ],
         child_columns=[
@@ -1010,7 +1040,8 @@ def test_big_int_child_keys_above_two_to_the_53_stay_exact(
     tmp_path: Path, policy: str, static_reasons: list[str], generate_calls: list[int]
 ) -> None:
     big = [2**53 + 1, 2**53 + 2, 2**53 + 3, 2**62 + 7]
-    parent = [{"name": "id", "type": "categorical", "categories": big}]
+    domain = [*big, *(2**53 + 10 + k for k in range(PARENT_ROWS - len(big)))]
+    parent = [{"name": "id", "type": "categorical", "categories": domain, "unique": True}]
     keys = pa.array([big[i % 4] for i in range(N - 2)] + [2**53 + 99, 2**63 - 1], pa.int64())
     child = child_table(keys)
     config = mixed_config(

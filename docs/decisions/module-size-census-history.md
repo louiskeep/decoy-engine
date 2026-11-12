@@ -2,7 +2,7 @@
 
 Status: record
 
-Per-file growth notes moved out of `tests/sentry/test_module_size.py` (R0 item 5, 2026-10-06). The census keeps a one-line rationale per entry and points here. Text is verbatim from the census comments; LOC figures are as of each note's date, not current. The policy itself (goal 600, max 700, exact-count ratchet, shrink-only legacy) is unchanged and documented in the test's module docstring and ADR-0005 (platform repo).
+Per-file growth notes moved out of `tests/sentry/test_module_size.py` (R0 item 5, 2026-10-06). The census keeps a one-line rationale per entry and points here. Text is verbatim from the census comments; LOC figures are as of each note's date, not current. The policy itself (goal 600, max 700, dense entries are ceilings with 20 lines of initial headroom and stale slack bounded at 40, shrink-only exact legacy entries) is documented in the test's module docstring and ADR-0005 (platform repo).
 
 ## `src/decoy_engine/execution/out_of_core/_budget.py` (census 608 at move time)
 
@@ -783,3 +783,16 @@ E3b (2026-10-24): +1 line passing `run_storm=bool(config.get("run_storm"))` into
 the single `decide_execution_route` call site. Decomposition target unchanged:
 split the probe-recovery resolver into its own module when next touched.
 
+
+## F06 r2 (2026-10-30): declared casting on every capable route
+
+- `execution/_pandas_adapter.py` (689 -> 692), `execution/out_of_core/_stream_driver.py` (609 -> 617) and
+  `execution/_pipeline_route_exec.py` (604 -> 612): the `cast_run` / declared-integer pass-through the routes need,
+  with no casting logic of their own (that lives in `declared_casting/`). Decomposition targets are unchanged.
+- `execution/out_of_core/_runner.py` (683 -> 700): the `cast_run` thread and the staged re-entry. It is at the hard
+  cap with no headroom. Decomposition target: move `_stream_table` and its joiner helpers into their own module;
+  they were not moved in this change because tests patch their names on `_runner`.
+- `execution/_sequential.py` (698 -> 661, `table_topo_order` split to `_sequential_order.py`) and
+  `execution/_pipeline_routing_signals.py` (643 -> 638) shrank while taking the F06 hooks.
+- `execution/_planner.py` stays at 578: the column lookups moved to `_planner_columns.py` to make room for the
+  chunk-stability rule for declared columns.

@@ -21,15 +21,32 @@ hash-scope decision (resolution of B1 in the Dennis review).
 
 from __future__ import annotations
 
+from decoy_engine.profile._csv_reader import (
+    CsvDialect,
+    read_csv_bytes,
+    read_csv_source,
+    resolve_csv_dialect,
+)
+from decoy_engine.profile._declared_columns import (
+    DeclarationFinding,
+    DeclarationRequest,
+    PreparedDeclaredSources,
+    check_columns_declared,
+    declaration_findings,
+    declared_columns,
+    prepare_declared_sources,
+    source_columns,
+)
 from decoy_engine.profile._hash import profile_hash
 from decoy_engine.profile._readers import (
     LazySource,
     ProfileSource,
     RowCount,
+    build_declared_source,
     build_profile_source,
 )
 from decoy_engine.profile._serialize import profile_from_json, profile_to_json
-from decoy_engine.profile._source import profile_source
+from decoy_engine.profile._source import profile_relationships_from_config, profile_source
 from decoy_engine.profile._types import (
     ColumnProfile,
     PIIClass,
@@ -40,16 +57,30 @@ from decoy_engine.profile._types import (
 
 __all__ = [
     "ColumnProfile",
+    "CsvDialect",
+    "DeclarationFinding",
+    "DeclarationRequest",
     "LazySource",
     "PIIClass",
+    "PreparedDeclaredSources",
     "Profile",
     "ProfileSource",
     "Relationship",
     "RowCount",
     "TableProfile",
+    "build_declared_source",
     "build_profile_source",
+    "check_columns_declared",
+    "declaration_findings",
+    "declared_columns",
+    "prepare_declared_sources",
     "profile_from_json",
     "profile_hash",
+    "profile_relationships_from_config",
     "profile_source",
     "profile_to_json",
+    "read_csv_bytes",
+    "read_csv_source",
+    "resolve_csv_dialect",
+    "source_columns",
 ]

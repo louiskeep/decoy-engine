@@ -165,6 +165,7 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine.declared_casting._eligibility import declared_route_guard
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._errors import PlanCompileError
 
@@ -276,6 +277,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry:
         chunked_bucket_perturb_fk_key_unsupported: `bucket_perturb` as an FK key column.
         per_table_transforms_present: `table` declares transforms.
     """
+    declared_route_guard("chunked", config=config, raise_on_decline=True)
     tables = config.get("tables") or []
     table_cfg = next((t for t in tables if isinstance(t, dict) and t.get("name") == table), None)
     if table_cfg is None:
@@ -379,6 +381,7 @@ def run_mask_pipeline_chunked(
     *,
     table: str,
     engine_version: str,
+    source_schema: pa.Schema,
     registry: Any = None,
     adapter: Any = None,
     vault_writer: Any = None,
@@ -405,10 +408,11 @@ def run_mask_pipeline_chunked(
     `_planner._runtime_source_rejections`). Carry-forward: extend the
     text_mask gate to that whole class.
 
-    `adapter` selects the execution substrate; None keeps the pandas
-    adapter (the byte-stable default this mode shipped with). The parameter
-    is retained for a future non-pandas substrate; pandas is the only
-    substrate today.
+    `source_schema` is the schema `chunks` was cut from. It is checked against the config before
+    `chunks` is touched; no chunk may carry a column outside it or the declared columns.
+
+    `adapter` selects the execution substrate; None keeps the pandas adapter (the byte-stable
+    default). It is kept for a future non-pandas substrate.
 
     `vault_writer` must be `None`: any writer is refused with
     `ExecutionError(code="vault_requires_resident_output")` before a chunk is
@@ -428,8 +432,7 @@ def run_mask_pipeline_chunked(
     `windowed_date` strategy consumes (Phase 4 slice 1); inert for every
     value-keyed strategy. See `_chunked_dgrn.py` for the domain contract.
 
-    Validation and plan compile happen EAGERLY at call time; only the
-    per-chunk masking is lazy.
+    Validation and plan compile happen EAGERLY at call time; only the per-chunk masking is lazy.
     """
     if vault_writer is not None:
         raise vault_requires_resident_output()
@@ -440,11 +443,13 @@ def run_mask_pipeline_chunked(
         chunks,
         table=table,
         engine_version=engine_version,
+        source_schema=source_schema,
         registry=registry,
         adapter=adapter,
         chunk_result_sink=chunk_result_sink,
         key_provider=key_provider,
         base_row_offset=base_row_offset,
+        file_access=file_access,
     )
 
 

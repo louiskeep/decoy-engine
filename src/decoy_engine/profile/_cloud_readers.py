@@ -24,6 +24,8 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from decoy_engine._lexeme import LEXEME_KEY, pandas_lexeme_kwargs
+from decoy_engine.connectors import _clients
 from decoy_engine.profile._readers import (
     ProfileSource,
     RowCount,
@@ -129,7 +131,9 @@ def _csv_row_count_from_window(size: int, window: bytes) -> RowCount:
     return estimate_csv_rows(size, header_bytes, data_lines)
 
 
-def _csv_sample_from_window(window: bytes, size: int, sample_rows: int) -> pd.DataFrame:
+def _csv_sample_from_window(
+    window: bytes, size: int, sample_rows: int, lexeme_columns: Any = None
+) -> pd.DataFrame:
     """Parse up to `sample_rows` rows from a leading CSV byte window.
 
     If the window is a prefix of a larger object it may end mid-row; the last
@@ -137,7 +141,9 @@ def _csv_sample_from_window(window: bytes, size: int, sample_rows: int) -> pd.Da
     """
     if len(window) < size:
         window = window.rsplit(b"\n", 1)[0] + b"\n"
-    return pd.read_csv(io.BytesIO(window), nrows=sample_rows)
+    return pd.read_csv(
+        io.BytesIO(window), nrows=sample_rows, **pandas_lexeme_kwargs(lexeme_columns)
+    )
 
 
 # ---------------------------------------------------------------------
@@ -145,74 +151,42 @@ def _csv_sample_from_window(window: bytes, size: int, sample_rows: int) -> pd.Da
 # ---------------------------------------------------------------------
 
 
-def _s3_client(descriptor: dict[str, Any]) -> Any:
-    """Construct a per-call boto3 S3 client (no shared global; QA Q1/Q10).
+def _s3_for(descriptor: dict[str, Any]) -> Any:
+    """A per-call S3 client from the shared factory (no shared global; QA Q1/Q10).
 
-    Connect + read timeouts so a black-holed endpoint cannot hang the worker
-    (QA-7 F2). Region + `endpoint_url` (MinIO/R2/moto) come from the descriptor.
+    Region and `endpoint_url` (MinIO/R2/moto) come from the descriptor; credentials come
+    from the SDK default chain.
     """
-    import boto3
-    from botocore.config import Config as BotoConfig
-
-    client_kwargs: dict[str, Any] = {}
     region = descriptor.get("region")
-    if isinstance(region, str) and region:
-        client_kwargs["region_name"] = region
     endpoint_url = descriptor.get("endpoint_url")
-    if isinstance(endpoint_url, str) and endpoint_url:
-        client_kwargs["endpoint_url"] = endpoint_url
-    client_kwargs["config"] = BotoConfig(
-        connect_timeout=5,
-        read_timeout=60,
-        retries={"max_attempts": 1, "mode": "standard"},
+    return _clients.s3_client(
+        region=region if isinstance(region, str) and region else None,
+        endpoint_url=endpoint_url if isinstance(endpoint_url, str) and endpoint_url else None,
+        access_key_id=None,
+        secret_access_key=None,
+        single_request=False,
     )
-    return boto3.client("s3", **client_kwargs)
-
-
-def _s3_wrapped(call: Callable[[], Any]) -> Any:
-    """Run an S3 SDK call, wrapping SDK errors so no raw metadata leaks.
-
-    Network-class errors surface only their exception type name; client errors
-    surface only the error CODE (NoSuchKey, AccessDenied, ...). The raw request
-    metadata / access key ID stays out of the message (QA-7 F2).
-    """
-    from botocore.exceptions import (
-        ClientError,
-        ConnectTimeoutError,
-        EndpointConnectionError,
-        ReadTimeoutError,
-    )
-
-    try:
-        return call()
-    except (EndpointConnectionError, ConnectTimeoutError, ReadTimeoutError) as exc:
-        raise RuntimeError(
-            f"profile_source s3: transient network error ({type(exc).__name__})"
-        ) from exc
-    except ClientError as exc:
-        code = exc.response.get("Error", {}).get("Code", "Unknown")
-        raise RuntimeError(f"profile_source s3: client error {code}") from exc
 
 
 def _s3_size(client: Any, bucket: str, key: str) -> int:
-    head = _s3_wrapped(lambda: client.head_object(Bucket=bucket, Key=key))
+    head = _clients.s3_call(client.head_object, Bucket=bucket, Key=key)
     return int(head["ContentLength"])
 
 
 def _s3_range(client: Any, bucket: str, key: str, start: int, end_inclusive: int) -> bytes:
-    response = _s3_wrapped(
-        lambda: client.get_object(Bucket=bucket, Key=key, Range=f"bytes={start}-{end_inclusive}")
+    response = _clients.s3_call(
+        client.get_object, Bucket=bucket, Key=key, Range=f"bytes={start}-{end_inclusive}"
     )
     # Q17: draining .read() does not release the socket; close the body so the
     # connection returns to the pool (multi-range parquet reads reuse it).
     with response["Body"] as stream:
-        return bytes(stream.read())
+        return bytes(_clients.s3_call(stream.read))
 
 
 def _s3_full(client: Any, bucket: str, key: str) -> bytes:
-    response = _s3_wrapped(lambda: client.get_object(Bucket=bucket, Key=key))
+    response = _clients.s3_call(client.get_object, Bucket=bucket, Key=key)
     with response["Body"] as stream:
-        return bytes(stream.read())
+        return bytes(_clients.s3_call(stream.read))
 
 
 class S3ParquetSource:
@@ -224,7 +198,7 @@ class S3ParquetSource:
         self._key = _require_str(descriptor, "key", "s3")
 
     def _bind(self) -> tuple[Any, int, Callable[[int, int], bytes]]:
-        client = _s3_client(self._descriptor)
+        client = _s3_for(self._descriptor)
         size = _s3_size(client, self._bucket, self._key)
 
         def fetch(start: int, end_inclusive: int) -> bytes:
@@ -245,7 +219,7 @@ class S3ParquetSource:
         return _read_parquet_sample(size, fetch, sample_rows)
 
     def to_frame(self) -> pd.DataFrame:
-        client = _s3_client(self._descriptor)
+        client = _s3_for(self._descriptor)
         return pd.read_parquet(io.BytesIO(_s3_full(client, self._bucket, self._key)))
 
 
@@ -258,7 +232,7 @@ class S3CsvSource:
         self._key = _require_str(descriptor, "key", "s3")
 
     def _size_and_window(self) -> tuple[int, bytes]:
-        client = _s3_client(self._descriptor)
+        client = _s3_for(self._descriptor)
         size = _s3_size(client, self._bucket, self._key)
         end = min(_CSV_SAMPLE_WINDOW_BYTES, size) - 1
         window = _s3_range(client, self._bucket, self._key, 0, end) if size > 0 else b""
@@ -272,16 +246,21 @@ class S3CsvSource:
         size, window = self._size_and_window()
         # Reuse the sample parser so a window truncated mid-row is trimmed to
         # whole lines before pandas infers the schema.
-        head = _csv_sample_from_window(window, size, _CSV_ESTIMATE_ROWS)
+        head = _csv_sample_from_window(
+            window, size, _CSV_ESTIMATE_ROWS, self._descriptor.get(LEXEME_KEY)
+        )
         return pa.Table.from_pandas(head, preserve_index=False).schema
 
     def sample_frame(self, sample_rows: int) -> pd.DataFrame:
         size, window = self._size_and_window()
-        return _csv_sample_from_window(window, size, sample_rows)
+        return _csv_sample_from_window(window, size, sample_rows, self._descriptor.get(LEXEME_KEY))
 
     def to_frame(self) -> pd.DataFrame:
-        client = _s3_client(self._descriptor)
-        return pd.read_csv(io.BytesIO(_s3_full(client, self._bucket, self._key)))
+        client = _s3_for(self._descriptor)
+        return pd.read_csv(
+            io.BytesIO(_s3_full(client, self._bucket, self._key)),
+            **pandas_lexeme_kwargs(self._descriptor.get(LEXEME_KEY)),
+        )
 
 
 def build_s3_profile_source(descriptor: dict[str, Any]) -> ProfileSource:
@@ -309,7 +288,7 @@ def _gcs_blob(descriptor: dict[str, Any], client: Any) -> Any:
 def _gcs_size(blob: Any) -> int:
     if blob.size is None:
         # size is populated by a metadata fetch, not an object download.
-        blob.reload()
+        _clients.gcs_reload(blob)
     return int(blob.size)
 
 
@@ -320,16 +299,14 @@ class GcsParquetSource:
         self._descriptor = descriptor
 
     def _with_reads(self, consume: Callable[[int, Callable[[int, int], bytes]], Any]) -> Any:
-        from google.cloud import storage
-
         # Q18: storage.Client owns an HTTP transport; close it via the context
         # manager once all ranged reads for this call have completed.
-        with storage.Client() as client:
+        with _clients.gcs_client() as client:
             blob = _gcs_blob(self._descriptor, client)
             size = _gcs_size(blob)
 
             def fetch(start: int, end_inclusive: int) -> bytes:
-                return bytes(blob.download_as_bytes(start=start, end=end_inclusive))
+                return bytes(_clients.gcs_download(blob, start=start, end=end_inclusive))
 
             return consume(size, fetch)
 
@@ -343,10 +320,8 @@ class GcsParquetSource:
         return self._with_reads(lambda size, fetch: _read_parquet_sample(size, fetch, sample_rows))
 
     def to_frame(self) -> pd.DataFrame:
-        from google.cloud import storage
-
-        with storage.Client() as client:
-            data = _gcs_blob(self._descriptor, client).download_as_bytes()
+        with _clients.gcs_client() as client:
+            data = _clients.gcs_download(_gcs_blob(self._descriptor, client))
         return pd.read_parquet(io.BytesIO(data))
 
 
@@ -357,15 +332,13 @@ class GcsCsvSource:
         self._descriptor = descriptor
 
     def _size_and_window(self) -> tuple[int, bytes]:
-        from google.cloud import storage
-
-        with storage.Client() as client:
+        with _clients.gcs_client() as client:
             blob = _gcs_blob(self._descriptor, client)
             size = _gcs_size(blob)
             if size == 0:
                 return 0, b""
             end = min(_CSV_SAMPLE_WINDOW_BYTES, size) - 1
-            window = bytes(blob.download_as_bytes(start=0, end=end))
+            window = bytes(_clients.gcs_download(blob, start=0, end=end))
         return size, window
 
     def row_count(self) -> RowCount:
@@ -376,19 +349,21 @@ class GcsCsvSource:
         size, window = self._size_and_window()
         # Reuse the sample parser so a window truncated mid-row is trimmed to
         # whole lines before pandas infers the schema.
-        head = _csv_sample_from_window(window, size, _CSV_ESTIMATE_ROWS)
+        head = _csv_sample_from_window(
+            window, size, _CSV_ESTIMATE_ROWS, self._descriptor.get(LEXEME_KEY)
+        )
         return pa.Table.from_pandas(head, preserve_index=False).schema
 
     def sample_frame(self, sample_rows: int) -> pd.DataFrame:
         size, window = self._size_and_window()
-        return _csv_sample_from_window(window, size, sample_rows)
+        return _csv_sample_from_window(window, size, sample_rows, self._descriptor.get(LEXEME_KEY))
 
     def to_frame(self) -> pd.DataFrame:
-        from google.cloud import storage
-
-        with storage.Client() as client:
-            data = _gcs_blob(self._descriptor, client).download_as_bytes()
-        return pd.read_csv(io.BytesIO(data))
+        with _clients.gcs_client() as client:
+            data = _clients.gcs_download(_gcs_blob(self._descriptor, client))
+        return pd.read_csv(
+            io.BytesIO(data), **pandas_lexeme_kwargs(self._descriptor.get(LEXEME_KEY))
+        )
 
 
 def build_gcs_profile_source(descriptor: dict[str, Any]) -> ProfileSource:
@@ -405,7 +380,7 @@ def build_gcs_profile_source(descriptor: dict[str, Any]) -> ProfileSource:
 def _require_str(descriptor: dict[str, Any], field: str, kind: str) -> str:
     value = descriptor.get(field)
     if not isinstance(value, str) or not value:
-        raise ValueError(f"profile_source: {kind} source missing {field}, got {value!r}")
+        raise ValueError(f"profile_source: {kind} source missing {field}")
     return value
 
 

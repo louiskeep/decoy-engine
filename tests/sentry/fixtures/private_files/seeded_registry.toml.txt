@@ -1,0 +1,56 @@
+# Fixture registry for the seeded corpus (`.toml.txt`: no sentry reads it as an allowlist).
+
+[[entry]]
+module = "pf/seeded_p1_p2.py"
+function = "master_key"
+sink = "Path.write_bytes"
+ordinal = 0
+reason = "seeded P1 case: no disposition"
+
+[[entry]]
+module = "pf/seeded_p1_p2.py"
+function = "key_dir"
+sink = "Path.write_text"
+ordinal = 0
+reason = "seeded P2 case: private, not baselined"
+disposition = "private"
+
+[[entry]]
+module = "pf/seeded_p1_p2.py"
+function = "public_report"
+sink = "Path.write_text"
+ordinal = 0
+reason = "seeded control: a public output"
+disposition = "public"
+
+[[entry]]
+module = "pf/seeded_read_row.py"
+function = "save"
+sink = "open"
+ordinal = 0
+reason = "seeded P1 case: read row with a write mode"
+disposition = "read"
+
+[[entry]]
+module = "pf/seeded_read_row.py"
+function = "wrapped_write"
+sink = "os.open"
+ordinal = 0
+reason = "seeded P1 case: read row whose _call-wrapped os.open passes write flags"
+disposition = "read"
+
+[[entry]]
+module = "pf/seeded_read_row.py"
+function = "wrapped_read"
+sink = "os.open"
+ordinal = 0
+reason = "seeded control: read row whose _call-wrapped os.open passes read-only flags"
+disposition = "read"
+
+[[entry]]
+module = "pf/seeded_private_row.py"
+function = "save"
+sink = "open"
+ordinal = 0
+reason = "seeded P2 case: private open, not baselined"
+disposition = "private"

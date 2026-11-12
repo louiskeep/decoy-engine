@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Any
 
 from decoy_engine import reasons
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.determinism import derive
 from decoy_engine.determinism._derive import DeriveContext
 from decoy_engine.execution._errors import StrategyError
@@ -65,26 +66,14 @@ def require_derivation_scope(writer: Any) -> bytes:
     return scope
 
 
-def tokenize_context(mask_key: bytes, namespace: str, scope: bytes) -> DeriveContext:
-    """The per-column token HMAC context under the vault-scoped subkey `K_tok`."""
-    try:
-        label = TOKENIZE_KEY_LABEL + len(scope).to_bytes(4, "big") + scope
-        return DeriveContext.for_column(derive(mask_key, namespace, label), namespace)
-    except BaseException:
-        del mask_key
-        raise
+def tokenize_context(mask_key: OpaqueBox, namespace: str, scope: bytes) -> DeriveContext:
+    """The per-column token HMAC context under the vault-scoped subkey `K_tok`. The mask key
+    arrives boxed and is opened inside the derive call, so no frame here holds its bytes."""
+    label = TOKENIZE_KEY_LABEL + len(scope).to_bytes(4, "big") + scope
+    return DeriveContext.for_column(derive(mask_key.open()[0], namespace, label), namespace)
 
 
 def token_from(keyed: DeriveContext, namespace: str, plaintext: str) -> str:
     """The proposed token for an NFC-normalized plaintext."""
     digest = keyed.derive_source(namespace, plaintext.encode("utf-8"))
     return _TOKEN_PREFIX + digest.hex()[:_TOKEN_HEX_LEN]
-
-
-def token_for(mask_key: bytes, namespace: str, scope: bytes, plaintext: str) -> str:
-    """One proposed token; the strategy builds the context once per column instead."""
-    try:
-        return token_from(tokenize_context(mask_key, namespace, scope), namespace, plaintext)
-    except BaseException:
-        del mask_key
-        raise

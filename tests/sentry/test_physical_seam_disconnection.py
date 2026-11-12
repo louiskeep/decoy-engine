@@ -63,6 +63,7 @@ REPO_ROOT = ENGINE_ROOT.parents[1]
 # never got added here.
 GUARDED_MODULES: tuple[str, ...] = (
     "execution/_pipeline.py",
+    "execution/pipeline/_subset_stage.py",
     "execution/_pipeline_routing.py",
     "execution/_pipeline_routing_signals.py",
     "execution/_pipeline_chunk_route.py",
@@ -86,6 +87,10 @@ GUARDED_MODULES: tuple[str, ...] = (
     # B7 (independent multi-table dispatch): another routing executor, it calls
     # `run_auto_chunk` per table and must not import `execution.physical` either.
     "execution/_pipeline_multi_table.py",
+    # RUN-STREAM E1a: the strict stream preflight is routing code and must not import the seam.
+    "execution/pipeline/_stream.py",
+    # RUN-STREAM E3: the route summary only reads recorded metrics; no physical import.
+    "execution/pipeline/_route_summary.py",
     # B6a (incremental output sink): the streamed lane's row-group assembly and publish
     # session sit between the dispatcher lane and the caller's sink; no physical import.
     "execution/_chunked_output_sink.py",
@@ -98,6 +103,7 @@ GUARDED_MODULES: tuple[str, ...] = (
     "execution/_pandas_adapter.py",
     "execution/_sequential.py",
     "execution/_chunked.py",
+    "execution/chunked/_progress.py",
     "execution/_adapter.py",
     "execution/_substrate.py",
     "execution/_runner.py",
@@ -110,6 +116,7 @@ GUARDED_MODULES: tuple[str, ...] = (
     "execution/native/_operator_params.py",
     "execution/native/_operator_step.py",
     "execution/out_of_core/_runner.py",
+    "execution/out_of_core/_rewrite_pass.py",
     "execution/out_of_core/_compat.py",
     "execution/out_of_core/_preflight.py",
     "execution/out_of_core/_null_int_guard.py",
@@ -384,6 +391,20 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_transforms_table.py",
             "src/decoy_engine/execution/out_of_core/_runner.py",
             "src/decoy_engine/execution/out_of_core/_preflight.py",
+            # RUN-STREAM E1b: the host CPU probe (new sub-package `execution/pipeline/`), the
+            # conservative budget export and the run-scoped DuckDB thread cap. None imports
+            # `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/__init__.py",
+            "src/decoy_engine/execution/pipeline/_cgroup.py",
+            "src/decoy_engine/execution/pipeline/_host.py",
+            # SUB-RUN E2: the subset stage imports the public `decoy_engine.subset` surface only.
+            "src/decoy_engine/execution/pipeline/_subset_stage.py",
+            # SAMPLE SE2: the sample's exact/approximate column label reads config and the
+            # strategy vocabulary only.
+            "src/decoy_engine/execution/pipeline/_sample.py",
+            # RUN-STREAM E3: `route_summary` reads recorded quality_metrics blocks and imports
+            # nothing from `execution.physical`.
+            "src/decoy_engine/execution/pipeline/_route_summary.py",
             # Dcomp-OOC (composite FK strict parity): the out-of-core joiners raise the one
             # orphan FAIL error producer (`_fk_resolve.orphan_fk_violation_error`) directly.
             # Both import nothing from `execution.physical`.
@@ -395,6 +416,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_pipeline_routing_fk_dtype.py",
             "src/decoy_engine/execution/out_of_core/_multi_parent.py",
             "src/decoy_engine/execution/out_of_core/_stream_driver_support.py",
+            # F06 r3: the per-table rewrite pass split out of `out_of_core/_runner.py` (a pure
+            # move; `_runner` stays in GUARDED_MODULES). It imports nothing from `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/_rewrite_pass.py",
             "src/decoy_engine/execution/out_of_core/_null_int_guard.py",
             # D3b (token vault on the bounded out-of-core route): the vault collector the two
             # out-of-core drivers call. It imports nothing from `execution.physical`.
@@ -469,6 +493,10 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # The deleted execution/polars/ tree itself is carved out of the filter below.
             "src/decoy_engine/execution/__init__.py",
             "src/decoy_engine/execution/_chunked.py",
+            # The chunked entries' progress helper (new sub-package); it is in GUARDED_MODULES,
+            # so it imports nothing from `execution.physical`.
+            "src/decoy_engine/execution/chunked/__init__.py",
+            "src/decoy_engine/execution/chunked/_progress.py",
             "src/decoy_engine/execution/_chunked_adapter_gate.py",
             "src/decoy_engine/execution/_planner.py",
             "src/decoy_engine/execution/_strategies/_top_code.py",
@@ -512,6 +540,7 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/native/protocol/__init__.py",
             "src/decoy_engine/execution/native/protocol/providers_base.py",
             "src/decoy_engine/execution/native/protocol/providers_gen.py",
+            "src/decoy_engine/execution/native/protocol/providers_gen_unique.py",
             "src/decoy_engine/execution/native/protocol/providers_mask.py",
             "src/decoy_engine/execution/out_of_core/_mask_group_b.py",
             # Slice C5b-i (position-keyed non-deterministic Faker, 2026-10-05): the oracle Faker
@@ -693,6 +722,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # `_pipeline_generate_mask.py` the split call site, `_pipeline_finalize.py` the
             # split's evidence stamp. None imports `execution.physical`.
             "src/decoy_engine/execution/_pipeline_multi_table.py",
+            # RUN-STREAM E1a: the strict `execution_mode="stream"` preflight (new sub-package
+            # `execution/pipeline/`) and its threading through the routing, lane and sink modules
+            # listed here. Routing code that reads config, the plan and source footers; it imports
+            # nothing from `execution.physical` (GUARDED_MODULES covers `_stream.py`).
+            "src/decoy_engine/execution/pipeline/__init__.py",
+            "src/decoy_engine/execution/pipeline/_stream.py",
             # B7 also corrects the module docstring of `_pipeline_chunk_route.py`, which said
             # auto-chunk routing was single-table only (a docstring-only edit).
             "src/decoy_engine/execution/_pipeline_chunk_route.py",
@@ -709,6 +744,8 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_isolated_common.py",
             # The driver removes staging on a self-reported failure and scrubs in-process error text.
             "src/decoy_engine/execution/_isolated_run.py",
+            # SUB-RUN E2: `probe_peak_bytes` refuses a subset config; no `execution.physical` import.
+            "src/decoy_engine/execution/_probe.py",
             # F29: `_governor.py` reroutes on the typed route-ineligibility reason identity carried in
             # `IsolatedRunResult.reason`, never on error text. No `execution.physical` import.
             "src/decoy_engine/execution/_governor.py",
@@ -924,6 +961,19 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/out_of_core/_stage.py",
             "src/decoy_engine/execution/_chunked_code_set.py",
             "src/decoy_engine/execution/_strategies/_code_set.py",
+            # F06 r2 module-size decomposition: the sequential table order and the planner's
+            # config column lookups split out of capped modules. Pure moves; neither imports
+            # `execution.physical`.
+            "src/decoy_engine/execution/_sequential_order.py",
+            "src/decoy_engine/execution/_planner_columns.py",
+            # Strategy catalog: each handler declares its own catalog attributes. Pure
+            # declarations; none imports `execution.physical`. (The other handlers are
+            # already permitted above.)
+            "src/decoy_engine/execution/_strategies/_derived_aggregate.py",
+            "src/decoy_engine/execution/_strategies/_formula.py",
+            "src/decoy_engine/execution/_strategies/_grouped_series.py",
+            "src/decoy_engine/execution/_strategies/_passthrough.py",
+            "src/decoy_engine/execution/_strategies/_redact.py",
         }
     )
     # Files allowed to change ONLY by these exact line replacements (path -> {removed: added}).

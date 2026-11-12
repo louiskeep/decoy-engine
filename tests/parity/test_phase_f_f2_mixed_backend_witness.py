@@ -153,10 +153,10 @@ def _record_generated(mp: pytest.MonkeyPatch) -> list[dict[str, pa.Table]]:
     real = _pipeline_mixed_route._generate
     seen: list[dict[str, pa.Table]] = []
 
-    def generate(ctx: Any) -> dict[str, pa.Table]:
-        out = real(ctx)
+    def generate(ctx: Any) -> tuple[dict[str, pa.Table], tuple[Any, ...]]:
+        out, raised = real(ctx)
         seen.append(out)
-        return out
+        return out, raised
 
     mp.setattr(_pipeline_mixed_route, "_generate", generate)
     return seen
@@ -205,13 +205,14 @@ def test_a_handoff_mutant_that_changes_the_parent_key_set_changes_the_orphan_cou
     generated = _record_generated(monkeypatch)
     recorded = _pipeline_mixed_route._generate
 
-    def corrupt(ctx: Any) -> dict[str, pa.Table]:
-        out = recorded(ctx)  # the recorder keeps the true generated tables
+    def corrupt(ctx: Any) -> tuple[dict[str, pa.Table], tuple[Any, ...]]:
+        out, raised = recorded(ctx)  # the recorder keeps the true generated tables
         parent = out[PARENT]
         if mutation == "truncated":
-            return {**out, PARENT: parent.slice(0, SEAM_PARENT_ROWS // 2)}
+            return {**out, PARENT: parent.slice(0, SEAM_PARENT_ROWS // 2)}, raised
         ids = pa.array(["Q" + v for v in parent.column("id").to_pylist()], pa.string())
-        return {**out, PARENT: parent.set_column(parent.schema.get_field_index("id"), "id", ids)}
+        mutated = parent.set_column(parent.schema.get_field_index("id"), "id", ids)
+        return {**out, PARENT: mutated}, raised
 
     monkeypatch.setattr(_pipeline_mixed_route, "_generate", corrupt)
     result = run(config, {CHILD: child})

@@ -99,11 +99,17 @@ def test_hash_and_tokenize_differ_for_the_same_input_and_parameters() -> None:
         assert h[:32] != t[len("tok_") :]
 
 
+def token_for(mask_key: bytes, namespace: str, scope: bytes, plaintext: str) -> str:
+    """One proposed token, built the way the strategy builds it (context once, then the token)."""
+    from decoy_engine._opaque import OpaqueBox
+    from decoy_engine.execution._strategies._tokenize_key import token_from, tokenize_context
+
+    return token_from(tokenize_context(OpaqueBox(mask_key), namespace, scope), namespace, plaintext)
+
+
 @settings(max_examples=200, deadline=None)
 @given(st.text(min_size=0, max_size=40), st.binary(min_size=16, max_size=64))
 def test_token_payload_never_equals_hash_truncate_32(text: str, scope: bytes) -> None:
-    from decoy_engine.execution._strategies._tokenize_key import token_for
-
     pt = unicodedata.normalize("NFC", text)
     hash_prefix = derive(MASK_KEY, "pan_ns", pt.encode("utf-8")).hex()[:32]
     token = token_for(MASK_KEY, "pan_ns", scope, pt)
@@ -113,8 +119,6 @@ def test_token_payload_never_equals_hash_truncate_32(text: str, scope: bytes) ->
 
 def test_tokenize_subkey_vector() -> None:
     """Pinned: the label, the scope framing and the order of the two derivations."""
-    from decoy_engine.execution._strategies._tokenize_key import token_for
-
     assert token_for(MASK_KEY, "pan_ns", SCOPE_A, "4111111111111111") == TOKEN_VECTOR
 
 

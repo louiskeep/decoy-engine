@@ -21,9 +21,9 @@ def _literal_kinds() -> set[str]:
     return set(get_args(GenerateColumnConfig.model_fields["type"].annotation))
 
 
-def test_the_literal_has_eleven_kinds_and_the_admission_table_matches() -> None:
+def test_the_literal_has_fourteen_kinds_and_the_admission_table_matches() -> None:
     kinds = _literal_kinds()
-    assert len(kinds) == 11
+    assert len(kinds) == 14
     assert kinds == set(ADMISSION_MATRIX)
 
 

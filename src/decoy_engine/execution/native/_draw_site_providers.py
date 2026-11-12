@@ -72,15 +72,20 @@ from decoy_engine.execution.native.protocol.providers_base import (
 from decoy_engine.execution.native.protocol.providers_gen import (
     CategoricalChoicesProvider,
     CompositeBuildPoolProvider,
+    DistributionProvider,
     DistributionSnapshotProvider,
     FakerPerRowProvider,
     FakerPoolBuildProvider,
     FormulaPerRowProvider,
     GenDeriveContextProvider,
+    LookupChoicesProvider,
     NullProbabilityProvider,
     PoolNonDeterministicProvider,
     ReferenceSamplerProvider,
     StatisticalPerRowProvider,
+)
+from decoy_engine.execution.native.protocol.providers_gen_unique import (
+    GEN_UNIQUE_PROVIDER_CLASSES,
 )
 
 # Private names the determinism drift tests import from here.
@@ -204,6 +209,8 @@ _DEDICATED_PROVIDER_CLASSES: tuple[type[DrawSiteProvider], ...] = (
     WindowedDateProvider,
     NullProbabilityProvider,
     DistributionSnapshotProvider,
+    DistributionProvider,
+    LookupChoicesProvider,
     PoolNonDeterministicProvider,
     CompositeBuildPoolProvider,
     CategoricalChoicesProvider,
@@ -220,6 +227,7 @@ _DEDICATED_PROVIDER_CLASSES: tuple[type[DrawSiteProvider], ...] = (
     CodeSetKeyedSelectProvider,
     JointMaskKeyedRowProvider,
     *GEN_POOL_PROVIDER_CLASSES,
+    *GEN_UNIQUE_PROVIDER_CLASSES,
 )
 
 # Unseeded, non-deterministic-by-contract sites.
@@ -283,6 +291,7 @@ __all__ = [
     "CategoricalChoicesProvider",
     "CodeSetKeyedSelectProvider",
     "CompositeBuildPoolProvider",
+    "DistributionProvider",
     "DistributionSnapshotProvider",
     "DrawSiteProtocolError",
     "DrawSiteProvider",
@@ -293,6 +302,7 @@ __all__ = [
     "GenDeriveContextProvider",
     "GroupedSeriesWalkProvider",
     "JointMaskKeyedRowProvider",
+    "LookupChoicesProvider",
     "MaskFormulaProvider",
     "NullProbabilityProvider",
     "PoolNonDeterministicProvider",

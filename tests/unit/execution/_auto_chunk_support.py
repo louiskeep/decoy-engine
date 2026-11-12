@@ -13,6 +13,7 @@ import importlib.util
 import inspect
 import sys
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
@@ -20,6 +21,7 @@ import pytest
 
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import run_pipeline
+from tests._declared_schema import declare_rest
 
 ENGINE_VERSION = "b2-auto-chunk-test"
 TABLE = "t"
@@ -38,15 +40,18 @@ def make_cfg(
 ) -> dict[str, Any]:
     """`path` is the parquet file `profile_source` reads; the execution reads the
     `sources` table the test passes, so the two must hold the same data."""
-    return PipelineConfig.model_validate(
-        {
-            "version": 2,
-            "global_settings": {"seed": 42},
-            "sources": {table: {"type": "file", "format": "parquet", "path": path}},
-            "tables": [{"name": table, "columns": columns}],
-            "targets": {table: {"type": "file", "format": "parquet", "path": "/dev/null"}},
-        }
-    ).model_dump()
+    raw = {
+        "version": 2,
+        "global_settings": {"seed": 42},
+        "sources": {table: {"type": "file", "format": "parquet", "path": path}},
+        "tables": [{"name": table, "columns": columns}],
+        "targets": {table: {"type": "file", "format": "parquet", "path": "/dev/null"}},
+    }
+    # A source file that already exists is declared in full; a test that writes it later
+    # calls `declare_rest` itself.
+    if Path(path).is_file():
+        declare_rest(raw)
+    return PipelineConfig.model_validate(raw).model_dump()
 
 
 def hash_col(name: str, namespace: str | None = None) -> dict[str, Any]:

@@ -7,10 +7,18 @@ calls in the engine are auditable through this module.
 
 from __future__ import annotations
 
+import ast
+
 import pytest
 from simpleeval import InvalidExpression
 
-from decoy_engine.expressions import BASE_GLOBALS, MASK_GLOBALS, safe_eval
+from decoy_engine.expressions import (
+    BASE_GLOBALS,
+    EVALUATED_NODE_TYPES,
+    MASK_GLOBALS,
+    formula_is_evaluable,
+    safe_eval,
+)
 
 
 class TestSafeEval:
@@ -194,3 +202,65 @@ class TestC1Sandbox:
 
     def test_value_method_chain_still_works(self):
         assert safe_eval("value.strip().upper()", MASK_GLOBALS, {"value": " hi "}) == "HI"
+
+
+# One expression per node type the evaluator dispatches on. Statement nodes and the deprecated
+# Num/Str/NameConstant/Index aliases never come out of ``ast.parse(mode="eval")``.
+_NODE_SAMPLES: dict[type, str] = {
+    ast.Name: "v",
+    ast.UnaryOp: "-v",
+    ast.BinOp: "v + 1",
+    ast.BoolOp: "v and 1",
+    ast.Compare: "v < 2",
+    ast.IfExp: "1 if v else 2",
+    ast.Call: "abs(v)",
+    ast.keyword: "round(v, ndigits=1)",
+    ast.Subscript: "[1, 2][v]",
+    ast.Attribute: "'a'.upper()",
+    ast.Slice: "'abc'[0:v]",
+    ast.JoinedStr: "f'{v}'",
+    ast.FormattedValue: "f'{v:>3}'",
+    ast.Constant: "1",
+    ast.Dict: "{1: v}",
+    ast.Tuple: "(v, 1)",
+    ast.List: "[v, 1]",
+    ast.Set: "{v, 1}",
+    ast.ListComp: "[w for w in [v]]",
+    ast.GeneratorExp: "list(w for w in [v])",
+    ast.DictComp: "{w: w for w in [v]}",
+}
+_NOT_PARSED_IN_EVAL_MODE = {ast.Expr, ast.Assign, ast.AugAssign, ast.Import}
+_DEPRECATED_ALIASES = {"Num", "Str", "NameConstant", "Index"}
+
+
+class TestFormulaIsEvaluable:
+    def test_samples_cover_every_node_type_the_evaluator_handles(self):
+        handled = {
+            t
+            for t in EVALUATED_NODE_TYPES
+            if t not in _NOT_PARSED_IN_EVAL_MODE and t.__name__ not in _DEPRECATED_ALIASES
+        }
+        assert set(_NODE_SAMPLES) == handled, "the evaluator gained or lost a node type"
+
+    @pytest.mark.parametrize("node_type", sorted(_NODE_SAMPLES, key=lambda t: t.__name__))
+    def test_every_handled_node_type_passes_and_runs(self, node_type):
+        text = _NODE_SAMPLES[node_type]
+        tree = ast.parse(text, mode="eval")
+        assert any(isinstance(n, node_type) for n in ast.walk(tree))
+        assert formula_is_evaluable(tree)
+        safe_eval(text, BASE_GLOBALS, {"v": 1, "abs": abs, "round": round})
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "lambda: 1",
+            "(x := 1)",
+            "{w for w in [1]}",
+            "1 @ 2",
+            "[1][0](2)",
+            "abs(*[1])",
+            "abs(**{})",
+        ],
+    )
+    def test_unsupported_syntax_is_refused(self, text):
+        assert not formula_is_evaluable(ast.parse(text, mode="eval"))

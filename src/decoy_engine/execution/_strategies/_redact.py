@@ -10,7 +10,12 @@ from __future__ import annotations
 import pandas as pd
 import pyarrow as pa
 
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    option,
+    provider_config_to_dict,
+)
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.kernel import redact_array
 from decoy_engine.plan._types import ColumnSeed
@@ -22,6 +27,10 @@ class RedactHandler:
     """Replace every non-null value in the column with a fixed string."""
 
     name: str = "redact"
+    namespace_required: bool = False
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = (option("redact_with", "str", "XXXX"),)
+    offer_in_wizard: bool = True
 
     def run(
         self,

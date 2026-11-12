@@ -117,15 +117,15 @@ from decoy_engine.transforms._codeset_config_checks import (  # noqa: F401 -- re
 )
 from decoy_engine.transforms._codeset_index import hole_candidate_count, hole_resolve
 from decoy_engine.transforms._codeset_loader import (
-    _SHIPPED_CORPORA,  # noqa: F401 -- re-exported (validate_code_set_config moved out)
+    _SHIPPED_CORPORA,
     CorpusVerifyReport,  # noqa: F401 -- re-exported public API (see below)
     _check_source_version_pin,
     _CorpusRecord,
     _get_corpus_record,
-    load_corpus,  # noqa: F401 -- re-exported public API (see below)
     load_corpus_provenance,  # noqa: F401 -- re-exported public API (see below)
     verify_corpus,  # noqa: F401 -- re-exported public API (see below)
 )
+from decoy_engine.transforms._codeset_loader import load_corpus as load_corpus
 
 # Stable salt for HMAC-keyed row derivation. Same purpose as
 # reference_tables._KEYED_ACCESS_SALT: determinism, not secrecy.
@@ -553,3 +553,7 @@ def _pick_gen(
     except BaseException:
         del job_seed
         raise
+
+
+# Public, immutable view of the shipped corpus names for callers outside `transforms/`.
+SHIPPED_CODE_SETS: tuple[str, ...] = tuple(sorted(_SHIPPED_CORPORA))

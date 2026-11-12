@@ -1,0 +1,8 @@
+{
+  "old": "src/decoy_engine/execution/_pipeline_routing.py",
+  "new": ["src/decoy_engine/execution/_pipeline_routing.py"],
+  "map": {},
+  "importers": [],
+  "docstring_prose": true,
+  "tests": ["tests/sentry/test_module_size.py"]
+}

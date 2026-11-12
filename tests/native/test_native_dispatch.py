@@ -14,6 +14,7 @@ from datetime import datetime
 import pyarrow as pa
 import pytest
 
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution._chunked_fk import fk_passthrough_columns_for_table
 from decoy_engine.execution.native import _dispatch
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
@@ -26,6 +27,7 @@ from decoy_engine.execution.native._dispatch import (
 from decoy_engine.keyprovider import SecretKeyProvider, key_provider_from_ref
 from decoy_engine.profile import ColumnProfile, Profile, Relationship, TableProfile
 from decoy_engine.providers_v2 import get_default_registry
+from tests.native._b8_support import run_native_or_oracle_chunked_below_gate
 
 _COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
 _NEEDS_COMPANION = pytest.mark.skipif(
@@ -44,7 +46,9 @@ def _all_admitted_config() -> dict:
     return {
         "version": 2,
         "global_settings": {"seed": 42, "post_validation": False},
-        "sources": {"w": {"type": "file", "format": "csv", "path": "/dev/null"}},
+        "sources": {
+            "w": {"type": "file", "format": "csv", "has_header": True, "path": "/dev/null"}
+        },
         "targets": {"w": {"type": "file", "format": "csv", "path": "/dev/null"}},
         "tables": [
             {
@@ -553,7 +557,7 @@ def test_uncovered_column_reroutes_to_oracle() -> None:
     source = pa.table({"p": [1, 2], "unconfigured": ["x", "y"]})
     sink: list[NativeRouteEvidence] = []
     list(
-        run_native_or_oracle_chunked(
+        run_native_or_oracle_chunked_below_gate(
             config, [source], table="w", engine_version="test", route_evidence_sink=sink
         )
     )
@@ -1022,6 +1026,7 @@ def test_provider_config_values_reach_the_kernels_not_just_the_defaults() -> Non
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.serial
 @_NEEDS_COMPANION
 def test_kernel_evidence_accumulates_across_multiple_chunks() -> None:
     config = {
@@ -1149,7 +1154,7 @@ def test_empty_chunk_stream_with_keyed_strategy_and_explicit_key_provider_succee
 # ---------------------------------------------------------------------------
 
 
-def test_configured_column_missing_from_first_chunk_reroutes_and_reports_both_sides() -> None:
+def test_configured_column_missing_from_first_chunk_is_refused_before_a_route_is_chosen() -> None:
     config = {
         "global_settings": {"seed": 42},
         "tables": [
@@ -1164,19 +1169,15 @@ def test_configured_column_missing_from_first_chunk_reroutes_and_reports_both_si
     }
     source = pa.table({"p": [1, 2]})  # "q" is configured but absent from this chunk.
     sink: list[NativeRouteEvidence] = []
-    list(
-        run_native_or_oracle_chunked(
-            config, [source], table="w", engine_version="test", route_evidence_sink=sink
+    with pytest.raises(PipelineValidationError) as caught:
+        list(
+            run_native_or_oracle_chunked(
+                config, [source], table="w", engine_version="test", route_evidence_sink=sink
+            )
         )
-    )
-    evidence = sink[0]
-    assert evidence.native_admitted is False
-    # BOTH sides of the symmetric difference show up: nothing extra in the
-    # chunk (empty `uncovered_columns`), but "q" is missing on the other side
-    # -- the diagnostic that reported only `actual - covered` would show an
-    # empty list here and silently hide the real cause.
-    assert "uncovered_columns:[]" in evidence.reroute_reason
-    assert "missing_configured_columns:['q']" in evidence.reroute_reason
+    assert caught.value.code == "source_file.declared_column_missing"
+    assert "column q" in str(caught.value)
+    assert sink == []  # refused before a route was chosen
 
 
 def test_second_chunk_introducing_an_unconfigured_column_fails_coded_after_first_chunk_consumed() -> (
@@ -1194,8 +1195,8 @@ def test_second_chunk_introducing_an_unconfigured_column_fails_coded_after_first
     chunk1 = pa.table({"p": [1, 2]})
     chunk2 = pa.table({"p": [3, 4], "surprise": ["a", "b"]})
     sink: list[NativeRouteEvidence] = []
-    it = run_native_or_oracle_chunked(
-        config, [chunk1, chunk2], table="w", engine_version="test", route_evidence_sink=sink
+    it = run_native_or_oracle_chunked_below_gate(
+        config, iter([chunk1, chunk2]), table="w", engine_version="test", route_evidence_sink=sink
     )
     assert sink[0].native_admitted is True
     first_out = next(it)
@@ -1234,17 +1235,19 @@ def test_second_chunk_missing_a_configured_column_fails_coded_not_silently_dropp
     chunk1 = pa.table({"p": [1, 2], "q": [10, 20]})
     chunk2 = pa.table({"p": [3, 4]})  # "q" absent on this later chunk only.
     sink: list[NativeRouteEvidence] = []
+    pulled: list[int] = []
+    counted = (pulled.append(i) or c for i, c in enumerate([chunk1, chunk2]))
     it = run_native_or_oracle_chunked(
-        config, [chunk1, chunk2], table="w", engine_version="test", route_evidence_sink=sink
+        config, counted, table="w", engine_version="test", route_evidence_sink=sink
     )
     assert sink[0].native_admitted is True
     first_out = next(it)
     assert set(first_out.schema.names) == {"p", "q"}
-    with pytest.raises(NativeChunkSchemaDriftError) as exc_info:
+    with pytest.raises(PipelineValidationError) as exc_info:
         next(it)
-    assert exc_info.value.code == "native_chunk_schema_drift"
-    assert exc_info.value.chunk_index == 1
-    assert "missing:['q']" in exc_info.value.detail
+    assert exc_info.value.code == "source_file.declared_column_missing"
+    assert "column q" in str(exc_info.value)
+    assert pulled == [0, 1]  # refused on chunk index 1, before any chunk after it was pulled
 
 
 def test_second_chunk_column_type_change_fails_coded() -> None:

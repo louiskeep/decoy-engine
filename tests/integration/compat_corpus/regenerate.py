@@ -34,10 +34,12 @@ from decoy_engine.vault import VaultWriter
 
 HERE = Path(__file__).resolve().parent
 
-# A fixed synthetic job seed. The determinism layer requires exactly 8 bytes
-# (the normalized job-seed envelope). Stored in the manifest so the test can
-# decrypt the locked vault.
-_SYNTHETIC_JOB_SEED = (0xC0FFEE0BADC0DE01).to_bytes(8, "big")
+# A fixed synthetic 32-byte mask key (the vault takes only a key of exactly 32 bytes,
+# the length of a mask root). Stored in the manifest so the test can decrypt the
+# locked vault; it is a test literal, never a real secret.
+_SYNTHETIC_MASK_KEY = bytes.fromhex(
+    "c0ffee0badc0de01c0ffee0badc0de02c0ffee0badc0de03c0ffee0badc0de04"
+)
 
 # (namespace, masked, source) triples: the re-identification rows a vault holds.
 _SYNTHETIC_ENTRIES = [
@@ -80,7 +82,7 @@ _SNAPSHOT_COL_CFGS = [
 
 def _vault_artifact() -> dict:
     vault_path = HERE / "decoy-vault-v2__synthetic.vault"
-    writer = VaultWriter(_SYNTHETIC_JOB_SEED)
+    writer = VaultWriter(_SYNTHETIC_MASK_KEY)
     writer.add(_SYNTHETIC_ENTRIES)
     written = writer.write(vault_path)
     expected = {f"{ns}\x1f{masked}": source for ns, masked, source in _SYNTHETIC_ENTRIES}
@@ -92,7 +94,7 @@ def _vault_artifact() -> dict:
         "produced_by_engine_version": decoy_engine.__version__,
         "seed_protocol_version": SEED_PROTOCOL_VERSION,
         "path": vault_path.name,
-        "job_seed_hex": _SYNTHETIC_JOB_SEED.hex(),
+        "mask_key_hex": _SYNTHETIC_MASK_KEY.hex(),
         "entries_written": written,
         # key is "namespace\x1fmasked" -> source (JSON has no tuple keys).
         "expected_mapping": expected,

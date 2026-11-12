@@ -12,6 +12,9 @@ from typing import TYPE_CHECKING
 
 import pyarrow as pa
 
+from decoy_engine import reasons
+from decoy_engine.declared_casting._eligibility import declared_route_guard
+from decoy_engine.declared_casting._refusals import note_declined
 from decoy_engine.execution.native._real_type_admission import C1_PROVIDER_ALLOWLIST
 from decoy_engine.execution.native._requirements import faker_pool_precondition_met
 
@@ -191,6 +194,20 @@ def check_out_of_core_compatibility(
     plan shape alone, and the exact-`string` requirement is enforced fail-closed
     by the per-table mask planner as a backstop.
     """
+    _decl = declared_route_guard("out_of_core", plan=plan)
+    if not _decl.admitted:
+        if relationship_graph.edges:  # a relational job is what this route is offered
+            note_declined("out_of_core", _decl)
+        return OutOfCoreCompatibility(
+            accepted=False,
+            rejections=(
+                OutOfCoreRejection(
+                    _decl.rejection or reasons.route.DECLARED_CAST_ROUTE_UNSUPPORTED,
+                    "the out-of-core route cannot apply this job's declared casting contract: "
+                    f"it lacks {', '.join(_decl.missing) or 'a required capability'}.",
+                ),
+            ),
+        )
     rejections: list[OutOfCoreRejection] = []
     if not relationship_graph.edges:
         return OutOfCoreCompatibility(

@@ -39,14 +39,16 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from decoy_engine import fileaccess
+from decoy_engine._lexeme import LEXEME_KEY
 from decoy_engine.fileaccess import FileAccess, FileHandle, FileRequest, FileRole
 from decoy_engine.fileaccess.adapters import arrow as arrow_adapter
+from decoy_engine.profile._csv_reader import resolve_csv_dialect
 from decoy_engine.profile._fixed_width_reader import read_fixed_width_handle
 from decoy_engine.profile._policy_bound import _PolicyBound
 from decoy_engine.profile._readers_csv import CsvFileSource, estimate_csv_rows
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterable, Iterator, Sequence
 
 # Fallback bounded sample size when a caller asks for a full scan
 # (sample_rows=None) under residency="bounded" -- see profile_source. A full
@@ -159,6 +161,7 @@ class OpenedLazyBatches:
         batch_rows: int,
         use_threads: bool,
         handle: FileHandle | None = None,
+        columns: Sequence[str] | None = None,
     ) -> None:
         self._parquet_file = parquet_file
         # The authorized handle lives as long as the batches do, through early failure and
@@ -166,7 +169,8 @@ class OpenedLazyBatches:
         self._handle = handle
         self._closed = False
         self.facts = footer_facts_of(parquet_file)
-        self.batches = self._read(batch_rows, use_threads)
+        # The projection narrows the batches only; `facts` stay the whole file's.
+        self.batches = self._read(batch_rows, use_threads, columns)
 
     @property
     def schema(self) -> pa.Schema:
@@ -184,18 +188,25 @@ class OpenedLazyBatches:
     def max_row_group_rows(self) -> int:
         return self.facts.max_row_group_rows
 
-    def _read(self, batch_rows: int, use_threads: bool) -> Iterator[pa.RecordBatch]:
+    def _read(
+        self, batch_rows: int, use_threads: bool, columns: Sequence[str] | None
+    ) -> Iterator[pa.RecordBatch]:
         # Wrap pyarrow's own iterator in a Python generator, as `iter_batches` does.
         # Returning the C-level iterator raw makes a downstream `yield from` raise
         # `RuntimeError: generator raised StopIteration` on Python 3.10 for an empty file:
         # the iterator's StopIteration escapes the consuming generator frame (PEP 479).
+        projection = {} if columns is None else {"columns": list(columns)}
         if self._handle is not None:
             yield from arrow_adapter.iter_batches(
-                self._handle, self._parquet_file, batch_size=batch_rows, use_threads=use_threads
+                self._handle,
+                self._parquet_file,
+                batch_size=batch_rows,
+                use_threads=use_threads,
+                **projection,
             )
         else:
             yield from self._parquet_file.iter_batches(
-                batch_size=batch_rows, use_threads=use_threads
+                batch_size=batch_rows, use_threads=use_threads, **projection
             )
 
     def close(self) -> None:
@@ -259,6 +270,7 @@ class LazySource:
         pre_buffer: bool | None = None,
         buffer_size: int = 0,
         use_threads: bool = True,
+        columns: Sequence[str] | None = None,
     ) -> OpenedLazyBatches:
         """Open the file once and return its footer facts, a batch iterator and the owner
         of the close, so the schema a caller validates is the schema its batches are read
@@ -268,7 +280,8 @@ class LazySource:
 
         `pre_buffer=None` omits the argument, so each installed PyArrow keeps its own
         default (`False` on 24.0.0, `True` on 25.0.1); pass it to pin the behavior.
-        `buffer_size` and `use_threads` default to pyarrow's own defaults."""
+        `buffer_size` and `use_threads` default to pyarrow's own defaults. `columns` narrows the
+        batches; the schema and facts stay the whole file's."""
         options: dict[str, Any] = {}
         if pre_buffer is not None:
             options["pre_buffer"] = pre_buffer
@@ -281,7 +294,7 @@ class LazySource:
             handle.close()
             raise
         try:
-            return OpenedLazyBatches(parquet_file, batch_rows, use_threads, handle)
+            return OpenedLazyBatches(parquet_file, batch_rows, use_threads, handle, columns)
         except BaseException:
             parquet_file.close()
             handle.close()
@@ -307,7 +320,10 @@ class LazySource:
         """The file's Arrow schema, read from the Parquet footer only."""
         handle = self._handle()
         try:
-            return arrow_adapter.parquet_file(handle).schema_arrow
+            # The ParquetFile is closed here too, not left to garbage collection: entry checks
+            # read this before any batch.
+            with arrow_adapter.parquet_file(handle) as parquet_file:
+                return parquet_file.schema_arrow
         finally:
             handle.close()
 
@@ -360,6 +376,11 @@ class ParquetFileSource(_PolicyBound):
     def __post_init__(self) -> None:
         if self.access is None:
             object.__setattr__(self, "access", fileaccess.capture())
+
+    @classmethod
+    def from_lazy(cls, lazy: LazySource) -> ParquetFileSource:
+        """The reader for a file handle a caller supplied, under that handle's own policy."""
+        return cls(lazy.path, lazy.access, lazy.field_key)
 
     def _lazy(self) -> LazySource:
         return LazySource(self.path, self.access, self.field_key)
@@ -457,8 +478,25 @@ def head_frame_from_batches(
 # ---------------------------------------------------------------------
 
 
+@fileaccess.entry_point
+def build_declared_source(
+    table: str, descriptor: dict[str, Any], *, file_access: FileAccess | None = None
+) -> ProfileSource:
+    """The `ProfileSource` for config table `table`, read under its own config position
+    `sources.<table>.path`. Every reader of a declared source goes through here, so a policy
+    that grants access per position sees the same key from each of them."""
+    return build_profile_source(
+        descriptor, field_key=f"sources.{table}.path", table=table, file_access=file_access
+    )
+
+
+@fileaccess.entry_point
 def build_profile_source(
-    descriptor: dict[str, Any], *, field_key: str = "source.path"
+    descriptor: dict[str, Any],
+    *,
+    field_key: str = "source.path",
+    table: str = "source",
+    file_access: FileAccess | None = None,
 ) -> ProfileSource:
     """Build the `ProfileSource` for one validated source descriptor. A local file is
     read through the installed policy under `field_key`, the config position it came from.
@@ -469,7 +507,7 @@ def build_profile_source(
     """
     src_type = descriptor.get("type")
     if src_type == "file":
-        return _build_file_source(descriptor, field_key)
+        return _build_file_source(descriptor, field_key, table=table)
     if src_type == "s3":
         from decoy_engine.profile._cloud_readers import build_s3_profile_source
 
@@ -492,7 +530,9 @@ def _at(field_key: str, name: str) -> str:
     return f"the value at {base}.{name}"
 
 
-def _build_file_source(descriptor: dict[str, Any], field_key: str) -> ProfileSource:
+def _build_file_source(
+    descriptor: dict[str, Any], field_key: str, *, table: str = "source"
+) -> ProfileSource:
     fmt = descriptor.get("format")
     path = descriptor.get("path")
     if not isinstance(path, str):
@@ -501,12 +541,15 @@ def _build_file_source(descriptor: dict[str, Any], field_key: str) -> ProfileSou
             f"{fileaccess.shown(repr(path), _at(field_key, 'path'))}"
         )
     if fmt == "csv":
+        dialect = resolve_csv_dialect(descriptor, table=table)
         return CsvFileSource(
             Path(path),
-            has_header=descriptor.get("has_header", True),
-            column_names=descriptor.get("column_names"),
-            delimiter=descriptor.get("delimiter", ","),
+            has_header=dialect.has_header,
+            column_names=None if dialect.column_names is None else list(dialect.column_names),
+            delimiter=dialect.delimiter,
+            lexeme_columns=tuple(descriptor.get(LEXEME_KEY) or ()),
             field_key=field_key,
+            table=table,
         )
     if fmt == "parquet":
         return ParquetFileSource(Path(path), field_key=field_key)

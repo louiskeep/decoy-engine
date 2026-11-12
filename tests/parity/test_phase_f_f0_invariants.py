@@ -43,7 +43,6 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.generation import (
-    _column_streams,
     _faker_pool,
     _referenced_formula,
     _streamed,
@@ -296,12 +295,14 @@ def test_non_dict_faker_kwargs_are_dropped_before_the_pool_build(
     assert log.calls[0].faker_kwargs == {}
 
 
-def test_seeds_follow_column_config_not_column_name_or_instance_locale(
+def test_seeds_follow_column_identity_and_config_not_instance_locale(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     base = _seam(monkeypatch, [_city()]).calls[0]
     renamed = _seam(monkeypatch, [_city("renamed")]).calls[0]
-    assert (renamed.build_seed, renamed.selection_seed) == (base.build_seed, base.selection_seed)
+    # The column name is part of the identity: a rename draws a different pool.
+    assert renamed.build_seed != base.build_seed
+    assert renamed.selection_seed != base.selection_seed
     # The instance default locale changes the pool's locale, not the seed root.
     inst = _seam(monkeypatch, [_city()], instance_default_locale="fr_FR").calls[0]
     assert inst.build_seed == base.build_seed
@@ -403,14 +404,20 @@ def test_reversed_postpass_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
     real = _referenced_formula.fill_referenced_formula_columns
 
     def reversed_order(
-        gcols: list[dict[str, Any]], data: Any, seed: int, derive_key: Any = None
+        gcols: list[dict[str, Any]],
+        data: Any,
+        seed: int,
+        derive_key: Any = None,
+        table_name: str = "",
     ) -> None:
-        real(list(reversed(gcols)), data, seed, derive_key)
+        real(list(reversed(gcols)), data, seed, derive_key, table_name=table_name)
 
     monkeypatch.setattr(_referenced_formula, "fill_referenced_formula_columns", reversed_order)
     _trips(
         lambda: _check_postpass_contract(fx.run_generate_tables(fx.cfg_referenced_formula())),
-        match="rf_b did not read",
+        # Reversed order lets rf_c read the finished rf_d, which breaks the forward-reference
+        # check on every row; rf_b's own check depends on the null mask, so it is not matched.
+        match="a forward reference must see the placeholder",
     )
 
 
@@ -688,7 +695,9 @@ def test_parent_truncated_to_its_first_batch_is_caught(monkeypatch: pytest.Monke
 
 
 def test_perturbed_parent_keys_are_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The fixture's parent key is `unique: true`, so it is drawn by the unique categorical sampler.
     monkeypatch.setattr(
-        _column_streams.CategoricalStream, "next_batch", lambda self, offset, size: ["x"] * size
+        "decoy_engine.generation._unique.unique_categorical",
+        lambda col, n, seed, derive_key=None: ["x"] * n,
     )
     _trips(lambda: _check_fk_coupling(fx.run_mixed_fk()), match="values differ|digest differs")

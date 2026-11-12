@@ -34,9 +34,11 @@ import pyarrow.parquet as pq
 from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import FK_KEY_DTYPE_UNSUPPORTED_CODE
+from decoy_engine.execution.out_of_core._duckdb import PRIVATE_COPY as _PRIVATE_COPY
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.execution.out_of_core._join import _sql_string
 from decoy_engine.execution.out_of_core._relation import ParentKeyRelation
+from decoy_engine.execution.out_of_core._scratch import precreate_private, private_dir
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -59,9 +61,10 @@ def resolve_incoming(
     (`graph.edges` order, the oracle's precedence). The group's first edge represents it:
     `parent_relations[first]` is rebound to the merged relation, so every downstream
     consumer (REMAP seeds, the WARN and FAIL identity, the per-column component map) reads
-    the first parent exactly as the oracle does, and the other members' entries are removed
-    together with their files, which no later table reads (a relation is keyed by its edge,
-    and each edge serves one child). A singleton group passes through untouched. A group whose
+    the first parent exactly as the oracle does, and the other members' entries are removed. A
+    member file is removed only when no remaining entry still points at it: every edge from the
+    same parent columns shares one file, which a sibling child, another column of this child or
+    a second group may still read. A singleton group passes through untouched. A group whose
     edges disagree on the orphan policy is refused with the planner's own code,
     `orphan_policy_conflict`, before anything is merged.
     """
@@ -95,11 +98,14 @@ def resolve_incoming(
             memory_limit=memory_limit,
         )
         merged_count += 1
-        for edge, relation in zip(members, member_relations, strict=True):
-            if edge is not first:
-                del parent_relations[edge]
-            # The merged copy supersedes the member on disk; keep the spill footprint to one.
-            relation.path.unlink(missing_ok=True)
+        for edge in members[1:]:
+            del parent_relations[edge]
+        # The merged copy supersedes the members, but edges from one parent's columns share one
+        # file (`_relation._edge_stem`); the runner's teardown removes a file still in use here.
+        in_use = {relation.path for relation in parent_relations.values()}
+        for relation in member_relations:
+            if relation.path not in in_use:
+                relation.path.unlink(missing_ok=True)
     return tuple(representatives)
 
 
@@ -133,7 +139,7 @@ def merge_parent_relations(
     # Scratch lives under the same `duckdb/` subtree as the connection's spill, exactly as
     # `_relation._build_relation` lays out its own staged and winners files.
     duckdb_dir = temp_dir / "duckdb"
-    duckdb_dir.mkdir(parents=True, exist_ok=True)
+    private_dir(duckdb_dir)
     out_path = temp_dir / "merged_key_relation.parquet"
     staged_path = duckdb_dir / "merged_key_staged.parquet"
     winners_path = duckdb_dir / "merged_key_winners.parquet"
@@ -144,7 +150,8 @@ def merge_parent_relations(
     )
     conn = connect_duckdb(temp_dir=duckdb_dir, memory_limit=memory_limit)
     try:
-        conn.execute(f"COPY ({members_sql}) TO {_sql_string(str(staged_path))} (FORMAT PARQUET)")
+        staged = _sql_string(precreate_private(staged_path))
+        conn.execute(f"COPY ({members_sql}) TO {staged} ({_PRIVATE_COPY})")
         staged_sql = f"read_parquet({_sql_string(str(staged_path))})"
         conn.execute(
             f"""
@@ -152,7 +159,7 @@ def merge_parent_relations(
                 SELECT {first.join_key_column}, min({_RANK}) AS __decoy_win_rank
                 FROM {staged_sql}
                 GROUP BY {first.join_key_column}
-            ) TO {_sql_string(str(winners_path))} (FORMAT PARQUET)
+            ) TO {_sql_string(precreate_private(winners_path))} ({_PRIVATE_COPY})
             """
         )
         masked_select = ", ".join(f"s.{col} AS {col}" for col in masked_columns)
@@ -164,9 +171,9 @@ def merge_parent_relations(
                 JOIN read_parquet({_sql_string(str(winners_path))}) w
                   ON s.{first.join_key_column} = w.{first.join_key_column}
                  AND s.{_RANK} = w.__decoy_win_rank
-            ) TO ? (FORMAT PARQUET)
+            ) TO ? ({_PRIVATE_COPY})
             """,
-            [str(out_path)],
+            [precreate_private(out_path)],
         )
     except BaseException:
         # COPY is not atomic; never leave a partial relation behind.

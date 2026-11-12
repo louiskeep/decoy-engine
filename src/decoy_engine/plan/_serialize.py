@@ -21,8 +21,6 @@ process that wrote it.
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
 from typing import Any
 
@@ -31,10 +29,21 @@ import yaml
 from decoy_engine import reasons
 from decoy_engine.expressions._when_parser import validate_envelope_when
 from decoy_engine.fileaccess import FileAccess, entry_point
-from decoy_engine.plan._checks import check_statistical_columns
-from decoy_engine.plan._checks_dp import verify_dp_snapshots
+from decoy_engine.plan._checks_dp import check_dp_generate_contract, verify_dp_snapshots
 from decoy_engine.plan._errors import PlanCompileError
-from decoy_engine.plan._generation import ReadSnapshot, build_generation_plan
+from decoy_engine.plan._generation import (
+    ReadSnapshot,
+    build_generation_plan,
+    check_generate_snapshot_columns,
+    column_pins_snapshot,
+    pinned_digest_message,
+    snapshot_schema_failure,
+    verified_pinned_bytes,
+)
+from decoy_engine.plan._serialize_declared import (
+    declared_casting_from_dict,
+    declared_casting_to_dict,
+)
 from decoy_engine.plan._types import (
     ColumnSeed,
     DpVerification,
@@ -51,6 +60,12 @@ from decoy_engine.plan._types import (
     SeedEnvelope,
     TableSeed,
     unfreeze_json,
+)
+from decoy_engine.plan.checks._lookup_tables import (
+    ReadLookup,
+    check_lookup_tables,
+    pinned_lookup_from_dict,
+    require_lookups_pinned,
 )
 
 
@@ -95,6 +110,10 @@ def _plan_to_dict(plan: Plan) -> dict[str, Any]:
     # versions' YAML shape identical for that case.
     if plan.generation is not None:
         out["generation"] = _generation_plan_to_dict(plan.generation)
+    # F06 (plan_version 3): omitted when empty, so a plan with no declared columns differs from
+    # its version-2 form only by the version line.
+    if plan.declared_casting is not None:
+        out["declared_casting"] = declared_casting_to_dict(plan.declared_casting)
     return out
 
 
@@ -241,6 +260,10 @@ def _generation_plan_to_dict(gp: GenerationPlan) -> dict[str, Any]:
     }
     if gp.dp_verification is not None:
         out["dp_verification"] = _dp_verification_to_dict(gp.dp_verification)
+    # GEN-TYPES E3 (plan_version 4): omitted when empty, so a plan with no lookups differs from
+    # its version-3 form only by the version line.
+    if gp.lookups:
+        out["lookups"] = [_pinned_snapshot_to_dict(s) for s in gp.lookups]
     return out
 
 
@@ -272,6 +295,11 @@ def _plan_from_dict(data: dict[str, Any]) -> Plan:
         generation=(
             _generation_plan_from_dict(generation_raw) if generation_raw is not None else None
         ),
+        declared_casting=(
+            declared_casting_from_dict(data["declared_casting"])
+            if data.get("declared_casting") is not None
+            else None
+        ),
     )
 
 
@@ -298,18 +326,14 @@ def _pinned_snapshot_from_dict(
     """
     position = f"generation.snapshots[{index}]"
     source_path = data["source_path"]
-    stored_sha256 = data["sha256"]
-    raw = base64.b64decode(data["payload_b64"])
-    if hashlib.sha256(raw).hexdigest() != stored_sha256:
+    raw = verified_pinned_bytes(data)
+    if raw is None:
         raise PlanCompileError(
             code=reasons.plan.DP_PINNED_SNAPSHOT_DIGEST_MISMATCH,
             path=position,
-            message=(
-                f"the embedded snapshot at {position} does not match its recorded sha256. "
-                "A Plan's pinned bytes are verified evidence, not a trusted claim; a mismatch "
-                "means the manifest was edited or corrupted after compile."
-            ),
+            message=pinned_digest_message(position),
         )
+    stored_sha256 = data["sha256"]
     pinned_snapshot = PinnedSnapshot(
         source_path=source_path,
         sha256=stored_sha256,
@@ -333,10 +357,13 @@ def _pinned_snapshot_from_dict(
                 "valid JSON. A digest match is not proof the payload is a JSON snapshot artifact."
             ),
         )
+    mismatch = snapshot_schema_failure(parsed, position)
+    if mismatch is not None:
+        raise PlanCompileError(code=mismatch.code, path=position, message=mismatch.message)
     read_snapshot = ReadSnapshot(
         path=source_path,
         sha256=stored_sha256,
-        parsed=parsed if isinstance(parsed, dict) else {},
+        parsed=parsed,
         raw=raw,
     )
     return pinned_snapshot, read_snapshot
@@ -367,7 +394,7 @@ def _require_statistical_snapshots_pinned(
             continue
         table_name = table_entry.get("name", "?")
         for col_entry in table_entry.get("generate_columns", []) or []:
-            if not isinstance(col_entry, dict) or col_entry.get("type") != "statistical":
+            if not isinstance(col_entry, dict) or not column_pins_snapshot(col_entry):
                 continue
             snapshot_file = col_entry.get("snapshot_file")
             col_name = col_entry.get("name", "?")
@@ -376,7 +403,7 @@ def _require_statistical_snapshots_pinned(
                     code=reasons.plan.STATISTICAL_SNAPSHOT_NOT_PINNED,
                     path=f"tables.{table_name}.generate_columns.{col_name}.snapshot_file",
                     message=(
-                        f"statistical column {col_name!r} references a snapshot_file that is "
+                        f"generate column {col_name!r} references a snapshot_file that is "
                         "not among this Plan's pinned snapshots -- a malformed manifest, not a "
                         "fallback to a fresh filesystem read."
                     ),
@@ -408,12 +435,24 @@ def _generation_plan_from_dict(data: dict[str, Any]) -> GenerationPlan:
     config-referenced snapshot absent from the pinned set is refused
     before `check_statistical_columns`'s own compile-time fallback (a
     direct filesystem read) can ever run against this untrusted manifest."""
+    # Config-only DP refusal first: an untrusted manifest with a refused config must not reach
+    # snapshot decoding, whose own errors would mask the coded refusal.
+    config = json.loads(data["config_json"])
+    check_dp_generate_contract(config)
     decoded = [
         _pinned_snapshot_from_dict(s, i) for i, s in enumerate(data.get("snapshots", []) or [])
     ]
     pinned_by_path: dict[str, ReadSnapshot] = {read.path: read for _pinned, read in decoded}
 
-    config = json.loads(data["config_json"])
+    # Lookups: digest-verified first, then every configured `file` must be pinned before the shared
+    # checker runs, so the checker has no path to fall back to.
+    lookup_decoded = [
+        pinned_lookup_from_dict(s, i) for i, s in enumerate(data.get("lookups", []) or [])
+    ]
+    lookup_pins: dict[str, ReadLookup] = {read.path: read for _pinned, read in lookup_decoded}
+    require_lookups_pinned(config, lookup_pins)
+    checked_lookups = check_lookup_tables(config, lookup_pins, {})
+
     _require_statistical_snapshots_pinned(config, pinned_by_path)
     dp_verified_columns, dp_verification = verify_dp_snapshots(config, pinned_by_path)
     # C-M1: `failures={}` (never `None`) here -- `_require_statistical_
@@ -423,7 +462,7 @@ def _generation_plan_from_dict(data: dict[str, Any]) -> GenerationPlan:
     # guarantee fails closed (a generic refusal) rather than falling back
     # to `check_statistical_columns`'s legacy direct-read path, which
     # would reopen a path this deserialization step must never touch.
-    column_specs = check_statistical_columns(
+    column_specs = check_generate_snapshot_columns(
         config, pinned_by_path, dp_verified_columns, failures={}
     )
     rebuilt = build_generation_plan(
@@ -431,6 +470,7 @@ def _generation_plan_from_dict(data: dict[str, Any]) -> GenerationPlan:
         pinned_by_path,
         column_specs=column_specs,
         dp_verification=dp_verification,
+        lookups=checked_lookups,
     )
     if rebuilt is None:
         # A manifest that serialized a `generation` block in the first

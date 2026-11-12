@@ -19,6 +19,22 @@ digests of those two tables moved; every column value digest and every other fix
 The change passed the semantic gate in `_fr0_refreeze.py`; its manifest is
 `tests/fixtures/phase_f_fr0/manifest.json`.
 
+Re-captured (column identity joined the seed): every fixture that draws random values moved
+because a column's stream now derives from (table, column) as well as its strategy config. Sequence,
+derived and other draw-free tables are unchanged. Captured with `python -m tests.parity._f0_capture`.
+
+Added 2026-11-10 (GEN-TYPES E1): the `source_free` fixture (constant and distribution columns).
+Captured under numpy 2.2.6 (identical on arm64 and x86); uniform and constant only; no existing entry moved.
+
+Re-baselined 2026-11-08 (generated numeric typing): an unformatted `sequence` and a numeric faker
+provider (annotated int or float) now declare and emit int64/float64 instead of string. Each affected
+column prints the same text per row with nulls at the same rows. Manifest and reasons:
+`tests/fixtures/phase_f_fr0/manifest.json`.
+
+Changed 2026-11-10 (fixture input): `live_faker` lost its `fallback` column, an unknown
+`faker_type` that compile now refuses (`generate_faker_type_unknown`). Only that table's schema and
+table digests moved; the other five column digests are unchanged.
+
 Shape: ``EXPECTED[fixture_id][table_name]`` is a `_f0_canonical.table_fingerprint` dict.
 ``POOL_SEAM`` is the generation pooled-faker seam (`_f0_seams.PoolCall.signature`) for the
 `pooled_faker` fixture, one entry per pooled column in declared order.
@@ -31,14 +47,14 @@ from typing import Any
 EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
     "sequence": {
         "seq": {
-            "schema": "78245e41da3e6c183061ef9ef03bbef39ac3f9382c79529a27a3be7455fe50a5",
+            "schema": "2e516e0de60d68531db9b2a95c93b72ff0d4f1dbfef8095010adc85d3a917fd2",
             "rows": 12,
             "columns": [
-                ("plain", "ead623bb7bba1e2d6759460612dc7b16d09ecbef7392fbdc5fbd6185d52e7e05"),
+                ("plain", "1ec5b45351654227288d8573b2a2f8abbdf3833928c098506c6218347709e20d"),
                 ("padded", "182a14b18053384fae0fd7c2f0e0eb23a08e5492da8d6d96e445c9e4504859a6"),
-                ("neg", "7261f29cb7402f0f484b325fb3d3ffdce24cbada803c01b48798d51db4222b23"),
+                ("neg", "778d292de22dfb187def46d18ddffb157a66cef6b22e4883f3e3556a71719c68"),
             ],
-            "table": "3df0c6047f7783128b54df894c8f737792708e97a3fb318223c710a621d3698b",
+            "table": "60c7d93fd8cea3692dc4b842110a50054bd993a02ee6c55eddd5caabacf69e82",
         }
     },
     "categorical": {
@@ -46,11 +62,11 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "schema": "8fcbb11a0ef84792f501201461c155a60257ba6a2d3b5c25cbde6a07b6e54492",
             "rows": 40,
             "columns": [
-                ("weighted", "1758720cdf34a626b572af6973b6bb835c6181e38c214fff2075b61b8194cf8f"),
-                ("uniform", "d202835d414aae22c5da5820e6136f9e6564552ea1e921bddbe52003637fba43"),
-                ("ints", "aa8d85f74d5ce432f8c411e97572bd6a2254bd8855ac7cff30044c62b28ef1e5"),
+                ("weighted", "b7d25a49668c68dbe948e25456d5d2876615d8653deead7905b97dabceffb7a1"),
+                ("uniform", "321620d2594e8ed2195356b8b632ec262cfaa33038117753c027c40f139d08b0"),
+                ("ints", "a5ecccf8d3f267dff95b22d71c9413661c688761d4d7c70985da4d38fb8c3a63"),
             ],
-            "table": "4b55d8edeba3b78e55c4df7eed549e6b7e7e00a5ec9ca69cd35c843eea6aa317",
+            "table": "ea82adeaa2af1ebc7aecb6cab8636442b4e15bd46d43cd10ee3642e59eb8f91a",
         }
     },
     "pooled_faker": {
@@ -58,26 +74,25 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "schema": "95da74638c7a0e193c0ae6cc86b32f3668f20ef216543e59ad0b144f5ce7d95e",
             "rows": 50000,
             "columns": [
-                ("city", "fce445cffb8ae3274e9c1c5f7fc61a3d9b42ab10225e8a4002c6c9127d8aa788"),
-                ("last", "b5c2c38e35d3f3ee73719b7cdd9780bae2e7bf6c382d8ee874fb83c7b9a666dc"),
-                ("street", "5c0b043324339261ae9c73fb5e4cb4b0be351be5e81df0716bac9b49a2b87494"),
+                ("city", "3eb7648cd2f080c68bd90570dd6ca45e9b5c150dbc9ef84e35388e87123f936a"),
+                ("last", "1879972639f3dffb1de434d79b00fd28d4a6466793d6387d846fdfd897b66f19"),
+                ("street", "f128ccff37f7fbc652ca09964d309d3b310eeb43defc0eaacbca3af3c9b742b1"),
             ],
-            "table": "7515cc948560fda6092680426cac4ff73a5cba3047cf79a07c446262654aa0cd",
+            "table": "fb96cde1164db481af66db9100f66236973ccfce9d9f75c2a73401c3054d7666",
         }
     },
     "live_faker": {
         "live": {
-            "schema": "839b1064d81a7eec3f24e9575ebaf98eb95936e3471ceda1a942866b4ab0d623",
+            "schema": "a887da5cffbcdd4936ffad62a618c9dcd5b5f13ef92c80bedfb98d5719272d75",
             "rows": 30,
             "columns": [
-                ("city", "a5f195876169a518f54dbcabbb45a2099cec9514b3bd0e488797965a3751e9f3"),
-                ("email", "d586e2786bd73f56a868080da970f4fab2cd344dcb234bab8b03a9030a8aecdb"),
-                ("de_name", "4d9f834ee7d261d5b0d1b13e34a597b12894e86e6984aebdb4e8553d36b92355"),
-                ("num", "86600c391e4b9659b8fb7d10ac3cebddfd09567ea89ff7ada38fa27f38752d6d"),
-                ("fallback", "973f9a4df74efce253a8a9497b18f790b84cbe28abe9a1a0d04d3e0f4a65a9de"),
-                ("opt_out", "8817cbf60eb100f4247a117c00d19285e4399d7965fdce4ecd56c020ac99d015"),
+                ("city", "3c662c698ec2248412e490fc3e0b2869fed7a452a2b91ecc50bdf5dbc124e379"),
+                ("email", "b503077a15137cc8ee43fb4c777d2798b684ba0863e0547ff7ffbd8e9621bcb9"),
+                ("de_name", "41f77afe03d3215973a433ce52a942a938a45db63c7c160e8b332b702808d441"),
+                ("num", "bbe70cef490a524527d1b4aed6042cb1ba24324d607b39d3a84e43a4d2ef4b8d"),
+                ("opt_out", "0639140d18601078b0f58cb03bb06d3b6fd000f54a3253671709be262ce4f969"),
             ],
-            "table": "571f2ecd49f43a7cfbb6d37f979bc25008fdef09ac2e9abdc73fdb57c969ed79",
+            "table": "138be283ade86ae610b3be41dbd782f9ece18cc89c286257b3daf1f2790b9f91",
         }
     },
     "live_faker_default_locale": {
@@ -85,10 +100,10 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "schema": "09f0a6050023432e75bfcbae5f0121b76ea56bc406498c4c19fc2dd94028d5a9",
             "rows": 20,
             "columns": [
-                ("city", "2f2f90e83bd0e612d95219e2ed4b7667447dd383700140249efdfae0d5326419"),
-                ("own", "0be72d27267556c2e7fb8a017ad7fa6af813a266e251088c708ad7e12bf43ba8"),
+                ("city", "af4cac94e630df9f31b9eabe57603d36b508d8771bae6fc9c37f57146dada8fe"),
+                ("own", "35d5f7f409aab83458b103df037ae8bc3771da011a8f68bd228f393f756907c0"),
             ],
-            "table": "ea3e1d889e9c68f3bcbfe32c5a122ae2961ceca384eede566f53e3669ad03073",
+            "table": "e8f47e28ec52dad4cd488b3192634a844b344516e078d724fb887b163293dc6c",
         }
     },
     "keyed_derive": {
@@ -96,12 +111,12 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "schema": "7dc1348a71c3a3dee4e6f5b28ec843b2358814b881fffb898ce23cb4fbc4c30f",
             "rows": 24,
             "columns": [
-                ("cat", "8babe2ee37b11436ee30df4a65003c6c9dc32da82ffe66215dd66ce74f6dfe58"),
-                ("city", "376f8c4c8ee70ffec81232a86f572006957584a9a418bbf89654e526ca597f32"),
-                ("rnd", "5737847637ff96684310f7a0a8f1ed59482f55102689ad28f03558134bb31776"),
-                ("maybe", "1102a25c8fba8a4476dbb04b18e5ce9c91456fc7090f9c6bcdf22026321b59f9"),
+                ("cat", "dc2ebfd6703b2014d796a35ad3e94778958dbab300dfe798ccf792d73d079ef9"),
+                ("city", "6c72ca71ab12d6ea8b91f64fbbc019f2b1991ec9e009b32066bd2eaa4a61be71"),
+                ("rnd", "7576d180739f9428f0a17fd34f6e2fe9277c6dbdd37a67fced2d2a7fbbe8a029"),
+                ("maybe", "5d6b2f907229442f9a1de3ca125ea6c3a4e60470a4658bb2960045dee29c681f"),
             ],
-            "table": "5fc5490f068d0d40cd4322f23d7ecc04b13ab84c4e2455483de74d60f6b5f9e1",
+            "table": "804855ce5453a6123e93f42d1c394abd4824705604fa4204c8b88b0e029a4bf9",
         }
     },
     "formula": {
@@ -109,16 +124,16 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "schema": "427da4841cb278415e1bc4e010bc1773e64568481996a167d357d94bab58628d",
             "rows": 25,
             "columns": [
-                ("rnd", "877b6483682a3ff3d0e03a5218241911083f81b8ae868e54f19bb32e437e1f3a"),
-                ("gau", "6ba157c6064b321204914212ac87abdc1f339236a1af0038d0232b93607ceba1"),
-                ("pick", "d915874c1f34e09518229ec27e573a872fb574afee003f4b555f97dfd209dd02"),
+                ("rnd", "ea057c28fbc73800ef7f8171667cf5f5b768bfdb182fd5770fcea8935ba66e6c"),
+                ("gau", "6308e35a93d0583919a164284bdd42c6fcbee3aef127a2a7b121e195866ae0e8"),
+                ("pick", "fe9ec9389425c523b5ad8a2ceff211f604bc2893735c16f692cb6e87397faa29"),
                 ("row", "edad610e72498c0ef171e1e3c65c9a6aa4e8f8956ab50eb44472e56761dfabf9"),
-                ("hsh", "fcc17defa0e7424566023fc24027a4a3addf12ff2fc9f25cc74b80a52842d86d"),
+                ("hsh", "2a6e80c753bfedbd93ba3620a27a7ef115a54cf91691c53155d994709258fb66"),
                 ("fixed_date", "adeb952fc6c10a08cca27885fdde742836bb291b49c18ad3bfae9e4aecb40477"),
                 ("empty", "1a7ced7720a8194fe783853ecc62232e944ec5e3efdf03282c78364f241005a3"),
                 ("bad", "1a7ced7720a8194fe783853ecc62232e944ec5e3efdf03282c78364f241005a3"),
             ],
-            "table": "3942827b9e13d99d3257e17d0443d2905425d90bd3a35b36c0779e04d5f8b1ba",
+            "table": "1e934ccf90c1bc2211fdfe9f6171fdde380146d65a8f0d10aefe274e312dfdcb",
         }
     },
     "referenced_formula": {
@@ -127,13 +142,13 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "rows": 16,
             "columns": [
                 ("pid", "2e3568117b7268589daf6b44944f7c0f10dfa8d069cdac450f0142138f7bc5bc"),
-                ("grp", "1c4e5f5cc2b99d03a04b23f43e5626d387f411fad384ba40bee87ffb7a91b25f"),
-                ("rf_a", "665d89e1c5bab5857aeaf87388948a1fdf7ccdf813ef75401b9c9c1efdc21bde"),
-                ("rf_b", "18d9328fec1015c2ad43c9e75ad108c3942011ced98ca97c5f952a2e3dc96c0c"),
+                ("grp", "54ed909af9960976d0ad151f6c9e3f1922e873f0dfb96c321728bbcafd1161f2"),
+                ("rf_a", "990c6d8c471ba8370ad782d76b38b51354ab87210e835b63480951c31457449e"),
+                ("rf_b", "33e17523ef5050e4cd4b4aa1cd57e0e64a3b65b42aa40aa978f4de39d59ebb02"),
                 ("rf_c", "ed6a8b1f067a2cb50f4d972ec89377af73351081176b94f38cba98d93db58fb5"),
                 ("rf_d", "bea96eed82fa1bfc53363f3bf046714a5f2f4c278862e7fbf21491d53885056a"),
             ],
-            "table": "d2c5f13e8900138664e150a18e15363f077729b402afa4ec87e824f50da8e57a",
+            "table": "02138b8efd76de7c3e85835886ddcb1bb6a044e2fe1d6f89146c0a2a0d86b533",
         }
     },
     "derived": {
@@ -142,14 +157,14 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "rows": 14,
             "columns": [
                 ("base", "91472db99376f15b424ecdfe591d347a96d9463fe2c68c9a29bd7a505ecf12fc"),
-                ("maybe", "fad0c27009544c0f2647476af54f95571f0133eba85acf1c8ea5d35a5b1911b7"),
+                ("maybe", "6471ff708935345b13d5016771047ee6529d065f62c142158c6574a9dd851237"),
                 ("plus", "a4a5ca3c2a8919836d46c0d385f6dca48b38660ee73f2ca1489c1c6b0d68bb20"),
                 (
                     "from_nullable",
-                    "4f4699923c7eccb755dd39bf5418cde668e4f9fef867438755395abc4eef4d55",
+                    "b290794a67f127e0b62e8923e0bf5ee2411cc4a324399220804f48adef38b472",
                 ),
             ],
-            "table": "d0e134747083e7e67a66f7d07d706569e5e569d7fe86443d18c404e0b552383f",
+            "table": "5783979b2c135d3a9671de24d11226ad3564a97bb31d42870a1efed8dc2948d7",
         }
     },
     "reference": {
@@ -157,21 +172,21 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "schema": "abd9d5a2cbbc42ae3009aaaff8a8ab85ed3c8ec8638968e89af709f108418ad2",
             "rows": 12,
             "columns": [
-                ("pkey", "e43bf983a1958fc28c68bac0fd0c7b39b39aff620eb3e56915140ca003a28ee3")
+                ("pkey", "994e7d8fe130ca24ccb34959464438ed7de7673b44360aad5f367ed631518f02")
             ],
-            "table": "5bd260410af58db6e28aa25502fe8865da080149765f8f97fa1e6bb839bb2371",
+            "table": "e61822720e498b0467325d7ecc3bbe360ddc05f0fb7fd0c81c63f3591c1a0f12",
         },
         "ref_child": {
-            "schema": "bcdc2b8897e69826f903a27d76c1b30c52b9b51e38eef04d07f0a8f98ca60a06",
+            "schema": "caf87e5f6df18b1b93f08ea35b5f19c1afa80ea27aadbec91438c3925488c0e0",
             "rows": 14,
             "columns": [
-                ("cid", "c15e5ad0b6fc9c50eb2e9dc73c00215b98ed3f0a0dbe1667a596aae05caa0c36"),
-                ("r_random", "ca891231af0d93c297081a16ff80597b601b9b6670cd614a55890ef04ad8a2dc"),
-                ("r_seq", "f72940eec72acc5b132e9992b9475e8475b77f9f35888a90853850471da1c2f3"),
-                ("r_weighted", "b14eb3ca348fa1a96d4c3df9bb8214c58363ec07573424dc0cc8176bb72e8135"),
-                ("r_bounded", "29456bb3eebc38287ef16f50aff6dcfdc836060ff2e769bcac23e59bf9a6c801"),
+                ("cid", "646b88e4574ca08f606c4055c214e53579235a0f19b04859f98f93a8f538e68d"),
+                ("r_random", "16c68d66e25b1a6b398ddd8653d8d6c1385f429405bdcfe4b451e1208a438f6c"),
+                ("r_seq", "7473de76d925e72f2e1e17752bb7ec7e68b6ad55ac758a766ab670a9ed6b0eba"),
+                ("r_weighted", "9e4118839347533759f5621cce525941d1f96db60497d3ab41dc023dfa014598"),
+                ("r_bounded", "bf74ff55758cee1caa28837d735b09c71b177f49bb423470654485ec356aec31"),
             ],
-            "table": "81619e14f5bc9f70a517ca6e21d4ff21080b701dd15494f9123f83f8e98861ef",
+            "table": "da6831948c5b95121f50ada166d22ccb7188661de0c811fa435e6c0a0ea75d2f",
         },
     },
     "derived_aggregate": {
@@ -180,14 +195,14 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "rows": 10,
             "columns": [
                 ("v", "60039219453e590118bb126893fa88aecffba07164a398135515767f9c8a10d6"),
-                ("v_null", "04f2c43b596bf6edbfdebb3dad8495fc30b5928097927e9c760133ba4bdca587"),
+                ("v_null", "d3ccc68944c9ff4068657ca818ea8f68d31aa045825dc5f3ba21b9715a0e3bcd"),
                 ("a_sum", "247acfb1d1a1b675d5773c0c94acbef01fc5c9de01b805c9de92caae1e324316"),
                 ("a_mean", "f15f9890327937348f4598a0fca90e33b447bfb114c6801d235810e025f239ce"),
                 ("a_min", "59bb70ad168c7c51a1bfaaa4e8c1fe7ad51d3e9d9af6ff365d03e91470808617"),
                 ("a_max", "5e9a99933569d70c2acb9961a5536ad9a31a57c5bc4c66d005b631018b43763b"),
-                ("a_count", "defdf84b0d9e2342770586571b0f3f480370888b895e2a82b4448ffdc073365a"),
+                ("a_count", "06dd649c27ef0ccc4cbb86de086d60b1eace801b9bded9c67628ee35a0e590ed"),
             ],
-            "table": "61acfeac32544546e11f199764fe152cde035be6c26bbad285c2055ca0f331aa",
+            "table": "7a01939e2db67304f0e22f38d97538ad597e87ecbea46574652653b28aea0c1a",
         }
     },
     "statistical": {
@@ -195,12 +210,12 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "schema": "0c9a2a03e9543ea0d484acd5cc1e20715989d239f3675ab94fea26a4780b8a05",
             "rows": 60,
             "columns": [
-                ("amount", "603e4ef90fc0a5a02cfe9e057757b8690997f14f17166fc6817a1953fdc35b3c"),
-                ("age", "616f5f5917e893301753de83dde384f3db7627a6066dac76237c0efb41a2dc5c"),
-                ("joined", "3ba94fe61db87f3e9fc1232c0a16d2f02068ebb434ff6d43f9ed2390bcd6541d"),
-                ("state", "4a58579cec53284599cc865d5f3e148554120afc6f7e963b1b9714ea75359b1c"),
+                ("amount", "3df4ef7088105526701e165762860edb9d28bb8715f6ff7758781a4693b7ce9c"),
+                ("age", "e5b623d2ec266ac4fc929a0bce9e53e8b1a61846f59149730125061b3c08319d"),
+                ("joined", "7d5186eba43886c55b6a5c597edacc94f5aa033dadb74cebd7f2ffbf95197250"),
+                ("state", "3d608bfaadc1fc017bfc0387160d4bef513862c9b4642dcc97094fd0f9a9c88d"),
             ],
-            "table": "3543ce7ade1f386db08ba44fa1d3e01a790d27636d65649ed554edcded44937d",
+            "table": "f37b5fca801949f050665dbb0def7a9e7ea1dbcf54b6ba2982dff10b6042c8b0",
         }
     },
     "conditional": {
@@ -208,10 +223,10 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "schema": "45c71929f1d230cd6f5ed73c3332eb410d0e2b94774e5d93f4e5a7384589c76c",
             "rows": 60,
             "columns": [
-                ("state", "4a58579cec53284599cc865d5f3e148554120afc6f7e963b1b9714ea75359b1c"),
-                ("tier", "ceddda77264e7458e2ac93aac003fe782560efa46ad3ee52f677fdcfa550f509"),
+                ("state", "18be90a9421c915da33cb8f1928db16b90e074765064c022806d35ef82a6da37"),
+                ("tier", "bf9fca540f9df6a6bb071e167529cea68bd819803ace05cc1444031bb47ca6d7"),
             ],
-            "table": "a256949efcae44979028c9421912a4fb511bbb02cb106d2c54eb57e314011b64",
+            "table": "cbceefabccf5a1ad482c8dcf8a61c33f9dcc757f777dccdbbd7adf0e3ec939f0",
         }
     },
     "grouped_windowed": {
@@ -219,40 +234,54 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "schema": "dd8dc8a8ae0a7584f7f6078af92bfc4b606fecefe56de863fd7dc51446b4c37d",
             "rows": 18,
             "columns": [
-                ("grp", "eb4b78865f4ebca05c8a12fff5e292efb0d62754820b782ad9c84a7bff8ffdcb"),
+                ("grp", "ea3e6a9169087f4a86166d961a8e8c1832c1582d5f8a71907852729ab17649ec"),
                 ("ord", "dd5c54086e0030fb006952593017b963b1b04980be96f55335e1136a13c1f916"),
                 ("anchor", "eed25f4fd8063d542f6d10619f45145e89d2dfa995a8cd32a3184392997a98a8"),
-                ("cum", "a8b2defe22f57be4eed48ee91a28ef9e0a9115d2ce593b467efe8040311bebac"),
-                ("walk", "6bc92b63fc9a9dbd8cecafbead6c7f59848e8c776e6695b546d751726bbca2c3"),
-                ("win", "9ba1c6bdc2b677f204ef916754d1e9be3dc555d283eb1c12a70856c5b50c0e88"),
-                ("gkey", "d445cfb65bd10cd7ef6100db3ddf8cc7465da261d54bfbc20e6c63f8804bb251"),
+                ("cum", "28e18779a86e630d1d972b3094e3529723e6ffcd43726fb603cd09eb4fe0dc6a"),
+                ("walk", "467a155068aa427583b4970e79cd1c921a2954bdf58ed76791650a62da96be22"),
+                ("win", "9607068222953d25090fce72edfc0c05f7780ef138388c74266caeca850cb2c6"),
+                ("gkey", "1f1257b96d35a13ef2a21e12d6d7c865cf1644d1002736a512b09e182c2e2e7c"),
             ],
-            "table": "38d60aecec60ba4eec009d36b13b1e7a04ac423fcda1dbe829aa310d04d5117a",
+            "table": "42e36d728df63493caf355c0e9603f09aed5f35961d251fd1a94bd671651ee34",
+        }
+    },
+    "source_free": {
+        "source_free": {
+            "schema": "5a37a07095f05539f97bfbcb3138805312b385dae4d18e116c2ede55ad6ccbd9",
+            "rows": 40,
+            "columns": [
+                ("country", "fd7fcb94ae747840f9cdb66640f13400b759dc453490a836f13f23f2e6aad91e"),
+                ("age", "6684419c1cfb7568b630f9b083e345a9f8f86ac215e48f9ad728cf36b02521c9"),
+                ("score", "a5020b86563aacb7505087a05ee2daf3226e4ac3b0e042b0f9eb2dbdb0194053"),
+                ("visits", "460a780d357a0711da7bd1c3bfaf28107637fcf18f68aa5a05322527be7c0309"),
+                ("rank", "6cf7b6d4ef29fb42b4bc4e94d3d6d2e1402a34cc7b1c8f5ee4a8ed2789313439"),
+            ],
+            "table": "62e95273151b5286452a137c75186489eb772ac07c2548f0e173ef75951e88b1",
         }
     },
     "nulls": {
         "nulls": {
-            "schema": "3eaa2e412ab4937ecee72bce2d43fe1b603db5344d5d02ea60cf3d2aae5a7d63",
+            "schema": "afa05e79b1f71aff04817653984fa103c0290616100f2970a75bee269e48973a",
             "rows": 30,
             "columns": [
-                ("seq_partial", "490f0cbb0e8ac47131fceb444a16c6c677abd8840e30eaa61d24aff9a2b4bdb6"),
-                ("cat_partial", "3364fee8d96f7a7150178fbdf46dd7449e0aa763f729be97fc9cf66c80af2248"),
+                ("seq_partial", "1658001bd49fa6efc4790b2a94833407f98e528840127eec8ae8f0a6f9732736"),
+                ("cat_partial", "47527e9e4692908bceba22f2a651e2e5d20c6c3dd9a097d368bec48226023ae4"),
                 (
                     "faker_partial",
-                    "b4fa6c819d8a337677184f97856ca9cd1b353c24f86f0b8bc9885bb37f1d81d0",
+                    "bf951ff776ac1324d40ab7407e6dbebd5211e4f61b3cc147f2fbe94422f13163",
                 ),
                 (
                     "cat_all_null",
                     "265822d774b2309b02cae4e9497a6d4d157cf60aa317e02cc6b04a3fa94a81e6",
                 ),
             ],
-            "table": "232902afc3faf49c772ad7bd6cddaba7846f58599e9e1c5b8c7f533d229cd271",
+            "table": "b50fc72af868f3b4939885213bdabc243221ba63dda6df3b3be46e9e46edebc8",
         },
         "empty": {
-            "schema": "c0cc89f59ad1792bfd3e6ab9eef47a610f70e3264bfcb4591ced62ec7de299bf",
+            "schema": "767f26506b2eda1f3f581fdf1e36590ef25bec3fcaab771816c61ffb14aee70c",
             "rows": 0,
             "columns": [("id", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")],
-            "table": "2445c1c0db89b65b0be8c6c6f88cf5befd76dd3251e7a8f9701fffe9db6872fd",
+            "table": "ce940f92e39e5478efccdb62a91b30ed86cc61e167838bc2ceda3539859a3626",
         },
     },
     "mixed_fk_generated_parent": {
@@ -260,10 +289,10 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "schema": "9a31618979c4ed6d06e64e9f49b1f3257b81cb47daf4cd9a4cbec30d93b3a871",
             "rows": 5,
             "columns": [
-                ("id", "ae455a2530ee14a2609557a48555d84c5a7706b099c5b1020dcde70604639abc"),
-                ("nm", "f94a9fc0b731455aa8af03ce3f45dd167c316c991ac5558be4ce2f8a928c88a4"),
+                ("id", "cb04007bfe7191396e56fc572a372b162ab09b02dadb1fd99fe46f5a699c0aff"),
+                ("nm", "14408bf93c4f9bd63f915fa085c510fe949c9035b9da57b225e8be7e78b3fa90"),
             ],
-            "table": "14acfc63f1435997498fa3f7b1e357d4857dcf40213e470ca624b2d346be624b",
+            "table": "17b88d4d1738563427a72868cd5c240a4c6db23eb4815f9ea72bf8dda36f14d4",
         },
         "accounts": {
             "schema": "d5655e336eed516a1c449bef81b0160f0e6abc5d0ae81a3e824099d0ed55db65",
@@ -344,10 +373,10 @@ POOL_SEAM: list[dict[str, Any]] = [
         "n": 50000,
         "locale": None,
         "pool_size": 10000,
-        "build_seed": "5facd2dcd2a5e53b",
-        "selection_seed": "ebdaa835ab9cfd18",
-        "pool_digest": "a2d52e514cf59ec73caae48899b3bb96a017f6bb83372ef7b7e4f71555efcb1f",
-        "sampled_digest": "5e4b1fd14ca80872f889095cd2d4f5dae245f014ae201aefa22d3e07d642331e",
+        "build_seed": "a94b15c8ba386c9c",
+        "selection_seed": "e7587ea770b3b50a",
+        "pool_digest": "33f05591a98c33fb3b5aaeb268085cb9d5fc4a386202be8353150ef936c684a4",
+        "sampled_digest": "40b5d3a7b21b305e4723bedb4a2dc37f6a5333d634fec3672e971fd607c6a1fe",
     },
     {
         "faker_type": "last_name",
@@ -355,10 +384,10 @@ POOL_SEAM: list[dict[str, Any]] = [
         "n": 50000,
         "locale": "de_DE",
         "pool_size": 10000,
-        "build_seed": "82446ead7bf203cc",
-        "selection_seed": "dc4929348d54853a",
-        "pool_digest": "df902d131f89027059cfa6ec3f488d586bce610272f8d135a7b466df5c5dd16f",
-        "sampled_digest": "8b4a5ee6b71a13573843fca0d3f56c5397de23104c8854d046f1d3a832b21d24",
+        "build_seed": "aeca1eca5a28a58f",
+        "selection_seed": "eb73b9fc4006c48f",
+        "pool_digest": "bfaf853b400c7d465f2a3d35ced59af5263d7de0a37050c75657d63794ddc830",
+        "sampled_digest": "8fe49c2ba6e4f1dc2c982eeffe6ac29be9842fb6821fa1f694c513275bbba629",
     },
     {
         "faker_type": "street_name",
@@ -366,9 +395,9 @@ POOL_SEAM: list[dict[str, Any]] = [
         "n": 50000,
         "locale": "fr_FR",
         "pool_size": 10000,
-        "build_seed": "029853f11ffd739a",
-        "selection_seed": "fae2a64b1d7932ce",
-        "pool_digest": "c6d58ec427bb9b510876e110da27cc64c63e986a3fa307ff244a19285252fbb0",
-        "sampled_digest": "2e86f4c4dd172070c7c2344f593eb82ee998b97775c6900806473616d2f0b6b0",
+        "build_seed": "77af8a192a9e8901",
+        "selection_seed": "be38b482710f12e5",
+        "pool_digest": "e054b89f1299f41c01277f9c220c5600d30c1a216691c37ff6807e7ff7589645",
+        "sampled_digest": "365e195fab6d23ad7c73cf452988cf624a499dd6a3c9bd905fccc126381bddca",
     },
 ]

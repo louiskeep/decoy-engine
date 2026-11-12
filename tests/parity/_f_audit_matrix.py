@@ -87,7 +87,7 @@ def standalone_admitted(p: Probe) -> bool:
     if p.fresh or p.kind not in ADMITTED_KINDS:
         return False
     if p.kind == "reference":
-        return not p.repair
+        return not p.repair and p.distribution != "fitted"
     if p.kind == "faker":
         return p.faker != "custom"
     if p.kind == "windowed_date":
@@ -103,6 +103,8 @@ def reason_of(p: Probe) -> str:
         return f"family_declined:{p.kind}"
     if p.kind == "reference" and p.repair:
         return "reference_cardinality_repair"
+    if p.kind == "reference" and p.distribution == "fitted":
+        return "reference_fitted_fanout"
     if p.kind == "faker" and p.faker == "custom":
         return "faker_custom_or_unresolved_provider"
     if p.kind == "windowed_date" and not p.anchor_ok:
@@ -137,6 +139,9 @@ def compute_of(p: Probe) -> str:
         return NO_SELECTION
     if p.kind == "categorical":
         return PYTHON_RNG
+    if p.kind in {"constant", "distribution"}:
+        # A parametric draw is not a selection among values: no backend event to witness.
+        return NO_SELECTION
     if p.kind == "reference":
         # An empty parent returns None before any draw; `sequential` is a direct index.
         if p.parent_empty and not p.repair:
@@ -159,10 +164,19 @@ def witness_of(p: Probe) -> tuple[str, str]:
     """(status, why). A positive value witness is granted only where one can be compared."""
     if p.kind in {"statistical", "grouped_series", "group_key"}:
         return EXCLUDED, "unobserved kind on the legacy path; proven by route and reason"
+    if p.kind in {"constant", "distribution"}:
+        return EXCLUDED, "no selection event to mark; value equality is the GEN-TYPES route tests"
+    if p.kind == "lookup":
+        return (
+            EXCLUDED,
+            "legacy-only and file-backed; value equality is the GEN-TYPES E3 lookup tests",
+        )
     if p.kind == "windowed_date" and not p.anchor_ok:
         return EXCLUDED, "legacy windowed_date is unobserved; proven by route and reason"
     if p.kind == "reference" and p.repair:
         return EXCLUDED, "whole-table cardinality repair rewrites the drawn keys"
+    if p.kind == "reference" and p.distribution == "fitted":
+        return EXCLUDED, "fitted fan-out is legacy-only; proven by route, reason and its own tests"
     if p.kind == "reference" and p.parent_empty:
         return EXCLUDED, "every position is an intrinsic null; the vacuity fence refuses a label"
     return VALUE_EQUALITY, ""
@@ -233,6 +247,18 @@ ROWS: Final[tuple[AuditRow, ...]] = (
         "one persistent random.Random.choices stream",
     ),
     _row(
+        "constant",
+        Probe("constant"),
+        lambda p: p.kind == "constant" and _clean(p),
+        "the one configured value; no RNG event",
+    ),
+    _row(
+        "distribution",
+        Probe("distribution"),
+        lambda p: p.kind == "distribution" and _clean(p),
+        "one persistent numpy Generator from the dist family; prefix-stable",
+    ),
+    _row(
         "reference-sequential",
         Probe("reference", distribution="sequential"),
         lambda p: _ref(p, "sequential"),
@@ -253,8 +279,22 @@ ROWS: Final[tuple[AuditRow, ...]] = (
     _row(
         "reference-empty-parent",
         Probe("reference", parent_empty=True),
-        lambda p: p.kind == "reference" and _clean(p) and not p.repair and p.parent_empty,
+        lambda p: (
+            p.kind == "reference"
+            and _clean(p)
+            and not p.repair
+            and p.distribution != "fitted"
+            and p.parent_empty
+        ),
         "intrinsic None, no draw",
+    ),
+    _row(
+        "reference-fitted-fanout",
+        Probe("reference", distribution="fitted"),
+        lambda p: (
+            p.kind == "reference" and not p.fresh and not p.repair and p.distribution == "fitted"
+        ),
+        "declines to the whole-table generator",
     ),
     _row(
         "reference-cardinality-repair",
@@ -361,6 +401,12 @@ ROWS: Final[tuple[AuditRow, ...]] = (
         "group-scoped keys",
     ),
     _row(
+        "lookup",
+        Probe("lookup"),
+        lambda p: _legacy_kind(p, "lookup"),
+        "family declined (file-backed list pinned in the plan); one random.Random.choices call",
+    ),
+    _row(
         "determinism-fresh",
         Probe("categorical", fresh=True),
         lambda p: p.kind == "categorical" and p.fresh,
@@ -388,7 +434,7 @@ def probe_grid() -> list[Probe]:
         grid.append(Probe(kind))
     grid.append(Probe("categorical", fresh=True))
     grid.append(Probe("categorical", plan_decliner=True))
-    for dist in ("random", "sequential", "weighted"):
+    for dist in ("random", "sequential", "weighted", "fitted"):
         for empty in (False, True):
             for repair in (False, True):
                 grid.append(

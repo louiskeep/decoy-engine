@@ -9,48 +9,914 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
-### Changed (B-6 vault crypto core, 2026-11-01)
+## [0.22.0] - 2026-11-10
 
-Plan: `docs/plans/2026-11-01-b6-vault-crypto-remediation.md` (slices S1, S2, S2b, S4a, S4b).
+### Breaking for consumers
 
-- HKDF-SHA256 (`determinism/_hkdf.py`) delegates to PyCA `cryptography` (`HKDF`, `HKDFExpand`,
-  `HMAC`) instead of a hand-written loop. Every derived key is byte-identical (RFC 5869 §A vectors
-  and a corpus captured from the stdlib implementation); the empty-salt refusal holds on both
-  `hkdf_extract` and the one-shot `hkdf_sha256`.
-- BREAKING (pre-GA, hard cut): `tokenize` derives each token under a per-vault subkey,
-  `derive(mask_key, namespace, b"tokenize-key/v1" || len(scope) || scope)`, where `scope` is the
-  new required `TokenVaultWriter.derivation_scope` (16 to 64 non-secret bytes the vault owner mints
-  once). Two vaults with the same key, namespace and plaintext now mint different tokens, and a
-  `hash` output (any `truncate`) is no longer a token payload. A writer without a scope (a vault
-  from before this change) is refused with the new `runtime.token_vault_derivation_unsupported`,
-  a malformed scope with `runtime.tokenize_vault_scope_required`; both are raised before any
-  source is read, with the registered summary as their only text. No dual derivation and no
-  migration: old vaults stop working with this release. Reason registry 1.3.0.
-- BREAKING (pre-GA): boundary rule B0. A file-vault `vault_writer` is refused with the new
-  `runtime.vault_requires_resident_output` wherever the engine cannot hold every output row
-  until the vault is published: `run_pipeline` with both a `sink` and a `vault_writer`,
-  `run_mask_chunked` / `run_mask_pipeline_chunked` with any `vault_writer`, and
-  `run_fk_out_of_core` with both. With a sink the engine committed output inside the run and
-  the vault could only follow it, so a crash between the two left published output whose vault
-  never existed. The refusal runs before any source or chunk is read. `run_pipeline` without a
-  sink (including its auto-chunk lane, which now calls internal entry names) is unchanged. The
-  `decoy` CLI's `run --chunked --vault` uses the refused combination and must refuse the flag
-  pair before it repins to this release.
-- BREAKING (pre-GA): the file vault is published privately, durably and exclusively.
-  `VaultWriter.write` (both a path string under the ambient policy and a policy `OutputDir`)
-  creates a stage beside the vault with mode exactly `0600` whatever the umask, writes and
-  fsyncs it, links it to the vault name, fsyncs the directory and removes the stage. An existing
-  vault is refused with the new `runtime.vault_exists` (was: overwritten in place under the
-  ambient policy, which also wrote through hard links); a write, fsync or link failure is the new
-  `runtime.vault_commit_failed`. Both texts are fixed and name no path. No failure path removes a
-  published vault. The ambient in-place write (`vault_direct` stage label) is deleted. Stage
-  files of every policy now take their mode from `fileaccess._output.STAGE_MODE` (quarantine and
-  vault `0600`); a private stage's mode is restored with `fchmod` before the first byte, so a
-  umask that masks owner bits (`0777`) no longer publishes a `0000` vault or quarantine sidecar
-  its owner cannot reopen.
-- `tests/unit/test_reason_registry_bump.py`: a branch that adds reason identities must set the
-  registry to its merge base's next minor and give every added identity that `since`.
-  `engine-v2-substrate-matrix.yml` now checks out with `fetch-depth: 0` for it.
+- a generate column that names an unknown faker type or locale, passes a keyword its provider does not take, mixes category types, reads a column that is not ready yet, or has a formula with an unknown name now fails at `decoy validate` and `decoy run`.
+
+### Added (constant and parametric distribution generate types, GEN-TYPES E1, 2026-11-10)
+
+Two new generate column types need no source file.
+
+`type: constant` with `value:` gives every row that value (a string, integer, float or bool).
+
+`type: distribution` with `family: uniform` and `low`, `high` draws uniform values in that range.
+Only `uniform` ships: the other families (normal, exponential, lognormal, beta, poisson, zipf) are
+refused until a portable sampler lands, because numpy's versions are not bit-identical across
+arm64 and x86. The family takes exactly its own keys and refuses any other. Optional `min` and `max` clip the draw. Output depends only on the seed and the
+column, and is the same on the resident, streamed and pinned routes. Both types accept
+`null_probability`.
+
+`generate_option_catalog()` entries gain `required_when`, which lists the keys a chosen family (or
+a `weighted` reference) requires. The capability matrix now lists `constant` and no longer calls
+`distribution` a legacy entry.
+
+### Added (fitted fan-out reference docs, QA-FK-FANOUT D, 2026-11-10)
+
+`docs/strategies.md` documents `distribution: fitted` for `reference` generate columns: the
+`fanout` block that `decoy fit --fanout` and `fanout_columns=` write, how children are allocated to
+parents and assigned, and every refusal code. CODEMAP names the fan-out module and its one lazy
+`quality` to `generation` call.
+
+### Added (public joint cell cap, GEN-COND-CAP, 2026-11-10)
+
+`decoy_engine.quality.MAX_CONTINGENCY_TOP_K` (1000), the largest `contingency_top_k` a snapshot accepts, is now public so callers can name the bound without keeping their own copy.
+
+### Changed (generate columns are checked per type at validate, GEN-STRICT E2, 2026-11-10)
+
+`run_config_only_checks` and `compile_plan` now call one check, `check_generate_columns`, in place of the five separate reference checks. It refuses a faker type or locale Faker does not know, `faker_kwargs` the provider does not accept, categories Arrow cannot type, a `derived` expression that reads a later column, a transform option its own parser rejects (for example `group_by` equal to `order_by`), and weights whose length differs from a `sequence` parent's row count. A formula must list every sibling column it reads in `references`, may not use an unknown name or the `{a}` form, and may not read itself or a later formula that has `references`. Each refusal names the table, column and option, with a registered code, and never echoes a submitted value. The messages of the five existing reference checks are now fixed text as well.
+
+A `statistical` column whose `condition_on` names a later column already failed before this change; it now reports `generate_column_forward_reference` instead of `statistical_condition_column_unavailable`. A faker column with no `locale` is checked at plan time against every Faker locale and again, with the platform's `instance_default_locale`, when generation starts.
+
+A `formula` that uses syntax the runtime evaluator cannot run (lambda, walrus, set comprehension, a call through a non-name) is now refused at validate and compile with `generate_formula_invalid`; it used to compile and generate a column of nulls. The check reads the evaluator's own node table (`decoy_engine.expressions.formula_is_evaluable`).
+
+### Fixed (profile every row at near the old speed, row 24f follow-up, 2026-11-10)
+
+`profile_columns` on a full frame is back to seconds at 1M rows x 8 columns (it took minutes after the
+CLI began profiling every row). Detectors match each distinct value once and weight by count, so
+the match rate, sample misses and format pattern are the same as matching every cell. The date probe
+judges the parse rate on the first 200 non-null values and coerces the full series only for date
+columns. K-anonymity factorizes each candidate column once, the sentinel scan judges distinct values,
+and the casing and alphabet samples convert only the rows they read. Profile output is unchanged
+except k-anonymity, which now also covers category-dtype and mixed-object columns that the old
+groupby got wrong or skipped: a category column with unused categories used to give k=0 and now
+gives k=1, and mixed-object combos the old groupby skipped are now reported.
+
+## [0.21.0] - 2026-11-10
+
+### Breaking for consumers
+
+- `contingency_top_k` accepts only an int from 1 to 1000; 0, a negative number, `True` and a larger value now raise
+  `DistributionSnapshotError`. A cap above the default is also refused in a plain snapshot when a joint column is
+  numeric, datetime, freetext, empty or `high_cardinality` (`quality.contingency_top_k_kind_unsupported`).
+
+### Added (condition_on fallback warning, GEN-COND-CAP E1b, 2026-11-10)
+
+Generation now raises `warning.generation_condition_parent_unseen` (registry 1.22.0) once per
+conditional `statistical` column per run when some rows have a `condition_on` parent with no fitted
+combination, and so draw from the column's overall counts. The record reaches `on_warning` and
+`ExecutionResult.warnings` with `table`, `column`, `condition_on`, `rows`, `rows_null_parent`,
+`rows_total`, `parent_values` (a count of distinct parent values, stopping at 1000) and `parent_values_capped`; it carries no cell value.
+Generated bytes do not change.
+
+### Added (route summary, RUN-STREAM E3, 2026-11-10)
+
+`route_summary(quality_metrics)` returns a frozen `RouteSummary` with the route, its reason code
+and text, the input and output modes, the configured thread and memory caps, and the values the
+route applied: the native thread clamp, the distinct DuckDB threads and memory limits, and the
+native status (`admitted`, `not_installed` or `declined: <code>`). A configured cap is never
+reported as applied; a route that opened no DuckDB connection or native kernel reports nothing
+applied. Missing blocks give `route="unknown"`. The caller passes the cap source labels, since it
+chose the caps. It is exported from `decoy_engine`.
+
+The out-of-core route's `quality_metrics["resources"]["out_of_core"]` block also carries
+`memory_cap_bytes`, the budget the run was given, whenever the block is written.
+
+### Changed (config-relative paths, generation warnings and order, GEN-CLI E1, 2026-11-10)
+
+`compile_plan`, `run_config_only_checks`, `run_pipeline`, `run_pipeline_isolated`, `validate_plan`,
+`compile_pinned_plan`, `compile_pinned_plan_with_generation`, `estimate_job`,
+`estimate_job_capacity` and `capture_physical_plan_inputs` take a new keyword, `base_dir`. A
+relative `snapshot_file` is read from that folder, a relative `quarantine.output_path` is
+written there (a `quarantine_path` argument still wins and is used as given), and the capacity
+estimators resolve `column_names_file` the way they already resolved `path`. With no `base_dir`
+nothing changes: a relative path still means the working directory, or the root under a strict
+file-access policy. Through `run_pipeline_isolated`, `base_dir` must be an absolute `str`. The
+config dict is never rewritten, so `pipeline_config_hash`, plan bytes and every output byte are the
+same from any folder. `decoy_engine.fileaccess.config_relative(locator, base_dir)` is the one join,
+and replaces the private copy in `execution/capacity.py`. An unreadable relative snapshot now names
+the path it tried and the rule.
+
+The generation fidelity gate now hands a structured `QualityWarning`
+(`warning.generation_fidelity_below_threshold`) to the new `on_warning` keyword on the four
+`generate_tables*` entries, and the pipeline routes fold it into `ExecutionResult.warnings`. The
+log line stays. The gate also warns when any one comparable column scores below
+`fidelity_warn_threshold`, not only the table's overall score, so a single broken column no longer
+hides in a high average. The default 0.8, the key and its bounds are unchanged. `detail` carries
+`trigger` (`overall` or `column`) and `below_columns`. A second code,
+`warning.seed_ignored_with_master_key`, is registered for hosts to raise (registry 1.22.0).
+
+`decoy_engine.generation.generation_order(config)` returns each generate table with its parents,
+parents first, and both generation routes build tables in that order. Ties follow table declaration
+order, then first-reference order, so the order no longer depends on `PYTHONHASHSEED`. Per-table
+bytes do not change. For a table with two or more parents the order of the returned tables, and so
+of written targets, may differ from a run on an earlier build; the order was never part of the
+byte contract. A `reference_table` that is not a generate table now raises the same `ValueError` on
+both routes.
+
+`decoy_engine.config.generate_option_catalog()` and `GenerateTypeOptions` list each generate
+type's required, optional and common option names. The root `decoy_engine` namespace is unchanged.
+
+### Changed (fitted number columns keep their shape, GEN-NUM-SHAPE, 2026-11-10)
+
+A fit now stores a quantile grid (`stats.quantile_grid`) for each number column with at least
+100 values and more than 30 distinct values, and statistical generation samples from it instead
+of ten equal-width bins. One extreme value no longer spreads generated rows across the whole
+range, and skewed columns keep their median. Every interval and tail has at least 10 source rows,
+and generated numbers stay between the 10th smallest and 10th largest source value. This applies
+to columns that get a grid or exact values; a column under 100 rows keeps the earlier histogram
+behavior, which can emit values anywhere in the source range. An interior
+grid knot can equal a source value held by fewer than 10 rows, as today's plain value-bearing
+snapshot quantiles and bin edges already can. A redacted fit withholds the grid.
+
+A number column with 30 or fewer distinct values stores those values (`stats.exact_values`),
+leaving out any value held by fewer than 10 rows, and generation emits them at their source
+shares. No extra flag is needed: every stored value is held by at least 10 source rows.
+
+Snapshots fitted by earlier versions have neither key and generate exactly as before; re-fit to
+get the new shape. A redacted fit drops both keys for sensitive columns.
+
+### Changed (condition_on joint cap bounds and fit warning, GEN-COND-CAP E1, 2026-11-10)
+
+`contingency_top_k` on `compute_distribution_snapshot` and `distribution_snapshot_document` now
+accepts only an int from 1 to `MAX_CONTINGENCY_TOP_K` (1000) and raises `DistributionSnapshotError`
+with the new `quality.contingency_top_k_invalid` otherwise. Before, 0 kept no cells and a negative
+number sliced from the end, and `True` was accepted as 1; a caller passing `True` must pass 1. No
+known caller passes the keyword, and the default (25) writes the same bytes as before.
+
+A cap above the default is refused in a plain snapshot (`include_values=False`) when a joint column
+is numeric, datetime, freetext, empty or `high_cardinality`, with the new
+`quality.contingency_top_k_kind_unsupported`: the extra cells would hold raw values. Plain
+categorical pairs keep every combination up to the cap, and `include_values=True` is not refused.
+
+`decoy_engine.snapshot_joint_warnings(doc, contingency_top_k=...)` is new. It returns one
+`QualityWarning` (`warning.fit_joint_cells_truncated`) per joint whose cap dropped combinations,
+with `columns`, `cell_count`, `cells_kept`, `cap_dropped`, `policy_dropped` and `other_count`, and
+skips joints whose values the writer withheld. It carries names and counts only (registry 1.22.0).
+
+## [0.20.0] - 2026-11-10
+
+### Breaking for consumers
+
+- Numeric fidelity scores drop for skewed or drifted columns (FID-RANGE); re-check
+  `fidelity_warn_threshold` and policy floors.
+- A csv file source must set `has_header` (CONFIG-EXPLICIT E1). Without it validation fails with
+  `source_file.has_header_required`; add `has_header: true` to keep the old read. A headerless source can
+  name its columns in a one-record header file with `column_names_file`. A csv dump always carries
+  `has_header`, so the physical plan hash moves for those configs. `resolve_csv_dialect` and
+  `build_profile_source` are now file-access entry points. Registry 1.15.0 adds three reasons (see
+  `docs/reasons.md`).
+- A generate column accepts only the option keys its `type` reads. A config whose unknown or
+  malformed option ran before because the generator ignored it is now refused with a
+  `config.generate_*` code; deleting such a key changes that column's seed and generated output.
+- A pipeline with `global_settings.dp` refuses a `type: reference` column with
+  `distribution: fitted` (`dp_generate_fitted_fanout_unsupported`). Use `distribution: random` under DP.
+- A generate run that keeps its output in memory is refused with `generation_budget_exceeded` when
+  the output cannot fit the detected memory ceiling, instead of running until the host kills it.
+- A source table with duplicate field names is refused with
+  `TransformError(code="duplicate_source_field_names")` at every public entry, instead of an
+  uncoded `KeyError`/`ValueError` or a silent out-of-core success.
+- The local protected quarantine arena goes through the allocator: on POSIX an empty arena with a
+  permissive mode is tightened to 0700 and accepted; one that already holds files is still refused
+  (`arena_unsafe`).
+- Generated numeric columns (an unformatted `sequence`, a faker provider that returns an int or a
+  float) are typed int64/float64 instead of string, and Parquet output has numeric columns. A
+  consumer that reads them as text sees a type change; convert with `generated_table_to_pandas`,
+  or nullable integer columns print as `1.0`.
+- A caller-named `temp_dir`, `staging_dir` or spill directory that already exists must be a real
+  directory you own with no group or other access. One that holds files, is a symlink or is owned by
+  another user is refused with `runtime.scratch_unsafe` (an empty open one is tightened to 0700). A
+  caller-named `staging_dir` is now created without parents, so its parent directory must exist.
+
+### Changed (numeric fidelity scale, FID-RANGE, 2026-11-10)
+
+Numeric column similarity now divides the quantile error by the source interquartile range
+(p75 - p25) instead of the source min-to-max range, so one extreme value no longer hides a wrong
+shape. When that range is 0 it uses p95 - p05, then max - min. A constant column scores 1 when the
+output quantiles match it and 0 otherwise. The old 1.0 floor is gone, so scores no longer depend
+on the column's units. The report shape and method name do not change.
+
+### Changed (generated numeric columns are typed, GEN-NUMERIC-TYPING, 2026-11-10)
+
+Generated numeric columns are now typed int64/float64 instead of string: an unformatted `sequence`
+and a faker provider that returns an int or float (pyint, pyfloat and similar). `derived`
+arithmetic and `grouped_series` ordering now work on numbers. Cell text is unchanged for non-null
+values; Parquet output has numeric columns. Formatted sequences (prefix, suffix, pad) and other
+faker providers stay string. A column stays string when its values cannot be proven to fit int64
+(a sequence whose last value overflows, an unbounded or oversized faker int provider), when a
+custom provider overrides its name, or when any reader of it needs text: formula references,
+aggregate input, group labels, window anchors, statistical conditioning, a `derived` expression
+that uses it with `+`, `==` or `in` against strings, or a relationship whose paired column is not
+generated with the same type.
+
+An engine release containing this change must ship together with the CLI switch from
+`table.to_pandas()` to `generated_table_to_pandas`, or nullable integer columns print as `1.0`.
+
+#### Added: `generated_table_to_pandas`
+
+`decoy_engine.generated_table_to_pandas(table)` converts a generated Arrow table to pandas with
+nullable integer dtypes, so a nullable numeric column writes `1` and not `1.0`.
+
+### Added (record library, engine side, LIB-L1a, 2026-11-10)
+
+`decoy_engine.records` holds the envelope the CLI's local record library and the platform importer share: `build`,
+`encode` and `decode` for `decoy-record/v1`, one canonical JSON form and content-addressed ids, a kind registry
+(`evidence`, `run-result`, `sample-run/v1`, `scan-set`; `publication` and `checkpoint` reserved), the
+`decoy-library-export/v1` codec and the `decoy-job-log/v1` header and reader. A record of an unknown kind or a later
+major decodes to an opaque record or `RecordNeedsNewer` instead of an error. Seven reasons join the registry at
+1.20.0: `runtime.record_invalid`, `runtime.record_corrupt`, `runtime.record_kind_reserved`,
+`warning.library_write_failed`, `warning.job_log_write_failed`, `warning.library_degraded` and
+`warning.library_delete_skipped`.
+
+### Added (fitted reference snapshot checks, QA-FK-FANOUT E2a, 2026-11-09)
+
+A `reference` column with `distribution: fitted` now has its `snapshot_file` read once and pinned
+into the Plan, like a `statistical` column. Compile, `run_config_only_checks` and `plan_from_yaml`
+refuse a fitted column with no `snapshot_file`, an unreadable snapshot, a snapshot with no fan-out
+for the source column (including every DP snapshot), an invalid fan-out block, or `weights`,
+`min_per_parent` or `max_per_parent` set. A loaded Plan whose manifest dropped the fitted snapshot
+raises `plan.statistical_snapshot_not_pinned`. Messages name fields only, never a stored value. One
+wrapper, `check_generate_snapshot_columns`, now runs the statistical and fitted checks at all three
+sites.
+
+### Added (fitted reference fan-out execution, FK-FANOUT E2b, 2026-11-10)
+
+A `reference` generate column with `distribution: fitted` and a `snapshot_file` made with a fan-out block gives
+each parent a child count drawn from the fitted degree histogram, instead of independent uniform picks. The
+snapshot is read once at compile and pinned, so deleting or editing the file after compile changes nothing, and
+seed derivation and the null mask never reopen it. The column takes the whole-table route. A `fitted` column
+with no pinned fan-out stops with `reference_fanout_missing`, and child rows against an empty parent pool stop
+with `reference_parent_pool_empty`. Other distributions generate the same cells as before.
+
+### Added (host CPU probe, DuckDB thread cap and conservative budget, RUN-STREAM E1b, 2026-11-09)
+
+`decoy_engine.detect_usable_cpus(*, fs_root=None, affinity=None)` is the platform's cgroup-aware core
+count moved into the engine: the tightest quota on the cgroup path (v1 or v2), capped by CPU affinity,
+or `os.cpu_count()` where the OS has no affinity call (macOS). A limit file that is present but
+unreadable raises `ExecutionError` with the new `runtime.cpu_detection_failed` (registry 1.21.0).
+`decoy_engine.resolve_conservative_ooc_budget_bytes()` returns 25% of the effective memory ceiling
+through `resolve_budget(None)`; `resolve_ooc_memory_limit(None)` keeps its ceiling-minus-reserve default
+for every other caller.
+
+`run_pipeline(out_of_core_threads=...)` caps the DuckDB threads of the out-of-core route. The cap is bound
+per run and read where each connection opens, so every nested connection gets
+`max(1, min(cap or usable CPUs, memory_limit // 2 GiB))` threads. DuckDB thread sizing now uses usable
+CPUs instead of `os.cpu_count()`. If the CPU limit cannot be read, a given cap is used in place of the CPU
+term (so `out_of_core_threads` works around the failure); without a cap the error is raised. The connection settings actually applied are returned in
+`quality_metrics["resources"]["out_of_core"]` (`thread_cap`, `applied`). The auto-chunk lane stamp gains
+`native_thread_clamp` (`requested`, `applied`). `applied` is the native companion's own answer
+(new `resolve_native_threads`, the resolver every kernel call uses), or None when the companion
+or that symbol is absent. The cgroup membership, mountinfo parsing and mount-root translation the CPU probe and the memory
+budget both need now live in one module, `execution/pipeline/_cgroup.py`. The memory budget finds its
+cgroup directory through mountinfo like the CPU probe, so a mount that exposes only a subtree (a
+container's cgroup namespace) is read at the right directory instead of falling back to host RAM.
+
+### Added (CONFIG-EXPLICIT E2a: declared-columns module, registry 1.19.0, 2026-11-08)
+
+`decoy_engine` exports `source_columns`, `declared_columns`, `check_columns_declared`,
+`DeclarationRequest`, `PreparedDeclaredSources` and `prepare_declared_sources`: the pre-read
+boundary that checks every source column is listed in the config. Registry 1.19.0 adds
+`source_file.undeclared_column` and `source_file.undeclared_table`. No route calls the boundary
+yet, so run behavior is unchanged.
+
+### Added (`unique` and `unique_together` generate options, GEN-UNIQUE E2, 2026-11-09)
+
+`unique: true` on a `sequence`, `categorical`, `faker` or `reference` generate column draws values with no
+repeats, and `unique_together: [[a, b]]` on a table does the same for a pair of `reference` columns. Rows that
+need more distinct values than exist stop the run with `uniqueness_impossible`, which names the table, column
+and counts but never a value. List and dict categories, parent keys and provider outputs are compared by
+equality, so they dedup instead of failing. Unique columns decline the window and pinned routes, and their
+seen set counts toward the memory floor. A config without these keys generates the same cells as before.
+
+### Added (`execution_mode="stream"`, RUN-STREAM E1a, 2026-11-09)
+
+`run_pipeline(execution_mode="stream")` means "must stream". It runs as `auto` with one extra
+requirement, and a job no streaming route can take is refused with the new
+`runtime.streaming_unavailable` (registry 1.18.0) before any source passed in `sources` is read.
+The size threshold does not apply, so a table of any size, empty included, takes the chunked lane. A
+table needs a lazy source and a streaming sink. Parquet output keeps one row group per chunk, split at
+pyarrow's 1,048,576-row writer cap, the grouping `ParquetWriter.write_table` gives each chunk of a
+`--chunked` run; the 256 MiB early cut stays an `auto` rule. A job with FK edges runs as one lane unit
+per table when every mask table passes the complete chunked compatibility gate. If the gate rejects it,
+the job takes the out-of-core route only when that route accepts the job and the FK dtype hazard is
+clear, and is refused otherwise. `auto` routing, its threshold and its row-group rules are unchanged.
+An empty source under `stream` writes an empty file with the source schema, as base `--chunked` does; the resident run types the empty columns differently (plan G6).
+
+### Changed (fidelity scores null-rate drift, GEN-FIT-SHAPE E3, 2026-11-09)
+
+Each `quality-fidelity/v1` column entry gains `value_similarity` (the score as before) and
+`missing_value_similarity` (`1 - |source null rate - output null rate|`, `null` when either side has no
+rows). `similarity` is the value score times the missing score, so a column that lost its nulls no longer
+scores 1.000; when the rates match, `similarity` is exactly the old number. `empty` and `kind_mismatch`
+entries stay out of the aggregate but report the missing score. If either snapshot carries a `dp` block the
+missing score is reported and not applied, because a DP null count is noise. The null fraction itself is now
+the public `decoy_engine.quality.snapshot_null_fraction`, the one place that count and zero-row rule live.
+
+### Changed (generate uniqueness groundwork, GEN-UNIQUE E1, 2026-11-09)
+
+No generated-cell changes. Groundwork for `unique` generate columns: the config-time checks (`config/_generate_unique.py`),
+`unique_set_bytes`, `parent_keys` and `pool_opted_out` land unwired, and `unique_capacity_ok` takes a
+`null_reusable` flag. The masking pool's `uniqueness_impossible` refusal now comes from the shared
+`raise_uniqueness_impossible` builder, so its message names counts only and its wording changed; the code is
+the same. A golden test pins generated cells, Plan config and seed fingerprints for configs without the new keys.
+
+### Changed (fitted generation keeps nulls, blanks, precision and resolution, GEN-FIT-SHAPE E2, 2026-11-09)
+
+A `type: statistical` column whose snapshot carries a `cell_format` block (every `decoy fit` after E1)
+now reproduces the source shape. Generated nulls follow the source null rate unless the column sets
+`null_probability`, which then owns the nulls (`0` included). A freetext column keeps its blank fraction
+and never emits an empty string otherwise. Numbers are rounded to the source decimal places, and a whole
+number column comes out as `int`. Datetimes are floored to the source resolution; day resolution emits
+`datetime.date` (Parquet `date32`). An all-null source column (kind `empty`) generates all nulls instead of
+being refused. A fitted column's Arrow type now comes from its spec, so an all-null window keeps it.
+`generate_rows` also stops failing on a column of `null` type when it meters bytes. A snapshot without
+the block, every DP snapshot included, generates byte-identical output. The malformed-block refusal is
+`plan.statistical_cell_format_invalid`. The `gen.statistical_per_row` draw-site entry is re-pinned: the
+fitted path adds a blank draw and a null draw after the value draw.
+
+### Added (fitted cell format in snapshots, GEN-FIT-SHAPE E1, 2026-11-09)
+
+`compute_distribution_snapshot(..., cell_format=True)` adds an optional `cell_format` block to each
+column of a `distribution-snapshot/v1`: `decimal_places` for numeric columns, `resolution` for datetime
+columns and `blank_count` for freetext columns (categorical and empty columns carry `{}`). The block holds
+counts and fixed names only, never a cell, so the redacted fit writes it for sensitive columns too, after
+the redactor nulls any member it does not recognise. `distribution_snapshot_document` (`decoy fit`) now
+passes the keyword, so new fits carry the block. The keyword defaults to `False`: a call without it, and
+every snapshot written before this, is byte-identical. Generation does not read the block yet.
+
+### Added (reason codes for generate uniqueness, 2026-11-09)
+
+Registry 1.17.0 adds four identities for GEN-UNIQUE: `config.generate_unique_conflict`,
+`config.generate_unique_domain_too_small`, `config.generate_unique_unsupported` and
+`plan.pinned_unique_pair_unsupported`. Nothing raises them yet; the checks land with GEN-UNIQUE E1 and E2.
+Existing identities keep their numbers.
+
+### Added (reason code for fitted cell format, 2026-11-09)
+
+Registry 1.16.0 adds one `plan` identity, `statistical_cell_format_invalid`, for a malformed `cell_format`
+block in a statistical column's snapshot entry. Nothing raises it yet; the decoder lands with GEN-FIT-SHAPE E2.
+Existing identities keep their numbers.
+
+### Changed (generate-column options are validated, registry 1.13.0)
+
+A generate column now accepts only the option keys its `type` reads, and checks their static
+values when the config is parsed. An unknown key (`weigths`) is refused with
+`config.generate_option_unknown` at `tables[0].generate_columns[0].weigths`; a wrong type, an out of
+range value, bad weights (negative, non-finite, zero total, or a count that differs from the
+categories), an unparsable formula, or a distribution outside `random`, `weighted` and `sequential`
+gets its own `config.generate_*` code. All problems on a column are reported together, and none of
+the messages quote a submitted value. Two generate columns with one name in a table are refused with
+`config.generate_column_duplicate`. A missing required key is now pydantic's `missing` at the key,
+and `pooled` on a non-faker column is reported as `config.generate_option_unknown`. The old
+`ConfigRuleError` texts for these are gone.
+
+Pre-GA hard change: a config that carried an unknown or malformed option, and ran because the
+generators ignored it, is now refused. A valid config dumps, hashes and generates byte for byte as
+before. Because unknown keys were part of the column fingerprint, deleting a now-refused stray key
+from a column changes that column's seed and generated output. The JSON schema for a generate
+column is closed per type, so editors and `decoy schema` flag a typo-shaped key. The faker
+locale, provider and kwargs names, category typing and sibling references are plan checks and
+land separately.
+### Added (reason codes for reference fan-out, 2026-11-09)
+
+Registry 1.14.0 adds six reason identities for fitted reference fan-out: `plan` gets
+`dp_generate_fitted_fanout_unsupported`, `reference_fanout_conflict`, `reference_fanout_invalid`,
+`reference_fanout_missing` and `reference_parent_pool_empty`, and `quality` gets `fanout_column_unknown`.
+Existing identities keep their numbers.
+
+A pipeline with `global_settings.dp` now refuses a `type: reference` column set to `distribution: fitted`
+with `dp_generate_fitted_fanout_unsupported`, because the exact source degree histogram must not reach DP
+output. The check reads only the config. It runs in `compile_plan`, `run_config_only_checks` and the load
+of a serialized Plan, before any snapshot is read or decoded, so a missing, unreadable or malformed
+snapshot cannot replace it with a file, digest or JSON error. Use `distribution: random` under DP.
+
+### Added (pipeline `name:` and `is_valid_pipeline_name`, registry 1.12.0)
+
+`PipelineConfig` accepts an optional top-level `name:`. It is a strict string: a non-string, or a
+string that fails the name rule, is refused with `config.pipeline_name_invalid`. The error message and the
+`PipelineConfigError` from `parse_pipeline_config` carry no submitted text; pydantic's own
+`errors()` list still holds it under `input`. A config without `name:` dumps and hashes byte-for-byte as before; the
+field is left out of the dump while unset. `name` is also left out of `Plan.pipeline_config_hash`,
+so renaming a pipeline does not change it. `decoy_engine.is_valid_pipeline_name(value)` is the one
+rule: 1 to 64 characters from `[A-Za-z0-9_.-]`, starting with a letter or digit, not ending in a
+dot, and not a Windows device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`, `LPT1` to `LPT9`,
+any case, any extension). `COM0` and `LPT0` are allowed. The CLI uses it for folder names and
+file stems, so there is no second copy of the pattern.
+
+### Added (run_pipeline quarantine_path)
+
+`run_pipeline(..., quarantine_path=None)` takes the path the quarantine JSONL is written to and uses it
+in place of `quarantine.output_path` for that run. The value must be a `str` or `None`; anything else
+(a bool included) raises `ExecutionError` with code `invalid_execution_knob` before any source is
+read. The plan and its config hash are built from the config as given, then the routes see a copy with
+only that path replaced, so the hash and the caller's dict do not change. It has no effect when the
+config has no `quarantine` block. The call signature gains one keyword-only parameter.
+
+### Added (profile_relationships_from_config)
+
+`decoy_engine.profile.profile_relationships_from_config(relationships_config)` returns the config's
+`relationships:` block as a tuple of profile-layer `Relationship` objects, one per child, without
+profiling a source. It replaces the private `_build_relationships`, which is removed. An unequal
+composite column count, or an empty column list, raises `ValueError` from `Relationship`. `profile_source` uses it.
+
+### Changed (library NullHandler on the engine logger)
+
+Importing `decoy_engine` attaches one `logging.NullHandler` to the `decoy_engine` logger, so engine
+warnings no longer reach stderr through Python's last-resort handler. Reconfiguring the logger keeps
+that handler (exactly one), and closes and replaces only the handlers the engine itself created from
+an earlier config. Handlers the host program attached to the `decoy_engine` logger are left in place, except extra `NullHandler`s, which are deduplicated to one.
+
+### Changed (no default engine log file)
+
+The engine logger no longer writes `logs/decoy_engine.log` into the current folder when the logging
+config has no `file`. Console output is unchanged. A caller that wants a file passes `file`, as before.
+
+### Added (generation capacity floor, 2026-11-09)
+
+A generate run that keeps its output in memory is now refused when the output cannot fit, instead of
+running until the host kills it. `run_generation` and `estimate_job_capacity` share one lower bound,
+`generation_floor_bytes`: each column is priced from its declared Arrow type (fixed-width types at
+their bit width, variable-width types at one int32 offset per row), or at 8 bytes per row when the
+plan runs the legacy whole-table path. The bound is compared with the whole detected memory ceiling
+(cgroup limit, else host RAM), never the 25% planning budget, so a run that fits is not refused.
+`run_generation` raises `GenerationBudgetExceeded` (`generation_budget_exceeded`) before any provider
+runs; the message holds byte counts and the table name only. It is skipped when `budget_bytes` is
+set (the ledger refuses first), when an eligible plan streams to a bounded sink, and when memory
+cannot be detected. `estimate_job_capacity` returns `INSUFFICIENT` with the same code and integer
+`needed_bytes` and `available_bytes` for a config with generate tables, before any source is
+profiled, against its `budget_bytes` override when given (validated and raised to the route
+minimum exactly as the run does); `UNKNOWN` when memory cannot be detected. Repeated generate-column
+names are priced once, as the legacy path keeps one column per name.
+`decoy_engine.errors.CAPACITY_REASON_CODES` lists the three codes a capacity check can report.
+
+### Added (fit snapshots withhold sensitive values, 2026-11-08)
+
+`decoy_engine` and `decoy_engine.profiling` export `distribution_snapshot_document(df, *, include_values=False,
+joint_columns=None, profile_row_cap=None, ...)`, the snapshot to write to disk. It is
+`compute_distribution_snapshot` (which stays raw for in-memory callers) with every value-sensitive
+column's cell values removed, using the same sensitivity rule as `profile_document`. A sensitive
+categorical column gets an empty `top_values` and its whole count in `other_count`; a joint that
+names one gets an empty `cells`; a numeric column gets one bin whose two edges sit outside every
+source cell (or the fixed bin `-1.5` to `1.5` when the range is too wide to pad) and no `mean`,
+`std` or quantiles; a datetime column keeps its `year_bins` with `min` and `max` moved to the year
+before the first and after the last, held within years 1 to 9999. The document gains `value_policy`
+(`flagged-redacted/v1`, or `raw` with `include_values=True`) and `redacted_columns`, two optional
+top-level keys that `distribution-snapshot/v1` readers ignore.
+
+Generation reads that marker. A `type: statistical` column that would sample categories from a
+redacted source column, or use one as `condition_on`, now fails at validate and at load with the new
+`plan` reason `statistical_snapshot_values_redacted` (registry 1.11.0). The message says to use a
+faker or pattern generator, or to re-fit with `--include-values` and set `allow_real_categories:
+true`. A `raw` snapshot is not refused here but still needs that opt-in, a snapshot with a missing,
+unknown or ill-typed marker is refused for categorical and conditional columns, and a snapshot with
+no marker (written before this change) loads as before. Numeric and datetime columns of a redacted
+snapshot still generate; the fidelity gate reports a redacted numeric column as not comparable
+(`no_quantiles`).
+
+### Added (check a DP fit request without data, 2026-11-08)
+
+`decoy_engine.quality.check_dp_fit_request(column_schema, *, epsilon, delta, numeric_bins=10)` runs the
+checks `fit_dp_snapshot` makes before it reads a row: the epsilon, delta and bin count, the column schema,
+the derived bin edges, then the proof-stack gate. It raises the same typed error the fit would, in the
+same order, so a malformed request keeps its own code on an uncertified host and a valid one raises
+`dp_platform_uncertified` or `dp_stack_uncertified` without any data. `fit_dp_snapshot` calls the same
+private preparation, so behavior and error codes of the fit do not change.
+
+### Fixed (generated columns with identical settings no longer repeat each other)
+
+Generated columns with identical settings used to get identical values in every row, with or
+without a master key: two `first_name` columns, two `date_between` columns, two categoricals with
+the same categories, and statistical columns fitted from independent source columns (correlation
+near 0.9 instead of near 0). The per-column draw stream now derives from the job seed (or master
+key and label), the strategy config, and the column identity (table name plus column name).
+Adding a column or growing `row_count` still leaves the other columns unchanged.
+
+Output changes for existing seeds and keys. This is accepted before GA and there is no opt-in to
+the old seeding. Renaming a column or moving it to another table now changes its values. The
+`_legacy_column_name_seed` column option is removed. Grouped-series, windowed-date and group-key
+columns derive their namespace from the same table and column identity, so a column of the same
+name in two tables no longer shares a stream.
+
+### Changed (stage creators restore owner bits; ownership check reads the effective user)
+
+Directory and private-file stages made through `RootedFileAccess` outputs now restore the owner
+bits a restrictive umask stripped: a stage directory is 0700 and a private stage file is 0600 under
+any umask, 0777 included, where such a stage was born unusable before. Public stage modes still
+follow the umask. The protected-directory ownership check (`runtime.scratch_unsafe`) now compares
+the directory owner with the effective user id instead of the real user id; the engine does not
+run set-uid, so the two agree.
+
+### Added (value redaction for saved scan documents, 2026-11-08)
+
+`decoy_engine` and `decoy_engine.profiling` export `profile_document`, `redact_profile_dict` and
+`is_value_sensitive`. `profile_document(profile)` is `ColumnProfile.to_dict()` with the cell values
+of every value-sensitive column removed: `min_value`, `max_value`, `mean_value`, `date_min`,
+`date_max`, `mode_value` and the distribution `min`, `max` and `mean` become `null`,
+`sample_invalid` and detector `sample_misses` become `[]`, and top-value text, distribution labels
+and sentinel value and note text become `"[redacted]"`, so counts, rates and array lengths are kept.
+A column is value-sensitive when any detector fired, its `pii_score` is at least 0.6, or it is
+near-unique; a loaded document with a missing or ill-typed input counts as sensitive. The document
+gains `value_policy` (`flagged-redacted/v1`, or `raw` with `include_values=True`) and
+`redacted_columns`. `redact_profile_dict` applies the same rules to a loaded document and ignores
+any marker it already carries. `to_dict()` is unchanged and still returns the raw form. Every field
+reachable from `ColumnProfile` must be classified in `profiling/_value_redaction.py`; a sentry fails
+on a new unclassified field.
+
+### Changed (row directories use the protected allocator)
+
+The out-of-core spill root and its subdirectories, the isolated-run work root, and the Postgres
+snapshot spill directory now come from `protected_scratch_dir` / `open_protected_dir`. A
+caller-named `temp_dir`, `staging_dir` or spill directory that already exists must be a real
+directory you own with no group or other access: an empty open one is tightened to 0700, one that
+holds files, a symlink or a foreign-owned one is refused with `runtime.scratch_unsafe`. A caller-named
+`staging_dir` is created with `open_protected_dir(create=True)`, so its parent must exist.
+### Added (SCAN-MULTI S1a: `scan_sources` and `scan-set/v1`, 2026-11-08)
+
+`scan_sources(sources, *, tables=None, sample_rows=10_000, strategy="head", file_access=None)`
+scans many declared tables in one call, one table in memory at a time, and returns a `ScanSet`.
+`scan_set_to_dict(scan, detail=False)` writes the value-free `scan-set/v1` document, defined once
+by `ScanSetCore` (`ScanSetCoreRead` ignores unknown fields). The core holds counts, rates, type
+labels, detector ids and column names. Names come from the producer's header text, and a header
+the guard flags as data is written as `c0..cn`; a misdeclared header the guard cannot detect is
+the stated limit. `detail=True` adds each table's `ColumnProfile` dict and can hold cell values.
+An invalid source descriptor is a `PipelineConfigError`; a failed read is a `ScanSourceError`
+(`runtime.scan_source_failed`); coded engine errors pass through. For a CSV with
+`has_header: true` the scan flags a first row that looks like data
+(`warning.scan_header_suspect`); for a local CSV scanned with `head` or `full` it counts values
+with a leading zero per column. Two new `warning` reasons (`scan_header_suspect`,
+`scan_key_type_mismatch`), one `runtime` reason (`scan_source_failed`, the fixed identity of
+`ScanSourceError`) and one `config` reason (`endpoint_url_invalid`, the refusal of a bad S3
+`endpoint_url`), registry 1.10.0. `S3Source.endpoint_url` accepts only an http or https URL with a
+host and refuses userinfo, a query, a fragment and their percent-encoded forms. `read_csv_source`,
+`resolve_csv_dialect` and `CsvDialect` are also exported from `decoy_engine.profile`.
+
+### Added (SCAN-MULTI S1b: declared-relationship integrity facts, 2026-11-08)
+
+`scan_sources` takes `relationships` (declared `RelationshipConfig` dicts), `integrity=True` and
+`spill_dir=None`. For each declared relationship it returns `RelationshipFacts`: parent rows,
+parent rows with a null key part, parent duplicate excess over complete keys, and per child the
+rows, null-key rows, orphan rows and distinct orphan keys. A null child key is not an orphan.
+Only key columns are read, from local files, and the anti-join runs in DuckDB under a memory limit
+with its spill in a `protected_scratch_dir` directory removed on every exit. CSV keys are read as
+text; a parent and child key type difference gives `key_type_mismatch`, a
+`warning.scan_key_type_mismatch` and no counts; a relationship that names a cloud table is
+`skipped_cloud`. No key value is ever returned. `read_csv_source` gains the keyword-only `columns`
+projection (returned in the order given); `connect_duckdb` is exported from `decoy_engine.execution`.
+
+### Fixed (QA row 24d: shuffle determinism, 2026-11-08)
+
+`shuffle` without `deterministic: true` drew from an unseeded generator, so two runs with the
+same config, seed and mask secret gave different output. That mode is the default, so plain
+`strategy: shuffle` (as in the GDPR template) did not repeat. It now draws from the mask key
+with the job seed and the table and column names bound in, and repeats across processes. Its
+output changes once. The multi-table split no longer holds a table whole because of it.
+Without a mask secret the mask key is the job seed, so anyone with the config and the output
+can recompute the permutation and undo it, as with every keyed strategy; set a secret
+(required at GA) when that matters.
+
+### Changed (value-free config errors, converter, 2026-11-08)
+
+- `decoy_engine.parse_pipeline_config(raw)` is the one route from a mapping to a `PipelineConfig`.
+  A failure raises `PipelineConfigError` with `problems`, a tuple of `ConfigProblem(code, location,
+  text)`. `location` keeps config keys, source, table and column names and list indexes
+  (`tables[0].name`); `text` comes from a fixed table keyed by Pydantic error type. The submitted
+  value, the discriminator tag echo and a plain `ValueError` message never appear. `validate_config`
+  and `override_sources` use the same route.
+- `PipelineConfigError` no longer sets `__cause__` (its docstring said it did): the Pydantic error
+  holds the submitted values. It gains `problems`; the unused `validation_error=` argument is gone.
+- Validator text is shown only for the new `ConfigRuleError` (name-only or fixed messages). The
+  config rule validators (tables, columns, sources, targets, subset, fixed-width layout,
+  quarantine) now raise it, so `validate_config` names the broken rule again (for example the CSV
+  dialect). The quarantine trigger message no longer echoes the submitted trigger. A registered
+  `PydanticCustomError` code shows the reason's summary.
+- `validate_config` reports a YAML syntax error as `could not parse YAML: invalid syntax at line N,
+  column M` (was `Failed to parse YAML: <PyYAML text>`, which echoed the offending line).
+  `decoy_engine.safe_output.yaml_error_text` holds that text.
+- New public names: `parse_pipeline_config`, `ConfigProblem`, `ConfigRuleError`.
+
+### Fixed (class sweep B1: end anchors and facade imports, 2026-11-08)
+
+Sixteen internal `re` patterns ended with `$`, which also matches before a trailing newline;
+they now end with `\Z`. This covers the Postgres snapshot identifier and type patterns, the
+secret-provider version patterns, the NPI checksum, the DuckDB memory limit, the Arrow dtype
+labels, the ISO-date sentinel and the column-name hint patterns. A value with a trailing newline
+no longer matches. `decoy_engine.reasons` also exports `COUNT_KEYS`, `MAX_COUNTS` and
+`is_count`, so progress, safe-output and telemetry code reads the public facades.
+
+### Added (init wizard E3: keyed columns of a config, 2026-11-08)
+
+`decoy_engine` and `decoy_engine.secret_providers` export `keyed_columns_for_config` and
+`KeyedColumn`. They list each config column that needs the mask secret as table, column and
+strategy, in config order, skipping generate tables. `secret_requirements_for_config` now walks the
+config through the same private walk, so the two cannot disagree; its result is unchanged. A
+composite parent key still needs the secret and is not listed. The `GlobalSettings` docstring no
+longer claims a `job_seed` fallback for a keyed plan without a secret.
+
+### Fixed (slice 0 item 3: derived expression visibility, 2026-11-01)
+
+- A `derived` expression now sees exactly the columns it references, read by real column
+  name. Before, the row context came from pandas `itertuples()._asdict()`, which renames a
+  column whose name is not an identifier or starts with an underscore to `_<position>`: an
+  expression `_1 + 0` could read an undeclared column at position 1, and a declared `_total`
+  could not be read at all.
+- A per-row `derived` failure no longer echoes the cell value: the text is the output
+  column, the row index and a fixed reason word, with nothing chained. In mask execution it is
+  `ExecutionError(code="derived_evaluation_failed")`; a reference missing from the frame is
+  refused once before any row with `derived_ref_missing` (two new `runtime` reasons, registry
+  1.9.0).
+- A source table with duplicate field names (caller Arrow tables, `LazySource` footers,
+  `source_loader` tables, non-CSV declared descriptors, chunks from any iterator) is refused
+  with `TransformError(code="duplicate_source_field_names")` at the earliest point of every
+  public entry, before routing, profiling and any pandas conversion, instead of an uncoded
+  `KeyError`/`ValueError` or a silent out-of-core success. `run_pipeline_isolated()` refuses
+  in the child, so config-only refusals win as in process; a duplicate table that Parquet
+  cannot serialize still fails at serialization. The message names the table and a count,
+  no longer the duplicated names.
+
+### Fixed (value-free FK key and pandas-ingest attribution errors, 2026-11-02)
+
+Four `ExecutionError` messages quoted a key or a source cell, and a normal `PandasExecutionAdapter`
+or `run_pipeline` job reached each one. Each message now names the table and column only:
+
+- `fk_nullable_int_array` (`out_of_core_fk_key_dtype_unsupported`): a resolved FK key above the
+  UInt64 range or below the Int64 range (e.g. a categorical parent result) used to be printed, and a
+  uint64 orphan beside a negative resolved key used to append pandas' text (`Python integer ... out of
+  bounds for uint64`). The message is now `FK output column <table>.<column>: a resolved key exceeds
+  the UInt64 range` / `is below the Int64 range` / `cannot share one lossless nullable UInt64 array`,
+  raised with no cause or context. The function takes keyword-only `table` and `column`.
+- `to_pandas_fk_safe`: the ingestion backstop no longer appends the Arrow error or the Arrow type.
+- `full_frame_value_unrepresentable` and `chunked_passthrough_value_unrepresentable` no longer append
+  the pandas/Arrow conversion error (`Value 3001 has non-zero nanoseconds`, `year 12921 is out of
+  range`). The full-frame error's chain is suppressed; the chunked error keeps the conversion error as
+  its `__cause__` for diagnosis.
+
+### Fixed (value-free discovery, subset-seed and derived-expression errors, 2026-11-01)
+
+Several public error texts forwarded library or engine text that can quote a source cell, and that
+text reaches API responses and job logs through `str(exc)`. Each one now carries a fixed message per
+failure class and no cause or context chain:
+
+- `run_discovery_sql`: `DiscoverySqlError` no longer includes DuckDB's text (a failed cast quoted the
+  string, e.g. an SSN). Its message is one of `SQL_CONVERSION_FAILED` (conversion, out of range,
+  invalid input), `SQL_NOT_EXECUTABLE` (parser, binder, catalog) or `SQL_FAILED`, under both the
+  ambient and strict policies. An execution error at the fetch step under the ambient policy used to
+  escape as a raw `duckdb.Error`; it is now a `DiscoverySqlError`, as at the execute step. A
+  statement DuckDB cannot parse used to raise a raw `ParserException` from the statement-kind check;
+  it is now `DiscoverySqlError(SQL_NOT_EXECUTABLE)`. Memory and policy failures under a strict policy
+  still keep their class.
+- `select_seed_rows` (`SubsetConfigError`): `subset_seed_key_type` names the table, the key column
+  and its type instead of quoting Polars' text with the mismatched keys, and neither an explicit-key
+  nor a filter-literal refusal chains the conversion error as its cause or context. `subset_seed_key_uncanonicalizable` names
+  the key column and a reason chosen by reason code (float, timezone-naive datetime).
+- `_canonicalize_source` (`GenerationError`, `float_canonicalization_unsupported`,
+  `timezone_naive_datetime`) no longer formats the value with `!r`.
+- Derived expressions: a row-evaluation failure gives the column and row with a closed-set reason
+  instead of the evaluator's text, and the `slice()` argument error names the argument's type, not
+  its value.
+
+### Added (SCAN-ML M1: optional ML detector config, status and loading, 2026-11-07)
+
+`pre_scan.detectors` and `post_scan.detectors` choose between `regex` (always on), the lgbm
+`classifier` and spaCy `ner`; `post_scan` also gains `ner_model`, `ner_findings` (`warn` or `fail`)
+and `dismissed`. A field equal to its default stays out of the dump, so existing configs keep their
+dump and hashes. `decoy_engine` exports `ModelRef`, `ModelStatus`, `classifier_status`,
+`ner_status`, `load_detectors`, `ModelUnavailableError`, `PreScanConfig` and `Dismissal`.
+`load_detectors` loads every requested model strictly and raises `ModelUnavailableError` rather than
+return a regex-only set. `ensure_ner_available` now checks the model name, accepts only an installed
+model distribution (a module such as `os` is refused and never imported), and refuses a model built
+for another spaCy minor (`provider.ner_model_incompatible`), at validate time instead of at load.
+`ModelPackLoadError` carries a `cause`. `detection/_ner_rate.py` holds the shared NER cell sample
+and rate. NER scores free-text columns only (median of 3 or more whitespace tokens per sampled
+cell) and flags a column at a 0.211 share of cells. A plan check that re-wraps a registered config
+or provider refusal now reaches consumers as that reason instead of `decoy.unregistered_reason`; a
+code registered in the raising family's own namespace keeps that family's record. Registry 1.8.0
+adds seven reasons (see `docs/reasons.md`). Nothing runs a model yet: the pre-scan, post-scan and
+route changes are later slices.
+
+### Added (protected directories)
+
+`decoy_engine.protected_scratch_dir` and `open_protected_dir` are the one allocator for directories that
+hold Decoy's own rows. Directories are owner-only from creation, an existing directory is reused only when
+it is a real directory owned by the caller with no group or other access, and a failure never falls back.
+Two reasons join the registry at 1.7.0: `runtime.scratch_unsafe` and `runtime.scratch_acl_failed`.
+
+Behavior change: the local protected quarantine arena goes through the allocator. On POSIX an empty arena
+with a permissive mode is now tightened to 0700 and accepted. A permissive arena that already holds files is
+still refused (`arena_unsafe`).
+
+### Added (strategy catalog)
+
+`decoy_engine.strategy_catalog()` returns one `StrategyInfo` row per scalar strategy, sorted by name, with its
+`StrategyOption` list. Each row says whether a namespace is required, whether the strategy is join-safe
+(`hash` and `fpe`), whether it is offered at the wizard's `edit` prompt, and where each option lives in a column
+entry (`column`, `provider_config` or `provider_config.ner`). `StrategyInfo` and `StrategyOption` are exported too.
+
+## [0.19.0] - 2026-11-07
+
+### Breaking for consumers (since v0.18.0)
+
+- `run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked`, `run_native_or_oracle_chunked` and `compile_plan` now refuse a config with `subset:` set (`config.subset_run_unsupported`, registry 1.6.0) instead of masking the full sources; run `run_subset` first.
+- `PLAN_VERSION` is 3 (was 2). A plan this engine writes carries `version: 3`, which a 0.18.0 engine cannot load; this engine still loads a version-2 plan. For a config that does not use declared casting, the version line is the only change.
+- Reason registry `1.2.0` -> `1.6.0` (893 -> 1006 identities). Consumers that enumerate or map reason codes take the new identities; none was removed or renamed.
+- A headerless CSV refusal starts with its code and names the source table, not the file: `source_file.column_count_mismatch: source customers line 3 has 4 fields but column_names declares 3`. A consumer that prints the code apart from the message shows it twice; one that matched the old text must match the code.
+- A `column_names` that is not a list or tuple of strings is refused by `CsvDialect` and `resolve_csv_dialect`. The `FileSource`, `S3Source` and `GCSSource` validation errors and `validate_config` no longer carry the submitted value or the chained pydantic error.
+- Subset explicit keys and filters refuse a lossy cast with the coded `subset_seed_key_type` instead of selecting the wrong rows, and a non-finite `Decimal` bound (NaN, sNaN, Infinity) is refused on every operator. A caller that passed such a key or bound and got rows back now gets a refusal.
+- GCS errors have new text and, for some failures, new classes. Every connector call and every GCS profile read (`GcsParquetSource`, `GcsCsvSource`) now ends in a `TransientError` or `PermanentError` with fixed text (for example `GCS bucket or object not found`, `GCS permission denied`, `GCS transient network or service error`); the SDK message, bucket and object name no longer appear. `google.auth` transport and timeout errors map to `TransientError` (they were `PermanentError`), other `google.auth` errors map to `PermanentError("GCS credentials unavailable or invalid")`, and a profile read that raised a raw `google.api_core` or `requests` exception now raises one of those two. A consumer that caught the Google exception types or matched the old `GCS not found: ...` text must catch `ConnectorError` subclasses instead.
+
+### Added (F34: the canary span check types, 2026-11-02)
+
+`decoy_engine.verification.canary` is public: `CanarySpanReport` and its finding, status and completion types, the
+closed enums, `CanaryVerdictPolicy` with `derive_status` and `compose_reasons` over a generated 32-row
+`POLICY_TABLE`, and three fixed exceptions that carry no message (`CanarySpanReportInvalid`, `CanaryPolicyInputError`
+and the artifact read failure). Twelve canary reasons are registered (registry 1.3.0, each `since="1.3.0"`).
+`CanarySpanReport` does not yet cross-check its status against its own counts; the report builder must do that.
+Canary span text is normalized for comparison, and Arrow cells render by type with strings compared through the
+binary view, so equal values compare equal across readers.
+
+### Added (F31: `decoy_engine.safe_output`, 2026-11-03)
+
+`SafeEvent` holds only exact, bounded fields (a registry reason, a closed exception label, an approved step name,
+closed counts and flags) so an event carries no exception text and no cell value. `safe_error_type` labels an
+exception by exact type, and `phase.error_result` now takes its `error_type` from that table. The widening of the
+label domain is additive.
+
+### Added (F30: `decoy_engine.telemetry`, 2026-11-03)
+
+`SpanRecorder` pairs phase events into `SpanRecord`s under the closed `decoy-telemetry/v1` vocabulary
+(`TELEMETRY_SCHEMA`, `SPAN_NAMES`, `ATTRIBUTE_KEYS`, `RESOURCE_KEYS`). Phase names are closed, reasons are
+registry-checked and error labels are exact-type safe labels; no value, path or message reaches a span attribute.
+The engine imports no OpenTelemetry package. The caller owns the SDK, the exporter and the flush.
+
+### Added (reason registry 1.5.0: platform and safe_output namespaces, 2026-11-04)
+
+The `platform` namespace (69 identities) and the `safe_output` namespace (`invalid`, `legacy_withheld`) join the
+registry, 71 identities in all, for the safe-output boundary. Summaries carry no value, path or expression.
+
+### Security (isolated-run payload, 2026-11-04)
+
+`run_pipeline_isolated` writes its payload through the output-transaction API with a private label, so the file is
+mode `0600` from creation on both the ambient and the strict file-access paths. Errors from that write are
+value-free.
+
+### Fixed (NER extra, 2026-11-06)
+
+The `[ner]` extra declares `click>=8.1,<9`, which spaCy imports and nothing else installs any more, so a fresh
+`ner` install failed at `import spacy`. The model wheel is pinned by URL and sha256 (`NER_MODEL_WHEELS`) and the user
+docs install it from that pin instead of `spacy download`.
+
+### Added (RESULT E1: the run-result model, 2026-11-06)
+
+`decoy_engine.RunResult` and `RunResultRead` define the frozen `decoy-run-result/v1` document (one record per
+`decoy run`), `RUN_RESULT_SCHEMA` names its tag, and `derive_outcome` is the one place that turns a failure
+category, delivery state and blocking check into a run status and exit code, using the caller's exit map.
+`pipeline_config_hash` exports the compiler's semantic config hash. `ReasonRecord.parse_payload` is now the one
+reason wire-compatibility parser; `from_payload` delegates to it, and it also returns the registry version the
+writer stamped. No registry change.
+
+### Security (locked dependencies, 2026-11-06)
+
+`uv.lock` moves eight packages to the lowest release that clears their advisories, so the `security.yml`
+audit finds nothing on CPython 3.10, 3.11 and 3.12: anyio 4.14.1 to 4.14.2 (PYSEC-2026-4023, -4024, -4025),
+certifi 2026.6.17 to 2026.10.18 (PYSEC-2026-4320), cryptography 49.0.0 to 50.0.0 (PYSEC-2026-3552),
+pyasn1 0.6.3 to 0.6.5 (PYSEC-2026-3455, -3456, -3457), setuptools 82.0.1 to 84.1.0 (PYSEC-2026-3447,
+GHSA-xmj3-9gf7-h52w), soupsieve 2.8.4 to 2.9 (PYSEC-2026-4170, -4171), urllib3 2.7.0 to 2.8.0
+(PYSEC-2026-4175, -4176, -4177) and werkzeug 3.1.8 to 3.1.9 (PYSEC-2026-4312). `pyproject.toml` ranges do not
+change. `_CERTIFIED_STACKS` gains one 3.10.20 row for the new lock profile and keeps every released row.
+Operators who route S3 or GCS through an HTTPS proxy: urllib3 2.8 takes proxy TLS settings only from
+`proxy_ssl_context`, and destination client certificates no longer apply to a forwarding proxy.
+
+### Added (F06: declared parsing, casting and quarantine, 2026-10-29)
+
+A column can now declare `logical_type`, `parse_format`, `sentinel_to_null`, `error_policy` (`fail`, `null`,
+`quarantine`) and `output_format`. The engine owns one versioned contract (`decoy_engine.contracts.declared_casting`,
+catalog version 1) and one casting boundary (`decoy_engine.declared_casting`): exact strings, strict integers,
+exact `Decimal` (precision 1..38, no float, no rounding, a pinned `decimal` context), restricted dates
+(`%Y %m %d`, no locale), explicit currency, ASCII overpunch, EBCDIC zoned decimal and COMP-3. Sentinels become
+null before parsing and are counted apart from source nulls; counts and every failure are value-free and use
+registered F29 reasons (`registry_version` 1.4.0, 29 new identities, after F34's 1.3.0). Fixed-width layouts gain
+`exact_record_width` (default off) so an over-length record is a framing error.
+`run_pipeline(quarantine_runtime=...)` takes a protected-quarantine runtime; the local reference sink writes
+Fernet-encrypted, `0700`/`0600`, finite-retention artifacts and the run returns a portable
+`ExecutionResult.quarantine_access` token. `PLAN_VERSION` is now 3 (the only YAML change for configs that do not
+use the feature is the version line; a version-2 plan still loads). Declared columns run on the full-frame,
+chunked, sequential, out-of-core, mixed and unified-slice routes through one batch-shaped casting kernel; a route
+that lacks a needed capability refuses before reading the source (`declared_cast_route_unsupported`) and `auto`
+routing never selects it. CSV readers keep declared columns as exact lexemes (no inference, no default NA
+conversion). The quarantine seal is the last failure-capable step of a run, a sealed artifact is discarded if the
+run then fails, retrieval tokens are bound to the run (`QuarantineAccessContext(owner, run_id)`), protected records
+carry full F29 `ReasonRecord`s, and the raw row reopens with its Decimal / date / datetime types intact.
+A failed discard after the seal is reported as the registered `protected_quarantine_cleanup_failed` with the
+artifact's recovery identity, and a declared job that falls back to a less bounded route lists the refusal under
+`quality_metrics["execution"]["declared_route_refusals"]`. The out-of-core typed staging copy is named by
+the engine (`s0000.typed.parquet`, never the table name) inside an engine-made per-run root, and is read back
+through a scratch reader, so it runs under a strict file-access policy. The local quarantine store retries short
+writes and is ambient-only (`arena_needs_ambient_policy` under a strict policy). See
+`docs/declared-casting.md` and `docs/security/protected-quarantine.md`.
+
+### Added (CLI-DIALECT: one public CSV source reader, 2026-11-06)
+
+`decoy_engine.read_csv_source(path, dialect, *, table, dtype=None, nrows=None, chunksize=None,
+file_access=None, field_key="source.path")` reads a CSV source under its declared dialect. `CsvDialect`
+(`has_header`, `column_names`, `delimiter`) and `resolve_csv_dialect(descriptor)` turn a source descriptor into
+that dialect, with the schema defaults. With the default dialect and `dtype=str` the frame equals
+`pd.read_csv(path, dtype=str)`. A headerless file is width-checked first; `chunksize` runs that check at the call
+and returns an iterator bound to the call's file-access policy. `CsvFileSource` (profile, validate, compile)
+reads through the same code, so there is one copy of the scan. The dialect rules (header against names, blank and
+duplicate names, delimiter shape) now live in one place, `config/_csv_dialect.py`, used by `FileSource` and
+`CsvDialect`. Their delimiter texts no longer echo the submitted value, and a `column_names` that is not a list
+or tuple of strings is refused (`CsvDialect` and `resolve_csv_dialect`). `resolve_csv_dialect` takes the defaults
+from `CsvDialect`. Under a strict file-access policy a headerless parser disagreement is the coded refusal, not a
+read error, and `nrows=0` returns the empty frame with the declared columns without reading the file. `FileSource`, `S3Source` and `GCSSource` hide submitted values in their validation errors, and `validate_config` no longer chains the pydantic error (it carried the submitted descriptor).
+
+### Changed (CLI-DIALECT: headerless CSV refusal messages, 2026-11-06)
+
+A headerless CSV refusal (wrong field count, no data rows, NUL byte, lone CR, parser disagreement) now starts
+with its code and names the source table instead of the file name: `source_file.column_count_mismatch: source
+customers line 3 has 4 fields but column_names declares 3`. Consumers that print the code separately from the
+message (for example the CLI's `decoy preflight` check JSON and the platform's error rendering) show the code twice.
+
+## [0.18.0] - 2026-11-01
+
+Pre-GA release (`RELEASE_PHASE = "pre-ga"`): the minor bump carries breaking changes with no shims. It is
+0.17.0 plus the A-4 file-access policy reconciled with F13 secret admission, the typed out-of-core temporal
+FK seam, the SBOM error-handling fixes, the exact-integer categorical CDF builder, and the generated NOTICE
+with its license gate and the SDV citation fixes.
+
+### Breaking for consumers (since v0.17.0)
+
+- A `file:` mask secret (`global_settings.mask_secret_ref: file:<path>`, or `keyprovider.key_provider_from_ref
+  ("file:...")`) must be owner-only. Any group or other permission bit (0640, 0644, 0444, 0660 ...) refuses it
+  with `runtime.secret_file_permissions_unsafe`, checked with `fstat` on the descriptor that is read; no bypass
+  setting. The mode is checked before the length, so a short secret at 0644 is refused for its mode, not as
+  `weak_mask_secret`. Deployed secret mounts and test fixtures that write a secret file under the default
+  umask must `chmod 0600` (or 0400) it. Windows ACLs are not inspected.
+- `env:` and `file:` secrets are never cached, whatever the `SecretCachePolicy` TTL.
+- Reason registry `1.1.0` -> `1.2.0` (891 -> 893 identities). New: `runtime.secret_file_permissions_unsafe`,
+  `decoy.file_access_denied` (the identity of `FileAccessDenied`). A consumer that pins the registry version or
+  the identity count, or maps reason codes to its own messages, must add both.
+- `keyprovider.key_provider_from_ref(ref, *, key_version=None, file_access=None)`: `file_access=` is new and
+  the function is a file-access entry point (`key_version=None` is unchanged since 0.17.0).
+- `quarantine.write_jsonl_staged` returns the staged `OutputTxn` (was the final `Path`); the caller publishes it.
+  `publish_staged_jsonl` and `discard_staged_jsonl` take that `OutputTxn` as `staged_path` (was a `Path`).
+- A bare `joint_mask.reference` name must be a shipped reference table. Any other bare name (a path, `../x`,
+  an absolute path) now fails with `FileNotFoundError` (config validation: `joint_mask_reference_not_found`)
+  and reads no file; 0.17.0 joined it onto the data directory and read it. Migration: reference a customer
+  table as `customer:<path>`.
+- A shipped code-set corpus name (`provider_config.code_set` with `corpus_source` unset or `shipped`) must be a
+  registered corpus. Any other name (`icd10.parquet`, `../x`, an absolute stem) now fails with
+  `PlanCompileError` `code_set_corpus_not_found`; 0.17.0 joined it onto the corpora directory and loaded that
+  file. Migration: `corpus_source: "customer:<path>"`.
+- `run_discovery_sql` runs on a locked DuckDB connection with external access off: SQL that reads a file
+  through a DuckDB function (`read_text`, `read_blob`, `glob`, ...) now fails with `DiscoverySqlError`
+  ("SQL execution failed: Permission Error ..."); 0.17.0 read the file. Multiple statements were already
+  refused in 0.17.0. Migration: pass each file as an entry of `tables=` and query it by name.
+- 42 file-reading or file-writing entry points (`decoy_engine.fileaccess.ENTRY_POINTS`, `run_pipeline`
+  included) take a keyword-only `file_access=None`. Additive with no policy installed; under an installed
+  policy an explicit `file_access=` must be that policy or narrower, else `FileAccessUnavailable`.
+- Out-of-core temporal FK columns publish the resolved unit of their key (were always `timestamp[us]`); a key
+  outside the resolved type is refused with `out_of_core_fk_key_dtype_unsupported`.
+- Weighted categorical masking (`strategy: categorical` with `weights`) moves masked output: the CDF
+  thresholds are now rounded half up over exact integers instead of floored from a float running sum. On the
+  seeded 20,000-vector corpus (`tests/unit/execution/_cdf_oracle.py`) at least one threshold moves in about 99%
+  of weight vectors, every moved threshold by at most one slot, so a row changes category with probability
+  about 5e-5. `[1, 1, 1]` gives `[333333, 666667, 1000000]` (was `[333333, 666666, 1000000]`). Output is now
+  identical on 3.10, 3.11 and 3.12. Weight vectors that built before and are now refused: a weight under one
+  slot after rounding (`[1.0, 2e-6, 1.0]`), a total above the largest double (`[1e308, 1e308]`), and `bool`,
+  `str`, `Decimal`, `Fraction` or subclass weights, refused with `StrategyError`
+  (`categorical_weights_nonpositive`) on the resident, out-of-core and chunked routes alike (the native
+  operator declines them, so the run takes the refusing route); NaN or infinite weights raise that
+  `StrategyError` instead of a bare `ValueError`. Migration: write weights as plain numbers.
+- `ProviderSpec.seed`, `ValuePool.seed`, `SeedEnvelope.job_seed`, `StrategyContext.job_seed`/`mask_key` and
+  `ShadowContext.job_seed`/`mask_key` are `repr=False`: they no longer appear in `repr()` output.
+- No public module or exported symbol was removed or renamed (`CodeSetConfig` moved to a private module and is
+  still importable from `decoy_engine.transforms.code_set`).
+- DP: certified rows are added for 0.18.0 (`31ecf945...`, engine dev/CI profile; `b643894d...`, the
+  decoy-cli runtime profile). The CLI's `requirements-certified.txt` header fingerprint moves to `b643894d...`;
+  a CLI install of 0.18.0 cannot run a certified fit until it does. The 0.17.0 rows (`5a76ea92...`,
+  `a7b40d54...`) stay certified, so a DP snapshot fit under 0.17.0 still compiles.
+
+The generated `NOTICE`, the license gate and the SDV citation fixes are not breaking: no runtime code,
+dependency or public symbol changes.
+
+### Changed (release R-b, 2026-11-01)
+
+`pyproject.toml`, `decoy_engine.__version__`, the `uv.lock` root entry and the proof-manifest stamp move to
+0.18.0, and a DP certified row is added for each profile (reverting only the engine version to 0.17.0 reproduces
+the 0.17.0 rows exactly; those rows stay in the certified set). The reason release pin (`tests/fixtures/f29/reason-registry-release.json`) is re-captured at
+registry 1.2.0 (893 identities: 884 `since` 1.0.0, 7 `since` 1.1.0, 2 `since` 1.2.0). The Phase F FR0
+manifest is re-frozen for engine minor `0.18` (envelope digests only; every golden table digest is
+unchanged).
 
 ### Fixed (categorical CDF: exact integer builder, 2026-11-01)
 
@@ -58,15 +924,17 @@ The weighted categorical CDF summed weights with the builtin `sum()`, which CPyt
 compensated, so about 2.3% of weight vectors got thresholds one slot apart on 3.12 versus 3.10/3.11 and
 masked output depended on the interpreter. `_build_cdf` now converts each weight to its exact dyadic
 rational and computes `(2 * C_i * RES + T) // (2 * T)` (round half up) over exact integers. Plan:
-`docs/plans/2026-10-31-categorical-cdf-exact-arithmetic.md` (branch `plan/cdf-exact-arithmetic`).
+`docs/plans/2026-10-31-categorical-cdf-exact-arithmetic.md` on branch `plan/cdf-exact-arithmetic` (f89f4ab7), not on main.
 
-- Output: thresholds move by at most one slot for about 2.2% of vectors versus 3.10 output; `[1, 1, 1]`
-  becomes `[333333, 666667, 1000000]` (was `[333333, 666666, 1000000]`). `[1.0, 2e-6, 1.0]` is now
-  refused as below resolution (0.999999 of a slot); `[1e308, 1e308]` is refused as an overflowing total.
+- Output: versus 3.10 output, at least one threshold moves in about 99% of weight vectors, each by at most
+  one slot (a row changes category with probability about 5e-5); `[1, 1, 1]` becomes
+  `[333333, 666667, 1000000]` (was `[333333, 666666, 1000000]`). `[1.0, 2e-6, 1.0]` is now refused as below
+  resolution (0.999999 of a slot); `[1e308, 1e308]` is refused as an overflowing total.
 - Weights must be `int`, a numpy integer, `float` or numpy `float16/32/64`, by exact type: `bool`, `str`,
   `None`, `Decimal`, `Fraction` and subclasses are refused. NaN and infinity raise `StrategyError`
   (`categorical_weights_nonpositive`) instead of a bare `ValueError`. Refusals run as whole-vector passes
   (type, non-finite, negative, total, resolution) and their messages carry the index only, no value.
+
 ### Changed (licensing: generated NOTICE, license gate, SDV citations, 2026-11-01)
 
 - `NOTICE` (shipped in the wheel) is generated from `uv.lock` by `scripts/dev/licenses_write.sh`: name,
@@ -79,6 +947,7 @@ rational and computes `(2 * C_i * RES + T) // (2 * T)` (round half up) over exac
 - SDV citations no longer call SDV MIT: SDV is BUSL-1.1. The engine cites the HMA1 and PAR methods (papers
   named) and uses no SDV code; `tests/sentry/test_sdv_import_sentry.py` fails on an SDV or sdmetrics import
   and on a citation labelling SDV permissive.
+
 
 ### Fixed (out-of-core: typed temporal FK seam, release R-b, 2026-11-01)
 
@@ -147,6 +1016,78 @@ write goes through a policy-issued `OutputDir` (staged, then published), and the
 their source through the policy. `postgres_snapshot.snapshot_tables_to_parquet` refuses any policy but
 the ambient one. `LazySource.iter_batches` and `to_table` take an optional `columns=` projection, which
 replaces the two direct Parquet opens in the out-of-core null guard and the mixed route.
+
+### Added (the `FileAccess` policy, built 2026-10-07, first released in 0.18.0)
+
+New public package `decoy_engine.fileaccess`. Every file the engine opens, stats, lists, creates,
+renames or deletes on behalf of a config value or a caller now goes through one `FileAccess` policy
+or a capability it issued (an open file handle, a directory capability, an output transaction), so a
+host that serves several users can decide which files an engine call may touch without keeping a list
+of config fields. Entry points (`run_pipeline`, `run_mask_pipeline_chunked`, `run_mask_chunked`,
+`profile_source`, `compile_plan`, `load_table`, `load_corpus`, `run_subset`, `run_discovery_sql`,
+`unmask_pipeline`, `load_vault`, `vault_writer_for_config`, and the rest of
+`decoy_engine.fileaccess.ENTRY_POINTS`) take a keyword-only `file_access=`. Policies ship for the
+ambient CLI behavior (`LocalFileAccess`), deny-by-default rooted access confined with
+`openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` (`RootedFileAccess`), and pre-opened descriptors
+(`PreopenedFileAccess`). A process that must never fall back to ambient access calls
+`fileaccess.forbid_ambient()` once at startup. `ParquetTransactionalSink`, `LazySource`,
+`VaultWriter`, `load_vault` and `unmask_pipeline` also accept the capability objects directly. A
+denial is one `FileAccessDenied` whose message is `file access denied: <config position>`, with no
+path, basename or file content; a library failure on a file the policy allowed (corrupt Parquet, bad
+YAML) is a separate `FileAccessReadError` with the same hygiene, and memory and disk-quota errors keep
+their class. Contract: `docs/security/file-access-policy.md`.
+
+With no policy argument the engine behaves as before: paths, symlinks, error text, output names, the
+default log file, accepted and rejected table names and the table sink's publish and failure
+semantics are unchanged. A new sentry fails CI if any engine code reaches a file-system call outside
+an adapter, a capability module or a reviewed registry entry.
+
+### Changed (BREAKING, pre-GA: bare reference names and discovery SQL, built 2026-10-07, first released in 0.18.0)
+
+Two behavior changes, both closing a read of an arbitrary host file.
+
+- A bare `joint_mask.reference` name must be one of the shipped reference tables. A name that is not
+  shipped, including `../../x` and an absolute path, raises the same `FileNotFoundError` as before
+  (validation reports `joint_mask_reference_not_found`) and never reads a file. Before, the loader
+  joined any bare name onto its data directory. `customer:<path>` is unchanged and is the only path
+  form.
+- `run_discovery_sql` runs on a locked in-memory DuckDB connection with external access off and
+  accepts exactly one `SELECT` over the tables it is given. `read_text`, `read_blob`, `glob`,
+  `FROM '<path>'`, `COPY`, `ATTACH`, `INSTALL`, `LOAD` and `SET` can no longer reach a file, write
+  one or turn this off. Tables are registered as Arrow datasets, so projections and predicates still
+  push down.
+
+Smaller changes under the same program: the three unused helpers `get_file_size`, `is_path_exists`
+and `create_directory_for_file` in `internal/fs.py` are removed; `quarantine.write_jsonl_staged`
+returns an opaque stage (publish it with `publish_staged_jsonl`, discard it with
+`discard_staged_jsonl`) instead of a path; `ParquetTransactionalSink` and the hold-back spill create
+their stages through the policy, with the same directory names, publish semantics and error behavior;
+a vault write to a path keeps writing in place, as before (a strict policy's `OutputDir` gets an exclusive create instead); subset output is staged and
+published with one rename instead of being written in place. Under a policy other than the ambient
+one, `run_pipeline_isolated` (when it would spawn a child or is given a `staging_dir` or `output_dir`)
+and `run_fk_out_of_core` with a caller-named `temp_dir` raise `FileAccessUnavailable` before any I/O.
+
+### Changed (BREAKING, pre-GA: strict error boundary and scratch names, built 2026-10-08, first released in 0.18.0)
+
+- A shipped corpus name resolves only if it is a registry key, through a registry-owned path,
+  before any file-system call. Any other name (`../x`, an absolute stem, `icd10.parquet`) raises
+  `code_set_corpus_not_found` with one fixed message that echoes neither the name nor a path. Before,
+  the name was joined onto the corpora directory, so an absolute stem could load an arbitrary
+  Parquet file as a "shipped" corpus.
+- Under a policy other than the ambient one, no engine error or log line names a file locator or the
+  descriptor path (`/proc/self/fd/<n>`) a library was handed: snapshot, corpus, model-pack,
+  name-hint, discovery, lockfile, custom-provider and quarantine diagnostics name the config position
+  instead. A secret file that fails to decode, validate or parse raises a fresh error built from the
+  config position, with no cause or context, even when the caller is already handling another error.
+  Text from the content of a file the principal may read can still appear.
+- Under such a policy every handler that translates, stores or swallows a file error re-raises the
+  policy errors, `MemoryError` (including Arrow's), DuckDB's out-of-memory error, `ENOMEM`, `ENOSPC`
+  and `EDQUOT` unchanged, so OOM classification and disk-quota handling still see them.
+- Scratch files the engine derives from a table, column or edge name (the out-of-core `joins/`,
+  `relations/` and `staged/` trees and relation files, the native pool-quality spool, the isolated
+  route's input copies) are now named by opaque per-run ids. A name holding `/` or `..`, or an absolute
+  name, can no longer place a scratch file outside the scratch directory. Output table files are
+  unchanged.
 
 ## [0.17.0] - 2026-11-01
 
@@ -1158,78 +2099,6 @@ is what tells it apart from an unrelated crash. Outcomes, return codes and every
 text are unchanged, except that an abnormal-exit error with samples gains a trailing
 `; memory: last X MiB, peak Y MiB of Z MiB (kind)` (sizes only). Uncapped and in-process runs carry
 no evidence.
-
-### Added (the `FileAccess` policy, 0.9.0 pending, 2026-10-07)
-
-New public package `decoy_engine.fileaccess`. Every file the engine opens, stats, lists, creates,
-renames or deletes on behalf of a config value or a caller now goes through one `FileAccess` policy
-or a capability it issued (an open file handle, a directory capability, an output transaction), so a
-host that serves several users can decide which files an engine call may touch without keeping a list
-of config fields. Entry points (`run_pipeline`, `run_mask_pipeline_chunked`, `run_mask_chunked`,
-`profile_source`, `compile_plan`, `load_table`, `load_corpus`, `run_subset`, `run_discovery_sql`,
-`unmask_pipeline`, `load_vault`, `vault_writer_for_config`, and the rest of
-`decoy_engine.fileaccess.ENTRY_POINTS`) take a keyword-only `file_access=`. Policies ship for the
-ambient CLI behavior (`LocalFileAccess`), deny-by-default rooted access confined with
-`openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` (`RootedFileAccess`), and pre-opened descriptors
-(`PreopenedFileAccess`). A process that must never fall back to ambient access calls
-`fileaccess.forbid_ambient()` once at startup. `ParquetTransactionalSink`, `LazySource`,
-`VaultWriter`, `load_vault` and `unmask_pipeline` also accept the capability objects directly. A
-denial is one `FileAccessDenied` whose message is `file access denied: <config position>`, with no
-path, basename or file content; a library failure on a file the policy allowed (corrupt Parquet, bad
-YAML) is a separate `FileAccessReadError` with the same hygiene, and memory and disk-quota errors keep
-their class. Contract: `docs/security/file-access-policy.md`.
-
-With no policy argument the engine behaves as before: paths, symlinks, error text, output names, the
-default log file, accepted and rejected table names and the table sink's publish and failure
-semantics are unchanged. A new sentry fails CI if any engine code reaches a file-system call outside
-an adapter, a capability module or a reviewed registry entry.
-
-### Changed (bare reference names and discovery SQL, 0.9.0 pending, 2026-10-07)
-
-Two behavior changes, both closing a read of an arbitrary host file.
-
-- A bare `joint_mask.reference` name must be one of the shipped reference tables. A name that is not
-  shipped, including `../../x` and an absolute path, raises the same `FileNotFoundError` as before
-  (validation reports `joint_mask_reference_not_found`) and never reads a file. Before, the loader
-  joined any bare name onto its data directory. `customer:<path>` is unchanged and is the only path
-  form.
-- `run_discovery_sql` runs on a locked in-memory DuckDB connection with external access off and
-  accepts exactly one `SELECT` over the tables it is given. `read_text`, `read_blob`, `glob`,
-  `FROM '<path>'`, `COPY`, `ATTACH`, `INSTALL`, `LOAD` and `SET` can no longer reach a file, write
-  one or turn this off. Tables are registered as Arrow datasets, so projections and predicates still
-  push down.
-
-Smaller changes under the same program: the three unused helpers `get_file_size`, `is_path_exists`
-and `create_directory_for_file` in `internal/fs.py` are removed; `quarantine.write_jsonl_staged`
-returns an opaque stage (publish it with `publish_staged_jsonl`, discard it with
-`discard_staged_jsonl`) instead of a path; `ParquetTransactionalSink` and the hold-back spill create
-their stages through the policy, with the same directory names, publish semantics and error behavior;
-a vault write to a path keeps writing in place, as before (a strict policy's `OutputDir` gets an exclusive create instead); subset output is staged and
-published with one rename instead of being written in place. Under a policy other than the ambient
-one, `run_pipeline_isolated` (when it would spawn a child or is given a `staging_dir` or `output_dir`)
-and `run_fk_out_of_core` with a caller-named `temp_dir` raise `FileAccessUnavailable` before any I/O.
-
-### Changed (strict error boundary and scratch names, 0.9.0 pending, 2026-10-08)
-
-- A shipped corpus name resolves only if it is a registry key, through a registry-owned path,
-  before any file-system call. Any other name (`../x`, an absolute stem, `icd10.parquet`) raises
-  `code_set_corpus_not_found` with one fixed message that echoes neither the name nor a path. Before,
-  the name was joined onto the corpora directory, so an absolute stem could load an arbitrary
-  Parquet file as a "shipped" corpus.
-- Under a policy other than the ambient one, no engine error or log line names a file locator or the
-  descriptor path (`/proc/self/fd/<n>`) a library was handed: snapshot, corpus, model-pack,
-  name-hint, discovery, lockfile, custom-provider and quarantine diagnostics name the config position
-  instead. A secret file that fails to decode, validate or parse raises a fresh error built from the
-  config position, with no cause or context, even when the caller is already handling another error.
-  Text from the content of a file the principal may read can still appear.
-- Under such a policy every handler that translates, stores or swallows a file error re-raises the
-  policy errors, `MemoryError` (including Arrow's), DuckDB's out-of-memory error, `ENOMEM`, `ENOSPC`
-  and `EDQUOT` unchanged, so OOM classification and disk-quota handling still see them.
-- Scratch files the engine derives from a table, column or edge name (the out-of-core `joins/`,
-  `relations/` and `staged/` trees and relation files, the native pool-quality spool, the isolated
-  route's input copies) are now named by opaque per-run ids. A name holding `/` or `..`, or an absolute
-  name, can no longer place a scratch file outside the scratch directory. Output table files are
-  unchanged.
 
 ### Fixed (deterministic Faker over integer columns with nulls, 2026-10-07)
 

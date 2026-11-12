@@ -1,0 +1,4 @@
+from unittest.mock import patch
+
+patch("decoy_engine.plan._checks.no_such")
+patch("decoy_engine.plan._checks:no_such")

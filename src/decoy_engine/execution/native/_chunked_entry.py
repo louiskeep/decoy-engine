@@ -14,11 +14,7 @@ table admits, and on the pandas oracle otherwise, behind one contract:
   microseconds, out-of-range dates, `-2^63` timestamps, nested columns) comes back
   exact. Output types follow the schema rule in `_chunked_schema_rule` on both
   routes, and no chunk carries pandas metadata.
-- A `vault_writer` is refused (`vault_requires_resident_output`, B-6 rule B0):
-  the caller publishes each yielded chunk, so a vault written afterwards would
-  follow output it reverses. `count_chunked` takes one for `run_pipeline`'s
-  auto-chunk lane, which returns resident output.
-- `chunk_result_sink` and `base_row_offset` behave the same on
+- `vault_writer`, `chunk_result_sink` and `base_row_offset` behave the same on
   both routes. The sink receives one `ExecutionResult` per chunk whose
   `quality_metrics["chunked_route"]` records each column's planned and executed
   backend (see `_chunked_evidence`).
@@ -43,13 +39,17 @@ from decoy_engine.execution import _chunked_text_mask as text_mask_gate
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._chunked import _chain_first
 from decoy_engine.execution._errors import ExecutionError, vault_requires_resident_output
-from decoy_engine.execution._guards import run_chunk_ingest_guards
+from decoy_engine.execution._guards import (
+    prepare_declared_execution_sources,
+    run_chunk_ingest_guards,
+)
 from decoy_engine.execution._output_projection import (
     enforce_output_projection,
     known_output_columns,
 )
 from decoy_engine.execution._row_error_summary import chunk_row_error_summary
 from decoy_engine.execution._transforms import stored_index_fields
+from decoy_engine.execution.chunked import observe_chunked
 from decoy_engine.execution.native._categorical_prepared import (
     PreparedCategorical,
 )
@@ -91,7 +91,10 @@ from decoy_engine.execution.native._when_mask import plan_when_masks
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation.pool import PoolCache, ValuePool
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
-from decoy_engine.progress import get_active_channel
+from decoy_engine.profile import (
+    DeclarationRequest,
+    PreparedDeclaredSources,
+)
 
 # Matches `MAX_NATIVE_THREADS` in decoy-engine-native/src/threads.rs: the compiled
 # kernels refuse a larger request, so the entry point refuses it before any work.
@@ -414,6 +417,7 @@ def _run_chunked(
     *,
     table: str,
     engine_version: str,
+    declared: PreparedDeclaredSources,
     registry: Any = None,
     adapter: Any = None,
     vault_writer: Any = None,
@@ -438,6 +442,7 @@ def _run_chunked(
         chunks,
         table=table,
         engine_version=engine_version,
+        declared=declared,
         registry=registry,
         adapter=adapter,
         vault_writer=vault_writer,
@@ -635,7 +640,7 @@ def run_mask_chunked(
     input the oracle masks or refuses is masked or refused the same way.
 
     `vault_writer` must be `None`: a writer raises
-    `ExecutionError(code="vault_requires_resident_output")` before any chunk is read.
+    `ExecutionError(code="vault_requires_resident_output")` before any chunk is read (B-6 B0).
 
     Validation and route choice happen eagerly at call time; only the per-chunk
     masking is lazy. A chunk whose output cannot be made schema-stable without
@@ -648,32 +653,28 @@ def run_mask_chunked(
     """
     if vault_writer is not None:
         raise vault_requires_resident_output()
-    return count_chunked(
-        config,
-        chunks,
-        table=table,
-        engine_version=engine_version,
-        registry=registry,
-        adapter=adapter,
-        chunk_result_sink=chunk_result_sink,
-        key_provider=key_provider,
-        base_row_offset=base_row_offset,
-        native_threads=native_threads,
-        route_evidence_sink=route_evidence_sink,
-        pool_cache=pool_cache,
-    )
+    return count_chunked(**locals())
 
 
 def count_chunked(
-    config: Any, chunks: Iterable[pa.Table], *, table: str, native_threads: int = 1, **kwargs: Any
+    config: dict[str, Any], chunks: Iterable[pa.Table], *, table: str, **kwargs: Any
 ) -> Iterator[pa.Table]:
     """`run_mask_chunked`'s body, which also takes a `vault_writer`: for `run_pipeline`'s
     auto-chunk lane only, which returns resident output (B0)."""
-    _validate_native_threads(native_threads)
-    # Progress: account every yielded chunk on the active channel (bound by the
-    # caller, e.g. `run_pipeline(progress=...)`); a no-op when nothing is bound.
-    return get_active_channel().count_rows(
-        table, _run_chunked(config, chunks, table=table, native_threads=native_threads, **kwargs)
+    # Local import: a top-level one shifts the line the secret-material census pins.
+    from decoy_engine.config._subset_run import refuse_unapplied_subset
+
+    refuse_unapplied_subset(config)
+    _validate_native_threads(kwargs.get("native_threads", 1))
+    # Config-level check before `chunks` is touched; the first chunk is checked in preflight.
+    declared = prepare_declared_execution_sources(
+        DeclarationRequest.for_chunks(config, table, None),
+        file_access=kwargs.pop("file_access", None),
+        registry=kwargs.get("registry"),
+    )
+    # Progress: the table's mask phase and every yielded chunk on the active channel.
+    return observe_chunked(
+        table, _run_chunked(config, chunks, table=table, declared=declared, **kwargs)
     )
 
 

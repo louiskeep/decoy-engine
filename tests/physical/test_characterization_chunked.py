@@ -60,12 +60,22 @@ def test_mask_pipeline_chunked_adapter_byte_identical(tmp_path: Path) -> None:
 
     direct_chunks = list(
         run_mask_pipeline_chunked(
-            job.config, iter(_slices(source, 2)), table="t", engine_version="v", registry=registry
+            job.config,
+            iter(_slices(source, 2)),
+            table="t",
+            engine_version="v",
+            source_schema=source.schema,
+            registry=registry,
         )
     )
     via_chunks = list(
         MaskPipelineChunkedAdapter().run(
-            job.config, iter(_slices(source, 2)), table="t", engine_version="v", registry=registry
+            job.config,
+            iter(_slices(source, 2)),
+            table="t",
+            engine_version="v",
+            source_schema=source.schema,
+            registry=registry,
         )
     )
 
@@ -93,7 +103,12 @@ def test_mask_pipeline_chunked_adapter_is_lazy(tmp_path: Path) -> None:
             yield chunk
 
     iterator = MaskPipelineChunkedAdapter().run(
-        job.config, _tracking_slices(), table="t", engine_version="v", registry=registry
+        job.config,
+        _tracking_slices(),
+        table="t",
+        engine_version="v",
+        source_schema=source.schema,
+        registry=registry,
     )
     assert pulled == [0]  # one eager admission-validation pull, not all three
     next(iterator)

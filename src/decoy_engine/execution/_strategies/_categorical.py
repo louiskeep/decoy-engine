@@ -48,6 +48,7 @@ from __future__ import annotations
 import bisect
 import math
 import sys
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -55,7 +56,12 @@ import pandas as pd
 
 from decoy_engine import reasons
 from decoy_engine.determinism import derive_index
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    option,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._positional_keys import row_positions
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
@@ -78,9 +84,12 @@ _EXACT_FLOAT_TYPES: frozenset[type] = frozenset({float, np.float16, np.float32, 
 _MAX_DOUBLE_RATIO = float.as_integer_ratio(sys.float_info.max)
 
 
-def _exact_ratios(weights: list[Any]) -> list[tuple[int, int]]:
-    """Each weight as an exact `(numerator, power-of-two denominator)`; refusals run as
-    whole-vector passes (type, then non-finite) and report the lowest index only."""
+def _admit_weights(weights: Sequence[Any]) -> list[Any]:
+    """The weights unchanged, as a list, once every one is an exact admitted type.
+
+    The single type admission for categorical weights: every route that builds a CDF
+    (resident handler, out-of-core group B, native prepared artifact) passes the raw
+    configured weights here, never a coerced copy, and `_build_cdf` calls it again."""
     for i, w in enumerate(weights):
         if type(w) not in _EXACT_INT_TYPES and type(w) not in _EXACT_FLOAT_TYPES:
             raise StrategyError(
@@ -88,6 +97,13 @@ def _exact_ratios(weights: list[Any]) -> list[tuple[int, int]]:
                 strategy="categorical",
                 message=f"categorical weight at index {i:d} is not a number; cannot normalize.",
             )
+    return list(weights)
+
+
+def _exact_ratios(weights: Sequence[Any]) -> list[tuple[int, int]]:
+    """Each weight as an exact `(numerator, power-of-two denominator)`; refusals run as
+    whole-vector passes (type, then non-finite) and report the lowest index only."""
+    weights = _admit_weights(weights)
     ratios: list[tuple[int, int]] = []
     for i, w in enumerate(weights):
         if type(w) in _EXACT_INT_TYPES:
@@ -104,7 +120,7 @@ def _exact_ratios(weights: list[Any]) -> list[tuple[int, int]]:
     return ratios
 
 
-def _build_cdf(weights: list[Any]) -> list[int]:
+def _build_cdf(weights: Sequence[Any]) -> list[int]:
     """Cumulative integer thresholds over ``_WEIGHTED_CDF_RES``: entry i is the exclusive
     upper bound for category i, so ``bisect_right(cdf, x)`` maps a uniform ``x`` in
     ``[0, _WEIGHTED_CDF_RES)`` to its category.
@@ -172,6 +188,14 @@ class CategoricalStrategyHandler:
     """Remap a column onto a fixed category pool (derive_index-keyed)."""
 
     name: str = "categorical"
+    namespace_required: bool = True
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("categories", "str_list", ("gold", "silver", "bronze"), required=True),
+        option("weights", "float_list", (0.5, 0.3, 0.2)),
+        option("deterministic", "bool", True, location="column"),
+    )
+    offer_in_wizard: bool = True
 
     def run(
         self,
@@ -209,7 +233,7 @@ class CategoricalStrategyHandler:
             )
         # MG-1 S5: optional weights. None = uniform (V1 path).
         weights_raw = cfg.get("weights")
-        weights: list[float] | None = None
+        weights: list[Any] | None = None
         if weights_raw is not None:
             if not isinstance(weights_raw, (list, tuple)) or len(weights_raw) != len(categories):
                 raise StrategyError(
@@ -222,7 +246,7 @@ class CategoricalStrategyHandler:
                         f"len={len(weights_raw) if hasattr(weights_raw, '__len__') else 'n/a'}."
                     ),
                 )
-            weights = [float(w) for w in weights_raw]
+            weights = _admit_weights(weights_raw)
 
         source = df[column]
         na_mask = source.isna().to_numpy()

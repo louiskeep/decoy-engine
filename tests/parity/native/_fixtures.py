@@ -41,14 +41,14 @@ from decoy_engine.execution._strategies import SCALAR_HANDLERS
 from decoy_engine.execution.native._provider_class import classify_provider
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.providers_v2 import get_default_registry
+from tests._declared_schema import declare_rest
 
 _ENGINE_VERSION = "native-parity-harness"
 
 # Native execution is route-chosen (never caller-chosen): the candidate is the
 # default `run_pipeline` route, which runs the compiled kernels when the native
 # companion is installed and the pandas oracle otherwise. A matrix case passes
-# when the two agree logically; cases stay xfail(strict=False) because the
-# companion is optional in CI.
+# when the two agree logically, with or without the companion installed.
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +328,7 @@ def _build_config(table: str, key: str, column: dict[str, Any], source: pa.Table
         "targets": {table: {"type": "file", "format": "parquet", "path": f"{path}.out"}},
         "tables": [{"name": table, "columns": [column]}],
     }
-    return PipelineConfig.model_validate(raw).model_dump()
+    return PipelineConfig.model_validate(declare_rest(raw)).model_dump()
 
 
 # Per-strategy minimal specs. Each entry: (column-config extras, source values,

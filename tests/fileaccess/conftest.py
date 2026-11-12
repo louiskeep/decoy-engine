@@ -17,6 +17,7 @@ READ_ROLES = frozenset(
         FileRole.REFERENCE,
         FileRole.CORPUS,
         FileRole.SNAPSHOT,
+        FileRole.LOOKUP,
         FileRole.SECRET,
         FileRole.VAULT,
         FileRole.CONFIG,
@@ -31,8 +32,11 @@ WRITE_ROLES = frozenset(
 
 
 @pytest.fixture
-def root_dir(tmp_path: Path) -> Path:
-    root = tmp_path / "root"
+def root_dir(short_tmp_path: Path) -> Path:
+    """The confinement root, kept short: `test_fifo_and_device_are_denied` binds a Unix socket
+    in it, and modules that import that test (the portable walk) get this fixture, not the
+    override in test_policy_rooted. A long basetemp would overflow the AF_UNIX limit."""
+    root = short_tmp_path / "root"
     root.mkdir()
     return root
 

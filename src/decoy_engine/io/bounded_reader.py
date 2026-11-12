@@ -290,12 +290,32 @@ def iter_parquet_chunks(
                 del batch
 
 
-def csv_convert_options(names: list[str]) -> pa_csv.ConvertOptions:
+def csv_convert_options(
+    names: list[str], lexeme_columns: frozenset[str] = frozenset()
+) -> pa_csv.ConvertOptions:
+    # Arrow has one global null list, so a declared lexeme column turns NA conversion off for
+    # the read and `restore_default_na` re-applies the legacy vocabulary to every other column.
     return pa_csv.ConvertOptions(
         column_types={name: pa.string() for name in names},
-        null_values=list(PANDAS_DEFAULT_NA_VALUES),
+        null_values=[] if lexeme_columns else list(PANDAS_DEFAULT_NA_VALUES),
         strings_can_be_null=True,
     )
+
+
+def restore_default_na(table: pa.Table, lexeme_columns: frozenset[str]) -> pa.Table:
+    """The legacy NA vocabulary on every column that did not declare a contract."""
+    if not lexeme_columns:
+        return table
+    na = pa.array(sorted(PANDAS_DEFAULT_NA_VALUES), pa.string())
+    for index, name in enumerate(table.column_names):
+        if name in lexeme_columns:
+            continue
+        column = table.column(index)
+        # pc.* funcs are dynamically generated; stubs miss them.
+        hit = pc.is_in(column, value_set=na)  # type: ignore[attr-defined, unused-ignore]
+        nulled = pc.if_else(hit, pa.scalar(None, pa.string()), column)  # type: ignore[attr-defined, unused-ignore]
+        table = table.set_column(index, name, nulled)
+    return table
 
 
 @fileaccess.entry_point
@@ -306,6 +326,7 @@ def iter_csv_chunks(
     table: str,
     file_access: FileAccess | None = None,
     field_key: str = "source.path",
+    lexeme_columns: frozenset[str] = frozenset(),
 ) -> Iterator[pa.Table]:
     """Owned string-typed chunks of a CSV file within `budget`, framed record by
     record so no record larger than `max_row_bytes` ever reaches the parser."""
@@ -325,7 +346,7 @@ def iter_csv_chunks(
         names = framer.split_record_fields(header)
         if names is None:
             raise CsvMalformed(table=table, record=0)
-        convert_options = csv_convert_options(names)
+        convert_options = csv_convert_options(names, lexeme_columns)
         ncols = len(names)
         per_record = 4 * ncols + math.ceil(ncols / 8) + budget.out_row_bound
         batch: list[bytes] = []
@@ -340,11 +361,14 @@ def iter_csv_chunks(
                 use_threads=False, block_size=min(len(payload) + 1, 2**31 - 1)
             )
             try:
-                return pa_csv.read_csv(
-                    io.BytesIO(payload),
-                    read_options=read_options,
-                    parse_options=parse_options,
-                    convert_options=convert_options,
+                return restore_default_na(
+                    pa_csv.read_csv(
+                        io.BytesIO(payload),
+                        read_options=read_options,
+                        parse_options=parse_options,
+                        convert_options=convert_options,
+                    ),
+                    lexeme_columns,
                 )
             except pa.ArrowInvalid:
                 raise CsvMalformed(table=table, record=first_index) from None

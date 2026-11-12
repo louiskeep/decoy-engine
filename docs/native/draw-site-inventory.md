@@ -44,12 +44,12 @@ partitionable.
 
 ## Summary
 
-- 34 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
+- 40 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
   the out-of-core batched path, the delegation handlers, and the 9 identifier
   provider adapters).
-- 23 partitionable, 11 not.
-- Family breakdown: `source_keyed_hmac` 15, `numpy_pcg64` 8, `faker_seed_instance`
-  4, `python_mt19937` 3, `per_row_reseed` 2, `per_group_stream` 1,
+- 23 partitionable, 17 not.
+- Family breakdown: `source_keyed_hmac` 15, `numpy_pcg64` 9, `faker_seed_instance`
+  5, `python_mt19937` 7, `per_row_reseed` 2, `per_group_stream` 1,
   `gen_derive_context` 1.
 - GP2 (2026-09-17) added `gen.faker_pool_build` / `gen.faker_pool_selection`: a
   generation-local pool bridge for a closed allowlist of scalar `faker_type`
@@ -129,7 +129,7 @@ catalogued for totality/audit, not a native draw. Wiring the full per-value
 V1 follow-up.
 
 ### mask.categorical_deterministic
-`execution/_strategies/_categorical.py:198`. Uniform path:
+`execution/_strategies/_categorical.py:211`. Uniform path:
 `derive_index(mask_key, namespace, _canonicalize_source(value), pool_size=len(categories))`.
 Weighted path: `derive_index(..., pool_size=_WEIGHTED_CDF_RES)` then a bisect over
 the CDF. Mirror: the out-of-core categorical kernel
@@ -149,11 +149,11 @@ Out-of-core mirror at `_mask_group_b.py:132`.
 `transforms/date_shift.py:120`. Keyed path:
 `min_days + (HMAC-SHA256(column_key, value)[:8] % range_size)`. The execution
 handler derives the column key via `derive(mask_key, namespace, value)`
-(`execution/_strategies/_date_shift.py:185`). Legacy no-key configs fall back to
+(`execution/_strategies/_date_shift.py:198`). Legacy no-key configs fall back to
 `md5(value)` (`transforms/date_shift.py:108`), preserved for reproducibility.
 
 ### mask.bucket_perturb
-`transforms/bucket_perturb.py:118`. `derive(job_seed, namespace, _canonicalize_source(value_str))`
+`transforms/bucket_perturb.py:119`. `derive(job_seed, namespace, _canonicalize_source(value_str))`
 gives a within-bucket offset per value.
 
 ### mask.group_key
@@ -162,7 +162,7 @@ group-by source, giving a 32-byte group key. Generation reuses the same call
 (the `group_key` generation kind maps here).
 
 ### mask.categorical_nondeterministic
-`execution/_strategies/_categorical.py:198`. Seeded and position-keyed:
+`execution/_strategies/_categorical.py:211`. Seeded and position-keyed:
 `derive_index(ctx.mask_key, plan.namespace, encode_int(ctx.row_offset + i), pool_size=len(categories))`
 per non-null row (weighted configs use `pool_size=_WEIGHTED_CDF_RES` and the shared CDF, as the
 deterministic site does). `encode_int` is the public `decoy_engine.kernel` encoder, the same
@@ -191,7 +191,7 @@ version only: the modular index shifts if `row_count` changes.
 `HMAC-SHA256(mask_key, matched_text)`. The span text keys the shift.
 
 ### mask.faker
-`execution/_strategies/_faker.py:119`. The masking `faker` strategy, deterministic
+`execution/_strategies/_faker.py:131`. The masking `faker` strategy, deterministic
 selection. The value-visible draw is the pool SELECTION: `PoolSampler.sample` runs a
 per-row `derive_index(mask_key, namespace, canonical(source), pool.size)` over a provider
 value pool. The selection re-keys onto `mask_key`; the pool BUILD stays on `job_seed` (see
@@ -201,7 +201,7 @@ value pool. The selection re-keys onto `mask_key`; the pool BUILD stays on `job_
 `job_seed` through `PoolSampler` (`gen.pool_nondeterministic`) and are not partitionable.
 
 ### mask.faker_nondeterministic
-`execution/_strategies/_faker.py:102`. Position-keyed on `job_seed`, for non-deterministic
+`execution/_strategies/_faker.py:114`. Position-keyed on `job_seed`, for non-deterministic
 `cardinality_mode: reuse`. Row `g` takes
 `pool.values[derive_index(job_seed, selection_namespace, encode_int(g), pool_size=pool.size)]`,
 where `g = ctx.row_offset + i` and `i` is the row's ordinal in the frame the handler
@@ -245,7 +245,7 @@ valid `derive` IKM lengths. Wired into output via the provider registry
 
 ---
 
-## Family: numpy_pcg64 (8 sites)
+## Family: numpy_pcg64 (9 sites)
 
 Draws from a `numpy.random.Generator` (`default_rng`, PCG64). Most are
 whole-column vector draws and are therefore NOT partitionable. The exception is
@@ -253,13 +253,17 @@ whole-column vector draws and are therefore NOT partitionable. The exception is
 HMAC of the row index.
 
 ### mask.shuffle
-`execution/_strategies/_shuffle.py:56`. Whole-column, multiset-preserving
+`execution/_strategies/_shuffle.py:80`. Whole-column, multiset-preserving
 permutation. Seed:
 `int.from_bytes(derive(mask_key, plan.namespace, column.encode("utf-8"))[:8], "big")`,
 then `default_rng(seed).permutation(len(non_na_values))`. NOT partitionable: a
 partition sees only its slice and cannot reproduce the global permutation order.
-Nulls are excluded before the draw. Non-deterministic mode uses an unseeded
-`default_rng()`.
+Nulls are excluded before the draw. Non-deterministic mode is unkeyed but still
+drawn from the mask key: namespace `UNKEYED_SHUFFLE_NAMESPACE`, source
+`job_seed.hex() + "/" + context_draw_identity(ctx, column)`. The identity is
+`<len>:<current_table>/<len>:<nested_outer_column or column>`, the same one
+non-deterministic Faker's default selection namespace uses (`execution/_adapter.py`),
+and an empty `current_table` fails closed with `faker_positional_table_unknown`.
 
 ### mask.windowed_date (UNCERTAIN)
 `transforms/windowed_date.py:209`. Per-row seed:
@@ -274,7 +278,7 @@ derive seed, which is the proof of concept. Task 0.3 must pin `i` to a global
 row number. Flagged uncertain for that reason.
 
 ### gen.null_probability
-`generation/synthesize.py:521`.
+`generation/synthesize.py:516`.
 `np.random.default_rng(GenDeriveContext.for_column(...).base_int("np")).random(n) < null_prob`.
 This one draw IS the null decision: one float per row from a single contiguous
 stream, so row `i` depends on `n` and stream position. NOT partitionable. V1
@@ -285,6 +289,13 @@ mirror at `generators/columns.py:221`.
 `choice(k, size=num_rows, p=probs)`, `uniform(lo, hi)`, or `random(num_rows)`.
 Numeric, categorical, and datetime samplers all draw whole-column vectors
 (`:141`, `:266`, `:386`). NOT partitionable.
+
+### gen.distribution
+`generation/kinds/_parametric.py:67`. `default_rng(base_int("dist"))` then, per batch,
+`random(size)` (uniform), scaled and shifted by separate ufuncs so there is no fused multiply-add,
+with an optional `np.clip` to `min`/`max`. The `dist` family is separate
+from `np` so the value stream never shares uniforms with `gen.null_probability`. Draws of sizes
+k and n-k concatenate to one draw of n, so batching does not change values. NOT partitionable.
 
 ### gen.pool_nondeterministic
 `generation/pool/_sampler.py:122`.
@@ -317,7 +328,7 @@ before sampling. Build-side, not per output row. Mirrors: `_name_email.py:134`,
 
 ---
 
-## Family: python_mt19937 (3 sites)
+## Family: python_mt19937 (7 sites)
 
 Draws from a stdlib `random.Random`. All three advance one stream across the
 column (whole-column `choices(k=n)` or a per-row `choice`/`choices` loop on a
@@ -325,16 +336,35 @@ single instance), so none is partitionable: a partition cannot resume a Python
 RNG mid-stream.
 
 ### gen.categorical
-`generation/synthesize.py:433`.
+`generation/synthesize.py:388`.
 `random.Random(GenDeriveContext.for_column(...).base_int("py")).choices(cats, weights=weights, k=n)`:
 one whole-column call. V1 mirror at `generators/columns.py:412`.
 
+### gen.lookup
+`generation/kinds/_lookup.py:254`. The `gen.categorical` call over a pinned lookup list:
+`random.Random(GenDeriveContext.for_column(...).base_int("py")).choices(values, weights=weights, k=n)`,
+one whole-column call. The seed fingerprint holds the file's content digest from the plan, never its
+path. NOT partitionable.
+
 ### gen.reference
-`generation/synthesize.py:624`. `random.Random(col_seed)` then per row
+`generation/_synthesize_derived.py:156`. `random.Random(col_seed)` then per row
 `choice(ref_vals)` or `choices(..., k=1)`; the `sequential` distribution draws
 nothing (`ref_vals[i % len]`). Cardinality repair
 (`generators/columns.py:596-656`) adds `shuffle`/`choices` on the same stream.
 V1 mirror at `generators/columns.py:507`.
+
+### gen.categorical_unique
+`generation/_unique.py`. `random.Random(base_int("py")).sample(distinct, min(n, len))`:
+sampling without replacement for `unique: true`; a `None` category fills the rows
+past the distinct count.
+
+### gen.reference_unique
+`generation/_unique.py`. `random.Random(base_int("py")).sample(ref_vals, n)` for
+`unique: true`; the `sequential` distribution slices `ref_vals[:n]` and draws nothing.
+
+### gen.unique_pair
+`generation/_unique.py`. `random.Random(base_int("unique_pair")).sample(range(P_a * P_b), n)`
+for a `unique_together` entry, decoded to one key from each parent.
 
 ### mask.formula
 `transforms/formula.py:55`. One `random.Random(formula_seed)` where
@@ -359,7 +389,7 @@ variable number of values internally (the reseed contains it).
 `local_seed = gen_ctx.row_int("py", i); row_rng.seed(local_seed); self.faker.seed_instance(gen_ctx.row_int("faker", i))`,
 then `safe_eval(formula, scope)`. The referenced-formula post-pass
 (`generators/_formula.py:144`) and the V2 delegation
-(`generation/synthesize.py:559`) mirror it.
+(`generation/_synthesize_derived.py:84`) mirror it.
 
 ### gen.statistical_per_row
 `generation/statistical/_sample.py:260`. `rng.seed(col_seed + i)` per row (the
@@ -370,15 +400,20 @@ within a row, but the per-row reseed contains it.
 
 ---
 
-## Family: faker_seed_instance (4 sites)
+## Family: faker_seed_instance (5 sites)
 
 `Faker.seed_instance(seed)` detaches the instance onto its own `random.Random`
 and reseeds it, then a provider method draws. Draw count per call varies by
 provider, but each site reseeds from a per-row or per-span key, so output is a
 pure function of that key.
 
+### gen.faker_unique_retry
+`generation/_unique.py`. After a unique faker row repeats a value, retry `k` reseeds from
+`row_int("faker_unique", i * 1000 + k - 1)`. The seen set makes a row depend on earlier
+rows, so the site is not partitionable.
+
 ### gen.faker_per_row
-`generation/synthesize.py:490`. Per row:
+`generation/synthesize.py:476`. Per row:
 `faker_inst.seed_instance(gen_ctx.row_int("faker", i))` then `provider_func(**kwargs)`.
 `row_int` is an HMAC over the faker family key and `i`. Partitionable. V1 mirror
 at `generators/columns.py:329` is byte-identical.
@@ -413,7 +448,7 @@ custom-override/locale availability. Seed:
 `build_seed = GenDeriveContext.for_column(...).family_bytes("faker_pool_build")[:8]`,
 then ONE `faker.seed_instance(int.from_bytes(build_seed, "big"))` on a fresh
 instance seeds a batch of `pool_size` provider calls. Keyed off the column's OWN
-root (fingerprint-derived), so rename-invariant per R3.10 and independent of every
+root (fingerprint-derived), so identity-scoped per column and independent of every
 other column's pool. Partitionable (pool identity is a pure function of that root).
 Paired with `gen.faker_pool_selection` (`numpy_pcg64` family, above) for the REUSE
 draw.
@@ -553,18 +588,20 @@ The `unit_float_from_bits53(raw_u64)` primitive extracts the upper 53 bits of a
 FULL 64-bit value (`(raw_u64 >> 11) / 2**53`), matching NumPy's own `random()`
 construction and always `< 1.0` (the all-ones input maps to `(2**53 - 1) / 2**53`).
 
-Registry: exactly one provider per catalogued `draw_site_id` (34 sites; 23
-partitionable, 11 not). An import-time invariant fails if the registry drifts
+Registry: exactly one provider per catalogued `draw_site_id` (40 sites; 23
+partitionable, 17 not). An import-time invariant fails if the registry drifts
 from `DRAW_SITES`.
 
 | draw_site_id                      | family              | partitionable | provider_version |
 | --------------------------------- | ------------------- | ------------- | --------------------------------------------------------------- |
 | gen.faker_per_row                 | faker_seed_instance | yes           | seed_protocol_v7 (GenDeriveContext); Faker seed_instance |
 | gen.faker_pool_build              | faker_seed_instance | yes           | seed_protocol_v7 (GenDeriveContext.family_bytes); Faker seed_instance |
+| gen.faker_unique_retry            | faker_seed_instance | no            | seed_protocol_v7 (GenDeriveContext); Faker seed_instance |
 | gen.pool_build_faker              | faker_seed_instance | yes           | seed_protocol_v7 (pool_seed via derive); Faker/provider adapter |
 | mask.text_mask_faker              | faker_seed_instance | yes           | Faker (seed_instance detaches a per-instance random.Random) |
 | gen.derive_context                | gen_derive_context  | yes           | seed_protocol_v7 |
 | gen.composite_build_pool          | numpy_pcg64         | no            | seed_protocol_v7; numpy NEP-19 PCG64 |
+| gen.distribution                  | numpy_pcg64         | no            | seed_protocol_v7 (GenDeriveContext); numpy NEP-19 PCG64 |
 | gen.distribution_snapshot         | numpy_pcg64         | no            | seed_protocol_v7 (GenDeriveContext); numpy NEP-19 PCG64 |
 | gen.faker_pool_selection          | numpy_pcg64         | no            | seed_protocol_v7 (GenDeriveContext.family_bytes); numpy NEP-19 PCG64 |
 | gen.identifier_nondeterministic   | numpy_pcg64         | no            | numpy NEP-19 PCG64 |
@@ -577,6 +614,10 @@ from `DRAW_SITES`.
 | gen.statistical_per_row           | per_row_reseed      | yes           | CPython Mersenne Twister (no numpy; bit-stable inverse-CDF) |
 | gen.categorical                   | python_mt19937      | no            | seed_protocol_v7 (GenDeriveContext); CPython Mersenne Twister |
 | gen.reference                     | python_mt19937      | no            | seed_protocol_v7 (GenDeriveContext); CPython Mersenne Twister |
+| gen.lookup                        | python_mt19937      | no            | seed_protocol_v7 (GenDeriveContext); CPython Mersenne Twister |
+| gen.categorical_unique            | python_mt19937      | no            | seed_protocol_v7 (GenDeriveContext); CPython Mersenne Twister |
+| gen.reference_unique              | python_mt19937      | no            | seed_protocol_v7 (GenDeriveContext); CPython Mersenne Twister |
+| gen.unique_pair                   | python_mt19937      | no            | seed_protocol_v7 (GenDeriveContext); CPython Mersenne Twister |
 | mask.formula                      | python_mt19937      | no            | CPython Mersenne Twister |
 | gen.identifier_deterministic      | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | gen.pool_deterministic            | source_keyed_hmac   | yes           | seed_protocol_v7 |

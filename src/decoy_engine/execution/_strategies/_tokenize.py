@@ -49,7 +49,8 @@ import unicodedata
 import pandas as pd
 
 from decoy_engine import reasons
-from decoy_engine.execution._adapter import StrategyContext
+from decoy_engine._opaque import OpaqueBox
+from decoy_engine.execution._adapter import StrategyContext, StrategyOption
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._tokenize_key import (
     require_derivation_scope,
@@ -64,6 +65,10 @@ class TokenizeStrategyHandler:
     """Reversible tokenization: deterministic surrogate + vault-recorded mapping."""
 
     name: str = "tokenize"
+    namespace_required: bool = True
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = ()
+    offer_in_wizard: bool = False
 
     def run(
         self,
@@ -132,7 +137,7 @@ class TokenizeStrategyHandler:
                 ),
             )
 
-        keyed = tokenize_context(ctx.mask_key, namespace, scope)
+        keyed = tokenize_context(OpaqueBox(ctx.mask_key), namespace, scope)
         out: list[str | None] = []
         for value in col.tolist():
             if pd.isna(value):

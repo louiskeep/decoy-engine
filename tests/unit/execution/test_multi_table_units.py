@@ -14,7 +14,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine.errors import RowErrorsFailedError
+from decoy_engine.errors import PipelineValidationError, RowErrorsFailedError
 from decoy_engine.execution import _pipeline_multi_table as pmt
 from decoy_engine.execution import run_pipeline
 from tests.unit.execution import _multi_table_support as mt
@@ -35,7 +35,11 @@ def _plan(*columns: tuple[str, str, str, bool, tuple[tuple[str, Any], ...]]) -> 
 
 
 class TestUnseededRandomNodes:
-    def test_reports_each_fresh_generator_shape_and_only_those(self) -> None:
+    def test_reports_each_fresh_generator_shape_and_only_those(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # No shipped strategy is unseeded; a stand-in set keeps the gate 9 scan covered.
+        monkeypatch.setattr(pmt, "UNSEEDED_RANDOM_STRATEGIES", frozenset({"shuffle"}))
         plan = _plan(
             ("t", "a", "categorical", False, ()),
             ("t", "b", "categorical", True, ()),
@@ -61,6 +65,13 @@ class TestUnseededRandomNodes:
 
     def test_a_plan_without_random_columns_reports_nothing(self) -> None:
         assert pmt.unseeded_random_nodes(_plan(("t", "a", "hash", False, ()))) == ()
+
+    def test_unkeyed_shuffle_is_not_reported(self) -> None:
+        plan = _plan(
+            ("t", "c", "shuffle", False, ()),
+            ("t", "f", "nested", False, (("strategy", "shuffle"),)),
+        )
+        assert pmt.unseeded_random_nodes(plan) == ()
 
 
 _KINDS = {"a": "mask", "b": "mask"}
@@ -119,7 +130,11 @@ class TestJobGates:
             "unseeded",
         ],
     )
-    def test_each_closed_gate_alone_keeps_the_job_whole(self, overrides: dict[str, Any]) -> None:
+    def test_each_closed_gate_alone_keeps_the_job_whole(
+        self, overrides: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Stand-in unseeded set for the "unseeded" case; no shipped strategy is in it.
+        monkeypatch.setattr(pmt, "UNSEEDED_RANDOM_STRATEGIES", frozenset({"shuffle"}))
         assert _gate(**overrides) is False
 
     def test_quarantine_present_but_disabled_does_not_close_the_gate(self) -> None:
@@ -434,7 +449,7 @@ def test_the_key_provider_reaches_both_the_dispatched_and_the_group_tables(
         )
 
 
-def test_the_unconfigured_column_policy_reaches_the_group_call(tmp_path: Path) -> None:
+def test_the_declaration_gate_refuses_before_the_group_call(tmp_path: Path) -> None:
     small = pa.table({**mt.string_table(mt.SMALL, "s").to_pydict(), "extra": ["z"] * mt.SMALL})
     cfg, sources = mt.build_job(
         tmp_path,
@@ -443,17 +458,13 @@ def test_the_unconfigured_column_policy_reaches_the_group_call(tmp_path: Path) -
             "small": (mt.std_columns("small_ns"), small),
         },
     )
-    cfg["global_settings"]["unconfigured_column_policy"] = "error"
-    errors: list[BaseException] = []
-    for extra in ({}, mt.off_kw()):
-        with pytest.raises(Exception) as raised:
-            run_pipeline(cfg, sources=sources, **mt.kw(**extra))
-        errors.append(raised.value)
-    assert mt.same_error(errors[0], errors[1])
-    cfg["global_settings"]["unconfigured_column_policy"] = "warn"
-    ok = run_pipeline(cfg, sources=sources, **mt.kw())
-    assert mt.dispatched_tables(ok) == ["big"]
-    assert ok.outputs["small"].column("extra").to_pylist() == ["z"] * mt.SMALL
+    cfg["tables"][1]["columns"] = [c for c in cfg["tables"][1]["columns"] if c["name"] != "extra"]
+    for policy in ("error", "warn"):
+        cfg["global_settings"]["unconfigured_column_policy"] = policy
+        for extra in ({}, mt.off_kw()):
+            with pytest.raises(PipelineValidationError) as raised:
+                run_pipeline(cfg, sources=sources, **mt.kw(**extra))
+            assert raised.value.code == "source_file.undeclared_column"
 
 
 def test_a_group_table_row_error_still_raises_with_its_own_records(tmp_path: Path) -> None:

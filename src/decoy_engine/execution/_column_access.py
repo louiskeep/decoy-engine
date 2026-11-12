@@ -28,8 +28,13 @@ import ast
 import tokenize
 import unicodedata
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
+
+# Whether an entry reads its own column from the source or produces it. A created column is
+# exempt from "declared but missing from the source" only through `created_targets`.
+OWN_TARGET_SOURCE = "source"
+OWN_TARGET_CREATES = "creates"
 
 # provider_config keys that name a sibling column for any strategy. Shared with
 # `native/_requirements._required_input_columns` so the two cannot drift.
@@ -52,6 +57,9 @@ class ColumnAccess:
     writes: frozenset[str] = frozenset()
     reads_unknown: bool = False
     writes_unknown: bool = False
+    # `source` unless the strategy writes its own target without reading it. The default is the
+    # fail-closed side: a new surface is never exempt until a row says it creates its target.
+    own_target: str = OWN_TARGET_SOURCE
 
 
 _NOTHING = ColumnAccess()
@@ -194,6 +202,38 @@ def _union(a: ColumnAccess, b: ColumnAccess) -> ColumnAccess:
         writes=a.writes | b.writes,
         reads_unknown=a.reads_unknown or b.reads_unknown,
         writes_unknown=a.writes_unknown or b.writes_unknown,
+        # Differing own-target claims fall back to reading the source, the fail-closed side.
+        own_target=a.own_target if a.own_target == b.own_target else OWN_TARGET_SOURCE,
+    )
+
+
+def _creates(declare: Declaration) -> Declaration:
+    """`declare` for a strategy that writes its own target from other columns only."""
+
+    def declared(entry: Mapping[str, Any]) -> ColumnAccess:
+        return replace(declare(entry), own_target=OWN_TARGET_CREATES)
+
+    return declared
+
+
+def _transforms(table_entry: Mapping[str, Any]) -> ColumnAccess:
+    """The table's `derive` ops in order: each target is written, and an expression reads the
+    source columns it names, or an earlier target (which is not a source read)."""
+    reads: set[str] = set()
+    writes: set[str] = set()
+    for op in table_entry.get("transforms") or []:
+        if not isinstance(op, Mapping) or op.get("op") != "derive":
+            continue
+        names = predicate_names(str(op.get("expression")))
+        if names is None:
+            return replace(_READS_UNKNOWN, own_target=OWN_TARGET_CREATES)
+        reads |= names - writes
+        if isinstance(op.get("column"), str):
+            writes.add(op["column"])
+    if not writes:
+        return _NOTHING
+    return ColumnAccess(
+        reads=frozenset(reads), writes=frozenset(writes), own_target=OWN_TARGET_CREATES
     )
 
 
@@ -284,13 +324,18 @@ _FIXED_COMPOSITES: tuple[str, ...] = (
 
 SURFACE_DECLARATIONS: dict[str, Declaration] = {
     **{f"scalar:{name}": _generic for name in _SCALAR_STRATEGIES},
-    "scalar:derived": _derived,
-    "scalar:derived_aggregate": _derived_aggregate,
+    **{
+        f"scalar:{name}": _creates(_generic)
+        for name in ("grouped_series", "windowed_date", "group_key")
+    },
+    "scalar:derived": _creates(_derived),
+    "scalar:derived_aggregate": _creates(_derived_aggregate),
     "scalar:joint_mask": _joint_mask,
     "scalar:nested": _nested,
     **{f"composite:{name}": _composite(_fixed_outputs(name)) for name in _FIXED_COMPOSITES},
     "composite:composite_custom": _composite(_custom_outputs),
     "surface:when": _when,
+    "surface:transforms": _transforms,
     # No relationship edges exist on the chunked route (`RelationshipGraph(edges=())`),
     # a composite FK group without an edge raises, and the projection and ingest-guard
     # stages read column names and own-column types only.
@@ -323,15 +368,79 @@ def column_access(entry: Mapping[str, Any], registry: Any) -> ColumnAccess:
         access = _WRITES_UNKNOWN if declare is None else declare(entry)
         # The when gate is not applied to composite nodes, but the declaration stays
         # conservative: the predicate's names count as read too.
-        if has_when(entry):
-            access = _union(access, SURFACE_DECLARATIONS["surface:when"](entry))
-        return access
+        return _with_when(access, entry)
     declare = SURFACE_DECLARATIONS.get(f"scalar:{entry.get('strategy')}")
     # An undeclared strategy may write anything: fail closed.
     access = _WRITES_UNKNOWN if declare is None else declare(entry)
-    if has_when(entry):
-        access = _union(access, SURFACE_DECLARATIONS["surface:when"](entry))
-    return access
+    return _with_when(access, entry)
+
+
+def _with_when(access: ColumnAccess, entry: Mapping[str, Any]) -> ColumnAccess:
+    """`access` plus the columns the entry's `when:` predicate reads. The gate leaves unmatched
+    rows untouched and never reads the entry's own target, so the predicate makes no claim about
+    who writes that target and `own_target` stays the entry's."""
+    if not has_when(entry):
+        return access
+    merged = _union(access, SURFACE_DECLARATIONS["surface:when"](entry))
+    return replace(merged, own_target=access.own_target)
+
+
+def created_columns(
+    table_entry: Mapping[str, Any], source_columns: Iterable[str], registry: Any
+) -> frozenset[str]:
+    """Columns the config creates on this table, given the columns the source has.
+
+    A column entry counts only when its declaration says it creates its own target and every
+    column it reads is a source column or a created derive target, so a target that is read, or whose inputs are absent or
+    unreadable, is not created. A `derive` target counts the same way against the source
+    columns its own expression reads.
+    """
+    have = frozenset(source_columns)
+    derived = _derive_created(table_entry, have)
+    readable = have | derived  # transforms run before the columns, so their targets are readable
+    created: set[str] = set()
+    for entry in table_entry.get("columns") or []:
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("name"), str):
+            continue
+        access = column_access(entry, registry)
+        if _creates_from(access, readable):
+            created.add(entry["name"])
+    return frozenset(created) | derived
+
+
+def _derive_created(table_entry: Mapping[str, Any], have: frozenset[str]) -> frozenset[str]:
+    """`derive` targets that are new columns built from source columns still on the frame.
+
+    The ops are walked in order, as `apply_transforms` applies them: a dropped column is no
+    longer readable, a target already on the frame is refused at run time (so it is never a
+    created column), and a target an earlier derive made is readable while it qualified and is
+    still on the frame. A target written twice must qualify on every write. The central
+    `surface:transforms` declaration cannot answer this: it merges the ops into one read and
+    write set, with no per-target verdict and no drop or shadow tracking.
+    """
+    frame = set(have)
+    ok: dict[str, bool] = {}
+    for op in table_entry.get("transforms") or []:
+        if not isinstance(op, Mapping):
+            continue
+        if op.get("op") == "drop_column":
+            frame -= _strings(op.get("columns"))
+        elif op.get("op") == "derive" and isinstance(op.get("column"), str):
+            target = op["column"]
+            names = predicate_names(str(op.get("expression")))
+            made = frozenset(t for t, g in ok.items() if g) & frame
+            good = names is not None and names <= (frame & have) | made and target not in frame
+            ok[target] = ok.get(target, True) and good
+            frame.add(target)
+    return frozenset(t for t, good in ok.items() if good)
+
+
+def _creates_from(access: ColumnAccess, have: frozenset[str]) -> bool:
+    return (
+        access.own_target == OWN_TARGET_CREATES
+        and not access.reads_unknown
+        and access.reads <= have
+    )
 
 
 def touched_columns(entries: Iterable[Mapping[str, Any]], registry: Any) -> frozenset[str] | None:

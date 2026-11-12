@@ -14,7 +14,7 @@ import pytest
 
 from decoy_engine.vault import VaultWriter
 
-KEY = b"12345678"
+KEY = b"12345678" * 4
 
 
 def _writer() -> VaultWriter:

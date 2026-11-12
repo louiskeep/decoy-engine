@@ -1,0 +1,24 @@
+{
+ "sentry_id": "reason-policy-single-source",
+ "created_in": "REG-RENUMBER",
+ "entries": {
+  "scripts/release/sbom_checks.py::pin_violations": {
+   "reason": "requirements-file pins, unrelated"
+  },
+  "src/decoy_engine/_progress_events.py::_field_value": {
+   "reason": "emits the live registry version into one event field"
+  },
+  "src/decoy_engine/reasons/_record.py::ReasonRecord.parse_payload": {
+   "reason": "ReasonRecord.parse_payload: checks one record's version, not a manifest comparison"
+  },
+  "src/decoy_engine/reasons/_record.py::ReasonRecord.validate": {
+   "reason": "ReasonRecord.validate: one record's version against the live registry"
+  },
+  "src/decoy_engine/reasons/_registry.py::check_integrity": {
+   "reason": "the registry's own structural check over specs, not a manifest comparison"
+  },
+  "tests/unit/run_result/test_model.py::_compat_literals": {
+   "reason": "an AST scanner that finds version literals for the one-parser test, not a validator"
+  }
+ }
+}

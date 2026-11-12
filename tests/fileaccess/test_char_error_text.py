@@ -60,14 +60,18 @@ def test_r1_parquet_sample_missing() -> None:
 
 @pytest.mark.parametrize("method", ["row_count", "schema"])
 def test_r1_csv_source_missing(method: str) -> None:
-    source = build_profile_source({"type": "file", "format": "csv", "path": "nope.csv"})
+    source = build_profile_source(
+        {"type": "file", "format": "csv", "has_header": True, "path": "nope.csv"}
+    )
     exc = _raises(getattr(source, method))
     assert isinstance(exc, FileNotFoundError)
     assert _text(exc) == "[Errno 2] No such file or directory: 'nope.csv'"
 
 
 def test_r1_csv_sample_and_frame_missing() -> None:
-    source = build_profile_source({"type": "file", "format": "csv", "path": "nope.csv"})
+    source = build_profile_source(
+        {"type": "file", "format": "csv", "has_header": True, "path": "nope.csv"}
+    )
     for call in (lambda: source.sample_frame(5), source.to_frame):
         exc = _raises(call)
         assert isinstance(exc, FileNotFoundError)
@@ -170,14 +174,14 @@ def test_r6_mask_secret_file_errors() -> None:
 
 
 def test_r10_vault_read_errors() -> None:
-    missing = _raises(lambda: load_vault("nope.dcyvault", b"12345678"))
+    missing = _raises(lambda: load_vault("nope.dcyvault", b"12345678" * 4))
     assert isinstance(missing, VaultError)
     assert _text(missing) == (
         "[vault_unreadable] vault file 'nope.dcyvault' could not be read: "
         "[Errno 2] No such file or directory: 'nope.dcyvault'"
     )
     Path("bad.dcyvault").write_bytes(b"junk")
-    bad = _raises(lambda: load_vault("bad.dcyvault", b"12345678"))
+    bad = _raises(lambda: load_vault("bad.dcyvault", b"12345678" * 4))
     assert (
         _text(bad)
         == "[vault_unreadable] 'bad.dcyvault' is not a decoy vault file (bad magic header)."
@@ -193,7 +197,7 @@ def test_r12_config_file_errors() -> None:
         "Config root must be a YAML mapping, got list"
     )
     Path("b.yaml").write_text("a: [\n")
-    assert _text(_raises(lambda: validate_config("b.yaml"))).startswith("Failed to parse YAML:")
+    assert _text(_raises(lambda: validate_config("b.yaml"))).startswith("could not parse YAML:")
 
 
 def test_r3_snapshot_read_errors() -> None:

@@ -1,0 +1,77 @@
+{
+  "schema": "decoy-telemetry/v1",
+  "span_names": [
+    "decoy.job",
+    "decoy.phase.cleanup",
+    "decoy.phase.compile",
+    "decoy.phase.configuration",
+    "decoy.phase.finalize",
+    "decoy.phase.generate",
+    "decoy.phase.mask",
+    "decoy.phase.publish",
+    "decoy.phase.resolve",
+    "decoy.phase.unknown",
+    "decoy.phase.verify",
+    "decoy.read",
+    "decoy.run"
+  ],
+  "attribute_keys": [
+    "decoy.bytes",
+    "decoy.elapsed_s",
+    "decoy.engine.version",
+    "decoy.job.id",
+    "decoy.mode",
+    "decoy.outcome",
+    "decoy.phase",
+    "decoy.reason",
+    "decoy.rows_in",
+    "decoy.rows_out",
+    "decoy.spans_dropped",
+    "error.type"
+  ],
+  "resource_keys": [
+    "service.name",
+    "service.version"
+  ],
+  "string_vocabularies": {
+    "decoy.mode": [
+      "convert",
+      "generate",
+      "graph",
+      "mask"
+    ],
+    "decoy.outcome": [
+      "cancelled",
+      "failed",
+      "incomplete",
+      "success"
+    ],
+    "decoy.phase": [
+      "cleanup",
+      "compile",
+      "configuration",
+      "finalize",
+      "generate",
+      "mask",
+      "publish",
+      "resolve",
+      "unknown",
+      "verify"
+    ]
+  },
+  "rule_vocabularies": {
+    "decoy.engine.version": "engine_version",
+    "decoy.reason": "registered_namespace_code",
+    "error.type": "safe_error_class"
+  },
+  "integer_keys": [
+    "decoy.bytes",
+    "decoy.job.id",
+    "decoy.rows_in",
+    "decoy.rows_out",
+    "decoy.spans_dropped"
+  ],
+  "number_keys": [
+    "decoy.elapsed_s"
+  ]
+}

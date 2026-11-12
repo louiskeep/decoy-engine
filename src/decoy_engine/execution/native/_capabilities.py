@@ -413,6 +413,39 @@ _GEN_ONLY: dict[str, _Ortho] = {
         gen=True,
         notes="Per-row reseed from col_seed + row index; partition-safe when the global index is preserved.",
     ),
+    "constant": _Ortho(
+        True,
+        False,
+        False,
+        False,
+        True,
+        gen=True,
+        notes="The one configured value for every row; no draw.",
+    ),
+    "lookup": _Ortho(
+        False,
+        True,
+        False,
+        False,
+        False,
+        gen=True,
+        notes=(
+            "One python Random choices call over the pinned lookup list; the value type comes "
+            "from the file. Resident route only, non-partitionable like categorical generation."
+        ),
+    ),
+    "distribution": _Ortho(
+        False,
+        True,
+        False,
+        False,
+        True,
+        gen=True,
+        notes=(
+            "One persistent numpy Generator (dist family) advanced in row order; prefix-stable, "
+            "so the batch layout does not change values."
+        ),
+    ),
 }
 
 # Composite / FK-group placeholder strategy names stamped by build_work_list.

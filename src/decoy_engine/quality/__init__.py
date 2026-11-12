@@ -37,6 +37,7 @@ from typing import Any
 _LAZY_EXPORTS: dict[str, str] = {
     "QUALITY_DIAGNOSTIC_SCHEMA_VERSION": "diagnostic",
     "compute_diagnostic": "diagnostic",
+    "snapshot_null_fraction": "diagnostic",
     "QUALITY_FIDELITY_SCHEMA_VERSION": "fidelity",
     "compute_fidelity": "fidelity",
     "QUALITY_POLICY_SCHEMA_VERSION": "policy",
@@ -47,8 +48,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "score_to_grade": "report",
     "QUALITY_SHAPE_FIDELITY_SCHEMA_VERSION": "shape_fidelity",
     "compute_shape_fidelity": "shape_fidelity",
+    "CATEGORICAL_DISTINCT_CAP": "snapshot",
     "DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION": "snapshot",
+    "MAX_CONTINGENCY_TOP_K": "snapshot",
     "compute_distribution_snapshot": "snapshot",
+    "check_dp_fit_request": "dp",
     "SYNTH_REPORT_SCHEMA_VERSION": "synth_report",
     "assemble_synth_report": "synth_report",
     "compute_attack_metrics": "synth_report",
@@ -71,7 +75,9 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "CATEGORICAL_DISTINCT_CAP",
     "DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION",
+    "MAX_CONTINGENCY_TOP_K",
     "QUALITY_DIAGNOSTIC_SCHEMA_VERSION",
     "QUALITY_FIDELITY_SCHEMA_VERSION",
     "QUALITY_POLICY_SCHEMA_VERSION",
@@ -81,6 +87,7 @@ __all__ = [
     "apply_quality_policy",
     "assemble_quality_report",
     "assemble_synth_report",
+    "check_dp_fit_request",
     "compute_attack_metrics",
     "compute_dcr",
     "compute_diagnostic",
@@ -90,4 +97,5 @@ __all__ = [
     "compute_quality_report",
     "compute_shape_fidelity",
     "score_to_grade",
+    "snapshot_null_fraction",
 ]

@@ -17,7 +17,7 @@ import pytest
 
 import decoy_engine
 from decoy_engine import run_mask_chunked
-from decoy_engine.errors import DecoyError
+from decoy_engine.errors import DecoyError, PipelineValidationError
 from decoy_engine.execution import _errors as _execution_errors
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution.native import _crypto_ext
@@ -28,6 +28,7 @@ from decoy_engine.execution.native._dispatch import (
     run_native_or_oracle_chunked,
 )
 from decoy_engine.generation.pool import PoolBuilder, PoolCache
+from tests.native._b8_support import run_mask_chunked_below_gate
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     NEEDS_COMPANION,
@@ -64,14 +65,16 @@ def _source(n: int = 11) -> pa.Table:
 
 
 def _run(
-    config: dict[str, Any], names: list[str], **kw: Any
+    config: dict[str, Any], names: list[str], *, below_gate: bool = False, **kw: Any
 ) -> tuple[list[pa.Table], list[Any], NativeRouteEvidence]:
+    """Run the public entry. `below_gate` is for a test whose subject is an unconfigured column."""
+    entry = run_mask_chunked_below_gate if below_gate else run_mask_chunked
     sink: list[Any] = []
     evidence: list[NativeRouteEvidence] = []
     chunks = split(_source().select(names), kw.pop("size", _CHUNK))
     kw.setdefault("key_provider", key_provider())
     out = list(
-        run_mask_chunked(
+        entry(
             config,
             chunks,
             table=TABLE,
@@ -276,6 +279,12 @@ def test_vetoed_tables_report_planned_native_and_executed_oracle(
     case: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config, names, kwargs, reason, planned = _veto_case(case, monkeypatch)
+    if case == "schema_veto":  # a configured column the source lacks is refused, not rerouted
+        with pytest.raises(PipelineValidationError) as caught:
+            _run(config, names, **kwargs)
+        assert caught.value.code == "source_file.declared_column_missing"
+        assert "column q" in str(caught.value)
+        return
     _, sink, evidence = _run(config, names, **kwargs)
     agg = aggregate_chunked_route_evidence(sink)
     assert evidence.native_admitted is False
@@ -292,7 +301,7 @@ def test_vetoed_tables_report_planned_native_and_executed_oracle(
 
 def test_unconfigured_admitted_reports_planned_and_executed_native_backends() -> None:
     config = make_config([redact("r"), truncate("t")])
-    _, sink, evidence = _run(config, ["r", "t", "p"])
+    _, sink, evidence = _run(config, ["r", "t", "p"], below_gate=True)
     agg = aggregate_chunked_route_evidence(sink)
     assert evidence.native_admitted is True and evidence.reroute_reason is None
     assert agg["native_admitted"] is True and agg["reroute_reason"] is None
@@ -332,7 +341,7 @@ def test_fk_table_runs_on_the_oracle_and_lists_its_configured_columns() -> None:
 
 def test_unconfigured_columns_are_not_listed_in_the_evidence() -> None:
     config = make_config([redact("r")])
-    _, sink, _ = _run(config, ["r", "p"])
+    _, sink, _ = _run(config, ["r", "p"], below_gate=True)
     agg = aggregate_chunked_route_evidence(sink)
     assert set(_columns(agg)) == {"r"}
 
@@ -465,6 +474,12 @@ def test_schema_drift_is_an_execution_error_and_a_decoy_error(kind: str, detail:
             )
         )
 
+    if kind == "missing":  # a declared column a later chunk drops is a coded config refusal
+        with pytest.raises(PipelineValidationError) as refused:
+            go()
+        assert refused.value.code == "source_file.declared_column_missing"
+        assert "column p" in str(refused.value)
+        return
     caught: list[BaseException] = []
     try:
         go()

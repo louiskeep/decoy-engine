@@ -159,6 +159,23 @@ MATRIX: tuple[MatrixRow, ...] = (
         "owned by the DP track, not F0. F1 inherits the exact-snapshot row for generation.",
     ),
     MatrixRow(
+        "source-free-kinds",
+        SUPPORTED,
+        ("source_free",),
+        ("constant", "distribution"),
+        "GEN-TYPES E1: constant draws nothing; distribution is one default_rng(base_int('dist')) "
+        "Generator per column, prefix-stable across batches. Recorded under numpy 2.2.6.",
+    ),
+    MatrixRow(
+        "lookup",
+        DEFERRED,
+        (),
+        ("lookup",),
+        "GEN-TYPES E3: one random.Random(base_int('py')).choices over a list pinned in the plan; "
+        "resident only (the streamed route declines it), so no F0 fixture pins it. Value equality "
+        "is covered by tests/unit/generation/kinds/test_gen_types_e3_lookup.py.",
+    ),
+    MatrixRow(
         "conditional-sampling",
         SUPPORTED,
         ("conditional",),

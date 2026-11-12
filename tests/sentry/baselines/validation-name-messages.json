@@ -1,0 +1,102 @@
+{
+ "sentry_id": "validation-name-messages",
+ "created_in": "VALUE-FREE-ERRORS-A1",
+ "entries": {
+  "permitted::config/_fixed_width.py::FixedWidthLayout._validate_column_order::37e15ba9af": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_fixed_width.py::FixedWidthLayout._validate_column_order::ce3e4102a2": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_global_settings.py::GlobalSettings._normalize_reference_date::074027fb65": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_global_settings.py::GlobalSettings._reject_explicit_dp_null::df09fe832c": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_pipeline.py::PipelineConfig._per_table_kind_consistency::5b2c398bc8": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_pipeline.py::PipelineConfig._per_table_kind_consistency::f4e934eacb": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_pipeline.py::PipelineConfig._reference_graph_valid::0d083161f0": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_pipeline.py::PipelineConfig._reference_graph_valid::8b110a1125": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_pipeline.py::PipelineConfig._reference_graph_valid::a1f038db6f": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_pipeline.py::PipelineConfig._reference_graph_valid::b60e1dd6fa": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_pipeline.py::PipelineConfig._reference_graph_valid::ebdac9c21d": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+   "permitted::config/_pipeline.py::PipelineConfig._subset_stage_constraints::e9ad2b8ae1": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_pipeline.py::PipelineConfig._subset_stage_constraints::fb76c37dc1": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_sources.py::FileSource._validate_delimited_params::ba967a5903": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_sources.py::FileSource._validate_layout_matches_format::2f38290381": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_sources.py::FileSource._validate_layout_matches_format::3101cb4554": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_subset.py::SubsetSeedConfig._mode_consistency::36eb5f1b44": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_subset.py::SubsetSeedConfig._mode_consistency::39a448f63c": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_subset.py::SubsetSeedConfig._mode_consistency::3ea6ebc864": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_subset.py::SubsetSeedConfig._mode_consistency::45e3015225": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_subset.py::SubsetSeedConfig._mode_consistency::c45c4b557d": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_tables.py::TableConfig._mask_xor_generate::5606ba86cd": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_tables.py::TableConfig._mask_xor_generate::69c59d3738": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_tables.py::TableConfig._mask_xor_generate::9869029277": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_tables.py::TableConfig._mask_xor_generate::dd4894395a": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_tables.py::TableConfig._mask_xor_generate::ecdb95d87f": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_targets.py::FileTarget._validate_layout_matches_format::73a4132113": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_targets.py::FileTarget._validate_layout_matches_format::a372622ce0": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_validators.py::QuarantineConfig._fail_closed_when_enabled::a33574c6c8": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::config/_validators.py::QuarantineConfig._fail_closed_when_enabled::ef73970c20": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::run_result/_model.py::_check.validate::3b71ccc0cc": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  },
+  "permitted::run_result/_model.py::_check_reason::68da91f3a9": {
+   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
+  }
+ }
+}

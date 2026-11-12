@@ -41,10 +41,13 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
         "execution_mode",
         "KEYWORD_ONLY",
         "'auto'",
-        "Literal['auto', 'sequential', 'full_frame', 'out_of_core']",
+        # RUN-STREAM E1a: `"stream"` is the one additive literal (translated to `auto` at entry).
+        "Literal['auto', 'stream', 'sequential', 'full_frame', 'out_of_core']",
     ),
     ("sink", "KEYWORD_ONLY", "None", "TransactionalSink | None"),
     ("source_loader", "KEYWORD_ONLY", "None", "Callable[[str], pa.Table] | None"),
+    # CONFIG-EXPLICIT E2c: the loader's declared schemas, required with a loader.
+    ("source_loader_schemas", "KEYWORD_ONLY", "None", "Mapping[str, pa.Schema] | None"),
     ("fpe_chunk_count", "KEYWORD_ONLY", "4", "int"),
     ("explain_plan", "KEYWORD_ONLY", "False", "bool"),
     ("auto_chunk", "KEYWORD_ONLY", "True", "bool"),
@@ -57,6 +60,8 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
     ("out_of_core_threshold_rows", "KEYWORD_ONLY", "5000000", "int"),
     ("full_frame_reject_rows", "KEYWORD_ONLY", "7500000", "int"),
     ("out_of_core_budget_bytes", "KEYWORD_ONLY", "None", "int | None"),
+    # RUN-STREAM E1b: the one additive DuckDB thread cap for the out-of-core route.
+    ("out_of_core_threads", "KEYWORD_ONLY", "None", "int | None"),
     ("use_byte_estimate_routing", "KEYWORD_ONLY", "True", "bool"),
     ("use_probe_routing", "KEYWORD_ONLY", "True", "bool"),
     ("key_provider", "KEYWORD_ONLY", "None", "KeyProvider | None"),
@@ -64,6 +69,7 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
     ("unified_slice_enabled", "KEYWORD_ONLY", "True", "bool"),
     ("progress", "KEYWORD_ONLY", "None", "ProgressSink | None"),
     ("progress_interval_s", "KEYWORD_ONLY", "1.0", "float"),
+    ("quarantine_runtime", "KEYWORD_ONLY", "None", "Any"),
     # secret_registry / secret_cache_policy: additive keyword-only params for F13 secret-provider
     # admission (the keyed job_seed fallback was removed); re-pinned under F13.
     ("secret_registry", "KEYWORD_ONLY", "None", "SecretProviderRegistry | None"),
@@ -71,6 +77,17 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
     ("_provider_snapshot", "KEYWORD_ONLY", "None", "Mapping[str, Callable[[Faker], Any]] | None"),
     # E1: the one additive keyword the file-access policy adds (compatibility contract section 9).
     ("file_access", "KEYWORD_ONLY", "None", "FileAccess | None"),
+    # project-layout E2: the placed quarantine path; replaces quarantine.output_path after the hash.
+    ("quarantine_path", "KEYWORD_ONLY", "None", "str | None"),
+    # GEN-CLI E1 (#460): config-relative paths resolve against this folder (compatibility contract).
+    ("base_dir", "KEYWORD_ONLY", "None", "str | Path | None"),
+    # SUB-RUN E2: what a `subset:` block does; additive (compatibility contract section 4.1).
+    (
+        "subset_request",
+        "KEYWORD_ONLY",
+        "'config'",
+        "SubsetRequest | Literal['config', 'skip']",
+    ),
 )
 FROZEN_RETURN = "ExecutionResult"
 
@@ -94,7 +111,7 @@ def test_run_pipeline_return_annotation_is_frozen() -> None:
 
 def test_the_frozen_table_covers_every_parameter_once() -> None:
     names = [row[0] for row in FROZEN_PARAMETERS]
-    assert len(names) == len(set(names)) == 40
+    assert len(names) == len(set(names)) == 46
     positional = [r[0] for r in FROZEN_PARAMETERS if r[1] == "POSITIONAL_OR_KEYWORD"]
     assert positional == ["config", "sources"]
 
@@ -102,3 +119,34 @@ def test_the_frozen_table_covers_every_parameter_once() -> None:
 def test_the_public_names_are_the_same_function() -> None:
     assert decoy_engine.run_pipeline is run_pipeline
     assert execution_run_pipeline is run_pipeline
+
+
+# (name, default repr, shown in repr, compared by ==): the public fields of `ExecutionResult`.
+FROZEN_RESULT_FIELDS: tuple[tuple[str, str, bool, bool], ...] = (
+    ("outputs", "<required>", True, True),
+    ("timings", "()", True, True),
+    ("boundary_conversion_ms", "0.0", True, True),
+    ("warnings", "()", True, True),
+    ("quality_metrics", "<factory>", True, True),
+    ("table_kinds", "<factory>", True, True),
+    ("row_errors", "()", True, True),
+    ("quarantine_access", "None", False, True),
+    ("sample_source_rows", "None", False, False),
+)
+
+
+def test_execution_result_fields_are_frozen() -> None:
+    import dataclasses
+
+    from decoy_engine.execution._adapter import ExecutionResult
+
+    observed = []
+    for f in dataclasses.fields(ExecutionResult):
+        if f.default is not dataclasses.MISSING:
+            default = repr(f.default)
+        elif f.default_factory is not dataclasses.MISSING:
+            default = "<factory>"
+        else:
+            default = "<required>"
+        observed.append((f.name, default, f.repr, f.compare))
+    assert tuple(observed) == FROZEN_RESULT_FIELDS

@@ -1,0 +1,9 @@
+pytest -p no:cacheprovider --tb=no  (Slice 0 test files from f45514eb against baseline fdd08a89 source)
+200 failed, 14 passed
+per file:
+  tests/unit/declared_casting: 66 failed
+  tests/acceptance: 40 failed, 4 passed
+  tests/property/test_f06_declared_casting.py: 12 failed
+  tests/sentry/test_f06_declared_casting.py: 14 failed, 10 passed
+  tests/security/test_f06_quarantine_boundary.py: 68 failed
+failure signatures: 103 ModuleNotFoundError(decoy_engine.declared_casting), 57 AssertionError, 33 ValidationError(extra_forbidden), 1 ModuleNotFoundError(_f06_mutation_battery)

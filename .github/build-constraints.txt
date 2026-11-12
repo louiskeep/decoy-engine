@@ -1,0 +1,4 @@
+# maturin: the companion's build backend, not in uv.lock; same version the wheel jobs pin (maturin-version v1.15.0)
+maturin==1.15.0
+# hatchling: the engine's build backend for tests/packaging (python -m build, isolated), not in uv.lock
+hatchling==1.32.4

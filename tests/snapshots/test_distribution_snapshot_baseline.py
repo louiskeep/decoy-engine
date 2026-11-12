@@ -56,6 +56,11 @@ def _numeric_only() -> pd.DataFrame:
     return pd.DataFrame({"x": rng.normal(loc=10.0, scale=2.0, size=100)})
 
 
+def _numeric_low_distinct() -> pd.DataFrame:
+    # Three levels on 40 rows each: the column gets exact_values instead of a grid.
+    return pd.DataFrame({"x": np.array([10, 20, 30] * 40, dtype=np.int64)})
+
+
 def _categorical_only() -> pd.DataFrame:
     return pd.DataFrame({"state": ["CA", "NY", "TX", "CA", "NY", "CA", "WA", "OR", "CA", "TX"]})
 
@@ -103,6 +108,7 @@ def _mixed_with_joint() -> pd.DataFrame:
 
 FIXTURES: dict[str, tuple[Callable[[], pd.DataFrame], dict[str, object]]] = {
     "numeric_only": (_numeric_only, {}),
+    "numeric_low_distinct": (_numeric_low_distinct, {}),
     "categorical_only": (_categorical_only, {}),
     "datetime_only": (_datetime_only, {}),
     "freetext_only": (_freetext_only, {}),

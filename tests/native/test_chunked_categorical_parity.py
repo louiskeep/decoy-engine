@@ -16,6 +16,7 @@ import pytest
 
 from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution.native._dispatch import NativeRouteEvidence
+from tests._declared_schema import declared_schema
 from tests.native._b8_support import identical, run_one
 from tests.native._chunked_categorical_support import (
     FORCE,
@@ -175,6 +176,7 @@ def _public_oracle(config: dict[str, Any], chunks: list[pa.Table]) -> list[pa.Ta
             config,
             list(chunks),
             table=TABLE,
+            source_schema=declared_schema(config, TABLE),
             engine_version=ENGINE_VERSION,
             key_provider=key_provider(),
         )

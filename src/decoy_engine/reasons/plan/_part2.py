@@ -15,6 +15,7 @@ __all__ = [
     "DP_BUDGET_EXCEEDED",
     "DP_FLAG_TOKEN_INVALID",
     "DP_GENERATE_ALLOW_REAL_CATEGORIES_UNSUPPORTED",
+    "DP_GENERATE_FITTED_FANOUT_UNSUPPORTED",
     "DP_GENERATE_HIGH_CARDINALITY_UNSUPPORTED",
     "DP_JOINT_UNSUPPORTED",
     "DP_PINNED_SNAPSHOT_DIGEST_MISMATCH",
@@ -66,9 +67,14 @@ __all__ = [
     "PLAN_SCHEMA_DETERMINISTIC_MAP_RENAMED",
     "POOL_CAPACITY_PRE_FLIGHT_UNIQUE",
     "POOL_SIZE_LOCATION_CONFLICT",
+    "REFERENCE_FANOUT_CONFLICT",
+    "REFERENCE_FANOUT_INVALID",
+    "REFERENCE_FANOUT_MISSING",
+    "REFERENCE_PARENT_POOL_EMPTY",
     "SEED_NOT_NUMERIC",
     "SEED_OVERFLOW",
     "STATISTICAL_ALLOW_REAL_CATEGORIES_INVALID_TYPE",
+    "STATISTICAL_CELL_FORMAT_INVALID",
     "STATISTICAL_COLUMN_NOT_IN_SNAPSHOT",
     "STATISTICAL_CONDITION_COLUMN_UNAVAILABLE",
     "STATISTICAL_CONDITION_KIND_INVALID",
@@ -127,6 +133,11 @@ DP_FLAG_TOKEN_INVALID = _d("dp_flag_token_invalid", "DP flag token invalid.")
 DP_GENERATE_ALLOW_REAL_CATEGORIES_UNSUPPORTED = _d(
     "dp_generate_allow_real_categories_unsupported",
     "DP generate allow real categories unsupported.",
+)
+DP_GENERATE_FITTED_FANOUT_UNSUPPORTED = _d(
+    "dp_generate_fitted_fanout_unsupported",
+    "DP generate fitted fan-out unsupported.",
+    since="1.14.0",
 )
 DP_GENERATE_HIGH_CARDINALITY_UNSUPPORTED = _d(
     "dp_generate_high_cardinality_unsupported", "DP generate high cardinality unsupported."
@@ -241,6 +252,15 @@ POOL_CAPACITY_PRE_FLIGHT_UNIQUE = _d(
     "pool_capacity_pre_flight_unique", "Pool capacity pre flight unique."
 )
 POOL_SIZE_LOCATION_CONFLICT = _d("pool_size_location_conflict", "Pool size location conflict.")
+REFERENCE_FANOUT_CONFLICT = _d(
+    "reference_fanout_conflict", "Reference fan-out conflict.", since="1.14.0"
+)
+REFERENCE_FANOUT_INVALID = _d(
+    "reference_fanout_invalid", "Reference fan-out invalid.", since="1.14.0"
+)
+REFERENCE_FANOUT_MISSING = _d(
+    "reference_fanout_missing", "Reference fan-out missing.", since="1.14.0"
+)
 SEED_NOT_NUMERIC = _d("seed_not_numeric", "Seed not numeric.")
 SEED_OVERFLOW = _d("seed_overflow", "Seed overflow.")
 STATISTICAL_CONDITION_COLUMN_UNAVAILABLE = _d(
@@ -300,9 +320,15 @@ WINDOWED_DATE_MISSING_ANCHOR_REF = _d(
 
 _d = _catalog.plan("StatisticalSpecError")
 
+REFERENCE_PARENT_POOL_EMPTY = _d(
+    "reference_parent_pool_empty", "Reference parent pool empty.", since="1.14.0"
+)
 STATISTICAL_ALLOW_REAL_CATEGORIES_INVALID_TYPE = _d(
     "statistical_allow_real_categories_invalid_type",
     "Statistical allow real categories invalid type.",
+)
+STATISTICAL_CELL_FORMAT_INVALID = _d(
+    "statistical_cell_format_invalid", "Statistical cell format invalid.", since="1.16.0"
 )
 STATISTICAL_COLUMN_NOT_IN_SNAPSHOT = _d(
     "statistical_column_not_in_snapshot", "Statistical column not in snapshot."

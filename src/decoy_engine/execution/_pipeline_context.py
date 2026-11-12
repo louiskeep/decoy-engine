@@ -23,26 +23,31 @@ The context carries RESOLVED values under the plain names (`registry` and `key_p
 the resolved ones; the raw arguments are not kept), so no executor can reach for the unresolved
 form by mistake.
 
-`classify_table_kinds` lives here because the builder needs it and `_pipeline` imports this
-module; `_pipeline` re-exports it, so its public import path is unchanged.
+`classify_table_kinds` is owned by `decoy_engine.config`; it is re-exported here and by
+`_pipeline`, so its public import paths are unchanged.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from decoy_engine.execution import _pipeline_auto_chunk, _pipeline_routing
+from decoy_engine.config import classify_table_kinds
+from decoy_engine.execution import _guards, _pipeline_auto_chunk, _pipeline_routing
 from decoy_engine.execution._chunked_output_sink import OutputPublish
 from decoy_engine.execution._errors import vault_requires_resident_output
 from decoy_engine.execution._transforms_admission import out_of_core_declined, routing_profile
 from decoy_engine.execution._transforms_gate import reject_any_per_table_transforms
+from decoy_engine.fileaccess import config_relative
+from decoy_engine.profile import DeclarationRequest
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from faker import Faker
 
     from decoy_engine.execution._adapter import ExecutionAdapter
@@ -51,6 +56,8 @@ if TYPE_CHECKING:
     from decoy_engine.execution._planner import ExecutionPlan
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.execution._transforms_prepare import PreparedSources
+    from decoy_engine.execution.pipeline._stream import StreamVerdict
+    from decoy_engine.execution.pipeline._subset_stage import SubsetStageScope
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
     from decoy_engine.profile._types import Profile
@@ -69,30 +76,6 @@ __all__ = [
     "classify_table_kinds",
     "decide_route",
 ]
-
-
-def classify_table_kinds(config: dict[str, Any]) -> dict[str, str]:
-    """Return `{table_name: "mask" | "generate"}` for every table in the config.
-
-    Per-table kind is inferred from `columns` (mask) vs `generate_columns`
-    (generate) presence on each TableConfig. The schema already enforces
-    XOR at validation time (`_per_table_kind_consistency` + `TableConfig`
-    invariants), so a config that reaches this helper has at most one
-    populated per table. Tables with neither are classified as mask
-    (defensive default; the schema rejects them upstream).
-    """
-    out: dict[str, str] = {}
-    for table in config.get("tables") or []:
-        if not isinstance(table, dict):
-            continue
-        name = table.get("name")
-        if not isinstance(name, str):
-            continue
-        if table.get("generate_columns"):
-            out[name] = "generate"
-        else:
-            out[name] = "mask"
-    return out
 
 
 @dataclass(frozen=True)
@@ -131,6 +114,9 @@ class PipelineRunContext:
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None
     # Knobs.
     execution_mode: str
+    # `execution_mode="stream"` was translated to "auto" at the entry; this is the one place the
+    # requirement survives (read by `decide_route` only).
+    stream_required: bool
     resolved_substrate: str
     fpe_chunk_count: int
     explain_plan: bool
@@ -153,6 +139,9 @@ class PipelineRunContext:
     post_validation_sample_size: int
     post_validation_enforce: bool
     now_iso: str | None
+    # F06: the resolved protected-quarantine runtime (sink + owner); None unless supplied.
+    quarantine_runtime: Any = None
+    out_of_core_threads: int | None = None
 
 
 @dataclass(frozen=True)
@@ -167,6 +156,8 @@ class RouteDecision:
     ooc_declined: str | None
     # The statically admitted mixed job when `route == "mixed"` (`_mixed_static`).
     mixed: MixedStaticPlan | None = None
+    # Set only for a run that requires streaming and takes the chunked lane.
+    stream: StreamVerdict | None = None
 
 
 def build_run_context(
@@ -186,8 +177,10 @@ def build_run_context(
     post_validation_enforce: bool,
     now_iso: str | None,
     execution_mode: str,
+    stream_required: bool = False,
     sink: TransactionalSink | None,
     source_loader: Callable[[str], pa.Table] | None,
+    source_loader_schemas: Mapping[str, pa.Schema] | None = None,
     fpe_chunk_count: int,
     explain_plan: bool,
     auto_chunk: bool,
@@ -210,6 +203,10 @@ def build_run_context(
     secret_scope: AdmissionScope,
     secret_registry: SecretProviderRegistry | None = None,
     secret_cache_policy: SecretCachePolicy | None = None,
+    quarantine_runtime: Any = None,
+    out_of_core_threads: int | None = None,
+    base_dir: str | Path | None = None,
+    subset_stage: SubsetStageScope | None = None,
 ) -> PipelineRunContext:
     """Resolve and validate every run input, in the order the inline code did.
 
@@ -217,6 +214,7 @@ def build_run_context(
     `run_pipeline` so the call resolves through `_pipeline`'s module namespace at run time.
     Existing tests count its calls by patching `_pipeline.prepare_transform_sources`.
     """
+    from decoy_engine.declared_casting._eligibility import preflight_declared_casting
     from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
     from decoy_engine.execution._substrate import (
         SUBSTRATE,
@@ -226,6 +224,7 @@ def build_run_context(
     )
     from decoy_engine.execution.out_of_core._route_policy import resolve_reorder_threshold_rows
     from decoy_engine.plan import compile_plan
+    from decoy_engine.plan._checks_declared_casting import compile_declared_casting_contract
     from decoy_engine.profile import profile_source
     from decoy_engine.providers_v2 import get_default_registry
     from decoy_engine.relationships import (
@@ -235,6 +234,17 @@ def build_run_context(
         check_orphan_fk_policy_completeness,
     )
     from decoy_engine.secret_providers import admit_mask_key, assert_plan_requirements_admitted
+
+    # F06 preflight: config-only, so a bad declared contract, an incapable explicit route or a
+    # missing protected-quarantine store is refused before the source is profiled or read.
+    declared_plan = compile_declared_casting_contract(config)
+    if declared_plan is not None:
+        preflight_declared_casting(
+            declared_plan,
+            config,
+            execution_mode=execution_mode,
+            quarantine_runtime=quarantine_runtime,
+        )
 
     # Adapter selection runs up front, before any profiling or plan
     # compilation, so an invalid substrate or count knob fails at submit
@@ -258,6 +268,8 @@ def build_run_context(
     require_positive_int("full_frame_reject_rows", full_frame_reject_rows)
     if out_of_core_budget_bytes is not None:
         require_positive_int("out_of_core_budget_bytes", out_of_core_budget_bytes)
+    if out_of_core_threads is not None:
+        require_positive_int("out_of_core_threads", out_of_core_threads)
     require_bool("use_byte_estimate_routing", use_byte_estimate_routing)
     require_bool("use_probe_routing", use_probe_routing)
     require_bool("unified_slice_enabled", unified_slice_enabled)
@@ -320,9 +332,35 @@ def build_run_context(
         )
     )
 
-    profile = profile_source(config, seed=job_seed)
+    # Every source column must be declared, checked from headers, footers and schemas first.
+    if (source_loader is None) != (source_loader_schemas is None):
+        raise ValueError("run_pipeline: source_loader and source_loader_schemas go together.")
+    schemas = {n: s.schema for n, s in caller_sources.items()}
+    request = DeclarationRequest.for_run(config, schemas, source_loader_schemas)
+    declared = _guards.prepare_declared_execution_sources(request, registry=resolved_registry)
+    if source_loader is not None and source_loader_schemas is not None:
+        source_loader = declared.checked_loader(source_loader, source_loader_schemas)
 
-    plan = compile_plan(config, profile, decoy_engine_version=engine_version)
+    # Duplicate field names are refused after the config-only admission and before profiling,
+    # routing and every pandas conversion: each looks columns up by name and would fail uncoded.
+    _guards.refuse_duplicate_run_sources(config, caller_sources)
+    source_loader = _guards.refusing_source_loader(source_loader)
+
+    supplied = caller_sources  # profiled whole: a subset run compiles from the full sources
+    if subset_stage is not None and subset_stage.active:
+        caller_sources, selection = subset_stage.apply(caller_sources, config)
+
+    profile = profile_source(config, seed=job_seed, declared=declared, supplied_sources=supplied)
+    if subset_stage is not None and subset_stage.active:
+        profile = subset_stage.restrict_profile(profile, selection, subset_stage.head_rows)
+
+    plan = compile_plan(
+        config,
+        profile,
+        decoy_engine_version=engine_version,
+        base_dir=base_dir,
+        instance_default_locale=instance_default_locale,
+    )
 
     # Late defense in depth: the compiled plan may not need more than admission covered.
     assert_plan_requirements_admitted(plan, admitted)
@@ -392,6 +430,7 @@ def build_run_context(
         instance_default_locale=instance_default_locale,
         provider_snapshot=provider_snapshot,
         execution_mode=execution_mode,
+        stream_required=stream_required,
         resolved_substrate=resolved_substrate,
         fpe_chunk_count=fpe_chunk_count,
         explain_plan=explain_plan,
@@ -404,6 +443,7 @@ def build_run_context(
         out_of_core_threshold_rows=out_of_core_threshold_rows,
         full_frame_reject_rows=full_frame_reject_rows,
         out_of_core_budget_bytes=out_of_core_budget_bytes,
+        out_of_core_threads=out_of_core_threads,
         use_byte_estimate_routing=use_byte_estimate_routing,
         use_probe_routing=use_probe_routing,
         out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
@@ -414,7 +454,34 @@ def build_run_context(
         post_validation_sample_size=post_validation_sample_size,
         post_validation_enforce=post_validation_enforce,
         now_iso=now_iso,
+        quarantine_runtime=quarantine_runtime,
     )
+
+
+def with_quarantine_path(
+    ctx: PipelineRunContext, path: str | None, base_dir: str | Path | None = None
+) -> PipelineRunContext:
+    """`ctx` with `quarantine.output_path` replaced in a copy of its config.
+
+    A caller's `path` wins and is used as given. Without one, a relative YAML path resolves
+    against `base_dir` (`fileaccess.config_relative`); with neither, the context is unchanged.
+
+    Called after the plan, and so its config hash, was built from the caller's config: the hash
+    and the caller's dict are untouched. Every route reads `ctx.config`, so none needs its own
+    override. Without a path or a `quarantine` block the context is returned as is.
+    """
+    quarantine = ctx.config.get("quarantine")
+    if not isinstance(quarantine, dict):
+        return ctx
+    if path is None:
+        declared = quarantine.get("output_path")
+        if base_dir is None or not isinstance(declared, str) or not declared:
+            return ctx
+        path = config_relative(declared, base_dir)
+        if path == declared:
+            return ctx
+    effective = {**ctx.config, "quarantine": {**quarantine, "output_path": path}}
+    return replace(ctx, config=effective)
 
 
 def decide_route(ctx: PipelineRunContext) -> RouteDecision:
@@ -431,6 +498,10 @@ def decide_route(ctx: PipelineRunContext) -> RouteDecision:
     surfaces it on every route, relationship jobs included. `keep_lazy` is the B6b footer
     snapshot of lazy candidates; see `_pipeline_routing`.
     """
+    if ctx.stream_required:
+        from decoy_engine.execution.pipeline import _stream
+
+        return _stream.decide_stream_route(ctx, decide_route)
     mixed = _mixed_static_plan(ctx)
     route, route_reason = _pipeline_routing.resolve_execution_route(
         routing_profile(ctx.profile, ctx.caller_sources, ctx.prepared.prepared),

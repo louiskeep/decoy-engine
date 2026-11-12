@@ -11,4 +11,4 @@
 ## Contributor checklist
 
 - [ ] I have signed off this commit with `git commit -s` per [CONTRIBUTING.md](../CONTRIBUTING.md) (Developer Certificate of Origin).
-- [ ] I understand that this contribution will be licensed under the Apache License 2.0.
+- [ ] I understand that this contribution will be licensed under the Functional Source License 1.1, Apache 2.0 Future License (FSL-1.1-ALv2).

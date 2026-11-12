@@ -1,0 +1,17 @@
+# Seeded corpus for tests/sentry/test_private_files.py (P1, P2). Out of every scan.
+from pathlib import Path
+
+
+def master_key(settings, value):
+    path = settings.master_key_path
+    path.write_bytes(value)
+
+
+def key_dir(cfg, name, v):
+    p = Path(cfg.key_dir) / name
+    p.write_text(v)
+
+
+def public_report(target, v):
+    p = Path(target)
+    p.write_text(v)

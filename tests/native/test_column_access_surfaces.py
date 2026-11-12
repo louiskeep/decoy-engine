@@ -19,6 +19,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pytest
 
+from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution import _column_access
 from decoy_engine.execution._column_access import (
     SIBLING_REFERENCE_KEYS,
@@ -37,6 +38,7 @@ from decoy_engine.generation.composite._name_email import CompositeNameEmail
 from decoy_engine.generation.composite._person import CompositePerson
 from decoy_engine.generation.composite._provider import CompositeProvider
 from decoy_engine.providers_v2 import get_default_registry
+from tests._declared_schema import chunked_entry_kwargs
 
 REG = get_default_registry()
 _FIXED_CLASSES = {
@@ -243,6 +245,8 @@ _PINNED_RUN_CALLS = frozenset(
         "ctx.code_set_corpora_metrics",
         "ctx.date_preserve_metrics",
         "source_anchor_columns",
+        "declared_int_cols.get",
+        "declared_integer_columns",
         "dict",
         "drain_row_errors",
         "enforce_output_projection",
@@ -728,6 +732,7 @@ def _outcome_of(entry_point: Any, config: dict[str, Any], chunks: list[pa.Table]
                 table=TABLE,
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
+                **chunked_entry_kwargs(entry_point, config, TABLE),
             )
         )
     except Exception as exc:
@@ -741,7 +746,6 @@ def test_run_mask_chunked_matches_the_public_oracle_on_the_corpus(case: str) -> 
     code on both; otherwise column names, Arrow types and values are equal (the public
     oracle adds pandas metadata, so metadata is not compared; none of the corpus columns
     changes type in the pandas round trip)."""
-    from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
     from tests.native._chunked_entry_support import TABLE, make_config
 
     columns, data, _required = _corpus()[case]

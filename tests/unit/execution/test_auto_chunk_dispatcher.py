@@ -345,8 +345,9 @@ def test_mixed_table_with_a_non_native_column_runs_wholly_on_the_oracle_route(
 def test_unconfigured_column_is_admitted_to_the_native_route(
     companion: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """B8: an unconfigured column no longer vetoes the table under the `warn` policy
-    (pre-GA default). The hash column still needs the companion to run natively."""
+    """B8: a column that is not masked no longer vetoes the table. Since the declaration gate
+    every source column is listed, so the extra column is a declared passthrough and runs on
+    the arrow lane. The hash column still needs the companion to run natively."""
     if companion == "absent":
         support.remove_companion(monkeypatch)
     data = {**support.string_source(), "extra": pa.array([f"e{i}" for i in range(support.ROWS)])}
@@ -354,7 +355,7 @@ def test_unconfigured_column_is_admitted_to_the_native_route(
     result = support.run_default(cfg, src)
     evidence = result.quality_metrics["chunked_route"]
     backends = _backends(evidence)
-    assert "extra" not in backends
+    assert backends["extra"][0] == "arrow_python"
     if companion == "present":
         assert evidence["native_admitted"] is True
         assert evidence["reroute_reason"] is None
@@ -556,13 +557,15 @@ def test_a_vault_writer_keyed_differently_from_the_mask_key_is_rejected_before_a
 
     cfg, src = _vault_job(tmp_path)
     spies = support.spy_lanes(monkeypatch)
-    with pytest.raises((VaultError, ExecutionError)):
+    # A floor-valid key that is not the run's mask root, so the route's key-match guard refuses it.
+    with pytest.raises(VaultError) as err:
         support.run_default(
             cfg,
             src,
-            vault_writer=VaultWriter((42).to_bytes(8, "big")),
+            vault_writer=VaultWriter(b"\x42" * 32),
             key_provider=SecretKeyProvider(secret=bytes(range(32)), key_version="v1"),
         )
+    assert err.value.code == "vault_key_mismatch"
     assert spies["entry.run_mask_chunked"] == []
     assert spies["oracle.run_mask_pipeline_chunked"] == []
 

@@ -24,6 +24,7 @@ def fill_referenced_formula_columns(
     data: dict[str, list[Any]],
     seed: int,
     derive_key: Any = None,
+    table_name: str = "",
 ) -> None:
     """Fill ``formula`` columns carrying ``references`` from finalized siblings.
 
@@ -52,6 +53,7 @@ def fill_referenced_formula_columns(
 
     from decoy_engine.generation.synthesize import _apply_null_probability
     from decoy_engine.generators.columns import ColumnGenerator
+    from decoy_engine.generators.derivation import with_table
 
     df = pd.DataFrame(data)
     cg = ColumnGenerator(seed=seed, derive_key=derive_key)
@@ -59,11 +61,15 @@ def fill_referenced_formula_columns(
         name = col["name"]
         formula = col.get("formula") or ""
         references = col.get("references") or []
-        series = cg.fill_referenced_formula_column(name, formula, references, df)
+        series = cg.fill_referenced_formula_column(
+            name, formula, references, df, table_name=table_name
+        )
         # Apply null_probability the same way every other generated column
         # does (the placeholder pass already ran it over all-None values; we
         # re-run it over the computed values so the column's null contract
         # holds on real output).
-        values = _apply_null_probability(series.tolist(), col, seed, derive_key)
+        values = _apply_null_probability(
+            series.tolist(), with_table(col, table_name), seed, derive_key
+        )
         data[name] = values
         df[name] = values

@@ -41,6 +41,7 @@ from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 from decoy_engine.unmask import unmask_pipeline
 from decoy_engine.vault import VaultWriter, load_vault, vault_writer_for_config
+from tests._declared_schema import declare_rest
 from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 from tests.parity import _strict_compare as sc
 
@@ -117,24 +118,26 @@ def job(
         path = tmp / f"{name}.parquet"
         pq.write_table(table, path)
         src[name] = {"type": "file", "path": str(path), "format": "parquet"}
-    return {
-        "version": 2,
-        "global_settings": {"seed": 7},
-        "sources": src,
-        "targets": {
-            n: {"type": "file", "format": "parquet", "path": str(tmp / f"{n}.out.parquet")}
-            for n in tables
-        },
-        "tables": [{"name": n, "columns": cols} for n, cols in columns.items()],
-        "relationships": [
-            {
-                "parent": {"table": "parent", "columns": ["id"]},
-                "children": [{"table": "child", "columns": ["parent_id"]}],
-                "orphan_policy": orphan,
-                "namespace": "ns",
-            }
-        ],
-    }
+    return declare_rest(
+        {
+            "version": 2,
+            "global_settings": {"seed": 7},
+            "sources": src,
+            "targets": {
+                n: {"type": "file", "format": "parquet", "path": str(tmp / f"{n}.out.parquet")}
+                for n in tables
+            },
+            "tables": [{"name": n, "columns": cols} for n, cols in columns.items()],
+            "relationships": [
+                {
+                    "parent": {"table": "parent", "columns": ["id"]},
+                    "children": [{"table": "child", "columns": ["parent_id"]}],
+                    "orphan_policy": orphan,
+                    "namespace": "ns",
+                }
+            ],
+        }
+    )
 
 
 def standard(
@@ -730,6 +733,7 @@ def test_all_null_vaulted_column_adds_no_entries(tmp_path: Path) -> None:
     only_empty = [_h("id", "ns"), _h("empty", "empty_ns", vault=True)]
     cfg, tables = standard(tmp_path, parent_vault=only_empty)
     cfg["tables"][1]["columns"] = [c for c in cfg["tables"][1]["columns"] if "vault" not in c]
+    declare_rest(cfg)
     ooc, writer = run(cfg, tables)
     assert mode(ooc)[0] == "out_of_core"
     assert writer._entries == set()
@@ -991,10 +995,10 @@ def test_fpe_with_vault_is_still_a_config_reject(tmp_path: Path) -> None:
     assert exc.value.code == "vault_strategy_reversible"
 
 
-def test_an_unkeyed_vault_writer_is_still_rejected_on_the_ooc_route(tmp_path: Path) -> None:
+def test_a_vault_writer_on_another_key_is_rejected_on_the_ooc_route(tmp_path: Path) -> None:
     cfg, tables = standard(tmp_path)
     with pytest.raises(Exception) as exc:
-        run(cfg, tables, writer=VaultWriter(b"\x00" * 8))
+        run(cfg, tables, writer=VaultWriter(b"\x00" * 32))
     assert getattr(exc.value, "code", None) == "vault_key_mismatch"
 
 
@@ -1002,12 +1006,12 @@ def test_direct_callers_of_the_runner_get_the_same_vault_guards() -> None:
     # `run_fk_out_of_core` is public; callers that skip `run_pipeline` skip its DE-02 guard.
     from decoy_engine.execution.out_of_core._vault_collect import assert_vault_inputs
 
-    key = b"\x01" * 8
+    key = b"\x01" * 32
     assert_vault_inputs(None, None, key)  # no writer: nothing to guard
     assert_vault_inputs(VaultWriter(key), {"tables": []}, key)
     with pytest.raises(ExecutionError) as no_config:
         assert_vault_inputs(VaultWriter(key), None, key)
     assert no_config.value.code == "out_of_core_vault_config_required"
     with pytest.raises(Exception) as unkeyed:
-        assert_vault_inputs(VaultWriter(b"\x02" * 8), {"tables": []}, key)
+        assert_vault_inputs(VaultWriter(b"\x02" * 32), {"tables": []}, key)
     assert getattr(unkeyed.value, "code", None) == "vault_key_mismatch"

@@ -13,7 +13,45 @@ Everything here must be JSON-serializable via dataclasses.asdict.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+from typing import Literal, get_args
+
+DetectorSource = Literal["regex", "classifier", "ner"]
+# The one order detectors are listed in: dumps, runs and log lines all follow it.
+DETECTOR_ORDER: tuple[DetectorSource, ...] = get_args(DetectorSource)
+
+# fullmatch, not match with `$`: `$` accepts a trailing newline, so "en_core_web_sm\n" would pass.
+_NER_MODEL_NAME = re.compile(r"[a-z][a-z0-9_]{1,63}")
+
+
+def validate_ner_model_name(value: object) -> str:
+    """Return `value` when it is a plain spaCy package name; raise `NerModelNameError` otherwise.
+
+    `spacy.load` also loads directories, so a path-like name would load arbitrary files. The one
+    rule serves the config models and the load sink. The error never carries the value.
+    """
+    if isinstance(value, str) and _NER_MODEL_NAME.fullmatch(value):
+        return value
+    from decoy_engine.detection.ner import NerModelNameError
+
+    raise NerModelNameError()
+
+
+@dataclass(frozen=True)
+class ModelRef:
+    """A model's identity as a record names it: id and installed version."""
+
+    id: str
+    version: str
+
+
+@dataclass(frozen=True)
+class DetectorRun:
+    """One detector source that ran, with the model it used (`None` for regex)."""
+
+    source: DetectorSource
+    model: ModelRef | None
 
 
 @dataclass

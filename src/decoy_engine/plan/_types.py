@@ -309,6 +309,10 @@ class Plan:
     # but `generate_tables` rejects it -- guide step 7/8). A Plan WITH
     # statistical generate columns always carries one.
     generation: GenerationPlan | None = None
+    # F06 (plan_version 3): the frozen declared parsing/casting contracts, sorted by
+    # (table, column). None for a plan with no declared columns, and for any older serialized
+    # plan, which then runs as it always did.
+    declared_casting: DeclaredCastingPlan | None = None
 
 
 # ---------------------------------------------------------------------
@@ -411,7 +415,8 @@ class GenerationPlan:
     `config_json` is the embedded, exact generate-side configuration
     (table/column declarations, seed material lives in `SeedEnvelope`
     separately); `snapshots`/`statistical_specs` are the read-once-pinned
-    artifacts and their frozen parsed specs; `dp_verification` is `None`
+    artifacts and their frozen parsed specs; `lookups` are the pinned lookup files;
+    `dp_verification` is `None`
     when no consumed column declared DP.
     """
 
@@ -419,3 +424,33 @@ class GenerationPlan:
     snapshots: tuple[PinnedSnapshot, ...] = field(default_factory=tuple)
     statistical_specs: tuple[PinnedStatisticalSpec, ...] = field(default_factory=tuple)
     dp_verification: DpVerification | None = None
+    # GEN-TYPES E3 (plan_version 4): the pinned `type: lookup` files, keyed by the declared
+    # string in `source_path` (diagnostic only). Omitted from the serialized plan when empty.
+    lookups: tuple[PinnedSnapshot, ...] = field(default_factory=tuple)
+
+
+# ---------------------------------------------------------------------
+# Pinned declared-casting payload (F06, plan_version 3)
+# ---------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PlanDeclaredColumn:
+    """One column's declared contract in canonical frozen-JSON form (see
+    `DeclaredColumnContractV1.to_payload`). The strategy is stamped so a stored plan states which
+    masking strategy the compiler proved the contract against."""
+
+    table: str
+    column: str
+    strategy: str
+    contract: FrozenJsonValue
+
+
+@dataclass(frozen=True)
+class DeclaredCastingPlan:
+    """The declared-casting block of a Plan: catalog version, sorted columns, and the
+    protected-quarantine declaration (None unless some column quarantines)."""
+
+    catalog_version: int
+    columns: tuple[PlanDeclaredColumn, ...]
+    quarantine: FrozenJsonValue = None

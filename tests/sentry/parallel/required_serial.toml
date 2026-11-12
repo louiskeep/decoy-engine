@@ -1,0 +1,133 @@
+# Tests known to need the whole host (docs/plans/2026-11-06-engine-par.md section 2). Each id is
+# an exact node-id prefix: the id itself, its parametrized cases, or a directory ending in "/".
+# Every collected test a prefix matches must carry the serial mark. The list only grows; to
+# remove one, add its id and a reason (15+ characters) under [[removed]] in the same diff.
+
+[[serial]]
+id = "tests/connectors/test_gcs_timeouts.py::test_black_holed_endpoint_fails_inside_the_bound"
+
+[[serial]]
+id = "tests/connectors/test_gcs_timeouts.py::test_timeout_error_text_is_value_free"
+
+[[serial]]
+id = "tests/unit/execution/test_isolated_memwatch_run.py::TestRealChild"
+
+[[serial]]
+id = "tests/perf/"
+
+[[serial]]
+id = "tests/connectors/test_postgres_snapshot.py::test_deadline_aborts_a_long_export_and_cleans_up"
+
+[[serial]]
+id = "tests/native/test_gil_release.py::test_native_compute_releases_gil_for_wallclock_parallelism"
+
+[[serial]]
+id = "tests/perf_fixtures/test_fixture_load_time.py::test_tier_loads_within_envelope"
+
+[[serial]]
+id = "tests/physical/test_bench_compare_harness.py::test_child_lifecycle_drains_both_pipes_beyond_buffer_size"
+
+[[serial]]
+id = "tests/physical/test_bench_compare_harness.py::test_child_lifecycle_timeout_group_kills_and_reaps"
+
+[[serial]]
+id = "tests/physical/test_bench_compare_harness.py::test_real_worker_tier_smoke"
+
+[[serial]]
+id = "tests/physical/test_bench_compare_harness.py::test_warmups_excluded_from_stats_and_pairing_preserved"
+
+[[serial]]
+id = "tests/physical/test_unified_slice_performance.py::test_smoke_tier_output_matches_and_is_not_grossly_slower"
+
+[[serial]]
+id = "tests/physical/test_unified_slice_timings.py::test_admitted_150k_row_job_elapsed_ms_is_positive_and_bounded_by_wall_time"
+
+[[serial]]
+id = "tests/secret_providers/test_r3_mutation_kills.py::test_a_second_invalidation_fences_a_load_that_began_after_the_first"
+
+[[serial]]
+id = "tests/secret_providers/test_r3_mutation_kills.py::test_flights_count_their_callers_and_outlive_all_but_the_last"
+
+[[serial]]
+id = "tests/security/test_text_redact_security.py::TestPerformanceCeiling::test_text_redact_long_input_with_many_matches_completes_under_5s"
+
+[[serial]]
+id = "tests/security/test_text_redact_security.py::TestPerformanceCeiling::test_text_redact_no_matches_no_validator_short_circuit"
+
+[[serial]]
+id = "tests/unit/determinism/test_derive.py::TestQa10F4DeriveContext::test_derive_context_amortises_hkdf"
+
+[[serial]]
+id = "tests/unit/execution/test_governor.py::TestMonitorDrivesRealKillDecision::test_vmrss_crossing_threshold_kills_and_reroutes_to_out_of_core"
+
+[[serial]]
+id = "tests/unit/execution/test_governor.py::TestPidExitsMidPoll::test_monitor_stops_cleanly_when_pid_vanishes"
+
+[[serial]]
+id = "tests/unit/execution/test_governor.py::TestRealSubprocessIntegration"
+
+[[serial]]
+id = "tests/unit/execution/test_governor.py::TestRecycledPidKillGuard::test_missing_ppid_never_kills"
+
+[[serial]]
+id = "tests/unit/execution/test_governor.py::TestRecycledPidKillGuard::test_ppid_match_still_kills"
+
+[[serial]]
+id = "tests/unit/execution/test_governor.py::TestRecycledPidKillGuard::test_ppid_mismatch_never_kills"
+
+[[serial]]
+id = "tests/unit/execution/test_isolated_memwatch.py::TestSamplerThread::test_sampling_is_paced_by_the_interval_not_a_busy_loop"
+
+[[serial]]
+id = "tests/unit/execution/test_isolated_memwatch_run.py::TestHandshakeCleanup::test_a_child_that_never_reports_is_killed_and_the_channel_released"
+
+[[serial]]
+id = "tests/unit/execution/test_isolated_memwatch_run.py::TestLifecycle::test_timeout_keeps_main_text_and_outcome_and_never_flags"
+
+[[serial]]
+id = "tests/unit/execution/test_isolated_run.py::TestGovernorKillAfterStagingLeavesNoPartialOutput::test_sigkill_after_staging_but_before_commit_never_commits"
+
+[[serial]]
+id = "tests/unit/execution/test_isolated_run.py::TestHangingChildHitsTimeout::test_hanging_child_is_killed_and_classified_cleanly"
+
+[[serial]]
+id = "tests/unit/execution/test_isolated_run.py::TestHwmContaminationGuard::test_parent_inflated_peak_does_not_leak_into_child_result"
+
+[[serial]]
+id = "tests/unit/execution/test_isolated_run.py::TestMemCapOom::test_low_mem_cap_classifies_oom_cleanly_not_an_opaque_crash"
+
+[[serial]]
+id = "tests/unit/execution/test_isolated_run.py::TestNormalJobCompletes::test_small_job_completes_with_correct_artifacts_and_plausible_peak"
+
+[[serial]]
+id = "tests/unit/execution/test_ooc_spill_reader_rss.py::test_spill_reader_does_not_hold_file_resident"
+
+[[serial]]
+id = "tests/unit/scripts/test_fk_scale_infra.py::test_supervisor_reports_a_killed_worker"
+
+[[serial]]
+id = "tests/unit/scripts/test_fk_scale_infra.py::test_supervisor_times_out_a_hung_worker"
+
+[[serial]]
+id = "tests/unit/scripts/test_fk_scale_infra.py::test_worker_emits_a_complete_record_at_small_n"
+
+[[serial]]
+id = "tests/unit/scripts/test_fk_scale_infra.py::test_worker_forced_oom_is_not_a_silent_pass"
+
+[[serial]]
+id = "tests/unit/test_instrumentation_timing.py::TestOverheadGate::test_overhead_below_5_percent_on_tight_loop"
+
+[[serial]]
+id = "tests/unit/test_instrumentation_timing.py::TestOverheadGate::test_overhead_negligible_when_no_collector"
+
+[[serial]]
+id = "tests/unit/test_lark_parser.py::TestPerformance::test_compile_once_evaluate_10k"
+
+[[serial]]
+id = "tests/native/test_native_dispatch.py::test_kernel_evidence_accumulates_across_multiple_chunks"
+
+[[serial]]
+id = "tests/unit/execution/test_pandas_adapter_exec_kills.py::TestResultTelemetryPackaging::test_timings_nonempty_and_conversion_positive_bounded"
+
+[[serial]]
+id = "tests/unit/execution/test_sequential_run_kills.py::test_result_reports_conversion_and_timings"

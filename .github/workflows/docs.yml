@@ -8,64 +8,40 @@
 # Before the deploy job can succeed, Pages must be enabled in repo settings:
 #   Settings → Pages → Source: GitHub Actions
 #
-# This repo (louiskeep/decoy-engine) is private. Pages on private repos
-# requires a paid plan (GitHub Pro / Team / Enterprise). On the free tier,
-# the build job still works (HTML is uploaded as a workflow artifact and
-# downloadable from the Actions UI) but the deploy job fails with a
-# permissions error. If a paid plan isn't planned, comment out the deploy
-# job below and let the build job stand alone — contributors can still
-# preview the artifact, just not via a public URL.
+# This repo (louiskeep/decoy-engine) is public. Deploy stays off until the DOCS_DEPLOY
+# variable is set to "true" and Pages is enabled; the build job uploads the HTML as an artifact.
 #
 # Item 50 Phase E in the cross-repo plan.
 
 name: docs
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'docs/**'
-      - 'src/decoy_engine/**'
-      - 'pyproject.toml'
-      - '.github/workflows/docs.yml'
+  # No push trigger while deploy is off (vars.DOCS_DEPLOY unset): a main push would only rebuild
+  # the tree the PR already built. Enabling deploy re-adds push to main (docs/ci-regression-gate.md).
   pull_request:
-    paths:
-      - 'docs/**'
-      - 'src/decoy_engine/**'
-      - 'pyproject.toml'
-      - '.github/workflows/docs.yml'
   workflow_dispatch:
 
-# Pages deploy needs these scopes; keep `contents: read` so the build job
-# can `git checkout` without elevated permissions.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# The build job gets read-only contents; only deploy holds the Pages scopes.
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-# Serialize concurrent deploys; cancel-in-progress=false so an in-flight
-# deploy isn't aborted mid-write (which can leave Pages in a half-deployed
-# state).
-concurrency:
-  group: pages
-  cancel-in-progress: false
 
 jobs:
   build:
+    # A literal name: the PR check context must not collide with a push-only job's.
+    name: docs-build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: ./.github/actions/lock-env
         with:
-          python-version: '3.11'
-          cache: pip
-
-      - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e .[docs]
-
+          extras: "docs"
+          python: "3.11.9"
       - name: Build (warnings as errors)
         # -W: treat warnings as errors. Mirrors the local `make html-strict`
         # contract — a green local build is what lands on Pages.
@@ -78,17 +54,23 @@ jobs:
         with:
           path: docs/_build/html
 
-  # Only deploy on main, AND only when the DOCS_DEPLOY repo variable is
-  # "true". The repo is private pre-launch and Pages needs the repo public
-  # (or a paid plan), so deploy stays OFF until launch to keep main green.
-  # Flip DOCS_DEPLOY to "true" in Settings -> Secrets and variables ->
-  # Actions -> Variables when the repo goes public at launch. PRs still get
-  # the build for validation (HTML downloadable as a workflow artifact);
-  # they never overwrite the live site.
+  # Only deploy on main, AND only when the DOCS_DEPLOY repo variable is "true"
+  # (Settings -> Secrets and variables -> Actions -> Variables). Pages is not enabled yet,
+  # so deploy stays OFF to keep main green. PRs still get the build for validation
+  # (HTML downloadable as a workflow artifact); they never overwrite the live site.
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DOCS_DEPLOY == 'true'
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Serialize deploys; cancel-in-progress=false so an in-flight deploy is not aborted mid-write
+    # (which can leave Pages half-deployed). Only deploy holds the group, so PR builds never queue.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

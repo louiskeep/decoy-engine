@@ -12,6 +12,8 @@ RNG families), consumed incrementally:
 - per-row faker: `seed_instance(row_int("faker", global_i))` then the provider;
 - pooled faker: pool built once, then one persistent `default_rng(selection_seed)`;
 - reference (no repair): parent key set materialized once, one persistent `random.Random`;
+- constant: no draw, the one configured value;
+- distribution: one persistent `default_rng(base_int("dist"))`, `size` draws per call;
 - windowed_date: no RNG state; each row derives its own offset from the global row index and
   its own same-batch anchor value (`transforms/windowed_date.py`), so it needs the sibling batch;
 - null mask: one `default_rng(base_int("np")).random(size)` per call.
@@ -31,7 +33,9 @@ import pandas as pd
 
 from decoy_engine.generation import _faker_pool
 from decoy_engine.generation._bounds import faker_pool_bytes
-from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.generation._numeric_typing import sequence_affixes
+from decoy_engine.generation.kinds import ConstantStream, ParametricStream
+from decoy_engine.generators.derivation import GenDeriveContext, column_identity, with_table
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 
 if TYPE_CHECKING:
@@ -64,7 +68,7 @@ class WindowedDateStream:
                 cfg[key] = col[key]
         self._config = WindowedDateConfig.from_dict(cfg)
         self._seed = seed.to_bytes(8, "big")
-        self._namespace = f"windowed_date/{col.get('name', 'windowed_date_col')}"
+        self._namespace = f"windowed_date/{column_identity(col)}"
 
     @property
     def anchor(self) -> str:
@@ -112,14 +116,16 @@ class KeyPool:
 
 
 class SequenceStream:
-    def __init__(self, col: dict[str, Any]) -> None:
+    def __init__(self, col: dict[str, Any], *, numeric: bool = False) -> None:
         self._start = int(col.get("start", 1))
         self._step = int(col.get("step", 1))
-        self._prefix = str(col.get("prefix", ""))
-        self._suffix = str(col.get("suffix", ""))
+        self._prefix, self._suffix = sequence_affixes(col)
         self._pad = int(col.get("pad_length", 0))
+        self._numeric = numeric
 
     def next_batch(self, offset: int, size: int) -> list[Any]:
+        if self._numeric:
+            return [self._start + i * self._step for i in range(offset, offset + size)]
         out: list[Any] = []
         for i in range(offset, offset + size):
             value = self._start + i * self._step
@@ -256,13 +262,15 @@ def make_column_stream(
     ledger: GenerationBudgetLedger,
     stage: ExitStack,
     faker_payload: int | None,
+    numeric: bool = False,
 ) -> ColumnStream:
     """Build one column's stream. Reservations taken here live until `stage` closes."""
+    col = with_table(col, table)
     ctx = GenDeriveContext.for_column(derive_key=derive_key, column_config=col, fallback_seed=seed)
     kind = col.get("type")
     inner: ColumnStream
     if kind == "sequence":
-        inner = SequenceStream(col)
+        inner = SequenceStream(col, numeric=numeric)
     elif kind == "categorical":
         inner = CategoricalStream(col, ctx)
     elif kind == "faker":
@@ -284,6 +292,10 @@ def make_column_stream(
         )
     elif kind == "windowed_date":
         inner = WindowedDateStream(col, seed)
+    elif kind == "constant":
+        inner = ConstantStream(col)
+    elif kind == "distribution":
+        inner = ParametricStream(col, ctx)
     else:
         raise ValueError(f"column {col.get('name')!r}: type {kind!r} has no streamed generator")
     null_prob = float(col.get("null_probability") or 0.0)
@@ -306,7 +318,7 @@ def _faker_stream(
     requested_locale = col.get("locale") or instance_default_locale
     # Pool admission is the TABLE row count, fixed for the column before the first batch.
     if _faker_pool.pool_eligible(
-        faker_type, requested_locale, rows, opted_out=col.get("pooled") is False
+        faker_type, requested_locale, rows, opted_out=_faker_pool.pool_opted_out(col)
     ):
         raw_kwargs = col.get("faker_kwargs") or {}
         # Reserve before the 10_000 provider calls that build the pool allocate anything.
