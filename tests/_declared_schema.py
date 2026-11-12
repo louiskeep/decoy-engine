@@ -18,6 +18,16 @@ def declared_schema(config: Mapping[str, Any], table: str) -> pa.Schema:
     return pa.schema([pa.field(name, pa.string()) for name in declared_columns(config, table)])
 
 
+def chunked_entry_kwargs(entry: Any, config: Mapping[str, Any], table: str) -> dict[str, Any]:
+    """`source_schema` for `run_mask_pipeline_chunked`, the one chunked entry that requires it.
+
+    For tests that loop over the chunked entries by function; the other entries take nothing.
+    """
+    if getattr(entry, "__name__", "") == "run_mask_pipeline_chunked":
+        return {"source_schema": declared_schema(config, table)}
+    return {}
+
+
 def declare_rest(
     config: dict[str, Any], supplied: Mapping[str, Any] | None = None
 ) -> dict[str, Any]:

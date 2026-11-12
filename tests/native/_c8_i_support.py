@@ -8,7 +8,7 @@ accepted string evaluates under the oracle's eval) and the mask-parity test.
 from __future__ import annotations
 
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
@@ -17,6 +17,11 @@ from hypothesis import strategies as st
 
 from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution.native._dispatch import NativeRouteEvidence
+from tests._declared_schema import declared_schema
+from tests.native._b8_support import (
+    run_mask_chunked_below_gate,
+    run_mask_pipeline_chunked_below_gate,
+)
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     TABLE,
@@ -108,7 +113,8 @@ def companion_missing(monkeypatch: Any) -> Iterator[None]:
         yield
 
 
-def run_native(
+def _run_native(
+    entry: Callable[..., Any],
     config: dict[str, Any],
     chunks: list[pa.Table],
     *,
@@ -116,7 +122,7 @@ def run_native(
 ) -> tuple[list[pa.Table], NativeRouteEvidence]:
     evidence: list[NativeRouteEvidence] = []
     out = list(
-        run_mask_chunked(
+        entry(
             config,
             list(chunks),
             table=TABLE,
@@ -129,11 +135,26 @@ def run_native(
     return out, evidence[0]
 
 
+def run_native(
+    config: dict[str, Any], chunks: list[pa.Table], *, sink: list[Any] | None = None
+) -> tuple[list[pa.Table], NativeRouteEvidence]:
+    return _run_native(run_mask_chunked, config, chunks, sink=sink)
+
+
+def run_native_below_gate(
+    config: dict[str, Any], chunks: list[pa.Table], *, sink: list[Any] | None = None
+) -> tuple[list[pa.Table], NativeRouteEvidence]:
+    """`run_native` for a test whose subject is how an unconfigured column is carried."""
+    return _run_native(run_mask_chunked_below_gate, config, chunks, sink=sink)
+
+
 def run_oracle_leg(
-    config: dict[str, Any], chunks: list[pa.Table], monkeypatch: Any
+    config: dict[str, Any], chunks: list[pa.Table], monkeypatch: Any, *, below_gate: bool = False
 ) -> tuple[list[pa.Table], NativeRouteEvidence]:
     """The oracle leg of `run_mask_chunked`, forced by an unadmittable sibling column: the
-    config gains a hash column `h` with no companion. Its output is stripped of `h`."""
+    config gains a hash column `h` with no companion. Its output is stripped of `h`.
+    `below_gate` matches the native leg it is compared with."""
+    run = run_native_below_gate if below_gate else run_native
     config = make_config(
         [
             *[{k: v for k, v in c.items()} for c in _columns(config)],
@@ -145,7 +166,7 @@ def run_oracle_leg(
         for t in chunks
     ]
     with companion_missing(monkeypatch):
-        out, ev = run_native(config, chunks)
+        out, ev = run(config, chunks)
     assert ev.native_admitted is False, ev
     return [t.drop_columns(["h"]) for t in out], ev
 
@@ -154,16 +175,28 @@ def _columns(config: dict[str, Any]) -> list[dict[str, Any]]:
     return config["tables"][0]["columns"]
 
 
-def run_public_oracle(config: dict[str, Any], chunks: list[pa.Table]) -> list[pa.Table]:
+def _run_oracle(
+    entry: Callable[..., Any], config: dict[str, Any], chunks: list[pa.Table]
+) -> list[pa.Table]:
     return list(
-        run_mask_pipeline_chunked(
+        entry(
             config,
             list(chunks),
             table=TABLE,
+            source_schema=declared_schema(config, TABLE),
             engine_version=ENGINE_VERSION,
             key_provider=key_provider(),
         )
     )
+
+
+def run_public_oracle(config: dict[str, Any], chunks: list[pa.Table]) -> list[pa.Table]:
+    return _run_oracle(run_mask_pipeline_chunked, config, chunks)
+
+
+def run_public_oracle_below_gate(config: dict[str, Any], chunks: list[pa.Table]) -> list[pa.Table]:
+    """`run_public_oracle` for a test whose subject is how an unconfigured column is carried."""
+    return _run_oracle(run_mask_pipeline_chunked_below_gate, config, chunks)
 
 
 # ---------------------------------------------------------------------------

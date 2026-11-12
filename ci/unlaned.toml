@@ -1,0 +1,19 @@
+# Markers and workflows with no automatic CI lane, each with the reason. The lane sentry
+# (tests/sentry/tooling/test_ci_lanes.py) fails on a stale entry, so this list can only shrink.
+schema = 1
+
+[[marker]]
+name = "benchmark"
+reason = "informational wall-clock numbers; shared-runner timing is noise; run by hand via benchmark.yml and on the GCP bench VMs"
+
+[[marker]]
+name = "codspeed"
+reason = "needs the CODSPEED_TOKEN secret and the perf extra; manual until the CodSpeed decision (FU-4)"
+
+[[workflow]]
+file = "benchmark.yml"
+reason = "manual by design (see the benchmark marker)"
+
+[[workflow]]
+file = "codspeed.yml"
+reason = "manual until the CodSpeed decision (FU-4)"
