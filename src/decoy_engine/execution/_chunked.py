@@ -438,7 +438,7 @@ def run_mask_pipeline_chunked(
         raise vault_requires_resident_output()
     from . import _chunked_oracle
 
-    return _chunked_oracle.mask_pipeline_chunked(
+    return _chunked_oracle._mask_pipeline_chunked(
         config,
         chunks,
         table=table,

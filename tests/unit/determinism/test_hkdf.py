@@ -132,6 +132,13 @@ class TestHkdfBounds:
         with pytest.raises(ValueError, match="exceeds RFC 5869 maximum"):
             hkdf_expand(prk, b"info", 255 * 32 + 1)
 
+    @pytest.mark.parametrize("length", [-1, -32])
+    def test_a_negative_length_is_rejected_by_expand_and_the_one_shot(self, length: int) -> None:
+        with pytest.raises(ValueError, match="negative"):
+            hkdf_expand(b"\x00" * 32, b"info", length)
+        with pytest.raises(ValueError, match="negative"):
+            hkdf_sha256(b"ikm", b"salt", b"info", length)
+
     def test_expand_accepts_max_length(self) -> None:
         prk = b"\x00" * 32
         out = hkdf_expand(prk, b"info", 255 * 32)

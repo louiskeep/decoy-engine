@@ -66,7 +66,7 @@ def _unkeyed_fk_job(tmp_path) -> tuple[dict, dict[str, pa.Table]]:
 def _run_route(route: str, cfg: dict, tables: dict, writer, key_provider=None):
     # The internal oracle entry: the public one refuses any vault writer first (B-6 B0), and this
     # test pins the key floor that the writer meets inside the oracle.
-    from decoy_engine.execution._chunked_oracle import mask_pipeline_chunked
+    from decoy_engine.execution._chunked_oracle import _mask_pipeline_chunked
 
     if route == "run_mask_pipeline_chunked":
         single = {
@@ -77,7 +77,7 @@ def _run_route(route: str, cfg: dict, tables: dict, writer, key_provider=None):
             "targets": {"P": cfg["targets"]["P"]},
         }
         return list(
-            mask_pipeline_chunked(
+            _mask_pipeline_chunked(
                 single,
                 [tables["P"]],
                 table="P",

@@ -309,6 +309,48 @@ def test_an_injected_failure_at_each_step(
     assert bool(_stages(route.directory)) is stage_remains
 
 
+@pytest.mark.parametrize("err", [errno.EINVAL, errno.EBADF, errno.ENOTSUP])
+def test_a_directory_fsync_the_filesystem_does_not_support_still_publishes(
+    route: _Route, monkeypatch: pytest.MonkeyPatch, err: int
+) -> None:
+    """The PostgreSQL `fsync_fname_ext` rule: these errnos mean the directory cannot be synced."""
+    writer = route.writer()
+    faults = _Faults(monkeypatch, route.directory)
+    faults.fail("fsync", lambda fd, *a, **k: stat.S_ISDIR(os.fstat(fd).st_mode), err)
+    assert writer.write(route.target()) == 1
+    monkeypatch.undo()
+    assert route.load() == {("ns", "m"): "s"}
+    assert _stages(route.directory) == []
+
+
+def test_a_directory_fsync_eio_is_still_fatal_and_keeps_the_vault(
+    route: _Route, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    writer = route.writer()
+    faults = _Faults(monkeypatch, route.directory)
+    faults.fail("fsync", lambda fd, *a, **k: stat.S_ISDIR(os.fstat(fd).st_mode), errno.EIO)
+    with pytest.raises(VaultError) as exc:
+        writer.write(route.target())
+    monkeypatch.undo()
+    assert exc.value.code == "vault_commit_failed"
+    assert route.load() == {("ns", "m"): "s"}
+
+
+@pytest.mark.parametrize("err", [errno.EPERM, errno.ENOTSUP, errno.EXDEV])
+def test_a_link_failure_is_fatal_even_with_an_unsupported_style_errno(
+    route: _Route, monkeypatch: pytest.MonkeyPatch, err: int
+) -> None:
+    """A filesystem without hard links cannot hold a vault: nothing is published."""
+    writer = route.writer()
+    faults = _Faults(monkeypatch, route.directory)
+    faults.fail("link", lambda *a, **k: True, err)
+    with pytest.raises(VaultError) as exc:
+        writer.write(route.target())
+    monkeypatch.undo()
+    assert exc.value.code == "vault_commit_failed"
+    assert not route.leaf.exists() and _stages(route.directory) == []
+
+
 def test_a_parent_that_cannot_be_opened_keeps_the_ambient_error_shape(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

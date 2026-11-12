@@ -144,7 +144,7 @@ own threat model.
 
 Every HKDF-SHA256 call above (`mask_key`, the per-namespace `derive` key, the vault key, the
 pipeline and model-pack keys) goes through `decoy_engine.determinism._hkdf`, which delegates the
-RFC 5869 arithmetic to PyCA `cryptography` (`HKDF`, `HKDFExpand`, `HMAC`). The engine adds one
+RFC 5869 arithmetic to PyCA `cryptography` (`HKDF`, `HKDFExpand`, `HKDF.extract`). The engine adds one
 rule over the primitive: an empty salt is refused on both `hkdf_extract` and the one-shot
 `hkdf_sha256`, because RFC 5869 and PyCA would otherwise derive under the all-zero salt. Moving
 from the earlier stdlib implementation changed no derived byte: the RFC 5869 §A vectors and a

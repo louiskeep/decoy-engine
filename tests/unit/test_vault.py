@@ -25,7 +25,7 @@ from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import ExecutionError
 
 # A vault writer goes through the internal entry: the public one refuses it (B-6 B0).
-from decoy_engine.execution._chunked_oracle import mask_pipeline_chunked
+from decoy_engine.execution._chunked_oracle import _mask_pipeline_chunked
 from decoy_engine.keyprovider import KeyedStrategyRequiresSecret, SecretKeyProvider
 from decoy_engine.plan import PlanCompileError, compile_plan, run_config_only_checks
 from decoy_engine.vault import (
@@ -204,7 +204,7 @@ class TestChunkedParity:
             for i in range(0, len(df), 7)
         ]
         list(
-            mask_pipeline_chunked(
+            _mask_pipeline_chunked(
                 cfg,
                 chunks,
                 table="accounts",

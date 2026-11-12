@@ -231,7 +231,7 @@ def _record_chunk_sizes(monkeypatch: pytest.MonkeyPatch) -> list[list[int]]:
     from decoy_engine.execution.native import _chunked_entry
 
     calls: list[list[int]] = []
-    real = _chunked_entry.count_chunked
+    real = _chunked_entry._run_mask_chunked
 
     def spy(config: Any, chunks: Any, **kwargs: Any) -> Any:
         sizes: list[int] = []
@@ -244,7 +244,7 @@ def _record_chunk_sizes(monkeypatch: pytest.MonkeyPatch) -> list[list[int]]:
 
         return real(config, counted(), **kwargs)
 
-    monkeypatch.setattr(_chunked_entry, "count_chunked", spy)
+    monkeypatch.setattr(_chunked_entry, "_run_mask_chunked", spy)
     return calls
 
 

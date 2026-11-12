@@ -120,7 +120,7 @@ def test_the_real_sink_publishes_nothing_when_the_mask_stream_fails_midway(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config, child = _job(tmp_path)
-    real = _chunked_entry.count_chunked
+    real = _chunked_entry._run_mask_chunked
 
     def failing(*args, **kwargs):
         for index, chunk in enumerate(real(*args, **kwargs)):
@@ -128,7 +128,7 @@ def test_the_real_sink_publishes_nothing_when_the_mask_stream_fails_midway(
                 raise RuntimeError("mask stream failed on the second chunk")
             yield chunk
 
-    monkeypatch.setattr(_chunked_entry, "count_chunked", failing)
+    monkeypatch.setattr(_chunked_entry, "_run_mask_chunked", failing)
     target = tmp_path / "published"
     with pytest.raises(RuntimeError, match="second chunk"):
         run(config, {CHILD: child}, sink=ParquetTransactionalSink(target))

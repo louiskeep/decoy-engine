@@ -30,5 +30,23 @@ def test_hkdf_module_delegates_to_cryptography() -> None:
     imports = _imports(tree)
     assert "hmac" not in imports and "hashlib" not in imports, sorted(imports)
     assert "cryptography.hazmat.primitives.kdf.hkdf" in imports, sorted(imports)
-    loops = [n for n in ast.walk(tree) if isinstance(n, (ast.For, ast.While))]
-    assert not loops, "a loop in _hkdf.py is an expand step written by hand"
+    assert not _loops(tree), "a loop in _hkdf.py is an expand step written by hand"
+
+
+_LOOPS = (ast.For, ast.While, ast.comprehension)  # a generator expression holds a comprehension
+
+
+def _loops(tree: ast.AST) -> list[ast.AST]:
+    return [n for n in ast.walk(tree) if isinstance(n, _LOOPS)]
+
+
+def test_the_loop_check_sees_comprehensions_and_generator_expressions() -> None:
+    for source in (
+        "x = [i for i in range(3)]",
+        "x = sum(i for i in range(3))",
+        "x = {i for i in range(3)}",
+        "for i in range(3):\n    pass",
+        "while True:\n    break",
+    ):
+        assert _loops(ast.parse(source)), source
+    assert not _loops(ast.parse("x = 1 + 2"))

@@ -106,11 +106,18 @@ the failure would surface as an opaque `vault_key_mismatch`.
 5. **Publication (B-6 D1).** `VaultWriter.write` never writes the vault in
    place. It opens the target's parent directory, creates a stage
    `_decoy_vault_stage_<hex>` beside the vault with creation mode `0600`
-   (given to `open(2)`, so no umask widens it; the published vault is a
-   hard link of the stage and has the same mode), writes and `fsync`s it,
+   (the umask can narrow the `open(2)` mode, for example under `0477`, so the
+   stage is `fchmod`ed back to exactly `0600` before the first byte; the
+   published vault is a hard link of the stage and has the same mode), writes and `fsync`s it,
    `link(2)`s it to the vault name, `fsync`s the directory (the commit
    point) and removes the stage name. A crash at any step leaves either no
-   vault or a complete one, never a partial one.
+   vault or a complete one, never a partial one. A directory `fsync` that
+   fails with `EINVAL`, `EBADF` or `ENOTSUP` means the filesystem cannot sync a
+   directory, and the publish goes on (as PostgreSQL's `fsync_fname_ext`
+   does); any other directory `fsync` error is `vault_commit_failed` and the
+   vault is kept. Limit: a filesystem without hard links (`link` fails with
+   `EPERM`, `ENOTSUP` or `EXDEV`, as on FAT and exFAT) cannot hold a vault,
+   because the exclusive publish is a `link(2)`.
 6. **Exclusive.** An existing vault is never overwritten: `write` raises
    `vault_exists` and leaves it untouched (two concurrent writers to one
    path: one publishes, the other gets `vault_exists`). Choose a new path,

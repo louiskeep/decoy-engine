@@ -253,7 +253,7 @@ def _run_legacy(
     # The internal name: this lane returns resident output, so it may collect vault entries (B0).
     masked_chunks = list(
         render(
-            _chunked_oracle.mask_pipeline_chunked(
+            _chunked_oracle._mask_pipeline_chunked(
                 config,
                 chunks_in,
                 table=table,
@@ -298,7 +298,7 @@ def _run_dispatcher(
     )
     chunks = list(
         render(
-            _chunked_entry.count_chunked(
+            _chunked_entry._run_mask_chunked(
                 config,
                 chunks_in,
                 table=table,
@@ -356,7 +356,7 @@ def _run_streamed(
         # The columns B1's schema rule pins resolve from chunk 0, so only the rest can hold
         # the stream back (`_chunked_output_sink` module docstring).
         rule = build_schema_rule(config, table=table, first=first, registry=registry)
-        chunks = _chunked_entry.count_chunked(
+        chunks = _chunked_entry._run_mask_chunked(
             config,
             stream,
             table=table,

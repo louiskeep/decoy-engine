@@ -25,8 +25,8 @@ from decoy_engine.execution.native import _chunked_entry
 
 # A vault writer goes through the internal entry: the public one refuses it (B-6 B0).
 from decoy_engine.execution.native._chunked_entry import (
+    _run_mask_chunked,
     aggregate_chunked_route_evidence,
-    count_chunked,
 )
 from decoy_engine.execution.native._dispatch import (
     NativeChunkSchemaDriftError,
@@ -148,7 +148,7 @@ def test_error_policy_keeps_the_oracle_route_and_raises_as_today() -> None:
     sink: list[Any] = []
     ev: list[Any] = []
     vault = VaultWriter(vault_key())
-    gen = count_chunked(
+    gen = _run_mask_chunked(
         config,
         list(chunks),
         table=TABLE,

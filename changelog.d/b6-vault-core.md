@@ -3,7 +3,7 @@ Breaking: a vault writer is refused with a sink or a chunked entry, a `TokenVaul
 ### Changed (vault crypto core, B-6, 2026-11-12)
 
 - HKDF-SHA256 (`determinism/_hkdf.py`) delegates to PyCA `cryptography` (`HKDF`, `HKDFExpand`,
-  `HMAC`) instead of a hand-written loop. Every derived key is byte-identical (RFC 5869 A.1 to
+  and `HKDF.extract` for the extract step) instead of a hand-written loop. Every derived key is byte-identical (RFC 5869 A.1 to
   A.3 vectors and a corpus captured from the stdlib implementation). The empty-salt refusal holds
   on both `hkdf_extract` and the one-shot `hkdf_sha256`.
 - Breaking, pre-GA, hard cut: `tokenize` derives each token under a per-vault subkey,

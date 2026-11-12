@@ -50,7 +50,7 @@ modules:
   # empty-salt refusal (QA-10 F12) on both entry points.
   - path: src/decoy_engine/determinism/_hkdf.py
     pattern: RFC 5869 HKDF-SHA256
-    source: RFC 5869; cryptography (PyCA, Apache-2.0/BSD) HKDF, HKDFExpand, HMAC
+    source: RFC 5869; cryptography (PyCA, Apache-2.0/BSD) HKDF, HKDFExpand, HKDF.extract
 
   # SP-05 (2026-06-27): FK-integrity validators use the SDV HMA1 parent-first
   # DAG pattern: materialise parent PK set, resolve child FK values against it.

@@ -932,11 +932,11 @@ class TestVaultIsKeyedSurface:
         source = pa.Table.from_pandas(df, preserve_index=False)
         bad_writer = VaultWriter(_SECRET_B.mask_key())  # keyed with a different secret
         # The internal oracle entry: the public one refuses any vault writer first (B-6 B0).
-        from decoy_engine.execution._chunked_oracle import mask_pipeline_chunked
+        from decoy_engine.execution._chunked_oracle import _mask_pipeline_chunked
 
         with pytest.raises(VaultError):
             list(
-                mask_pipeline_chunked(
+                _mask_pipeline_chunked(
                     cfg,
                     [source],
                     table="t",
@@ -961,10 +961,10 @@ class TestVaultIsKeyedSurface:
         source = pa.Table.from_pandas(df, preserve_index=False)
         writer = vault_writer_for_config(cfg, key_provider=_SECRET)
         # The internal oracle entry: the public one refuses any vault writer (B-6 B0).
-        from decoy_engine.execution._chunked_oracle import mask_pipeline_chunked
+        from decoy_engine.execution._chunked_oracle import _mask_pipeline_chunked
 
         chunks = list(
-            mask_pipeline_chunked(
+            _mask_pipeline_chunked(
                 cfg,
                 [source],
                 table="t",

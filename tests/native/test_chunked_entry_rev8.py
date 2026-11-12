@@ -9,8 +9,8 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
-from decoy_engine.execution._chunked_oracle import mask_pipeline_chunked
-from decoy_engine.execution.native._chunked_entry import count_chunked
+from decoy_engine.execution._chunked_oracle import _mask_pipeline_chunked
+from decoy_engine.execution.native._chunked_entry import _run_mask_chunked
 from decoy_engine.vault import VaultWriter
 from tests._declared_schema import declared_schema
 from tests.native._chunked_entry_support import (
@@ -42,8 +42,8 @@ _ROUTES = ["native_eligible", "forced_oracle", "public_oracle"]
 def _start(route: str, config: dict[str, Any], chunks: list[pa.Table], **kw: Any) -> Any:
     # A vault writer goes through the internal entries: the public ones refuse it (B-6 B0).
     vault = kw.get("vault_writer") is not None
-    oracle = mask_pipeline_chunked if vault else run_mask_pipeline_chunked
-    entry = count_chunked if vault else run_mask_chunked
+    oracle = _mask_pipeline_chunked if vault else run_mask_pipeline_chunked
+    entry = _run_mask_chunked if vault else run_mask_chunked
     if route == "public_oracle":
         return _call(oracle, config, chunks, source_schema=declared_schema(config, TABLE), **kw)
     if route == "forced_oracle":

@@ -36,8 +36,10 @@ from decoy_engine.fileaccess._output import (
     _call,
     _close,
     create_private_at,
+    discard_stage_at,
     make_parent_dir_at,
     make_stage_dir_at,
+    publish_exclusive_durable,
 )
 from decoy_engine.fileaccess._types import (
     FileAccessUnavailable,
@@ -360,42 +362,18 @@ class LocalOutputTxn(_LocalStageDir):
 
     def _unlink_stage(self) -> None:
         if self._staged_file is not None and self._parent_fd >= 0:
-            try:
-                os.unlink(self._staged_file.name, dir_fd=self._parent_fd)
-            except OSError:
-                pass
+            discard_stage_at(self._parent_fd, self._staged_file.name)
 
     def _publish_durable(self) -> None:
-        """Link the fsynced stage to the leaf (refusing an existing one), fsync the parent (the
-        commit point), then drop the stage name. Errors carry an errno, never a path; after the
-        link only the stage is ever removed."""
+        """Publish through the shared durable helper; only the path-shaped step 1 is ambient."""
         staged = self._staged_file
         if staged is None:  # pragma: no cover - checked by publish
             raise FileAccessUnavailable("nothing was staged")
         self._finished = True
-        parent = self._parent_fd
-        code = 0
         try:
-            os.link(
-                staged.name,
-                self._target.name,
-                src_dir_fd=parent,
-                dst_dir_fd=parent,
-                follow_symlinks=False,
-            )
-        except OSError as exc:
-            code = exc.errno or errno.EIO
-        if not code:
-            try:
-                os.fsync(parent)
-            except OSError as exc:
-                code = -(exc.errno or errno.EIO)  # negative: the leaf is published
-        self._unlink_stage()
-        self._close_parent()
-        if code == errno.EEXIST:
-            raise FileExistsError(errno.EEXIST, "output exists")
-        if code:
-            raise OSError(abs(code), os.strerror(abs(code)))
+            publish_exclusive_durable(self._parent_fd, staged.name, self._target.name)
+        finally:
+            self._close_parent()
 
     def _writes_through(self) -> bool:
         """An existing special file (`/dev/null`) or symlink is written in place, as the

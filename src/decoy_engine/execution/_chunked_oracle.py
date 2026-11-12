@@ -509,7 +509,7 @@ def _oracle_masked(
     return _masked()
 
 
-def mask_pipeline_chunked(
+def _mask_pipeline_chunked(
     config: dict[str, Any],
     chunks: Iterable[pa.Table],
     *,

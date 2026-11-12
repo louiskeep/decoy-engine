@@ -653,14 +653,15 @@ def run_mask_chunked(
     """
     if vault_writer is not None:
         raise vault_requires_resident_output()
-    return count_chunked(**locals())
+    return _run_mask_chunked(**locals())
 
 
-def count_chunked(
+def _run_mask_chunked(
     config: dict[str, Any], chunks: Iterable[pa.Table], *, table: str, **kwargs: Any
 ) -> Iterator[pa.Table]:
     """`run_mask_chunked`'s body, which also takes a `vault_writer`: for `run_pipeline`'s
-    auto-chunk lane only, which returns resident output (B0)."""
+    auto-chunk lane only, which returns resident output (B0). `**kwargs` is `_run_chunked`'s
+    own parameters; the file is at its size ceiling, so they are not spelled a second time."""
     # Local import: a top-level one shifts the line the secret-material census pins.
     from decoy_engine.config._subset_run import refuse_unapplied_subset
 

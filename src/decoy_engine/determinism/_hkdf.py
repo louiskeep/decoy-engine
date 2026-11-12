@@ -32,6 +32,8 @@ _EMPTY_SALT_MESSAGE = (
 
 
 def _check_length(length: int) -> None:
+    if length < 0:
+        raise ValueError(f"HKDF length {length} is negative")
     if length > _MAX_LENGTH:
         raise ValueError(f"HKDF length {length} exceeds RFC 5869 maximum {_MAX_LENGTH}")
 

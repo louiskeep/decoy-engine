@@ -403,7 +403,7 @@ def test_a_join_failure_on_the_dispatcher_lane_names_the_table(
 ) -> None:
     from decoy_engine.execution.native import _chunked_entry
 
-    _schema_disagreement(monkeypatch, _chunked_entry, "count_chunked")
+    _schema_disagreement(monkeypatch, _chunked_entry, "_run_mask_chunked")
     cfg, src = _native_table()
     with pytest.raises(ExecutionError) as raised:
         _call(cfg, src, table="people")
@@ -415,7 +415,7 @@ def test_a_join_failure_on_the_legacy_lane_names_the_table(
 ) -> None:
     from decoy_engine.execution import _chunked_oracle
 
-    _schema_disagreement(monkeypatch, _chunked_oracle, "mask_pipeline_chunked")
+    _schema_disagreement(monkeypatch, _chunked_oracle, "_mask_pipeline_chunked")
     cfg, src = _native_table()
     with pytest.raises(ExecutionError) as raised:
         _call(cfg, src, table="people", dispatcher_enabled=False)

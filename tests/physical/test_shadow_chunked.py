@@ -141,14 +141,14 @@ def test_unkeyed_multi_chunk_parity_always_run(
     monkeypatch.setattr(_sc_mod, "_batches", _spy_batches)
 
     oracle_chunks: list[int] = []
-    _orig_rmpc = _chunked_mod.mask_pipeline_chunked
+    _orig_rmpc = _chunked_mod._mask_pipeline_chunked
 
     def _spy_rmpc(*args: object, **kwargs: object):
         for masked_chunk in _orig_rmpc(*args, **kwargs):
             oracle_chunks.append(masked_chunk.num_rows)
             yield masked_chunk
 
-    monkeypatch.setattr(_chunked_mod, "mask_pipeline_chunked", _spy_rmpc)
+    monkeypatch.setattr(_chunked_mod, "_mask_pipeline_chunked", _spy_rmpc)
 
     run = _run_chunked(
         tmp_path, "unkeyed_multi_chunk", _build_multi_chunk_source(_N_ROWS), _UNKEYED_COLUMNS

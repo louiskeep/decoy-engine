@@ -228,6 +228,44 @@ def _sync(dir_fd: int) -> None:
         pass
 
 
+# A directory fsync failing with one of these means the filesystem cannot sync a directory, not
+# that the entry is lost (PostgreSQL `fsync_fname_ext` makes the same call). Any other errno is fatal.
+_DIR_FSYNC_UNSUPPORTED = frozenset({errno.EINVAL, errno.EBADF, errno.ENOTSUP})
+
+
+def discard_stage_at(dir_fd: int, name: str) -> None:
+    """Remove the stage name beneath `dir_fd`; a name already gone or unremovable is left."""
+    try:
+        os.unlink(name, dir_fd=dir_fd)
+    except OSError:
+        pass
+
+
+def publish_exclusive_durable(parent_fd: int, stage_name: str, leaf: str) -> None:
+    """The one durable exclusive publish: `link(2)` the fsynced stage to `leaf` (the
+    compare-and-set), fsync the directory (the commit point), then drop the stage name.
+
+    Raises `FileExistsError` for an existing leaf and an errno-only `OSError` for any other
+    failure. The stage is removed on every path; a leaf that was linked is never removed, so a
+    directory fsync failure reports an error with the vault kept."""
+    code = 0
+    try:
+        os.link(stage_name, leaf, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
+    except OSError as exc:
+        code = exc.errno or errno.EIO
+    if not code:
+        try:
+            os.fsync(parent_fd)
+        except OSError as exc:
+            if exc.errno not in _DIR_FSYNC_UNSUPPORTED:
+                code = exc.errno or errno.EIO
+    discard_stage_at(parent_fd, stage_name)
+    if code == errno.EEXIST:
+        raise FileExistsError(errno.EEXIST, "output exists")
+    if code:
+        raise OSError(code, os.strerror(code))
+
+
 def _rmtree_fd(dir_fd: int) -> None:
     """Remove everything beneath `dir_fd` without following any link."""
     for entry in list(os.scandir(dir_fd)):
@@ -400,37 +438,29 @@ class RootedOutputTxn(_StageDir):
             raise FileAccessUnavailable("nothing was staged")
         parent = state.parent_fd
         if state.kind == "file" and self._publish_mode == "exclusive":
-            try:
-                _call(
-                    os.link,
-                    state.stage_name,
-                    self._leaf,
-                    src_dir_fd=parent,
-                    dst_dir_fd=parent,
-                    follow_symlinks=False,
-                )
-            except FileExistsError:
-                _discard(state)
-                raise
-            except OSError:
-                if self._durable:  # nothing was published: only the stage is removed
-                    _discard(state)
-                raise
             if self._durable:
-                # The commit point: a published leaf whose directory entry is not durable is
-                # reported, never removed (the stage is, on every path).
-                failed = 0
                 try:
-                    os.fsync(parent)
-                except OSError as exc:
-                    failed = exc.errno or errno.EIO
-                if failed:
+                    publish_exclusive_durable(parent, state.stage_name, self._leaf)
+                except OSError:
+                    _discard(state)  # the stage only; a linked leaf is never removed
+                    raise
+            else:
+                try:
+                    _call(
+                        os.link,
+                        state.stage_name,
+                        self._leaf,
+                        src_dir_fd=parent,
+                        dst_dir_fd=parent,
+                        follow_symlinks=False,
+                    )
+                except FileExistsError:
                     _discard(state)
-                    raise OSError(failed, os.strerror(failed))
-            try:
-                os.unlink(state.stage_name, dir_fd=parent)
-            except OSError:
-                pass
+                    raise
+                try:
+                    os.unlink(state.stage_name, dir_fd=parent)
+                except OSError:
+                    pass
         else:
             _call(os.replace, state.stage_name, self._leaf, src_dir_fd=parent, dst_dir_fd=parent)
             if state.kind == "file":
@@ -552,4 +582,6 @@ __all__ = [
     "STAGE_SUFFIX",
     "RootedOutputDir",
     "RootedOutputTxn",
+    "discard_stage_at",
+    "publish_exclusive_durable",
 ]

@@ -154,7 +154,7 @@ def b1_as_the_lane(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     from decoy_engine.execution._chunked_code_set import aggregate_chunk_code_set_corpora
 
     # The internal entry: the public one refuses a vault writer (B-6 B0).
-    from decoy_engine.execution.native._chunked_entry import count_chunked as run_mask_chunked
+    from decoy_engine.execution.native._chunked_entry import _run_mask_chunked as run_mask_chunked
 
     def b1_lane(
         config: Any,
@@ -304,13 +304,13 @@ def spy_lanes(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
     # writer); the labels keep the public names the assertions were written against.
     monkeypatch.setattr(
         _chunked_entry,
-        "count_chunked",
-        wrap("entry.run_mask_chunked", _chunked_entry.count_chunked),
+        "_run_mask_chunked",
+        wrap("entry.run_mask_chunked", _chunked_entry._run_mask_chunked),
     )
     monkeypatch.setattr(
         _chunked_oracle,
-        "mask_pipeline_chunked",
-        wrap("oracle.run_mask_pipeline_chunked", _chunked_oracle.mask_pipeline_chunked),
+        "_mask_pipeline_chunked",
+        wrap("oracle.run_mask_pipeline_chunked", _chunked_oracle._mask_pipeline_chunked),
     )
     if importlib.util.find_spec("decoy_engine.execution._pipeline_auto_chunk") is not None:
         from decoy_engine.execution import _pipeline_auto_chunk as ac
