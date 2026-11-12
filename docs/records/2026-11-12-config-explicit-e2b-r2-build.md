@@ -7,7 +7,7 @@ Branch `feat/config-explicit-e2b-reverse`, stacked on #514 (`feat/config-explici
 ## Runs
 
 - Red: the tests-only commit (registry plus tests, no behavior) gave 73 assertion failures over the 11 touched files. A second red commit (when and registry cells) gave the two `TestWhenRejection` X ids and `test_a_when_keeps_the_entrys_own_target_claim` red.
-- Green: `tests/unit/profile unit/execution unit/config unit/scripts unit/progress`, `tests/native physical parity acceptance sentry` and the registry test: 12 failed, 26802 passed, 5129 skipped. The 12 are the 10 import-layer ids, `test_live_registry_has_one_complete_fixture_per_minor` (registry 1.26.0 with no 1.25 fixture until that slice merges) and `TestMemCapOom` (passes alone: 2 passed).
+- Green: `tests/unit/profile unit/execution unit/config unit/scripts unit/progress`, `tests/native physical parity acceptance sentry` and the registry test: 12 failed, 26802 passed, 5129 skipped. The 12 are the 10 import-layer ids, `test_live_registry_has_one_complete_fixture_per_minor` (registry unreleased with no 1.25 fixture until that slice merges) and `TestMemCapOom` (passes alone: 2 passed).
 
 ## Mutations (final source head, each in a throwaway worktree, assertion failures)
 

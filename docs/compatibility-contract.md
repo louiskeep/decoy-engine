@@ -748,7 +748,7 @@ them is the target. This slice only records the policy; it adds no refusal and n
 
 **Declared-but-missing columns (CONFIG-EXPLICIT E2b-r).** The same boundary now also refuses a column the config
 declares for a mask table (a `columns` entry, a `drop_column` column or a composite-relationship child column) that
-the source's header, footer or schema does not have: `source_file.declared_column_missing`, registry 1.26.0. It runs
+the source's header, footer or schema does not have: `source_file.declared_column_missing`, registry unreleased. It runs
 on every catalog the routes above already check, so the refusal comes before any data row is read; for the chunked
 entries the catalog is `source_schema` (pipeline entry) or the first chunk, and each later chunk is checked before it
 masks. It names the first missing column and the count (config names, never a value). Order is undeclared table,
