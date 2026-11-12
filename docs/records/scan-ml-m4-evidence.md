@@ -274,3 +274,11 @@ Reruns on `f7c1ccab`:
 - NER gate: `DECOY_REQUIRE_NER=1 pytest -m ner -n 2`: 52 passed, 10 skipped (import skips for
   other extras only).
 - `pytest tests/integration/compat_corpus`: 5 passed, 1 skipped (pre-GA real-artifact capture).
+
+`0ee8b732` merges the M5 branch at `c5915831` again, bringing main `885b5b2c` (#535, #536), which
+landed during these checks; no conflict and no post-scan, execution or registry-version file
+touched. After it: `--check` exit 0; in the NER venv with `DECOY_REQUIRE_NER=1`, the six M4 files,
+the M5 acceptance file, `tests/sentry`, `tests/unit/progress`, `tests/unit/reasons`,
+`tests/unit/run_result` and the compat corpus rerun: only the 23 `test_outbound_clients` ids fail.
+The mutations, the full gate selection, lint and the `-m ner` run are from `f7c1ccab`; the merge
+changed no file they read except through main's unrelated run-result and capacity modules.
