@@ -103,6 +103,7 @@ GUARDED_MODULES: tuple[str, ...] = (
     "execution/_pandas_adapter.py",
     "execution/_sequential.py",
     "execution/_chunked.py",
+    "execution/chunked/_progress.py",
     "execution/_adapter.py",
     "execution/_substrate.py",
     "execution/_runner.py",
@@ -492,6 +493,10 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # The deleted execution/polars/ tree itself is carved out of the filter below.
             "src/decoy_engine/execution/__init__.py",
             "src/decoy_engine/execution/_chunked.py",
+            # The chunked entries' progress helper (new sub-package); it is in GUARDED_MODULES,
+            # so it imports nothing from `execution.physical`.
+            "src/decoy_engine/execution/chunked/__init__.py",
+            "src/decoy_engine/execution/chunked/_progress.py",
             "src/decoy_engine/execution/_chunked_adapter_gate.py",
             "src/decoy_engine/execution/_planner.py",
             "src/decoy_engine/execution/_strategies/_top_code.py",

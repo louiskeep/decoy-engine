@@ -439,7 +439,8 @@ class ProgressChannel:
             except BaseException as exc:
                 # Any phase started via the manual `phase_start`/`phase_finish` pair
                 # (the sequential, out-of-core, generate and generate+mask routes
-                # compute `rows_out` at finish, so they cannot use the `phase()` CM)
+                # compute `rows_out` at finish, and the lazy chunked entries finish only
+                # when drained, so none can use the `phase()` CM)
                 # that the raising work never finished would otherwise leave a
                 # consumer's step stuck "running". Close each as an error before the
                 # terminal event so a monitor sees a terminal state for every step.

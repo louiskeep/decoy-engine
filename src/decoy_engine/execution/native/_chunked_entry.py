@@ -49,6 +49,7 @@ from decoy_engine.execution._output_projection import (
 )
 from decoy_engine.execution._row_error_summary import chunk_row_error_summary
 from decoy_engine.execution._transforms import stored_index_fields
+from decoy_engine.execution.chunked import observe_chunked
 from decoy_engine.execution.native._categorical_prepared import (
     PreparedCategorical,
 )
@@ -94,7 +95,6 @@ from decoy_engine.profile import (
     DeclarationRequest,
     PreparedDeclaredSources,
 )
-from decoy_engine.progress import get_active_channel
 
 # Matches `MAX_NATIVE_THREADS` in decoy-engine-native/src/threads.rs: the compiled
 # kernels refuse a larger request, so the entry point refuses it before any work.
@@ -659,9 +659,9 @@ def run_mask_chunked(
         file_access=file_access,
         registry=registry,
     )
-    # Progress: account every yielded chunk on the active channel (bound by the
-    # caller, e.g. `run_pipeline(progress=...)`); a no-op when nothing is bound.
-    return get_active_channel().count_rows(
+    # Progress: the table's mask phase and every yielded chunk on the active channel (bound by
+    # the caller, e.g. `run_pipeline(progress=...)`); a no-op when nothing is bound.
+    return observe_chunked(
         table,
         _run_chunked(
             config,
