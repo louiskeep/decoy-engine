@@ -187,7 +187,10 @@ the environment.
 - The full suite, the perf suite, and the docs build.
 - `tests/sentry/layout/test_import_layers.py` outside gates (no import-linter in `.venv`); gates
   ran it in `.venv-layers` (15 passed).
-- macOS (the plan names a Mac mini run before a1a lands): not available here.
+- macOS: ran on the Mac mini (M4, arm64) at head a6a09e4a. `tests/fileaccess/publication`: 14 passed,
+  7 skipped (the strict cells, which need Linux `openat2`), 0 failed. The rest of `tests/fileaccess`
+  (strict policy, strace and other Linux-only files) is not green on macOS and is outside this
+  slice; the same run showed 51 failed, 592 passed, 8 skipped, 421 errors.
 - Windows: the win32 arms are main's code unchanged and were not executed.
 
 ## V2-LOG

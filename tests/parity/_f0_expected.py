@@ -289,10 +289,10 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "schema": "9a31618979c4ed6d06e64e9f49b1f3257b81cb47daf4cd9a4cbec30d93b3a871",
             "rows": 5,
             "columns": [
-                ("id", "8d357c1dda98e9feca23fc8e3f4dccc3807731a7815cc4c7732af69bc649d1e1"),
+                ("id", "cb04007bfe7191396e56fc572a372b162ab09b02dadb1fd99fe46f5a699c0aff"),
                 ("nm", "14408bf93c4f9bd63f915fa085c510fe949c9035b9da57b225e8be7e78b3fa90"),
             ],
-            "table": "382896f15e9848571bd6e6754b796d2bb8380e6fe7872aa3827aaffd220010e5",
+            "table": "17b88d4d1738563427a72868cd5c240a4c6db23eb4815f9ea72bf8dda36f14d4",
         },
         "accounts": {
             "schema": "d5655e336eed516a1c449bef81b0160f0e6abc5d0ae81a3e824099d0ed55db65",

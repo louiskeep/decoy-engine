@@ -24,6 +24,11 @@ if TYPE_CHECKING:
 
 _TOKEN = object()
 
+# The execution layer's rule for which declared columns the config creates itself: a table entry
+# and the source's columns in, the created column names out. `profile` cannot import `execution`,
+# so the policy crosses the boundary as this callable.
+CreatedTargets = Callable[[Mapping[str, Any], Sequence[str]], frozenset[str]]
+
 
 def is_declared_column(entry: Mapping[str, Any]) -> bool:
     """A column entry counts as declared when it has a non-empty name and strategy."""
@@ -252,11 +257,16 @@ class PreparedDeclaredSources:
     """
 
     def __init__(
-        self, token: object, config: Mapping[str, Any], inputs: tuple[DeclarationInput, ...]
+        self,
+        token: object,
+        config: Mapping[str, Any],
+        inputs: tuple[DeclarationInput, ...],
+        created_targets: CreatedTargets | None = None,
     ) -> None:
         if token is not _TOKEN:
             raise TypeError("PreparedDeclaredSources is built by prepare_declared_sources")
         self._config = config
+        self._created_targets = created_targets
         self._config_id = id(config)
         self.inputs = inputs
         # `for_chunks` with a schema: the columns a chunk of that table may carry.
@@ -267,6 +277,13 @@ class PreparedDeclaredSources:
     def matches(self, config: Mapping[str, Any]) -> bool:
         """True when `config` is the object this capability was prepared for."""
         return id(config) == self._config_id
+
+    def created(self, table: str, columns: Iterable[str]) -> frozenset[str]:
+        """Columns of `table` the config creates itself, given the source's `columns`; none
+        unless the route's policy says so."""
+        if self._created_targets is None:
+            return frozenset()
+        return self._created_targets(_table_entry(self._config, table), tuple(columns))
 
     def check_names(self, table: str, names: Iterable[str]) -> None:
         within = self._chunk_columns.get(table)
@@ -316,9 +333,15 @@ class PreparedDeclaredSources:
 
 @fileaccess.entry_point
 def prepare_declared_sources(
-    request: DeclarationRequest, *, file_access: FileAccess | None = None
+    request: DeclarationRequest,
+    *,
+    file_access: FileAccess | None = None,
+    created_targets: CreatedTargets | None = None,
 ) -> PreparedDeclaredSources:
-    """Resolve the request into ordered inputs, check them once, and return the capability."""
+    """Resolve the request into ordered inputs, check them once, and return the capability.
+
+    `created_targets` is the execution layer's policy for columns the config creates; an
+    execution route gets it through `prepare_declared_execution_sources`."""
     resolved = [
         DeclarationInput(
             name, source_columns(descriptor, table=name, file_access=file_access), "descriptor"
@@ -327,7 +350,7 @@ def prepare_declared_sources(
     ]
     inputs = (*resolved, *request._inputs)
     check_columns_declared(request._config, inputs)
-    return PreparedDeclaredSources(_TOKEN, request._config, inputs)
+    return PreparedDeclaredSources(_TOKEN, request._config, inputs, created_targets)
 
 
 __all__ = [

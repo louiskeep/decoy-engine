@@ -157,6 +157,8 @@ kind or payload major this version does not know is returned as an opaque record
 dropped. A default export withholds such a record (its id goes in the header's `withheld_records`); `keep_paths` copies it byte for byte. `decoy-library-export/v1` is the JSON Lines export format and
 `decoy-job-log/v1` the header of a job log. Corpus samples are in `tests/integration/compat_corpus/records/`.
 
+The `evidence` payload (`cli-local-1`) also accepts two additive optional keys, `path_base` (exactly `"project"`) and `project_manifest` (path text or `null`), both present or both absent (a reader refuses a half pair, a null `path_base` and any base other than `"project"`), as a run inside a `decoy.yaml` project writes them. Absent keys stay absent, and `project_manifest` is a path field in a default export.
+
 `scan-set/v1` is the record of one multi-table scan (`decoy_engine.scan_sources`). The engine
 owns its shape: `ScanSetCore` to write (unknown fields refused), `ScanSetCoreRead` to read
 (unknown fields ignored). It holds counts, rates, type labels, detector ids and column names.
@@ -735,6 +737,14 @@ profile, compile or mask (a named limit: one chunk is pulled before the column c
 are checked lazily before each masks, so earlier chunks may already be in the sink, as for drift
 refusals. The private `_run_chunked`, `_oracle_preflight` and `_oracle_preflight_admitted` take a
 required `declared` capability. The CLI's `run --chunked` moves in CLI Part C1.
+
+**Columns the config creates (CONFIG-EXPLICIT E2b-r1).** `profile_source` gains the optional
+`supplied_sources` mapping: a supplied-only table is profiled (a same-name descriptor keeps
+profiling its own file), which `build_run_context` now passes. Execution routes obtain the
+`PreparedDeclaredSources` capability only through `prepare_declared_execution_sources`
+(`execution/_guards.py`), which hands `profile` a policy built from `SURFACE_DECLARATIONS`: an entry
+creates its own target when its row says so, every column it reads is a source column, and none of
+them is the target. This slice only records the policy; it adds no refusal and no reason code.
 
 ### 3.5 Disguises
 

@@ -23,9 +23,23 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from decoy_engine.fileaccess._openat2 import openat2_usable
+
 UNIT_FILE = "t.parquet"
 UNIT_BYTES = b"F22-A1A-UNIT"
 KILL_MARKER = "killed-after-mkdir"
+
+# The strict policy confines every open with openat2, which only Linux has; the ambient cells
+# run everywhere.
+POLICIES = [
+    pytest.param(
+        "strict",
+        marks=pytest.mark.skipif(not openat2_usable(), reason="strict policy needs Linux openat2"),
+    ),
+    "ambient",
+]
 
 
 def run_child(target: Callable[[str], None], spec: dict[str, Any], tmp: Path) -> tuple[int, dict]:
