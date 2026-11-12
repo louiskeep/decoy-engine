@@ -474,7 +474,7 @@ def test_mask_tables_and_empty_plans_have_no_floor() -> None:
     assert generation_floor_bytes(config, classify_plan(config)) == 0
 
 
-# ---- the capacity reason-code set is pinned in tests/unit/test_capacity_reason_codes.py ------
+# ---- the capacity reason-code set is pinned in tests/unit/reasons/test_capacity_reason_codes.py -
 
 
 def _private_imports(path: str, package: str) -> list[str]:
