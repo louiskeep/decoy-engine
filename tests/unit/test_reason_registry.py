@@ -536,7 +536,13 @@ def test_fpe_handler_fallback_codes_are_registered_with_a_pinned_fixture() -> No
 
 
 def _blocked_report(**parts: object) -> dict[str, object]:
-    return {"residual_pii": [], "fk_preservation": [], "policy_validation": [], **parts}
+    return {
+        "schema_version": "post-scan-integrity/v2",
+        "residual_pii": [],
+        "fk_preservation": [],
+        "policy_validation": [],
+        **parts,
+    }
 
 
 def _blocked_key(code: str, status: str, baseline: str) -> dict[str, object]:
