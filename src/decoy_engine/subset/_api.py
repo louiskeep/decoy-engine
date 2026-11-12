@@ -325,7 +325,8 @@ def subset_request_from_config(config: dict[str, Any]) -> SubsetRequest | None:
         relationships=tuple(relationships),
         seeds=tuple(seeds),
         policy=policy,
-        excluded_edges=tuple(sorted(excluded)),
+        # a config may repeat a relationship; the record names each edge once
+        excluded_edges=tuple(sorted(set(excluded))),
     )
 
 

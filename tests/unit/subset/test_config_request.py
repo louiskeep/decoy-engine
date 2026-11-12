@@ -120,6 +120,20 @@ def test_none_direction_child_stays_in_scope_with_no_rows() -> None:
     assert sel.excluded_edges == (edge.edge_id,)
 
 
+def test_a_repeated_generate_relationship_is_excluded_once() -> None:
+    edge = ("gen", "id", "c", "gid")
+    config = _config(
+        {"p": "mask", "d": "mask", "gen": "generate", "c": "mask"},
+        [("p", "id", "d", "pid"), edge, edge],
+        "p",
+    )
+    req = _request(config)
+    assert req.excluded_edges == ("gen.id -> c.gid",)
+    tables = {"p": _table("pid"), "d": _table("pid"), "c": _table("gid")}
+    sel = select_subset(req, tables, job_seed=JOB_SEED)
+    assert sel.excluded_edges == ("gen.id -> c.gid",)
+
+
 def test_generate_parent_with_a_mask_child_drops_the_edge_and_passes_the_child_whole() -> None:
     config = _config(
         {"p": "mask", "d": "mask", "gen": "generate", "c": "mask"},
