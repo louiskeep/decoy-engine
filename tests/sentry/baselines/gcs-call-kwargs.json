@@ -185,9 +185,6 @@
     "decoy_engine/execution/out_of_core/_runner.py::run_fk_out_of_core::open::1": {
       "reason": "vault OpaqueBox.open (decoy_engine._opaque), not a GCS Blob"
     },
-    "decoy_engine/execution/out_of_core/_scratch.py::ScratchAccess.__init__::open::0": {
-      "reason": "os.open on a local path, not a GCS Blob"
-    },
     "decoy_engine/execution/out_of_core/_scratch.py::open_private::open::0": {
       "reason": "os.open on a local path, not a GCS Blob"
     },

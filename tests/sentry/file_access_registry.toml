@@ -5,7 +5,7 @@
 # `dir_category` (protected_root, protected_child, output_parent, published_output, non_row) and
 # `dir_test` (an existing pytest node id; every category but protected_root) mark directory
 # creators for tests/sentry/protected_dir (G-ONE-PROTECTED-DIR).
-# Count: 193 (asserted by the sentry).
+# Count: 192 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -749,16 +749,6 @@ ordinal = 2
 rule = "path under the out-of-core run's scratch arena (opened by the runner or handed to it by `run_staged`), named by an opaque per-run id (t0000), never by a table, column or edge name"
 owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
-
-[[entry]]
-module = "decoy_engine/execution/out_of_core/_scratch.py"
-function = "ScratchAccess.__init__"
-sink = "os.open"
-ordinal = 0
-disposition = "read"
-rule = "a directory the out-of-core stager created under the engine's own scratch root; ScratchAccess is built only by scratch_access_for (issuer token) and serves reads beneath that one descriptor"
-owner = "cam"
-reason = "opens the engine's own staging directory once so staged key files are read through a descriptor-confined policy instead of an ambient path"
 
 [[entry]]
 module = "decoy_engine/execution/out_of_core/_spill_estimate.py"
@@ -1821,9 +1811,9 @@ function = "_open"
 sink = "os.open"
 ordinal = 0
 disposition = "read"
-rule = "O_RDONLY|O_DIRECTORY|O_NOFOLLOW: by path, the directory `_parent_base` returned (the system temp directory, a live issued root, or a caller path after `require_ambient`) and, in `_adopt`, an ambient caller path; otherwise the fresh pending root under its held base descriptor"
+rule = "O_RDONLY|O_DIRECTORY|O_NOFOLLOW: by path, the directory `_parent_base` returned (the system temp directory, a live issued root, or a caller path after `require_ambient`) and, in `_adopt`, a path at or below a live issued root (`_vet_live`) or an ambient caller path; otherwise the fresh pending root under its held base descriptor, or `.` under a held arena descriptor for `reader()`"
 owner = "cam"
-reason = "the scratch arena opens its base and its fresh root by descriptor; it creates nothing (F25 S1a, plan 4.2)"
+reason = "the scratch arena opens its base and its fresh root by descriptor, and its reader's own descriptor; it creates nothing (F25 S1a, S2a-1b-i, plan 4.2)"
 
 [[entry]]
 module = "decoy_engine/fileaccess/_scratch.py"

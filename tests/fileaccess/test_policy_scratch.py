@@ -13,6 +13,7 @@ import pytest
 from decoy_engine.execution.out_of_core import _scratch
 from decoy_engine.execution.out_of_core._stage import MaskedKeyStager
 from decoy_engine.fileaccess import FileAccessDenied
+from decoy_engine.fileaccess._scratch import ScratchAccess
 from decoy_engine.profile._readers import LazySource
 from tests.fileaccess.support import RootRelative
 
@@ -58,4 +59,4 @@ def test_the_stager_source_reads_its_own_file_and_nothing_else(tmp_path: Path) -
 
 def test_a_reader_cannot_be_constructed_without_the_issuer(tmp_path: Path) -> None:
     with pytest.raises(TypeError):
-        _scratch.ScratchAccess(tmp_path, issuer=object())
+        ScratchAccess(-1, str(tmp_path), issuer=object())

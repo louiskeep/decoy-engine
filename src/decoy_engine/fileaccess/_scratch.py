@@ -7,8 +7,10 @@ Maildir's pending-then-rename (`tmp/` then `new/`), with a marker inside proving
 The arena creates nothing itself: roots and missing `under=` levels come from L0.1's allocator,
 children and private files from A-4's named creators in `_output.py`. Each new descriptor is read
 back with `fstat`; anything but an owner-only 0700 directory or 0600 file is refused and removed.
-Creator errno failures pass through unchanged. `local_path` is the one path release. Named limits:
-a crash inside `open` leaves an empty pending directory (L4); same-user interference (L6).
+Creator errno failures pass through unchanged. `local_path` is the one path release; `reader()`
+is the one issuer of `ScratchAccess`, a SOURCE reader confined by descriptor to one arena directory.
+Named limits: a crash inside `open` leaves an empty pending directory (L4); same-user interference
+(L6).
 """
 
 from __future__ import annotations
@@ -36,13 +38,17 @@ from decoy_engine.fileaccess._output import (
 from decoy_engine.fileaccess._protected_dir import (
     ProtectedDirUnsafe,
     _allocate,
+    _key,
+    _live_root,
     _owned_private,
     _parent_base,
     _register,
     _unregister,
+    _vet_live,
 )
+from decoy_engine.fileaccess._rooted import Root, RootedFileAccess, lexical_ok
 from decoy_engine.fileaccess._scratch_reports import CleanupReport, Disposition
-from decoy_engine.fileaccess._types import FileAccessUnavailable
+from decoy_engine.fileaccess._types import FileAccessUnavailable, FileRequest, FileRole
 
 if sys.platform != "win32":
     import fcntl
@@ -227,10 +233,16 @@ class ScratchArena:
 
     @classmethod
     def _adopt(cls, path: str | os.PathLike[str]) -> ScratchArena:
-        """Transitional non-owning `Path` arm (ambient only): missing levels made as `create_dir`
-        makes them; an existing leaf must already be owner-only, checked and never chmodded."""
-        require_ambient("a scratch directory named by path")
+        """Transitional non-owning `Path` arm: missing levels made as `create_dir` makes them; an
+        existing leaf must already be owner-only, checked and never chmodded. A path at or below a
+        live issued root is taken under every policy (`open_protected_dir`'s rule); any other
+        path needs the ambient policy."""
         target = os.path.abspath(os.fspath(path))
+        live = _live_root(_key(target))
+        if live is None:
+            require_ambient("a scratch directory named by path")
+        else:
+            _vet_live(os.fspath(path), target, live)
         missing, current = [], target
         while True:  # up to the deepest existing ancestor
             try:
@@ -302,6 +314,18 @@ class ScratchArena:
             raise FileAccessUnavailable("an under= scratch arena releases paths only when ambient")
         return os.path.join(self._root.path, *self._rel, *names)
 
+    def reader(self) -> ScratchAccess:
+        """A SOURCE reader confined to this directory, on a descriptor of its own: it outlives
+        this object, never the disk, since reclaim still removes what it reads."""
+        self._check()
+        fd = _open(".", self._fd.fd)  # a fresh open file description, never sharing the root lock
+        try:
+            prefix = os.path.abspath(os.path.join(self._root.path, *self._rel))
+            return ScratchAccess(fd, prefix, issuer=_ISSUER)
+        except BaseException:
+            _close(fd)
+            raise
+
     def reclaim(self) -> CleanupReport:
         """Remove the whole arena (opener only). A second call returns the first report."""
         if self._rel or not self._root.owning:
@@ -319,6 +343,34 @@ class ScratchArena:
 
     def __reduce__(self) -> tuple[object, ...]:
         raise TypeError("a scratch arena cannot be serialized; it crosses a process as its fd")
+
+
+class ScratchAccess(RootedFileAccess):
+    """Read-only SOURCE access beneath ONE arena directory, over a descriptor `reader()` opened.
+
+    A source over a staged file never reaches the file system through an ambient path and cannot
+    name anything outside that directory. A locator is a component, or the absolute path
+    `local_path` released, whose directory prefix is stripped before the rooted lookup."""
+
+    def __init__(self, fd: int, prefix: str, *, issuer: object) -> None:
+        if issuer is not _ISSUER:
+            raise TypeError("ScratchAccess is issued by ScratchArena.reader")
+        self._finalizer = weakref.finalize(self, _close, fd)
+        self._prefix = prefix.rstrip("/") + "/"
+        super().__init__(
+            [Root("scratch", fd, frozenset({FileRole.SOURCE}), frozenset({"read", "stat"}))],
+            allow_portable_fallback=True,
+        )
+
+    def select(self, req: FileRequest) -> tuple[Root, str]:
+        locator = req.locator
+        if lexical_ok(locator):
+            canonical = os.path.normpath(locator)
+            if canonical.startswith(self._prefix):
+                req = FileRequest(
+                    req.role, req.access, canonical[len(self._prefix) :], req.field_key
+                )
+        return super().select(req)
 
 
 def _make_dir(parent_fd: int, name: str) -> int:
@@ -349,4 +401,4 @@ def scratch_native_iter(batches: Iterable[T]) -> Iterator[T]:
     return guarded_iter(_DISPLAY, True, batches)
 
 
-__all__ = ["ARENA_PREFIX", "ScratchArena", "scratch_native", "scratch_native_iter"]
+__all__ = ["ARENA_PREFIX", "ScratchAccess", "ScratchArena", "scratch_native", "scratch_native_iter"]

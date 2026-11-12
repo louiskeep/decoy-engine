@@ -97,11 +97,9 @@ def stage_typed_sources(
     Each file is named by a per-run counter, never by the table name, so no config value shapes a
     path (the out-of-core runner's opaque ``t0000`` scratch names follow the same rule). It is
     created 0600 by the arena before any row lands, whatever the umask, and read back only through
-    a reader issued over the arena's root (``scratch_access_for``), as the out-of-core key stager
-    reads its own files.
+    the arena's own reader (``arena.reader()``), as the out-of-core key stager reads its own files.
     """
     from decoy_engine.execution.out_of_core._budget import check_temp_disk_budget
-    from decoy_engine.execution.out_of_core._scratch import scratch_access_for
     from decoy_engine.fileaccess.adapters.arrow import parquet_writer
     from decoy_engine.profile._readers import LazySource
 
@@ -137,7 +135,7 @@ def stage_typed_sources(
         if max_bytes is not None:
             check_temp_disk_budget(root, max_bytes=max_bytes)
         if reader is None:
-            reader = scratch_access_for(root)
+            reader = arena.reader()
         # The absolute released path: the reader strips its own root prefix from it.
         out[table] = LazySource(
             Path(arena.local_path(name)), access=reader, field_key="engine.scratch"

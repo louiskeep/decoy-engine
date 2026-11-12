@@ -357,9 +357,13 @@ def test_adopt_under_a_strict_policy(tmp_path: Path, strict: Strict, cell: str) 
                 with pytest.raises(FileAccessUnavailable):
                     ScratchArena._adopt(outside)
                 assert not (tmp_path / "outside").exists(), "refused before anything is made"
-            else:
-                escape = f"{arena.local_path()}/staged/../../escape"
+            else:  # `..` that stays inside is refused by `_vet_live`; one that leaves is outside
+                within = f"{arena.local_path()}/staged/../staged/t0000"
                 with pytest.raises(ProtectedDirUnsafe):
+                    ScratchArena._adopt(within)
+                assert not inside.parent.exists()
+                escape = f"{arena.local_path()}/staged/../../escape"
+                with pytest.raises(FileAccessUnavailable):
                     ScratchArena._adopt(escape)
                 assert not os.path.exists(os.path.normpath(escape))
     if cell == "under_live_root":
@@ -408,5 +412,5 @@ def test_reader_holds_its_own_descriptor() -> None:
         del child
         gc.collect()  # the child's finalizer closes the child's descriptor
         assert LazySource(Path("k.parquet"), access=reader).to_table() == table
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(FileAccessDenied):  # reclaimed: the file is gone beneath the descriptor
         LazySource(Path("k.parquet"), access=reader).to_table()
