@@ -31,6 +31,10 @@ provider (annotated int or float) now declare and emit int64/float64 instead of 
 column prints the same text per row with nulls at the same rows. Manifest and reasons:
 `tests/fixtures/phase_f_fr0/manifest.json`.
 
+Changed 2026-11-10 (fixture input): `live_faker` lost its `fallback` column, an unknown
+`faker_type` that compile now refuses (`generate_faker_type_unknown`). Only that table's schema and
+table digests moved; the other five column digests are unchanged.
+
 Shape: ``EXPECTED[fixture_id][table_name]`` is a `_f0_canonical.table_fingerprint` dict.
 ``POOL_SEAM`` is the generation pooled-faker seam (`_f0_seams.PoolCall.signature`) for the
 `pooled_faker` fixture, one entry per pooled column in declared order.
@@ -79,17 +83,16 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
     },
     "live_faker": {
         "live": {
-            "schema": "1434a50bfef0ac821ea753928ab82960061f2496cd5ff8f92faa0d76b8ee742e",
+            "schema": "a887da5cffbcdd4936ffad62a618c9dcd5b5f13ef92c80bedfb98d5719272d75",
             "rows": 30,
             "columns": [
                 ("city", "3c662c698ec2248412e490fc3e0b2869fed7a452a2b91ecc50bdf5dbc124e379"),
                 ("email", "b503077a15137cc8ee43fb4c777d2798b684ba0863e0547ff7ffbd8e9621bcb9"),
                 ("de_name", "41f77afe03d3215973a433ce52a942a938a45db63c7c160e8b332b702808d441"),
                 ("num", "bbe70cef490a524527d1b4aed6042cb1ba24324d607b39d3a84e43a4d2ef4b8d"),
-                ("fallback", "cfc1f9a7fb56d5b16e2f6a211c1ca6932310d05d7c4fb54c7a69f9458bf61845"),
                 ("opt_out", "0639140d18601078b0f58cb03bb06d3b6fd000f54a3253671709be262ce4f969"),
             ],
-            "table": "61de7a2800710c2f26ffc95d8dd245aed4eeada6c25cc4303dd0160af254dd0d",
+            "table": "138be283ade86ae610b3be41dbd782f9ece18cc89c286257b3daf1f2790b9f91",
         }
     },
     "live_faker_default_locale": {
@@ -286,10 +289,10 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "schema": "9a31618979c4ed6d06e64e9f49b1f3257b81cb47daf4cd9a4cbec30d93b3a871",
             "rows": 5,
             "columns": [
-                ("id", "8d357c1dda98e9feca23fc8e3f4dccc3807731a7815cc4c7732af69bc649d1e1"),
+                ("id", "cb04007bfe7191396e56fc572a372b162ab09b02dadb1fd99fe46f5a699c0aff"),
                 ("nm", "14408bf93c4f9bd63f915fa085c510fe949c9035b9da57b225e8be7e78b3fa90"),
             ],
-            "table": "382896f15e9848571bd6e6754b796d2bb8380e6fe7872aa3827aaffd220010e5",
+            "table": "17b88d4d1738563427a72868cd5c240a4c6db23eb4815f9ea72bf8dda36f14d4",
         },
         "accounts": {
             "schema": "d5655e336eed516a1c449bef81b0160f0e6abc5d0ae81a3e824099d0ed55db65",

@@ -46,6 +46,8 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
     ),
     ("sink", "KEYWORD_ONLY", "None", "TransactionalSink | None"),
     ("source_loader", "KEYWORD_ONLY", "None", "Callable[[str], pa.Table] | None"),
+    # CONFIG-EXPLICIT E2c: the loader's declared schemas, required with a loader.
+    ("source_loader_schemas", "KEYWORD_ONLY", "None", "Mapping[str, pa.Schema] | None"),
     ("fpe_chunk_count", "KEYWORD_ONLY", "4", "int"),
     ("explain_plan", "KEYWORD_ONLY", "False", "bool"),
     ("auto_chunk", "KEYWORD_ONLY", "True", "bool"),
@@ -79,6 +81,13 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
     ("quarantine_path", "KEYWORD_ONLY", "None", "str | None"),
     # GEN-CLI E1 (#460): config-relative paths resolve against this folder (compatibility contract).
     ("base_dir", "KEYWORD_ONLY", "None", "str | Path | None"),
+    # SUB-RUN E2: what a `subset:` block does; additive (compatibility contract section 4.1).
+    (
+        "subset_request",
+        "KEYWORD_ONLY",
+        "'config'",
+        "SubsetRequest | Literal['config', 'skip']",
+    ),
 )
 FROZEN_RETURN = "ExecutionResult"
 
@@ -102,7 +111,7 @@ def test_run_pipeline_return_annotation_is_frozen() -> None:
 
 def test_the_frozen_table_covers_every_parameter_once() -> None:
     names = [row[0] for row in FROZEN_PARAMETERS]
-    assert len(names) == len(set(names)) == 44
+    assert len(names) == len(set(names)) == 46
     positional = [r[0] for r in FROZEN_PARAMETERS if r[1] == "POSITIONAL_OR_KEYWORD"]
     assert positional == ["config", "sources"]
 

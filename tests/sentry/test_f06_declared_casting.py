@@ -379,7 +379,7 @@ def test_matrix_every_output_descriptor_has_exact_width_or_a_registered_rejectio
     )
     from decoy_engine.declared_casting._eligibility import ROUTE_CAPABILITIES, contract_model
 
-    outputs = [d for d in descriptors() if d.direction == "output"]
+    outputs = [d for d in descriptors() if d.direction == "output" and d.declarable]
     assert outputs
     for d in outputs:
         for with_width in (False, True):

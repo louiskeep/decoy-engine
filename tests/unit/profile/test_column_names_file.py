@@ -36,6 +36,7 @@ from decoy_engine.profile._csv_reader import CsvDialect, read_csv_source, resolv
 from decoy_engine.profile._readers import build_profile_source
 from decoy_engine.profile._source import profile_source
 from decoy_engine.validation_result import CODES
+from tests._declared_schema import declare_rest
 
 NAMES_FILE = "zz_names_file.csv"
 
@@ -163,8 +164,8 @@ def test_profile_reads_header_file_like_inline_names(tmp_path: Path) -> None:
     names = ["id", "name", "code"]
     by_file = _source(data, column_names_file=str(header))
     by_list = _source(data, column_names=names)
-    from_file = profile_source({"sources": {"events": by_file}}, seed=1)
-    from_list = profile_source({"sources": {"events": by_list}}, seed=1)
+    from_file = profile_source(declare_rest({"sources": {"events": by_file}}), seed=1)
+    from_list = profile_source(declare_rest({"sources": {"events": by_list}}), seed=1)
     assert _columns(from_file) == _columns(from_list)
     assert [c[0] for c in _columns(from_file)] == names
 

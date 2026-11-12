@@ -52,6 +52,10 @@ PINNABLE_TYPES = frozenset(
 )
 
 REJECTED_TYPES = {
+    "lookup": (
+        str(reasons.plan.PINNED_LOOKUP_UNSUPPORTED),
+        "lookup columns are not available in pinned mode",
+    ),
     "faker": (
         "pinned_faker_unsupported",
         "faker columns are not available in pinned mode",
@@ -245,9 +249,9 @@ def compile_pinned_plan_with_generation(
     The step order is load-bearing for which error wins: token scan, reference date, pre-compile
     rejection, guarded compile, resolved-config recheck.
     """
-    import decoy_engine
     from decoy_engine.plan import compile_plan
     from decoy_engine.plan._types import unfreeze_json
+    from decoy_engine.release import __version__ as engine_version
 
     refuse_live_tokens(config, "config")
     if reference_date is None:
@@ -266,7 +270,7 @@ def compile_pinned_plan_with_generation(
         plan = compile_plan(
             config,
             _empty_profile(reference),
-            decoy_engine_version=str(decoy_engine.__version__),
+            decoy_engine_version=str(engine_version),
             base_dir=base_dir,
         )
     finally:

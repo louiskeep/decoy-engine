@@ -351,10 +351,15 @@ class Collected:
 
 
 def parse_marker_expr(gates_text: str) -> str:
-    """The `-m` expression of gates.sh's PYTEST_ARGS: the one place the suite selection lives."""
-    m = re.search(r"^PYTEST_ARGS=\(-m '([^']*)'", gates_text, re.MULTILINE)
+    """The `-m` expression of gates.sh's PYTEST_ARGS: the one reader of that line.
+
+    Strict on purpose: exactly one `PYTEST_ARGS=` line, and it must be the whole form
+    `PYTEST_ARGS=(-m '<expr>')`. Any other shape raises, so a format change breaks every
+    consumer here instead of being half-read by a looser copy elsewhere."""
+    pins = [ln for ln in gates_text.splitlines() if ln.startswith("PYTEST_ARGS=")]
+    m = re.fullmatch(r"PYTEST_ARGS=\(-m '([^']+)'\)", pins[0]) if len(pins) == 1 else None
     if m is None:
-        raise ValueError("gates.sh PYTEST_ARGS has no -m expression")
+        raise ValueError("gates.sh has no single PYTEST_ARGS=(-m '<expr>') line")
     return m.group(1)
 
 

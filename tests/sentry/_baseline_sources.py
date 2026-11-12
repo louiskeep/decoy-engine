@@ -39,13 +39,17 @@ class InCode:
     # tracked files, so the baseline stores a placeholder for it.
     masks: tuple[str, ...] = ()
 
-    def __call__(self) -> set[str]:
+    def _module(self) -> object:
         path = SENTRY / self.test_file
         spec = importlib.util.spec_from_file_location(f"_bl_{path.stem}", path)
         if spec is None or spec.loader is None:
             raise ImportError(path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
+        return mod
+
+    def __call__(self) -> set[str]:
+        mod = self._module()
         tokens = [getattr(mod, name) for name in self.masks]
         out = set()
         for k in getattr(mod, self.constant):
@@ -54,6 +58,10 @@ class InCode:
                 key = key.replace(token, "<removed-surface>")
             out.add(key)
         return out
+
+    def maxes(self) -> dict[str, int]:
+        """Integer values of the constant, keyed like ``__call__``: the live ``max`` per entry."""
+        return {_flat(k): int(v) for k, v in getattr(self._module(), self.constant).items()}
 
 
 in_code = InCode
@@ -88,12 +96,34 @@ def toml_keys(rel: str) -> Callable[[], set[str]]:
     return keys
 
 
+def import_layer_keys(rel: str, contract: str) -> Callable[[], set[str]]:
+    """``<contract>::<importer> -> <imported>`` for each ignore line of an import-linter config.
+
+    Layer membership is not keyed here: it is the exact snapshot in ``test_import_layers.py``.
+    """
+
+    def keys() -> set[str]:
+        path = SENTRY / "layout" / "_layout.py"
+        spec = importlib.util.spec_from_file_location("_bl_layout", path)
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod  # dataclasses in the module look themselves up here
+        spec.loader.exec_module(mod)
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        return {f"{contract}::{key}" for key in mod.ignore_keys(text)}
+
+    return keys
+
+
 @dataclass(frozen=True)
 class Source:
     sentry_id: str
     where: str  # file the sentry reads, for the reason text
     keys: Callable[[], set[str]]
     note: str = ""
+    # Live numeric value per key, for a list whose entries are counts (recorded as ``max``).
+    maxes: Callable[[], dict[str, int]] | None = None
 
 
 F29 = "tests/fixtures/f29"
@@ -127,6 +157,19 @@ SOURCES: tuple[Source, ...] = (
         in_code("test_reason_registry.py", "UNCHECKED_HELPERS"),
     ),
     Source("module-size", "test_module_size.py", in_code("test_module_size.py", "ALLOWLIST")),
+    Source(
+        "package-fanout",
+        "layout/test_package_fanout.py",
+        in_code("layout/test_package_fanout.py", "FANOUT_ALLOWLIST"),
+        maxes=in_code("layout/test_package_fanout.py", "FANOUT_ALLOWLIST").maxes,
+    ),
+    Source(
+        "table-kind-truth-tests",
+        "test_table_kind_classifier.py",
+        in_code("test_table_kind_classifier.py", "TRUTH_TEST_BASELINE"),
+        maxes=in_code("test_table_kind_classifier.py", "TRUTH_TEST_BASELINE").maxes,
+    ),
+    Source("import-layers", ".importlinter", import_layer_keys(".importlinter", "layers")),
     Source(
         "public-import-boundary",
         "test_public_import_boundary.py",
@@ -267,7 +310,9 @@ def write_initial() -> None:
         if path.exists():
             raise SystemExit(f"{path} exists; baselines only shrink after the first inventory")
         reason = f"initial X0a inventory of {src.where}; existing entry, reviewed by its own sentry"
-        entries = {k: {"reason": reason} for k in sorted(src.keys())}
+        entries: dict[str, dict[str, object]] = {k: {"reason": reason} for k in sorted(src.keys())}
+        for k, value in (src.maxes() if src.maxes else {}).items():
+            entries[k]["max"] = value
         doc = {"sentry_id": src.sentry_id, "created_in": CREATED_IN, "entries": entries}
         path.write_text(json.dumps(doc, indent=1, sort_keys=False) + "\n", encoding="utf-8")
         rows.append(

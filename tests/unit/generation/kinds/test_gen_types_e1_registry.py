@@ -14,6 +14,7 @@ import pytest
 
 from decoy_engine import reasons
 from decoy_engine.config import PipelineConfig
+from decoy_engine.config import _generate_option_catalog as catalog
 from decoy_engine.config import _generate_options as opts
 from decoy_engine.config._tables import GENERATE_TYPES
 from decoy_engine.execution.native import _determinism_protocol as protocol
@@ -57,7 +58,7 @@ def _valid_extras(family: str) -> dict[str, Any]:
 def test_every_registry_names_the_new_types(kind: str) -> None:
     assert kind in GENERATE_TYPES
     assert kind in opts.GENERATE_OPTIONS
-    assert kind in opts.generate_option_catalog()
+    assert kind in catalog.generate_option_catalog()
     assert kind in ADMISSION_MATRIX
     assert kind in PINNABLE_TYPES or kind in REJECTED_TYPES
     assert kind in READER_KEYS
@@ -158,13 +159,13 @@ def test_the_reference_weighted_rule_keeps_its_code_and_location() -> None:
 
 
 def test_the_catalog_shows_the_family_requirements() -> None:
-    entry = opts.generate_option_catalog()["distribution"]
+    entry = catalog.generate_option_catalog()["distribution"]
     assert entry.required == ("family",)
     assert entry.required_when["family"] == {"uniform": ("low", "high")}
-    assert set(entry.optional) == {"low", "high", "min", "max"}
-    ref = opts.generate_option_catalog()["reference"]
+    assert set(entry.optional) == {"low", "high", "min", "max", "output_type"}
+    ref = catalog.generate_option_catalog()["reference"]
     assert ref.required_when == {"distribution": {"weighted": ("weights",)}}
-    assert opts.generate_option_catalog()["sequence"].required_when == {}
+    assert catalog.generate_option_catalog()["sequence"].required_when == {}
 
 
 def test_the_mutant_one_table_drives_missing_and_foreign_keys(

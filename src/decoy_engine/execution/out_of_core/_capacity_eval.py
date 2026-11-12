@@ -489,7 +489,7 @@ def enforce_ooc_memory_preflight(
 
     R1 anti-drift: the floor/cap loop above is no longer inline here -- it
     is `evaluate_capacity`, a pure function this gate and the estimate-only
-    `estimate_job_capacity` (CLI `decoy preflight`) both call on the SAME
+    `estimate_job_capacity` (CLI `decoy validate preflight`) both call on the SAME
     typed `CapacityInputs`, so the two can never independently drift on what
     "fits" means. This function is now a thin translation shim: build the
     inputs, ask the evaluator, raise on `INSUFFICIENT` (unchanged caller

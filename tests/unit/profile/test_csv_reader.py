@@ -35,6 +35,7 @@ from decoy_engine.profile._csv_reader import CsvDialect, read_csv_source, resolv
 from decoy_engine.profile._readers import CsvFileSource, build_profile_source
 from decoy_engine.profile._source import profile_source
 from decoy_engine.validation_result import CODES
+from tests._declared_schema import declare_rest
 
 BASE_FRAMES = Path(__file__).parent / "fixtures" / "csv_reader_base_frames.json"
 
@@ -279,7 +280,7 @@ def _headerless_config(path: Path, table: str, delimiter: str = ",") -> dict[str
     }
     if delimiter != ",":
         source["delimiter"] = delimiter
-    return {"sources": {table: source}}
+    return declare_rest({"sources": {table: source}})
 
 
 def test_profile_source_resolves_the_dialect_once(
@@ -457,3 +458,39 @@ def test_projection_refuses_unknown_and_repeated_names_without_quoting_them(
         with pytest.raises(ValueError) as info:
             _projected(tmp_path, text, dialect, columns=bad)
         assert "zz_secret_name" not in str(info.value)
+
+
+class _SpyChunks:
+    """A chunk iterator that records `close()`, like the pandas reader that owns the file."""
+
+    def __init__(self) -> None:
+        self.closed = 0
+        self._frames = iter([pd.DataFrame({"a": ["1"], "b": ["2"]})] * 3)
+
+    def __iter__(self) -> _SpyChunks:
+        return self
+
+    def __next__(self) -> pd.DataFrame:
+        return next(self._frames)
+
+    def close(self) -> None:
+        self.closed += 1
+
+
+def test_shaped_closes_the_inner_iterator_when_closed_early() -> None:
+    spy = _SpyChunks()
+    shaped = _csv_reader._shaped(spy, ["b", "a"])  # spy stays referenced: no refcount close
+    assert list(next(shaped).columns) == ["b", "a"]
+    shaped.close()
+    assert spy.closed == 1
+
+
+def test_shaped_closes_the_inner_iterator_on_exhaustion_and_on_error() -> None:
+    spy = _SpyChunks()
+    assert len(list(_csv_reader._shaped(spy, ["a", "b"]))) == 3
+    assert spy.closed == 1
+
+    bad = _SpyChunks()
+    with pytest.raises(ValueError):
+        list(_csv_reader._shaped(bad, ["zz"]))
+    assert bad.closed == 1

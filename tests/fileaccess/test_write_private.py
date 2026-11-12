@@ -249,7 +249,16 @@ def test_error_text_is_value_free(
         def mkdir(self: Path, *a: Any, **k: Any) -> None:
             raise OSError(errno.EACCES, os.strerror(errno.EACCES), str(self))
 
+        real_open = os.open
+
+        def open_dir(path: Any, flags: int, *a: Any, **k: Any) -> int:
+            # The POSIX arm opens the target's parent before it creates anything under it.
+            if flags & getattr(os, "O_DIRECTORY", 0) and "dir_fd" not in k:
+                raise OSError(errno.EACCES, os.strerror(errno.EACCES), os.fsdecode(path))
+            return real_open(path, flags, *a, **k)
+
         monkeypatch.setattr(Path, "mkdir", mkdir)
+        monkeypatch.setattr(os, "open", open_dir)
         code = errno.EACCES
     elif step == "mkstemp":
 

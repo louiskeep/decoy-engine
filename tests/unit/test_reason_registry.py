@@ -475,4 +475,84 @@ def test_joint_cap_codes_are_registered_with_a_pinned_fixture() -> None:
         ("warning", "seed_ignored_with_master_key"),
     ]
     assert pinned["registry_version"] == "1.22.0"
-    assert reasons.REGISTRY_VERSION == "1.22.0"
+    assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 22, 0)
+
+
+GEN_TYPES_FIXTURE = "reason-manifest-v1.23-gen-types.json"
+
+
+def test_gen_types_e2_codes_are_registered_with_a_pinned_fixture() -> None:
+    """GEN-TYPES E2: two output-type codes and the boolean kernel's value failure, all `since` 1.23.0."""
+    expected = [
+        ("config", "generate_output_type_unsupported", "PipelineValidationError"),
+        ("runtime", "declared_boolean_invalid", "decoy_engine.declared_casting"),
+        ("runtime", "output_type_cast_failed", "ExecutionError"),
+    ]
+    for ns, code, owner in expected:
+        spec = reasons.find(ns, code)
+        assert spec is not None
+        assert (spec.owner, spec.since) == (owner, "1.23.0")
+        assert not re.search(r"[{}%]", spec.summary)
+        assert getattr(getattr(reasons, ns), code.upper()) == code
+    pinned = _load(GEN_TYPES_FIXTURE)
+    assert sorted((e["namespace"], e["code"]) for e in pinned["entries"]) == sorted(
+        (n, c) for n, c, _ in expected
+    )
+    assert pinned["registry_version"] == "1.23.0"
+    assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 23, 0)
+
+
+FPE_FALLBACKS_FIXTURE = "reason-manifest-v1.24-fpe-fallbacks.json"
+
+
+def test_fpe_handler_fallback_codes_are_registered_with_a_pinned_fixture() -> None:
+    """The FPE handler's two default codes resolve in the registry, `since` 1.24.0."""
+    from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
+    from decoy_engine.execution._strategies._fpe import (
+        strategy_code_for_checksum,
+        strategy_code_for_unencryptable,
+    )
+
+    expected = [
+        ("runtime", "fpe_checksum_unsupported", "FPE_CHECKSUM_UNSUPPORTED_STRATEGY"),
+        ("runtime", "fpe_unencryptable_value", "FPE_UNENCRYPTABLE_VALUE"),
+    ]
+    for ns, code, symbol in expected:
+        spec = reasons.find(ns, code)
+        assert spec is not None
+        assert (spec.owner, spec.since, spec.symbol) == ("StrategyError", "1.24.0", symbol)
+        assert not re.search(r"[{}%]", spec.summary)
+        assert getattr(getattr(reasons, ns), symbol) == code
+    assert strategy_code_for_unencryptable(FpeUnencryptableError("x")) == "fpe_unencryptable_value"
+    assert strategy_code_for_checksum(FpeChecksumError("x", scheme="luhn")) == (
+        "fpe_checksum_unsupported"
+    )
+    pinned = _load(FPE_FALLBACKS_FIXTURE)
+    assert sorted((e["namespace"], e["code"]) for e in pinned["entries"]) == sorted(
+        (n, c) for n, c, _ in expected
+    )
+    assert pinned["registry_version"] == "1.24.0"
+    assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 24, 0)
+
+
+def test_gen_types_e3_codes_are_registered() -> None:
+    """GEN-TYPES E3: nine `lookup_*` plan codes and the pinned-mode refusal, all pending."""
+    expected = [
+        ("plan", "lookup_column_missing", "PlanCompileError"),
+        ("plan", "lookup_file_empty", "PlanCompileError"),
+        ("plan", "lookup_file_format_unsupported", "PlanCompileError"),
+        ("plan", "lookup_file_too_large", "PlanCompileError"),
+        ("plan", "lookup_file_unreadable", "PlanCompileError"),
+        ("plan", "lookup_not_pinned", "PlanCompileError"),
+        ("plan", "lookup_pinned_digest_mismatch", "PlanCompileError"),
+        ("plan", "lookup_too_many_entries", "PlanCompileError"),
+        ("plan", "lookup_weight_invalid", "PlanCompileError"),
+        ("plan", "pinned_lookup_unsupported", "PinnedModeError"),
+    ]
+    for ns, code, owner in expected:
+        spec = reasons.find(ns, code)
+        assert spec is not None
+        assert (spec.owner, spec.since) == (owner, "unreleased")
+        assert not re.search(r"[{}%]", spec.summary)
+        assert getattr(getattr(reasons, ns), code.upper()) == code
+    assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 24, 0)

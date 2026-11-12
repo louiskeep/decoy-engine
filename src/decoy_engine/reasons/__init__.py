@@ -62,9 +62,11 @@ from decoy_engine.reasons._registry import (
     lookup,
     manifest,
     namespaces,
+    pending_summary_edits,
     specs,
 )
 from decoy_engine.reasons._types import (
+    UNRELEASED,
     Kind,
     Outcome,
     Phase,
@@ -84,6 +86,7 @@ __all__ = [
     "REGISTRY_SCHEMA",
     "REGISTRY_VERSION",
     "REGISTRY_VERSION_RE",
+    "UNRELEASED",
     "CleanupState",
     "Kind",
     "Operation",
@@ -113,6 +116,7 @@ __all__ = [
     "lookup",
     "manifest",
     "namespaces",
+    "pending_summary_edits",
     "physical",
     "plan",
     "platform",

@@ -103,6 +103,7 @@ GEN_KIND_TO_SITE: dict[str, str] = {
     "sequence": DETERMINISTIC_NO_DRAW,
     "constant": DETERMINISTIC_NO_DRAW,
     "distribution": "gen.distribution",
+    "lookup": "gen.lookup",
     "derived": DETERMINISTIC_NO_DRAW,
     "derived_aggregate": DETERMINISTIC_NO_DRAW,
     "group_key": "mask.group_key",  # group_key generation reuses the same derive()

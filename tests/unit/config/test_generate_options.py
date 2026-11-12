@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from decoy_engine import reasons
 from decoy_engine.config import PipelineConfig, parse_pipeline_config
 from decoy_engine.config._errors import PipelineConfigError
+from decoy_engine.config._generate_options import GENERATE_OPTIONS
 from decoy_engine.config._tables import GENERATE_TYPES
 from decoy_engine.generators.derivation import strategy_config_fingerprint
 
@@ -20,7 +21,7 @@ FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "gen_strict"
 ROOT = Path(__file__).resolve().parents[3]
 CANARY = "CANARY-7731"
 
-# The smallest valid column per type: exactly today's required keys.
+# The smallest valid column per type: exactly the catalog's required keys.
 MINIMAL: dict[str, dict[str, Any]] = {
     "faker": {"faker_type": "name"},
     "sequence": {"start": 1},
@@ -29,12 +30,13 @@ MINIMAL: dict[str, dict[str, Any]] = {
     "reference": {"reference_table": "p", "reference_column": "id"},
     "statistical": {"snapshot_file": "s.json"},
     "derived": {"expression": "a + 1"},
-    "derived_aggregate": {},
+    "derived_aggregate": {"op": "sum", "column": "x"},
     "grouped_series": {"group_by": "g", "order_by": "o"},
     "windowed_date": {"anchor": "a", "max_days": 5},
     "group_key": {"group_by": "g"},
     "constant": {"value": "US"},
     "distribution": {"family": "uniform", "low": 0, "high": 3},
+    "lookup": {"codeset": "icd10"},
 }
 
 
@@ -435,7 +437,8 @@ def test_shipped_generate_configs_keep_dump_and_fingerprints(key: str) -> None:
     assert dump == IDENTITY[key]["dump"]
     fingerprints = {
         f"{t['name']}.{c['name']}": strategy_config_fingerprint(
-            {**c, "_table": t["name"]}, snapshot_content_digest="sha256:0"
+            {**c, "_table": t["name"]},
+            content_digests={("*", "snapshot_file"): "sha256:0"},
         )
         for t in dump["tables"]
         for c in t.get("generate_columns", [])
@@ -537,3 +540,22 @@ def test_schema_keeps_common_options_and_declared_fields() -> None:
     col = _col("sequence", null_probability=0.5, determinism="fresh")
     col["pooled"] = None
     assert _schema_valid(_config(col))
+
+
+def _branch(type_: str) -> dict[str, Any]:
+    (branch,) = [
+        b for b in _column_schema()["allOf"] if b["if"]["properties"]["type"]["const"] == type_
+    ]
+    return branch["then"]
+
+
+@pytest.mark.parametrize("type_", sorted(GENERATE_OPTIONS))
+def test_schema_takes_a_pooled_flag_on_faker_only(type_: str) -> None:
+    pooled = _branch(type_)["properties"]["pooled"]
+    assert pooled == ({} if type_ == "faker" else {"type": "null"})
+
+
+def test_schema_requires_the_keys_checked_at_plan_compile() -> None:
+    for type_, spec in GENERATE_OPTIONS.items():
+        assert _branch(type_)["required"] == [*spec.required, *spec.plan_required]
+    assert {"op", "column"} <= set(_branch("derived_aggregate")["required"])

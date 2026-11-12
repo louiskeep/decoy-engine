@@ -30,8 +30,8 @@ import hashlib
 import hmac
 import json
 import os
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Mapping
+from typing import Any, NamedTuple
 
 from decoy_engine import fileaccess
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION
@@ -58,6 +58,9 @@ _EXCLUDED_FROM_FINGERPRINT = frozenset(
         # GEN-UNIQUE: a build-strategy toggle like `pooled`. A unique column keeps its seed root, so
         # its first-draw rows equal the plain column's values (invariant U5).
         "unique",
+        # GEN-TYPES E2: how a value is printed, not which value is drawn; adding it must not
+        # re-seed the column (the values before the cast stay equal).
+        "output_type",
         "_table",
     }
 )
@@ -92,18 +95,37 @@ def column_identity(column_config: dict[str, Any]) -> str:
     )
 
 
-# ``snapshot_file`` (statistical columns) is a FILESYSTEM PATH, not a
-# generation input. Hashing the path string couples the derived seed to a
-# UI/ops-mutable location: renaming or date-stamping a snapshot silently
-# shifts synthetic output, and a harness that stages the snapshot in a
-# fresh temp dir per run gets a different seed every process (breaking the
-# cross-process determinism gate). We substitute the path with the SHA-256
-# of the file's CONTENT before fingerprinting, so the same distribution at
-# ANY path yields the same seed, and two genuinely different snapshots
-# yield different seeds. Excluding it outright (dropping it) would instead
-# collide two different snapshots onto one seed -- the wrong direction.
-_SNAPSHOT_FILE_KEY = "snapshot_file"
+# A file-valued key (``snapshot_file`` on a statistical column, ``file`` on a lookup column) is a
+# FILESYSTEM PATH, not a generation input. Hashing the path string couples the derived seed to a
+# UI/ops-mutable location: renaming or date-stamping a file silently shifts synthetic output, and
+# a harness that stages the file in a fresh temp dir per run gets a different seed every process
+# (breaking the cross-process determinism gate). We substitute the path with the SHA-256 of the
+# file's CONTENT before fingerprinting, so the same data at ANY path yields the same seed, and two
+# genuinely different files yield different seeds. Excluding the key outright would instead
+# collide two different files onto one seed -- the wrong direction.
+#
+# The registry is keyed by ``(column type, key)``, so a future type with a bare ``file`` key does
+# not inherit lookup's rule by accident. ``"*"`` matches any column type: ``snapshot_file`` has
+# always been fingerprinted by content on whatever column carries it (statistical, a fitted
+# reference, or a bare config), and no seed may move. ``disk_fallback`` says whether a caller with
+# no digest may have the fingerprint read the file: only the standalone ``snapshot_file`` case may.
+# A lookup file is pinned at compile and the run reads the plan only, so a missing digest is an
+# error and the fingerprint never opens the path (a second read would reopen the TOCTOU window).
+class _FileValuedKey(NamedTuple):
+    role: FileRole
+    disk_fallback: bool
 
+
+FILE_VALUED_KEYS: dict[tuple[str, str], _FileValuedKey] = {
+    ("*", "snapshot_file"): _FileValuedKey(FileRole.SNAPSHOT, True),
+    ("lookup", "file"): _FileValuedKey(FileRole.LOOKUP, False),
+}
+
+
+_NO_DIGEST = (
+    "strategy_config_fingerprint: {} has no pinned content digest; a lookup file is read once "
+    "at compile and never opened again, so the fingerprint cannot derive a seed without it."
+)
 
 _UNREADABLE = (
     "strategy_config_fingerprint: snapshot_file {!r} is missing or unreadable ({}); cannot "
@@ -112,7 +134,9 @@ _UNREADABLE = (
 )
 
 
-def _snapshot_content_digest(path: str, field_key: str = "snapshot_file") -> str:
+def _snapshot_content_digest(
+    path: str, field_key: str = "snapshot_file", role: FileRole = FileRole.SNAPSHOT
+) -> str:
     """SHA-256 hex of a snapshot file's raw bytes, for use in the fingerprint.
 
     Content, not path: the same snapshot at any location fingerprints
@@ -124,7 +148,7 @@ def _snapshot_content_digest(path: str, field_key: str = "snapshot_file") -> str
     shown = fileaccess.shown(path, key)
     failure: str | None = None
     try:
-        data = fileaccess.read_all(FileRole.SNAPSHOT, path, key)
+        data = fileaccess.read_all(role, path, key)
     except OSError as exc:
         if fileaccess.keeps_class(exc):
             raise
@@ -142,7 +166,7 @@ def _snapshot_content_digest(path: str, field_key: str = "snapshot_file") -> str
 def strategy_config_fingerprint(
     column_config: dict[str, Any],
     *,
-    snapshot_content_digest: str | None = None,
+    content_digests: Mapping[tuple[str, str], str] | None = None,
     file_access: FileAccess | None = None,
 ) -> str:
     """SHA-256 hex of canonical JSON of the strategy-relevant config.
@@ -152,31 +176,31 @@ def strategy_config_fingerprint(
     Returns the full 64-char hex; callers that want a shorter label can
     truncate.
 
-    ``snapshot_file`` is fingerprinted by CONTENT, not path (see
-    ``_SNAPSHOT_FILE_KEY``): its value in the payload is replaced with the
-    SHA-256 of the referenced file's bytes so the seed follows the
-    distribution, not the filesystem location.
+    A file-valued key (``FILE_VALUED_KEYS``) is fingerprinted by CONTENT, not path: its value in
+    the payload is replaced with the SHA-256 of the referenced file's bytes so the seed follows
+    the data, not the filesystem location.
 
-    ``snapshot_content_digest``, when given, is used verbatim instead of
-    reading ``snapshot_file`` from disk (same ``"sha256:<hex>"`` shape
-    ``_snapshot_content_digest`` returns). DPS Scope B (guide section
-    4.7/4.8): a Plan-pinned caller already knows this file's content
-    digest from compile time -- `StatisticalSpec.snapshot_digest` -- and
-    must not reopen the path merely to rederive a value it already has
-    (defect F4). Direct/standalone callers with no Plan (the tests in
-    `test_gen_derive_context.py`/`test_r3_10_generation_key_contract.py`)
-    omit this and keep today's read-the-file behavior unchanged.
+    ``content_digests`` maps ``(column type, key)`` (or ``("*", key)``) to the ``"sha256:<hex>"``
+    digest to use instead of reading the file (DPS Scope B, guide section 4.7/4.8: a Plan-pinned caller already
+    knows the digest from compile time and must not reopen the path, defect F4). A direct caller
+    with no Plan may omit it for ``snapshot_file`` and keep today's read-the-file behavior. A
+    lookup ``file`` has no such fallback: without its digest this raises.
     """
     payload = {
         k: v for k, v in (column_config or {}).items() if k not in _EXCLUDED_FROM_FINGERPRINT
     }
-    snapshot_file = payload.get(_SNAPSHOT_FILE_KEY)
-    if snapshot_file:
-        payload[_SNAPSHOT_FILE_KEY] = (
-            snapshot_content_digest
-            if snapshot_content_digest is not None
-            else _snapshot_content_digest(str(snapshot_file))
-        )
+    kind = str(payload.get("type"))
+    for (key_type, key), (role, disk_fallback) in FILE_VALUED_KEYS.items():
+        path = payload.get(key)
+        if key_type not in (kind, "*") or not path:
+            continue
+        digests = content_digests or {}
+        digest = digests.get((kind, key)) or digests.get((key_type, key))
+        if digest is None:
+            if not disk_fallback:
+                raise RuntimeError(_NO_DIGEST.format(key))
+            digest = _snapshot_content_digest(str(path), key, role)
+        payload[key] = digest
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -250,7 +274,7 @@ class GenDeriveContext:
         column_config: dict[str, Any],
         fallback_seed: int,
         *,
-        snapshot_content_digest: str | None = None,
+        content_digests: Mapping[tuple[str, str], str] | None = None,
     ) -> GenDeriveContext:
         """Resolve the 32-byte column root (fresh / keyed / unkeyed).
 
@@ -259,10 +283,9 @@ class GenDeriveContext:
         `derive_key` resolver failure (QA-1 M18 contract) rather than
         silently degrading to the unkeyed path.
 
-        `snapshot_content_digest` passes straight through to
-        `strategy_config_fingerprint` (a `type: statistical` column's
-        already-pinned digest, guide section 4.7/4.8); every other column
-        type ignores it.
+        `content_digests` passes straight through to `strategy_config_fingerprint` (the
+        already-pinned digest of a statistical column's snapshot or a lookup column's file, guide
+        section 4.7/4.8); every other column type ignores it.
         """
         cfg = column_config or {}
 
@@ -271,9 +294,7 @@ class GenDeriveContext:
             # across runs. Full 32 bytes, not 4.
             return cls(os.urandom(32))
 
-        fingerprint = strategy_config_fingerprint(
-            cfg, snapshot_content_digest=snapshot_content_digest
-        )
+        fingerprint = strategy_config_fingerprint(cfg, content_digests=content_digests)
 
         identity = column_identity(cfg)
 

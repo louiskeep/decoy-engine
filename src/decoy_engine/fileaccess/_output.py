@@ -12,6 +12,14 @@ Publication keeps each sink's existing semantics: a directory stage publishes wi
 `rename(2)` (an absent or empty destination, `ENOTEMPTY` on a non-empty one, stage intact for
 `abort()`); a file stage publishes with `link(2)` (`exclusive`, refuses any existing leaf) or
 `rename(2)` (`replace`). No path uses `RENAME_EXCHANGE`.
+
+Directories are made by one core, `_make_dir_core`, with two entry points: `make_stage_dir_at`
+(private stage directories, exact 0700) and `make_parent_dir_at` (user-named output parents at
+their real name, born mode with the owner bits forced). The core creates with the requested
+mode, observes the mode the filesystem actually gave (the umask or a default ACL decides it),
+and repairs only the owner bits, so Decoy can always open what it made; it never reads or sets
+the process umask. A parent keeps an inherited set-group-ID bit through that repair, as Git's
+`adjust_shared_perm` keeps `S_ISGID` on a shared repository directory.
 """
 
 from __future__ import annotations
@@ -19,6 +27,8 @@ from __future__ import annotations
 import errno
 import os
 import secrets
+import stat
+import sys
 import weakref
 from collections.abc import Callable
 from typing import Any, Literal, TypeVar
@@ -66,30 +76,48 @@ def _call(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     raise OSError(code, os.strerror(code)) from None
 
 
-def make_stage_dir_at(parent_fd: int, name: str) -> int:
-    """Create directory ``name`` under ``parent_fd``, owner-readable-writable whatever the umask,
-    and return it opened. The umask only narrows ``mkdir``'s mode: 0777 leaves the directory
-    0000 (the open fails ``EACCES``, one ``chmod`` repairs it) and 0200 leaves it 0500 (an
-    ``fchmod`` restores the owner bits). A mode-ignoring filesystem already shows them, so
-    nothing is changed there. Failures keep only their errno; the directory this call made is
-    removed if a later step fails, and an existing entry is never touched."""
-    validate_component(name, _CREATOR_KEY)
-    _call(os.mkdir, name, 0o700, dir_fd=parent_fd)
+def _born_mode(parent_fd: int, name: str) -> int:
+    """The mode of a directory this call just made but cannot open for reading. An `O_PATH`
+    descriptor needs no permission on the directory itself, so its `fstat` sees what the
+    umask left. Elsewhere the group and other bits are not observable without a read, so the
+    repair falls back to owner-only (narrower, never wider)."""
+    if sys.platform != "linux":
+        return stat.S_IFDIR | 0o700
+    fd = _call(os.open, name, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent_fd)
+    try:
+        born = os.fstat(fd).st_mode
+    finally:
+        _close(fd)
+    if not stat.S_ISDIR(born):  # a link swapped in after mkdir: never chmod through it
+        raise OSError(errno.ENOTDIR, os.strerror(errno.ENOTDIR))
+    return born
+
+
+def _make_dir_core(parent_fd: int, name: str, mode: int, *, keep_special: bool) -> tuple[int, int]:
+    """Create directory ``name`` under ``parent_fd`` with ``mode``, open it, and return the
+    descriptor and the born mode. The umask (or a default ACL) only narrows the mode, so the
+    owner bits it stripped are restored to ``(born & 0o777) | 0o700``; with ``keep_special``
+    an inherited set-group-ID bit is kept, without it any special bit is cleared. Failures keep
+    only their errno; the directory this call made is removed if a later step fails, and an
+    existing entry is never touched (``mkdir`` raises ``EEXIST`` first)."""
+    _call(os.mkdir, name, mode, dir_fd=parent_fd)
     fd = -1
     try:
         try:
             fd = _call(os.open, name, _DIR_FLAGS, dir_fd=parent_fd)
+            born = os.fstat(fd).st_mode
         except PermissionError:
+            born = _born_mode(parent_fd, name)
             # Named limit L6: this chmod goes by name, so a different user who can write in the
             # caller's output directory could swap a symlink in between mkdir and here. The effect
-            # stays bounded: 0700 on a path the engine user owns, and no read. An fd-only repair
-            # is impossible: a 0000 directory cannot be opened, and fchmod on an O_PATH
-            # descriptor gives EBADF. Reached only for a directory this call just created (mkdir
-            # raises, EEXIST included, before this point).
-            _call(os.chmod, name, 0o700, dir_fd=parent_fd)
+            # stays bounded: owner bits on a path the engine user owns, and no read. An fd-only
+            # repair is impossible: an unreadable directory cannot be opened for it, and fchmod
+            # on an O_PATH descriptor gives EBADF.
+            _call(os.chmod, name, _repaired(born, keep_special), dir_fd=parent_fd)
             fd = _call(os.open, name, _DIR_FLAGS, dir_fd=parent_fd)
-        if (os.fstat(fd).st_mode & 0o700) != 0o700:
-            _call(os.fchmod, fd, 0o700)
+        now = os.fstat(fd).st_mode
+        if (now & 0o700) != 0o700 or (not keep_special and now & 0o7000):
+            _call(os.fchmod, fd, _repaired(born, keep_special))
     except OSError:
         _close(fd)
         try:
@@ -97,7 +125,41 @@ def make_stage_dir_at(parent_fd: int, name: str) -> int:
         except OSError:
             pass
         raise
-    return fd
+    return fd, born
+
+
+def _repaired(born: int, keep_special: bool) -> int:
+    return (born & (0o7777 if keep_special else 0o777)) | 0o700
+
+
+def make_stage_dir_at(parent_fd: int, name: str) -> int:
+    """Create private stage directory ``name`` under ``parent_fd``, exactly 0700 whatever the
+    umask or an inherited set-group-ID bit, and return it opened. ``EEXIST`` is raised and the
+    existing entry left untouched."""
+    validate_component(name, _CREATOR_KEY)
+    return _make_dir_core(parent_fd, name, 0o700, keep_special=False)[0]
+
+
+def make_parent_dir_at(parent_fd: int, name: str) -> int:
+    """Create output parent ``name`` under ``parent_fd`` at its real name and return it opened;
+    the only creator of user-named directories on an output chain (F22 5.0 rule 1).
+
+    Its permission bits are the born ones with the owner bits forced (0755 under umask 022,
+    0700 under 0477) and an inherited set-group-ID bit is kept, so a group-shared parent keeps
+    its group. ``EEXIST`` (another attempt or process made it first) continues with the existing
+    directory, opened without following a link and never repaired: one Decoy cannot open is
+    refused with its errno (named limit L1u). ``name`` is one component the caller already
+    holds: the strict policy validated it, and the ambient policy passes the user's path
+    components unchanged, as its path semantics always have."""
+    try:
+        return _make_dir_core(parent_fd, name, 0o777, keep_special=True)[0]
+    except FileExistsError:
+        pass
+    return _open_existing_dir(parent_fd, name)
+
+
+def _open_existing_dir(parent_fd: int, name: str) -> int:
+    return _call(os.open, name, _DIR_FLAGS, dir_fd=parent_fd)
 
 
 def _restore_always(fd: int) -> None:
@@ -373,7 +435,8 @@ class RootedOutputTxn(_StageDir):
 
 class RootedOutputDir:
     """An output root fd plus one allowed leaf. Parent directories are created one validated
-    component at a time with `mkdirat` and `openat2`; no symlink is ever followed."""
+    component at a time with `make_parent_dir_at` and opened with `openat2` when only read;
+    no symlink is ever followed."""
 
     strict = True
 
@@ -395,11 +458,9 @@ class RootedOutputDir:
         try:
             for part in self._parents:
                 if create:
-                    try:
-                        os.mkdir(part, 0o777, dir_fd=fd)
-                    except FileExistsError:
-                        pass
-                child = _openat2._confined_open(fd, part, os.O_RDONLY | os.O_DIRECTORY)
+                    child = make_parent_dir_at(fd, part)
+                else:
+                    child = _openat2._confined_open(fd, part, os.O_RDONLY | os.O_DIRECTORY)
                 _close(fd)
                 fd = child
         except OSError:
@@ -432,11 +493,7 @@ class RootedOutputDir:
         parent = -1
         try:
             parent = self._open_parent(create=True)
-            try:
-                os.mkdir(self._leaf, 0o777, dir_fd=parent)
-            except FileExistsError:
-                child = _openat2._confined_open(parent, self._leaf, os.O_RDONLY | os.O_DIRECTORY)
-                _close(child)
+            _close(make_parent_dir_at(parent, self._leaf))
         except OSError:
             failed = True
         finally:

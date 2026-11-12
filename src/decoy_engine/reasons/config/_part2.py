@@ -11,6 +11,7 @@ __all__ = [
     "GENERATE_OPTION_TYPE",
     "GENERATE_OPTION_UNKNOWN",
     "GENERATE_OPTION_VALUE_UNKNOWN",
+    "GENERATE_OUTPUT_TYPE_UNSUPPORTED",
     "GENERATE_UNIQUE_CONFLICT",
     "GENERATE_UNIQUE_DOMAIN_TOO_SMALL",
     "GENERATE_UNIQUE_UNSUPPORTED",
@@ -57,6 +58,11 @@ GENERATE_OPTION_VALUE_UNKNOWN = _d(
     "generate_option_value_unknown",
     "Generate column option value is not one of the allowed choices.",
     since="1.13.0",
+)
+GENERATE_OUTPUT_TYPE_UNSUPPORTED = _d(
+    "generate_output_type_unsupported",
+    "Generate column type or target cannot carry the requested output type.",
+    since="1.23.0",
 )
 GENERATE_UNIQUE_CONFLICT = _d(
     "generate_unique_conflict",

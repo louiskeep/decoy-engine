@@ -74,7 +74,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
-from decoy_engine.config._subset_run import refuse_unapplied_subset
 from decoy_engine.declared_casting._refusals import collect_refusals
 from decoy_engine.execution import _pipeline_context as _ctx
 from decoy_engine.execution import _pipeline_finalize
@@ -87,6 +86,7 @@ from decoy_engine.execution._planner import (
 )
 from decoy_engine.execution._substrate import require_optional_nonempty_str
 from decoy_engine.execution._transforms_prepare import prepare_transform_sources
+from decoy_engine.execution.pipeline._subset_stage import resolve_subset
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.progress import ProgressChannel, ProgressSink, use_progress
@@ -101,6 +101,7 @@ if TYPE_CHECKING:
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.secret_providers import SecretCachePolicy, SecretProviderRegistry
+    from decoy_engine.subset import SubsetRequest
 
 
 __all__ = ["classify_table_kinds", "run_pipeline"]
@@ -130,6 +131,7 @@ def run_pipeline(
     execution_mode: Literal["auto", "stream", "sequential", "full_frame", "out_of_core"] = "auto",
     sink: TransactionalSink | None = None,
     source_loader: Callable[[str], pa.Table] | None = None,
+    source_loader_schemas: Mapping[str, pa.Schema] | None = None,
     fpe_chunk_count: int = _pipeline_finalize.FPE_CHUNK_COUNT_DEFAULT,
     explain_plan: bool = False,
     auto_chunk: bool = _pipeline_finalize.AUTO_CHUNK_DEFAULT,
@@ -157,6 +159,7 @@ def run_pipeline(
     file_access: FileAccess | None = None,
     quarantine_path: str | None = None,
     base_dir: str | Path | None = None,
+    subset_request: SubsetRequest | Literal["config", "skip"] = "config",
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -201,6 +204,14 @@ def run_pipeline(
     promote hard-fails to a job failure. SECURITY: only synthetic masked values
     reach the summary (R18); no source PII is emitted.
 
+    `source_loader_schemas` is required with a `source_loader` and refused without one: it
+    declares the Arrow schema of every table the loader serves, so the declaration check runs
+    before the loader is called. A table the loader returns with other columns is refused.
+
+    `subset_request`: `"config"` applies the config's `subset:` block, `"skip"` masks every row
+    (a declared block stamps `{"applied": False}`), a `SubsetRequest` replaces it; else refused
+    before any read. Applied, it stamps `quality_metrics["subset"]`; refused with a `source_loader`.
+
     Execution routing (`execution_mode`, `sink`, `source_loader`, `auto_chunk`,
     `chunk_size_rows`, `auto_chunk_threshold_rows`, `native_threads`,
     `chunked_dispatcher_enabled`, `multi_table_dispatch_enabled`, `out_of_core_threshold_rows`,
@@ -220,11 +231,10 @@ def run_pipeline(
     `"out_of_core"` as an explicit fail-closed force and `"stream"` means "must stream"
     (`execution.pipeline._stream`).
 
-    Sprint B2 (docs/plans/2026-07-10-oom-avoidance-routing-redesign.md
-    §3.3/§11/§13): `use_probe_routing` (TB-5 default `True`; no effect without
-    `use_byte_estimate_routing=True`, also default `True`; force either `False`
-    to roll back) is the two-point micro-probe's fast-path RECOVERY for a job
-    the static estimate over-downgrades. See `decide_execution_route` and
+    Sprint B2 (docs/plans/2026-07-10-oom-avoidance-routing-redesign.md §3.3/§11/§13):
+    `use_probe_routing` (TB-5 default `True`; no effect without `use_byte_estimate_routing=True`,
+    also default `True`; force either `False` to roll back) is the two-point micro-probe's fast-path
+    RECOVERY for a job the static estimate over-downgrades. See `decide_execution_route` and
     `_pipeline_routing_signals.resolve_probe_recovery`.
 
     Execution-substrate knobs (mask-kind tables only; generate tables
@@ -240,14 +250,12 @@ def run_pipeline(
       cross-run cache policy (default: the process registry, cache disabled). The keyed-mask
       secret is admitted before any source is read.
 
-    It forwards to `select_execution_adapter`, which validates it
-    up front: a non-positive-int count knob raises `ExecutionError`
-    ``code='invalid_execution_knob'``, both BEFORE any profiling or plan
-    compilation. When any knob is non-default the selected adapter
-    identity and every knob value are stamped under
-    ``quality_metrics["execution_adapter"]`` so a job's performance mode
-    is reproducible from its manifest; the all-default path stamps
-    nothing, keeping golden fixtures byte-identical.
+    It forwards to `select_execution_adapter`, which validates it up front: a non-positive-int count
+    knob raises `ExecutionError` ``code='invalid_execution_knob'``, both BEFORE any profiling or
+    plan compilation. When any knob is non-default the selected adapter identity and every knob
+    value are stamped under ``quality_metrics["execution_adapter"]`` so a job's performance mode is
+    reproducible from its manifest; the all-default path stamps nothing, keeping golden fixtures
+    byte-identical.
 
     `quarantine_runtime` (F06): a `decoy_engine.declared_casting.ProtectedQuarantineRuntime`
     (sink + owner). Required, and checked before the source is read, by any column with
@@ -277,7 +285,7 @@ def run_pipeline(
     oracle call to the SAME registry snapshot as its own coordinator-side call.
     `None` (every real caller) resolves against the live registry.
     """
-    refuse_unapplied_subset(config)  # `subset:` is refused first, before any source is read
+    config, stage = resolve_subset(config, subset_request, source_loader)
     stream_required = execution_mode == "stream"
     execution_mode = "auto" if stream_required else execution_mode
     require_optional_nonempty_str("quarantine_path", quarantine_path)
@@ -293,6 +301,7 @@ def run_pipeline(
         AdmissionScope() as secret_scope,
         use_progress(progress, interval_s=progress_interval_s) as _progress,
         _progress.run_scope(),
+        stage,
     ):
         with _progress.phase("resolve"):
             ctx = _ctx.build_run_context(
@@ -314,6 +323,7 @@ def run_pipeline(
                 stream_required=stream_required,
                 sink=sink,
                 source_loader=source_loader,
+                source_loader_schemas=source_loader_schemas,
                 fpe_chunk_count=fpe_chunk_count,
                 explain_plan=explain_plan,
                 auto_chunk=auto_chunk,
@@ -339,12 +349,14 @@ def run_pipeline(
                 secret_registry=secret_registry,
                 secret_cache_policy=secret_cache_policy,
                 base_dir=base_dir,
+                subset_stage=stage,
             )
         ctx = _ctx.with_quarantine_path(ctx, quarantine_path, base_dir)
         with collect_refusals() as refusals:
             decision = _ctx.decide_route(ctx)
             _emit_route(_progress, decision)
-            return _dispatch.execute_route(ctx, decision, refusals)
+            result = _dispatch.execute_route(ctx, decision, refusals)
+        return stage.stamp(result)
 
 
 def _emit_route(channel: ProgressChannel, decision: Any) -> None:

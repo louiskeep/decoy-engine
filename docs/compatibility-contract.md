@@ -65,6 +65,14 @@ logging config has no `file`; a caller that wants a log file passes `file`.
 Path | None = None)` is keyword-only (44 frozen parameters). Relative config paths resolve against it;
 `None` leaves every path as written (today's behavior).
 
+**Pre-GA additive keyword with SUB-RUN E2 (2026-11-12).** `run_pipeline(..., subset_request:
+SubsetRequest | Literal["config", "skip"] = "config")` is keyword-only (46 frozen parameters). `"config"`
+applies a `subset:` block, `"skip"` runs the full sources, a `SubsetRequest` replaces the block; any other
+value raises `ExecutionError` (`invalid_execution_knob`) before any read. `decoy_engine.subset` adds
+`split_subset_config`, `SubsetSplit` and the E1 names, and `SubsetSelection` gains the opaque
+`materialization_check` stage-transfer field (never an output). A config with no `subset:` block behaves
+exactly as before.
+
 **Pre-GA correction (main health, 2026-10-31).** `RESERVED_NAMES` of the `when` closed grammar gains `type`
 (additive to the list, breaking for a config whose `when:` references a column named `type`, which now fails
 with `when_outside_closed_grammar`). It is listed on every interpreter rather than derived from
@@ -88,6 +96,15 @@ were reserved are now raised by `FileSource` (`source_file.no_header_columns`,
 `build_profile_source` are now file-access entry points: with no installed policy under `forbid_ambient()`
 either raises `FileAccessUnavailable` before dispatch, including an inline-only descriptor for the resolver and a
 non-file descriptor for `build_profile_source`. Ambient callers are unchanged.
+
+**Pre-GA correction (CONFIG-EXPLICIT E2c, 2026-11-10).** Every source column must be declared in the config,
+supplied tables included. `profile_source`, `run_pipeline` and `run_pipeline_isolated` refuse an undeclared column
+(`source_file.undeclared_column`) or a source with no `tables` entry (`source_file.undeclared_table`) from headers,
+footers and schemas, before any data row is read, staged, profiled or masked. Fixtures that relied on the DE-03
+`warn` pass-through now declare the column as `passthrough`; that path is reached only by drift after the gate.
+`run_pipeline` gains `source_loader_schemas`, required with a `source_loader` and refused without one, and
+`profile_source` gains the keyword-only `declared` capability. No registry code is added. The chunked entries are
+unchanged here; CONFIG-EXPLICIT E2d gates them (below).
 
 Until GA: use this document as the design target so we don't paint ourselves
 into a corner. After GA: this document is binding.
@@ -147,6 +164,8 @@ tag and models: `evidence` (`cli-local-1`, the CLI manifest), `run-result` (`dec
 kind or payload major this version does not know is returned as an opaque record or as `RecordNeedsNewer`, never
 dropped. A default export withholds such a record (its id goes in the header's `withheld_records`); `keep_paths` copies it byte for byte. `decoy-library-export/v1` is the JSON Lines export format and
 `decoy-job-log/v1` the header of a job log. Corpus samples are in `tests/integration/compat_corpus/records/`.
+
+The `evidence` payload (`cli-local-1`) also accepts two additive optional keys, `path_base` (exactly `"project"`) and `project_manifest` (path text or `null`), both present or both absent (a reader refuses a half pair, a null `path_base` and any base other than `"project"`), as a run inside a `decoy.yaml` project writes them. Absent keys stay absent, and `project_manifest` is a path field in a default export.
 
 `scan-set/v1` is the record of one multi-table scan (`decoy_engine.scan_sources`). The engine
 owns its shape: `ScanSetCore` to write (unknown fields refused), `ScanSetCoreRead` to read
@@ -704,6 +723,46 @@ nothing is coerced. While `name` is unset the config dump and
 `Plan.pipeline_config_hash` are byte-identical to before, and a set `name` is
 excluded from the plan hash because it is data binding, not masking semantics.
 `tests/unit/config/test_pipeline_name.py` pins all of this.
+
+**Declaration gate on the run, isolated and profile routes (CONFIG-EXPLICIT E2c).** `prepare_declared_sources`
+(`DeclarationRequest.for_run`, `for_descriptors`) is the one boundary. `profile_source` calls it first, or accepts the
+`PreparedDeclaredSources` that `build_run_context` already made for the same config object (`declared=`; a capability
+for another config raises `ValueError`). `build_run_context` checks the config descriptors, the supplied tables and
+`source_loader_schemas` together, then wraps the loader with `checked_loader` so a table that materializes with other
+columns is refused before it is profiled or masked. `run_pipeline_isolated` runs the same check in the parent before
+staging or spawn, and the child `run_pipeline` rechecks. The refusals are `source_file.undeclared_column` (names a
+position and a count, never a column) and `source_file.undeclared_table`.
+
+**Declaration gate on the chunked entries (CONFIG-EXPLICIT E2d).** `run_mask_pipeline_chunked`,
+`run_mask_chunked` and `run_native_or_oracle_chunked` call `prepare_declared_sources`
+(`DeclarationRequest.for_chunks`) after the subset refusal and before `chunks` is touched, then
+check every chunk's columns against the declared set. `run_mask_pipeline_chunked` gains the required
+keyword-only `source_schema: pa.Schema` (a breaking signature change, no default): the table and that
+schema are checked at entry, and a chunk column outside the schema is refused with
+`source_file.undeclared_column`. The two native entries keep their signatures. They check the config
+level at entry (an undeclared table) and the first chunk's columns right after it is read, before
+profile, compile or mask (a named limit: one chunk is pulled before the column check); later chunks
+are checked lazily before each masks, so earlier chunks may already be in the sink, as for drift
+refusals. The private `_run_chunked`, `_oracle_preflight` and `_oracle_preflight_admitted` take a
+required `declared` capability. The CLI's `run --chunked` moves in CLI Part C1.
+
+**Columns the config creates (CONFIG-EXPLICIT E2b-r1).** `profile_source` gains the optional
+`supplied_sources` mapping: a supplied-only table is profiled (a same-name descriptor keeps
+profiling its own file), which `build_run_context` now passes. Execution routes obtain the
+`PreparedDeclaredSources` capability only through `prepare_declared_execution_sources`
+(`execution/_guards.py`), which hands `profile` a policy built from `SURFACE_DECLARATIONS`: an entry
+creates its own target when its row says so, every column it reads is a source column, and none of
+them is the target. This slice only records the policy; it adds no refusal and no reason code.
+
+**Declared-but-missing columns (CONFIG-EXPLICIT E2b-r).** The same boundary now also refuses a column the config
+declares for a mask table (a `columns` entry, a `drop_column` column or a composite-relationship child column) that
+the source's header, footer or schema does not have: `source_file.declared_column_missing`, registry unreleased. It runs
+on every catalog the routes above already check, so the refusal comes before any data row is read; for the chunked
+entries the catalog is `source_schema` (pipeline entry) or the first chunk, and each later chunk is checked before it
+masks. It names the first missing column and the count (config names, never a value). Order is undeclared table,
+undeclared source column, then missing declared column. Before this, `run` failed late with a bare `KeyError`. The reverse rule belongs to the execution
+choke point, which knows the columns the config creates: `profile_source`, `prepare_declared_sources`
+and `check_columns_declared` called without a created-column policy apply the forward rule only.
 
 ### 3.5 Disguises
 

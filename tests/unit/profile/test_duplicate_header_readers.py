@@ -18,6 +18,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from tests._declared_schema import declare_rest
+
 DUP_CSV = b"a,a,b\n1,2,x\n3,4,y\n"
 RENAMED = ["a", "a.1", "b"]
 KEPT = ["a", "a", "b"]
@@ -111,7 +113,7 @@ def _stub_cloud(monkeypatch: pytest.MonkeyPatch, data: bytes, kind: str) -> None
     from decoy_engine.profile import _cloud_readers
 
     if kind == "s3":
-        monkeypatch.setattr(_cloud_readers, "_s3_client", lambda descriptor: _FakeS3(data))
+        monkeypatch.setattr(_cloud_readers._clients, "s3_client", lambda **_kw: _FakeS3(data))
         return
     storage = pytest.importorskip("google.cloud.storage")
     monkeypatch.setattr(storage, "Client", lambda *a, **k: _FakeGcsClient(data))
@@ -247,7 +249,8 @@ def test_r6_cloud_parquet_descriptor_is_refused_before_profiling(
             },
         }
     )
-    clean = pa.table({"a": [1, 3], "c": [2, 4], "b": ["x", "y"]})
+    clean = pa.table({"a": [1, 3], "b": ["x", "y"]})
+    declare_rest(cfg, {"t": clean})
     with pytest.raises(Exception) as exc:
         run_pipeline(cfg, {"t": clean}, engine_version=ENGINE_VERSION)
     assert type(exc.value) is TransformError

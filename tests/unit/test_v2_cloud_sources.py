@@ -254,6 +254,7 @@ class TestCloudSourceEndToEnd:
             }
             config["tables"][0]["name"] = "customers"
             config["tables"][0]["columns"][0]["name"] = "email"
+            config["tables"][0]["columns"].append({"name": "id", "strategy": "passthrough"})
 
             profile = profile_source(config)
         finally:

@@ -22,6 +22,7 @@ from decoy_engine.config import TableConfig
 from decoy_engine.execution import PandasExecutionAdapter, _transforms
 from decoy_engine.execution._transforms import TransformError
 from decoy_engine.plan._errors import PlanCompileError
+from tests._declared_schema import chunked_entry_kwargs, declared_schema
 from tests.unit.execution._transform_testkit import (
     ENGINE_VERSION,
     reference_bindings,
@@ -478,9 +479,13 @@ class TestExactViewShapes:
         plain = _run(plain_cfg, tbl)
         neutral = _run(neutral_cfg, tbl)
         tables_equal(neutral.outputs["t"], plain.outputs["t"])
-        assert len(seen) == 2
-        assert seen[0] == seen[1], "adapter-visible dtypes must match the no-transform run"
-        assert list(seen[0]) == list(seen[1])
+        # One dispatch per declared column in each run; the two runs must see the same frames.
+        nodes = len(plain_cfg["tables"][0]["columns"])
+        assert len(seen) == 2 * nodes
+        assert seen[:nodes] == seen[nodes:], (
+            "adapter-visible dtypes must match the no-transform run"
+        )
+        assert [list(f) for f in seen[:nodes]] == [list(f) for f in seen[nodes:]]
 
     def test_boundary_arithmetic_agrees_with_the_bare_pandas_view(self, shape):
         tbl = _exact_view_tables()[shape]
@@ -727,7 +732,11 @@ class TestSchemaGuard:
             "tables": [
                 {
                     "name": "t",
-                    "columns": [{"name": "ix", "strategy": "redact"}],
+                    "columns": [
+                        {"name": "ix", "strategy": "redact"},
+                        {"name": "id", "strategy": "passthrough"},
+                        {"name": "s", "strategy": "passthrough"},
+                    ],
                     "transforms": [{"op": "derive", "column": "ix", "expression": "id * 2"}],
                 }
             ]
@@ -817,7 +826,13 @@ class TestGuardPlacement:
 
         for fn in (run_mask_pipeline_chunked, run_native_or_oracle_chunked):
             with pytest.raises(PlanCompileError) as exc:
-                fn(single, _Poison(), table="t", engine_version=ENGINE_VERSION)
+                fn(
+                    single,
+                    _Poison(),
+                    table="t",
+                    engine_version=ENGINE_VERSION,
+                    **chunked_entry_kwargs(fn, single, "t"),
+                )
             assert exc.value.code == "per_table_transforms_present"
         assert ev.events == []
 
@@ -847,13 +862,21 @@ class TestGuardPlacement:
         ev = _Events(monkeypatch)
         chunked_calls = [
             lambda: run_mask_pipeline_chunked(
-                cfg, iter([defective]), table="t", engine_version=ENGINE_VERSION
+                cfg,
+                iter([defective]),
+                table="t",
+                source_schema=declared_schema(cfg, "t"),
+                engine_version=ENGINE_VERSION,
             ),
             lambda: run_native_or_oracle_chunked(
                 cfg, iter([defective]), table="t", engine_version=ENGINE_VERSION
             ),
             lambda: MaskPipelineChunkedAdapter().run(
-                cfg, iter([defective]), table="t", engine_version=ENGINE_VERSION
+                cfg,
+                iter([defective]),
+                table="t",
+                engine_version=ENGINE_VERSION,
+                source_schema=declared_schema(cfg, "t"),
             ),
             lambda: NativeOrOracleChunkedAdapter().run(
                 cfg, iter([defective]), table="t", engine_version=ENGINE_VERSION
@@ -974,12 +997,6 @@ class TestDefectsThroughRoutes:
         assert str(err) == expected and err.args == (expected,)
         assert getattr(err, "__notes__", []) == []
         assert err.__cause__ is None and err.__context__ is None
-
-    def test_stored_index_reference_without_transforms_fails_as_on_main(self, tmp_path):
-        tbl = _stored_table()
-        cfg = single_table_config(tmp_path, tbl, columns=[{"name": "ix", "strategy": "redact"}])
-        with pytest.raises(KeyError, match="ix"):
-            _run(cfg, tbl)
 
 
 class TestUnsupportedKeyTypes:

@@ -7,7 +7,7 @@ exception's text, class name or ``.code`` attribute.
 
 Trust model. An exception's ``.code`` is trusted only when the exception's class is one of the
 engine families registered below *and* the code is registered in that family's namespace, or,
-when it is not, the code is a :class:`ReasonCode` registry symbol registered in its own
+when it is not, the code is a :class:`decoy_engine.reasons.ReasonCode` registry symbol registered in its own
 namespace (a family error re-wrapping another family's refusal). Character shape is not trust:
 an exception raised by a parser or a user callback can carry a data-derived ``code`` that is
 still lowercase and underscores, and a third-party class can copy an engine code string.
@@ -97,6 +97,7 @@ _CODED: tuple[tuple[str, str, str], ...] = (
 )
 # Engine exceptions that carry no code but have one fixed meaning: (module, class, reason).
 _FIXED: tuple[tuple[str, str, ReasonCode], ...] = (
+    ("builtins", "MemoryError", reasons.decoy.PROCESS_OUT_OF_MEMORY),
     ("decoy_engine.errors", "EmptyParentPoolError", reasons.config.FK_EMPTY_PARENT_POOL),
     ("decoy_engine.errors", "UnknownFKColumnError", reasons.config.FK_UNKNOWN_COLUMN),
     ("decoy_engine.errors", "ConfigError", reasons.config.UNTAGGED),
@@ -139,12 +140,14 @@ def _first_in_mro(exc: BaseException, table: dict[type, Any]) -> Any:
     return None
 
 
+def is_capacity_oserror(exc: BaseException) -> bool:
+    """True for an OSError whose errno is ENOSPC or EDQUOT; the cause chain is not walked."""
+    return isinstance(exc, OSError) and exc.errno in _CAPACITY_ERRNOS
+
+
 def _capacity_evidence(exc: BaseException) -> bool:
     """Typed ENOSPC/EDQUOT on the exception or its direct cause; a generic OSError is not."""
-    for candidate in (exc, getattr(exc, "__cause__", None)):
-        if isinstance(candidate, OSError) and candidate.errno in _CAPACITY_ERRNOS:
-            return True
-    return False
+    return any(is_capacity_oserror(c) for c in (exc, getattr(exc, "__cause__", None)) if c)
 
 
 def _record(
@@ -440,6 +443,7 @@ __all__ = [
     "capture_failure",
     "current_failure_scope",
     "failure_scope",
+    "is_capacity_oserror",
     "reason_from_exception",
     "reasons_from_report",
     "registered_families",

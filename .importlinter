@@ -1,0 +1,56 @@
+# Import-layer contract for decoy_engine (LAYOUT E3). Tiers run top to bottom: a module may
+# import from its own tier (`:` siblings) and from any tier below, never from a tier above.
+# exhaustive = true: a new top-level package or module is red until it is placed here and in
+# the snapshot in tests/sentry/layout/test_import_layers.py. Each ignore line is a measured
+# back import that exists today; the list may only shrink (baseline import-layers.json).
+# Both sides of an ignore name a leaf module, never a package: import-linter exempts the whole
+# module edge, so an ignore on a package facade would let every later symbol through it.
+
+[importlinter]
+root_package = decoy_engine
+
+[importlinter:contract:layers]
+name = decoy_engine tiers
+type = layers
+containers = decoy_engine
+exhaustive = true
+layers =
+    unmask : delivery : walks : identifiers : providers : records : support
+    execution : kernel : quarantine : validation : verification : vault
+    plan : generation : generators : transforms : declared_casting : secret_providers : keyprovider : relationships : providers_v2 : reference_tables : quality : subset
+    profile : profiling : detection : internal : progress : context : config : determinism : contracts : connectors : expressions : validators : sdk : run_result
+    io : data_discovery : disguises : phase : telemetry : safe_output : fileaccess
+    errors : reason_adapter : validation_result : release : reasons : instrumentation : checksums : _opaque : _lexeme : _error_base : _progress_events : _reference_date : codesets : _execution_error : _field_names : _value_free
+ignore_imports =
+    decoy_engine.config._generate_unique -> decoy_engine.generation.pool._capacity
+    decoy_engine.declared_casting._boundary -> decoy_engine.execution._errors
+    decoy_engine.declared_casting._boundary -> decoy_engine.execution._pipeline_sources
+    decoy_engine.declared_casting._cleanup -> decoy_engine.execution._errors
+    decoy_engine.declared_casting._eligibility -> decoy_engine.execution._errors
+    decoy_engine.declared_casting._quarantine_local -> decoy_engine.execution._errors
+    decoy_engine.declared_casting._stream -> decoy_engine.execution.out_of_core._budget
+    decoy_engine.declared_casting._stream -> decoy_engine.execution.out_of_core._scratch
+    decoy_engine.errors -> decoy_engine.execution._row_error_summary
+    decoy_engine.fileaccess._errors -> decoy_engine.execution._isolated_common
+    decoy_engine.generation._bounds -> decoy_engine.execution.out_of_core._budget
+    decoy_engine.generation._streamed -> decoy_engine.execution._chunked_output_sink
+    decoy_engine.generation._streamed -> decoy_engine.execution._mem_estimate
+    decoy_engine.generation._streamed -> decoy_engine.execution.out_of_core._budget
+    decoy_engine.generation.pool._sampler -> decoy_engine.execution.native._crypto_ext
+    decoy_engine.generation.pool._sampler -> decoy_engine.execution.native._index_ext
+    decoy_engine.internal.faker_setup -> decoy_engine.generation._dob_anchor
+    decoy_engine.plan._checks_bucketize -> decoy_engine.execution._strategies._bucketize
+    decoy_engine.plan._checks_correctness -> decoy_engine.execution._errors
+    decoy_engine.plan._checks_correctness -> decoy_engine.execution.out_of_core._mask
+    decoy_engine.plan._checks_top_code -> decoy_engine.execution._strategies._top_code
+    decoy_engine.plan._seed_envelope -> decoy_engine.execution._distribution_behavior
+    decoy_engine.plan._seed_envelope -> decoy_engine.execution._technique_class
+    decoy_engine.profile._declared_columns -> decoy_engine.execution._pipeline_context
+    decoy_engine.profile._declared_columns -> decoy_engine.execution._transforms
+    decoy_engine.profiling._scan_integrity -> decoy_engine.execution.out_of_core._duckdb
+    decoy_engine.profiling._snapshot_values -> decoy_engine.generation.pool._events
+    decoy_engine.profiling._snapshot_values -> decoy_engine.generation.statistical._cell_format
+    decoy_engine.profiling._snapshot_values -> decoy_engine.quality.snapshot
+    decoy_engine.profiling.scan_set -> decoy_engine.execution._guards
+    decoy_engine.telemetry._recorder -> decoy_engine.progress
+    decoy_engine.telemetry._vocab -> decoy_engine.progress

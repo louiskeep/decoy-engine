@@ -197,6 +197,16 @@ def _spy_mkdtemp(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str | None, Any]
         return real(suffix, prefix, dir)
 
     monkeypatch.setattr(tempfile, "mkdtemp", spy)
+    # The POSIX ambient arm makes stage directories through `make_stage_dir_at`, not `mkdtemp`.
+    from decoy_engine.fileaccess import _local
+
+    real_stage = _local._make_stage_dir
+
+    def stage_spy(parent: Path, prefix: str, **kwargs: Any) -> Path:
+        log.append((prefix, str(parent)))
+        return real_stage(parent, prefix, **kwargs)
+
+    monkeypatch.setattr(_local, "_make_stage_dir", stage_spy)
     return log
 
 

@@ -29,7 +29,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from decoy_engine.config import refuse_unlisted_generate_families
+from decoy_engine.config import (
+    refuse_fixed_width_output_types,
+    refuse_unlisted_generate_families,
+)
 
 # Note: imports from decoy_engine.relationships are deferred inside
 # compile_plan to break a circular import. decoy_engine/__init__.py
@@ -106,7 +109,9 @@ from decoy_engine.profile._types import Profile
 # payload. A plan_version 1 YAML predates `generation` entirely and
 # deserializes with `generation=None` -- the correct pre-GA hard-delete
 # behavior (`generate_tables` raises the moment it's asked to generate).
-PLAN_VERSION = 3
+# GEN-TYPES E3: bumped 3 -> 4 for the pinned `generation.lookups` list (omitted when empty, so a
+# plan without lookups differs from its version-3 form only by the version line).
+PLAN_VERSION = 4
 
 
 @entry_point
@@ -247,6 +252,7 @@ def compile_plan(
     # Config-only; both branches + run_config_only_checks.
     check_faker_requires_provider(config)
     refuse_unlisted_generate_families(config)
+    refuse_fixed_width_output_types(config)
     # Row 29 (HC-7, 2026-07-17): clinical free-text advisory. WARN-ONLY --
     # unlike every check above, this never raises; it returns warning
     # strings folded into PlanCompileResult.warnings below (same shape as
@@ -439,6 +445,7 @@ def compile_plan(
         _snapshots.pinned,
         column_specs=_snapshots.column_specs,
         dp_verification=_snapshots.dp_verification,
+        lookups=_snapshots.lookups,
     )
 
     return Plan(
@@ -550,6 +557,7 @@ def run_config_only_checks(
     # Row 26 (DE-03 sibling): faker-without-provider rejection. Config-only.
     check_faker_requires_provider(config)
     refuse_unlisted_generate_families(config)
+    refuse_fixed_width_output_types(config)
     # F06: declared parsing/casting contracts. Reported only when a config declares any, so a
     # legacy config's list is unchanged.
     declared = (

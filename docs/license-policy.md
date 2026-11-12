@@ -13,7 +13,7 @@ version and platform the lock covers. Which extras count as runtime and which as
 is recorded in `scripts/dev/license_policy.json` (`extras`); a new extra that is in
 neither list fails the gate.
 
-- Runtime extras: `cloud`, `gcs`, `geo`, `hashicorp-vault`, `mimesis`, `ml`, `ner`,
+- Runtime extras: `cloud`, `gcs`, `geo`, `hashicorp-vault`, `mimesis`, `ner`,
   `sftp`, `vault`.
 - Tooling extras, out of scope: `dev`, `docs`, `lint`, `mutation`, `perf`, `xdist`.
 - Not covered: the separate `decoy-engine-native` companion (its Rust crates), system

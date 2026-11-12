@@ -2175,10 +2175,7 @@
    "timing_count_positive": true,
    "timings": "tuple"
   },
-  "warnings": [
-   "QualityWarning(code='undeclared_output_columns', provider='output_projection', column=None, detail={'table': 'parent', 'undeclared_columns': ['note']})",
-   "QualityWarning(code='undeclared_output_columns', provider='output_projection', column=None, detail={'table': 'child', 'undeclared_columns': ['cid']})"
-  ]
+  "warnings": []
  },
  "ff_legacy_single": {
   "execution": {

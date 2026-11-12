@@ -7,8 +7,8 @@ ML is off by default, on-prem only, with no cloud inference. Only the status and
 surface (`classifier_status`, `load_detectors`) is re-exported from `decoy_engine`; the pack
 format, loader and featurizer stay package-level.
 
-Requires the ``[ml]`` optional extras:
-    pip install -e '.[ml]'
+scikit-learn and lightgbm are base dependencies. lightgbm also needs ``libomp`` on macOS
+(``brew install libomp``) and ``libgomp1`` on Linux.
 """
 
 from decoy_engine.profiling.model_pack._detectors import (

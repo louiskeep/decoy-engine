@@ -35,10 +35,7 @@
   "permitted::config/_pipeline.py::PipelineConfig._reference_graph_valid::ebdac9c21d": {
    "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
   },
-  "permitted::config/_pipeline.py::PipelineConfig._subset_stage_constraints::217f49d0b5": {
-   "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
-  },
-  "permitted::config/_pipeline.py::PipelineConfig._subset_stage_constraints::e9ad2b8ae1": {
+   "permitted::config/_pipeline.py::PipelineConfig._subset_stage_constraints::e9ad2b8ae1": {
    "reason": "Name-only or fixed ConfigRuleError text; the digest pins the exact message expression and any producer return folded into it."
   },
   "permitted::config/_pipeline.py::PipelineConfig._subset_stage_constraints::fb76c37dc1": {

@@ -203,7 +203,7 @@ def _build_streams(
                 derive_key=derive_key,
                 column_config=col,
                 fallback_seed=seed,
-                snapshot_content_digest=digest,
+                content_digests={("statistical", "snapshot_file"): digest} if digest else None,
             ).base_int("np")
 
             def draw_stat(
@@ -332,7 +332,7 @@ def generate_rows(
     names = [c["name"] for c in cols]
 
     def typed(data: dict[str, list[Any]]) -> pa.Table:
-        return arrow_table(data, table_name=table, statistical_specs=specs)
+        return arrow_table(data, table_name=table, statistical_specs=specs, columns=cols)
 
     acc: dict[str, list[Any]] = {n: [] for n in names}
     emitted = used = 0

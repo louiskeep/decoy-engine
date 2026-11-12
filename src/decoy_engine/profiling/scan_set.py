@@ -67,7 +67,7 @@ _DESCRIPTOR: TypeAdapter[Any] = TypeAdapter(SourceDescriptor)
 
 # Errors the file-access and CSV layers already keep value-free; wrapping them would hide
 # their codes from the caller. Any other registered engine family passes through too
-# (`_is_coded`), so only an unclassified failure is wrapped.
+# (`passes_through`), so only an unclassified failure is wrapped.
 _PASS_THROUGH = (
     FileAccessDenied,
     FileAccessReadError,
@@ -246,7 +246,7 @@ def scan_sources(
     a protected directory under `spill_dir` (default: the system temp directory). The tables
     they name must be in `sources` but need not be selected. Nothing is inferred.
     """
-    from decoy_engine import __version__
+    from decoy_engine.release import __version__
 
     if strategy not in ("head", "random", "full"):
         raise PipelineConfigError("strategy must be 'head', 'random' or 'full'")
@@ -294,10 +294,10 @@ def _integrity_facts(
     cause: str | None = None
     try:
         return _scan_integrity.relationship_facts(descriptors, declared, spill_dir=spill_dir)
-    except (*_PASS_THROUGH, PipelineConfigError):
+    except PipelineConfigError:
         raise
     except Exception as exc:
-        if _is_coded(exc):
+        if passes_through(exc):
             raise
         cause = safe_error_class(type(exc).__name__)
     raise ScanSourceError("relationships", cause or "Exception")
@@ -326,18 +326,18 @@ def _scan_one(
     cause: str | None = None
     try:
         return _read_and_profile(name, descriptor, sample_rows, strategy, file_access)
-    except _PASS_THROUGH:
-        raise
     except Exception as exc:
-        if _is_coded(exc):
+        if passes_through(exc):
             raise
         cause = safe_error_class(type(exc).__name__)
     raise ScanSourceError(name, cause or "Exception")
 
 
-def _is_coded(exc: BaseException) -> bool:
-    """True for a scan error or any engine error family the reason adapter classifies."""
-    return isinstance(exc, (ScanSourceError, *reason_adapter.registered_families()))
+def passes_through(exc: BaseException) -> bool:
+    """True when `exc` must reach the caller unchanged: the file-access and validation errors, a
+    scan error, or any engine error family the reason adapter classifies. Only an unclassified
+    failure is stripped to its class name."""
+    return isinstance(exc, (*_PASS_THROUGH, ScanSourceError, *reason_adapter.registered_families()))
 
 
 def _read_and_profile(
@@ -349,7 +349,7 @@ def _read_and_profile(
 ) -> TableScan:
     # Imported here because decoy_engine.profile imports this package.
     from decoy_engine import profile as src
-    from decoy_engine.execution import refuse_duplicate_field_names
+    from decoy_engine.execution._guards import refuse_duplicate_field_names
 
     reader = src.build_declared_source(name, descriptor)
     whole = strategy == "full" or sample_rows is None

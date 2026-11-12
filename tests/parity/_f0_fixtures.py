@@ -247,7 +247,6 @@ def cfg_live_faker() -> dict[str, Any]:
                         "faker_type": "pyint",
                         "faker_kwargs": {"min_value": 5, "max_value": 9},
                     },
-                    {"name": "fallback", "type": "faker", "faker_type": "not_a_real_provider"},
                     {"name": "opt_out", "type": "faker", "faker_type": "company", "pooled": False},
                 ],
             )
@@ -725,12 +724,15 @@ def run_composite_name_email_seeded_pool() -> dict[str, pa.Table]:
     return {"name_email_pool": _bundle_table(out)}
 
 
+MIXED_FK_PARENT_KEYS = ["x", "y", "z", "w", "v", "u", "t", "s"]
+
+
 def run_mixed_fk() -> dict[str, pa.Table]:
     """Generated parent -> masked child through `run_pipeline`.
 
     `people` is a generate table; `accounts` is a mask table whose `person_id` is an FK child of
-    `people.id` (orphan policy warn). The child's source keys cover the whole parent category set,
-    but the generated parent only ever holds a subset of it, so the `orphan_fk` warning's row count
+    `people.id` (orphan policy warn). The parent draws five unique keys from eight categories and
+    the child's source keys are five of those eight, so the `orphan_fk` warning's row count
     depends on exactly which parent keys the whole-table generation produced. That is the coupling
     F1/F2 must preserve: the mask side reads the COMPLETE generated parent as its FK pool.
     """
@@ -770,7 +772,8 @@ def run_mixed_fk() -> dict[str, pa.Table]:
                         {
                             "name": "id",
                             "type": "categorical",
-                            "categories": ["x", "y", "z", "w", "v"],
+                            "categories": MIXED_FK_PARENT_KEYS,
+                            "unique": True,
                         },
                         {"name": "nm", "type": "faker", "faker_type": "first_name"},
                     ],

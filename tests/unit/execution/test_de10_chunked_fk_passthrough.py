@@ -33,6 +33,7 @@ from decoy_engine.execution._chunked_fk import fk_passthrough_columns_for_table
 from decoy_engine.execution._fk_keys import FK_KEY_DTYPE_UNSUPPORTED_CODE
 from decoy_engine.plan import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
+from tests._declared_schema import declared_schema
 
 _ENGINE = "test-de10-chunked-fk-passthrough"
 
@@ -187,7 +188,15 @@ def test_chunked_passthrough_child_now_gate_killed_before_ingestion_guard_runs()
     chunk = pa.table({"customer_id": pa.array([1, None, _BIG_KEY], type=pa.int64())})
 
     with pytest.raises(PlanCompileError) as exc:
-        list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+        list(
+            run_mask_pipeline_chunked(
+                config,
+                [chunk],
+                table="orders",
+                source_schema=declared_schema(config, "orders"),
+                engine_version=_ENGINE,
+            )
+        )
     assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
 
@@ -220,7 +229,15 @@ def test_chunked_passthrough_child_gate_kill_fires_before_any_chunk_read() -> No
 
     tracker = _LazyTracker()
     with pytest.raises(PlanCompileError) as exc:
-        list(run_mask_pipeline_chunked(config, tracker, table="orders", engine_version=_ENGINE))
+        list(
+            run_mask_pipeline_chunked(
+                config,
+                tracker,
+                table="orders",
+                source_schema=declared_schema(config, "orders"),
+                engine_version=_ENGINE,
+            )
+        )
     assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
     assert tracker.consumed == 0
 
@@ -245,7 +262,15 @@ def test_chunked_passthrough_child_small_int_now_gate_killed_too() -> None:
     chunk = pa.table({"customer_id": pa.array([1, None, 42], type=pa.int64())})
 
     with pytest.raises(PlanCompileError) as exc:
-        list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+        list(
+            run_mask_pipeline_chunked(
+                config,
+                [chunk],
+                table="orders",
+                source_schema=declared_schema(config, "orders"),
+                engine_version=_ENGINE,
+            )
+        )
     assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
 
@@ -259,7 +284,15 @@ def test_chunked_passthrough_child_big_int_without_null_now_gate_killed_too() ->
     chunk = pa.table({"customer_id": pa.array([1, _BIG_KEY], type=pa.int64())})
 
     with pytest.raises(PlanCompileError) as exc:
-        list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+        list(
+            run_mask_pipeline_chunked(
+                config,
+                [chunk],
+                table="orders",
+                source_schema=declared_schema(config, "orders"),
+                engine_version=_ENGINE,
+            )
+        )
     assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
 
@@ -274,7 +307,15 @@ def test_chunked_passthrough_parent_null_bearing_big_int_fk_raises_coded_error()
     chunk = pa.table({"id": pa.array([1, None, _BIG_KEY], type=pa.int64())})
 
     with pytest.raises(ExecutionError) as exc:
-        list(run_mask_pipeline_chunked(config, [chunk], table="customers", engine_version=_ENGINE))
+        list(
+            run_mask_pipeline_chunked(
+                config,
+                [chunk],
+                table="customers",
+                source_schema=declared_schema(config, "customers"),
+                engine_version=_ENGINE,
+            )
+        )
     assert exc.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
 
 
@@ -283,7 +324,13 @@ def test_chunked_passthrough_parent_big_int_without_null_still_admitted() -> Non
     chunk = pa.table({"id": pa.array([1, _BIG_KEY], type=pa.int64())})
 
     out = list(
-        run_mask_pipeline_chunked(config, [chunk], table="customers", engine_version=_ENGINE)
+        run_mask_pipeline_chunked(
+            config,
+            [chunk],
+            table="customers",
+            source_schema=declared_schema(config, "customers"),
+            engine_version=_ENGINE,
+        )
     )
     vals = pa.concat_tables(out).column("id").to_pylist()
     assert vals == [1, _BIG_KEY]
@@ -294,7 +341,13 @@ def test_chunked_passthrough_parent_small_int_null_bearing_fk_still_admitted() -
     chunk = pa.table({"id": pa.array([1, None, 42], type=pa.int64())})
 
     out = list(
-        run_mask_pipeline_chunked(config, [chunk], table="customers", engine_version=_ENGINE)
+        run_mask_pipeline_chunked(
+            config,
+            [chunk],
+            table="customers",
+            source_schema=declared_schema(config, "customers"),
+            engine_version=_ENGINE,
+        )
     )
     vals = pa.concat_tables(out).column("id").to_pylist()
     assert vals == [1, None, 42]
@@ -335,6 +388,7 @@ def test_chunked_passthrough_child_gate_killed_first() -> None:
                 config,
                 [chunk],
                 table="orders",
+                source_schema=declared_schema(config, "orders"),
                 engine_version=_ENGINE,
             )
         )

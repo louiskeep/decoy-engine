@@ -55,6 +55,7 @@ from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
 from decoy_engine.secret_providers import admit_mask_key
+from tests._declared_schema import declare_rest, declared_schema
 
 _EV = "de02-accept"
 _JOB_SEED = (42).to_bytes(8, "big")
@@ -166,6 +167,7 @@ def _config(tmp_path, columns=None, seed: int = 42, mask_secret_ref=None) -> dic
 def _run(tmp_path, cfg, *, key_provider=None, **kwargs):
     df = _frame()
     df.to_csv(tmp_path / "t.csv", index=False)
+    declare_rest(cfg)
     sources = {"t": pa.Table.from_pandas(df, preserve_index=False)}
     result = run_pipeline(
         cfg, sources=sources, engine_version=_EV, key_provider=key_provider, **kwargs
@@ -763,7 +765,15 @@ class TestPublicEntryPointsGated:
         df.to_csv(tmp_path / "t.csv", index=False)
         source = pa.Table.from_pandas(df, preserve_index=False)
         with pytest.raises(KeyedStrategyRequiresSecret):
-            list(run_mask_pipeline_chunked(cfg, [source], table="t", engine_version=_EV))
+            list(
+                run_mask_pipeline_chunked(
+                    cfg,
+                    [source],
+                    table="t",
+                    source_schema=declared_schema(cfg, "t"),
+                    engine_version=_EV,
+                )
+            )
 
     def test_chunked_entry_point_gated_on_empty_input(self, tmp_path, phase):
         """Codex-found: a chunked source with ZERO chunks used to return `[]`
@@ -775,7 +785,11 @@ class TestPublicEntryPointsGated:
 
         cfg = self._keyed_cfg(tmp_path)
         with pytest.raises(KeyedStrategyRequiresSecret):
-            list(run_mask_pipeline_chunked(cfg, [], table="t", engine_version=_EV))
+            list(
+                run_mask_pipeline_chunked(
+                    cfg, [], table="t", source_schema=declared_schema(cfg, "t"), engine_version=_EV
+                )
+            )
 
     def test_chunked_entry_point_empty_input_unkeyed_still_runs(self, tmp_path, phase):
         """The empty-input gate fix must not over-gate: a non-keyed plan with
@@ -784,7 +798,14 @@ class TestPublicEntryPointsGated:
         from decoy_engine import run_mask_pipeline_chunked
 
         cfg = _config(tmp_path, columns=[{"name": "email", "strategy": "redact"}])
-        assert list(run_mask_pipeline_chunked(cfg, [], table="t", engine_version=_EV)) == []
+        assert (
+            list(
+                run_mask_pipeline_chunked(
+                    cfg, [], table="t", source_schema=declared_schema(cfg, "t"), engine_version=_EV
+                )
+            )
+            == []
+        )
 
     def test_chunked_entry_point_empty_input_with_secret_still_runs(self, tmp_path, phase):
         """A keyed plan with zero chunks but a real secret still clears the
@@ -794,7 +815,16 @@ class TestPublicEntryPointsGated:
         cfg = self._keyed_cfg(tmp_path)
         kp = SecretKeyProvider(b"x" * 32)
         assert (
-            list(run_mask_pipeline_chunked(cfg, [], table="t", engine_version=_EV, key_provider=kp))
+            list(
+                run_mask_pipeline_chunked(
+                    cfg,
+                    [],
+                    table="t",
+                    source_schema=declared_schema(cfg, "t"),
+                    engine_version=_EV,
+                    key_provider=kp,
+                )
+            )
             == []
         )
 
@@ -879,7 +909,15 @@ class TestVaultIsKeyedSurface:
         df.to_csv(tmp_path / "t.csv", index=False)
         source = pa.Table.from_pandas(df, preserve_index=False)
         with pytest.raises(KeyedStrategyRequiresSecret):
-            list(run_mask_pipeline_chunked(cfg, [source], table="t", engine_version=_EV))
+            list(
+                run_mask_pipeline_chunked(
+                    cfg,
+                    [source],
+                    table="t",
+                    source_schema=declared_schema(cfg, "t"),
+                    engine_version=_EV,
+                )
+            )
 
     @needs_crypto
     def test_chunked_mismatched_vault_writer_under_secret_fails_closed(self, tmp_path):
@@ -900,6 +938,7 @@ class TestVaultIsKeyedSurface:
                     cfg,
                     [source],
                     table="t",
+                    source_schema=declared_schema(cfg, "t"),
                     engine_version=_EV,
                     vault_writer=bad_writer,
                     key_provider=_SECRET,
@@ -924,6 +963,7 @@ class TestVaultIsKeyedSurface:
                 cfg,
                 [source],
                 table="t",
+                source_schema=declared_schema(cfg, "t"),
                 engine_version=_EV,
                 vault_writer=writer,
                 key_provider=_SECRET,

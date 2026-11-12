@@ -35,7 +35,11 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine.generation._numeric_derived import derived_uses_as_numbers
-from decoy_engine.generation.kinds import constant_arrow_type, parametric_arrow_type
+from decoy_engine.generation.kinds import (
+    constant_arrow_type,
+    output_arrow_type,
+    parametric_arrow_type,
+)
 from decoy_engine.internal.pandas_compat import table_to_pandas_exact_ints
 
 _INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
@@ -146,6 +150,7 @@ READER_KEYS: dict[str, tuple[tuple[str, str], ...]] = {
     "categorical": (),
     "constant": (),
     "distribution": (),
+    "lookup": (),
     "formula": (("references", "formula.references"),),
     "reference": (),
     "statistical": (("condition_on", "statistical.condition_on"),),
@@ -247,6 +252,13 @@ def numeric_plan(
     candidates = set(base)
 
     def planned(key: Key) -> pa.DataType | None:
+        """The type the column is emitted as: its declared `output_type`, else the generated type."""
+        root = _reference_root(tables, key)
+        declared = output_arrow_type(cols[root]) if root in cols else None
+        return declared or generated(key)
+
+    def generated(key: Key) -> pa.DataType | None:
+        """The type of the values the generator makes, which sibling readers see."""
         root = _reference_root(tables, key)
         if root in candidates:
             return base[root]
@@ -265,7 +277,7 @@ def numeric_plan(
         return None
 
     def is_number(key: Key) -> bool:
-        dtype = planned(key) if key in cols else None
+        dtype = generated(key) if key in cols else None
         return dtype is not None and (pa.types.is_integer(dtype) or pa.types.is_floating(dtype))
 
     def reader_ok(m: Key) -> bool:

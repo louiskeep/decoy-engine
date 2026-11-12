@@ -28,7 +28,11 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine.generation._numeric_typing import numeric_plan
-from decoy_engine.generation.kinds import constant_arrow_type, parametric_arrow_type
+from decoy_engine.generation.kinds import (
+    constant_arrow_type,
+    output_arrow_type,
+    parametric_arrow_type,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -48,6 +52,7 @@ ADMISSION_MATRIX: dict[str, tuple[bool, str]] = {
         True,
         "one persistent numpy Generator from the dist family; n draws equal batched draws",
     ),
+    "lookup": (False, "file-backed lookup; resident only in this row"),
     "formula": (False, "whole-column pandas coercion"),
     "statistical": (False, "whole-column fit/condition_on, pinned-snapshot sampler"),
     "derived": (False, "reads sibling columns row by row; no sibling-input seam yet"),
@@ -73,6 +78,9 @@ class ColumnAdmission:
     eligible: bool
     reason: str
     arrow_type: pa.DataType | None = None
+    # The type of the values the generator draws, before any `output_type` cast. `arrow_type` is
+    # what is emitted. They differ only for a column with an `output_type`.
+    generated_type: pa.DataType | None = None
 
 
 @dataclass(frozen=True)
@@ -96,6 +104,10 @@ class PlanAdmission:
         return pa.schema(
             [pa.field(c.column, c.arrow_type) for c in self.columns if c.table == table]
         )
+
+    def generated_types(self, table: str) -> list[pa.DataType | None]:
+        """Per column of `table`, the type the generator draws (before any `output_type` cast)."""
+        return [c.generated_type for c in self.columns if c.table == table]
 
 
 def _categorical_type(col: dict[str, Any]) -> tuple[pa.DataType | None, str]:
@@ -186,8 +198,15 @@ def classify_plan(
         return ColumnAdmission(table, col["name"], str(col.get("type")), False, reason)
 
     def admit(table: str, col: dict[str, Any], arrow_type: pa.DataType) -> ColumnAdmission:
+        # A declared `output_type` is the emitted type; the cast itself runs at the batch boundary.
         return ColumnAdmission(
-            table, col["name"], str(col.get("type")), True, "eligible", arrow_type
+            table,
+            col["name"],
+            str(col.get("type")),
+            True,
+            "eligible",
+            output_arrow_type(col) or arrow_type,
+            arrow_type,
         )
 
     def classify_reference(table: str, col: dict[str, Any]) -> ColumnAdmission:

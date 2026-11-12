@@ -13,8 +13,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine import run_mask_chunked
-from decoy_engine.execution._chunked import run_mask_pipeline_chunked
+from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route_evidence
 from decoy_engine.execution.native._chunked_evidence import plan_column_backends
@@ -22,7 +21,13 @@ from decoy_engine.execution.native._chunked_schema_rule import build_schema_rule
 from decoy_engine.execution.native._real_type_admission import string_source_type_rejection
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
-from tests.native._b8_support import Run, assert_same_as_oracle, run_one, run_pair
+from tests._declared_schema import declared_schema
+from tests.native._b8_support import (
+    Run,
+    assert_same_as_oracle,
+    run_one,
+    run_pair,
+)
 from tests.native._c6b_i_support import (
     ADMITTED_CONFIGS,
     CORPUS,
@@ -246,6 +251,7 @@ def _oracle_raises(config: dict[str, Any], chunks: list[pa.Table]) -> StrategyEr
                 config,
                 chunks,
                 table=TABLE,
+                source_schema=declared_schema(config, TABLE),
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
             )
@@ -334,6 +340,7 @@ def test_a_later_null_typed_chunk_is_rejected_schema_drift() -> None:
                 config,
                 chunks,
                 table=TABLE,
+                source_schema=declared_schema(config, TABLE),
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
             )

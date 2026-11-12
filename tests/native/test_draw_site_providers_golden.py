@@ -106,6 +106,9 @@ _SCENARIOS: dict[str, Callable[[], Any]] = {
     "gen.categorical": lambda: provider_for("gen.categorical").choices(
         _ctx(), ["a", "b", "c"], [0.5, 0.3, 0.2], 6
     ),
+    "gen.lookup": lambda: provider_for("gen.lookup").choices(
+        _ctx(), ["a", "b", "c"], [0.5, 0.3, 0.2], 6
+    ),
     "gen.reference": lambda: [
         provider_for("gen.reference").sample(_ctx(), [1, 2, 3, 4], 6, distribution=d, weights=w)
         for d, w in (("random", None), ("sequential", None), ("weighted", [4, 3, 2, 1]))
@@ -213,6 +216,7 @@ def test_unit_float_known_answers() -> None:
 
 
 _GOLDEN_OUTPUT: dict[str, str] = {
+    "gen.lookup": "1dd8bbdc10126eeb340ce6d6442b7874d88f62dd14827ddde84919610b3b3090",
     "gen.categorical": "1dd8bbdc10126eeb340ce6d6442b7874d88f62dd14827ddde84919610b3b3090",
     "gen.categorical_unique": "2a6e1e385403950a3b2b1095120ff03996eb120a7a43d88835eadbf24c6f862f",
     "gen.faker_unique_retry": "8120cf533ae61ba59a34796b5c426152a987f73e197cff99377ccd35f59da88c",
@@ -254,4 +258,4 @@ _GOLDEN_OUTPUT: dict[str, str] = {
     "mask.windowed_date": "e7155d227e2e065ea4ad6de21ddd5f12c08f5d6a9654351f208c5f6f7b2b612a",
 }
 
-_GOLDEN_REGISTRY = "636eecdcaa4d6acf29ed8d11a20e3bb540ee0f23bb3c82361a9c5f9e1de98260"
+_GOLDEN_REGISTRY = "8789eba2896f50b75a19453daf97502f2a5cb4edc6874e4192533f542e6d9b7d"

@@ -23,7 +23,12 @@ import pyarrow as pa
 
 from decoy_engine import reasons
 from decoy_engine.generation._faker_pool import POOL_ELIGIBLE_LOCALE_PAIRS
-from decoy_engine.generation.kinds import constant_payload_bound, parametric_payload_bound
+from decoy_engine.generation.kinds import (
+    constant_payload_bound,
+    output_payload_bound,
+    output_type_of,
+    parametric_payload_bound,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -215,6 +220,8 @@ def compute_payload_bounds(
             )
         else:
             result = _legacy_payload_bound(col)
+        if output_type_of(col) is not None:
+            result = output_payload_bound(result)
         out[key] = result
         return result
 
@@ -377,7 +384,7 @@ def generation_floor_shortfall(
 
 def detected_memory_bytes() -> int | None:
     """The whole memory ceiling (cgroup limit, else host RAM), or `None` when it cannot be read."""
-    from decoy_engine.execution import ExecutionError
+    from decoy_engine._execution_error import ExecutionError
     from decoy_engine.execution.out_of_core import _budget
 
     try:

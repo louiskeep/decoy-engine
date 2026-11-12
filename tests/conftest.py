@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from tests._dp_cert import is_certified_dp_env, should_skip_dp
+from tests._lenient_checks import LENIENT_CHECK_TARGETS, lifted_check
 
 # Registers the xdist-worker report scrubber (a lone surrogate in a captured log would otherwise
 # abort a parallel run with an INTERNALERROR). Inert outside an xdist worker.
@@ -169,5 +170,5 @@ def lenient_generate_checks(monkeypatch: pytest.MonkeyPatch) -> None:
     with them if one gets past the plan. The check has its own tests in
     tests/unit/plan/checks; this keeps the runtime behavior covered.
     """
-    monkeypatch.setattr("decoy_engine.plan._compile.check_generate_columns", lambda *a, **k: None)
-    monkeypatch.setattr("decoy_engine.plan.checks.check_faker_default_locale", lambda *a, **k: None)
+    for target in LENIENT_CHECK_TARGETS:
+        monkeypatch.setattr(target, lifted_check(target))

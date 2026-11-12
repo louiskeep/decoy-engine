@@ -425,7 +425,7 @@ class ModelPackLoader:
             import joblib
         except ImportError as exc:
             raise ModelPackLoadError(
-                "joblib is required to load a model pack. Install via: pip install -e '.[ml]'",
+                "joblib is a base dependency and failed to import. Reinstall decoy-engine.",
                 cause="import",
             ) from exc
         try:

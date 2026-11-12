@@ -48,6 +48,7 @@ from decoy_engine.config._csv_dialect import CSV_DIALECT_DEFAULTS, CsvDialect, c
 from decoy_engine.errors import ConfigError, PipelineValidationError
 from decoy_engine.fileaccess import FileAccess, FileHandle, FileRequest, FileRole
 from decoy_engine.fileaccess.adapters import pandas as pandas_adapter
+from decoy_engine.fileaccess.adapters.memory import MemoryHandle
 from decoy_engine.validation_result import CODES
 
 if TYPE_CHECKING:
@@ -329,7 +330,21 @@ def _shaped(result: Any, columns: Sequence[str]) -> Any:
     """`_ordered` over one frame, or lazily over each chunk of an iterator."""
     if isinstance(result, pd.DataFrame):
         return _ordered(result, columns)
-    return (_ordered(chunk, columns) for chunk in result)
+    return _shaped_chunks(result, columns)
+
+
+def _shaped_chunks(
+    chunks: Iterator[pd.DataFrame], columns: Sequence[str]
+) -> Iterator[pd.DataFrame]:
+    # A generator expression would reach `chunks` only through reference counting when it is
+    # closed; the finally closes the file handle at the call that closes this.
+    try:
+        for chunk in chunks:
+            yield _ordered(chunk, columns)
+    finally:
+        close = getattr(chunks, "close", None)
+        if close is not None:
+            close()
 
 
 def _projection(
@@ -414,8 +429,12 @@ def _read_csv_rows(
     dtype: type[str] | None = None,
     lexeme_columns: tuple[str, ...] = (),
     columns: Sequence[str] | None = None,
+    exact_text: bool = False,
 ) -> pd.DataFrame | Iterator[pd.DataFrame]:
     """The shared core: one frame, or an iterator of frames when `chunksize` is set.
+
+    `exact_text` turns off pandas' NA vocabulary for the whole frame, so `NA` and an empty field
+    reach the caller as the text they are (`read_csv_bytes` needs that: `NA` is a country code).
 
     With `columns`, only those columns are parsed and every frame holds exactly them, in the
     order given.
@@ -446,6 +465,8 @@ def _read_csv_rows(
         _scan_record_widths(open_handle, dialect, table=table, nrows=nrows)
         read_opts = {"header": None, **_positional_lexemes(lexeme_columns, names)}
     kwargs: dict[str, Any] = {"sep": dialect.delimiter, "dtype": dtype, **read_opts, **use}
+    if exact_text:
+        kwargs = {**kwargs, "keep_default_na": False, "na_filter": False}
     if nrows is not None:
         kwargs["nrows"] = nrows
     if chunksize is None:
@@ -540,4 +561,20 @@ def read_csv_source(
     )
 
 
-__all__ = ["CsvDialect", "read_csv_source", "resolve_csv_dialect"]
+def read_csv_bytes(raw: bytes, *, table: str, field_key: str = "lookup.file") -> pd.DataFrame:
+    """Parse CSV bytes the engine already holds, as exact text.
+
+    The one bytes seam of the CSV reader (a pinned lookup file is read once through the file
+    policy, then parsed from the plan's bytes with no second open). One fixed dialect: comma
+    delimiter, a header row, UTF-8 (a BOM is stripped), every cell kept as text with no NA
+    conversion. It goes through `_read_csv_rows` over a `MemoryHandle`, so it shares the reader's
+    parse and its strict failure handling: a malformed file raises `FileAccessReadError` naming
+    only `field_key`, never a cell. `table` names the source in any `PipelineValidationError`.
+    """
+    handle = MemoryHandle(raw, field_key)
+    frame = _read_csv_rows(lambda: handle, CsvDialect(), table=table, dtype=str, exact_text=True)
+    assert isinstance(frame, pd.DataFrame)  # noqa: S101 - chunksize is None
+    return frame
+
+
+__all__ = ["CsvDialect", "read_csv_bytes", "read_csv_source", "resolve_csv_dialect"]

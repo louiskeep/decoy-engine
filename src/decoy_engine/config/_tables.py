@@ -43,11 +43,8 @@ from pydantic import (
 from pydantic_core import PydanticCustomError, ValidationError
 
 from decoy_engine import reasons
-from decoy_engine.config._generate_options import (
-    closed_key_schema,
-    option_problems,
-    problem_details,
-)
+from decoy_engine.config._generate_option_catalog import POOLED_TYPE, closed_key_schema
+from decoy_engine.config._generate_options import option_problems, problem_details
 from decoy_engine.config._generate_unique import (
     column_conflict_problems,
     table_unique_problems,
@@ -288,6 +285,7 @@ class GenerateColumnConfig(BaseModel):
         "group_key",
         "constant",
         "distribution",
+        "lookup",
     ]
 
     # GP2 (Codex round-2 spec A/G7): the ONLY validated `type: faker` knob.
@@ -320,7 +318,7 @@ class GenerateColumnConfig(BaseModel):
         # `pooled` is a faker-only build-strategy toggle. `is not None`, not field presence:
         # `model_dump()` stamps `pooled: null` on every generate column, so a dumped non-faker
         # column must revalidate. With StrictBool only a real bool reaches here.
-        if self.type != "faker" and self.pooled is not None:
+        if self.type != POOLED_TYPE and self.pooled is not None:
             problems.append((("pooled",), str(reasons.config.GENERATE_OPTION_UNKNOWN)))
         if problems:
             raise ValidationError.from_exception_data(
@@ -467,3 +465,24 @@ class TableConfig(BaseModel):
                             f"on a missing column and fail mid-run."
                         )
         return self
+
+
+def classify_table_kinds(config: dict[str, Any]) -> dict[str, str]:
+    """Return `{table_name: "mask" | "generate"}` for every table in the config.
+
+    Per-table kind is inferred from `columns` (mask) vs `generate_columns`
+    (generate) presence on each TableConfig. The schema already enforces
+    XOR at validation time (`_per_table_kind_consistency` + `TableConfig`
+    invariants), so a config that reaches this helper has at most one
+    populated per table. Tables with neither are classified as mask
+    (defensive default; the schema rejects them upstream).
+    """
+    out: dict[str, str] = {}
+    for table in config.get("tables") or []:
+        if not isinstance(table, dict):
+            continue
+        name = table.get("name")
+        if not isinstance(name, str):
+            continue
+        out[name] = "generate" if table.get("generate_columns") else "mask"
+    return out

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from decoy_engine.reasons import _catalog
+from decoy_engine.reasons._types import UNRELEASED
 
 __all__ = [
     "DEDUPE_UNSUPPORTED_TYPE",
@@ -17,7 +18,18 @@ __all__ = [
     "GENERATE_LOCALE_UNKNOWN",
     "GENERATE_OPTION_INVALID",
     "GROUPED_SERIES_GROUP_BY_EQUALS_ORDER_BY",
+    "LOOKUP_COLUMN_MISSING",
+    "LOOKUP_FILE_EMPTY",
+    "LOOKUP_FILE_FORMAT_UNSUPPORTED",
+    "LOOKUP_FILE_TOO_LARGE",
+    "LOOKUP_FILE_UNREADABLE",
+    "LOOKUP_NOT_PINNED",
+    "LOOKUP_PINNED_DIGEST_MISMATCH",
+    "LOOKUP_TOO_MANY_ENTRIES",
+    "LOOKUP_WEIGHT_INVALID",
+    "PINNED_LOOKUP_UNSUPPORTED",
     "REFERENCE_WEIGHTS_LENGTH_MISMATCH",
+    "RELATIONSHIP_PARENT_NOT_UNIQUE",
     "SORT_UNSUPPORTED_TYPE",
     "STATISTICAL_HIGH_CARDINALITY_REQUIRES_REAL_CATEGORIES",
     "STATISTICAL_HIGH_CARDINALITY_SNAPSHOT_MISMATCH",
@@ -140,4 +152,65 @@ REFERENCE_WEIGHTS_LENGTH_MISMATCH = _d(
     "reference_weights_length_mismatch",
     "Reference weights count does not match the parent sequence row count.",
     since="1.13.0",
+)
+RELATIONSHIP_PARENT_NOT_UNIQUE = _d(
+    "relationship_parent_not_unique",
+    "A generated relationship parent key is not provably unique.",
+    since=UNRELEASED,
+)
+
+_d = _catalog.plan("PlanCompileError")
+
+LOOKUP_COLUMN_MISSING = _d(
+    "lookup_column_missing",
+    "Lookup file does not have the value or weight column the generate column names.",
+    since=UNRELEASED,
+)
+LOOKUP_FILE_EMPTY = _d(
+    "lookup_file_empty",
+    "Lookup file has no entries.",
+    since=UNRELEASED,
+)
+LOOKUP_FILE_FORMAT_UNSUPPORTED = _d(
+    "lookup_file_format_unsupported",
+    "Lookup file is not a CSV or Parquet file with a value column of a supported type.",
+    since=UNRELEASED,
+)
+LOOKUP_FILE_TOO_LARGE = _d(
+    "lookup_file_too_large",
+    "Lookup file is larger than the embedded-artifact size cap.",
+    since=UNRELEASED,
+)
+LOOKUP_FILE_UNREADABLE = _d(
+    "lookup_file_unreadable",
+    "Lookup file could not be read or parsed.",
+    since=UNRELEASED,
+)
+LOOKUP_NOT_PINNED = _d(
+    "lookup_not_pinned",
+    "A lookup file named by the plan's configuration is not among its pinned lookups.",
+    since=UNRELEASED,
+)
+LOOKUP_PINNED_DIGEST_MISMATCH = _d(
+    "lookup_pinned_digest_mismatch",
+    "A pinned lookup file does not match its recorded sha256.",
+    since=UNRELEASED,
+)
+LOOKUP_TOO_MANY_ENTRIES = _d(
+    "lookup_too_many_entries",
+    "Lookup file has more entries than the 1,000,000 entry cap.",
+    since=UNRELEASED,
+)
+LOOKUP_WEIGHT_INVALID = _d(
+    "lookup_weight_invalid",
+    "Lookup file has a weight that is not a finite number of at least zero, or no positive total.",
+    since=UNRELEASED,
+)
+
+_d = _catalog.plan("PinnedModeError")
+
+PINNED_LOOKUP_UNSUPPORTED = _d(
+    "pinned_lookup_unsupported",
+    "Lookup columns are not available in pinned mode.",
+    since=UNRELEASED,
 )
