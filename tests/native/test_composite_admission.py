@@ -419,7 +419,7 @@ def _outcome(config: dict[str, Any], chunks: list[pa.Table]) -> tuple[Any, int, 
     try:
         for _ in run_mask_chunked_below_gate(
             config,
-            chunks,
+            iter(chunks),
             table=TABLE,
             engine_version=ENGINE_VERSION,
             key_provider=key_provider(),
@@ -844,7 +844,7 @@ def test_stored_index_drift_is_raised_by_both_public_entries(
     config = make_config([redact("s"), truncate("t")], global_settings=_WARN)
     gen = entry_point(
         config,
-        chunks,
+        iter(chunks),
         table=TABLE,
         engine_version=ENGINE_VERSION,
         key_provider=key_provider(),
