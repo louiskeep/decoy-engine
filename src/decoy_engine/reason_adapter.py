@@ -140,12 +140,14 @@ def _first_in_mro(exc: BaseException, table: dict[type, Any]) -> Any:
     return None
 
 
+def is_capacity_oserror(exc: BaseException) -> bool:
+    """True for an OSError whose errno is ENOSPC or EDQUOT; the cause chain is not walked."""
+    return isinstance(exc, OSError) and exc.errno in _CAPACITY_ERRNOS
+
+
 def _capacity_evidence(exc: BaseException) -> bool:
     """Typed ENOSPC/EDQUOT on the exception or its direct cause; a generic OSError is not."""
-    for candidate in (exc, getattr(exc, "__cause__", None)):
-        if isinstance(candidate, OSError) and candidate.errno in _CAPACITY_ERRNOS:
-            return True
-    return False
+    return any(is_capacity_oserror(c) for c in (exc, getattr(exc, "__cause__", None)) if c)
 
 
 def _record(
@@ -441,6 +443,7 @@ __all__ = [
     "capture_failure",
     "current_failure_scope",
     "failure_scope",
+    "is_capacity_oserror",
     "reason_from_exception",
     "reasons_from_report",
     "registered_families",

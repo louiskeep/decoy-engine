@@ -65,6 +65,14 @@ logging config has no `file`; a caller that wants a log file passes `file`.
 Path | None = None)` is keyword-only (44 frozen parameters). Relative config paths resolve against it;
 `None` leaves every path as written (today's behavior).
 
+**Pre-GA additive keyword with SUB-RUN E2 (2026-11-12).** `run_pipeline(..., subset_request:
+SubsetRequest | Literal["config", "skip"] = "config")` is keyword-only (46 frozen parameters). `"config"`
+applies a `subset:` block, `"skip"` runs the full sources, a `SubsetRequest` replaces the block; any other
+value raises `ExecutionError` (`invalid_execution_knob`) before any read. `decoy_engine.subset` adds
+`split_subset_config`, `SubsetSplit` and the E1 names, and `SubsetSelection` gains the opaque
+`materialization_check` stage-transfer field (never an output). A config with no `subset:` block behaves
+exactly as before.
+
 **Pre-GA correction (main health, 2026-10-31).** `RESERVED_NAMES` of the `when` closed grammar gains `type`
 (additive to the list, breaking for a config whose `when:` references a column named `type`, which now fails
 with `when_outside_closed_grammar`). It is listed on every interpreter rather than derived from
@@ -760,6 +768,16 @@ profiling its own file), which `build_run_context` now passes. Execution routes 
 (`execution/_guards.py`), which hands `profile` a policy built from `SURFACE_DECLARATIONS`: an entry
 creates its own target when its row says so, every column it reads is a source column, and none of
 them is the target. This slice only records the policy; it adds no refusal and no reason code.
+
+**Declared-but-missing columns (CONFIG-EXPLICIT E2b-r).** The same boundary now also refuses a column the config
+declares for a mask table (a `columns` entry, a `drop_column` column or a composite-relationship child column) that
+the source's header, footer or schema does not have: `source_file.declared_column_missing`, registry unreleased. It runs
+on every catalog the routes above already check, so the refusal comes before any data row is read; for the chunked
+entries the catalog is `source_schema` (pipeline entry) or the first chunk, and each later chunk is checked before it
+masks. It names the first missing column and the count (config names, never a value). Order is undeclared table,
+undeclared source column, then missing declared column. Before this, `run` failed late with a bare `KeyError`. The reverse rule belongs to the execution
+choke point, which knows the columns the config creates: `profile_source`, `prepare_declared_sources`
+and `check_columns_declared` called without a created-column policy apply the forward rule only.
 
 ### 3.5 Disguises
 
