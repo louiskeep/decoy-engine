@@ -21,8 +21,22 @@ def table() -> pd.DataFrame:
     return pd.DataFrame(
         {
             "age": [21, 22, 23, 24, 31, 33, 35, 38, 41, 49, 52, 58],
-            "zip": ["121", "121", "122", "122", "130", "131", "130", "131", "210", "211", "210", "212"],
+            "zip": [
+                "121",
+                "121",
+                "122",
+                "122",
+                "130",
+                "131",
+                "130",
+                "131",
+                "210",
+                "211",
+                "210",
+                "212",
+            ],
             "dx": ["a", "b", "a", "c", "b", "a", "c", "c", "a", "b", "c", "a"],
+            "visits": [1, 4, 2, 2, 3, 1, 5, 2, 4, 1, 3, 2],
         }
     )
 
@@ -37,4 +51,15 @@ def release(
 ) -> tuple[Lattice, SearchResult, Released]:
     chosen = the_lattice or lattice()
     result = search_lattice(frame, chosen, tuple(models), suppression_limit=limit, **search)
+    return chosen, result, apply_search(frame, chosen, result)
+
+
+def release_if_found(
+    frame: Any, models: Sequence[PrivacyModel], limit: float
+) -> tuple[Lattice, SearchResult, Released] | None:
+    """``release`` for generated tables, where the search may find no node."""
+    chosen = lattice()
+    result = search_lattice(frame, chosen, tuple(models), suppression_limit=limit)
+    if not result.found:
+        return None
     return chosen, result, apply_search(frame, chosen, result)

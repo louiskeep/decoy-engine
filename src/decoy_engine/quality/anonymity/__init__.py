@@ -13,6 +13,9 @@ Models (each module cites its source):
   largest Earth Mover's Distance between a class's sensitive distribution
   and the whole table's, with equal or ordered ground distance (Li, Li and
   Venkatasubramanian 2007).
+- ``measure_reidentification_risk``: prosecutor risk from class sizes, and
+  journalist and marketer risk against a supplied population table (ARX's
+  sample risk summary, after El Emam); never a journalist figure without one.
 
 Input is a ``pandas.DataFrame`` or a ``pyarrow.Table``; only the named
 columns are read, and Arrow columns convert losslessly.
@@ -69,6 +72,11 @@ from decoy_engine.quality.anonymity._models import (
     PrivacyModel,
     RecursiveCLDiversity,
 )
+from decoy_engine.quality.anonymity._risk import (
+    ReidentificationRiskReport,
+    check_risk_threshold,
+    measure_reidentification_risk,
+)
 from decoy_engine.quality.anonymity._t_closeness import (
     TClosenessReport,
     measure_t_closeness_equal,
@@ -86,9 +94,12 @@ __all__ = [
     "OrderedTCloseness",
     "PrivacyModel",
     "RecursiveCLDiversity",
+    "ReidentificationRiskReport",
     "TClosenessReport",
+    "check_risk_threshold",
     "measure_k_anonymity",
     "measure_l_diversity",
+    "measure_reidentification_risk",
     "measure_t_closeness_equal",
     "measure_t_closeness_ordered",
 ]

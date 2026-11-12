@@ -88,6 +88,8 @@ class PrivacyModel(abc.ABC):
     # ARX's monotonicWithSuppression: when true, the rows failing at a node
     # include the rows failing at any successor.
     monotone_with_suppression: ClassVar[bool]
+    # The model's token in written reports; one per descriptor.
+    kind: ClassVar[str]
 
     @property
     def sensitive_column(self) -> str | None:
@@ -115,6 +117,7 @@ class KAnonymity(PrivacyModel):
 
     k: int
     monotone_with_suppression: ClassVar[bool] = True
+    kind: ClassVar[str] = "k_anonymity"
 
     def __post_init__(self) -> None:
         _required_int("k", self.k)
@@ -144,6 +147,7 @@ class DistinctLDiversity(_SensitiveModel):
 
     l: int  # noqa: E741 -- the model's published name
     monotone_with_suppression: ClassVar[bool] = True
+    kind: ClassVar[str] = "distinct_l_diversity"
 
     def __post_init__(self) -> None:
         _required_column(self.sensitive)
@@ -165,6 +169,7 @@ class EntropyLDiversity(_SensitiveModel):
 
     l: int  # noqa: E741 -- the model's published name
     monotone_with_suppression: ClassVar[bool] = False
+    kind: ClassVar[str] = "entropy_l_diversity"
 
     def __post_init__(self) -> None:
         _required_column(self.sensitive)
@@ -187,6 +192,7 @@ class RecursiveCLDiversity(_SensitiveModel):
     c: float
     l: int  # noqa: E741 -- the model's published name
     monotone_with_suppression: ClassVar[bool] = False
+    kind: ClassVar[str] = "recursive_cl_diversity"
 
     def __post_init__(self) -> None:
         _required_column(self.sensitive)
@@ -229,6 +235,7 @@ class EqualTCloseness(_TModel):
     """Equal-distance EMD to the table distribution at most ``t``."""
 
     monotone_with_suppression: ClassVar[bool] = False
+    kind: ClassVar[str] = "equal_t_closeness"
 
     @property
     def coder(self) -> Coder | None:
@@ -243,6 +250,7 @@ class OrderedTCloseness(_TModel):
     """Ordered-distance EMD to the table distribution at most ``t``."""
 
     monotone_with_suppression: ClassVar[bool] = False
+    kind: ClassVar[str] = "ordered_t_closeness"
 
     @property
     def coder(self) -> Coder | None:

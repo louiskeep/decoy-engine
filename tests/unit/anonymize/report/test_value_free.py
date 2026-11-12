@@ -17,7 +17,11 @@ from decoy_engine.anonymize.report import (
     RiskUtilityReportRead,
     build_risk_utility_report,
 )
-from decoy_engine.quality.anonymity import EntropyLDiversity, KAnonymity
+from decoy_engine.quality.anonymity import (
+    EntropyLDiversity,
+    KAnonymity,
+    measure_reidentification_risk,
+)
 from decoy_engine.run_result import ValueFree
 
 from ._helpers import release
@@ -42,7 +46,9 @@ def _problems(ann: Any, meta: tuple[Any, ...], path: str, seen: set[type]) -> li
         base, *extra = get_args(ann)
         return _problems(base, meta + tuple(extra), path, seen)
     if origin is Union or origin is types.UnionType or origin in (tuple, list):
-        return [p for a in get_args(ann) if a is not Ellipsis for p in _problems(a, meta, path, seen)]
+        return [
+            p for a in get_args(ann) if a is not Ellipsis for p in _problems(a, meta, path, seen)
+        ]
     if origin is Literal or ann is type(None):
         return []
     strict = any(isinstance(m, Strict) and m.strict for m in meta)
@@ -116,12 +122,20 @@ def _raises(call: Any, kind: Any = (TypeError, ValueError)) -> None:
 def test_errors_hold_no_cell() -> None:
     frame = _frame()
     lattice, result, released = release(frame, (KAnonymity(2),), 0.25)
-    build = lambda **kw: build_risk_utility_report(released, lattice, result, risk_threshold=0.2, **kw)
+    build = lambda **kw: build_risk_utility_report(
+        released, lattice, result, risk_threshold=0.2, **kw
+    )
     # population missing the sentinel class
     _raises(lambda: build(population=frame[frame["zip"] != ZIP_SENTINEL]))
-    # population with another type family in a quasi-identifier
-    widened = frame.assign(age=frame["age"].astype(float))
-    _raises(lambda: build(population=widened))
+    # population with another type family in a quasi-identifier (the measure's check)
+    _raises(
+        lambda: measure_reidentification_risk(
+            pd.DataFrame({"g": [1, 1]}),
+            ["g"],
+            risk_threshold=0.2,
+            population=pd.DataFrame({"g": [SENTINEL, 1.0, 1.0]}),
+        )
+    )
     # population value a hierarchy does not cover
     _raises(lambda: build(population=frame.assign(zip=[SENTINEL] * len(frame))))
     # an edited released table
@@ -142,7 +156,9 @@ def test_a_column_name_that_cannot_be_written_is_refused_without_the_name(name: 
     frame = _frame().rename(columns={"zip": name})
     lattice = Lattice({"age": interval_hierarchy((5, 10)), name: prefix_hierarchy(3, keep=(2, 1))})
     _, result, released = release(frame, (KAnonymity(2),), 0.25, the_lattice=lattice)
-    with pytest.raises(ValueError, match="^a column name cannot be written to the report$") as caught:
+    with pytest.raises(
+        ValueError, match="^a column name cannot be written to the report$"
+    ) as caught:
         build_risk_utility_report(released, lattice, result, risk_threshold=0.2)
     assert caught.value.__context__ is None
 

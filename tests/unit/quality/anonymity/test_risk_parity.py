@@ -52,5 +52,7 @@ def test_both_measures_call_the_shared_helpers() -> None:
 def test_k_anonymity_does_not_divide_for_its_risk_figures() -> None:
     """The formulas live in ``_risk.py``; ``_k_anonymity.py`` has no division of its own."""
     tree = ast.parse((Path(anonymity.__file__).parent / "_k_anonymity.py").read_text("utf-8"))
-    divisions = [n for n in ast.walk(tree) if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Div)]
+    divisions = [
+        n for n in ast.walk(tree) if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Div)
+    ]
     assert divisions == []

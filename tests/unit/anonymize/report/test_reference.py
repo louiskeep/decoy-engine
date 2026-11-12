@@ -13,7 +13,7 @@ from hypothesis import strategies as st
 from decoy_engine.anonymize.report import build_risk_utility_report
 from decoy_engine.quality.anonymity import EntropyLDiversity, KAnonymity
 
-from ._helpers import release
+from ._helpers import release_if_found
 from ._reference import risk_section
 
 
@@ -61,15 +61,16 @@ def test_risk_section_matches_reference(
     tau: float,
 ) -> None:
     models = (KAnonymity(k), EntropyLDiversity("dx", 2)) if entropy else (KAnonymity(k),)
-    lattice, result, released = release(frame, models, limit)
-    if not result.found:
+    found = release_if_found(frame, models, limit)
+    if found is None:
         return
+    lattice, result, released = found
     population = pd.concat([frame, extra], ignore_index=True) if with_population else None
     report = build_risk_utility_report(
         released, lattice, result, risk_threshold=tau, population=population
     )
     generalized_population = (
-        None if population is None else lattice.apply(population, result.node)
+        None if population is None else lattice.apply(population, result.node or ())
     )
     want = risk_section(released.table, lattice.columns, tau, generalized_population)
     risk = report.to_payload()["risk"]

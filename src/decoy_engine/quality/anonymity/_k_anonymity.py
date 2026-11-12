@@ -28,6 +28,7 @@ from decoy_engine.quality.anonymity._classes import (
     rows_in,
 )
 from decoy_engine.quality.anonymity._report import check_report_values
+from decoy_engine.quality.anonymity._risk import prosecutor_average, prosecutor_highest
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,8 +88,8 @@ def measure_k_anonymity(
         k_min=k_min,
         class_size_distribution=distribution,
         rows_with_null_quasi_identifier=classes.rows_with_null_quasi_identifier,
-        highest_prosecutor_risk=1.0 / k_min if k_min else None,
-        average_prosecutor_risk=count / rows if rows else None,
+        highest_prosecutor_risk=prosecutor_highest(k_min) if k_min else None,
+        average_prosecutor_risk=prosecutor_average(count, rows) if rows else None,
         k_target=target,
         classes_below_target=below,
         rows_below_target=below_rows,

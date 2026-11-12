@@ -56,7 +56,10 @@ def test_round_trip() -> None:
     payload = _payload()
     read = RiskUtilityReportRead.model_validate(payload)
     assert read.to_payload() == payload
-    assert RiskUtilityReportRead.model_validate(json.loads(json.dumps(payload))).to_payload() == payload
+    assert (
+        RiskUtilityReportRead.model_validate(json.loads(json.dumps(payload))).to_payload()
+        == payload
+    )
     assert RiskUtilityReport.model_validate(payload).to_payload() == payload
 
 
@@ -83,8 +86,14 @@ def test_a_missing_tag_is_refused_on_read() -> None:
 
 @pytest.mark.parametrize(
     "path",
-    [("method",), ("search", "metric"), ("risk", "population"), ("assumptions", 0),
-     ("not_established", 0), ("models", 0, "kind")],
+    [
+        ("method",),
+        ("search", "metric"),
+        ("risk", "population"),
+        ("assumptions", 0),
+        ("not_established", 0),
+        ("models", 0, "kind"),
+    ],
 )
 def test_free_text_in_a_token_is_refused(path: tuple[Any, ...]) -> None:
     doc = _payload()

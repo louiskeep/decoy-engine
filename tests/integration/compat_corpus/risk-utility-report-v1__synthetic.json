@@ -1,0 +1,87 @@
+{
+  "assumptions": [
+    "prosecutor_target_known_in_release",
+    "population_consistent_with_superset",
+    "suppressed_rows_not_released"
+  ],
+  "classes": {
+    "class_count": 4,
+    "k_min": 2
+  },
+  "heights": [
+    3,
+    3
+  ],
+  "method": "full_domain_generalization_with_record_suppression",
+  "models": [
+    {
+      "c": null,
+      "k": 2,
+      "kind": "k_anonymity",
+      "l": null,
+      "met": true,
+      "sensitive": null,
+      "t": null
+    },
+    {
+      "c": null,
+      "k": null,
+      "kind": "entropy_l_diversity",
+      "l": 2,
+      "met": true,
+      "sensitive": "dx",
+      "t": null
+    }
+  ],
+  "node": [
+    2,
+    1
+  ],
+  "not_established": [
+    "expert_determination",
+    "linkage_with_external_data",
+    "suppressed_rows_risk"
+  ],
+  "quasi_identifiers": [
+    "age",
+    "zip"
+  ],
+  "risk": {
+    "journalist": {
+      "average": 0.25,
+      "highest": 0.3333333333333333,
+      "records_at_risk": 0.3333333333333333,
+      "rows_at_risk": 4
+    },
+    "marketer": {
+      "average": 0.24444444444444446
+    },
+    "population": "supplied",
+    "population_rows": 16,
+    "prosecutor": {
+      "average": 0.3333333333333333,
+      "highest": 0.5,
+      "records_at_risk": 1.0,
+      "rows_at_risk": 12
+    },
+    "risk_threshold": 0.2
+  },
+  "schema": "risk-utility-report/v1",
+  "search": {
+    "lattice_size": 16,
+    "metric": "loss",
+    "nodes_evaluated": 11
+  },
+  "suppression": {
+    "allowed_suppressed": 3,
+    "rows_input": 12,
+    "rows_released": 12,
+    "rows_suppressed": 0,
+    "suppression_limit": 0.25
+  },
+  "utility": {
+    "discernibility": 40,
+    "loss_metric": 0.21717171717171718,
+    "non_uniform_entropy": 34.0
+  }
+}

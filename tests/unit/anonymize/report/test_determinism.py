@@ -15,7 +15,7 @@ from hypothesis import strategies as st
 from decoy_engine.anonymize.report import build_risk_utility_report
 from decoy_engine.quality.anonymity import EntropyLDiversity, KAnonymity
 
-from ._helpers import release, table
+from ._helpers import release, release_if_found, table
 
 MODELS = (KAnonymity(2), EntropyLDiversity("dx", 2))
 
@@ -40,9 +40,10 @@ def _chunked(frame: pd.DataFrame, pieces: int) -> pa.Table:
 
 
 def _document(source: Any, population: Any, limit: float) -> str | None:
-    lattice, result, released = release(source, MODELS, limit)
-    if not result.found:
+    found = release_if_found(source, MODELS, limit)
+    if found is None:
         return None
+    lattice, result, released = found
     report = build_risk_utility_report(
         released, lattice, result, risk_threshold=0.25, population=population
     )
@@ -50,7 +51,12 @@ def _document(source: Any, population: Any, limit: float) -> str | None:
 
 
 @settings(derandomize=True, max_examples=40, deadline=None)
-@given(frame=frames(), seed=st.integers(0, 1000), pieces=st.integers(1, 4), limit=st.sampled_from([0, 0.3]))
+@given(
+    frame=frames(),
+    seed=st.integers(0, 1000),
+    pieces=st.integers(1, 4),
+    limit=st.sampled_from([0, 0.3]),
+)
 def test_order_chunking_and_route_do_not_matter(
     frame: pd.DataFrame, seed: int, pieces: int, limit: float
 ) -> None:

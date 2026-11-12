@@ -159,7 +159,20 @@ def _risk_report_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     release = pd.DataFrame(
         {
             "age": [21, 22, 23, 24, 31, 33, 35, 38, 41, 49, 52, 58],
-            "zip": ["121", "121", "122", "122", "130", "131", "130", "131", "210", "211", "210", "212"],
+            "zip": [
+                "121",
+                "121",
+                "122",
+                "122",
+                "130",
+                "131",
+                "130",
+                "131",
+                "210",
+                "211",
+                "210",
+                "212",
+            ],
             "dx": ["a", "b", "a", "c", "b", "a", "c", "c", "a", "b", "c", "a"],
         }
     )
@@ -184,9 +197,7 @@ def build_risk_report_document() -> dict:
     from decoy_engine.quality.anonymity import EntropyLDiversity, KAnonymity
 
     release, population = _risk_report_frames()
-    lattice = Lattice(
-        {"age": interval_hierarchy((5, 10)), "zip": prefix_hierarchy(3, keep=(2, 1))}
-    )
+    lattice = Lattice({"age": interval_hierarchy((5, 10)), "zip": prefix_hierarchy(3, keep=(2, 1))})
     models = (KAnonymity(2), EntropyLDiversity("dx", 2))
     result = search_lattice(release, lattice, models, suppression_limit=0.25)
     released = apply_search(release, lattice, result)

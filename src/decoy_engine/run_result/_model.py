@@ -453,3 +453,7 @@ def _derive_read(model: type[BaseModel], cache: dict[type, type] | None = None) 
 
 
 RunResultRead: Any = _derive_read(RunResult)
+
+# Public name for other versioned documents built on the same compatibility rule (one derivation,
+# not a copy per document).
+derive_read_model = _derive_read

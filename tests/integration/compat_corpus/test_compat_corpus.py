@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -90,10 +91,10 @@ def test_corpus_artifact_round_trips(artifact: dict) -> None:
         document = json.loads((HERE / artifact["path"]).read_text(encoding="utf-8"))
         read = RiskUtilityReportRead.model_validate(document).to_payload()
         for path, want in artifact["expected_values"].items():
-            got: object = read
+            value: Any = read
             for part in path.split("."):
-                got = got[part]  # type: ignore[index]
-            assert got == want, (
+                value = value[part]
+            assert value == want, (
                 f"{artifact['tag']} written by engine {artifact['produced_by_engine_version']}: "
                 f"{path} no longer reads back to its recorded value (compatibility-contract 3.1)."
             )
@@ -189,7 +190,9 @@ def test_risk_report_other_major_variant_is_refused() -> None:
 
     from decoy_engine.anonymize.report import RiskUtilityReportRead
 
-    data = json.loads((RISK_VARIANTS / "risk-utility-report-v1-other-major.json").read_text("utf-8"))
+    data = json.loads(
+        (RISK_VARIANTS / "risk-utility-report-v1-other-major.json").read_text("utf-8")
+    )
     with pytest.raises(ValidationError):
         RiskUtilityReportRead.model_validate(data)
 

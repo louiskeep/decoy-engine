@@ -535,6 +535,25 @@ than "the release is anonymous":
   recoding, one level per column), with at most 5,000 nodes; larger lattices
   are refused. Loss figures use the observed values, not a declared domain.
 
+## Anonymity risk and utility report (library, V2 track): what the figures do not cover
+
+`decoy_engine.anonymize.report.build_risk_utility_report` states the re-identification risk of a
+release chosen by the enforcement search, with ARX's prosecutor, journalist and marketer formulas.
+It is a library reached by import only. The figures are narrower than "the release is safe":
+
+- Every figure assumes the attacker matches on the named quasi-identifiers only. A column left out
+  of that list is assumed unknown to the attacker; if it is not, every figure is optimistic.
+- Journalist and marketer risk are computed only against a population table the caller supplies.
+  The report checks that the population is consistent with being a superset of the release (every
+  released class present and at least as large); it cannot check that it is the population an
+  attacker would really use. Without one the report gives no such figure and says so.
+- No figure is an expert determination. Whether a risk is "very small" for the anticipated
+  recipient, and for how long, is the expert's judgement (HHS OCR guidance on Expert
+  Determination); the report records the threshold the caller chose.
+- The suppressed rows' risk is not reported. Releasing
+  `Released.generalized_including_suppressed` publishes rows these figures never covered.
+- Attribute disclosure is covered only as far as the l-diversity and t-closeness models met.
+
 ## What it does do
 
 To be clear about the other side: Decoy does give you deterministic,

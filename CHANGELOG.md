@@ -9,6 +9,20 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (anonymity risk and utility report, V2 track)
+
+V2 track (V2-3.5 slice 1 in `docs/roadmap/v2-sprints.md`, louiskeep/decoy), built ahead, opt-in by
+import only; not merged per owner instruction. `decoy_engine.anonymize.report.build_risk_utility_report`
+builds the `risk-utility-report/v1` document for a release chosen by the enforcement search:
+prosecutor re-identification risk (highest, average, records at risk above a required threshold),
+journalist and marketer risk only against a supplied population table, the search's loss figures and
+suppression counts, the chosen node and the privacy models met, and fixed statements of the
+assumptions made and what the analysis does not establish. It is value-free, deterministic, and read
+back by `RiskUtilityReportRead`, a reader derived from the writer; a sample is locked in the
+compatibility corpus. `decoy_engine.quality.anonymity` gains `measure_reidentification_risk`,
+`ReidentificationRiskReport` and `check_risk_threshold`; `decoy_engine.run_result` exports
+`ValueFree` and `derive_read_model`. No config key, strategy, catalog row or run behaviour changes.
+
 ### Added (anonymity enforcement search, V2 track)
 
 V2 track (V2-3.3 slice 1 in `docs/roadmap/v2-sprints.md`, louiskeep/decoy), built ahead, opt-in by

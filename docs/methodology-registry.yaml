@@ -265,6 +265,18 @@ modules:
     pattern: discernibility, loss metric and non-uniform entropy with ARX suppression penalties
     source: Bayardo and Agrawal 2005; Iyengar 2002; Gionis and Tassa, IEEE TKDE 21(2) 2009; ARX MetricSDNMDiscernability and MetricMDNMLoss (Apache-2.0)
 
+  - path: src/decoy_engine/quality/anonymity/_risk.py
+    pattern: ARX sample risk summary
+    source: ARX RiskModelSampleSummary (Apache-2.0); El Emam and Dankar, JAMIA 15(5) 2008; Dankar and El Emam, marketer risk, EDBT/ICDT workshops 2010; El Emam, Guide to the De-Identification of Personal Health Information, 2013
+
+  - path: src/decoy_engine/anonymize/report/__init__.py
+    pattern: ARX sample risk summary
+    source: ARX RiskModelSampleSummary (Apache-2.0); HHS OCR, Guidance Regarding Methods for De-identification of PHI (Expert Determination), November 2012
+
+  - path: src/decoy_engine/anonymize/report/_build.py
+    pattern: ARX risk analysis of an anonymized output
+    source: ARX RiskModelSampleSummary (Apache-2.0); HHS OCR Expert Determination guidance, November 2012, section 2
+
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
   # RiskFlag) was deleted under the pre-scan-reframe-C clean break

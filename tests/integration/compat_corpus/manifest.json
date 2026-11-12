@@ -61,6 +61,55 @@
           "has_joint": true
         }
       ]
+    },
+    {
+      "tag": "risk-utility-report/v1",
+      "kind": "risk_utility_report",
+      "synthetic": true,
+      "produced_by_engine_version": "0.19.0",
+      "path": "risk-utility-report-v1__synthetic.json",
+      "expected_values": {
+        "schema": "risk-utility-report/v1",
+        "method": "full_domain_generalization_with_record_suppression",
+        "quasi_identifiers": [
+          "age",
+          "zip"
+        ],
+        "node": [
+          2,
+          1
+        ],
+        "suppression.rows_input": 12,
+        "suppression.rows_suppressed": 0,
+        "suppression.rows_released": 12,
+        "utility.discernibility": 40,
+        "risk.population": "supplied",
+        "risk.risk_threshold": 0.2,
+        "risk.prosecutor.highest": 0.5,
+        "risk.prosecutor.rows_at_risk": 12,
+        "risk.journalist.average": 0.25,
+        "risk.marketer.average": 0.24444444444444446,
+        "models": [
+          {
+            "kind": "k_anonymity",
+            "sensitive": null,
+            "k": 2,
+            "l": null,
+            "c": null,
+            "t": null,
+            "met": true
+          },
+          {
+            "kind": "entropy_l_diversity",
+            "sensitive": "dx",
+            "k": null,
+            "l": 2,
+            "c": null,
+            "t": null,
+            "met": true
+          }
+        ]
+      }
     }
   ]
 }
