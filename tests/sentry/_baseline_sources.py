@@ -163,6 +163,12 @@ SOURCES: tuple[Source, ...] = (
         in_code("layout/test_package_fanout.py", "FANOUT_ALLOWLIST"),
         maxes=in_code("layout/test_package_fanout.py", "FANOUT_ALLOWLIST").maxes,
     ),
+    Source(
+        "table-kind-truth-tests",
+        "test_table_kind_classifier.py",
+        in_code("test_table_kind_classifier.py", "TRUTH_TEST_BASELINE"),
+        maxes=in_code("test_table_kind_classifier.py", "TRUTH_TEST_BASELINE").maxes,
+    ),
     Source("import-layers", ".importlinter", import_layer_keys(".importlinter", "layers")),
     Source(
         "public-import-boundary",

@@ -21,10 +21,10 @@ sections 4.8, 5, 6, 7 (AT-M5a), 11 to 14. Handoff: `handoffs/scan-ml-build`.
   `str(error)` and `message` are the registry summary; `route` and `setting` are attributes; the
   error is raised with an empty chain through `secret_providers._errors.raise_bare`.
 - Reason `route.post_scan_models_unsupported` (owner `PostScanRouteError`, a configuration refusal
-  in the RESOLVE and COMPILE phases, `since` 1.25.0), registry minor 1.25.0 (built at the next minor of
-  its base; main then took that minor for the FPE fallback codes, #481, so the renumber tool moved
-  this slice; no `UNRELEASED` marker exists on main), pinned in `tests/fixtures/f29/reason-manifest-v1.25-scanml-m5.json`,
-  mapped in `reason_adapter._FIXED`. `consumer-contract.json` regenerated (version lines only).
+  in the RESOLVE and COMPILE phases), mapped in `reason_adapter._FIXED`. It was first built at a
+  numbered registry minor with its own fixture; since main retired numbered minors (#506) it is
+  declared `since=UNRELEASED`, the registry version, `consumer-contract.json` and `docs/reasons.md`
+  are main's, and no fixture exists (see "Unreleased conversion").
 - The guard is the first statement of `run_sequential`, `run_fk_out_of_core`,
   `run_mask_pipeline_chunked`, native `run_mask_chunked` and `run_native_or_oracle_chunked`.
 - `config` is a required keyword-only argument of `run_sequential`, `run_fk_out_of_core` and the
@@ -108,8 +108,8 @@ same retarget for three negative spies #495's main carries in `tests/unit/execut
 call the entries directly (the below-gate helpers in `tests/native/`) stay on the public entries. Patches of the
 physical drivers' calls (`test_lossless_forwarding.py`) and the `b1_as_the_lane` helper keep the
 public entries, because those paths still call them. `tests/unit/config/test_scan_ml_reasons.py`
-asserted that M5's reason did not exist yet (an M1 tripwire); it now asserts the reason exists in
-its own minor 1.25.0.
+asserted that M5's reason did not exist yet (an M1 tripwire); it now asserts the reason exists
+with `since` equal to the pending value `"unreleased"`.
 
 ## Merge with main
 
@@ -139,9 +139,8 @@ Second merge: `91a0e975` merges main `7fc12e7f` (#492 moves the classifier stack
 install, #481 registers the FPE fallback codes at the minor this slice had claimed, #497 adds the
 canary scan entry) because main moved again before the push. Conflicts: `docs/reasons.md` and
 `tests/unit/test_reason_registry.py`, both sides kept. `scripts/dev/registry_renumber.py --main
-origin/main` then moved `route.post_scan_models_unsupported` to the next free minor, 1.25.0
-(`004cc7f6`; fixture now `reason-manifest-v1.25-scanml-m5.json`; `--check` reports the registry
-consistent). The merge left two of main's FPE test assertions under the M5 test; `6aa0547d` puts
+origin/main` then moved `route.post_scan_models_unsupported` to the next free numbered minor
+(`004cc7f6`, superseded by the unreleased conversion below). The merge left two of main's FPE test assertions under the M5 test; `6aa0547d` puts
 them back in the FPE test, and every other line main added in `8f9fdfab..7fc12e7f` is present.
 
 ## Red first
@@ -295,4 +294,65 @@ Full suite:  trigger public execution signatures plus reason registry, orchestra
   `src/decoy_engine/execution/_chunked_oracle.py` (`_mask_pipeline_chunked`): each core repeats its
   entry's pre-read steps (subset check, thread check, declaration gate) beside the entry, so a new
   pre-read step added to an entry must be added to its core too; no sentry compares the two lists.
-Registry renumbered at merge from 1.24.0 to 1.25.0 by scripts/dev/registry_renumber.py; main was at 1.24.0.
+
+## Third and fourth merges, and the unreleased conversion (2026-11-12)
+
+`45ca33ac` merges main `44bbf494` (#506 release-stamped registry, #514 created-column contract,
+#517, #525 and #526 post-scan work, #524, #494 and others), because the owner asked for M5 on the
+new main and for the registry conversion. Conflicts and resolution:
+
+- `execution/_chunked.py`: imports, both kept (main's `prepare_declared_execution_sources` beside
+  the route-guard import; `prepare_declared_sources` is no longer imported there); the docstring
+  keeps main's wording plus the post-scan sentence. The entry body is the post-scan guard, the
+  subset check, main's `prepare_declared_execution_sources(..., registry=registry)`, then
+  `_chunked_oracle._mask_declared` (unchanged since the earlier merge; it holds main's preflight
+  and loop, which this merge did not change).
+- `execution/native/_dispatch.py`: imports, both kept.
+- The guard-free cores follow main's new gate: `native/chunked/_core.mask_chunked` and
+  `_chunked_oracle._mask_pipeline_chunked` now call `prepare_declared_execution_sources` through
+  their entry modules, passing the run's `registry`, exactly as `run_mask_chunked` and
+  `run_mask_pipeline_chunked` do on main. Re-diffed after the merge: each core runs every pre-read
+  step its public entry runs (subset check, thread check for the native one, the declaration gate
+  with registry) except the post-scan guard, which stays the first statement of all five entries.
+- Sizes: `native/_chunked_entry.py` 688 of 689, `native/_dispatch.py` 677 of 688, `_chunked.py`
+  587, `_chunked_oracle.py` 576, `native/chunked/_core.py` 52. No ceiling moved. The secret-material
+  census, re-derived with `scripts/secret_material_census.py --write`, is unchanged.
+
+Unreleased conversion: `scripts/dev/registry_renumber.py --to-unreleased --main origin/main` first
+refused (`unconverted docs/reasons.md`, the M5 registry test naming the numbered fixture, and two
+lines of this record naming it). By hand: the M5 registry test now asserts `since == UNRELEASED`
+with no fixture (`test_scanml_m5_route_refusal_is_registered_as_pending`), the `docs/reasons.md`
+paragraph naming the fixture is removed (main's text), and this record stops naming the file.
+The tool then converted the catalog declaration to `since=UNRELEASED`, the tripwire and the docs
+to the pending form, reset `REGISTRY_VERSION`, `docs/reasons.md` and `consumer-contract.json` to
+main's 1.24.0, and deleted the fixture. `--check --main origin/main` prints "registry consistent",
+exit 0. The changelog fragment names the code as `route/post_scan_models_unsupported`.
+
+`6689efce` merges main `873686d7` (#534, delivery reason codes), which landed during the checks;
+no conflict. After it: `--check` exit 0; `tests/sentry`, the registry, release-pin, consumer
+contract, tripwire, M5 acceptance, delivery, reasons and compat-corpus tests rerun (only the 23
+`test_outbound_clients` ids fail, no `google`). PR #528 was not on main at that point.
+
+Reruns on `13df1b9f` (the converted head before `6689efce`):
+
+- Mutations M-M5a (4 red), M-M5a2 (2 red), M-M5a3 (11 red), M-M5a4 (2 red), the same ids as
+  listed under "Mutations".
+- `GATES_WORKERS=2 scripts/dev/gates.sh --baseline --steps ruff,format,mypy,sentry,layers,licenses,tests <191 paths>`
+  against main `44bbf494` (same recipe as before, plus `prepare_declared_execution_sources` and
+  `tests/unit/test_reason_release_pin.py`): sentry 5182 passed, 3 failed, 21 errors (main 5152, 3,
+  21); layers 15 passed; licenses 63 passed; tests 14930 passed, 2 failed, 21 errors, 2717 skipped
+  (main 14859, 2, 21, 2717). Failing ids identical, 24 each, no branch-only id, no main failure
+  passing; collected 17670 against 17599 (+71, the M5 tests). ruff, format, mypy rc 127 (not in
+  the dev extra); with `--extra lint`: ruff PASS, format PASS, mypy the same 4 errors as main.
+- NER gate (venv re-synced, wheel SHA-256 OK): `DECOY_REQUIRE_NER=1 pytest -m ner -n 2`: 39 passed,
+  10 skipped (import skips for other extras only).
+- `pytest tests/integration/compat_corpus`: 5 passed, 1 skipped (the pre-GA real-artifact
+  capture skip), on `13df1b9f` and again on `6689efce`.
+
+`e9114bc2` merges main `9e451dac` (#528, key type families in profiling), which landed before the
+push; no conflict and no execution or registry file touched. After it: `--check` exit 0;
+`tests/sentry`, the registry and tripwire tests, M5 acceptance, `tests/unit/profiling`, the
+post-scan key tests and the compat corpus rerun, with only the 23 `test_outbound_clients` ids
+failing. The full gate selection, mutations, lint and NER gate were not rerun after `6689efce` and
+`e9114bc2`; neither merge touched a file they read beyond the registry and profiling checks rerun
+above.

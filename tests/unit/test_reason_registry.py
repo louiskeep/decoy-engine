@@ -535,41 +535,31 @@ def test_fpe_handler_fallback_codes_are_registered_with_a_pinned_fixture() -> No
     assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 24, 0)
 
 
-SCANML_M5_FIXTURE = "reason-manifest-v1.25-scanml-m5.json"
+def test_scanml_m5_route_refusal_is_registered_as_pending() -> None:
+    """SCAN-ML M5: one route refusal owned by PostScanRouteError, pending its release stamp."""
+    from decoy_engine.reasons._types import UNRELEASED
 
-
-def test_scanml_m5_route_refusal_is_registered_with_a_pinned_fixture() -> None:
-    """SCAN-ML M5: one route refusal owned by PostScanRouteError, `since` 1.25.0."""
     spec = reasons.find("route", "post_scan_models_unsupported")
     assert spec is not None
-    assert (spec.owner, spec.since, spec.kind.value) == ("PostScanRouteError", "1.25.0", "failure")
+    assert (spec.owner, spec.since, spec.kind.value) == (
+        "PostScanRouteError",
+        UNRELEASED,
+        "failure",
+    )
     assert not re.search(r"[{}%]", spec.summary)
     assert reasons.route.POST_SCAN_MODELS_UNSUPPORTED == "post_scan_models_unsupported"
-    pinned = _load(SCANML_M5_FIXTURE)
-    assert [(e["namespace"], e["code"]) for e in pinned["entries"]] == [
-        ("route", "post_scan_models_unsupported")
-    ]
-    assert pinned["registry_version"] == "1.25.0"
-    assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 25, 0)
 
 
-SCANML_M4_FIXTURE = "reason-manifest-v1.26-scanml-m4.json"
+def test_scanml_m4_post_scan_block_is_registered_as_pending() -> None:
+    """SCAN-ML M4: one post-scan block owned by PostScanBlockedError, pending its release stamp."""
+    from decoy_engine.reasons._types import UNRELEASED
 
-
-def test_scanml_m4_post_scan_block_is_registered_with_a_pinned_fixture() -> None:
-    """SCAN-ML M4: one post-scan block owned by PostScanBlockedError, `since` 1.26.0."""
     spec = reasons.find("post_scan", "ner_blocked")
     assert spec is not None
     assert (spec.owner, spec.since, spec.kind.value) == (
         "PostScanBlockedError",
-        "1.26.0",
+        UNRELEASED,
         "failure",
     )
     assert not re.search(r"[{}%]", spec.summary)
     assert reasons.post_scan.NER_BLOCKED == "ner_blocked"
-    pinned = _load(SCANML_M4_FIXTURE)
-    assert [(e["namespace"], e["code"]) for e in pinned["entries"]] == [
-        ("post_scan", "ner_blocked")
-    ]
-    assert pinned["registry_version"] == "1.26.0"
-    assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 26, 0)

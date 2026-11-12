@@ -6,7 +6,7 @@ core, which does everything the public entry does except that refusal: the subse
 thread check, the declaration gate and the progress-counted `_run_chunked` stream.
 
 The gate and the route helpers are looked up through the `_chunked_entry` module object, so a
-patch of `_chunked_entry.prepare_declared_sources` (the declaration-gate seam) holds on both paths.
+patch of `_chunked_entry.prepare_declared_execution_sources` (the declaration-gate seam) holds on both paths.
 """
 
 from __future__ import annotations
@@ -37,8 +37,10 @@ def mask_chunked(
     refuse_unapplied_subset(config)
     _chunked_entry._validate_native_threads(native_threads)
     # Config-level check before `chunks` is touched; the first chunk is checked in preflight.
-    declared = _chunked_entry.prepare_declared_sources(
-        _chunked_entry.DeclarationRequest.for_chunks(config, table, None), file_access=file_access
+    declared = _chunked_entry.prepare_declared_execution_sources(
+        _chunked_entry.DeclarationRequest.for_chunks(config, table, None),
+        file_access=file_access,
+        registry=kwargs.get("registry"),
     )
     # Progress: account every yielded chunk on the active channel (bound by the
     # caller, e.g. `run_pipeline(progress=...)`); a no-op when nothing is bound.

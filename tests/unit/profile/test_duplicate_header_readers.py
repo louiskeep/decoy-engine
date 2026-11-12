@@ -249,7 +249,7 @@ def test_r6_cloud_parquet_descriptor_is_refused_before_profiling(
             },
         }
     )
-    clean = pa.table({"a": [1, 3], "c": [2, 4], "b": ["x", "y"]})
+    clean = pa.table({"a": [1, 3], "b": ["x", "y"]})
     declare_rest(cfg, {"t": clean})
     with pytest.raises(Exception) as exc:
         run_pipeline(cfg, {"t": clean}, engine_version=ENGINE_VERSION)
