@@ -91,9 +91,9 @@ def test_typed_empty_load_uses_schema_types_only(
 
     def read_columns(conn: Any) -> None:
         seen.append(
-            conn.execute(
-                "SELECT table_name, data_type FROM duckdb_columns() WHERE column_name = 'k0'"
-            ).fetchall()
+            conn.cursor()
+            .execute("SELECT table_name, data_type FROM duckdb_columns() WHERE column_name = 'k0'")
+            .fetchall()
         )
 
     monkeypatch.setattr(_scan_integrity, "_before_fetch", read_columns)
