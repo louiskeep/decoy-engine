@@ -179,7 +179,7 @@ certifies rows of `(platform, cpython_full_version, lock_fingerprint)` in
 | Profile | Used by | How it is built |
 |---|---|---|
 | Engine dev and CI | `dp-certified-gate` job, local dev | `uv sync --frozen --extra dev --extra lint --extra vault --extra cloud` on CPython 3.10.20 |
-| CLI runtime | End users running `decoy fit --epsilon` | `decoy-engine` and `decoy-cli` plus `requirements-certified.txt` from the `decoy` repo (63 third-party pins) on CPython 3.10.20 |
+| CLI runtime | End users running `decoy fit --epsilon` | `decoy-engine` and `decoy-cli` plus `requirements-certified.txt` from the `decoy` repo (63 third-party pins; 67 once the CLI repo adds the four classifier-stack lines) on CPython 3.10.20 |
 
 Prior releases' rows are kept from engine 0.18.0 on, so their artifacts still
 compile.

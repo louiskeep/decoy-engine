@@ -41,6 +41,11 @@ from decoy_engine.execution.native._real_type_admission import real_type_rejecti
 from decoy_engine.execution.native._requirements import CHUNKED_ROUTE_VETOED_STRATEGIES
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
+from tests._declared_schema import declared_schema
+from tests.native._b8_support import (
+    run_mask_chunked_below_gate,
+    run_mask_pipeline_chunked_below_gate,
+)
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     FORCE_ORACLE_VALUE,
@@ -80,13 +85,18 @@ def _table(values: list[Any] | None = None, typ: pa.DataType | None = None) -> p
     return gk_source(values if values is not None else _STRINGS, typ)
 
 
-def _oracle(config: dict[str, Any], chunks: list[pa.Table]) -> list[pa.Table]:
-    """The public oracle chunked entry (no dispatcher, no native route)."""
+def _oracle(
+    config: dict[str, Any], chunks: list[pa.Table], *, below_gate: bool = False
+) -> list[pa.Table]:
+    """The public oracle chunked entry (no dispatcher, no native route). `below_gate` is for a
+    test that feeds the same unconfigured column through `run_one`, which runs below the gate."""
+    entry = run_mask_pipeline_chunked_below_gate if below_gate else run_mask_pipeline_chunked
     return list(
-        run_mask_pipeline_chunked(
+        entry(
             config,
             list(chunks),
             table=TABLE,
+            source_schema=declared_schema(config, TABLE),
             engine_version=ENGINE_VERSION,
             key_provider=key_provider(),
         )
@@ -199,7 +209,7 @@ def test_an_unconfigured_sibling_cannot_be_named_by_group_by() -> None:
     native route reads (an unconfigured sibling) never reaches it."""
     with pytest.raises(PlanCompileError) as exc:
         list(
-            run_mask_chunked(
+            run_mask_chunked_below_gate(
                 make_config(columns(sibling=False)),
                 [_table()],
                 table=TABLE,
@@ -268,7 +278,7 @@ def test_a_self_anchor_declines_with_its_own_distinct_reason(tmp_path: Path) -> 
     reason = run.ev[0].reroute_reason or ""
     assert f"group_key_self_anchor_not_native_chunked_route:{TARGET}" in reason
     assert "masked_sibling" not in reason
-    assert _values(run.out) == _values(_oracle(config, chunks))
+    assert _values(run.out) == _values(_oracle(config, chunks, below_gate=True))
     assert _values(run.out) == _full_frame(config, table, tmp_path).column(TARGET).to_pylist()
 
 
