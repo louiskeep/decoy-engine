@@ -619,19 +619,38 @@ def test_at8_a_failed_candidate_check_writes_nothing(
     assert r.git("status", "--porcelain", "--untracked-files=all") == ""
 
 
-def test_at8_only_a_file_the_stamp_creates_is_named_in_the_rm_hint(
+def test_at8_an_untracked_file_is_listed_for_inspection_never_for_deletion(
     engine_seed: Path, tmp_path: Path
 ) -> None:
     r = engine_clone(engine_seed, tmp_path)
-    leftover = f"{F29}/reason-manifest-v9.9-release-0-0-1.json"
+    # Matches the fixture pattern, but the test (not the stamp) made it: a person's draft.
+    draft = f"{F29}/reason-manifest-v9.9-release-0-0-1.json"
     hand_written = "changelog.d/hand-written.md"
-    (r.path / leftover).write_text("{}\n", encoding="utf-8")
+    (r.path / draft).write_text("{}\n", encoding="utf-8")
     (r.path / hand_written).write_text(fragment(), encoding="utf-8")
     with pytest.raises(sr.FragmentError, match="uncommitted") as info:
         _stamp(r)
     message = str(info.value)
-    assert leftover in message and hand_written in message
-    assert message.split("rm -- ", 1)[1] == leftover
+    assert draft in message and hand_written in message
+    assert "rm " not in message
+
+
+def test_at8_a_created_file_is_removed_even_when_the_restore_fails(
+    engine_seed: Path, tmp_path: Path, monkeypatch
+) -> None:
+    # The stamp never prints a delete command: it removes what it created itself, first, so a
+    # failing restore cannot strand it. No stamp path leaves a created file behind to be named.
+    r = engine_clone(engine_seed, tmp_path)
+    made = f"{F29}/reason-manifest-v9.9-release-0-0-1.json"
+    (r.path / made).write_text("{}\n", encoding="utf-8")
+
+    def broken(*args: object, **kwargs: object) -> str:
+        raise sr.FragmentError("restore failed")
+
+    monkeypatch.setattr(sr, "_git", broken)
+    with pytest.raises(sr.FragmentError, match="restore failed"):
+        sr._rollback(r.path, created=(made,))
+    assert not (r.path / made).exists()
 
 
 @pytest.mark.parametrize("fail_at", [1, 5, 7, 9])
