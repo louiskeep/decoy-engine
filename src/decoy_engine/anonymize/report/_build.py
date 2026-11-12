@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine.anonymize import type_family
 from decoy_engine.anonymize.hierarchies import Lattice
 from decoy_engine.anonymize.report._model import RISK_UTILITY_REPORT_SCHEMA, RiskUtilityReport
 from decoy_engine.anonymize.search import Released, SearchResult
@@ -67,6 +68,12 @@ def _check_arguments(released: object, lattice: object, result: object, populati
         raise ValueError("a column name cannot be written to the report")
 
 
+def _same_families(left: pd.Series, right: pd.Series) -> bool:
+    """Per-cell type families, since ``equals`` counts ``1``, ``1.0`` and ``True`` as equal in
+    an object column although the class identity keeps them apart."""
+    return [type_family(v) for v in left.tolist()] == [type_family(v) for v in right.tolist()]
+
+
 def _same_table(left: pd.DataFrame | pa.Table, right: pd.DataFrame | pa.Table) -> bool:
     if isinstance(left, pd.DataFrame) and isinstance(right, pd.DataFrame):
         return (
@@ -74,6 +81,11 @@ def _same_table(left: pd.DataFrame | pa.Table, right: pd.DataFrame | pa.Table) -
             and left.index.equals(right.index)
             and left.dtypes.equals(right.dtypes)
             and left.equals(right)
+            and all(
+                _same_families(left.iloc[:, i], right.iloc[:, i])
+                for i in range(left.shape[1])
+                if pd.api.types.is_object_dtype(left.dtypes.iloc[i])
+            )
         )
     if isinstance(left, pa.Table) and isinstance(right, pa.Table):
         return left.equals(right)

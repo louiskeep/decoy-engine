@@ -551,47 +551,59 @@ def _resolve(node: ast.ImportFrom, package: str) -> str:
 _ALLOWED_ENGINE_MODULES = frozenset({"decoy_engine.anonymize"})
 
 
+_PACKAGE = "decoy_engine.quality.anonymity"
+_ALLOWED_ROOTS = ({"numpy", "pandas", "pyarrow", "__future__"} | set(sys.stdlib_module_names)) - {
+    "importlib"
+}
+
+
+def _refused_imports(tree: ast.AST) -> list[str]:
+    """Imports a module of the package may not make (relative ones resolved)."""
+    refused = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            names = [_resolve(node, _PACKAGE)]
+        elif isinstance(node, ast.Name) and node.id == "__import__":
+            refused.append("__import__")
+            continue
+        else:
+            continue
+        for name in names:
+            root = name.split(".")[0]
+            inside = name == _PACKAGE or name.startswith(_PACKAGE + ".")
+            if not (root in _ALLOWED_ROOTS or inside or name in _ALLOWED_ENGINE_MODULES):
+                refused.append(name)
+    return refused
+
+
 def test_package_imports_only_data_libraries() -> None:
     """``import decoy_engine`` already loads the pipeline, so a sys.modules check
     cannot show darkness; the syntax tree of every module in the package can.
     Relative imports are resolved against the package; dynamic import
     machinery is refused so the walk cannot be sidestepped."""
-    package = "decoy_engine.quality.anonymity"
-    forbidden = {"importlib"}
-    allowed_roots = (
-        {"numpy", "pandas", "pyarrow", "__future__"} | set(sys.stdlib_module_names)
-    ) - forbidden
     package_dir = Path(anonymity.__file__).parent
     modules = sorted(package_dir.glob("*.py"))
     assert len(modules) >= 5
     for path in modules:
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom):
-                names = [_resolve(node, package)]
-            elif isinstance(node, ast.Name) and node.id == "__import__":
-                raise AssertionError((path.name, "__import__"))
-            else:
-                continue
-            for name in names:
-                root = name.split(".")[0]
-                inside = name == package or name.startswith(package + ".")
-                assert root in allowed_roots or inside or name in _ALLOWED_ENGINE_MODULES, (
-                    path.name,
-                    name,
-                )
+        assert _refused_imports(tree) == [], path.name
 
 
-def test_only_the_anonymize_root_is_allowed() -> None:
-    assert "decoy_engine.anonymize" in _ALLOWED_ENGINE_MODULES
-    for name in (
-        "decoy_engine.anonymize.hierarchies",
-        "decoy_engine.anonymize.search",
-        "decoy_engine.anonymize._values",
-    ):
-        assert name not in _ALLOWED_ENGINE_MODULES
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from decoy_engine.anonymize.hierarchies import Lattice",
+        "from decoy_engine.anonymize.search import search_lattice",
+        "import decoy_engine.anonymize._values",
+    ],
+)
+def test_only_the_anonymize_root_is_allowed(source: str) -> None:
+    """Seeded: the walk refuses anything below the anonymize root."""
+    assert _refused_imports(ast.parse(source)) != [], source
+    assert _refused_imports(ast.parse("from decoy_engine.anonymize import type_family")) == []
+    assert _refused_imports(ast.parse("import importlib")) == ["importlib"]
 
 
 def test_import_walk_sees_relative_and_dynamic_imports() -> None:

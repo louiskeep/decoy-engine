@@ -196,6 +196,22 @@ def test_a_changed_cell_in_an_arrow_release_is_refused() -> None:
         )
 
 
+@pytest.mark.parametrize(("before", "after"), [(1, 1.0), (1, True), (0, False)])
+def test_an_edit_that_equals_misses_is_refused(before: Any, after: Any) -> None:
+    """``DataFrame.equals`` counts 1, 1.0 and True as equal in an object column; the class
+    identity does not, so the check compares type families too."""
+    frame = table().assign(code=[before] * 12)
+    frame["code"] = frame["code"].astype(object)
+    the_lattice, result, released = release(frame, (KAnonymity(3),), 0.34)
+    edited = released.table.copy()
+    edited.iloc[0, edited.columns.get_loc("code")] = after
+    assert edited.equals(released.table)
+    with pytest.raises(ValueError, match="released table"):
+        build_risk_utility_report(
+            _with_table(released, edited), the_lattice, result, risk_threshold=0.2
+        )
+
+
 def test_a_replaced_row_is_refused() -> None:
     the_lattice, result, released = _suppressing()
     replaced = pd.concat([released.table.iloc[1:], released.table.iloc[:1]])

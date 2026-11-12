@@ -190,3 +190,27 @@ def test_inputs_are_not_modified() -> None:
     _risk(sample, population)
     pd.testing.assert_frame_equal(sample, SAMPLE)
     pd.testing.assert_frame_equal(population, POPULATION)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        pd.Series([1, 2, None], dtype=object),
+        pd.Series([1.5, None]),
+        pd.Series(["a", None]),
+        pd.Series([True, False], dtype=object),
+        pd.Series([1, 1.0, True], dtype=object),
+        pd.Series([datetime.date(2020, 1, 1), pd.Timestamp("2020-01-01")], dtype=object),
+        pd.to_datetime(pd.Series(["2020-01-01", None])),
+        pd.Series(pd.array([1, None], dtype="Int64")),
+        pd.Series(pd.array([1, None], dtype="int64[pyarrow]")),
+        pd.Series([None, None], dtype=object),
+    ],
+)
+def test_family_shortcut_agrees_with_the_per_cell_families(values: pd.Series) -> None:
+    from decoy_engine.anonymize import type_family
+    from decoy_engine.quality.anonymity._classes import null_mask
+    from decoy_engine.quality.anonymity._risk import _families
+
+    per_cell = {type_family(v) for v in values[~null_mask(values)].tolist()}
+    assert _families(values) == per_cell

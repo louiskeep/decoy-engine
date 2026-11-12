@@ -109,9 +109,33 @@ def _at_risk_rows(sizes: IntArray, weights: IntArray, threshold: Fraction) -> in
     return at_risk
 
 
+# ``infer_dtype`` results (a C-level scan) that mean one type family; "date" is not here, as it
+# also covers a mix of dates and datetimes.
+_INFERRED_FAMILY = {
+    "string": "str",
+    "bytes": "bytes",
+    "integer": "int",
+    "floating": "float",
+    "boolean": "bool",
+    "decimal": "decimal",
+    "complex": "complex",
+    "datetime": "datetime",
+    "datetime64": "datetime",
+    "timedelta": "timedelta",
+    "timedelta64": "timedelta",
+    "time": "time",
+}
+
+
 def _families(series: pd.Series) -> set[str]:
     """Type families of the non-null cells (``type_family`` depends on the type only)."""
-    values = series[~null_mask(series)].tolist()
+    present = series[~null_mask(series)]
+    if not len(present):
+        return set()
+    known = _INFERRED_FAMILY.get(pd.api.types.infer_dtype(present, skipna=False))
+    if known is not None:
+        return {known}
+    values = present.tolist()
     examples = dict(zip(map(type, values), values, strict=True))
     return {type_family(example) for example in examples.values()}
 

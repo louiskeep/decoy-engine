@@ -6,8 +6,9 @@ from ``decoy_engine.run_result.derive_read_model`` (the run-result document's co
 tokens tolerant of later minors, added fields ignored, the tag required), so it is never a
 hand-kept copy. Under ``/v1`` only optional fields may be added (compatibility contract 3.1).
 
-One cross-field rule, written once and attached to both models: journalist and marketer
-figures exist only when a population was supplied.
+One cross-field rule: journalist and marketer figures exist only when a population was
+supplied. The writer enforces it strictly; the reader enforces it for the two v1 population
+tokens and lets a token added in a later minor carry figures.
 """
 
 from __future__ import annotations
@@ -134,12 +135,26 @@ class MarketerFigures(_Base):
 
 
 def _population_sections_agree(section: Any) -> Any:
-    """Journalist and marketer figures and a population row count only with a population."""
+    """Writer: journalist and marketer figures and a population row count only with a
+    supplied population."""
     supplied = section.population == "supplied"
     if not supplied and (section.journalist is not None or section.marketer is not None):
         raise ValueError("journalist and marketer figures need a supplied population")
     if supplied != (section.population_rows is not None):
         raise ValueError("population_rows is given exactly when a population was supplied")
+    return section
+
+
+def _population_sections_agree_on_read(section: Any) -> Any:
+    """Reader: the same rule for the two v1 tokens only. A later minor may add a population
+    token (for example an estimated population) that carries figures, and must still read."""
+    if section.population == "not_supplied":
+        if section.journalist is not None or section.marketer is not None:
+            raise ValueError("journalist and marketer figures need a supplied population")
+        if section.population_rows is not None:
+            raise ValueError("population_rows is given only when a population was supplied")
+    if section.population == "supplied" and section.population_rows is None:
+        raise ValueError("population_rows is given when a population was supplied")
     return section
 
 
@@ -182,7 +197,7 @@ def _derive_reader() -> Any:
     class RiskSectionRead(risk_read):  # type: ignore[valid-type, misc]
         @model_validator(mode="after")
         def check_population_sections(self) -> Any:
-            return _population_sections_agree(self)
+            return _population_sections_agree_on_read(self)
 
     cache[RiskSection] = RiskSectionRead
     return derive_read_model(RiskUtilityReport, cache)

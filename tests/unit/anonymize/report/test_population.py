@@ -95,3 +95,25 @@ def test_population_rows_follow_the_population_token(model: Any) -> None:
     forged["risk"]["population_rows"] = 5
     with pytest.raises(ValidationError):
         model.model_validate(forged)
+
+
+def test_a_later_minor_population_token_with_figures_reads() -> None:
+    """A v1 reader keeps the rule for the two tokens it knows and reads a newer token."""
+    frame = table()
+    doc = _payload(pd.concat([frame, frame], ignore_index=True))
+    doc["risk"]["population"] = "estimated"
+    read = RiskUtilityReportRead.model_validate(doc)
+    assert read.risk.population == "estimated"
+    assert read.risk.journalist is not None
+    with pytest.raises(ValidationError):
+        RiskUtilityReport.model_validate(doc)
+    doc["risk"]["population_rows"] = None
+    assert RiskUtilityReportRead.model_validate(doc).risk.population_rows is None
+
+
+def test_reader_refuses_a_supplied_population_without_rows() -> None:
+    frame = table()
+    doc = _payload(pd.concat([frame, frame], ignore_index=True))
+    doc["risk"]["population_rows"] = None
+    with pytest.raises(ValidationError):
+        RiskUtilityReportRead.model_validate(doc)
