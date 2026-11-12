@@ -138,7 +138,8 @@ def sample_request(
     for component in components:
         if root is not None and root in component:
             for table in component:
-                directions.update({i: "both" for i in edge_ids[table]})
+                for edge_id in edge_ids[table]:
+                    directions[edge_id] = "both"
             continue
         if seeded & set(component):
             continue
