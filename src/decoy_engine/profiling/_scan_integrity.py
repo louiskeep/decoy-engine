@@ -285,26 +285,24 @@ def _open_keys(
     )
 
 
-def _is_text(t: pa.DataType) -> bool:
+def _family(t: pa.DataType) -> str | None:
+    """The one place that says which Arrow types DuckDB compares by value across widths and
+    encodings: every integer width, and plain or dictionary-encoded strings."""
+    if pa.types.is_integer(t):
+        return "integer"
     if pa.types.is_dictionary(t):
         t = t.value_type
-    return pa.types.is_string(t) or pa.types.is_large_string(t)
+    return "string" if pa.types.is_string(t) or pa.types.is_large_string(t) else None
 
 
 def _comparable(schema: pa.Schema) -> list[str]:
     """One token per column. Integer widths and string encodings are each one family because
     DuckDB compares their values exactly; floats, decimals, dates, timestamps and non-string
     dictionaries differ by scale, unit or representation, so they keep their exact type text."""
-    out = []
-    for field in schema:
-        t = field.type
-        if pa.types.is_integer(t):
-            out.append("integer")
-        elif _is_text(t):
-            out.append("string")
-        else:
-            out.append(str("binary" if pa.types.is_large_binary(t) else t))
-    return out
+    return [
+        _family(f.type) or str("binary" if pa.types.is_large_binary(f.type) else f.type)
+        for f in schema
+    ]
 
 
 def keys_comparable(parent: KeyBatches, children: Sequence[KeyBatches]) -> bool:
@@ -324,12 +322,12 @@ def _duck_types(parent: KeyBatches, children: Sequence[KeyBatches]) -> list[str 
         types = [s.types[n] for s in schemas]
         if all(t.equals(types[0]) for t in types):
             out.append(None)
-        elif pa.types.is_integer(types[0]):
-            out.append("HUGEINT" if any(t == pa.uint64() for t in types) else "BIGINT")
-        elif _is_text(types[0]):
-            out.append("VARCHAR")
         else:
-            out.append(None)
+            family = _family(types[0])
+            if family == "integer":
+                out.append("HUGEINT" if any(t == pa.uint64() for t in types) else "BIGINT")
+            else:
+                out.append("VARCHAR" if family == "string" else None)
     return out
 
 
