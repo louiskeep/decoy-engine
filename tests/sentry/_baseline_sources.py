@@ -305,6 +305,15 @@ SOURCES: tuple[Source, ...] = (
             ]
         ),
     ),
+    Source(  # keys of the ratchet-schema baseline itself
+        "post-scan-gate-applies",
+        "tests/sentry/baselines/post-scan-gate-applies.json",
+        lambda: set(
+            json.loads((BASELINES / "post-scan-gate-applies.json").read_text(encoding="utf-8"))[
+                "entries"
+            ]
+        ),
+    ),
 )
 
 # Committed data a sentry reads that is a pinned contract, not an allowlist that could grow.
