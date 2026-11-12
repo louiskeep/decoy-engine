@@ -8,9 +8,11 @@
 # 1. uv.lock agrees with pyproject.toml (uv lock --check: nothing is written).
 # 2. A throwaway venv synced --frozen from the lock in the DP certified profile (the lock-profile CPython,
 #    extras dev+lint+vault+cloud: the same profile as ci.yml's dp-certified-gate).
-# 3. In that venv: the version-agreement and reason-release-pin tests, the reason pin --check, and
-#    the DP fit gate (check_fit_environment), which fails unless this engine version's own
-#    79-dist profile is a certified row.
+# 3. In that venv: the version-agreement and reason-release-pin tests, the reason pin --check,
+#    the reason pin --release-ready (no pending reason, deprecation or summary correction is left
+#    for stamp_release.py; the pin script asks the one registry policy), and the DP fit gate
+#    (check_fit_environment), which fails unless this engine version's own 79-dist profile is a
+#    certified row.
 # 4. The CycloneDX SBOM from the lock (scripts/release/sbom.sh), written to $SBOM_OUT or a temp
 #    path; its sha256 is printed. A path inside the checkout dirties the tree and cut-release.sh
 #    then refuses to tag.
@@ -58,6 +60,7 @@ echo "== version agreement and reason release pin"
 "$py" -m pytest -q -p no:cacheprovider tests/unit/test_version_agreement.py \
   tests/unit/test_reason_release_pin.py
 "$py" scripts/release/reason_release_pin.py --check
+"$py" scripts/release/reason_release_pin.py --release-ready
 
 echo "== DP certified profile admits decoy-engine $version"
 "$py" -I -c 'import decoy_engine, sys
