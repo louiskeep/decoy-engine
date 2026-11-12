@@ -251,7 +251,15 @@ the same threshold and `_confidence_bucket`. `sample_misses` stays empty here (i
 
 Batch boundaries must not change any fact. A pandas frame built per batch takes its dtype from
 that batch (an integer column with a null becomes float), so comparisons run in Arrow or through a
-dtype mapping derived from the schema, never from one batch's values.
+dtype mapping derived from the schema, never from one batch's values. The mapping is the central
+`internal/pandas_compat.exact_int_types_mapper`.
+
+Recorded semantic change (PS-5 review): an integer column that holds a null is read as whole
+numbers ("10005") on every route. The old runner converted with plain `to_pandas()`, which turns
+such a column into floats ("10005.0"), so digit detectors (`us_zip`, `npi` and the like) never
+matched it. They can now fire there. This is the safer direction and the only reading that does
+not depend on which batch a null falls in. AT-19 pins the difference against plain `to_pandas()`
+and AT-22 carves it out by name.
 
 `residual_pii.py` and `policy_validation.py` keep their decision tables and take these facts.
 `run_post_mask(source_frames, output_frames, *, config, keys=None)` stays the public adapter.
@@ -553,7 +561,7 @@ Red first: each slice's first commit adds its tests, red on the base.
 | AT-23b | PS-3 | The five-file fixture census is complete (four parity fixture files plus `test_numeric_typing_readers.py`), taken with the lenient generate checks off: grep census and affected suites are red before migration, then green with same-Arrow-type unique keys and regenerated exact values; shipped examples and current docs have zero refused configs | omit `_f0_fixtures.py` from the census |
 | AT-21 | PS-4 | FK findings: introduced orphans `fail`, inherited only `warning`, none `info`, unchecked `error`; a composite fills the tuples; tag stays v2; the three named fixtures change as listed; `compute_post_scan_integrity` retains FK findings when `keys=None` | keep the 1% threshold |
 | AT-19 | PS-5 | Column facts on tables of 10, 10,000 and 250,000 rows over batches of 7 and 100,000: identity counts, `bytes_identical`, distinct counts and every detector rate equal the resident pandas values exactly. Batch boundaries change no result: an integer column whose nulls sit only in the second batch, plus a string column, give the same facts in one batch and in uneven batches as the whole table | average per-batch rates instead of summing hits; compare per-batch pandas frames whose dtype depends on the batch |
-| AT-22 | PS-6 | `run_post_mask` adapter equals the old runner on every existing fixture; a column near `min_rate` escalates exactly as on the resident path | read only the first batch |
+| AT-22 | PS-6 | `run_post_mask` adapter equals the old runner on every existing fixture, with one named carve-out: an integer column holding a null is read as whole numbers (4.4), and a dedicated test pins the finding that moves; a column near `min_rate` escalates exactly as on the resident path | read only the first batch |
 | AT-31 | PS-7 | Unit: `run_resident` stamps `keys` and `verdict`; a second call is a no-op; `before_commit` on a required, unrun gate with a sink lacking `staged_tables` raises `check_error` | reset `ran` in `before_commit` |
 | AT-16 | PS-8, PS-10 | A blocking verdict commits nothing. At PS-8 sequential and out-of-core no-sink cells block at step 5; full-frame also blocks. Sink cells for sequential, out-of-core, chunked and mixed land in PS-10: no output table, sink evidence aborted, temp files gone | run the gate after `sink.commit()` |
 | AT-20 | PS-8, PS-10 | Gate runs once; every successful cell has the report in result `quality_metrics`, and each blocked cell carries it in the exception or existing isolated envelope field. Includes full-frame no sink, mixed with a sink and streaming off, a cross-table cycle, and from PS-10 streamed full-frame and out-of-core; PS-8 forced streaming refuses, PS-10 introduced orphan blocks | omit the step-6 report copy |
@@ -704,8 +712,9 @@ Catalog check: no new regex validator; wire enums and report tag remain checked 
 - "Runs got slower." Key checks read key columns only; exact distinct counts add one DuckDB pass
   per configured column. PS-10's record times the 10M laptop demo with and without the gate.
 - "F22 moved the sink." The `staged_tables()` contract (4.6) is posted on the F22 PRs.
-- "Report numbers moved." The column suite is exact (AT-19, AT-22); FK severities move on purpose
-  (AT-21).
+- "Report numbers moved." The column suite is exact (AT-19, AT-22) except that an integer column
+  holding a null is now read as whole numbers, so digit detectors can report a finding there that
+  the old runner missed (4.4; named in the release note); FK severities move on purpose (AT-21).
 - "`integrity: true` runs stopped writing." A column-suite `fail` now blocks before commit (row 61
   ruling); today it only reports. The release note and `docs/relationships.md` name it and the
   `POSTSCAN-STREAM` hold.
@@ -719,6 +728,8 @@ Taken as recommended under the standing rule; the owner may overturn.
 - Q3: no `tables[].primary_key` field in V1; keys are declared only in `relationships:` (V2-LOG).
 - Q4 (row 61): a post-scan block withholds the whole run in strict and best-effort delivery; the
   gate takes no delivery mode.
+- Q5 (PS-5 review): integer columns holding a null are read as whole numbers by the column suite,
+  not as floats; residual-PII findings on such columns may appear where the old runner had none.
 
 ## 15. V2-LOG entries (backlog-ready)
 
