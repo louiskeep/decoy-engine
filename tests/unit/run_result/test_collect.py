@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib.util
+from collections.abc import Iterator
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
@@ -10,10 +12,14 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
+from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import run_pipeline
-from decoy_engine.progress import PhaseEvent, RateSample, RouteEvent
+from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
+from decoy_engine.execution.chunked import observe_chunked
+from decoy_engine.progress import PhaseEvent, RateSample, RouteEvent, use_progress
 from decoy_engine.run_result import CollectedFacts, RunResultCollector, project_tables
+from tests._declared_schema import chunked_entry_kwargs
 
 _VERSION = "collect-test"
 
@@ -94,7 +100,7 @@ def _phase(name: str, status: str, table: str | None = None, **kw: Any) -> Phase
     ("route", "kwargs", "source"),
     [
         ("sequential", {"execution_mode": "sequential"}, "phase"),
-        ("out_of_core", {"execution_mode": "out_of_core"}, "rate"),
+        ("out_of_core", {"execution_mode": "out_of_core"}, "phase"),
     ],
 )
 def test_whole_table_routes_count_rows(tmp_path: Path, route: str, kwargs: dict, source: str):
@@ -312,3 +318,138 @@ def test_a_phase_name_outside_the_vocabulary_is_timed_as_unknown():
     facts = collector.snapshot()
     assert facts.phases == (("unknown", 1.5),)
     assert not facts.finished
+
+
+def test_out_of_core_reorder_driver_counts_rows(tmp_path: Path):
+    cfg, sources = _job(tmp_path, ("t1", "t2"), fk=True)
+    collector = RunResultCollector()
+    run_pipeline(
+        cfg,
+        sources=sources,
+        engine_version=_VERSION,
+        progress=collector,
+        execution_mode="out_of_core",
+        sink=ParquetTransactionalSink(tmp_path / "sink"),
+        out_of_core_reorder_threshold_rows=0,
+        out_of_core_budget_bytes=512 * 1024 * 1024,
+    )
+    tables = _project(cfg, collector)
+    for name in ("t1", "t2"):
+        assert (tables[name].rows_out, tables[name].rows_source) == (3, "phase")
+
+
+@pytest.mark.parametrize("route", ["sequential", "out_of_core"])
+def test_a_table_that_fails_while_loading_reads_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route: str
+):
+    cfg, sources = _job(tmp_path, ("t1", "t2", "t3"), fk=True)
+    inputs: dict[str, Any] = {"sources": sources}
+    if route == "sequential":
+
+        def loader(name: str) -> pa.Table:
+            if name == "t2":
+                raise RuntimeError("load failed")
+            return sources[name]
+
+        inputs = {
+            "source_loader": loader,
+            "source_loader_schemas": {n: t.schema for n, t in sources.items()},
+        }
+    else:
+        from decoy_engine.execution.out_of_core import _runner
+
+        real, calls = _runner.resolve_incoming, []
+
+        def resolve(*args: Any, **kwargs: Any) -> Any:
+            calls.append(1)
+            if len(calls) == 2:
+                raise RuntimeError("load failed")
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(_runner, "resolve_incoming", resolve)
+    collector = RunResultCollector()
+    with pytest.raises(RuntimeError, match="load failed"):
+        run_pipeline(
+            cfg, engine_version=_VERSION, progress=collector, execution_mode=route, **inputs
+        )
+    tables = _project(cfg, collector, run_failed=True)
+    assert [tables[n].outcome for n in ("t1", "t2", "t3")] == ["succeeded", "failed", "not_run"]
+
+
+_CHUNK_ROWS = (2, 3, 1)
+
+
+def _chunks() -> Iterator[pa.Table]:
+    for index, rows in enumerate(_CHUNK_ROWS):
+        yield pa.table({"id": [f"c{index}-{i}" for i in range(rows)]})
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        run_mask_pipeline_chunked,
+        pytest.param(
+            run_mask_chunked,
+            marks=pytest.mark.skipif(
+                importlib.util.find_spec("decoy_engine_native") is None,
+                reason="decoy-engine-native companion not installed; the companion job covers it",
+            ),
+        ),
+    ],
+    ids=["oracle", "native"],
+)
+def test_chunked_entries_count_rows(tmp_path: Path, entry: Any):
+    cfg, _ = _job(tmp_path, ("t1",))
+    collector = RunResultCollector()
+    with use_progress(collector):
+        received = sum(
+            chunk.num_rows
+            for chunk in entry(
+                cfg,
+                _chunks(),
+                table="t1",
+                engine_version=_VERSION,
+                **chunked_entry_kwargs(entry, cfg, "t1"),
+            )
+        )
+    row = _project(cfg, collector)["t1"]
+    assert received == sum(_CHUNK_ROWS)
+    assert (row.rows_out, row.rows_source, row.outcome) == (received, "phase", "succeeded")
+
+
+class _Events:
+    def __init__(self) -> None:
+        self.phases: list[tuple[str, str | None]] = []
+        self.collector = RunResultCollector()
+
+    def on_event(self, event: Any) -> None:
+        if isinstance(event, PhaseEvent):
+            self.phases.append((event.status, event.table))
+        self.collector.on_event(event)
+
+
+def test_observe_chunked_outcomes():
+    sink = _Events()
+    with use_progress(sink):
+        stream = observe_chunked("t1", _chunks())
+        next(stream)
+        stream.close()
+    assert sink.phases == [("start", "t1"), ("finish", "t1")]
+    facts = sink.collector.snapshot()
+    assert dict(facts.finished) == {"t1": _CHUNK_ROWS[0]} and not facts.errored
+
+    boom = RuntimeError("producer failed")
+
+    def producer() -> Iterator[pa.Table]:
+        yield from _chunks()
+        raise boom
+
+    failing = _Events()
+    with use_progress(failing) as channel:
+        with pytest.raises(RuntimeError) as raised, channel.run_scope():
+            for _ in observe_chunked("t1", producer()):
+                pass
+    assert raised.value is boom
+    assert [status for status, _ in failing.phases] == ["start", "error"]
+    facts = failing.collector.snapshot()
+    assert "t1" in facts.errored and "t1" not in facts.finished
