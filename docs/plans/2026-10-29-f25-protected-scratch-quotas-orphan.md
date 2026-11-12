@@ -71,7 +71,6 @@ This is the migration checklist and the initial sentry manifest. An inventory ro
 | T15 | `src/decoy_engine/quarantine.py:358` | `_decoy_quarantine_stage_*.jsonl`, raw quarantine data. Move single-file stage inside a 0700 destination-side arena and preserve primary-error/cleanup behavior. Direct durable JSONL at `:304` is separately classified below. |
 | T16 | `src/decoy_engine/profile/_fixed_width_writer.py:322`, `:339` | `.decoy-fw-*.tmp`, potentially raw fixed-width rows. Manager allocates within destination-side arena; retain current fsync/rename discipline. |
 | T17 | `src/decoy_engine/data_discovery.py:158`, `:179` | Independent in-memory DuckDB connection with no configured spill root. A result row limit does not bound query workspace. Register/configure its native spill path or disable spilling and reject the workload before unprotected spill. Do not overlook this non-execution-package consumer. |
-| T19 | Subset staging, execution/pipeline/_subset_stage.py (SUB-RUN E2) | calls declared_casting.stage_lazy_batches, shared with T18; survivor-filter callback; same per-batch budget and typed-empty behavior | migrate the one stage_lazy_batches implementation to ScratchArena with T18; keep both callers | S2a-1-ii, or the first F25 slice after SUB-RUN E2 merges |
 
 Additional classifications, to prevent misleading census totals:
 
