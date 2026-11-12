@@ -55,6 +55,7 @@ from decoy_engine._progress_events import (
     event_to_dict,
     event_to_legacy_dict,
     safe_error_class,
+    safe_registered_code,
 )
 from decoy_engine.reason_adapter import capture_failure, failure_scope
 from decoy_engine.reasons import Phase, ReasonRecord, approve_ref
@@ -554,5 +555,6 @@ __all__ = [
     "event_to_legacy_dict",
     "get_active_channel",
     "safe_error_class",
+    "safe_registered_code",
     "use_progress",
 ]
