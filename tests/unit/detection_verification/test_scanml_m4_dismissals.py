@@ -147,3 +147,22 @@ def test_an_ner_dismissal_for_an_old_model_version_stops_applying() -> None:
     assert (current["severity"], current["dismissed"], current["promoted"]) == ("info", True, False)
     old = run({**dismissal, "model_version": "3.7.0"})
     assert (old["severity"], old["dismissed"], old["promoted"]) == ("fail", False, True)
+
+
+def test_the_regex_only_hook_honours_dismissals() -> None:
+    """`run_post_mask` with `detectors=None` (the platform hook) applies `post_scan.dismissed`."""
+    regex = {**CLASSIFIER, "source": "regex", "model_id": None, "model_version": None}
+    source = pd.DataFrame({"email": EMAILS})
+    out = pd.DataFrame({"email": OTHER_EMAILS})
+
+    def run(dismissals: list[dict[str, Any]]) -> dict[str, Any]:
+        cfg = s.config([s.table_config("t", [])], post_scan={"dismissed": dismissals})
+        return s.run_post_mask({"t": source}, {"t": out}, cfg, None)
+
+    (before,) = s.rows(run([]), "regex", column="email")
+    assert (before["severity"], before["dismissed"]) == ("warning", False)
+    report = run([regex])
+    (after,) = s.rows(report, "regex", column="email")
+    assert (after["severity"], after["dismissed"]) == ("info", True)
+    assert not s.rows(report, "classifier") and not s.rows(report, "ner")
+    assert report["detectors"] == [{"source": "regex", "model": None}]

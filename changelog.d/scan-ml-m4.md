@@ -11,6 +11,8 @@ free-text columns only. Each model pass runs in its own `try`: a pass that raise
 finding and keeps the regex findings. `post_scan.dismissed` entries lower the exact `warning` they
 name to `info`; a stale one is counted in the `post_scan.models` log line. Under
 `post_scan.ner_findings: fail` an NER warning becomes `fail` (`promoted`), and an NER `fail` or
-`error` makes `run_pipeline` raise the new public `PostScanBlockedError` (reason
-`post_scan.ner_blocked`, `since` unreleased) before it returns, so no output is published. The report
-gains `detectors`, `tables_checked` and `config_sha256`; the tag stays `post-scan-integrity/v2`.
+`error` makes `run_pipeline` raise the new public `PostScanBlockedError` (new reason code
+`post_scan/ner_blocked`) before it returns, so no output is published. The report gains
+`detectors`, `tables_checked` and `config_sha256`; the tag stays `post-scan-integrity/v2`.
+The regex-only hook, `run_post_mask` with `detectors=None`, now honours `post_scan.dismissed`: a
+matching regex `warning` is reported as `info` with `dismissed: true`.

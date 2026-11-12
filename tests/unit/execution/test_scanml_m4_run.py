@@ -250,3 +250,23 @@ def test_a_regex_fail_alone_never_blocks(monkeypatch: pytest.MonkeyPatch) -> Non
     report = result.quality_metrics["post_scan_integrity"]
     assert s.rows(report, "regex", column="email", severity="fail"), report["residual_pii"]
     assert not s.rows(report, "ner")
+
+
+def test_the_run_context_never_shows_its_detector_set(tmp_path: Path) -> None:
+    """The loaded set rides on the run context only: out of its repr and equality, out of the
+    result, and its own repr carries ids and versions, never the loaded pack."""
+    import dataclasses
+    import json
+
+    from decoy_engine.execution._pipeline_context import PipelineRunContext
+
+    (spec,) = [f for f in dataclasses.fields(PipelineRunContext) if f.name == "post_scan_detectors"]
+    assert (spec.repr, spec.compare) == (False, False)
+    detectors = s.detector_set("classifier")
+    assert "manifest" not in repr(detectors) and "clf" not in repr(detectors)
+    table = _source()
+    cfg = _cfg(tmp_path, table, {"detectors": ["regex", "classifier"]})
+    result = _run(cfg, table, auto_chunk=False)
+    dumped = json.dumps(result.quality_metrics, default=repr)
+    assert "DetectorSet" not in dumped and "classifier_pack" not in dumped
+    assert "DetectorSet" not in repr(result)

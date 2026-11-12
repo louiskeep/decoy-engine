@@ -30,7 +30,7 @@ form by mistake.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -140,8 +140,9 @@ class PipelineRunContext:
     # F06: the resolved protected-quarantine runtime (sink + owner); None unless supplied.
     quarantine_runtime: Any = None
     out_of_core_threads: int | None = None
-    # The post-scan detector set `run_pipeline` loaded strictly at run start (a `DetectorSet`).
-    post_scan_detectors: Any = None
+    # The post-scan detector set `run_pipeline` loaded strictly at run start (a `DetectorSet`); kept
+    # out of repr and equality, so a context printed in a log or error never shows the loaded models.
+    post_scan_detectors: Any = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
