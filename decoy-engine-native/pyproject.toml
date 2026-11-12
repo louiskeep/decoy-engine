@@ -9,6 +9,8 @@ description = "Compiled Rust companion for decoy-engine's native masking hot pat
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 license = "FSL-1.1-ALv2"
+# A copy of the repo-root LICENSE: PEP 639 paths cannot leave this directory.
+license-files = ["LICENSE"]
 authors = [{ name = "louiskeep" }]
 classifiers = [
     "Development Status :: 3 - Alpha",

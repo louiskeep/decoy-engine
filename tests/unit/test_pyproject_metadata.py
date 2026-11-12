@@ -64,3 +64,13 @@ def test_keywords_present() -> None:
     keywords = data["project"]["keywords"]
     assert isinstance(keywords, list) and len(keywords) >= 5
     assert "decoy" in keywords
+
+
+def test_native_companion_ships_the_root_license() -> None:
+    """The native wheel carries the same LICENSE text as the engine, from its own directory."""
+    native = PYPROJECT.parent / "decoy-engine-native"
+    with (native / "pyproject.toml").open("rb") as fh:
+        project = tomllib.load(fh)["project"]
+    assert project["license"] == "FSL-1.1-ALv2"
+    assert project["license-files"] == ["LICENSE"]
+    assert (native / "LICENSE").read_bytes() == (PYPROJECT.parent / "LICENSE").read_bytes()
