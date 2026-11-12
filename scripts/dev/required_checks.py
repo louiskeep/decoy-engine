@@ -10,17 +10,19 @@ The required list (`ci/required-jobs.toml`) and the workflows are read with `git
 at the `main` sha the API reports, never from the working tree, so a branch cannot edit its own
 list. `origin/main` is fetched and must equal that sha, else exit 2 ("stale origin/main").
 
-- `contexts`: the merge tier's GitHub check names as a JSON list, for branch protection. A job is
-  named by its literal `name` or its key; a matrix job gets one name per leg, `key (v1, v2)`, in axis
-  order. Supported matrix shapes: list axes, plus `include` entries that only add keys to existing
-  legs. An `exclude`, an `include` that adds a leg or a templated `name` exits 2 naming the job.
+- `contexts`: the merge tier's GitHub check names as a JSON list, for branch protection. A job
+  is named by its literal `name` or its key; a matrix job gets one name per leg,
+  `key (v1, v2)`, in axis order. Supported matrix shapes: list axes, plus `include` entries that
+  only add keys to existing legs. An `exclude`, an `include` that adds a leg or a templated
+  `name` exits 2 naming the job.
 - `verify --tier merge`: per merge workflow, the newest `pull_request` run on head H has every
   derived name with conclusion `success` (skipped, neutral, cancelled and missing are red) on
-  `run_attempt` 1, unless `--allow-rerun` names the workflow; the reason is printed for the gate log.
-- `verify --tier nightly`: per workflow with a `schedule` trigger on main, the newest `schedule` run
-  is on the main sha, at most 26 hours old, `completed` with conclusion `success`, and has every job
-  the tree derives for that workflow with conclusion `success`. All job pages are read. A job skipped
-  on schedule counts as not green.
+  `run_attempt` 1, unless `--allow-rerun` names the workflow; the reason is printed for the gate
+  log.
+- `verify --tier nightly`: per workflow with a `schedule` trigger on main, the newest `schedule`
+  run is on the main sha, at most 26 hours old, `completed` with conclusion `success`, and has
+  every job the tree derives for that workflow with conclusion `success`. All job pages are read.
+  A job skipped on schedule counts as not green.
 
 Exit 0: everything checks. Exit 1: a red, missing or stale item. Exit 2: usage, derivation or API
 error. An error is never a pass. Output names workflows, jobs and shas only.
@@ -55,6 +57,7 @@ MAX_NIGHTLY_AGE = timedelta(hours=26)
 WORKFLOW_DIR = ".github/workflows/"
 REGISTRY = "ci/required-jobs.toml"
 RUNS = 100
+MAX_LIST_PAGES = 100
 
 Fetch = Callable[[str], Any]
 Git = Callable[[Sequence[str]], str]
@@ -172,33 +175,90 @@ def _newest(runs: list[dict[str, Any]], **want: Any) -> dict[str, Any] | None:
     return max(hits, key=lambda r: r["created_at"], default=None)
 
 
+def _read_listing(
+    fetch: Fetch,
+    page_path: Callable[[int], str],
+    list_field: str,
+    item_fields: dict[str, tuple[type, ...]],
+    *,
+    run_id: int | None = None,
+) -> list[dict[str, Any]]:
+    """Read one strict, finite API listing and cross-check its declared total."""
+
+    def error(message: str) -> CheckError:
+        prefix = f"run {run_id}: " if run_id is not None else ""
+        return CheckError(prefix + message)
+
+    items: list[dict[str, Any]] = []
+    ids: set[int] = set()
+    total: int | None = None
+    for page in range(1, MAX_LIST_PAGES + 1):
+        response = fetch(page_path(page))
+        if type(response) is not dict:
+            raise error(f"listing fields total_count and {list_field} have wrong type")
+        count = response.get("total_count")
+        batch = response.get(list_field)
+        if type(count) is not int:
+            raise error("listing field total_count has wrong type")
+        if type(batch) is not list:
+            raise error(f"listing field {list_field} has wrong type")
+        if total is None:
+            total = count
+        elif count != total:
+            raise error("listing field total_count changed between pages")
+        if not batch:
+            break
+        for item in batch:
+            if type(item) is not dict:
+                raise error(f"listing field {list_field} has a non-mapping item")
+            for field, allowed_types in item_fields.items():
+                if field not in item or type(item[field]) not in allowed_types:
+                    raise error(f"listing field {field} has wrong type")
+            item_id = item["id"]
+            if item_id in ids:
+                raise error("listing field id is not distinct")
+            ids.add(item_id)
+            items.append(item)
+    else:
+        raise error(f"listing exceeded page count {MAX_LIST_PAGES}")
+
+    if total != len(ids):
+        raise error(f"listing read {len(ids)} distinct items against total_count {total}")
+    return items
+
+
+def _runs(repo: str, workflow: str, query: str, fetch: Fetch) -> list[dict[str, Any]]:
+    """Every workflow run page, with the fields consumed by both verification tiers."""
+    fields = {
+        "id": (int,),
+        "event": (str,),
+        "head_sha": (str,),
+        "run_attempt": (int,),
+        "created_at": (str,),
+        "status": (str,),
+        "conclusion": (str, type(None)),
+    }
+    return _read_listing(
+        fetch,
+        lambda page: (
+            f"repos/{repo}/actions/workflows/{workflow}/runs?{query}&per_page={RUNS}&page={page}"
+        ),
+        "workflow_runs",
+        fields,
+    )
+
+
 def _jobs(repo: str, run: dict[str, Any], fetch: Fetch) -> dict[str, list[str | None]]:
     """Every job of the run, all pages; any read that is not exact is an error, never a list."""
-    jobs: list[dict[str, Any]] = []
-    total: int | None = None
-    page = 1
-    while True:
-        resp = fetch(
+    jobs = _read_listing(
+        fetch,
+        lambda page: (
             f"repos/{repo}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100&page={page}"
-        )
-        count, batch = resp.get("total_count"), resp["jobs"]
-        if type(count) is not int:
-            raise CheckError(f"run {run['id']}: job listing has no total_count")
-        total = count if total is None else total
-        if count != total:
-            raise CheckError(f"run {run['id']}: job count moved from {total} to {count} mid-read")
-        jobs += batch
-        if len(jobs) >= total:
-            break
-        if not batch:
-            raise CheckError(f"run {run['id']}: read {len(jobs)} of {total} jobs")
-        page += 1
-    # A low count or a repeated page would otherwise pass as a complete read.
-    ids = {job.get("id") for job in jobs}
-    if len(jobs) != total or len(ids) != len(jobs) or None in ids:
-        raise CheckError(
-            f"run {run['id']}: read {len(jobs)} jobs ({len(ids)} distinct) against a count of {total}"
-        )
+        ),
+        "jobs",
+        {"id": (int,), "name": (str,), "conclusion": (str, type(None))},
+        run_id=run["id"],
+    )
     by_name: dict[str, list[str | None]] = {}
     for job in jobs:
         by_name.setdefault(job["name"], []).append(job["conclusion"])
@@ -211,10 +271,7 @@ def verify_merge(
     """Problems that keep `head` from merging; empty when every merge job is green first time."""
     problems = []
     for wf, names in merge_contexts(tree.required, tree.workflows).items():
-        runs = fetch(
-            f"repos/{repo}/actions/workflows/{wf}/runs"
-            f"?event=pull_request&head_sha={head}&per_page={RUNS}"
-        )["workflow_runs"]
+        runs = _runs(repo, wf, f"event=pull_request&head_sha={head}", fetch)
         run = _newest(runs, event="pull_request", head_sha=head)
         if run is None:
             problems.append(f"{wf}: no pull_request run on {head}")
@@ -234,14 +291,12 @@ def verify_merge(
 
 
 def verify_nightly(repo: str, tree: MainTree, fetch: Fetch, now: datetime) -> list[str]:
-    """Problems with last night's schedule runs on the main tip; empty when all are fresh and green."""
+    """Problems with last night's runs; empty when all are fresh and green on the main tip."""
     problems = []
     for wf, doc in sorted(tree.workflows.items()):
         if "schedule" not in workflow_events(doc):
             continue
-        runs = fetch(f"repos/{repo}/actions/workflows/{wf}/runs?event=schedule&per_page={RUNS}")[
-            "workflow_runs"
-        ]
+        runs = _runs(repo, wf, "event=schedule", fetch)
         run = _newest(runs, event="schedule")
         if run is None or run["head_sha"] != tree.sha:
             problems.append(f"{wf}: no fresh run on the main sha")
@@ -348,7 +403,10 @@ def main(
     except CheckError as e:
         print(f"required_checks: {e}", file=sys.stderr)
     except Exception as e:
-        print(f"required_checks: {type(e).__name__} while reading CI state", file=sys.stderr)
+        print(
+            f"required_checks: {type(e).__name__} while reading CI state",
+            file=sys.stderr,
+        )
     return 2
 
 

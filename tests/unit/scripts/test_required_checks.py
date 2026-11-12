@@ -6,8 +6,11 @@ git serves is the real `ci/` registry and workflows, which is also the AT-20 fix
 
 from __future__ import annotations
 
+import ast
+import inspect
 import json
 import re
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -94,6 +97,8 @@ class FakeGitHub:
         self.main = MAIN
         self.error: Exception | None = None
         self.job_pages: list[int] = []
+        self.job_requests: list[tuple[int, int]] = []
+        self.response_transform: Callable[[str, Any], Any] | None = None
         self._next = 1
 
     def add(
@@ -133,17 +138,29 @@ class FakeGitHub:
             return {"commit": {"sha": self.main}}
         for wf, runs in self.runs.items():
             if path.startswith(f"repos/{REPO}/actions/workflows/{wf}/runs?"):
-                return {"workflow_runs": runs}
+                qs = parse_qs(urlparse(path).query)
+                page, size = int(qs.get("page", ["1"])[0]), int(qs["per_page"][0])
+                out = {
+                    "total_count": len(runs),
+                    "workflow_runs": runs[(page - 1) * size : page * size],
+                }
+                return self.response_transform(path, out) if self.response_transform else out
         for rid, jobs in self.jobs.items():
             if path.startswith(f"repos/{REPO}/actions/runs/{rid}/jobs"):
                 qs = parse_qs(urlparse(path).query)
                 page, size = int(qs.get("page", ["1"])[0]), int(qs["per_page"][0])
                 self.job_pages.append(page)
+                self.job_requests.append((rid, page))
                 for i, job in enumerate(jobs):
                     job.setdefault("id", rid * 10_000 + i)
-                return {"total_count": len(jobs), "jobs": jobs[(page - 1) * size : page * size]}
+                out = {
+                    "total_count": len(jobs),
+                    "jobs": jobs[(page - 1) * size : page * size],
+                }
+                return self.response_transform(path, out) if self.response_transform else out
         if "/actions/workflows/" in path and path.split("?")[0].endswith("/runs"):
-            return {"workflow_runs": []}
+            out = {"total_count": 0, "workflow_runs": []}
+            return self.response_transform(path, out) if self.response_transform else out
         raise AssertionError(f"unexpected API path {path}")
 
 
@@ -197,7 +214,10 @@ def matrix_job(**strategy: Any) -> dict[str, Any]:
         (matrix_job(v=["1", "2"], exclude=[{"v": "1"}]), "exclude"),
         (matrix_job(v=["1", "2"], include=[{"v": "3"}]), "adds a leg"),
         (matrix_job(include=[{"v": "3"}]), "adds a leg"),
-        ({"name": "x ${{ matrix.v }}", "strategy": {"matrix": {"v": ["1"]}}}, "templated"),
+        (
+            {"name": "x ${{ matrix.v }}", "strategy": {"matrix": {"v": ["1"]}}},
+            "templated",
+        ),
         (matrix_job(v="${{ fromJSON(needs.a.outputs.v) }}"), "list"),
     ],
 )
@@ -212,7 +232,9 @@ def test_include_that_only_adds_keys_keeps_the_names() -> None:
     assert rc.job_check_names("j", job) == ["j (1)", "j (2)"]
 
 
-def test_derivation_error_exits_two_with_the_job(capsys: pytest.CaptureFixture[str]) -> None:
+def test_derivation_error_exits_two_with_the_job(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     class Git(FakeGit):
         def __call__(self, args: Any) -> str:
             argv = list(args)
@@ -226,7 +248,9 @@ def test_derivation_error_exits_two_with_the_job(capsys: pytest.CaptureFixture[s
     assert "companion-wheel-macos" in capsys.readouterr().err
 
 
-def test_contexts_prints_the_merge_tier_as_json(capsys: pytest.CaptureFixture[str]) -> None:
+def test_contexts_prints_the_merge_tier_as_json(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     assert run_main(["contexts", "--ref", MAIN], FakeGitHub()) == 0
     out = capsys.readouterr().out
     got = json.loads(out)
@@ -237,7 +261,9 @@ def test_contexts_prints_the_merge_tier_as_json(capsys: pytest.CaptureFixture[st
 # --- AT-21: verify --tier merge -------------------------------------------------------------
 
 
-def test_all_green_exits_zero_and_prints_the_main_sha(capsys: pytest.CaptureFixture[str]) -> None:
+def test_all_green_exits_zero_and_prints_the_main_sha(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     assert verify(green_pr()) == 0
     assert MAIN in capsys.readouterr().out
 
@@ -266,7 +292,13 @@ def test_a_missing_name_is_red() -> None:
 
 def test_a_missing_matrix_leg_is_red() -> None:
     assert (
-        verify(drop(green_pr(), "native-companion.yml", "companion-wheel-linux (3.11, aarch64)"))
+        verify(
+            drop(
+                green_pr(),
+                "native-companion.yml",
+                "companion-wheel-linux (3.11, aarch64)",
+            )
+        )
         == 1
     )
 
@@ -298,7 +330,9 @@ def test_newest_run_decides() -> None:
     assert verify(gh2) == 0
 
 
-def test_second_attempt_is_red_unless_allowed(capsys: pytest.CaptureFixture[str]) -> None:
+def test_second_attempt_is_red_unless_allowed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     gh = green_pr()
     gh.runs["ci.yml"][0]["run_attempt"] = 2
     assert verify(gh) == 1
@@ -318,10 +352,13 @@ def test_api_error_is_never_a_pass() -> None:
     assert verify(gh) == 2
 
 
-def test_unexpected_response_shape_exits_two() -> None:
+def test_unexpected_response_shape_exits_two(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     gh = green_pr()
     gh.jobs[1] = [{"conclusion": "success"}]  # no name
     assert verify(gh) == 2
+    assert "tier green" not in capsys.readouterr().out
 
 
 def test_list_comes_from_the_main_sha_not_the_working_tree(
@@ -449,6 +486,271 @@ def test_many_green_jobs_across_pages_pass() -> None:
     assert 2 in gh.job_pages
 
 
+@pytest.mark.parametrize(("size", "expected"), [(0, 1), (100, 0), (101, 0), (200, 0)])
+def test_legitimate_job_listing_sizes_end_on_an_empty_probe(
+    size: int, expected: int, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gh = nightly()
+    rid = gh.runs["security.yml"][0]["id"]
+    required = gh.jobs[rid]
+    gh.jobs[rid] = (
+        required + [{"name": f"extra-{i}", "conclusion": "success"} for i in range(size)]
+    )[:size]
+
+    assert run_nightly(gh) == expected
+    empty_probe = max(1, (size + 99) // 100 + 1)
+    assert (rid, empty_probe) in gh.job_requests
+    assert "required_checks:" not in capsys.readouterr().err
+
+
+def _job_contract_transform(case: str) -> Callable[[str, Any], Any]:
+    first_page: list[dict[str, Any]] = []
+
+    def transform(path: str, out: Any) -> Any:
+        nonlocal first_page
+        if "/jobs" not in path:
+            return out
+        page = int(parse_qs(urlparse(path).query).get("page", ["1"])[0])
+        if case == "response_not_mapping":
+            return []
+        if case == "false_count_100":
+            out["total_count"] = 100
+        elif case == "low_count":
+            out["total_count"] -= 1
+        elif case == "high_count":
+            out["total_count"] += 1
+        elif case == "jobs_not_list":
+            out["jobs"] = {}
+        elif case == "job_not_mapping" and out["jobs"]:
+            out["jobs"][0] = []
+        elif case == "count_string":
+            out["total_count"] = "101"
+        elif case == "count_bool":
+            out["total_count"] = True
+        elif case == "count_missing":
+            out.pop("total_count")
+        elif case == "id_missing" and out["jobs"]:
+            out["jobs"][0].pop("id")
+        elif case == "id_string" and out["jobs"]:
+            out["jobs"][0]["id"] = "1"
+        elif case == "id_bool" and out["jobs"]:
+            out["jobs"][0]["id"] = True
+        elif case == "name_not_string" and out["jobs"]:
+            out["jobs"][0]["name"] = 1
+        elif case == "conclusion_wrong_type" and out["jobs"]:
+            out["jobs"][0]["conclusion"] = 1
+        elif case == "moving_count" and page == 2:
+            out["total_count"] += 1
+        elif case == "empty_before_total" and page == 1:
+            out["jobs"] = []
+        elif case == "repeated_page":
+            if page == 1:
+                first_page = [dict(job) for job in out["jobs"]]
+            elif page == 2:
+                out["jobs"] = [dict(job) for job in first_page]
+        elif case == "duplicate_across_pages" and page == 2 and out["jobs"]:
+            rid = int(path.split("/runs/", 1)[1].split("/", 1)[0])
+            out["jobs"][0]["id"] = rid * 10_000
+        return out
+
+    return transform
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "false_count_100",
+        "low_count",
+        "high_count",
+        "response_not_mapping",
+        "jobs_not_list",
+        "job_not_mapping",
+        "count_string",
+        "count_bool",
+        "count_missing",
+        "id_missing",
+        "id_string",
+        "id_bool",
+        "name_not_string",
+        "conclusion_wrong_type",
+        "moving_count",
+        "empty_before_total",
+        "repeated_page",
+        "duplicate_across_pages",
+    ],
+)
+def test_job_listing_contract_errors_exit_two_without_green(
+    case: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gh = nightly()
+    for jobs in gh.jobs.values():
+        jobs += [{"name": f"extra-{i}", "conclusion": "success"} for i in range(101 - len(jobs))]
+    gh.response_transform = _job_contract_transform(case)
+
+    assert run_nightly(gh) == 2
+    cap = capsys.readouterr()
+    assert "tier green" not in cap.out
+    assert "tier green" not in cap.err
+
+
+@pytest.mark.parametrize(
+    ("case", "message"),
+    [
+        ("list_missing", "listing field jobs has wrong type"),
+        ("count_true", "listing field total_count has wrong type"),
+        ("id_twice", "listing field id is not distinct"),
+    ],
+)
+def test_each_listing_check_refuses_on_its_own(
+    case: str, message: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Each listing agrees with itself in every other respect, so only the named check can
+    refuse it. The message ends there: it repeats no value from the response."""
+
+    def transform(path: str, out: Any) -> Any:
+        if "/jobs" not in path:
+            return out
+        page = int(parse_qs(urlparse(path).query).get("page", ["1"])[0])
+        one = out["jobs"][:1] if page == 1 else []
+        if case == "list_missing":
+            return {"total_count": 0}
+        if case == "count_true":
+            return {"total_count": True, "jobs": one}
+        return {"total_count": 1, "jobs": one + [dict(job) for job in one]}
+
+    gh = nightly()
+    gh.response_transform = transform
+    assert run_nightly(gh) == 2
+    cap = capsys.readouterr()
+    assert cap.err.rstrip().endswith(message)
+    assert "tier green" not in cap.out
+
+
+@pytest.mark.parametrize(
+    ("field", "bad"),
+    [
+        ("id", "bad"),
+        ("event", 1),
+        ("head_sha", 1),
+        ("run_attempt", True),
+        ("created_at", 1),
+        ("status", None),
+        ("conclusion", 1),
+    ],
+)
+def test_workflow_run_fields_are_strict(
+    field: str, bad: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gh = nightly()
+
+    def transform(path: str, out: Any) -> Any:
+        if "/actions/workflows/" in path and out["workflow_runs"]:
+            out["workflow_runs"][0][field] = bad
+        return out
+
+    gh.response_transform = transform
+    assert run_nightly(gh) == 2
+    # A run listing that fails its contract stops the read before any job listing.
+    assert gh.job_pages == []
+    cap = capsys.readouterr()
+    assert f"listing field {field} has wrong type" in cap.err
+    assert "tier green" not in cap.out
+
+
+def test_non_list_workflow_runs_exit_two_without_green(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    gh = nightly()
+
+    def transform(path: str, out: Any) -> Any:
+        if "/actions/workflows/" in path:
+            out["workflow_runs"] = {}
+        return out
+
+    gh.response_transform = transform
+    assert run_nightly(gh) == 2
+    assert "tier green" not in capsys.readouterr().out
+
+
+def test_false_workflow_run_count_cannot_hide_page_two(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    gh = nightly()
+    for _ in range(100):
+        gh.add("ci.yml", scheduled_names("ci.yml"), event="schedule", sha=MAIN)
+
+    def transform(path: str, out: Any) -> Any:
+        if "/actions/workflows/ci.yml/runs?" in path:
+            out["total_count"] = 100
+        return out
+
+    gh.response_transform = transform
+    assert run_nightly(gh) == 2
+    assert "tier green" not in capsys.readouterr().out
+
+
+def test_listing_page_cap_is_an_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gh = nightly()
+    monkeypatch.setattr(rc, "MAX_LIST_PAGES", 3)
+
+    def transform(path: str, out: Any) -> Any:
+        if "/jobs" in path:
+            page = int(parse_qs(urlparse(path).query)["page"][0])
+            out = {
+                "total_count": 3,
+                "jobs": [{"id": page, "name": "job", "conclusion": "success"}],
+            }
+        return out
+
+    gh.response_transform = transform
+    assert run_nightly(gh) == 2
+    assert "tier green" not in capsys.readouterr().out
+
+
+def test_listing_errors_do_not_echo_values_or_keep_exception_context() -> None:
+    class Leaky:
+        def __str__(self) -> str:
+            return "secret-value"
+
+        __repr__ = __str__
+
+    def fetch(_path: str) -> Any:
+        return {
+            "total_count": 1,
+            "jobs": [{"id": 1, "name": Leaky(), "conclusion": None}],
+        }
+
+    with pytest.raises(rc.CheckError) as info:
+        rc._read_listing(
+            fetch,
+            lambda page: f"page={page}",
+            "jobs",
+            {"id": (int,), "name": (str,), "conclusion": (str, type(None))},
+            run_id=7,
+        )
+    assert "name" in str(info.value)
+    assert "secret-value" not in str(info.value)
+    assert info.value.__cause__ is None and info.value.__context__ is None
+
+
+def test_api_fetch_sites_are_branch_read_and_listing_choke_point() -> None:
+    tree = ast.parse(inspect.getsource(rc))
+    parents: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if any(
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "fetch"
+            for call in ast.walk(node)
+        ):
+            parents.append(node.name)
+    assert sorted(parents) == ["_read_listing", "main_tree"]
+
+
 def test_a_short_job_read_is_an_error_not_a_pass() -> None:
     class Short(FakeGitHub):
         def __call__(self, path: str) -> Any:
@@ -489,10 +791,11 @@ def test_a_repeated_job_page_is_an_error_not_a_pass(claimed: int) -> None:
 
     class Repeat(FakeGitHub):
         def __call__(self, path: str) -> Any:
+            if "/jobs" not in path:
+                return super().__call__(path)
+            asked.append(path.rsplit("=", 1)[1])
             out = super().__call__(re.sub(r"page=\d+$", "page=1", path))
-            if "/jobs" in path:
-                asked.append(path.rsplit("=", 1)[1])
-                out["total_count"] = claimed
+            out["total_count"] = claimed
             return out
 
     assert run_nightly(_nightly_with(Repeat, extra=150)) == 2
@@ -517,7 +820,10 @@ def test_a_job_without_an_id_is_an_error() -> None:
             if "/jobs" in path:
                 # One job, so the distinct-id count alone cannot catch the missing id.
                 first = out["jobs"][:1]
-                out = {"total_count": 1, "jobs": [{k: v for k, v in first[0].items() if k != "id"}]}
+                out = {
+                    "total_count": 1,
+                    "jobs": [{k: v for k, v in first[0].items() if k != "id"}],
+                }
             return out
 
     assert run_nightly(_nightly_with(NoId)) == 2
