@@ -38,6 +38,13 @@ Date: 2026-11-12. Branch: `feat/scan-ml-m2`, engine PR #492.
   where `requirements-certified.txt` gains joblib 1.5.3 and threadpoolctl 3.6.0 and a real install
   and fit happen.
 
+## Follow-ups at merge
+
+- The `base-install` row in `ci/required-jobs.toml` lands with whichever of PR #491 and PR #492
+  merges second.
+- PR #491's `ml` reason text in `required-jobs.toml` ("importorskip the ml extra") is stale after
+  this slice and gets corrected in that same change.
+
 ## For C1 and the platform image
 
 The Linux lightgbm wheel needs the system `libgomp.so.1` and does not bundle it. A slim base image

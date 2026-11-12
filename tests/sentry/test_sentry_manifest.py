@@ -43,7 +43,6 @@ SENTRIES = (
     "tests/sentry/test_locator_hygiene.py",
     "tests/sentry/test_log_interpolation.py",
     "tests/sentry/test_methodology_citations.py",
-    "tests/sentry/test_ml_base_install.py",
     "tests/sentry/test_module_size.py",
     "tests/sentry/test_mypy_override_targets.py",
     "tests/sentry/test_numeric_reader_registry.py",
@@ -94,6 +93,7 @@ SENTRIES = (
     "tests/sentry/profiling/test_snapshot_value_registry.py",
     "tests/sentry/source_config/test_declaration_gate.py",
     "tests/sentry/source_config/test_source_dialect_choke_point.py",
+    "tests/sentry/tooling/test_ml_base_install.py",
     "tests/sentry/tooling/test_pytest_timeout.py",
     # Named sentries that live outside tests/sentry/.
     "tests/secret_providers/test_leak_sentry.py",

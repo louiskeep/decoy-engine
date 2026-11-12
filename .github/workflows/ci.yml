@@ -180,6 +180,9 @@ jobs:
   ml-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # An unloadable stack (no libgomp1, broken wheel) fails the ml tests instead of skipping.
+      DECOY_REQUIRE_ML: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/lock-env
