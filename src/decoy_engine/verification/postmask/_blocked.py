@@ -17,6 +17,7 @@ from typing import Any, NamedTuple
 from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
 from decoy_engine.reasons import ReasonRef, reason_ref_payload
+from decoy_engine.verification.postmask.types import SCHEMA_VERSION
 
 __all__ = [
     "PostScanBlockedError",
@@ -53,6 +54,9 @@ _CHECK_ERROR, _KEY_TYPE_MISMATCH, _FINDING_BLOCKED = (
 _ORPHANS = _P.FOREIGN_KEY_ORPHANS_INTRODUCED.spec.ref
 _FALLBACK_SUMMARY = "The post-scan integrity check blocked the run."
 _MAX_SPOTS = 3
+_SEVERITIES = frozenset({"info", "warning", "fail", "error"})
+# A report that cannot be read is a check that could not run, so it blocks.
+_UNREADABLE = object()
 
 
 class SeverityCounts(NamedTuple):
@@ -85,10 +89,17 @@ class PostScanVerdict:
         }
 
 
-def _rows(report: Mapping[str, Any], section: str) -> Iterator[Mapping[str, Any]]:
-    for row in report.get(section) or ():
-        if isinstance(row, Mapping):
-            yield row
+def _rows(report: Mapping[str, Any], section: str) -> Iterator[Mapping[str, Any] | object]:
+    """The rows of one section; a present section that is not a list, or a row that is not a
+    mapping, comes out as `_UNREADABLE` so the caller can block on it."""
+    rows = report.get(section)
+    if rows is None:
+        return
+    if not isinstance(rows, (list, tuple)):
+        yield _UNREADABLE
+        return
+    for row in rows:
+        yield row if isinstance(row, Mapping) else _UNREADABLE
 
 
 def _key_refs(key: Mapping[str, Any]) -> Iterator[tuple[ReasonRef, bool]]:
@@ -96,10 +107,17 @@ def _key_refs(key: Mapping[str, Any]) -> Iterator[tuple[ReasonRef, bool]]:
     baseline. A `check_error` blocks unless it is the source side's; a `key_type_mismatch` blocks
     unless the source types were not comparable either."""
     baseline = key.get("baseline")
-    for payload in key.get("codes") or ():
+    payloads = key.get("codes") or ()
+    if not isinstance(payloads, (list, tuple)):
+        yield _CHECK_ERROR, True
+        return
+    for payload in payloads:
+        if not isinstance(payload, Mapping):
+            yield _CHECK_ERROR, True
+            continue
         ref = ReasonRef(str(payload.get("namespace")), str(payload.get("code")))
         if ref == _CHECK_ERROR:
-            yield ref, baseline != "error"
+            yield ref, baseline != "error" or key.get("status") == "error"
         elif ref == _KEY_TYPE_MISMATCH:
             yield ref, baseline != "key_type_mismatch"
         else:
@@ -111,19 +129,27 @@ def post_scan_verdict(report: Mapping[str, Any], *, ner_blocked: bool = False) -
     blocked: set[ReasonRef] = set()
     warned: set[ReasonRef] = set()
     for key in _rows(report, "keys"):
+        if not isinstance(key, Mapping):
+            blocked.add(_CHECK_ERROR)
+            continue
         for ref, blocks in _key_refs(key):
             (blocked if blocks else warned).add(ref)
     keyed = bool(blocked)
+    version = report.get("schema_version")
+    if not isinstance(version, str) or version.split(".")[0] != SCHEMA_VERSION.split(".")[0]:
+        blocked.add(_CHECK_ERROR)
     for section in ("residual_pii", "policy_validation"):
         for finding in _rows(report, section):
-            severity = finding.get("severity")
+            severity = finding.get("severity") if isinstance(finding, Mapping) else None
             if severity == "fail":
                 blocked.add(_FINDING_BLOCKED)
-            elif severity == "error":
+            elif severity not in _SEVERITIES or severity == "error":
                 blocked.add(_CHECK_ERROR)
     for finding in _rows(report, "fk_preservation"):
-        severity = finding.get("severity")
-        if not keyed and severity == "fail":
+        severity = finding.get("severity") if isinstance(finding, Mapping) else None
+        if severity not in _SEVERITIES:
+            blocked.add(_CHECK_ERROR)
+        elif not keyed and severity == "fail":
             blocked.add(_ORPHANS)
         elif not keyed and severity == "error":
             blocked.add(_CHECK_ERROR)
@@ -146,7 +172,7 @@ def block_location(report: Mapping[str, Any]) -> str:
     spots = []
     for section, fixed in (("residual_pii", None), ("policy_validation", "policy_validation")):
         for f in _rows(report, section):
-            if f.get("severity") == "fail":
+            if isinstance(f, Mapping) and f.get("severity") == "fail":
                 spots.append(
                     f"{f.get('table')}.{f.get('column')} ({fixed or f.get('detector_id')})"
                 )
@@ -172,7 +198,7 @@ class PostScanBlockedError(DecoyError):
             if first and reasons.is_registered(first.code, (first.namespace,))
             else _FALLBACK_SUMMARY
         )
-        where = block_location(report)
+        where = block_location(report) if _FINDING_BLOCKED in self.verdict.codes else ""
         self.message = f"{summary} At {where}." if where else summary
         super().__init__(self.message)
 
