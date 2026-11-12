@@ -247,7 +247,6 @@ def cfg_live_faker() -> dict[str, Any]:
                         "faker_type": "pyint",
                         "faker_kwargs": {"min_value": 5, "max_value": 9},
                     },
-                    {"name": "fallback", "type": "faker", "faker_type": "not_a_real_provider"},
                     {"name": "opt_out", "type": "faker", "faker_type": "company", "pooled": False},
                 ],
             )

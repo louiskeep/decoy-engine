@@ -22,6 +22,7 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine.generation._reproducibility import build_envelope, reproducibility_exclusions
+from tests._lenient_checks import lenient_generate_checks_lifted
 from tests.parity import _f0_fixtures as fx
 from tests.parity import _fr0_semantic_gate as gate
 from tests.parity._f0_canonical import table_fingerprint
@@ -40,7 +41,7 @@ REFROZEN: dict[str, dict[str, Any]] = {
     },
     "live_faker": {
         "reason": (
-            "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row"
+            "schema only: unformatted sequence and numeric faker columns now declare int64 instead of string; every cell prints as the same text and every null stays at the same row; 2026-11-10: the `fallback` column (an unknown faker type, now refused at compile) was removed from the fixture"
         ),
         "previous_tables": {
             "live": "8aba04ab3f97f3d163a41609c45e4cad07b93e724a9fddf4b5d199240a2e83b7"
@@ -114,7 +115,7 @@ def g_pooled(t: dict[str, pa.Table]) -> None:
 
 
 def g_live_faker(t: dict[str, pa.Table]) -> None:
-    for name in ("city", "email", "de_name", "fallback", "opt_out"):
+    for name in ("city", "email", "de_name", "opt_out"):
         assert all(isinstance(v, str) and v for v in _col(t, "live", name))
     assert all("@" in v for v in _col(t, "live", "email"))
     assert all(5 <= int(v) <= 9 for v in _col(t, "live", "num"))
@@ -323,4 +324,7 @@ def build_manifest() -> dict[str, Any]:
 
 
 if __name__ == "__main__":
-    print(json.dumps(build_manifest(), indent=2, sort_keys=True))
+    # The goldens pin runtime output for fixtures the strict plan check refuses (`formula`,
+    # `referenced_formula`), so lift the same checks tests/parity/conftest.py lifts.
+    with lenient_generate_checks_lifted():
+        print(json.dumps(build_manifest(), indent=2, sort_keys=True))

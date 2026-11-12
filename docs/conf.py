@@ -182,6 +182,11 @@ nitpick_ignore = [
     ("py:class", "faker.Faker"),
     ("py:class", "numpy.random.Generator"),
     ("py:class", "numpy.ndarray"),
+    # numpy.dtype and numpy.float64 come from the np.ndarray[Any,
+    # np.dtype[np.float64]] annotations in quality.snapshot; the numpy
+    # inventory does not list them as py:class.
+    ("py:class", "numpy.dtype"),
+    ("py:class", "numpy.float64"),
     ("py:class", "pydantic.BaseModel"),
     ("py:obj", "pydantic.BaseModel"),
     ("py:class", "pydantic.SecretStr"),
@@ -217,6 +222,10 @@ nitpick_ignore = [
     ("py:class", "FrozenValue"),
     ("py:class", "CodeSetConfig"),
     ("py:class", "encrypted"),
+    # Literal aliases (detection.types, profiling.scan_set) that autoapi
+    # renders as classes; their defining pages register no class target.
+    ("py:class", "DetectorSource"),
+    ("py:class", "Strategy"),
     # CI-E1: third-party names the intersphinx inventories do not index as
     # classes (polars lists members, duckdb ships no inventory).
     ("py:class", "polars.LazyFrame"),

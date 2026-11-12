@@ -50,6 +50,7 @@ __all__ = [
     "ORPHAN_FK_VIOLATION",
     "ORPHAN_POLICY_CONFLICT",
     "ORPHAN_REMAP_PARENT_MISSING",
+    "OUTPUT_TYPE_CAST_FAILED",
     "OUT_OF_CORE_BACKEND_UNAVAILABLE",
     "OUT_OF_CORE_BATCH_ROWS_INVALID",
     "OUT_OF_CORE_BUCKET_PERTURB_AUTODETECT_UNSUPPORTED",
@@ -224,6 +225,11 @@ NULL_BEARING_INT_UNSUPPORTED = _d("null_bearing_int_unsupported", "Null bearing 
 ORPHAN_FK_VIOLATION = _d("orphan_fk_violation", "Orphan FK violation.")
 ORPHAN_POLICY_CONFLICT = _d("orphan_policy_conflict", "Orphan policy conflict.")
 ORPHAN_REMAP_PARENT_MISSING = _d("orphan_remap_parent_missing", "Orphan remap parent missing.")
+OUTPUT_TYPE_CAST_FAILED = _d(
+    "output_type_cast_failed",
+    "A generated value could not be cast to its output type.",
+    since="1.23.0",
+)
 OUT_OF_CORE_BACKEND_UNAVAILABLE = _d(
     "out_of_core_backend_unavailable", "Out of core backend unavailable."
 )

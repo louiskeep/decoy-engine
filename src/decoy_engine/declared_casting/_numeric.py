@@ -8,6 +8,10 @@ binary floating point, rounding, ``quantize`` or locale data. Pattern sources: P
 (exact base-10), Arrow ``decimal128`` bounds (precision <= 38), Unicode TR35 (every symbol is
 declared, none is inferred).
 
+``round_to_scale`` is the one exception: generation's explicit rounding of a generated number to
+a declared scale. It runs in its own half-even context because ``_PINNED`` traps ``Inexact`` and
+``Rounded`` (an exact parse must never lose digits), which a quantize would trip.
+
 Lines tagged ``# guard:<name>`` are the load-bearing comparisons; the mutation sentry removes each
 one in turn and the vector battery must notice.
 """
@@ -45,6 +49,33 @@ _PINNED = decimal.Context(
         decimal.DivisionByZero,
     ],
 )
+
+
+_ROUNDING = decimal.Context(
+    prec=80,
+    rounding=decimal.ROUND_HALF_EVEN,
+    Emin=-200,
+    Emax=200,
+    capitals=1,
+    clamp=0,
+    flags=[],
+    traps=[decimal.InvalidOperation, decimal.Overflow, decimal.Underflow],
+)
+
+
+def round_to_scale(value: Decimal, scale: int) -> CastOutcome:
+    """``value`` rounded half-even to ``scale`` places, or a failing outcome (never an exception).
+
+    A non-Decimal, NaN, an infinity, or a value whose digits cannot be held at the scale inside
+    the context's precision is refused. The kernel that parses the result still decides the field
+    precision; this only performs the explicit rounding the exact kernels refuse to do.
+    """
+    if not isinstance(value, Decimal) or not value.is_finite():
+        return fail(_R.DECLARED_DECIMAL_INVALID)
+    try:
+        return succeed(value.quantize(Decimal((0, (1,), -scale)), context=_ROUNDING))
+    except decimal.InvalidOperation:
+        return fail(_R.DECLARED_DECIMAL_OVERFLOW)
 
 
 def scaled(unscaled: int, scale: int, *, negative: bool) -> Decimal:

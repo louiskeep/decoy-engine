@@ -57,15 +57,22 @@ _INTEGER_TYPES = {
 }
 
 
-def arrow_type(model: C.DeclaredColumnContractV1) -> pa.DataType:
-    p = model.parse_format
-    if model.logical_type == "string":
+def arrow_type_for_spec(parse_format: Any) -> pa.DataType:
+    """The Arrow type a validated parse format yields (one mapping for declared and generated cells)."""
+    logical = type(parse_format).logical
+    if logical == "string":
         return pa.string()
-    if model.logical_type == "integer":
-        return _INTEGER_TYPES[(bool(p.signed), p.bit_width)]()
-    if model.logical_type in ("decimal", "currency"):
-        return pa.decimal128(p.precision, p.scale)
+    if logical == "integer":
+        return _INTEGER_TYPES[(bool(parse_format.signed), parse_format.bit_width)]()
+    if logical in ("decimal", "currency"):
+        return pa.decimal128(parse_format.precision, parse_format.scale)
+    if logical == "boolean":
+        return pa.bool_()
     return pa.date32()
+
+
+def arrow_type(model: C.DeclaredColumnContractV1) -> pa.DataType:
+    return arrow_type_for_spec(model.parse_format)
 
 
 @dataclass(frozen=True)

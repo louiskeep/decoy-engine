@@ -475,4 +475,28 @@ def test_joint_cap_codes_are_registered_with_a_pinned_fixture() -> None:
         ("warning", "seed_ignored_with_master_key"),
     ]
     assert pinned["registry_version"] == "1.22.0"
-    assert reasons.REGISTRY_VERSION == "1.22.0"
+    assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 22, 0)
+
+
+GEN_TYPES_FIXTURE = "reason-manifest-v1.23-gen-types.json"
+
+
+def test_gen_types_e2_codes_are_registered_with_a_pinned_fixture() -> None:
+    """GEN-TYPES E2: two output-type codes and the boolean kernel's value failure, all `since` 1.23.0."""
+    expected = [
+        ("config", "generate_output_type_unsupported", "PipelineValidationError"),
+        ("runtime", "declared_boolean_invalid", "decoy_engine.declared_casting"),
+        ("runtime", "output_type_cast_failed", "ExecutionError"),
+    ]
+    for ns, code, owner in expected:
+        spec = reasons.find(ns, code)
+        assert spec is not None
+        assert (spec.owner, spec.since) == (owner, "1.23.0")
+        assert not re.search(r"[{}%]", spec.summary)
+        assert getattr(getattr(reasons, ns), code.upper()) == code
+    pinned = _load(GEN_TYPES_FIXTURE)
+    assert sorted((e["namespace"], e["code"]) for e in pinned["entries"]) == sorted(
+        (n, c) for n, c, _ in expected
+    )
+    assert pinned["registry_version"] == "1.23.0"
+    assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 23, 0)

@@ -246,7 +246,7 @@ def scan_sources(
     a protected directory under `spill_dir` (default: the system temp directory). The tables
     they name must be in `sources` but need not be selected. Nothing is inferred.
     """
-    from decoy_engine import __version__
+    from decoy_engine.release import __version__
 
     if strategy not in ("head", "random", "full"):
         raise PipelineConfigError("strategy must be 'head', 'random' or 'full'")
@@ -349,7 +349,7 @@ def _read_and_profile(
 ) -> TableScan:
     # Imported here because decoy_engine.profile imports this package.
     from decoy_engine import profile as src
-    from decoy_engine.execution import refuse_duplicate_field_names
+    from decoy_engine.execution._guards import refuse_duplicate_field_names
 
     reader = src.build_declared_source(name, descriptor)
     whole = strategy == "full" or sample_rows is None

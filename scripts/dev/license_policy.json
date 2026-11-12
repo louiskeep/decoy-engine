@@ -45,6 +45,6 @@
   },
   "extras": {
     "runtime": ["cloud", "gcs", "geo", "hashicorp-vault", "mimesis", "ml", "ner", "sftp", "vault"],
-    "tooling": ["dev", "docs", "lint", "mutation", "perf", "xdist"]
+    "tooling": ["dev", "docs", "layers", "lint", "mutation", "perf", "xdist"]
   }
 }

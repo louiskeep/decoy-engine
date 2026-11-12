@@ -103,7 +103,7 @@ def profile_source(
     elif not declared.matches(config):
         raise ValueError("profile_source: `declared` was prepared for a different config.")
 
-    from decoy_engine import __version__ as engine_version
+    from decoy_engine.release import __version__ as engine_version
 
     # Q15 fix (Option B, defensive fallback): if the caller did not pass
     # seed=, fall back to the config's global_settings.seed before

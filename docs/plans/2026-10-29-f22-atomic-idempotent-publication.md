@@ -1,4 +1,4 @@
-Status: plan
+Status: superseded (by `docs/plans/2026-10-30-f22-publication-replan.md`; the r5 build of this plan is reference-only at `2fa4f8a5`)
 
 Summary: Complete F22 by binding validated output and evidence into one publication descriptor, recognizing committed retries, and making replacement and protected backup explicit.
 

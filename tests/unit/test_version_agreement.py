@@ -2,8 +2,8 @@
 
 `pyproject.toml` is the one source: it drives the wheel metadata, the lock entry, the SBOM
 root component and the release tag (`scripts/release/cut-release.sh` reads the tag name from
-it). `decoy_engine.__version__` stays a literal on purpose: the platform's install gate
-(`api/engine_compat.py`) compares the imported module's own claim against the dist metadata,
+it). `decoy_engine.__version__` stays a literal on purpose (it lives in `release.py` and the
+root re-exports it): the platform's install gate (`api/engine_compat.py`) compares the imported module's own claim against the dist metadata,
 and a module that read its version from that metadata would make the gate vacuous. So the
 literal, the lock, the installed metadata, the newest dated CHANGELOG section and the
 proof-manifest stamp are held to the pyproject value here instead. The native companion has its own version line; its two
