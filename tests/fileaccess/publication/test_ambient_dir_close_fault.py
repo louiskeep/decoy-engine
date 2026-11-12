@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from decoy_engine.fileaccess import FileRequest, FileRole
-from decoy_engine.fileaccess._local import LocalFileAccess
+from decoy_engine.fileaccess._local import LocalFileAccess, LocalOutputDir
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX directory descriptors")
 
@@ -46,7 +46,7 @@ def _faulty_directory_close(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     return faults
 
 
-def _output_dir(target: Path):  # noqa: ANN202 - the ambient output dir type is internal
+def _output_dir(target: Path) -> LocalOutputDir:
     req = FileRequest(FileRole.TARGET_OUTPUT, "write", str(target), "targets.t.path")
     return LocalFileAccess().output_dir(req)
 
