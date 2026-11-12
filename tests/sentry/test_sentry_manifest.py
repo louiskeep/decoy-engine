@@ -77,6 +77,7 @@ SENTRIES = (
     "tests/sentry/test_source_hygiene.py",
     "tests/sentry/test_subset_inputs.py",
     "tests/sentry/test_support_no_network.py",
+    "tests/sentry/test_table_kind_classifier.py",
     "tests/sentry/test_unified_backend_map.py",
     "tests/sentry/test_validate_no_mutation.py",
     "tests/sentry/test_wave_b_no_registry_version_literal.py",

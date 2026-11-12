@@ -19,6 +19,7 @@ import polars as pl
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine.config import classify_table_kinds
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.fileaccess.adapters import serial
 from decoy_engine.plan._types import PlanRelationship
@@ -251,9 +252,13 @@ def select_subset(
             survivors={name: closure.survivors[name] for name in sorted(scope.tables)},
             counts=counts,
             scope=scope,
-            excluded_edges=(
-                *request.excluded_edges,
-                *(e.edge_id for e in edges if directions[e.edge_id] == "none"),
+            excluded_edges=tuple(
+                sorted(
+                    {
+                        *request.excluded_edges,
+                        *(e.edge_id for e in edges if directions[e.edge_id] == "none"),
+                    }
+                )
             ),
             estimate=plan,
         )
@@ -269,8 +274,7 @@ def subset_request_from_config(config: dict[str, Any]) -> SubsetRequest | None:
     if subset_block is None:
         return None
     # A generate table has no source to read, so an edge touching one cannot be subset.
-    # Mirrors `execution.classify_table_kinds`, which this lower tier cannot import.
-    generated = {t["name"] for t in config.get("tables", []) if t.get("generate_columns")}
+    generated = {n for n, kind in classify_table_kinds(config).items() if kind == "generate"}
     relationships: list[PlanRelationship] = []
     excluded: list[str] = []
     for rel in relationships_from_config(config):
@@ -347,6 +351,8 @@ def subset_inputs_from_config(
             )
         sources[name] = SubsetSource(path=src["path"], format=src["format"])
 
-    # The block was checked above, so the request is never None.
+    # The block was checked above, so the request is never None. Relationships stay unfiltered:
+    # the generate-table filter belongs to the run path, and standalone subsetting refuses an
+    # edge that touches a generate table in preflight.
     request = cast(SubsetRequest, subset_request_from_config(config))
-    return sources, request.relationships, request.seeds, request.policy
+    return sources, relationships_from_config(config), request.seeds, request.policy

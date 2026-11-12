@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from decoy_engine.subset._inputs import (
     LazyInput,
     ParquetPathInput,
     ResidentInput,
+    TableInput,
     as_input,
 )
 from decoy_engine.subset._keys import RI
@@ -40,7 +42,7 @@ def test_resident_key_frame_numbers_rows_from_zero_and_keeps_requested_order() -
 
 
 def test_no_columns_gives_an_index_only_frame_for_every_kind(tmp_path: Path) -> None:
-    kinds = [
+    kinds: list[TableInput] = [
         ResidentInput("parent", pa.table(PARENT)),
         LazyInput("parent", csv_source(tmp_path, "parent", PARENT), 2),
         LazyInput("parent", parquet_source(tmp_path, "parent", PARENT), 2),
@@ -49,7 +51,7 @@ def test_no_columns_gives_an_index_only_frame_for_every_kind(tmp_path: Path) -> 
         frame = kind.key_frame([])
         assert frame.columns == [RI]
         assert frame[RI].to_list() == [0, 1, 2, 3, 4]
-        assert kind.num_rows() == 5
+        assert kind.num_rows == 5
 
 
 def test_lazy_key_frame_reads_only_the_named_columns_across_batches(tmp_path: Path) -> None:
@@ -64,14 +66,14 @@ def test_lazy_key_frame_reads_only_the_named_columns_across_batches(tmp_path: Pa
 def test_schemas_are_the_real_types(tmp_path: Path) -> None:
     csv = LazyInput("parent", csv_source(tmp_path, "parent", PARENT), 2)
     res = ResidentInput("parent", pa.table({"k": pa.array([1], pa.int64())}))
-    assert csv.polars_schema()["id"] == pl.String
-    assert res.polars_schema()["k"] == pl.Int64
+    assert csv.polars_schema["id"] == pl.String
+    assert res.polars_schema["k"] == pl.Int64
 
 
 def test_parquet_path_input_reads_keys_and_filters_rows(tmp_path: Path) -> None:
     path = parquet_source(tmp_path, "parent", PARENT).path
     inp = ParquetPathInput("parent", SubsetSource(path=str(path), format="parquet"))
-    assert inp.num_rows() == 5
+    assert inp.num_rows == 5
     assert inp.key_frame(["id"])["id"].to_list() == PARENT["id"]
     assert inp.filtered_frame([1, 3])["id"].to_list() == ["b", "d"]
 
@@ -111,3 +113,18 @@ def test_zero_row_lazy_file_gives_a_typed_empty_key_frame(tmp_path: Path) -> Non
         assert frame.columns == [RI, "x", "id"]
         assert frame.height == 0
         assert frame.schema["id"] == dtype
+
+
+def test_a_custom_table_input_passes_through_as_input_unchanged() -> None:
+    class Custom:
+        name = "custom"
+        polars_schema = pl.Schema({"k": pl.Int64})
+        num_rows = 3
+
+        def key_frame(self, columns: Sequence[str]) -> pl.DataFrame:
+            return pl.DataFrame({"k": [1, 2, 3]})
+
+    custom = Custom()
+    assert isinstance(custom, TableInput)
+    assert as_input("custom", custom) is custom
+    assert not isinstance(object(), TableInput)

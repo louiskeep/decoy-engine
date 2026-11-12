@@ -127,7 +127,7 @@ def run_subset_preflight(
         )
 
     inputs = {table: as_input(table, sources[table]) for table in tables_referenced}
-    schemas: dict[str, pl.Schema] = {t: inp.polars_schema() for t, inp in inputs.items()}
+    schemas: dict[str, pl.Schema] = {t: inp.polars_schema for t, inp in inputs.items()}
 
     # 5.1: dangling column / duplicate column / reserved column, per edge end.
     schema_ok_edges: list[SubsetEdge] = []

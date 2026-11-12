@@ -9,7 +9,7 @@ classes hold the only path-based Parquet reads in the package (`tests/sentry/tes
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 import polars as pl
 import pyarrow as pa
@@ -24,16 +24,19 @@ from decoy_engine.subset._types import SubsetSource
 _BATCH_ROWS = 65_536
 
 
+@runtime_checkable
 class TableInput(Protocol):
     name: str
 
+    @property
     def polars_schema(self) -> pl.Schema: ...
 
+    @property
     def num_rows(self) -> int: ...
 
     def key_frame(self, columns: Sequence[str]) -> pl.DataFrame:
         """The `RI` row-index column plus `columns`, in the order given. No columns: an
-        `RI`-only frame of `num_rows()` rows."""
+        `RI`-only frame of `num_rows` rows."""
         ...
 
 
@@ -50,15 +53,17 @@ class ResidentInput:
         self.name = name
         self._table = table
 
+    @property
     def polars_schema(self) -> pl.Schema:
         return pl.from_arrow(self._table.slice(0, 0)).schema  # type: ignore[union-attr]
 
+    @property
     def num_rows(self) -> int:
         return self._table.num_rows
 
     def key_frame(self, columns: Sequence[str]) -> pl.DataFrame:
         if not columns:
-            return _index_only(self.num_rows())
+            return _index_only(self.num_rows)
         return _with_index(pl.from_arrow(self._table.select(list(columns))))  # type: ignore[arg-type]
 
 
@@ -70,15 +75,17 @@ class LazyInput:
         self._source = source
         self._batch_rows = batch_rows
 
+    @property
     def polars_schema(self) -> pl.Schema:
         return pl.from_arrow(self._source.schema.empty_table()).schema  # type: ignore[union-attr]
 
+    @property
     def num_rows(self) -> int:
         return self._source.num_rows
 
     def key_frame(self, columns: Sequence[str]) -> pl.DataFrame:
         if not columns:
-            return _index_only(self.num_rows())
+            return _index_only(self.num_rows)
         cols = list(columns)
         batches = list(self._source.iter_batches(self._batch_rows, columns=cols))
         schema = pa.schema([self._source.schema.field(c) for c in cols])
@@ -101,10 +108,12 @@ class ParquetPathInput:
             )
         )
 
+    @property
     def polars_schema(self) -> pl.Schema:
         with self._open() as handle:
             return polars_adapter.collect_schema(handle, polars_adapter.scan_parquet(handle))
 
+    @property
     def num_rows(self) -> int:
         with self._open() as handle:
             counted = polars_adapter.collect(
@@ -129,6 +138,8 @@ class ParquetPathInput:
 def as_input(name: str, value: object) -> TableInput:
     """Wrap one supplied table; an input already wrapped passes through unchanged. Anything
     but the known kinds is a programming error."""
+    # The concrete kinds go first: before Python 3.12 a protocol isinstance reads every property,
+    # and `ParquetPathInput`'s properties open the file.
     if isinstance(value, (ResidentInput, LazyInput, ParquetPathInput)):
         return value
     if isinstance(value, pa.Table):
@@ -137,4 +148,6 @@ def as_input(name: str, value: object) -> TableInput:
         return LazyInput(name, value)
     if isinstance(value, SubsetSource):
         return ParquetPathInput(name, value)
+    if isinstance(value, TableInput):
+        return value
     raise TypeError(f"table {name!r}: unsupported subset input type {type(value).__name__}")

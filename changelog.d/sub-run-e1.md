@@ -6,4 +6,5 @@ lazy sources (`LazySource`, including CSV) and returns a `SubsetSelection`, plus
 `pa.Table` and `LazySource` values. A table no seed reaches passes through whole. Keys keep their
 real types, so a text CSV key against an integer Parquet key is still refused with
 `subset.subset_relationship_type_mismatch`. `plan_subset`, `run_subset` and the `decoy subset`
-output are unchanged, and no reason code is added.
+output are unchanged: standalone subsetting still refuses a relationship that touches a
+generate table, and no reason code is added.
