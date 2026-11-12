@@ -7,9 +7,11 @@ from pathlib import Path
 
 import polars as pl
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.profile import LazySource
+from decoy_engine.profile._lazy_csv import CsvLazySource
 from decoy_engine.subset import SubsetSource
 from decoy_engine.subset._inputs import (
     LazyInput,
@@ -83,3 +85,29 @@ def test_as_input_dispatches_on_exact_kinds_and_rejects_the_rest(tmp_path: Path)
     for bad in (str(src.path), pl.DataFrame(PARENT), {"path": "x"}):
         with pytest.raises(TypeError):
             as_input("p", bad)
+
+
+def test_as_input_passes_a_wrapped_input_through_unchanged(tmp_path: Path) -> None:
+    wrapped = as_input("p", pa.table(PARENT))
+    assert as_input("p", wrapped) is wrapped
+    path = parquet_source(tmp_path, "p", PARENT).path
+    by_path = as_input("p", SubsetSource(path=str(path), format="parquet"))
+    assert as_input("p", by_path) is by_path
+
+
+def test_zero_row_lazy_file_gives_a_typed_empty_key_frame(tmp_path: Path) -> None:
+    pq.write_table(
+        pa.table({"id": pa.array([], pa.int64()), "x": pa.array([], pa.string())}),
+        tmp_path / "z.parquet",
+    )
+    csv = tmp_path / "z.csv"
+    csv.write_text("id,x\n", encoding="utf-8")
+    desc = {"type": "file", "format": "csv", "path": str(csv), "has_header": True}
+    for src, dtype in (
+        (LazySource(tmp_path / "z.parquet"), pl.Int64),
+        (CsvLazySource.from_descriptor(desc, table="z"), pl.String),
+    ):
+        frame = LazyInput("z", src, 2).key_frame(["x", "id"])
+        assert frame.columns == [RI, "x", "id"]
+        assert frame.height == 0
+        assert frame.schema["id"] == dtype

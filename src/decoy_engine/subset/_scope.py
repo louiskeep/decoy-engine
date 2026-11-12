@@ -19,6 +19,8 @@ class SubsetRequest:
     relationships: tuple[PlanRelationship, ...]
     seeds: tuple[SeedSpec, ...]
     policy: FanOutPolicy
+    # Edges dropped before the request was built (a generate-kind end has no source to read).
+    excluded_edges: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -42,8 +44,9 @@ class SubsetSelection:
 
 
 def scope_for(request: SubsetRequest, table_names: Iterable[str]) -> SubsetScope:
-    """Split the supplied tables into those a seed reaches over the declared edges (either
-    direction, as the closure walks them) and those it does not."""
+    """Split the supplied tables into those a seed reaches over the declared edges and those
+    it does not. Reach ignores `edge_directions`: a table whose only edge is `upward` is still
+    narrowed (to no rows), as standalone `plan_subset` reports it, never passed whole."""
     supplied = frozenset(table_names)
     neighbours: dict[str, set[str]] = {}
     for rel in request.relationships:

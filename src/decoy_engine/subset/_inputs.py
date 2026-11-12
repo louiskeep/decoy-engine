@@ -127,7 +127,10 @@ class ParquetPathInput:
 
 
 def as_input(name: str, value: object) -> TableInput:
-    """Wrap one supplied table. Anything but the three known kinds is a programming error."""
+    """Wrap one supplied table; an input already wrapped passes through unchanged. Anything
+    but the known kinds is a programming error."""
+    if isinstance(value, (ResidentInput, LazyInput, ParquetPathInput)):
+        return value
     if isinstance(value, pa.Table):
         return ResidentInput(name, value)
     if isinstance(value, LazySource):

@@ -26,7 +26,7 @@ from decoy_engine.release import __version__
 from decoy_engine.subset._closure import ClosureResult, compute_closure, verify_closure
 from decoy_engine.subset._edges import build_subset_edges, relationships_from_config
 from decoy_engine.subset._errors import SubsetConfigError, SubsetPreflightError
-from decoy_engine.subset._inputs import as_input
+from decoy_engine.subset._inputs import TableInput, as_input
 from decoy_engine.subset._keys import load_key_frames
 from decoy_engine.subset._manifest import build_manifest, to_json_dict
 from decoy_engine.subset._materialize import materialize_subset
@@ -85,7 +85,7 @@ def _seed_spec_public(spec: SeedSpec) -> dict[str, Any]:
 
 def _compute(
     *,
-    sources: Mapping[str, SubsetSource | pa.Table | LazySource],
+    sources: Mapping[str, SubsetSource | pa.Table | LazySource | TableInput],
     relationships: tuple[PlanRelationship, ...],
     seeds: tuple[SeedSpec, ...],
     policy: FanOutPolicy,
@@ -99,14 +99,14 @@ def _compute(
     ClosureResult,
 ]:
     try:
-        report = run_subset_preflight(sources=sources, relationships=relationships, seeds=seeds)
+        inputs = {name: as_input(name, value) for name, value in sources.items()}
+        report = run_subset_preflight(sources=inputs, relationships=relationships, seeds=seeds)
         if not report.passed:
             first = report.failures[0]
             raise SubsetPreflightError(code=first.code, report=report, message=first.message)
 
         edges = build_subset_edges(relationships)
         directions = resolve_edge_directions(edges, policy)
-        inputs = {name: as_input(name, value) for name, value in sources.items()}
         key_frames = load_key_frames(inputs, edges, seeds)
         seed_rows, seed_counts, seed_null_excluded = select_seed_rows(
             seeds=seeds, key_frames=key_frames, job_seed=job_seed
@@ -250,7 +250,10 @@ def select_subset(
             survivors={name: closure.survivors[name] for name in sorted(scope.tables)},
             counts=counts,
             scope=scope,
-            excluded_edges=tuple(e.edge_id for e in edges if directions[e.edge_id] == "none"),
+            excluded_edges=(
+                *request.excluded_edges,
+                *(e.edge_id for e in edges if directions[e.edge_id] == "none"),
+            ),
             estimate=plan,
         )
     except BaseException:
@@ -264,7 +267,15 @@ def subset_request_from_config(config: dict[str, Any]) -> SubsetRequest | None:
     subset_block = config.get("subset")
     if subset_block is None:
         return None
-    relationships = relationships_from_config(config)
+    # A generate table has no source to read, so an edge touching one cannot be subset.
+    generated = {t["name"] for t in config.get("tables", []) if t.get("generate_columns")}
+    relationships: list[PlanRelationship] = []
+    excluded: list[str] = []
+    for rel in relationships_from_config(config):
+        if rel.parent.table in generated or any(c.table in generated for c in rel.children):
+            excluded.extend(e.edge_id for e in build_subset_edges((rel,)))
+        else:
+            relationships.append(rel)
 
     seeds: list[SeedSpec] = []
     for entry in subset_block.get("seeds", []):
@@ -296,7 +307,12 @@ def subset_request_from_config(config: dict[str, Any]) -> SubsetRequest | None:
         edge_directions=edge_directions,
         allow_dangling=bool(subset_block.get("allow_dangling", False)),
     )
-    return SubsetRequest(relationships=relationships, seeds=tuple(seeds), policy=policy)
+    return SubsetRequest(
+        relationships=tuple(relationships),
+        seeds=tuple(seeds),
+        policy=policy,
+        excluded_edges=tuple(sorted(excluded)),
+    )
 
 
 def subset_inputs_from_config(

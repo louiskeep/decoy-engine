@@ -30,7 +30,9 @@ from decoy_engine.subset import (
     run_subset,
     run_subset_preflight,
     select_subset,
+    subset_request_from_config,
 )
+from decoy_engine.subset._edges import build_subset_edges
 from tests.fileaccess.support import ALL_ACCESS, RecordingFileAccess
 from tests.unit.subset._fixtures_inputs import (
     CHILD,
@@ -237,3 +239,42 @@ def test_two_table_cycle_closes_with_every_kept_fk_resolved() -> None:
     assert all(a["b_id"][i].as_py() in b_ids for i in sel.survivors["a"])
     assert all(b["a_id"][i].as_py() in a_ids for i in sel.survivors["b"])
     assert len(a_ids) == n
+
+
+def test_upward_only_child_is_in_scope_with_no_rows_not_whole() -> None:
+    base = request()
+    (edge,) = build_subset_edges(base.relationships)
+    req = SubsetRequest(
+        relationships=base.relationships,
+        seeds=base.seeds,
+        policy=FanOutPolicy(edge_directions=((edge.edge_id, "upward"),), allow_dangling=True),
+    )
+    sel = select_subset(req, text_tables(), job_seed=JOB_SEED)
+    assert "child" in sel.scope.tables
+    assert "child" not in sel.scope.whole
+    assert sel.survivors["child"] == frozenset()
+    assert sel.counts["child"] == (5, 0)
+
+
+def test_generate_kind_edge_is_dropped_and_listed_not_refused() -> None:
+    config = {
+        "tables": [
+            {"name": "parent", "columns": [{"name": "id"}]},
+            {"name": "gen", "generate_columns": [{"name": "pid"}]},
+        ],
+        "relationships": [
+            {
+                "parent": {"table": "parent", "columns": ["id"]},
+                "children": [{"table": "gen", "columns": ["pid"]}],
+                "orphan_policy": "preserve",
+            }
+        ],
+        "subset": {
+            "seeds": [{"table": "parent", "mode": "keys", "key_columns": ["id"], "keys": [["b"]]}]
+        },
+    }
+    req = subset_request_from_config(config)
+    assert req is not None and req.relationships == ()
+    sel = select_subset(req, {"parent": text_tables()["parent"]}, job_seed=JOB_SEED)
+    assert sel.excluded_edges == ("parent.id -> gen.pid",)
+    assert sel.counts["parent"] == (5, 1)
