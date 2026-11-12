@@ -2,7 +2,12 @@
 
 Methodology:
 
-- Numeric: histogram inverse-CDF -- pick a bin by cumulative bin_counts,
+- Numeric with a `quantile_grid` or `exact_values` block (_numeric_shape.py): inverse CDF over
+  the piecewise-linear empirical quantile function (Hyndman and Fan 1996, type 7), one random
+  draw per value, or a weighted draw of the observed values. The release floor and the sources
+  are in that module. A snapshot without either block, a redacted fit and a DP-verified column
+  take the histogram path below.
+- Numeric histogram: inverse-CDF -- pick a bin by cumulative bin_counts,
   then uniform within the bin. The standard inversion method over an
   empirical histogram (Devroye, Non-Uniform Random Variate Generation,
   1986, ch. II.2 inversion / III histogram methods). Pure-Python
@@ -39,9 +44,21 @@ from __future__ import annotations
 import random
 from bisect import bisect_right
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
 from decoy_engine import reasons
+from decoy_engine.generation.statistical._cell_format import (
+    CellFormat,
+    emits_int,
+    floor_datetime,
+    format_numeric,
+    is_integer_dtype,
+)
+from decoy_engine.generation.statistical._numeric_shape import (
+    NumericShape,
+    decode_numeric_shape,
+    grid_value,
+)
 from decoy_engine.generation.statistical._spec import (
     OTHER_TOKEN,
     StatisticalSpec,
@@ -146,8 +163,36 @@ def _cumulative(counts: list[float]) -> list[float]:
     return out
 
 
-def _is_integer_dtype(dtype: str) -> bool:
-    return dtype.lstrip("uU").startswith("int") or dtype.startswith("Int")
+_is_integer_dtype = is_integer_dtype
+
+
+def _null_rate(fmt: CellFormat | None) -> float:
+    """Per-row null probability the sampler owns; 0 means no null draw is made at all."""
+    if fmt is None or not fmt.apply_nulls or fmt.null_count == 0 or fmt.row_count == 0:
+        return 0.0
+    # Through the shared rule so the sampler and the fidelity report agree on the rate.
+    from decoy_engine.quality import snapshot_null_fraction
+
+    rate = snapshot_null_fraction(
+        {"null_count": fmt.null_count, "non_null_count": fmt.row_count - fmt.null_count}
+    )
+    return rate or 0.0
+
+
+def freetext_tables(spec: StatisticalSpec) -> tuple[list[float], list[float], list[float] | None]:
+    """Length edges, counts and cumulative counts of the NON-blank cells of a freetext column.
+
+    The blank cells sit in the first length bin; they are drawn separately, so they come off it
+    here. The cumulative table is None
+    when every non-null cell was blank, which the sampler answers with "" rather than a length.
+    """
+    edges = [float(e) for e in spec.stats.get("length_bin_edges") or []]
+    counts = [float(c) for c in spec.stats.get("length_bin_counts") or []]
+    blanks = spec.cell_format.blank_count if spec.cell_format else 0
+    if blanks and counts:
+        counts[0] -= blanks
+    cum = _cumulative(counts)
+    return edges, counts, (cum if cum and cum[-1] > 0 else None)
 
 
 def _positive_weight_only(values: list[Any], weights: list[float]) -> tuple[list[Any], list[float]]:
@@ -168,6 +213,13 @@ def _numeric_row(rng: random.Random, edges: list[float], cum: list[float]) -> fl
     bin_idx = min(bisect_right(cum, u), last)
     lo, hi = edges[bin_idx], edges[bin_idx + 1]
     return lo + rng.random() * (hi - lo)
+
+
+def _shape_row(rng: random.Random, shape: NumericShape) -> float | int:
+    """One draw from a quantile grid (one random value) or from the exact values (a weighted pick)."""
+    if shape.counts is None:
+        return grid_value(shape.probs, shape.values, rng.random())
+    return rng.choices(shape.values, weights=shape.counts, k=1)[0]
 
 
 def _decode_flag_token(token: object, column: str) -> bool:
@@ -231,6 +283,97 @@ def _conditional_tables(
     return by_parent
 
 
+def _conditional_lookup(spec: StatisticalSpec) -> dict[str, tuple[list[str], list[float]]]:
+    """The draw tables of a conditional column, zero weights dropped; empty when not conditional."""
+    if not spec.condition_on:
+        return {}
+    return {k: _positive_weight_only(v, w) for k, (v, w) in _conditional_tables(spec).items()}
+
+
+def _select_table(
+    conditional: dict[str, tuple[list[str], list[float]]],
+    marginal: tuple[list[Any], list[float]],
+    parent_values: list[Any],
+    i: int,
+) -> tuple[list[Any], list[float], bool]:
+    """The table row `i` draws from and whether it is the marginal fallback. The one place the
+    parent is keyed (`str`, None included), shared by the sampler and the fallback counter."""
+    parent = parent_values[i] if i < len(parent_values) else None
+    table = conditional.get(str(parent))
+    if table is None:
+        return marginal[0], marginal[1], True
+    return table[0], table[1], False
+
+
+# Memory bound: the row counts are exact, the distinct-key set never grows past this.
+DISTINCT_PARENT_CAP = 1000
+
+
+class FallbackCounts(NamedTuple):
+    """Rows that drew from the overall counts, rows among them with a None or missing parent,
+    and the number of distinct parent keys that had no fitted combination, counted only up to
+    `DISTINCT_PARENT_CAP` (`parent_values_capped` says it stopped there)."""
+
+    rows: int
+    rows_null_parent: int
+    parent_values: int
+    parent_values_capped: bool = False
+
+
+def conditional_fallback_counts(
+    spec: StatisticalSpec, parent_values: list[Any], n: int
+) -> FallbackCounts:
+    """Count the rows `sample_column` draws from the marginal for lack of a joint cell. Selects
+    through `_select_table` and never draws."""
+    if spec.kind != "categorical" or spec.condition_on is None:
+        return FallbackCounts(0, 0, 0)
+    conditional = _conditional_lookup(spec)
+    rows = rows_null = 0
+    capped = False
+    keys: set[str] = set()
+    for i in range(n):
+        if _select_table(conditional, ([], []), parent_values, i)[2]:
+            parent = parent_values[i] if i < len(parent_values) else None
+            rows += 1
+            rows_null += parent is None
+            if len(keys) < DISTINCT_PARENT_CAP:
+                keys.add(str(parent))
+            else:
+                capped = capped or str(parent) not in keys
+    return FallbackCounts(rows, rows_null, len(keys), capped)
+
+
+def _sample_shape(
+    spec: StatisticalSpec,
+    shape: NumericShape,
+    n: int,
+    rng: random.Random,
+    *,
+    col_seed: int,
+    start: int,
+) -> list[Any]:
+    fmt = spec.cell_format
+    null_rate = _null_rate(fmt)
+    as_int = emits_int(spec)
+    exact = shape.counts is not None
+    # The grid's own ends bound the output; exact values are source cells and need no clamp.
+    lo_bound, hi_bound = shape.values[0], shape.values[-1]
+    out: list[Any] = []
+    for i in range(n):
+        rng.seed(col_seed + start + i)
+        x = _shape_row(rng, shape)
+        if exact:
+            value: Any = int(x) if as_int else float(x)
+        elif fmt is not None:
+            value = format_numeric(x, fmt, lo_bound, hi_bound, as_int=as_int)
+        elif as_int:
+            value = int(min(max(round(x), lo_bound), hi_bound))
+        else:
+            value = x
+        out.append(None if null_rate and rng.random() < null_rate else value)
+    return out
+
+
 def sample_column(
     spec: StatisticalSpec,
     n: int,
@@ -260,9 +403,17 @@ def sample_column(
             ),
         )
 
+    if spec.kind == "empty":  # an all-null source column: nothing to seed or draw
+        return [None] * n
+
     rng = random.Random()
+    fmt = spec.cell_format
+    null_rate = _null_rate(fmt)
 
     if spec.kind == "numeric":
+        shape = decode_numeric_shape(spec.column, spec.stats, spec.carrier)
+        if shape is not None:
+            return _sample_shape(spec, shape, n, rng, col_seed=col_seed, start=start)
         edges = [float(e) for e in spec.stats.get("bin_edges") or []]
         counts = [float(c) for c in spec.stats.get("bin_counts") or []]
         if len(edges) < 2 or len(counts) != len(edges) - 1 or sum(counts) <= 0:
@@ -274,16 +425,19 @@ def sample_column(
                 ),
             )
         cum = _cumulative(counts)
-        as_int = _is_integer_dtype(spec.dtype)
+        as_int = emits_int(spec)
         lo_bound, hi_bound = edges[0], edges[-1]
         out: list[Any] = []
         for i in range(n):
             rng.seed(col_seed + start + i)
             x = _numeric_row(rng, edges, cum)
-            if as_int:
-                out.append(int(min(max(round(x), lo_bound), hi_bound)))
+            if fmt is not None:
+                value: Any = format_numeric(x, fmt, lo_bound, hi_bound, as_int=as_int)
+            elif as_int:
+                value = int(min(max(round(x), lo_bound), hi_bound))
             else:
-                out.append(x)
+                value = x
+            out.append(None if null_rate and rng.random() < null_rate else value)
         return out
 
     if spec.kind == "categorical":
@@ -309,19 +463,17 @@ def sample_column(
         # the marginal non-empty; each conditional table is non-empty because admission refuses a
         # conditional row whose weights sum to <= 0.
         values, weights = _positive_weight_only(values, weights)
-        conditional = (
-            {k: _positive_weight_only(v, w) for k, (v, w) in _conditional_tables(spec).items()}
-            if spec.condition_on
-            else {}
-        )
+        conditional = _conditional_lookup(spec)
         out = []
         for i in range(n):
             rng.seed(col_seed + start + i)
-            table = (values, weights)
+            t_values, t_weights = values, weights
             if spec.condition_on is not None and parent_values is not None:
-                parent = parent_values[i] if i < len(parent_values) else None
-                table = conditional.get(str(parent), (values, weights))
-            out.append(rng.choices(table[0], weights=table[1], k=1)[0])
+                t_values, t_weights, _ = _select_table(
+                    conditional, (values, weights), parent_values, i
+                )
+            value = rng.choices(t_values, weights=t_weights, k=1)[0]
+            out.append(None if null_rate and rng.random() < null_rate else value)
         return out
 
     if spec.kind == "datetime":
@@ -356,12 +508,13 @@ def sample_column(
             year = rng.choices(years, weights=weights, k=1)[0]
             year_start = datetime(year, 1, 1)
             year_seconds = (datetime(year + 1, 1, 1) - year_start).total_seconds()
-            ts = year_start + timedelta(seconds=rng.random() * year_seconds)
-            out.append(min(max(ts, lo), hi))
+            ts = min(max(year_start + timedelta(seconds=rng.random() * year_seconds), lo), hi)
+            value = floor_datetime(ts, fmt.resolution, lo) if fmt and fmt.resolution else ts
+            out.append(None if null_rate and rng.random() < null_rate else value)
         return out
 
     if spec.kind == "freetext":
-        edges = [float(e) for e in spec.stats.get("length_bin_edges") or []]
+        edges, _, length_cum = freetext_tables(spec)
         counts = [float(c) for c in spec.stats.get("length_bin_counts") or []]
         if len(edges) < 2 or len(counts) != len(edges) - 1 or sum(counts) <= 0:
             raise StatisticalSpecError(
@@ -372,13 +525,20 @@ def sample_column(
                     "Refit, or use a larger epsilon if the snapshot was DP-noised."
                 ),
             )
-        cum = _cumulative(counts)
         lo_len, hi_len = int(edges[0]), int(edges[-1])
+        # blank_count <= non-null cells, so a positive count also means a positive denominator.
+        blank_share = fmt.blank_count / fmt.non_null_cells if fmt and fmt.blank_count else 0.0
+        # A fitted column's non-blank cell is never empty: the blanks were drawn apart from it.
+        min_len = max(lo_len, 1) if fmt else lo_len
         out = []
         for i in range(n):
             rng.seed(col_seed + start + i)
-            target = int(min(max(round(_numeric_row(rng, edges, cum)), lo_len), hi_len))
-            out.append(_lorem_text(rng, target))
+            if (blank_share and rng.random() < blank_share) or length_cum is None:
+                value = ""
+            else:
+                target = int(min(max(round(_numeric_row(rng, edges, length_cum)), min_len), hi_len))
+                value = _lorem_text(rng, target)
+            out.append(None if null_rate and rng.random() < null_rate else value)
         return out
 
     raise StatisticalSpecError(  # load_spec already rejects; defensive only

@@ -65,6 +65,8 @@ from pydantic import (
     model_validator,
 )
 
+from decoy_engine.errors import ConfigRuleError
+
 
 class FixedWidthColumn(BaseModel):
     """One column of a fixed-width record layout.
@@ -134,10 +136,10 @@ class FixedWidthLayout(BaseModel):
         prev_end = 0
         for column in self.columns:
             if column.name in seen_names:
-                raise ValueError(f"fixed_width layout: duplicate column name {column.name!r}")
+                raise ConfigRuleError(f"fixed_width layout: duplicate column name {column.name!r}")
             seen_names.add(column.name)
             if column.start < prev_end:
-                raise ValueError(
+                raise ConfigRuleError(
                     f"fixed_width layout: column {column.name!r} (start={column.start}) "
                     f"overlaps a preceding column or is out of order (preceding column "
                     f"ends at {prev_end}); columns must be listed in ascending, "

@@ -43,6 +43,7 @@ from decoy_engine.transforms.windowed_date import (
     _sample_offset,
     apply_windowed_date,
 )
+from tests._declared_schema import declared_schema
 from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 
 _ENGINE_VERSION = "p4-slice1-dgrn-test"
@@ -58,7 +59,14 @@ def _config(tmp_path, columns: list[dict], table: str = "accounts") -> dict:
         {
             "version": 2,
             "global_settings": {"seed": 42},
-            "sources": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
+            "sources": {
+                table: {
+                    "type": "file",
+                    "format": "csv",
+                    "has_header": True,
+                    "path": str(tmp_path / "in.csv"),
+                }
+            },
             "tables": [{"name": table, "columns": columns}],
             "targets": {
                 table: {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}
@@ -272,6 +280,7 @@ class TestBaseOffsetBoundary:
                 cfg,
                 _chunks(chunk_df, 5),
                 table="accounts",
+                source_schema=declared_schema(cfg, "accounts"),
                 engine_version=_ENGINE_VERSION,
                 base_row_offset=n_offset,
             )
@@ -317,6 +326,7 @@ class TestBaseOffsetBoundary:
                 cfg,
                 _chunks(df, 1),
                 table="accounts",
+                source_schema=declared_schema(cfg, "accounts"),
                 engine_version=_ENGINE_VERSION,
                 base_row_offset=ROW_OFFSET_DOMAIN_MAX,
             )
@@ -338,6 +348,7 @@ class TestBaseOffsetBoundary:
                     cfg,
                     _chunks(df, 3),
                     table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
                     engine_version=_ENGINE_VERSION,
                     base_row_offset=bad_offset,
                 )
@@ -356,6 +367,7 @@ class TestBaseOffsetBoundary:
                     cfg,
                     _chunks(df, 3),  # one 3-row chunk
                     table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
                     engine_version=_ENGINE_VERSION,
                     base_row_offset=ROW_OFFSET_DOMAIN_MAX - 1,  # last row = MAX + 1
                 )
@@ -486,6 +498,7 @@ class TestWhenRejection:
                     cfg,
                     _chunks(df, 2),
                     table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
                     engine_version=_ENGINE_VERSION,
                 )
             )
@@ -610,7 +623,11 @@ class TestNullAnchorPropagation:
         out = pa.concat_tables(
             list(
                 run_mask_pipeline_chunked(
-                    cfg, _chunks(df, 2), table="accounts", engine_version=_ENGINE_VERSION
+                    cfg,
+                    _chunks(df, 2),
+                    table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         )
@@ -691,6 +708,7 @@ class TestMixedStrategyFixture:
                     cfg,
                     _chunks(df, chunk_size),
                     table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
                     engine_version=_ENGINE_VERSION,
                 )
             )

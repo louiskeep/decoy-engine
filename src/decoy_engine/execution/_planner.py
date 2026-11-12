@@ -187,6 +187,7 @@ def classify_job(
     source_tables: Mapping[str, pa.Table | LazySource] | None = None,
     auto_chunk_threshold_rows: int = AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT,
     source_facts: Mapping[str, _ci.SourceFacts] | None = None,
+    ignore_size_threshold: bool = False,
 ) -> ExecutionPlan:
     """Classify a job into exactly one execution mode, without executing.
 
@@ -209,6 +210,9 @@ def classify_job(
     `check_chunked_compatibility`); `source_tables`
     contributes only Arrow metadata (row/null counts, schema types); a `LazySource`
     contributes its footer facts (the `source_facts` snapshot, else one footer read).
+
+    `ignore_size_threshold` drops the row-count gate, for a run that requires streaming: a
+    table of any size, empty included, may take the lane. Every other gate still applies.
     """
     from decoy_engine.execution._pipeline import classify_table_kinds
     from decoy_engine.execution._runner import build_work_list, order_work
@@ -238,6 +242,7 @@ def classify_job(
         auto_chunk_threshold_rows=auto_chunk_threshold_rows,
         registry=registry,
         source_facts=facts,
+        ignore_size_threshold=ignore_size_threshold,
     ) or declared_rejection("chunked", plan=plan)  # F06: declared casting is full-frame only
     if chunked_rejection is None:
         reason = (
@@ -249,7 +254,10 @@ def classify_job(
             only = source_tables[mask_tables[0]]
             rows = facts[mask_tables[0]].num_rows if isinstance(only, LazySource) else only.num_rows
             reason += (
-                f" source holds {rows} rows, at or above the auto-chunk "
+                f" source holds {rows} rows, with chunk-stable dtypes; the run requires "
+                "streaming, so the auto-chunk size threshold does not apply."
+                if ignore_size_threshold
+                else f" source holds {rows} rows, at or above the auto-chunk "
                 f"threshold ({auto_chunk_threshold_rows}), with chunk-stable dtypes."
             )
         return ExecutionPlan(mode="chunked", rejections=rejections, reason=reason)
@@ -283,6 +291,7 @@ def _chunked_rejection(
     auto_chunk_threshold_rows: int,
     registry: ProviderRegistry,
     source_facts: dict[str, _ci.SourceFacts],
+    ignore_size_threshold: bool = False,
 ) -> str | None:
     """None when the job is admissible for chunked streaming; else why not.
 
@@ -371,6 +380,7 @@ def _chunked_rejection(
                     ordered_work=ordered_work,
                     source_facts=source_facts,
                     declared=chunk_stability(config, table),
+                    ignore_size_threshold=ignore_size_threshold,
                 )
             )
     return "; ".join(reasons) if reasons else None
@@ -432,6 +442,7 @@ def _runtime_source_rejections(
     ordered_work: list[Any] | None = None,
     source_facts: dict[str, _ci.SourceFacts] | None = None,
     declared: tuple[frozenset[str], frozenset[str]] = (frozenset(), frozenset()),
+    ignore_size_threshold: bool = False,
 ) -> list[str]:
     """Runtime (loaded-source) gates: presence, size threshold, dtypes,
     and the bucketize source shape.
@@ -457,7 +468,7 @@ def _runtime_source_rejections(
         return reasons
     facts = _ci.facts_for(source_facts, src, table)
     schema = facts.schema
-    if facts.num_rows < auto_chunk_threshold_rows:
+    if facts.num_rows < auto_chunk_threshold_rows and not ignore_size_threshold:
         reasons.append(
             f"source holds {facts.num_rows} rows, below the auto-chunk "
             f"threshold ({auto_chunk_threshold_rows}); full-frame is cheaper "

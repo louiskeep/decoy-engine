@@ -1,0 +1,373 @@
+Slice 0 item 3, plan revision 5: probe transcripts (planning evidence, not the build red baseline).
+Head: plan/slice0 at a2aa70c (origin/main 0090f6f merged; src tree identical to 0090f6f).
+Environment: scripts/dev/bootstrap.sh -> .venv from uv.lock, Python 3.10.20, pandas 2.3.3, pyarrow 24.0.0 (RESULT: OK); native companion not installed.
+Probe scripts were scratch files; each line below is one call. Default run_pipeline settings (no routing flag passed).
+FK config: parent(id hash, note redact) <- child(cid hash, parent_id hash, + work); child columns cid,parent_id,qty,{other|qty},q2.
+work: derived = qty passthrough + q2 derived 'qty * 2'; redact = qty redact; transform = child transforms [limit 10].
+kind: resident pa.Table; lazy = LazySource over a Parquet file; loader = sources={} + source_loader; descriptor = declared child Parquet file has the duplicate header, runtime child is a CLEAN resident table.
+"route=[...]" on a success line lists the first quality_metrics keys: an out_of_core_hash key marks the out-of-core route, sequential_hash the sequential route, neither full_frame.
+
+== A. Readers: what each reader returns for a duplicate header (a,a,b) ==
+pq.write_table(dup): ok
+CsvFileSource header schema: ['a', 'a.1', 'b']
+CsvFileSource header to_frame: ['a', 'a.1', 'b']
+CsvFileSource headerless dup column_names schema: RAISES ValueError: Duplicate column names found: ['a', 'a', 'b']
+CsvFileSource headerless dup column_names sample_frame: ['a', 'a', 'b']
+ParquetFileSource schema: ['a', 'a', 'b']
+LazySource schema: ['a', 'a', 'b']
+LazySource materialize: RAISES ArrowInvalid: Can't unify schema with duplicate field names.
+cloud csv sample helper: ['a', 'a.1', 'b']
+cloud parquet schema helper: ['a', 'a', 'b']
+pyarrow.csv.read_csv (not used by engine/CLI): ['a', 'a', 'b']
+CLI read_source csv: ['a', 'a.1', 'b']
+CLI read_source parquet: RAISES ArrowInvalid: Can't unify schema with duplicate field names.
+CLI iter_source_chunks csv: [['a', 'a.1', 'b']]
+CLI iter_source_chunks parquet: [['a', 'a', 'b']]
+FixedWidthFileSource dup layout schema: RAISES ConfigError: <tmp>/fw.txt: fixed_width layout failed schema validation (1 error(s)); see FixedWidthLayout for the expected
+read_fixed_width dup layout: RAISES ConfigError: <tmp>/fw.txt: fixed_width layout failed schema validation (1 error(s)); see FixedWidthLayout for the expected
+CLI read_source fixed_width dup layout: RAISES ConfigError: <tmp>/fw.txt: fixed_width layout failed schema validation (1 error(s)); see FixedWidthLayout for the expected
+pq.ParquetFile(dup).read(): ['a', 'a', 'b']
+LazySource iter batches: [['a', 'a', 'b']]
+headerless msg: ['Value error, FileSource: `column_names` must be unique']
+fw msg: ["Value error, fixed_width layout: duplicate column name 'a'"]
+
+== B. run_pipeline, every route x kind x work, unique and duplicate ==
+auto        resident   derived   uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+auto        resident   derived   DUP -> KeyError(code=None) at table.pxi:1735 :: '\'Field "qty" exists 2 times in schema\''
+auto        resident   redact    uniq -> OK route=['execution', 'out_of_core_hash', 'residency'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+auto        resident   redact    DUP -> KeyError(code=None) at table.pxi:1735 :: '\'Field "qty" exists 2 times in schema\''
+auto        resident   transform uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+auto        resident   transform DUP -> TransformError(code=duplicate_source_field_names) at _transforms.py:168 :: "table 'child' has duplicate physical field names ['qty']"
+auto        lazy       derived   uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+auto        lazy       derived   DUP -> KeyError(code=None) at types.pxi:3189 :: "'Column qty does not exist in schema'"
+auto        lazy       redact    uniq -> OK route=['execution', 'out_of_core_hash', 'residency'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+auto        lazy       redact    DUP -> KeyError(code=None) at types.pxi:3189 :: "'Column qty does not exist in schema'"
+auto        lazy       transform uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+auto        lazy       transform DUP -> TransformError(code=duplicate_source_field_names) at _transforms.py:168 :: "table 'child' has duplicate physical field names ['qty']"
+auto        loader     derived   uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+auto        loader     derived   DUP -> ValueError(code=None) at pandas_compat.py:388 :: "Duplicate column names found: ['cid', 'parent_id', 'qty', 'qty', 'q2']"
+auto        loader     redact    uniq -> OK route=['execution', 'out_of_core_hash', 'residency'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+auto        loader     redact    DUP -> OK route=['execution', 'out_of_core_hash', 'residency'] child_cols=['cid', 'parent_id', 'qty', 'qty', 'q2']
+auto        loader     transform uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+auto        loader     transform DUP -> TransformError(code=duplicate_source_field_names) at _transforms.py:168 :: "table 'child' has duplicate physical field names ['qty']"
+auto        descriptor derived   uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+auto        descriptor derived   DUP -> ValueError(code=None) at _walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names ['qty']; column nam"
+auto        descriptor redact    uniq -> OK route=['execution', 'out_of_core_hash', 'residency'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+auto        descriptor redact    DUP -> ValueError(code=None) at _walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names ['qty']; column nam"
+auto        descriptor transform uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+auto        descriptor transform DUP -> ValueError(code=None) at _walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names ['qty']; column nam"
+full_frame  resident   derived   uniq -> OK route=['execution'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+full_frame  resident   derived   DUP -> KeyError(code=None) at table.pxi:1735 :: '\'Field "qty" exists 2 times in schema\''
+full_frame  resident   redact    uniq -> OK route=['execution'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+full_frame  resident   redact    DUP -> KeyError(code=None) at table.pxi:1735 :: '\'Field "qty" exists 2 times in schema\''
+full_frame  resident   transform uniq -> OK route=['execution'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+full_frame  resident   transform DUP -> TransformError(code=duplicate_source_field_names) at _transforms.py:168 :: "table 'child' has duplicate physical field names ['qty']"
+full_frame  lazy       derived   uniq -> OK route=['execution'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+full_frame  lazy       derived   DUP -> KeyError(code=None) at types.pxi:3189 :: "'Column qty does not exist in schema'"
+full_frame  lazy       redact    uniq -> OK route=['execution'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+full_frame  lazy       redact    DUP -> KeyError(code=None) at types.pxi:3189 :: "'Column qty does not exist in schema'"
+full_frame  lazy       transform uniq -> OK route=['execution'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+full_frame  lazy       transform DUP -> TransformError(code=duplicate_source_field_names) at _transforms.py:168 :: "table 'child' has duplicate physical field names ['qty']"
+full_frame  loader     derived   uniq -> OK route=['execution'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+full_frame  loader     derived   DUP -> ValueError(code=None) at pandas_compat.py:388 :: "Duplicate column names found: ['cid', 'parent_id', 'qty', 'qty', 'q2']"
+full_frame  loader     redact    uniq -> OK route=['execution'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+full_frame  loader     redact    DUP -> KeyError(code=None) at base.py:3819 :: '0'
+full_frame  loader     transform uniq -> OK route=['execution'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+full_frame  loader     transform DUP -> TransformError(code=duplicate_source_field_names) at _transforms.py:168 :: "table 'child' has duplicate physical field names ['qty']"
+full_frame  descriptor derived   uniq -> OK route=['execution'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+full_frame  descriptor derived   DUP -> ValueError(code=None) at _walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names ['qty']; column nam"
+full_frame  descriptor redact    uniq -> OK route=['execution'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+full_frame  descriptor redact    DUP -> ValueError(code=None) at _walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names ['qty']; column nam"
+full_frame  descriptor transform uniq -> OK route=['execution'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+full_frame  descriptor transform DUP -> ValueError(code=None) at _walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names ['qty']; column nam"
+sequential  resident   derived   uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+sequential  resident   derived   DUP -> KeyError(code=None) at table.pxi:1735 :: '\'Field "qty" exists 2 times in schema\''
+sequential  resident   redact    uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+sequential  resident   redact    DUP -> KeyError(code=None) at table.pxi:1735 :: '\'Field "qty" exists 2 times in schema\''
+sequential  resident   transform uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+sequential  resident   transform DUP -> TransformError(code=duplicate_source_field_names) at _transforms.py:168 :: "table 'child' has duplicate physical field names ['qty']"
+sequential  lazy       derived   uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+sequential  lazy       derived   DUP -> KeyError(code=None) at types.pxi:3189 :: "'Column qty does not exist in schema'"
+sequential  lazy       redact    uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+sequential  lazy       redact    DUP -> KeyError(code=None) at types.pxi:3189 :: "'Column qty does not exist in schema'"
+sequential  lazy       transform uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+sequential  lazy       transform DUP -> TransformError(code=duplicate_source_field_names) at _transforms.py:168 :: "table 'child' has duplicate physical field names ['qty']"
+sequential  loader     derived   uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+sequential  loader     derived   DUP -> ValueError(code=None) at pandas_compat.py:388 :: "Duplicate column names found: ['cid', 'parent_id', 'qty', 'qty', 'q2']"
+sequential  loader     redact    uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+sequential  loader     redact    DUP -> KeyError(code=None) at base.py:3819 :: '0'
+sequential  loader     transform uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+sequential  loader     transform DUP -> TransformError(code=duplicate_source_field_names) at _transforms.py:168 :: "table 'child' has duplicate physical field names ['qty']"
+sequential  descriptor derived   uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+sequential  descriptor derived   DUP -> ValueError(code=None) at _walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names ['qty']; column nam"
+sequential  descriptor redact    uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+sequential  descriptor redact    DUP -> ValueError(code=None) at _walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names ['qty']; column nam"
+sequential  descriptor transform uniq -> OK route=['execution', 'sequential_hash'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+sequential  descriptor transform DUP -> ValueError(code=None) at _walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names ['qty']; column nam"
+out_of_core resident   derived   uniq -> ConfigError(code=None) at _pipeline_routing.py:529 :: "execution_mode='out_of_core' requested but the job is not out-of-core-compatible (out_of_c"
+out_of_core resident   derived   DUP -> KeyError(code=None) at table.pxi:1735 :: '\'Field "qty" exists 2 times in schema\''
+out_of_core resident   redact    uniq -> OK route=['execution', 'out_of_core_hash', 'residency'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+out_of_core resident   redact    DUP -> KeyError(code=None) at table.pxi:1735 :: '\'Field "qty" exists 2 times in schema\''
+out_of_core resident   transform uniq -> PlanCompileError(code=per_table_transforms_present) at _transforms_gate.py:60 :: "[per_table_transforms_present] tables.child.transforms: table 'child' declare
+out_of_core resident   transform DUP -> PlanCompileError(code=per_table_transforms_present) at _transforms_gate.py:60 :: "[per_table_transforms_present] tables.child.transforms: table 'child' declares
+out_of_core lazy       derived   uniq -> ConfigError(code=None) at _pipeline_routing.py:529 :: "execution_mode='out_of_core' requested but the job is not out-of-core-compatible (out_of_c"
+out_of_core lazy       derived   DUP -> KeyError(code=None) at types.pxi:3189 :: "'Column qty does not exist in schema'"
+out_of_core lazy       redact    uniq -> OK route=['execution', 'out_of_core_hash', 'residency'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+out_of_core lazy       redact    DUP -> KeyError(code=None) at types.pxi:3189 :: "'Column qty does not exist in schema'"
+out_of_core lazy       transform uniq -> PlanCompileError(code=per_table_transforms_present) at _transforms_gate.py:60 :: "[per_table_transforms_present] tables.child.transforms: table 'child' declare
+out_of_core lazy       transform DUP -> PlanCompileError(code=per_table_transforms_present) at _transforms_gate.py:60 :: "[per_table_transforms_present] tables.child.transforms: table 'child' declares
+out_of_core loader     derived   uniq -> ConfigError(code=None) at _pipeline_routing.py:529 :: "execution_mode='out_of_core' requested but the job is not out-of-core-compatible (out_of_c"
+out_of_core loader     derived   DUP -> ConfigError(code=None) at _pipeline_routing.py:529 :: "execution_mode='out_of_core' requested but the job is not out-of-core-compatible (out_of_c"
+out_of_core loader     redact    uniq -> OK route=['execution', 'out_of_core_hash', 'residency'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+out_of_core loader     redact    DUP -> OK route=['execution', 'out_of_core_hash', 'residency'] child_cols=['cid', 'parent_id', 'qty', 'qty', 'q2']
+out_of_core loader     transform uniq -> PlanCompileError(code=per_table_transforms_present) at _transforms_gate.py:60 :: "[per_table_transforms_present] tables.child.transforms: table 'child' declare
+out_of_core loader     transform DUP -> PlanCompileError(code=per_table_transforms_present) at _transforms_gate.py:60 :: "[per_table_transforms_present] tables.child.transforms: table 'child' declares
+out_of_core descriptor derived   uniq -> ConfigError(code=None) at _pipeline_routing.py:529 :: "execution_mode='out_of_core' requested but the job is not out-of-core-compatible (out_of_c"
+out_of_core descriptor derived   DUP -> ValueError(code=None) at _walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names ['qty']; column nam"
+out_of_core descriptor redact    uniq -> OK route=['execution', 'out_of_core_hash', 'residency'] child_cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+out_of_core descriptor redact    DUP -> ValueError(code=None) at _walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names ['qty']; column nam"
+out_of_core descriptor transform uniq -> PlanCompileError(code=per_table_transforms_present) at _transforms_gate.py:60 :: "[per_table_transforms_present] tables.child.transforms: table 'child' declare
+out_of_core descriptor transform DUP -> PlanCompileError(code=per_table_transforms_present) at _transforms_gate.py:60 :: "[per_table_transforms_present] tables.child.transforms: table 'child' declares
+
+== C. duplicate cells only, deepest engine frame and adapter reason ==
+auto        resident   derived   DUP -> KeyError(code=None) reason=decoy.unexpected_error at execution/_pipeline_routing_signals.py:305 :: '\'Field "qty" exists 2 times in schema\''
+auto        resident   redact    DUP -> KeyError(code=None) reason=decoy.unexpected_error at execution/_pipeline_routing_signals.py:305 :: '\'Field "qty" exists 2 times in schema\''
+auto        resident   transform DUP -> TransformError(code=duplicate_source_field_names) reason=runtime.duplicate_source_field_names at execution/_transforms.py:168 :: "table 'child' has duplicate physical field names [
+auto        lazy       derived   DUP -> KeyError(code=None) reason=decoy.unexpected_error at execution/_mem_estimate_arrow.py:286 :: "'Column qty does not exist in schema'"
+auto        lazy       redact    DUP -> KeyError(code=None) reason=decoy.unexpected_error at execution/_mem_estimate_arrow.py:286 :: "'Column qty does not exist in schema'"
+auto        lazy       transform DUP -> TransformError(code=duplicate_source_field_names) reason=runtime.duplicate_source_field_names at execution/_transforms.py:168 :: "table 'child' has duplicate physical field names [
+auto        loader     derived   DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_sequential.py:508 :: "Duplicate column names found: ['cid', 'parent_id', 'qty', 'qty', 'q2']"
+auto        loader     redact    DUP -> OK route=['execution', 'out_of_core_hash', 'residency'] child_cols=['cid', 'parent_id', 'qty', 'qty', 'q2']
+auto        loader     transform DUP -> TransformError(code=duplicate_source_field_names) reason=runtime.duplicate_source_field_names at execution/_transforms.py:168 :: "table 'child' has duplicate physical field names [
+auto        descriptor derived   DUP -> ValueError(code=None) reason=decoy.unexpected_error at profile/_walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names"
+auto        descriptor redact    DUP -> ValueError(code=None) reason=decoy.unexpected_error at profile/_walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names"
+auto        descriptor transform DUP -> ValueError(code=None) reason=decoy.unexpected_error at profile/_walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names"
+full_frame  resident   derived   DUP -> KeyError(code=None) reason=decoy.unexpected_error at execution/_pipeline_routing_signals.py:305 :: '\'Field "qty" exists 2 times in schema\''
+full_frame  resident   redact    DUP -> KeyError(code=None) reason=decoy.unexpected_error at execution/_pipeline_routing_signals.py:305 :: '\'Field "qty" exists 2 times in schema\''
+full_frame  resident   transform DUP -> TransformError(code=duplicate_source_field_names) reason=runtime.duplicate_source_field_names at execution/_transforms.py:168 :: "table 'child' has duplicate physical field names [
+full_frame  lazy       derived   DUP -> KeyError(code=None) reason=decoy.unexpected_error at execution/_mem_estimate_arrow.py:286 :: "'Column qty does not exist in schema'"
+full_frame  lazy       redact    DUP -> KeyError(code=None) reason=decoy.unexpected_error at execution/_mem_estimate_arrow.py:286 :: "'Column qty does not exist in schema'"
+full_frame  lazy       transform DUP -> TransformError(code=duplicate_source_field_names) reason=runtime.duplicate_source_field_names at execution/_transforms.py:168 :: "table 'child' has duplicate physical field names [
+full_frame  loader     derived   DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_pandas_adapter.py:335 :: "Duplicate column names found: ['cid', 'parent_id', 'qty', 'qty', 'q2']"
+full_frame  loader     redact    DUP -> KeyError(code=None) reason=decoy.unexpected_error at execution/_strategies/_redact.py:37 :: '0'
+full_frame  loader     transform DUP -> TransformError(code=duplicate_source_field_names) reason=runtime.duplicate_source_field_names at execution/_transforms.py:168 :: "table 'child' has duplicate physical field names [
+full_frame  descriptor derived   DUP -> ValueError(code=None) reason=decoy.unexpected_error at profile/_walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names"
+full_frame  descriptor redact    DUP -> ValueError(code=None) reason=decoy.unexpected_error at profile/_walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names"
+full_frame  descriptor transform DUP -> ValueError(code=None) reason=decoy.unexpected_error at profile/_walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names"
+sequential  resident   derived   DUP -> KeyError(code=None) reason=decoy.unexpected_error at execution/_pipeline_routing_signals.py:305 :: '\'Field "qty" exists 2 times in schema\''
+sequential  resident   redact    DUP -> KeyError(code=None) reason=decoy.unexpected_error at execution/_pipeline_routing_signals.py:305 :: '\'Field "qty" exists 2 times in schema\''
+sequential  resident   transform DUP -> TransformError(code=duplicate_source_field_names) reason=runtime.duplicate_source_field_names at execution/_transforms.py:168 :: "table 'child' has duplicate physical field names [
+sequential  lazy       derived   DUP -> KeyError(code=None) reason=decoy.unexpected_error at execution/_mem_estimate_arrow.py:286 :: "'Column qty does not exist in schema'"
+sequential  lazy       redact    DUP -> KeyError(code=None) reason=decoy.unexpected_error at execution/_mem_estimate_arrow.py:286 :: "'Column qty does not exist in schema'"
+sequential  lazy       transform DUP -> TransformError(code=duplicate_source_field_names) reason=runtime.duplicate_source_field_names at execution/_transforms.py:168 :: "table 'child' has duplicate physical field names [
+sequential  loader     derived   DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_sequential.py:508 :: "Duplicate column names found: ['cid', 'parent_id', 'qty', 'qty', 'q2']"
+sequential  loader     redact    DUP -> KeyError(code=None) reason=decoy.unexpected_error at execution/_strategies/_redact.py:37 :: '0'
+sequential  loader     transform DUP -> TransformError(code=duplicate_source_field_names) reason=runtime.duplicate_source_field_names at execution/_transforms.py:168 :: "table 'child' has duplicate physical field names [
+sequential  descriptor derived   DUP -> ValueError(code=None) reason=decoy.unexpected_error at profile/_walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names"
+sequential  descriptor redact    DUP -> ValueError(code=None) reason=decoy.unexpected_error at profile/_walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names"
+sequential  descriptor transform DUP -> ValueError(code=None) reason=decoy.unexpected_error at profile/_walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names"
+out_of_core resident   derived   DUP -> KeyError(code=None) reason=decoy.unexpected_error at execution/_pipeline_routing_signals.py:305 :: '\'Field "qty" exists 2 times in schema\''
+out_of_core resident   redact    DUP -> KeyError(code=None) reason=decoy.unexpected_error at execution/_pipeline_routing_signals.py:305 :: '\'Field "qty" exists 2 times in schema\''
+out_of_core resident   transform DUP -> PlanCompileError(code=per_table_transforms_present) reason=plan.per_table_transforms_present at execution/_transforms_gate.py:60 :: "[per_table_transforms_present] tables.child.tra
+out_of_core lazy       derived   DUP -> KeyError(code=None) reason=decoy.unexpected_error at execution/_mem_estimate_arrow.py:286 :: "'Column qty does not exist in schema'"
+out_of_core lazy       redact    DUP -> KeyError(code=None) reason=decoy.unexpected_error at execution/_mem_estimate_arrow.py:286 :: "'Column qty does not exist in schema'"
+out_of_core lazy       transform DUP -> PlanCompileError(code=per_table_transforms_present) reason=plan.per_table_transforms_present at execution/_transforms_gate.py:60 :: "[per_table_transforms_present] tables.child.tra
+out_of_core loader     derived   DUP -> ConfigError(code=None) reason=route.out_of_core_ineligible at execution/_pipeline_routing.py:529 :: "execution_mode='out_of_core' requested but the job is not out-of-core-"
+out_of_core loader     redact    DUP -> OK route=['execution', 'out_of_core_hash', 'residency'] child_cols=['cid', 'parent_id', 'qty', 'qty', 'q2']
+out_of_core loader     transform DUP -> PlanCompileError(code=per_table_transforms_present) reason=plan.per_table_transforms_present at execution/_transforms_gate.py:60 :: "[per_table_transforms_present] tables.child.tra
+out_of_core descriptor derived   DUP -> ValueError(code=None) reason=decoy.unexpected_error at profile/_walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names"
+out_of_core descriptor redact    DUP -> ValueError(code=None) reason=decoy.unexpected_error at profile/_walk.py:98 :: "walk_dataframe: DataFrame for table 'child' has duplicate column names"
+out_of_core descriptor transform DUP -> PlanCompileError(code=per_table_transforms_present) reason=plan.per_table_transforms_present at execution/_transforms_gate.py:60 :: "[per_table_transforms_present] tables.child.tra
+
+== D. run_pipeline_isolated, isolate=False and isolate=True (default); leak = table or column names found in error/reason/evidence ==
+isolated_false auto        resident   derived   uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false auto        resident   derived   DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='KeyError' leak=[] cols=None
+isolated_false auto        resident   redact    uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false auto        resident   redact    DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='KeyError' leak=[] cols=None
+isolated_false auto        resident   transform uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false auto        resident   transform DUP -> Isolated outcome=crashed isolated=False reason=runtime.duplicate_source_field_names error='TransformError' leak=[] cols=None
+isolated_false auto        loader     derived   uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false auto        loader     derived   DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false auto        loader     redact    uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false auto        loader     redact    DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false auto        loader     transform uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false auto        loader     transform DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false auto        descriptor derived   uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false auto        descriptor derived   DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_false auto        descriptor redact    uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false auto        descriptor redact    DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_false auto        descriptor transform uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false auto        descriptor transform DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_false full_frame  resident   derived   uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false full_frame  resident   derived   DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='KeyError' leak=[] cols=None
+isolated_false full_frame  resident   redact    uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false full_frame  resident   redact    DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='KeyError' leak=[] cols=None
+isolated_false full_frame  resident   transform uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false full_frame  resident   transform DUP -> Isolated outcome=crashed isolated=False reason=runtime.duplicate_source_field_names error='TransformError' leak=[] cols=None
+isolated_false full_frame  loader     derived   uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false full_frame  loader     derived   DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false full_frame  loader     redact    uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false full_frame  loader     redact    DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false full_frame  loader     transform uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false full_frame  loader     transform DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false full_frame  descriptor derived   uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false full_frame  descriptor derived   DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_false full_frame  descriptor redact    uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false full_frame  descriptor redact    DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_false full_frame  descriptor transform uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false full_frame  descriptor transform DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_false sequential  resident   derived   uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false sequential  resident   derived   DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='KeyError' leak=[] cols=None
+isolated_false sequential  resident   redact    uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false sequential  resident   redact    DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='KeyError' leak=[] cols=None
+isolated_false sequential  resident   transform uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false sequential  resident   transform DUP -> Isolated outcome=crashed isolated=False reason=runtime.duplicate_source_field_names error='TransformError' leak=[] cols=None
+isolated_false sequential  loader     derived   uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false sequential  loader     derived   DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false sequential  loader     redact    uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false sequential  loader     redact    DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false sequential  loader     transform uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false sequential  loader     transform DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false sequential  descriptor derived   uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false sequential  descriptor derived   DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_false sequential  descriptor redact    uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false sequential  descriptor redact    DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_false sequential  descriptor transform uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false sequential  descriptor transform DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_false out_of_core resident   derived   uniq -> Isolated outcome=crashed isolated=False reason=route.out_of_core_ineligible error='ConfigError' leak=[] cols=None
+isolated_false out_of_core resident   derived   DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='KeyError' leak=[] cols=None
+isolated_false out_of_core resident   redact    uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false out_of_core resident   redact    DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='KeyError' leak=[] cols=None
+isolated_false out_of_core resident   transform uniq -> Isolated outcome=crashed isolated=False reason=plan.per_table_transforms_present error='PlanCompileError' leak=[] cols=None
+isolated_false out_of_core resident   transform DUP -> Isolated outcome=crashed isolated=False reason=plan.per_table_transforms_present error='PlanCompileError' leak=[] cols=None
+isolated_false out_of_core loader     derived   uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false out_of_core loader     derived   DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false out_of_core loader     redact    uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false out_of_core loader     redact    DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false out_of_core loader     transform uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false out_of_core loader     transform DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_false out_of_core descriptor derived   uniq -> Isolated outcome=crashed isolated=False reason=route.out_of_core_ineligible error='ConfigError' leak=[] cols=None
+isolated_false out_of_core descriptor derived   DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_false out_of_core descriptor redact    uniq -> Isolated outcome=completed isolated=False reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_false out_of_core descriptor redact    DUP -> Isolated outcome=crashed isolated=False reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_false out_of_core descriptor transform uniq -> Isolated outcome=crashed isolated=False reason=plan.per_table_transforms_present error='PlanCompileError' leak=[] cols=None
+isolated_false out_of_core descriptor transform DUP -> Isolated outcome=crashed isolated=False reason=plan.per_table_transforms_present error='PlanCompileError' leak=[] cols=None
+isolated_true auto        resident   derived   uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true auto        resident   derived   DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='KeyError' leak=[] cols=None
+isolated_true auto        resident   redact    uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true auto        resident   redact    DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='KeyError' leak=[] cols=None
+isolated_true auto        resident   transform uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true auto        resident   transform DUP -> Isolated outcome=crashed isolated=True reason=runtime.duplicate_source_field_names error='TransformError' leak=[] cols=None
+isolated_true auto        loader     derived   uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true auto        loader     derived   DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true auto        loader     redact    uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true auto        loader     redact    DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true auto        loader     transform uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true auto        loader     transform DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true auto        descriptor derived   uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true auto        descriptor derived   DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_true auto        descriptor redact    uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true auto        descriptor redact    DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_true auto        descriptor transform uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true auto        descriptor transform DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_true full_frame  resident   derived   uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true full_frame  resident   derived   DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='KeyError' leak=[] cols=None
+isolated_true full_frame  resident   redact    uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true full_frame  resident   redact    DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='KeyError' leak=[] cols=None
+isolated_true full_frame  resident   transform uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true full_frame  resident   transform DUP -> Isolated outcome=crashed isolated=True reason=runtime.duplicate_source_field_names error='TransformError' leak=[] cols=None
+isolated_true full_frame  loader     derived   uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true full_frame  loader     derived   DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true full_frame  loader     redact    uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true full_frame  loader     redact    DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true full_frame  loader     transform uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true full_frame  loader     transform DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true full_frame  descriptor derived   uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true full_frame  descriptor derived   DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_true full_frame  descriptor redact    uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true full_frame  descriptor redact    DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_true full_frame  descriptor transform uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true full_frame  descriptor transform DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_true sequential  resident   derived   uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true sequential  resident   derived   DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='KeyError' leak=[] cols=None
+isolated_true sequential  resident   redact    uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true sequential  resident   redact    DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='KeyError' leak=[] cols=None
+isolated_true sequential  resident   transform uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true sequential  resident   transform DUP -> Isolated outcome=crashed isolated=True reason=runtime.duplicate_source_field_names error='TransformError' leak=[] cols=None
+isolated_true sequential  loader     derived   uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true sequential  loader     derived   DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true sequential  loader     redact    uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true sequential  loader     redact    DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true sequential  loader     transform uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true sequential  loader     transform DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true sequential  descriptor derived   uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true sequential  descriptor derived   DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_true sequential  descriptor redact    uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true sequential  descriptor redact    DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_true sequential  descriptor transform uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true sequential  descriptor transform DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_true out_of_core resident   derived   uniq -> Isolated outcome=crashed isolated=True reason=route.out_of_core_ineligible error='ConfigError' leak=[] cols=None
+isolated_true out_of_core resident   derived   DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='KeyError' leak=[] cols=None
+isolated_true out_of_core resident   redact    uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true out_of_core resident   redact    DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='KeyError' leak=[] cols=None
+isolated_true out_of_core resident   transform uniq -> Isolated outcome=crashed isolated=True reason=plan.per_table_transforms_present error='PlanCompileError' leak=[] cols=None
+isolated_true out_of_core resident   transform DUP -> Isolated outcome=crashed isolated=True reason=plan.per_table_transforms_present error='PlanCompileError' leak=[] cols=None
+isolated_true out_of_core loader     derived   uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true out_of_core loader     derived   DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true out_of_core loader     redact    uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true out_of_core loader     redact    DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true out_of_core loader     transform uniq -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true out_of_core loader     transform DUP -> ValueError(code=None) reason=decoy.unexpected_error at execution/_isolated_run.py:249 :: 'run_pipeline_isolated cannot carry a non-None source_loader kwarg acro'
+isolated_true out_of_core descriptor derived   uniq -> Isolated outcome=crashed isolated=True reason=route.out_of_core_ineligible error='ConfigError' leak=[] cols=None
+isolated_true out_of_core descriptor derived   DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_true out_of_core descriptor redact    uniq -> Isolated outcome=completed isolated=True reason=None error=None leak=[] cols=['cid', 'parent_id', 'qty', 'other', 'q2']
+isolated_true out_of_core descriptor redact    DUP -> Isolated outcome=crashed isolated=True reason=decoy.unexpected_error error='ValueError' leak=[] cols=None
+isolated_true out_of_core descriptor transform uniq -> Isolated outcome=crashed isolated=True reason=plan.per_table_transforms_present error='PlanCompileError' leak=[] cols=None
+isolated_true out_of_core descriptor transform DUP -> Isolated outcome=crashed isolated=True reason=plan.per_table_transforms_present error='PlanCompileError' leak=[] cols=None
+
+== E. chunked entries. NOTE: the `run_mask_chunked` lines in this section call the INTERNAL `execution/_pipeline_route_exec.run_mask_chunked` (run_pipeline's auto-chunk helper over one resident table), not the public entry; the public `decoy_engine.run_mask_chunked` (`execution/native/_chunked_entry.py:586`) is section F ==
+run_mask_pipeline_chunked redact    uniq       -> OK chunks=2 cols=['s', 'qty', 'other', 'q2']
+run_mask_pipeline_chunked redact    dup-first  -> ValueError(decoy.unexpected_error) at profile/_walk.py:98 :: "walk_dataframe: DataFrame for table 't' has duplicate column"
+run_mask_pipeline_chunked redact    dup-second -> ValueError(decoy.unexpected_error) at execution/_pandas_adapter.py:335 :: "Duplicate column names found: ['s', 'qty', 'qty', 'q2']"
+internal _pipeline_route_exec.run_mask_chunked redact    uniq       -> OK cols=['s', 'qty', 'other', 'q2']
+internal _pipeline_route_exec.run_mask_chunked redact    dup        -> ValueError(decoy.unexpected_error) at profile/_walk.py:98 :: "walk_dataframe: DataFrame for table 't' has duplicate column"
+run_mask_pipeline_chunked derived   uniq       -> PlanCompileError(plan.strategy_not_chunk_safe) at execution/_chunked.py:342 :: '[strategy_not_chunk_safe] tables.t.columns: column(s) q2 (de'
+run_mask_pipeline_chunked derived   dup-first  -> PlanCompileError(plan.strategy_not_chunk_safe) at execution/_chunked.py:342 :: '[strategy_not_chunk_safe] tables.t.columns: column(s) q2 (de'
+run_mask_pipeline_chunked derived   dup-second -> PlanCompileError(plan.strategy_not_chunk_safe) at execution/_chunked.py:342 :: '[strategy_not_chunk_safe] tables.t.columns: column(s) q2 (de'
+internal _pipeline_route_exec.run_mask_chunked derived   uniq       -> PlanCompileError(plan.strategy_not_chunk_safe) at execution/_chunked.py:342 :: '[strategy_not_chunk_safe] tables.t.columns: column(s) q2 (de'
+internal _pipeline_route_exec.run_mask_chunked derived   dup        -> PlanCompileError(plan.strategy_not_chunk_safe) at execution/_chunked.py:342 :: '[strategy_not_chunk_safe] tables.t.columns: column(s) q2 (de'
+run_mask_pipeline_chunked transform uniq       -> PlanCompileError(plan.per_table_transforms_present) at execution/_transforms_gate.py:60 :: "[per_table_transforms_present] tables.t.transforms: table 't"
+run_mask_pipeline_chunked transform dup-first  -> PlanCompileError(plan.per_table_transforms_present) at execution/_transforms_gate.py:60 :: "[per_table_transforms_present] tables.t.transforms: table 't"
+run_mask_pipeline_chunked transform dup-second -> PlanCompileError(plan.per_table_transforms_present) at execution/_transforms_gate.py:60 :: "[per_table_transforms_present] tables.t.transforms: table 't"
+internal _pipeline_route_exec.run_mask_chunked transform uniq       -> PlanCompileError(plan.per_table_transforms_present) at execution/_transforms_gate.py:60 :: "[per_table_transforms_present] tables.t.transforms: table 't"
+internal _pipeline_route_exec.run_mask_chunked transform dup        -> PlanCompileError(plan.per_table_transforms_present) at execution/_transforms_gate.py:60 :: "[per_table_transforms_present] tables.t.transforms: table 't"
+run_mask_pipeline_chunked truncate uniq -> OK ['s', 'qty', 'other', 'q2']
+run_mask_pipeline_chunked truncate dup-second(s dup, truncate) -> KeyError(decoy.unexpected_error) at execution/_guards.py:85 :: "'Column s does not exist in schema'"
+
+== F. public decoy_engine.run_mask_chunked (chunk iterator); dup-second here changes the name set, so drift catches it ==
+decoy_engine.run_mask_chunked redact    uniq           -> OK chunks=2 cols=['s', 'qty', 'other', 'q2']
+decoy_engine.run_mask_chunked redact    dup-first      -> ValueError(decoy.unexpected_error) at profile/_walk.py:98 :: "walk_dataframe: DataFrame for table 't' has duplicate column"
+decoy_engine.run_mask_chunked redact    dup-second     -> NativeChunkSchemaDriftError(runtime.native_chunk_schema_drift) at execution/native/_chunk_schema.py:109 :: "'t' chunk 1: schema drift vs the first chunk (missing=['othe"
+decoy_engine.run_mask_chunked derived   uniq           -> PlanCompileError(plan.strategy_not_chunk_safe) at execution/_chunked.py:342 :: '[strategy_not_chunk_safe] tables.t.columns: column(s) q2 (de'
+decoy_engine.run_mask_chunked derived   dup-first      -> PlanCompileError(plan.strategy_not_chunk_safe) at execution/_chunked.py:342 :: '[strategy_not_chunk_safe] tables.t.columns: column(s) q2 (de'
+decoy_engine.run_mask_chunked derived   dup-second     -> PlanCompileError(plan.strategy_not_chunk_safe) at execution/_chunked.py:342 :: '[strategy_not_chunk_safe] tables.t.columns: column(s) q2 (de'
+decoy_engine.run_mask_chunked transform uniq           -> PlanCompileError(plan.per_table_transforms_present) at execution/_transforms_gate.py:60 :: "[per_table_transforms_present] tables.t.transforms: table 't"
+decoy_engine.run_mask_chunked transform dup-first      -> PlanCompileError(plan.per_table_transforms_present) at execution/_transforms_gate.py:60 :: "[per_table_transforms_present] tables.t.transforms: table 't"
+decoy_engine.run_mask_chunked transform dup-second     -> PlanCompileError(plan.per_table_transforms_present) at execution/_transforms_gate.py:60 :: "[per_table_transforms_present] tables.t.transforms: table 't"
+decoy_engine.run_mask_chunked truncate  uniq           -> OK chunks=2 cols=['s', 'qty', 'other', 'q2']
+decoy_engine.run_mask_chunked truncate  dup-second(s)  -> NativeChunkSchemaDriftError(runtime.native_chunk_schema_drift) at execution/native/_chunk_schema.py:109 :: "'t' chunk 1: schema drift vs the first chunk (missing=['othe"
+decoy_engine.run_mask_chunked truncate  dup-first(s)   -> ValueError(decoy.unexpected_error) at profile/_walk.py:98 :: "walk_dataframe: DataFrame for table 't' has duplicate column"
+
+== G. later chunk with the SAME name set (first [s,qty,q2], second [s,qty,qty,q2] or [s,qty,s,q2]), both public chunked entries ==
+decoy_engine.run_mask_chunked  redact           uniq                 -> OK chunks=2 cols=[['s', 'qty', 'q2'], ['s', 'qty', 'q2']]
+decoy_engine.run_mask_chunked  redact           same-set dup-second  -> KeyError(decoy.unexpected_error) at execution/native/_chunk_schema.py:118 :: "'Column qty does not exist in schema'"
+decoy_engine.run_mask_chunked  truncate(dup s)  uniq                 -> OK chunks=2 cols=[['s', 'qty', 'q2'], ['s', 'qty', 'q2']]
+decoy_engine.run_mask_chunked  truncate(dup s)  same-set dup-second  -> KeyError(decoy.unexpected_error) at execution/native/_chunk_schema.py:118 :: "'Column s does not exist in schema'"
+run_mask_pipeline_chunked      redact           uniq                 -> OK chunks=2 cols=[['s', 'qty', 'q2'], ['s', 'qty', 'q2']]
+run_mask_pipeline_chunked      redact           same-set dup-second  -> ValueError(decoy.unexpected_error) at execution/_pandas_adapter.py:335 :: "Duplicate column names found: ['s', 'qty', 'qty', 'q2']"
+run_mask_pipeline_chunked      truncate(dup s)  uniq                 -> OK chunks=2 cols=[['s', 'qty', 'q2'], ['s', 'qty', 'q2']]
+run_mask_pipeline_chunked      truncate(dup s)  same-set dup-second  -> KeyError(decoy.unexpected_error) at execution/_guards.py:85 :: "'Column s does not exist in schema'"
+
+== H. decoy_engine.io bounded readers (public engine API; used by the platform streaming route into the chunked entries) ==
+io.iter_csv_chunks [['a', 'a', 'b'], ['a', 'a', 'b']]
+io.iter_parquet_chunks [['a', 'a', 'b'], ['a', 'a', 'b']]

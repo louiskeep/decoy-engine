@@ -199,7 +199,8 @@ def test_summaries_are_value_free() -> None:
 
 def test_registry_version_is_at_least_the_floor() -> None:
     # A later registry bump must not turn this red: only the floor and the pin ordering are fixed.
+    # A release re-captures the pin at the live version, so equal is allowed.
     pin = json.loads(PIN.read_text())
     current = Version(reasons.REGISTRY_VERSION)
     assert current >= Version(V)
-    assert current > Version(pin["registry_version"])
+    assert current >= Version(pin["registry_version"])

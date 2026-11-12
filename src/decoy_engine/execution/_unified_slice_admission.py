@@ -49,6 +49,7 @@ from typing import TYPE_CHECKING, Any, Final
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine._field_names import repeated_names
 from decoy_engine._lexeme import integer_columns_by_table
 from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._errors import ExecutionError
@@ -293,7 +294,7 @@ def cheap_admission(
         # (B6b): the unified slice's D5 single-open seam holds only for an already-
         # resident table. Any other lazy source was resolved to a table before this.
         return None
-    if len(set(source.column_names)) != len(source.column_names):
+    if repeated_names(source.column_names):
         # Root-cause fix: the coordinator dispatches by NAME-keyed lookup
         # (`_shadow_coordinator.py:133-160`), so a duplicate resident field
         # name is unsafe regardless of config. Establishing this FIRST is

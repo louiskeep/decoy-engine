@@ -20,7 +20,6 @@ import hmac
 import json
 import os
 import secrets
-import stat
 import struct
 import time
 from dataclasses import dataclass, field
@@ -179,32 +178,18 @@ class LocalProtectedQuarantineSink:
 
     # -- filesystem -------------------------------------------------------------------------------
 
-    def _private_dir(self, path: Path, *, create: bool) -> None:
-        try:
-            st = os.lstat(path)
-        except FileNotFoundError:
-            if not create:
-                raise
-            os.mkdir(path, 0o700)
-            os.chmod(path, 0o700)
-            st = os.lstat(path)
-        if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
-            raise ValueError("quarantine arena path is not a plain directory")
-        if st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) & 0o077:
-            raise ValueError("quarantine arena is not private to this user")
-
     def _prepare_root(self) -> None:
         # Every file operation of the store runs after this guard (A-4: a caller-named path is
         # followed only under the ambient policy).
         fileaccess.require_ambient("the local protected quarantine store")
         if not self._ready:
-            self._private_dir(self._root, create=True)
+            fileaccess.open_protected_dir(self._root, create=True)
             self._ready = True
 
     def _owner_dir(self, owner_hash: str, *, create: bool) -> Path:
         self._prepare_root()
         path = self._root / owner_hash
-        self._private_dir(path, create=create)
+        fileaccess.open_protected_dir(path, create=create)
         return path
 
     # -- writing ------------------------------------------------------------------------------------

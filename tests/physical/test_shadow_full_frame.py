@@ -24,6 +24,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution import run_pipeline
 from decoy_engine.execution._adapter import ExecutionAdapter, ExecutionResult
 from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
@@ -382,21 +383,19 @@ def test_extra_resident_source_preserved_and_projection_warning_parity(tmp_path:
     direct_result = _direct_full_frame_result(inputs, sources, ctx)
     _assert_outputs_and_diagnostics_equal(shadow_result, direct_result)
 
-    oracle_result = run_pipeline(
-        config,
-        sources,
-        engine_version=ENGINE_VERSION,
-        execution_mode="full_frame",
-        auto_chunk=False,
-        key_provider=None,
-        sink=None,
-    )
-    assert_generation_tables_arrow_ipc_equal(
-        dict(shadow_result.outputs), dict(oracle_result.outputs)
-    )
-    assert_diagnostics_multisets_equal(
-        tuple(shadow_result.warnings), tuple(oracle_result.warnings), "warnings"
-    )
+    # The declaration gate (CONFIG-EXPLICIT E2c) refuses a supplied table the config does not
+    # declare, so the oracle run can no longer produce a projection warning to compare against.
+    with pytest.raises(PipelineValidationError) as refused:
+        run_pipeline(
+            config,
+            sources,
+            engine_version=ENGINE_VERSION,
+            execution_mode="full_frame",
+            auto_chunk=False,
+            key_provider=None,
+            sink=None,
+        )
+    assert refused.value.code == "source_file.undeclared_table"
 
 
 # ---------------------------------------------------------------------------

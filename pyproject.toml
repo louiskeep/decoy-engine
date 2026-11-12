@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 # `decoy-engine`. The CLI dist renamed to `decoy-cli`; the engine
 # library dist did not.
 name = "decoy-engine"
-version = "0.18.0"
+version = "0.22.0"
 description = "Data masking and synthetic generation engine. Validates pipeline configs, compiles execution plans, runs masking + generate jobs on a pandas substrate. Used by the decoy-cli CLI and the decoy-platform commercial product."
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
@@ -130,6 +130,20 @@ dependencies = [
     # 2026-07-22-dps-scope-b-spike-result.md). This build has no Polars
     # dependency of its own.
     "opendp==0.15.1",
+    # SCAN-ML M2: the bundled lgbm-v1 field classifier runs in every install, so its stack is a
+    # base dependency (the `ml` extra is removed). scikit-learn backs the vectorizer and
+    # calibration; LightGBM is the gradient-boosted classifier. Versions are EXACT-pinned, not
+    # ranged, because the frozen golden pack (docs/v2/ml/packs/lgbm-v1) and its retrain gate
+    # (tests/snapshots/test_ml_lightgbm_golden.py::test_lightgbm_regression_retrain) assert
+    # reproduced metrics within 1e-4: tree-split tie-breaking and calibration drift across even a
+    # scikit-learn patch release can exceed that. Bump deliberately: change the pin and
+    # regenerate the golden in the same PR (UPDATE_SNAPSHOTS=1), and re-pin the certified DP
+    # rows, since these packages are part of the certified closure. Cost acknowledged: a
+    # downstream install alongside a package needing another scikit-learn or lightgbm fails to
+    # resolve (same posture as the exact faker pin). On macOS LightGBM needs `brew install
+    # libomp`; without it `classifier_status()` reports the `import` cause and nothing raises.
+    "scikit-learn==1.7.2",
+    "lightgbm==4.6.0",
     # Google's standalone, pure-Python privacy accountant (Apache-2.0, no
     # native build step). Composes each OpenDP-certified per-column
     # (epsilon, delta) into one fit-wide privacy-loss-distribution total via
@@ -168,25 +182,30 @@ dev = [
     # remediation 2026-06-12) is part of the default test run; without
     # this pin CI fails at collection with ModuleNotFoundError.
     "hypothesis>=6.0",
+    # Parallel suite runs: scripts/dev/gates.sh uses `-n N --dist loadfile` for the `tests`
+    # step (ENGINE-PAR P2). Part of `dev` so the lock-synced gate venv has it; the certified DP
+    # fingerprint is re-pinned in the same change (dp_provenance._CERTIFIED_STACKS).
+    "pytest-xdist>=3.5",
+    # Per-test hang guard: one stuck test fails with a stack dump instead of stalling a suite
+    # (a full run hung 70 min on 2026-11-10). The limit is `timeout` in [tool.pytest.ini_options];
+    # tests/sentry/tooling/test_pytest_timeout.py fails if the plugin or the limit goes missing.
+    "pytest-timeout>=2.4",
 ]
 # Test-Quality Program (TQ-0, 2026-07-25): coverage measurement + mutation
 # grading. pytest-cov feeds the TQ-3 diff-coverage ratchet; mutmut grades
 # whether tests catch planted bugs (the objective "adequately tested" bar).
 # Kept OUT of `dev` on purpose: the certified DP profile syncs
-# `dev+lint+vault` and its 77-dist fingerprint (dp_provenance, 895b9a20) must
+# `dev+lint+vault` and its 79-dist fingerprint (dp_provenance) must
 # stay exact, so mutmut/pytest-cov and their transitive deps (libcst, textual,
 # coverage, ...) live in this separate extra that the cert gate never installs.
-mutation = [
-    "pytest-cov>=5.0",
-    "mutmut>=3.0",
-]
-# Parallel local test runs (2026-09-16). Kept OUT of `dev` on purpose, exactly
-# like `mutation` above: the certified DP profile syncs dev+lint+vault and its
-# 77-dist fingerprint (895b9a20) must stay exact, so pytest-xdist and its
-# execnet transitive dep live in this separate extra the cert gate never
-# installs. Install `.[dev,xdist]`, then `pytest tests/ -n auto`: the full suite
-# is parallel-safe and finishes in ~10 min versus over 25 min serial on a
-# 4-core box. Local convenience only; CI still runs the suite serially.
+mutation = ["pytest-cov>=5.0", "mutmut>=3.0"]
+# LAYOUT E3: import-linter for the layer contract in .importlinter. Its own extra, synced only
+# into .venv-layers by gates.sh --steps layers, so the certified profile above stays exact.
+layers = ["import-linter==2.15"]
+# Compatibility alias (2026-11-07): pytest-xdist is part of `dev` now, so `.[dev,xdist]` and
+# `.[dev]` install the same set. Kept so an existing `--extra xdist` still resolves; new
+# callers use `dev`. The suite is parallel-safe through scripts/dev/gates.sh (`GATES_WORKERS`);
+# a bare `pytest -n auto` also works, but it runs the `serial` tests alongside the rest.
 xdist = [
     "pytest-xdist>=3.0",
 ]
@@ -209,10 +228,13 @@ mimesis = [
 ]
 # Capability-gaps WS2 (2026-06-12): spaCy NER backs text_redact's
 # person_name/location span detection (opt-in `ner` config key). The
-# language model is NOT pip-resolvable; install it separately:
-# `python -m spacy download en_core_web_sm`.
+# language model is NOT pip-resolvable; install the pinned wheel listed in
+# NER_MODEL_WHEELS (detection/ner.py), which carries its URL and SHA-256.
+# click is listed explicitly: spaCy still imports it, but typer no longer
+# depends on it, so a fresh install fails at `import spacy` without this line.
 ner = [
     "spacy>=3.7,<4",
+    "click>=8.1,<9",
 ]
 # Deferred follow-up 1 (2026-06-12): the token vault encrypts its
 # source->masked map with Fernet (AES-128-CBC + HMAC-SHA256) from the
@@ -270,41 +292,6 @@ sftp = ["paramiko>=3.0"]
 # Upper bound: h3 4.x is the stable API; cap below 5 until a 5.x validation pass.
 geo = [
     "h3>=4.0,<5",
-]
-# ML field-recognition harness extras. scikit-learn backs the held-out
-# split scaffolding (StratifiedGroupKFold, §A.3 leakage guard) and
-# calibration utilities (CalibratedClassifierCV, §A.4). LightGBM is the
-# optional gradient-boosted classifier (ML2.2). Not required for the regex
-# baseline (which has no training phase). Upper bound: 2.x changes the
-# GroupKFold API; pin below 3 until a 3.x validation pass.
-# lightgbm upper bound: 4.x is the stable API; cap below 5 until a 5.x
-# validation pass.
-#
-# Versions are EXACT-pinned, not ranged. The frozen golden pack
-# (docs/v2/ml/packs/lgbm-v1) and its retrain gate
-# (tests/snapshots/test_ml_lightgbm_golden.py::test_lightgbm_regression_retrain)
-# assert reproduced metrics within 1e-4 of the committed baseline. Tree-split
-# tie-breaking and calibration drift across even a scikit-learn patch release
-# can exceed that tolerance, so a floating range would make the CI gate
-# non-reproducible over time. These are the versions the shipped pack was
-# trained under (Python 3.10, the public floor). Bump deliberately: change the
-# pin and regenerate the golden in the same PR
-# (UPDATE_SNAPSHOTS=1 pytest tests/snapshots/test_ml_lightgbm_golden.py),
-# never implicitly.
-#
-# Cost acknowledged: this makes `[ml]` a HERMETIC extra. A downstream install
-# of decoy-engine[ml] alongside a package needing a different scikit-learn/
-# lightgbm gets an unsatisfiable or force-downgraded resolution, and a security
-# patch (e.g. a scikit-learn 1.7.3 CVE fix) cannot be adopted without the
-# deliberate bump-and-regenerate above. That trade is accepted for a
-# reproducible shipped model pack (same posture as the exact faker pin in the
-# core deps); the numeric stack under sklearn (numpy/scipy) is intentionally
-# left unpinned -- LightGBM training is pinned deterministic
-# (n_jobs=1 + deterministic=True + force_row_wise=True in trainer.py), and the
-# first ubuntu-latest ml-gate run is the reproducibility proof of record.
-ml = [
-    "scikit-learn==1.7.2",
-    "lightgbm==4.6.0",
 ]
 # CI/perf-tooling: CodSpeed instrumented microbenchmarks (tests/codspeed/).
 # Optional: the `codspeed` pytest marker keeps that suite out of the default
@@ -380,7 +367,7 @@ pythonpath = ["src", "scripts"]
 # exclusion is the testflight/ location outside testpaths). The CLI -m flag
 # overrides addopts -m, so addopts alone is not sufficient -- but together
 # with the path exclusion it closes all default-loop collection vectors.
-# `packaging` is ALSO excluded here (unlike `ml`, which merely importorskips):
+# `packaging` is ALSO excluded here (unlike `ml`-marked tests, which merely importorskip):
 # a packaging test shells out to a full isolated wheel/sdist build, so it must
 # never fire in the default loop even if the `build` frontend becomes
 # importable in a dev venv. It runs only via the packaging-gate CI job's
@@ -405,6 +392,12 @@ pythonpath = ["src", "scripts"]
 # codec/characterization/driver-unit tests, including the hash-order
 # fail-control); run the marked determinism sweep explicitly via
 # `pytest -m determinism_harness` or `python scripts/faker-determinism/check_determinism.py`.
+# Per-test hang guard (pytest-timeout, `dev` extra): a hung test fails with a stack dump instead of
+# stalling the suite. 300 s is the floor; the one slower test (test_ff1_primitive.py's exhaustive
+# six-digit permutation, 247 s under -n 4) carries its own `@pytest.mark.timeout`. No
+# `timeout_method` on purpose: the plugin default is signal on POSIX and thread on Windows, and an
+# explicit "signal" would make every test error on Windows (no SIGALRM).
+timeout = 300
 addopts = "-m 'not benchmark and not testflight and not packaging and not codspeed and not determinism_harness'"
 markers = [
     "no_default_secret: opt out of the shared throwaway secret (tests/_keyed_secret.py); the test asserts behavior with no secret supplied",
@@ -416,9 +409,11 @@ markers = [
     "golden: engine-v2 S1 golden fixture suite (CSVs + manifests under tests/fixtures/golden/); CI gates engine-v2 sprint work on these",
     "regression: a bugfix's regression test; the prove-regression gate re-runs it against the pre-fix baseline and requires it to fail there",
     "testflight: acceptance test-flight suite (deliberately run, multi-job); excluded from the default loop; invoke via pytest testflight -m testflight or python scripts/test_flight.py",
-    "ml: Pre-scan field-recognition ML tests needing the [ml] extra (scikit-learn + lightgbm). Run by the ml-gate CI job (pytest -m ml with .[dev,ml] installed); they importorskip in the default gate where the extra is absent. Mark a new ML test module by adding pytestmark = pytest.mark.ml at module top so coverage stays automatic rather than a hand-maintained path list.",
+    "ml: Pre-scan field-recognition ML tests (scikit-learn + lightgbm, base dependencies). Run by the ml-gate CI job (pytest -m ml); they also run in the default gate, and skip through tests/_ml.py only where scikit-learn or lightgbm cannot import (macOS without libomp, Linux without libgomp1). Mark a new ML test module by adding pytestmark = pytest.mark.ml at module top so coverage stays automatic rather than a hand-maintained path list.",
+    "ner: tests that load the real spaCy model (the [ner] extra plus the pinned en_core_web_sm wheel). Run by the ner-gate CI job (pytest -m ner). They skip when spaCy or the model is missing, as in the default gate; with DECOY_REQUIRE_NER=1 (set by ner-gate) a missing install fails instead.",
     "packaging: build-artifact tests that shell out to the wheel build frontend (DE-07 wheel-membership gate). Run by the packaging-gate CI job (pytest -m packaging with `build` installed); importorskip out of the default loop where `build` is absent.",
-    "dp_certified: requires the certified DP proof-stack (fit_dp_snapshot only completes in the 77-dist dev+lint+vault 3.10.20 profile); tests/conftest.py's pytest_collection_modifyitems skips these off that profile. Run by the dp-certified-gate CI job.",
+    "dp_certified: requires the certified DP proof-stack (fit_dp_snapshot only completes in the 79-dist dev+lint+vault 3.10.20 profile); tests/conftest.py's pytest_collection_modifyitems skips these off that profile. Run by the dp-certified-gate CI job.",
+    "serial: needs the whole host (a wall-clock budget, a process or host memory envelope, a CPU speedup ratio, an absolute thread count). scripts/dev/gates.sh runs it in a separate pass without xdist and deselects it from the parallel pass; plain `pytest` runs it like any test. Directory marks come from SERIAL_DIRS in tests/conftest.py.",
 ]
 
 # ── Tooling baseline (V2.0-prep, sprint 1) ──────────────────────────────────
@@ -725,6 +720,11 @@ module = [
     "decoy_engine.generation.pool._sampler",
     "decoy_engine.generation.pool._validate",
     "decoy_engine.generation.pool._value_pool",
+    # GEN-TYPES: constant and parametric distribution generate types.
+    "decoy_engine.generation.kinds",
+    "decoy_engine.generation.kinds._constant",
+    "decoy_engine.generation.kinds._output_type",
+    "decoy_engine.generation.kinds._parametric",
     # engine-v2 S8 (Composite Generators). Spec:
     # docs/v2/sprints/engine-v2/sprint-08-composite-generators.md in decoy-platform.
     # Per best-practices §5.4 + S8 spec §1.
@@ -874,14 +874,14 @@ module = [
     "google.cloud",
     "google.cloud.*",
     # scikit-learn ships no py.typed marker; imported lazily in
-    # profiling.model_pack.trainer and profiling.eval.split (ml extra only).
+    # profiling.model_pack.trainer and profiling.eval.split (base dependency).
     "sklearn",
     "sklearn.*",
     # joblib ships no py.typed marker; imported lazily in
-    # profiling.model_pack.trainer and profiling.model_pack.loader (ml extra only).
+    # profiling.model_pack.trainer and profiling.model_pack.loader (base dependency).
     "joblib",
     # lightgbm ships no py.typed marker; imported lazily in
-    # profiling.model_pack.trainer (ml extra only).
+    # profiling.model_pack.trainer (base dependency).
     "lightgbm",
     "lightgbm.*",
     # python-stdnum ships no py.typed marker / stub package.

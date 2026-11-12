@@ -17,6 +17,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from decoy_engine import fileaccess, reasons
@@ -38,6 +39,8 @@ PINNABLE_TYPES = frozenset(
     {
         "sequence",
         "categorical",
+        "constant",
+        "distribution",
         "reference",
         "derived",
         "derived_aggregate",
@@ -138,6 +141,11 @@ def reject_unpinnable(config: dict[str, Any]) -> None:
                 code=reasons.plan.PINNED_NOT_GENERATION_ONLY,
                 message=f"table {tname!r} has no generate_columns; pinned mode is generation-only",
             )
+        if table.get("unique_together"):
+            raise PinnedModeError(
+                code=reasons.plan.PINNED_UNIQUE_PAIR_UNSUPPORTED,
+                message=f"table {tname!r}: unique_together has no place in a pinned table",
+            )
         by_name = {c.get("name"): c for c in gcols}
         for col in gcols:
             _reject_column(tname, col, by_name)
@@ -210,6 +218,7 @@ def compile_pinned_plan(
     reference_date: datetime | str | None = None,
     *,
     file_access: FileAccess | None = None,
+    base_dir: str | Path | None = None,
 ) -> PinnedPlan:
     """Resolve ``config`` into a ``PinnedPlan`` bound to ``reference_date``.
 
@@ -217,9 +226,10 @@ def compile_pinned_plan(
     used, so an approved config carries its own clock anchor. The positional argument wins.
 
     The config seed is deliberately dropped: the caller supplies the seed at execution, and the
-    fingerprint must be the same for every seed.
+    fingerprint must be the same for every seed. ``base_dir`` is the config file's folder, from
+    which a relative ``snapshot_file`` is read; the fingerprint never sees it.
     """
-    return compile_pinned_plan_with_generation(config, reference_date).pinned
+    return compile_pinned_plan_with_generation(config, reference_date, base_dir=base_dir).pinned
 
 
 @fileaccess.entry_point
@@ -228,15 +238,16 @@ def compile_pinned_plan_with_generation(
     reference_date: datetime | str | None = None,
     *,
     file_access: FileAccess | None = None,
+    base_dir: str | Path | None = None,
 ) -> PinnedCompilation:
     """``compile_pinned_plan`` that also returns the ``GenerationPlan`` of the same compile.
 
     The step order is load-bearing for which error wins: token scan, reference date, pre-compile
     rejection, guarded compile, resolved-config recheck.
     """
-    import decoy_engine
     from decoy_engine.plan import compile_plan
     from decoy_engine.plan._types import unfreeze_json
+    from decoy_engine.release import __version__ as engine_version
 
     refuse_live_tokens(config, "config")
     if reference_date is None:
@@ -253,7 +264,10 @@ def compile_pinned_plan_with_generation(
     reset = snapshot_content_guard.set(lambda parsed: refuse_live_tokens(parsed, "snapshot"))
     try:
         plan = compile_plan(
-            config, _empty_profile(reference), decoy_engine_version=str(decoy_engine.__version__)
+            config,
+            _empty_profile(reference),
+            decoy_engine_version=str(engine_version),
+            base_dir=base_dir,
         )
     finally:
         snapshot_content_guard.reset(reset)
@@ -316,11 +330,17 @@ def compile_pinned_plan_with_generation(
             )
         )
 
+    # The whole-table route's own call on the full resolved config, relationships included, so
+    # every route types a number the same way. Decided here because the plan keeps no relationships.
+    from decoy_engine.generation._numeric_typing import numeric_plan
+
+    numeric = tuple(sorted((t, c, str(dt)) for (t, c), dt in numeric_plan(resolved).items()))
     pinned = PinnedPlan(
         schema_version=PINNED_PLAN_SCHEMA,
         reference_date=reference,
         runtime_identity=runtime_identity(),
         tables=tuple(tables),
         statistical=tuple(sorted(statistical, key=lambda s: (s.table, s.column))),
+        numeric_types=numeric,
     )
     return PinnedCompilation(pinned=pinned, generation=gen)

@@ -1,0 +1,186 @@
+{
+  "entries": [
+    {
+      "code": "contingency_top_k_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "quality",
+      "owner": "DistributionSnapshotError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "verify",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.22.0",
+      "summary": "Contingency top K invalid.",
+      "symbol": "CONTINGENCY_TOP_K_INVALID"
+    },
+    {
+      "code": "contingency_top_k_kind_unsupported",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "quality",
+      "owner": "DistributionSnapshotError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "verify",
+          "retry": "unknown",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "unknown",
+          "severity": "error"
+        }
+      ],
+      "since": "1.22.0",
+      "summary": "Contingency top K kind unsupported.",
+      "symbol": "CONTINGENCY_TOP_K_KIND_UNSUPPORTED"
+    },
+    {
+      "code": "fit_joint_cells_truncated",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "warning",
+      "namespace": "warning",
+      "owner": "QualityWarning",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "findings",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "warning"
+        }
+      ],
+      "since": "1.22.0",
+      "summary": "Fit joint cells truncated.",
+      "symbol": "FIT_JOINT_CELLS_TRUNCATED"
+    },
+    {
+      "code": "generation_condition_parent_unseen",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "warning",
+      "namespace": "warning",
+      "owner": "QualityWarning",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "findings",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "warning"
+        }
+      ],
+      "since": "1.22.0",
+      "summary": "Conditional column drew some rows from its overall counts.",
+      "symbol": "GENERATION_CONDITION_PARENT_UNSEEN"
+    },
+    {
+      "code": "generation_fidelity_below_threshold",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "warning",
+      "namespace": "warning",
+      "owner": "QualityWarning",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "findings",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "warning"
+        }
+      ],
+      "since": "1.22.0",
+      "summary": "Generated table scores below the fidelity warn threshold.",
+      "symbol": "GENERATION_FIDELITY_BELOW_THRESHOLD"
+    },
+    {
+      "code": "seed_ignored_with_master_key",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "warning",
+      "namespace": "warning",
+      "owner": "QualityWarning",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "findings",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "warning"
+        },
+        {
+          "outcome": "findings",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "warning"
+        }
+      ],
+      "since": "1.22.0",
+      "summary": "The job seed is not used for generated tables when a master key is set.",
+      "symbol": "SEED_IGNORED_WITH_MASTER_KEY"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.22.0"
+}

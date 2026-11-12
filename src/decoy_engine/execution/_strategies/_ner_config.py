@@ -27,10 +27,25 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from decoy_engine import reasons
+from decoy_engine.detection.ner import NER_ENTITY_MAP
+from decoy_engine.execution._adapter import StrategyOption, option
 from decoy_engine.execution._errors import StrategyError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+
+# The NER options text_redact and text_mask both accept; one copy so the two cannot drift.
+NER_WIZARD_OPTIONS: tuple[StrategyOption, ...] = (
+    option("ner_model", "str", "en_core_web_sm", location="provider_config.ner"),
+    option(
+        "ner_entities",
+        "str_list",
+        ("person_name",),
+        location="provider_config.ner",
+        choices=tuple(sorted(set(NER_ENTITY_MAP.values()))),
+    ),
+)
 
 
 def resolve_ner_config(cfg: Mapping[str, Any]) -> tuple[str | None, list[str] | None]:
@@ -101,4 +116,4 @@ def enforce_ner_model_version(
         )
 
 
-__all__ = ["enforce_ner_model_version", "resolve_ner_config"]
+__all__ = ["NER_WIZARD_OPTIONS", "enforce_ner_model_version", "resolve_ner_config"]

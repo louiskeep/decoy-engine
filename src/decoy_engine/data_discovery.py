@@ -157,6 +157,39 @@ def _coerce(value: Any) -> Any:
     return str(value)
 
 
+# Closed-set failure text. DuckDB's own message quotes the offending cell (a failed cast
+# names the string it could not convert), so it is never forwarded; the class picks the text.
+SQL_CONVERSION_FAILED = (
+    "SQL execution failed: a value could not be converted to the requested type, "
+    "parsed, or was out of range."
+)
+SQL_NOT_EXECUTABLE = (
+    "SQL execution failed: the statement could not be planned; check table names, "
+    "column names, types and syntax."
+)
+SQL_FAILED = "SQL execution failed."
+
+
+def _failure_message(exc: Exception) -> str:
+    import duckdb
+
+    if isinstance(
+        exc, (duckdb.ConversionException, duckdb.OutOfRangeException, duckdb.InvalidInputException)
+    ):
+        return SQL_CONVERSION_FAILED
+    if isinstance(
+        exc,
+        (
+            duckdb.ParserException,
+            duckdb.BinderException,
+            duckdb.CatalogException,
+            duckdb.SyntaxException,
+        ),
+    ):
+        return SQL_NOT_EXECUTABLE
+    return SQL_FAILED
+
+
 @fileaccess.entry_point
 def run_discovery_sql(
     sql: str,
@@ -176,14 +209,24 @@ def run_discovery_sql(
     truncate the materialized result to keep the response small.
 
     Raises ``DiscoverySqlError`` on validation failure or DuckDB
-    execution error.
+    execution error. An execution error carries one fixed message per failure class
+    (``SQL_CONVERSION_FAILED``, ``SQL_NOT_EXECUTABLE``, ``SQL_FAILED``) and no cause:
+    the library's text can quote source values.
     """
     import duckdb
 
     from decoy_engine.fileaccess.adapters.duckdb import statement_kinds, untrusted_session
 
     _validate_select_only(sql)
-    if statement_kinds(sql) != ["SELECT"]:
+    try:
+        kinds: list[str] | None = statement_kinds(sql)
+    except duckdb.Error as exc:
+        if fileaccess.keeps_class(exc):
+            raise
+        kinds = None
+    if kinds is None:
+        raise DiscoverySqlError(SQL_NOT_EXECUTABLE)
+    if kinds != ["SELECT"]:
         raise DiscoverySqlError("Only a single SELECT statement is allowed.")
 
     policy = fileaccess.current()
@@ -200,41 +243,25 @@ def run_discovery_sql(
                 handle = source
             handles[name] = handle
 
-        strict = not fileaccess.is_ambient()
-        pairs = [(h.library_path(), h.display) for h in handles.values()] + [
-            (src, handles[n].display) for n, src in tables.items() if isinstance(src, str)
-        ]
         failure: duckdb.Error | None = None
         cols: list[str] = []
         raw: list[Any] = []
         with untrusted_session(handles) as con:
             try:
                 rel = con.execute(sql)
-            except duckdb.Error as exc:
-                if not strict:
-                    raise DiscoverySqlError(f"SQL execution failed: {exc}") from exc
-                if fileaccess.keeps_class(exc):
-                    raise
-                failure = exc
-            else:
                 cols = [d[0] for d in rel.description]
                 # fetchmany pulls at most row_limit rows; we don't materialize
                 # everything in case the user wrote `SELECT * FROM huge`.
-                if not strict:
-                    raw = rel.fetchmany(row_limit)
-                else:
-                    try:
-                        raw = rel.fetchmany(row_limit)
-                    except duckdb.Error as exc:
-                        if fileaccess.keeps_class(exc):
-                            raise
-                        failure = exc
+                raw = rel.fetchmany(row_limit)
+            except duckdb.Error as exc:
+                if fileaccess.keeps_class(exc):
+                    raise
+                failure = exc
             if failure is not None:
-                # Raised after the handlers close: no library error is the cause or context,
-                # and the library's text names the descriptor path, not the file.
-                text = fileaccess.redact_locators(str(failure), pairs)
+                # Raised after the handler exits so no library error is the cause or context.
+                message = _failure_message(failure)
                 failure = None
-                raise DiscoverySqlError(f"SQL execution failed: {text}") from None
+                raise DiscoverySqlError(message) from None
             rows = [
                 {col: _coerce(value) for col, value in zip(cols, row, strict=False)} for row in raw
             ]

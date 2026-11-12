@@ -36,10 +36,15 @@ from typing import Any
 
 from decoy_engine._lexeme import profile_descriptors
 from decoy_engine.fileaccess import FileAccess, entry_point
+from decoy_engine.profile._declared_columns import (
+    DeclarationRequest,
+    PreparedDeclaredSources,
+    prepare_declared_sources,
+)
 from decoy_engine.profile._readers import (
     BOUNDED_FALLBACK_ROWS,
     ProfileSource,
-    build_profile_source,
+    build_declared_source,
 )
 from decoy_engine.profile._types import Profile, Relationship, TableProfile
 from decoy_engine.profile._walk import walk_dataframe
@@ -53,6 +58,7 @@ def profile_source(
     seed: int | None = None,
     residency: str = "bounded",
     file_access: FileAccess | None = None,
+    declared: PreparedDeclaredSources | None = None,
 ) -> Profile:
     """Profile every source declared in `config["sources"]`.
 
@@ -76,6 +82,8 @@ def profile_source(
             - "full": the historical whole-source read (`to_frame()` per
               source), for callers that pass `sample_rows=None` and genuinely
               need whole-column distincts on a source small enough to hold.
+        declared: the capability a caller prepared for this same `config`, so the headers and
+            footers are not read twice. A capability for another config raises `ValueError`.
 
     Returns:
         A frozen `Profile` covering every table declared in
@@ -87,7 +95,15 @@ def profile_source(
             f"profile_source: residency must be 'bounded' or 'full', got {residency!r}."
         )
 
-    from decoy_engine import __version__ as engine_version
+    # Before any reader exists: every source column must be declared (CONFIG-EXPLICIT E2).
+    if declared is None:
+        prepare_declared_sources(
+            DeclarationRequest.for_descriptors(config), file_access=file_access
+        )
+    elif not declared.matches(config):
+        raise ValueError("profile_source: `declared` was prepared for a different config.")
+
+    from decoy_engine.release import __version__ as engine_version
 
     # Q15 fix (Option B, defensive fallback): if the caller did not pass
     # seed=, fall back to the config's global_settings.seed before
@@ -125,13 +141,13 @@ def profile_source(
     relationships_config = config.get("relationships", []) or []
     pk_cols_per_table = _derive_pk_cols(relationships_config)
     fk_specs_per_table = _derive_fk_specs(relationships_config)
-    relationships = tuple(_build_relationships(relationships_config))
+    relationships = profile_relationships_from_config(relationships_config)
 
     # F06: declared columns are read as exact lexemes (no NA conversion, no inference).
     sources = profile_descriptors(config)
     tables: list[TableProfile] = []
     for table_name, source_descriptor in sources.items():
-        reader = build_profile_source(source_descriptor, field_key=f"sources.{table_name}.path")
+        reader = build_declared_source(table_name, source_descriptor)
         table = _profile_one_source(
             reader,
             table_name=table_name,
@@ -298,9 +314,9 @@ def _derive_fk_specs(
     return fk_specs
 
 
-def _build_relationships(
+def profile_relationships_from_config(
     relationships_config: list[dict[str, Any]],
-) -> list[Relationship]:
+) -> tuple[Relationship, ...]:
     """Convert config relationships into Profile-layer Relationship tuples.
 
     Each config relationship may have multiple children; each child
@@ -336,4 +352,4 @@ def _build_relationships(
                     namespace=namespace if isinstance(namespace, str) else None,
                 )
             )
-    return out
+    return tuple(out)

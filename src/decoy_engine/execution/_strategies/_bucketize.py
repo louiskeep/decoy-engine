@@ -37,7 +37,12 @@ import numpy as np
 import pandas as pd
 
 from decoy_engine import reasons
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    option,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.generation.pool._events import QualityWarning
@@ -59,6 +64,13 @@ class BucketizeStrategyHandler:
     """Round numeric values into fixed-width buckets."""
 
     name: str = "bucketize"
+    namespace_required: bool = False
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("width", "int", 10, required=True),
+        option("format", "str", "range", choices=tuple(sorted(_FORMATS))),
+    )
+    offer_in_wizard: bool = True
 
     def run(
         self,

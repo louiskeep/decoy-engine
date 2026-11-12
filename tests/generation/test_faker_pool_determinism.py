@@ -131,6 +131,8 @@ def test_positive_control_types_are_certified_where_available() -> None:
     )
 
 
+# Spawns the full determinism matrix: 260 s on the Mac, 570 s on a Linux VM, so 3x the slower.
+@pytest.mark.timeout(1800)
 @pytest.mark.determinism_harness
 @pytest.mark.skipif(not _GOLDEN, reason="golden_digests.json is empty or not yet generated")
 def test_full_matrix_against_golden(tmp_path: Path) -> None:

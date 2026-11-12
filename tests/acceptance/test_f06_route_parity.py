@@ -14,6 +14,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from tests._declared_schema import declare_rest
 from tests.acceptance._f06_support import (
     INT64,
     ISO_DATE,
@@ -162,8 +163,8 @@ def _fk_cfg(tmp_path: Path, *, endpoints: bool, policy: str = "null") -> dict[st
         "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
-            "parent": {"type": "file", "format": "csv", "path": par},
-            "child": {"type": "file", "format": "csv", "path": chi},
+            "parent": {"type": "file", "format": "csv", "has_header": True, "path": par},
+            "child": {"type": "file", "format": "csv", "has_header": True, "path": chi},
         },
         "tables": [
             {"name": "parent", "columns": [parent_key if endpoints else plain, column("label")]},
@@ -198,7 +199,7 @@ def _fk_cfg(tmp_path: Path, *, endpoints: bool, policy: str = "null") -> dict[st
     }
     if policy == "quarantine":
         cfg["protected_quarantine"] = PROTECTED_QUARANTINE
-    return cfg
+    return declare_rest(cfg)
 
 
 def _fk_sources() -> dict[str, pa.Table]:
@@ -557,6 +558,8 @@ def _int_only(tmp_path: Path, policy: str) -> dict[str, Any]:
     cfg = _cfg(tmp_path, policy)
     table = cfg["tables"][0]
     table["columns"] = [c for c in table["columns"] if c["name"] != "start"]
+    # The source file drops `start` too, so the config still lists every column it holds.
+    write_csv(tmp_path / "g.csv", ["id", "age"], [["1", "1"]])
     return cfg
 
 

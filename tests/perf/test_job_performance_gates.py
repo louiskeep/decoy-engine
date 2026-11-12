@@ -82,6 +82,7 @@ from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import ExecutionResult, run_pipeline
 from decoy_engine.execution._chunked import run_mask_pipeline_chunked
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+from tests._declared_schema import declared_schema
 
 _ENGINE_VERSION = "p0-perf-gate"
 
@@ -598,7 +599,11 @@ def test_chunked_large_single_table_gate(tmp_path: Any) -> None:
         return pa.concat_tables(
             list(
                 run_mask_pipeline_chunked(
-                    cfg, _chunks(), table="accounts", engine_version=_ENGINE_VERSION
+                    cfg,
+                    _chunks(),
+                    table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
+                    engine_version=_ENGINE_VERSION,
                 )
             )
         )

@@ -145,6 +145,23 @@ def guarded(display: str, strict: bool, fn: Callable[..., T], *args: Any, **kwar
     their class; a denial from inside passes unchanged. Under the local policy the call is
     made as it is, so CLI text is unchanged. The new error is raised after the `except`
     block closes so no library error is left as its `__context__`."""
+    return guarded_with_parser_errors(display, strict, (), fn, *args, **kwargs)
+
+
+def guarded_with_parser_errors(
+    display: str,
+    strict: bool,
+    parser_errors: tuple[type[Exception], ...],
+    fn: Callable[..., T],
+    *args: Any,
+    **kwargs: Any,
+) -> T:
+    """`guarded`, except the named parser error types also pass through unchanged.
+
+    For a caller that classifies a parse failure itself and raises its own value-free coded
+    refusal (the library text can carry a cell value, so the caller must never forward it).
+    Every other library failure maps exactly as in `guarded`. The one place a library error
+    type is allowed past a strict policy; adapters name the types, never a caller."""
     if not strict:
         return fn(*args, **kwargs)
     resurfaced: Exception | None = None
@@ -153,6 +170,8 @@ def guarded(display: str, strict: bool, fn: Callable[..., T], *args: Any, **kwar
     except (FileAccessDenied, FileAccessReadError, FileAccessUnavailable, StopIteration):
         # FileAccessUnavailable is only raised at the policy/open and txn layers today, never by a
         # library read/write of an open handle; passing it through is defensive, not load-bearing.
+        raise
+    except parser_errors:
         raise
     except Exception as exc:
         resurfaced = _resurface(exc)
@@ -169,16 +188,22 @@ def read_error(field_key: str) -> FileAccessReadError:
     return exc
 
 
-def guarded_iter(display: str, strict: bool, it: Iterable[T]) -> Iterator[T]:
-    """Step an iterator under `guarded` semantics. Under the local policy it is a plain
-    `yield from`, so CLI text is unchanged."""
+def guarded_iter(
+    display: str,
+    strict: bool,
+    it: Iterable[T],
+    parser_errors: tuple[type[Exception], ...] = (),
+) -> Iterator[T]:
+    """Step an iterator under `guarded` semantics (`guarded_with_parser_errors` when
+    `parser_errors` is given). Under the local policy it is a plain `yield from`, so CLI text
+    is unchanged."""
     if not strict:
         yield from it
         return
     iterator = iter(it)
     while True:
         try:
-            item = guarded(display, True, next, iterator)
+            item = guarded_with_parser_errors(display, True, parser_errors, next, iterator)
         except StopIteration:
             return
         yield item

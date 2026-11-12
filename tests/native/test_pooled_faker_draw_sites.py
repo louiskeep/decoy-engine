@@ -29,7 +29,7 @@ from pathlib import Path
 import decoy_engine.generation._faker_pool as _faker_pool
 import decoy_engine.generation.synthesize as _synthesize
 from decoy_engine.generation.pool._sampler import PoolSampler
-from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.generators.derivation import GenDeriveContext, with_table
 from decoy_engine.providers import register_faker_provider, unregister_faker_provider
 
 # ---------------------------------------------------------------------------
@@ -147,7 +147,7 @@ def test_eligible_column_reaches_the_pool_bridge(monkeypatch) -> None:
     monkeypatch.setattr(PoolSampler, "sample", _sample_spy)
 
     col = {"name": "city", "type": "faker", "faker_type": "city"}
-    out = _synthesize._faker(col, _faker_pool.N_THRESHOLD, 42, None, None)
+    out = _synthesize._faker(with_table(col, ""), _faker_pool.N_THRESHOLD, 42, None, None)
 
     assert calls, "eligible column (allowlisted, at threshold) never reached build_and_sample"
     assert sample_calls, "gen.faker_pool_selection (PoolSampler.sample) never fired"
@@ -157,7 +157,7 @@ def test_eligible_column_reaches_the_pool_bridge(monkeypatch) -> None:
 def test_below_threshold_column_never_reaches_the_pool_bridge(monkeypatch) -> None:
     calls = _spy_build_and_sample(monkeypatch)
     col = {"name": "city", "type": "faker", "faker_type": "city"}
-    out = _synthesize._faker(col, _faker_pool.N_THRESHOLD - 1, 42, None, None)
+    out = _synthesize._faker(with_table(col, ""), _faker_pool.N_THRESHOLD - 1, 42, None, None)
     assert not calls, "below-threshold column reached the pool bridge; per-row is required"
     assert len(out) == _faker_pool.N_THRESHOLD - 1
 
@@ -165,14 +165,14 @@ def test_below_threshold_column_never_reaches_the_pool_bridge(monkeypatch) -> No
 def test_non_allowlisted_type_never_reaches_the_pool_bridge(monkeypatch) -> None:
     calls = _spy_build_and_sample(monkeypatch)
     col = {"name": "n", "type": "faker", "faker_type": "pyint"}
-    _synthesize._faker(col, _faker_pool.N_THRESHOLD + 100, 42, None, None)
+    _synthesize._faker(with_table(col, ""), _faker_pool.N_THRESHOLD + 100, 42, None, None)
     assert not calls, "pyint is not in POOL_ELIGIBLE_FAKER_TYPES; must stay per-row"
 
 
 def test_opted_out_column_never_reaches_the_pool_bridge(monkeypatch) -> None:
     calls = _spy_build_and_sample(monkeypatch)
     col = {"name": "city", "type": "faker", "faker_type": "city", "pooled": False}
-    _synthesize._faker(col, _faker_pool.N_THRESHOLD + 100, 42, None, None)
+    _synthesize._faker(with_table(col, ""), _faker_pool.N_THRESHOLD + 100, 42, None, None)
     assert not calls, "pooled: false must gate out the pool bridge entirely"
 
 
@@ -181,7 +181,7 @@ def test_pooled_true_does_not_force_an_ineligible_provider(monkeypatch) -> None:
     per-row even when the column explicitly opts in (Codex round-2 spec)."""
     calls = _spy_build_and_sample(monkeypatch)
     col = {"name": "n", "type": "faker", "faker_type": "pyint", "pooled": True}
-    _synthesize._faker(col, _faker_pool.N_THRESHOLD + 100, 42, None, None)
+    _synthesize._faker(with_table(col, ""), _faker_pool.N_THRESHOLD + 100, 42, None, None)
     assert not calls
 
 
@@ -193,7 +193,7 @@ def test_custom_override_reaches_bridge_but_forces_per_row_output(monkeypatch) -
     register_faker_provider("city", lambda fake: "CUSTOM_CITY")
     try:
         col = {"name": "c", "type": "faker", "faker_type": "city"}
-        out = _synthesize._faker(col, _faker_pool.N_THRESHOLD + 10, 42, None, None)
+        out = _synthesize._faker(with_table(col, ""), _faker_pool.N_THRESHOLD + 10, 42, None, None)
     finally:
         unregister_faker_provider("city")
     assert calls, "the bridge must still be tried for a cheap-gate-eligible column"
@@ -205,12 +205,14 @@ def test_locale_unavailable_reaches_bridge_but_forces_per_row_fallback(monkeypat
     # ja_JP has no `state` provider (verified against the installed Faker
     # locale data); the locked resolver must report it unavailable.
     col = {"name": "s", "type": "faker", "faker_type": "state", "locale": "ja_JP"}
-    out = _synthesize._faker(col, _faker_pool.N_THRESHOLD + 10, 42, None, None)
+    out = _synthesize._faker(with_table(col, ""), _faker_pool.N_THRESHOLD + 10, 42, None, None)
     assert calls
     # Per-row unknown->word fallback still applies on the non-pooled path;
     # just prove the bridge did not supply the output (it can't stand up a
     # `state` pool for a locale that has no such provider).
-    gen_ctx = GenDeriveContext.for_column(derive_key=None, column_config=col, fallback_seed=42)
+    gen_ctx = GenDeriveContext.for_column(
+        derive_key=None, column_config=with_table(col, ""), fallback_seed=42
+    )
     forced_none = _faker_pool.build_and_sample(
         faker_type="state",
         faker_kwargs={},

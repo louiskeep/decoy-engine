@@ -74,6 +74,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
+from decoy_engine.config._subset_run import refuse_unapplied_subset
 from decoy_engine.declared_casting._refusals import collect_refusals
 from decoy_engine.execution import _pipeline_context as _ctx
 from decoy_engine.execution import _pipeline_finalize
@@ -84,6 +85,7 @@ from decoy_engine.execution._planner import (
     FULL_FRAME_REJECT_ROWS_DEFAULT,
     OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
 )
+from decoy_engine.execution._substrate import require_optional_nonempty_str
 from decoy_engine.execution._transforms_prepare import prepare_transform_sources
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.profile._readers import LazySource
@@ -91,6 +93,8 @@ from decoy_engine.progress import ProgressChannel, ProgressSink, use_progress
 from decoy_engine.secret_providers import AdmissionScope
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from faker import Faker
 
     from decoy_engine.execution._transactional_sink import TransactionalSink
@@ -101,11 +105,7 @@ if TYPE_CHECKING:
 
 __all__ = ["classify_table_kinds", "run_pipeline"]
 
-# The substrate/auto-chunk knob defaults live on `_pipeline_finalize` now (single source of truth
-# for this signature and the non-default-ness check `stamp_execution_metrics` computes).
-# SC2 out-of-core auto-routing thresholds (per largest mask table). Defaults target the 32 GB
-# deployment box; see `_planner` for the memory-model reasoning. Plumbed as run_pipeline kwargs so
-# the platform SC5 estimator can override them with box+schema-calibrated values.
+# Knob defaults live on `_pipeline_finalize`; the SC2 thresholds are kwargs the platform estimator overrides.
 _OUT_OF_CORE_THRESHOLD_DEFAULT = OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT
 _FULL_FRAME_REJECT_DEFAULT = FULL_FRAME_REJECT_ROWS_DEFAULT
 
@@ -127,9 +127,10 @@ def run_pipeline(
     post_validation_sample_size: int = 100,
     post_validation_enforce: bool = False,
     now_iso: str | None = None,
-    execution_mode: Literal["auto", "sequential", "full_frame", "out_of_core"] = "auto",
+    execution_mode: Literal["auto", "stream", "sequential", "full_frame", "out_of_core"] = "auto",
     sink: TransactionalSink | None = None,
     source_loader: Callable[[str], pa.Table] | None = None,
+    source_loader_schemas: Mapping[str, pa.Schema] | None = None,
     fpe_chunk_count: int = _pipeline_finalize.FPE_CHUNK_COUNT_DEFAULT,
     explain_plan: bool = False,
     auto_chunk: bool = _pipeline_finalize.AUTO_CHUNK_DEFAULT,
@@ -142,6 +143,7 @@ def run_pipeline(
     out_of_core_threshold_rows: int = _OUT_OF_CORE_THRESHOLD_DEFAULT,
     full_frame_reject_rows: int = _FULL_FRAME_REJECT_DEFAULT,
     out_of_core_budget_bytes: int | None = None,
+    out_of_core_threads: int | None = None,
     use_byte_estimate_routing: bool = True,
     use_probe_routing: bool = True,
     key_provider: KeyProvider | None = None,
@@ -154,33 +156,30 @@ def run_pipeline(
     secret_cache_policy: SecretCachePolicy | None = None,
     _provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     file_access: FileAccess | None = None,
+    quarantine_path: str | None = None,
+    base_dir: str | Path | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
-    `config` MUST be the validated dump from `PipelineConfig.model_validate`;
-    no re-validation here. `sources` is the caller-loaded
-    `Mapping[table_name -> pa.Table | LazySource]` for the mask-kind tables;
-    pure-generate configs may pass `None` (or an empty dict). A `LazySource`
-    entry is admitted to auto-chunk and the B7 split from its Parquet footer facts and
-    streams when the output streams (a `TransactionalSink`, `_chunked_input`); otherwise
-    it is resolved per-route -- see `_pipeline_sources`.
-    `engine_version` flows into `compile_plan`'s audit-evidence stamping.
+    `config` MUST be the validated dump from `PipelineConfig.model_validate`; no re-validation here.
+    `sources` is the caller-loaded `Mapping[table_name -> pa.Table | LazySource]` for the mask-kind
+    tables; pure-generate configs may pass `None` (or an empty dict). A `LazySource` entry is
+    admitted to auto-chunk and the B7 split from its Parquet footer facts and
+    streams when the output streams (a `TransactionalSink`, `_chunked_input`); otherwise it is
+    resolved per-route -- see `_pipeline_sources`. `engine_version` flows into `compile_plan`'s
+    audit-evidence stamping.
 
-    Returns one `ExecutionResult` whose `outputs` covers every output
-    table (generate + mask) and whose `table_kinds` field carries the
-    per-table classification for the manifest stamping.
+    Returns one `ExecutionResult` whose `outputs` covers every output table (generate + mask) and
+    whose `table_kinds` field carries the per-table classification for the manifest stamping.
 
-    BF1 (2026-06-26) distribution-fidelity surfacing. `fidelity_report`
-    is the opt-in, default-OFF switch that attaches a per-mask-table
-    `quality-report/v1` block under `ExecutionResult.quality_metrics`
-    (key `fidelity_reports`). It is REPORT-ONLY: a low score never fails
-    the job. Default-OFF leaves the hot path byte-for-byte unchanged, so
-    golden / compat-corpus fixtures do not move. `now_iso` pins the
-    report's `generated_at` for deterministic stamping (None -> wall
-    clock). SECURITY: only the assembled, aggregate-only report is
-    emitted; the intermediate snapshots (which carry category labels /
-    raw values) are never attached. First slice is mask-kind tables,
-    marginal-only (no joint_columns); generate-kind tables are skipped.
+    BF1 (2026-06-26) distribution-fidelity surfacing. `fidelity_report` is the opt-in, default-OFF
+    switch that attaches a per-mask-table `quality-report/v1` block under
+    `ExecutionResult.quality_metrics` (key `fidelity_reports`). It is REPORT-ONLY: a low score never
+    fails the job. Default-OFF leaves the hot path byte-for-byte unchanged, so golden /
+    compat-corpus fixtures do not move. `now_iso` pins the report's `generated_at` for deterministic
+    stamping (None -> wall clock). SECURITY: only the assembled, aggregate-only report is emitted;
+    the intermediate snapshots (which carry category labels / raw values) are never attached. First
+    slice is mask-kind tables, marginal-only (no joint_columns); generate-kind tables are skipped.
 
     A1 (2026-09-23) post-execution validation surfacing. `post_validation` is
     the opt-in, default-OFF switch that runs the post-execution scan suite
@@ -203,6 +202,10 @@ def run_pipeline(
     promote hard-fails to a job failure. SECURITY: only synthetic masked values
     reach the summary (R18); no source PII is emitted.
 
+    `source_loader_schemas` is required with a `source_loader` and refused without one: it
+    declares the Arrow schema of every table the loader serves, so the declaration check runs
+    before the loader is called. A table the loader returns with other columns is refused.
+
     Execution routing (`execution_mode`, `sink`, `source_loader`, `auto_chunk`,
     `chunk_size_rows`, `auto_chunk_threshold_rows`, `native_threads`,
     `chunked_dispatcher_enabled`, `multi_table_dispatch_enabled`, `out_of_core_threshold_rows`,
@@ -219,7 +222,8 @@ def run_pipeline(
     of docs/plans/2026-10-01-dispatcher-auto-chunk.md. The SC2 size thresholds
     default to 32 GB-box-calibrated constants (see `_planner`) and are kwargs the
     platform admission estimator can override; `execution_mode` gains
-    `"out_of_core"` as an explicit fail-closed force.
+    `"out_of_core"` as an explicit fail-closed force and `"stream"` means "must stream"
+    (`execution.pipeline._stream`).
 
     Sprint B2 (docs/plans/2026-07-10-oom-avoidance-routing-redesign.md
     §3.3/§11/§13): `use_probe_routing` (TB-5 default `True`; no effect without
@@ -255,6 +259,11 @@ def run_pipeline(
     `error_policy: quarantine`; the run returns its portable retrieval token on
     `ExecutionResult.quarantine_access`. A declared job runs on any route whose capabilities
     cover its contracts; an explicit `execution_mode` lacking one is refused before any read.
+    `quarantine_path` replaces `quarantine.output_path` after the config hash; a blank or non-`str` is refused.
+
+    `base_dir` is the pipeline YAML's folder: a relative `snapshot_file` and a relative
+    `quarantine.output_path` resolve from it. `None` keeps the working-directory behavior. Through
+    `run_pipeline_isolated` it must be an absolute `str` (the kwargs cross a JSON boundary).
 
     Under `auto`, a declared job that an admission layer kept off a route (mixed, chunked,
     unified slice, out-of-core, or the multi-table split) falls back to a capable route and says
@@ -273,15 +282,15 @@ def run_pipeline(
     oracle call to the SAME registry snapshot as its own coordinator-side call.
     `None` (every real caller) resolves against the live registry.
     """
-    # MG-5: the `tokenize` strategy masks per-cell through a platform-injected
-    # token vault. That writer is threaded only to the FULL-FRAME adapter (the
-    # bounded sequential / out-of-core / chunked routes build their own
-    # StrategyContext without it), so a tokenize job MUST run full-frame or it
-    # would fail closed with `tokenize_requires_vault` on a bounded route. A
-    # token vault is passed only for a tokenize job, so its presence is the
-    # signal: force full-frame and disable auto-chunk when the caller left the
-    # route on `auto`. An explicit execution_mode is left untouched (a caller
-    # that forces a bounded route for a tokenize job gets the honest fail-closed).
+    refuse_unapplied_subset(config)  # `subset:` is refused first, before any source is read
+    stream_required = execution_mode == "stream"
+    execution_mode = "auto" if stream_required else execution_mode
+    require_optional_nonempty_str("quarantine_path", quarantine_path)
+    # MG-5: `tokenize` masks per-cell through a platform-injected token vault, threaded only to
+    # the FULL-FRAME adapter (bounded routes fail closed with `tokenize_requires_vault`). A vault
+    # is passed only for a tokenize job, so its presence forces full-frame and disables
+    # auto-chunk while the route is `auto`. An explicit execution_mode is left untouched
+    # (a caller that forces a bounded route for a tokenize job gets the honest fail-closed).
     if token_vault_writer is not None and execution_mode == "auto":
         execution_mode = "full_frame"
         auto_chunk = False
@@ -307,8 +316,10 @@ def run_pipeline(
                 post_validation_enforce=post_validation_enforce,
                 now_iso=now_iso,
                 execution_mode=execution_mode,
+                stream_required=stream_required,
                 sink=sink,
                 source_loader=source_loader,
+                source_loader_schemas=source_loader_schemas,
                 fpe_chunk_count=fpe_chunk_count,
                 explain_plan=explain_plan,
                 auto_chunk=auto_chunk,
@@ -321,6 +332,7 @@ def run_pipeline(
                 out_of_core_threshold_rows=out_of_core_threshold_rows,
                 full_frame_reject_rows=full_frame_reject_rows,
                 out_of_core_budget_bytes=out_of_core_budget_bytes,
+                out_of_core_threads=out_of_core_threads,
                 use_byte_estimate_routing=use_byte_estimate_routing,
                 use_probe_routing=use_probe_routing,
                 key_provider=key_provider,
@@ -332,7 +344,9 @@ def run_pipeline(
                 secret_scope=secret_scope,
                 secret_registry=secret_registry,
                 secret_cache_policy=secret_cache_policy,
+                base_dir=base_dir,
             )
+        ctx = _ctx.with_quarantine_path(ctx, quarantine_path, base_dir)
         with collect_refusals() as refusals:
             decision = _ctx.decide_route(ctx)
             _emit_route(_progress, decision)

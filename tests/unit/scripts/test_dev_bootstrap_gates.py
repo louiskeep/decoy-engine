@@ -6,35 +6,30 @@ than leave "same failures as baseline" as a claim."""
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
-
-REPO = Path(__file__).resolve().parents[3]
-DEV = REPO / "scripts" / "dev"
-BASH = shutil.which("bash")
-GIT = shutil.which("git")
+from _gates_harness import (
+    BASH,
+    DEV,
+    GIT,
+    REPO,
+)
+from _gates_harness import diff_clone as _diff_clone
+from _gates_harness import (
+    git as _git,
+)
+from _gates_harness import (
+    report_module as _report_module,
+)
+from _gates_harness import (
+    run as _run,
+)
+from _gates_harness import seeded_clone as _seeded_clone
 
 pytestmark = pytest.mark.skipif(BASH is None or GIT is None, reason="needs bash and git")
-
-
-def _run(argv: list[str], cwd: Path, check: bool = False) -> subprocess.CompletedProcess[str]:
-    # Point the scripts at the interpreter running this test so nothing is installed.
-    env = dict(os.environ, DECOY_VENV=sys.prefix)
-    env.pop("VIRTUAL_ENV", None)
-    return subprocess.run(  # noqa: S603 -- argv is test literals plus resolved tool paths
-        argv, cwd=cwd, env=env, capture_output=True, text=True, timeout=600, check=check
-    )
-
-
-def _git(cwd: Path, *args: str) -> str:
-    ident = ["-c", "user.name=gates-test", "-c", "user.email=gates-test@example.invalid"]
-    return _run([str(GIT), *ident, *args], cwd, check=True).stdout
 
 
 @pytest.mark.skipif(shutil.which("uv") is None, reason="bootstrap.sh drives uv")
@@ -55,26 +50,6 @@ def test_bootstrap_check_fails_on_a_lock_pin_that_differs_from_the_install(tmp_p
     assert re.search(r"duckdb\s+installed \S+\s+lock 0\.0\.1\s+MISMATCH", out), out
     assert "BOOTSTRAP FAIL: duckdb installed" in out, out
     assert "fix:" in out
-
-
-def _seeded_clone(tmp_path: Path) -> Path:
-    """A clone whose origin/main has one shared failure and whose HEAD adds one more."""
-    clone = tmp_path / "repo"
-    _git(tmp_path, "clone", "-q", "--shared", str(REPO), str(clone))
-    # Test the scripts in this working tree, not whatever the clone's HEAD carries.
-    shutil.rmtree(clone / "scripts" / "dev", ignore_errors=True)
-    shutil.copytree(DEV, clone / "scripts" / "dev")
-    seed = clone / "tests" / "_seeded"
-    seed.mkdir()
-    (seed / "test_seed_shared.py").write_text("def test_shared():\n    assert False\n")
-    (seed / "test_seed_ok.py").write_text("def test_ok():\n    assert True\n")
-    _git(clone, "add", "-A")
-    _git(clone, "commit", "-qm", "base")
-    _git(clone, "update-ref", "refs/remotes/origin/main", "HEAD")
-    (seed / "test_seed_branch.py").write_text("def test_branch():\n    assert False\n")
-    _git(clone, "add", "-A")
-    _git(clone, "commit", "-qm", "seed")
-    return clone
 
 
 def test_gates_baseline_reports_a_seeded_failure_as_branch_only(tmp_path: Path) -> None:
@@ -141,23 +116,6 @@ def test_gates_fails_when_no_step_ran(tmp_path: Path, steps: str) -> None:
     assert expected in proc.stderr, out
 
 
-def _diff_clone(tmp_path: Path, branch_files: dict[str, str]) -> Path:
-    """A clone whose origin/main is HEAD~1 and whose HEAD adds `branch_files`."""
-    clone = tmp_path / "repo"
-    _git(tmp_path, "clone", "-q", "--shared", str(REPO), str(clone))
-    shutil.rmtree(clone / "scripts" / "dev", ignore_errors=True)
-    shutil.copytree(DEV, clone / "scripts" / "dev")
-    _git(clone, "add", "-A")
-    _git(clone, "commit", "--allow-empty", "-qm", "base")
-    _git(clone, "update-ref", "refs/remotes/origin/main", "HEAD")
-    for rel, body in branch_files.items():
-        (clone / rel).parent.mkdir(parents=True, exist_ok=True)
-        (clone / rel).write_text(body)
-    _git(clone, "add", "-A")
-    _git(clone, "commit", "-qm", "branch")
-    return clone
-
-
 def test_gates_fails_a_code_change_that_selects_no_tests(tmp_path: Path) -> None:
     clone = _diff_clone(tmp_path, {"src/decoy_engine/_x0a_probe.py": "X = 1\n"})
     proc = _run([str(BASH), "scripts/dev/gates.sh", "--steps", "format,tests"], clone)
@@ -186,14 +144,35 @@ def test_gates_baseline_passes_when_the_only_failure_is_shared_with_main(tmp_pat
     assert "(none)" in out.split("BRANCH-ONLY FAILING STEPS", 1)[-1], out
 
 
-def _report_module():  # type: ignore[no-untyped-def]
-    import importlib.util
+def test_gates_baseline_skips_main_when_the_branch_is_green(tmp_path: Path) -> None:
+    clone = _seeded_clone(tmp_path)
+    argv = [str(BASH), "scripts/dev/gates.sh", "--steps", "tests", "--baseline"]
+    argv.append("tests/_seeded/test_seed_ok.py")
+    proc = _run(argv, clone)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    assert "not rerun: every branch step passed or was skipped" in out, out
+    assert "detached worktree" not in out, out
 
-    spec = importlib.util.spec_from_file_location("_gates_report", DEV / "_gates_report.py")
-    assert spec and spec.loader
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+
+def test_gates_baseline_reruns_main_with_the_branch_path_list(tmp_path: Path) -> None:
+    # Main must run in the branch's execution context (same selection), not only the failing
+    # files: a narrower rerun could call a branch regression "shared".
+    clone = _seeded_clone(tmp_path)
+    files = [f"tests/_seeded/test_seed_{n}.py" for n in ("ok", "shared", "branch")]
+    argv = [str(BASH), "scripts/dev/gates.sh", "--steps", "tests", "--baseline", *files]
+    proc = _run(argv, clone)
+    out = proc.stdout + proc.stderr
+    branch, base = out.split("-- branch --", 1)[1].split("-- baseline --", 1)
+    base = base.split("-- FAILING TEST IDS --", 1)[0]
+
+    def paths(section: str) -> list[str]:
+        return re.findall(r"tests/_seeded/test_seed_\w+\.py", section.split("$ ", 1)[1])
+
+    assert paths(branch.split("-- baseline --")[0]) == files, out
+    # Identical list and order; the only drop is the file main does not have.
+    assert paths(base) == [f for f in files if not f.endswith("_branch.py")], out
+    assert re.search(r"BRANCH-ONLY\s+tests/_seeded/test_seed_branch\.py::test_branch", out), out
 
 
 def _write_run(out: Path, label: str, rc: int, log: str) -> None:

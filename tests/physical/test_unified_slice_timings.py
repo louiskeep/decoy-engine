@@ -118,6 +118,7 @@ def test_unified_lane_timings_cover_every_native_operator_matching_pandas_keys(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.serial
 def test_admitted_150k_row_job_elapsed_ms_is_positive_and_bounded_by_wall_time(
     tmp_path: Path,
 ) -> None:

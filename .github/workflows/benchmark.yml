@@ -2,9 +2,8 @@
 # GitHub-hosted runner (ubuntu-latest: 4 vCPU / 16 GB / pinned image), so
 # numbers are comparable PR-to-PR without machine-variance noise.
 #
-# Triggered manually (workflow_dispatch button in the Actions UI) or by
-# adding the `run-bench` label to a PR. Not on every push — bench runs are
-# slow and we don't want to spam every commit.
+# Triggered manually (workflow_dispatch button in the Actions UI). Not on every push or PR:
+# bench runs are slow, and the benchmark marker has no automatic lane (ci/unlaned.toml).
 #
 # Catches the catastrophic-regression scenario: a refactor lands and the
 # Pre-scan Arrow→pandas overhead jumps from 4% to 30%; the comment on the PR
@@ -26,12 +25,6 @@ permissions:
 
 jobs:
   pre-scan-arrow-boundary:
-    # Only fire on the `run-bench` label, or on manual workflow_dispatch.
-    # Skips the run if someone applies an unrelated label like `bug`.
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && github.event.label.name == 'run-bench')
-
     runs-on: ubuntu-latest
     # 30 minutes is generous for the Pre-scan benchmark (~1 minute today);
     # bumps up when Bug 5's calibration tier (8M-row HIPAA) lands here too.

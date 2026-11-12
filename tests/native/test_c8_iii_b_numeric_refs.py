@@ -28,6 +28,7 @@ from decoy_engine.execution import run_pipeline
 from decoy_engine.execution._chunked_input import SourceFacts
 from decoy_engine.execution.native._when_admission import planner_relaxed_when_columns
 from decoy_engine.profile._readers import LazySource
+from tests._declared_schema import declare_rest
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     TABLE,
@@ -63,6 +64,7 @@ def _setup(
     pq.write_table(table, path, **write)
     cfg["sources"][TABLE] = {"type": "file", "format": "parquet", "path": path}
     cfg["targets"][TABLE] = {"type": "file", "format": "parquet", "path": path + ".out"}
+    declare_rest(cfg)
     if kind == "lazy":
         return cfg, LazySource(Path(path)), pq.read_table(path)
     return cfg, table, table

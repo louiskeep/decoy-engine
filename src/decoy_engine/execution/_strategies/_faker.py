@@ -24,7 +24,12 @@ from __future__ import annotations
 
 import pandas as pd
 
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    option,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._exact_int_sources import sampling_source
 from decoy_engine.execution._strategies._faker_positional import (
     positional_pool_indices,
@@ -40,6 +45,13 @@ class FakerStrategyHandler:
     """Pool-backed masking via PoolBuilder + the vectorized PoolSampler."""
 
     name: str = "faker"
+    namespace_required: bool = True
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("provider", "str", "person_first_name", required=True, location="column"),
+        option("deterministic", "bool", True, location="column"),
+    )
+    offer_in_wizard: bool = True
 
     def run(
         self,

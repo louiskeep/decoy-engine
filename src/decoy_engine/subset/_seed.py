@@ -60,29 +60,37 @@ def _predicate_expr(p: Predicate, kf: pl.DataFrame, table: str) -> pl.Expr:
     if p.op == "is_not_null":
         return c.is_not_null()
     target = kf.schema[p.column]
-    values = list(p.value) if p.op == "in" else [p.value]
     try:
-        if p.op in _ORDERING and _is_decimal_on_float(p.value, target):
-            # Decimal("0.1") round-trips through Float64 0.1 but is below it.
-            return _range_expr(c, p.op, p.value, target)
-        try:
-            literal = _literals_exact(values, target)
-        except _LITERAL_ERRORS:
-            if p.op not in _ORDERING:
-                raise
-            bridged = _naive_temporal_range(c, p.op, p.value, target)
-            if bridged is not None:
-                return bridged
-            if not _is_real_bound(p.value, target):
-                raise
-            return _range_expr(c, p.op, p.value, target)
-    except _LITERAL_ERRORS as exc:
+        expr = _literal_predicate_expr(c, p, target)
+    except _LITERAL_ERRORS:
+        expr = None
+    if expr is None:
         # Same boundary as explicit keys: polars' error text echoes the literal.
+        # Raised outside the handler so no chained cause or context carries it.
         raise SubsetConfigError(
             code=reasons.config.SUBSET_SEED_KEY_TYPE,
             message=f"table {table!r}: filter literal(s) for column {p.column!r} do not "
             f"convert exactly to the column's {_dtype_label(target)} type",
-        ) from exc
+        )
+    return expr
+
+
+def _literal_predicate_expr(c: pl.Expr, p: Predicate, target: pl.DataType) -> pl.Expr:
+    values = list(p.value) if p.op == "in" else [p.value]
+    if p.op in _ORDERING and _is_decimal_on_float(p.value, target):
+        # Decimal("0.1") round-trips through Float64 0.1 but is below it.
+        return _range_expr(c, p.op, p.value, target)
+    try:
+        literal = _literals_exact(values, target)
+    except _LITERAL_ERRORS:
+        if p.op not in _ORDERING:
+            raise
+        bridged = _naive_temporal_range(c, p.op, p.value, target)
+        if bridged is not None:
+            return bridged
+        if not _is_real_bound(p.value, target):
+            raise
+        return _range_expr(c, p.op, p.value, target)
     if p.op == "in":
         return c.is_in(literal.implode())
     return _OPS[p.op](c, pl.lit(literal).first())
@@ -240,6 +248,22 @@ def _float_edge(bound: Fraction, ftype: type[np.floating[Any]], *, down: bool) -
     return float(f)
 
 
+# The reason is chosen by code, never by the exception text, so the message stays a closed set.
+_UNCANONICALIZABLE_REASON: dict[str, str] = {
+    reasons.runtime.FLOAT_CANONICALIZATION_UNSUPPORTED: "float values are not supported",
+    reasons.runtime.TIMEZONE_NAIVE_DATETIME: "timezone-naive datetimes are not supported",
+}
+
+
+def _uncanonicalizable(spec: SeedSpec, position: int, code: str) -> SubsetConfigError:
+    reason = _UNCANONICALIZABLE_REASON.get(code, "the value type is not supported")
+    return SubsetConfigError(
+        code=reasons.config.SUBSET_SEED_KEY_UNCANONICALIZABLE,
+        message=f"table {spec.table!r}: seed key column {spec.key_columns[position]!r} holds "
+        f"a value that cannot be canonicalized for sampling: {reason}",
+    )
+
+
 def _select_sample(spec: SeedSpec, kf: pl.DataFrame, job_seed: bytes) -> tuple[frozenset[int], int]:
     try:
         ns = f"subset/sample/{spec.table}"
@@ -256,18 +280,19 @@ def _select_sample(spec: SeedSpec, kf: pl.DataFrame, job_seed: bytes) -> tuple[f
         digests: list[tuple[bytes, int]] = []
         for row in non_null.iter_rows():
             ri, key = row[0], row[1:]
-            try:
-                source = b"".join(
-                    len(part := _canonicalize_source(component)).to_bytes(4, "big") + part
-                    for component in key
-                )
-            except GenerationError as exc:
-                raise SubsetConfigError(
-                    code=reasons.config.SUBSET_SEED_KEY_UNCANONICALIZABLE,
-                    message=f"table {spec.table!r}: a seed key column value could not "
-                    "be canonicalized for sampling",
-                ) from exc
-            digests.append((ctx.derive_source(ns, source), ri))
+            parts: list[bytes] = []
+            for position, component in enumerate(key):
+                try:
+                    part = _canonicalize_source(component)
+                except GenerationError as exc:
+                    rejected: tuple[int, str] | None = (position, exc.code)
+                    break
+                parts.append(len(part).to_bytes(4, "big") + part)
+            else:
+                rejected = None
+            if rejected is not None:
+                raise _uncanonicalizable(spec, *rejected)
+            digests.append((ctx.derive_source(ns, b"".join(parts)), ri))
         digests.sort()
         selected = frozenset(ri for _, ri in digests[:k])
         return selected, seed_null_excluded
@@ -386,13 +411,16 @@ def _select_keys(spec: SeedSpec, kf: pl.DataFrame) -> frozenset[int]:
     for i, c in enumerate(spec.key_columns):
         try:
             col = _literals_exact([tup[i] for tup in spec.keys], kf.schema[c])
-        except _LITERAL_ERRORS as exc:
-            # The cast error text echoes key values; name only table and column.
+        except _LITERAL_ERRORS:
+            col = None
+        if col is None:
+            # The cast error text echoes key values; name only table and column, with
+            # no chained cause or context.
             raise SubsetConfigError(
                 code=reasons.config.SUBSET_SEED_KEY_TYPE,
                 message=f"table {spec.table!r}: explicit seed key(s) for key column {c!r} "
                 f"do not convert exactly to the column's {_dtype_label(kf.schema[c])} type",
-            ) from exc
+            )
         columns.append(col.alias(c))
     # Engine null-key rule (`fk_join_key_tuple` callers skip any tuple with a
     # NULL_FK_KEY part): a requested tuple with a null part matches no row.

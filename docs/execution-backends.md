@@ -305,6 +305,15 @@ Two independent routing layers compose in `_pipeline_routing.py`, in a fixed dec
    typed to `PandasExecutionAdapter`), so it always constructs its own
    adapter regardless of the caller's `substrate` knob; the out-of-core
    route is likewise pandas-oracle-parity by construction.
+
+   `execution_mode="stream"` means "must stream" (RUN-STREAM E1a). `run_pipeline` translates it once to
+   `auto` plus an immutable `stream_required`, and `decide_route` hands that run to
+   `execution/pipeline/_stream.py` instead of the two layers. A preflight over config, plan and source
+   footers takes the chunked lane (one table) or the B7 split (several) when every mask table passes
+   `check_chunked_compatibility`, with the size threshold dropped and the Parquet row groups kept at
+   one per chunk. A job with FK edges whose tables all pass that gate runs as per-table lane units; one
+   the gate rejects takes the out-of-core route only when out-of-core accepts it and the FK dtype hazard
+   is clear. Anything else raises `runtime.streaming_unavailable` before the passed `sources` are read.
 2. S3 (engine-efficiencies P3) auto-chunk routing: reached only when (1)
    did NOT take the sequential early return -- every path into
    `decide_chunk_route` is either explicitly forced full_frame or was

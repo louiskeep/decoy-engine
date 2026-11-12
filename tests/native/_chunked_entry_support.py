@@ -53,7 +53,8 @@ def make_config(
         "version": 2,
         "global_settings": {"seed": 20261001, "post_validation": False, **(global_settings or {})},
         "sources": {
-            t["name"]: {"type": "file", "format": "csv", "path": "/dev/null"} for t in tables
+            t["name"]: {"type": "file", "format": "csv", "has_header": True, "path": "/dev/null"}
+            for t in tables
         },
         "targets": {
             t["name"]: {"type": "file", "format": "csv", "path": "/dev/null"} for t in tables

@@ -4,6 +4,7 @@ cleanup ended instead of reporting ``not_needed``."""
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,17 @@ def _open_fds() -> int:
     return len(os.listdir("/proc/self/fd"))
 
 
+def _on_artifact_fd(real: Any, error: BaseException) -> Any:
+    """A fault for the artifact descriptor only; any other descriptor reaches the real call."""
+
+    def fault(fd: int, *a: Any, **k: Any) -> Any:
+        if stat.S_ISREG(os.fstat(fd).st_mode):
+            raise error
+        return real(fd, *a, **k)
+
+    return fault
+
+
 def _partials(tmp_path: Path) -> list[Path]:
     return list((tmp_path / "q").rglob("*.partial"))
 
@@ -47,9 +59,7 @@ def test_failed_open_closes_the_fd_and_removes_the_partial(
     sink = _sink(tmp_path)
     before = _open_fds()
 
-    def boom(*a: Any, **k: Any) -> None:
-        raise OSError(28, "injected")
-
+    boom = _on_artifact_fd(getattr(local.os, failing), OSError(28, "injected"))
     monkeypatch.setattr(local.os, failing, boom)
     with pytest.raises(QuarantineError) as info:
         _begin(sink)
@@ -67,11 +77,13 @@ def test_failed_open_reports_a_cleanup_that_could_not_finish(
 
     sink = _sink(tmp_path)
 
-    def boom(*a: Any, **k: Any) -> None:
-        raise OSError(28, "injected")
+    boom = _on_artifact_fd(local.os.fchmod, OSError(28, "injected"))
+    real_unlink = os.unlink
 
     def no_unlink(path: Any, *a: Any, **k: Any) -> None:
-        raise PermissionError(13, "injected")
+        if str(path).endswith(".partial"):
+            raise PermissionError(13, "injected")
+        real_unlink(path, *a, **k)
 
     monkeypatch.setattr(local.os, "fchmod", boom)
     monkeypatch.setattr(local.os, "unlink", no_unlink)
@@ -92,10 +104,12 @@ def test_failed_open_reports_a_close_that_failed_even_when_the_partial_is_gone(
     real_close = os.close
     held: list[int] = []
 
-    def boom(*a: Any, **k: Any) -> None:
-        raise OSError(28, "injected")
+    boom = _on_artifact_fd(local.os.fchmod, OSError(28, "injected"))
 
     def no_close(fd: int) -> None:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            real_close(fd)
+            return
         held.append(fd)
         raise OSError(5, "injected")
 

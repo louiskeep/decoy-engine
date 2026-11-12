@@ -46,19 +46,57 @@ unchanged and duck-typed providers keep working through `secret_providers.prepar
 
 **Pre-GA corrections taken with the file-access policy (A-4 merged with F13, 2026-11-01).** Additive:
 every file-reading or file-writing public entry point listed in `decoy_engine.fileaccess.ENTRY_POINTS`
-takes a keyword-only `file_access: FileAccess | None = None` (`run_pipeline` now has 40 frozen
-parameters: F13's `secret_registry` and `secret_cache_policy`, A-4's `file_access`), and
+takes a keyword-only `file_access: FileAccess | None = None` (`run_pipeline` now has 42 frozen
+parameters: F13's `secret_registry` and `secret_cache_policy`, A-4's `file_access`, and project-layout E2's `quarantine_path`), and
 `keyprovider.key_provider_from_ref(ref, *, key_version: str | None = None, file_access=None) ->
 KeyProvider` is one of them. New registered reasons: `runtime.secret_file_permissions_unsafe` and
 `decoy.file_access_denied`. Breaking, no shim: a `file:` mask secret readable by group or other is
 refused; `env:` and `file:` secrets are never cached even with a positive `SecretCachePolicy` TTL.
 `resolve_mask_secret_ref` stays deleted (F13).
 
+**Pre-GA corrections taken with the project layout (E2, 2026-11-09).** Additive: `run_pipeline(...,
+quarantine_path: str | None = None)` is keyword-only. It replaces `quarantine.output_path` for that run,
+applied after the plan and its config hash are built, so the hash and the caller's dict do not change.
+Anything but `None` or a non-blank `str` raises `ExecutionError` (`invalid_execution_knob`) before any
+source is read. Breaking, no shim: the engine logger no longer writes `logs/decoy_engine.log` when the
+logging config has no `file`; a caller that wants a log file passes `file`.
+
+**Pre-GA additive keyword with GEN-CLI E1 (#460, 2026-11-10).** `run_pipeline(..., base_dir: str |
+Path | None = None)` is keyword-only (44 frozen parameters). Relative config paths resolve against it;
+`None` leaves every path as written (today's behavior).
+
 **Pre-GA correction (main health, 2026-10-31).** `RESERVED_NAMES` of the `when` closed grammar gains `type`
 (additive to the list, breaking for a config whose `when:` references a column named `type`, which now fails
 with `when_outside_closed_grammar`). It is listed on every interpreter rather than derived from
 `keyword.softkwlist`, so a config validates identically on every supported Python. The list is frozen
 on purpose; after GA any further addition is a breaking change.
+
+**Pre-GA correction (SUB-STOP, 2026-11-05).** A config with `subset:` set is refused by every run entry
+(`run_pipeline`, `run_pipeline_isolated`, `run_mask_pipeline_chunked`, `run_mask_chunked`, `run_native_or_oracle_chunked`) and by `compile_plan`,
+with `config.subset_run_unsupported` (registry 1.6.0). Before, the block validated and the run silently masked
+the full sources. `plan_subset` and `run_subset` are unchanged; run them first and point `sources:` at their output.
+
+**Pre-GA correction (CONFIG-EXPLICIT E1, 2026-11-08).** A csv file source must set `has_header` (registry
+1.15.0). An old config without it fails validation with `source_file.has_header_required` and the fix line
+"add `has_header: true` if the first row names the columns (the old default)". `column_names_file`, a path to a
+one-record header file for a headerless source, is additive. A csv dump now always carries `has_header`, so the
+physical `plan_hash` moves for those configs while `pipeline_config_hash` does not. Three registered codes that
+were reserved are now raised by `FileSource` (`source_file.no_header_columns`,
+`source_file.column_names_with_header`, `source_file.csv_param_on_non_csv`), alongside the new
+`source_file.has_header_required`, `source_file.column_names_source_conflict` and
+`source_file.column_names_file_invalid`. No schema version moves. `resolve_csv_dialect` and the public
+`build_profile_source` are now file-access entry points: with no installed policy under `forbid_ambient()`
+either raises `FileAccessUnavailable` before dispatch, including an inline-only descriptor for the resolver and a
+non-file descriptor for `build_profile_source`. Ambient callers are unchanged.
+
+**Pre-GA correction (CONFIG-EXPLICIT E2c, 2026-11-10).** Every source column must be declared in the config,
+supplied tables included. `profile_source`, `run_pipeline` and `run_pipeline_isolated` refuse an undeclared column
+(`source_file.undeclared_column`) or a source with no `tables` entry (`source_file.undeclared_table`) from headers,
+footers and schemas, before any data row is read, staged, profiled or masked. Fixtures that relied on the DE-03
+`warn` pass-through now declare the column as `passthrough`; that path is reached only by drift after the gate.
+`run_pipeline` gains `source_loader_schemas`, required with a `source_loader` and refused without one, and
+`profile_source` gains the keyword-only `declared` capability. No registry code is added. The chunked entries are
+unchanged here; CONFIG-EXPLICIT E2d gates them (below).
 
 Until GA: use this document as the design target so we don't paint ourselves
 into a corner. After GA: this document is binding.
@@ -90,11 +128,43 @@ quality-shape-fidelity/v1  post-scan-integrity/v2    name-hints/v1
 ssn/v1  npi/v1  pan/v1  iban/v1  ein/v1  mrn/v1  ndc/v1  icd10/v1
 cusip/v1  address/v1  locality/v1  person/v1  provider/v1
 composite/v1  custom/v1   ... (every disguise spec)
-subset-manifest/v1
+subset-manifest/v1         decoy-run-result/v1
+decoy-record/v1            sample-run/v1         decoy-library-export/v1
+decoy-job-log/v1
+scan-set/v1
 ```
 
 A user runs `decoy fit`, keeps the `distribution-snapshot/v1` artifact, and
 feeds it to a later engine version. That artifact is a **contract**.
+
+`decoy-run-result/v1` is the record of one `decoy run` (status, exit code, per-table outcome,
+delivery, checks, timings). The engine owns its shape (`decoy_engine.RunResult` to write,
+`decoy_engine.RunResultRead` to read). Every string in it is an enum or a validated name, reference,
+hash, version or timestamp, never a data value or message. The write model refuses unknown fields and
+enum values; the read model ignores added fields, reads a new enum value as a string and reads a
+reason it cannot validate as `null`. Numbers and flags are strict on both sides (`False` is not a `0`,
+`"1"` is not a `1`). The `schema` key is required on read and accepts only `decoy-run-result/v1`: a
+document of another major (`/v2`), free text or a missing key is refused, never read as v1; a reader
+that wants `/v2` support adds a new model under a new tag. Hand-authored corpus samples (the v1 sample and its cross-minor variants) are in
+`tests/integration/compat_corpus/run_result/`.
+
+`decoy-record/v1` is the envelope of the local record library (`decoy_engine.records`): kind, payload tag, a
+content-addressed `id` (SHA-256 of the canonical envelope without `id`, parsed first so a reformatted file keeps
+its id), `payload_digest`, closed `labels`, typed `links`, and the payload. The kind registry owns each kind's payload
+tag and models: `evidence` (`cli-local-1`, the CLI manifest), `run-result` (`decoy-run-result/v1`), `sample-run/v1`
+(metadata of a `--sample N` run, never rows), `scan-set` (`scan-set/v1`, the engine's `ScanSetCore`), and the reserved `publication` and `checkpoint`. A record of a
+kind or payload major this version does not know is returned as an opaque record or as `RecordNeedsNewer`, never
+dropped. A default export withholds such a record (its id goes in the header's `withheld_records`); `keep_paths` copies it byte for byte. `decoy-library-export/v1` is the JSON Lines export format and
+`decoy-job-log/v1` the header of a job log. Corpus samples are in `tests/integration/compat_corpus/records/`.
+
+`scan-set/v1` is the record of one multi-table scan (`decoy_engine.scan_sources`). The engine
+owns its shape: `ScanSetCore` to write (unknown fields refused), `ScanSetCoreRead` to read
+(unknown fields ignored). It holds counts, rates, type labels, detector ids and column names.
+Column names are the producer's header text; when the scan's header guard flags a header row
+that looks like data, the core writes positional names (`c0..cn`) instead. A misdeclared header
+the guard cannot recognise (a person name, an address) is the stated limit. The core holds no
+cell value. The optional per-table `detail` member of `scan_set_to_dict(detail=True)` is
+the nested `ColumnProfile` dict; it is additive-only within `/v1` and is not part of the core.
 
 **Rules:**
 
@@ -116,7 +186,8 @@ design (no raw key value, no raw filter-predicate literal), so it carries no
 re-identification risk on its own, but the same rule applies: a shape change
 mints `subset-manifest/v2` with a kept `v1` reader. The `subset:` block added
 to `PipelineConfig` (`config/_subset.py`) is additive and optional (`None` by
-default, unchanged behavior for every existing config); it is part of the
+default, unchanged behavior for every existing config, except that a run now
+refuses a config that sets it: see the SUB-STOP correction in section 1); it is part of the
 §3.4 config contract like any other optional block.
 
 ### 3.2 The vault (the catastrophic one)
@@ -179,6 +250,16 @@ before any decryption attempt and raises a typed
 from the wrong-seed `vault_key_mismatch`. Cross-version unmask is not supported
 and was not supported before F13; F13 makes the failure diagnosable rather than
 opaque.
+
+**Current state (column identity, 2026-11-08, pre-GA):** the generation column
+root now mixes the column identity (table name plus column name) with the
+strategy fingerprint, so columns with identical settings no longer draw the same
+stream. Generated output changes for existing seeds and keys, and renaming a
+column or moving it to another table re-keys it. `SEED_PROTOCOL_VERSION` is
+deliberately NOT bumped: it is shared with the mask path, so a bump would re-key
+all mask output for a generation-only change. Pinned plans are guarded by the
+engine version recorded in their `runtime_identity`, so a plan pinned before this
+change is refused by a newer engine instead of silently regenerating differently.
 
 **Current state (v7, 2026-09-11, pre-GA):** `SEED_PROTOCOL_VERSION` moved 6 -> 7
 (Task 5.2, DE-01 resolution): the `fpe` strategy's cipher, and the `fpe`-branch
@@ -286,6 +367,51 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   (A5a): a `format: fixed_width` `FileSource` can now be read through these
   names instead of importing the private `decoy_engine.profile._fixed_width_reader`
   module, which the additive-only rule in §4.1 does not cover.
+  It also includes `generated_table_to_pandas(table)` (2026-11-08): converts a generated
+  Arrow table to pandas with every integer column kept as a pandas nullable integer, so
+  output written from the frame prints `1` where a plain `to_pandas()` prints `1.0`.
+  It also includes `decoy_engine.profile.profile_relationships_from_config(relationships_config)
+  -> tuple[Relationship, ...]` (CLI-QA1 E-b): the config's `relationships:` block as one
+  `Relationship` per child, skipping malformed entries; an unequal composite column count, or an
+  empty column list, raises `ValueError`. It replaces the private `_build_relationships`.
+  It also includes `read_csv_source`, `CsvDialect` and `resolve_csv_dialect`
+  (CLI-DIALECT, 2026-11): `read_csv_source(path, dialect, *, table, dtype=None,
+  nrows=None, chunksize=None, file_access=None, field_key="source.path")` reads
+  a CSV source under its declared dialect. `dtype=str` with the default dialect
+  equals `pd.read_csv(path, dtype=str)`. A headerless file is width-checked and
+  a refusal is `PipelineValidationError` with `source_file.column_count_mismatch`,
+  `source_file.nul_byte` or `source_file.lone_cr`; the message is
+  `<code>: source <table> <detail>` and holds no value, path or file name. New
+  parameters are keyword-only and additive. `CsvDialect` and `resolve_csv_dialect`
+  refuse an incoherent dialect, or a `column_names` that is not a list or tuple of
+  strings, with `ConfigError` whose fixed text never echoes a submitted value.
+  A csv `FileSource` must set `has_header`. With `has_header: false` it names its
+  columns inline (`column_names`) or in `column_names_file`, never both: a
+  one-record UTF-8 header file of at most 1 MiB, read with the source's delimiter
+  and quoting, BOM and blank lines skipped, names kept unstripped, under the bound
+  file-access policy. A file that is missing, unreadable or not a regular file,
+  not UTF-8, empty, over 1 MiB, holds a NUL byte or a lone CR, has more than one
+  record, or a blank or duplicate name is refused with
+  `source_file.column_names_file_invalid` and a fixed phrase that names no value.
+  `resolve_csv_dialect(descriptor, *, table="source", file_access=None)` requires
+  `has_header` in the descriptor and raises `ConfigError` before any IO without it.
+  `nrows=0` returns the empty frame with the declared columns. The keyword-only
+  `columns` (SCAN-MULTI S1b) parses only the named columns and returns every frame
+  or chunk with exactly them in the order given; a headerless file maps the names
+  onto `column_names`; an unknown or repeated name is a `ValueError` that quotes
+  no name.
+  It also includes `scan_sources(sources, *, tables=None, sample_rows=10_000, strategy="head",
+  file_access=None)`, `ScanSet`, `TableScan`, `ScanSetCore` and `scan_set_to_dict(scan, *, detail)`
+  (SCAN-MULTI S1a, 2026-11): new keyword-only parameters are additive; errors name the table and
+  the cause's class only. SCAN-MULTI S1b adds the keyword-only `relationships`, `integrity` and
+  `spill_dir`, and `RelationshipFacts` and `ChildFacts` (counts only, in `ScanSet.relationships`
+  and the `relationships` member of `scan-set/v1`).
+  It also includes `parse_pipeline_config`, `ConfigProblem` and `ConfigRuleError`
+  (VALUE-FREE-ERRORS, 2026-11): `parse_pipeline_config(raw)` raises
+  `PipelineConfigError` whose `problems` are `ConfigProblem(code, location, text)`
+  with config names kept and submitted values dropped. `PipelineConfigError` no
+  longer sets `__cause__`; its `validation_error=` argument is removed. A
+  validator's message is shown only when it is a `ConfigRuleError`.
   It also includes `run_mask_chunked` (2026-10-01): the chunked
   dispatcher as a public entry point. Its signature is
   `run_mask_chunked(config, chunks, *, table, engine_version, registry=None,
@@ -524,6 +650,21 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   `source_row_groups` and `source_max_row_group_rows`; `execution.loaded_fully_in_memory` is
   `False` when every source of a streamed run was read lazily. A caller that passes resident
   tables sees no change except the added `input` block.
+  SCAN-ML M1 (2026-11) adds `ModelRef`, `ModelStatus`, `classifier_status`, `ner_status`,
+  `load_detectors`, `ModelUnavailableError`, `PreScanConfig` and `Dismissal`, and the config fields
+  `pre_scan.detectors`, `pre_scan.ner_model`, `post_scan.detectors`, `post_scan.ner_model`,
+  `post_scan.ner_findings` and `post_scan.dismissed`. All are additive. A field equal to its default
+  is left out of the dump, so a config that predates them keeps its exact dump,
+  `pipeline_config_hash` and plan hash; the plan hash leaves out `pre_scan` and keeps
+  `post_scan.dismissed` (under `ner_findings: fail` a dismissal decides what blocks). Registry 1.8.0
+  adds `config.detectors_invalid`, `config.post_scan_inactive`, `config.pre_scan_ner_inactive`,
+  `config.ner_model_invalid`, `config.dismissal_invalid`, `provider.classifier_unavailable` and
+  `provider.ner_model_incompatible`. Three behavior changes. `ensure_ner_available` now checks the
+  model name (one `fullmatch` rule) and refuses a model built for another spaCy minor, so a
+  `text_redact` `ner` column fails at validate time where it used to fail at load. A name counts as
+  an installed model only when it is an installed distribution that ships a spaCy `meta.json`; a
+  plain importable module (`os`, `json`) is refused with `provider.ner_model_not_installed` and is
+  never imported. `ModelPackLoadError` gains a `cause` field (`disabled`, `import` or `pack`).
 - **CLI:** verb names, flag names, and the exit-code contract (0 ok, 1
   validation/usage, 2 deprecated-shim, 3 runtime).
 - **Config:** the `pipeline.yaml` schema. An old config must keep validating and
@@ -547,6 +688,53 @@ namespaces would collapse to one token. tokenize is an always-keyed strategy,
 so at GA it requires a resolved >=32-byte secret like every other keyed
 surface (`keyed_strategy_requires_secret`); it never derives tokens from the
 public job seed.
+
+`keyed_columns_for_config` and `KeyedColumn` joined the public API on 2026-11-08
+(init wizard part E3), additive under §4.1. `keyed_columns_for_config(config)`
+returns every column of a raw config mapping that needs the mask secret, in
+config order, as `KeyedColumn(table, column, strategy)`; each field is the name
+as written, or `None` when the config leaves it out. It reads names only, never
+a value, a schema or a row. It uses the same column walk as
+`secret_requirements_for_config`, so a config needs the mask secret exactly when
+this list is non-empty or a relationship has a composite parent key (keyed with
+no single field, so not listed) or a missing or malformed parent, which fails
+safe. `tests/secret_providers/test_keyed_columns.py`
+pins the result with a written-out oracle and the parity rule.
+
+`decoy_engine.is_valid_pipeline_name` and `PipelineConfig.name` joined the public
+surface on 2026-11-09 (PROJECT-LAYOUT E1), additive under §4.1.
+`is_valid_pipeline_name(value)` is the one pipeline-name rule: 1 to 64
+characters from `[A-Za-z0-9_.-]`, first character a letter or digit, no trailing
+dot, not a Windows device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`,
+`LPT1` to `LPT9`, any case, any extension); a non-string is never valid.
+`PipelineConfig.name` is optional and strict: a non-string or a name that fails
+the rule is refused with `config.pipeline_name_invalid` (registry 1.12.0) and
+nothing is coerced. While `name` is unset the config dump and
+`Plan.pipeline_config_hash` are byte-identical to before, and a set `name` is
+excluded from the plan hash because it is data binding, not masking semantics.
+`tests/unit/config/test_pipeline_name.py` pins all of this.
+
+**Declaration gate on the run, isolated and profile routes (CONFIG-EXPLICIT E2c).** `prepare_declared_sources`
+(`DeclarationRequest.for_run`, `for_descriptors`) is the one boundary. `profile_source` calls it first, or accepts the
+`PreparedDeclaredSources` that `build_run_context` already made for the same config object (`declared=`; a capability
+for another config raises `ValueError`). `build_run_context` checks the config descriptors, the supplied tables and
+`source_loader_schemas` together, then wraps the loader with `checked_loader` so a table that materializes with other
+columns is refused before it is profiled or masked. `run_pipeline_isolated` runs the same check in the parent before
+staging or spawn, and the child `run_pipeline` rechecks. The refusals are `source_file.undeclared_column` (names a
+position and a count, never a column) and `source_file.undeclared_table`.
+
+**Declaration gate on the chunked entries (CONFIG-EXPLICIT E2d).** `run_mask_pipeline_chunked`,
+`run_mask_chunked` and `run_native_or_oracle_chunked` call `prepare_declared_sources`
+(`DeclarationRequest.for_chunks`) after the subset refusal and before `chunks` is touched, then
+check every chunk's columns against the declared set. `run_mask_pipeline_chunked` gains the required
+keyword-only `source_schema: pa.Schema` (a breaking signature change, no default): the table and that
+schema are checked at entry, and a chunk column outside the schema is refused with
+`source_file.undeclared_column`. The two native entries keep their signatures. They check the config
+level at entry (an undeclared table) and the first chunk's columns right after it is read, before
+profile, compile or mask (a named limit: one chunk is pulled before the column check); later chunks
+are checked lazily before each masks, so earlier chunks may already be in the sink, as for drift
+refusals. The private `_run_chunked`, `_oracle_preflight` and `_oracle_preflight_admitted` take a
+required `declared` capability. The CLI's `run --chunked` moves in CLI Part C1.
 
 ### 3.5 Disguises
 
@@ -650,6 +838,12 @@ turns into "I can add X alongside the old X" with five more minutes of thought.
   The corpus is synthetic pre-GA: artifacts carry `synthetic: true` and
   `produced_by_engine_version: "0.1.0"`. At GA, replace or supplement with a real
   (`synthetic: false`) artifact of each read-back kind.
+- **`decoy-run-result/v1` fixtures** (`tests/integration/compat_corpus/run_result/run-result-v1*.json`).
+  They live in the corpus directory, in their own subfolder, so the frozen samples sit in one place.
+  They are hand-authored reader samples, not artifacts minted by `regenerate.py`: there is no
+  producing code to regenerate and they have no entry in `manifest.json`. The manifest-driven corpus
+  test does not read them. `tests/unit/run_result/test_model.py` reads the sample and the cross-minor
+  variants through `RunResultRead` and refuses them on the write model.
 - **`CHANGELOG.md`** records every user-visible change.
 - **The regression-gate** runs the above on every PR.
 

@@ -20,6 +20,7 @@ from decoy_engine.plan import compile_plan, plan_to_yaml
 from decoy_engine.profile import _walk
 from decoy_engine.profile._types import ColumnProfile
 from decoy_engine.providers_v2 import get_default_registry
+from tests._declared_schema import chunked_entry_kwargs
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     TABLE,
@@ -208,6 +209,7 @@ def _run(fn: Any, config: dict[str, Any], chunks: list[pa.Table]) -> list[pa.Tab
             table="customers",
             engine_version=ENGINE_VERSION,
             key_provider=key_provider(),
+            **chunked_entry_kwargs(fn, config, "customers"),
         )
     )
 

@@ -347,6 +347,8 @@ class TestIndependentDifferential:
 # ---------------------------------------------------------------------------
 
 
+# Exhaustive 10**6 permutation: about 250 s on a VM, 3x that as the limit.
+@pytest.mark.timeout(780)
 def test_exhaustive_six_digit_permutation():
     key = bytes(range(32))  # arbitrary fixed 32-byte key; determinism is the point
     tweak = b"exhaustive-6-digit-check"

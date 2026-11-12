@@ -145,10 +145,7 @@ from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
 from decoy_engine.execution._exact_int_sources import register_exact_int_sources, release_table
 from decoy_engine.execution._fk_keys import fk_columns_for_table, to_pandas_fk_safe
-from decoy_engine.execution._guards import (
-    reject_gated_hash_on_integer,
-    reject_null_bearing_int,
-)
+from decoy_engine.execution._guards import run_chunk_ingest_guards
 from decoy_engine.execution._output_projection import (
     UnconfiguredColumnPolicy,
     enforce_output_projection,
@@ -283,11 +280,11 @@ def run_sequential(
     q_cfg: dict[str, Any] = quarantine_config or {}
     q_enabled = bool(q_cfg.get("enabled", False))
     q_triggers: list[str] = list(q_cfg.get("triggers") or [])
-    q_output_path: str = (q_cfg.get("output_path") or "").strip()
+    q_output_path: str = q_cfg.get("output_path") or ""
     # Fail-closed backstop for raw-dict callers who bypass QuarantineConfig
     # validation: if quarantine is enabled with a row-error trigger, it must name
     # an output_path, or a quarantined row would be silently dropped.
-    if q_enabled and q_triggers and not q_output_path:
+    if q_enabled and q_triggers and not q_output_path.strip():
         raise ValueError(
             "quarantine enabled with triggers but no output_path; refusing to run "
             "(would silently drop quarantined rows)."
@@ -400,9 +397,8 @@ def run_sequential(
                 _pg = get_active_channel()
                 _pg_rows_in = src.num_rows
                 _pg_started = _pg.phase_start("mask", table=table, rows_in=_pg_rows_in)
-                # Same guard as run(), table-local (FK children exempt via graph).
-                reject_null_bearing_int(plan, {table: src}, registry, graph)
-                reject_gated_hash_on_integer(plan, {table: src.schema}, registry, graph)
+                # The same guard list as run(), table-local (FK children exempt via graph).
+                run_chunk_ingest_guards(plan, {table: src}, registry, graph)
                 t0 = time.perf_counter()
                 # DE-10: same lossless-typing contract as the full-frame `run()`
                 # ingestion (execution/_fk_keys.py) -- an FK key column never

@@ -153,6 +153,7 @@ def _mask_config(tmp_path, n_cols: int) -> dict:
                 "customers": {
                     "type": "file",
                     "format": "csv",
+                    "has_header": True,
                     "path": str(tmp_path / "customers.csv"),
                 },
             },
@@ -191,6 +192,7 @@ def _row_error_config(tmp_path) -> dict:
                 "customers": {
                     "type": "file",
                     "format": "csv",
+                    "has_header": True,
                     "path": str(tmp_path / "customers.csv"),
                 },
             },
@@ -235,6 +237,7 @@ def _row_error_sources(tmp_path) -> dict[str, pa.Table]:
 
 
 class TestNormalJobCompletes:
+    @pytest.mark.serial
     def test_small_job_completes_with_correct_artifacts_and_plausible_peak(self, tmp_path):
         cfg = _mask_config(tmp_path, n_cols=2)
         sources = _mask_sources(tmp_path, n_rows=50, n_cols=2)
@@ -359,6 +362,7 @@ class TestMemCapOom:
 
 
 class TestHwmContaminationGuard:
+    @pytest.mark.serial
     def test_parent_inflated_peak_does_not_leak_into_child_result(self, tmp_path):
         cfg = _mask_config(tmp_path, n_cols=2)
         sources = _mask_sources(tmp_path, n_rows=50, n_cols=2)
@@ -537,6 +541,7 @@ class TestTimeoutHasSaneDefault:
 
 
 class TestHangingChildHitsTimeout:
+    @pytest.mark.serial
     def test_hanging_child_is_killed_and_classified_cleanly(self, tmp_path, monkeypatch):
         _install_fake_worker(tmp_path, monkeypatch, "hanging_worker", _HANGING_WORKER_SRC)
         cfg = _mask_config(tmp_path, n_cols=1)
@@ -618,6 +623,7 @@ class TestRowErrorsCarried:
 
 
 class TestGovernorKillAfterStagingLeavesNoPartialOutput:
+    @pytest.mark.serial
     def test_sigkill_after_staging_but_before_commit_never_commits(self, tmp_path):
         cfg = _mask_config(tmp_path, n_cols=6)
         sources = _mask_sources(tmp_path, n_rows=300_000, n_cols=6)

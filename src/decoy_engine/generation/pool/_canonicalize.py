@@ -68,7 +68,8 @@ def _canonicalize_source(value: Any) -> bytes:
     against bare Python values used in tests.
 
     Raises:
-        GenerationError on float, timezone-naive datetime, or null.
+        GenerationError on float, timezone-naive datetime, or null. The message never
+        names the value: it reaches job logs through every wrapper that forwards it.
     """
     if value is None:
         raise GenerationError(
@@ -91,7 +92,7 @@ def _canonicalize_source(value: Any) -> bytes:
         raise GenerationError(
             code=reasons.runtime.FLOAT_CANONICALIZATION_UNSUPPORTED,
             message=(
-                f"Float source value {value!r} cannot be canonicalized for "
+                "A float source value cannot be canonicalized for "
                 "deterministic mapping. IEEE-754 representation drifts "
                 "across platforms; route through a stringified or binned "
                 "integer column upstream. See S5 spec §5.1 + PQ-call."
@@ -104,7 +105,7 @@ def _canonicalize_source(value: Any) -> bytes:
             raise GenerationError(
                 code=reasons.runtime.TIMEZONE_NAIVE_DATETIME,
                 message=(
-                    f"Datetime {value!r} has no tzinfo. Deterministic "
+                    "A source datetime has no tzinfo. Deterministic "
                     "canonicalization requires explicit UTC; localize "
                     "upstream or use a date if intra-day precision is "
                     "not needed."

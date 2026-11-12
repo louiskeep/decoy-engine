@@ -17,6 +17,7 @@ from simpleeval import FunctionNotDefined, NameNotDefined
 
 from decoy_engine.expressions import BASE_GLOBALS, safe_eval
 from decoy_engine.generation._dob_anchor import anchored_date_of_birth
+from decoy_engine.generators.derivation import TABLE_KEY
 from decoy_engine.internal.crypto import hmac_hex
 
 
@@ -58,6 +59,39 @@ def _undefined_name(exc: Exception) -> str | None:
     if isinstance(exc, NameError) and exc.name:
         return exc.name
     return None
+
+
+# Names `_formula_scope` binds; the plan check reads them as defined. A test pins this to the scope.
+FORMULA_SCOPE_NAMES = frozenset(
+    [
+        "random",
+        "randint",
+        "choice",
+        "gauss",
+        "round",
+        "min",
+        "max",
+        "len",
+        "str",
+        "int",
+        "float",
+        "hash",
+        "date_between",
+        "date_this_decade",
+        "date_this_year",
+        "date_this_month",
+        "future_date",
+        "past_date",
+        "date_of_birth",
+        "time",
+        "now",
+        "today",
+        "days_from_now",
+        "months_from_now",
+        "years_from_now",
+        "format_date",
+    ]
+)
 
 
 class _FormulaMixin:
@@ -125,6 +159,7 @@ class _FormulaMixin:
         formula: str,
         references: list[str],
         out: pd.DataFrame,
+        table_name: str = "",
     ) -> pd.Series:
         """Evaluate a formula column whose expression reads sibling columns.
 
@@ -143,7 +178,7 @@ class _FormulaMixin:
             )
             return pd.Series([None] * len(out), dtype=object)
 
-        gen_ctx = self._column_ctx(col_name)
+        gen_ctx = self._column_ctx(col_name, {TABLE_KEY: table_name})
         values: list = []
         # Track null sibling cells coerced to '' so the substitution is
         # diagnosable: a null in a referenced column silently blanks the formula

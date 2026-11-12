@@ -344,7 +344,10 @@ def _lazy_sources(cfg: dict[str, Any], kind: str, sources: dict[str, pa.Table]) 
 
 
 def _lazy_kwargs(kind: str, sources: dict[str, pa.Table]) -> dict[str, Any]:
-    return {"source_loader": (lambda name: sources[name])} if kind == "loader" else {}
+    if kind != "loader":
+        return {}
+    schemas = {name: table.schema for name, table in sources.items()}
+    return {"source_loader": (lambda name: sources[name]), "source_loader_schemas": schemas}
 
 
 class TestLazySources:
@@ -393,7 +396,12 @@ class TestLazySources:
         for name, tbl in sources.items():
             csv_path = tmp_path / f"{name}.csv"
             tbl.to_pandas().to_csv(csv_path, index=False)
-            cfg["sources"][name] = {"type": "file", "format": "csv", "path": str(csv_path)}
+            cfg["sources"][name] = {
+                "type": "file",
+                "format": "csv",
+                "has_header": True,
+                "path": str(csv_path),
+            }
         with pytest.raises(ExecutionError) as exc:
             _run(
                 cfg,
@@ -401,6 +409,7 @@ class TestLazySources:
                 use_byte_estimate_routing=False,
                 full_frame_reject_rows=1,
                 source_loader=lambda name: sources[name],
+                source_loader_schemas={n: t.schema for n, t in sources.items()},
             )
         assert exc.value.code == _REJECT
 
@@ -454,6 +463,7 @@ class TestLazySources:
                 {},
                 execution_mode="sequential",
                 source_loader=lambda name: sources[name],
+                source_loader_schemas={n: t.schema for n, t in sources.items()},
                 sink=lambda name, data: held.append(name),
             )
         assert held == ["parent"]
@@ -480,6 +490,7 @@ class TestLazySources:
             {"parent": sources["parent"], "child": sources["child"]},
             execution_mode=mode,
             source_loader=lambda name: loader_tables[name],
+            source_loader_schemas={n: t.schema for n, t in loader_tables.items()},
         )
         expected_parent = reference_transform(sources["parent"], P_OPS)
         assert res.outputs["parent"].num_rows == expected_parent.num_rows == 10

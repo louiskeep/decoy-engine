@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution import (
     _chunked_input,
     _pipeline_auto_chunk,
@@ -29,6 +30,7 @@ from decoy_engine.execution import (
 from decoy_engine.execution import _chunked_output_sink as _output_sink
 from decoy_engine.execution import _pipeline_multi_table as _multi_table
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
+from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.progress import get_active_channel
 
@@ -42,6 +44,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionAdapter
     from decoy_engine.execution._output_projection import UnconfiguredColumnPolicy
     from decoy_engine.execution._planner import ExecutionPlan
+    from decoy_engine.execution.pipeline._stream import StreamVerdict
     from decoy_engine.generation.pool import PoolCache
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
@@ -69,6 +72,8 @@ class GenerateMaskStepResult:
     # the whole sources exists (`decide_output_mode`).
     sources: dict[str, pa.Table]
     inputs_streamed: bool
+    # Generation-side `QualityWarning`s (the fidelity gate), ahead of `mask_warnings` in the result.
+    generate_warnings: tuple[Any, ...] = ()
 
 
 def run_generate_and_mask_steps(
@@ -109,18 +114,22 @@ def run_generate_and_mask_steps(
     now_iso: str | None,
     publish: _output_sink.OutputPublish,
     pregenerated: dict[str, pa.Table] | None = None,
+    pregenerated_warnings: tuple[Any, ...] = (),
     cast_run: Any = None,
+    stream: StreamVerdict | None = None,
 ) -> GenerateMaskStepResult:
     """Run generate-kind tables then mask-kind tables (`_pipeline.py`
     Steps 1-2), returning everything the stitch + finalize stages need.
     See the module docstring for why this is a separate function. `pregenerated` skips
-    Step 1 with outputs a declined mixed route already built."""
+    Step 1 with outputs a declined mixed route already built; `pregenerated_warnings` carries the
+    warnings that generation raised, so the fallback never loses one."""
     from decoy_engine.generation.synthesize import generate_tables
 
     # Step 1: generate-kind tables. Plan-only (guide 4.8/9): passing the
     # whole Plan is safe even with mask tables present, since synthesize
     # filters by `generate_columns` presence internally.
     generate_outputs: dict[str, pa.Table] = {}
+    generate_warnings: list[Any] = list(pregenerated_warnings)
     if has_generate_table:
         generate_outputs = (
             pregenerated
@@ -130,6 +139,7 @@ def run_generate_and_mask_steps(
                 derive_key=derive_key,
                 instance_default_locale=instance_default_locale,
                 provider_snapshot=provider_snapshot,
+                on_warning=generate_warnings.append,
             )
         )
 
@@ -161,6 +171,8 @@ def run_generate_and_mask_steps(
         split = (
             None
             if route_chunked
+            else stream.split
+            if stream is not None
             else _multi_table.decide_multi_table_split(
                 config,
                 plan=plan,
@@ -205,6 +217,12 @@ def run_generate_and_mask_steps(
             )
             if out_mode == "streamed":
                 publish.open()
+        if stream is not None and out_mode != "streamed":
+            # The preflight admitted streaming; running resident now would break "must stream".
+            raise ExecutionError(
+                code=reasons.runtime.STREAMING_UNAVAILABLE,
+                message=f"execution_mode='stream': the output would stay resident ({out_reason}).",
+            )
         # B6b: a lazy table streams only when the output does and a lane takes it; every other
         # one is materialized exactly once, here, before any lane runs.
         modes = _chunked_input.input_modes(
@@ -248,6 +266,7 @@ def run_generate_and_mask_steps(
                 generate_output_tables=generate_output_tables,
                 sink=publish.active_sink,
                 output_reason=out_reason if out_mode == "resident" else None,
+                align_row_groups=stream is not None,
             )
         elif route_chunked:
             # The eligible shape is exactly one mask table with no generate
@@ -276,7 +295,11 @@ def run_generate_and_mask_steps(
                     dispatcher_enabled=chunked_dispatcher_enabled,
                     cast_run=cast_run,
                     **(
-                        {"sink": publish.active_sink, "expected": keep_lazy.get(mask_table_name)}
+                        {
+                            "sink": publish.active_sink,
+                            "expected": keep_lazy.get(mask_table_name),
+                            "align_row_groups": stream is not None,
+                        }
                         if out_mode == "streamed"
                         else {}
                     ),
@@ -367,4 +390,5 @@ def run_generate_and_mask_steps(
         fidelity_reports=fidelity_reports,
         sources=sources,
         inputs_streamed=bool(sources) and all(isinstance(v, LazySource) for v in sources.values()),
+        generate_warnings=tuple(generate_warnings),
     )

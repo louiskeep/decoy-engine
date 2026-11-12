@@ -1,0 +1,26 @@
+{
+  "entries": [
+    {
+      "code": "statistical_snapshot_values_redacted",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "StatisticalSpecError",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.11.0",
+      "summary": "Statistical snapshot values redacted.",
+      "symbol": "STATISTICAL_SNAPSHOT_VALUES_REDACTED"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.11.0"
+}

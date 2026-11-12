@@ -260,7 +260,7 @@ def run_out_of_core_route(
     Disk (OOC-D): `temp_disk_budget_bytes` is threaded into `run_fk_out_of_core`
     as `_TEMP_DISK_SAFETY_FRACTION` (0.9) of the free space `shutil.disk_usage`
     reports at `_spill_estimate.default_ooc_temp_root()` -- the SAME root the
-    runner's own `tempfile.mkdtemp` default lands under absent an explicit
+    runner's own `protected_scratch_dir` default lands under absent an explicit
     `temp_dir`, so this budget and the runner's actual spill target are the
     same filesystem. This is what makes the runner's existing `check_temp_
     disk_budget` runtime cap (already called at each table boundary once a

@@ -20,6 +20,7 @@ from decoy_engine.profiling.eval.split import (
     make_group_key,
     make_split_inputs,
 )
+from tests._ml import require_ml_stack
 
 pytestmark = pytest.mark.ml  # ml-gate membership (pytest -m ml)
 
@@ -134,7 +135,7 @@ class TestHeldOutSplit:
     """StratifiedGroupKFold split -- skipped when scikit-learn is absent."""
 
     def test_split_yields_non_overlapping_indices(self):
-        sklearn = pytest.importorskip("sklearn")  # noqa: F841
+        require_ml_stack()
         from decoy_engine.profiling.eval.split import held_out_split
 
         fixtures = build_fixtures()
@@ -149,7 +150,7 @@ class TestHeldOutSplit:
             assert sorted(train_idx + test_idx) == list(range(len(X)))
 
     def test_same_group_not_in_both_splits(self):
-        sklearn = pytest.importorskip("sklearn")  # noqa: F841
+        require_ml_stack()
         from decoy_engine.profiling.eval.split import held_out_split
 
         fixtures = build_fixtures()
@@ -164,7 +165,7 @@ class TestHeldOutSplit:
             )
 
     def test_split_requires_sklearn(self):
-        """ImportError raised when the [ml] extra (scikit-learn) is absent.
+        """ImportError raised when scikit-learn (a base dependency) fails to import.
 
         Forces the failure deterministically whether or not sklearn is installed:
         a ``None`` entry in ``sys.modules`` makes ``from sklearn... import`` raise

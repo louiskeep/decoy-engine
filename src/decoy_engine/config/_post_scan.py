@@ -4,20 +4,129 @@
 PII, FK preservation, policy validation), report-only. It does not enable
 Pre-scan discovery or any other Post-scan check; `post_validation` and
 `fidelity_report` stay separate subpass controls.
+
+`detectors`, `ner_model`, `ner_findings` and `dismissed` choose model detectors for that suite.
+Each is dropped from the dump while it equals its default, so a config that predates them keeps
+its exact dump and plan hash; a changed value moves the hash because it changes what the run
+checks or, under `ner_findings: fail`, blocks on. Comparison is by value, not by what was
+written (`_global_settings.py` precedent), so writing a default out does not move the hash.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
+from pydantic_core import PydanticCustomError
+
+from decoy_engine import reasons
+from decoy_engine.config._pre_scan import canonical_detectors, checked_ner_model, inactive
+from decoy_engine.detection.ner import DEFAULT_NER_MODEL
+from decoy_engine.detection.types import DetectorSource
+
+_DISMISSAL_INVALID = str(reasons.config.DISMISSAL_INVALID)
+
+
+class Dismissal(BaseModel):
+    """A reviewed finding: matches only the warning whose every field here is equal."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True, frozen=True, strict=True)
+
+    table: str
+    column: str
+    detector_id: str
+    source: DetectorSource
+    model_id: str | None = None
+    model_version: str | None = None
+    strategy: str | None  # None: the column had no configured strategy
+
+    @field_validator("table", "column", "detector_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            raise PydanticCustomError(_DISMISSAL_INVALID, "a dismissal field must be text.")
+        return value
+
+    @field_validator("strategy", "model_id", "model_version", mode="before")
+    @classmethod
+    def _optional_text(cls, value: Any) -> Any:
+        if value is not None and not isinstance(value, str):
+            raise PydanticCustomError(_DISMISSAL_INVALID, "a dismissal field must be text or null.")
+        return value
+
+    @model_validator(mode="after")
+    def _model_identity_iff_model_source(self) -> Dismissal:
+        has_model = self.model_id is not None and self.model_version is not None
+        if self.source == "regex" and (self.model_id is not None or self.model_version is not None):
+            raise PydanticCustomError(_DISMISSAL_INVALID, "a regex dismissal names no model.")
+        if self.source != "regex" and not has_model:
+            raise PydanticCustomError(
+                _DISMISSAL_INVALID, "a model dismissal needs model_id and model_version."
+            )
+        return self
 
 
 class PostScanConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     integrity: bool = False
+    detectors: tuple[DetectorSource, ...] = ("regex",)
+    ner_model: str = DEFAULT_NER_MODEL
+    ner_findings: Literal["warn", "fail"] = "warn"
+    dismissed: tuple[Dismissal, ...] = ()
+
+    @field_validator("detectors")
+    @classmethod
+    def _detectors(cls, value: tuple[DetectorSource, ...]) -> tuple[DetectorSource, ...]:
+        return canonical_detectors(value)
+
+    @field_validator("ner_model", mode="before")
+    @classmethod
+    def _ner_model(cls, value: Any) -> str:
+        return checked_ner_model(value)
+
+    @model_validator(mode="after")
+    def _chosen_settings_must_run(self) -> PostScanConfig:
+        if not self.integrity:
+            if self.detectors != ("regex",):
+                raise inactive("post_scan.detectors", "post_scan.integrity: true")
+            if self.ner_findings == "fail":
+                raise inactive("post_scan.ner_findings", "post_scan.integrity: true")
+            if self.dismissed:
+                raise inactive("post_scan.dismissed", "post_scan.integrity: true")
+        if "ner" not in self.detectors:
+            if self.ner_findings == "fail":
+                raise inactive("post_scan.ner_findings", "ner in post_scan.detectors")
+            if "ner_model" in self.model_fields_set:
+                raise inactive("post_scan.ner_model", "ner in post_scan.detectors")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_defaults(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if tuple(data.get("detectors", ())) == ("regex",):
+            data.pop("detectors", None)
+        if data.get("ner_model") == DEFAULT_NER_MODEL:
+            data.pop("ner_model", None)
+        if data.get("ner_findings") == "warn":
+            data.pop("ner_findings", None)
+        if not data.get("dismissed"):
+            data.pop("dismissed", None)
+        return data
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> Any:
+        from decoy_engine.config._declared_casting import recover_serialization_schema
+
+        return recover_serialization_schema(core_schema, handler)
 
 
 def post_scan_integrity_requested(config: Mapping[str, Any]) -> bool:

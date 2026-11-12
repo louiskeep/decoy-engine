@@ -51,7 +51,12 @@ from decoy_engine import reasons
 from decoy_engine._opaque import OpaqueBox
 from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    option,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.fileaccess import map_in_context
 from decoy_engine.generation.pool._events import QualityWarning
@@ -77,7 +82,7 @@ _FF1_MIN_DOMAIN = _ff1.FF1_MIN_DOMAIN
 
 # Maps the low-level exception's `.code` (dotted) onto the handler-surface
 # `StrategyError` code (underscored) the runner / operator sees. Codes not in
-# this map keep their existing default (`fpe_unencryptable_value` for any
+# this map keep their registered default (`fpe_unencryptable_value` for any
 # `FpeUnencryptableError` whose `.code` isn't listed, matching pre-Task-5.2
 # behavior for the DE-01 guards verbatim).
 _UNENCRYPTABLE_STRATEGY_CODE: dict[str, str] = {
@@ -91,18 +96,25 @@ _CHECKSUM_STRATEGY_CODE: dict[str, str] = {
 
 def strategy_code_for_unencryptable(exc: FpeUnencryptableError) -> str:
     """Map an `FpeUnencryptableError` onto its `StrategyError`/row-error code."""
-    return _UNENCRYPTABLE_STRATEGY_CODE.get(exc.code, "fpe_unencryptable_value")
+    return _UNENCRYPTABLE_STRATEGY_CODE.get(exc.code, reasons.runtime.FPE_UNENCRYPTABLE_VALUE)
 
 
 def strategy_code_for_checksum(exc: FpeChecksumError) -> str:
     """Map an `FpeChecksumError` onto its `StrategyError`/row-error code."""
-    return _CHECKSUM_STRATEGY_CODE.get(exc.code, "fpe_checksum_unsupported")
+    return _CHECKSUM_STRATEGY_CODE.get(exc.code, reasons.runtime.FPE_CHECKSUM_UNSUPPORTED_STRATEGY)
 
 
 class FpeStrategyHandler:
     """Format-preserving encryption via NIST SP 800-38G FF1, keyed onto derive."""
 
     name: str = "fpe"
+    namespace_required: bool = True
+    join_safe: bool = True
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("charset", "str", "digits"),
+        option("preserve_separators", "bool", False),
+    )
+    offer_in_wizard: bool = True
 
     def __init__(self, *, chunk_count: int = 4) -> None:
         self._chunk_count = chunk_count

@@ -26,6 +26,7 @@ from decoy_engine.execution.native._dispatch import (
 from decoy_engine.keyprovider import SecretKeyProvider, key_provider_from_ref
 from decoy_engine.profile import ColumnProfile, Profile, Relationship, TableProfile
 from decoy_engine.providers_v2 import get_default_registry
+from tests.native._b8_support import run_native_or_oracle_chunked_below_gate
 
 _COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
 _NEEDS_COMPANION = pytest.mark.skipif(
@@ -44,7 +45,9 @@ def _all_admitted_config() -> dict:
     return {
         "version": 2,
         "global_settings": {"seed": 42, "post_validation": False},
-        "sources": {"w": {"type": "file", "format": "csv", "path": "/dev/null"}},
+        "sources": {
+            "w": {"type": "file", "format": "csv", "has_header": True, "path": "/dev/null"}
+        },
         "targets": {"w": {"type": "file", "format": "csv", "path": "/dev/null"}},
         "tables": [
             {
@@ -553,7 +556,7 @@ def test_uncovered_column_reroutes_to_oracle() -> None:
     source = pa.table({"p": [1, 2], "unconfigured": ["x", "y"]})
     sink: list[NativeRouteEvidence] = []
     list(
-        run_native_or_oracle_chunked(
+        run_native_or_oracle_chunked_below_gate(
             config, [source], table="w", engine_version="test", route_evidence_sink=sink
         )
     )
@@ -1022,6 +1025,7 @@ def test_provider_config_values_reach_the_kernels_not_just_the_defaults() -> Non
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.serial
 @_NEEDS_COMPANION
 def test_kernel_evidence_accumulates_across_multiple_chunks() -> None:
     config = {
@@ -1194,8 +1198,8 @@ def test_second_chunk_introducing_an_unconfigured_column_fails_coded_after_first
     chunk1 = pa.table({"p": [1, 2]})
     chunk2 = pa.table({"p": [3, 4], "surprise": ["a", "b"]})
     sink: list[NativeRouteEvidence] = []
-    it = run_native_or_oracle_chunked(
-        config, [chunk1, chunk2], table="w", engine_version="test", route_evidence_sink=sink
+    it = run_native_or_oracle_chunked_below_gate(
+        config, iter([chunk1, chunk2]), table="w", engine_version="test", route_evidence_sink=sink
     )
     assert sink[0].native_admitted is True
     first_out = next(it)

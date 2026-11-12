@@ -17,14 +17,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, runtime_checkable
 
 import numpy as np
 import pandas as pd
 import pyarrow as pa
 
 from decoy_engine import reasons
-from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.execution._row_errors import RowError, RowErrorRecord
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
@@ -319,6 +319,81 @@ class StrategyHandler(Protocol):
         ...
 
 
+# Strategy catalog rows. They live beside `StrategyHandler` because every handler module imports
+# this module and the `_strategies` package `__init__` imports every handler: defining the row
+# types there would be an import cycle.
+WireType = Literal["str", "int", "float", "bool", "str_list", "float_list"]
+OptionLocation = Literal["column", "provider_config", "provider_config.ner"]
+OptionExample = str | int | float | bool | tuple[str, ...] | tuple[float, ...]
+OptionValue = str | int | float | bool | list[str] | list[float]
+
+
+@dataclass(frozen=True)
+class StrategyOption:
+    """One value an operator may set on a strategy, with where it lives in a column entry.
+
+    `location` is `column` for a top-level `ColumnConfig` field, `provider_config` for a key of
+    the free-form `provider_config` mapping, and `provider_config.ner` for a member of its `ner`
+    mapping (written without the `ner_` name prefix).
+
+    `example` is test data chosen to differ from the handler default; it is never a prompt prefill.
+    """
+
+    name: str
+    wire_type: WireType
+    required: bool
+    location: OptionLocation
+    choices: tuple[str, ...] | None
+    example: OptionExample
+
+
+@dataclass(frozen=True)
+class StrategyInfo:
+    """What the catalog knows about one strategy."""
+
+    name: str
+    namespace_required: bool  # true when ANY mode of the strategy needs a namespace
+    # Injective and deterministic per value with the handler's defaults, so it may mask a FK key.
+    # Options that shorten the output (hash truncate) are not offered.
+    join_safe: bool
+    options: tuple[StrategyOption, ...]  # allowed V1 wizard options; empty is valid
+    offer_in_wizard: bool  # listed at the wizard's `edit` prompt
+
+    @property
+    def required_options(self) -> tuple[str, ...]:
+        return tuple(o.name for o in self.options if o.required)
+
+    @property
+    def example_options(self) -> Mapping[str, OptionValue]:
+        """Each option's example, with tuples as lists (the shape a parsed config holds)."""
+        return {
+            o.name: cast("OptionValue", list(o.example))
+            if isinstance(o.example, tuple)
+            else o.example
+            for o in self.options
+        }
+
+
+def option(
+    name: str,
+    wire_type: WireType,
+    example: OptionExample,
+    *,
+    required: bool = False,
+    location: OptionLocation = "provider_config",
+    choices: tuple[str, ...] | None = None,
+) -> StrategyOption:
+    """Shorthand for a handler's `wizard_options` entry; `provider_config` is the common place."""
+    return StrategyOption(
+        name=name,
+        wire_type=wire_type,
+        required=required,
+        location=location,
+        choices=choices,
+        example=example,
+    )
+
+
 @runtime_checkable
 class ExecutionAdapter(Protocol):
     """The planning/execution boundary (S9 spec §2). Narrow by design.
@@ -393,3 +468,38 @@ def pandas_column_to_kernel_input(column: pd.Series) -> pa.Array | list[Any]:
     except pa.ArrowException:
         na_mask = column.isna().to_numpy()
         return [None if is_na else value for is_na, value in zip(na_mask, column, strict=True)]
+
+
+def column_draw_identity(table: str, column: str) -> str:
+    """`<len>:<table>/<len>:<column>`, the (table, column) identity a table-keyed draw binds.
+
+    Names are unrestricted strings, so a plain `table/column` join would let table `a/b` +
+    column `c` collide with table `a` + column `b/c`; the length prefixes rule that out."""
+    return f"{len(table)}:{table}/{len(column)}:{column}"
+
+
+def draw_column(ctx: Any, column: str) -> str:
+    """The column a draw is keyed on: the outer column when running as a nested child.
+
+    `getattr` because a handler may be given a minimal context that predates the field."""
+    return str(getattr(ctx, "nested_outer_column", "") or column)
+
+
+def context_draw_identity(ctx: Any, column: str, *, strategy: str) -> str:
+    """`column_draw_identity` of the context's table and `draw_column`, failing closed.
+
+    An unstamped table would key every same-named column of every table on one draw, so an
+    empty `current_table` raises instead. The code predates the second caller and keeps its
+    Faker-era name; `strategy` on the error says which handler hit it."""
+    table = getattr(ctx, "current_table", "")
+    if not table:
+        raise StrategyError(
+            code=reasons.runtime.FAKER_POSITIONAL_TABLE_UNKNOWN,
+            strategy=strategy,
+            message=(
+                f"column {column!r}: {strategy} keys its draw on the table and column, but the "
+                "strategy context carries no current table. Every dispatch path stamps it; a "
+                "caller that does not must set it."
+            ),
+        )
+    return column_draw_identity(table, draw_column(ctx, column))

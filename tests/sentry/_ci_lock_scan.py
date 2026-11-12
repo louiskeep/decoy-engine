@@ -6,6 +6,18 @@ setup-uv action, pinned to a commit SHA), no unpinned index or project install b
 parsing of uv.lock, a pip-audit leg that cannot be hidden, and explicit least-privilege
 permissions. Order is checked by step index, not data flow: a step that deletes the venv between
 install and use is not seen.
+
+Shell parsing lives in ci_scan/_shell_tokens.py, one file shared byte-for-byte with the CLI
+repository. Against the CI-E1 scanner (f2b7b3da) a 708-command differential scan shows only:
+- reworded findings: an editable install reports `project install by pip (-e)` once, because
+  `-e` now consumes its value instead of also reporting `.` or the path, and `--editable` is
+  reported as `(-e)`;
+- removed false positives: index options flagged on non-package commands (`ls -i`, `rm -f`), and
+  `uv run --frozen sync` reported as an install;
+- stricter, on purpose: index environment variables and `-f`/`--find-links`, the bodies of
+  `bash -c "..."`, global options before pip and uv subcommands, `uv pip sync`, uv options this
+  scanner does not know, and fetching `uv tool` and pipx verbs (`inject`, `upgrade`, ...).
+`uv tool run` keeps its base rule: it needs `--frozen` or UV_FROZEN like `uv run`.
 """
 
 from __future__ import annotations
@@ -19,6 +31,21 @@ import yaml
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
+from tests.sentry.ci_scan._shell_tokens import (
+    EXACT_PIN,
+    INDEX_OPTIONS,
+    code_lines,
+    env_mapping_index_names,
+    index_env_names,
+    is_package_command,
+    parse_install_args,
+    pip_install_args,
+    tool_fetch,
+    uv_run_findings,
+    uv_subcommands,
+)
+from tests.sentry.ci_scan._shell_tokens import commands as shell_commands
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:
@@ -30,39 +57,14 @@ CONSTRAINTS = ROOT / ".github" / "build-constraints.txt"
 ACTIONS = ROOT / ".github" / "actions"
 LOCK_ENV_USES = "./.github/actions/lock-env"
 SETUP_UV_USES = "./.github/actions/setup-uv"
-VERSION = re.compile(r"^\d+\.\d+\.\d+$")
-SETUP_UV_SHA = re.compile(r"^astral-sh/setup-uv@[0-9a-f]{40}$")
-INDEX_OPTIONS = {"--index-url", "--extra-index-url", "-i", "--index", "--default-index"}
+# `uv pip sync` installs a requirements file just as `uv sync` installs the project.
+SYNC_SUBCOMMANDS = {"sync", "pip sync"}
+VERSION = re.compile(r"\d+\.\d+\.\d+")
+SETUP_UV_SHA = re.compile(r"astral-sh/setup-uv@[0-9a-f]{40}")
 
 # Commands that need the engine installed (or its docs/typing toolchain) to mean anything.
 CONSUMER_TOKENS = {"pytest", "sphinx-build", "mypy"}
 CONSUMER_SUFFIXES = ("prove_regression.py", "scripts/test_flight.py")
-SEPARATORS = {"&&", "||", ";", "|"}
-# pip/uv-pip options that consume the next token as their value.
-VALUE_OPTIONS = {
-    "--python",
-    "--build-constraint",
-    "-c",
-    "--constraint",
-    "-r",
-    "--requirement",
-    "-i",
-    "--index-url",
-    "--extra-index-url",
-    "--index",
-    "--default-index",
-    "-f",
-    "--find-links",
-    "-t",
-    "--target",
-    "--prefix",
-    "--no-binary",
-    "--only-binary",
-}
-EXACT_PIN = re.compile(r"^[A-Za-z0-9_.\-]+(\[[A-Za-z0-9_,.\-]+\])?==[^<>=!~\s]+$")
-_TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
-_TOOLS = {"uv", "uvx", "pipx", "python", "python3", "bash"}
-_SHORT_VALUE = re.compile(r"^-[erific].+$")
 _VENV_NAMES = ("UV_PROJECT_ENVIRONMENT", "DECOY_VENV")
 _EXIT_ZERO = re.compile(r"\bexit(\s+(0|\"0\"|'0'))?\s*($|[;&|)}])")
 _ERREXIT_OFF = re.compile(r"\bset\s+(\+e\b|\+o\s+errexit)")
@@ -74,12 +76,9 @@ WRITE_ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
     ("docs.yml", "deploy"): frozenset({"pages", "id-token"}),  # Pages deploy, main push only
     ("native-companion-release.yml", "sign-publish"): frozenset({"contents"}),  # makes the release
 }
-# The one self-hosted job that may bootstrap without the lock-env action: the Mac merge gate.
-MAC_GATE = ("gate-selfhosted.yml", "gate", ["self-hosted", "macos", "decoy-gate"])
-
-
-def _is_pip(token: str) -> bool:
-    return re.fullmatch(r"pip[0-9.]*", token) is not None
+# The one self-hosted job that may bootstrap without the lock-env action: the merge gate, which runs
+# on any decoy-gate runner (the Mac or the Linux GCP runner).
+MAC_GATE = ("gate-selfhosted.yml", "gate", ["self-hosted", "decoy-gate"])
 
 
 def _step_text(step: dict[str, Any]) -> str:
@@ -94,78 +93,8 @@ def _step_text(step: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def _code_lines(text: str) -> list[str]:
-    """Shell lines with continuations joined and comment-only or blank lines dropped."""
-    text = re.sub(r"\\\n\s*", " ", text)
-    return [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")]
-
-
-def _base(token: str) -> str:
-    return token.rsplit("/", 1)[-1]
-
-
-def _normalise(cmd: list[str]) -> list[str]:
-    """Give `/usr/local/bin/uv` and `pip3.11` their plain names; split `--opt=value`, `-e.`, `-rX`.
-
-    Option splitting runs only for commands that name pip, uv, uvx or pipx, so `sed -i.bak` and
-    `docker run -it` keep their shape."""
-    named = [
-        _base(t)
-        if "/" in t and not t.startswith("-") and (_base(t) in _TOOLS or _is_pip(_base(t)))
-        else t
-        for t in cmd
-    ]
-    if not any(t in {"uv", "uvx", "pipx"} or _is_pip(t) for t in named):
-        return named
-    out: list[str] = []
-    for tok in named:
-        if tok.startswith("--") and "=" in tok:
-            key, _, value = tok.partition("=")
-            out += [key, *([value] if value else [])]
-        elif _SHORT_VALUE.match(tok):
-            out += [tok[:2], tok[2:]]
-        else:
-            out.append(tok)
-    return out
-
-
-def _commands(text: str) -> list[list[str]]:
-    """Split step text into commands of normalised tokens: comments dropped, continuations joined."""
-    text = text.replace('\\"', '"').replace("\\$", "$")
-    commands: list[list[str]] = []
-    for line in _code_lines(text):
-        current: list[str] = []
-        for raw in _TOKEN.findall(line):
-            token = raw.strip("\"'") if raw[0] in "\"'" else raw
-            if token.endswith(";") and len(token) > 1:
-                current.append(token[:-1])
-                commands.append(current)
-                current = []
-            elif token in SEPARATORS:
-                commands.append(current)
-                current = []
-            else:
-                current.append(token)
-        commands.append(current)
-    return [_normalise(c) for c in commands if c]
-
-
-def _pip_install_args(cmd: list[str]) -> list[str] | None:
-    """Arguments after `pip install` (pip, python -m pip, uv pip), or None if not one."""
-    for i, tok in enumerate(cmd):
-        if not _is_pip(tok):
-            continue
-        rest = cmd[i + 1 :]
-        j = 0
-        while j < len(rest) and rest[j].startswith("-"):
-            j += 1
-        if j < len(rest) and rest[j] == "install":
-            return rest[j + 1 :]
-    return None
-
-
 def _is_consumer(cmd: list[str]) -> bool:
-    if _pip_install_args(cmd) is not None:
+    if pip_install_args(cmd) is not None:
         return False
     return any(t in CONSUMER_TOKENS or t.endswith(CONSUMER_SUFFIXES) for t in cmd)
 
@@ -173,7 +102,7 @@ def _is_consumer(cmd: list[str]) -> bool:
 def _is_lock_install(cmd: list[str]) -> bool:
     if any(t.endswith("bootstrap.sh") for t in cmd):
         return True
-    return "uv" in cmd and "sync" in cmd and "--frozen" in cmd
+    return bool(SYNC_SUBCOMMANDS & set(uv_subcommands(cmd))) and "--frozen" in cmd
 
 
 def _wheel_vars(text: str) -> set[str]:
@@ -204,52 +133,26 @@ def _path_finding(arg: str, wheels: set[str]) -> str | None:
 
 
 def _requirement_findings(args: list[str], wheels: set[str]) -> list[str]:
-    findings: list[str] = []
-    skip = False
-    for arg in args:
-        if skip:
-            skip = False
-            continue
-        if arg in {"-r", "--requirement"}:
-            findings.append("pip install -r reads an unlocked requirements file")
-            skip = True
-            continue
-        if arg in INDEX_OPTIONS:
-            findings.append(f"package index override ({arg})")
-            skip = True
-            continue
-        if arg in VALUE_OPTIONS:
-            skip = True
-            continue
-        if arg in {"-e", "--editable"}:
-            findings.append(f"project install by pip ({arg})")
-            continue
-        if arg.startswith("-"):
-            continue
+    parsed = parse_install_args(args)
+    findings = ["pip install -r reads an unlocked requirements file" for _ in parsed.requirements]
+    findings += [f"package index override ({opt})" for opt in parsed.index_overrides]
+    findings += ["project install by pip (-e)" for _ in parsed.editables]
+    for arg in parsed.positionals:
         if arg.startswith((".", "/", "$", "~")) or ("/" in arg and "==" not in arg):
             if msg := _path_finding(arg, wheels):
                 findings.append(msg)
-            continue
-        if not EXACT_PIN.match(arg):
+        elif not EXACT_PIN.fullmatch(arg):
             findings.append(f"requirement is not an exact == pin ({arg})")
     return findings
 
 
 def _tool_findings(cmd: list[str]) -> list[str]:
     """uvx, `uv tool install|run` and pipx fetch a tool from the index: pin it exactly."""
-    start = None
-    for i, tok in enumerate(cmd):
-        nxt = cmd[i + 1] if i + 1 < len(cmd) else ""
-        if tok == "uvx" or (tok == "pipx" and nxt in {"install", "run"}):
-            start = i + (2 if tok == "pipx" else 1)
-            break
-        if tok == "uv" and nxt == "tool" and (cmd[i + 2 : i + 3] or [""])[0] in {"install", "run"}:
-            start = i + 3
-            break
-    if start is None:
+    fetch = tool_fetch(cmd)
+    if fetch is None:
         return []
     skip = False
-    for arg in cmd[start:]:
+    for arg in fetch[1]:
         if skip:
             skip = False
             continue
@@ -258,21 +161,20 @@ def _tool_findings(cmd: list[str]) -> list[str]:
             continue
         if arg.startswith("-"):
             continue
-        return [] if EXACT_PIN.match(arg) else [f"tool is not an exact == pin ({arg})"]
+        return [] if EXACT_PIN.fullmatch(arg) else [f"tool is not an exact == pin ({arg})"]
     return ["tool command names no package"]
 
 
 def _misc_findings(cmd: list[str]) -> list[str]:
     findings = _tool_findings(cmd)
-    if "uv" in cmd and "lock" in cmd and "--check" not in cmd:
+    subs = set(uv_subcommands(cmd))
+    if "lock" in subs and "--check" not in cmd:
         findings.append("uv lock without --check re-resolves the lock")
-    findings += [f"package index override ({t})" for t in cmd if t in INDEX_OPTIONS]
-    if "uv" in cmd:
-        after = cmd[cmd.index("uv") + 1 :]
-        if after[:1] in (["add"], ["remove"]):
-            findings.append(f"uv {after[0]} edits the dependency set")
-        if "run" in after and any(t.startswith("--with") for t in after):
-            findings.append("uv run --with installs outside the lock")
+    if is_package_command(cmd):
+        findings += [f"package index override ({t})" for t in cmd if t in INDEX_OPTIONS]
+    findings += [f"index environment variable ({n})" for n in index_env_names(cmd)]
+    for sub in sorted(subs & {"add", "remove"}):
+        findings.append(f"uv {sub} edits the dependency set")
     return findings
 
 
@@ -297,7 +199,7 @@ def _frozen_env(wf: dict[str, Any], job: dict[str, Any]) -> bool:
 
 
 def is_mac_gate(name: str, job_name: str, job: dict[str, Any]) -> bool:
-    """The exact job allowed to bootstrap on a self-hosted Mac: workflow, job and labels all match."""
+    """The exact job allowed to bootstrap on a self-hosted runner: workflow, job and labels all match."""
     return (name, job_name, job.get("runs-on")) == MAC_GATE
 
 
@@ -309,7 +211,7 @@ def _pyarrow_findings(commands: list[list[list[str]]], texts: list[str]) -> list
     lock_read = any("lock_version.sh" in t for t in texts)
     for step_cmds in commands:
         for cmd in step_cmds:
-            for arg in _pip_install_args(cmd) or []:
+            for arg in pip_install_args(cmd) or []:
                 if not arg.startswith("pyarrow"):
                     continue
                 if not re.fullmatch(r"pyarrow==\$\{?[A-Za-z_]+\}?", arg):
@@ -329,15 +231,19 @@ def _step_findings(
     if role == "workflow":
         if _writes_venv_env(text) or _env_sets_venv(step.get("env")):
             findings.append(f"{job_name}: copies the venv env block; use {LOCK_ENV_USES}")
-    if any("uv.lock" in line for line in _code_lines(text)):
+    if any("uv.lock" in line for line in code_lines(text)):
         findings.append(f"{job_name}: inline lock parsing; use scripts/dev/lock_version.sh")
     wheels = _wheel_vars(text)
+    findings += [
+        f"{job_name}: index environment variable ({n}) in env"
+        for n in env_mapping_index_names(step.get("env"))
+    ]
     for cmd in cmds:
         findings += [f"{job_name}: {m}" for m in _misc_findings(cmd)]
-        args = _pip_install_args(cmd)
+        args = pip_install_args(cmd)
         if args is not None:
             findings += [f"{job_name}: {m}" for m in _requirement_findings(args, wheels)]
-        if "uv" in cmd and "sync" in cmd and "--frozen" not in cmd:
+        if SYNC_SUBCOMMANDS & set(uv_subcommands(cmd)) and "--frozen" not in cmd:
             findings.append(f"{job_name}: uv sync without --frozen")
     return findings
 
@@ -352,30 +258,39 @@ def scan_workflow(wf: dict[str, Any], *, role: str = "workflow", name: str = "")
     findings: list[str] = []
     if role == "workflow" and _env_sets_venv(wf.get("env")):
         findings.append("workflow: copies the venv env block; use " + LOCK_ENV_USES)
+    findings += [
+        f"workflow: index environment variable ({n}) in env"
+        for n in env_mapping_index_names(wf.get("env"))
+    ]
     for job_name, job in (wf.get("jobs") or {}).items():
         steps = job.get("steps") or []
         frozen_env = _frozen_env(wf, job)
         texts = [_step_text(s) for s in steps]
-        commands = [_commands(t) for t in texts]
+        commands = [shell_commands(t) for t in texts]
         locked_at: int | None = None
         exempt = is_mac_gate(name, job_name, job)
         uses_uv = any(str(st.get("uses", "")) in {LOCK_ENV_USES, SETUP_UV_USES} for st in steps)
         if role == "workflow" and _env_sets_venv(job.get("env")):
             findings.append(f"{job_name}: copies the venv env block; use {LOCK_ENV_USES}")
+        findings += [
+            f"{job_name}: index environment variable ({n}) in env"
+            for n in env_mapping_index_names(job.get("env"))
+        ]
         for index, step_cmds in enumerate(commands):
             if str(steps[index].get("uses", "")) == LOCK_ENV_USES and locked_at is None:
                 locked_at = index
             findings += _step_findings(job_name, steps[index], texts[index], step_cmds, role)
             for cmd in step_cmds:
-                installs = ("uv" in cmd and "sync" in cmd) or any(
+                installs = SYNC_SUBCOMMANDS & set(uv_subcommands(cmd)) or any(
                     t.endswith("bootstrap.sh") for t in cmd
                 )
                 if role == "workflow" and not exempt and installs:
                     findings.append(f"{job_name}: installs outside {LOCK_ENV_USES}")
                 if role == "workflow" and ("uv" in cmd or "uvx" in cmd) and not uses_uv:
                     findings.append(f"{job_name}: runs uv without the setup-uv or lock-env action")
-                if "uv" in cmd and "run" in cmd and "--frozen" not in cmd and not frozen_env:
-                    findings.append(f"{job_name}: uv run without --frozen and no UV_FROZEN env")
+                findings += [
+                    f"{job_name}: {m}" for m in uv_run_findings(cmd, frozen_env=frozen_env)
+                ]
                 if _is_lock_install(cmd) and locked_at is None:
                     locked_at = index
                 if _is_consumer(cmd) and (locked_at is None or locked_at > index):
@@ -387,9 +302,9 @@ def scan_workflow(wf: dict[str, Any], *, role: str = "workflow", name: str = "")
             uses = str(step.get("uses", ""))
             if not uses.startswith("astral-sh/setup-uv"):
                 continue
-            if not VERSION.match(str((step.get("with") or {}).get("version", ""))):
+            if not VERSION.fullmatch(str((step.get("with") or {}).get("version", ""))):
                 findings.append(f"{job_name}: setup-uv version is not an exact x.y.z")
-            if not SETUP_UV_SHA.match(uses):
+            if not SETUP_UV_SHA.fullmatch(uses):
                 findings.append(f"{job_name}: setup-uv is not pinned to a commit SHA")
             if role != "setup-uv":
                 findings.append(f"{job_name}: raw setup-uv; use {SETUP_UV_USES}")
@@ -518,8 +433,8 @@ def audit_findings(job: dict[str, Any]) -> list[str]:
     findings: list[str] = []
     steps = job.get("steps") or []
     texts = [_step_text(s) for s in steps]
-    all_cmds = [c for t in texts for c in _commands(t)]
-    audit_steps = [i for i, t in enumerate(texts) if "pip-audit" in " ".join(_code_lines(t))]
+    all_cmds = [c for t in texts for c in shell_commands(t)]
+    audit_steps = [i for i, t in enumerate(texts) if "pip-audit" in " ".join(code_lines(t))]
     audits = [c for c in all_cmds if any(re.fullmatch(r"pip-audit(==[\d.]+)?", t) for t in c)]
     if not any("uv" in c and "export" in c and "--frozen" in c for c in all_cmds):
         findings.append("no `uv export --frozen` step")
@@ -528,7 +443,7 @@ def audit_findings(job: dict[str, Any]) -> list[str]:
             f"want exactly one pip-audit step and command, got {len(audit_steps)}/{len(audits)}"
         )
     for text in texts:
-        code = "\n".join(_code_lines(text))
+        code = "\n".join(code_lines(text))
         if _EXIT_ZERO.search(code):
             findings.append("a step exits 0 explicitly, which can hide the audit result")
         if _ERREXIT_OFF.search(code):
@@ -539,8 +454,8 @@ def audit_findings(job: dict[str, Any]) -> list[str]:
     if "if" in job:
         findings.append("a job-level `if` can skip the audit")
     if len(audit_steps) == 1:
-        step, lines = steps[audit_steps[0]], _code_lines(texts[audit_steps[0]])
-        cmds = _commands(texts[audit_steps[0]])
+        step, lines = steps[audit_steps[0]], code_lines(texts[audit_steps[0]])
+        cmds = shell_commands(texts[audit_steps[0]])
         bare = re.sub(r"\"[^\"]*\"|'[^']*'", "", lines[0]) if lines else ""
         if "if" in step:
             findings.append("a step-level `if` can skip the audit")

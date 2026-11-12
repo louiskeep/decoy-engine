@@ -1,32 +1,121 @@
-# The merge gate: scripts/dev/gates.sh (env, ruff, format, mypy, sentry, licenses, impact-selected
-# tests) on the always-on Mac, so a push is checked by the same command a builder runs locally.
-# Needs a runner registered with labels self-hosted, macos, decoy-gate (owner ops step).
+# Two tiers, so pushes stop queuing on the two self-hosted runners.
 #
-# flock holds ~/.cache/pytest-one.lock for the whole command, the same lock ~/bin/pytest-one
-# takes, so the gate queues behind any full-suite run on the box. pytest-one cannot wrap
-# gates.sh because it always runs `python -m pytest`.
+# fast: every push to a feature branch runs the cheap checks (env, ruff, format, mypy, sentry
+# tests) on a GitHub-hosted runner. The repo is public, so those minutes are free and never wait
+# for a runner of ours.
+#
+# gate: the merge gate, scripts/dev/gates.sh, on self-hosted runners labelled decoy-gate (the always-on Mac or
+# the Linux GCP runner). It runs only on a push to main and on workflow_dispatch, which the
+# orchestrator fires after review with `gh workflow run gate-selfhosted.yml --ref <branch>`. A
+# dispatch run checks out the branch head, so its result shows in `gh pr checks`. A push to main
+# runs the whole suite; a dispatch runs the impact-selected tests and, for anything red, reruns
+# just that step (for tests, the failing files) on origin/main. Two shards
+# split the selected test files across the two runners; shard 1 also does the lint, type,
+# sentry and licence steps. Runners are an owner ops step. The scripts stay bash 3.2 clean
+# because the Mac still runs them.
+#
+# Tree proof: a dispatch can ask for mode=full, the same whole suite a main push runs. When a main
+# push's tree is byte-identical to the head tree of a green full dispatch run (both shards), the
+# tree-proof job finds that run and the main gate is skipped; any doubt or lookup error runs it.
+# scripts/dev/gate_tree_proof.py holds the rule; tests/sentry/test_ci_config.py pins it.
+#
+# Branches that need no checks are filtered out: plan branches (plan/**, which go through the
+# Dennis and Codex reviews instead) and the V2 and V1+ branches, which must not use the gate
+# queue. There is no path filter: files under docs/ and *.md files are read by sentries or ship
+# in the wheel, and GitHub evaluates path filters on at most 3,000 changed files, so a docs skip
+# could pass a change no check ever saw. The ignore list is pinned by
+# tests/sentry/test_ci_config.py; main is never ignored.
+#
+# flock holds ~/.cache/pytest-one.lock for the whole gate command, the same lock
+# ~/bin/pytest-one takes, so on the Mac the gate queues behind any full-suite run there. The
+# Linux runner's VM runs no other tests, so its lock only serialises gate jobs. pytest-one
+# cannot wrap gates.sh because it always runs `python -m pytest`.
 name: gate-selfhosted
 
 # push and workflow_dispatch only. Never pull_request or pull_request_target: this repo is
 # public and a self-hosted runner executes the branch's code, so a PR from a fork would run
-# arbitrary code on the Mac. A sentry (test_ci_config.py) enforces this for every workflow.
+# arbitrary code on the runner. A sentry (test_ci_config.py) enforces this for every workflow.
 on:
   push:
+    branches-ignore:
+      - "plan/**"
+      - "feat/v2-**"
+      - "plan/v2-**"
+      - "feat/v1plus-**"
+      - "plan/v1plus-**"
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "baseline: impact-selected tests. full: the whole suite, as on main; a main push with the same tree then skips its gate."
+        type: choice
+        options: [baseline, full]
+        default: baseline
 
+# The event name is in the group so a push to a branch never cancels a gate run that was
+# dispatched for it.
 concurrency:
-  group: gate-selfhosted-${{ github.ref }}
+  group: gate-selfhosted-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
+  fast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Owner-only, same as the gate. Pushes only: a dispatch wants the full gate.
+    if: github.event_name == 'push' && github.repository_owner == 'louiskeep' && github.actor == 'louiskeep' && !github.event.repository.fork
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch origin/main for the merge base
+        run: git fetch --no-tags https://github.com/${{ github.repository }}.git main:refs/remotes/origin/main
+      - uses: ./.github/actions/lock-env
+        with:
+          bootstrap: "true"
+      - name: Fast checks
+        # gates.sh with no tests step: same ruff, mypy and sentry commands as the full gate.
+        run: bash scripts/dev/gates.sh --keep-going --steps env,ruff,format,mypy,sentry
+
+  tree-proof:
+    # Main pushes only, on a hosted runner. Never fails the run: a failed lookup prints skip=false.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository_owner == 'louiskeep' && github.actor == 'louiskeep' && !github.event.repository.fork
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.find.outputs.skip }}
+      proof_run: ${{ steps.find.outputs.proof_run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Find a green full gate run on the same tree
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tree=$(git rev-parse "HEAD^{tree}")
+          python3 scripts/dev/gate_tree_proof.py --repo "${{ github.repository }}" --tree "$tree" | tee -a "$GITHUB_OUTPUT"
+
   gate:
-    runs-on: [self-hosted, macos, decoy-gate]
+    name: gate ${{ matrix.shard }}/2 ${{ (github.event_name == 'push' || inputs.mode == 'full') && 'full' || 'baseline' }}
+    runs-on: [self-hosted, decoy-gate]
     timeout-minutes: 90
-    # Owner-only: a push by anyone else, or from a fork, never reaches the runner.
-    if: github.repository_owner == 'louiskeep' && github.actor == 'louiskeep' && !github.event.repository.fork
+    needs: tree-proof
+    # Owner-only: a push by anyone else, or from a fork, never reaches the runner. Dispatch and
+    # main only; feature-branch pushes get the fast job. tree-proof is skipped on a dispatch, so
+    # !cancelled() keeps the gate running then; skip is 'true' only with a proof run.
+    if: "!cancelled() && needs.tree-proof.outputs.skip != 'true' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && github.repository_owner == 'louiskeep' && github.actor == 'louiskeep' && !github.event.repository.fork"
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -40,12 +129,26 @@ jobs:
         run: |
           export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
           export DECOY_VENV="$HOME/.cache/decoy-gate-venv-engine"
+          mkdir -p ~/.cache
           flock ~/.cache/pytest-one.lock bash scripts/dev/bootstrap.sh
       - name: Gate
-        # EVIDENCE block names the head it tested; keep-going lists every red step. --baseline reruns
-        # origin/main on this host and fails only on branch-only failures (mypy, sentry, tests), so
-        # Mac-only failures that main has too do not block every push.
+        env:
+          GATE_MODE: ${{ (github.event_name == 'push' || inputs.mode == 'full') && 'full' || 'baseline' }}
+        # EVIDENCE block names the head it tested; keep-going lists every red step.
+        # Main: the FULL suite (--full), because on main HEAD equals origin/main and an impact
+        # selection is empty. No --baseline there: main compared with itself would call every
+        # failure shared, so any red on main is red. Shard 1 also runs the lint, type, sentry
+        # and licence steps; the others run only their slice of the tests.
+        # A dispatch with mode=full runs exactly what main runs (see tree-proof above).
+        # Dispatch on a branch: impact-selected tests. --baseline reruns origin/main only for the
+        # steps (and test files) that failed on the branch and fails only on branch-only
+        # failures, so host-only failures that main has too do not block. A stored baseline file
+        # cannot be used: it is a whole-suite result and this run is a sharded selection.
         run: |
           export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
           export DECOY_VENV="$HOME/.cache/decoy-gate-venv-engine"
-          flock ~/.cache/pytest-one.lock scripts/dev/gates.sh --keep-going --baseline
+          mkdir -p ~/.cache
+          # Shard 1 takes gates.sh's own default step list (one owner); the rest run only tests.
+          if [ "${{ matrix.shard }}" = 1 ]; then steps=; else steps="--steps tests"; fi
+          if [ "$GATE_MODE" = full ]; then mode=--full; else mode=--baseline; fi
+          flock ~/.cache/pytest-one.lock scripts/dev/gates.sh --keep-going $mode $steps --shard "${{ matrix.shard }}/2"

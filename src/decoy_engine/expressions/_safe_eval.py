@@ -36,6 +36,7 @@ security profile owned by the derive op directly.
 
 from __future__ import annotations
 
+import ast
 import random as _random
 import re as _re
 from typing import Any
@@ -151,3 +152,51 @@ def safe_eval(
     scope.update(locals_)
     functions = {k: v for k, v in scope.items() if callable(v)}
     return EvalWithCompoundTypes(names=scope, functions=functions).eval(expr)
+
+
+# ---- admissibility ------------------------------------------------------------------------------
+#
+# simpleeval parses any Python expression and only refuses a node type when it reaches it at
+# run time, so a lambda or a walrus used to compile and then generate a column of nulls. The
+# check below reads the evaluator's own dispatch table (``nodes``) and operator table, so it
+# cannot drift from what ``safe_eval`` can run. Config and plan validation both call it.
+
+_probe = EvalWithCompoundTypes(names={}, functions={})
+# Node types simpleeval dispatches on. Frozen at import: the instance is only a way to read them.
+EVALUATED_NODE_TYPES: frozenset[type] = frozenset(_probe.nodes)
+EVALUATED_OPERATOR_TYPES: frozenset[type] = frozenset(_probe.operators)
+del _probe
+
+# Nodes the evaluator never dispatches on but reaches through a parent that it does handle:
+# the parse root, load/store contexts, the and/or marker of a BoolOp, and the clauses of a
+# comprehension.
+_STRUCTURAL = (ast.Expression, ast.expr_context, ast.And, ast.Or, ast.comprehension)
+
+
+def formula_is_evaluable(tree: ast.AST) -> bool:
+    """True when ``safe_eval`` can run every node of *tree* (an ``ast.parse(..., "eval")`` result).
+
+    A node outside the evaluator's dispatch table (lambda, walrus, set comprehension, await,
+    ...) is refused, as are the cases the evaluator handles only in one position: ``*x`` inside
+    a list display, a call through a name or attribute, and ``f(**x)``.
+    """
+    starred_ok: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.List):
+            starred_ok |= {id(e) for e in node.elts if isinstance(e, ast.Starred)}
+        elif isinstance(node, ast.Call):
+            if not isinstance(node.func, (ast.Name, ast.Attribute)):
+                return False
+        elif isinstance(node, ast.keyword) and node.arg is None:
+            return False
+    for node in ast.walk(tree):
+        kind = type(node)
+        if isinstance(node, ast.Starred):
+            if id(node) not in starred_ok:
+                return False
+        elif isinstance(node, (ast.operator, ast.unaryop, ast.cmpop)):
+            if kind not in EVALUATED_OPERATOR_TYPES:
+                return False
+        elif kind not in EVALUATED_NODE_TYPES and not isinstance(node, _STRUCTURAL):
+            return False
+    return True

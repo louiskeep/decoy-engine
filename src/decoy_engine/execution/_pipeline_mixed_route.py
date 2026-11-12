@@ -68,15 +68,19 @@ __all__ = ["run_mixed_route"]
 ROUTE_NAME = "mixed"
 
 
-def _generate(ctx: PipelineRunContext) -> dict[str, pa.Table]:
+def _generate(ctx: PipelineRunContext) -> tuple[dict[str, pa.Table], tuple[Any, ...]]:
+    """The generate tables and the warnings generation raised."""
     from decoy_engine.generation.synthesize import generate_tables
 
-    return generate_tables(
+    raised: list[Any] = []
+    tables = generate_tables(
         ctx.plan,
         derive_key=ctx.derive_key,
         instance_default_locale=ctx.instance_default_locale,
         provider_snapshot=ctx.provider_snapshot,
+        on_warning=raised.append,
     )
+    return tables, tuple(raised)
 
 
 def _runtime_decline(
@@ -103,6 +107,7 @@ def _fall_back(
     ctx: PipelineRunContext,
     decision: RouteDecision,
     generate_outputs: dict[str, pa.Table],
+    generate_warnings: tuple[Any, ...],
     reason: str,
 ) -> ExecutionResult:
     """Continue on the full-frame path, reusing the generate outputs already built."""
@@ -114,7 +119,9 @@ def _fall_back(
         route_reason=f"{reasons.route.MIXED_RUNTIME_DECLINED}:{reason}",
         mixed=None,
     )
-    return _pipeline_full_frame.run_full_frame_route(ctx, declined, pregenerated=generate_outputs)
+    return _pipeline_full_frame.run_full_frame_route(
+        ctx, declined, pregenerated=generate_outputs, pregenerated_warnings=generate_warnings
+    )
 
 
 def _read_key_column(source: pa.Table | LazySource, column: str) -> pa.Array:
@@ -152,13 +159,13 @@ def run_mixed_route(ctx: PipelineRunContext, decision: RouteDecision) -> Executi
     if static is None:  # pragma: no cover - the router sets both together
         raise AssertionError("run_mixed_route reached without a static admission")
 
-    generate_outputs = _generate(ctx)
+    generate_outputs, generate_warnings = _generate(ctx)
     declined = _runtime_decline(static, ctx, generate_outputs)
     if declined is not None:
-        return _fall_back(ctx, decision, generate_outputs, declined)
+        return _fall_back(ctx, decision, generate_outputs, generate_warnings, declined)
     cast_run = open_cast_run(ctx.plan, ctx.quarantine_runtime)
     try:
-        return _run_admitted(ctx, decision, static, generate_outputs, cast_run)
+        return _run_admitted(ctx, decision, static, generate_outputs, generate_warnings, cast_run)
     except BaseException as failure:
         if cast_run is not None:
             cast_run.abort(failure)
@@ -170,6 +177,7 @@ def _run_admitted(
     decision: RouteDecision,
     static: MixedStaticPlan,
     generate_outputs: dict[str, pa.Table],
+    generate_warnings: tuple[Any, ...],
     cast_run: Any,
 ) -> ExecutionResult:
 
@@ -200,7 +208,7 @@ def _run_admitted(
         mask_outputs: dict[str, pa.Table] = {}
         per_table: dict[str, Any] = {}
         timings: list[Any] = []
-        warnings: list[Any] = list(fk_warnings)
+        warnings: list[Any] = [*generate_warnings, *fk_warnings]
         conversion_ms = 0.0
         for name in write_order(ctx.plan, ctx.graph, ctx.table_kinds):
             if name in generate_outputs:

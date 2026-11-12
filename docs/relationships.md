@@ -130,12 +130,12 @@ plus every `order`/`order_item` that belongs to them, nothing orphaned."
 seed, close it over the SAME `relationships` graph declared above, then write
 the filtered Parquet. Masking runs unchanged on the subsetted output.
 
-This is engine-core only in this release: there is no `decoy subset` CLI verb
-yet and no platform UI for it (both are planned follow-ons). Callers use
-`decoy_engine.subset.run_subset` / `plan_subset` directly, or add a `subset:`
-block to `PipelineConfig` (`config/_subset.py`) to run subsetting as the
-pipeline's pre-mask stage; the field is additive and optional, so existing
-configs are unaffected.
+Run `decoy_engine.subset.run_subset` (or `decoy subset`) first and point the
+masking run's `sources:` at its output. A pipeline run does not apply a
+`subset:` block yet: it refuses a config that sets one with
+`config.subset_run_unsupported` until the pipeline runs subsetting itself
+(SUB-RUN). `plan_subset` and `run_subset` read the same block and are
+unaffected.
 
 ### How the closure works
 

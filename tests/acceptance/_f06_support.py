@@ -11,6 +11,8 @@ from typing import Any
 
 import pyarrow as pa
 
+from tests._declared_schema import declare_rest
+
 INT64 = {"id": "integer/ascii/v1", "signed": True, "bit_width": 64}
 DEC_5_2 = {"id": "decimal/plain/v1", "precision": 5, "scale": 2}
 ISO_DATE = {"id": "date/iso8601/v1"}
@@ -78,7 +80,9 @@ def config(
     return {
         "version": 2,
         "global_settings": {"seed": 7},
-        "sources": {table: {"type": "file", "format": "csv", "path": source_path}},
+        "sources": {
+            table: {"type": "file", "format": "csv", "has_header": True, "path": source_path}
+        },
         "tables": [{"name": table, "columns": columns}],
         "targets": {table: {"type": "file", "format": "csv", "path": source_path + ".out"}},
         "relationships": [],
@@ -90,7 +94,7 @@ def config(
 def validate(raw: dict[str, Any]) -> dict[str, Any]:
     from decoy_engine.config import PipelineConfig
 
-    return PipelineConfig.model_validate(raw).model_dump()
+    return PipelineConfig.model_validate(declare_rest(raw)).model_dump()
 
 
 def run(raw: dict[str, Any], sources: dict[str, Any], **kwargs: Any) -> Any:

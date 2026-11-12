@@ -19,6 +19,7 @@ from decoy_engine import run_mask_pipeline_chunked
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import run_pipeline
 from decoy_engine.plan import PlanCompileError
+from tests._declared_schema import declared_schema
 
 _ENGINE_VERSION = "chunked-substrate-parity-test"
 
@@ -93,7 +94,14 @@ def _config(tmp_path, columns: list[dict], table: str = "accounts") -> dict:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
+        "sources": {
+            table: {
+                "type": "file",
+                "format": "csv",
+                "has_header": True,
+                "path": str(tmp_path / "in.csv"),
+            }
+        },
         "tables": [{"name": table, "columns": columns}],
         "targets": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
     }
@@ -114,6 +122,7 @@ def _chunked(cfg: dict, df: pd.DataFrame, chunk_size: int, adapter=None) -> pa.T
                 cfg,
                 _chunks(df, chunk_size),
                 table="accounts",
+                source_schema=declared_schema(cfg, "accounts"),
                 engine_version=_ENGINE_VERSION,
                 adapter=adapter,
             )
@@ -145,6 +154,7 @@ class TestChunkedSubstrateParity:
                     cfg,
                     [],
                     table="accounts",
+                    source_schema=declared_schema(cfg, "accounts"),
                     engine_version=_ENGINE_VERSION,
                 )
             )

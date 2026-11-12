@@ -286,11 +286,9 @@ def test_walk_is_not_vacuous() -> None:
         if site.sink in MODE_SINKS:
             seen[(site.module, site.sink)] = seen.get((site.module, site.sink), 0) + 1
     known = {
-        ("decoy_engine/execution/out_of_core/_scratch.py", "os.chmod"): 3,
         ("decoy_engine/execution/out_of_core/_scratch.py", "os.fchmod"): 1,
         ("decoy_engine/execution/out_of_core/_duckdb.py", "os.chmod"): 1,
-        ("decoy_engine/connectors/postgres_snapshot.py", "os.chmod"): 1,
-        ("decoy_engine/declared_casting/_quarantine_local.py", "os.chmod"): 1,
+        ("decoy_engine/fileaccess/_protected_dir.py", "os.chmod"): 1,
         ("decoy_engine/declared_casting/_quarantine_local.py", "os.fchmod"): 1,
     }
     short = {k: (n, seen.get(k, 0)) for k, n in known.items() if seen.get(k, 0) < n}

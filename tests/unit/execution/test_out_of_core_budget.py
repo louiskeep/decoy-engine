@@ -302,6 +302,24 @@ class TestResolveBudgetSlotAware:
         assert excinfo.value.code == "out_of_core_reserved_bytes_invalid"
 
 
+def _mountinfo(
+    tmp_path,
+    monkeypatch,
+    *,
+    v2: tuple[str, str] | None = None,
+    v1_memory: tuple[str, str] | None = None,
+) -> None:
+    """Point the budget at a fake mountinfo: each entry is (mountpoint, mount root)."""
+    lines = []
+    if v2 is not None:
+        lines.append(f"36 35 0:30 {v2[1]} {v2[0]} rw - cgroup2 cgroup2 rw")
+    if v1_memory is not None:
+        lines.append(f"40 35 0:35 {v1_memory[1]} {v1_memory[0]} rw - cgroup cgroup rw,memory")
+    path = tmp_path / "self_mountinfo"
+    path.write_text("\n".join(lines) + "\n")
+    monkeypatch.setattr(budget_mod, "_PROC_SELF_MOUNTINFO", path)
+
+
 class TestCgroupV2Read:
     """v2 `memory.max`: numeric bytes, or the literal `"max"` for unlimited
     (cgroup-v2.txt), read from a process's resolved leaf directory."""
@@ -313,7 +331,7 @@ class TestCgroupV2Read:
         (leaf / "memory.max").write_text("1073741824\n")
         proc_self_cgroup = tmp_path / "self_cgroup"
         proc_self_cgroup.write_text("0::/user.slice\n")
-        monkeypatch.setattr(budget_mod, "_CGROUP_V2_MOUNT", mount)
+        _mountinfo(tmp_path, monkeypatch, v2=(str(mount), "/"))
         monkeypatch.setattr(budget_mod, "_PROC_SELF_CGROUP", proc_self_cgroup)
         assert budget_mod.detect_cgroup_memory_limit_bytes() == 1 * _GIB
 
@@ -326,9 +344,8 @@ class TestCgroupV2Read:
         (leaf / "memory.max").write_text("max\n")
         proc_self_cgroup = tmp_path / "self_cgroup"
         proc_self_cgroup.write_text("0::/user.slice\n")
-        monkeypatch.setattr(budget_mod, "_CGROUP_V2_MOUNT", mount)
+        _mountinfo(tmp_path, monkeypatch, v2=(str(mount), "/"))
         monkeypatch.setattr(budget_mod, "_PROC_SELF_CGROUP", proc_self_cgroup)
-        monkeypatch.setattr(budget_mod, "_CGROUP_V1_MEMORY_MOUNT", tmp_path / "no-v1")
         assert budget_mod.detect_cgroup_memory_limit_bytes() is None
 
     def test_unlimited_v2_falls_back_to_host_ram_end_to_end(self, tmp_path, monkeypatch) -> None:
@@ -338,9 +355,8 @@ class TestCgroupV2Read:
         (leaf / "memory.max").write_text("max\n")
         proc_self_cgroup = tmp_path / "self_cgroup"
         proc_self_cgroup.write_text("0::/user.slice\n")
-        monkeypatch.setattr(budget_mod, "_CGROUP_V2_MOUNT", mount)
+        _mountinfo(tmp_path, monkeypatch, v2=(str(mount), "/"))
         monkeypatch.setattr(budget_mod, "_PROC_SELF_CGROUP", proc_self_cgroup)
-        monkeypatch.setattr(budget_mod, "_CGROUP_V1_MEMORY_MOUNT", tmp_path / "no-v1")
         monkeypatch.setattr(budget_mod, "detect_host_memory_bytes", lambda: 8 * _GIB)
         assert budget_mod.detect_effective_memory_bytes() == 8 * _GIB
 
@@ -357,8 +373,7 @@ class TestCgroupV1Read:
         (leaf / "memory.limit_in_bytes").write_text("536870912\n")
         proc_self_cgroup = tmp_path / "self_cgroup"
         proc_self_cgroup.write_text("5:memory:/docker/abc123\n")
-        monkeypatch.setattr(budget_mod, "_CGROUP_V2_MOUNT", tmp_path / "no-v2")
-        monkeypatch.setattr(budget_mod, "_CGROUP_V1_MEMORY_MOUNT", v1_mount)
+        _mountinfo(tmp_path, monkeypatch, v1_memory=(str(v1_mount), "/"))
         monkeypatch.setattr(budget_mod, "_PROC_SELF_CGROUP", proc_self_cgroup)
         assert budget_mod.detect_cgroup_memory_limit_bytes() == 512 * _MIB
 
@@ -381,8 +396,7 @@ class TestCgroupV1Read:
         (leaf / "memory.limit_in_bytes").write_text(f"{sentinel}\n")
         proc_self_cgroup = tmp_path / "self_cgroup"
         proc_self_cgroup.write_text("5:memory:/docker/abc123\n")
-        monkeypatch.setattr(budget_mod, "_CGROUP_V2_MOUNT", tmp_path / "no-v2")
-        monkeypatch.setattr(budget_mod, "_CGROUP_V1_MEMORY_MOUNT", v1_mount)
+        _mountinfo(tmp_path, monkeypatch, v1_memory=(str(v1_mount), "/"))
         monkeypatch.setattr(budget_mod, "_PROC_SELF_CGROUP", proc_self_cgroup)
         assert budget_mod.detect_cgroup_memory_limit_bytes() is None
 
@@ -394,8 +408,7 @@ class TestCgroupV1Read:
         (leaf / "memory.limit_in_bytes").write_text("34359738368\n")  # 32 GiB
         proc_self_cgroup = tmp_path / "self_cgroup"
         proc_self_cgroup.write_text("5:memory:/docker/abc123\n")
-        monkeypatch.setattr(budget_mod, "_CGROUP_V2_MOUNT", tmp_path / "no-v2")
-        monkeypatch.setattr(budget_mod, "_CGROUP_V1_MEMORY_MOUNT", v1_mount)
+        _mountinfo(tmp_path, monkeypatch, v1_memory=(str(v1_mount), "/"))
         monkeypatch.setattr(budget_mod, "_PROC_SELF_CGROUP", proc_self_cgroup)
         assert budget_mod.detect_cgroup_memory_limit_bytes() == 32 * 1024 * _MIB
 
@@ -559,3 +572,46 @@ class TestRunnerBatchRows:
         paths = write_large_fk_chain(tmp_path / "src", 200, width=1, batch_rows=100)
         result = self._run(paths, tmp_path, "disk-ok", temp_disk_budget_bytes=1 * _GIB)
         assert result.outputs["child"].num_rows == 200
+
+
+class TestCgroupMountRootTranslation:
+    """A mount that exposes only a subtree (a container's cgroup namespace) is read through its
+    root field: the leaf is the membership relative to that root, under the mountpoint."""
+
+    def test_v2_membership_under_a_non_root_mount_reads_the_translated_leaf(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        mount = tmp_path / "cgroup_v2"
+        (mount / "worker").mkdir(parents=True)
+        (mount / "worker" / "memory.max").write_text("1073741824\n")
+        # The wrong (untranslated) directory holds a different limit so a miss cannot pass.
+        (mount / "tenant" / "container" / "worker").mkdir(parents=True)
+        (mount / "tenant" / "container" / "worker" / "memory.max").write_text("max\n")
+        proc_self_cgroup = tmp_path / "self_cgroup"
+        proc_self_cgroup.write_text("0::/tenant/container/worker\n")
+        monkeypatch.setattr(budget_mod, "_PROC_SELF_CGROUP", proc_self_cgroup)
+        _mountinfo(tmp_path, monkeypatch, v2=(str(mount), "/tenant/container"))
+        assert budget_mod.detect_cgroup_memory_limit_bytes() == 1 * _GIB
+
+    def test_v1_membership_under_a_non_root_mount_reads_the_translated_leaf(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        mount = tmp_path / "cgroup_v1_memory"
+        (mount / "worker").mkdir(parents=True)
+        (mount / "worker" / "memory.limit_in_bytes").write_text("536870912\n")
+        proc_self_cgroup = tmp_path / "self_cgroup"
+        proc_self_cgroup.write_text("5:memory:/tenant/container/worker\n")
+        monkeypatch.setattr(budget_mod, "_PROC_SELF_CGROUP", proc_self_cgroup)
+        _mountinfo(tmp_path, monkeypatch, v1_memory=(str(mount), "/tenant/container"))
+        assert budget_mod.detect_cgroup_memory_limit_bytes() == 512 * _MIB
+
+    def test_membership_outside_the_mount_root_degrades_to_no_limit(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        mount = tmp_path / "cgroup_v2"
+        mount.mkdir()
+        proc_self_cgroup = tmp_path / "self_cgroup"
+        proc_self_cgroup.write_text("0::/elsewhere/worker\n")
+        monkeypatch.setattr(budget_mod, "_PROC_SELF_CGROUP", proc_self_cgroup)
+        _mountinfo(tmp_path, monkeypatch, v2=(str(mount), "/tenant/container"))
+        assert budget_mod.detect_cgroup_memory_limit_bytes() is None

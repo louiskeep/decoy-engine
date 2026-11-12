@@ -322,9 +322,9 @@ The job's `sequential_categorical` disposition says which columns ran where.
 ### shuffle
 
 Permutes the non-null values within a column, preserving the multiset and the
-null positions. Deterministic mode seeds the permutation from the namespace, so
-it is byte-stable across runs; non-deterministic mode differs. Needs a
-namespace in deterministic mode.
+null positions. Deterministic mode seeds the permutation from the namespace and
+needs one. Non-deterministic mode (the default) seeds it from the job seed and
+the table and column names. Both draw from the mask key, so both are byte-stable across runs.
 
 Use it to break the row-to-value linkage while keeping the column's exact value
 distribution.
@@ -358,9 +358,10 @@ intact. Deterministic by construction. This is what lets you sanitize a
   Non-English models work through the same key: `de_core_news_sm`,
   `es_core_news_sm`, and the multilingual `xx_ent_wiki_sm` emit WikiNER-style
   `PER`/`LOC` labels, which map onto the same `person_name`/`location`
-  detector ids. Install models separately
-  (`python -m spacy download de_core_news_sm`) and PIN the model package
-  version in deployments that need byte-stable output across environments:
+  detector ids. Install models separately as version-pinned wheels checked
+  against a SHA-256 (the engine pins `en_core_web_sm` in `NER_MODEL_WHEELS`;
+  for other models the deployment owns the version and hash), because
+  byte-stable output across environments needs one model version:
   NER output is deterministic per model version, and the compiled plan stamps
   the installed version (`ner_model_version`) for the audit trail.
 
@@ -948,8 +949,8 @@ Common parameters:
   (`concat(a, b, ...)`, two or more arguments), substring
   (`slice(s, start[, end])`, Python-native 0-indexed slicing -- e.g.
   `slice(firstname, -4)` for the last 4 characters), date
-  (`days_between(start, end)`), ternary (`value if condition else other`),
-  and literals (integers, floats, double-quoted strings, `True`, `False`,
+  (`days_between(start, end)`), ternary (`value if condition else other`,
+  or `if(condition, value, other)`), and literals (integers, floats, double-quoted strings, `True`, `False`,
   `None`). Anything outside that set raises `ValidationError` at config-parse
   time, before any row data is touched. A column value that looks like an
   expression string is treated as data and is never re-evaluated.
@@ -988,10 +989,10 @@ path. The engine calls no `eval()`, `exec()`, or `__import__`. A column value
 that looks like an expression string is treated as data and is never re-parsed.
 
 In generate mode, each derived column reads from already-generated sibling
-columns in declared order. A forward reference (a derived column that
-references a sibling declared later in `generate_columns`) is caught at
-evaluation time with a fail-closed error, not yet at plan-compile time.
-Declare dependencies before the columns that read them.
+columns in declared order. Plan compile refuses a forward reference (a derived
+column that references a sibling declared later in `generate_columns`) with
+`generate_column_forward_reference`. Declare dependencies before the columns
+that read them.
 
 **Shipped in SP-10b:** `case_when` (closed-grammar CASE WHEN conditional
 expression) and `derived_aggregate` (intra-table scalar aggregate). Neither
@@ -999,12 +1000,14 @@ implements `conditioned_on`: `case_when` is a conditional expression construct
 in the closed grammar; `conditioned_on` is a separate planned parameter on the
 `categorical` strategy (per-row nested weight tables) and is not yet built.
 
-**Carry-forwards (SP-10c and later, not yet built):** `grouped_series`,
-`windowed_date`; FK extensions (`cardinality`, `composite_depth`, `null_m2m`);
-layer-2/3 features (`conditioned_on`, `group_key`, `reconciliation_pass`). The
-FK-driven cross-table aggregate (parent.total = sum(child.amount), Gen Gap 4)
-is also not yet built; it is deferred to SP-10c. Forward-reference detection
-at plan-compile time is also deferred.
+`grouped_series`, `windowed_date` and `group_key` are built; their keys are in
+the table under [Options are checked per type](#options-are-checked-per-type).
+
+**Carry-forwards (SP-10c and later, not yet built):** FK extensions
+(`cardinality`, `composite_depth`, `null_m2m`); layer-2/3 features
+(`conditioned_on`, `reconciliation_pass`). The FK-driven cross-table aggregate
+(parent.total = sum(child.amount), Gen Gap 4) is also not yet built; it is
+deferred to SP-10c.
 
 ```yaml
 # Mask mode: replace an existing column value using source siblings.
@@ -1241,12 +1244,111 @@ are not affected.
 
 In `mode: generate`, each column declares a `type` instead of a `strategy`.
 
+`sequence`, `categorical`, `faker` and `reference` columns accept `unique: true`, and a table
+accepts `unique_together` for pairs of `reference` columns. See
+[Unique generated columns](guides/generate-uniqueness.md).
+
+### Options are checked per type
+
+Each type takes a fixed set of keys, listed below. Every type also takes `name`, `type`,
+`null_probability` (a number from 0 to 1) and `determinism` (`stable` or `fresh`). `unique` is
+taken by the four types named above, and `pooled` by `faker` only (any other type refuses it
+with `generate_option_unknown`). `generate_option_catalog()` returns this table: the columns
+are `required`, `optional` and `required_when`, the common keys are `common`, and the required
+keys marked "at plan compile" are also in `required_at_plan`. `decoy schema` closes each type
+to its keys and lists the same required keys, and it allows `pooled` only on `faker` (other
+types may carry `pooled: null`), so an editor flags a misspelt or misplaced key. A test checks
+this table against `generate_option_catalog()`.
+
+`output_type` (`int`, `decimal(n)`, `date` or `bool`) sets the type of the column written.
+`distribution`, `sequence`, `grouped_series` and `derived_aggregate` take `int` or `decimal(n)`
+only, `windowed_date` takes `date` only, and `reference`, `statistical` and `group_key` do not
+take it.
+
+| Type | Required | Optional | Required when |
+|---|---|---|---|
+| `sequence` | `start` | `step`, `prefix`, `suffix`, `pad_length`, `output_type` | |
+| `faker` | `faker_type` | `locale`, `faker_kwargs`, `output_type` | |
+| `categorical` | `categories` | `weights`, `output_type` | |
+| `reference` | `reference_table`, `reference_column` | `distribution`, `weights`, `min_per_parent`, `max_per_parent`, `snapshot_file`, `source_column` | `weights` if `distribution: weighted` |
+| `formula` | `formula` | `references`, `output_type` | |
+| `statistical` | `snapshot_file` | `source_column`, `high_cardinality`, `allow_real_categories`, `other_mode`, `condition_on` | |
+| `derived` | `expression` | `bounds`, `null_propagation`, `output_type` | |
+| `derived_aggregate` | `op`, `column` (at plan compile) | `output_type` | |
+| `grouped_series` | `group_by`, `order_by` | `generator`, `step`, `max_step`, `start`, `output_type` | |
+| `windowed_date` | `anchor`, `max_days` | `min_days`, `distribution`, `output_type` | |
+| `group_key` | `group_by` | `length`, `prefix` | |
+| `constant` | `value` | `output_type` | |
+| `distribution` | `family` | `low`, `high`, `min`, `max`, `output_type` | `low`, `high` if `family: uniform` |
+
+`derived_aggregate` is the one type whose required keys are checked at plan compile, not at
+config parse: its transform refuses a missing `op` or `column` with `derived_aggregate_op_missing`
+or `derived_aggregate_column_missing`.
+
+Two layers refuse a bad column, and `decoy validate` and `decoy run` run both, so they refuse the
+same configs:
+
+- **Config parse** checks each key on its own: a key the type does not take
+  (`generate_option_unknown`), a wrong type (`generate_option_type`), a value out of range
+  (`generate_option_range`, for example `step: 0` or `null_probability: 2`), a value outside a
+  fixed list (`generate_option_value_unknown`), weights that are negative, not finite, sum to 0
+  or do not match the categories in length (`generate_weights_invalid`), a formula Python cannot
+  parse or the evaluator cannot run (`generate_formula_invalid`), and two columns with one name
+  (`generate_column_duplicate`). The location is the index path, such as
+  `tables[0].generate_columns[2].weigths`.
+- **Plan compile** checks what needs Faker, Arrow or the other columns: an unknown locale, faker
+  type or faker keyword (`generate_locale_unknown`, `generate_faker_type_unknown`,
+  `generate_faker_kwargs_unknown`), categories Arrow cannot put in one column
+  (`generate_categories_mixed`), a key that names a column the table does not have
+  (`derived_missing_column_ref`, `derived_aggregate_missing_column_ref`,
+  `grouped_series_missing_group_by_ref`, `grouped_series_missing_order_by_ref`,
+  `windowed_date_missing_anchor_ref`, `group_key_missing_group_by_ref`), a column the table has
+  but generates later (`generate_column_forward_reference`), `group_by` equal to `order_by`
+  (`grouped_series_group_by_equals_order_by`), the formula rules below, `weighted` reference
+  weights whose length differs from a `sequence` parent's `row_count`
+  (`reference_weights_length_mismatch`), and every other parse rule a type's transform has. Those
+  keep the transform's own code, such as `derived_aggregate_op_missing`,
+  `derived_bounds_inverted`, `grouped_series_generator_invalid`,
+  `windowed_date_min_exceeds_max` or `group_key_length_odd`; `generate_option_invalid` is used
+  only for a failure that carries no registered code. The path uses names:
+  `tables.<table>.generate_columns.<column>.<key>`.
+
+A refusal message holds the reason's fixed text and the table, column and option names. It
+never holds a category, weight, formula or other option value.
+
+### Memory floor
+
+Before a resident generate run starts, the engine prices the bytes the generated tables must
+hold, plus the seen-sets of `unique` columns. How it prices them follows the route the run will
+take:
+
+- **Arrow route** (every column eligible): each column at its Arrow size (fixed-width columns at
+  their bit width, variable-width columns at one offset per row). All tables are held together,
+  so their floors add up.
+- **Legacy route** (any column declined): every column at one eight-byte list slot per row. The
+  legacy path frees each table's slots before the next table starts, so only the largest table
+  counts.
+
+If that floor is larger than the machine's memory ceiling (the cgroup limit, else host RAM), the
+run is refused with `generation_budget_exceeded`, and the message gives the bytes needed, the
+bytes available and the largest table. `estimate_job_capacity` makes the same check and reports
+`INSUFFICIENT` with that code, so the CLI refuses the config before a run: `decoy validate
+pipeline.yaml` runs it as part of the whole pre-run gate, and `decoy validate preflight
+pipeline.yaml` runs that layer alone. `decoy validate config` checks the config only and does
+not run the capacity check. The floor is a lower bound, so a run that passes it can still run
+out of memory. It is skipped when the run has an explicit memory budget
+(the run then holds itself to that budget), when it streams eligible columns to a bounded sink,
+and when the ceiling cannot be read.
+`CAPACITY_REASON_CODES` in `decoy_engine.errors` lists every code that means the same verdict.
+
 ### sequence
 
 Monotonic counter.
 
-- `start`: first value.
-- `step`: increment.
+- `start`: first value (required).
+- `step`: increment, any integer but 0 (default 1).
+- `prefix` / `suffix` / `pad_length`: turn the value into text, zero-padded to `pad_length`
+  digits.
 
 Use it for surrogate primary keys.
 
@@ -1254,15 +1356,21 @@ Use it for surrogate primary keys.
 
 A synthetic value per row from a named faker type.
 
-- `faker_type`: the faker generator (for example `first_name`, `email`, `job`).
-- locale and faker kwargs are supported per the generator.
+- `faker_type`: the faker generator (for example `first_name`, `email`, `job`). It must be a
+  provider in the column's locale or a registered custom provider.
+- `locale`: one locale or a non-empty list, each one Faker knows (`en_US` or `en-US`). A column
+  without one is checked again in the run's default locale before any provider runs.
+- `faker_kwargs`: keyword arguments for the provider method. For a built-in Faker method an
+  unknown keyword is refused (`generate_faker_kwargs_unknown`). A registered custom provider is
+  called as `fn(faker)` and never reads them, so any keyword is accepted there and ignored.
 
 ### categorical
 
 Draws each row from a fixed category pool.
 
-- `categories`: the pool.
-- `weights`: optional per-category distribution.
+- `categories`: the pool. The values must fit one Arrow column type (`[1, 2.5]` and
+  `["a", null]` do; `["a", 1]` does not).
+- `weights`: optional, one non-negative number per category with a positive sum.
 
 ### reference
 
@@ -1272,10 +1380,122 @@ child can point at a generated parent's keys.
 - `reference_table` / `reference_column`: the generated parent table and column
   to draw from (both required).
 - `distribution`: how draws are spread across the parent values: `random`
-  (default), `sequential`, or `weighted`.
-- `weights`: per-value weights, used when `distribution` is `weighted`.
+  (default), `sequential`, `weighted`, or `fitted` (below). Any other value is refused.
+- `weights`: per-value weights, required when `distribution` is `weighted`. Against a
+  `sequence` parent with no nulls, the list must have one weight per parent row.
 - `min_per_parent` / `max_per_parent`: optional per-parent cardinality bounds
   (0 = unbounded). These bounds do not compose with `sequential`.
+- `snapshot_file` / `source_column`: only with `distribution: fitted` (below).
+  Any other distribution refuses them with `config.generate_option_unknown`.
+
+`random` and `weighted` pick a parent for each child row on its own, so on 30
+parents and 60 children almost every parent gets 1 to 4 children. A source
+where a few parents hold most of the children, or many parents hold none, loses
+that shape. `distribution: fitted` keeps it.
+
+#### Fitted fan-out (`distribution: fitted`)
+
+The fan-out of a key column is how many child rows each parent key has. A
+fitted reference column gives each generated parent a child count drawn from
+the fan-out of the source child table.
+
+```yaml
+- name: patient_id
+  type: reference
+  reference_table: patients
+  reference_column: patient_id
+  distribution: fitted
+  snapshot_file: visits.snap.json
+  source_column: patient_id   # optional; defaults to the column name
+```
+
+**What the snapshot records.** `decoy fit visits.csv --fanout patient_id`
+writes a `fanout` block on the `patient_id` entry of the snapshot. The CLI
+option ships with the CLI release that pins this engine; from Python, pass
+`fanout_columns=["patient_id"]` to `compute_distribution_snapshot` or
+`distribution_snapshot_document`.
+
+```json
+"patient_id": {
+  "kind": "categorical",
+  "fanout": {"rows": 20, "keys": 8, "degrees": [[1, 5], [2, 1], [5, 1], [8, 1]]}
+}
+```
+
+- `rows`: the non-null rows of the column.
+- `keys`: the distinct non-null keys.
+- `degrees`: `[children, parents]` pairs in ascending order. `[1, 5]` means 5
+  keys appear on exactly 1 row. Keys compare as strings, the way the rest of
+  the snapshot treats them.
+
+The block holds counts only, never a key value, so a snapshot written with
+sensitive columns withheld still keeps it. Without `--fanout` the snapshot is
+unchanged. A DP snapshot never carries a fan-out.
+
+**How children are allocated to parents.** Generation reads the pinned
+snapshot bytes from the compiled Plan, never the file. With `P` unique non-null
+generated parent keys and a child `row_count` of `N`:
+
+1. Active parents: `K = round(N * keys / rows)`, clamped to at least 1 and at
+   most `min(P, N)`. This keeps the source's mean children per active parent.
+   If the child and parent row counts keep the source's ratio, the share of
+   parents with no children comes out as in the source too, without reading
+   the parent file.
+2. Base degrees: the `K` values of the source degree histogram at evenly
+   spaced quantiles (systematic resampling with a fixed offset). This step
+   draws nothing at random. When `K` equals the source `keys`, it returns the
+   source degrees exactly.
+3. Scale to `N`: largest-remainder apportionment makes the degrees sum to
+   exactly `N` with every active parent holding at least one child. All
+   arithmetic is on integers, so every platform gets the same result.
+4. Cap: no parent gets more children than the largest source parent, as long
+   as `N <= K * max_degree`. When `K` was clamped to `P` and `N` is larger
+   than that, the cap cannot hold and some parents exceed the source maximum.
+
+**Assignment.** Two shuffles are the only random draws. The first assigns the
+`K` degrees, plus a zero for each of the other `P - K` parents, to the parent
+keys. The second shuffles the child rows. Every child key comes from the
+generated parent pool (no orphans) and the column has exactly `N` rows. The
+seed derives from the master key (or `seed`), the column config and the
+snapshot digest, through the same derivation as every reference column, so
+the same inputs give byte-identical output.
+
+For the source above (`rows` 20, `keys` 8):
+
+| Generated parents `P` | Child rows `N` | Result |
+|---|---|---|
+| 10 | 20 | degrees `8, 5, 2, 1, 1, 1, 1, 1, 0, 0`: the source exactly |
+| 30 | 60 | 24 of 30 parents have children; 15 have 1, 3 have 2, 3 have 5, 3 have 8 |
+
+Notes:
+
+- `null_probability` applies after assignment, as on any reference column, so
+  each parent loses children at random.
+- Two fitted reference columns in one child table are allocated separately,
+  so which patient sees which provider is not kept. A chain (`patients`,
+  `visits`, `claims`) is fitted one level at a time from each child file.
+- A plan with a fitted column runs on the legacy generation route; the
+  streamed core declines it (admission reason `reference_fitted_fanout`).
+- `random`, `sequential` and `weighted` output does not change.
+
+**Refusals.** `fitted` never falls back to uniform draws or to an all-null
+column.
+
+| Code | When |
+|---|---|
+| `plan.reference_fanout_missing` | No `snapshot_file`; the source column is not in the snapshot; or its entry has no `fanout` (a snapshot fitted without `--fanout`, or any DP snapshot). Also raised at generation if no pinned fan-out reached it (a caller that skipped compile). |
+| `plan.reference_fanout_invalid` | The `fanout` block breaks a rule: not an object; a count that is not a plain integer (bools, floats and numeric strings are refused, not coerced); a pair that is not two positive integers; degrees not strictly ascending; parent counts that do not sum to `keys`; children that do not sum to `rows`; or `keys` of 0. |
+| `plan.reference_fanout_conflict` | `weights`, `min_per_parent` or `max_per_parent` is set; the fan-out already fixes the per-parent counts. |
+| `plan.reference_parent_pool_empty` | The child table has rows but the generated parent column has no non-null keys. |
+| `plan.dp_generate_fitted_fanout_unsupported` | The config declares `global_settings.dp`. The exact source fan-out would reach DP output unprotected; use `distribution: random`. |
+| `plan.statistical_snapshot_unreadable`, `plan.statistical_snapshot_schema_mismatch` | The snapshot file could not be read or is not `distribution-snapshot/v1`. |
+| `plan.statistical_snapshot_not_pinned` | A saved Plan loaded with `plan_from_yaml` no longer carries the fitted column's snapshot. |
+| `plan.pinned_snapshot_file_not_statistical` | The pinned API (`compile_pinned`) takes `snapshot_file` only on statistical columns. |
+| `quality.fanout_column_unknown` | At fit: a fan-out column is not in the source, or `fanout_columns` is a bare string. |
+| `config.generate_unique_conflict` | `unique: true` with `distribution: fitted`. |
+
+Messages name tables, columns and fields only, never a key value or a stored
+count.
 
 ### formula
 
@@ -1283,10 +1503,15 @@ Computes a column from an expression over the other generated columns.
 
 - `formula`: the Python expression evaluated per row (required).
 - `references`: the sibling column names the expression reads; filled in a
-  single declared-order post-pass after the other columns exist. A formula
-  column that reads a later-declared referenced formula sibling sees that
-  sibling's null placeholder, not its computed value. Declare dependencies
-  before the columns that read them.
+  single declared-order post-pass after the other columns exist.
+
+Plan compile refuses a formula that reads a sibling not listed in `references`
+(`generate_formula_reference_missing`), lists a column the table does not have
+(`generate_formula_reference_unknown`), reads a name that is neither a sibling nor one
+the formula scope provides, such as `abs` or `sqrt` (`round` and `random` are in the scope)
+(`generate_formula_name_unknown`), wraps a sibling in braces as `{a} * 2` (`generate_formula_template_syntax`), or reads itself or a later formula
+that has `references` (`generate_column_forward_reference`). Declare dependencies
+before the columns that read them.
 
 ### derived
 
@@ -1298,18 +1523,23 @@ validation timing, and security note.
 In generate mode the same parameters (`expression`, `bounds`,
 `null_propagation`) are top-level keys on the generate column config, not
 nested under `provider_config:`. Sibling columns must be declared before the
-`derived` column that reads them; a forward reference fails at evaluation time.
+`derived` column that reads them; plan compile refuses a forward reference with
+`generate_column_forward_reference`.
+
+### constant
+
+Every row gets the same `value`: a string, a bool, a 64-bit integer or a finite float.
 
 ### distribution
 
-Samples rows whose distribution matches a provided snapshot (numeric,
-categorical, or datetime). Use it to generate a column shaped like a real
-source column's distribution.
+Draws numbers from a named family, with no source file. To shape a column like a real one, use
+`statistical` with a `decoy fit` snapshot instead.
 
-- `snapshot`: a dict with `kind` (`numeric`, `categorical`, or `datetime`) and a
-  `stats` block. `numeric` needs `bin_edges` + `bin_counts`; `categorical` needs
-  `top_values` + `other_count`; `datetime` needs `year_bins` + `min` + `max`.
-  This matches `compute_distribution_snapshot`'s output.
+- `family`: `uniform` is the only family. Others are refused with
+  `generate_option_value_unknown` until a sampler gives the same bytes on arm64 and x86.
+- `low` / `high`: the uniform range (both required, `high` above `low`). The family takes
+  only its own keys.
+- `min` / `max`: optional clip applied to each draw (`min` at most `max`).
 
 ## Job-level config: validators and quarantine (SP-05, extended Sprint 2 honesty pack)
 
@@ -1558,13 +1788,13 @@ Two safety bounds are checked before parsing:
 | String | `concat(a, b, ...)` (two or more arguments) |
 | Substring | `slice(s, start[, end])` (Python-native 0-indexed, half-open, negative-from-end slicing; out-of-range indices clamp rather than error, e.g. `slice(firstname, -4)` for the last 4 characters) |
 | Date | `days_between(start, end)` (integer days; accepts `datetime.date` or ISO-8601 strings) |
-| Conditional | `case_when(cond1, val1, ..., condN, valN, default)` -- **non-short-circuit**: all sub-expressions are evaluated before branch selection; every branch value must be safe to evaluate for all rows |
-| Ternary | `value if condition else other` |
+| Conditional | `case_when(cond1, val1, ..., condN, valN, default)` -- lazy: only the conditions up to the first true one and the chosen value are evaluated, so an unchosen `100 // a` cannot raise |
+| Ternary | `value if condition else other`, or the call form `if(condition, value, other)` (same node; lazy like `case_when`, and `or` / `and` short-circuit; the condition is evaluated first, so a failing condition is reported before a failing branch) |
 | Literals | integers, floats, double-quoted strings, `True`, `False`, `None` |
 | Column refs | bare identifiers (no dots, no dunders) |
 
 Anything not in the table above is rejected. This includes: function calls
-other than `concat`, `slice`, `days_between`, and `case_when`, attribute
+other than `concat`, `slice`, `days_between`, `case_when` and `if`, attribute
 access (`.`), subscript syntax (`[]`), `import`, and dunder identifiers
 (`__class__`, etc.).
 

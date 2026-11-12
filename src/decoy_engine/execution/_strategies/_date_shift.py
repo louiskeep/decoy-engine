@@ -65,7 +65,12 @@ import pandas as pd
 
 from decoy_engine import reasons
 from decoy_engine.determinism._derive import DeriveContext
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    StrategyOption,
+    option,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
@@ -84,6 +89,14 @@ class DateShiftStrategyHandler:
     """
 
     name: str = "date_shift"
+    namespace_required: bool = True
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("min_days", "int", -30),
+        option("max_days", "int", 30),
+        option("date_format", "str", "%Y-%m-%d"),
+    )
+    offer_in_wizard: bool = True
 
     def run(
         self,
