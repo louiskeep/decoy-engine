@@ -82,7 +82,7 @@ from decoy_engine.config._subset import (
     SubsetPredicateConfig,
     SubsetSeedConfig,
 )
-from decoy_engine.config._tables import ColumnConfig, TableConfig
+from decoy_engine.config._tables import ColumnConfig, TableConfig, classify_table_kinds
 from decoy_engine.config._targets import (
     FileTarget,
     GCSTarget,
@@ -139,6 +139,7 @@ __all__ = [
     "TableConfig",
     "TargetDescriptor",
     "TransformOp",
+    "classify_table_kinds",
     "distinct_categories",
     "generate_option_catalog",
     "override_sources",
