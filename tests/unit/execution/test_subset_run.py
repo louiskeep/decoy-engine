@@ -49,22 +49,29 @@ def _fk_closed(out: dict[str, pa.Table]) -> None:
     assert set(items) <= orders
 
 
+class _RootSpy:
+    """Records the scratch root; a plain class so nothing is cleaned up on garbage collection."""
+
+    def __init__(self, real: Any, seen: list[Path], held: list[Any]) -> None:
+        self._real = real
+        self._seen = seen
+        held.append(real)
+
+    def __enter__(self) -> Path:
+        root: Path = self._real.__enter__()
+        self._seen.append(root)
+        return root
+
+    def __exit__(self, *exc: Any) -> Any:
+        return self._real.__exit__(*exc)
+
+
 @contextmanager
 def _roots(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[Path]]:
     seen: list[Path] = []
+    held: list[Any] = []
     real = stage_mod.engine_scratch_root
-
-    held: list[Any] = []  # keeps each manager alive: a dropped one would clean up on collection
-
-    @contextmanager
-    def spy(parent: Any) -> Iterator[Path]:
-        manager = real(parent)
-        held.append(manager)
-        with manager as root:
-            seen.append(root)
-            yield root
-
-    monkeypatch.setattr(stage_mod, "engine_scratch_root", spy)
+    monkeypatch.setattr(stage_mod, "engine_scratch_root", lambda p: _RootSpy(real(p), seen, held))
     yield seen
 
 
