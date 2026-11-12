@@ -49,6 +49,8 @@ The same fixture also pins the two GEN-CLI additions (`warning.generation_fideli
 
 `reason-manifest-v1.23-gen-types.json` pins the three GEN-TYPES E2 additions (`config.generate_output_type_unsupported`, `runtime.output_type_cast_failed` and `runtime.declared_boolean_invalid`; `since` 1.23.0: a generate column or fixed-width target cannot carry the requested `output_type`, a generated value could not be cast to its `output_type`, and a value is not a boolean under `boolean/text/v1`).
 
+`reason-manifest-v1.24-fpe-fallbacks.json` pins the two FPE handler fallback codes (`runtime.fpe_unencryptable_value` and `runtime.fpe_checksum_unsupported`; `since` 1.24.0). The `fpe` strategy had emitted both since Task 5.2 when a low-level FPE error carried no more specific code, but neither was registered, so they surfaced as `decoy.unregistered_reason`. The checksum one's symbol is `FPE_CHECKSUM_UNSUPPORTED_STRATEGY`, because `FPE_CHECKSUM_UNSUPPORTED` already names the low-level `fpe.checksum_unsupported`.
+
 `reason-manifest-v1.24-scanml-m5.json` pins the one SCAN-ML M5 addition (`route.post_scan_models_unsupported`; `since` 1.24.0: a route that runs no post-scan, the sequential, out-of-core and chunked entries, refuses a config that asks for a model post-scan detector or `ner_findings: fail`, before any source is read; raised as `PostScanRouteError`).
 
 An older consumer that reads a record whose identity it does not know (same registry major) degrades to `decoy.unknown_reason_from_future`, keeping the original identity in an uninterpreted context field. An unsupported major becomes `decoy.unsupported_schema_version`. Neither is ever read as success or as retry advice.

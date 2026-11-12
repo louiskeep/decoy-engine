@@ -33,8 +33,10 @@ __all__ = [
     "FILTER_EXPRESSION_ERROR",
     "FILTER_EXPRESSION_NOT_BOOLEAN",
     "FPE_CHECKSUM_INVALID_SOURCE",
+    "FPE_CHECKSUM_UNSUPPORTED_STRATEGY",
     "FPE_UNENCRYPTABLE_DOMAIN",
     "FPE_UNENCRYPTABLE_LENGTH",
+    "FPE_UNENCRYPTABLE_VALUE",
     "GENERATION_NOT_REPRODUCIBLE",
     "INVALID_SUBSTRATE",
     "JOINT_MASK_KEY_BY_SNAPSHOT_MISALIGNED",
@@ -129,6 +131,18 @@ FAKER_POSITIONAL_TABLE_UNKNOWN = _d(
     "faker_positional_table_unknown", "Faker positional table unknown."
 )
 FPE_UNENCRYPTABLE_DOMAIN = _d("fpe_unencryptable_domain", "FPE unencryptable domain.")
+FPE_UNENCRYPTABLE_VALUE = _d(
+    "fpe_unencryptable_value",
+    "A value cannot be format-preserving-encrypted without leaking cleartext or losing round-trip.",
+    since="1.24.0",
+)
+# The plain symbol FPE_CHECKSUM_UNSUPPORTED is the low-level `fpe.checksum_unsupported`.
+FPE_CHECKSUM_UNSUPPORTED_STRATEGY = _d(
+    "fpe_checksum_unsupported",
+    "The FPE checksum scheme is unsupported or the value's length is invalid for it.",
+    symbol="FPE_CHECKSUM_UNSUPPORTED_STRATEGY",
+    since="1.24.0",
+)
 JOINT_MASK_KEY_BY_SNAPSHOT_MISALIGNED = _d(
     "joint_mask_key_by_snapshot_misaligned", "Joint mask key by snapshot misaligned."
 )

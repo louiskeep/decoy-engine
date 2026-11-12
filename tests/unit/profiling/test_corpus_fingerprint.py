@@ -2,7 +2,7 @@
 
 Class 9 guard for the corpus split: a header pool, value generator or statement
 order that changes while moving changes these digests. The LightGBM golden also
-depends on this corpus but needs the ml extra and a retrain to notice.
+depends on this corpus but needs the classifier stack and a retrain to notice.
 """
 
 from __future__ import annotations
