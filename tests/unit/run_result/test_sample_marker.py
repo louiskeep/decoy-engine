@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from decoy_engine.run_result import RunResult, RunResultRead
 
@@ -67,3 +67,19 @@ def test_at16_the_write_model_refuses_a_malformed_marker(edit: Any) -> None:
     edit(doc["sample"])
     with pytest.raises(ValidationError):
         RunResult.model_validate(doc)
+
+
+class _Wrapper(BaseModel):
+    record: RunResult
+
+
+@pytest.mark.parametrize("with_sample", [False, True])
+def test_every_dump_path_gives_one_wire_form(with_sample: bool) -> None:
+    doc = _sampled() if with_sample else _old()
+    record = RunResult.model_validate(doc)
+    payload = record.to_payload()
+    assert payload == doc
+    assert json.loads(record.model_dump_json(by_alias=True)) == doc
+    nested = json.loads(_Wrapper(record=record).model_dump_json(by_alias=True))["record"]
+    assert nested == doc
+    assert _Wrapper(record=record).model_dump(mode="json", by_alias=True)["record"] == doc
