@@ -457,27 +457,27 @@ def test_at8_an_identity_release_stamps_every_pending_code_at_the_next_minor(
     r = engine_clone(engine_seed, tmp_path)
     before = _fixtures(r.path)
     two_identities(r)
-    assert _stamp(r) == "1.24.0"
+    assert _stamp(r) == "1.25.0"
     live = manifest(r.path)
-    assert live["registry_version"] == "1.24.0"
+    assert live["registry_version"] == "1.25.0"
     probes = {e["code"]: e["since"] for e in live["entries"] if e["code"] in PROBES}
-    assert probes == {"probe_one": "1.24.0", "probe_two": "1.24.0"}
-    name = "reason-manifest-v1.24-release-0-23-0.json"
+    assert probes == {"probe_one": "1.25.0", "probe_two": "1.25.0"}
+    name = "reason-manifest-v1.25-release-0-23-0.json"
     assert _fixtures(r.path) - before == {name}
-    assert pol.parse_fixture_name(name) == ("1.24.0", "release-0-23-0")
-    assert pol.fixture_name("1.24.0", pol.release_fixture_slug("0.23.0")) == name
+    assert pol.parse_fixture_name(name) == ("1.25.0", "release-0-23-0")
+    assert pol.fixture_name("1.25.0", pol.release_fixture_slug("0.23.0")) == name
     fixture = json.loads((r.path / F29 / name).read_text(encoding="utf-8"))
-    assert fixture["registry_version"] == "1.24.0"
+    assert fixture["registry_version"] == "1.25.0"
     assert [e["code"] for e in fixture["entries"]] == ["probe_one", "probe_two"]
     pin = _pin(r.path)
-    assert (pin["registry_version"], pin["baseline_ceiling"]) == ("1.24.0", "1.24.0")
+    assert (pin["registry_version"], pin["baseline_ceiling"]) == ("1.25.0", "1.25.0")
     contract = json.loads((r.path / F29 / "consumer-contract.json").read_text(encoding="utf-8"))
-    assert pol.contract_versions(contract) == {"1.24.0"}
-    assert "`registry_version` (`1.24.0`)" in (r.path / "docs/reasons.md").read_text(
+    assert pol.contract_versions(contract) == {"1.25.0"}
+    assert "`registry_version` (`1.25.0`)" in (r.path / "docs/reasons.md").read_text(
         encoding="utf-8"
     )
     text = (r.path / CONFIG2).read_text(encoding="utf-8")
-    assert text.count('since="1.24.0")') == 2 and "since=UNRELEASED)" not in text
+    assert text.count('since="1.25.0")') == 2 and "since=UNRELEASED)" not in text
     assert "import UNRELEASED" not in text and PENDING_DOC in text
     log = (r.path / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "## [0.23.0] - 2026-11-12" in log and "`config/probe_one`" in log
@@ -492,15 +492,15 @@ def test_at8_a_patch_release_moves_the_registry_and_keeps_the_ceiling(
     r = engine_clone(engine_seed, tmp_path)
     before = _fixtures(r.path)
     CASES[case](r)
-    assert _stamp(r) == "1.23.1"
+    assert _stamp(r) == "1.24.1"
     live = manifest(r.path)
-    assert live["registry_version"] == "1.23.1" and _fixtures(r.path) == before
+    assert live["registry_version"] == "1.24.1" and _fixtures(r.path) == before
     pin = _pin(r.path)
-    assert (pin["registry_version"], pin["baseline_ceiling"]) == ("1.23.1", "1.23.0")
+    assert (pin["registry_version"], pin["baseline_ceiling"]) == ("1.24.1", "1.24.0")
     assert EMPTY_MARKERS in (r.path / REGISTRY).read_text(encoding="utf-8")
     if case == "deprecation":
         entry = next(e for e in live["entries"] if e["code"] == "pipeline_name_invalid")
-        assert entry["deprecated_in"] == "1.23.1"
+        assert entry["deprecated_in"] == "1.24.1"
     _both_gates_pass(r)
     r.commit({}, "chore: release 0.23.0")
     edit_file(r.path / CONFIG1, '"Top level bad mode."', '"Top-level mode is not supported."')
@@ -510,9 +510,9 @@ def test_at8_a_patch_release_moves_the_registry_and_keeps_the_ceiling(
         EMPTY_MARKERS.replace("frozenset()", 'frozenset({("config", "top_level.bad_mode")})'),
     )
     r.commit({}, "fix: correct another summary")
-    assert _stamp(r, "0.24.0") == "1.23.2"
+    assert _stamp(r, "0.24.0") == "1.24.2"
     pin = _pin(r.path)
-    assert (pin["registry_version"], pin["baseline_ceiling"]) == ("1.23.2", "1.23.0")
+    assert (pin["registry_version"], pin["baseline_ceiling"]) == ("1.24.2", "1.24.0")
     assert _fixtures(r.path) == before
     _both_gates_pass(r)
 
@@ -523,17 +523,17 @@ def test_at8_a_release_with_nothing_pending_recaptures_the_pin(
     r = engine_clone(engine_seed, tmp_path)
     before = _fixtures(r.path)
     assert _pin(r.path)["registry_version"] == "1.22.0"
-    assert _stamp(r) == "1.23.0"
+    assert _stamp(r) == "1.24.0"
     pin = _pin(r.path)
-    assert (pin["registry_version"], pin["baseline_ceiling"]) == ("1.23.0", "1.23.0")
-    assert manifest(r.path)["registry_version"] == "1.23.0" and _fixtures(r.path) == before
+    assert (pin["registry_version"], pin["baseline_ceiling"]) == ("1.24.0", "1.24.0")
+    assert manifest(r.path)["registry_version"] == "1.24.0" and _fixtures(r.path) == before
     _both_gates_pass(r)
 
 
 @pytest.mark.parametrize(
     ("case", "flag", "ok"),
-    [("identity", "1.24.0", True), ("identity", "1.25.0", False), ("summary", "1.24.0", False),
-     ("summary", "auto", True), ("noop", "1.24.0", False), ("noop", "auto", True)],
+    [("identity", "1.25.0", True), ("identity", "1.26.0", False), ("summary", "1.25.0", False),
+     ("summary", "auto", True), ("noop", "1.25.0", False), ("noop", "auto", True)],
 )  # fmt: skip
 def test_at8_the_cli_accepts_only_the_automatic_registry_minor(
     engine_seed: Path, tmp_path: Path, case: str, flag: str, ok: bool

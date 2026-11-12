@@ -34,7 +34,7 @@ FIXTURE_GLOB = "reason-manifest-v*-*." + "json"  # built apart: a sentry scans f
 FIXTURE_FLOOR = "1.5.0"  # fixed: the last minor that shipped without a fixture (F31 #377)
 
 UNRELEASED = "unreleased"  # decoy_engine.reasons.UNRELEASED: a `since` no release stamped yet
-LAST_PER_PR_MINOR = "1.23.0"  # the last minor the old per-PR process made; not a moving version
+LAST_PER_PR_MINOR = "1.24.0"  # the last minor the old per-PR process made; not a moving version
 PENDING_ARGUMENTS = ("since", "deprecated_in")  # catalog arguments that may be UNRELEASED
 # The two accepted pending edits to a released reason and the fields each may change before the
 # release stamp. Every pin, stamp and renumber decision reads this one descriptor.

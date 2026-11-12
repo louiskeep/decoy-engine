@@ -152,7 +152,7 @@ def test_release_check_command_runs_by_file_path(cwd: Path | None, tmp_path: Pat
 
 
 # REG-RELEASE E2: pending declarations, the per-field v2 pin, the ceiling and the transitions.
-# Synthetic manifests use the real 1.22/1.23 numbers where the ceiling rule is under test.
+# Synthetic manifests use the real 1.22 to 1.24 numbers where the ceiling rule is under test.
 from scripts.release import reason_manifest_policy as pol  # noqa: E402
 from scripts.release import reason_release_pin as rp  # noqa: E402
 
@@ -160,12 +160,12 @@ PENDING = "unreleased"
 
 
 def _rel() -> dict:
-    """Shipped 1.22.0 (identity a), live 1.23.0 (b and c added under the old per-PR minor)."""
+    """Shipped 1.22.0 (identity a), live 1.24.0 (b, then c, each under an old per-PR minor)."""
     return {
-        "registry_version": "1.23.0",
+        "registry_version": "1.24.0",
         "reason_schema_version": 1,
         "event_schema_version": 1,
-        "entries": [_ent("a", "1.22.0"), _ent("b", "1.23.0"), _ent("c", "1.23.0")],
+        "entries": [_ent("a", "1.22.0"), _ent("b", "1.23.0"), _ent("c", "1.24.0")],
     }
 
 
@@ -173,7 +173,8 @@ def _rel_fixtures() -> dict[str, dict]:
     e = _rel()["entries"]
     return {
         "reason-manifest-v1.22-a.json": {"registry_version": "1.22.0", "entries": [e[0]]},
-        "reason-manifest-v1.23-bc.json": {"registry_version": "1.23.0", "entries": e[1:]},
+        "reason-manifest-v1.23-b.json": {"registry_version": "1.23.0", "entries": [e[1]]},
+        "reason-manifest-v1.24-c.json": {"registry_version": "1.24.0", "entries": [e[2]]},
     }
 
 
@@ -307,9 +308,9 @@ def test_at1_migration_keeps_the_shipped_version_and_baselines_through_the_ceili
     pin, problems = rp.migrate_v1(_v1(shipped), _rel(), _rel_fixtures(), "1.21.0")
     assert problems == [] and pin is not None
     assert pin["registry_version"] == "1.22.0"
-    assert pin["baseline_ceiling"] == pol.LAST_PER_PR_MINOR == "1.23.0"
+    assert pin["baseline_ceiling"] == pol.LAST_PER_PR_MINOR == "1.24.0"
     assert [(r["namespace"], r["code"]) for r in pin["identities"]] == [("ns", c) for c in "abc"]
-    assert pin["since_counts"] == {"1.22.0": 1, "1.23.0": 2}
+    assert pin["since_counts"] == {"1.22.0": 1, "1.23.0": 1, "1.24.0": 1}
     assert pol.release_pin_violations(pin, _rel()) == []
 
 
@@ -322,7 +323,7 @@ def test_at1_migration_refuses_a_v1_or_full_fixture_mismatch() -> None:
     pin, problems = rp.migrate_v1(bad_v1, _rel(), _rel_fixtures(), "1.21.0")
     assert pin is None and problems
     fixtures = _rel_fixtures()
-    fixtures["reason-manifest-v1.23-bc.json"]["entries"][0]["summary"] = "Old wording."
+    fixtures["reason-manifest-v1.23-b.json"]["entries"][0]["summary"] = "Old wording."
     pin, problems = rp.migrate_v1(_v1(shipped), _rel(), fixtures, "1.21.0")
     assert pin is None and any("differs from the live entry" in p for p in problems), problems
 
@@ -346,7 +347,7 @@ def test_at1b_the_same_edits_without_markers_fail() -> None:
     _resummarize(live)
     assert pol.release_pin_violations(pin, live) == ["ns.a: summary differs from the release pin"]
     live = _rel()
-    _by(live, "b").update(deprecated_in="1.23.1", replaced_by=["ns", "c"])
+    _by(live, "b").update(deprecated_in="1.24.1", replaced_by=["ns", "c"])
     problems = pol.release_pin_violations(pin, live)
     assert "ns.b: deprecated_in differs from the release pin" in problems, problems
 
@@ -371,7 +372,7 @@ def test_at1b_every_other_field_stays_frozen_under_a_pending_edit(
 
 def test_at1b_a_numeric_tombstone_cannot_be_retargeted() -> None:
     shipped = _rel()
-    _by(shipped, "c").update(deprecated_in="1.23.0", replaced_by=["ns", "a"])
+    _by(shipped, "c").update(deprecated_in="1.24.0", replaced_by=["ns", "a"])
     pin = rp.build_pin(shipped, "1.22.0")
     for change in (
         {"deprecated_in": PENDING, "replaced_by": ["ns", "b"]},
@@ -387,12 +388,12 @@ def test_at1b_a_patch_stamp_moves_the_registry_and_keeps_the_ceiling(edit, pendi
     live = _rel()
     code = edit(live)
     t = pol.registry_transition(live, rp.build_pin(_rel(), "1.22.0"), pending)
-    assert (t.kind, t.version, t.writes_fixture) == ("patch", "1.23.1", False)
+    assert (t.kind, t.version, t.writes_fixture) == ("patch", "1.24.1", False)
     stamped = pol.stamped_manifest(live, t)
     new = rp.build_pin(stamped, t.version)
-    assert (new["registry_version"], new["baseline_ceiling"]) == ("1.23.1", "1.23.0")
-    assert stamped["registry_version"] == "1.23.1"
-    assert _by(stamped, code)["deprecated_in"] in (None, "1.23.1")
+    assert (new["registry_version"], new["baseline_ceiling"]) == ("1.24.1", "1.24.0")
+    assert stamped["registry_version"] == "1.24.1"
+    assert _by(stamped, code)["deprecated_in"] in (None, "1.24.1")
     assert pol.release_pin_violations(new, stamped) == []
     assert pol.release_ready_violations(stamped, frozenset()) == []
 
@@ -421,8 +422,8 @@ def test_at2_numeric_fields_are_frozen_per_field_and_pending_additions_are_not()
 
 @pytest.mark.parametrize(
     ("shipped", "allowed"),
-    [("1.22.0", "1.23.0"), ("1.0.0", "1.23.0"), ("1.23.0", "1.23.0"), ("1.23.1", "1.23.1"),
-     ("1.24.0", "1.24.0")],
+    [("1.22.0", "1.24.0"), ("1.0.0", "1.24.0"), ("1.23.0", "1.24.0"), ("1.24.0", "1.24.0"),
+     ("1.24.1", "1.24.1"), ("1.25.0", "1.25.0")],
 )  # fmt: skip
 def test_at3_the_allowed_version_is_the_shipped_version_or_the_last_per_pr_minor(
     shipped: str, allowed: str
@@ -438,12 +439,14 @@ def test_at3_only_unreleased_additions_pass_the_ceiling() -> None:
     assert pol.unreleased_violations(live, pin) == []
     assert pol.release_pin_violations(pin, live) == []
     live = _rel()
-    live["entries"].append(_ent("d", "1.24.0"))
+    live["entries"].append(_ent("d", "1.25.0"))
     assert pol.unreleased_violations(live, pin) != []
-    for version in ("1.24.0", "1.22.0", "1.23.1"):
+    for version in ("1.25.0", "1.23.0", "1.22.0", "1.24.1"):
         live = _rel()
         live["registry_version"] = version
         assert pol.unreleased_violations(live, pin) != [], version
         assert pol.release_pin_violations(pin, live) != [], version
-    assert pol.unreleased_violations(_rel(), pin, ["reason-manifest-v1.24-x.json"]) != []
-    assert pol.unreleased_violations(_rel(), pin, ["reason-manifest-v1.23-gen-types.json"]) == []
+    assert pol.unreleased_violations(_rel(), pin, ["reason-manifest-v1.25-x.json"]) != []
+    assert (
+        pol.unreleased_violations(_rel(), pin, ["reason-manifest-v1.24-fpe-fallbacks.json"]) == []
+    )

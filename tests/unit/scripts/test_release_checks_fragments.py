@@ -151,7 +151,7 @@ def test_at1b_release_checks_refuses_marked_edits_until_they_are_stamped(
     assert proc.returncode != 0 and PIN_STEPS_PASSED not in proc.stdout, proc.stderr[-800:]
     from scripts.release import stamp_release as sr
 
-    assert sr.stamp_release(r.path, "0.23.0", "2026-11-12") == "1.23.1"
+    assert sr.stamp_release(r.path, "0.23.0", "2026-11-12") == "1.24.1"
     r.commit({}, "chore: release prep")
     proc = _release_checks(r.path, bin_dir)
     assert PIN_STEPS_PASSED in proc.stdout, proc.stdout[-800:] + proc.stderr[-800:]
@@ -170,7 +170,7 @@ def test_at4_release_checks_passes_the_pin_steps_after_an_identity_stamp(
     )
     from scripts.release import stamp_release as sr
 
-    assert sr.stamp_release(r.path, "0.23.0", "2026-11-12") == "1.24.0"
+    assert sr.stamp_release(r.path, "0.23.0", "2026-11-12") == "1.25.0"
     r.commit({}, "chore: release prep")
     proc = _release_checks(r.path, bin_dir)
     assert PIN_STEPS_PASSED in proc.stdout, proc.stdout[-800:] + proc.stderr[-800:]
