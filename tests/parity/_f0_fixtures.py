@@ -724,6 +724,9 @@ def run_composite_name_email_seeded_pool() -> dict[str, pa.Table]:
     return {"name_email_pool": _bundle_table(out)}
 
 
+MIXED_FK_PARENT_KEYS = ["x", "y", "z", "w", "v", "u", "t", "s"]
+
+
 def run_mixed_fk() -> dict[str, pa.Table]:
     """Generated parent -> masked child through `run_pipeline`.
 
@@ -769,7 +772,7 @@ def run_mixed_fk() -> dict[str, pa.Table]:
                         {
                             "name": "id",
                             "type": "categorical",
-                            "categories": ["x", "y", "z", "w", "v", "u", "t", "s"],
+                            "categories": MIXED_FK_PARENT_KEYS,
                             "unique": True,
                         },
                         {"name": "nm", "type": "faker", "faker_type": "first_name"},

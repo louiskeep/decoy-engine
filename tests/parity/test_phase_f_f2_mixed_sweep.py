@@ -1040,7 +1040,7 @@ def test_big_int_child_keys_above_two_to_the_53_stay_exact(
     tmp_path: Path, policy: str, static_reasons: list[str], generate_calls: list[int]
 ) -> None:
     big = [2**53 + 1, 2**53 + 2, 2**53 + 3, 2**62 + 7]
-    domain = [*big, *(2**53 + 10 + k for k in range(PARENT_ROWS))]
+    domain = [*big, *(2**53 + 10 + k for k in range(PARENT_ROWS - len(big)))]
     parent = [{"name": "id", "type": "categorical", "categories": domain, "unique": True}]
     keys = pa.array([big[i % 4] for i in range(N - 2)] + [2**53 + 99, 2**63 - 1], pa.int64())
     child = child_table(keys)
