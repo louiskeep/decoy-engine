@@ -1,29 +1,26 @@
 """Incremental output sink for the auto-chunk lane (Rust engine program slice B6a).
 
-B2 and B7 run a routed table on B1's chunked dispatcher but still gather every masked
-chunk and join them into one resident table. When the caller passes a
-`TransactionalSink` (and nothing needs the whole output afterwards), this module
-streams the chunks into it one Parquet row group at a time instead, and owns the
-publish session that commits once at the end or aborts on any failure.
+B2 and B7 run a routed table on B1's chunked dispatcher but still gather every masked chunk
+into one resident table. When the caller passes a `TransactionalSink` (and nothing needs the
+whole output afterwards), this module streams the chunks into it one Parquet row group at a
+time instead, and owns the publish session that commits once or aborts on any failure.
 
 The design follows the established writers rather than inventing one:
 
-- Arrow's `ParquetWriter` buffers one row group, not the file, and takes a fixed
-  schema up front; `ParquetTransactionalSink.write_batches` is that pattern.
-- DuckDB `COPY ... TO` and Polars `sink_parquet` flush a row group at a row (or byte)
-  cap and bind the output schema before the first byte is written.
-- Spark's `FileOutputCommitter` protocol stages output privately and makes it visible
-  with one rename at job commit, deleting the staging tree on abort.
+- Arrow's `ParquetWriter` buffers one row group, not the file, and takes a fixed schema up
+  front; `ParquetTransactionalSink.write_batches` is that pattern.
+- DuckDB `COPY ... TO` and Polars `sink_parquet` flush a row group at a row (or byte) cap
+  and bind the output schema before the first byte is written.
+- Spark's `FileOutputCommitter` stages output privately and makes it visible with one
+  rename at job commit, deleting the staging tree on abort.
 
-Decoy's oracle route cannot give every column's type up front (B1's schema rule pins
-hash, truncate, string redact and passthrough columns only), so chunks that arrive
-before every column has a non-null type are held back, and held-back chunks beyond one
-row group spill to disk as Arrow IPC. Plan:
-docs/plans/2026-10-02-b6a-incremental-output-sink.md.
+Decoy's oracle route cannot give every column's type up front (B1's schema rule pins hash,
+truncate, string redact and passthrough columns only), so chunks that arrive before every column
+has a non-null type are held back, and held-back chunks beyond one row group spill to disk as
+Arrow IPC. Plan: docs/plans/2026-10-02-b6a-incremental-output-sink.md.
 
-Memory bound: the caps (`ROW_GROUP_ROWS`, `ROW_GROUP_BYTES`) are checked after a chunk is
-added, so the buffered output is at most one row group's cap plus one chunk, plus the
-combined copy of the group being written, not a hard cap.
+Memory bound: the caps (`ROW_GROUP_ROWS`, `ROW_GROUP_BYTES`) are checked after a chunk is added:
+at most one row group's cap plus one chunk, plus the copy of the group being written.
 """
 
 from __future__ import annotations
@@ -135,13 +132,12 @@ def decide_output_mode(
 class OutputPublish:
     """The publish session: inert until the run decides to stream, then commit-or-abort.
 
-    Used as a context manager around everything from the mask step to the return. An
-    exception leaving the block aborts an open, uncommitted session once and propagates
-    unchanged. Abort is best effort exactly as on the sequential route (`_sequential.py`):
-    an `Exception` raised by `abort()` is suppressed, a `BaseException` such as
-    `KeyboardInterrupt` is not. `commit()` is the run's last action and returns the sink's
-    receipt (F22); its failure leaves the session uncommitted, so the same exit aborts it. An
-    open session leaving the block normally without having committed is a wiring bug."""
+    Used as a context manager around everything from the mask step to the return. An exception
+    leaving the block aborts an open, uncommitted session once and propagates unchanged. Abort
+    is best effort as on the sequential route (`_sequential.py`): an `Exception` raised by
+    `abort()` is suppressed, a `BaseException` such as `KeyboardInterrupt` is not. `commit()` is
+    the run's last action and returns the sink's receipt (F22); its failure leaves the session
+    uncommitted, so the same exit aborts it. Leaving normally uncommitted is a wiring bug."""
 
     def __init__(self, sink: Any, stream: bool, post_validation: bool) -> None:
         require_bool("stream_chunked_output", stream)
@@ -158,6 +154,10 @@ class OutputPublish:
 
     def open(self) -> None:
         self.is_open = True
+
+    def staged_tables(self) -> list[str]:
+        """The streamed sink's own staged set, which its commit describes in full (F22)."""
+        return list(self.sink.staged_tables()) if self.is_open else []
 
     def commit(self) -> CommitReceipt | None:
         if not self.is_open or self._finished:

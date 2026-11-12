@@ -436,6 +436,10 @@ class ParquetTransactionalSink:
         _validate_table_name(table)
         return self._target / f"{table}.parquet"
 
+    def staged_tables(self) -> list[str]:
+        """Every file this sink staged: the one source of what its commit binds and describes."""
+        return list(self._writer.staged)
+
     def _stage(self) -> OutputTxn:
         if self._txn is None:
             # The stage lives beside the target (same filesystem) so publication is one rename.
@@ -465,7 +469,7 @@ class ParquetTransactionalSink:
         evidence = self.publication_evidence
         evidence.last_operation = Operation.COMMIT
         try:
-            tables = list(self._writer.staged)
+            tables = self.staged_tables()
             receipt = publish_unit(self._out, self._stage(), self._request, tables=tables)
         except BaseException as exc:
             self._cleanup_staging()  # `publish_unit` aborted it; confirm where we can look
@@ -483,13 +487,10 @@ class ParquetTransactionalSink:
     def reconcile(self) -> CommitReceipt | None:
         """Seal an uncertain attempt once its result is bound and durable (plan 5.6, D4).
 
-        In OPEN it does nothing and returns `None`: nothing is sealed before this sink has
-        measured a result, so a matching `operation_id` alone is never adopted. From UNCERTAIN
-        it reads the bound descriptor: this sink's measured `result_id` there, with the unit
-        tree and its chain to the anchor fsynced, seals the sink (`already_committed`); an
-        fsync failure leaves it uncertain (`CommitUncertain`); an absent or different unit
-        refuses it (`publication_commit_not_visible`). A bound unit is never replaced or
-        removed by the engine, so this read needs no destination lock.
+        OPEN returns `None` (a matching `operation_id` alone is never adopted). UNCERTAIN reads
+        the bound descriptor: this sink's `result_id` there with the unit tree and chain fsynced
+        seals it (`already_committed`); an fsync failure stays uncertain; an absent or different
+        unit is `publication_commit_not_visible`. No lock: a bound unit is never replaced.
         """
         arrival = self._machine.arrive("reconcile")
         if arrival.act is Act.RESULT:

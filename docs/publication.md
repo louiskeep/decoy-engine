@@ -266,7 +266,10 @@ an abort every call is.
 
 `ParquetTransactionalSink(target, request=PublicationRequest(...))` stages each table as
 `<table>.parquet` in a `publication` stage beside the target and, on `commit()`, hands the stage
-and exactly the tables it staged to `publish_unit`. Without a `request` the sink is its own
+and its own full staged set, `staged_tables()`, to `publish_unit`; no caller picks a subset, so
+the bound descriptor describes every file the sink staged. A streamed route's publish session
+(`OutputPublish` in `execution/_chunked_output_sink.py`) reports the same set through its own
+`staged_tables()`. Without a `request` the sink is its own
 attempt: a fresh random `operation_id`, still judged by its measured result. A request carrying
 a vault is refused with `ValueError` when the sink is built: an engine sink never binds a vault
 (vault jobs publish through `publish_tables`).

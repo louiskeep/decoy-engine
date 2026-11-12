@@ -158,3 +158,40 @@ def test_route_outcome_matrix(route: str, tmp_path: Path, monkeypatch: pytest.Mo
     assert conflict.receipt == refused
     assert snapshot(leaf) == before
     assert stages_left(tmp_path) == []
+
+
+STREAMED = {"full_frame_streamed", "mixed", "streamed_generation"}
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_descriptor_describes_every_staged_table(
+    route: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sink hands its own full staged set to `publish_unit` on every route, so the bound
+    descriptor describes exactly as many files as the sink staged; a streamed route's publish
+    session reports the same set (`staged_tables()` on both)."""
+    import json
+
+    from decoy_engine.execution import _chunked_output_sink
+    from decoy_engine.publication import DESCRIPTOR_NAME
+
+    seen: list[list[str]] = []
+    real = _chunked_output_sink.OutputPublish.commit
+
+    def commit(self: Any) -> Any:
+        seen.append(self.staged_tables())
+        return real(self)
+
+    monkeypatch.setattr(_chunked_output_sink.OutputPublish, "commit", commit)
+    leaf = tmp_path / "out"
+    sink = ParquetTransactionalSink(leaf, request=PublicationRequest("op-1"))
+    receipt = _runner(route, tmp_path, monkeypatch)("A", sink)
+    staged = sink.staged_tables()
+    bound = json.loads((leaf / DESCRIPTOR_NAME).read_bytes())
+    assert staged and sorted(staged) == sorted(
+        p.name for p in leaf.glob("*.parquet")
+    )  # non-vacuity
+    assert len(bound["artifacts"]) == len(staged) == len(receipt.artifacts)
+    assert sorted(a["path"] for a in bound["artifacts"]) == sorted(staged)
+    if route in STREAMED:
+        assert [sorted(s) for s in seen if s] == [sorted(staged)]
