@@ -6,7 +6,7 @@ check_distribution_generate from here so existing callers are unaffected.
 
 Implements plan section 6.3: config-derived baseline for generate tables.
 No source frame is available for generate tables; the baseline is the
-declared column weights and params.
+declared column weights and mean/std.
 """
 
 from __future__ import annotations
@@ -40,10 +40,10 @@ def check_distribution_generate(
       output std within col_spec.tolerance * max(declared_std, 1.0) of
       declared std.
 
-    - Formula generate columns carrying params.mean/std metadata: same
+    - Formula generate columns whose spec declares mean/std: same
       mean/std band check as statistical (the formula type accepts an
       arbitrary Python expression; when the operator knows the output
-      distribution they declare params as a reviewable contract).
+      distribution they declare mean/std on the spec as a reviewable contract).
 
     Args:
         job_name: Job name for error messages.
@@ -52,11 +52,11 @@ def check_distribution_generate(
         output_df: Post-generate pandas DataFrame.
         config_table: Raw pipeline config dict for this table. Must carry
             generate_columns (list of dicts with name, type, and type-specific
-            params like weights or params.mean/std).
+            params like weights).
 
     Raises:
         AssertionError: If any column's output distribution deviates from its
-            declared weights / params beyond tolerance.
+            declared weights / mean/std beyond tolerance.
     """
     spec_by_col = {s.column: s for s in spec}
     gen_cols: list[dict[str, Any]] = config_table.get("generate_columns", [])
@@ -107,9 +107,8 @@ def check_distribution_generate(
                 )
 
         elif col_type == "statistical":
-            params: dict[str, Any] = gen_col.get("params") or {}
-            declared_mean = params.get("mean")
-            declared_std = params.get("std")
+            declared_mean = col_spec.mean if col_spec is not None else None
+            declared_std = col_spec.std if col_spec is not None else None
             if declared_mean is None or declared_std is None:
                 continue
             series = output_df[col_name].dropna()
@@ -138,14 +137,13 @@ def check_distribution_generate(
 
         else:
             # For any non-categorical, non-statistical type (e.g. formula), check
-            # mean and std if the column config carries them as `params` metadata.
+            # mean and std if the column's spec declares them.
             # The formula type accepts an arbitrary Python expression; when the
             # operator knows the output distribution (e.g. gauss(mu, sigma)), they
-            # declare params: {mean: mu, std: sigma} as a reviewable contract and
+            # declare mean: mu, std: sigma on the spec as a reviewable contract and
             # this branch enforces it.
-            params_meta: dict[str, Any] = gen_col.get("params") or {}
-            fm_mean = params_meta.get("mean")
-            fm_std = params_meta.get("std")
+            fm_mean = col_spec.mean if col_spec is not None else None
+            fm_std = col_spec.std if col_spec is not None else None
             if fm_mean is None or fm_std is None:
                 continue
             fm_series = output_df[col_name].dropna()

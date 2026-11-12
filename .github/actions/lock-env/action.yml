@@ -1,0 +1,40 @@
+name: lock-env
+description: Install the engine from uv.lock into a venv outside the workspace and check the key dependencies against the lock.
+inputs:
+  extras:
+    description: Space-separated uv extras (for example "dev ml").
+    default: ""
+  python:
+    description: CPython patch for the venv. Empty means the lock profile (scripts/dev/lock_version.sh --python).
+    default: ""
+  bootstrap:
+    description: '"true" runs scripts/dev/bootstrap.sh (the Mac gate profile), which also checks the key dependencies, instead of a plain sync.'
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/setup-uv
+    - name: Lock venv outside the workspace
+      shell: bash
+      run: |
+        echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+        echo "DECOY_VENV=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+        echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+    - name: Install from uv.lock
+      shell: bash
+      env:
+        EXTRAS: ${{ inputs.extras }}
+        PYTHON: ${{ inputs.python }}
+        BOOTSTRAP: ${{ inputs.bootstrap }}
+      run: |
+        if [ "$BOOTSTRAP" = "true" ]; then
+          bash scripts/dev/bootstrap.sh
+        else
+          args=()
+          for e in $EXTRAS; do args+=(--extra "$e"); done
+          uv sync --frozen ${args[@]+"${args[@]}"} --python "${PYTHON:-$(bash scripts/dev/lock_version.sh --python)}"
+        fi
+    - name: Installed versions equal the lock
+      if: inputs.bootstrap != 'true'
+      shell: bash
+      run: bash scripts/dev/lock_version.sh --check

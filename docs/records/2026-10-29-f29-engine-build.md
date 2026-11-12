@@ -2,7 +2,7 @@
 
 Status: record
 
-Plan: [`docs/plans/2026-10-29-f29-machine-readable-errors-progress.md`](../plans/2026-10-29-f29-machine-readable-errors-progress.md). Inventory and freeze: [`2026-10-29-f29-e0-inventory.md`](2026-10-29-f29-e0-inventory.md).
+Plan: [`docs/plans/2026-10-29-f29-machine-readable-errors-progress.md`](https://github.com/louiskeep/decoy-engine/blob/main/docs/plans/2026-10-29-f29-machine-readable-errors-progress.md). Inventory and freeze: [`2026-10-29-f29-e0-inventory.md`](2026-10-29-f29-e0-inventory.md).
 
 ## Built (engine slices E0 to E6)
 

@@ -6,7 +6,10 @@ is deliberately small and focused on ONE thing -- spaCy NER activation
 `en_core_web_sm`:
 
     pip install 'decoy-engine[ner]'
-    python -m spacy download en_core_web_sm
+    pip install --no-deps ./en_core_web_sm-3.8.0-py3-none-any.whl
+
+The wheel's URL and SHA-256 are pinned in
+`decoy_engine.detection.ner.NER_MODEL_WHEELS`; check the hash before installing.
     python examples/ner_redaction_demo.py
 """
 
@@ -32,8 +35,8 @@ if not spacy_installed():
     sys.exit(1)
 if not model_installed(DEFAULT_NER_MODEL):
     print(
-        f"The {DEFAULT_NER_MODEL!r} model is not installed. Run: "
-        f"python -m spacy download {DEFAULT_NER_MODEL}",
+        f"The {DEFAULT_NER_MODEL!r} model is not installed. Install the wheel pinned in "
+        "decoy_engine.detection.ner.NER_MODEL_WHEELS (check its SHA-256 first).",
         file=sys.stderr,
     )
     sys.exit(1)
@@ -61,7 +64,14 @@ notes.to_csv(IN / "notes.csv", index=False)
 config = {
     "version": 2,
     "global_settings": {"seed": 1},
-    "sources": {"notes": {"type": "file", "format": "csv", "path": "examples/in/notes.csv"}},
+    "sources": {
+        "notes": {
+            "type": "file",
+            "format": "csv",
+            "has_header": True,
+            "path": "examples/in/notes.csv",
+        }
+    },
     "targets": {"notes": {"type": "file", "format": "csv", "path": "examples/out/notes.csv"}},
     "tables": [
         {

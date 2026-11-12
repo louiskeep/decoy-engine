@@ -20,6 +20,11 @@ from tests.parity._f0_fixtures import frozen_faker_clock
 
 
 @pytest.fixture(autouse=True)
+def _runtime_backstop_configs(lenient_generate_checks: None) -> None:
+    """The frozen oracles pin runtime output for configs the strict plan check now refuses."""
+
+
+@pytest.fixture(autouse=True)
 def _f0_frozen_faker_clock(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[None]:

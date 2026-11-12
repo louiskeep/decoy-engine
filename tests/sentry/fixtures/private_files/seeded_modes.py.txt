@@ -1,0 +1,36 @@
+# Seeded corpus for rules P3 and P4. Each function is one case.
+import os
+from pathlib import Path
+
+
+def swallowed_dir_chmod(p):
+    try:
+        os.chmod(p, 0o700)
+    except OSError:
+        pass
+
+
+def swallowed_fchmod(fd):
+    try:
+        os.fchmod(fd, 0o600)
+    except Exception:
+        ...
+
+
+def from_import_alias(p, v):
+    from os import chmod as _c
+
+    p = Path(p)
+    p.write_text(v)
+    _c(p, 0o600)
+
+
+def module_alias_variable_mode(p, mode):
+    import os as _o
+
+    _o.chmod(p, mode)
+
+
+def directory_chmod_and_fchmod(d, fd):
+    os.chmod(d, 0o700)
+    os.fchmod(fd, 0o600)

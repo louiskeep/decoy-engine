@@ -35,6 +35,8 @@ import pyarrow.compute as pc
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine.fileaccess import FileAccess
+from decoy_engine.generation._numeric_typing import numeric_plan, restore_declared
+from decoy_engine.generation._statistical_column import arrow_table
 from decoy_engine.generation._window_admission import (
     CODE_NOT_CLASS_A,
     CODE_TIMEOUT,
@@ -149,6 +151,19 @@ def _positional(
     return draw
 
 
+def _typed(
+    draw: Callable[[int, int, Mapping[str, list[Any]]], list[Any]],
+    col: dict[str, Any],
+    dtype: pa.DataType,
+) -> Callable[[int, int, Mapping[str, list[Any]]], list[Any]]:
+    """A window draw whose values carry the numeric type the plan declared for the column."""
+
+    def typed(off: int, n: int, sib: Mapping[str, list[Any]]) -> list[Any]:
+        return restore_declared(col, draw(off, n, sib), dtype)
+
+    return typed
+
+
 def _build_streams(
     cols: list[dict[str, Any]],
     *,
@@ -166,10 +181,11 @@ def _build_streams(
         WindowedDateStream,
     )
     from decoy_engine.generation.statistical import sample_column
-    from decoy_engine.generators.derivation import GenDeriveContext
+    from decoy_engine.generators.derivation import GenDeriveContext, with_table
 
     draws: dict[str, Callable[[int, int, Mapping[str, list[Any]]], list[Any]]] = {}
     for col in cols:
+        col = with_table(col, table)
         name, kind = col["name"], col.get("type")
         if kind == "sequence":
             draws[name] = _positional(SequenceStream(col))
@@ -232,6 +248,8 @@ def _row_bytes(tbl: pa.Table) -> np.ndarray:
             sizes = pc.binary_length(column)  # type: ignore[attr-defined, unused-ignore]
             lengths = sizes.fill_null(0).to_numpy(zero_copy_only=False)
             total += lengths.astype(np.int64) + 4
+        elif pa.types.is_null(column.type):  # `bit_width` raises on the null type, so test it first
+            total += 8
         else:
             total += max(column.type.bit_width // 8, 1) if hasattr(column.type, "bit_width") else 8
     return total
@@ -306,7 +324,16 @@ def generate_rows(
         provider_snapshot=provider_snapshot,
         specs=specs,
     )
+    numeric = numeric_plan(prepared.config, provider_snapshot=provider_snapshot)
+    for c in cols:
+        dtype = numeric.get((table, c["name"]))
+        if dtype is not None:
+            draws[c["name"]] = _typed(draws[c["name"]], c, dtype)
     names = [c["name"] for c in cols]
+
+    def typed(data: dict[str, list[Any]]) -> pa.Table:
+        return arrow_table(data, table_name=table, statistical_specs=specs, columns=cols)
+
     acc: dict[str, list[Any]] = {n: [] for n in names}
     emitted = used = 0
     capped = False
@@ -322,7 +349,7 @@ def generate_rows(
             window[name] = draws[name](offset + done, size, window)
         keep = size
         if budget_bytes is not None:
-            running = np.cumsum(_row_bytes(pa.table(window)))
+            running = np.cumsum(_row_bytes(typed(window)))
             keep = int(np.searchsorted(running, budget_bytes - used, side="right"))
             capped = keep < size
             used += int(running[keep - 1]) if keep else 0
@@ -336,7 +363,7 @@ def generate_rows(
         raise GenerationWindowTimeoutError(
             code=CODE_TIMEOUT, message=f"deadline of {deadline_s}s passed after {emitted} rows"
         )
-    result = pa.table(acc) if emitted else pa.table({n: pa.array([], pa.null()) for n in names})
+    result = typed(acc) if emitted else typed({n: [] for n in names})
     return GeneratedWindow(
         result,
         offset,

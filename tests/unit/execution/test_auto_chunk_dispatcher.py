@@ -345,8 +345,9 @@ def test_mixed_table_with_a_non_native_column_runs_wholly_on_the_oracle_route(
 def test_unconfigured_column_is_admitted_to_the_native_route(
     companion: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """B8: an unconfigured column no longer vetoes the table under the `warn` policy
-    (pre-GA default). The hash column still needs the companion to run natively."""
+    """B8: a column that is not masked no longer vetoes the table. Since the declaration gate
+    every source column is listed, so the extra column is a declared passthrough and runs on
+    the arrow lane. The hash column still needs the companion to run natively."""
     if companion == "absent":
         support.remove_companion(monkeypatch)
     data = {**support.string_source(), "extra": pa.array([f"e{i}" for i in range(support.ROWS)])}
@@ -354,7 +355,7 @@ def test_unconfigured_column_is_admitted_to_the_native_route(
     result = support.run_default(cfg, src)
     evidence = result.quality_metrics["chunked_route"]
     backends = _backends(evidence)
-    assert "extra" not in backends
+    assert backends["extra"][0] == "arrow_python"
     if companion == "present":
         assert evidence["native_admitted"] is True
         assert evidence["reroute_reason"] is None

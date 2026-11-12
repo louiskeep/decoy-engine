@@ -22,8 +22,7 @@ from enum import Enum
 
 from decoy_engine.execution.native._route_decline_codes import RouteDeclineCode
 from decoy_engine.profile._types import PIIClass
-from decoy_engine.reasons import _registry
-from decoy_engine.reasons._types import Outcome, ReasonSpec, RetryClass, Severity
+from decoy_engine.reasons import Outcome, ReasonSpec, RetryClass, Severity, find
 
 _LABEL_TOKEN = object()
 _LABEL = re.compile(r"(t[0-9]{1,4}(\.c[0-9]{1,4})?|n[0-9]{1,4})")
@@ -87,7 +86,7 @@ class ReasonRef:
     _spec: ReasonSpec
 
     def __init__(self, namespace: object, code: object) -> None:
-        spec = _registry.find(namespace, code) if isinstance(namespace, str) else None
+        spec = find(namespace, code) if isinstance(namespace, str) else None
         if spec is None:
             raise ValueError("reason is not registered")
         object.__setattr__(self, "_spec", spec)
@@ -173,9 +172,11 @@ class StrategyKind(str, Enum):
     BUCKETIZE = "bucketize"
     CATEGORICAL = "categorical"
     CODESET = "code_set"
+    CONSTANT = "constant"
     DATE_SHIFT = "date_shift"
     DERIVED = "derived"
     DERIVED_AGGREGATE = "derived_aggregate"
+    DISTRIBUTION = "distribution"
     FAKER = "faker"
     FORMULA = "formula"
     FPE = "fpe"

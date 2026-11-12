@@ -47,6 +47,7 @@ from decoy_engine.execution._pipeline_routing import decide_execution_route
 from decoy_engine.execution._pipeline_routing_signals import byte_estimate_full_frame_fits
 from decoy_engine.profile._types import ColumnProfile, TableProfile
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
+from tests._declared_schema import declare_rest
 
 _MB = 1024 * 1024
 _GB = 1024 * _MB
@@ -616,44 +617,46 @@ def _fk_pure_mask_config(tmp_path: Path, n: int = 20) -> dict[str, Any]:
     )
     parent_src = _write_source(tmp_path, parent, "parent")
     child_src = _write_source(tmp_path, child, "child")
-    return {
-        "version": 2,
-        "global_settings": {"job_name": "b1b-byte-estimate-routing", "seed": 7},
-        "sources": {
-            "parent": {"type": "file", "path": parent_src, "format": "parquet"},
-            "child": {"type": "file", "path": child_src, "format": "parquet"},
-        },
-        "targets": {
-            "parent": {
-                "type": "file",
-                "path": str(tmp_path / "parent.out.parquet"),
-                "format": "parquet",
+    return declare_rest(
+        {
+            "version": 2,
+            "global_settings": {"job_name": "b1b-byte-estimate-routing", "seed": 7},
+            "sources": {
+                "parent": {"type": "file", "path": parent_src, "format": "parquet"},
+                "child": {"type": "file", "path": child_src, "format": "parquet"},
             },
-            "child": {
-                "type": "file",
-                "path": str(tmp_path / "child.out.parquet"),
-                "format": "parquet",
+            "targets": {
+                "parent": {
+                    "type": "file",
+                    "path": str(tmp_path / "parent.out.parquet"),
+                    "format": "parquet",
+                },
+                "child": {
+                    "type": "file",
+                    "path": str(tmp_path / "child.out.parquet"),
+                    "format": "parquet",
+                },
             },
-        },
-        "tables": [
-            {
-                "name": "parent",
-                "columns": [
-                    _faker_col("id", "ns"),
-                    {"name": "age", "strategy": "bucketize", "provider_config": {"width": 10}},
-                ],
-            },
-            {"name": "child", "columns": [_faker_col("parent_id", "ns")]},
-        ],
-        "relationships": [
-            {
-                "parent": {"table": "parent", "columns": ["id"]},
-                "children": [{"table": "child", "columns": ["parent_id"]}],
-                "orphan_policy": "preserve",
-                "namespace": "ns",
-            }
-        ],
-    }
+            "tables": [
+                {
+                    "name": "parent",
+                    "columns": [
+                        _faker_col("id", "ns"),
+                        {"name": "age", "strategy": "bucketize", "provider_config": {"width": 10}},
+                    ],
+                },
+                {"name": "child", "columns": [_faker_col("parent_id", "ns")]},
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "parent", "columns": ["id"]},
+                    "children": [{"table": "child", "columns": ["parent_id"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "ns",
+                }
+            ],
+        }
+    )
 
 
 def _fk_sources(config: dict[str, Any]) -> dict[str, pa.Table]:
@@ -845,6 +848,7 @@ class TestEndToEndWiring:
                 ],
             }
             sources = {n: pq.read_table(s["path"]) for n, s in config["sources"].items()}
+            declare_rest(config, sources)
             try:
                 result = run_pipeline(
                     config,

@@ -40,11 +40,16 @@ STAGE_PREFIX: dict[str, str] = {
     "pack": "_decoy_pack_stage_",
 }
 STAGE_SUFFIX: dict[str, str] = {"quarantine": ".jsonl", "quarantine_direct": ".jsonl"}
+# Labels whose stage holds secrets or real data, so the stage file is 0600 at creation.
+PRIVATE_LABELS: frozenset[str] = frozenset({"quarantine", "isolated"})
 # Every output but a vault leaf may create missing parent directories; a vault leaf sits
 # directly in a directory the caller already provided.
 CREATES_PARENTS: frozenset[str] = frozenset(STAGE_PREFIX) - {"vault"}
 
 T = TypeVar("T")
+
+# Denial key for a bad name given straight to a creator; it names the capability, never the name.
+_CREATOR_KEY = "fileaccess.stage"
 
 _DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _FILE_CREATE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -59,6 +64,85 @@ def _call(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     except OSError as exc:
         code = exc.errno or errno.EIO
     raise OSError(code, os.strerror(code)) from None
+
+
+def make_stage_dir_at(parent_fd: int, name: str) -> int:
+    """Create directory ``name`` under ``parent_fd``, owner-readable-writable whatever the umask,
+    and return it opened. The umask only narrows ``mkdir``'s mode: 0777 leaves the directory
+    0000 (the open fails ``EACCES``, one ``chmod`` repairs it) and 0200 leaves it 0500 (an
+    ``fchmod`` restores the owner bits). A mode-ignoring filesystem already shows them, so
+    nothing is changed there. Failures keep only their errno; the directory this call made is
+    removed if a later step fails, and an existing entry is never touched."""
+    validate_component(name, _CREATOR_KEY)
+    _call(os.mkdir, name, 0o700, dir_fd=parent_fd)
+    fd = -1
+    try:
+        try:
+            fd = _call(os.open, name, _DIR_FLAGS, dir_fd=parent_fd)
+        except PermissionError:
+            # Named limit L6: this chmod goes by name, so a different user who can write in the
+            # caller's output directory could swap a symlink in between mkdir and here. The effect
+            # stays bounded: 0700 on a path the engine user owns, and no read. An fd-only repair
+            # is impossible: a 0000 directory cannot be opened, and fchmod on an O_PATH
+            # descriptor gives EBADF. Reached only for a directory this call just created (mkdir
+            # raises, EEXIST included, before this point).
+            _call(os.chmod, name, 0o700, dir_fd=parent_fd)
+            fd = _call(os.open, name, _DIR_FLAGS, dir_fd=parent_fd)
+        if (os.fstat(fd).st_mode & 0o700) != 0o700:
+            _call(os.fchmod, fd, 0o700)
+    except OSError:
+        _close(fd)
+        try:
+            os.rmdir(name, dir_fd=parent_fd)
+        except OSError:
+            pass
+        raise
+    return fd
+
+
+def _restore_always(fd: int) -> None:
+    _call(os.fchmod, fd, 0o600)
+
+
+def _restore_missing_owner_bits(fd: int) -> None:
+    """Repair only what the umask stripped, so a filesystem that already reports owner read and
+    write is not asked for a chmod it may refuse."""
+    if (_call(os.fstat, fd).st_mode & 0o600) != 0o600:
+        _call(os.fchmod, fd, 0o600)
+
+
+def _create_private_core(dir_fd: int, name: str, restore: Callable[[int], None]) -> int:
+    """The one private-file creation: ``O_EXCL`` so only this call's file is ever touched, then
+    the caller's restorer. If the restorer fails, close and unlink the name this call created."""
+    fd = _call(os.open, name, _FILE_CREATE, 0o600, dir_fd=dir_fd)
+    try:
+        restore(fd)
+    except OSError:
+        _close(fd)
+        try:
+            os.unlink(name, dir_fd=dir_fd)
+        except OSError:
+            pass
+        raise
+    return fd
+
+
+def create_private_at(dir_fd: int, name: str) -> int:
+    """A new 0600 file whose mode is set unconditionally (top-level private stages, arena files)."""
+    validate_component(name, _CREATOR_KEY)
+    return _create_private_core(dir_fd, name, _restore_always)
+
+
+def create_private_child_at(dir_fd: int, name: str) -> int:
+    """A new private file inside a stage directory: owner bits restored only when missing."""
+    validate_component(name, _CREATOR_KEY)
+    return _create_private_core(dir_fd, name, _restore_missing_owner_bits)
+
+
+def create_output_file_at(dir_fd: int, name: str, mode: int) -> int:
+    """A new output-mode file; the umask governs ``mode``."""
+    validate_component(name, _CREATOR_KEY)
+    return _call(os.open, name, _FILE_CREATE, mode, dir_fd=dir_fd)
 
 
 def _close(fd: int) -> None:
@@ -156,7 +240,9 @@ class _StageDir:
 
     def create_file(self, component: str) -> int:
         self._check(component)
-        return _call(os.open, component, _FILE_CREATE, self._mode, dir_fd=self._fd)
+        if self._mode == 0o600:
+            return create_private_child_at(self._fd, component)
+        return create_output_file_at(self._fd, component, self._mode)
 
     def open_file(self, component: str) -> int:
         self._check(component)
@@ -166,8 +252,7 @@ class _StageDir:
 
     def create_dir(self, component: str) -> _StageDir:
         self._check(component)
-        _call(os.mkdir, component, 0o700, dir_fd=self._fd)
-        child = _call(os.open, component, _DIR_FLAGS, dir_fd=self._fd)
+        child = make_stage_dir_at(self._fd, component)
         self._live.child_fds.append(child)
         return _StageDir(child, self._display, self._live, self._mode)
 
@@ -219,11 +304,11 @@ class RootedOutputTxn(_StageDir):
         name = f"{STAGE_PREFIX[label]}{secrets.token_hex(6)}{STAGE_SUFFIX.get(label, '')}"
         state = _State(os.dup(parent_fd), name, kind)
         self._state = state
-        mode_bits = 0o600 if label == "quarantine" else 0o666
+        self._private = label in PRIVATE_LABELS
+        mode_bits = 0o600 if self._private else 0o666
         stage_fd = -1
         if kind == "dir":
-            _call(os.mkdir, name, 0o700, dir_fd=state.parent_fd)
-            stage_fd = _call(os.open, name, _DIR_FLAGS, dir_fd=state.parent_fd)
+            stage_fd = make_stage_dir_at(state.parent_fd, name)
             state.stage_fd = stage_fd
         super().__init__(stage_fd, display, state, mode_bits)
         self._finalizer = weakref.finalize(self, _discard, state)
@@ -234,13 +319,9 @@ class RootedOutputTxn(_StageDir):
             if self._state.file_created:
                 raise FileAccessUnavailable("a file stage holds exactly one file")
             self._state.file_created = True
-            return _call(
-                os.open,
-                self._state.stage_name,
-                _FILE_CREATE,
-                self._mode,
-                dir_fd=self._state.parent_fd,
-            )
+            if self._private:
+                return create_private_at(self._state.parent_fd, self._state.stage_name)
+            return create_output_file_at(self._state.parent_fd, self._state.stage_name, self._mode)
         return super().create_file(component)
 
     def publish(self) -> None:
@@ -386,4 +467,10 @@ class RootedOutputDir:
             _close(child)
 
 
-__all__ = ["STAGE_PREFIX", "STAGE_SUFFIX", "RootedOutputDir", "RootedOutputTxn"]
+__all__ = [
+    "PRIVATE_LABELS",
+    "STAGE_PREFIX",
+    "STAGE_SUFFIX",
+    "RootedOutputDir",
+    "RootedOutputTxn",
+]

@@ -40,10 +40,13 @@ from decoy_engine.generation._bounds import (
     accumulator_bytes,
     batch_buffer_bytes,
     compute_payload_bounds,
+    detected_memory_bytes,
     faker_pool_bytes,
+    generation_floor_shortfall,
     key_pool_bytes,
     legacy_table_bytes,
     sink_buffer_bytes,
+    table_unique_peak,
 )
 from decoy_engine.generation._budget_ledger import (
     GenerationBudgetExceeded,
@@ -56,7 +59,9 @@ from decoy_engine.generation._column_streams import (
     draw_batch,
     make_column_stream,
 )
-from decoy_engine.generation._faker_pool import pool_eligible
+from decoy_engine.generation._faker_pool import pool_eligible, pool_opted_out
+from decoy_engine.generation._numeric_typing import restore_declared
+from decoy_engine.generation.kinds import cast_output_values, output_types
 from decoy_engine.generation.pool._runtime_pool_size import DEFAULT_POOL_SIZE
 from decoy_engine.progress import get_active_channel
 
@@ -64,6 +69,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 
     from faker import Faker
+
+    from decoy_engine.generation.pool._events import QualityWarning
 
 DEFAULT_BATCH_ROWS = 65_536
 _MIN_BATCH_ROWS = 1_024
@@ -149,20 +156,22 @@ def _make_layout(
 
 
 def _table_order(config: dict[str, Any]) -> list[dict[str, Any]]:
-    from decoy_engine.generation.synthesize import _topo_sort
+    from decoy_engine.generation.synthesize import generation_order
 
     generate_by_name = {
         t["name"]: t for t in config.get("tables") or [] if t.get("generate_columns")
     }
-    deps = {
-        name: {c["reference_table"] for c in t["generate_columns"] if c.get("type") == "reference"}
-        for name, t in generate_by_name.items()
-    }
-    return [generate_by_name[name] for name in _topo_sort(deps)]
+    return [generate_by_name[name] for name, _parents in generation_order(config)]
 
 
 def _payloads(table: dict[str, Any], bounds: Mapping[tuple[str, str], int | None]) -> list[int]:
     return [bounds.get((table["name"], c["name"])) or 0 for c in table["generate_columns"]]
+
+
+def _bound_payload(
+    bounds: Mapping[tuple[str, str], int | None], table: str
+) -> Callable[[dict[str, Any]], int]:
+    return lambda col: bounds.get((table, col["name"])) or 0
 
 
 def _referenced_keys(tables: Sequence[dict[str, Any]]) -> set[tuple[str, str]]:
@@ -186,7 +195,7 @@ def _pooled_columns(
             c.get("faker_type", "word"),
             c.get("locale") or instance_default_locale,
             rows,
-            opted_out=c.get("pooled") is False,
+            opted_out=pool_opted_out(c),
         )
     ]
 
@@ -277,17 +286,28 @@ def _table_batches(
     streams: Sequence[ColumnStream],
     widths: Mapping[str, int],
     collectors: Mapping[str, KeyPool],
+    generated: Sequence[pa.DataType | None],
 ) -> Iterator[pa.RecordBatch]:
     offset = 0
-    names = [c["name"] for c in table["generate_columns"]]
+    cols = table["generate_columns"]
+    names = [c["name"] for c in cols]
+    declared = output_types(cols)
     for size in sizes:
         arrays = []
         # Post-null-mask values of the columns already emitted in THIS batch, which is what the
         # legacy path's `generated` mapping holds when a windowed_date column reads its anchor.
         emitted: dict[str, list[Any]] = {}
-        for name, stream, field_ in zip(names, streams, schema, strict=True):
-            values = draw_batch(stream, offset, size, emitted)
-            emitted[name] = values
+        for col, name, stream, field_, gen_type in zip(
+            cols, names, streams, schema, generated, strict=True
+        ):
+            # Parse text cells to the GENERATED type; the output_type cast comes after, so the
+            # provider's text never reaches `int()` just because the column is emitted as int.
+            values = restore_declared(col, draw_batch(stream, offset, size, emitted), gen_type)
+            emitted[name] = values  # siblings read the generator's values, not the typed ones
+            if name in declared:
+                values = cast_output_values(
+                    values, declared[name], table=str(table["name"]), column=name
+                )
             arr = pa.array(values, type=field_.type)
             if name in widths:
                 _check_width(arr, widths[name], name)
@@ -296,6 +316,22 @@ def _table_batches(
             arrays.append(arr)
         yield pa.RecordBatch.from_arrays(arrays, schema=schema)
         offset += size
+
+
+def _refuse_if_over_memory(config: dict[str, Any], admission: PlanAdmission) -> None:
+    """Refuse a resident run whose output alone is larger than the memory ceiling.
+
+    Compared with the whole detected ceiling, not the 25% planning budget, so it only refuses runs
+    that cannot fit. An undetectable host skips the check: it can only add a refusal.
+    """
+    available = detected_memory_bytes()
+    if available is None:
+        return
+    shortfall = generation_floor_shortfall(config, admission, available)
+    if shortfall is not None:
+        raise GenerationBudgetExceeded(
+            code=reasons.runtime.GENERATION_BUDGET_EXCEEDED, message=shortfall.message
+        )
 
 
 def run_generation(
@@ -310,15 +346,20 @@ def run_generation(
     ledger: GenerationBudgetLedger | None = None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     legacy_kwargs: dict[str, Any] | None = None,
+    on_warning: Callable[[QualityWarning], None] | None = None,
 ) -> GenerationResult:
     """Run a plan's configuration through the core. See the module docstring for the modes.
 
     ``budget_bytes=None`` and no ``ledger`` is the explicit unbounded mode: no byte ceiling is
     enforced and no bounded-memory guarantee is made. ``partition(table, rows)`` overrides the
-    batch layout (used to prove route-independence over irregular partitions).
+    batch layout (used to prove route-independence over irregular partitions). ``on_warning``
+    receives each fidelity-gate ``QualityWarning``; it never changes the generated tables.
     """
     from decoy_engine.plan._seed import _normalize_job_seed_int
+    from decoy_engine.plan.checks import check_faker_default_locale
 
+    # Before any pool or provider: a column without `locale` runs in the platform default.
+    check_faker_default_locale(config, instance_default_locale, provider_snapshot=provider_snapshot)
     resolved_batch = batch_rows
     if ledger is None:
         if budget_bytes is None:
@@ -331,6 +372,8 @@ def run_generation(
             resolved_batch = resolved_batch or resolved.batch_rows
     resolved_batch = resolved_batch or DEFAULT_BATCH_ROWS
     admission = classify_plan(config, provider_snapshot=provider_snapshot)
+    if not ledger.bounded and not (admission.eligible and is_bounded_sink(sink)):
+        _refuse_if_over_memory(config, admission)
     tables = _table_order(config)
     # Bounds are only needed (and only defensible to demand) under a bounded ceiling.
     bounds = compute_payload_bounds(config, provider_snapshot) if ledger.bounded else {}
@@ -347,6 +390,7 @@ def run_generation(
             instance_default_locale,
             provider_snapshot,
             legacy_kwargs or {},
+            on_warning,
         )
 
     layout = {
@@ -396,6 +440,7 @@ def run_generation(
         already released.
         """
         name = t["name"]
+        generated = admission.generated_types(name)
         streams = [
             make_column_stream(
                 c,
@@ -409,15 +454,20 @@ def run_generation(
                 ledger=ledger,
                 stage=stage,
                 faker_payload=bounds.get((name, c["name"])),
+                numeric=g is not None and pa.types.is_integer(g),
             )
-            for c in t["generate_columns"]
+            for c, g in zip(t["generate_columns"], generated, strict=True)
         ]
         widths: dict[str, int] = {}
         for c in t["generate_columns"]:
             width = bounds.get((name, c["name"]))
             if enforce_widths and c.get("type") == "faker" and width is not None:
                 widths[c["name"]] = width
-        consume(name, schema, _table_batches(t, schema, lay.sizes(), streams, widths, collectors))
+        consume(
+            name,
+            schema,
+            _table_batches(t, schema, lay.sizes(), streams, widths, collectors, generated),
+        )
 
     _pg = get_active_channel()
 
@@ -494,6 +544,7 @@ def _run_legacy(
     instance_default_locale: str | None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None,
     legacy_kwargs: dict[str, Any],
+    on_warning: Callable[[QualityWarning], None] | None = None,
 ) -> GenerationResult:
     """Whole-table generation for plans with a semantically ineligible column.
 
@@ -508,6 +559,11 @@ def _run_legacy(
         need = sum(
             legacy_table_bytes(int(t.get("row_count") or 0), _payloads(t, bounds)) for t in tables
         )
+        # Unique draws free their set before the next table starts: the largest one counts once.
+        need += max(
+            (table_unique_peak(t, _bound_payload(bounds, t["name"])) for t in tables),
+            default=0,
+        )
         if not _fits(ledger, need):
             raise GenerationBudgetExceeded(
                 code=reasons.runtime.GENERATION_BUDGET_EXCEEDED,
@@ -520,6 +576,7 @@ def _run_legacy(
         derive_key,
         instance_default_locale,
         provider_snapshot=provider_snapshot,
+        on_warning=on_warning,
         **legacy_kwargs,
     )
     if ledger.bounded:

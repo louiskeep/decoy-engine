@@ -41,6 +41,7 @@ import pytest
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution import ParquetTransactionalSink
 from decoy_engine.execution._pipeline import run_pipeline
+from tests._declared_schema import declare_rest
 
 _AGE = ["10", "20", "30", "40", "50", "badX"]
 _IDS = ["p0", "p1", "p2", "p3", "p4", "p5"]
@@ -137,7 +138,7 @@ def _fk_config(
     }
     if quarantine is not None:
         cfg["quarantine"] = quarantine
-    return cfg
+    return declare_rest(cfg)
 
 
 def _sources(config: dict[str, Any]) -> dict[str, pa.Table]:
@@ -333,7 +334,7 @@ def _key_error_config(
     }
     if quarantine is not None:
         cfg["quarantine"] = quarantine
-    return cfg
+    return declare_rest(cfg)
 
 
 class TestFkKeyColumnErrorLeakClosure:
@@ -573,6 +574,7 @@ class TestSequentialMultiTableQuarantineJsonlNotClobbered:
             ],
             "quarantine": {"enabled": True, "output_path": qpath, "triggers": ["format_error"]},
         }
+        declare_rest(config)
         sources = _sources(config)
         sink = ParquetTransactionalSink(tmp_path / "out")
 
@@ -647,7 +649,7 @@ def _self_fk_config(
     }
     if quarantine is not None:
         cfg["quarantine"] = quarantine
-    return cfg
+    return declare_rest(cfg)
 
 
 class TestSelfRefFkKeyErrorLeakClosure:
@@ -800,55 +802,57 @@ def _dupwhen_config(tmp_path: Path) -> dict[str, Any]:
     child = pa.table({"parent_id": pa.array(["notadate"], type=pa.string())})
     parent_src = _write_source(tmp_path, parent, "parent")
     child_src = _write_source(tmp_path, child, "child")
-    return {
-        "version": 2,
-        "global_settings": {"job_name": "s2-dupwhen-accepted-limitation", "seed": 42},
-        "sources": {
-            "parent": {"type": "file", "path": parent_src, "format": "parquet"},
-            "child": {"type": "file", "path": child_src, "format": "parquet"},
-        },
-        "targets": {
-            "parent": {
-                "type": "file",
-                "path": str(tmp_path / "parent.out.parquet"),
-                "format": "parquet",
+    return declare_rest(
+        {
+            "version": 2,
+            "global_settings": {"job_name": "s2-dupwhen-accepted-limitation", "seed": 42},
+            "sources": {
+                "parent": {"type": "file", "path": parent_src, "format": "parquet"},
+                "child": {"type": "file", "path": child_src, "format": "parquet"},
             },
-            "child": {
-                "type": "file",
-                "path": str(tmp_path / "child.out.parquet"),
-                "format": "parquet",
+            "targets": {
+                "parent": {
+                    "type": "file",
+                    "path": str(tmp_path / "parent.out.parquet"),
+                    "format": "parquet",
+                },
+                "child": {
+                    "type": "file",
+                    "path": str(tmp_path / "child.out.parquet"),
+                    "format": "parquet",
+                },
             },
-        },
-        "tables": [
-            {
-                "name": "parent",
-                "columns": [
-                    {
-                        "name": "id",
-                        "strategy": "date_shift",
-                        "provider_config": {"min_days": 1, "max_days": 30},
-                        "namespace": "dup_ns",
-                        "when": "keep == 1",
-                    },
-                    {"name": "keep", "strategy": "passthrough"},
-                ],
+            "tables": [
+                {
+                    "name": "parent",
+                    "columns": [
+                        {
+                            "name": "id",
+                            "strategy": "date_shift",
+                            "provider_config": {"min_days": 1, "max_days": 30},
+                            "namespace": "dup_ns",
+                            "when": "keep == 1",
+                        },
+                        {"name": "keep", "strategy": "passthrough"},
+                    ],
+                },
+                {"name": "child", "columns": [_faker_col("parent_id", "dup_ns")]},
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "parent", "columns": ["id"]},
+                    "children": [{"table": "child", "columns": ["parent_id"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "dup_ns",
+                }
+            ],
+            "quarantine": {
+                "enabled": True,
+                "output_path": str(tmp_path / "quarantine.jsonl"),
+                "triggers": ["format_error"],
             },
-            {"name": "child", "columns": [_faker_col("parent_id", "dup_ns")]},
-        ],
-        "relationships": [
-            {
-                "parent": {"table": "parent", "columns": ["id"]},
-                "children": [{"table": "child", "columns": ["parent_id"]}],
-                "orphan_policy": "preserve",
-                "namespace": "dup_ns",
-            }
-        ],
-        "quarantine": {
-            "enabled": True,
-            "output_path": str(tmp_path / "quarantine.jsonl"),
-            "triggers": ["format_error"],
-        },
-    }
+        }
+    )
 
 
 class TestWhenGatedDuplicateKeyAcceptedLimitation:

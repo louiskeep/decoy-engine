@@ -15,7 +15,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from decoy_engine.errors import RowErrorsFailedError
+from decoy_engine.errors import PipelineValidationError, RowErrorsFailedError
 from decoy_engine.execution import (
     ExecutionError,
     _isolated_worker,
@@ -154,6 +154,13 @@ def test_a_split_with_a_resident_group_or_extra_frame_stays_resident(
     kind: str, tmp_path: Path
 ) -> None:
     cfg, sources, reason = _sibling_job(kind, tmp_path)
+    if kind == "extra_resident_frame":
+        # The declaration gate (CONFIG-EXPLICIT E2c) refuses a supplied table the config does
+        # not declare, on every route, before any split decision.
+        with pytest.raises(PipelineValidationError) as refused:
+            _run(cfg, sources, b6a.RecordingSink())
+        assert refused.value.code == "source_file.undeclared_table"
+        return
     expected = _reference(cfg, sources)
     sink = b6a.RecordingSink()
     result = _run(cfg, sources, sink)
@@ -287,7 +294,7 @@ def test_run_pipeline_isolated_returns_equal_outputs_and_publishes_the_same_byte
     assert pq.read_table(tmp_path / "pub_streamed" / "t.parquet").num_rows == _WORKER_ROWS
 
 
-@pytest.mark.parametrize("kind", ["full_frame_small", "extra_resident_frame"])
+@pytest.mark.parametrize("kind", ["full_frame_small"])
 def test_the_split_executor_refuses_a_sink_it_cannot_honor_before_masking(
     kind: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -11,6 +11,10 @@ Public API:
         plan_to_yaml,
     )
 
+`pipeline_config_hash(config)` is the compiler's semantic config hash (``Plan.pipeline_config_hash``),
+exported under a public name: it ignores ``sources`` and ``targets`` and key order, so a caller can
+fingerprint a config the same way the plan does.
+
 `compile_plan(config, profile, *, decoy_engine_version)` is the keystone
 S1 deliverable. Given a parsed pipeline config dict and a Profile (from
 `decoy_engine.profile`), it runs five compile-time checks and produces
@@ -30,6 +34,7 @@ human-readable message. Determinism contract mirrors PERF.BASE.2.
 
 from __future__ import annotations
 
+from decoy_engine.plan._compile import _hash_config as pipeline_config_hash
 from decoy_engine.plan._compile import compile_plan, run_config_only_checks
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._seed import job_seed_for_config
@@ -61,6 +66,7 @@ __all__ = [
     "TableSeed",
     "compile_plan",
     "job_seed_for_config",
+    "pipeline_config_hash",
     "plan_from_yaml",
     "plan_to_yaml",
     "run_config_only_checks",

@@ -190,7 +190,8 @@ def test_own_source_profiles_under_the_policy(world: World) -> None:
     config = {
         "sources": {
             "t": {"type": "file", "format": "parquet", "path": str(world.root / "s.parquet")}
-        }
+        },
+        "tables": [{"name": "t", "columns": [{"name": "a", "strategy": "passthrough"}]}],
     }
     profile = profile_source(config, file_access=world.policy)
     assert profile.tables[0].row_count == 3

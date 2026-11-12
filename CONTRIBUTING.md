@@ -27,21 +27,21 @@ pytest tests/integration/
 
 The full suite is large; running only the modules you touched plus their nearest integration neighbors is the expected scope for most PRs.
 
-To run the whole suite locally, install the parallel runner and use all cores:
+To run the whole suite locally, use the gate script, which runs it in parallel (pytest-xdist is part of the `dev` extra):
 
 ```
-pip install -e ".[dev,xdist]"
-pytest tests/ -n auto
+GATES_WORKERS=4 scripts/dev/gates.sh --keep-going --steps tests tests
 ```
 
-The suite is parallel-safe and finishes in roughly 10 minutes this way, versus over 25 minutes serial on a 4-core machine. `xdist` is a separate extra on purpose (it stays out of the certified DP profile); CI still runs the suite serially.
+It runs every test not marked `serial` with `-n N --dist loadfile`, then the `serial` tests alone in a plain second pass. The marker is for a test that needs the whole host: a wall-clock bound, a process or host memory envelope, a CPU speedup ratio, an absolute thread count. A sentry (`tests/sentry/parallel/`) fails a test that asserts one of these without the mark. A bare `pytest tests -n auto` also works but runs the `serial` tests next to the others, so those can fail under load. CI still runs the suite serially.
 
 ### Lock-exact environment and local gates (workers)
 
 - `scripts/dev/bootstrap.sh` syncs `.venv` exactly from `uv.lock` (`uv sync --frozen`, the dp-certified-gate profile on CPython 3.10.20) and prints python, DuckDB, pyarrow, polars, pandas and native companion ABI against what the tree expects. Any mismatch exits non-zero with the fix; `--check` verifies without installing.
-- `scripts/dev/gates.sh [paths...]` runs the env check, ruff check, ruff format --check, mypy, `tests/sentry`, `licenses` (the license and SDV sentries with `DECOY_LICENSE_STRICT=1`, so NOTICE is compared with the venv's installed metadata and a drifted venv fails instead of skipping), then the given tests (default: tests touching files changed against `origin/main`), stopping at the first failure unless `--keep-going`.
+- `scripts/dev/gates.sh [paths...]` runs the env check, ruff check, ruff format --check, mypy, `tests/sentry` (without the layer test), `layers` (the import-layer contract in `.importlinter`, run in its own `.venv-layers` with the `layers` extra; `--steps layers` alone needs no `.venv`), `licenses` (the license and SDV sentries with `DECOY_LICENSE_STRICT=1`, so NOTICE is compared with the venv's installed metadata and a drifted venv fails instead of skipping), then the given tests (default: tests touching files changed against `origin/main`), stopping at the first failure unless `--keep-going`.
 - It ends with an EVIDENCE block (commands, tool versions, per-step counts, failing test ids). Paste that block into evidence files instead of summarizing. The gate fails unless that block printed in full and at least one step ran.
 - `--baseline` reruns the same steps on `origin/main` in a temporary detached worktree with the same venv and labels each failing id BOTH, BRANCH-ONLY or BASELINE-ONLY, so "same failures as baseline" is computed, not claimed.
+- `GATES_WORKERS=N|auto` (default `auto`, at most 4 workers, fewer on a small host) sets the worker count of the `tests` step; `GATES_WORKERS=1`, or a venv without pytest-xdist, is one plain pytest run. `--write-baseline` and `--baseline-file` store and check the worker count with the failing ids and refuse a mismatch, so pin `GATES_WORKERS` for both. `--write-baseline FILE --order-from OLD` starts the longest test files first, using the file timings of an earlier baseline.
 - Both scripts are covered by `tests/unit/scripts/test_dev_bootstrap_gates.py`.
 
 ## Pull requests

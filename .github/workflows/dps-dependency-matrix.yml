@@ -28,20 +28,21 @@
 name: dps-dependency-matrix
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    paths:
-      - "src/decoy_engine/quality/dp_provenance.py"
-      - "src/decoy_engine/quality/carriers.py"
-      - "src/decoy_engine/quality/carrier_adapter.py"
-      - "src/decoy_engine/quality/dp_budget.py"
-      - "uv.lock"
-      - ".github/workflows/dps-dependency-matrix.yml"
+  schedule:
+    - cron: "52 3 * * *"
+  workflow_dispatch:
+
+
+permissions:
+  contents: read
 
 jobs:
   fingerprint-matrix:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Every uv run below must use the lock as is, never re-resolve.
+      UV_FROZEN: "1"
     strategy:
       # fail-fast off: each row's fingerprint/probe result is independent
       # evidence; one uncertified patch should not hide the others' output.
@@ -59,21 +60,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Pin the exact CPython patch
-        run: uv python install ${{ matrix.python-version }}
-
       - name: Sync the EXACT locked environment
-        # --frozen: install strictly from uv.lock, never re-resolve. The extra
-        # set here MUST reproduce the certification profile (the set the pinned
-        # 3.10.20 fingerprint was computed over); the lock==installed guard
-        # below fails the build if it does not, so a profile drift is caught
-        # rather than silently changing the certified hash. Maintainer TODO on
-        # first green run: confirm this invocation reproduces the pinned 3.10.20
-        # fingerprint, then lock it.
-        run: uv sync --frozen --extra dev --extra lint --extra vault --extra cloud --python ${{ matrix.python-version }}
+        # lock-env runs uv sync --frozen: strictly uv.lock, never re-resolve. The extra set MUST
+        # reproduce the certification profile (the set the pinned 3.10.20 fingerprint was computed
+        # over); the lock==installed guard below fails the build if it does not, so a profile drift
+        # is caught rather than silently changing the certified hash.
+        uses: ./.github/actions/lock-env
+        with:
+          extras: "dev lint vault cloud"
+          python: ${{ matrix.python-version }}
 
       - name: Guard -- lock == installed (Codex round-6)
         # The fingerprint is only reproducible once the installed set is proven

@@ -153,6 +153,16 @@ impl NativeThreadBudget {
         Self::resolve_from_knee(requested, host_available, native_mask_thread_knee)
     }
 
+    /// [`resolve`](Self::resolve) against this process's `available_parallelism`.
+    ///
+    /// The one place the kernels read the host parallelism for a per-call budget.
+    pub fn resolve_on_host(requested: Option<i64>) -> Result<NativeThreadBudget, DeriveError> {
+        let host_available = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        Self::resolve(requested, host_available)
+    }
+
     /// [`resolve`](Self::resolve) with the knee supplied as an already-resolved value.
     ///
     /// A test-only helper so the clamp arithmetic is unit-testable against a chosen knee without

@@ -22,9 +22,11 @@ compute that offset on read.
 from __future__ import annotations
 
 import contextlib
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, BinaryIO, Protocol
 
 import pyarrow as pa
+
+from decoy_engine.execution.out_of_core._scratch import close_private, open_private, private_dir
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -82,6 +84,7 @@ class SpillPayloadStore:
     def __init__(self, path: Path) -> None:
         self._path = path
         self._writer: pa.ipc.RecordBatchStreamWriter | None = None
+        self._sink: BinaryIO | None = None
         self._schema: pa.Schema | None = None
 
     def append(self, batch: pa.RecordBatch) -> None:
@@ -91,9 +94,10 @@ class SpillPayloadStore:
             # The schema is only known once the first non-empty batch arrives;
             # opening the writer any earlier would fix it from an empty batch's
             # (possibly wrong) type inference.
-            self._path.parent.mkdir(parents=True, exist_ok=True)
+            private_dir(self._path.parent)
             self._schema = batch.schema
-            self._writer = pa.ipc.new_stream(str(self._path), self._schema)
+            self._sink = open_private(self._path)
+            self._writer = pa.ipc.new_stream(self._sink, self._schema)
         self._writer.write_batch(batch)
 
     def iter_batches(self) -> Iterator[tuple[int, pa.RecordBatch]]:
@@ -104,9 +108,7 @@ class SpillPayloadStore:
         # which is version and buffering dependent. The store is write-once in
         # phase 1 then read in phase 3, so closing here is a safe one-way
         # transition.
-        if self._writer is not None:
-            self._writer.close()
-            self._writer = None
+        self.close()
         if self._schema is None:
             # Nothing was ever appended (every batch was zero-row): no file was
             # created, so there is nothing to read back.
@@ -118,9 +120,8 @@ class SpillPayloadStore:
                 offset += batch.num_rows
 
     def close(self) -> None:
-        if self._writer is not None:
-            self._writer.close()
-            self._writer = None
+        writer, sink, self._writer, self._sink = self._writer, self._sink, None, None
+        close_private(writer, sink)
 
 
 class RawParentKeySpill:
@@ -143,11 +144,12 @@ class RawParentKeySpill:
 
     def __init__(self, path: Path, schema: pa.Schema) -> None:
         self._path = path
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        private_dir(self._path.parent)
+        self._sink: BinaryIO | None = open_private(path)
         # Schema is known up front (the raw source key columns' fixed types),
         # so the writer opens eagerly; a zero-row table yields a valid empty
         # stream that reads back as no batches.
-        self._writer: pa.ipc.RecordBatchStreamWriter | None = pa.ipc.new_stream(str(path), schema)
+        self._writer: pa.ipc.RecordBatchStreamWriter | None = pa.ipc.new_stream(self._sink, schema)
 
     def append(self, batch: pa.RecordBatch) -> None:
         if self._writer is None:
@@ -157,9 +159,8 @@ class RawParentKeySpill:
 
     def finalize(self) -> None:
         """Close the writer so the stream is complete; idempotent."""
-        if self._writer is not None:
-            self._writer.close()
-            self._writer = None
+        writer, sink, self._writer, self._sink = self._writer, self._sink, None, None
+        close_private(writer, sink)
 
     def __iter__(self) -> Iterator[pa.RecordBatch]:
         with pa.OSFile(str(self._path), "rb") as src, pa.ipc.open_stream(src) as reader:
@@ -203,12 +204,13 @@ class SpillChildKeys:
 
     def __init__(self, path: Path, schema: pa.Schema) -> None:
         self._path = path
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        private_dir(self._path.parent)
+        self._sink: BinaryIO | None = open_private(path)
         # Schema is known up front (`StreamFkJoiner._key_schema`, fixed before
         # any batch is staged), so the writer opens eagerly, mirroring
         # `RawParentKeySpill`; a zero-row table yields a valid empty stream
         # that reads back as no batches.
-        self._writer: pa.ipc.RecordBatchStreamWriter | None = pa.ipc.new_stream(str(path), schema)
+        self._writer: pa.ipc.RecordBatchStreamWriter | None = pa.ipc.new_stream(self._sink, schema)
 
     def append(self, batch: pa.RecordBatch) -> None:
         if self._writer is None:
@@ -218,9 +220,8 @@ class SpillChildKeys:
 
     def finalize(self) -> None:
         """Close the writer so the stream carries its EOS marker; idempotent."""
-        if self._writer is not None:
-            self._writer.close()
-            self._writer = None
+        writer, sink, self._writer, self._sink = self._writer, self._sink, None, None
+        close_private(writer, sink)
 
     @contextlib.contextmanager
     def open_reader(self) -> Iterator[pa.RecordBatchReader]:

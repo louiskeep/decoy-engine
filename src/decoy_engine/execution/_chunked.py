@@ -165,6 +165,8 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine.config._subset_run import refuse_unapplied_subset
+from decoy_engine.declared_casting._eligibility import declared_route_guard
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._errors import PlanCompileError
 
@@ -275,6 +277,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry:
         chunked_bucket_perturb_fk_key_unsupported: `bucket_perturb` as an FK key column.
         per_table_transforms_present: `table` declares transforms.
     """
+    declared_route_guard("chunked", config=config, raise_on_decline=True)
     tables = config.get("tables") or []
     table_cfg = next((t for t in tables if isinstance(t, dict) and t.get("name") == table), None)
     if table_cfg is None:
@@ -429,6 +432,7 @@ def run_mask_pipeline_chunked(
     """
     from . import _chunked_oracle
 
+    refuse_unapplied_subset(config)
     state = _chunked_oracle._oracle_preflight(
         config,
         chunks,

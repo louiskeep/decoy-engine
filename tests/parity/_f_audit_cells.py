@@ -9,8 +9,11 @@ independently recomputed value, which the value-equality witness must reject.
 
 from __future__ import annotations
 
+import json
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -100,6 +103,43 @@ def cfg_categorical() -> dict[str, Any]:
     )
 
 
+def cfg_constant() -> dict[str, Any]:
+    return fx.config(
+        [
+            _t(
+                "t",
+                40,
+                [
+                    {"name": "k", "type": "constant", "value": "US"},
+                    {"name": "k_m", "type": "constant", "value": 7, "null_probability": 0.3},
+                ],
+            )
+        ]
+    )
+
+
+def cfg_distribution() -> dict[str, Any]:
+    return fx.config(
+        [
+            _t(
+                "t",
+                40,
+                [
+                    {"name": "x", "type": "distribution", "family": "uniform", "low": 1, "high": 9},
+                    {
+                        "name": "x_m",
+                        "type": "distribution",
+                        "family": "uniform",
+                        "low": 0,
+                        "high": 8,
+                        "null_probability": 0.3,
+                    },
+                ],
+            )
+        ]
+    )
+
+
 def _parent(null_probability: float = 0.0) -> dict[str, Any]:
     col: dict[str, Any] = {"name": "k", "type": "categorical", "categories": ["K1", "K2", "K3"]}
     if null_probability:
@@ -130,6 +170,31 @@ def cfg_reference_repair() -> dict[str, Any]:
         "max_per_parent": 4,
     }
     return fx.config([_t("child", 14, [ref]), _parent()])
+
+
+_FITTED_DIR = tempfile.TemporaryDirectory(prefix="f-audit-fitted-")
+
+
+def cfg_reference_fitted() -> dict[str, Any]:
+    """A fitted-fan-out reference: the snapshot is pinned at compile, so this file is read once."""
+    import pandas as pd
+
+    from decoy_engine.quality.snapshot import compute_distribution_snapshot
+
+    frame = pd.DataFrame({"pid": ["a"] * 3 + ["b"] * 2 + ["c", "d", "e"]})
+    snap = compute_distribution_snapshot(frame, fanout_columns=("pid",))
+    path = Path(_FITTED_DIR.name) / "fanout.snap.json"
+    path.write_text(json.dumps(snap, sort_keys=True), encoding="utf-8")
+    ref = {
+        "name": "r",
+        "type": "reference",
+        "reference_table": "par",
+        "reference_column": "k",
+        "distribution": "fitted",
+        "snapshot_file": str(path),
+        "source_column": "pid",
+    }
+    return fx.config([_t("child", 8, [ref]), _parent()])
 
 
 def cfg_faker(faker_type: str, *, rows: int = 100, **extra: Any) -> dict[str, Any]:
@@ -511,6 +576,12 @@ def _cells(unmarked_windowed: Callable[..., list[Any]]) -> tuple[Cell, ...]:
             {("t", "cat"): "categorical", ("t", "cat_m"): "categorical"},
             mutants=m("categorical"),
         ),
+        Cell("constant", cfg_constant, {("t", "k"): "constant", ("t", "k_m"): "constant"}),
+        Cell(
+            "distribution",
+            cfg_distribution,
+            {("t", "x"): "distribution", ("t", "x_m"): "distribution"},
+        ),
         ref_cell("reference-sequential", "sequential"),
         ref_cell("reference-random", "random"),
         ref_cell("reference-weighted", "weighted"),
@@ -558,6 +629,12 @@ def legacy_cells(unmarked_windowed: Callable[..., list[Any]]) -> tuple[Cell, ...
         Cell(
             "reference-cardinality-repair",
             cfg_reference_repair,
+            {},
+            admission_key=("child", "r"),
+        ),
+        Cell(
+            "reference-fitted-fanout",
+            cfg_reference_fitted,
             {},
             admission_key=("child", "r"),
         ),

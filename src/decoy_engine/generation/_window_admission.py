@@ -284,6 +284,8 @@ def _check_statistical(
         _check_datetime(table, col, spec)
     elif spec.kind == "categorical":
         _check_categorical(table, col, spec, max_cell_chars)
+    elif spec.kind == "empty":  # all-null source: every cell is None, nothing unbounded
+        return
     else:
         _refuse(
             table, col, CODE_UNBOUNDED, "kind", f"statistical kind {spec.kind!r} has no sampler"
@@ -368,8 +370,9 @@ def classify_window_table(
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> WindowAdmission:
     """Classify one generate table for a windowed read. Raises on any refusal, else A or B."""
-    from decoy_engine.generation._faker_pool import pool_eligible
+    from decoy_engine.generation._faker_pool import pool_eligible, pool_opted_out
     from decoy_engine.generation._reproducibility import reproducibility_exclusions
+    from decoy_engine.plan.checks import check_faker_default_locale
 
     spec_table = next(
         (
@@ -383,6 +386,9 @@ def classify_window_table(
         raise GenerationWindowError(
             code=CODE_TABLE_UNKNOWN, message=f"{table!r} is not a generate table of this plan"
         )
+    check_faker_default_locale(
+        config, instance_default_locale, provider_snapshot=provider_snapshot, table=table
+    )
     cols: list[dict[str, Any]] = spec_table["generate_columns"]
     rows = int(spec_table.get("row_count") or 0)
     exclusions = reproducibility_exclusions(config, provider_snapshot=provider_snapshot)
@@ -413,13 +419,16 @@ def classify_window_table(
         elif kind == "faker":
             locale = col.get("locale") or instance_default_locale
             pooled = pool_eligible(
-                col.get("faker_type", "word"), locale, rows, opted_out=col.get("pooled") is False
+                col.get("faker_type", "word"), locale, rows, opted_out=pool_opted_out(col)
             )
             if not pooled:
                 _check_faker(table, col, max_cell_chars, provider_snapshot)
         elif kind == "sequence":
             _check_sequence(table, col, max_cell_chars, window_end)
 
+    pair_members = frozenset(
+        member for pair in spec_table.get("unique_together") or [] for member in pair
+    )
     verdicts: dict[str, str | None] = {}  # column -> Class B reason, None for Class A
     for idx, col in enumerate(cols):
         verdicts[col["name"]] = _class_b_reason(
@@ -431,6 +440,7 @@ def classify_window_table(
             rows,
             instance_default_locale,
             pool_eligible,
+            pair_members,
         )
     reasons = tuple((n, r) for n, r in verdicts.items() if r is not None)
     return WindowAdmission(table, "B" if reasons else "A", reasons)
@@ -445,8 +455,17 @@ def _class_b_reason(
     rows: int,
     instance_default_locale: str | None,
     pool_eligible: Callable[..., bool],
+    pair_members: frozenset[str] = frozenset(),
 ) -> str | None:
+    from decoy_engine.generation._faker_pool import pool_opted_out
+
     kind = col.get("type")
+    # Unique draws read the whole column's history, so they cannot be seeked to a window. Checked
+    # before `null_injection` so the reason names the real cause. A sequence stays Class A.
+    if col.get("unique") is True and kind != "sequence":
+        return "unique"
+    if col["name"] in pair_members:
+        return "unique_pair"
     if float(col.get("null_probability") or 0.0) > 0:
         return "null_injection"
     if kind == "sequence":
@@ -454,7 +473,7 @@ def _class_b_reason(
     if kind == "faker":
         locale = col.get("locale") or instance_default_locale
         if pool_eligible(
-            col.get("faker_type", "word"), locale, rows, opted_out=col.get("pooled") is False
+            col.get("faker_type", "word"), locale, rows, opted_out=pool_opted_out(col)
         ):
             return "pooled_faker"
         return None

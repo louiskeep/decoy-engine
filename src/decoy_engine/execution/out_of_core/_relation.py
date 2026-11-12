@@ -15,10 +15,12 @@ from decoy_engine._opaque import OpaqueBox
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_join_key_tuple, fk_key_value
 from decoy_engine.execution.out_of_core._compat import _column_seed
+from decoy_engine.execution.out_of_core._duckdb import PRIVATE_COPY as _PRIVATE_COPY
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.execution.out_of_core._join import _sql_string
 from decoy_engine.execution.out_of_core._key_width import SlimRowWidthTracker
 from decoy_engine.execution.out_of_core._mask import mask_column, masked_output_type
+from decoy_engine.execution.out_of_core._scratch import precreate_private, private_dir
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.kernel import hash_array
 
@@ -454,7 +456,7 @@ def _build_relation(
         _staging_schema(masked_types, masked_columns),
         width_tracker.wrap(batches),
     )
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    private_dir(temp_dir)
     stem = _edge_stem(edge)
     out_path = temp_dir / f"{stem}_key_relation.parquet"
     # The dedup staging copy: the registered RecordBatchReader is single-pass,
@@ -514,7 +516,9 @@ def _build_relation(
         # The COPY fully consumes the single-pass reader; the dedup below reads
         # the STAGED parquet, never `parent_keys` again, so the exhausted
         # registration just rides along until conn.close() in the finally.
-        conn.execute(f"COPY parent_keys TO {_sql_string(str(staged_path))} (FORMAT PARQUET)")
+        # Each COPY target is created 0600 first and written in place (`_PRIVATE_COPY`).
+        staged = _sql_string(precreate_private(staged_path))
+        conn.execute(f"COPY parent_keys TO {staged} ({_PRIVATE_COPY})")
         staged_sql = f"read_parquet({_sql_string(str(staged_path))})"
         conn.execute(
             f"""
@@ -523,7 +527,7 @@ def _build_relation(
                        max(__decoy_row_nr) AS __decoy_win_row_nr
                 FROM {staged_sql}
                 GROUP BY __decoy_fk_join_key
-            ) TO {_sql_string(str(winners_path))} (FORMAT PARQUET)
+            ) TO {_sql_string(precreate_private(winners_path))} ({_PRIVATE_COPY})
             """
         )
         winners_sql = f"read_parquet({_sql_string(str(winners_path))})"
@@ -536,9 +540,9 @@ def _build_relation(
                 JOIN {winners_sql} w
                   ON s.__decoy_fk_join_key = w.__decoy_fk_join_key
                  AND s.__decoy_row_nr = w.__decoy_win_row_nr
-            ) TO ? (FORMAT PARQUET)
+            ) TO ? ({_PRIVATE_COPY})
             """,
-            [str(out_path)],
+            [precreate_private(out_path)],
         )
     except BaseException:
         # A mid-build failure may have left a partially written output

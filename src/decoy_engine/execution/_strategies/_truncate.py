@@ -25,6 +25,8 @@ import pandas as pd
 from decoy_engine import reasons
 from decoy_engine.execution._adapter import (
     StrategyContext,
+    StrategyOption,
+    option,
     pandas_column_to_kernel_input,
     provider_config_to_dict,
 )
@@ -32,6 +34,8 @@ from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.kernel import truncate_array
 from decoy_engine.plan._types import ColumnSeed
+
+_KEEP_SIDES = ("head", "tail")
 
 
 class TruncateHandler:
@@ -49,6 +53,14 @@ class TruncateHandler:
     """
 
     name: str = "truncate"
+    namespace_required: bool = False
+    join_safe: bool = False
+    wizard_options: tuple[StrategyOption, ...] = (
+        option("length", "int", 3, required=True),
+        option("keep", "str", "tail", choices=_KEEP_SIDES),
+        option("mask_char", "str", "*"),
+    )
+    offer_in_wizard: bool = True
 
     def run(
         self,
@@ -77,7 +89,7 @@ class TruncateHandler:
         keep = cfg.get("keep")
         if keep is None:
             keep = "tail" if from_end_legacy else "head"
-        if keep not in ("head", "tail"):
+        if keep not in _KEEP_SIDES:
             raise StrategyError(
                 code=reasons.runtime.TRUNCATE_KEEP_INVALID,
                 strategy="truncate",

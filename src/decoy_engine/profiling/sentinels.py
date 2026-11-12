@@ -24,8 +24,10 @@ from collections import Counter
 from datetime import date, datetime
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
+from decoy_engine.detection.detectors import PreparedValues, _series_str
 from decoy_engine.profiling.types import SentinelFlag
 
 # ── known sentinel values ─────────────────────────────────────────────────────
@@ -84,7 +86,7 @@ _REASONABLE_DOB_LOWER = date(1880, 1, 1)
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-_ISO_DATE_RE = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T].*)?$")
+_ISO_DATE_RE = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T].*)?\Z")
 
 
 def _to_date(v: Any) -> date | None:
@@ -139,7 +141,7 @@ def detect_sentinels(series: pd.Series, col_name: str) -> list[SentinelFlag]:
     # date-hinted columns (NOT pandas-coerce - pandas Timestamps reject the
     # 0001-01-01 / 9999-12-31 sentinels we care most about).
     else:
-        flags.extend(_scan_strings(non_null))
+        flags.extend(_scan_strings(_series_str(series)))
         if any(
             hint in (col_name or "").lower()
             for hint in ("date", "dob", "birth", "start", "end", "due")
@@ -147,6 +149,22 @@ def detect_sentinels(series: pd.Series, col_name: str) -> list[SentinelFlag]:
             flags.extend(_scan_dates(non_null, col_name))
 
     return flags
+
+
+def _distinct_with_counts(values: pd.Series) -> list[tuple[Any, int]]:
+    """Distinct values in first-appearance order with their cell counts.
+
+    The scanners below are pure functions of the value, so judging each distinct
+    value once and adding its count equals judging every cell, and keeps the
+    flag order (first appearance) the same.
+    """
+    try:
+        codes, uniques = pd.factorize(values)
+    except TypeError:
+        # Unhashable cells (dict / list from JSON-typed sources): judge each cell.
+        return [(v, 1) for v in values]
+    counts = np.bincount(codes, minlength=len(uniques))
+    return list(zip(uniques.tolist(), counts.tolist(), strict=True))
 
 
 # ── scanners (private) ────────────────────────────────────────────────────────
@@ -159,20 +177,20 @@ def _scan_dates(non_null: pd.Series, col_name: str) -> list[SentinelFlag]:
     is_dob_column = any(h in (col_name or "").lower() for h in ("dob", "birth"))
 
     counter: Counter[date] = Counter()
-    for v in non_null:
+    for v, n in _distinct_with_counts(non_null):
         d = _to_date(v)
         if d is None:
             continue
         # Known sentinel exact match.
         if d in _DATE_SENTINELS:
-            counter[d] += 1
+            counter[d] += n
             continue
         # Out-of-range date checks.
         if is_dob_column:
             if d > today or d < _REASONABLE_DOB_LOWER:
-                out_of_range_count += 1
+                out_of_range_count += n
         elif d.year < 1900 or d.year > 2100:
-            out_of_range_count += 1
+            out_of_range_count += n
 
     for d, count in counter.items():
         flags.append(
@@ -204,13 +222,13 @@ def _scan_dates(non_null: pd.Series, col_name: str) -> list[SentinelFlag]:
 def _scan_numerics(non_null: pd.Series) -> list[SentinelFlag]:
     flags: list[SentinelFlag] = []
     counter: Counter[float] = Counter()
-    for v in non_null:
+    for v, n in _distinct_with_counts(non_null):
         try:
             f = float(v)
         except (TypeError, ValueError):
             continue
         if f in _NUMERIC_SENTINELS:
-            counter[f] += 1
+            counter[f] += n
     for f, count in counter.items():
         flags.append(
             SentinelFlag(
@@ -223,13 +241,14 @@ def _scan_numerics(non_null: pd.Series) -> list[SentinelFlag]:
     return flags
 
 
-def _scan_strings(non_null: pd.Series) -> list[SentinelFlag]:
+def _scan_strings(values: PreparedValues) -> list[SentinelFlag]:
     flags: list[SentinelFlag] = []
     counter: Counter[str] = Counter()
-    for v in non_null.astype(str):
-        normalized = v.strip().lower()
+    # `uniques` is already stripped, so strip-then-lower gives the same key.
+    for v, n in zip(values.uniques.tolist(), values.counts.tolist(), strict=True):
+        normalized = v.lower()
         if normalized in _STRING_SENTINELS:
-            counter[normalized] += 1
+            counter[normalized] += n
     for normalized, count in counter.items():
         flags.append(
             SentinelFlag(

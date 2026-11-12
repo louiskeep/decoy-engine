@@ -19,6 +19,7 @@ config, then evaluates a full set of invariants against the output.
 | `c_hr_selfref` | self-referential FK + generate | employees, synthetic_events |
 | `d_longitudinal_visits` | mixed (FK + standalone generate) | providers, patients, visits |
 | `e_hostile_edge_cases` | mixed (FK + standalone single-row + empty generate) | people, accounts, singleton, empty_table |
+| `f_tokenize_vault` | mixed (standalone tokenize table via in-memory token vault) | cases |
 
 The suite lives in `testflight/` at the repo root. It is excluded from the
 default `pytest tests` collection by `addopts` in `pyproject.toml` and by the

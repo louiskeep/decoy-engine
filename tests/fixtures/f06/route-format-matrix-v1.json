@@ -1,0 +1,872 @@
+{
+  "formats": {
+    "cobol/comp-3/v1|output": {
+      "inverse": "cobol/comp-3/v1",
+      "logical": "decimal",
+      "physical_kind": "binary",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "exact"
+    },
+    "cobol/comp-3/v1|parse": {
+      "inverse": "cobol/comp-3/v1",
+      "logical": "decimal",
+      "physical_kind": "binary",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "exact"
+    },
+    "cobol/overpunch-ascii-trailing/v1|output": {
+      "inverse": "cobol/overpunch-ascii-trailing/v1",
+      "logical": "decimal",
+      "physical_kind": "text",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "exact"
+    },
+    "cobol/overpunch-ascii-trailing/v1|parse": {
+      "inverse": "cobol/overpunch-ascii-trailing/v1",
+      "logical": "decimal",
+      "physical_kind": "text",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "exact"
+    },
+    "cobol/zoned-ebcdic-trailing/v1|output": {
+      "inverse": "cobol/zoned-ebcdic-trailing/v1",
+      "logical": "decimal",
+      "physical_kind": "binary",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "exact"
+    },
+    "cobol/zoned-ebcdic-trailing/v1|parse": {
+      "inverse": "cobol/zoned-ebcdic-trailing/v1",
+      "logical": "decimal",
+      "physical_kind": "binary",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "exact"
+    },
+    "currency/explicit/v1|output": {
+      "inverse": "currency/explicit/v1",
+      "logical": "currency",
+      "physical_kind": "text",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "bounded"
+    },
+    "currency/explicit/v1|parse": {
+      "inverse": "currency/explicit/v1",
+      "logical": "currency",
+      "physical_kind": "text",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "bounded"
+    },
+    "date/iso8601/v1|output": {
+      "inverse": "date/iso8601/v1",
+      "logical": "date",
+      "physical_kind": "text",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "exact"
+    },
+    "date/iso8601/v1|parse": {
+      "inverse": "date/iso8601/v1",
+      "logical": "date",
+      "physical_kind": "text",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "exact"
+    },
+    "date/strftime/v1|output": {
+      "inverse": "date/strptime/v1",
+      "logical": "date",
+      "physical_kind": "text",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "exact"
+    },
+    "date/strptime/v1|parse": {
+      "inverse": "date/strftime/v1",
+      "logical": "date",
+      "physical_kind": "text",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "exact"
+    },
+    "decimal/grouped/v1|output": {
+      "inverse": "decimal/grouped/v1",
+      "logical": "decimal",
+      "physical_kind": "text",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "bounded"
+    },
+    "decimal/grouped/v1|parse": {
+      "inverse": "decimal/grouped/v1",
+      "logical": "decimal",
+      "physical_kind": "text",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "bounded"
+    },
+    "decimal/plain/v1|output": {
+      "inverse": "decimal/plain/v1",
+      "logical": "decimal",
+      "physical_kind": "text",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "bounded"
+    },
+    "decimal/plain/v1|parse": {
+      "inverse": "decimal/plain/v1",
+      "logical": "decimal",
+      "physical_kind": "text",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "bounded"
+    },
+    "integer/ascii/v1|output": {
+      "inverse": "integer/ascii/v1",
+      "logical": "integer",
+      "physical_kind": "text",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "bounded"
+    },
+    "integer/ascii/v1|parse": {
+      "inverse": "integer/ascii/v1",
+      "logical": "integer",
+      "physical_kind": "text",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "bounded"
+    },
+    "integer/zero-pad/v1|output": {
+      "inverse": "integer/ascii/v1",
+      "logical": "integer",
+      "physical_kind": "text",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "bounded"
+    },
+    "string/exact/v1|output": {
+      "inverse": "string/exact/v1",
+      "logical": "string",
+      "physical_kind": "text",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:post_mask_row_quarantine+row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "unknown"
+    },
+    "string/exact/v1|parse": {
+      "inverse": "bounded_by_source",
+      "logical": "string",
+      "physical_kind": "text",
+      "routes": {
+        "chunked": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "full_frame": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "mixed": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "out_of_core": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "refused:declared_cast_route_unsupported:row_quarantine"
+        },
+        "sequential": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        },
+        "unified_slice": {
+          "fail": "ok",
+          "null": "ok",
+          "quarantine": "ok"
+        }
+      },
+      "vector_count": 1,
+      "width_rule": "unknown"
+    }
+  },
+  "matrix_version": 1,
+  "routes": {
+    "chunked": [
+      "binary_cells",
+      "issue_counts",
+      "post_mask_format",
+      "post_mask_row_quarantine",
+      "pre_mask_cast",
+      "row_quarantine"
+    ],
+    "full_frame": [
+      "binary_cells",
+      "cast_before_join",
+      "issue_counts",
+      "post_mask_format",
+      "post_mask_row_quarantine",
+      "pre_mask_cast",
+      "row_quarantine"
+    ],
+    "mixed": [
+      "binary_cells",
+      "issue_counts",
+      "post_mask_format",
+      "pre_mask_cast"
+    ],
+    "out_of_core": [
+      "binary_cells",
+      "issue_counts",
+      "post_mask_format",
+      "pre_mask_cast"
+    ],
+    "sequential": [
+      "binary_cells",
+      "cast_before_join",
+      "issue_counts",
+      "post_mask_format",
+      "post_mask_row_quarantine",
+      "pre_mask_cast",
+      "row_quarantine"
+    ],
+    "unified_slice": [
+      "binary_cells",
+      "issue_counts",
+      "post_mask_format",
+      "post_mask_row_quarantine",
+      "pre_mask_cast",
+      "row_quarantine"
+    ]
+  }
+}

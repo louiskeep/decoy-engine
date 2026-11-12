@@ -1,0 +1,75 @@
+{
+ "sentry_id": "private-file-sinks",
+ "created_in": "X7b",
+ "entries": {
+  "entry::decoy_engine/declared_casting/_quarantine_local.py::LocalProtectedQuarantineSink._open_artifact::os.open::0": {
+   "reason": "protected quarantine artifact: O_CREAT|O_EXCL|O_NOFOLLOW 0600 plus fchmod in a 0700 quarantine root"
+  },
+  "entry::decoy_engine/declared_casting/_stream.py::stage_typed_sources::pyarrow.parquet.ParquetWriter::0": {
+   "reason": "writes into an open_private file (O_CREAT|O_NOFOLLOW 0600 plus fchmod) under a private_dir 0700 scratch root; the create is open_private, not this call"
+  },
+  "entry::decoy_engine/declared_casting/_stream.py::stage_typed_sources::pyarrow.parquet.ParquetWriter::1": {
+   "reason": "writes into an open_private file (O_CREAT|O_NOFOLLOW 0600 plus fchmod) under a private_dir 0700 scratch root; the create is open_private, not this call"
+  },
+  "entry::decoy_engine/execution/_isolated_run.py::_write_payload::pyarrow.parquet.write_table::0": {
+   "reason": "staged source copies (real data). V1 found, out of scope (X7b): written at the umask into the isolated work root; private only when the engine makes it (mkdtemp 0700), world-readable on a searchable caller staging_dir"
+  },
+  "entry::decoy_engine/execution/_isolated_worker.py::_stage_outputs::pyarrow.parquet.write_table::0": {
+   "reason": "staged job outputs. V1 found, out of scope (X7b): written at the umask into the isolated work root; private only when the engine makes it (mkdtemp 0700), world-readable on a searchable caller staging_dir"
+  },
+  "entry::decoy_engine/execution/_isolated_worker.py::_stage_row_errors::open::0": {
+   "reason": "staged row-error file. V1 found, out of scope (X7b): written at the umask into the isolated work root; private only when the engine makes it (mkdtemp 0700), world-readable on a searchable caller staging_dir"
+  },
+  "entry::decoy_engine/execution/_isolated_worker.py::_write_envelope_file::Path.write_text::0": {
+   "reason": "result envelope. V1 found, out of scope (X7b): written at the umask into the isolated work root; private only when the engine makes it (mkdtemp 0700), world-readable on a searchable caller staging_dir"
+  },
+  "entry::decoy_engine/execution/native/_pool_quality.py::measure_pool_quality::pyarrow.parquet.write_table::0": {
+   "reason": "cleartext source/masked pairs spool written at the umask inside the temp_dir connect_duckdb restricts to 0700; unlinked in finally"
+  },
+  "entry::decoy_engine/execution/out_of_core/_external_sort.py::BoundedExternalSorter._merge_group::pyarrow.ipc.new_file::0": {
+   "reason": "writes into an open_private file (O_CREAT|O_NOFOLLOW 0600 plus fchmod) under a private_dir 0700 scratch root; the create is open_private, not this call"
+  },
+  "entry::decoy_engine/execution/out_of_core/_external_sort.py::BoundedExternalSorter._write_run::pyarrow.ipc.new_file::0": {
+   "reason": "writes into an open_private file (O_CREAT|O_NOFOLLOW 0600 plus fchmod) under a private_dir 0700 scratch root; the create is open_private, not this call"
+  },
+  "entry::decoy_engine/execution/out_of_core/_multi_parent.py::merge_parent_relations::duckdb.connection.execute::0": {
+   "reason": "DuckDB COPY into a precreate_private 0600 file written in place (USE_TMP_FILE false) under a private_dir 0700 scratch root"
+  },
+  "entry::decoy_engine/execution/out_of_core/_multi_parent.py::merge_parent_relations::duckdb.connection.execute::1": {
+   "reason": "DuckDB COPY into a precreate_private 0600 file written in place (USE_TMP_FILE false) under a private_dir 0700 scratch root"
+  },
+  "entry::decoy_engine/execution/out_of_core/_multi_parent.py::merge_parent_relations::duckdb.connection.execute::2": {
+   "reason": "DuckDB COPY into a precreate_private 0600 file written in place (USE_TMP_FILE false) under a private_dir 0700 scratch root"
+  },
+  "entry::decoy_engine/execution/out_of_core/_payload_store.py::RawParentKeySpill.__init__::pyarrow.ipc.new_stream::0": {
+   "reason": "writes into an open_private file (O_CREAT|O_NOFOLLOW 0600 plus fchmod) under a private_dir 0700 scratch root; the create is open_private, not this call"
+  },
+  "entry::decoy_engine/execution/out_of_core/_payload_store.py::SpillChildKeys.__init__::pyarrow.ipc.new_stream::0": {
+   "reason": "writes into an open_private file (O_CREAT|O_NOFOLLOW 0600 plus fchmod) under a private_dir 0700 scratch root; the create is open_private, not this call"
+  },
+  "entry::decoy_engine/execution/out_of_core/_payload_store.py::SpillPayloadStore.append::pyarrow.ipc.new_stream::0": {
+   "reason": "writes into an open_private file (O_CREAT|O_NOFOLLOW 0600 plus fchmod) under a private_dir 0700 scratch root; the create is open_private, not this call"
+  },
+  "entry::decoy_engine/execution/out_of_core/_relation.py::_build_relation::duckdb.connection.execute::0": {
+   "reason": "DuckDB COPY into a precreate_private 0600 file written in place (USE_TMP_FILE false) under a private_dir 0700 scratch root"
+  },
+  "entry::decoy_engine/execution/out_of_core/_relation.py::_build_relation::duckdb.connection.execute::1": {
+   "reason": "DuckDB COPY into a precreate_private 0600 file written in place (USE_TMP_FILE false) under a private_dir 0700 scratch root"
+  },
+  "entry::decoy_engine/execution/out_of_core/_relation.py::_build_relation::duckdb.connection.execute::2": {
+   "reason": "DuckDB COPY into a precreate_private 0600 file written in place (USE_TMP_FILE false) under a private_dir 0700 scratch root"
+  },
+  "entry::decoy_engine/execution/out_of_core/_scratch.py::open_private::os.open::0": {
+   "reason": "the scratch private-file primitive itself: O_CREAT|O_NOFOLLOW 0600 plus fchmod in a 0700 scratch root"
+  },
+  "entry::decoy_engine/execution/out_of_core/_stage.py::MaskedKeyStager.__init__::pyarrow.parquet.ParquetWriter::0": {
+   "reason": "writes into an open_private file (O_CREAT|O_NOFOLLOW 0600 plus fchmod) under a private_dir 0700 scratch root; the create is open_private, not this call"
+  },
+  "entry::decoy_engine/fileaccess/_local.py::LocalOutputTxn.create_file::os.open::0": {
+   "reason": "ambient vault_direct rewrite in place keeps the legacy Path.write_bytes mode (0666 minus umask); row chunks are Fernet-encrypted, the header holds only versions and counts. V1 found, out of scope (X7b)"
+  },
+  "entry::decoy_engine/fileaccess/_local.py::LocalOutputTxn.create_file::tempfile.mkstemp::0": {
+   "reason": "the private stage implementation itself"
+  }
+ }
+}

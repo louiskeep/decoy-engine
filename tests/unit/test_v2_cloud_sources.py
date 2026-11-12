@@ -254,6 +254,7 @@ class TestCloudSourceEndToEnd:
             }
             config["tables"][0]["name"] = "customers"
             config["tables"][0]["columns"][0]["name"] = "email"
+            config["tables"][0]["columns"].append({"name": "id", "strategy": "passthrough"})
 
             profile = profile_source(config)
         finally:
@@ -325,11 +326,13 @@ class TestCloudSourceEndToEnd:
             # fake mirrors that surface (end is inclusive, matching GCS).
             def __init__(self):
                 self.size = len(fake_csv)
+                self.calls = []
 
-            def reload(self):
-                pass
+            def reload(self, timeout=None, retry=None):
+                self.calls.append(("reload", timeout, retry))
 
-            def download_as_bytes(self, start=None, end=None):
+            def download_as_bytes(self, start=None, end=None, timeout=None, retry=None):
+                self.calls.append(("download_as_bytes", timeout, retry))
                 if start is None:
                     return fake_csv
                 return fake_csv[start : (end + 1 if end is not None else None)]

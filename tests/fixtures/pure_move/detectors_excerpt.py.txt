@@ -1,0 +1,214 @@
+from __future__ import annotations
+
+import re
+from collections.abc import Callable
+
+import pandas as pd
+
+from decoy_engine.detection._patterns import (
+    _ADDRESS_RE,
+    _BIOMETRIC_ID_RE,
+    _CVV_RE,
+    _DEVICE_ID_RE,
+    _EMAIL_RE,
+    _EU_DATE_RE,
+    _FAX_NUMBER_RE,
+    _HEALTH_PLAN_ID_RE,
+    _IBAN_RE,
+    _ICD10_RE,
+    _IPV4_RE,
+    _ISO_DATE_RE,
+    _LICENSE_NUM_RE,
+    _MRN_RE,
+    _NPI_RE,
+    _PAN_RE,
+    _PERSON_NAME_RE,
+    _SSN_RE,
+    _URL_RE,
+    _US_DATE_RE,
+    _US_PHONE_RE,
+    _US_ZIP_RE,
+    _VEHICLE_ID_RE,
+)
+from decoy_engine.detection._validators import (
+    _IBAN_COUNTRIES,  # noqa: F401  re-exported; external importers use this path
+    _ICD10_CHAPTERS,  # noqa: F401  re-exported; external importers use this path
+    _iban_valid,
+    _icd10_valid,
+    _ipv4_valid,
+    _iso_date_valid,
+    _luhn_valid,
+    _npi_valid,
+)
+from decoy_engine.detection.domains import domain_for
+from decoy_engine.detection.types import CustomDetectorSpec, DetectorMatch
+
+DEFAULT_MIN_MATCH_RATE = 0.5  # 50% of non-null values must match (no hint)
+NAME_HINT_MIN_RATE = 0.4  # 40% if the column name strongly hints
+LOW_CONFIDENCE_NO_HINT_FLOOR = 0.3  # opt-in floor for surfacing low-confidence finds
+HIGH_CONFIDENCE_NO_HINT_FLOOR = 0.75  # content alone, name hint absent
+HIGH_CONFIDENCE_WITH_HINT_FLOOR = 0.45  # content alongside a confirming name hint
+SAMPLE_MISS_LIMIT = 3
+
+def _series_str(series: pd.Series) -> pd.Series:
+    """Drop nulls and coerce to string - every detector needs this prelude."""
+    return series.dropna().astype(str).str.strip()
+
+def _hint(terms: list[str]) -> re.Pattern[str]:
+    """Build a case-insensitive name-hint regex from a list of token strings.
+
+    Each term matches when it appears as a standalone token in the column
+    name, where tokens are separated by `_`, `-`, `.`, or string boundaries.
+    Order of alternation matters only for performance, not correctness.
+    """
+    body = "|".join(re.escape(t) for t in terms)
+    return re.compile(rf"(?i)^(.*[._-])?({body})([._-].*)?$")
+
+from decoy_engine.detection.name_hints.loader import load_name_hint_terms
+
+_NAME_HINTS: dict[str, re.Pattern[str]] = {
+    det_id: _hint(terms) for det_id, terms in load_name_hint_terms().items()
+}
+
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+_NAME_HINT_EXTRAS: ContextVar[dict[str, re.Pattern[str]] | None] = ContextVar(
+    "_NAME_HINT_EXTRAS",
+    default=None,
+)
+
+def _variant(label: str) -> tuple[str, re.Pattern[str]]:
+    """F-8 fix: derive the compiled regex from the label so the two cannot
+    drift. Used by the regex-style variants where ``label == regex_source``.
+    The date variants below intentionally pass an independent label
+    (a strptime format string) so they cannot use this helper."""
+    return label, re.compile(label)
+
+_SSN_VARIANTS = [
+    _variant(r"\d{3}-\d{2}-\d{4}"),
+    _variant(r"\d{9}"),
+]
+
+_US_PHONE_VARIANTS = [
+    # NB: most distinctive shapes first so e.g. "(NNN) NNN-NNNN" doesn't
+    # leak into the bare-dash bucket.
+    _variant(r"\(\d{3}\) \d{3}-\d{4}"),
+    _variant(r"\(\d{3}\)\d{3}-\d{4}"),
+    _variant(r"\d{3}-\d{3}-\d{4}"),
+    _variant(r"\d{3}\.\d{3}\.\d{4}"),
+    _variant(r"\d{3} \d{3} \d{4}"),
+    _variant(r"\+1 \d{3} \d{3} \d{4}"),
+    _variant(r"\+1-\d{3}-\d{3}-\d{4}"),
+    _variant(r"\d{10}"),
+]
+
+def detect_email(series: pd.Series, col_name: str) -> DetectorMatch | None:
+    return _evaluate(
+        "email",
+        _series_str(series),
+        _EMAIL_RE,
+        name_hint=_hits_name_hint("email", col_name),
+        min_rate=DEFAULT_MIN_MATCH_RATE,
+    )
+
+def detect_ssn(series: pd.Series, col_name: str) -> DetectorMatch | None:
+    return _evaluate(
+        "ssn",
+        _series_str(series),
+        _SSN_RE,
+        name_hint=_hits_name_hint("ssn", col_name),
+        min_rate=DEFAULT_MIN_MATCH_RATE,
+        format_variants=_SSN_VARIANTS,
+    )
+
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Span:
+    """A non-overlapping PII span inside a text cell.
+
+    `detector_id` matches the keys in `_SPAN_DETECTORS` (``"email"``,
+    ``"ssn"``, ``"us_phone"``, ``"pan"``, ``"npi"``, ``"icd10"``,
+    ``"iban"``, etc).
+    """
+
+    detector_id: str
+    start: int
+    end: int
+    matched_text: str
+
+_USPS_STREET_SUFFIXES: tuple[str, ...] = (
+    "street",
+    "st",
+    "avenue",
+    "ave",
+    "boulevard",
+    "blvd",
+    "road",
+    "rd",
+    "drive",
+    "dr",
+    "lane",
+    "ln",
+    "court",
+    "ct",
+    "circle",
+    "cir",
+    "place",
+    "pl",
+    "terrace",
+    "ter",
+    "trail",
+    "trl",
+    "parkway",
+    "pkwy",
+    "highway",
+    "hwy",
+    "way",
+    "plaza",
+    "plz",
+    "square",
+    "sq",
+    "expressway",
+    "expy",
+    "freeway",
+    "fwy",
+    "crossing",
+    "xing",
+    "loop",
+    "alley",
+    "aly",
+    "bend",
+    "cove",
+    "cv",
+    "point",
+    "pt",
+    "ridge",
+    "rdg",
+)
+
+_STREET_ADDRESS_RE = re.compile(
+    r"\b\d{1,6}\s+"  # house number
+    # 1-4 street-name words; the leading [A-Za-z0-9] admits ordinal names
+    # ("5th", "42nd") while the suffix anchor keeps bare number runs out.
+    r"(?:[A-Za-z0-9][A-Za-z0-9'.\-]*\s+){1,4}"
+    r"(?:" + "|".join(_USPS_STREET_SUFFIXES) + r")\.?"  # Pub 28 C1 suffix
+    r"(?:\s+(?:apt|apartment|suite|ste|unit|#)\.?\s*[\w\-]+)?"  # C2 unit
+    r"(?=[\s,.;:!?)\"']|$)",
+    re.IGNORECASE,
+)
+
+_SPAN_DETECTORS: dict[str, tuple[re.Pattern[str], Callable[[str], bool] | None]] = {
+    "email": (_EMAIL_RE, None),
+    "ssn": (_SSN_RE, None),
+    "us_phone": (_US_PHONE_RE, None),
+    "us_zip": (_US_ZIP_RE, None),
+    "pan": (_PAN_RE, _luhn_valid),
+    "iban": (_IBAN_RE, _iban_valid),
+    "ipv4": (_IPV4_RE, _ipv4_valid),
+    "icd10": (_ICD10_RE, _icd10_valid),
+    "npi": (_NPI_RE, _npi_valid),
+    "url": (_URL_RE, None),
+    "street_address": (_STREET_ADDRESS_RE, None),
+}

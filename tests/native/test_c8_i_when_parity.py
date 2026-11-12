@@ -18,6 +18,7 @@ import pytest
 
 from decoy_engine.execution import run_pipeline
 from decoy_engine.execution.native import _operator_step
+from tests._declared_schema import declare_rest
 from tests.native._c8_i_support import (
     CHUNKINGS,
     PREDICATES,
@@ -51,6 +52,7 @@ def _whole_frame(config: dict[str, Any], source: pa.Table, tmp_path: Path) -> pa
     config = copy.deepcopy(config)
     config["sources"][TABLE] = {"type": "file", "format": "parquet", "path": path}
     config["targets"][TABLE] = {"type": "file", "format": "parquet", "path": path + ".out"}
+    declare_rest(config)
     result = run_pipeline(
         config,
         {TABLE: source},

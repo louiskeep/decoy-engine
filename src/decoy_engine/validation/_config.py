@@ -15,6 +15,7 @@ from decoy_engine import fileaccess
 from decoy_engine.errors import ConfigError, PipelineValidationError
 from decoy_engine.fileaccess import FileAccess, FileRequest, FileRole
 from decoy_engine.fileaccess.adapters import serial
+from decoy_engine.safe_output import yaml_error_text
 
 
 @fileaccess.entry_point
@@ -52,10 +53,14 @@ def _load_config(config: str | Path | dict) -> dict:
             handle.stat()
         except (FileNotFoundError, NotADirectoryError):
             raise ConfigError(f"Config file not found: {handle.display}") from None
+        yaml_failure: str | None = None
         try:
             data = serial.yaml_safe_load(handle)
         except yaml.YAMLError as e:
-            raise ConfigError(f"Failed to parse YAML: {e}") from e
+            yaml_failure = yaml_error_text(e)
+        if yaml_failure is not None:
+            # Outside the handler: the YAML error's snippet holds the offending source line.
+            raise ConfigError(yaml_failure)
     finally:
         handle.close()
     if not isinstance(data, dict):
@@ -74,12 +79,16 @@ def _select_validator(data: dict) -> Any:
     # used to reach validate_config for a V1 shape now get a typed reject
     # pointing at the V2 path.
     if data.get("version") == 2:
-        from decoy_engine.config import PipelineConfig
+        from decoy_engine.config import PipelineConfigError, parse_pipeline_config
 
+        message: str | None = None
         try:
-            PipelineConfig.model_validate(data)
-        except Exception as exc:  # PipelineConfigError is the typed shape
-            raise PipelineValidationError(str(exc)) from exc
+            parse_pipeline_config(data)
+        except PipelineConfigError as exc:
+            message = str(exc)
+        # Raised after the handler so the wrapper has no `__context__`.
+        if message is not None:
+            raise PipelineValidationError(message)
         return None
     raise PipelineValidationError(
         "v1 mask + v1 generate config shapes are no longer validated by "

@@ -22,6 +22,7 @@ from decoy_engine import run_pipeline
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import ExecutionResult
 from decoy_engine.keyprovider import SecretKeyProvider
+from tests._declared_schema import declare_rest
 
 ENGINE_VERSION = "f2-mixed"
 COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
@@ -120,7 +121,7 @@ def mixed_config(
             }
         )
         raw["targets"]["lookup"] = {"type": "file", "format": "csv", "path": "lookup.out.csv"}
-    return PipelineConfig.model_validate(raw).model_dump()
+    return PipelineConfig.model_validate(declare_rest(raw)).model_dump()
 
 
 def run(
