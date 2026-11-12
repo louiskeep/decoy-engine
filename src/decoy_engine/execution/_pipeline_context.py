@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.execution._transforms_prepare import PreparedSources
     from decoy_engine.execution.pipeline._stream import StreamVerdict
+    from decoy_engine.execution.pipeline._subset_stage import SubsetStageScope
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
     from decoy_engine.profile._types import Profile
@@ -204,6 +205,7 @@ def build_run_context(
     quarantine_runtime: Any = None,
     out_of_core_threads: int | None = None,
     base_dir: str | Path | None = None,
+    subset_stage: SubsetStageScope | None = None,
 ) -> PipelineRunContext:
     """Resolve and validate every run input, in the order the inline code did.
 
@@ -334,9 +336,13 @@ def build_run_context(
     _guards.refuse_duplicate_run_sources(config, caller_sources)
     source_loader = _guards.refusing_source_loader(source_loader)
 
-    profile = profile_source(
-        config, seed=job_seed, declared=declared, supplied_sources=caller_sources
-    )
+    supplied = caller_sources  # profiled whole: a subset run compiles from the full sources
+    if subset_stage is not None and subset_stage.active:
+        caller_sources, selection = subset_stage.apply(caller_sources, config)
+
+    profile = profile_source(config, seed=job_seed, declared=declared, supplied_sources=supplied)
+    if subset_stage is not None and subset_stage.active:
+        profile = subset_stage.restrict_profile(profile, selection)
 
     plan = compile_plan(
         config,

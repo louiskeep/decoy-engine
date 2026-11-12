@@ -27,6 +27,7 @@ from decoy_engine.profiling._scan_integrity import (
     RelationshipFacts,
     column_distinct,
     key_facts,
+    keys_comparable,
 )
 from decoy_engine.profiling._snapshot_values import (
     distribution_snapshot_document,
@@ -56,6 +57,7 @@ from decoy_engine.profiling.scan_set import (
     ScanSetCoreRead,
     ScanSourceError,
     TableScan,
+    passes_through,
     scan_set_to_dict,
     scan_sources,
 )
@@ -97,7 +99,9 @@ __all__ = [
     "get_default_strategy",
     "is_value_sensitive",
     "key_facts",
+    "keys_comparable",
     "known_detector_ids",
+    "passes_through",
     "profile_columns",
     "profile_document",
     "redact_profile_dict",

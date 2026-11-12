@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from tests.sentry.fa import sinks
+from tests.sentry.fa.callgraph import FuncDef, build_graph
 from tests.sentry.fa.resolve import (
     DYNAMIC,
     ProjectIndex,
@@ -344,13 +345,7 @@ class ModuleScanner:
     def _is_connect(self, node: ast.AST, scope: Scope) -> bool:
         if not isinstance(node, ast.Call):
             return False
-        target = resolve(node.func, scope, self.index) or ""
-        return (
-            target in CONNECT_NAMES
-            or target.endswith(".connect_duckdb")
-            or target.endswith(".connect_internal")
-            or target.endswith(".untrusted_session")
-        )
+        return is_connect_name(resolve(node.func, scope, self.index) or "")
 
     def _is_executor(self, node: ast.AST, scope: Scope) -> bool:
         if not isinstance(node, ast.Call):
@@ -519,6 +514,12 @@ class ModuleScanner:
                     self._record(info, f"executor.{attr}", "executor", node)
 
 
+def is_connect_name(target: str) -> bool:
+    return target in CONNECT_NAMES or target.endswith(
+        (".connect_duckdb", ".connect_internal", ".untrusted_session")
+    )
+
+
 def _is_inner_of_attribute(node: ast.AST, nodes: list[ast.AST]) -> bool:
     """True when `node` is the `.value` of a longer attribute chain also in `nodes`."""
     return any(isinstance(n, ast.Attribute) and n.value is node for n in nodes)
@@ -574,3 +575,125 @@ def scan_tree(src_root: Path, package: str = "decoy_engine") -> tuple[list[Site]
     for path in files:
         sites.extend(ModuleScanner(path, src_root, index).scan())
     return sites, index
+
+
+# -- connection and scratch-reader flow (F25 plan 4.1): wider than the D9 `conn_vars` above, used
+# only for `scratch_native` membership, walked over `callgraph.py`'s call edges (no second graph).
+_FA = "decoy_engine.fileaccess"
+WRAPPERS = frozenset({f"{_FA}.scratch_native", f"{_FA}._scratch.scratch_native"})
+ITER_WRAPPERS = frozenset({f"{_FA}.scratch_native_iter", f"{_FA}._scratch.scratch_native_iter"})
+_READS = "parquet.read_metadata parquet.read_schema parquet.read_table parquet.ParquetFile"
+READ_FORMS = frozenset(f"pyarrow.{n}" for n in f"{_READS} ipc.open_stream ipc.open_file".split())
+READ_FORMS |= {"pyarrow.OSFile", "pyarrow.memory_map"}
+PLAIN_DATA = frozenset({"fetchone", "fetchall", "fetchmany", "fetchdf", "fetchnumpy", "df", "pl"})
+CONN, RESULT, READER = "conn", "result", "reader"
+
+
+def own_nodes(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> Iterator[ast.AST]:
+    for stmt in fn.body:
+        if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            yield from _walk_no_defs(stmt)
+
+
+class NativeFlow:
+    """Connections, results, readers via parameters, returns, `self.<attr>` and assignments."""
+
+    def __init__(self, src_root: Path, package: str) -> None:
+        graph = build_graph(src_root, package)
+        self.index, self.funcs = graph.index, graph.funcs
+        self.callees: dict[int, list[str]] = defaultdict(list)
+        for fd in self.funcs.values():
+            for edge in fd.calls:
+                self.callees[id(edge.call)].append(edge.callee)
+        self.params: set[tuple[str, str]] = set()  # (function, parameter) handed a connection
+        self.returners: set[str] = set()
+        self.attrs: dict[tuple[str, str], str] = {}  # (module.Class, attribute) -> kind
+        self.names: dict[str, dict[str, str]] = {}
+        state = None
+        while state != (len(self.params), len(self.returners), len(self.attrs)):
+            state = (len(self.params), len(self.returners), len(self.attrs))
+            for qual in sorted(self.funcs, key=lambda q: q.count(".")):  # enclosing ones first
+                self._analyse(self.funcs[qual])
+
+    def target(self, node: ast.AST, fd: FuncDef) -> str:
+        assert fd.scope is not None  # named as the call graph names a callee
+        found = resolve(node, fd.scope, self.index)
+        if found and found != DYNAMIC:
+            return found
+        if isinstance(node, ast.Name):
+            return f"{fd.module}.{node.id}"
+        if isinstance(node, ast.Attribute) and getattr(node.value, "id", "") == "self":
+            return f"{fd.qualname.rsplit('.', 1)[0]}.{node.attr}"
+        return ""
+
+    def is_wrapper(self, node: ast.AST, fd: FuncDef, names: frozenset[str] = WRAPPERS) -> bool:
+        return isinstance(node, ast.Call) and self.target(node.func, fd) in names
+
+    def connects(self, ref: ast.AST, fd: FuncDef) -> bool:
+        found = self.target(ref, fd)
+        return is_connect_name(found) or found in self.returners
+
+    def kind(self, node: ast.AST, fd: FuncDef, names: dict[str, str]) -> str | None:
+        if isinstance(node, ast.Name):
+            return names.get(node.id) or (CONN if (fd.qualname, node.id) in self.params else None)
+        if isinstance(node, ast.Attribute) and getattr(node.value, "id", "") == "self":
+            owner = fd.qualname.rsplit(".", 1)[0]
+            return names.get(f"self.{node.attr}") or self.attrs.get((owner, node.attr))
+        if not isinstance(node, ast.Call) or self.is_wrapper(node, fd, ITER_WRAPPERS):
+            return None
+        ref = (node.args or [node.func])[0] if self.is_wrapper(node, fd) else node.func
+        if self.connects(ref, fd):
+            return CONN
+        if self.target(ref, fd) in READ_FORMS:
+            return READER
+        if isinstance(ref, ast.Call) and self.target(ref.func, fd) == "getattr" and ref.args:
+            ref = ast.Attribute(value=ref.args[0], attr="", ctx=ast.Load())
+        if isinstance(ref, ast.Attribute) and self.kind(ref.value, fd, names) in (CONN, RESULT):
+            return None if ref.attr in PLAIN_DATA else RESULT
+        return None
+
+    def _analyse(self, fd: FuncDef) -> None:
+        enclosing = self.names.get(fd.qualname.rsplit(".", 1)[0], {})  # a closure's names
+        names = self.names.setdefault(fd.qualname, dict(enclosing))
+        nodes = list(own_nodes(fd.node))
+        size = -1
+        while size != len(names):
+            size = len(names)
+            for node in nodes:
+                if isinstance(node, ast.Assign):
+                    pairs = [(t, node.value) for t in node.targets]
+                elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and node.value is not None:
+                    pairs = [(node.target, node.value)]
+                elif isinstance(node, (ast.With, ast.AsyncWith)):
+                    pairs = [(i.optional_vars, i.context_expr) for i in node.items]
+                else:
+                    continue
+                for target, value in pairs:
+                    self._bind(target, value, fd, names)
+        for node in nodes:
+            if isinstance(node, ast.Return) and self.kind(node.value or node, fd, names) == CONN:
+                self.returners.add(fd.qualname)
+            elif isinstance(node, ast.Call):
+                self._bind_arguments(node, fd, names)
+
+    def _bind(self, to: ast.AST | None, value: ast.AST, fd: FuncDef, names: dict[str, str]) -> None:
+        found = self.kind(value, fd, names)
+        if found is None:
+            return
+        if isinstance(to, ast.Name):
+            names[to.id] = found
+        elif isinstance(to, ast.Attribute) and getattr(to.value, "id", "") == "self":
+            names[f"self.{to.attr}"] = found
+            self.attrs[(fd.qualname.rsplit(".", 1)[0], to.attr)] = found
+
+    def _bind_arguments(self, call: ast.Call, fd: FuncDef, names: dict[str, str]) -> None:
+        for target in filter(None, map(self.funcs.get, self.callees.get(id(call), []))):
+            args = target.node.args
+            positional = [a.arg for a in [*args.posonlyargs, *args.args]]
+            bound = isinstance(call.func, ast.Attribute) or target.node.name == "__init__"
+            positional = positional[int(bound and positional[:1] in (["self"], ["cls"])) :]
+            pairs = [*zip(positional, call.args, strict=False)]
+            pairs += [(k.arg, k.value) for k in call.keywords]
+            for param, arg in pairs:
+                if self.kind(arg, fd, names) == CONN:
+                    self.params.add((target.qualname, param))
