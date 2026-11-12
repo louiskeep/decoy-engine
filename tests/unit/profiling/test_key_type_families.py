@@ -119,18 +119,25 @@ def _schema_only(type_: pa.DataType) -> KeyBatches:
     return KeyBatches(pa.schema([("k0", type_)]), lambda: iter(()))
 
 
-@pytest.mark.parametrize(
-    ("ptype", "ctype"),
-    list(itertools.product(INTS + STRINGS, INTS + STRINGS)),
-    ids=lambda t: str(t),
-)
+# Built as a list, not skipped inside the test: a skipped cell would hide a pair that stopped
+# being comparable, and the count below pins that the list did not shrink.
+COMPARABLE_PAIRS = [
+    (ptype, ctype)
+    for ptype, ctype in itertools.product(INTS + STRINGS, INTS + STRINGS)
+    if not ptype.equals(ctype) and keys_comparable(_schema_only(ptype), [_schema_only(ctype)])
+]
+
+
+def test_every_same_family_pair_is_comparable() -> None:
+    same_family = len(INTS) * (len(INTS) - 1) + len(STRINGS) * (len(STRINGS) - 1)
+    assert len(COMPARABLE_PAIRS) == same_family
+
+
+@pytest.mark.parametrize(("ptype", "ctype"), COMPARABLE_PAIRS, ids=lambda t: str(t))
 def test_comparable_pair_never_falls_back_to_the_declared_type(
     ptype: pa.DataType, ctype: pa.DataType
 ) -> None:
-    parent, child = _schema_only(ptype), _schema_only(ctype)
-    if not keys_comparable(parent, [child]) or ptype.equals(ctype):
-        pytest.skip("not a comparable pair of different types")
-    assert _scan_integrity._duck_types(parent, [child]) != [None]
+    assert _scan_integrity._duck_types(_schema_only(ptype), [_schema_only(ctype)]) != [None]
 
 
 def test_uint64_never_wraps_onto_int64(tmp_path: Path) -> None:
