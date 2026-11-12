@@ -313,8 +313,10 @@ def _two_components(allow_dangling: bool) -> dict[str, Any]:
         [FK, ("p2", "id", "c2", "pid")],
         seeds=[{"table": "p", "mode": "keys", "key_columns": ["id"], "keys": [["p1"]]}],
     )
+    # Without `allow_dangling` the preflight refuses a "downward" edge anywhere, so the seeded
+    # component states "both" there.
     cfg["subset"]["edge_directions"] = {
-        "p.id -> c.pid": "downward",
+        "p.id -> c.pid": "downward" if allow_dangling else "both",
         "p2.id -> c2.pid": "downward",
     }
     cfg["subset"]["allow_dangling"] = allow_dangling
@@ -324,7 +326,8 @@ def _two_components(allow_dangling: bool) -> dict[str, Any]:
 @pytest.mark.parametrize("allow_dangling", [False, True])
 def test_an_unseeded_component_is_upward_whatever_the_config_says(allow_dangling: bool) -> None:
     req = sample_request(_two_components(allow_dangling), rows=2)
-    assert _directions(req) == {"p.id -> c.pid": "downward", "p2.id -> c2.pid": "upward"}
+    kept = "downward" if allow_dangling else "both"
+    assert _directions(req) == {"p.id -> c.pid": kept, "p2.id -> c2.pid": "upward"}
     tables = {**parent_child("p", "c"), **parent_child("p2", "c2")}
     chosen = select_subset(req, tables, config=JOB_SEED_CONFIG)
     assert chosen.survivors["c2"]
@@ -425,22 +428,24 @@ def test_an_upward_walk_from_a_child_of_a_cycle_keeps_both_cycle_tables() -> Non
 
 
 class _CountingInput(ResidentInput):
-    def __init__(self, name: str, table: pa.Table, log: list[str]) -> None:
+    def __init__(self, name: str, table: pa.Table, log: list[tuple[str, tuple[str, ...]]]) -> None:
         super().__init__(name, table)
         self._log = log
 
     def key_frame(self, columns: Any) -> pl.DataFrame:
-        self._log.append(self.name)
+        self._log.append((self.name, tuple(columns)))
         return super().key_frame(columns)
 
 
-def test_each_table_is_read_for_keys_exactly_once() -> None:
+def test_a_head_root_reads_only_edge_columns_and_each_table_exactly_twice() -> None:
+    # Two reads per table is the cost of the FK preflight plus the key load, both on main. The
+    # list (not a set) pins the count, and no read asks for the root's own key column.
     tables = parent_child("p", "c")
-    log: list[str] = []
+    log: list[tuple[str, tuple[str, ...]]] = []
     inputs = {n: _CountingInput(n, t, log) for n, t in tables.items()}
     req = sample_request(config({"p": "mask", "c": "mask"}, [FK]), rows=3, root="p")
     select_subset(req, inputs, config=JOB_SEED_CONFIG)
-    assert sorted(log) == ["c", "p"]
+    assert sorted(log) == [("c", ("pid",)), ("c", ("pid",)), ("p", ("id",)), ("p", ("id",))]
 
 
 def test_ignoring_the_subset_block_gives_default_seeds_and_only_upward_edges() -> None:
