@@ -11,6 +11,13 @@ optional GCS + SFTP installs). List + open + write semantics; no DataFrame
 conversion at the connector layer.
 """
 
+from decoy_engine.connectors.object_store import (
+    GCSObjectStore,
+    ObjectStore,
+    PutResult,
+    S3ObjectStore,
+    Version,
+)
 from decoy_engine.connectors.s3 import S3Config, S3FileSink, S3FileSource
 
 # GCS and SFTP connectors are optional installs (`decoy-engine[gcs]` and
@@ -31,11 +38,16 @@ __all__ = [
     "GCSConfig",
     "GCSFileSink",
     "GCSFileSource",
+    "GCSObjectStore",
+    "ObjectStore",
+    "PutResult",
     # SDK-based file connectors (Sprint G).
     "S3Config",
     "S3FileSink",
     "S3FileSource",
+    "S3ObjectStore",
     "SFTPConfig",
     "SFTPFileSink",
     "SFTPFileSource",
+    "Version",
 ]
