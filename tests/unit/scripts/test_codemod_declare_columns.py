@@ -354,8 +354,9 @@ def test_missing_record_is_hand(
 ) -> None:
     """A declared column the source lacks is for a person to fix; the file is left alone."""
     cfg = tmp_path / "cfg.py"
-    cfg.write_text(ONE, encoding="utf-8")
-    rec = _record(tmp_path, cfg, "t", "missing", ["a"], ["a"])
+    text = 'CFG = {"sources": {"t": {}}, "tables": []}\n'  # a table record would add an entry
+    cfg.write_text(text, encoding="utf-8")
+    rec = _record(tmp_path, cfg, "t", "missing", ["a"], [])
     codemod.main(["declare-columns", "--record", str(rec), str(cfg)])
     assert "hand t::n t" in capsys.readouterr().out
-    assert cfg.read_text() == ONE
+    assert cfg.read_text() == text
