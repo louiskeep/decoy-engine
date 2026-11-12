@@ -1,7 +1,8 @@
 # GEN-REL then GEN-INHERIT build: relational generation (roadmap rows 24n and 24r)
 
-Repo `louiskeep/decoy-engine`. Two plans, both on plan branches (read them with `git show origin/<branch>:<path>`):
+Repo `louiskeep/decoy-engine`. Three plans, both on plan branches (read them with `git show origin/<branch>:<path>`):
 
+- REG-RELEASE (slice 0 only): `docs/plans/2026-11-11-reg-release.md` on `plan/reg-release` at `c9d2eb72`. Plan gate: Codex GO on round 3 (2026-11-12), 0 V1 findings. Owner decision R1 (pending deprecations and summary fixes on released codes, stamped at release) is frozen in it. Build only its E2; E1 is already merged (#450).
 - GEN-REL: `docs/plans/gen-rel.md` on `plan/gen-rel` at `26a83542`. Plan gate: Codex GO on round 3 (2026-11-11), 0 V1 findings. Owner decisions are frozen in it.
 - GEN-INHERIT: `docs/plans/2026-11-10-gen-inherit.md` on `plan/gen-inherit` at `c31ca102`. Plan gate: Codex GO on the re-check (2026-11-11), 0 V1 findings.
 
@@ -17,7 +18,8 @@ The plans are the spec. For GEN-REL read Behavior, Frozen contracts, Placement, 
 
 | # | Slice | Plan | Depends on | Branch |
 |---|---|---|---|---|
-| 1 | E1: bounded reference repair, capacity layer, relationship parser and safe messages, warn/preserve/remap policies, fitted precedence | GEN-REL | main | `feat/gen-rel-e1` |
+| 0 | E2: release-time registry stamping, `since=UNRELEASED`, versioned release pin, `--to-unreleased` conversion (no per-PR registry bumps from here on) | REG-RELEASE | main | `feat/reg-release-e2` |
+| 1 | E1: bounded reference repair, capacity layer, relationship parser and safe messages, warn/preserve/remap policies, fitted precedence. Declare every new reason code `since=UNRELEASED` | GEN-REL | REG-RELEASE E2 | `feat/gen-rel-e1` |
 | 2 | E2: self-reference, cycle refusal, option matrix, pinned and seed cells | GEN-REL | E1 | `feat/gen-rel-e2` |
 | 3 | E3a: parent-anchored `windowed_date`, typed parent lookup, five coded date failures, numeric typing on the central edges | GEN-REL | E2 | `feat/gen-rel-e3a` |
 | 4 | E3b: per-parent `derived_aggregate`, every op, childless identity | GEN-REL | E3a | `feat/gen-rel-e3b` |
@@ -26,7 +28,7 @@ The plans are the spec. For GEN-REL read Behavior, Frozen contracts, Placement, 
 
 Use the exact source and test files the GEN-REL Slices table lists for each slice, and the red-first order in "Red-first execution per slice". GEN-INHERIT's own Slices section lists its files.
 
-Stacking: the plan says each slice starts from main after the previous one merges. You cannot merge, so stack instead: each slice branches from the previous slice's branch head (slice 1 from `main`). One PR per slice, base = the previous slice's branch (slice 1's base is `main`). The orchestrator retargets and merges in order. If main moves under you, merge `origin/main` into the slice (never rebase a pushed branch, never force-push).
+Stacking: the plan says each slice starts from main after the previous one merges. You cannot merge, so stack instead: each slice branches from the previous slice's branch head (slice 0 from `main`). One PR per slice, base = the previous slice's branch (slice 0's base is `main`). Slice 0 is a frozen-contract change: it needs a full suite on its merge head, which the orchestrator runs. The orchestrator retargets and merges in order. If main moves under you, merge `origin/main` into the slice (never rebase a pushed branch, never force-push).
 
 You may take the whole chain. Stop and report at any slice where: the plan is wrong or silent on something that changes a guarantee; a defect of a class the plan already closes appears again; a census number (module count, file size, registry count) would have to rise beyond what the plan allows; or a test needs weakening to pass.
 
