@@ -5,7 +5,14 @@ from __future__ import annotations
 import decoy_engine
 import decoy_engine.run_result as run_result
 
-NEW = ("CollectedFacts", "DeliveryFacts", "ProjectedTables", "TableDelivery", "project_tables")
+NEW = (
+    "CollectedFacts",
+    "DeliveryFacts",
+    "ProjectedTables",
+    "RunResultCollector",
+    "TableDelivery",
+    "project_tables",
+)
 
 
 def test_package_exports() -> None:
