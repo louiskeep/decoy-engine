@@ -160,3 +160,44 @@ def test_every_entry_raises_the_same_error_for_a_forged_plan() -> None:
         with pytest.raises(ValueError) as exc:
             call()
         assert str(exc.value) == MESSAGE
+
+
+# GEN-REL: a self-reference is a tree inside one table, not a dependency between tables
+
+
+def _tree_tables() -> list[dict[str, Any]]:
+    key = {"name": "id", "type": "sequence", "start": 1}
+    return [
+        {
+            "name": "employees",
+            "row_count": 12,
+            "generate_columns": [
+                key,
+                {
+                    "name": "manager_id",
+                    "type": "reference",
+                    "reference_table": "employees",
+                    "reference_column": "id",
+                },
+                {
+                    "name": "dept",
+                    "type": "reference",
+                    "reference_table": "depts",
+                    "reference_column": "id",
+                },
+            ],
+        },
+        {"name": "depts", "row_count": 3, "generate_columns": [key]},
+    ]
+
+
+def test_a_self_reference_is_not_a_dependency_edge() -> None:
+    config = {"version": 2, "global_settings": {"seed": 1}, "tables": _tree_tables()}
+    assert generation_order(config) == (("depts", ()), ("employees", ("depts",)))
+
+
+def test_a_table_that_only_references_itself_has_no_parents() -> None:
+    tables = _tree_tables()[:1]
+    del tables[0]["generate_columns"][2]
+    config = {"version": 2, "global_settings": {"seed": 1}, "tables": tables}
+    assert generation_order(config) == (("employees", ()),)

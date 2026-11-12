@@ -2,7 +2,8 @@
 
 Covers the relationship gate, the byte-identity near neighbors (AT-1), the empty-parent policies
 on the resident, streamed, whole-table and pinned routes (AT-6), fitted precedence (AT-6f), the
-weights refusal (AT-13), the registry cells (AT-14) and value-free refusals (AT-15).
+weights refusal (AT-13), the registry cells (AT-14) and value-free refusals (AT-15), and the
+self-reference cells of the same three: byte identity beside a tree, the pinned twins, messages.
 """
 
 from __future__ import annotations
@@ -21,7 +22,13 @@ from decoy_engine import reasons, relationships
 from decoy_engine.config._pipeline import PipelineConfig
 from decoy_engine.generation._admission import classify_plan
 from decoy_engine.generation._synthesize_derived import _reference
-from decoy_engine.generation.pinned import PinnedPlan, compile_pinned_plan, fingerprint
+from decoy_engine.generation.pinned import (
+    PinnedModeError,
+    PinnedPlan,
+    compile_pinned_plan,
+    execute_pinned,
+    fingerprint,
+)
 from decoy_engine.generation.pool import GenerationError, QualityWarning
 from decoy_engine.generation.statistical import StatisticalSpecError, fanout_spec_from_snapshot
 from decoy_engine.generators.derivation import with_table
@@ -472,3 +479,116 @@ def test_at15_runtime_refusal_names_the_table_and_column_only(route: str, tmp_pa
         f"[generate_per_parent_infeasible] {_summary('runtime', 'generate_per_parent_infeasible')}"
         " Table 'kids', column 'pid'."
     )
+
+
+# ---- self-reference: registry twins, value-free refusals, untouched neighbors ------------------
+
+TREE_CODES = (
+    ("config", "generate_self_reference_key_invalid", "PipelineValidationError"),
+    ("config", "generate_self_reference_option_unsupported", "PipelineValidationError"),
+    ("plan", "pinned_relational_option_unsupported", "PinnedModeError"),
+    ("runtime", "pinned_relational_option_unsupported", "PinnedModeError"),
+)
+PINNED_UNSUPPORTED = "pinned_relational_option_unsupported"
+
+
+def _tree_config(rows: int = 30, **options: Any) -> dict[str, Any]:
+    key = {"name": "id", "type": "sequence", "start": 1}
+    return cfg([table("employees", rows, [key, ref("manager_id", "employees", **options)])])
+
+
+@pytest.mark.parametrize(("namespace", "code", "owner"), TREE_CODES)
+def test_at14_self_reference_codes_are_registered_unreleased_in_the_right_catalog(
+    namespace: str, code: str, owner: str
+) -> None:
+    spec = reasons.get(namespace, code)
+    assert spec.since == reasons.UNRELEASED
+    assert spec.owner == owner and spec.kind is reasons.Kind.FAILURE
+    phases = {rule.phase for rule in spec.rules}
+    if namespace == "config":
+        assert phases == {reasons.Phase.CONFIGURATION}
+    elif namespace == "plan":
+        assert phases == {reasons.Phase.COMPILE}
+    else:
+        assert reasons.Phase.GENERATE in phases and reasons.Phase.COMPILE not in phases
+
+
+def test_at14_the_pinned_twins_share_one_fixed_summary_and_differ_by_namespace() -> None:
+    plan_code = reasons.plan.PINNED_RELATIONAL_OPTION_UNSUPPORTED
+    runtime_code = reasons.runtime.PINNED_RELATIONAL_OPTION_UNSUPPORTED
+    assert plan_code == runtime_code == PINNED_UNSUPPORTED
+    assert (plan_code.namespace, runtime_code.namespace) == ("plan", "runtime")
+    assert _summary("plan", PINNED_UNSUPPORTED) == _summary("runtime", PINNED_UNSUPPORTED)
+
+
+def test_at15_pinned_compile_refusal_of_a_self_reference_names_the_table_and_column_only() -> None:
+    config = _tree_config(31, max_per_parent=7919, root_count=3)
+    with pytest.raises(PinnedModeError) as exc:
+        compile_pinned_plan(copy.deepcopy(config), REF)
+    assert exc.value.code == reasons.plan.PINNED_RELATIONAL_OPTION_UNSUPPORTED
+    assert exc.value.code.namespace == "plan"
+    assert is_safe(exc.value)
+    assert str(exc.value) == (
+        f"[{PINNED_UNSUPPORTED}] {_summary('plan', PINNED_UNSUPPORTED)}"
+        " Table 'employees', column 'manager_id'."
+    )
+
+
+def test_at15_pinned_execute_refusal_of_a_self_reference_names_the_table_and_column_only() -> None:
+    """A plan that never went through pinned compile: the column is rewritten after the fact."""
+    plan = compile_pinned_plan(copy.deepcopy(family(5, 31)), REF)
+    stored = plan.to_dict()
+    kids = next(t for t in stored["tables"] if t["name"] == "kids")
+    column = json.loads(kids["columns"][1]["config_json"])
+    column.update(reference_table="kids", reference_column="cid", max_per_parent=7919)
+    kids["columns"][1]["config_json"] = json.dumps(column, sort_keys=True)
+    kids["depends_on"] = []
+    with pytest.raises(PinnedModeError) as exc:
+        execute_pinned(PinnedPlan.from_dict(stored), 7)
+    assert exc.value.code == reasons.runtime.PINNED_RELATIONAL_OPTION_UNSUPPORTED
+    assert exc.value.code.namespace == "runtime"
+    assert is_safe(exc.value)
+    assert str(exc.value) == (
+        f"[{PINNED_UNSUPPORTED}] {_summary('runtime', PINNED_UNSUPPORTED)}"
+        " Table 'kids', column 'pid'."
+    )
+
+
+def test_at15_validate_refusals_of_a_self_reference_carry_the_fixed_summary_and_no_input() -> None:
+    for options, code in (
+        ({"min_per_parent": 7919}, "generate_self_reference_option_unsupported"),
+        (
+            {"distribution": "weighted", "weights": [7919, 7907]},
+            ("generate_self_reference_option_unsupported"),
+        ),
+    ):
+        with pytest.raises(ValidationError) as exc:
+            PipelineConfig.model_validate(_tree_config(**options))
+        (error,) = exc.value.errors()
+        assert error["type"] == code
+        assert error["msg"] == _summary("config", code)
+        assert error["input"] is None
+        assert "79" not in str(exc.value)
+        assert is_safe(exc.value)
+    bad_key = _tree_config()
+    bad_key["tables"][0]["generate_columns"][0] = {
+        "name": "id",
+        "type": "categorical",
+        "categories": [f"{SENTINEL}a", f"{SENTINEL}b"],
+    }
+    with pytest.raises(ValidationError) as exc:
+        PipelineConfig.model_validate(bad_key)
+    (error,) = exc.value.errors()
+    assert error["type"] == "generate_self_reference_key_invalid"
+    assert error["msg"] == _summary("config", "generate_self_reference_key_invalid")
+    assert SENTINEL not in str(exc.value) and is_safe(exc.value)
+
+
+def test_at1_a_tree_beside_a_family_leaves_the_familys_bytes_alone(tmp_path: Path) -> None:
+    """The self-edge skip and the tree dispatch must not move a table that has neither."""
+    config = family(5, 40)
+    config["tables"].append(_tree_config()["tables"][0])
+    config["targets"]["employees"] = {"type": "file", "format": "csv", "path": "o.csv"}
+    out = run_route("resident", config, tmp_path)
+    assert digest(out["kids"]) == EXPECTED_DIGESTS["resident"]["unbounded_random"]
+    assert out["employees"].column("manager_id").null_count == 1
