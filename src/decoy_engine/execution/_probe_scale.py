@@ -64,6 +64,8 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.config import generate_columns_of
+
 __all__ = [
     "DEFAULT_PROBE_FLOOR_ROWS",
     "ScaledJob",
@@ -123,7 +125,7 @@ def downscale_config(
     for table in scaled.get("tables") or []:
         if not isinstance(table, dict):
             continue
-        if not table.get("generate_columns"):
+        if not generate_columns_of(table):
             continue
         row_count = table.get("row_count")
         if isinstance(row_count, int):
@@ -159,7 +161,7 @@ def _loosen_per_parent_bounds(scaled: dict[str, Any]) -> None:
     by_name = {t.get("name"): t for t in tables}
     for table in tables:
         rows = table.get("row_count")
-        for col in table.get("generate_columns") or []:
+        for col in generate_columns_of(table):
             if not isinstance(col, dict) or col.get("type") != "reference":
                 continue
             lo, hi = _positive(col.get("min_per_parent")), _positive(col.get("max_per_parent"))
@@ -172,7 +174,7 @@ def _loosen_per_parent_bounds(scaled: dict[str, Any]) -> None:
             key = next(
                 (
                     c
-                    for c in parent.get("generate_columns") or []
+                    for c in generate_columns_of(parent)
                     if isinstance(c, dict) and c.get("name") == col.get("reference_column")
                 ),
                 {},
@@ -235,7 +237,7 @@ def downscale_job(
     scaled_sources = downscale_sources(sources or {}, fraction, floor_rows=floor_rows)
     row_counts: dict[str, int] = {name: table.num_rows for name, table in scaled_sources.items()}
     for table in scaled_config.get("tables") or []:
-        if not isinstance(table, dict) or not table.get("generate_columns"):
+        if not isinstance(table, dict) or not generate_columns_of(table):
             continue
         row_count = table.get("row_count")
         name = table.get("name")

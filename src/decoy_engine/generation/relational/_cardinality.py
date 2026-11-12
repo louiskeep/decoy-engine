@@ -34,7 +34,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from decoy_engine import _capacity, reasons, relationships
-from decoy_engine.config import value_key
+from decoy_engine.config import generate_columns_of, value_key
 from decoy_engine.generation.pool import GenerationError, QualityWarning, emit_generation_warning
 from decoy_engine.generators.derivation import TABLE_KEY
 
@@ -93,7 +93,7 @@ def reference_policies(config: dict[str, Any]) -> dict[tuple[str, str], str]:
     for table in config.get("tables") or []:
         if not isinstance(table, dict):
             continue
-        for col in table.get("generate_columns") or []:
+        for col in generate_columns_of(table):
             if not isinstance(col, dict) or col.get("type") != "reference":
                 continue
             name, column = table.get("name"), col.get("name")

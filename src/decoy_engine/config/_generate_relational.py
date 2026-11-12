@@ -24,6 +24,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from decoy_engine import _capacity, reasons
+from decoy_engine.config._tables import generate_columns_of
 
 __all__ = ["per_parent_problems"]
 
@@ -79,7 +80,7 @@ def per_parent_problems(tables: Sequence[Mapping[str, Any]]) -> list[Problem]:
     problems: list[Problem] = []
     for t_idx, table in enumerate(tables):
         rows = _row_count(table)
-        for c_idx, col in enumerate(table.get("generate_columns") or []):
+        for c_idx, col in enumerate(generate_columns_of(table)):
             if not isinstance(col, Mapping) or col.get("type") != "reference":
                 continue
             parent = col.get("reference_table")
