@@ -52,7 +52,7 @@ EXEMPT: dict[str, str] = {
     "decoy_engine.execution._probe.probe_peak_bytes": "memory probe, publishes no output",
     "decoy_engine.execution._transforms_table.apply_table_transforms": "transforms, not masking",
     "decoy_engine.execution.native._dispatch.plan_native_route": "routing decision only",
-    "decoy_engine.execution.out_of_core._spill_estimate.predict_ooc_disk_bytes": "estimate only",
+    "decoy_engine.execution.out_of_core._spill_estimate.predict_ooc_disk_bytes": "disk estimate, masks nothing",
 }
 # Plan-level entries and the wrappers that forward to them; each product call passes `config=`.
 CONFIG_CALLEES = frozenset(
