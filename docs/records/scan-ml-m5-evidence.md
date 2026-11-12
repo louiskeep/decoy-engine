@@ -23,7 +23,7 @@ sections 4.8, 5, 6, 7 (AT-M5a), 11 to 14. Handoff: `handoffs/scan-ml-build`.
 - Reason `route.post_scan_models_unsupported` (owner `PostScanRouteError`, a configuration refusal
   in the RESOLVE and COMPILE phases, `since` 1.25.0), registry minor 1.25.0 (built at the next minor of
   its base; main then took that minor for the FPE fallback codes, #481, so the renumber tool moved
-  this slice; no `UNRELEASED` marker exists on main), pinned in `tests/fixtures/f29/reason-manifest-v1.25-scanml-m5.json`,
+  this slice; no `UNRELEASED` marker exists on main), pinned then in a numbered minor fixture (retired since, see "Unreleased conversion"),
   mapped in `reason_adapter._FIXED`. `consumer-contract.json` regenerated (version lines only).
 - The guard is the first statement of `run_sequential`, `run_fk_out_of_core`,
   `run_mask_pipeline_chunked`, native `run_mask_chunked` and `run_native_or_oracle_chunked`.
@@ -140,7 +140,7 @@ install, #481 registers the FPE fallback codes at the minor this slice had claim
 canary scan entry) because main moved again before the push. Conflicts: `docs/reasons.md` and
 `tests/unit/test_reason_registry.py`, both sides kept. `scripts/dev/registry_renumber.py --main
 origin/main` then moved `route.post_scan_models_unsupported` to the next free minor, 1.25.0
-(`004cc7f6`; fixture now `reason-manifest-v1.25-scanml-m5.json`; `--check` reports the registry
+(`004cc7f6`; the numbered fixture was renamed to match; `--check` reports the registry
 consistent). The merge left two of main's FPE test assertions under the M5 test; `6aa0547d` puts
 them back in the FPE test, and every other line main added in `8f9fdfab..7fc12e7f` is present.
 
