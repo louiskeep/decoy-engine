@@ -22,6 +22,7 @@ from decoy_engine.execution import (
     run_pipeline,
     run_pipeline_isolated,
 )
+from decoy_engine.publication import DESCRIPTOR_NAME
 from tests.unit.execution import _auto_chunk_support as support
 from tests.unit.execution import _b6a_support as b6a
 from tests.unit.execution import _multi_table_support as mt
@@ -64,7 +65,7 @@ def test_two_dispatched_tables_stream_in_config_order_with_per_table_evidence(
         assert (target / f"{name}.parquet").read_bytes() == b6a.parquet_bytes(
             expected.outputs[name], tmp_path / f"ref_{name}.parquet"
         )
-    assert sorted(p.name for p in target.iterdir()) == ["a.parquet", "b.parquet"]
+    assert sorted(p.name for p in target.iterdir()) == [DESCRIPTOR_NAME, "a.parquet", "b.parquet"]
     tables = {t["table"]: t for t in result.quality_metrics["auto_chunk"]["tables"]}
     assert set(tables) == {"a", "b"}
     for entry in tables.values():

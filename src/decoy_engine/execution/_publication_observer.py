@@ -11,7 +11,9 @@ Three rules keep the report truthful:
   as ``unknown``, never as clean: its ``abort()`` returning proves nothing about cleanup.
 * ``commit()`` returning is the only evidence of ``published``. A failed atomic rename left
   nothing published (the reference sink's contract); a failed commit on a sink with no such
-  contract is ``unknown``.
+  contract is ``unknown``. The reference sink projects its state-table state onto its evidence
+  (``project_sink_state``): sealed is published, uncertain (bound, not confirmed durable) is
+  unknown, refused, failed and aborted are not published.
 * ``abort()`` is best effort and its failure never masks the run's first failure; its outcome is
   recorded as cleanup state, ``confirmed`` only when the sink checked.
 
@@ -21,10 +23,14 @@ used by `_transactional_sink`; this module adds observation only, no new publica
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Final
 
 from decoy_engine import reasons
+from decoy_engine.publication import CommitReceipt
+from decoy_engine.publication._sink_state import SinkState
 from decoy_engine.reason_adapter import amend_failure, capture_failure
 from decoy_engine.reasons import (
     CleanupState,
@@ -62,6 +68,34 @@ class PublicationEvidence:
         )
 
 
+_P, _C = PublicationState, CleanupState
+SINK_STATE_EVIDENCE: Final[Mapping[SinkState, tuple[PublicationState, CleanupState | None]]] = (
+    MappingProxyType(
+        {
+            SinkState.OPEN: (_P.NOT_PUBLISHED, None),
+            SinkState.WRITING: (_P.NOT_PUBLISHED, None),
+            SinkState.COMMITTING: (_P.NOT_PUBLISHED, None),
+            SinkState.RECOVERING: (_P.UNKNOWN, _C.NOT_NEEDED),
+            SinkState.SEALED: (_P.PUBLISHED, _C.NOT_NEEDED),
+            SinkState.UNCERTAIN: (_P.UNKNOWN, _C.NOT_NEEDED),
+            SinkState.REFUSED: (_P.NOT_PUBLISHED, None),
+            SinkState.FAILED: (_P.NOT_PUBLISHED, None),
+            SinkState.ABORTED: (_P.NOT_PUBLISHED, None),
+        }
+    )
+)
+"""Sink state to F29 evidence (plan 5.6). A cleanup of ``None`` keeps what the sink observed
+about its stage; a bound unit (sealed, uncertain) has no stage left to clean."""
+
+
+def project_sink_state(evidence: PublicationEvidence, state: SinkState) -> None:
+    """Set ``evidence`` from the sink's state-table ``state``."""
+    publication, cleanup = SINK_STATE_EVIDENCE[state]
+    evidence.state = publication
+    if cleanup is not None:
+        evidence.cleanup = cleanup
+
+
 def evidence_of(sink: Any) -> PublicationEvidence | None:
     """The sink's own evidence, or ``None`` for a sink that keeps none."""
     evidence = getattr(sink, "publication_evidence", None)
@@ -96,11 +130,13 @@ def capture_publication_failure(
         return None
 
 
-def observed_commit(sink: Any) -> None:
-    """``sink.commit()``, recording the outcome. Exceptions propagate unchanged."""
+def observed_commit(sink: Any) -> CommitReceipt | None:
+    """``sink.commit()``, recording the outcome; returns the sink's ``CommitReceipt`` (the
+    value ``commit()`` returned, else the sink's ``receipt``), or ``None`` for a sink that
+    gives none. Exceptions propagate unchanged."""
     evidence = evidence_of(sink)
     try:
-        sink.commit()
+        returned = sink.commit()
     except BaseException as exc:
         # An engine sink has already recorded its own failed-commit state; a sink with no
         # evidence is reported ``unknown``.
@@ -109,6 +145,8 @@ def observed_commit(sink: Any) -> None:
     if evidence is not None:
         evidence.state = PublicationState.PUBLISHED
         evidence.last_operation = Operation.COMMIT
+    receipt = returned if isinstance(returned, CommitReceipt) else getattr(sink, "receipt", None)
+    return receipt if isinstance(receipt, CommitReceipt) else None
 
 
 def observed_abort(sink: Any, failing: BaseException | None = None) -> None:

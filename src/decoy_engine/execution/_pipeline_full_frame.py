@@ -313,5 +313,5 @@ def _run_full_frame(
             # from here on still discards the sealed artifact through cast_run.abort().
             result.quality_metrics["declared_casting"], quarantine_token = cast_run.finish()
             result = dataclasses.replace(result, quarantine_access=quarantine_token)
-        publish.commit()  # B6a: the run's last action; inert unless this run streamed
-        return result
+        receipt = publish.commit()  # B6a: the run's last action; inert unless this run streamed
+        return dataclasses.replace(result, publication_receipt=receipt)

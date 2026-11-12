@@ -237,9 +237,9 @@ def test_the_reorder_driver_names_nothing_from_a_column_or_edge(
     outer = tmp_path / "outer"
     outer.mkdir()
     work = outer / "work"
-    # The sink stages beside its target (`_decoy_stage_*` plus a `target.parent.mkdir`), which is
-    # legitimate output staging, not scratch. Nest the target so that staging lands under `out/`,
-    # the prefix the confinement assertion already allows.
+    # The sink stages beside its target (`._decoy_publication_pending_*` and its lock file, plus
+    # a `target.parent.mkdir`), which is legitimate output staging, not scratch. Nest the target
+    # so that staging lands under `out/`, the prefix the confinement assertion already allows.
     out = tmp_path / "out"
     out.mkdir()
     before = _listing(tmp_path)

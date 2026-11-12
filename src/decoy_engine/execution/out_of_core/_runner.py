@@ -303,10 +303,14 @@ def run_fk_out_of_core(
         _validate_batch.finish_validation(validators, quality_metrics)
         seal = {"quarantine_access": seal_evidence(cast_run, quality_metrics)}  # last, pre-publish
         if sink is not None:
-            observed_commit(sink)
+            receipt = observed_commit(sink)
             committed = True
             return ExecutionResult(
-                outputs={}, warnings=tuple(warnings), quality_metrics=quality_metrics, **seal
+                outputs={},
+                warnings=tuple(warnings),
+                quality_metrics=quality_metrics,
+                publication_receipt=receipt,
+                **seal,
             )
         return ExecutionResult(
             outputs=outputs, warnings=tuple(warnings), quality_metrics=quality_metrics, **seal

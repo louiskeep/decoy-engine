@@ -104,6 +104,14 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("publication/_types.py", "raise_for_outcome"): (
         "re-raises a CommitReceipt's code; the receipt accepts only a registered `decoy` code"
     ),
+    ("execution/_transactional_sink.py", "_recover"): (
+        "builds the RECOVERING refusal receipt from the registry symbol "
+        "`PUBLICATION_COMMIT_NOT_VISIBLE` as an exact `str` (a CommitReceipt takes no subclass)"
+    ),
+    ("execution/_transactional_sink.py", "ParquetTransactionalSink._leave"): (
+        "forwards the code of the CommitReceipt the attempt ended with to the sink state table; "
+        "the receipt accepts only a registered `decoy` code"
+    ),
     ("publication/_sink_state.py", "SinkStateMachine._refuse"): (
         "raises the code of a literal sink-state cell (a registry symbol) or the one the attempt "
         "ended with; its CommitReceipt accepts only a registered `decoy` code"

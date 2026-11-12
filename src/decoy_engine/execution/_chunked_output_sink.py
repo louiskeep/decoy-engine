@@ -54,6 +54,7 @@ from decoy_engine.fileaccess.adapters import arrow as arrow_adapter
 
 if TYPE_CHECKING:
     from decoy_engine.execution._pipeline_multi_table import MultiTableSplit
+    from decoy_engine.publication import CommitReceipt
 
 __all__ = [
     "ROW_GROUP_BYTES",
@@ -138,9 +139,9 @@ class OutputPublish:
     exception leaving the block aborts an open, uncommitted session once and propagates
     unchanged. Abort is best effort exactly as on the sequential route (`_sequential.py`):
     an `Exception` raised by `abort()` is suppressed, a `BaseException` such as
-    `KeyboardInterrupt` is not. `commit()` is the run's last action; the sink's `commit()`
-    failing leaves the session uncommitted, so the same exit aborts it. An open session
-    that leaves the block normally without having committed is a wiring bug and raises."""
+    `KeyboardInterrupt` is not. `commit()` is the run's last action and returns the sink's
+    receipt (F22); its failure leaves the session uncommitted, so the same exit aborts it. An
+    open session leaving the block normally without having committed is a wiring bug."""
 
     def __init__(self, sink: Any, stream: bool, post_validation: bool) -> None:
         require_bool("stream_chunked_output", stream)
@@ -158,11 +159,12 @@ class OutputPublish:
     def open(self) -> None:
         self.is_open = True
 
-    def commit(self) -> None:
+    def commit(self) -> CommitReceipt | None:
         if not self.is_open or self._finished:
-            return
-        observed_commit(self.sink)
+            return None
+        receipt = observed_commit(self.sink)
         self._finished = True
+        return receipt
 
     def __enter__(self) -> OutputPublish:
         return self

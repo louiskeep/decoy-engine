@@ -16,6 +16,7 @@ from decoy_engine.generation import _column_streams
 from decoy_engine.generation import _plan_entry as plan_entry
 from decoy_engine.generation._plan_entry import generate_tables, generate_tables_streamed
 from decoy_engine.generation._streamed import is_bounded_sink
+from decoy_engine.publication import PublicationFailed
 from tests.parity import _f0_fixtures as fx
 from tests.parity._fr0_support import fingerprints, plan_of
 
@@ -51,7 +52,7 @@ def _relational_plan() -> Any:
 
 
 def _staging_dirs(parent: Path) -> list[Path]:
-    return [p for p in parent.iterdir() if p.name.startswith("_decoy_stage_")]
+    return [p for p in parent.iterdir() if p.name.startswith("._decoy_publication_pending_")]
 
 
 # ---- the sink capability marker ---------------------------------------------------------------
@@ -150,8 +151,11 @@ def test_commit_failure_aborts_and_preserves_the_error(
 
     monkeypatch.setattr(ts.os, "replace", failing_replace)
     target = tmp_path / "out"
-    with pytest.raises(OSError, match="commit failed"):
+    # F22: the commit is `publish_unit`, so a failed rename is `PublicationFailed`, which keeps
+    # the errno and drops the OS text.
+    with pytest.raises(PublicationFailed) as info:
         generate_tables_streamed(_relational_plan(), sink=ParquetTransactionalSink(target))
+    assert info.value.code == "publication_failed" and "commit failed" not in str(info.value)
     assert not target.exists() and _staging_dirs(tmp_path) == []
 
 

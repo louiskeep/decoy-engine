@@ -1150,7 +1150,7 @@ def test_real_parquet_transactional_sink_publishes_everything_atomically(
     static_reasons.clear()
     got = run(config, sources, sink=ParquetTransactionalSink(target))
     route = _route(got, static_reasons)
-    assert not [p for p in tmp_path.iterdir() if p.name.startswith("_decoy_stage_")]
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith("._decoy_publication_pending_")]
     if route == "mixed":
         published = {p.stem: pq.read_table(p) for p in sorted(target.glob("*.parquet"))}
         assert sorted(published) == sorted(want.outputs), (sorted(published), sorted(want.outputs))

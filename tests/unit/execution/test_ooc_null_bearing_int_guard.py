@@ -136,7 +136,7 @@ def test_t1_direct_runner_rejects_and_matches_full_frame_and_publishes_nothing(
         )
     assert ooc.value.code == _CODE
     assert not target.exists()
-    assert not [p for p in tmp_path.iterdir() if p.name.startswith("_decoy_stage_")]
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith("._decoy_publication_pending_")]
 
 
 @pytest.mark.parametrize("strategy", _REJECTED)

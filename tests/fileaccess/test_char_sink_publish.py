@@ -4,6 +4,11 @@ and the output name sets accepted and rejected today.
 The sink's directory publish is one `os.replace` (POSIX `rename(2)`): it publishes into an absent
 or empty destination and fails closed on a non-empty one. The policy-issued `OutputTxn` must keep
 exactly this behavior, so every case below stays green after the port.
+
+Updated on purpose by F22 c1b, where the commit goes through `publish_unit`: a published unit
+also holds `_decoy_publication.json`; a non-empty destination is refused
+(`publication_target_occupied`) with the stage removed on that exit; a zero-write commit binds a
+unit holding only the descriptor and is refused, not silent, onto a non-empty target.
 """
 
 from __future__ import annotations
@@ -18,13 +23,15 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
-from decoy_engine.publication import PublicationRefused
+from decoy_engine.publication import DESCRIPTOR_NAME, PublicationRefused
 
 TABLE = pa.table({"a": [1, 2, 3]})
 
 
 def _stages(parent: Path) -> list[str]:
-    return sorted(p.name for p in parent.iterdir() if p.name.startswith("_decoy_stage_"))
+    return sorted(
+        p.name for p in parent.iterdir() if p.name.startswith("._decoy_publication_pending_")
+    )
 
 
 def _snapshot(directory: Path) -> dict[str, tuple[int, int, int, int]]:
@@ -42,7 +49,7 @@ def test_publish_into_absent_target(tmp_path: Path) -> None:
     assert not target.exists()
     assert len(_stages(target.parent)) == 1
     sink.commit()
-    assert sorted(p.name for p in target.iterdir()) == ["orders.parquet"]
+    assert sorted(p.name for p in target.iterdir()) == [DESCRIPTOR_NAME, "orders.parquet"]
     assert pq.read_table(target / "orders.parquet").equals(TABLE)
     assert _stages(target.parent) == []
 
@@ -53,42 +60,44 @@ def test_publish_into_empty_directory(tmp_path: Path) -> None:
     sink = ParquetTransactionalSink(target)
     sink.write("orders", TABLE)
     sink.commit()
-    assert sorted(p.name for p in target.iterdir()) == ["orders.parquet"]
+    assert sorted(p.name for p in target.iterdir()) == [DESCRIPTOR_NAME, "orders.parquet"]
 
 
-def test_non_empty_destination_fails_closed_and_stage_survives_until_abort(tmp_path: Path) -> None:
+def test_non_empty_destination_is_refused_and_left_unchanged(tmp_path: Path) -> None:
     target = tmp_path / "out"
     target.mkdir()
     (target / "keep.txt").write_text("occupant")
     before = _snapshot(target)
     sink = ParquetTransactionalSink(target)
     sink.write("orders", TABLE)
-    with pytest.raises(OSError) as info:
+    assert len(_stages(tmp_path)) == 1  # non-vacuity: the table was staged
+    with pytest.raises(PublicationRefused) as info:
         sink.commit()
-    assert info.value.errno in (errno.ENOTEMPTY, errno.EEXIST)
+    assert info.value.code == "publication_target_occupied"
     assert _snapshot(target) == before
     assert (target / "keep.txt").read_text() == "occupant"
-    stages = _stages(tmp_path)
-    assert len(stages) == 1
-    assert (tmp_path / stages[0] / "orders.parquet").exists()
+    assert _stages(tmp_path) == []  # a refusal removes the stage on that exit
     sink.abort()
     assert _stages(tmp_path) == []
     assert _snapshot(target) == before
 
 
-def test_zero_write_commit_creates_an_empty_target(tmp_path: Path) -> None:
+def test_zero_write_commit_binds_a_descriptor_only_unit(tmp_path: Path) -> None:
     target = tmp_path / "x" / "out"
-    ParquetTransactionalSink(target).commit()
-    assert target.is_dir() and list(target.iterdir()) == []
+    assert ParquetTransactionalSink(target).commit().outcome == "published"
+    assert target.is_dir() and [p.name for p in target.iterdir()] == [DESCRIPTOR_NAME]
     assert _stages(target.parent) == []
 
 
-def test_zero_write_commit_onto_a_non_empty_target_is_silent(tmp_path: Path) -> None:
+def test_zero_write_commit_onto_a_non_empty_target_is_refused(tmp_path: Path) -> None:
     target = tmp_path / "out"
     target.mkdir()
     (target / "keep.txt").write_text("occupant")
-    ParquetTransactionalSink(target).commit()
-    assert (target / "keep.txt").read_text() == "occupant"
+    before = _snapshot(target)
+    with pytest.raises(PublicationRefused) as info:
+        ParquetTransactionalSink(target).commit()
+    assert info.value.code == "publication_target_occupied"
+    assert _snapshot(target) == before
 
 
 def test_abort_without_writes_is_a_no_op(tmp_path: Path) -> None:
@@ -164,7 +173,7 @@ def test_stage_directory_is_a_sibling_with_the_documented_prefix(tmp_path: Path)
     sink = ParquetTransactionalSink(tmp_path / "o" / "out")
     sink.write("t", TABLE)
     (stage,) = _stages(tmp_path / "o")
-    assert stage.startswith("_decoy_stage_")
+    assert stage.startswith("._decoy_publication_pending_")
     sink.abort()
 
 
@@ -180,7 +189,7 @@ def test_accepted_table_names_publish_under_the_same_leaf(tmp_path: Path, name: 
     sink = ParquetTransactionalSink(target)
     sink.write(name, TABLE)
     sink.commit()
-    assert [p.name for p in target.iterdir()] == [f"{name}.parquet"]
+    assert sorted(p.name for p in target.iterdir()) == sorted([DESCRIPTOR_NAME, f"{name}.parquet"])
 
 
 @pytest.mark.parametrize("name", REJECTED_VALUE)

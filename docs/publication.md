@@ -3,9 +3,9 @@
 How the engine creates, stages and binds an output directory, and what it promises about the
 result. This page grows with the F22 publication work (plan
 `docs/plans/2026-10-30-f22-publication-replan.md`); each section says what is in place today.
-Later parts add vault-before-output ordering and route every engine sink through
-`publish_unit` (the sink's state table is in place, below); until those sections exist here,
-the engine does not claim them.
+The reference sink commits through `publish_unit` on every route that uses it (below). Later
+parts add vault-before-output ordering and the isolated route on the same bind; until those
+sections exist here, the engine does not claim them.
 
 Platforms: Linux and macOS, on both the ambient policy (`LocalFileAccess`, the CLI default) and
 the strict policies (`RootedFileAccess`, `PreopenedFileAccess`). Windows keeps its plain path
@@ -256,12 +256,68 @@ then the result is bound and the abort does nothing. Busy and refused calls rais
 nothing. `abort()` never raises. A table name that is not one path component is refused with
 `ValueError` before the state moves.
 
-What the sink does today: a commit still publishes the stage with the plain `table_sink` rename
-(the published unit holds only the Parquet files), so it ends sealed or failed, and a second
-`commit()` on a sealed sink returns without any I/O. After a failed write or commit every call
-but `abort()` is refused, and after an abort every call is. Routing the sink's commit through
-`publish_unit` (receipts, `already_committed` on a restart), `reconcile()` on the sink and
-the routes' receipts are a later part; until this section says so, the sink does not claim them.
+What the sink does: every call goes through the table above. Its commit is `publish_unit`
+(next section), so it ends sealed (`published`, `already_committed`), refused, failed or
+uncertain, and a second `commit()` on a sealed sink returns the same receipt without any I/O.
+After a failed write or commit, or a refusal, every call but `abort()` is refused, and after
+an abort every call is.
+
+## The reference sink on `publish_unit`
+
+`ParquetTransactionalSink(target, request=PublicationRequest(...))` stages each table as
+`<table>.parquet` in a `publication` stage beside the target and, on `commit()`, hands the stage
+and exactly the tables it staged to `publish_unit`. Without a `request` the sink is its own
+attempt: a fresh random `operation_id`, still judged by its measured result. A request carrying
+a vault is refused with `ValueError` when the sink is built: an engine sink never binds a vault
+(vault jobs publish through `publish_tables`).
+
+`commit()` returns the `CommitReceipt` for `published` and `already_committed` and raises the
+typed error for every other outcome (`raise_for_outcome`); the receipt is also on
+`sink.receipt`. With no `write()` the unit holds only its descriptor.
+
+| Commit ends | `commit()` | State after |
+|---|---|---|
+| bound | returns the receipt (`published`) | sealed |
+| the same result already bound, chain fsynced | returns the receipt (`already_committed`) | sealed |
+| bound, or found bound, and a chain fsync failed | raises `CommitUncertain` | uncertain |
+| the same `operation_id` bound with another result | raises `PublicationRefused` (`publication_operation_conflict`) | refused |
+| another result bound, or anything else at the target, or the lock refused | raises `PublicationRefused` (its code) | refused |
+| a staged table unreadable, the descriptor write, the stage fsync walk or the rename failed | raises `PublicationFailed` (`publication_failed`) | failed |
+
+On every outcome but a bind the stage is already removed when `commit()` returns or raises.
+
+**Restart.** A job rerun after a crash builds a fresh sink with the same `operation_id`,
+writes its tables again and calls `commit()`. The judge compares measured results: the same
+result is `already_committed` once the bound unit and its chain to the anchor are fsynced; a
+different result under the same `operation_id` is `operation_conflict` and the bound unit is
+untouched. A matching `operation_id` alone never seals anything.
+
+**`reconcile()`.** On a sink that has not committed it does nothing and returns `None`. On an
+uncertain sink it reads the bound descriptor: this sink's own measured `result_id` there, with
+the unit tree and every directory up to the anchor fsynced, seals the sink and returns a
+receipt with `outcome` `already_committed` and `durable` true; an fsync failure, or a read
+that cannot tell, leaves it uncertain (`CommitUncertain` again); an absent unit or a different
+result refuses it (`publication_commit_not_visible`). On a sealed sink it returns the sealed
+receipt. Routes do not call it; it is for a caller holding an uncertain sink.
+
+**Evidence.** The sink's F29 publication evidence follows its state: sealed is `published`,
+uncertain `unknown` (bound, not confirmed durable), refused, failed and aborted
+`not_published`. A bound unit needs no cleanup; after a refusal or failure the cleanup state
+is what the sink observed of its removed stage (`confirmed` on the ambient policy, `attempted`
+on the strict ones).
+
+**Routes.** Every engine route that publishes through the sink returns its receipt:
+`run_sequential` and `run_fk_out_of_core` on `ExecutionResult.publication_receipt`,
+`run_pipeline`'s full-frame streamed and mixed routes on the same field, and streamed
+generation on `GenerationResult.publication_receipt`. On `run_pipeline`'s sequential and
+out-of-core routes the pipeline rebuilds the route's result and the field is `None`; the
+receipt is on the sink the caller passed (`sink.receipt`). A route whose commit raises fails
+the run with that error, and nothing of this attempt is bound.
+
+**On disk.** Every unit the reference sink publishes holds `_decoy_publication.json` beside
+its Parquet files, and the target's parent holds the empty lock file `.<leaf>.decoy-lock`
+(never removed). A consumer that lists every file of an output directory sees both. Unit
+files are `0600` and unit directories `0700`.
 
 ## Named limits
 

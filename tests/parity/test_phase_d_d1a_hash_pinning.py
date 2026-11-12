@@ -85,7 +85,7 @@ def _without_a(batch: pa.RecordBatch) -> pa.RecordBatch:
 def _assert_aborted(sink: RecordingSink, out_dir: Path) -> None:
     assert (sink.commits, sink.aborts) == (0, 1)
     assert not out_dir.exists()
-    assert not list(out_dir.parent.glob("_decoy_stage_*"))
+    assert not list(out_dir.parent.glob("._decoy_publication_pending_*"))
 
 
 @pytest.mark.parametrize(
