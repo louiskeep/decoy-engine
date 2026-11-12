@@ -10,9 +10,9 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
-from decoy_engine.progress import PhaseEvent, RateSample
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import run_pipeline
+from decoy_engine.progress import PhaseEvent, RateSample
 from decoy_engine.run_result import CollectedFacts, RunResultCollector, project_tables
 
 _VERSION = "collect-test"
