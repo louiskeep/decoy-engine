@@ -343,6 +343,11 @@ jobs:
         with:
           bootstrap: "true"
       - name: Determinism harness
-        run: pytest -m determinism_harness --tb=short --junitxml=determinism.xml
+        # Scoped to the module that owns the marker: a whole-tree collection counts module-level
+        # skips of unrelated files and trips the zero-skip guard below. A sentry
+        # (test_ci_lanes.py) fails if a marked file falls outside this path.
+        run: >
+          pytest tests/generation/test_faker_pool_determinism.py
+          -m determinism_harness --tb=short --junitxml=determinism.xml
       - name: Guard -- the harness actually executed (passed>0, none skipped/errored/failed)
         run: python scripts/dev/junit_ran.py determinism.xml

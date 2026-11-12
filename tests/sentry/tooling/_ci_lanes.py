@@ -70,6 +70,7 @@ class Lane(NamedTuple):
     expr: str | None  # the -m expression; None selects every test
     whole_suite: bool
     bad: bool  # the expression is outside the grammar
+    paths: tuple[str, ...]  # positional test paths; empty means the default testpaths
 
 
 def load(root: Path = ROOT) -> Tree:
@@ -167,8 +168,10 @@ def _pytest_args(cmd: list[str]) -> list[str] | None:
     return None
 
 
-def _read_args(args: list[str], default: str | None) -> tuple[str | None, bool, bool]:
-    """(expression, whole_suite, bad) of one pytest command line; the last -m wins."""
+def _read_args(
+    args: list[str], default: str | None
+) -> tuple[str | None, bool, bool, tuple[str, ...]]:
+    """(expression, whole_suite, bad, paths) of one pytest command line; the last -m wins."""
     expr, has_m, bad, paths, i = default, False, False, [], 0
     while i < len(args):
         tok = args[i]
@@ -193,7 +196,7 @@ def _read_args(args: list[str], default: str | None) -> tuple[str | None, bool, 
             _check_expr(expr)
         except ExprError:
             bad = True
-    return expr, all(p == "tests" for p in paths), bad
+    return expr, all(p == "tests" for p in paths), bad, tuple(paths)
 
 
 def lanes(tree: Tree) -> list[Lane]:

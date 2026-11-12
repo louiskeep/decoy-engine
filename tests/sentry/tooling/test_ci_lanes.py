@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import re
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -357,3 +358,48 @@ def test_gates_excludes_the_harness_that_its_own_lane_owns() -> None:
     expr = parse_marker_expr(TREE.gates)
     assert not lanes.selects(expr, frozenset({"determinism_harness"}))
     assert "determinism" in TREE.required["merge"][0]["jobs"]
+
+
+# --- the determinism job collects every file that carries its marker ------------------------
+
+# Collecting the whole tree counts module-level skips of unrelated files, and the job's zero-skip
+# guard then fails. The job therefore names the owning module; this keeps that list complete.
+_MARK_SITE = re.compile(r"mark\.determinism" + r"_harness\b")
+
+
+def marker_sites(root: Path) -> list[str]:
+    return sorted(
+        str(p.relative_to(root))
+        for p in (root / "tests").rglob("*.py")
+        if _MARK_SITE.search(p.read_text())
+    )
+
+
+def outside_scope(sites: list[str], paths: tuple[str, ...]) -> list[str]:
+    return [s for s in sites if not any(s == p or s.startswith(p + "/") for p in paths)]
+
+
+def determinism_paths(tree: lanes.Tree) -> tuple[str, ...]:
+    (lane,) = [ln for ln in lanes.lanes(tree) if ln.job == "determinism"]
+    return lane.paths
+
+
+def test_determinism_job_collects_every_marked_file() -> None:
+    sites = marker_sites(lanes.ROOT)
+    assert sites, "no file carries the marker, so the scope check would pass vacuously"
+    assert outside_scope(sites, determinism_paths(TREE)) == []
+
+
+def test_determinism_job_is_scoped_not_whole_tree() -> None:
+    assert determinism_paths(TREE) and "tests" not in determinism_paths(TREE)
+
+
+def test_marker_site_outside_the_job_scope_is_caught() -> None:
+    sites = [*marker_sites(lanes.ROOT), "tests/physical/test_new_harness.py"]
+    assert outside_scope(sites, determinism_paths(TREE)) == ["tests/physical/test_new_harness.py"]
+
+
+def test_scope_that_drops_the_owning_module_is_caught() -> None:
+    t = seeded()
+    only_lane(t, ("ci.yml", "determinism"), "pytest tests/unit -m determinism_harness")
+    assert outside_scope(marker_sites(lanes.ROOT), determinism_paths(t)) != []
