@@ -570,3 +570,21 @@ def test_at8_a_failure_while_applying_restores_every_owned_path(
     monkeypatch.undo()
     assert r.git("status", "--porcelain", "--untracked-files=all") == ""
 
+
+@pytest.mark.parametrize(
+    ("names", "left"),
+    [
+        ("UNRELEASED, Kind", "Kind"),
+        ("KINDS, UNRELEASED", "KINDS"),
+        ("A, UNRELEASED, Kind", "A, Kind"),
+    ],
+)
+def test_stamping_drops_the_unused_unreleased_import_wherever_it_sits(
+    names: str, left: str
+) -> None:
+    head = "from decoy_engine.reasons._types import "
+    src = f'{head}{names}\n\nX = _d("x", "X.", since=UNRELEASED)\n'
+    assert (
+        sr._tools()[2].stamp_source(src, "9.9.0")
+        == f'{head}{left}\n\nX = _d("x", "X.", since="9.9.0")\n'
+    )

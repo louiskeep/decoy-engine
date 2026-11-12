@@ -205,10 +205,9 @@ def stamp_source(text: str, version: str) -> str:
     out = PENDING_ARG.sub(sub, text)
     if out == text or _unreleased_names(out) != 1:
         return out
-    out = out.replace(f"{TYPES_IMPORT}UNRELEASED\n", "", 1)
-    return out.replace(f"{TYPES_IMPORT}UNRELEASED, ", TYPES_IMPORT, 1).replace(
-        "\n    UNRELEASED,\n", "\n", 1
-    )
+    out = out.replace(f"{TYPES_IMPORT}UNRELEASED\n", "", 1).replace("\n    UNRELEASED,\n", "\n", 1)
+    one_line = rf"^({re.escape(TYPES_IMPORT)}.*?)(?:\bUNRELEASED, |, UNRELEASED\b)"
+    return re.sub(one_line, r"\1", out, count=1, flags=re.M)
 
 
 def clear_pending_summaries(text: str) -> str:
