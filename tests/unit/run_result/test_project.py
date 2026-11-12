@@ -7,8 +7,8 @@ from types import MappingProxyType
 import pyarrow as pa
 import pytest
 
-from decoy_engine.delivery import TableDelivery as PlanTableDelivery
 from decoy_engine import ExecutionError
+from decoy_engine.delivery import TableDelivery as PlanTableDelivery
 from decoy_engine.execution import ExecutionResult
 from decoy_engine.reason_adapter import reason_from_exception
 from decoy_engine.run_result import (
@@ -59,13 +59,19 @@ def test_rows_precedence(result, facts, rows, source) -> None:
     ("facts", "failed", "expected"),
     [
         (CollectedFacts(aggregate_error=True), True, ["failed", "failed", "failed"]),
-        (CollectedFacts(aggregate_error=True, finished={"a": 1}), True,
-         ["succeeded", "failed", "failed"]),
+        (
+            CollectedFacts(aggregate_error=True, finished={"a": 1}),
+            True,
+            ["succeeded", "failed", "failed"],
+        ),
         (CollectedFacts(started=frozenset("abc")), True, ["failed"] * 3),
         (CollectedFacts(started=frozenset("abc")), False, ["succeeded"] * 3),
         (CollectedFacts(), False, ["not_run"] * 3),
-        (CollectedFacts(finished={"a": 1}, errored=frozenset("b")), True,
-         ["succeeded", "failed", "not_run"]),
+        (
+            CollectedFacts(finished={"a": 1}, errored=frozenset("b")),
+            True,
+            ["succeeded", "failed", "not_run"],
+        ),
         (None, True, ["not_run"] * 3),
     ],
 )
@@ -84,10 +90,14 @@ def test_delivery_facts() -> None:
     delivery = DeliveryFacts(
         mode="in_place",
         vault="not_used",
-        tables={"a": entry("delivered", format="csv", output="a.csv"), "b": entry("failed", reason=REASON)},
+        tables={
+            "a": entry("delivered", format="csv", output="a.csv"),
+            "b": entry("failed", reason=REASON),
+        },
     )
     projected = project_tables(
-        config=cfg("a", "b", "c"), execution_result=done(("a", 1), ("b", 2), ("c", 3)),
+        config=cfg("a", "b", "c"),
+        execution_result=done(("a", 1), ("b", 2), ("c", 3)),
         delivery=delivery,
     )
     a, b, c = projected.tables
@@ -109,7 +119,9 @@ def test_delivery_facts() -> None:
 )
 def test_delivery_outcome_cells(states, outcome) -> None:
     tables = {n: entry(s) for n, s in zip("ab", states, strict=False)}
-    got = project_tables(config=cfg("a", "b"), delivery=DeliveryFacts("strict", "committed", tables))
+    got = project_tables(
+        config=cfg("a", "b"), delivery=DeliveryFacts("strict", "committed", tables)
+    )
     assert got.delivery.outcome == outcome
     assert (got.delivery.mode, got.delivery.vault) == ("strict", "committed")
 
@@ -136,7 +148,8 @@ def test_delivery_states_agree() -> None:
 
 def test_delivery_states_project() -> None:
     delivery = DeliveryFacts(
-        "best_effort", "not_used",
+        "best_effort",
+        "not_used",
         {
             "a": entry("delivered"),
             "b": entry("failed", reason=REASON),
@@ -149,7 +162,10 @@ def test_delivery_states_project() -> None:
     assert projected.delivery.outcome == "partial"
     exit_map = {("partially_delivered", None): 6}
     outcome = derive_outcome(
-        category=None, delivery_mode=projected.delivery.mode,
-        delivery_outcome=projected.delivery.outcome, blocking_failed=False, exit_map=exit_map,
+        category=None,
+        delivery_mode=projected.delivery.mode,
+        delivery_outcome=projected.delivery.outcome,
+        blocking_failed=False,
+        exit_map=exit_map,
     )
     assert (outcome.status, outcome.exit_code) == ("partially_delivered", 6)
