@@ -26,6 +26,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 SRC = Path(__file__).parents[3] / "src" / "decoy_engine"
 GATE = "prepare_declared_sources"
 # Execution routes call the choke point in `execution/_guards.py`, which adds the created-column
@@ -388,3 +390,46 @@ def test_the_profile_call_check_sees_a_missing_declared_keyword() -> None:
     assert _profile_calls_without_declared(kwargs_only) == [2]
     passing = ast.parse("def f(c, d):\n    return profile_source(c, declared=d)\n")
     assert _profile_calls_without_declared(passing) == []
+
+
+LANE_CORES = (
+    ("execution/_chunked_oracle.py", "_mask_pipeline_chunked"),
+    ("execution/native/chunked/_core.py", "mask_chunked"),
+)
+
+
+def test_each_route_calls_a_read_it_guards() -> None:
+    """A route whose function calls none of its guarded names passes the ordering check vacuously."""
+    for (rel, func_name), guarded in ROUTES.items():
+        called = {name for name, _ in _calls(_function(_parse(rel), func_name))}
+        assert guarded & called, (rel, func_name, sorted(guarded))
+
+
+def _core_route(key: tuple[str, str]) -> frozenset[str]:
+    guarded = ROUTES.get(key)
+    assert guarded is not None, f"the lane core {key} is not in ROUTES"
+    return guarded
+
+
+@pytest.mark.parametrize("key", LANE_CORES)
+def test_moving_the_read_above_the_gate_in_a_lane_core_makes_the_walk_fail(
+    key: tuple[str, str],
+) -> None:
+    guarded = _core_route(key)
+    rel, func_name = key
+    tree = _parse(rel)
+    func = _function(tree, func_name)
+    gate_at = next(i for i, s in enumerate(func.body) if _contains_gate(s))
+    read_at = next(i for i, s in enumerate(func.body) if any(n in guarded for n, _ in _calls(s)))
+    func.body.insert(gate_at, func.body.pop(read_at))
+    assert _route_violations(_reparse(tree), func_name, guarded) != []
+
+
+@pytest.mark.parametrize("key", LANE_CORES)
+def test_dropping_the_gate_from_a_lane_core_makes_the_walk_fail(key: tuple[str, str]) -> None:
+    guarded = _core_route(key)
+    rel, func_name = key
+    tree = _parse(rel)
+    func = _function(tree, func_name)
+    func.body = [s for s in func.body if not _contains_gate(s)]
+    assert _route_violations(_reparse(tree), func_name, guarded) != []

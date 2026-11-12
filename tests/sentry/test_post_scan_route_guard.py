@@ -224,3 +224,31 @@ def test_resident_lane_checker_catches_a_public_entry_call() -> None:
     assert resident_lane_public_calls("_chunked_entry.run_mask_chunked(c, s)\n") == [
         "run_mask_chunked:1"
     ]
+
+
+# One case per spelling of a watched call: an import alias, an attribute call, a plain import.
+SPELLINGS = {
+    "import_as": "from m import {name} as alias\nalias({args})\n",
+    "module_import_as": "import m as mod\nmod.{name}({args})\n",
+    "attribute": "import m\nm.{name}({args})\n",
+    "from_import": "from m import {name}\n{name}({args})\n",
+}
+
+
+@pytest.mark.parametrize("spelling", sorted(SPELLINGS))
+def test_caller_checker_resolves_each_spelling(spelling: str) -> None:
+    source = SPELLINGS[spelling].format(name="run_sequential", args="a, p, l")
+    assert calls_without_config(source) == ["run_sequential:2"]
+    passing = SPELLINGS[spelling].format(name="run_sequential", args="a, config=c")
+    assert calls_without_config(passing) == []
+
+
+@pytest.mark.parametrize("spelling", sorted(SPELLINGS))
+def test_resident_lane_checker_resolves_each_spelling(spelling: str) -> None:
+    source = SPELLINGS[spelling].format(name="run_mask_chunked", args="c, s")
+    assert resident_lane_public_calls(source) == ["run_mask_chunked:2"]
+
+
+def test_checkers_follow_a_re_binding_of_an_alias() -> None:
+    source = "from m import run_sequential as rs\nalias = rs\nalias(a)\n"
+    assert calls_without_config(source) == ["run_sequential:3"]
