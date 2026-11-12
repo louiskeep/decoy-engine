@@ -1,0 +1,63 @@
+# Jobs that must be green on a pull request head before it merges. The lane sentry
+# (tests/sentry/tooling/test_ci_lanes.py) checks every entry against the workflows. The nightly
+# tier is not listed: it is every job that runs on `schedule`, derived from the workflows.
+schema = 1
+
+[[merge]]
+workflow = "ci.yml"
+jobs = [
+  "packaging-gate",
+  "ml-gate",
+  "base-install",
+  "ner-gate",
+  "dp-certified-gate",
+  "determinism",
+]
+
+[[merge]]
+workflow = "native-companion.yml"
+jobs = [
+  "companion-wheel-linux",
+  "companion-wheel-windows",
+  "companion-wheel-macos",
+  "companion-rust-lint",
+  "core-companion-present",
+  "companion-fuzz-sanitizer",
+  "core-companion-absent",
+]
+
+[[merge]]
+workflow = "docs.yml"
+jobs = ["build"]
+
+[[merge]]
+workflow = "compat-preflight.yml"
+jobs = ["compat-preflight"]
+
+[[merge]]
+workflow = "changelog-fragment.yml"
+jobs = ["changelog-fragment"]
+
+[[merge_exempt]]
+workflow = "regression-proof.yml"
+job = "prove-regression"
+reason = "runs only on PRs labelled bugfix"
+
+[[merge_exempt]]
+workflow = "docs.yml"
+job = "deploy"
+reason = "deploy job; runs only from a main push, and docs.yml has no push trigger until DOCS_DEPLOY is enabled"
+
+# Default markers whose tests skip outside their profile: a whole-suite run does not count as
+# their lane.
+[[dedicated_marker]]
+name = "ml"
+reason = "tests skip when the ML stack cannot load (tests/_ml.py); only ml-gate sets DECOY_REQUIRE_ML=1 so that fails"
+
+[[dedicated_marker]]
+name = "ner"
+reason = "tests need the NER model wheel; the dev profile skips them"
+
+[[dedicated_marker]]
+name = "dp_certified"
+reason = "fit_dp_snapshot completes only on the certified profile"

@@ -28,6 +28,7 @@ sentry (`tests/sentry/test_package_map_paths.py`) asserts every path here exists
 | `io/` | Bounded source readers shared by CLI and platform: CSV record framer, Parquet/CSV byte-budget chunk cutter (`ChunkBudget`) |
 | `quality/` | Fidelity report, distribution snapshot, DP fit |
 | `validators/` | Job-level validators (`validators:` block) |
+| `support/` | Pseudonymised support-bundle types (F32): closed `SupportBundle` dataclasses with no free-text field, `Label` ordinal names and `Version` checked types, with the central `reasons.ReasonRef` registry-checked. Reads `execution`, `profile` and `reasons`; nothing in the engine imports it |
 | `quarantine.py` | Quarantine-row routing (`quarantine:` block) |
 | `contracts/` | Versioned engine-owned contracts consumed by CLI/platform: `declared_casting.py` (F06 per-column parse/sentinel/policy/output contract), `_declared_base.py`, `_declared_formats.py` (the closed format shapes) |
 | `declared_casting/` | F06 casting boundary: `_catalog.py` (the only format registry + capability manifest), `_numeric.py`/`_date.py`/`_cobol.py` kernels, `_boundary.py` (`DeclaredCastRun`: pre-mask cast, post-mask format), `_counts.py`, `_eligibility.py` (`evaluate_declared_casting`, `declared_route_guard`), `_quarantine_protocol.py`, `_quarantine_local.py` (Fernet reference sink) |

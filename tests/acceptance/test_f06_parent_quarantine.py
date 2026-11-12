@@ -123,7 +123,7 @@ def test_format_quarantine_on_a_child_only_table_stays_admitted(tmp_path: Path) 
     cfg, sources = _config(tmp_path, "format")
     amt = cfg["tables"][0]["columns"].pop(1)
     cfg["tables"][1]["columns"].append(amt)
-    cfg["sources"]["child"] = cfg["sources"]["parent"]
+    cfg["sources"]["child"] = dict(cfg["sources"]["parent"])
     sources["child"] = sources["parent"].rename_columns(["pid", "amt"]).select(["pid", "amt"])
     sources["child"] = sources["child"].append_column("cid", pa.array(["a", "b"], pa.string()))
     pq.write_table(sources["child"], cfg["sources"]["child"]["path"].replace("parent", "child"))

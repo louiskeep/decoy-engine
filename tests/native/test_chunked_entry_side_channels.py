@@ -21,6 +21,11 @@ from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution.native._dispatch import NativeRouteEvidence
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.vault import VaultWriter, collect_vault_entries
+from tests._declared_schema import declared_schema
+from tests.native._b8_support import (
+    run_mask_chunked_below_gate,
+    run_mask_pipeline_chunked_below_gate,
+)
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     FORCE_ORACLE_VALUE,
@@ -50,14 +55,14 @@ def _forced_columns(config: dict[str, Any]) -> list[str]:
     ]
 
 
-def _entry(config: dict[str, Any], chunks: Any, **kw: Any) -> Any:
+def _entry(config: dict[str, Any], chunks: Any, *, below_gate: bool = False, **kw: Any) -> Any:
     """`run_mask_chunked` that owns a route-evidence sink and, for a config carrying a
-    forcing column, proves the table stayed on the oracle for the exact reason."""
+    forcing column, proves the table stayed on the oracle for the exact reason.
+    `below_gate` is for a test whose subject is an undeclared table or column."""
+    entry = run_mask_chunked_below_gate if below_gate else run_mask_chunked
     kw.setdefault("key_provider", key_provider())
     sink = kw.setdefault("route_evidence_sink", [])
-    out = run_mask_chunked(
-        config, chunks, table=kw.pop("table", TABLE), engine_version=ENGINE_VERSION, **kw
-    )
+    out = entry(config, chunks, table=kw.pop("table", TABLE), engine_version=ENGINE_VERSION, **kw)
     for column in _forced_columns(config):
         assert len(sink) == 1, sink
         assert sink[0].native_admitted is False, sink[0]
@@ -65,11 +70,12 @@ def _entry(config: dict[str, Any], chunks: Any, **kw: Any) -> Any:
     return out
 
 
-def _oracle(config: dict[str, Any], chunks: Any, **kw: Any) -> Any:
+def _oracle(config: dict[str, Any], chunks: Any, *, below_gate: bool = False, **kw: Any) -> Any:
+    entry = run_mask_pipeline_chunked_below_gate if below_gate else run_mask_pipeline_chunked
     kw.setdefault("key_provider", key_provider())
-    return run_mask_pipeline_chunked(
-        config, chunks, table=kw.pop("table", TABLE), engine_version=ENGINE_VERSION, **kw
-    )
+    table = kw.pop("table", TABLE)
+    kw.setdefault("source_schema", declared_schema(config, table))
+    return entry(config, chunks, table=table, engine_version=ENGINE_VERSION, **kw)
 
 
 class _RecordingAdapter(PandasExecutionAdapter):
@@ -279,8 +285,11 @@ def test_compatibility_rejection_is_identical_on_both_entry_points(case: str) ->
     want = (type(direct.value), direct.value.code)
     assert want[1] is not None
 
-    oracle = _failure(lambda: _oracle(config, _poisoned(first), table=table))
-    entry = _failure(lambda: _entry(config, _poisoned(first), table=table))
+    # `table_unknown` is the compatibility check's own refusal, which the gate now answers first
+    # at a public entry (`source_file.undeclared_table`), so that case runs below the gate.
+    below = case == "table_unknown"
+    oracle = _failure(lambda: _oracle(config, _poisoned(first), table=table, below_gate=below))
+    entry = _failure(lambda: _entry(config, _poisoned(first), table=table, below_gate=below))
     assert oracle == want
     assert entry == want
 
