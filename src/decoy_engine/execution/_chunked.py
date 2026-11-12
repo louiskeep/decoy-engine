@@ -168,6 +168,7 @@ from decoy_engine import reasons
 from decoy_engine.config._subset_run import refuse_unapplied_subset
 from decoy_engine.declared_casting._eligibility import declared_route_guard
 from decoy_engine.execution._guards import prepare_declared_execution_sources
+from decoy_engine.execution.chunked import observe_chunked
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.profile import DeclarationRequest
@@ -457,19 +458,17 @@ def run_mask_pipeline_chunked(
     if state.first is None:
         # Admission cleared (or the plan is unkeyed); there is genuinely nothing to mask.
         state.close_secret()
-        return iter(())
-    return _chunked_oracle.release_when_done(
-        _chunked_oracle._oracle_masked(
-            state,
-            config=config,
-            table=table,
-            vault_writer=vault_writer,
-            chunk_result_sink=chunk_result_sink,
-            base_row_offset=base_row_offset,
-            on_chunk=None,
-        ),
+        return observe_chunked(table, iter(()))
+    stream = _chunked_oracle._oracle_masked(
         state,
+        config=config,
+        table=table,
+        vault_writer=vault_writer,
+        chunk_result_sink=chunk_result_sink,
+        base_row_offset=base_row_offset,
+        on_chunk=None,
     )
+    return observe_chunked(table, _chunked_oracle.release_when_done(stream, state))
 
 
 def _warm_faker_pools(
