@@ -347,3 +347,15 @@ def test_probe_writes_per_worker_files_under_xdist(
     assert [json.loads(x) for x in out.read_text().splitlines()] == [{"run": run}]
     probe.pytest_sessionfinish(_Session("no"))
     assert out.read_text() == ""
+
+
+def test_missing_record_is_hand(
+    codemod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A declared column the source lacks is for a person to fix; the file is left alone."""
+    cfg = tmp_path / "cfg.py"
+    cfg.write_text(ONE, encoding="utf-8")
+    rec = _record(tmp_path, cfg, "t", "missing", ["a"], ["a"])
+    codemod.main(["declare-columns", "--record", str(rec), str(cfg)])
+    assert "hand t::n t" in capsys.readouterr().out
+    assert cfg.read_text() == ONE

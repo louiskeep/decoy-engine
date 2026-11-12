@@ -18,6 +18,7 @@ import pytest
 
 from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked, run_pipeline
 from decoy_engine.config import PipelineConfig
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution._column_access import (
     OWN_TARGET_CREATES,
     OWN_TARGET_SOURCE,
@@ -155,8 +156,10 @@ def _expected_refusal(entry: str, route: str) -> str | None:
     return "strategy_not_chunk_safe"
 
 
-def _config(tmp_path: Path, entry: str, *, fk: bool = False) -> dict[str, Any]:
-    table = _table(entry, _valid(entry))
+def _config(
+    tmp_path: Path, entry: str, *, fk: bool = False, refs: tuple[str, ...] | None = None
+) -> dict[str, Any]:
+    table = _table(entry, refs or _valid(entry))
     tables = [table]
     if fk:  # out-of-core needs a relationship
         key = {"strategy": "hash", "namespace": "k"}
@@ -228,6 +231,17 @@ def test_created_target_route_matrix(
     assert VALUES[entry](out["tgt"].to_pylist())
     if route == "native":  # the companion declines the table, so the oracle route ran it
         assert evidence[0].native_admitted is False
+
+
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("entry", ENTRIES)
+def test_created_target_self_reference_refused(entry: str, route: str, tmp_path: Path) -> None:
+    """A target that is its own required input is not created: refused before masking."""
+    refs = ("tgt",) * len(_valid(entry))
+    config = _config(tmp_path, entry, fk=route == "out_of_core", refs=refs)
+    with pytest.raises(PipelineValidationError) as caught:
+        _run(route, config, [])
+    assert caught.value.code == "source_file.declared_column_missing"
 
 
 def _native_group_key_selects_no_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

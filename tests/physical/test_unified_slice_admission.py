@@ -14,6 +14,7 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution import _unified_slice_admission
 from decoy_engine.execution.native._companion_status import native_companion_status
 from decoy_engine.execution.physical._activation import build_unified_slice_activation
@@ -418,8 +419,10 @@ def test_cheap_admission_declines_physical_named_index(tmp_path: Path) -> None:
     schema = base.schema.with_metadata({b"pandas": json.dumps(meta).encode()})
     source = base.cast(schema)
     config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
-    profile, _ = _profile_and_plan(config, source)
-    assert _cheap_ok(config, profile, source) is None
+    with pytest.raises(PipelineValidationError) as caught:  # the stored index is not a column
+        _profile_and_plan(config, source)
+    assert caught.value.code == "source_file.declared_column_missing"
+    assert "column c" in str(caught.value)
 
 
 def test_cheap_admission_admits_a_default_range_index(tmp_path: Path) -> None:

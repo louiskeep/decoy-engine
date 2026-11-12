@@ -70,6 +70,7 @@ __all__ = [
     "SOURCE_FILE_COLUMN_NAMES_SOURCE_CONFLICT",
     "SOURCE_FILE_COLUMN_NAMES_WITH_HEADER",
     "SOURCE_FILE_CSV_PARAM_ON_NON_CSV",
+    "SOURCE_FILE_DECLARED_COLUMN_MISSING",
     "SOURCE_FILE_FILE_NOT_FOUND",
     "SOURCE_FILE_HAS_HEADER_REQUIRED",
     "SOURCE_FILE_LONE_CR",
@@ -143,6 +144,11 @@ SOURCE_FILE_COLUMN_NAMES_FILE_INVALID = _d(
     "source_file.column_names_file_invalid",
     "Source file column names file invalid.",
     since="1.15.0",
+)
+SOURCE_FILE_DECLARED_COLUMN_MISSING = _d(
+    "source_file.declared_column_missing",
+    "Source file declared column missing.",
+    since="1.26.0",
 )
 SOURCE_FILE_UNDECLARED_COLUMN = _d(
     "source_file.undeclared_column",

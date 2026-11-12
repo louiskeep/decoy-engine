@@ -18,6 +18,7 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution import _chunked
 from decoy_engine.execution._chunked import check_chunked_compatibility
 from decoy_engine.execution._chunked_carry import passthrough_columns, plan_carry
@@ -49,6 +50,7 @@ from tests.unit.execution import _auto_chunk_support as support
 
 REG = get_default_registry()
 _WARN = {"unconfigured_column_policy": "warn"}
+MISSING = "source_file.declared_column_missing"
 _FIXED = {
     "composite_name_email": ("first_name", ["last_name", "email"]),
     "composite_city_state_zip": ("city", ["state", "zip"]),
@@ -339,7 +341,9 @@ def test_a_configured_stored_index_column_is_refused_before_any_chunk(
         else run_mask_chunked_below_gate
     )
     sink: list[Any] = []
-    with pytest.raises(TransformError) as info:
+    # A configured name that is only the stored index is absent from the arrow columns.
+    stored = case != "when_reference"
+    with pytest.raises(PipelineValidationError if stored else TransformError) as info:
         list(
             entry_point(
                 config,
@@ -351,7 +355,8 @@ def test_a_configured_stored_index_column_is_refused_before_any_chunk(
                 **chunked_entry_kwargs(entry_point, config, TABLE),
             )
         )
-    assert info.value.code == "config_references_stored_index"
+    assert info.value.code == (MISSING if stored else "config_references_stored_index")
+    assert not stored or "column id" in str(info.value)
     assert sink == []
 
 
@@ -442,7 +447,8 @@ def test_a_stored_index_change_between_chunks_is_schema_drift_on_both_routes(
     forced = make_config([redact("s"), truncate("t"), force_oracle(FORCE)], global_settings=_WARN)
     native = _outcome(config, chunks)
     oracle = _outcome(forced, [with_force(c) for c in chunks])
-    assert native == oracle == ("native_chunk_schema_drift", 1, 1)
+    code = MISSING if direction == "plain_then_index" else "native_chunk_schema_drift"
+    assert native == oracle == (code, 1, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -854,7 +860,8 @@ def test_stored_index_drift_is_raised_by_both_public_entries(
     next(gen)
     with pytest.raises(Exception) as info:
         next(gen)
-    assert getattr(info.value, "code", None) == "native_chunk_schema_drift"
+    expected = MISSING if direction == "plain_then_index" else "native_chunk_schema_drift"
+    assert getattr(info.value, "code", None) == expected
     assert len(sink) == 1
 
 

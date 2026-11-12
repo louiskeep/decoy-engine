@@ -14,6 +14,7 @@ from datetime import datetime
 import pyarrow as pa
 import pytest
 
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.execution._chunked_fk import fk_passthrough_columns_for_table
 from decoy_engine.execution.native import _dispatch
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
@@ -1168,19 +1169,15 @@ def test_configured_column_missing_from_first_chunk_reroutes_and_reports_both_si
     }
     source = pa.table({"p": [1, 2]})  # "q" is configured but absent from this chunk.
     sink: list[NativeRouteEvidence] = []
-    list(
-        run_native_or_oracle_chunked(
-            config, [source], table="w", engine_version="test", route_evidence_sink=sink
+    with pytest.raises(PipelineValidationError) as caught:
+        list(
+            run_native_or_oracle_chunked(
+                config, [source], table="w", engine_version="test", route_evidence_sink=sink
+            )
         )
-    )
-    evidence = sink[0]
-    assert evidence.native_admitted is False
-    # BOTH sides of the symmetric difference show up: nothing extra in the
-    # chunk (empty `uncovered_columns`), but "q" is missing on the other side
-    # -- the diagnostic that reported only `actual - covered` would show an
-    # empty list here and silently hide the real cause.
-    assert "uncovered_columns:[]" in evidence.reroute_reason
-    assert "missing_configured_columns:['q']" in evidence.reroute_reason
+    assert caught.value.code == "source_file.declared_column_missing"
+    assert "column q" in str(caught.value)
+    assert sink == []  # refused before a route was chosen
 
 
 def test_second_chunk_introducing_an_unconfigured_column_fails_coded_after_first_chunk_consumed() -> (
@@ -1244,11 +1241,10 @@ def test_second_chunk_missing_a_configured_column_fails_coded_not_silently_dropp
     assert sink[0].native_admitted is True
     first_out = next(it)
     assert set(first_out.schema.names) == {"p", "q"}
-    with pytest.raises(NativeChunkSchemaDriftError) as exc_info:
+    with pytest.raises(PipelineValidationError) as exc_info:
         next(it)
-    assert exc_info.value.code == "native_chunk_schema_drift"
-    assert exc_info.value.chunk_index == 1
-    assert "missing:['q']" in exc_info.value.detail
+    assert exc_info.value.code == "source_file.declared_column_missing"
+    assert "column q" in str(exc_info.value)
 
 
 def test_second_chunk_column_type_change_fails_coded() -> None:

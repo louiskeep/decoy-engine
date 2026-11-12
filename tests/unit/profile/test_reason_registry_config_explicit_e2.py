@@ -54,9 +54,28 @@ def test_the_declaration_refusals_are_scanned_and_registry_backed() -> None:
         for s in scan.scan(scan.SRC, helpers)
         if s.file == "profile/_declared_columns.py" and s.family == "source_refusal"
     ]
-    assert len(sites) == 2
+    assert len(sites) == 3
     assert {s.value_class for s in sites} == {"registry"}
 
 
 def _keys(manifest: dict) -> set[tuple[str, str]]:
     return {(e["namespace"], e["code"]) for e in manifest["entries"]}
+
+
+E2B_FIXTURE = FIXTURE.with_name("reason-manifest-v1.26-config-explicit-e2b-r.json")
+
+
+def test_declared_column_missing_is_registered_pinned_and_scanned() -> None:
+    """AT-E2b-1 registry half: one new code, pinned, raised through the one adapter."""
+    code = reasons.config.SOURCE_FILE_DECLARED_COLUMN_MISSING
+    spec = reasons.find("config", code)
+    assert code == "source_file.declared_column_missing"
+    assert spec is not None
+    assert (spec.owner, spec.since) == ("PipelineValidationError", "1.26.0")
+    assert code == CODES.SOURCE_FILE_DECLARED_COLUMN_MISSING
+    pinned = json.loads(E2B_FIXTURE.read_text())
+    assert [e["code"] for e in pinned["entries"]] == [code]
+    live = json.loads(json.dumps(reasons.manifest()))
+    live["entries"] = [e for e in live["entries"] if (e["namespace"], e["code"]) in _keys(pinned)]
+    assert append_only_violations(pinned, live) == []
+    assert pinned["entries"] == live["entries"]
