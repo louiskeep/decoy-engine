@@ -245,3 +245,7 @@ modules:
   - path: src/decoy_engine/publication/_descriptor.py
     pattern: Git content addressing plus RFC 8785 canonical JSON
     source: Git object model (content-addressed names); RFC 8785 JSON Canonicalization Scheme (IETF)
+
+  - path: src/decoy_engine/publication/_publish.py
+    pattern: Delta Lake idempotent transaction identifiers
+    source: Delta Lake transaction protocol (transaction identifiers, Apache-2.0); PostgreSQL SyncDataDirectory (fsync found state before trusting it)

@@ -5,7 +5,7 @@
 # `dir_category` (protected_root, protected_child, output_parent, published_output, non_row) and
 # `dir_test` (an existing pytest node id; every category but protected_root) mark directory
 # creators for tests/sentry/protected_dir (G-ONE-PROTECTED-DIR).
-# Count: 194 (asserted by the sentry).
+# Count: 196 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -1871,3 +1871,21 @@ ordinal = 0
 rule = "a path from `protected_scratch_dir` / `open_protected_dir`: a fresh engine-named child of the system temp directory or a parent that is a live issued root or the ambient policy named, or a caller path reached only after `require_ambient` refused every policy but the ambient one (an issued root runs under every policy)"
 owner = "cam"
 reason = "the allocator removes a directory it issued, or one it created that failed its own check"
+
+[[entry]]
+module = "decoy_engine/publication/_publish.py"
+function = "_measure_one"
+sink = "mmap.mmap"
+ordinal = 0
+rule = "a descriptor `OutputTxn.open_file` returned for a validated component of a publication stage; read-only map, no path"
+owner = "cam"
+reason = "F22 5.2: the publisher measures each staged table itself (SHA-256 over the read-only map) through the stage capability"
+
+[[entry]]
+module = "decoy_engine/publication/_publish.py"
+function = "_measure_one"
+sink = "pyarrow.parquet.ParquetFile"
+ordinal = 0
+rule = "a file object over a dup of the descriptor `OutputTxn.open_file` returned for a validated stage component; no path"
+owner = "cam"
+reason = "F22 5.2: the row count comes from the staged table's Parquet footer, read by the publisher through the stage capability"

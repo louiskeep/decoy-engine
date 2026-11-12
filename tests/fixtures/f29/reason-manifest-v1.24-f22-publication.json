@@ -1,0 +1,968 @@
+{
+  "entries": [
+    {
+      "code": "publication_attempt_aborted",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "decoy_engine.publication",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.24.0",
+      "summary": "This publication attempt was aborted.",
+      "symbol": "PUBLICATION_ATTEMPT_ABORTED"
+    },
+    {
+      "code": "publication_attempt_sealed",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "decoy_engine.publication",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.24.0",
+      "summary": "This publication attempt already committed and accepts no further change.",
+      "symbol": "PUBLICATION_ATTEMPT_SEALED"
+    },
+    {
+      "code": "publication_commit_in_progress",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "decoy_engine.publication",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "retry_operation",
+          "severity": "error"
+        }
+      ],
+      "since": "1.24.0",
+      "summary": "A commit is already in progress on this publication.",
+      "symbol": "PUBLICATION_COMMIT_IN_PROGRESS"
+    },
+    {
+      "code": "publication_commit_not_visible",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "decoy_engine.publication",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "restart_attempt",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "restart_attempt",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "restart_attempt",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "restart_attempt",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "restart_attempt",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "restart_attempt",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "restart_attempt",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "restart_attempt",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "restart_attempt",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "restart_attempt",
+          "severity": "error"
+        }
+      ],
+      "since": "1.24.0",
+      "summary": "An output whose commit was uncertain is not at the destination.",
+      "symbol": "PUBLICATION_COMMIT_NOT_VISIBLE"
+    },
+    {
+      "code": "publication_commit_uncertain",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "decoy_engine.publication",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "retry_operation",
+          "severity": "error"
+        }
+      ],
+      "since": "1.24.0",
+      "summary": "The output is visible but its durability could not be confirmed.",
+      "symbol": "PUBLICATION_COMMIT_UNCERTAIN"
+    },
+    {
+      "code": "publication_lock_timeout",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "decoy_engine.publication",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "retry_operation",
+          "severity": "error"
+        }
+      ],
+      "since": "1.24.0",
+      "summary": "Another writer held the output destination lock past the deadline.",
+      "symbol": "PUBLICATION_LOCK_TIMEOUT"
+    },
+    {
+      "code": "publication_lock_unavailable",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "decoy_engine.publication",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "environment_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.24.0",
+      "summary": "The output destination cannot be locked on this filesystem.",
+      "symbol": "PUBLICATION_LOCK_UNAVAILABLE"
+    },
+    {
+      "code": "publication_operation_conflict",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "decoy_engine.publication",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.24.0",
+      "summary": "This operation already published a different result to the destination.",
+      "symbol": "PUBLICATION_OPERATION_CONFLICT"
+    },
+    {
+      "code": "publication_recovery_in_progress",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "decoy_engine.publication",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "retry_operation",
+          "severity": "error"
+        }
+      ],
+      "since": "1.24.0",
+      "summary": "A recovery is already in progress on this publication.",
+      "symbol": "PUBLICATION_RECOVERY_IN_PROGRESS"
+    },
+    {
+      "code": "publication_target_occupied",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "decoy_engine.publication",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "environment_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.24.0",
+      "summary": "The output destination already holds a different or unreadable result.",
+      "symbol": "PUBLICATION_TARGET_OCCUPIED"
+    },
+    {
+      "code": "publication_vault_conflict",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "decoy_engine.publication",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.24.0",
+      "summary": "A vault with different contents already exists for this output.",
+      "symbol": "PUBLICATION_VAULT_CONFLICT"
+    },
+    {
+      "code": "publication_vault_mismatch",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "decoy_engine.publication",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.24.0",
+      "summary": "The committed output at the destination was bound with a different vault.",
+      "symbol": "PUBLICATION_VAULT_MISMATCH"
+    },
+    {
+      "code": "publication_write_in_progress",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "decoy",
+      "owner": "decoy_engine.publication",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "publication",
+          "phase": "configuration",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "resolve",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "compile",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "mask",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "generate",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "finalize",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "verify",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "publish",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "cleanup",
+          "retry": "retry_operation",
+          "severity": "error"
+        },
+        {
+          "outcome": "publication",
+          "phase": "unknown",
+          "retry": "retry_operation",
+          "severity": "error"
+        }
+      ],
+      "since": "1.24.0",
+      "summary": "A write is already in progress on this publication.",
+      "symbol": "PUBLICATION_WRITE_IN_PROGRESS"
+    }
+  ],
+  "reason_schema_version": 1,
+  "registry_version": "1.24.0"
+}

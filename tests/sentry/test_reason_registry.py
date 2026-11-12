@@ -100,6 +100,10 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("subset/_errors.py", "SubsetError.__init__"): _CTOR,
     ("subset/_errors.py", "SubsetPreflightError.__init__"): _CTOR,
     ("vault.py", "VaultError.__init__"): _CTOR,
+    ("publication/_types.py", "_CodedOutcome.__init__"): _CTOR,
+    ("publication/_types.py", "raise_for_outcome"): (
+        "re-raises a CommitReceipt's code; the receipt accepts only a registered `decoy` code"
+    ),
     ("validation_result.py", "ValidationResult.add_error"): _CTOR,
     ("validation_result.py", "ValidationResult.add_warning"): _CTOR,
     ("progress.py", "ProgressChannel.route"): _CTOR,
@@ -116,6 +120,7 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("generation/_window_admission.py", "_refuse"): _HELPER,
     ("plan/_checks_dp.py", "_raise"): _HELPER,
     ("profile/_csv_reader.py", "source_refusal"): _HELPER,
+    ("publication/_publish.py", "_receipt"): _HELPER,
     ("plan/_checks_top_code.py", "_reject_unusable_bound"): _HELPER,
     # -- re-wraps of an already-registered exception code ------------------------------------
     ("execution/_chunked_when_guard.py", "PositionalWhenGuard.check_schema"): _REWRAP,

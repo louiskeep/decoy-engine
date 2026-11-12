@@ -94,6 +94,8 @@ _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.quality.snapshot", "DistributionSnapshotError", "quality"),
     ("decoy_engine.connectors.postgres_snapshot", "PostgresSnapshotError", "connector"),
     ("decoy_engine.execution.physical._shadow_diff_codes", "ShadowDifference", "physical"),
+    ("decoy_engine.publication._types", "PublicationRefused", "decoy"),
+    ("decoy_engine.publication._types", "PublicationFailed", "decoy"),
 )
 # Engine exceptions that carry no code but have one fixed meaning: (module, class, reason).
 _FIXED: tuple[tuple[str, str, ReasonCode], ...] = (
@@ -109,6 +111,20 @@ _FIXED: tuple[tuple[str, str, ReasonCode], ...] = (
     ("decoy_engine.sdk", "PermanentError", reasons.decoy.CONNECTOR_PERMANENT_FAILURE),
     ("decoy_engine.fileaccess._types", "FileAccessDenied", reasons.decoy.FILE_ACCESS_DENIED),
     ("decoy_engine.profiling.scan_set", "ScanSourceError", reasons.runtime.SCAN_SOURCE_FAILED),
+    # F22 errno-only file-access errors: one meaning each, whoever raised them.
+    (
+        "decoy_engine.fileaccess._types",
+        "CommitUncertain",
+        reasons.decoy.PUBLICATION_COMMIT_UNCERTAIN,
+    ),
+    (
+        "decoy_engine.fileaccess._types",
+        "LockUnavailable",
+        reasons.decoy.PUBLICATION_LOCK_UNAVAILABLE,
+    ),
+    ("decoy_engine.fileaccess._types", "LockTimeout", reasons.decoy.PUBLICATION_LOCK_TIMEOUT),
+    # A bounded read over its cap; the publisher maps its own reads to a refusal first.
+    ("decoy_engine.fileaccess._types", "LeafTooLarge", reasons.decoy.PUBLICATION_FAILED),
 )
 
 

@@ -3,10 +3,8 @@
 How the engine creates, stages and binds an output directory, and what it promises about the
 result. This page grows with the F22 publication work (plan
 `docs/plans/2026-10-30-f22-publication-replan.md`); each section says what is in place today.
-Later parts add the `already_committed` and `operation_conflict` outcomes and
-vault-before-output ordering; the `decoy-publication/v1` descriptor format is defined below, but
-no publish writes it yet. Until those sections exist here,
-the engine does not claim them.
+Later parts add vault-before-output ordering and route every engine sink through
+`publish_unit`; until those sections exist here, the engine does not claim them.
 
 Platforms: Linux and macOS, on both the ambient policy (`LocalFileAccess`, the CLI default) and
 the strict policies (`RootedFileAccess`, `PreopenedFileAccess`). Windows keeps its plain path
@@ -106,8 +104,8 @@ All errors these paths raise carry an errno name and no path, file name or opera
 ## The `decoy-publication/v1` descriptor
 
 Package `decoy_engine.publication` (`_descriptor.py`) defines the descriptor a published unit
-will carry as `_decoy_publication.json` at its root. No publish writes it yet (slice a3 does);
-this section is the format.
+carries as `_decoy_publication.json` at its root; `publish_unit` (below) writes it. This section
+is the format.
 
 The bytes are canonical JSON: keys sorted, separators `,` and `:` with no whitespace, ASCII only
 (other characters as `\u` escapes), no NaN or infinity. Equal content therefore has equal bytes,
@@ -145,15 +143,78 @@ JSON type (a `true` is never a count, `"640"` is never a number); a count out of
 outside its closed set; a digest, `operation_id` or version that does not match its shape in full
 (a trailing newline included); an unsafe path; artifacts out of order or repeated; a `result_id`
 that does not recompute; bytes that are not the canonical encoding. The refusal is a `ValueError`
-whose text is `descriptor_refused:<check>`, a closed token, with nothing from the bytes. A later
-slice turns any refusal into `publication_target_occupied`, so a malformed record never drives a
-judge or an adoption.
+whose text is `descriptor_refused:<check>`, a closed token, with nothing from the bytes.
+`publish_unit` turns any refusal into `publication_target_occupied`, so a malformed record never
+drives a judge or an adoption.
 
 The request and receipt types (`_types.py`) are checked when built: `PublicationRequest`
 (`operation_id`, `unit`, `overwrite` = `"refuse_different"`, `vault`, `lock_timeout_s`, default
 30 seconds), and `CommitReceipt` (`outcome`, `operation_id`, `reason_code`, `result_id`,
 `descriptor_digest`, `vault_digest`, `artifacts`, `visible`, `durable`, `os_error`), whose
 `ArtifactSummary` entries hold `role`, `size`, `rows` and `sha256`, never a name or a path.
+
+## Judge and bind: `publish_unit`
+
+`publish_unit(out, txn, request, tables=[...])` binds one `immutable_directory/v1` unit: `txn` is
+a `publication` stage of `out` holding exactly the Parquet tables named in `tables`, each a file
+directly in the stage. `publish_tables(out, {name: table}, request)` is the resident entry: it
+stages each table under its name and calls `publish_unit`. The caller names the files; the
+publisher measures every one itself through the stage (size, SHA-256, row count from the Parquet
+footer), never taking a number from the producer. A file left in the stage but not named is
+bound without being described, so a producer stages nothing else (the engine's own callers
+stage only the tables they name).
+
+Under the destination lock, held from the first read to the bind:
+
+1. the bound descriptor is read (at most 1 MiB) and this attempt's tables are measured into a
+   new descriptor and its `result_id`;
+2. the two are judged:
+
+| At the leaf | Same `result_id` | Same `operation_id` | Outcome |
+|---|---|---|---|
+| nothing, or an empty directory | - | - | bind |
+| a valid descriptor | yes | any | `already_committed`, after the unit tree and its chain to the anchor are fsynced |
+| a valid descriptor | no | yes | `operation_conflict` |
+| a valid descriptor | no | no | refused, `publication_target_occupied` |
+| anything else: files without a descriptor, a descriptor that is unreadable, over 1 MiB or refused by the reader, a file or link at the leaf | - | - | refused, `publication_target_occupied` |
+
+3. only a bind verdict writes the descriptor into the stage and publishes it durably (the steps
+   of the `publication` label above).
+
+The engine never replaces or merges into a bound unit: a different result is refused and the
+unit, its bytes and its inode numbers are unchanged. A zero-table publish binds a unit holding
+only its descriptor, so an empty unit is never silently replaced either. Every exit but a bind
+aborts the stage.
+
+Every exit is a `CommitReceipt`:
+
+| Exit | `outcome` | `reason_code` | `visible` | `durable` |
+|---|---|---|---|---|
+| bound | `published` | - | yes | yes |
+| the same result already bound, chain fsynced | `already_committed` | - | yes | yes |
+| the same result already bound, an fsync of its chain failed | `commit_uncertain` | `publication_commit_uncertain` | yes | no |
+| bound, an fsync of the chain after the rename failed | `commit_uncertain` | `publication_commit_uncertain` | yes | no |
+| same `operation_id`, different result | `operation_conflict` | `publication_operation_conflict` | no | no |
+| a different result, or anything else at the leaf | `refused` | `publication_target_occupied` | no | no |
+| the same result bound with a vault, this request without one | `refused` | `publication_vault_mismatch` | no | no |
+| `flock` unsupported or the lock file cannot be opened | `refused` | `publication_lock_unavailable` | no | no |
+| the lock held past `lock_timeout_s` | `refused` | `publication_lock_timeout` | no | no |
+| a staged table unreadable or not Parquet, the descriptor write, the stage fsync walk or the rename failed | `failed` | `publication_failed` | no | no |
+
+`os_error` carries the errno name where an operating-system call failed. `result_id`,
+`descriptor_digest` and `artifacts` describe the bound unit for `published`, `already_committed`
+and `commit_uncertain`, and this attempt's measured result otherwise. A request that carries a
+vault is not accepted yet (vault-before-output ordering is a later part); the engine never binds
+an output whose vault is not durable.
+
+A caller that wants an exception passes the receipt to `raise_for_outcome`, which returns it for
+`published` and `already_committed` and otherwise raises `PublicationRefused` (`refused`,
+`operation_conflict`), `PublicationFailed` (`failed`) or `CommitUncertain`. Each maps to its
+registered reason through `reason_from_exception`. Receipts, error text and reason records carry
+codes, errno names, digests and counts only: never a path, a file or table name, or
+operating-system message text. Table names live only in the descriptor, which is data.
+
+The reason codes are in the `decoy` namespace of the reason registry (`docs/reasons.md`).
 
 ## Named limits
 
