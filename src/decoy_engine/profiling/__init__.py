@@ -25,6 +25,7 @@ from decoy_engine.profiling._scan_integrity import (
     KeyBatches,
     KeyFacts,
     RelationshipFacts,
+    column_distinct,
     key_facts,
 )
 from decoy_engine.profiling._snapshot_values import (
@@ -92,6 +93,7 @@ __all__ = [
     "StrategyDefault",
     "TableScan",
     "TopValue",
+    "column_distinct",
     "distribution_snapshot_document",
     "get_default_strategy",
     "is_value_sensitive",

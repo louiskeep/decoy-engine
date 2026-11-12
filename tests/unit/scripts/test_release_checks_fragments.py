@@ -65,7 +65,7 @@ def test_only_the_readme_passes_the_fragment_check(tmp_path: Path, files: dict[s
     assert "changelog.d" not in proc.stderr, proc.stderr
 
 
-# REG-RELEASE E2 (AT-4): after the ordinary pin check the real script asks the pin CLI whether the
+# AT-4: after the ordinary pin check the real script asks the pin CLI whether the
 # registry is release-ready. `uv` is a stub that builds a "venv" whose python runs the engine copy,
 # so the pin steps run for real without a lock sync.
 import re  # noqa: E402
@@ -75,6 +75,7 @@ from test_stamp_release_compile import (  # noqa: E402
     engine_clone,
     make_seed,
     two_identities,
+    versions,
 )
 from tests.unit.test_reason_release_pin import (  # noqa: E402
     add_pending_deprecation,
@@ -151,7 +152,7 @@ def test_at1b_release_checks_refuses_marked_edits_until_they_are_stamped(
     assert proc.returncode != 0 and PIN_STEPS_PASSED not in proc.stdout, proc.stderr[-800:]
     from scripts.release import stamp_release as sr
 
-    assert sr.stamp_release(r.path, "0.23.0", "2026-11-12") == "1.24.1"
+    assert sr.stamp_release(r.path, "0.23.0", "2026-11-12") == versions(engine_seed).patch1
     r.commit({}, "chore: release prep")
     proc = _release_checks(r.path, bin_dir)
     assert PIN_STEPS_PASSED in proc.stdout, proc.stdout[-800:] + proc.stderr[-800:]
@@ -170,7 +171,7 @@ def test_at4_release_checks_passes_the_pin_steps_after_an_identity_stamp(
     )
     from scripts.release import stamp_release as sr
 
-    assert sr.stamp_release(r.path, "0.23.0", "2026-11-12") == "1.25.0"
+    assert sr.stamp_release(r.path, "0.23.0", "2026-11-12") == versions(engine_seed).next
     r.commit({}, "chore: release prep")
     proc = _release_checks(r.path, bin_dir)
     assert PIN_STEPS_PASSED in proc.stdout, proc.stdout[-800:] + proc.stderr[-800:]

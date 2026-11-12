@@ -41,6 +41,8 @@ from decoy_engine.fileaccess._protected_dir import (
 )
 from decoy_engine.fileaccess._read import keeps_class, read_all, read_checked, read_text, shown
 from decoy_engine.fileaccess._rooted import Root, RootedFileAccess
+from decoy_engine.fileaccess._scratch import ScratchArena
+from decoy_engine.fileaccess._scratch_reports import CleanupReport, QuotaReport
 from decoy_engine.fileaccess._types import (
     CONTRACT_VERSION,
     DirHandle,
@@ -98,6 +100,7 @@ ENTRY_POINTS: tuple[str, ...] = (
     "decoy_engine.reference_tables._loader.load_table",
     "decoy_engine.subset._api.plan_subset",
     "decoy_engine.subset._api.run_subset",
+    "decoy_engine.subset._api.select_subset",
     "decoy_engine.subset._preflight.run_subset_preflight",
     "decoy_engine.transforms._codeset_loader.load_corpus",
     "decoy_engine.transforms._codeset_loader.load_corpus_provenance",
@@ -112,6 +115,7 @@ ENTRY_POINTS: tuple[str, ...] = (
 __all__ = [
     "CONTRACT_VERSION",
     "ENTRY_POINTS",
+    "CleanupReport",
     "DirHandle",
     "FileAccess",
     "FileAccessDenied",
@@ -126,8 +130,10 @@ __all__ = [
     "PreopenedFileAccess",
     "ProtectedDirAclFailed",
     "ProtectedDirUnsafe",
+    "QuotaReport",
     "Root",
     "RootedFileAccess",
+    "ScratchArena",
     "ambient_forbidden",
     "at_position",
     "bind_iterator",
