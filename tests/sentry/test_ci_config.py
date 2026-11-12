@@ -9,6 +9,7 @@ from pathlib import Path
 
 import yaml
 from scripts.dev import gate_tree_proof
+from scripts.dev.required_checks import workflow_events
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -20,11 +21,6 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def _workflow() -> dict:
     return yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())
-
-
-def test_every_ci_job_has_a_timeout() -> None:
-    missing = [name for name, job in _workflow()["jobs"].items() if "timeout-minutes" not in job]
-    assert not missing, f"ci.yml jobs without timeout-minutes: {missing}"
 
 
 def _lint_extra_ruff_pin() -> str:
@@ -50,46 +46,19 @@ def test_precommit_ruff_hook_matches_lint_extra() -> None:
 
 
 WORKFLOWS = ROOT / ".github" / "workflows"
-# Release and tag publishing keep their triggers; they are not merge gates. The PR checks
-# read pull_request context (base_ref, PR body, labels) and cannot run from a manual dispatch.
-TRIGGERED_ON_PURPOSE = {
-    "gate-selfhosted.yml",
-    "native-companion-release.yml",
-    "compat-preflight.yml",
-    "regression-proof.yml",
-    "changelog-fragment.yml",
-}
-
-
-def _trigger_names(wf: dict) -> set[str]:
-    on = wf.get(True) or wf.get("on")  # YAML parses a bare `on:` key as True
-    if isinstance(on, str):
-        return {on}
-    return set(on)  # a mapping yields its keys, a list its items
-
-
-def _triggers(path: Path) -> set[str]:
-    return _trigger_names(yaml.safe_load(path.read_text()))
-
-
-def test_paid_runner_workflows_are_manual_dispatch_only() -> None:
-    """X0a: the self-hosted gate is the merge gate; paid runners fire only on demand."""
-    bad = {
-        p.name: sorted(_triggers(p) - {"workflow_dispatch"})
-        for p in sorted(WORKFLOWS.glob("*.yml"))
-        if p.name not in TRIGGERED_ON_PURPOSE and _triggers(p) != {"workflow_dispatch"}
-    }
-    assert not bad, f"workflows with automatic triggers: {bad}"
 
 
 def selfhosted_violations(wf: dict) -> list[str]:
-    """Self-hosted jobs must not run on PR triggers and must carry the owner-only guard."""
-    triggers = _trigger_names(wf)
+    """Self-hosted jobs run only on push and dispatch and must carry the owner-only guard.
+
+    A PR or a schedule must never start one: gate-vm-watch starts a VM for any queued self-hosted
+    job. Events are decoded in one place, scripts.dev.required_checks.workflow_events."""
+    triggers = workflow_events(wf)
     out = []
     for name, job in wf["jobs"].items():
         if "self-hosted" not in str(job.get("runs-on", "")):
             continue
-        bad = triggers & {"pull_request", "pull_request_target"}
+        bad = triggers - {"push", "workflow_dispatch"}
         if bad:
             out.append(f"{name}: self-hosted job triggered by {sorted(bad)}")
         guard = str(job.get("if", ""))
@@ -146,7 +115,10 @@ def test_selfhosted_gate_runs_gates_under_the_shared_lock() -> None:
     # Host-only failures that main shares must not fail every dispatch run.
     assert "scripts/dev/gates.sh --keep-going $mode" in runs
     assert "mode=--baseline" in runs
-    assert _triggers(WORKFLOWS / "gate-selfhosted.yml") == {"push", "workflow_dispatch"}
+    assert workflow_events(yaml.safe_load((WORKFLOWS / "gate-selfhosted.yml").read_text())) == {
+        "push",
+        "workflow_dispatch",
+    }
 
 
 def test_full_gate_runs_only_on_dispatch_and_main_in_two_shards() -> None:

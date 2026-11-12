@@ -547,7 +547,6 @@ def _chain_job(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Table]]:
                 "columns": [
                     {"name": "parent_id", "strategy": "passthrough"},
                     {"name": "tag", "strategy": "passthrough"},
-                    {"name": "id", "strategy": "passthrough"},
                 ],
             },
             {

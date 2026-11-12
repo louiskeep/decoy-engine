@@ -1352,7 +1352,7 @@ reason = "package data"
 
 [[entry]]
 module = "decoy_engine/profiling/_scan_integrity.py"
-function = "_check"
+function = "key_facts"
 sink = "duckdb.connection.execute"
 ordinal = 0
 disposition = "read"

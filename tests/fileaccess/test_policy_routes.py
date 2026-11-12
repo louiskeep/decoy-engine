@@ -37,6 +37,7 @@ from decoy_engine.fileaccess import (
 )
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.vault import VaultWriter
+from tests._declared_schema import chunked_entry_kwargs, declared_schema
 from tests.fileaccess import route_corpus as rc
 from tests.fileaccess.support import RecordingFileAccess, RootRelative
 from tests.unit.execution import _auto_chunk_support as support
@@ -202,6 +203,7 @@ def test_chunked_entries_refuse_a_denied_resource_before_the_second_chunk(
                         table="t",
                         engine_version="e1",
                         file_access=policy,
+                        **chunked_entry_kwargs(fn, cfg, "t"),
                     )
                 )
             except (FileAccessDenied, ExecutionError) as exc:
@@ -234,7 +236,12 @@ def test_lazy_iterator_is_judged_by_the_policy_it_was_created_under(tmp_path: Pa
     try:
         seen: list[Any] = []
         it = run_mask_pipeline_chunked(
-            cfg, touching(seen), table="t", engine_version="e1", file_access=allowing
+            cfg,
+            touching(seen),
+            table="t",
+            source_schema=declared_schema(cfg, "t"),
+            engine_version="e1",
+            file_access=allowing,
         )
         assert fileaccess.installed() is None
         revoking = _RevokeAfter(allowing, allow=0)
@@ -253,7 +260,12 @@ def test_lazy_iterator_is_judged_by_the_policy_it_was_created_under(tmp_path: Pa
 
         flaky = _RevokeAfter(allowing, allow=1)
         bound = run_mask_pipeline_chunked(
-            cfg, touching([]), table="t", engine_version="e1", file_access=flaky
+            cfg,
+            touching([]),
+            table="t",
+            source_schema=declared_schema(cfg, "t"),
+            engine_version="e1",
+            file_access=flaky,
         )
         next(bound)
         with pytest.raises(FileAccessDenied):
@@ -263,7 +275,12 @@ def test_lazy_iterator_is_judged_by_the_policy_it_was_created_under(tmp_path: Pa
 
         def drain(label: str) -> None:
             local = run_mask_pipeline_chunked(
-                cfg, touching([]), table="t", engine_version="e1", file_access=allowing
+                cfg,
+                touching([]),
+                table="t",
+                source_schema=declared_schema(cfg, "t"),
+                engine_version="e1",
+                file_access=allowing,
             )
             results[label] = sum(t.num_rows for t in local)
 

@@ -69,6 +69,23 @@ def suite(tmp_path_factory: pytest.TempPathFactory) -> dict[str, list[dict[str, 
     return collect_suite(ROOT, expr, tmp_path_factory.mktemp("serial-dump"))
 
 
+def test_marker_expr_is_read_strictly_from_the_real_gates_line() -> None:
+    text = (ROOT / "scripts" / "dev" / "gates.sh").read_text()
+    line = next(ln for ln in text.splitlines() if ln.startswith("PYTEST_ARGS="))
+    assert line == f"PYTEST_ARGS=(-m '{res.parse_marker_expr(text)}')"
+    for changed in (
+        line.replace("(-m '", "(-m x '"),  # an extra argument before the expression
+        line.replace("')", "' --strict-markers)"),  # an extra argument after it
+        line + " junk",
+        line.replace("-m '", '-m "').replace("')", '")'),  # double quotes
+        "PYTEST_ARGS=(-m '')",  # empty expression
+        "# no line at all",
+        line + "\n" + line,  # ambiguous: two definitions
+    ):
+        with pytest.raises(ValueError, match="PYTEST_ARGS"):
+            res.parse_marker_expr(changed)
+
+
 def unverifiable(data: dict[str, list[dict[str, object]]]) -> dict[str, str]:
     return {str(e["file"]): str(e["reason"]) for e in [*data["skipped"], *data["errors"]]}
 

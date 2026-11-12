@@ -34,11 +34,13 @@ from decoy_engine.profiling.model_pack.types import (
     PACK_FORMAT,
     ModelPackManifest,
 )
+from tests._ml import require_ml_stack
 
-# Optional ML extra (joblib / scikit-learn); skip this module when absent so a
-# base `.[dev]` CI install (no ml extra) does not fail collection.
-joblib = pytest.importorskip("joblib")
-DictVectorizer = pytest.importorskip("sklearn.feature_extraction").DictVectorizer
+# Skip the module where the classifier stack cannot import (macOS without libomp).
+require_ml_stack()
+
+import joblib  # noqa: E402
+from sklearn.feature_extraction import DictVectorizer  # noqa: E402
 
 # ── Fixture key (32 bytes, dev/test only) ─────────────────────────────────────
 #

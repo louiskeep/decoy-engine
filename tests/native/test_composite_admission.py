@@ -28,7 +28,13 @@ from decoy_engine.execution.native._dispatch import run_native_or_oracle_chunked
 from decoy_engine.generation.composite import CompositeAdapter, composite_capability
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
-from tests.native._b8_support import FORCE, with_force
+from tests._declared_schema import chunked_entry_kwargs, declared_schema
+from tests.native._b8_support import (
+    FORCE,
+    run_mask_chunked_below_gate,
+    run_mask_pipeline_chunked_below_gate,
+    with_force,
+)
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     TABLE,
@@ -134,6 +140,7 @@ def test_composite_provider_is_refused_by_both_chunked_entries(case: str) -> Non
                     engine_version=ENGINE_VERSION,
                     key_provider=key_provider(),
                     chunk_result_sink=sink,
+                    **chunked_entry_kwargs(entry_point, config, TABLE),
                 )
             )
         assert info.value.code == "strategy_not_chunk_safe"
@@ -194,7 +201,7 @@ def test_handler_written_columns_are_never_carried_or_schema_passthrough(
     assert not (set(written) & set(listed))
     _patch_out_composite_refusal(monkeypatch)
     out = list(
-        run_mask_chunked(
+        run_mask_chunked_below_gate(
             config,
             _chunks(data),
             table=TABLE,
@@ -326,7 +333,11 @@ def test_a_configured_stored_index_column_is_refused_before_any_chunk(
         columns = [*columns, force_oracle(FORCE)]
         chunks = [with_force(c) for c in chunks]
     config = make_config(columns, global_settings=_WARN)
-    entry_point = run_mask_pipeline_chunked if route == "public_oracle" else run_mask_chunked
+    entry_point = (
+        run_mask_pipeline_chunked_below_gate
+        if route == "public_oracle"
+        else run_mask_chunked_below_gate
+    )
     sink: list[Any] = []
     with pytest.raises(TransformError) as info:
         list(
@@ -337,6 +348,7 @@ def test_a_configured_stored_index_column_is_refused_before_any_chunk(
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
                 chunk_result_sink=sink,
+                **chunked_entry_kwargs(entry_point, config, TABLE),
             )
         )
     assert info.value.code == "config_references_stored_index"
@@ -369,6 +381,7 @@ def test_legacy_entry_drops_a_stored_index_field_like_the_oracle() -> None:
             config,
             chunks,
             table=TABLE,
+            source_schema=declared_schema(config, TABLE),
             engine_version=ENGINE_VERSION,
             key_provider=key_provider(),
         )
@@ -381,7 +394,7 @@ def test_error_policy_reroute_reason_names_only_the_unconfigured_columns() -> No
     table = pa.Table.from_pandas(df)
     config = make_config([redact("s")], global_settings={"unconfigured_column_policy": "error"})
     ev: list[Any] = []
-    gen = run_mask_chunked(
+    gen = run_mask_chunked_below_gate(
         config,
         [table],
         table=TABLE,
@@ -404,9 +417,9 @@ def _outcome(config: dict[str, Any], chunks: list[pa.Table]) -> tuple[Any, int, 
     yielded = 0
     code = None
     try:
-        for _ in run_mask_chunked(
+        for _ in run_mask_chunked_below_gate(
             config,
-            chunks,
+            iter(chunks),
             table=TABLE,
             engine_version=ENGINE_VERSION,
             key_provider=key_provider(),
@@ -509,7 +522,7 @@ def _row_error_run(config: dict[str, Any], chunks: list[pa.Table], **kw: Any) ->
     sink: list[Any] = []
     with pytest.raises(RowErrorsFailedError):
         list(
-            run_mask_chunked(
+            run_mask_chunked_below_gate(
                 config,
                 chunks,
                 table=TABLE,
@@ -567,7 +580,7 @@ def test_caller_only_composite_fails_closed_before_any_output(
     sink: list[Any] = []
     with pytest.raises(PlanCompileError) as info:
         list(
-            run_mask_chunked(
+            run_mask_chunked_below_gate(
                 config,
                 [_source(data)],
                 table=TABLE,
@@ -604,7 +617,11 @@ def test_rebound_registry_output_equals_the_public_oracle(monkeypatch: pytest.Mo
         "registry": reg,
     }
     ours = list(run_mask_chunked(config, chunks, **kwargs))
-    oracle = list(run_mask_pipeline_chunked(config, chunks, **kwargs))
+    oracle = list(
+        run_mask_pipeline_chunked(
+            config, chunks, source_schema=declared_schema(config, TABLE), **kwargs
+        )
+    )
     assert [o.to_pydict() for o in ours] == [o.to_pydict() for o in oracle]
     assert [o.schema.types for o in ours] == [o.schema.types for o in oracle]
 
@@ -631,7 +648,10 @@ _READ_T = "t != 'zz'"
 
 
 def test_a_read_when_column_keeps_a_big_int_passthrough_exact() -> None:
-    from tests.native._rev9_support import run_entry, run_public
+    from tests.native._rev9_support import (
+        run_entry_below_gate,
+        run_public_below_gate,
+    )
 
     big = 2**53 + 1
     chunks = [
@@ -643,7 +663,7 @@ def test_a_read_when_column_keeps_a_big_int_passthrough_exact() -> None:
         )
         for _ in range(2)
     ]
-    out, sink, _ev = run_entry(_when_config(_READ_BIG), chunks)
+    out, sink, _ev = run_entry_below_gate(_when_config(_READ_BIG), chunks)
     for got, src in zip(out, chunks, strict=True):
         assert got.schema.field("big").equals(src.schema.field("big"), check_metadata=True)
         assert got.column("big").to_pylist() == [big, None, 3]
@@ -651,7 +671,7 @@ def test_a_read_when_column_keeps_a_big_int_passthrough_exact() -> None:
         ["big"]
     ] * 2
     # The unchanged public oracle rounds it through float64; only characterized here.
-    public = run_public(_when_config(_READ_BIG), chunks)
+    public = run_public_below_gate(_when_config(_READ_BIG), chunks)
     assert public[0].schema.field("big").type == pa.float64()
     assert public[0].column("big").to_pylist()[0] == float(2**53)
     # Every row is selected, as the replaced bytes comparison selected every row.
@@ -659,14 +679,14 @@ def test_a_read_when_column_keeps_a_big_int_passthrough_exact() -> None:
 
 
 def test_a_read_when_column_still_raises_for_an_unrepresentable_value() -> None:
-    from tests.native._rev9_support import BY_NAME, run_public
+    from tests.native._rev9_support import BY_NAME, run_public_below_gate
 
     t64 = BY_NAME["time64ns_unaligned"]
     chunks = [
         pa.table({"r": pa.array(["a", "b", "c"]), "t": t64.good}),
         pa.table({"r": pa.array(["a", "b", "c"]), "t": t64.bad}),
     ]
-    gen = run_mask_chunked(
+    gen = run_mask_chunked_below_gate(
         _when_config(_READ_T),
         chunks,
         table=TABLE,
@@ -678,7 +698,7 @@ def test_a_read_when_column_still_raises_for_an_unrepresentable_value() -> None:
         next(gen)
     assert getattr(ours.value, "code", None) == "chunked_passthrough_value_unrepresentable"
     with pytest.raises(pa.ArrowInvalid):
-        run_public(_when_config(_READ_T), chunks)
+        run_public_below_gate(_when_config(_READ_T), chunks)
 
 
 def test_a_when_does_not_refuse_an_unrelated_stored_index() -> None:
@@ -693,6 +713,7 @@ def test_a_when_does_not_refuse_an_unrelated_stored_index() -> None:
                 table=TABLE,
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
+                **chunked_entry_kwargs(entry_point, config, TABLE),
             )
         )
 
@@ -714,6 +735,7 @@ def test_an_unparsable_when_naming_a_named_stored_index_is_rejected_at_compile()
                     table=TABLE,
                     engine_version=ENGINE_VERSION,
                     key_provider=key_provider(),
+                    **chunked_entry_kwargs(entry_point, config, TABLE),
                 )
             )
         assert info.value.code == "when_outside_closed_grammar"
@@ -739,6 +761,7 @@ def test_a_when_naming_an_unnamed_stored_index_is_rejected_at_compile() -> None:
                     table=TABLE,
                     engine_version=ENGINE_VERSION,
                     key_provider=key_provider(),
+                    **chunked_entry_kwargs(entry_point, config, TABLE),
                 )
             )
         assert info.value.code == "when_outside_closed_grammar"
@@ -810,19 +833,23 @@ def test_stored_index_drift_is_raised_by_both_public_entries(
     entry_name: str, direction: str
 ) -> None:
     entry_point = (
-        run_mask_chunked if entry_name == "run_mask_chunked" else run_mask_pipeline_chunked
+        run_mask_chunked_below_gate
+        if entry_name == "run_mask_chunked"
+        else run_mask_pipeline_chunked_below_gate
     )
     indexed = _indexed()
     plain = [c.replace_schema_metadata(None) for c in indexed]
     chunks = [indexed[0], plain[1]] if direction == "index_then_plain" else [plain[0], indexed[1]]
     sink: list[Any] = []
+    config = make_config([redact("s"), truncate("t")], global_settings=_WARN)
     gen = entry_point(
-        make_config([redact("s"), truncate("t")], global_settings=_WARN),
-        chunks,
+        config,
+        iter(chunks),
         table=TABLE,
         engine_version=ENGINE_VERSION,
         key_provider=key_provider(),
         chunk_result_sink=sink,
+        **chunked_entry_kwargs(entry_point, config, TABLE),
     )
     next(gen)
     with pytest.raises(Exception) as info:
@@ -952,7 +979,7 @@ def test_a_composite_with_a_when_still_generates_every_output(
     else:
         produced = pa.concat_tables(
             list(
-                run_mask_chunked(
+                run_mask_chunked_below_gate(
                     config,
                     [source],
                     table=TABLE,
@@ -982,6 +1009,7 @@ def test_writes_unknown_entries_are_refused_by_the_public_entries() -> None:
                         engine_version=ENGINE_VERSION,
                         key_provider=key_provider(),
                         chunk_result_sink=sink,
+                        **chunked_entry_kwargs(entry_point, config, TABLE),
                     )
                 )
             assert info.value.code == "strategy_not_chunk_safe"
