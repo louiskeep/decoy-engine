@@ -189,7 +189,7 @@ jobs:
   # Selection is by the `ml` marker (pytest -m ml overrides the addopts -m), NOT a
   # hand-maintained path list: a new ML test module joins the gate by adding
   # `pytestmark = pytest.mark.ml`, so coverage cannot silently shrink. The `ml`-marked tests
-  # also run in regression-gate, where they importorskip only if lightgbm cannot import.
+  # also run in regression-gate, where they skip only if the ML stack cannot load.
   ml-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 20

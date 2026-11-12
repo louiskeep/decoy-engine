@@ -40,10 +40,11 @@ Date: 2026-11-12. Branch: `feat/scan-ml-m2`, engine PR #492.
 
 ## Follow-ups at merge
 
-- The `base-install` row in `ci/required-jobs.toml` lands with whichever of PR #491 and PR #492
-  merges second.
-- PR #491's `ml` reason text in `required-jobs.toml` ("importorskip the ml extra") is stale after
-  this slice and gets corrected in that same change.
+Both done on this branch after PR #491 merged first:
+
+- `base-install` is in the `ci.yml` merge list in `ci/required-jobs.toml`.
+- The `ml` reason text there now says the tests skip when the ML stack cannot load, and that only
+  `ml-gate` sets `DECOY_REQUIRE_ML=1`.
 
 ## For C1 and the platform image
 
