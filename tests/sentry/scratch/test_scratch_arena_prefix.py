@@ -35,11 +35,9 @@ CREATE_FLAGS = frozenset({"os.O_CREAT", "decoy_engine.fileaccess._output._FILE_C
 # Plan 4.2: every raw creation in `_output.py` sits in one of these, plus the one flag definition.
 OUTPUT_RAW = frozenset(
     {
-        "make_stage_dir_at",
+        "_make_dir_core",
         "_create_private_core",
         "create_output_file_at",
-        "RootedOutputDir._open_parent",
-        "RootedOutputDir.ensure_dir",
     }
 )
 PRIVATE_ENTRIES = {
