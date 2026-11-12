@@ -348,3 +348,11 @@ Reruns on `13df1b9f` (the converted head before `6689efce`):
   10 skipped (import skips for other extras only).
 - `pytest tests/integration/compat_corpus`: 5 passed, 1 skipped (the pre-GA real-artifact
   capture skip), on `13df1b9f` and again on `6689efce`.
+
+`e9114bc2` merges main `9e451dac` (#528, key type families in profiling), which landed before the
+push; no conflict and no execution or registry file touched. After it: `--check` exit 0;
+`tests/sentry`, the registry and tripwire tests, M5 acceptance, `tests/unit/profiling`, the
+post-scan key tests and the compat corpus rerun, with only the 23 `test_outbound_clients` ids
+failing. The full gate selection, mutations, lint and NER gate were not rerun after `6689efce` and
+`e9114bc2`; neither merge touched a file they read beyond the registry and profiling checks rerun
+above.
