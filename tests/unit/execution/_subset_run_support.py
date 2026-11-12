@@ -15,7 +15,7 @@ from decoy_engine.profile._readers import LazySource
 from decoy_engine.subset import select_subset, subset_request_from_config
 from tests._declared_schema import declare_rest
 
-VAR = "SUB_RUN_TEST_SECRET"
+VAR = "SUB_STOP_TEST_SECRET"
 CANARY = "CANARY91357"
 KEYS = {"customers": "cid", "orders": "oid", "items": "iid"}
 

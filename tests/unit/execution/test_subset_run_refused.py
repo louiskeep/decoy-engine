@@ -221,7 +221,7 @@ def test_isolated_runs_a_subset_and_refuses_a_typed_request_before_staging(
             engine_version="t",
             subset_request="config",
         )
-        assert out.outcome == "completed"
+        assert out.outcome == "completed", (isolate, out.error)
         assert out.outputs is not None and out.outputs["customers"].num_rows == 5
     skipped = run_pipeline_isolated(
         cfg,
