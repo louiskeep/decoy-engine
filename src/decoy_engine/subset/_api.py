@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -268,14 +269,23 @@ def subset_request_from_config(config: dict[str, Any]) -> SubsetRequest | None:
     if subset_block is None:
         return None
     # A generate table has no source to read, so an edge touching one cannot be subset.
+    # Mirrors `execution.classify_table_kinds`, which this lower tier cannot import.
     generated = {t["name"] for t in config.get("tables", []) if t.get("generate_columns")}
     relationships: list[PlanRelationship] = []
     excluded: list[str] = []
     for rel in relationships_from_config(config):
-        if rel.parent.table in generated or any(c.table in generated for c in rel.children):
-            excluded.extend(e.edge_id for e in build_subset_edges((rel,)))
-        else:
-            relationships.append(rel)
+        # Drop per edge: a mask child of a mask parent keeps its edge even when a sibling
+        # child is generated, or its rows would point at parents the subset removed.
+        kept = (
+            ()
+            if rel.parent.table in generated
+            else tuple(c for c in rel.children if c.table not in generated)
+        )
+        if len(kept) != len(rel.children):
+            dropped = replace(rel, children=tuple(c for c in rel.children if c not in kept))
+            excluded.extend(e.edge_id for e in build_subset_edges((dropped,)))
+        if kept:
+            relationships.append(replace(rel, children=kept))
 
     seeds: list[SeedSpec] = []
     for entry in subset_block.get("seeds", []):

@@ -278,3 +278,40 @@ def test_generate_kind_edge_is_dropped_and_listed_not_refused() -> None:
     sel = select_subset(req, {"parent": text_tables()["parent"]}, job_seed=JOB_SEED)
     assert sel.excluded_edges == ("parent.id -> gen.pid",)
     assert sel.counts["parent"] == (5, 1)
+
+
+def test_generate_child_is_dropped_per_edge_and_the_mask_child_stays_in_scope() -> None:
+    config = {
+        "tables": [
+            {"name": "parent", "columns": [{"name": "id"}]},
+            {"name": "child", "columns": [{"name": "pid"}]},
+            {"name": "gen", "generate_columns": [{"name": "pid"}]},
+        ],
+        "relationships": [
+            {
+                "parent": {"table": "parent", "columns": ["id"]},
+                "children": [
+                    {"table": "child", "columns": ["pid"]},
+                    {"table": "gen", "columns": ["pid"]},
+                ],
+                "orphan_policy": "preserve",
+            }
+        ],
+        "subset": {
+            "seeds": [{"table": "parent", "mode": "keys", "key_columns": ["id"], "keys": [["b"]]}]
+        },
+    }
+    req = subset_request_from_config(config)
+    assert req is not None
+    assert [e.edge_id for e in build_subset_edges(req.relationships)] == ["parent.id -> child.pid"]
+    assert req.excluded_edges == ("parent.id -> gen.pid",)
+    tables = text_tables()
+    sel = select_subset(
+        req, {"parent": tables["parent"], "child": tables["child"]}, job_seed=JOB_SEED
+    )
+    assert "child" in sel.scope.tables and "child" not in sel.scope.whole
+    kept_parents = set(_ids(sel, "parent", "id", PARENT))
+    assert kept_parents == {"b"}
+    kept_fks = {CHILD["pid"][i] for i in sel.survivors["child"]}
+    assert kept_fks and kept_fks <= kept_parents
+    assert sel.excluded_edges == ("parent.id -> gen.pid",)
