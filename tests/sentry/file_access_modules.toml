@@ -58,6 +58,7 @@ ambient_guards = [
 # module with no such call. Each producer slice adds its modules when they start calling.
 # Modules that release a scratch arena path (`ScratchArena.local_path`, the one path release).
 scratch_path_release = [
+  "decoy_engine/declared_casting/_stream.py",
   "decoy_engine/execution/out_of_core/_runner.py",
 ]
 # Modules that call `scratch_native`; in each, every DuckDB connection or result call must go

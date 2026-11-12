@@ -1,10 +1,9 @@
-"""The out-of-core runner's scratch root: engine-created, or one a caller names (ambient only)."""
+"""Private scratch helpers the out-of-core runner uses beneath its scratch arena."""
 
 from __future__ import annotations
 
 import os
 import weakref
-from contextlib import AbstractContextManager, ExitStack
 from pathlib import Path
 from typing import BinaryIO
 
@@ -14,35 +13,10 @@ from decoy_engine.fileaccess import (
     Root,
     RootedFileAccess,
     open_protected_dir,
-    protected_scratch_dir,
 )
 from decoy_engine.fileaccess._rooted import lexical_ok
 
 _ISSUER = object()
-
-
-def scratch_root(temp_dir: Path | None, stack: ExitStack | None = None) -> Path:
-    """The private (0700) directory the runner spills into.
-
-    With no `temp_dir` the engine makes its own, owned by `stack` (required then) and removed
-    when the stack closes. A directory the caller names is a caller path, which only the ambient
-    policy follows, so any other policy is refused before any I/O. A root `engine_scratch_root`
-    or an earlier `scratch_root(None)` issued is the engine's own and is taken under every
-    policy."""
-    if temp_dir is not None:
-        return open_protected_dir(temp_dir, create=True, parents=True)
-    if stack is None:
-        raise TypeError("scratch_root needs an ExitStack to own an engine-made root")
-    return stack.enter_context(protected_scratch_dir(prefix="decoy-ooc-"))
-
-
-def engine_scratch_root(parent: Path | None) -> AbstractContextManager[Path]:
-    """A private per-run root the engine creates, removed on every exit.
-
-    Under a caller-named `parent` (ambient policy only, as for `scratch_root`) or the system temp
-    directory. While open, `scratch_root` accepts it as the run's `temp_dir` under any policy, so
-    a staged copy and the route's spill share one root and one temp-disk budget."""
-    return protected_scratch_dir(parent, prefix="decoy-ooc-run-")
 
 
 def open_private(path: Path) -> BinaryIO:

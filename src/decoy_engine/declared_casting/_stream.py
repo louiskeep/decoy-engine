@@ -12,11 +12,14 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
 from decoy_engine.declared_casting._boundary import CastBatch, DeclaredCastRun
+
+if TYPE_CHECKING:
+    from decoy_engine.fileaccess import ScratchArena
 
 
 class CastPairing:
@@ -79,7 +82,7 @@ def format_stream(
 def stage_typed_sources(
     run: DeclaredCastRun,
     sources: Mapping[str, Any],
-    root: Path,
+    arena: ScratchArena,
     batch_rows: int,
     max_bytes: int | None = None,
 ) -> dict[str, Any]:
@@ -87,22 +90,22 @@ def stage_typed_sources(
     ordinary one.
 
     A resident table is cast in place. A ``LazySource`` is streamed batch by batch into a typed
-    Parquet file under ``root`` (bounded memory), because a route that re-reads its sources in
+    Parquet file in ``arena`` (bounded memory), because a route that re-reads its sources in
     several passes must not count or quarantine twice and must see one stable, already-compacted
-    row set on every pass. ``max_bytes`` bounds the footprint of ``root``, checked per batch.
+    row set on every pass. ``max_bytes`` bounds the footprint of the arena, checked per batch.
 
-    ``root`` is an engine-made directory. Each file is named by a per-run counter, never by the
-    table name, so no config value shapes a path (the out-of-core runner's opaque ``t0000``
-    scratch names follow the same rule), and it is read back only through a reader issued over
-    ``root`` (``scratch_access_for``), as the out-of-core key stager does. Each file is created
-    0600 on its own descriptor (``open_private``) before any row lands, whatever the umask.
+    Each file is named by a per-run counter, never by the table name, so no config value shapes a
+    path (the out-of-core runner's opaque ``t0000`` scratch names follow the same rule). It is
+    created 0600 by the arena before any row lands, whatever the umask, and read back only through
+    a reader issued over the arena's root (``scratch_access_for``), as the out-of-core key stager
+    reads its own files.
     """
-    import pyarrow.parquet as pq
-
     from decoy_engine.execution.out_of_core._budget import check_temp_disk_budget
-    from decoy_engine.execution.out_of_core._scratch import open_private, scratch_access_for
+    from decoy_engine.execution.out_of_core._scratch import scratch_access_for
+    from decoy_engine.fileaccess.adapters.arrow import parquet_writer
     from decoy_engine.profile._readers import LazySource
 
+    root = Path(arena.local_path())
     out = dict(sources)
     reader: Any = None
     for index, table in enumerate(run.tables()):
@@ -112,34 +115,33 @@ def stage_typed_sources(
         if not isinstance(src, LazySource):
             out[table] = run.pre_mask({table: src})[table]
             continue
-        path = root / f"s{index:04d}.typed.parquet"
+        name = f"s{index:04d}.typed.parquet"
         writer: Any = None
         offset = 0
-        sink = open_private(path)
         try:
             for batch in src.iter_batches(batch_rows):
                 cast = run.cast_batch(table, batch, offset=offset)
                 offset += batch.num_rows
                 if writer is None:
-                    writer = pq.ParquetWriter(sink, cast.table.schema)
+                    writer = parquet_writer(arena, name, cast.table.schema)
                 writer.write_table(cast.table)
                 if max_bytes is not None:
                     check_temp_disk_budget(root, max_bytes=max_bytes)
             if writer is None:  # a zero-row source still needs a typed, readable file
                 empty = run.cast_batch(table, src.schema.empty_table(), offset=0).table
-                writer = pq.ParquetWriter(sink, empty.schema)
+                writer = parquet_writer(arena, name, empty.schema)
                 writer.write_table(empty)
         finally:
-            try:
-                if writer is not None:
-                    writer.close()
-            finally:
-                sink.close()
+            if writer is not None:
+                writer.close()
         if max_bytes is not None:
             check_temp_disk_budget(root, max_bytes=max_bytes)
         if reader is None:
             reader = scratch_access_for(root)
-        out[table] = LazySource(path, access=reader, field_key="engine.scratch")
+        # The absolute released path: the reader strips its own root prefix from it.
+        out[table] = LazySource(
+            Path(arena.local_path(name)), access=reader, field_key="engine.scratch"
+        )
     return out
 
 
@@ -185,23 +187,23 @@ def run_staged(fn: Callable[..., Any], call: dict[str, Any], default_batch_rows:
 
     ``call`` is the caller's own keyword snapshot (``dict(locals())`` at its first line); the
     sources are replaced by their staged form and ``_staged=True`` stops the second call from
-    staging again. One private per-run root (``engine_scratch_root``: under the caller's
-    ``temp_dir`` when given, ambient policy only, else the system temp directory) holds the copy
-    and is handed on as the route's ``temp_dir``, so the route spills beside the copy and every
-    footprint check, the copy's per batch and the route's per table, measures both against the
-    one ``temp_disk_budget_bytes``. Two roots would each get the whole budget. The root is the
-    engine's own, so the route takes it under any file-access policy, and it is removed on every
-    exit.
+    staging again. One scratch arena (under the caller's ``temp_dir`` when given, ambient policy
+    only, else in the system temp directory) holds the copy and is handed on as the route's
+    ``_arena``, so the route spills beside the copy and every footprint check, the copy's per
+    batch and the route's per table, measures both against the one ``temp_disk_budget_bytes``.
+    Two arenas would each get the whole budget. The route never reclaims a handed arena; this
+    opener does, on every exit.
     """
-    from decoy_engine.execution.out_of_core._scratch import engine_scratch_root
+    from decoy_engine.fileaccess import ScratchArena
 
     run = call["cast_run"]
     plan, sources = call.pop("plan"), call.pop("sources")
     call.pop("_staged", None)
-    with engine_scratch_root(call.get("temp_dir")) as root:
+    call.pop("_arena", None)  # the route's own default; a second value would be a duplicate
+    with ScratchArena.open(under=call.get("temp_dir")) as arena:
         batch_rows = call.get("batch_rows") or default_batch_rows
         staged = stage_typed_sources(
-            run, sources, root, batch_rows, call.get("temp_disk_budget_bytes")
+            run, sources, arena, batch_rows, call.get("temp_disk_budget_bytes")
         )
-        call["temp_dir"] = root
-        return fn(plan, staged, _staged=True, **call)
+        call["temp_dir"] = Path(arena.local_path())
+        return fn(plan, staged, _staged=True, _arena=arena, **call)

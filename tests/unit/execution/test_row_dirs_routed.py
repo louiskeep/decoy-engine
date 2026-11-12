@@ -11,7 +11,6 @@ import os
 import stat
 import sys
 import tempfile
-from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -51,68 +50,25 @@ def _mode(path: Path) -> int:
 # -- P0-ooc-routed -------------------------------------------------------------------------------
 
 
-def test_ooc_engine_made_root_comes_from_the_allocator(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = _spy(monkeypatch, _scratch, "protected_scratch_dir")
-    stack = ExitStack()
-    root = _scratch.scratch_root(None, stack)
-    assert len(calls) == 1 and calls[0][1] == {"prefix": "decoy-ooc-"}
-    assert root.is_dir() and _mode(root) == 0o700
-    stack.close()
-    assert not root.exists()
-
-
-def test_ooc_engine_made_root_is_the_engines_own_under_any_policy(tmp_path: Path) -> None:
+def test_ooc_private_dir_under_an_arena_root_under_any_policy(tmp_path: Path) -> None:
     jail = tmp_path / "jail"
     jail.mkdir()
     policy = _Strict(jail)
-    stack = ExitStack()
     try:
-        with fileaccess.scope(policy):
-            root = _scratch.scratch_root(None, stack)  # the engine's own root, outside the jail
-            assert _scratch.scratch_root(root, stack) == root  # a live issued root is taken again
-            child = _scratch.private_dir(root / "a" / "b")
+        with fileaccess.ScratchArena.open() as arena, fileaccess.scope(policy):
+            child = _scratch.private_dir(Path(arena.local_path()) / "a" / "b")
             assert child.is_dir() and _mode(child) == 0o700
-            caller = tmp_path / "caller"
-            with pytest.raises(fileaccess.FileAccessUnavailable):
-                _scratch.scratch_root(caller, stack)
-            assert not caller.exists()
     finally:
-        stack.close()
         policy.close()
-    assert not root.exists()
 
 
-def test_ooc_per_run_root_comes_from_the_allocator(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    calls = _spy(monkeypatch, _scratch, "protected_scratch_dir")
-    with _scratch.engine_scratch_root(tmp_path / "parent") as root:
-        assert root.parent == tmp_path / "parent" and _mode(root) == 0o700
-    assert len(calls) == 1 and calls[0][1] == {"prefix": "decoy-ooc-run-"}
-    assert not root.exists()
-
-
-def test_ooc_caller_named_root_and_private_dir_use_open_protected_dir(
+def test_ooc_private_dir_uses_open_protected_dir(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls = _spy(monkeypatch, _scratch, "open_protected_dir")
-    named = _scratch.scratch_root(tmp_path / "x" / "y")
-    assert named == tmp_path / "x" / "y"
     _scratch.private_dir(tmp_path / "x" / "z")
-    assert [c[1] for c in calls] == [{"create": True, "parents": True}] * 2
-    assert _mode(tmp_path / "x") == _mode(named) == _mode(tmp_path / "x" / "z") == 0o700
-
-
-def test_ooc_a_symlinked_caller_root_is_refused(tmp_path: Path) -> None:
-    (tmp_path / "real").mkdir(mode=0o700)
-    (tmp_path / "link").symlink_to(tmp_path / "real")
-    with pytest.raises(ProtectedDirUnsafe):
-        _scratch.scratch_root(tmp_path / "link")
-
-
-def test_ooc_an_engine_made_root_needs_an_owner() -> None:
-    with pytest.raises(TypeError):
-        _scratch.scratch_root(None)
+    assert [c[1] for c in calls] == [{"create": True, "parents": True}]
+    assert _mode(tmp_path / "x") == _mode(tmp_path / "x" / "z") == 0o700
 
 
 def test_ooc_the_scratch_module_makes_no_raw_directory() -> None:

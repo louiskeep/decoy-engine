@@ -5,12 +5,6 @@
   "entry::decoy_engine/declared_casting/_quarantine_local.py::LocalProtectedQuarantineSink._open_artifact::os.open::0": {
    "reason": "protected quarantine artifact: O_CREAT|O_EXCL|O_NOFOLLOW 0600 plus fchmod in a 0700 quarantine root"
   },
-  "entry::decoy_engine/declared_casting/_stream.py::stage_typed_sources::pyarrow.parquet.ParquetWriter::0": {
-   "reason": "writes into an open_private file (O_CREAT|O_NOFOLLOW 0600 plus fchmod) under a private_dir 0700 scratch root; the create is open_private, not this call"
-  },
-  "entry::decoy_engine/declared_casting/_stream.py::stage_typed_sources::pyarrow.parquet.ParquetWriter::1": {
-   "reason": "writes into an open_private file (O_CREAT|O_NOFOLLOW 0600 plus fchmod) under a private_dir 0700 scratch root; the create is open_private, not this call"
-  },
   "entry::decoy_engine/execution/_isolated_run.py::_write_payload::pyarrow.parquet.write_table::0": {
    "reason": "staged source copies (real data). V1 found, out of scope (X7b): written at the umask into the isolated work root; private only when the engine makes it (mkdtemp 0700), world-readable on a searchable caller staging_dir"
   },
