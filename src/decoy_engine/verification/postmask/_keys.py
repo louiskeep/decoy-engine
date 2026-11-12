@@ -60,6 +60,8 @@ class KeyResult:
     source: KeyCounts
     output: KeyCounts
     error_class: str | None = None
+    baseline: str = "measured"
+    baseline_error_class: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {

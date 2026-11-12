@@ -36,6 +36,7 @@ from decoy_engine.reasons._identity import (
     ReasonRef,
     UnknownReasonError,
     get_reason,
+    reason_ref_payload,
     require_known,
 )
 from decoy_engine.reasons._record import (
@@ -124,6 +125,7 @@ __all__ = [
     "pre_scan",
     "provider",
     "quality",
+    "reason_ref_payload",
     "require_known",
     "route",
     "runtime",
