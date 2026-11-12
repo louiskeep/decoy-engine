@@ -18,8 +18,8 @@ Review findings M1 to M3 and L1.
   - `v` / `a` with `weight_column: w` (`lookup_column_missing`): red with the weight-column
     presence check dropped.
 - `pinned_lookup_unsupported` now has a row in `test_rejected_construct_is_a_coded_error`.
-- Imports: `lookup_from_codeset` is exported from `generation.kinds` and `checked_lookup` from
-  `plan.checks`, and their callers import from there. The code set loader comes from the public
+- Imports: `lookup_from_codeset` and `checked_lookup` are not package exports (the file-access
+  sentry would read them as entry points); callers import them from their private modules. The code set loader comes from the public
   `transforms.code_set`, which now re-exports `load_corpus` with an explicit `as` form for mypy.
   That import stays inside the function: a top-level import makes `import decoy_engine.generation.kinds`
   fail with a circular import through `transforms`, `plan` and `execution`.

@@ -35,8 +35,6 @@ INTERNAL_SEAMS: dict[str, str] = {
     "decoy_engine.execution.out_of_core._mask.mask_column": "per-column step of the FK route",
     "decoy_engine.execution.out_of_core._relation.build_parent_key_relation": "FK route step",
     "decoy_engine.execution.physical._snapshot.capture_physical_plan_inputs": "shadow-plan capture",
-    "decoy_engine.generation.kinds._lookup.lookup_from_codeset": "shipped code set read",
-    "decoy_engine.plan.checks._lookup_tables.checked_lookup": "step of plan compile, load and run",
 }
 
 
