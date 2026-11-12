@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 from collections.abc import Iterator
 from itertools import pairwise
 from pathlib import Path
@@ -96,23 +95,17 @@ def _phase(name: str, status: str, table: str | None = None, **kw: Any) -> Phase
     return PhaseEvent(name, status, table=table, **kw)  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize(
-    ("route", "kwargs", "source"),
-    [
-        ("sequential", {"execution_mode": "sequential"}, "phase"),
-        ("out_of_core", {"execution_mode": "out_of_core"}, "phase"),
-    ],
-)
-def test_whole_table_routes_count_rows(tmp_path: Path, route: str, kwargs: dict, source: str):
+@pytest.mark.parametrize("route", ["sequential", "out_of_core"])
+def test_whole_table_routes_count_rows(tmp_path: Path, route: str):
     cfg, sources = _job(tmp_path, ("t1", "t2"), fk=True)
     collector = RunResultCollector()
     result = run_pipeline(
-        cfg, sources=sources, engine_version=_VERSION, progress=collector, **kwargs
+        cfg, sources=sources, engine_version=_VERSION, progress=collector, execution_mode=route
     )
     tables = _project(cfg, collector)
     for name in ("t1", "t2"):
         assert tables[name].rows_out == result.outputs[name].num_rows == 3
-        assert tables[name].rows_source == source
+        assert tables[name].rows_source == "phase"
         assert tables[name].outcome == "succeeded"
 
 
@@ -320,7 +313,17 @@ def test_a_phase_name_outside_the_vocabulary_is_timed_as_unknown():
     assert not facts.finished
 
 
-def test_out_of_core_reorder_driver_counts_rows(tmp_path: Path):
+def test_out_of_core_reorder_driver_counts_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from decoy_engine.execution.out_of_core import _runner
+
+    reordered: list[str] = []
+    real = _runner.stream_table
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        reordered.append(kwargs["table_name"])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(_runner, "stream_table", spy)
     cfg, sources = _job(tmp_path, ("t1", "t2"), fk=True)
     collector = RunResultCollector()
     run_pipeline(
@@ -333,6 +336,8 @@ def test_out_of_core_reorder_driver_counts_rows(tmp_path: Path):
         out_of_core_reorder_threshold_rows=0,
         out_of_core_budget_bytes=512 * 1024 * 1024,
     )
+    # t1 has no parent, so only the child takes the reorder driver.
+    assert reordered == ["t2"]
     tables = _project(cfg, collector)
     for name in ("t1", "t2"):
         assert (tables[name].rows_out, tables[name].rows_source) == (3, "phase")
@@ -385,18 +390,7 @@ def _chunks() -> Iterator[pa.Table]:
 
 
 @pytest.mark.parametrize(
-    "entry",
-    [
-        run_mask_pipeline_chunked,
-        pytest.param(
-            run_mask_chunked,
-            marks=pytest.mark.skipif(
-                importlib.util.find_spec("decoy_engine_native") is None,
-                reason="decoy-engine-native companion not installed; the companion job covers it",
-            ),
-        ),
-    ],
-    ids=["oracle", "native"],
+    "entry", [run_mask_pipeline_chunked, run_mask_chunked], ids=["oracle", "native"]
 )
 def test_chunked_entries_count_rows(tmp_path: Path, entry: Any):
     cfg, _ = _job(tmp_path, ("t1",))
@@ -428,28 +422,66 @@ class _Events:
         self.collector.on_event(event)
 
 
-def test_observe_chunked_outcomes():
+def _outcome(sink: _Events, *, run_failed: bool) -> tuple[str, bool]:
+    row = _project(_job_cfg(), sink.collector, run_failed=run_failed)["t1"]
+    return row.outcome, "t1" in sink.collector.snapshot().finished
+
+
+def _job_cfg() -> dict:
+    cols = [{"name": "id", "strategy": "hash"}]
+    return {
+        "version": 2,
+        "tables": [{"name": "t1", "columns": cols}],
+        "sources": {"t1": {"type": "file", "format": "csv", "path": "x.csv"}},
+    }
+
+
+def test_observe_chunked_drained_stream_finishes_with_its_rows():
     sink = _Events()
     with use_progress(sink):
+        assert sum(c.num_rows for c in observe_chunked("t1", _chunks())) == sum(_CHUNK_ROWS)
+    assert sink.phases == [("start", "t1"), ("finish", "t1")]
+    assert dict(sink.collector.snapshot().finished) == {"t1": sum(_CHUNK_ROWS)}
+
+
+def test_observe_chunked_early_close_emits_no_finish():
+    sink = _Events()
+    with use_progress(sink) as channel, channel.run_scope():
         stream = observe_chunked("t1", _chunks())
         next(stream)
         stream.close()
-    assert sink.phases == [("start", "t1"), ("finish", "t1")]
-    facts = sink.collector.snapshot()
-    assert dict(facts.finished) == {"t1": _CHUNK_ROWS[0]} and not facts.errored
+    # No finish event: the consumer's own rule reads the open start as succeeded on an ok run.
+    assert sink.phases == [("start", "t1")]
+    assert _outcome(sink, run_failed=False) == ("succeeded", False)
 
+
+def test_observe_chunked_producer_error_propagates_and_reads_failed():
     boom = RuntimeError("producer failed")
 
     def producer() -> Iterator[pa.Table]:
         yield from _chunks()
         raise boom
 
-    failing = _Events()
-    with use_progress(failing) as channel:
+    sink = _Events()
+    with use_progress(sink) as channel:
         with pytest.raises(RuntimeError) as raised, channel.run_scope():
             for _ in observe_chunked("t1", producer()):
                 pass
     assert raised.value is boom
-    assert [status for status, _ in failing.phases] == ["start", "error"]
-    facts = failing.collector.snapshot()
-    assert "t1" in facts.errored and "t1" not in facts.finished
+    assert [status for status, _ in sink.phases] == ["start", "error"]
+    assert "t1" in sink.collector.snapshot().errored
+
+
+def test_observe_chunked_consumer_error_is_not_a_success():
+    sink = _Events()
+    with use_progress(sink) as channel:
+        stream = observe_chunked("t1", _chunks())
+        with pytest.raises(RuntimeError, match="write failed"), channel.run_scope():
+            for _ in stream:
+                raise RuntimeError("write failed")
+    events_at_terminal = list(sink.phases)
+    # The abandoned stream is closed only now, after the run's terminal event.
+    stream.close()
+    assert sink.phases == events_at_terminal
+    assert ("finish", "t1") not in sink.phases
+    assert _outcome(sink, run_failed=True)[0] == "failed"
