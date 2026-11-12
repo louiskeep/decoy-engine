@@ -21,7 +21,7 @@ sections 4.8, 5, 6, 7 (AT-M5a), 11 to 14. Handoff: `handoffs/scan-ml-build`.
   `str(error)` and `message` are the registry summary; `route` and `setting` are attributes; the
   error is raised with an empty chain through `secret_providers._errors.raise_bare`.
 - Reason `route.post_scan_models_unsupported` (owner `PostScanRouteError`, a configuration refusal
-  in the RESOLVE and COMPILE phases, `since` 1.25.0), registry minor 1.25.0 (built at the next minor of
+  in the RESOLVE and COMPILE phases, `since` unreleased), registry minor unreleased (built at the next minor of
   its base; main then took that minor for the FPE fallback codes, #481, so the renumber tool moved
   this slice; no `UNRELEASED` marker exists on main), pinned then in a numbered minor fixture (retired since, see "Unreleased conversion"),
   mapped in `reason_adapter._FIXED`. `consumer-contract.json` regenerated (version lines only).
@@ -109,7 +109,7 @@ call the entries directly (the below-gate helpers in `tests/native/`) stay on th
 physical drivers' calls (`test_lossless_forwarding.py`) and the `b1_as_the_lane` helper keep the
 public entries, because those paths still call them. `tests/unit/config/test_scan_ml_reasons.py`
 asserted that M5's reason did not exist yet (an M1 tripwire); it now asserts the reason exists in
-its own minor 1.25.0.
+its own minor unreleased.
 
 ## Merge with main
 
@@ -139,7 +139,7 @@ Second merge: `91a0e975` merges main `7fc12e7f` (#492 moves the classifier stack
 install, #481 registers the FPE fallback codes at the minor this slice had claimed, #497 adds the
 canary scan entry) because main moved again before the push. Conflicts: `docs/reasons.md` and
 `tests/unit/test_reason_registry.py`, both sides kept. `scripts/dev/registry_renumber.py --main
-origin/main` then moved `route.post_scan_models_unsupported` to the next free minor, 1.25.0
+origin/main` then moved `route.post_scan_models_unsupported` to the next free minor, unreleased
 (`004cc7f6`; the numbered fixture was renamed to match; `--check` reports the registry
 consistent). The merge left two of main's FPE test assertions under the M5 test; `6aa0547d` puts
 them back in the FPE test, and every other line main added in `8f9fdfab..7fc12e7f` is present.
@@ -295,4 +295,4 @@ Full suite:  trigger public execution signatures plus reason registry, orchestra
   `src/decoy_engine/execution/_chunked_oracle.py` (`_mask_pipeline_chunked`): each core repeats its
   entry's pre-read steps (subset check, thread check, declaration gate) beside the entry, so a new
   pre-read step added to an entry must be added to its core too; no sentry compares the two lists.
-Registry renumbered at merge from 1.24.0 to 1.25.0 by scripts/dev/registry_renumber.py; main was at 1.24.0.
+Registry renumbered at merge from 1.24.0 to unreleased by scripts/dev/registry_renumber.py; main was at 1.24.0.

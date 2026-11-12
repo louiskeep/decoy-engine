@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from decoy_engine.reasons import _catalog
-from decoy_engine.reasons._types import Kind, Outcome, Phase, RetryClass, Severity
+from decoy_engine.reasons._types import UNRELEASED, Kind, Outcome, Phase, RetryClass, Severity
 
 __all__ = [
     "MIXED_GENERATE_MASK_CHUNKED",
@@ -64,5 +64,5 @@ POST_SCAN_MODELS_UNSUPPORTED = _catalog.route("PostScanRouteError")(
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
     phases=(Phase.RESOLVE, Phase.COMPILE),
-    since="1.25.0",
+    since=UNRELEASED,
 )
