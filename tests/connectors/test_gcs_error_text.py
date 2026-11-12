@@ -219,10 +219,8 @@ def test_open_file_object_translates_after_open(where: str, install: Callable[..
     _value_free(str(info.value), repr(info.value))
 
 
-def test_wrap_gcs_error_classifies_a_retry_timeout_as_transient() -> None:
-    from decoy_engine.connectors.gcs import _wrap_gcs_error
-
-    err = _wrap_gcs_error(gax_exc.RetryError(MSG, ValueError(MSG)))
+def test_gcs_error_classifies_a_retry_timeout_as_transient() -> None:
+    err = _clients().gcs_error(gax_exc.RetryError(MSG, ValueError(MSG)))
     assert type(err) is TransientError, type(err).__name__
     _value_free(str(err), repr(err))
 
