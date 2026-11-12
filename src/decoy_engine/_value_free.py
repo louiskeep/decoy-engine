@@ -22,10 +22,15 @@ from pydantic import BaseModel, Field, Strict, create_model
 
 __all__ = [
     "Count",
+    "SharedRules",
     "ValueFree",
     "derive_read",
     "has_kind",
 ]
+
+
+class SharedRules(BaseModel):
+    """Base of a rules class: validators a write model and its derived read model both run."""
 
 
 class ValueFree:

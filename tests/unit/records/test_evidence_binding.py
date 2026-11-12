@@ -8,12 +8,13 @@ from types import MappingProxyType
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from decoy_engine import records
 from decoy_engine.records import RecordError, canonical_bytes
 from decoy_engine.records._payloads import EvidencePayload
 from decoy_engine.records._read_model import read_model_of
-from tests.unit.records._helpers import PRODUCER, T0, corpus, make, raw_of
+from tests.unit.records._helpers import PRODUCER, T0, corpus, make, raw_of, seal
 
 PROJECT = "evidence-cli-local-1-project.json"
 CANARY = "CANARY-7f3a"
@@ -157,3 +158,48 @@ def test_eb_older_samples_stay_without_the_pair() -> None:
         assert "path_base" not in sample and "project_manifest" not in sample
         env = make("evidence", sample, labels={})
         assert "path_base" not in env.payload
+
+
+# -- the public decoder holds the same binding rules as the write model ----------------------
+
+
+def _sealed_with(payload_edit: Mapping[str, Any], drop: tuple[str, ...] = ()) -> bytes:
+    raw = raw_of(make("evidence", _manifest(), labels={}))
+    raw["payload"].update(payload_edit)
+    for key in drop:
+        raw["payload"].pop(key, None)
+    return canonical_bytes(seal(raw))
+
+
+_BAD_BINDINGS = {
+    "only_path_base": {"path_base": "project"},
+    "only_project_manifest": {"project_manifest": "out/run.json"},
+    "null_path_base": {"path_base": None, "project_manifest": "out/run.json"},
+    "other_path_base": {"path_base": "cwd", "project_manifest": "out/run.json"},
+}
+
+
+@pytest.mark.parametrize("name", list(_BAD_BINDINGS))
+def test_eb_decode_refuses_an_invalid_binding_state(name: str) -> None:
+    with pytest.raises(RecordError) as caught:
+        records.decode(_sealed_with(_BAD_BINDINGS[name]))
+    assert caught.value.code == "record_invalid"
+    assert "cwd" not in str(caught.value) and "out/run.json" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        {"path_base": "project", "project_manifest": "out/run.json"},
+        {"path_base": "project", "project_manifest": None},
+        {},
+    ],
+)
+def test_eb_decode_still_reads_a_valid_binding(edit: dict[str, Any]) -> None:
+    assert isinstance(records.decode(_sealed_with(edit)), records.DecodedRecord)
+
+
+@pytest.mark.parametrize("name", list(_BAD_BINDINGS))
+def test_eb_read_model_refuses_an_invalid_binding_state(name: str) -> None:
+    with pytest.raises(ValidationError):
+        read_model_of(EvidencePayload).model_validate(_manifest(**_BAD_BINDINGS[name]))
