@@ -34,6 +34,7 @@ from decoy_engine.generation._pinned_plan import (
     validate_seed,
 )
 from decoy_engine.generation._statistical_column import arrow_table
+from decoy_engine.generation.pool import GenerationError
 from decoy_engine.generation.statistical import StatisticalSpec, spec_from_dict
 
 
@@ -101,6 +102,20 @@ def _policies_well_formed(plan: PinnedPlan) -> bool:
     return True
 
 
+def _refuse_malformed_policies(plan: PinnedPlan) -> None:
+    """Refuse a plan whose recorded reference policies would not decode, before anything reads it.
+
+    The policy decides what an empty parent does, so a field that was tampered with is refused
+    at the run with the relational refusal rather than read leniently. The message is the fixed
+    summary: a malformed entry has no trustworthy name to show.
+    """
+    if not _policies_well_formed(plan):
+        raise GenerationError(
+            code=reasons.runtime.PINNED_RELATIONAL_OPTION_UNSUPPORTED,
+            message=reasons.runtime.PINNED_RELATIONAL_OPTION_UNSUPPORTED.spec.summary,
+        )
+
+
 def _check_plan(plan: PinnedPlan) -> dict[tuple[str, str], StatisticalSpec]:
     """Re-check a plan that may have been deserialized or hand-built, then decode its specs."""
     if plan.runtime_identity != runtime_identity():
@@ -117,7 +132,8 @@ def _check_plan(plan: PinnedPlan) -> dict[tuple[str, str], StatisticalSpec]:
                 }
                 for t in plan.tables
             ]
-        }
+        },
+        at_execute=True,
     )
     for ti, t in enumerate(plan.tables):
         for ci, c in enumerate(t.columns):
@@ -130,11 +146,6 @@ def _check_plan(plan: PinnedPlan) -> dict[tuple[str, str], StatisticalSpec]:
         raise PinnedModeError(
             code=reasons.plan.PINNED_PLAN_MALFORMED,
             message="a recorded numeric type is not int64 or float64",
-        )
-    if not _policies_well_formed(plan):
-        raise PinnedModeError(
-            code=reasons.plan.PINNED_PLAN_MALFORMED,
-            message="a recorded reference policy is not a table, a column and a known policy",
         )
     specs: dict[tuple[str, str], StatisticalSpec] = {}
     for s in plan.statistical:
@@ -195,6 +206,8 @@ def execute_pinned(
 
     import pandas as pd
 
+    # First: the token scan serializes the plan, which a policy field of the wrong type breaks.
+    _refuse_malformed_policies(plan)
     _scan_plan_for_tokens(plan)
     seed = validate_seed(seed)
     specs = _check_plan(plan)

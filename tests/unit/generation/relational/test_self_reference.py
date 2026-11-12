@@ -20,7 +20,7 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine import reasons
-from decoy_engine.generation import relational, synthesize
+from decoy_engine.generation import synthesize
 from decoy_engine.generation._admission import classify_plan
 from decoy_engine.generation._plan_entry import generate_tables_streamed
 from decoy_engine.generation.pinned import (
@@ -29,6 +29,8 @@ from decoy_engine.generation.pinned import (
     compile_pinned_plan,
     execute_pinned,
 )
+from decoy_engine.generation.pool import GenerationError
+from decoy_engine.generation.relational._self_reference import self_reference
 from decoy_engine.generators.derivation import GenDeriveContext, with_table
 from tests.unit.generation.relational._support import REF, family, is_safe, plan_of
 from tests.unit.generation.unique._gu_e2_support import cfg, ref, run, seq_parent, table
@@ -53,7 +55,7 @@ def _column(**options: Any) -> dict[str, Any]:
 
 def _draw(n: int, seed: int = 7, keys: list[Any] | None = None, **options: Any) -> list[Any]:
     keys = list(range(1, n + 1)) if keys is None else keys
-    return relational.self_reference(_column(**options), n, seed, None, {"id": keys})
+    return self_reference(_column(**options), n, seed, None, {"id": keys})
 
 
 def _assert_forest(ids: list[Any], parents: list[Any], roots: int) -> None:
@@ -100,6 +102,14 @@ def test_at8_all_rows_can_be_roots_and_an_empty_table_is_empty() -> None:
     assert run([_tree(0)])["employees"].num_rows == 0
 
 
+def test_at8_a_direct_call_holds_root_count_inside_one_to_n() -> None:
+    """Validation refuses these; a caller that skipped it still gets a forest, never an error."""
+    assert _draw(5, root_count=99) == [None] * 5
+    for low in (0, -4):
+        assert _draw(40, root_count=low).count(None) == 1
+    assert _draw(40, root_count=None).count(None) == 1
+
+
 def test_at8_a_string_key_is_copied_as_it_is() -> None:
     key = {"name": "id", "type": "sequence", "start": 1, "prefix": "E-", "pad_length": 4}
     out = run([_tree(40, key)])["employees"]
@@ -125,7 +135,7 @@ def test_at8_the_draw_is_uniform_over_the_earlier_rows() -> None:
     )
     keys = [f"k{i}" for i in range(50)]
     want = [None, *(keys[rng.randrange(i)] for i in range(1, 50))]
-    assert relational.self_reference(col, 50, 7, None, {"id": keys}) == want
+    assert self_reference(col, 50, 7, None, {"id": keys}) == want
 
 
 def test_at8_a_self_reference_sits_beside_an_ordinary_reference() -> None:
@@ -141,17 +151,17 @@ def test_at8_a_self_reference_sits_beside_an_ordinary_reference() -> None:
 # ---- AT-9: the capped draw ----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("cap", [1, 2, 5])
+@pytest.mark.parametrize("most", [1, 2, 5])
 @pytest.mark.parametrize("roots", [1, 4])
-def test_at9_no_key_gets_more_children_than_max_per_parent(cap: int, roots: int) -> None:
-    options: dict[str, Any] = {"max_per_parent": cap}
+def test_at9_no_key_gets_more_children_than_max_per_parent(most: int, roots: int) -> None:
+    options: dict[str, Any] = {"max_per_parent": most}
     if roots > 1:
         options["root_count"] = roots
     for seed in SEEDS:
         ids, parents = _generated(seed, **options)
         _assert_forest(ids, parents, roots)
         counts = Counter(p for p in parents if p is not None)
-        assert max(counts.values()) <= cap
+        assert max(counts.values()) <= most
         # Rows added after the roots must be able to take children, or the draw runs dry.
         assert any(p not in ids[:roots] for p in parents[roots:])
 
@@ -263,7 +273,7 @@ def test_at10_pinned_execute_refuses_a_self_reference_before_any_draw(
     bad = _self_referencing(compile_pinned_plan(copy.deepcopy(family(5, 9)), REF))
     if deserialized:
         bad = PinnedPlan.from_dict(json.loads(json.dumps(bad.to_dict())))
-    with pytest.raises(PinnedModeError) as exc:
+    with pytest.raises(GenerationError) as exc:
         execute_pinned(bad, 1)
     assert exc.value.code == reasons.runtime.PINNED_RELATIONAL_OPTION_UNSUPPORTED
     assert exc.value.code.namespace == "runtime"

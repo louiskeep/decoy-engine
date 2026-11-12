@@ -800,7 +800,7 @@ def _no_draw(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(synthesize, "_generate_column", boom)
 
 
-def _assert_runtime_relational_refusal(exc: pytest.ExceptionInfo[PinnedModeError]) -> None:
+def _assert_runtime_relational_refusal(exc: pytest.ExceptionInfo[Any]) -> None:
     from decoy_engine import reasons
 
     assert exc.value.code == reasons.runtime.PINNED_RELATIONAL_OPTION_UNSUPPORTED
@@ -829,7 +829,9 @@ def test_hand_built_plan_with_a_bad_policy_is_refused_before_any_draw(
     _no_draw(monkeypatch)
     plan = compile_pinned_plan(_family_config("fail"), REF)
     bad = dataclasses.replace(plan, reference_policies=policies)
-    with pytest.raises(PinnedModeError) as exc:
+    from decoy_engine.generation.pool import GenerationError
+
+    with pytest.raises(GenerationError) as exc:
         execute_pinned(bad, 1)
     _assert_runtime_relational_refusal(exc)
     assert "leaky" not in str(exc.value) and "7" not in str(exc.value)

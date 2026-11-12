@@ -323,6 +323,9 @@ _BASE_OPTIONS: Mapping[str, TypeOptions] = {
             "weights": OptionSpec(_weights),
             "min_per_parent": OptionSpec(_int_at_least(0)),
             "max_per_parent": OptionSpec(_int_at_least(0)),
+            # A self-reference only; its range depends on the table's row count, so
+            # `_generate_relational.self_reference_problems` checks it and its scope.
+            "root_count": _I,
             "snapshot_file": OptionSpec(_fitted_only_str),
             "source_column": OptionSpec(_fitted_only_str),
         },

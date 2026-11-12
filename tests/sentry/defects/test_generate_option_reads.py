@@ -45,6 +45,7 @@ READER_FILES = (
     "generation/kinds/_output_type.py",
     "generation/kinds/_parametric.py",
     "generation/_referenced_formula.py",
+    "generation/relational/_self_reference.py",
     "generators/columns.py",
     "generators/derivation.py",
     "generators/_formula.py",

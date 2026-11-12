@@ -18,6 +18,7 @@ __all__ = [
     "GENERATE_LOCALE_UNKNOWN",
     "GENERATE_OPTION_INVALID",
     "GROUPED_SERIES_GROUP_BY_EQUALS_ORDER_BY",
+    "PINNED_RELATIONAL_OPTION_UNSUPPORTED",
     "REFERENCE_WEIGHTS_LENGTH_MISMATCH",
     "RELATIONSHIP_PARENT_NOT_UNIQUE",
     "SORT_UNSUPPORTED_TYPE",
@@ -146,5 +147,15 @@ REFERENCE_WEIGHTS_LENGTH_MISMATCH = _d(
 RELATIONSHIP_PARENT_NOT_UNIQUE = _d(
     "relationship_parent_not_unique",
     "A generated relationship parent key is not provably unique.",
+    since=UNRELEASED,
+)
+
+# A summary is the whole message beside the table and column names. The run-time twin in the
+# `runtime` namespace carries the same text for a plan that never went through pinned compile.
+_d = _catalog.plan("PinnedModeError")
+
+PINNED_RELATIONAL_OPTION_UNSUPPORTED = _d(
+    "pinned_relational_option_unsupported",
+    "Pinned generation does not support this relational generate option.",
     since=UNRELEASED,
 )

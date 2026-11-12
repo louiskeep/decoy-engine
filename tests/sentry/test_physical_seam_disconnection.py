@@ -959,8 +959,10 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_strategies/_redact.py",
             # GEN-REL E1: the capacity probe loosens a bounded `reference` column's per-parent
             # bounds to the scaled row counts, so a scaled config stays feasible, and reads a
-            # table's generate columns through `config.generate_columns_of`. It imports
-            # nothing from `execution.physical`.
+            # table's generate columns through `config.generate_columns_of`. GEN-REL E2: it
+            # also holds a self-reference's explicit `root_count` to the scaled row count,
+            # using `config.is_self_reference`. It still imports nothing from
+            # `execution.physical`.
             "src/decoy_engine/execution/_probe_scale.py",
         }
     )

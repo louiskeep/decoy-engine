@@ -45,7 +45,11 @@ from pydantic_core import PydanticCustomError, ValidationError
 from decoy_engine import reasons
 from decoy_engine.config._delivery import DeliveryConfig
 from decoy_engine.config._generate_options import problem_details
-from decoy_engine.config._generate_relational import per_parent_problems
+from decoy_engine.config._generate_relational import (
+    is_self_reference,
+    per_parent_problems,
+    self_reference_problems,
+)
 from decoy_engine.config._generate_unique import cross_table_unique_problems
 from decoy_engine.config._global_settings import GlobalSettings
 from decoy_engine.config._namespaces import NamespaceConfig
@@ -289,7 +293,9 @@ class PipelineConfig(BaseModel):
                         f"points to {ref_table}.{ref_column!r}, but "
                         f"{ref_table!r} declares no such column"
                     )
-                d.add(ref_table)
+                # A self-reference is a tree inside one table, not an edge between tables.
+                if not is_self_reference(table.name, {"type": col.type, **extras}):
+                    d.add(ref_table)
             deps[table.name] = d
         # Detect cycles via DFS three-color marking.
         # QA walks/generators F4 (2026-06-01, HIGH reliability): iterative
@@ -330,6 +336,41 @@ class PipelineConfig(BaseModel):
                     state[parent_name] = GRAY
                     path.append(parent_name)
                     stack.append((parent_name, iter(deps.get(parent_name, ()))))
+        return self
+
+    @model_validator(mode="after")
+    def _self_references_valid(self) -> PipelineConfig:
+        """A reference to the column's own table must be a shape the tree draw honors.
+
+        Runs after the reference graph is known valid, so the key column exists. `root_count`
+        on a reference to another table is refused here too: only this check knows the table.
+        """
+        if not any(
+            c.type == "reference"
+            and (
+                "root_count" in (c.model_extra or {})
+                or is_self_reference(t.name, {"type": c.type, **(c.model_extra or {})})
+            )
+            for t in self.tables
+            for c in t.generate_columns
+        ):
+            return self
+        problems = self_reference_problems(
+            [
+                {
+                    "name": t.name,
+                    "row_count": t.row_count,
+                    "unique_together": t.unique_together,
+                    "generate_columns": [
+                        {**(c.model_extra or {}), "name": c.name, "type": c.type}
+                        for c in t.generate_columns
+                    ],
+                }
+                for t in self.tables
+            ]
+        )
+        if problems:
+            raise ValidationError.from_exception_data("PipelineConfig", problem_details(problems))
         return self
 
     @model_validator(mode="after")

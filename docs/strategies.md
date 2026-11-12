@@ -1270,7 +1270,7 @@ take it.
 | `sequence` | `start` | `step`, `prefix`, `suffix`, `pad_length`, `output_type` | |
 | `faker` | `faker_type` | `locale`, `faker_kwargs`, `output_type` | |
 | `categorical` | `categories` | `weights`, `output_type` | |
-| `reference` | `reference_table`, `reference_column` | `distribution`, `weights`, `min_per_parent`, `max_per_parent`, `snapshot_file`, `source_column` | `weights` if `distribution: weighted` |
+| `reference` | `reference_table`, `reference_column` | `distribution`, `weights`, `min_per_parent`, `max_per_parent`, `root_count`, `snapshot_file`, `source_column` | `weights` if `distribution: weighted` |
 | `formula` | `formula` | `references`, `output_type` | |
 | `statistical` | `snapshot_file` | `source_column`, `high_cardinality`, `allow_real_categories`, `other_mode`, `condition_on` | |
 | `derived` | `expression` | `bounds`, `null_propagation`, `output_type` | |
@@ -1391,6 +1391,8 @@ child can point at a generated parent's keys.
   (0 = unbounded). These bounds do not compose with `sequential`. See "Per-parent bounds" below.
 - `snapshot_file` / `source_column`: only with `distribution: fitted` (below).
   Any other distribution refuses them with `config.generate_option_unknown`.
+- `root_count`: only on a reference to the column's own table (see "Self-reference trees"
+  below). On any other reference it is refused with `config.generate_option_unknown`.
 
 `random` and `weighted` pick a parent for each child row on its own, so on 30
 parents and 60 children almost every parent gets 1 to 4 children. A source
@@ -1440,6 +1442,50 @@ policy of each covered reference column as plan metadata (`reference_policies`),
 fingerprint follows the policy while the column's values and seed do not. A `fitted` column is
 the exception: an empty parent always stops with `plan.reference_parent_pool_empty`, whatever the
 policy.
+
+#### Self-reference trees (`reference_table` is the column's own table)
+
+A `reference` column whose `reference_table` is its own table is a self-reference: a manager
+for each employee, a parent category for each category. The rows are generated as a forest.
+
+```yaml
+- name: employees
+  row_count: 200
+  generate_columns:
+    - {name: id, type: sequence, start: 1}
+    - name: manager_id
+      type: reference
+      reference_table: employees
+      reference_column: id
+      root_count: 1        # optional, default 1
+      max_per_parent: 8    # optional
+```
+
+- The first `root_count` rows are roots: their value is null. `root_count` defaults to 1 (one
+  tree) and must lie between 1 and the table's `row_count`. A table with `row_count: 0` ignores
+  it.
+- Every later row takes the key of a row above it, chosen uniformly (a random recursive tree,
+  Smythe and Mahmoud 1995). A parent always comes earlier in the table, so every chain ends at a
+  root and there is never a cycle.
+- With `max_per_parent`, a row picks uniformly among the earlier rows that have fewer than
+  `max_per_parent` children. No key gets more children than that. This is a degree-bounded
+  variant, not the uniform recursive tree.
+- The same seed gives the same tree. The column's Arrow type is the key column's type.
+
+| When | Refused | Code |
+| --- | --- | --- |
+| Validate | `reference_column` is not an earlier `sequence` column of the same table, or that column has `null_probability` above 0 | `config.generate_self_reference_key_invalid` |
+| Validate | `distribution` other than `random`, a positive `min_per_parent`, `null_probability` above 0, `unique: true`, or the column is a `unique_together` member | `config.generate_self_reference_option_unsupported` |
+| Validate | `root_count` below 1 or above a positive `row_count` | `config.generate_option_range` |
+| Validate | `root_count` on a reference to another table | `config.generate_option_unknown` |
+| Pinned compile | any self-reference | `plan.pinned_relational_option_unsupported` |
+| Pinned execute | a self-reference in a plan that did not come from pinned compile, or a recorded `reference_policies` field that does not decode | `runtime.pinned_relational_option_unsupported` (a `GenerationError`) |
+
+Only the self-edge is exempt from the cycle check: two tables that reference each other are
+still refused as a reference cycle. A self-reference runs on the whole-table route (streaming
+admission declines it with `reference_to_own_table`). A capacity probe holds an explicit
+`root_count` to its scaled row count, so a config that validates at full size is never refused
+by its probe.
 
 #### Fitted fan-out (`distribution: fitted`)
 

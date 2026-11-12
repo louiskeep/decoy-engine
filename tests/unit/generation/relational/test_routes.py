@@ -487,7 +487,7 @@ TREE_CODES = (
     ("config", "generate_self_reference_key_invalid", "PipelineValidationError"),
     ("config", "generate_self_reference_option_unsupported", "PipelineValidationError"),
     ("plan", "pinned_relational_option_unsupported", "PinnedModeError"),
-    ("runtime", "pinned_relational_option_unsupported", "PinnedModeError"),
+    ("runtime", "pinned_relational_option_unsupported", "GenerationError"),
 )
 PINNED_UNSUPPORTED = "pinned_relational_option_unsupported"
 
@@ -543,7 +543,7 @@ def test_at15_pinned_execute_refusal_of_a_self_reference_names_the_table_and_col
     column.update(reference_table="kids", reference_column="cid", max_per_parent=7919)
     kids["columns"][1]["config_json"] = json.dumps(column, sort_keys=True)
     kids["depends_on"] = []
-    with pytest.raises(PinnedModeError) as exc:
+    with pytest.raises(GenerationError) as exc:
         execute_pinned(PinnedPlan.from_dict(stored), 7)
     assert exc.value.code == reasons.runtime.PINNED_RELATIONAL_OPTION_UNSUPPORTED
     assert exc.value.code.namespace == "runtime"
