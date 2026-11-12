@@ -384,3 +384,45 @@ def test_run_pipeline_hands_its_registry_to_the_boundary(
     config = PipelineConfig.model_validate(_config(tmp_path, "derive")).model_dump()
     run_pipeline(config, {"t": SRC}, registry=REG, execution_mode="full_frame", **KW)
     assert seen == [REG]
+
+
+def test_derive_after_dropped_input_is_not_exempt() -> None:
+    ops = [
+        {"op": "drop_column", "columns": ["a"]},
+        {"op": "derive", "column": "x", "expression": "a + 1"},
+    ]
+    assert _created({"name": "t", "columns": PASSTHROUGH, "transforms": ops}) == frozenset()
+
+
+def test_derive_target_shadowing_source_is_not_exempt() -> None:
+    ops = [{"op": "derive", "column": "a", "expression": "b"}]
+    assert _created({"name": "t", "columns": PASSTHROUGH, "transforms": ops}) == frozenset()
+    dropped_first = [{"op": "drop_column", "columns": ["a"]}, *ops]
+    assert _created({"name": "t", "transforms": dropped_first}) == {"a"}
+
+
+@pytest.mark.parametrize("entry", ["oracle", "native"])
+def test_chunked_entries_hand_their_registry_to_the_boundary(
+    entry: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.execution import _chunked
+    from decoy_engine.execution.native import _chunked_entry
+
+    module = _chunked if entry == "oracle" else _chunked_entry
+    seen: list[Any] = []
+    real = module.prepare_declared_execution_sources
+
+    def spy(request: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs.get("registry"))
+        return real(request, **kwargs)
+
+    monkeypatch.setattr(module, "prepare_declared_execution_sources", spy)
+    config = PipelineConfig.model_validate(_config(tmp_path, "group_key")).model_dump()
+    if entry == "oracle":
+        out = run_mask_pipeline_chunked(
+            config, [SRC], table="t", source_schema=SRC.schema, registry=REG, **KW
+        )
+    else:
+        out = run_mask_chunked(config, [SRC], table="t", registry=REG, **KW)
+    list(out)
+    assert seen and seen[0] is REG

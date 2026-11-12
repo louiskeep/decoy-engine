@@ -50,6 +50,8 @@ Capture now builds its declared sources with `DeclarationRequest.for_run` and pa
 
 `test_extra_resident_source_preserved_and_projection_warning_parity` pinned the old gap: capture accepted a supplied table the config does not declare, which the live route refuses. It now asserts capture and the live route refuse with the same code. Declared, that table is a second mask table, which the full-frame shadow declines, so the echoed-extra-source path has no input left through capture.
 
+Round 2: `_derive_created` now walks the transforms in order with the set of columns on the frame, so a derive reading a column an earlier `drop_column` removed, or targeting a column already on the frame, is not a created column (the run refuses the second, and the first cannot read the dropped input). Both chunked entries now pass their caller registry to the boundary. The shadow test was renamed to say what it checks.
+
 ## Not verified
 
 Mac run; X-id behavior under the reverse rule (E2b-r2).

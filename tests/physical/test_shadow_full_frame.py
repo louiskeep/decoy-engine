@@ -365,18 +365,17 @@ def test_oracle_parity_outputs_warnings_row_errors(tmp_path: Path) -> None:
     )
 
 
-def test_extra_resident_source_preserved_and_projection_warning_parity(tmp_path: Path) -> None:
-    """A2b: an admitted job's snapshot carries an EXTRA resident source
-    table beyond the one masked -- the coordinator's output preserves the
-    echoed extra-source key AND matches the oracle's projection-warning
-    parity. The direct-adapter comparator (A1) uses the SAME full mapping."""
+def test_undeclared_extra_source_is_refused_and_a_declared_one_is_declined(tmp_path: Path) -> None:
+    """A supplied table the config does not declare is refused by capture and by the live
+    route with the same code. Declared, it is a second mask table, which the full-frame
+    shadow declines."""
     config, source = _admitted_table_config(tmp_path)
     extra = pa.table({"note": pa.array(["x", "y"], type=pa.string())})
     sources = {_TABLE: source, "extra": extra}
 
-    # The declaration gate (CONFIG-EXPLICIT E2c) refuses a supplied table the config does not
-    # declare. Capture builds its declared sources through the call the live route makes, so
-    # it refuses with the same code and the oracle run has no projection warning to compare.
+    # A supplied table the config does not declare is refused before anything is read.
+    # Capture builds its declared sources through the call the live route makes, so it
+    # refuses with the same code and the oracle run has no projection warning to compare.
     for refused_run in (
         lambda: _capture(config, sources),
         lambda: run_pipeline(

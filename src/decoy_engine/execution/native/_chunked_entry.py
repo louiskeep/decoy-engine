@@ -655,7 +655,9 @@ def run_mask_chunked(
     _validate_native_threads(native_threads)
     # Config-level check before `chunks` is touched; the first chunk is checked in preflight.
     declared = prepare_declared_execution_sources(
-        DeclarationRequest.for_chunks(config, table, None), file_access=file_access
+        DeclarationRequest.for_chunks(config, table, None),
+        file_access=file_access,
+        registry=registry,
     )
     # Progress: account every yielded chunk on the active channel (bound by the
     # caller, e.g. `run_pipeline(progress=...)`); a no-op when nothing is bound.

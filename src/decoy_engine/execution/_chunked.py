@@ -413,10 +413,8 @@ def run_mask_pipeline_chunked(
     `source_schema` is the schema `chunks` was cut from. It is checked against the config before
     `chunks` is touched; no chunk may carry a column outside it or the declared columns.
 
-    `adapter` selects the execution substrate; None keeps the pandas
-    adapter (the byte-stable default this mode shipped with). The parameter
-    is retained for a future non-pandas substrate; pandas is the only
-    substrate today.
+    `adapter` selects the execution substrate; None keeps the pandas adapter (the byte-stable
+    default). It is kept for a future non-pandas substrate.
 
     `vault_writer` (a `decoy_engine.vault.VaultWriter`) collects each
     chunk's source->masked pairs for `vault: true` columns as the chunk
@@ -438,9 +436,10 @@ def run_mask_pipeline_chunked(
     from . import _chunked_oracle
 
     refuse_unapplied_subset(config)
-    # Before `chunks` is touched: the table and `source_schema` must be declared (E2d).
     declared = prepare_declared_execution_sources(
-        DeclarationRequest.for_chunks(config, table, source_schema), file_access=file_access
+        DeclarationRequest.for_chunks(config, table, source_schema),
+        file_access=file_access,
+        registry=registry,
     )
     state = _chunked_oracle._oracle_preflight(
         config,

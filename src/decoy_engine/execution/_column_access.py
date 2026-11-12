@@ -401,18 +401,26 @@ def created_columns(
 
 
 def _derive_created(table_entry: Mapping[str, Any], have: frozenset[str]) -> frozenset[str]:
-    """`derive` targets whose own expressions read only source columns. A target built from an
-    earlier target is not exempt, since the earlier column does not exist to be read yet when
-    the source lacks it; a target written twice must qualify on every write."""
+    """`derive` targets that are new columns built from source columns still on the frame.
+
+    The ops are walked in order, as `apply_transforms` applies them: a dropped column is no
+    longer readable, a target already on the frame is refused at run time (so it is never a
+    created column), and a column an earlier derive made does not exist in the source to be
+    read. A target written twice must qualify on every write.
+    """
+    frame = set(have)
     ok: dict[str, bool] = {}
     for op in table_entry.get("transforms") or []:
-        if not isinstance(op, Mapping) or op.get("op") != "derive":
+        if not isinstance(op, Mapping):
             continue
-        target = op.get("column")
-        if not isinstance(target, str):
-            continue
-        names = predicate_names(str(op.get("expression")))
-        ok[target] = ok.get(target, True) and names is not None and names <= have
+        if op.get("op") == "drop_column":
+            frame -= _strings(op.get("columns"))
+        elif op.get("op") == "derive" and isinstance(op.get("column"), str):
+            target = op["column"]
+            names = predicate_names(str(op.get("expression")))
+            good = names is not None and names <= frame & have and target not in frame
+            ok[target] = ok.get(target, True) and good
+            frame.add(target)
     return frozenset(t for t, good in ok.items() if good)
 
 
