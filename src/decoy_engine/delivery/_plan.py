@@ -25,6 +25,7 @@ class TableDelivery:
     state: DeliveryState
     # The smallest failed table name the dropped table is reachable from; None unless dropped.
     dropped_because: str | None = None
+    code: ReasonCode | None = None
 
 
 @dataclass(frozen=True)
