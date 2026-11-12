@@ -126,6 +126,21 @@ def test_at12_no_value_is_nan_and_every_missing_value_is_a_null(op: str, tmp_pat
         assert column.null_count == 0
 
 
+@pytest.mark.parametrize("op", AGGREGATE_OPS)
+def test_at12_a_parent_whose_children_hold_only_nulls_gets_no_nan(op: str, tmp_path: Path) -> None:
+    """pandas gives NaN for the mean, min and max of an all-null group; the column holds a null."""
+    nulls = {**LINE_AMOUNT, "null_probability": 1.0}
+    out = run_route(
+        "resident", per_parent(op, line_cols=[LINE_ID, ref("oid", "orders"), nulls]), tmp_path
+    )
+    values = _totals(out)
+    with_children = [values[i] for i in range(len(values)) if i not in _childless(out)]
+    assert with_children, "no order has a line: the cell would be vacuous"
+    assert not any(isinstance(v, float) and math.isnan(v) for v in values)
+    assert with_children == [0 if op in ("sum", "count") else None] * len(with_children)
+    assert _same(values, _oracle(out, op))
+
+
 @pytest.mark.parametrize(
     ("op", "arrow_type"),
     [
