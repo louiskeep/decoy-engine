@@ -95,6 +95,7 @@ SENTRIES = (
     "tests/sentry/generation/test_uniqueness_refusal_choke_point.py",
     "tests/sentry/parallel/test_serial_resources.py",
     "tests/sentry/parallel/test_stable_ids.py",
+    "tests/sentry/post_scan/test_post_scan_choke_points.py",
     "tests/sentry/profiling/test_profile_value_registry.py",
     "tests/sentry/profiling/test_snapshot_value_registry.py",
     "tests/sentry/source_config/test_declaration_gate.py",
