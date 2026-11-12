@@ -11,6 +11,9 @@ detectors or `ner_findings: fail` (SCAN-ML M5). Three rules hold that:
    to one, passes `config=`.
 3. Resident lane. `run_pipeline`'s own modules (`execution/_pipeline*.py`) never call a guarded
    public chunked entry: its auto-chunk lane runs the post-scan, so it uses the guard-free cores.
+
+Rules 2 and 3 see a call under an import alias, a re-binding or an attribute, through the
+resolver the declaration-gate sentry uses (`tests/sentry/_call_resolution.py`).
 """
 
 from __future__ import annotations
@@ -22,6 +25,8 @@ import textwrap
 from pathlib import Path
 
 import pytest
+
+from tests.sentry._call_resolution import resolved_calls
 
 SRC = Path(__file__).resolve().parents[2] / "src"
 EXECUTION = SRC / "decoy_engine" / "execution"
@@ -58,7 +63,6 @@ EXEMPT: dict[str, str] = {
 CONFIG_CALLEES = frozenset(
     {
         "run_sequential",
-        "_run_sequential",
         "run_fk_out_of_core",
         "run_sequential_route",
         "run_out_of_core_route",
@@ -146,22 +150,19 @@ def test_guarded_entry_calls_the_guard_first(qualified: str) -> None:
     assert guard_first(_function_node(qualified)), f"{qualified} does not call {GUARD} first"
 
 
-def _call_name(call: ast.Call) -> str | None:
-    if isinstance(call.func, ast.Name):
-        return call.func.id
-    if isinstance(call.func, ast.Attribute):
-        return call.func.attr
-    return None
+def _watched_calls(source: str, targets: frozenset[str]) -> list[tuple[str, ast.Call]]:
+    """Calls of each target under any local spelling (see `tests/sentry/_call_resolution.py`)."""
+    tree = ast.parse(source)
+    found = [(target, call) for target in sorted(targets) for call in resolved_calls(tree, target)]
+    return sorted(found, key=lambda hit: (hit[1].lineno, hit[1].col_offset))
 
 
 def calls_without_config(source: str) -> list[str]:
-    missing: list[str] = []
-    for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.Call) and _call_name(node) in CONFIG_CALLEES:
-            keywords = {k.arg for k in node.keywords}
-            if "config" not in keywords:
-                missing.append(f"{_call_name(node)}:{node.lineno}")
-    return missing
+    return [
+        f"{target}:{call.lineno}"
+        for target, call in _watched_calls(source, CONFIG_CALLEES)
+        if "config" not in {k.arg for k in call.keywords}
+    ]
 
 
 def test_every_product_call_of_a_plan_level_entry_passes_config() -> None:
@@ -174,11 +175,7 @@ def test_every_product_call_of_a_plan_level_entry_passes_config() -> None:
 
 
 def resident_lane_public_calls(source: str) -> list[str]:
-    return [
-        f"{_call_name(node)}:{node.lineno}"
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Call) and _call_name(node) in PUBLIC_CHUNKED
-    ]
+    return [f"{target}:{call.lineno}" for target, call in _watched_calls(source, PUBLIC_CHUNKED)]
 
 
 def test_run_pipeline_modules_never_call_a_guarded_chunked_entry() -> None:
