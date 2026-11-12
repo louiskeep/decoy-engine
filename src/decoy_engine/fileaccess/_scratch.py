@@ -19,9 +19,9 @@ import secrets
 import stat
 import sys
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import suppress
-from typing import Any
+from typing import Any, TypeVar
 
 from decoy_engine.fileaccess._component import validate_component
 from decoy_engine.fileaccess._entry import is_ambient, require_ambient
@@ -53,6 +53,7 @@ _MARKER = ".decoy-arena"
 _MAGIC = b"decoy-arena-v1:"
 _DISPLAY = "engine.scratch"
 _ISSUER = object()
+T = TypeVar("T")
 
 
 def _open(name: str, dir_fd: int | None = None, *, directory: bool = True) -> int:
@@ -330,4 +331,14 @@ def _make_dir(parent_fd: int, name: str) -> int:
     return fd
 
 
-__all__ = ["ARENA_PREFIX", "ScratchArena"]
+def scratch_native(fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
+    """Neutered control (red commit only): re-raises the library failure unchanged."""
+    return fn(*args, **kwargs)
+
+
+def scratch_native_iter(batches: Iterable[T]) -> Iterator[T]:
+    """Neutered control (red commit only): a plain pull."""
+    return iter(batches)
+
+
+__all__ = ["ARENA_PREFIX", "ScratchArena", "scratch_native", "scratch_native_iter"]

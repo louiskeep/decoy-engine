@@ -11,10 +11,12 @@ re-exports, assignment and bound-method aliases, `functools.partial`, `getattr`,
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
+from tests.sentry.fa import sinks
 from tests.sentry.fa.classify import Roles, classify, registry_index
 from tests.sentry.fa.rules import (
     creator_problems,
@@ -323,6 +325,111 @@ def test_chmod_without_dir_fd_is_still_flagged(fixture_scan) -> None:  # type: i
         if v.site.module == "fx/cap/bad_chmod_no_dir_fd.py"
     ]
     assert flagged and "dir_fd" in flagged[0].reason
+
+
+# -- F25 S1b: the scratch path release and native-boundary keys (plan 4.1) ------------------
+
+RELEASE_OWNERS = frozenset({"decoy_engine/fileaccess/_scratch.py"})
+NATIVE_OWNERS = RELEASE_OWNERS | {"decoy_engine/fileaccess/__init__.py"}
+# A DuckDB connection or result call; `fetch*` is matched by prefix.
+NATIVE_METHODS = sinks.DUCKDB_CONNECTION_METHODS | {"register", "unregister", "arrow", "df"}
+
+
+def _qualified(tree: ast.Module) -> Iterator[tuple[str, ast.AST]]:
+    def visit(body: list[ast.stmt], qual: str) -> Iterator[tuple[str, ast.AST]]:
+        for stmt in body:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                yield from visit(
+                    stmt.body, stmt.name if qual == "<module>" else f"{qual}.{stmt.name}"
+                )
+            else:
+                yield from ((qual, node) for node in ast.walk(stmt))
+
+    return visit(tree.body, "<module>")
+
+
+def _uses(tree: ast.Module, name: str) -> list[str]:
+    """Where `name` is read as an attribute or name, imported, or looked up by string."""
+    return [
+        qual
+        for qual, node in _qualified(tree)
+        if (isinstance(node, ast.Attribute) and node.attr == name)
+        or (isinstance(node, ast.Name) and node.id == name)
+        or (isinstance(node, ast.alias) and name in (node.name, node.asname))
+        or (isinstance(node, ast.Constant) and node.value == name)
+    ]
+
+
+def _bare_native_calls(tree: ast.Module) -> list[str]:
+    """Connection and result methods reached other than as `scratch_native(conn.method, ...)`."""
+    wrapped = {
+        id(node.args[0])
+        for _q, node in _qualified(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", getattr(node.func, "attr", None)) == "scratch_native"
+        and node.args
+    }
+    found = []
+    for qual, node in _qualified(tree):
+        method = node.attr if isinstance(node, ast.Attribute) else None
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            method = node.value  # `getattr(conn, "execute")`
+        if method is None or id(node) in wrapped:
+            continue
+        if method in NATIVE_METHODS or (method.startswith("fetch") and method.isidentifier()):
+            found.append(qual)
+    return found
+
+
+def release_findings(trees: dict[str, ast.Module], keys: dict[str, list[str]]) -> list[str]:
+    """Why the `scratch_path_release` and `scratch_native` keys do not match the code exactly."""
+    return []  # neutered control (red commit only): no rule
+
+
+def _source_trees(root: Path, package: str) -> dict[str, ast.Module]:
+    return {
+        p.relative_to(root).as_posix(): ast.parse(p.read_text(encoding="utf-8"))
+        for p in sorted((root / package).rglob("*.py"))
+    }
+
+
+_EVASIONS = "fx/plain/scratch_release_evasions.py"
+_RELEASE_CELLS = {
+    # cell: (fixture keys, findings it must include)
+    "unlisted_caller_evasions": (
+        {"scratch_path_release": [], "scratch_native": [_EVASIONS]},
+        {
+            f"scratch_path_release: {_EVASIONS}::{f} is not listed"
+            for f in ("release_by_alias", "release_by_getattr", "release_by_bound_method")
+        },
+    ),
+    "listed_without_call": (
+        {"scratch_path_release": ["fx/plain/direct_open.py"], "scratch_native": [_EVASIONS]},
+        {"scratch_path_release: fx/plain/direct_open.py is listed but makes no such call"},
+    ),
+    "bare_native_call_evasions": (
+        {"scratch_path_release": [_EVASIONS], "scratch_native": [_EVASIONS]},
+        {
+            f"scratch_native: {_EVASIONS}::{f} calls a connection bare"
+            for f in ("native_bare", "native_by_getattr", "native_by_bound_method")
+        },
+    ),
+    "unlisted_native_caller": (
+        {"scratch_path_release": [_EVASIONS], "scratch_native": []},
+        {f"scratch_native: {_EVASIONS}::{q} is not listed" for q in ("<module>", "native_wrapped")},
+    ),
+}
+
+
+@pytest.mark.parametrize("cell", ["engine", *_RELEASE_CELLS])
+def test_local_path_callers_are_allowlisted(cell: str) -> None:
+    if cell == "engine":
+        assert release_findings(_source_trees(SRC, "decoy_engine"), MODULES) == []
+        return
+    keys, expected = _RELEASE_CELLS[cell]
+    findings = set(release_findings(_source_trees(FIXTURES, "fx"), keys))
+    assert expected <= findings, sorted(expected - findings)
+    assert not [f for f in findings if "native_wrapped calls" in f], "a wrapped call was flagged"
 
 
 def test_a_listed_creator_that_does_not_validate_its_name_is_still_flagged(fixture_scan) -> None:  # type: ignore[no-untyped-def]
