@@ -16,7 +16,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "Lookup file does not have the value or weight column the generate column names.",
       "symbol": "LOOKUP_COLUMN_MISSING"
     },
@@ -36,7 +36,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "Lookup file has no entries.",
       "symbol": "LOOKUP_FILE_EMPTY"
     },
@@ -56,7 +56,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "Lookup file is not a CSV or Parquet file with a value column of a supported type.",
       "symbol": "LOOKUP_FILE_FORMAT_UNSUPPORTED"
     },
@@ -76,7 +76,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "Lookup file is larger than the embedded-artifact size cap.",
       "symbol": "LOOKUP_FILE_TOO_LARGE"
     },
@@ -96,7 +96,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "Lookup file could not be read or parsed.",
       "symbol": "LOOKUP_FILE_UNREADABLE"
     },
@@ -116,7 +116,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "A lookup file named by the plan's configuration is not among its pinned lookups.",
       "symbol": "LOOKUP_NOT_PINNED"
     },
@@ -136,7 +136,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "A pinned lookup file does not match its recorded sha256.",
       "symbol": "LOOKUP_PINNED_DIGEST_MISMATCH"
     },
@@ -156,7 +156,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "Lookup file has more entries than the 1,000,000 entry cap.",
       "symbol": "LOOKUP_TOO_MANY_ENTRIES"
     },
@@ -176,7 +176,7 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "Lookup file has a weight that is not a finite number of at least zero, or no positive total.",
       "symbol": "LOOKUP_WEIGHT_INVALID"
     },
@@ -196,11 +196,11 @@
           "severity": "error"
         }
       ],
-      "since": "1.24.0",
+      "since": "1.25.0",
       "summary": "Lookup columns are not available in pinned mode.",
       "symbol": "PINNED_LOOKUP_UNSUPPORTED"
     }
   ],
   "reason_schema_version": 1,
-  "registry_version": "1.24.0"
+  "registry_version": "1.25.0"
 }
