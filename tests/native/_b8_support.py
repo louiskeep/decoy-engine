@@ -100,8 +100,9 @@ def _below_gate_entry(entry: Callable[..., Any], module: ModuleType) -> Callable
     The public entry itself runs, so its file-access binding, subset refusal, thread check,
     progress accounting and signature are the production ones. Only the
     `prepare_declared_execution_sources` its module calls at entry is replaced, for the duration
-    of the (eager) call; the iterator it returns keeps the capability it was given. The arguments are bound against the entry's own
-    signature, so a call the entry would reject is rejected here too.
+    of the (eager) call; the iterator it returns keeps the capability it was given. The
+    arguments are bound against the entry's own signature, so a call the entry would reject is
+    rejected here too.
     """
     signature = inspect.signature(entry)
 

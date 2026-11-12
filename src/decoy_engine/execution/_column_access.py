@@ -202,7 +202,8 @@ def _union(a: ColumnAccess, b: ColumnAccess) -> ColumnAccess:
         writes=a.writes | b.writes,
         reads_unknown=a.reads_unknown or b.reads_unknown,
         writes_unknown=a.writes_unknown or b.writes_unknown,
-        own_target=a.own_target,
+        # Differing own-target claims fall back to reading the source, the fail-closed side.
+        own_target=a.own_target if a.own_target == b.own_target else OWN_TARGET_SOURCE,
     )
 
 

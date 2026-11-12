@@ -31,7 +31,7 @@ from __future__ import annotations
 import random
 import warnings
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -45,37 +45,16 @@ from decoy_engine.profile._declared_columns import (
 from decoy_engine.profile._readers import (
     BOUNDED_FALLBACK_ROWS,
     LazySource,
+    ParquetFileSource,
     ProfileSource,
-    RowCount,
     build_declared_source,
-    head_frame_from_batches,
 )
+from decoy_engine.profile._readers_resident import ResidentTableSource
 from decoy_engine.profile._types import Profile, Relationship, TableProfile
 from decoy_engine.profile._walk import walk_dataframe
 
 if TYPE_CHECKING:
-    import pandas as pd
     import pyarrow as pa
-
-
-@dataclass(frozen=True)
-class _SuppliedLazy:
-    """`ProfileSource` over a supplied file handle that no descriptor describes."""
-
-    lazy: LazySource
-
-    def row_count(self) -> RowCount:
-        return RowCount(self.lazy.num_rows, exact=True)
-
-    def schema(self) -> pa.Schema:
-        return self.lazy.schema
-
-    def sample_frame(self, sample_rows: int) -> pd.DataFrame:
-        batches = self.lazy.iter_batches(sample_rows)
-        return head_frame_from_batches(batches, sample_rows, self.lazy.schema)
-
-    def to_frame(self) -> pd.DataFrame:
-        return self.lazy.to_table().to_pandas()
 
 
 @entry_point
@@ -191,14 +170,13 @@ def profile_source(
             "sample_rows": sample_rows,
             "rng": rng,
         }
-        if given is not None and not isinstance(given, LazySource):
-            tables.append(walk_dataframe(given.to_pandas(), **walk))
-            continue
-        reader = (
-            build_declared_source(table_name, sources[table_name])
-            if given is None
-            else _SuppliedLazy(given)
-        )
+        reader: ProfileSource
+        if given is None:
+            reader = build_declared_source(table_name, sources[table_name])
+        elif isinstance(given, LazySource):
+            reader = ParquetFileSource.from_lazy(given)
+        else:
+            reader = ResidentTableSource(given)
         tables.append(_profile_one_source(reader, residency=residency, **walk))
 
     return Profile(

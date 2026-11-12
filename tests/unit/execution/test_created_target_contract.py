@@ -8,7 +8,6 @@ and pin what the route does today, and check that supplied tables are profiled.
 
 from __future__ import annotations
 
-import contextlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -21,13 +20,19 @@ from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked, run_pipeli
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution._column_access import (
     OWN_TARGET_CREATES,
+    OWN_TARGET_SOURCE,
     SURFACE_DECLARATIONS,
+    ColumnAccess,
+    _union,
     created_columns,
 )
 from decoy_engine.execution._isolated_run import run_pipeline_isolated
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
 from decoy_engine.execution.physical import _shadow_batch_runner
-from decoy_engine.execution.physical._shadow_diff_codes import ShadowDifference
+from decoy_engine.execution.physical._shadow_diff_codes import (
+    NATIVE_COMPANION_UNAVAILABLE,
+    ShadowDifference,
+)
 from decoy_engine.profile import profile_source
 from decoy_engine.providers_v2 import get_default_registry
 from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
@@ -35,6 +40,7 @@ from tests.native.test_column_access_surfaces import (
     test_g1_every_scalar_handler_has_a_declaration_and_no_more as inventory_test,
 )
 from tests.physical._shadow_helpers import (
+    assert_shadow_matches_oracle,
     build_config,
     run_shadow_and_oracle,
     write_read_only_fixture,
@@ -247,8 +253,13 @@ def _native_group_key_selects_no_target(tmp_path: Path, monkeypatch: pytest.Monk
     columns = [PASSTHROUGH[1], _table("group_key", ("g",))["columns"][-1]]
     path = write_read_only_fixture(tmp_path, source, "t")
     config = build_config(tmp_path, "t", path, columns)
-    with contextlib.suppress(ShadowDifference):  # no compiled companion on this machine
-        run_shadow_and_oracle(config, "t", source, key_provider=THROWAWAY_KEY_PROVIDER)
+    try:
+        run = run_shadow_and_oracle(config, "t", source, key_provider=THROWAWAY_KEY_PROVIDER)
+        assert_shadow_matches_oracle(run)
+    except ShadowDifference as exc:
+        # Only a machine without the compiled companion may skip the comparison.
+        if exc.code != NATIVE_COMPANION_UNAVAILABLE:
+            raise
     assert selected, "the batch loop never ran"
     assert all("tgt" not in names for names in selected)
 
@@ -284,3 +295,11 @@ def test_supplied_only_table_gets_its_created_column(entry: str, tmp_path: Path)
     out = run_pipeline(config, sources, execution_mode="full_frame", **KW).outputs["s"]
     assert out.column_names == [*SRC.column_names, "tgt"]
     assert VALUES[entry](out["tgt"].to_pylist())
+
+
+def test_union_of_differing_own_targets_reads_the_source() -> None:
+    creating = ColumnAccess(own_target=OWN_TARGET_CREATES)
+    reading = ColumnAccess(own_target=OWN_TARGET_SOURCE)
+    assert _union(creating, reading).own_target == OWN_TARGET_SOURCE
+    assert _union(reading, creating).own_target == OWN_TARGET_SOURCE
+    assert _union(creating, creating).own_target == OWN_TARGET_CREATES
