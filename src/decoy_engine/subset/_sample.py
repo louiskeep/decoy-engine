@@ -16,6 +16,8 @@ from decoy_engine.subset._edges import (
     build_subset_edges,
     linked_neighbours,
     mask_relationships,
+    reach,
+    require_known_endpoints,
     sample_refusal_edge,
     unknown_table_error,
 )
@@ -61,12 +63,7 @@ def _components(tables: list[str], relationships: tuple[Any, ...]) -> list[list[
     for table in tables:
         if table in seen:
             continue
-        stack, members = [table], {table}
-        while stack:
-            for nxt in neighbours.get(stack.pop(), ()):
-                if nxt not in members:
-                    members.add(nxt)
-                    stack.append(nxt)
+        members = reach([table], neighbours)
         seen |= members
         components.append([t for t in tables if t in members])
     return components
@@ -83,17 +80,21 @@ def sample_request(
     """The request that makes `decoy run --sample` pick `rows` head rows and close over them.
 
     Raises `ExecutionError` (`invalid_execution_knob`) for a bad knob, a root with a `subset:`
-    block and a generated parent of a masked child, and `SubsetPreflightError` for a root or a
-    relationship table that is not a mask table.
+    block and a generated parent of a masked child, and `SubsetPreflightError` for a root that is
+    not a mask table or a relationship table the config does not declare.
 
-    A config-set "downward" direction with `allow_dangling` in an unseeded component stays as the
-    config states it, so that component's head seeds pull no parents.
+    Config-set directions apply only in components a config seed is in; every other component
+    closes upward, so its head seeds always pull their parents.
     """
     _require_int("rows", rows, SAMPLE_ROWS_MIN, SAMPLE_ROWS_MAX)
     _require_int("display_rows", display_rows, 0, _DISPLAY_MAX)
     use_block = use_config_subset and config.get("subset") is not None
     if root is not None and use_block:
         raise invalid_knob("a sample root cannot be combined with a subset block.")
+    mask_tables = [t for t, kind in classify_table_kinds(config).items() if kind == "mask"]
+    if root is not None and root not in mask_tables:
+        raise unknown_table_error(root)
+    require_known_endpoints(config)
     refused = sample_refusal_edge(config)
     if refused is not None:
         parent, parent_columns, child, child_columns = refused
@@ -101,16 +102,9 @@ def sample_request(
             f"a sampled generated parent {parent!r} {list(parent_columns)} would orphan the "
             f"masked child {child!r} {list(child_columns)}."
         )
-    mask_tables = [t for t, kind in classify_table_kinds(config).items() if kind == "mask"]
-    if root is not None and root not in mask_tables:
-        raise unknown_table_error(root)
 
     relationships, excluded = mask_relationships(config)
     edges = build_subset_edges(relationships)
-    for e in edges:
-        for table in (e.parent_table, e.child_table):
-            if table not in mask_tables:
-                raise unknown_table_error(table)
     # A self-reference is not a child of anything else: it must not make its table a parent, or
     # the table is never child-free and the sample closes it to nothing.
     parents = {e.parent_table for e in edges if e.parent_table != e.child_table}
@@ -146,7 +140,7 @@ def sample_request(
         seeds.extend(SeedSpec(table=t, mode="head", count=rows) for t in heads)
         for table in component:
             for edge_id in edge_ids[table]:
-                directions.setdefault(edge_id, "upward")
+                directions[edge_id] = "upward"
 
     ceiling = SAMPLE_KEPT_CEILING if budget_cap is None else min(budget_cap, SAMPLE_KEPT_CEILING)
     policy = replace(

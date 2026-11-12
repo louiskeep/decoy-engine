@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from decoy_engine.plan._types import PlanRelationship
-from decoy_engine.subset._edges import linked_neighbours
+from decoy_engine.subset._edges import linked_neighbours, reach
 from decoy_engine.subset._types import FanOutPolicy, SeedSpec, SubsetPlan
 
 if TYPE_CHECKING:
@@ -57,13 +57,7 @@ def scope_for(request: SubsetRequest, table_names: Iterable[str]) -> SubsetScope
     narrowed (to no rows), as standalone `plan_subset` reports it, never passed whole."""
     supplied = frozenset(table_names)
     neighbours = linked_neighbours(request.relationships)
-    reached = {seed.table for seed in request.seeds}
-    frontier = list(reached)
-    while frontier:
-        for nxt in neighbours.get(frontier.pop(), ()):
-            if nxt not in reached:
-                reached.add(nxt)
-                frontier.append(nxt)
+    reached = reach((seed.table for seed in request.seeds), neighbours)
     if request.sample is None:
         return SubsetScope(tables=supplied & reached, whole=supplied - reached)
     # A sample never passes a table whole: what no seed closes over is read head-first, and a

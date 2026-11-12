@@ -47,5 +47,4 @@ Each applied alone to a throwaway checkout of source head `74ec077e`, `tests/uni
 - An unknown or generate root raises `SubsetPreflightError` with a one-failure report, the pattern `relationships_from_config` uses, because that family maps to the `subset` namespace.
 - `sample_refusal_edge` returns a plain tuple `(parent_table, parent_columns, child_table, child_columns)`.
 - `sample_request` raises the invalid-knob code for a generated parent of a masked child; the CLI refuses earlier through `sample_refusal_edge`.
-- In a `subset:` block, an edge direction the config already sets in an unseeded component is kept.
 - `select_subset` still preflights every seed table, so SE2 passes a request without the head seeds of tables it keeps out.

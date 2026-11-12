@@ -20,6 +20,7 @@ the estimate).
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 
 from decoy_engine import reasons
@@ -68,6 +69,19 @@ def linked_neighbours(relationships: tuple[PlanRelationship, ...]) -> dict[str, 
             neighbours.setdefault(rel.parent.table, set()).add(child.table)
             neighbours.setdefault(child.table, set()).add(rel.parent.table)
     return neighbours
+
+
+def reach(start: Iterable[str], neighbours: Mapping[str, set[str]]) -> set[str]:
+    """Every table linked to `start` over `neighbours`, `start` included. The one walk, so a
+    component and a seed's scope cannot be computed two ways."""
+    reached = set(start)
+    frontier = list(reached)
+    while frontier:
+        for nxt in neighbours.get(frontier.pop(), ()):
+            if nxt not in reached:
+                reached.add(nxt)
+                frontier.append(nxt)
+    return reached
 
 
 def one_failure_report(failure: PreflightFailure) -> FkPreflightReport:
@@ -147,6 +161,18 @@ def _generated_tables(config: dict) -> set[str]:
     return {n for n, kind in classify_table_kinds(config).items() if kind == "generate"}
 
 
+def require_known_endpoints(config: dict) -> None:
+    """Refuse a relationship end that names no table of the config, mask or generate.
+
+    Read before the generate-edge drop: that drop discards an edge by its generated end and would
+    hide an unknown table on the other one."""
+    known = classify_table_kinds(config)
+    for rel in relationships_from_config(config):
+        for table in (rel.parent.table, *(c.table for c in rel.children)):
+            if table not in known:
+                raise unknown_table_error(table)
+
+
 def mask_relationships(
     config: dict,
 ) -> tuple[tuple[PlanRelationship, ...], tuple[str, ...]]:
@@ -182,11 +208,11 @@ def sample_refusal_edge(config: dict) -> tuple[str, tuple[str, ...], str, tuple[
     Read before `mask_relationships` drops it: a sample scales the generated parent down while
     the masked child keeps its source keys, so the child would point at parents that are gone.
     """
-    generated = _generated_tables(config)
+    kinds = classify_table_kinds(config)
     for rel in relationships_from_config(config):
-        if rel.parent.table not in generated:
+        if kinds.get(rel.parent.table) != "generate":
             continue
         for child in rel.children:
-            if child.table not in generated:
+            if kinds.get(child.table) == "mask":
                 return rel.parent.table, rel.parent.columns, child.table, child.columns
     return None
