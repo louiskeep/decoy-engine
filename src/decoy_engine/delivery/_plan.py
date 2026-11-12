@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from decoy_engine.config import PipelineConfigError, parse_delivery_config
 from decoy_engine.generation import generation_order
-from decoy_engine.reasons import ReasonCode
+from decoy_engine.reasons import Kind, ReasonCode
 from decoy_engine.reasons.decoy import DELIVERY_DEPENDENT_DROPPED, DELIVERY_WITHHELD
 
 DeliveryState = Literal["delivered", "failed", "withheld", "dropped"]
@@ -52,10 +52,17 @@ def _children(config: Mapping[str, Any]) -> dict[str, set[str]]:
 
 
 _BAD_GRAPH = "delivery dependency graph names a table not in the config"
+_BAD_OUTCOME = "delivery outcome is not a failure reason code"
 
 
 def _check_universe(config: Mapping[str, Any], outcomes: Mapping[str, Any]) -> None:
     """Refuse outcomes or edges that name tables the config does not hold; messages are fixed."""
+    # A decision or warning code, or a non-code, would be recorded as a failed table's cause.
+    for cause in outcomes.values():
+        if cause is not None and not (
+            isinstance(cause, ReasonCode) and cause.spec.kind is Kind.FAILURE
+        ):
+            raise PipelineConfigError(_BAD_OUTCOME)
     names = {t["name"] for t in config.get("tables") or []}
     targets = config.get("targets") or {}
     # Validation does not tie target keys to tables; a target no table owns has no run outcome.
