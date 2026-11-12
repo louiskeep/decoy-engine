@@ -20,7 +20,7 @@ layers =
     plan : generation : generators : transforms : declared_casting : secret_providers : keyprovider : relationships : providers_v2 : reference_tables : quality
     profile : profiling : detection : internal : progress : context : config : determinism : contracts : connectors : expressions : validators : sdk : run_result
     io : data_discovery : disguises : phase : telemetry : safe_output : fileaccess
-    errors : reason_adapter : validation_result : release : reasons : instrumentation : checksums : _opaque : _lexeme : _error_base : _progress_events : _reference_date : codesets : _execution_error : _field_names : _value_free : _capacity
+    errors : reason_adapter : validation_result : release : reasons : instrumentation : checksums : _opaque : _lexeme : _error_base : _progress_events : _reference_date : _capacity : codesets : _execution_error : _field_names : _value_free
 ignore_imports =
     decoy_engine.config._generate_unique -> decoy_engine.generation.pool._capacity
     decoy_engine.declared_casting._boundary -> decoy_engine.execution._errors
