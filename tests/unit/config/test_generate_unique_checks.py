@@ -11,6 +11,7 @@ import pytest
 
 from decoy_engine import reasons
 from decoy_engine.config import _generate_unique as gu
+from decoy_engine.config import declares_unique
 
 CONFLICT = str(reasons.config.GENERATE_UNIQUE_CONFLICT)
 TOO_SMALL = str(reasons.config.GENERATE_UNIQUE_DOMAIN_TOO_SMALL)
@@ -33,6 +34,32 @@ class TestUniqueFlag:
     def test_everything_else_refused(self, value):
         # M6: accepting a string bool turns this red.
         assert gu.unique_flag(value, {}) == [((), OPTION_TYPE)]
+
+
+class TestDeclaresUnique:
+    @pytest.mark.parametrize("type_", sorted(gu.UNIQUE_TYPES))
+    def test_unique_true_declares_it_for_every_unique_type(self, type_):
+        assert gu.declares_unique({"type": type_, "unique": True})
+
+    def test_sequence_is_unique_by_construction(self):
+        assert gu.declares_unique({"type": "sequence"})
+        assert gu.declares_unique({"type": "sequence", "step": -2})
+
+    def test_facade_exports_the_predicate(self):
+        assert declares_unique({"type": "sequence"})
+
+    def test_zero_step_sequence_is_not(self):
+        # M7: ignoring the step turns this red.
+        assert not gu.declares_unique({"type": "sequence", "step": 0})
+
+    @pytest.mark.parametrize("type_", sorted(gu.UNIQUE_TYPES - {"sequence"}))
+    def test_other_types_need_the_flag(self, type_):
+        assert not gu.declares_unique({"type": type_})
+        assert not gu.declares_unique({"type": type_, "unique": False})
+
+    def test_raw_mapping_does_not_raise(self):
+        assert not gu.declares_unique({})
+        assert not gu.declares_unique({"type": ["x"], "unique": "yes"})
 
 
 class TestUniqueType:

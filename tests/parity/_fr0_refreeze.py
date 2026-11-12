@@ -195,7 +195,9 @@ def g_derived(t: dict[str, pa.Table]) -> None:
 
 
 def g_mixed_fk(t: dict[str, pa.Table]) -> None:
-    assert set(_col(t, "people", "id")) <= {"x", "y", "z", "w", "v"}
+    ids = _col(t, "people", "id")
+    assert set(ids) <= set(fx.MIXED_FK_PARENT_KEYS)
+    assert len(set(ids)) == len(ids)
 
 
 def g_composite(table: str) -> Callable[[dict[str, pa.Table]], None]:

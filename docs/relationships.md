@@ -117,6 +117,11 @@ The engine builds an ordering over the tables so each parent is masked before
 its children, then runs them in that order. You do not order the tables
 yourself; declaring the relationship is enough.
 
+When the parent table is generated, its key must be provably unique, or `decoy validate`
+and `decoy run` refuse the config with `plan.relationship_parent_not_unique`. Any of these
+shows it: `row_count` of at most 1, a `sequence` column with a non-zero `step`, `unique: true`
+on a key column, or a `unique_together` entry that lists exactly the key columns.
+
 See [recipes](recipes.md) recipe (b) for a full folder-masking config, and
 [determinism](determinism.md) for what "byte-stable across runs" depends on.
 
