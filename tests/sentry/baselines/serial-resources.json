@@ -254,9 +254,6 @@
   "tests/unit/execution/test_isolated_memwatch_run.py::TestLifecycle.test_envelope_result_carries_evidence_with_the_flag_off": {
    "reason": "Asserts the memory-pressure evidence flag from scripted or stubbed samples; reads no live process memory."
   },
-  "tests/unit/execution/test_isolated_run.py::TestMemCapOom.test_low_mem_cap_classifies_oom_cleanly_not_an_opaque_crash": {
-   "reason": "Name-only match triaged in P2: the test reads no clock, process memory, fixed port or rlimit."
-  },
   "tests/unit/execution/test_isolated_run.py::TestTimeoutHasSaneDefault.test_timeout_s_defaults_to_a_bounded_ceiling_not_none": {
    "reason": "Name-only match triaged in P2: the test reads no clock, process memory, fixed port or rlimit."
   },
