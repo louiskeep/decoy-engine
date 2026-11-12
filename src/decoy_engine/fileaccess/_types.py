@@ -9,8 +9,10 @@ docs/security/file-access-policy.md.
 from __future__ import annotations
 
 import enum
+import errno as _errno
 import os
 from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, BinaryIO, Literal, Protocol, TextIO, runtime_checkable
 
@@ -56,6 +58,7 @@ StageLabel = Literal[
     "vault",
     "vault_direct",
     "pack",
+    "publication",
 ]
 
 
@@ -110,6 +113,47 @@ class FileAccessReadError(DecoyError):
 
 class FileAccessUnavailable(DecoyError):  # noqa: N818 - the plan's name
     """No policy where one is required, or a route a strict policy cannot serve."""
+
+
+class _ErrnoOnly:
+    """Mixin for file-access failures that keep only their errno name: no path, no name, no OS
+    text. Not an exception itself, so each plan-named error below is its own `DecoyError`."""
+
+    summary = "file access failed"
+
+    def __init__(self, errno_value: int) -> None:
+        self.errno = errno_value
+        self.errno_name = _errno.errorcode.get(errno_value, "EIO")
+        super().__init__(f"{self.summary}: {self.errno_name}")  # type: ignore[call-arg]
+
+    def __reduce__(self) -> tuple[object, tuple[int]]:
+        return (type(self), (self.errno,))
+
+
+class CommitUncertain(_ErrnoOnly, DecoyError):  # noqa: N818 - the plan's name
+    """The unit is bound under its name, but an fsync on its chain failed: visible, not
+    confirmed durable. The leaf is kept; a later `sync_chain()` can confirm it."""
+
+    summary = "output bound, durability not confirmed"
+
+
+class LockUnavailable(_ErrnoOnly, DecoyError):  # noqa: N818 - the plan's name
+    """The destination lock cannot be taken here (no `flock`, or its file cannot be opened);
+    there is no lock-free fallback."""
+
+    summary = "publication lock unavailable"
+
+
+class LockTimeout(_ErrnoOnly, DecoyError):  # noqa: N818 - the plan's name
+    """Another holder kept the destination lock past the deadline."""
+
+    summary = "publication lock timed out"
+
+
+class LeafTooLarge(_ErrnoOnly, DecoyError):  # noqa: N818 - the plan's name
+    """A bounded read found more bytes than its limit."""
+
+    summary = "file over the read limit"
 
 
 class EntryView(Protocol):
@@ -230,6 +274,18 @@ class OutputDir(Protocol):
 
     def is_empty_or_absent(self) -> bool: ...
 
+    def lock(self, timeout_s: float) -> AbstractContextManager[None]:
+        """Hold `flock(LOCK_EX)` on `.<leaf>.decoy-lock` in the leaf's parent until exit."""
+        ...
+
+    def read_member(self, component: str, *, limit: int) -> bytes | None:
+        """One file inside a bound directory leaf, at most `limit` bytes; `None` if absent."""
+        ...
+
+    def sync_chain(self) -> None:
+        """fsync the bound leaf's tree, then its parent and each directory up to the anchor."""
+        ...
+
 
 @runtime_checkable
 class FileAccess(Protocol):
@@ -247,6 +303,7 @@ class FileAccess(Protocol):
 __all__ = [
     "CONTRACT_VERSION",
     "Access",
+    "CommitUncertain",
     "DirHandle",
     "EncodedKey",
     "FileAccess",
@@ -255,6 +312,9 @@ __all__ = [
     "FileHandle",
     "FileRequest",
     "FileRole",
+    "LeafTooLarge",
+    "LockTimeout",
+    "LockUnavailable",
     "OutputDir",
     "OutputTxn",
     "StageDir",

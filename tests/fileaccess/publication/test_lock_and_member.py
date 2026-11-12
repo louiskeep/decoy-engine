@@ -24,6 +24,7 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX flock")
 POLICIES = ["strict", "ambient"]
 
 
+@pytest.mark.serial  # asserts a wall-clock lower bound on the lock deadline
 @pytest.mark.parametrize("policy", POLICIES)
 def test_lock_contention_and_unsupported(
     tmp_path: Path, policy: str, monkeypatch: pytest.MonkeyPatch

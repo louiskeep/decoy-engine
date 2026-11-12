@@ -11,7 +11,8 @@ symlink planted in the stage is never followed.
 Publication keeps each sink's existing semantics: a directory stage publishes with plain
 `rename(2)` (an absent or empty destination, `ENOTEMPTY` on a non-empty one, stage intact for
 `abort()`); a file stage publishes with `link(2)` (`exclusive`, refuses any existing leaf) or
-`rename(2)` (`replace`). No path uses `RENAME_EXCHANGE`.
+`rename(2)` (`replace`). No path uses `RENAME_EXCHANGE`. A `DURABLE_LABELS` directory stage is
+fsynced before the rename and its parent chain up to the capability root after it (`_durable`).
 
 Directories are made by one core, `_make_dir_core`, with two entry points: `make_stage_dir_at`
 (private stage directories, exact 0700) and `make_parent_dir_at` (user-named output parents at
@@ -31,6 +32,7 @@ import stat
 import sys
 import weakref
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from typing import Any, Literal, TypeVar
 
 from decoy_engine.fileaccess import _openat2
@@ -48,10 +50,13 @@ STAGE_PREFIX: dict[str, str] = {
     "subset": "_decoy_subset_stage_",
     "vault": "_decoy_vault_stage_",
     "pack": "_decoy_pack_stage_",
+    "publication": "._decoy_publication_pending_",
 }
 STAGE_SUFFIX: dict[str, str] = {"quarantine": ".jsonl", "quarantine_direct": ".jsonl"}
 # Labels whose stage holds secrets or real data, so the stage file is 0600 at creation.
-PRIVATE_LABELS: frozenset[str] = frozenset({"quarantine", "isolated"})
+PRIVATE_LABELS: frozenset[str] = frozenset({"quarantine", "isolated", "publication"})
+# Labels whose directory publish is durable (F22 5.1): the walk, the rename, then the chain.
+DURABLE_LABELS: frozenset[str] = frozenset({"publication"})
 # Every output but a vault leaf may create missing parent directories; a vault leaf sits
 # directly in a directory the caller already provided.
 CREATES_PARENTS: frozenset[str] = frozenset(STAGE_PREFIX) - {"vault"}
@@ -207,6 +212,10 @@ def create_output_file_at(dir_fd: int, name: str, mode: int) -> int:
     return _call(os.open, name, _FILE_CREATE, mode, dir_fd=dir_fd)
 
 
+def _dup(held_fd: int) -> int:
+    return os.dup(held_fd)
+
+
 def _close(fd: int) -> None:
     try:
         os.close(fd)
@@ -248,11 +257,12 @@ class _State:
         self.finished = False
         self.file_created = False
         self.child_fds: list[int] = []
+        self.chain_fds: list[int] = []  # root down to the parent's parent, for a durable publish
 
 
-def _close_children(state: _State) -> None:
-    while state.child_fds:
-        _close(state.child_fds.pop())
+def _close_all(fds: list[int]) -> None:
+    while fds:
+        _close(fds.pop())
 
 
 def _discard(state: _State) -> None:
@@ -278,7 +288,8 @@ def _discard(state: _State) -> None:
                 pass
     finally:
         state.stage_fd = -1
-        _close_children(state)
+        _close_all(state.child_fds)
+        _close_all(state.chain_fds)
         _close(state.parent_fd)
 
 
@@ -355,16 +366,21 @@ class RootedOutputTxn(_StageDir):
         mode: Literal["exclusive", "replace"],
         label: StageLabel,
         display: str,
+        chain: tuple[int, ...] = (),
     ) -> None:
         if issuer is not _ISSUER:
             raise FileAccessUnavailable("an output transaction is issued by an OutputDir")
         validate_component(leaf, display)
         if label not in STAGE_PREFIX:
             raise deny(display)  # an in-place label exists only for the ambient policy
+        if label == "publication" and kind != "dir":
+            raise FileAccessUnavailable("a publication stage is a directory")
+        self._durable = label in DURABLE_LABELS
         self._leaf = leaf
         self._publish_mode = mode
         name = f"{STAGE_PREFIX[label]}{secrets.token_hex(6)}{STAGE_SUFFIX.get(label, '')}"
         state = _State(os.dup(parent_fd), name, kind)
+        state.chain_fds = [_dup(fd) for fd in chain]
         self._state = state
         self._private = label in PRIVATE_LABELS
         mode_bits = 0o600 if self._private else 0o666
@@ -387,6 +403,8 @@ class RootedOutputTxn(_StageDir):
         return super().create_file(component)
 
     def publish(self) -> None:
+        from decoy_engine.fileaccess import _durable
+
         state = self._state
         if state.finished:
             raise FileAccessUnavailable("output transaction is finished")
@@ -411,6 +429,8 @@ class RootedOutputTxn(_StageDir):
             except OSError:
                 pass
         else:
+            if self._durable:  # a failure here leaves the stage for abort()
+                _durable._sync_tree(state.stage_fd)
             _call(os.replace, state.stage_name, self._leaf, src_dir_fd=parent, dst_dir_fd=parent)
             if state.kind == "file":
                 _sync(parent)
@@ -418,9 +438,15 @@ class RootedOutputTxn(_StageDir):
         if state.stage_fd >= 0:
             _close(state.stage_fd)
             state.stage_fd = -1
-        _close_children(state)
-        _close(parent)
+        _close_all(state.child_fds)
         self._finalizer.detach()
+        try:
+            if self._durable:  # the parent is the commit point, then up to the root
+                chain = [parent, *reversed(state.chain_fds)]
+                _durable._sync_bound(lambda: _durable._sync_fds(chain))
+        finally:
+            _close_all(state.chain_fds)
+            _close(parent)
 
     def abort(self) -> None:
         _discard(self._state)
@@ -453,7 +479,8 @@ class RootedOutputDir:
         self.locator = req.locator
         self._field_key = req.field_key
 
-    def _open_parent(self, *, create: bool) -> int:
+    def _open_parent(self, *, create: bool, chain: list[int] | None = None) -> int:
+        """The leaf's parent, opened from the root; `chain` keeps every directory above it."""
         fd = os.dup(self._root_fd)
         try:
             for part in self._parents:
@@ -461,7 +488,10 @@ class RootedOutputDir:
                     child = make_parent_dir_at(fd, part)
                 else:
                     child = _openat2._confined_open(fd, part, os.O_RDONLY | os.O_DIRECTORY)
-                _close(fd)
+                if chain is None:
+                    _close(fd)
+                else:
+                    chain.append(fd)
                 fd = child
         except OSError:
             _close(fd)
@@ -477,16 +507,22 @@ class RootedOutputDir:
     ) -> RootedOutputTxn:
         failed = False
         parent = -1
+        chain: list[int] = []
         try:
-            parent = self._open_parent(create=label in CREATES_PARENTS)
+            parent = self._open_parent(create=label in CREATES_PARENTS, chain=chain)
         except OSError:
             failed = True
-        if failed:
-            raise deny(self._field_key) from None
         try:
-            return RootedOutputTxn(_ISSUER, parent, self._leaf, kind, mode, label, self.display)
+            if failed:
+                raise deny(self._field_key) from None
+            held = tuple(chain) if label in DURABLE_LABELS else ()
+            return RootedOutputTxn(
+                _ISSUER, parent, self._leaf, kind, mode, label, self.display, held
+            )
         finally:
-            _close(parent)
+            for fd in (parent, *chain):
+                if fd >= 0:
+                    _close(fd)
 
     def ensure_dir(self) -> None:
         failed = False
@@ -501,6 +537,32 @@ class RootedOutputDir:
                 _close(parent)
         if failed:
             raise deny(self._field_key) from None
+
+    def lock(self, timeout_s: float) -> AbstractContextManager[None]:
+        from decoy_engine.fileaccess import _durable
+
+        return _durable._held_lock(self._parent_reader, self._leaf, timeout_s)
+
+    def read_member(self, component: str, *, limit: int) -> bytes | None:
+        from decoy_engine.fileaccess import _durable
+
+        validate_component(component, self._field_key)
+        return _durable._read_member(self._parent_reader, self._leaf, component, limit)
+
+    def _parent_reader(self) -> int:
+        return self._open_parent(create=False)
+
+    def sync_chain(self) -> None:
+        from decoy_engine.fileaccess import _durable
+
+        chain: list[int] = []
+        try:
+            chain.append(self._open_parent(create=False, chain=chain))
+            _durable._sync_leaf_at(chain[-1], self._leaf)
+            _durable._sync_fds(chain[::-1])
+        finally:
+            for fd in chain:
+                _close(fd)
 
     def is_empty_or_absent(self) -> bool:
         failed = False
@@ -525,6 +587,7 @@ class RootedOutputDir:
 
 
 __all__ = [
+    "DURABLE_LABELS",
     "PRIVATE_LABELS",
     "STAGE_PREFIX",
     "STAGE_SUFFIX",
