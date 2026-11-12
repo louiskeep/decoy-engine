@@ -77,6 +77,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from decoy_engine import fileaccess
+from decoy_engine.execution._guards import prepare_declared_execution_sources
 from decoy_engine.execution._isolated_commit import (
     CommitError,
     atomic_commit,
@@ -106,7 +107,7 @@ from decoy_engine.execution._isolated_reason import commit_reason, reason_from_e
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._row_errors import RowErrorRecord
 from decoy_engine.fileaccess import FileAccess, FileRequest, FileRole, entry_point
-from decoy_engine.profile import DeclarationRequest, prepare_declared_sources
+from decoy_engine.profile import DeclarationRequest
 from decoy_engine.reason_adapter import reason_from_exception
 from decoy_engine.reasons import ReasonRecord
 from decoy_engine.reasons import decoy as _decoy_reasons
@@ -220,7 +221,7 @@ def run_pipeline_isolated(
     )
 
     # Before any staging or spawn: the child rechecks, since a capability cannot cross the process.
-    prepare_declared_sources(
+    prepare_declared_execution_sources(
         DeclarationRequest.for_run(config, {n: t.schema for n, t in (sources or {}).items()}),
         file_access=file_access,
     )
