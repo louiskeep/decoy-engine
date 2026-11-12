@@ -242,6 +242,29 @@ def test_projection_agrees_with_generation() -> None:
     assert next(t for t in result.pinned.tables if t.name == "orders").depends_on == ("customers",)
 
 
+def test_reference_policy_is_projected_from_the_same_compile(spy: _CompileSpy) -> None:
+    """GEN-REL: the pinned policy comes from the resolved config of the one compile."""
+    config = _main_config()
+    config["relationships"] = [
+        {
+            "parent": {"table": "customers", "columns": ["id"]},
+            "children": [{"table": "orders", "columns": ["cust"]}],
+            "orphan_policy": "warn",
+        }
+    ]
+    result = compile_pinned_plan_with_generation(config, REF)
+    assert spy.calls == 1
+    assert _resolved(result.generation)["relationships"][0]["orphan_policy"] == "warn"
+    assert result.pinned.reference_policies == (("orders", "cust", "warn"),)
+    _assert_projection_agrees(result)
+    bare = compile_pinned_plan_with_generation(_main_config(), REF)
+    assert bare.pinned.reference_policies == ()
+    assert result.pinned.tables == bare.pinned.tables
+    assert execute_pinned(result.pinned, 4)["orders"].equals(
+        execute_pinned(bare.pinned, 4)["orders"]
+    )
+
+
 def test_statistical_digest_substitution(snap: str) -> None:
     result = compile_pinned_plan_with_generation(_stat_config(snap), REF)
     _assert_projection_agrees(result)

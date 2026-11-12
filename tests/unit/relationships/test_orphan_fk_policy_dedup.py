@@ -25,10 +25,21 @@ import pytest
 
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.profile._types import Relationship
+from decoy_engine.relationships import _graph
 from decoy_engine.relationships._graph import (
     OrphanPolicy,
     check_orphan_fk_policy_completeness,
 )
+
+SENTINEL = "SENTINEL-POLICY-TOKEN"
+
+
+def _entry(policy: object, child_col: str = "fk") -> dict:
+    return {
+        "parent": {"table": "parent", "columns": ["id"]},
+        "children": [{"table": "child", "columns": [child_col]}],
+        "orphan_policy": policy,
+    }
 
 
 def _rel(
@@ -126,8 +137,12 @@ class TestGenuineDuplicateStillRejects:
         with pytest.raises(PlanCompileError) as exc:
             check_orphan_fk_policy_completeness(config, rels)
         assert exc.value.code == "orphan_fk_policy_duplicate"
-        assert "preserve" in exc.value.message
-        assert "fail" in exc.value.message
+        assert exc.value.path == "relationships[1]"
+        # The message names the two ends; a submitted policy token never reaches it.
+        assert "parent.id" in exc.value.message and "child.fk" in exc.value.message
+        for token in ("preserve", "fail"):
+            assert token not in str(exc.value)
+        assert exc.value.__cause__ is None and exc.value.__context__ is None
 
     def test_same_parent_same_child_same_policy_tolerated(self) -> None:
         """Same-policy duplicates are tolerated; the second entry
@@ -149,3 +164,53 @@ class TestGenuineDuplicateStillRejects:
         }
         lookup = check_orphan_fk_policy_completeness(config, rels)
         assert lookup[("parent", ("id",), "child", ("fk",))] == OrphanPolicy("remap")
+
+
+class TestCentralNormalizer:
+    """GEN-REL AT-6r: one relationship-policy parser, exported for generation, with safe text."""
+
+    def test_the_normalizer_is_public_and_returns_the_four_part_lookup(self) -> None:
+        from decoy_engine.relationships import normalize_orphan_policy_lookup
+
+        config = {"relationships": [_entry("warn"), _entry("fail", "other")]}
+        assert normalize_orphan_policy_lookup(config) == {
+            ("parent", ("id",), "child", ("fk",)): OrphanPolicy.WARN,
+            ("parent", ("id",), "child", ("other",)): OrphanPolicy.FAIL,
+        }
+        assert normalize_orphan_policy_lookup({}) == {}
+        assert normalize_orphan_policy_lookup({"relationships": "not-a-list"}) == {}
+
+    def test_the_completeness_check_consumes_the_normalizer(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[dict] = []
+        real = _graph.normalize_orphan_policy_lookup
+
+        def spy(config: dict) -> dict:
+            calls.append(config)
+            return real(config)
+
+        monkeypatch.setattr(_graph, "normalize_orphan_policy_lookup", spy)
+        config = {"relationships": [_entry("remap")]}
+        lookup = check_orphan_fk_policy_completeness(config, (_rel("parent", "id", "child", "fk"),))
+        assert calls == [config]
+        assert lookup == {("parent", ("id",), "child", ("fk",)): OrphanPolicy.REMAP}
+
+    @pytest.mark.parametrize("policy", [SENTINEL, 7919, ["fail"]])
+    def test_an_invalid_policy_is_refused_without_echoing_it(self, policy: object) -> None:
+        with pytest.raises(PlanCompileError) as exc:
+            check_orphan_fk_policy_completeness({"relationships": [_entry(policy)]}, ())
+        assert exc.value.code == "orphan_fk_policy_invalid"
+        assert exc.value.path == "relationships[0].orphan_policy"
+        assert "parent.id" in exc.value.message
+        for token in (SENTINEL, "7919", "fail"):
+            assert token not in str(exc.value)
+        assert exc.value.__cause__ is None and exc.value.__context__ is None
+
+    def test_a_duplicate_names_neither_policy(self) -> None:
+        config = {"relationships": [_entry("warn"), _entry("remap")]}
+        with pytest.raises(PlanCompileError) as exc:
+            check_orphan_fk_policy_completeness(config, ())
+        assert exc.value.code == "orphan_fk_policy_duplicate"
+        for token in ("warn", "remap"):
+            assert token not in str(exc.value)

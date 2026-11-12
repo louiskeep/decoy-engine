@@ -50,7 +50,7 @@ LAYERS: tuple[str, ...] = (
     "io : data_discovery : disguises : phase : telemetry : safe_output : fileaccess",
     "errors : reason_adapter : validation_result : release : reasons : instrumentation"
     " : checksums : _opaque : _lexeme : _error_base : _progress_events : _reference_date"
-    " : codesets : _execution_error : _field_names : _value_free",
+    " : codesets : _execution_error : _field_names : _value_free : _capacity",
 )
 
 

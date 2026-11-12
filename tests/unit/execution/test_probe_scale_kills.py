@@ -128,3 +128,58 @@ class TestDownscaleJobRowCountsGate:
         }
         job = downscale_job({"version": 2, "tables": [gen_no_count]}, None, 0.01, floor_rows=0)
         assert job.row_counts == {}
+
+
+def _bounded(parent_rows: int, child_rows: int, **bounds: int) -> dict:
+    return {
+        "tables": [
+            _generate_table("parents", parent_rows),
+            {
+                "name": "kids",
+                "row_count": child_rows,
+                "generate_columns": [
+                    "not-a-column",
+                    {"name": "note", "type": "constant", "value": 1},
+                    {
+                        "name": "pid",
+                        "type": "reference",
+                        "reference_table": "parents",
+                        "reference_column": "id",
+                        **bounds,
+                    },
+                ],
+            },
+        ]
+    }
+
+
+class TestDownscalePerParentBoundKills:
+    def test_other_entries_are_skipped_not_a_loop_abort(self) -> None:
+        scaled = downscale_config(_bounded(25, 50, max_per_parent=2), 0.1, floor_rows=0)
+        cols = scaled["tables"][1]["generate_columns"]
+        assert cols[0] == "not-a-column" and "max_per_parent" not in cols[1]
+        assert (cols[2]["min_per_parent"], cols[2]["max_per_parent"]) == (0, 3)
+
+    def test_the_rewrite_does_not_touch_the_original_config(self) -> None:
+        config = _bounded(25, 50, min_per_parent=2, max_per_parent=2)
+        downscale_config(config, 0.1, floor_rows=0)
+        ref = config["tables"][1]["generate_columns"][2]
+        assert (ref["min_per_parent"], ref["max_per_parent"]) == (2, 2)
+
+    def test_a_full_size_probe_loosens_nothing(self) -> None:
+        full = downscale_config(_bounded(25, 50, min_per_parent=2, max_per_parent=2), 1.0)
+        ref = full["tables"][1]["generate_columns"][2]
+        assert (ref["min_per_parent"], ref["max_per_parent"]) == (2, 2)
+
+    def test_a_parent_outside_the_config_leaves_the_bounds_alone(self) -> None:
+        config = _bounded(25, 50, min_per_parent=2, max_per_parent=2)
+        config["tables"][1]["generate_columns"][2]["reference_table"] = "elsewhere"
+        ref = downscale_config(config, 0.1, floor_rows=0)["tables"][1]["generate_columns"][2]
+        assert (ref["min_per_parent"], ref["max_per_parent"]) == (2, 2)
+
+    def test_an_empty_scaled_child_drops_the_minimum_only(self) -> None:
+        scaled = downscale_config(
+            _bounded(1000, 4, min_per_parent=2, max_per_parent=5), 0.1, floor_rows=0
+        )
+        ref = scaled["tables"][1]["generate_columns"][2]
+        assert (ref["min_per_parent"], ref["max_per_parent"]) == (0, 5)
