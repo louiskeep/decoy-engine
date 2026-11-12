@@ -26,16 +26,11 @@ from decoy_engine.execution._pipeline_route_exec import resolve_temp_disk_budget
 from decoy_engine.execution.out_of_core._scratch import engine_scratch_root
 from decoy_engine.profile import Profile, TableProfile
 from decoy_engine.profile._readers import LazySource
-from decoy_engine.subset import (
-    SubsetInternalError,
-    SubsetRequest,
-    SubsetSelection,
-    select_subset,
-    split_subset_config,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
+
+    from decoy_engine.subset import SubsetRequest, SubsetSelection
 
 _BATCH_ROWS = 65_536
 _STEM = "subset"
@@ -66,8 +61,12 @@ class SubsetStageScope:
     ) -> tuple[dict[str, pa.Table | LazySource], SubsetSelection]:
         # Facts first: for a CSV this also records the file identity the read checks.
         expected = {n: source_facts(s) for n, s in sources.items() if isinstance(s, LazySource)}
+        # Loaded here: polars comes with the subset package, and a run without a subset
+        # (or a memory-capped child) must not pay for it.
+        from decoy_engine.subset import SubsetInternalError, select_subset
+
         # Callers test `active` first, so a request is set.
-        selection = select_subset(cast(SubsetRequest, self._request), sources, config=config)
+        selection = select_subset(cast("SubsetRequest", self._request), sources, config=config)
         self.selection = selection
         check = selection.materialization_check
         survivors = {n: sorted(v) for n, v in selection.survivors.items()}
@@ -133,7 +132,7 @@ class SubsetStageScope:
         return result
 
     def _metrics(self) -> dict[str, Any]:
-        sel = cast(SubsetSelection, self.selection)  # `apply` ran before the route
+        sel = cast("SubsetSelection", self.selection)  # `apply` ran before the route
         return {
             "applied": True,
             "fingerprint": self.fingerprint,
@@ -182,6 +181,10 @@ def resolve_subset(
 
     Refuses before any read: an unknown `subset_request` value, and a subset on a
     `source_loader` run. `"skip"` leaves the stage inert; a `SubsetRequest` replaces the block."""
+    if subset_request in ("config", "skip") and config.get("subset") is None:
+        return config, SubsetStageScope(None, None)
+    from decoy_engine.subset import SubsetRequest, split_subset_config
+
     if not (isinstance(subset_request, SubsetRequest) or subset_request in ("config", "skip")):
         raise ExecutionError(
             code=reasons.runtime.INVALID_EXECUTION_KNOB,
