@@ -241,6 +241,8 @@ def run_fk_out_of_core(
                 memory_limit=memory_limit_for(budget_bytes, 1) if budget_bytes else memory_limit,
             )
             table_outgoing_edges = tuple(outgoing[table_name])
+            # Read once, before the driver: a lazy source reopens its file for the count.
+            _pg_rows = sources[table_name].num_rows if _pg.active else None
             # Route-independent gate: both drivers raise the same coded error (not a bare KeyError).
             validate_outgoing_parent_columns(table_outgoing_edges, sources[table_name].schema)
             route = decide_route(
@@ -291,9 +293,7 @@ def run_fk_out_of_core(
                 _stream_table(**table_kwargs, mask_key=key_box.open()[0])
             _pg.flush(table_name)
             # This route drops no row, so the source count is the written count.
-            _pg.phase_finish(
-                "mask", _pg_started, table=table_name, rows_out=sources[table_name].num_rows
-            )
+            _pg.phase_finish("mask", _pg_started, table=table_name, rows_out=_pg_rows)
             if temp_disk_budget_bytes is not None:
                 # Table boundaries are the natural checkpoints: the spill
                 # footprint peaks with each table's relation/join staging, and
