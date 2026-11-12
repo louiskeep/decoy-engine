@@ -15,7 +15,11 @@
    "_dominant_variant": "src/decoy_engine/detection/_scoring.py",
    "PreparedValues": "src/decoy_engine/detection/_scoring.py",
    "_SCOPE": "src/decoy_engine/detection/_scoring.py",
-   "prepared_scope": "src/decoy_engine/detection/_scoring.py"
+   "prepared_scope": "src/decoy_engine/detection/_scoring.py",
+   "DetectorCount": "src/decoy_engine/detection/_scoring.py",
+   "_COUNTS": "src/decoy_engine/detection/_scoring.py",
+   "counting_scope": "src/decoy_engine/detection/_scoring.py",
+   "decide_detector": "src/decoy_engine/detection/_scoring.py"
   }
  },
  "E1.2": {

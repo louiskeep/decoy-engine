@@ -20,6 +20,7 @@ import pytest
 
 from tests.fileaccess.publication._dirmode_support import (
     KILL_MARKER,
+    POLICIES,
     UNIT_BYTES,
     UNIT_FILE,
     mode,
@@ -30,7 +31,6 @@ from tests.fileaccess.publication._dirmode_support import (
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX directory modes")
 
-POLICIES = ["strict", "ambient"]
 PARENT = 0o777  # the create mode only `make_parent_dir_at` passes to the directory core
 
 
@@ -113,7 +113,11 @@ def test_v_set_group_id_parent(tmp_path: Path, umask: int) -> None:
     assert code == 0 and got["outcome"] == "made", got
     assert mode(shared / "s") == 0o700
     born = 0o777 & ~umask
-    assert mode(shared / "d") == stat.S_ISGID | born | 0o700
+    if sys.platform == "darwin":
+        # BSD inherits the group from the parent without needing the bit
+        assert mode(shared / "d") == born | 0o700
+    else:
+        assert mode(shared / "d") == stat.S_ISGID | born | 0o700
     assert os.lstat(shared / "d").st_gid == gid and os.lstat(shared / "d" / "e").st_gid == gid
 
 

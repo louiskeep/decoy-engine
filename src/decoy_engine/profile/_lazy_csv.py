@@ -31,7 +31,7 @@ from decoy_engine.profile._csv_reader import read_csv_source, resolve_csv_dialec
 from decoy_engine.profile._readers import FooterFacts, LazySource, OpenedLazyBatches
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Iterator, Mapping, Sequence
 
     from decoy_engine.fileaccess import FileAccess
 
@@ -75,16 +75,19 @@ class OpenedCsvBatches(OpenedLazyBatches):
         facts: FooterFacts,
         chunks: Iterator[pd.DataFrame],
         verify: Any,
+        batch_schema: pa.Schema | None = None,
     ) -> None:
         self._closed = False
         self._chunks = chunks
+        # A projection changes the batches' schema, never the facts.
+        self._batch_schema = batch_schema or facts.schema
         self.facts = facts
         self.batches = self._read(verify)
 
     def _read(self, verify: Any) -> Iterator[pa.RecordBatch]:  # type: ignore[override]
         try:
             for frame in self._chunks:
-                yield _batch(frame, self.facts.schema)
+                yield _batch(frame, self._batch_schema)
             verify()
         finally:
             self.close()
@@ -218,6 +221,7 @@ class CsvLazySource(LazySource):
         pre_buffer: bool | None = None,
         buffer_size: int = 0,
         use_threads: bool = True,
+        columns: Sequence[str] | None = None,
     ) -> OpenedLazyBatches:
         """Facts and a batch iterator for one read. The facts are the ones routing took when
         the file is unchanged since; the batch iterator checks the identity again when it is
@@ -232,7 +236,10 @@ class CsvLazySource(LazySource):
             if self._identity() != identity:
                 raise lazy_source_changed(self.table, "the file changed while it was read")
 
-        return OpenedCsvBatches(facts, self._chunks(batch_rows), verify)
+        if columns is None:
+            return OpenedCsvBatches(facts, self._chunks(batch_rows), verify)
+        names = list(columns)
+        return OpenedCsvBatches(facts, self._chunks(batch_rows, names), verify, _text_schema(names))
 
     def to_table(self, columns: list[str] | None = None) -> pa.Table:
         """Read the file (or just `columns`) into memory as text. Fallback for small jobs."""

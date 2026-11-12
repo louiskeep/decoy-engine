@@ -98,10 +98,11 @@ def _below_gate_entry(entry: Callable[..., Any], module: ModuleType) -> Callable
     """`entry` with the declaration gate answered by a `below_gate` capability.
 
     The public entry itself runs, so its file-access binding, subset refusal, thread check,
-    progress accounting and signature are the production ones. Only the `prepare_declared_sources`
-    its module calls at entry is replaced, for the duration of the (eager) call; the iterator it
-    returns keeps the capability it was given. The arguments are bound against the entry's own
-    signature, so a call the entry would reject is rejected here too.
+    progress accounting and signature are the production ones. Only the
+    `prepare_declared_execution_sources` its module calls at entry is replaced, for the duration
+    of the (eager) call; the iterator it returns keeps the capability it was given. The
+    arguments are bound against the entry's own signature, so a call the entry would reject is
+    rejected here too.
     """
     signature = inspect.signature(entry)
 
@@ -109,7 +110,9 @@ def _below_gate_entry(entry: Callable[..., Any], module: ModuleType) -> Callable
     def run(config: dict[str, Any], chunks: Iterable[pa.Table], **kw: Any) -> Any:
         table = signature.bind(config, chunks, **kw).arguments["table"]
         capability, fed = below_gate(config, table, chunks)
-        with mock.patch.object(module, "prepare_declared_sources", return_value=capability):
+        with mock.patch.object(
+            module, "prepare_declared_execution_sources", return_value=capability
+        ):
             return entry(config, fed, **kw)
 
     return run

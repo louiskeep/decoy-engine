@@ -17,11 +17,11 @@ from pathlib import Path
 
 import pytest
 
+from decoy_engine.fileaccess._openat2 import openat2_usable
 from tests.fileaccess.publication._chain_support import OSMARK, mode, output_dir
+from tests.fileaccess.publication._dirmode_support import POLICIES
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX flock")
-
-POLICIES = ["strict", "ambient"]
 
 
 @pytest.mark.serial  # asserts a wall-clock lower bound on the lock deadline
@@ -68,6 +68,7 @@ def test_lock_contention_and_unsupported(
             os.close(root_fd)
 
 
+@pytest.mark.skipif(not openat2_usable(), reason="strict policy needs Linux openat2")
 def test_strict_policy_confined(tmp_path: Path) -> None:
     from decoy_engine import fileaccess
 
