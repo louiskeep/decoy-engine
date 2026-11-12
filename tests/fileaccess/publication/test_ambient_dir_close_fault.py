@@ -93,3 +93,23 @@ def test_directory_close_fault_does_not_mask_the_primary_error(
     assert faults, "non-vacuity: the parent descriptor close raised"
     assert raised.value.errno == errno.EACCES
     assert not list((tmp_path / "p").iterdir())
+
+
+def test_durable_publish_survives_directory_close_faults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A durable unit: the owner-only file create, the stage tree sync and the chain sync after
+    the rename each close directory descriptors; none of those faults may fail the publish or
+    turn the bound leaf into `CommitUncertain`."""
+    target = tmp_path / "p" / "out"
+    out = _output_dir(target)
+    faults = _faulty_directory_close(monkeypatch)
+    txn = out.begin("dir", "exclusive", label="publication")
+    fd = txn.create_file(UNIT)
+    os.write(fd, DATA)
+    os.close(fd)
+    txn.publish()
+    out.sync_chain()
+    monkeypatch.undo()
+    assert len(faults) >= 3, "non-vacuity: faults hit the create, the publish and the chain"
+    assert (target / UNIT).read_bytes() == DATA

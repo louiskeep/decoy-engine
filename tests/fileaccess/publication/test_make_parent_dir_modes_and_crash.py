@@ -1,7 +1,8 @@
 """F22 5.0 rule (1): output parents are made by `make_parent_dir_at` at the real name.
 
 Plan `docs/plans/2026-10-30-f22-publication-replan.md` 7.2 row `test_make_parent_dir_modes_and_crash`
-(slice a1a; the durable-walk part lands with a1b). Every case publishes from a `spawn` child
+(slices a1a and a1b; a1b adds the entry-point spy and the durable walk under the publication
+label). Every case publishes from a `spawn` child
 into `p/a/out` with `p` and `a` absent. Named limit L1u: a SIGKILL between the `mkdir` of a parent
 and its owner-bit repair, under a umask that strips an owner bit, leaves a directory Decoy cannot
 open; the retry refuses it with nothing bound, and the operator fixes the mode.
@@ -61,6 +62,7 @@ def test_i_umask_0477_parents_are_0700_through_the_entry_point(base: Path, polic
     assert (base / "p" / "a" / "out" / UNIT_FILE).read_bytes() == UNIT_BYTES
     assert mode(base / "p") == 0o700 and mode(base / "p" / "a") == 0o700
     assert ["p", PARENT] in got["core"] and ["a", PARENT] in got["core"]
+    assert got["entry"] == ["p", "a"]  # created through the entry point, not the bare core
 
 
 @pytest.mark.parametrize("policy", POLICIES)
@@ -144,11 +146,14 @@ def test_vii_ensure_dir_under_0477(base: Path, policy: str) -> None:
         ["a", PARENT],
         ["out", PARENT],
     ]
+    assert got["entry"] == ["p", "a", "out"]
 
 
+@pytest.mark.parametrize("label", ["table_sink", "publication"])
 @pytest.mark.parametrize("policy", POLICIES)
-def test_viii_no_umask_round_trip_and_no_proc_read(base: Path, policy: str) -> None:
-    code, got = _publish(base, policy, 0o477, spies=True)
+def test_viii_no_umask_round_trip_and_no_proc_read(base: Path, policy: str, label: str) -> None:
+    # the publication label adds the durable walk (a1b), which must not read the umask either
+    code, got = _publish(base, policy, 0o477, spies=True, label=label)
     assert code == 0 and got["outcome"] == "published", got
     assert got["core"]  # non-vacuity: the spies were live while parents were made
     assert got["umask"] == 0 and got["proc"] == 0

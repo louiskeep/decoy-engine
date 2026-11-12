@@ -155,10 +155,11 @@ def _install_eexist_hook(name: str, seen: dict[str, Any]) -> None:
 
 
 def _install_spies(found: dict[str, Any]) -> None:
-    """Record directory-core calls, validator arguments, `os.umask` and `/proc` status opens."""
+    """Record directory-core and `make_parent_dir_at` calls, validator arguments, `os.umask` and
+    `/proc` status opens."""
     from decoy_engine.fileaccess import _component, _output
 
-    found.update(core=[], validated=[], umask=0, proc=0)
+    found.update(core=[], entry=[], validated=[], umask=0, proc=0)
     core = getattr(_output, "_make_dir_core", None)
     if core is not None:
 
@@ -167,6 +168,17 @@ def _install_spies(found: dict[str, Any]) -> None:
             return core(parent_fd, name, mode, **kw)
 
         _output._make_dir_core = core_spy  # type: ignore[attr-defined]
+
+    from decoy_engine.fileaccess import _local
+
+    entry = _output.make_parent_dir_at
+
+    def entry_spy(parent_fd: int, name: str) -> int:
+        found["entry"].append(name)
+        return entry(parent_fd, name)
+
+    _output.make_parent_dir_at = entry_spy  # type: ignore[assignment]
+    _local.make_parent_dir_at = entry_spy  # type: ignore[assignment]
 
     real_validate = _component.validate_component
 
@@ -251,7 +263,7 @@ def publish_case(spec_path: str) -> None:
         if spec.get("op") == "ensure_dir":
             out.ensure_dir()
         else:
-            txn = out.begin("dir", "exclusive", label="table_sink")
+            txn = out.begin("dir", "exclusive", label=spec.get("label", "table_sink"))
             fd = txn.create_file(UNIT_FILE)
             os.write(fd, UNIT_BYTES)
             os.close(fd)
@@ -264,6 +276,23 @@ def publish_case(spec_path: str) -> None:
     _write(spec["result"], found)
 
 
+STAGE_PREFIXES = {"table_sink": "_decoy_stage_", "publication": "._decoy_publication_pending_"}
+
+
+def _spy_fsync() -> list[list[int]]:
+    """Record the `(st_dev, st_ino)` of every descriptor `os.fsync` is called on."""
+    seen: list[list[int]] = []
+    real = os.fsync
+
+    def spy(fd: int) -> None:
+        st = os.fstat(fd)
+        seen.append([st.st_dev, st.st_ino])
+        real(fd)
+
+    os.fsync = spy  # type: ignore[assignment]
+    return seen
+
+
 def umask_stage_case(spec_path: str) -> None:
     """One dir txn with a file and a `create_dir` subdirectory, into an existing parent."""
     spec = json.loads(Path(spec_path).read_text("utf-8"))
@@ -272,18 +301,25 @@ def umask_stage_case(spec_path: str) -> None:
     found: dict[str, Any] = {"probe": _probe(base)}
     _emulate_owner_bits(str(base))
     parent = base / "out"
+    label = spec.get("label", "table_sink")
+    synced = _spy_fsync() if label == "publication" else []
     try:
         out, _root_fd = _output_dir(spec["policy"], base, "out/leaf")
-        txn = out.begin("dir", "exclusive", label="table_sink")
+        txn = out.begin("dir", "exclusive", label=label)
         fd = txn.create_file(UNIT_FILE)
         os.write(fd, UNIT_BYTES)
         os.close(fd)
         sub = txn.create_dir("sub")
         os.close(sub.create_file("g"))
-        (stage,) = [p for p in parent.iterdir() if p.name.startswith("_decoy_stage_")]
+        prefix = STAGE_PREFIXES[label]
+        (stage,) = [p for p in parent.iterdir() if p.name.startswith(prefix)]
         found["stage_mode"] = stat.S_IMODE(os.lstat(stage).st_mode)
         found["sub_mode"] = stat.S_IMODE(os.lstat(stage / "sub").st_mode)
+        unit = [stage / UNIT_FILE, stage / "sub" / "g", stage / "sub", stage]
+        keys = [[os.lstat(p).st_dev, os.lstat(p).st_ino] for p in unit]
         txn.publish()
+        found["unit_keys"] = keys
+        found["synced"] = [k for k in keys if k in synced]
         found["outcome"] = "published"
     except Exception as exc:
         found["outcome"] = "refused"

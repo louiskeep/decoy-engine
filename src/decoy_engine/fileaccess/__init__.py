@@ -45,6 +45,7 @@ from decoy_engine.fileaccess._scratch import ScratchArena
 from decoy_engine.fileaccess._scratch_reports import CleanupReport, QuotaReport
 from decoy_engine.fileaccess._types import (
     CONTRACT_VERSION,
+    CommitUncertain,
     DirHandle,
     FileAccess,
     FileAccessDenied,
@@ -53,6 +54,9 @@ from decoy_engine.fileaccess._types import (
     FileHandle,
     FileRequest,
     FileRole,
+    LeafTooLarge,
+    LockTimeout,
+    LockUnavailable,
     OutputDir,
     OutputTxn,
 )
@@ -116,6 +120,7 @@ __all__ = [
     "CONTRACT_VERSION",
     "ENTRY_POINTS",
     "CleanupReport",
+    "CommitUncertain",
     "DirHandle",
     "FileAccess",
     "FileAccessDenied",
@@ -124,7 +129,10 @@ __all__ = [
     "FileHandle",
     "FileRequest",
     "FileRole",
+    "LeafTooLarge",
     "LocalFileAccess",
+    "LockTimeout",
+    "LockUnavailable",
     "OutputDir",
     "OutputTxn",
     "PreopenedFileAccess",

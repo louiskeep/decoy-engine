@@ -17,6 +17,7 @@ capability_modules = [
   "decoy_engine/fileaccess/_output.py",
   "decoy_engine/fileaccess/_preopened.py",
   "decoy_engine/fileaccess/_openat2.py",
+  "decoy_engine/fileaccess/_durable.py",
 ]
 
 # Public functions in a capability module that take a held descriptor. They are the named creation

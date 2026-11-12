@@ -5,7 +5,7 @@
 # `dir_category` (protected_root, protected_child, output_parent, published_output, non_row) and
 # `dir_test` (an existing pytest node id; every category but protected_root) mark directory
 # creators for tests/sentry/protected_dir (G-ONE-PROTECTED-DIR).
-# Count: 197 (asserted by the sentry).
+# Count: 200 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -1116,6 +1116,33 @@ disposition = "read"
 rule = "the FileRequest.locator of a request served by LocalFileAccess, an ancestor of it, or its stage directory, opened read-only as a directory so the creators in _output.py work beneath a held descriptor"
 owner = "cam"
 reason = "ambient CLI semantics (links followed, path as given), POSIX arm only: F22 5.0 rule 1 opens the deepest existing ancestor and makes each missing output parent under it"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "_probe_dir"
+sink = "os.stat"
+ordinal = 0
+rule = "a directory on the resolved chain from the leaf's parent of a LocalFileAccess output up to its mount root, lstat only (device and owner)"
+owner = "cam"
+reason = "F22 5.0 rule D, POSIX arm only: the ambient durable walk finds the mount boundary and the owner of an unreadable ancestor; no read and no write"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "_sync_up"
+sink = "os.path.realpath"
+ordinal = 0
+rule = "the parent of the FileRequest.locator of a request served by LocalFileAccess"
+owner = "cam"
+reason = "F22 5.0 rule D, POSIX arm only: the ambient durable walk fsyncs the physical directory chain, so links in the caller path are resolved first"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn._publish_durable"
+sink = "os.replace"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "F22 5.1, POSIX arm only: the durable publication bind renames the fsynced stage onto the leaf, as LocalOutputTxn.publish does for other labels"
 
 [[entry]]
 module = "decoy_engine/fileaccess/_local.py"
