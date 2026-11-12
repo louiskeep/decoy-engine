@@ -47,3 +47,29 @@ M1 to M5 were run on `55b28933` before the split; the code they hit is unchanged
 - A forged `Label` with a well-formed value from hostile in-process code stays V2-LOG.
 - `Version` still accepts four-part `1.0.0.0` (V2-LOG, as before).
 - No Platform or CLI code was run; Python 3.10 only.
+
+## 6. Main merge, 2026-11-12
+
+Merged `origin/main` `426e6d05` into this branch (merge commit `a2df1717`, plain merge, no rebase). One conflict: `tests/sentry/test_public_import_boundary.py`, the public-facade tuple; kept main's side (`telemetry/__init__.py`, `safe_output/__init__.py`) and re-added this branch's `support/__init__.py` row.
+
+Edits the main-side rules forced, no behavior change:
+
+- Placement: `support` is appended to the top tier of the layers contract in `.importlinter` and in the `LAYERS` snapshot of `tests/sentry/layout/test_import_layers.py`. No `ignore_imports` line was added. Row added to `src/decoy_engine/_MAP.md` and to `CODEMAP.md` (package table and a "Support bundles" row in "Where Things Go"). The row names `tests/unit/support/` and no sentry yet: the no-network sentry lives in the labels half, and the package-map path sentry fails on a path that does not exist on this branch, so the labels half adds that cell.
+- Mirrored enum `StrategyKind` gained `CONSTANT = "constant"` and `DISTRIBUTION = "distribution"` (new `GenerateColumnConfig.type` members on main). `test_mirrored_enums_match_engine` is unchanged. `CountKey`, `NativeStatus` and `OrphanPolicy` already matched. `_shape.py` is 429 lines.
+- Facade rule (`tests/sentry/defects/test_exception_context.py`, "no private import behind a public facade"): `support/__init__.py` and `support/_shape.py` imported `decoy_engine.reasons._types` and `._registry`. They now import `Outcome`, `ReasonSpec`, `RetryClass`, `Severity` and `find` from `decoy_engine.reasons`; the objects are the same.
+- Reason scanner (`tests/sentry/test_reason_registry.py`): the scanner resolves classes by bare name, so `support.ReasonRef(namespace, code)` made the existing call in `profiling/scan_set.py` (`WarningRefCore._known`) look like an unregistered code site. Added one `ADAPTERS` row for it, with the reason that `require_known` resolves the ref against the registry first. No ratchet or cap changed.
+- Fragment `changelog.d/f32-e1-types.md`; `check_fragment.py --base origin/main` exits 0.
+- `REGISTRY_VERSION` is unchanged, so the renumber check did not apply.
+
+Results (head `dbb173cf` plus this record): `tests/unit/support` and `tests/unit/test_reason_registry.py`: 73 passed. `tests/sentry` on the Mac before the last two fixes: 5089 passed, 11 failed (the 10 Mac-only layout tests, plus the reason-scanner site fixed afterwards). After the fixes: `tests/sentry/test_reason_registry.py`, `tests/sentry/defects`, `tests/sentry/test_package_map_paths.py`: 187 passed. Layout on Linux via `scripts/dev/gates.sh --steps layers`: 15 passed. ruff check, ruff format --check and mypy on the touched files: clean.
+
+Mutations on the final code (each applied once, run, reverted):
+
+| # | Mutation | Result |
+|---|---|---|
+| M9 | accept any dataclass annotation | red: `test_nested_plain_dataclass_is_refused` |
+| M10 | rename `Label.__reduce__` | red: `test_label_survives_pickle_copy_asdict` |
+| M11 | rename `Label.__deepcopy__` | red: same test |
+| M12 | `Version` parts `[0-9]+` | red: `test_version_rejects_free_text` |
+
+Not run: the full suite.
