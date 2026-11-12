@@ -66,6 +66,13 @@ workflows disagree.
 `docs.yml` has no `push` trigger while deploy is off (`vars.DOCS_DEPLOY` unset). Enabling deploy
 re-adds `push` to `main` in the same change.
 
+Before each engine merge, run `scripts/dev/required_checks.py verify --sha <pr head> --tier merge`
+with the engine venv Python and `GH_TOKEN` set. It reads the required list from the `origin/main`
+tip, not the branch, and requires every merge job green on its first attempt (`--allow-rerun
+WORKFLOW=REASON` logs a named exception for a pure download flake). `verify --tier nightly` says
+whether last night's scheduled runs on main are fresh and green; `contexts` prints the check names
+for branch protection.
+
 Branch protection (requiring the `merge` jobs on `main`) is a repository setting and is not
 applied by this change.
 

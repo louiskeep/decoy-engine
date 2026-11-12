@@ -45,6 +45,7 @@ PUBLIC_BOUNDARY_FILES: tuple[str, ...] = (
     "verification/canary/__init__.py",
     "telemetry/__init__.py",
     "safe_output/__init__.py",
+    "support/__init__.py",
 )
 
 # Narrow exceptions: a public-boundary file is allowed to import from

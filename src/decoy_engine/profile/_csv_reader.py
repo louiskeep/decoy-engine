@@ -329,7 +329,21 @@ def _shaped(result: Any, columns: Sequence[str]) -> Any:
     """`_ordered` over one frame, or lazily over each chunk of an iterator."""
     if isinstance(result, pd.DataFrame):
         return _ordered(result, columns)
-    return (_ordered(chunk, columns) for chunk in result)
+    return _shaped_chunks(result, columns)
+
+
+def _shaped_chunks(
+    chunks: Iterator[pd.DataFrame], columns: Sequence[str]
+) -> Iterator[pd.DataFrame]:
+    # A generator expression would reach `chunks` only through reference counting when it is
+    # closed; the finally closes the file handle at the call that closes this.
+    try:
+        for chunk in chunks:
+            yield _ordered(chunk, columns)
+    finally:
+        close = getattr(chunks, "close", None)
+        if close is not None:
+            close()
 
 
 def _projection(

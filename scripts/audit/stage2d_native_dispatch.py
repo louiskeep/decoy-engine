@@ -187,6 +187,7 @@ def run_cell(spec: dict) -> dict:
             _chunks(source, chunk_rows),
             table="w",
             engine_version="stage2d-dispatch-probe",
+            source_schema=source.schema,
             key_provider=_key_provider(),
         )
     )

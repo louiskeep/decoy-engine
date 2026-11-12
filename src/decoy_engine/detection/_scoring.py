@@ -14,6 +14,7 @@ import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -84,6 +85,33 @@ def prepared_scope(series: pd.Series) -> Iterator[None]:
         _SCOPE.reset(token)
 
 
+class DetectorCount(NamedTuple):
+    """One detector's tally over one column before the threshold test."""
+
+    detector_id: str
+    hits: int
+    n: int
+    threshold: float
+    name_hint: bool
+
+
+_COUNTS: ContextVar[list[DetectorCount] | None] = ContextVar("detector_count_scope", default=None)
+
+
+@contextmanager
+def counting_scope() -> Iterator[list[DetectorCount]]:
+    """Collect every detector's raw tally in the block, whether or not it fired.
+
+    A caller that streams a column sums hits and n over its batches and applies the
+    threshold itself, so the rate is the whole-column rate and not an average of batch rates."""
+    counts: list[DetectorCount] = []
+    token = _COUNTS.set(counts)
+    try:
+        yield counts
+    finally:
+        _COUNTS.reset(token)
+
+
 def _series_str(series: pd.Series) -> PreparedValues:
     """Drop nulls, stringify and strip, once per column inside a `prepared_scope`."""
     scoped = _SCOPE.get()
@@ -105,6 +133,20 @@ def _confidence_bucket(rate: float, *, name_hint: bool) -> str:
     if (not name_hint and rate >= 0.50) or (name_hint and rate >= NAME_HINT_MIN_RATE):
         return "medium"
     return "low"
+
+
+def decide_detector(
+    hits: int, n: int, threshold: float, name_hint: bool
+) -> tuple[float, str] | None:
+    """The one firing rule: `(rate, confidence bucket)` when `hits` of `n` values reach
+    `threshold`, else None. A batch scan sums `hits` and `n` first, so it decides like a
+    whole-column scan."""
+    if n == 0:
+        return None
+    rate = float(hits) / n
+    if rate < threshold:
+        return None
+    return rate, _confidence_bucket(rate, name_hint=name_hint)
 
 
 def _dominant_variant(
@@ -173,10 +215,15 @@ def _evaluate(
             except (TypeError, ValueError):
                 continue
         hit = validated
-    rate = float(int(values.counts[hit].sum())) / values.n
+    hits = int(values.counts[hit].sum())
     threshold = NAME_HINT_MIN_RATE if name_hint else min_rate
-    if rate < threshold:
+    tally = _COUNTS.get()
+    if tally is not None:
+        tally.append(DetectorCount(detector_id, hits, values.n, threshold, name_hint))
+    fired = decide_detector(hits, values.n, threshold, name_hint)
+    if fired is None:
         return None
+    rate, confidence = fired
     miss_rows = np.flatnonzero(~hit[values.codes])[:SAMPLE_MISS_LIMIT]
     misses = uniques.iloc[values.codes[miss_rows]].tolist()
     format_pattern: str | None = None
@@ -187,6 +234,6 @@ def _evaluate(
         match_rate=round(rate, 4),
         sample_misses=[str(m) for m in misses],
         format_pattern=format_pattern,
-        confidence=_confidence_bucket(rate, name_hint=name_hint),
+        confidence=confidence,
         domain=domain_for(detector_id).value,
     )

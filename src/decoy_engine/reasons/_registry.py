@@ -21,9 +21,12 @@ from decoy_engine.reasons._types import (
     Severity,
 )
 
-REGISTRY_VERSION = "1.23.0"
+REGISTRY_VERSION = "1.24.0"
 REASON_SCHEMA_VERSION = 1
 EVENT_SCHEMA_VERSION = 1
+# Released identities whose summary carries an editorial correction the next release ships as a
+# patch. Release prep empties the set when it stamps the registry.
+PENDING_SUMMARY_EDITS: frozenset[tuple[str, str]] = frozenset()
 
 _SPECS: dict[tuple[str, str], ReasonSpec] = {}
 _BY_CODE: dict[str, list[ReasonSpec]] = {}
@@ -143,6 +146,11 @@ def is_registered(code: object, namespaces: Iterable[str] | None = None) -> bool
 def specs() -> tuple[ReasonSpec, ...]:
     """Every entry, tombstones included, ordered by identity."""
     return tuple(_SPECS[k] for k in sorted(_SPECS))
+
+
+def pending_summary_edits() -> frozenset[tuple[str, str]]:
+    """The ``(namespace, code)`` identities whose summary correction awaits a release."""
+    return PENDING_SUMMARY_EDITS
 
 
 def namespaces() -> tuple[str, ...]:
