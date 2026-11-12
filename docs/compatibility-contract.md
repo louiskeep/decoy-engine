@@ -96,7 +96,7 @@ footers and schemas, before any data row is read, staged, profiled or masked. Fi
 `warn` pass-through now declare the column as `passthrough`; that path is reached only by drift after the gate.
 `run_pipeline` gains `source_loader_schemas`, required with a `source_loader` and refused without one, and
 `profile_source` gains the keyword-only `declared` capability. No registry code is added. The chunked entries are
-unchanged here.
+unchanged here; CONFIG-EXPLICIT E2d gates them (below).
 
 Until GA: use this document as the design target so we don't paint ourselves
 into a corner. After GA: this document is binding.
@@ -735,6 +735,19 @@ for another config raises `ValueError`). `build_run_context` checks the config d
 columns is refused before it is profiled or masked. `run_pipeline_isolated` runs the same check in the parent before
 staging or spawn, and the child `run_pipeline` rechecks. The refusals are `source_file.undeclared_column` (names a
 position and a count, never a column) and `source_file.undeclared_table`.
+
+**Declaration gate on the chunked entries (CONFIG-EXPLICIT E2d).** `run_mask_pipeline_chunked`,
+`run_mask_chunked` and `run_native_or_oracle_chunked` call `prepare_declared_sources`
+(`DeclarationRequest.for_chunks`) after the subset refusal and before `chunks` is touched, then
+check every chunk's columns against the declared set. `run_mask_pipeline_chunked` gains the required
+keyword-only `source_schema: pa.Schema` (a breaking signature change, no default): the table and that
+schema are checked at entry, and a chunk column outside the schema is refused with
+`source_file.undeclared_column`. The two native entries keep their signatures. They check the config
+level at entry (an undeclared table) and the first chunk's columns right after it is read, before
+profile, compile or mask (a named limit: one chunk is pulled before the column check); later chunks
+are checked lazily before each masks, so earlier chunks may already be in the sink, as for drift
+refusals. The private `_run_chunked`, `_oracle_preflight` and `_oracle_preflight_admitted` take a
+required `declared` capability. The CLI's `run --chunked` moves in CLI Part C1.
 
 ### 3.5 Disguises
 

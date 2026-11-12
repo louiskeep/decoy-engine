@@ -74,7 +74,7 @@ class Probes:
     """The close spy, the ParquetFile spy and a chunk counter, installed together."""
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from decoy_engine.execution.native import _chunked_entry
+        from decoy_engine.execution.native.chunked import _core as _native_core
         from decoy_engine.profile._readers import OpenedLazyBatches
 
         self.files = b6b.ParquetFileSpy(monkeypatch)
@@ -86,7 +86,7 @@ class Probes:
             lambda owner: (self.closes.append(owner), real_close(owner))[1],
         )
         self.pulled: list[int] = []
-        real_mask = _chunked_entry._mask_chunked
+        real_mask = _native_core.mask_chunked
 
         def counted(config: Any, chunks: Any, **kwargs: Any) -> Any:
             def tap() -> Any:
@@ -96,7 +96,7 @@ class Probes:
 
             return real_mask(config, tap(), **kwargs)
 
-        monkeypatch.setattr(_chunked_entry, "_mask_chunked", counted)
+        monkeypatch.setattr(_native_core, "mask_chunked", counted)
 
     def readers(self) -> list[Any]:
         return [

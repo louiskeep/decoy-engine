@@ -49,6 +49,7 @@ from decoy_engine.secret_providers import (
     prepare_legacy,
     prepare_secret,
 )
+from tests._declared_schema import declared_schema
 from tests.secret_providers._helpers import (
     ENGINE_VERSION,
     ProtocolProvider,
@@ -158,7 +159,15 @@ def test_failure_through_the_pipeline_is_value_free(tmp_path, registry, caplog):
 
     source = TouchedSource()
     with pytest.raises(MaskSecretError) as chunk_info:
-        list(run_mask_pipeline_chunked(cfg, source, table="t", engine_version=ENGINE_VERSION))
+        list(
+            run_mask_pipeline_chunked(
+                cfg,
+                source,
+                table="t",
+                source_schema=declared_schema(cfg, "t"),
+                engine_version=ENGINE_VERSION,
+            )
+        )
     assert chunk_info.value.code == "secret_provider_unavailable" and source.touched == 0
     assert "F13-PATH-MARKER" not in "".join(traceback.format_exception(chunk_info.value))
 

@@ -235,12 +235,12 @@ def test_two_independent_mask_tables_each_run_on_the_chunked_lane(tmp_path: Path
 def test_generation_runs_once_and_each_mask_table_gets_one_lane_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from decoy_engine.execution.native import _chunked_entry
+    from decoy_engine.execution.native.chunked import _core as _native_core
     from decoy_engine.generation import synthesize
 
     lane_tables: list[str] = []
     generated: list[int] = []
-    real_lane, real_generate = _chunked_entry._mask_chunked, synthesize.generate_tables
+    real_lane, real_generate = _native_core.mask_chunked, synthesize.generate_tables
 
     def lane(*args: Any, **kwargs: Any) -> Any:
         lane_tables.append(kwargs["table"])
@@ -250,7 +250,7 @@ def test_generation_runs_once_and_each_mask_table_gets_one_lane_run(
         generated.append(1)
         return real_generate(*args, **kwargs)
 
-    monkeypatch.setattr(_chunked_entry, "_mask_chunked", lane)
+    monkeypatch.setattr(_native_core, "mask_chunked", lane)
     monkeypatch.setattr(synthesize, "generate_tables", generate)
     child = child_table(pa.array(STRING_KEYS, pa.string()))
     got = run(mixed_config(tmp_path, child), {CHILD: child})

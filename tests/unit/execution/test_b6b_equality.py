@@ -228,10 +228,10 @@ def test_lazy_equals_the_twin_with_a_plain_recording_sink(tmp_path: Path) -> Non
 
 
 def _record_chunk_sizes(monkeypatch: pytest.MonkeyPatch) -> list[list[int]]:
-    from decoy_engine.execution.native import _chunked_entry
+    from decoy_engine.execution.native.chunked import _core as _native_core
 
     calls: list[list[int]] = []
-    real = _chunked_entry._mask_chunked
+    real = _native_core.mask_chunked
 
     def spy(config: Any, chunks: Any, **kwargs: Any) -> Any:
         sizes: list[int] = []
@@ -244,7 +244,7 @@ def _record_chunk_sizes(monkeypatch: pytest.MonkeyPatch) -> list[list[int]]:
 
         return real(config, counted(), **kwargs)
 
-    monkeypatch.setattr(_chunked_entry, "_mask_chunked", spy)
+    monkeypatch.setattr(_native_core, "mask_chunked", spy)
     return calls
 
 

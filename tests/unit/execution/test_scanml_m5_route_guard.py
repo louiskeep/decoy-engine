@@ -31,6 +31,7 @@ MODEL_NER = {"post_scan": {"integrity": True, "detectors": ["regex", "ner"]}}
 NER_FAIL = {"post_scan": {"integrity": True, "detectors": ["regex", "ner"], "ner_findings": "fail"}}
 REFUSED = {"model_ner": MODEL_NER, "ner_findings_fail": NER_FAIL}
 REGEX_ONLY = {"post_scan": {"integrity": True}}
+_SCHEMA = pa.schema([("r", pa.string())])
 
 
 def _guard_module() -> Any:
@@ -152,8 +153,11 @@ def _chunked_call(entry: str, config: dict[str, Any], monkeypatch: pytest.Monkey
     }[entry]
     chunks = _SpyChunks()
 
+    # The declared-columns gate (E2d) wants the oracle entry's schema; the guard runs before it.
+    extra = {"source_schema": _SCHEMA} if entry == "run_mask_pipeline_chunked" else {}
+
     def call() -> Any:
-        return fn(config, chunks, table="t", engine_version="v")
+        return fn(config, chunks, table="t", engine_version="v", **extra)
 
     return call, chunks
 
@@ -397,8 +401,11 @@ def test_chunked_entry_output_with_regex_only_integrity_equals_integrity_off(ent
     }[entry]
     src = pa.table({"r": pa.array([f"s{i}" for i in range(6)])})
 
+    extra = {"source_schema": src.schema} if entry == "run_mask_pipeline_chunked" else {}
+
     def run(config: dict[str, Any]) -> list[pa.Table]:
-        return list(fn(config, [src.slice(0, 3), src.slice(3)], table="t", engine_version="v"))
+        chunks = [src.slice(0, 3), src.slice(3)]
+        return list(fn(config, chunks, table="t", engine_version="v", **extra))
 
     on = run(_chunk_cfg({"integrity": True}))
     off = run(_chunk_cfg({}))
@@ -432,10 +439,10 @@ def test_run_pipeline_auto_chunk_lane_runs_model_post_scan_configs_as_on_main(
     lane: str, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from decoy_engine.execution import _chunked_oracle, run_pipeline
-    from decoy_engine.execution.native import _chunked_entry
+    from decoy_engine.execution.native.chunked import _core as _native_core
 
     core = {
-        "dispatcher": (_chunked_entry, "_mask_chunked"),
+        "dispatcher": (_native_core, "mask_chunked"),
         "oracle": (_chunked_oracle, "_mask_pipeline_chunked"),
     }
     module, name = core[lane]

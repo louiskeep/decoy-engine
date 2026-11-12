@@ -105,7 +105,7 @@ def _chunked(weights: list[Any]) -> list[pa.Table]:
     col["provider_config"]["weights"] = list(weights)
     return list(
         run_mask_chunked(
-            make_config([col]),
+            make_config([col, {"name": "p", "strategy": "passthrough"}]),
             [source(["a", "b", None, "a"])],
             table=TABLE,
             engine_version=ENGINE_VERSION,

@@ -121,7 +121,13 @@ def test_mask_pipeline_chunked_adapter_forwards_result_unchanged(
     adapter = MaskPipelineChunkedAdapter()
     chunks_marker = iter([pa.table({"c": [1]})])
 
-    result = adapter.run({"cfg": 1}, chunks_marker, table="t", engine_version="v")
+    result = adapter.run(
+        {"cfg": 1},
+        chunks_marker,
+        table="t",
+        engine_version="v",
+        source_schema=pa.schema([]),
+    )
 
     assert result is sentinel
     assert calls[0]["chunks"] is chunks_marker

@@ -97,6 +97,7 @@ from decoy_engine.execution.native._route_decline_codes import (
 )
 from decoy_engine.execution.native._when_admission import first_when_decline
 from decoy_engine.generation.pool import PoolCache
+from decoy_engine.profile import DeclarationRequest, prepare_declared_sources
 from decoy_engine.verification.postmask._route_guard import refuse_unchecked_route
 
 RouteTag = Literal["native_kernel", "native_pool", "oracle"]
@@ -648,11 +649,13 @@ def run_native_or_oracle_chunked(
     # Lazy import: `_chunked_entry` imports this module for `plan_native_route`.
     from decoy_engine.execution.native._chunked_entry import _run_chunked
 
+    declared = prepare_declared_sources(DeclarationRequest.for_chunks(config, table, None))
     return _run_chunked(
         config,
         chunks,
         table=table,
         engine_version=engine_version,
+        declared=declared,
         key_provider=key_provider,
         native_threads=native_threads,
         route_evidence_sink=route_evidence_sink,

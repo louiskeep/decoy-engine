@@ -87,6 +87,11 @@ from decoy_engine.execution.native._when_mask import plan_when_masks
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation.pool import PoolCache, ValuePool
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
+from decoy_engine.profile import (
+    DeclarationRequest,
+    PreparedDeclaredSources,
+    prepare_declared_sources,
+)
 from decoy_engine.progress import get_active_channel
 
 # Matches `MAX_NATIVE_THREADS` in decoy-engine-native/src/threads.rs: the compiled
@@ -410,6 +415,7 @@ def _run_chunked(
     *,
     table: str,
     engine_version: str,
+    declared: PreparedDeclaredSources,
     registry: Any = None,
     adapter: Any = None,
     vault_writer: Any = None,
@@ -434,6 +440,7 @@ def _run_chunked(
         chunks,
         table=table,
         engine_version=engine_version,
+        declared=declared,
         registry=registry,
         adapter=adapter,
         vault_writer=vault_writer,
@@ -646,42 +653,31 @@ def run_mask_chunked(
 
     refuse_unchecked_route(config, "native_chunked")
     refuse_unapplied_subset(config)
-    return _mask_chunked(
-        config,
-        chunks,
-        table=table,
-        engine_version=engine_version,
-        registry=registry,
-        adapter=adapter,
-        vault_writer=vault_writer,
-        chunk_result_sink=chunk_result_sink,
-        key_provider=key_provider,
-        base_row_offset=base_row_offset,
-        native_threads=native_threads,
-        route_evidence_sink=route_evidence_sink,
-        pool_cache=pool_cache,
-    )
-
-
-def _mask_chunked(
-    config: dict[str, Any],
-    chunks: Iterable[pa.Table],
-    *,
-    table: str,
-    native_threads: int = 1,
-    **kwargs: Any,
-) -> Iterator[pa.Table]:
-    """`run_mask_chunked` without the post-scan route guard: `run_pipeline`'s resident auto-chunk
-    lane calls this, because that run does its own post-scan."""
-    from decoy_engine.config._subset_run import refuse_unapplied_subset
-
-    refuse_unapplied_subset(config)
     _validate_native_threads(native_threads)
+    # Config-level check before `chunks` is touched; the first chunk is checked in preflight.
+    declared = prepare_declared_sources(
+        DeclarationRequest.for_chunks(config, table, None), file_access=file_access
+    )
     # Progress: account every yielded chunk on the active channel (bound by the
     # caller, e.g. `run_pipeline(progress=...)`); a no-op when nothing is bound.
     return get_active_channel().count_rows(
         table,
-        _run_chunked(config, chunks, table=table, native_threads=native_threads, **kwargs),
+        _run_chunked(
+            config,
+            chunks,
+            table=table,
+            engine_version=engine_version,
+            declared=declared,
+            registry=registry,
+            adapter=adapter,
+            vault_writer=vault_writer,
+            chunk_result_sink=chunk_result_sink,
+            key_provider=key_provider,
+            base_row_offset=base_row_offset,
+            native_threads=native_threads,
+            route_evidence_sink=route_evidence_sink,
+            pool_cache=pool_cache,
+        ),
     )
 
 

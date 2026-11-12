@@ -24,6 +24,7 @@ from decoy_engine.plan._types import SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
+from tests._declared_schema import declared_schema
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     NEEDS_COMPANION,
@@ -264,6 +265,7 @@ def test_a_gated_hash_over_a_string_column_still_runs_on_the_chunked_route() -> 
             config,
             chunks,
             table=TABLE,
+            source_schema=declared_schema(config, TABLE),
             engine_version=ENGINE_VERSION,
             key_provider=key_provider(),
         )

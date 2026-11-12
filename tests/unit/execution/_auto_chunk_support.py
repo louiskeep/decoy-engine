@@ -280,7 +280,7 @@ def spy_lanes(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
     lane calls each entry's guard-free core, so the `entry.` and `oracle.` keys count those."""
     from decoy_engine.execution import _chunked_oracle
     from decoy_engine.execution import _pipeline_route_exec as rx
-    from decoy_engine.execution.native import _chunked_entry
+    from decoy_engine.execution.native.chunked import _core as _native_core
 
     calls: dict[str, list[Any]] = {
         "route_exec.run_mask_chunked": [],
@@ -300,9 +300,9 @@ def spy_lanes(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
         rx, "run_mask_chunked", wrap("route_exec.run_mask_chunked", rx.run_mask_chunked)
     )
     monkeypatch.setattr(
-        _chunked_entry,
-        "_mask_chunked",
-        wrap("entry.run_mask_chunked", _chunked_entry._mask_chunked),
+        _native_core,
+        "mask_chunked",
+        wrap("entry.run_mask_chunked", _native_core.mask_chunked),
     )
     monkeypatch.setattr(
         _chunked_oracle,

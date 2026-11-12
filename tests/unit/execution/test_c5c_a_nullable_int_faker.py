@@ -23,7 +23,7 @@ from decoy_engine.execution._strategies._faker import FakerStrategyHandler
 from decoy_engine.generation.pool import _sampler
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._errors import GenerationError
-from tests._declared_schema import declare_rest
+from tests._declared_schema import declare_rest, declared_schema
 from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 from tests.unit.execution import _c5c_a_support as sup
 
@@ -185,7 +185,13 @@ def _chunks(table: pa.Table, size: int) -> list[pa.Table]:
 def _chunked(tmp_path: Path, table: pa.Table, size: int) -> list[Any]:
     pq.write_table(table, tmp_path / "in.parquet")
     cfg = _config(str(tmp_path / "in.parquet"), [_faker_cfg()])
-    out = run_mask_pipeline_chunked(cfg, _chunks(table, size), table="t", engine_version="c5c-a")
+    out = run_mask_pipeline_chunked(
+        cfg,
+        _chunks(table, size),
+        table="t",
+        source_schema=declared_schema(cfg, "t"),
+        engine_version="c5c-a",
+    )
     return [v for chunk in out for v in chunk.column("n").to_pylist()]
 
 
@@ -237,6 +243,7 @@ def test_numeric_output_drift_between_chunks_is_still_rejected_on_concat(
             cfg,
             _chunks(table, 2),
             table="t",
+            source_schema=declared_schema(cfg, "t"),
             engine_version="c5c-a",
             registry=sup.int_registry(),
         )

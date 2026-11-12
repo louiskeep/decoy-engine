@@ -169,6 +169,7 @@ from decoy_engine.config._subset_run import refuse_unapplied_subset
 from decoy_engine.declared_casting._eligibility import declared_route_guard
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.profile import DeclarationRequest, prepare_declared_sources
 from decoy_engine.verification.postmask._route_guard import refuse_unchecked_route
 
 from . import _chunked_bucket_perturb as bucket_perturb_gate
@@ -382,6 +383,7 @@ def run_mask_pipeline_chunked(
     *,
     table: str,
     engine_version: str,
+    source_schema: pa.Schema,
     registry: Any = None,
     adapter: Any = None,
     vault_writer: Any = None,
@@ -407,6 +409,9 @@ def run_mask_pipeline_chunked(
     low-level entry (the auto route gates them via
     `_planner._runtime_source_rejections`). Carry-forward: extend the
     text_mask gate to that whole class.
+
+    `source_schema` is the schema `chunks` was cut from. It is checked against the config before
+    `chunks` is touched; no chunk may carry a column outside it or the declared columns.
 
     `adapter` selects the execution substrate; None keeps the pandas
     adapter (the byte-stable default this mode shipped with). The parameter
@@ -436,11 +441,16 @@ def run_mask_pipeline_chunked(
 
     refuse_unchecked_route(config, "chunked")
     refuse_unapplied_subset(config)
-    return _chunked_oracle._mask_pipeline_chunked(
+    # Before `chunks` is touched: the table and `source_schema` must be declared (E2d).
+    declared = prepare_declared_sources(
+        DeclarationRequest.for_chunks(config, table, source_schema), file_access=file_access
+    )
+    return _chunked_oracle._mask_declared(
         config,
         chunks,
         table=table,
         engine_version=engine_version,
+        declared=declared,
         registry=registry,
         adapter=adapter,
         vault_writer=vault_writer,

@@ -26,7 +26,14 @@ from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution._chunked import check_chunked_compatibility
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
-from tests.native._b8_support import FORCE, FORCE_REASON, Run, identical, run_pair
+from tests._declared_schema import chunked_entry_kwargs
+from tests.native._b8_support import (
+    FORCE,
+    FORCE_REASON,
+    Run,
+    identical,
+    run_pair,
+)
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     NEEDS_COMPANION,
@@ -206,6 +213,7 @@ def test_1a_numeric_reference_is_rejected_on_both_chunked_entries(
                 table=TABLE,
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
+                **chunked_entry_kwargs(run, cfg, TABLE),
             )
         )
     assert info.value.code == code
@@ -276,7 +284,12 @@ def test_1b_later_chunk_numeric_drift_is_rejected_before_it_runs(
 
     with pytest.raises(PlanCompileError) as info:
         for _ in run(
-            cfg, stream(), table=TABLE, engine_version=ENGINE_VERSION, key_provider=key_provider()
+            cfg,
+            stream(),
+            table=TABLE,
+            engine_version=ENGINE_VERSION,
+            key_provider=key_provider(),
+            **chunked_entry_kwargs(run, cfg, TABLE),
         ):
             pass
     assert info.value.code == code
@@ -394,6 +407,7 @@ def test_4_numeric_source_faker_with_when_declines_via_the_schema_guard(entry: s
                 table=TABLE,
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
+                **chunked_entry_kwargs(run, cfg, TABLE),
             )
         )
     assert info.value.code == FAKER_WHEN_CODE
