@@ -738,6 +738,14 @@ are checked lazily before each masks, so earlier chunks may already be in the si
 refusals. The private `_run_chunked`, `_oracle_preflight` and `_oracle_preflight_admitted` take a
 required `declared` capability. The CLI's `run --chunked` moves in CLI Part C1.
 
+**Columns the config creates (CONFIG-EXPLICIT E2b-r1).** `profile_source` gains the optional
+`supplied_sources` mapping: a supplied-only table is profiled (a same-name descriptor keeps
+profiling its own file), which `build_run_context` now passes. Execution routes obtain the
+`PreparedDeclaredSources` capability only through `prepare_declared_execution_sources`
+(`execution/_guards.py`), which hands `profile` a policy built from `SURFACE_DECLARATIONS`: an entry
+creates its own target when its row says so, every column it reads is a source column, and none of
+them is the target. This slice only records the policy; it adds no refusal and no reason code.
+
 ### 3.5 Disguises
 
 Disguises are dated/versioned specs (`disguises/`, `disguises/loader.py`,
