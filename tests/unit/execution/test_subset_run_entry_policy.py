@@ -75,13 +75,31 @@ def test_splitting_and_applying_entries_call_the_split() -> None:
     assert _calls(entries["validate_plan"], "split_subset_config")
 
 
-def test_no_public_entry_is_unclassified() -> None:
+def unclassified(entries: dict[str, Callable[..., object]]) -> list[str]:
+    """Entries whose first parameter is a config and that sit in no subset kind."""
     known = APPLIES | set(DELEGATES) | REFUSES | SPLITS | CONFIG_ONLY | NOT_APPLICABLE
-    for name, fn in sorted(_public_callables().items()):
+    missing = []
+    for name, fn in sorted(entries.items()):
         params = list(inspect.signature(fn).parameters)
-        if not params or params[0] not in ("config", "config_dump"):
-            continue
-        assert name in known, (
-            f"public entry {name} takes a config; classify it in this file "
-            "(APPLIES, DELEGATES, REFUSES, SPLITS, CONFIG_ONLY or NOT_APPLICABLE)"
-        )
+        if params and params[0] in ("config", "config_dump") and name not in known:
+            missing.append(name)
+    return missing
+
+
+def test_no_public_entry_is_unclassified() -> None:
+    assert unclassified(_public_callables()) == [], (
+        "a public entry takes a config; classify it in this file "
+        "(APPLIES, DELEGATES, REFUSES, SPLITS, CONFIG_ONLY or NOT_APPLICABLE)"
+    )
+
+
+def test_the_check_fails_on_a_planted_unclassified_entry() -> None:
+    def run_x(config: dict[str, object]) -> None: ...
+
+    def estimate_y(config_dump: dict[str, object]) -> None: ...
+
+    def run_other(rows: int) -> None: ...
+
+    planted = {**_public_callables(), "run_x": run_x, "estimate_y": estimate_y}
+    planted["run_other"] = run_other
+    assert unclassified(planted) == ["estimate_y", "run_x"]

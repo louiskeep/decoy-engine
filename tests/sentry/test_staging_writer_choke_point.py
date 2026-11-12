@@ -1,8 +1,12 @@
 """Sentry: one staging writer. Declared casting and the subset stage both stage lazy sources
 through `declared_casting.stage_typed_sources`; neither opens a writer of its own.
 
-Named limit: the scan matches the writer names `open_private`, `ParquetWriter` and
-`parquet_writer` (call or attribute); a differently named equivalent is not seen.
+Covers: the two staging callers only (`CALLERS`), for the names in `WRITER_NAMES`. Does not
+cover: any other module under `execution/` or `declared_casting/` (the out-of-core stage, the
+sinks and the isolated-run writers hold writers of their own and are not callers of this
+function), a differently named equivalent, or direct scratch allocation. The scan stays at two
+files because widening it to those packages finds existing writers that this sentry cannot
+classify without an allowlist.
 """
 
 from __future__ import annotations
@@ -13,7 +17,7 @@ from pathlib import Path
 SRC = Path(__file__).resolve().parents[2] / "src" / "decoy_engine"
 OWNER = ("declared_casting/_stream.py", "stage_typed_sources")
 CALLERS = ("declared_casting/_stream.py", "execution/pipeline/_subset_stage.py")
-WRITER_NAMES = frozenset({"open_private", "ParquetWriter", "parquet_writer"})
+WRITER_NAMES = frozenset({"open_private", "ParquetWriter", "parquet_writer", "write_table"})
 
 
 def writer_uses(source: str) -> set[tuple[str, int]]:

@@ -13,12 +13,13 @@ import pyarrow.parquet as pq
 import pytest
 
 import decoy_engine.subset as subset_pkg
-from decoy_engine import run_pipeline
+from decoy_engine import reasons, run_pipeline
 from decoy_engine.execution import _pipeline_route_dispatch as dispatch
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.pipeline import _subset_stage as stage_mod
 from decoy_engine.subset import (
     SubsetError,
+    SubsetInternalError,
     SubsetRequest,
     plan_subset,
     run_subset,
@@ -27,6 +28,7 @@ from decoy_engine.subset import (
     subset_request_from_config,
 )
 from tests.unit.execution import _subset_run_support as sup
+from tests.unit.execution._auto_chunk_support import NEEDS_COMPANION, remove_companion
 
 V = "t"
 CANARY_SEED = {"table": "customers", "mode": "keys", "key_columns": ["cid"], "keys": [[sup.CANARY]]}
@@ -76,6 +78,34 @@ def _roots(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[Path]]:
     yield seen
 
 
+def _count_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    real = subset_pkg.select_subset
+
+    def off_by_one(*a: Any, **k: Any) -> Any:
+        sel = real(*a, **k)
+        counts = {n: (s, kp + 1 if n == "customers" else kp) for n, (s, kp) in sel.counts.items()}
+        return dataclasses.replace(sel, counts=counts)
+
+    monkeypatch.setattr(subset_pkg, "select_subset", off_by_one)
+
+
+@contextmanager
+def _decisions(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[tuple[Any, Any]]]:
+    """The route decision of each run and the context it was made from."""
+    from decoy_engine.execution import _pipeline_context as ctx_mod
+
+    seen: list[tuple[Any, Any]] = []
+    real = ctx_mod.decide_route
+
+    def spy(ctx: Any) -> Any:
+        decision = real(ctx)
+        seen.append((decision, ctx))
+        return decision
+
+    monkeypatch.setattr(ctx_mod, "decide_route", spy)
+    yield seen
+
+
 def _rewrite_after_select(monkeypatch: pytest.MonkeyPatch, cfg: dict[str, Any], fmt: str) -> None:
     """Change a kept key on disk between the selection and the staging read."""
     real = subset_pkg.select_subset
@@ -117,8 +147,14 @@ def test_at11_closed_rows_metrics_and_identity(tmp_path: Path) -> None:
     assert plan_subset(**kw) is not None
     out = run_subset(output_dir=tmp_path / "standalone", **kw)
     assert out is not None
+    full = _run(cfg, data, subset_request="skip")
     for name, rows in want.items():
-        assert pq.read_table(tmp_path / "standalone" / f"{name}.parquet").num_rows == len(rows)
+        standalone = pq.read_table(tmp_path / "standalone" / f"{name}.parquet")
+        key = sup.KEYS[name]
+        assert standalone.column(key).to_pylist() == data[name].column(key).take(rows).to_pylist()
+        # The masked key values are the full run's values at the same kept rows.
+        full_keys = full.outputs[name].column(key).take(pa.array(rows, type=pa.int64()))
+        assert res.outputs[name].column(key).to_pylist() == full_keys.to_pylist(), name
 
 
 def test_at12_subset_equals_full_run_restricted_to_kept_rows(
@@ -134,14 +170,21 @@ def test_at12_subset_equals_full_run_restricted_to_kept_rows(
         return plans[-1]
 
     monkeypatch.setattr(plan_pkg, "compile_plan", spy)
-    cfg, data, _ = sup.job(tmp_path)
+    cfg, data, _ = sup.job(tmp_path, wide=True)
     full = _run(cfg, data, subset_request="skip")
     sub = _run(cfg, data)
     assert plans[0].pipeline_config_hash == plans[1].pipeline_config_hash
     assert plans[0].profile_hash != plans[1].profile_hash
-    for name, rows in sup.kept(cfg, data).items():
-        want = full.outputs[name].take(pa.array(rows, type=pa.int64()))
-        assert sub.outputs[name].equals(want), name
+    keep = sup.kept(cfg, data)
+    rows = keep["customers"]
+    # Ordinal-keyed strategies agree with value-keyed ones on a prefix, so the oracle needs gaps.
+    assert rows != list(range(rows[0], rows[0] + len(rows)))
+    assert set(sup.WIDE_VALUES) <= set(sub.outputs["customers"].schema.names)
+    for name, ordinals in keep.items():
+        want = full.outputs[name].take(pa.array(ordinals, type=pa.int64()))
+        assert sub.outputs[name].schema == want.schema, name
+        for column in want.schema.names:
+            assert sub.outputs[name].column(column).equals(want.column(column)), (name, column)
 
 
 def test_at13_profile_has_kept_counts_and_clamped_columns(
@@ -164,6 +207,13 @@ def test_at13_profile_has_kept_counts_and_clamped_columns(
     for col in tabs["customers"].columns:
         assert col.row_count == 5 and col.null_count <= 5
         assert col.distinct_count is None or col.distinct_count <= 5
+    from decoy_engine.profile import profile_source
+
+    full = {t.name: t for t in profile_source(cfg).tables}
+    for name, table in tabs.items():
+        assert [(c.name, c.dtype) for c in table.columns] == [
+            (c.name, c.dtype) for c in full[name].columns
+        ], name
     assert tabs["customers"].columns[0].dtype
 
 
@@ -199,6 +249,26 @@ def test_at14_lazy_inputs_give_the_resident_rows(tmp_path: Path, fmt: str, mode:
         assert pq.read_table(target / f"{name}.parquet").num_rows == len(rows), name
 
 
+@NEEDS_COMPANION
+@pytest.mark.parametrize("mode", ["stream", "out_of_core"])
+def test_at14_native_kernels_give_the_same_rows_as_the_pandas_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    from tests.unit.execution.run_stream import _support as rs
+
+    cfg, data, lazy = sup.job(tmp_path)
+    want = sup.kept(cfg, data)
+    native_sink, native_dir = rs.real_sink(tmp_path, "native")
+    _run(cfg, lazy, sink=native_sink, execution_mode=mode)
+    remove_companion(monkeypatch)
+    twin_sink, twin_dir = rs.real_sink(tmp_path, "twin")
+    _run(cfg, sup.lazy_sources(cfg), sink=twin_sink, execution_mode=mode)
+    for name, rows in want.items():
+        got = pq.read_table(native_dir / f"{name}.parquet")
+        assert got.num_rows == len(rows), name
+        assert got.equals(pq.read_table(twin_dir / f"{name}.parquet")), name
+
+
 def test_at15_lazy_and_resident_inputs_agree_with_typed_key_and_null(tmp_path: Path) -> None:
     cfg, data, lazy = sup.job(tmp_path)
     resident = _run(cfg, data)
@@ -215,6 +285,25 @@ def test_at15_typed_integer_keys_and_a_null_survive_staging(tmp_path: Path) -> N
     assert resident.outputs["orders"].num_rows > 0
     for name in data:
         assert lazy_out.outputs[name].equals(resident.outputs[name]), name
+
+
+def test_at16_a_small_subset_of_a_large_source_takes_the_in_memory_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg, data, lazy = sup.job(tmp_path)
+    # The row-count rule decides here (the byte estimate sends any lazy FK job out of core).
+    # Items hold 180 rows and the subset keeps fewer: only the full count passes the threshold.
+    routing = {"out_of_core_threshold_rows": 50, "use_byte_estimate_routing": False}
+    kept = sup.kept(cfg, data)
+    assert len(kept["items"]) < 50 < data["items"].num_rows
+    with _decisions(monkeypatch) as seen:
+        _run(cfg, lazy, subset_request="skip", **routing)
+        _run(cfg, lazy, **routing)
+    (full, _), (subset, ctx) = seen
+    assert full.route == "out_of_core"
+    assert subset.route == "sequential"
+    counts = {t.name: (t.row_count, t.row_count_exact) for t in ctx.profile.tables}
+    assert counts == {n: (len(rows), True) for n, rows in kept.items()}
 
 
 def test_at28_zero_row_sources_stage_typed_empty_files(tmp_path: Path) -> None:
@@ -261,19 +350,21 @@ def test_at25_forced_count_mismatch_leaks_no_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg, data, lazy = sup.job(tmp_path, seed=CANARY_SEED)
-    real = subset_pkg.select_subset
-
-    def off_by_one(*a: Any, **k: Any) -> Any:
-        sel = real(*a, **k)
-        counts = {n: (s, kp + 1 if n == "customers" else kp) for n, (s, kp) in sel.counts.items()}
-        return dataclasses.replace(sel, counts=counts)
-
-    monkeypatch.setattr(subset_pkg, "select_subset", off_by_one)
+    _count_mismatch(monkeypatch)
     with pytest.raises(SubsetError) as info:
         _run(cfg, lazy)
     assert info.value.code == "subset_materialize_count_mismatch"
     assert sup.CANARY not in str(info.value) + repr(info.value)
     assert info.value.__cause__ is None and info.value.__context__ is None
+
+
+def test_at25_a_successful_run_stamps_no_key_value(tmp_path: Path) -> None:
+    cfg, data, lazy = sup.job(tmp_path, seed=CANARY_SEED)
+    for sources in (data, lazy):
+        res = _run(cfg, sources)
+        assert res.quality_metrics["subset"]["applied"] is True
+        assert sup.CANARY not in repr(res.quality_metrics)
+        assert not any(sup.CANARY in str(w) for w in res.warnings)
 
 
 def _break_route(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -290,23 +381,33 @@ def _small_budget(monkeypatch: pytest.MonkeyPatch) -> None:
 def _io_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail(*a: Any, **k: Any) -> Any:
         (k["root"] / "s0000.subset.parquet").write_bytes(b"x")
-        raise OSError("disk")
+        raise OSError("os-detail-text")
 
     monkeypatch.setattr(stage_mod, "stage_typed_sources", fail)
 
 
-@pytest.mark.parametrize("case", ["success", "route", "budget", "io"])
+@pytest.mark.parametrize("case", ["success", "route", "budget", "io", "count"])
 def test_at26_no_staged_file_survives_any_exit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
     cfg, _, lazy = sup.job(tmp_path)
-    {"success": lambda m: None, "route": _break_route, "budget": _small_budget, "io": _io_failure}[
-        case
-    ](monkeypatch)
+    {
+        "success": lambda m: None,
+        "route": _break_route,
+        "budget": _small_budget,
+        "io": _io_failure,
+        "count": _count_mismatch,
+    }[case](monkeypatch)
     with _roots(monkeypatch) as roots:
         if case == "success":
             res = _run(cfg, lazy)
             assert not any(isinstance(v, stage_mod.LazySource) for v in res.outputs.values())
+        elif case == "io":
+            with pytest.raises(SubsetInternalError) as info:
+                _run(cfg, lazy)
+            assert info.value.code == reasons.runtime.OUT_OF_CORE_TEMP_DISK_EXCEEDED
+            assert isinstance(info.value.__cause__, OSError)
+            assert "os-detail-text" not in str(info.value)
         else:
             with pytest.raises(Exception):
                 _run(cfg, lazy)
@@ -350,14 +451,20 @@ def test_at28_a_seed_matching_no_row_gives_typed_empty_outputs(
         "predicates": [{"column": "cid", "op": "eq", "value": "NO-SUCH"}],
     }
     cfg, data, lazy = sup.job(tmp_path, seed=seed)
-    full = _run(cfg, data, subset_request="skip")
+    # The oracle is a full run over zero-row sources: masking an empty foreign key child column
+    # types it null, whatever the route, so that is the schema a typed empty output carries.
+    empty = _run(cfg, {n: t.slice(0, 0) for n, t in data.items()}, subset_request="skip")
     res = _run(cfg, lazy if lazy_input else data)
     assert res.quality_metrics["subset"]["tables"]["customers"]["kept_rows"] == 0
     assert res.outputs["customers"].num_rows == 0
-    assert res.outputs["customers"].schema.names == full.outputs["customers"].schema.names
+    for name in data:
+        assert res.outputs[name].num_rows == 0
+        assert res.outputs[name].schema == empty.outputs[name].schema, name
 
 
-def test_at29_a_foreign_key_cycle_keeps_every_reference(tmp_path: Path) -> None:
+def test_at29_a_foreign_key_cycle_keeps_every_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from decoy_engine.config import PipelineConfig
     from tests._declared_schema import declare_rest
 
@@ -405,7 +512,9 @@ def test_at29_a_foreign_key_cycle_keeps_every_reference(tmp_path: Path) -> None:
         },
     }
     cfg = PipelineConfig.model_validate(declare_rest(raw)).model_dump()
-    out = _run(cfg, {"a": a, "b": b}).outputs
+    with _decisions(monkeypatch) as seen:
+        out = _run(cfg, {"a": a, "b": b}).outputs
+    assert [d.route for d, _ in seen] == ["full_frame"]
     assert set(out["a"].column("b_id").to_pylist()) <= set(out["b"].column("b_id").to_pylist())
     assert set(out["b"].column("a_id").to_pylist()) <= set(out["a"].column("a_id").to_pylist())
 
