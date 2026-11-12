@@ -27,6 +27,7 @@ from decoy_engine.profiling._scan_integrity import (
     RelationshipFacts,
     column_distinct,
     key_facts,
+    keys_comparable,
 )
 from decoy_engine.profiling._snapshot_values import (
     distribution_snapshot_document,
@@ -97,6 +98,7 @@ __all__ = [
     "get_default_strategy",
     "is_value_sensitive",
     "key_facts",
+    "keys_comparable",
     "known_detector_ids",
     "profile_columns",
     "profile_document",

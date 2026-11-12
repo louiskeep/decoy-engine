@@ -14,8 +14,10 @@ The spill holds key values, which are row data, so it lives in a directory from 
 protected-directory allocator and is removed on every exit.
 
 CSV key columns are read as text, as `decoy run` reads them; other formats keep their declared
-types. Parent and child key types are compared as declared and never cast: a difference gives
-`key_type_mismatch` and no counts. A relationship that names a cloud table is `skipped_cloud`
+types. Key types are compared by family: every integer width is one family and string, large
+string and a dictionary of strings are another, so ends that differ only inside a family are
+measured by value. Any other difference gives `key_type_mismatch` and no counts. No key value is
+cast: the tables take one DuckDB type wide enough for every end. A relationship that names a cloud table is `skipped_cloud`
 before any read, because the cloud CSV readers download the whole object.
 
 Nothing returned or raised here carries a key value: only counts, table names and positions.
@@ -283,16 +285,51 @@ def _open_keys(
     )
 
 
+def _is_text(t: pa.DataType) -> bool:
+    if pa.types.is_dictionary(t):
+        t = t.value_type
+    return pa.types.is_string(t) or pa.types.is_large_string(t)
+
+
 def _comparable(schema: pa.Schema) -> list[str]:
-    """Declared types as text; string and large_string are one type to a reader."""
+    """One token per column. Integer widths and string encodings are each one family because
+    DuckDB compares their values exactly; floats, decimals, dates, timestamps and non-string
+    dictionaries differ by scale, unit or representation, so they keep their exact type text."""
     out = []
     for field in schema:
         t = field.type
-        if pa.types.is_large_string(t):
-            t = pa.string()
-        elif pa.types.is_large_binary(t):
-            t = pa.binary()
-        out.append(str(t))
+        if pa.types.is_integer(t):
+            out.append("integer")
+        elif _is_text(t):
+            out.append("string")
+        else:
+            out.append(str("binary" if pa.types.is_large_binary(t) else t))
+    return out
+
+
+def keys_comparable(parent: KeyBatches, children: Sequence[KeyBatches]) -> bool:
+    """Whether `key_facts` would measure these ends rather than report `key_type_mismatch`.
+    Reads schemas only and opens no connection."""
+    wanted = _comparable(parent.schema)
+    return all(_comparable(k.schema) == wanted for k in children)
+
+
+def _duck_types(parent: KeyBatches, children: Sequence[KeyBatches]) -> list[str | None]:
+    """The DuckDB type for each key label, wide enough for every end; `None` keeps the parent's
+    declared type. The tables are created from these types, never from the first batch, so a
+    later wider batch cannot overflow or narrow."""
+    schemas = [parent.schema, *(k.schema for k in children)]
+    out: list[str | None] = []
+    for n in range(len(parent.schema)):
+        types = [s.types[n] for s in schemas]
+        if all(t.equals(types[0]) for t in types):
+            out.append(None)
+        elif pa.types.is_integer(types[0]):
+            out.append("HUGEINT" if any(t == pa.uint64() for t in types) else "BIGINT")
+        elif _is_text(types[0]):
+            out.append("VARCHAR")
+        else:
+            out.append(None)
     return out
 
 
@@ -306,10 +343,14 @@ def _before_fetch(conn: Any) -> None:
     lets a test see the spill files while the loaded tables still exist."""
 
 
-def _load(conn: Any, table: str, keys: KeyBatches) -> None:
+def _load(conn: Any, table: str, keys: KeyBatches, duck: Sequence[str | None]) -> None:
     # The empty first table fixes the column types; each batch is then appended.
     conn.register("incoming", pa.Table.from_batches([], schema=keys.schema))
-    conn.execute(f"CREATE TABLE {table} AS SELECT * FROM incoming")
+    picks = ", ".join(
+        f"{label}::{kind} AS {label}" if kind else label
+        for label, kind in zip(_labels(len(duck)), duck, strict=True)
+    )
+    conn.execute(f"CREATE TABLE {table} AS SELECT {picks} FROM incoming")
     for batch in keys.batches():
         conn.register("incoming", pa.Table.from_batches([batch]))
         conn.execute(f"INSERT INTO {table} SELECT * FROM incoming")
@@ -340,17 +381,17 @@ def key_facts(
     from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 
     bounded = parent.bounded and all(k.bounded for k in children)
-    wanted = _comparable(parent.schema)
-    if any(_comparable(k.schema) != wanted for k in children):
+    if not keys_comparable(parent, children):
         return KeyFacts("key_type_mismatch", 0, 0, 0, (), bounded)
 
     width = len(parent.schema)
     labels = _labels(width)
     cols = ", ".join(labels)
     on = " AND ".join(f"p.{label} = c.{label}" for label in labels)
+    duck = _duck_types(parent, children)
     conn = connect_duckdb(temp_dir=scratch, memory_limit=memory_limit)
     try:
-        _load(conn, "parent", parent)
+        _load(conn, "parent", parent, duck)
         complete = _complete("p", width)
         parent_rows = _count(conn, "SELECT count(*) FROM parent")
         complete_rows = _count(conn, f"SELECT count(*) FROM parent p WHERE {complete}")
@@ -359,7 +400,7 @@ def key_facts(
         )
         counted = []
         for keys in children:
-            _load(conn, "child", keys)
+            _load(conn, "child", keys, duck)
             counted.append(_child_facts(conn, width, on))
             conn.execute("DROP TABLE child")
     finally:
