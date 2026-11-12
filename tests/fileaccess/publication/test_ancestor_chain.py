@@ -29,11 +29,14 @@ from tests.fileaccess.publication._chain_support import (
     restat,
     stage_unit,
 )
-from tests.fileaccess.publication._dirmode_support import KILL_MARKER, publish_case, run_child
+from tests.fileaccess.publication._dirmode_support import (
+    KILL_MARKER,
+    POLICIES,
+    publish_case,
+    run_child,
+)
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX durable publish")
-
-POLICIES = ["strict", "ambient"]
 
 
 @pytest.fixture
