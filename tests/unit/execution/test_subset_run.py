@@ -12,6 +12,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+import decoy_engine.subset as subset_pkg
 from decoy_engine import run_pipeline
 from decoy_engine.execution import _pipeline_route_dispatch as dispatch
 from decoy_engine.execution._errors import ExecutionError
@@ -77,7 +78,7 @@ def _roots(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[Path]]:
 
 def _rewrite_after_select(monkeypatch: pytest.MonkeyPatch, cfg: dict[str, Any], fmt: str) -> None:
     """Change a kept key on disk between the selection and the staging read."""
-    real = stage_mod.select_subset
+    real = subset_pkg.select_subset
 
     def changed(*a: Any, **k: Any) -> Any:
         sel = real(*a, **k)
@@ -95,7 +96,7 @@ def _rewrite_after_select(monkeypatch: pytest.MonkeyPatch, cfg: dict[str, Any], 
             pacsv.write_csv(new, path)
         return sel
 
-    monkeypatch.setattr(stage_mod, "select_subset", changed)
+    monkeypatch.setattr(subset_pkg, "select_subset", changed)
 
 
 def test_at11_closed_rows_metrics_and_identity(tmp_path: Path) -> None:
@@ -241,14 +242,14 @@ def test_at25_forced_count_mismatch_leaks_no_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg, data, lazy = sup.job(tmp_path, seed=CANARY_SEED)
-    real = stage_mod.select_subset
+    real = subset_pkg.select_subset
 
     def off_by_one(*a: Any, **k: Any) -> Any:
         sel = real(*a, **k)
         counts = {n: (s, kp + 1 if n == "customers" else kp) for n, (s, kp) in sel.counts.items()}
         return dataclasses.replace(sel, counts=counts)
 
-    monkeypatch.setattr(stage_mod, "select_subset", off_by_one)
+    monkeypatch.setattr(subset_pkg, "select_subset", off_by_one)
     with pytest.raises(SubsetError) as info:
         _run(cfg, lazy)
     assert info.value.code == "subset_materialize_count_mismatch"
