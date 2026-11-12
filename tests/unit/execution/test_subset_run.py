@@ -54,9 +54,13 @@ def _roots(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[Path]]:
     seen: list[Path] = []
     real = stage_mod.engine_scratch_root
 
+    held: list[Any] = []  # keeps each manager alive: a dropped one would clean up on collection
+
     @contextmanager
     def spy(parent: Any) -> Iterator[Path]:
-        with real(parent) as root:
+        manager = real(parent)
+        held.append(manager)
+        with manager as root:
             seen.append(root)
             yield root
 
@@ -288,10 +292,12 @@ def test_at27_the_budget_is_checked_after_every_batch(
     from decoy_engine.execution.out_of_core import _budget
 
     calls: list[int] = []
+    files: list[str] = []
 
     def second_fails(root: Path, *, max_bytes: int) -> int:
         calls.append(1)
         if len(calls) == 2:
+            files.extend(sorted(p.name for p in root.iterdir()))
             raise ExecutionError(code="out_of_core_temp_disk_exceeded", message="over budget")
         return 0
 
@@ -302,6 +308,7 @@ def test_at27_the_budget_is_checked_after_every_batch(
     with _roots(monkeypatch) as roots, pytest.raises(ExecutionError) as info:
         _run(cfg, lazy)
     assert info.value.code == "out_of_core_temp_disk_exceeded" and len(calls) == 2
+    assert files == ["s0000.subset.parquet"], "the second check came before the first file ended"
     assert not any(r.exists() for r in roots)
 
 
