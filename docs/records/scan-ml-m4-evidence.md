@@ -37,9 +37,8 @@ so no merge of main was needed. Plan: SCAN-ML (`plan/scan-ml` at `e0ae4204`), se
   most `_CLASSIFIER_ROWS = 60` non-null values per column (see Deviations 1).
 - `detection/_model_status.log_detector_models` writes the `post_scan.models` line.
 - Reason `post_scan.ner_blocked` (owner `PostScanBlockedError`, verify phase, verification outcome,
-  retry `configuration_repair`, `since` 1.26.0), registry 1.26.0, fixture
-  `reason-manifest-v1.26-scanml-m4.json`, `reason_adapter._FIXED`, `consumer-contract.json`
-  (version lines only), `docs/reasons.md`.
+  retry `configuration_repair`), mapped in `reason_adapter._FIXED`. First built at a numbered
+  minor with its own fixture; now declared pending (see "Merge with M5 and main").
 - `PostScanBlockedError` exported from `decoy_engine`; `__init__.py` is 597 lines (one split
   `validation_result` import folded; no census entry). `docs/compatibility-contract.md` 3.1 and
   3.4, fragment `changelog.d/scan-ml-m4.md`.
