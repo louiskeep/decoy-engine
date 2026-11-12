@@ -25,7 +25,7 @@ from typing import Any, TypeVar
 
 from decoy_engine.fileaccess._component import validate_component
 from decoy_engine.fileaccess._entry import is_ambient, require_ambient
-from decoy_engine.fileaccess._errors import deny
+from decoy_engine.fileaccess._errors import deny, guarded, guarded_iter
 from decoy_engine.fileaccess._output import (
     _call,
     _close,
@@ -332,13 +332,21 @@ def _make_dir(parent_fd: int, name: str) -> int:
 
 
 def scratch_native(fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
-    """Neutered control (red commit only): re-raises the library failure unchanged."""
-    return fn(*args, **kwargs)
+    """Run one native call (DuckDB, pyarrow) on scratch, under every policy, value-free.
+
+    The mapping is `_errors.guarded`'s, strict whatever the policy, by type, never by text:
+    memory failures keep their class (`passes_by_type`, or rebuilt over scrubbed text by
+    `resurface_scrubbed`, so `is_memory_failure` still matches), a resource-errno `OSError`
+    keeps its class rebuilt errno-only, a denial passes, and anything else becomes
+    `FileAccessReadError("engine.scratch")`. Each new error is raised after the `except` block,
+    so neither `__context__` nor `__cause__` holds the library's text.
+    """
+    return guarded(_DISPLAY, True, fn, *args, **kwargs)
 
 
 def scratch_native_iter(batches: Iterable[T]) -> Iterator[T]:
-    """Neutered control (red commit only): a plain pull."""
-    return iter(batches)
+    """Each pull of a native batch iterator under `scratch_native`'s mapping."""
+    return guarded_iter(_DISPLAY, True, batches)
 
 
 __all__ = ["ARENA_PREFIX", "ScratchArena", "scratch_native", "scratch_native_iter"]

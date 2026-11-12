@@ -383,7 +383,26 @@ def _bare_native_calls(tree: ast.Module) -> list[str]:
 
 def release_findings(trees: dict[str, ast.Module], keys: dict[str, list[str]]) -> list[str]:
     """Why the `scratch_path_release` and `scratch_native` keys do not match the code exactly."""
-    return []  # neutered control (red commit only): no rule
+    out: list[str] = []
+    for key, name, owners in (
+        ("scratch_path_release", "local_path", RELEASE_OWNERS),
+        ("scratch_native", "scratch_native", NATIVE_OWNERS),
+    ):
+        listed = set(keys[key])
+        out += [f"{key}: {rel} is not a module" for rel in sorted(listed - set(trees))]
+        for rel, tree in sorted(trees.items()):
+            if rel in owners:
+                continue
+            uses = _uses(tree, name)
+            if uses and rel not in listed:
+                out += [f"{key}: {rel}::{qual} is not listed" for qual in uses]
+            if rel in listed and not uses:
+                out.append(f"{key}: {rel} is listed but makes no such call")
+            if key == "scratch_native" and rel in listed:
+                out += [
+                    f"{key}: {rel}::{q} calls a connection bare" for q in _bare_native_calls(tree)
+                ]
+    return out
 
 
 def _source_trees(root: Path, package: str) -> dict[str, ast.Module]:
