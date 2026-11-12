@@ -120,6 +120,12 @@ class CategoricalChoicesProvider(DrawSiteProvider):
         return self.rng(gen_ctx).choices(list(categories), weights=weights, k=n)
 
 
+class LookupChoicesProvider(CategoricalChoicesProvider):
+    """``gen.lookup``: the categorical call over a pinned lookup list."""
+
+    draw_site_id = "gen.lookup"
+
+
 class ReferenceSamplerProvider(DrawSiteProvider):
     """``gen.reference``: one ``random.Random(base_int("py"))`` advanced across all rows.
 

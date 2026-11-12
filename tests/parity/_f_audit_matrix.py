@@ -166,6 +166,11 @@ def witness_of(p: Probe) -> tuple[str, str]:
         return EXCLUDED, "unobserved kind on the legacy path; proven by route and reason"
     if p.kind in {"constant", "distribution"}:
         return EXCLUDED, "no selection event to mark; value equality is the GEN-TYPES route tests"
+    if p.kind == "lookup":
+        return (
+            EXCLUDED,
+            "legacy-only and file-backed; value equality is the GEN-TYPES E3 lookup tests",
+        )
     if p.kind == "windowed_date" and not p.anchor_ok:
         return EXCLUDED, "legacy windowed_date is unobserved; proven by route and reason"
     if p.kind == "reference" and p.repair:
@@ -394,6 +399,12 @@ ROWS: Final[tuple[AuditRow, ...]] = (
         Probe("group_key"),
         lambda p: _legacy_kind(p, "group_key"),
         "group-scoped keys",
+    ),
+    _row(
+        "lookup",
+        Probe("lookup"),
+        lambda p: _legacy_kind(p, "lookup"),
+        "family declined (file-backed list pinned in the plan); one random.Random.choices call",
     ),
     _row(
         "determinism-fresh",

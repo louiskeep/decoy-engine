@@ -3,6 +3,11 @@
 import google.cloud.storage as gcs
 from google.cloud import storage as _s
 from google.cloud.storage import Client as C
+import boto3
+import boto3 as b3
+import botocore.session
+from boto3 import client as boto_client
+from boto3 import session as boto_session
 
 
 def client_module_alias():
@@ -69,3 +74,40 @@ def reload_timeout_none(blob, R):
 
 def reload_retry_none(blob, T):
     blob.reload(timeout=T, retry=None)
+
+
+def s3_client_plain():
+    return boto3.client("s3")
+
+
+def s3_resource_plain():
+    return boto3.resource("s3")
+
+
+def s3_session_client():
+    return boto3.Session(profile_name="p").client("s3")
+
+
+def s3_session_module_client():
+    return boto3.session.Session().client("s3")
+
+
+def s3_from_import_client():
+    return boto_client("s3")
+
+
+def s3_from_import_session():
+    return boto_session.Session().client("s3")
+
+
+def s3_alias_client():
+    return b3.client("s3")
+
+
+def s3_botocore_session():
+    return botocore.session.get_session().create_client("s3")
+
+
+def s3_session_in_variable():
+    s = boto3.Session()
+    return s.client("s3")

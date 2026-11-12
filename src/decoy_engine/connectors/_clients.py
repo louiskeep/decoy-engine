@@ -32,18 +32,33 @@ import json
 from collections.abc import Callable, Iterator
 from typing import Any
 
+from decoy_engine.errors import ConnectorErrorKind
 from decoy_engine.sdk import ConnectorError, PermanentError, TransientError
 
 # Read at call time, never bound into defaults, so tests can shorten them.
 GCS_TIMEOUT: tuple[float, float] = (5.0, 60.0)
 GCS_RETRY_TOTAL_S: float = 120.0
 
-_NOT_FOUND = "GCS bucket or object not found"
-_DENIED = "GCS permission denied"
-_TRANSIENT = "GCS transient network or service error"
-_REJECTED = "GCS rejected the request"
-_CREDENTIALS = "GCS credentials unavailable or invalid"
-_UNEXPECTED = "Unexpected GCS error"
+# Fixed words per kind. SDK text is untrusted and never joins a message.
+_PHRASE: dict[ConnectorErrorKind, str] = {
+    "not_found": "bucket or object not found",
+    "access_denied": "permission denied",
+    "transient": "transient network or service error",
+    "rejected": "rejected the request",
+    "credentials": "credentials unavailable or invalid",
+    "precondition_failed": "precondition failed",
+    "conflict": "conflicting write",
+    "wrong_region": "bucket is in another region",
+    "pointer_invalid": "pointer object is invalid",
+    "unexpected": "unexpected error",
+}
+
+
+def _classified(provider: str, kind: ConnectorErrorKind) -> ConnectorError:
+    """The one kind-to-class table: only ``transient`` is retried, every other kind is final."""
+    text = f"Unexpected {provider} error" if kind == "unexpected" else f"{provider} {_PHRASE[kind]}"
+    cls = TransientError if kind == "transient" else PermanentError
+    return cls(text, kind=kind)
 
 
 def gcs_retry() -> Any:
@@ -59,54 +74,72 @@ def gcs_retry() -> Any:
 def gcs_error(exc: BaseException) -> ConnectorError:
     """Classify a GCS failure into a typed SDK error with fixed, value-free text.
 
-    Exact-type table checked with ``isinstance``; the original survives only as
-    ``__cause__`` (a server-admin surface), never in the text.
+    Exact-type table checked with ``isinstance``; the original is not kept, so neither
+    ``__cause__`` nor ``__context__`` can carry SDK text.
     """
     if isinstance(exc, (TransientError, PermanentError)):
         return exc
+    return _classified("GCS", _gcs_kind(exc))
+
+
+def _gcs_kind(exc: BaseException) -> ConnectorErrorKind:
     try:
         from google.api_core import exceptions as gax
         from google.auth import exceptions as gauth
         from requests import exceptions as req
     except ImportError:
-        return PermanentError(_UNEXPECTED)
+        return "unexpected"
     # TransportError and TimeoutError subclass GoogleAuthError: check them first.
     if isinstance(exc, (gauth.TransportError, gauth.TimeoutError)):
-        return TransientError(_TRANSIENT)
+        return "transient"
     if isinstance(exc, gauth.GoogleAuthError):
-        return PermanentError(_CREDENTIALS)
+        return "credentials"
     if isinstance(exc, gax.NotFound):
-        return PermanentError(_NOT_FOUND)
+        return "not_found"
     if isinstance(exc, (gax.Forbidden, gax.PermissionDenied, gax.Unauthenticated)):
-        return PermanentError(_DENIED)
-    if isinstance(
-        exc,
-        (
-            gax.ServiceUnavailable,
-            gax.TooManyRequests,
-            gax.DeadlineExceeded,
-            gax.GatewayTimeout,
-            gax.InternalServerError,
-            gax.RetryError,
-            req.Timeout,
-            req.ConnectionError,
-        ),
-    ):
-        return TransientError(_TRANSIENT)
-    if isinstance(exc, gax.BadRequest):
-        return PermanentError(_REJECTED)
-    return PermanentError(_UNEXPECTED)
+        return "access_denied"
+    if isinstance(exc, gax.PreconditionFailed):
+        return "precondition_failed"
+    if isinstance(exc, gax.Conflict):
+        return "conflict"
+    transient = (
+        gax.ServiceUnavailable,
+        gax.TooManyRequests,
+        gax.DeadlineExceeded,
+        gax.GatewayTimeout,
+        gax.InternalServerError,
+        gax.RetryError,
+        req.Timeout,
+        req.ConnectionError,
+    )
+    if isinstance(exc, transient):
+        return "transient"
+    return "rejected" if isinstance(exc, gax.BadRequest) else "unexpected"
 
 
-def _guard(call: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-    """Run one GCS call; a failure leaves as ``gcs_error(exc)`` chained to ``exc``."""
+def _call(
+    classify: Callable[[BaseException], ConnectorError],
+    call: Callable[..., Any],
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Run ``call``; a failure leaves as ``classify(exc)``, raised after the ``except`` block.
+
+    Raising outside the handler keeps ``__cause__`` and ``__context__`` empty, so the SDK
+    error (and any text it holds) is unreachable from the raised one.
+    """
     try:
         return call(*args, **kwargs)
     except Exception as exc:
-        err = gcs_error(exc)
+        err = classify(exc)
         if err is exc:
             raise
-        raise err from exc
+    raise err
+
+
+def _guard(call: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Run one GCS call; a failure leaves as ``gcs_error(exc)`` with no chain."""
+    return _call(gcs_error, call, *args, **kwargs)
 
 
 def gcs_client(**kwargs: Any) -> Any:
@@ -191,3 +224,128 @@ class _TranslatingFile:
 
 def gcs_open(blob: Any, mode: str) -> _TranslatingFile:
     return _TranslatingFile(_guard(blob.open, mode, timeout=GCS_TIMEOUT, retry=gcs_retry()))
+
+
+# S3 error codes (or bare HTTP statuses, which head calls report as the code) to kinds.
+_S3_KINDS: dict[str, ConnectorErrorKind] = {
+    **dict.fromkeys(("NoSuchBucket", "NoSuchKey", "404", "NotFound"), "not_found"),
+    **dict.fromkeys(("403", "AccessDenied", "AllAccessDisabled"), "access_denied"),
+    **dict.fromkeys(("InvalidAccessKeyId", "SignatureDoesNotMatch", "ExpiredToken"), "credentials"),
+    **dict.fromkeys(("PreconditionFailed", "412"), "precondition_failed"),
+    **dict.fromkeys(("ConditionalRequestConflict", "409"), "conflict"),
+    **dict.fromkeys(("PermanentRedirect", "301", "AuthorizationHeaderMalformed"), "wrong_region"),
+    # The codes botocore's standard retry mode retries (retries/standard.py throttled and
+    # transient codes, 429 and 509 in _retry.json) are transient for the caller.
+    **dict.fromkeys(
+        (
+            "SlowDown",
+            "InternalError",
+            "ServiceUnavailable",
+            "RequestTimeout",
+            "RequestTimeoutException",
+            "PriorRequestNotComplete",
+            "Throttling",
+            "ThrottlingException",
+            "ThrottledException",
+            "RequestThrottledException",
+            "TooManyRequests",
+            "TooManyRequestsException",
+            "ProvisionedThroughputExceededException",
+            "TransactionInProgressException",
+            "RequestLimitExceeded",
+            "BandwidthLimitExceeded",
+            "LimitExceededException",
+            "RequestThrottled",
+            "EC2ThrottledException",
+            "429",
+            "509",
+        ),
+        "transient",
+    ),
+}
+
+
+def s3_client(
+    *,
+    region: str | None,
+    endpoint_url: str | None,
+    access_key_id: str | None,
+    secret_access_key: str | None,
+    single_request: bool,
+) -> Any:
+    """The one S3 client factory: bounded timeouts and an explicit attempt count.
+
+    An ordinary client lets the SDK retry a request once (two attempts, as before). A
+    ``single_request`` client never resends, for conditional writes where a resend can turn
+    a win into a loss. The engine has no retry loop of its own. With no region botocore
+    resolves one from the environment or profile. Static credentials are passed only when
+    set, so the default chain stays in force otherwise.
+    """
+    import boto3
+    from botocore.config import Config as BotoConfig
+
+    kwargs: dict[str, Any] = {
+        "endpoint_url": endpoint_url,
+        "config": BotoConfig(
+            connect_timeout=5,
+            read_timeout=60,
+            retries={"total_max_attempts": 1 if single_request else 2, "mode": "standard"},
+        ),
+    }
+    if region is not None:
+        kwargs["region_name"] = region
+    if access_key_id is not None:
+        kwargs["aws_access_key_id"] = access_key_id
+    if secret_access_key is not None:
+        kwargs["aws_secret_access_key"] = secret_access_key
+    return boto3.client("s3", **kwargs)
+
+
+def _s3_kind(exc: BaseException) -> ConnectorErrorKind:
+    try:
+        from botocore import exceptions as bce
+    except ImportError:
+        return "unexpected"
+    # BotoCoreError has no credentials base class, so the sibling families are listed.
+    if isinstance(
+        exc,
+        (
+            bce.NoCredentialsError,
+            bce.PartialCredentialsError,
+            bce.CredentialRetrievalError,
+            bce.TokenRetrievalError,
+            bce.SSOError,
+        ),
+    ):
+        return "credentials"
+    if isinstance(exc, (bce.ConnectionError, bce.HTTPClientError)):
+        return "transient"
+    if not isinstance(exc, bce.ClientError):
+        return "unexpected"
+    response = exc.response if isinstance(exc.response, dict) else {}
+    code = (response.get("Error") or {}).get("Code")
+    status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
+    if isinstance(code, str) and code in _S3_KINDS:
+        return _S3_KINDS[code]
+    if not isinstance(status, int) or isinstance(status, bool):
+        return "unexpected"
+    if str(status) in _S3_KINDS:
+        return _S3_KINDS[str(status)]
+    if status >= 500:
+        return "transient"
+    return "rejected" if status >= 400 else "unexpected"
+
+
+def s3_error(exc: BaseException) -> ConnectorError:
+    """Classify an S3 failure into a typed SDK error with fixed text and a ``kind``.
+
+    No SDK message, ARN, bucket or key is read into the result.
+    """
+    if isinstance(exc, (TransientError, PermanentError)):
+        return exc
+    return _classified("S3", _s3_kind(exc))
+
+
+def s3_call(call: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Run one S3 SDK call; a failure leaves as ``s3_error(exc)`` with no chain."""
+    return _call(s3_error, call, *args, **kwargs)

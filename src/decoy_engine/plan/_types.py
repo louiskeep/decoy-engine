@@ -415,7 +415,8 @@ class GenerationPlan:
     `config_json` is the embedded, exact generate-side configuration
     (table/column declarations, seed material lives in `SeedEnvelope`
     separately); `snapshots`/`statistical_specs` are the read-once-pinned
-    artifacts and their frozen parsed specs; `dp_verification` is `None`
+    artifacts and their frozen parsed specs; `lookups` are the pinned lookup files;
+    `dp_verification` is `None`
     when no consumed column declared DP.
     """
 
@@ -423,6 +424,9 @@ class GenerationPlan:
     snapshots: tuple[PinnedSnapshot, ...] = field(default_factory=tuple)
     statistical_specs: tuple[PinnedStatisticalSpec, ...] = field(default_factory=tuple)
     dp_verification: DpVerification | None = None
+    # GEN-TYPES E3 (plan_version 4): the pinned `type: lookup` files, keyed by the declared
+    # string in `source_path` (diagnostic only). Omitted from the serialized plan when empty.
+    lookups: tuple[PinnedSnapshot, ...] = field(default_factory=tuple)
 
 
 # ---------------------------------------------------------------------

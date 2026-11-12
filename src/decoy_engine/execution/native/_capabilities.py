@@ -422,6 +422,18 @@ _GEN_ONLY: dict[str, _Ortho] = {
         gen=True,
         notes="The one configured value for every row; no draw.",
     ),
+    "lookup": _Ortho(
+        False,
+        True,
+        False,
+        False,
+        False,
+        gen=True,
+        notes=(
+            "One python Random choices call over the pinned lookup list; the value type comes "
+            "from the file. Resident route only, non-partitionable like categorical generation."
+        ),
+    ),
     "distribution": _Ortho(
         False,
         True,

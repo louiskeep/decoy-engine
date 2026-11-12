@@ -599,77 +599,73 @@
  },
  "synthetic/all-types": {
   "dump": {
+   "version": 2,
    "global_settings": {
-    "categorical_retention_warn_threshold": 0.8,
-    "fidelity_warn_threshold": 0.8,
-    "freetext_advisory_min_avg_length": 40.0,
-    "freetext_advisory_min_distinctness": 0.5,
-    "mask_secret_ref": null,
-    "on_pool_exhaustion": "scale_up",
-    "post_validation": false,
     "seed": 42,
-    "unconfigured_column_policy": null
+    "post_validation": false,
+    "on_pool_exhaustion": "scale_up",
+    "fidelity_warn_threshold": 0.8,
+    "categorical_retention_warn_threshold": 0.8,
+    "unconfigured_column_policy": null,
+    "mask_secret_ref": null,
+    "freetext_advisory_min_avg_length": 40.0,
+    "freetext_advisory_min_distinctness": 0.5
    },
-   "namespaces": {},
-   "post_scan": {
-    "integrity": false
-   },
-   "quarantine": null,
-   "relationships": [],
    "sources": {},
-   "subset": null,
    "tables": [
     {
+     "name": "t1",
      "columns": [],
+     "row_count": 20,
      "generate_columns": [
       {
        "name": "seq",
+       "type": "sequence",
+       "pooled": null,
        "null_probability": 0.1,
        "pad_length": 4,
-       "pooled": null,
        "prefix": "P",
        "start": 1,
        "step": 2,
-       "suffix": "S",
-       "type": "sequence"
+       "suffix": "S"
       },
       {
+       "name": "fk1",
+       "type": "faker",
+       "pooled": null,
        "determinism": "fresh",
        "faker_type": "name",
        "locale": [
         "en_US",
         "fr_FR"
-       ],
-       "name": "fk1",
-       "pooled": null,
-       "type": "faker"
+       ]
       },
       {
+       "name": "fk2",
+       "type": "faker",
+       "pooled": false,
        "faker_kwargs": {
         "max_value": 5,
         "min_value": 1
        },
        "faker_type": "pyint",
-       "locale": "en_US",
-       "name": "fk2",
-       "pooled": false,
-       "type": "faker"
+       "locale": "en_US"
       },
       {
-       "faker_type": "date_object",
        "name": "dt",
+       "type": "faker",
        "pooled": null,
-       "type": "faker"
+       "faker_type": "date_object"
       },
       {
+       "name": "cat",
+       "type": "categorical",
+       "pooled": null,
        "categories": [
         "a",
         "b",
         "c"
        ],
-       "name": "cat",
-       "pooled": null,
-       "type": "categorical",
        "weights": [
         1,
         2.5,
@@ -677,161 +673,173 @@
        ]
       },
       {
-       "formula": "seq * 2",
        "name": "fm",
+       "type": "formula",
        "pooled": null,
+       "formula": "seq * 2",
        "references": [
         "seq"
-       ],
-       "type": "formula"
+       ]
       },
       {
+       "name": "dr",
+       "type": "derived",
+       "pooled": null,
        "bounds": {
         "min": 0
        },
        "expression": "seq + 1",
-       "name": "dr",
-       "null_propagation": "explicit_null",
-       "pooled": null,
-       "type": "derived"
+       "null_propagation": "explicit_null"
       },
       {
-       "column": "seq",
        "name": "ag",
-       "op": "sum",
+       "type": "derived_aggregate",
        "pooled": null,
-       "type": "derived_aggregate"
+       "column": "seq",
+       "op": "sum"
       },
       {
+       "name": "gs",
+       "type": "grouped_series",
+       "pooled": null,
        "generator": "cumcount",
        "group_by": "cat",
        "max_step": 10,
-       "name": "gs",
        "order_by": "seq",
-       "pooled": null,
        "start": 1,
-       "step": 1,
-       "type": "grouped_series"
+       "step": 1
       },
       {
+       "name": "wd",
+       "type": "windowed_date",
+       "pooled": null,
        "anchor": "dt",
        "distribution": "uniform",
        "max_days": 30,
-       "min_days": 1,
-       "name": "wd",
-       "pooled": null,
-       "type": "windowed_date"
+       "min_days": 1
       },
       {
+       "name": "gk",
+       "type": "group_key",
+       "pooled": null,
        "group_by": "cat",
        "length": 8,
-       "name": "gk",
-       "pooled": null,
-       "prefix": "K",
-       "type": "group_key"
+       "prefix": "K"
       },
       {
+       "name": "st",
+       "type": "statistical",
+       "pooled": null,
        "allow_real_categories": false,
        "condition_on": "cat",
        "high_cardinality": false,
-       "name": "st",
        "other_mode": "redistribute",
-       "pooled": null,
        "snapshot_file": "x.json",
-       "source_column": "src",
-       "type": "statistical"
+       "source_column": "src"
       },
       {
        "name": "cn",
-       "pooled": null,
        "type": "constant",
+       "pooled": null,
        "value": "US"
       },
       {
-       "family": "uniform",
-       "high": 100,
-       "low": 10,
-       "max": 90,
-       "min": 18,
        "name": "ds",
+       "type": "distribution",
        "pooled": null,
-       "type": "distribution"
+       "family": "uniform",
+       "low": 10,
+       "high": 100,
+       "min": 18,
+       "max": 90
+      },
+      {
+       "name": "lk",
+       "type": "lookup",
+       "pooled": null,
+       "codeset": "icd10",
+       "value_column": "code"
       }
      ],
-     "name": "t1",
-     "row_count": 20,
      "transforms": []
     },
     {
+     "name": "t2",
      "columns": [],
+     "row_count": 20,
      "generate_columns": [
       {
+       "name": "r1",
+       "type": "reference",
+       "pooled": null,
        "distribution": "weighted",
        "max_per_parent": 3,
        "min_per_parent": 0,
-       "name": "r1",
-       "pooled": null,
        "reference_column": "seq",
        "reference_table": "t1",
-       "type": "reference",
        "weights": [
         1,
         2
        ]
       },
       {
-       "distribution": "sequential",
        "name": "r2",
+       "type": "reference",
        "pooled": null,
+       "distribution": "sequential",
        "reference_column": "seq",
-       "reference_table": "t1",
-       "type": "reference"
+       "reference_table": "t1"
       },
       {
        "name": "r3",
+       "type": "reference",
        "pooled": null,
        "reference_column": "seq",
-       "reference_table": "t1",
-       "type": "reference"
+       "reference_table": "t1"
       }
      ],
-     "name": "t2",
-     "row_count": 20,
      "transforms": []
     }
    ],
+   "relationships": [],
    "targets": {
     "t1": {
+     "type": "file",
      "format": "csv",
-     "layout": null,
      "path": "/out/t1.csv",
-     "type": "file"
+     "layout": null
     },
     "t2": {
+     "type": "file",
      "format": "csv",
-     "layout": null,
      "path": "/out/t2.csv",
-     "type": "file"
+     "layout": null
     }
    },
+   "namespaces": {},
+   "post_scan": {
+    "integrity": false
+   },
    "validators": [],
-   "version": 2
+   "quarantine": null,
+   "subset": null
   },
   "fingerprints": {
-   "t1.ag": "1f2b17f6b4fa283402f7fc569dfcb5e90a8df3aaa610612347b7b51ad9570cd0",
-   "t1.cat": "dd09ba4d8ad8d8744352a6f3fa246a91a17b7f4c3598685a7febbcc485b8148c",
-   "t1.cn": "5474f20182b631dc224f7bab649d0688a8262ff779f8430fa2bb979dea770f8d",
-   "t1.dr": "7d7665aefeec47743ab195681002d6b1cdddf1d85cbd177a8fac7a3b05f13f9e",
-   "t1.ds": "ae8a2133d95c8948ea5c7c1088c70913192211b34aac6f13bb271100c3485d5c",
-   "t1.dt": "a9e4a7f2651059ed09ecafe171f7bc793b5edbd49111a4017546833e6d08f792",
+   "t1.seq": "cf35487eb4ebbb10460727610ddf8e6731f4f9b3e6f75c01577436050ef13280",
    "t1.fk1": "793694a106ffd47d49875ac330603fb82c52dbbc45123b7bf7388cb2e1157934",
    "t1.fk2": "396a040c18f302f188da609f7d5f32996a18b42b7873c6ccb87d0f4ad4cfcdf4",
+   "t1.dt": "a9e4a7f2651059ed09ecafe171f7bc793b5edbd49111a4017546833e6d08f792",
+   "t1.cat": "dd09ba4d8ad8d8744352a6f3fa246a91a17b7f4c3598685a7febbcc485b8148c",
    "t1.fm": "d4679b8949b40c51bc416966cd656aa1e947390b649c3d7d7161d4d26374d54a",
-   "t1.gk": "48fca43e334229cd02f667d990f1344b9785db44008cfb0ce64e088b2bd8a1eb",
+   "t1.dr": "7d7665aefeec47743ab195681002d6b1cdddf1d85cbd177a8fac7a3b05f13f9e",
+   "t1.ag": "1f2b17f6b4fa283402f7fc569dfcb5e90a8df3aaa610612347b7b51ad9570cd0",
    "t1.gs": "6726185348dccd2745fb79f228f4abccee0a854171bcac5b3d079e9bd95dd488",
-   "t1.seq": "cf35487eb4ebbb10460727610ddf8e6731f4f9b3e6f75c01577436050ef13280",
-   "t1.st": "fc0a56c4dba6be687db7298b30cb29a9e1811b02ce4da56fb38185cb4dcc5dc5",
    "t1.wd": "43f8844a93214b9aa220f025b6930c9203619b57ddc4d1ade0d037b0312fbcf5",
+   "t1.gk": "48fca43e334229cd02f667d990f1344b9785db44008cfb0ce64e088b2bd8a1eb",
+   "t1.st": "fc0a56c4dba6be687db7298b30cb29a9e1811b02ce4da56fb38185cb4dcc5dc5",
+   "t1.cn": "5474f20182b631dc224f7bab649d0688a8262ff779f8430fa2bb979dea770f8d",
+   "t1.ds": "ae8a2133d95c8948ea5c7c1088c70913192211b34aac6f13bb271100c3485d5c",
+   "t1.lk": "bd7cea34b57c192a32810ad9940499dc1bdd771842970ca20a98cb8248751839",
    "t2.r1": "ad719105118ece5004ed92bd8e3cfbc1fe9ff119b94447ae71ce719f9a97d44e",
    "t2.r2": "fed50788ad83ee8b55a9bb8a7f792dff1d7ffd74b0ce47314b99a817125bb5c4",
    "t2.r3": "4da13208780f85255779ada2859faab8e505ad807ea3a69677989799b66375ca"
@@ -965,6 +973,12 @@
        "high": 100,
        "min": 18,
        "max": 90
+      },
+      {
+       "name": "lk",
+       "type": "lookup",
+       "codeset": "icd10",
+       "value_column": "code"
       }
      ],
      "name": "t1",
