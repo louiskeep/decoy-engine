@@ -12,6 +12,7 @@ from decoy_engine.verification.canary._policy import (
     compose_reasons,
     derive_status,
 )
+from decoy_engine.verification.canary._scan import MAX_SCANNED_ARTIFACTS, scan_canary_artifacts
 from decoy_engine.verification.canary._types import (
     MAX_COUNT,
     MAX_FINDINGS,
@@ -37,6 +38,7 @@ from decoy_engine.verification.canary._types import (
 __all__ = [
     "MAX_COUNT",
     "MAX_FINDINGS",
+    "MAX_SCANNED_ARTIFACTS",
     "POLICY_TABLE",
     "CanaryArtifactInput",
     "CanaryArtifactOutcome",
@@ -60,4 +62,5 @@ __all__ = [
     "completion_class",
     "compose_reasons",
     "derive_status",
+    "scan_canary_artifacts",
 ]

@@ -2,7 +2,7 @@ name: lock-env
 description: Install the engine from uv.lock into a venv outside the workspace and check the key dependencies against the lock.
 inputs:
   extras:
-    description: Space-separated uv extras (for example "dev ml").
+    description: Space-separated uv extras (for example "dev ner").
     default: ""
   python:
     description: CPython patch for the venv. Empty means the lock profile (scripts/dev/lock_version.sh --python).

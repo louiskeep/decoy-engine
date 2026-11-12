@@ -502,6 +502,39 @@ def test_gen_types_e2_codes_are_registered_with_a_pinned_fixture() -> None:
     assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 23, 0)
 
 
+FPE_FALLBACKS_FIXTURE = "reason-manifest-v1.24-fpe-fallbacks.json"
+
+
+def test_fpe_handler_fallback_codes_are_registered_with_a_pinned_fixture() -> None:
+    """The FPE handler's two default codes resolve in the registry, `since` 1.24.0."""
+    from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
+    from decoy_engine.execution._strategies._fpe import (
+        strategy_code_for_checksum,
+        strategy_code_for_unencryptable,
+    )
+
+    expected = [
+        ("runtime", "fpe_checksum_unsupported", "FPE_CHECKSUM_UNSUPPORTED_STRATEGY"),
+        ("runtime", "fpe_unencryptable_value", "FPE_UNENCRYPTABLE_VALUE"),
+    ]
+    for ns, code, symbol in expected:
+        spec = reasons.find(ns, code)
+        assert spec is not None
+        assert (spec.owner, spec.since, spec.symbol) == ("StrategyError", "1.24.0", symbol)
+        assert not re.search(r"[{}%]", spec.summary)
+        assert getattr(getattr(reasons, ns), symbol) == code
+    assert strategy_code_for_unencryptable(FpeUnencryptableError("x")) == "fpe_unencryptable_value"
+    assert strategy_code_for_checksum(FpeChecksumError("x", scheme="luhn")) == (
+        "fpe_checksum_unsupported"
+    )
+    pinned = _load(FPE_FALLBACKS_FIXTURE)
+    assert sorted((e["namespace"], e["code"]) for e in pinned["entries"]) == sorted(
+        (n, c) for n, c, _ in expected
+    )
+    assert pinned["registry_version"] == "1.24.0"
+    assert tuple(int(p) for p in reasons.REGISTRY_VERSION.split(".")) >= (1, 24, 0)
+
+
 GEN_TYPES_E3_FIXTURE = "reason-manifest-v1.24-gen-types-e3.json"
 
 

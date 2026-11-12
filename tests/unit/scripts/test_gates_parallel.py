@@ -26,6 +26,7 @@ from _gates_harness import (
     seeded_clone,
 )
 from _gates_harness import gates as run_gates
+from tests.sentry.parallel._resources import parse_marker_expr
 
 pytestmark = pytest.mark.skipif(BASH is None or GIT is None, reason="needs bash and git")
 
@@ -35,9 +36,7 @@ ORDER_ENV = "DECOY_TEST_ORDER_FILE"
 
 
 def mark_expr() -> str:
-    m = re.search(r"^PYTEST_ARGS=\(-m '([^']+)'\)", (DEV / "gates.sh").read_text(), re.MULTILINE)
-    assert m, "gates.sh no longer defines PYTEST_ARGS=(-m '<expr>')"
-    return m.group(1)
+    return parse_marker_expr((DEV / "gates.sh").read_text())
 
 
 def commit(clone: Path, message: str) -> None:

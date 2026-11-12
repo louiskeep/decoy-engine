@@ -30,9 +30,14 @@
 name: native-companion
 
 on:
-  # Manual dispatch only. gate-selfhosted.yml is the merge gate; the paid runners
-  # fire on demand so they stop failing every push (X0a). Old triggers: git history.
+  pull_request:
+  schedule:
+    - cron: "37 3 * * *"
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -56,6 +61,7 @@ jobs:
   # time (the cross image is a build tool, not the compatibility baseline).
   companion-wheel-linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -132,6 +138,7 @@ jobs:
   # Windows-specific binary name. Same shared parity_smoke.py as every other target.
   companion-wheel-windows:
     runs-on: windows-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -179,6 +186,7 @@ jobs:
   # parity_smoke.py as every other target.
   companion-wheel-macos:
     runs-on: macos-15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -222,6 +230,7 @@ jobs:
   # same 1.98.0 as rust-toolchain.toml so CI and local builds agree.
   companion-rust-lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - name: Install pinned Rust with rustfmt + clippy
@@ -250,6 +259,7 @@ jobs:
   # already covers.
   core-companion-present:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/lock-env
@@ -330,6 +340,7 @@ jobs:
   # plain std). A crash, a sanitizer report, or an unexpected process exit fails the job.
   companion-fuzz-sanitizer:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - name: Install nightly Rust with rust-src (build-std needs it)
@@ -386,6 +397,7 @@ jobs:
   # regression-gate for no new signal).
   core-companion-absent:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/lock-env
