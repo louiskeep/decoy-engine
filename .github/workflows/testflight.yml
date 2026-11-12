@@ -3,11 +3,9 @@
 # Runs the multi-job test-flight suite that proves Phase-5 engine strategies
 # compose, post-run distribution is intact, and relationships hold.
 #
-# Trigger: workflow_dispatch (manual one-click on any branch/PR) plus an
-# optional nightly schedule. NOT triggered on push and NOT a required status
-# check -- this is a deliberately-run pre-merge gate, not a per-commit hook.
-# Because pyproject.toml addopts excludes the testflight marker, the
-# regression-gate and substrate-matrix workflows never accidentally run it.
+# Trigger: a nightly schedule on main plus workflow_dispatch (manual one-click on any branch).
+# NOT triggered on push or PR. Because pyproject.toml addopts excludes the testflight marker, the
+# regression-gate never runs it by accident.
 #
 # Substrate: pandas only, which is the only masking substrate (the dormant
 # polars masking adapter was removed). The strategy catalog exercised by the
@@ -21,9 +19,10 @@
 name: testflight
 
 on:
-  # Manual dispatch only. gate-selfhosted.yml is the merge gate; the paid runners
-  # fire on demand so they stop failing every push (X0a). Old triggers: git history.
+  schedule:
+    - cron: "47 3 * * *"
   workflow_dispatch:
+
 
 permissions:
   contents: read
@@ -31,6 +30,7 @@ permissions:
 jobs:
   testflight:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       # Both Python legs run to completion so a divergence on one is not masked
       # by the other short-circuiting the matrix.
@@ -41,8 +41,6 @@ jobs:
         # the supported Python range, not just on 3.10. Verified identical
         # (53/53 checks, 5/5 fingerprints match golden) before this leg landed.
         python-version: ["3.10", "3.11"]
-    env:
-      DECOY_SUBSTRATE: pandas
     steps:
       - uses: actions/checkout@v7
 
