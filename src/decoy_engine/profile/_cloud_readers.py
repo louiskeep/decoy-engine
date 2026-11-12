@@ -164,6 +164,7 @@ def _s3_for(descriptor: dict[str, Any]) -> Any:
         endpoint_url=endpoint_url if isinstance(endpoint_url, str) and endpoint_url else None,
         access_key_id=None,
         secret_access_key=None,
+        single_request=False,
     )
 
 

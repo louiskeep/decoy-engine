@@ -95,6 +95,7 @@ def _build_s3_client(config: S3Config):
         secret_access_key=(
             config.secret_access_key.get_secret_value() if config.secret_access_key else None
         ),
+        single_request=False,
     )
 
 

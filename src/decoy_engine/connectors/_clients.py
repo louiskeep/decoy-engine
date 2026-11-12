@@ -234,8 +234,8 @@ _S3_KINDS: dict[str, ConnectorErrorKind] = {
     **dict.fromkeys(("PreconditionFailed", "412"), "precondition_failed"),
     **dict.fromkeys(("ConditionalRequestConflict", "409"), "conflict"),
     **dict.fromkeys(("PermanentRedirect", "301", "AuthorizationHeaderMalformed"), "wrong_region"),
-    # The SDK retry is off, so the engine retries what botocore's standard retry mode
-    # retries (retries/standard.py throttled and transient codes, 429 and 509 in _retry.json).
+    # The codes botocore's standard retry mode retries (retries/standard.py throttled and
+    # transient codes, 429 and 509 in _retry.json) are transient for the caller.
     **dict.fromkeys(
         (
             "SlowDown",
@@ -271,12 +271,15 @@ def s3_client(
     endpoint_url: str | None,
     access_key_id: str | None,
     secret_access_key: str | None,
+    single_request: bool,
 ) -> Any:
-    """The one S3 client factory: bounded timeouts, one request, no SDK retry.
+    """The one S3 client factory: bounded timeouts and an explicit attempt count.
 
-    The engine's own retry on ``TransientError`` is the only retry layer. With no region
-    botocore resolves one from the environment or profile. Static credentials are passed
-    only when set, so the default chain stays in force otherwise.
+    An ordinary client lets the SDK retry a request once (two attempts, as before). A
+    ``single_request`` client never resends, for conditional writes where a resend can turn
+    a win into a loss. The engine has no retry loop of its own. With no region botocore
+    resolves one from the environment or profile. Static credentials are passed only when
+    set, so the default chain stays in force otherwise.
     """
     import boto3
     from botocore.config import Config as BotoConfig
@@ -286,7 +289,7 @@ def s3_client(
         "config": BotoConfig(
             connect_timeout=5,
             read_timeout=60,
-            retries={"total_max_attempts": 1, "mode": "standard"},
+            retries={"total_max_attempts": 1 if single_request else 2, "mode": "standard"},
         ),
     }
     if region is not None:
