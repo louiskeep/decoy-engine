@@ -27,6 +27,13 @@ def job(tree: lanes.Tree, wf: str, key: str) -> dict[str, Any]:
     return tree.workflows[wf]["jobs"][key]
 
 
+def with_on(doc: dict[Any, Any], on: Any) -> dict[Any, Any]:
+    """The workflow with its triggers replaced. YAML 1.1 parses the `on:` key as True."""
+    out = {k: v for k, v in doc.items() if k not in (True, "on")}
+    out[True] = on
+    return out
+
+
 def has(found: list[str], text: str) -> bool:
     return any(text in f for f in found)
 
@@ -50,7 +57,11 @@ def test_real_tree_has_no_findings() -> None:
 
 def test_new_marker_without_lane_is_a_finding_until_registered_unlaned() -> None:
     t = seeded()
-    t.pyproject["tool"]["pytest"]["ini_options"]["markers"].append("slowx: x")
+    ini = t.pyproject["tool"]["pytest"]["ini_options"]
+    ini["markers"].append("slowx: x")
+    ini["addopts"] = ini["addopts"].replace(
+        "not benchmark", "not slowx and not benchmark"
+    )  # opt-in
     assert has(lanes.marker_findings(t), "'slowx'")
     t.unlaned["marker"].append({"name": "slowx", "reason": "test"})
     assert lanes.marker_findings(t) == []
@@ -72,7 +83,9 @@ def test_broad_expression_is_not_a_lane_for_an_opt_in_marker() -> None:
             {"run": 'pytest tests/native/x.py -m "perf or not perf"'}
         ]
     t.unlaned["marker"] = [e for e in t.unlaned["marker"] if e["name"] != "benchmark"]
-    t.workflows["benchmark.yml"]["on"] = ["push"]  # make the job automatic
+    t.workflows["benchmark.yml"] = with_on(
+        t.workflows["benchmark.yml"], ["push"]
+    )  # make the job automatic
     assert has(lanes.marker_findings(t), "'benchmark'")
 
 
@@ -149,7 +162,7 @@ def test_unreadable_expressions_fail_closed(expr: str) -> None:
 
 def test_not_pr_job_in_a_dispatch_only_workflow_is_no_lane() -> None:
     t = seeded()
-    t.workflows["ci.yml"]["on"] = {"workflow_dispatch": None}
+    t.workflows["ci.yml"] = with_on(t.workflows["ci.yml"], {"workflow_dispatch": None})
     only_lane(
         t, ("ci.yml", "determinism"), "pytest -m determinism_harness", **{"if": lanes.NOT_PR_IF}
     )
@@ -213,10 +226,13 @@ def test_registry_schema_is_closed() -> None:
 
 def test_path_filters_are_findings() -> None:
     t = seeded()
-    t.workflows["ci.yml"]["on"] = {
-        "pull_request": {"paths": ["src/**"]},
-        "push": {"paths-ignore": ["docs/**"]},
-    }
+    t.workflows["ci.yml"] = with_on(
+        t.workflows["ci.yml"],
+        {
+            "pull_request": {"paths": ["src/**"]},
+            "push": {"paths-ignore": ["docs/**"]},
+        },
+    )
     found = [f for f in lanes.trigger_findings(t) if f.startswith("T2")]
     assert len(found) == 2
 
@@ -263,7 +279,7 @@ def test_required_list_rules() -> None:
     job(t, "ci.yml", "determinism")["if"] = "always()"
     assert has(_r(t), "R2 ci.yml:determinism: merge job has an `if`")
     t = seeded()
-    t.workflows["docs.yml"]["on"] = ["workflow_dispatch"]
+    t.workflows["docs.yml"] = with_on(t.workflows["docs.yml"], ["workflow_dispatch"])
     assert has(_r(t), "no pull_request trigger")
     t = seeded()
     job(t, "ci.yml", "ml-gate")["runs-on"] = ["self-hosted", "x"]
@@ -285,7 +301,9 @@ def test_required_list_rules() -> None:
     }
     assert has(_r(t), "R3 ci.yml:extra")
     t = seeded()
-    t.workflows["codspeed.yml"]["on"] = {"pull_request_target": None}
+    t.workflows["codspeed.yml"] = with_on(
+        t.workflows["codspeed.yml"], {"pull_request_target": None}
+    )
     assert has(_r(t), "R3 codspeed.yml:benchmarks")
 
 
@@ -299,6 +317,12 @@ def test_job_in_a_schedule_only_workflow_needs_no_listing() -> None:
 
 
 # --- AT-11: concurrency and timeouts -------------------------------------------------------
+
+
+def test_release_workflow_may_keep_cancel_in_progress_false() -> None:
+    t = seeded()
+    conc = t.workflows["native-companion-release.yml"]["concurrency"]
+    assert conc["cancel-in-progress"] is False and lanes.trigger_findings(t) == []
 
 
 def test_concurrency_and_timeout_rules() -> None:

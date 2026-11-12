@@ -274,7 +274,11 @@ def _closed(doc: dict[str, Any], label: str, tables: dict[str, dict[str, type]])
                 continue
             for key, kind in fields.items():
                 val = entry[key]
-                if not isinstance(val, kind) or not val or (kind is str and not val.strip()):
+                if (
+                    not isinstance(val, kind)
+                    or not val
+                    or (isinstance(val, str) and not val.strip())
+                ):
                     out.append(f"R1 {label}: [[{table}]] {key} must be a non-empty {kind.__name__}")
             ident = tuple(str(entry[k]) for k in fields if k != "reason")
             if ident in seen:
@@ -366,7 +370,12 @@ def trigger_findings(tree: Tree) -> list[str]:
         conc = doc.get("concurrency")
         if "pull_request" in events and conc != CONCURRENCY:
             out.append(f"T4 {name}: pull_request workflow lacks the shared concurrency block")
-        if isinstance(conc, dict) and conc.get("cancel-in-progress") is False:
+        # A release workflow never sees a PR, and cancelling a publish mid-run is the wrong default.
+        if (
+            "pull_request" in events
+            and isinstance(conc, dict)
+            and conc.get("cancel-in-progress") is False
+        ):
             out.append(f"T4 {name}: workflow-level cancel-in-progress is false")
     return out
 
