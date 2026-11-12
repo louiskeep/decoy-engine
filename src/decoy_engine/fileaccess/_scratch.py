@@ -57,16 +57,19 @@ _ISSUER = object()
 
 def _open(name: str, dir_fd: int | None = None, *, directory: bool = True) -> int:
     # Literal read-only flags at each call, so the private-file sentry can read them.
-    code = 0
-    try:
-        if directory:
-            return os.open(
-                name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=dir_fd
-            )
-        return os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=dir_fd)
-    except OSError as exc:
-        code = exc.errno or errno.EIO
-    raise OSError(code, os.strerror(code)) from None
+    if directory:
+        return _call(
+            os.open,
+            name,
+            flags=os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=dir_fd,
+        )
+    return _call(os.open, name, flags=os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=dir_fd)
+
+
+def _open_base(path: str) -> int:
+    # The policy already vetted `path`, and a temp directory may be a link (macOS /tmp).
+    return _call(os.open, path, flags=os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
 
 
 def _rename(src: str, dst: str, dir_fd: int) -> None:
@@ -183,12 +186,21 @@ class ScratchArena:
     display = _DISPLAY
     strict = True
 
-    def __init__(self, issuer: object, root: _Root, fd: _Fd, rel: tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        issuer: object,
+        root: _Root,
+        fd: _Fd,
+        rel: tuple[str, ...],
+        opener: ScratchArena | None = None,
+    ) -> None:
         if issuer is not _ISSUER:
             raise FileAccessUnavailable("a scratch arena is made by ScratchArena.open")
         self._root = root
         self._fd = fd
         self._rel = rel
+        # The opener's finalizer owns the whole tree, so a live child keeps it from collection.
+        self._opener = opener
         # Only the owning root reclaims on collection; children and adopted roots only close.
         cleanup: tuple[Any, ...] = (
             (fd.close,) if rel else (_reclaim if root.owning else _release, root)
@@ -201,22 +213,22 @@ class ScratchArena:
         if sys.platform == "win32":
             raise FileAccessUnavailable("the scratch arena needs a POSIX host in this release")
         base = _parent_base(under)
-        pending = os.path.basename(_allocate(base, _PENDING_PREFIX))
-        base_fd = _open(base)
+        base_fd = _open_base(base)
+        fd, pending, ours = -1, "", False
         try:
+            pending = os.path.basename(_allocate(base, _PENDING_PREFIX))
             fd = _open_dir(pending, base_fd)
-            if not _exact(fd, stat.S_IFDIR, 0o700):  # not what the allocator made: change nothing
-                _close(fd)
+            # Not what the allocator made: change nothing on disk.
+            if not _exact(fd, stat.S_IFDIR, 0o700):
                 raise ProtectedDirUnsafe
-        except BaseException:
-            _close(base_fd)
-            raise
-        try:
+            ours = True
             final = _mark_and_publish(fd, base_fd, pending)
         except BaseException:
-            _quietly(_rmtree_fd, fd)
-            _close(fd)
-            _quietly(_rmdir, pending, base_fd)
+            if ours:
+                _quietly(_rmtree_fd, fd)
+                _quietly(_rmdir, pending, base_fd)
+            if fd >= 0:
+                _close(fd)
             _close(base_fd)
             raise
         root = _Root(fd, base_fd, final, os.path.join(base, final), owning=True)
@@ -277,14 +289,20 @@ class ScratchArena:
         self._check(component, writes=True)
         child = _Fd(_make_dir(self._fd.fd, component))
         self._root.children.append(child)
-        return ScratchArena(_ISSUER, self._root, child, (*self._rel, component))
+        opener = self._opener or self
+        return ScratchArena(_ISSUER, self._root, child, (*self._rel, component), opener)
 
     def remove(self, component: str) -> None:
         self._check(component, writes=True)
         try:
             _unlink(component, self._fd.fd)
-        except IsADirectoryError:
-            _rmdir(component, self._fd.fd)
+            return
+        except (IsADirectoryError, PermissionError) as exc:
+            failed = exc  # macOS refuses to unlink a directory with EPERM, Linux with EISDIR
+        found = _call(os.stat, component, dir_fd=self._fd.fd, follow_symlinks=False)
+        if not stat.S_ISDIR(found.st_mode):
+            raise failed
+        _rmdir(component, self._fd.fd)
 
     def rename(self, src: str, dst: str) -> None:
         self._check(src, dst, writes=True)
