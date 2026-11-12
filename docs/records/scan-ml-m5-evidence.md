@@ -2,7 +2,8 @@ Status: record
 
 # SCAN-ML M5: post-scan route guard
 
-Date: 2026-11-12. Branch: `feat/scanml-m5`, started from engine main `426e6d05`. Plan: SCAN-ML
+Date: 2026-11-12. Branch: `feat/scanml-m5`, started from engine main `426e6d05`, merged with main
+`8f9fdfab` in `96bf249b` (see "Merge with main"). Plan: SCAN-ML
 (`plan/scan-ml` at `e0ae4204`, `docs/plans/2026-11-07-scan-ml.md`), section 4.5 (route guard),
 sections 4.8, 5, 6, 7 (AT-M5a), 11 to 14. Handoff: `handoffs/scan-ml-build`.
 
@@ -41,20 +42,27 @@ sections 4.8, 5, 6, 7 (AT-M5a), 11 to 14. Handoff: `handoffs/scan-ml-build`.
 ## Deviations from the plan text
 
 The plan (section 4.5, the route-guard bullet; section 12; AT-M5a) is the spec. Three points differ,
-each decided by the owner through the orchestrator on 2026-11-12 after the first build stopped:
+each decided by the owner (relayed by the orchestrator) on 2026-11-12 after the first build stopped:
 
-1. Option A for the resident auto-chunk lane. On main, `run_pipeline` with `post_scan.integrity: true`
+1. Option A for the resident auto-chunk lane, the owner's choice. On main, `run_pipeline` with `post_scan.integrity: true`
    still takes the auto-chunk route (the output is kept resident, `_chunked_output_sink.py`), and that
    lane called the public `run_mask_chunked` and `run_mask_pipeline_chunked`. With the guard first in
    those entries, as the plan says, `run_pipeline` would have refused every auto-chunked model
    post-scan job instead of running the check (contradicting plan 5.2 and AT-M4e). The guard stays
-   first in the public entries; the lane now calls guard-free private cores:
-   `native._chunked_entry._mask_chunked` (subset check, thread check, `count_rows` over
-   `_run_chunked`) and `_chunked_oracle._mask_pipeline_chunked` (the former body of
-   `run_mask_pipeline_chunked`). The sentry asserts that no `execution/_pipeline*.py` module calls a
+   first in the public entries; the lane now calls guard-free private cores, each of which runs
+   everything its public entry runs except the guard: `native.chunked._core.mask_chunked` (subset
+   check, thread check, declaration gate, `count_rows` over `_run_chunked`) and
+   `_chunked_oracle._mask_pipeline_chunked` (subset check, declaration gate, then
+   `_chunked_oracle._mask_declared`, the preflight and per-chunk loop the public entry also calls).
+   Both cores reach the declaration gate through the entry modules (`_chunked_entry.` and
+   `_chunked.prepare_declared_sources`), so the gate seam #495's below-gate test helpers patch is the
+   one the lane uses. The native core is a new private module, `execution/native/chunked/_core.py`
+   (owner-approved after the merge pushed `native/_chunked_entry.py` to 703 lines against its 689
+   ceiling; CODEMAP's native row already names `execution/native/chunked/` as the target for new
+   native modules, so no fan-out, size or baseline number moved and no CODEMAP row was needed). The sentry asserts that no `execution/_pipeline*.py` module calls a
    guarded public chunked entry, and AT-M5a asserts that a model post-scan config through either
    auto-chunk lane does not raise and gives the same output as regex-only integrity.
-2. A fifth guarded entry, `run_native_or_oracle_chunked` (see "Open decision").
+2. A fifth guarded entry, `run_native_or_oracle_chunked` (see "Owner decision").
 3. Wrapper threading. Making `config` required on `run_sequential` and `run_fk_out_of_core` also
    makes it required on the wrappers that forward to them: `run_sequential_route`,
    `run_out_of_core_route` (its `config` was `dict | None = None`), `PandasExecutionAdapter.run_sequential`
@@ -66,15 +74,15 @@ Test callers that passed no config before now pass `config={}`. That keeps their
 (before, `run_sequential` read no config and `run_fk_out_of_core` saw `None`, which its vault and
 validator paths treat like an empty mapping when no vault writer is set).
 
-## Open decision
+## Owner decision
 
 `run_native_or_oracle_chunked` (`native/_dispatch.py`) is public (exported from
 `decoy_engine.execution.native`, listed in `docs/compatibility-contract.md` section 1), takes a config,
 masks chunk by chunk and runs no post-scan. The plan names four entries and is silent on it. The owner
-did not answer, so the stricter path was taken: it is guarded as a fifth entry, covered by AT-M5a and
-listed in the sentry's GUARDED table. No resident `run_pipeline` path reaches it (no `src/` caller;
+confirmed on 2026-11-12 that it is guarded as a fifth entry; it is covered by AT-M5a and listed in the
+sentry's GUARDED table. No resident `run_pipeline` path reaches it (no `src/` caller;
 `git grep -n run_native_or_oracle_chunked -- src` shows only its definition and the package export),
-and guarding it broke no existing test. To reverse: remove the guard call in
+and guarding it broke no existing test. Should the decision change: remove the guard call in
 `run_native_or_oracle_chunked`, move its row from GUARDED to EXEMPT in
 `tests/sentry/test_post_scan_route_guard.py` with a reason, and drop it from `ENTRIES` in
 `tests/unit/execution/test_scanml_m5_route_guard.py`.
@@ -84,17 +92,47 @@ and guarding it broke no existing test. To reverse: remove the guard call in
 Several tests observed or injected into `run_pipeline`'s auto-chunk lane by patching the public
 entries. The lane now calls the private cores, so each patch target moved to the function the lane
 calls; every assertion is unchanged. `_chunked_entry.run_mask_chunked` became
-`_chunked_entry._mask_chunked`, and `_chunked.run_mask_pipeline_chunked` became
+`native.chunked._core.mask_chunked`, and `_chunked.run_mask_pipeline_chunked` became
 `_chunked_oracle._mask_pipeline_chunked`, in: `tests/unit/execution/_auto_chunk_support.py`
 (`spy_lanes`, keys kept), `_b6a_support.py` (`ChunkSpy`), `test_auto_chunk_dispatcher.py`,
 `test_auto_chunk_routing.py` (one spy and the two `bomb` patches, so they keep guarding the
 legacy lane), `test_auto_chunk_units.py`, `test_b6a_output.py`, `test_b6b_equality.py`,
 `test_b6b_failures.py`, `tests/parity/test_phase_f_f2_mixed_parity.py`,
-`test_phase_f_f2_mixed_publish.py` and `tests/physical/test_shadow_chunked.py`. Patches of the
+`test_phase_f_f2_mixed_publish.py` and `tests/physical/test_shadow_chunked.py`. After the merge, the
+same retarget for three negative spies #495's main carries in `tests/unit/execution/test_group_key_chunked.py`
+(each patches the oracle entry around `run_pipeline` and asserts it is never called, beside
+`auto_chunk.mode == "full_frame"`): `TestCacheCollisionFloatSignedZero::test_auto_route_selects_oracle_chunked_runner_never_invoked`,
+`TestCacheCollisionDecimalSignedZero::test_auto_route_selects_oracle_chunked_runner_never_invoked` and
+`TestTextRedactMaskedGroupByRoutesToOracle::test_auto_route_falls_back_to_oracle`. #495's tests that
+call the entries directly (the below-gate helpers in `tests/native/`) stay on the public entries. Patches of the
 physical drivers' calls (`test_lossless_forwarding.py`) and the `b1_as_the_lane` helper keep the
 public entries, because those paths still call them. `tests/unit/config/test_scan_ml_reasons.py`
 asserted that M5's reason did not exist yet (an M1 tripwire); it now asserts the reason exists in
 its own minor 1.24.0.
+
+## Merge with main
+
+`96bf249b` merges main `8f9fdfab` (#495, the declared-columns gate on the three chunked entries)
+because it conflicted in `execution/_chunked.py`, `native/_chunked_entry.py` and
+`native/_dispatch.py`. Both sides are kept:
+
+- `_chunked.py`: imports kept from both; the entry body is the post-scan guard, the subset check,
+  #495's `prepare_declared_sources(DeclarationRequest.for_chunks(config, table, source_schema))`, then
+  `_chunked_oracle._mask_declared` (main's preflight and loop, moved so the file stays under 600).
+- `native/_chunked_entry.py`: main's `run_mask_chunked` body, unchanged, with the guard (and its
+  local import) in front. `_chunked_entry.py` is 684 lines against its 689 ceiling.
+- `native/_dispatch.py`: imports only (both kept); `run_native_or_oracle_chunked` runs the guard,
+  then main's subset, transforms and declaration steps.
+- `#495`'s sentry `tests/sentry/source_config/test_declaration_gate.py` requires the gate inside each
+  public entry's own body before its reader; that holds, and it runs after the post-scan guard.
+
+Order in the five entries after the merge: `run_sequential` and `run_fk_out_of_core`: post-scan
+guard, `declared_route_guard` (#495 does not touch them). `run_mask_pipeline_chunked`: post-scan
+guard, subset check, declaration gate, preflight. `run_mask_chunked`: post-scan guard, subset
+check, thread check, declaration gate, `_run_chunked`. `run_native_or_oracle_chunked`: post-scan
+guard, subset check, transforms refusal, declaration gate, `_run_chunked`. AT-M5a passes the oracle
+entry its `source_schema`; the guard fires before it is used. The secret-material census, re-derived
+with `scripts/secret_material_census.py --write`, equals main's.
 
 ## Red first
 
@@ -119,10 +157,13 @@ After the red commit the two auto-chunk tests were corrected in their setup, not
 they now pass a sink (the pinned chunked-sink case) and expect the legacy lane's resident reason
 `legacy_lane`; on the red commit they already failed at the "core is missing" assertion.
 
-## Mutations (final source head `06bbf9e7`, each applied once, then reverted)
+## Mutations
 
-Command for each: `.venv/bin/python -m pytest -q -p no:randomly -n 2
-tests/unit/execution/test_scanml_m5_route_guard.py tests/sentry/test_post_scan_route_guard.py`.
+Each mutation applied once, its tests run, then reverted; no commit carries one. Command for each:
+`.venv/bin/python -m pytest -q -p no:randomly -n 2 tests/unit/execution/test_scanml_m5_route_guard.py
+tests/sentry/test_post_scan_route_guard.py`. Run first on `06bbf9e7` and again on the merged source
+head `96bf249b` (the later `8f91d3ea` changes one sentry file only). The counts were the same on
+both heads:
 
 - M-M5a, drop the guard from `run_sequential`: 4 failed (the two `run_sequential` refusal cases,
   `test_refusal_text_is_the_fixed_summary_with_no_chain[run_sequential]`, sentry
@@ -134,41 +175,51 @@ tests/unit/execution/test_scanml_m5_route_guard.py tests/sentry/test_post_scan_r
   `test_refusal_text_is_the_fixed_summary_with_no_chain` cases, the five
   `test_guard_refuses_each_model_post_scan_shape` cases,
   `test_error_is_public_and_pickles_to_the_same_identity`).
-- M-M5a4 (option A), the dispatcher lane calls the public `run_mask_chunked` again: 2 failed
+- M-M5a4 (option A), the dispatcher lane calls the public `run_mask_chunked` again (on the merged
+  head: `_core.mask_chunked(` replaced by `_core._chunked_entry.run_mask_chunked(` in
+  `_pipeline_auto_chunk.py`): 2 failed
   (`test_run_pipeline_auto_chunk_lane_runs_model_post_scan_configs_as_on_main[dispatcher]`, sentry
   `test_run_pipeline_modules_never_call_a_guarded_chunked_entry`).
-
-No commit carries a mutation. Later commits touch only tests, a sentry baseline and docs.
 
 ## Checks
 
 ```
 uv sync --frozen --extra dev
-GATES_WORKERS=2 scripts/dev/gates.sh --baseline --steps ruff,format,mypy,sentry,layers,licenses,tests <182 paths>
+GATES_WORKERS=2 scripts/dev/gates.sh --baseline --steps ruff,format,mypy,sentry,layers,licenses,tests <183 paths>
 ```
 
-Head `17562e7c`, baseline origin/main `426e6d05`. The 182 paths: every `tests/**/test_*.py` that
-`git grep` finds for `run_sequential`, `run_fk_out_of_core`, `run_sequential_route`,
-`run_out_of_core_route`, `OutOfCoreAdapter`, `SequentialAdapter`, `run_mask_chunked`,
-`run_mask_pipeline_chunked`, `run_native_or_oracle_chunked`, `_chunked_entry`, `_chunked_oracle`,
-`PostScanRouteError` and `post_scan_models_unsupported` (minus `tests/perf/`), plus the acceptance
-file, `tests/sentry` (module size, reason registry and minor fixtures included),
+Final run: head `8f91d3ea`, baseline origin/main `8f9fdfab`, tree clean. The 183 paths: every
+`tests/**/test_*.py` that `git grep` finds for `run_sequential`, `run_fk_out_of_core`,
+`run_sequential_route`, `run_out_of_core_route`, `OutOfCoreAdapter`, `SequentialAdapter`,
+`run_mask_chunked`, `run_mask_pipeline_chunked`, `run_native_or_oracle_chunked`, `_chunked_entry`,
+`_chunked_oracle`, `chunked._core`, `_native_core`, `PostScanRouteError`,
+`post_scan_models_unsupported` and `prepare_declared_sources` (minus `tests/perf/`), plus the
+acceptance file, `tests/sentry` (module size, reason registry and minor fixtures included),
 `tests/unit/test_reason_registry.py`, `tests/unit/test_public_api.py`,
-`tests/unit/progress/test_consumer_contract.py` and `tests/unit/execution/test_subset_run_guard_entries.py`.
+`tests/unit/progress/test_consumer_contract.py`, `tests/unit/execution/test_subset_run_guard_entries.py`
+and `tests/unit/config/test_scan_ml_reasons.py`.
 
 | Step | Branch | Main |
 |---|---|---|
 | ruff, format, mypy | not run: `.venv/bin/ruff` and `mypy` are not in the `dev` extra (rc 127 on both) | same |
-| sentry | 5034 passed, 3 failed, 21 errors | 5014 passed, 3 failed, 21 errors |
+| sentry | 5048 passed, 3 failed, 21 errors | 5018 passed, 3 failed, 21 errors |
 | layers | 15 passed | skipped (passed on branch) |
 | licenses | 63 passed | skipped (passed on branch) |
-| tests | 14661 passed, 3 failed, 21 errors, 2717 skipped | 14601 passed, 2 failed, 21 errors, 2717 skipped |
+| tests | 14728 passed, 2 failed, 21 errors, 2717 skipped | 14657 passed, 2 failed, 21 errors, 2717 skipped |
 
-Failing ids on both: `tests/sentry/parallel/test_serial_resources.py::test_the_required_serial_registry_is_marked`
-and the `tests/sentry/test_outbound_clients.py` set (no `google` package in this venv). Branch only:
+Failing ids, identical on branch and main (24 each, no branch-only id):
+`tests/sentry/parallel/test_serial_resources.py::test_the_required_serial_registry_is_marked` and the
+`tests/sentry/test_outbound_clients.py` set (no `google` package in this venv). No main failure
+passes on the branch. Collected count in the tests step: branch 17468 against main 17397 (+71, the
+new tests).
+
+Earlier runs on this branch: on `17562e7c` against `426e6d05` one branch-only id, the M1 tripwire
 `tests/unit/config/test_scan_ml_reasons.py::test_the_slice_adds_exactly_these_identities_and_no_later_slice_code`
-(the M1 tripwire above), fixed in `ca37c508` and passing there (16 passed in that file). No main
-failure passes on the branch. Collected count in the tests step: branch 17402 against main 17341 (+61, the new tests).
+(updated in `ca37c508`); on the merge head `96bf249b` against `8f9fdfab` one branch-only id,
+`tests/sentry/test_physical_seam_disconnection.py::test_production_execution_modules_are_byte_identical_to_origin_main`,
+because the two new `execution/native/chunked/` files were not in that sentry's path list of
+permitted parent-level execution changes. `8f91d3ea` adds them with a reason, the way earlier
+slices added theirs (a path list, no number).
 
 Lint, separately, because the `dev` extra has no linters:
 
@@ -177,21 +228,24 @@ uv sync --frozen --extra dev --extra lint
 GATES_WORKERS=2 scripts/dev/gates.sh --baseline --steps ruff,format,mypy tests/unit/execution/test_scanml_m5_route_guard.py
 ```
 
-ruff PASS, format PASS, mypy 4 errors on the branch and the same 4 on main (no branch-only error).
+On `8f91d3ea`: ruff PASS, format PASS, mypy 4 errors on the branch and the same 4 on main (no
+branch-only error).
 
-Module sizes after the change (census ceilings unchanged): `_chunked_entry.py` 688 of 689,
-`_pandas_adapter.py` 694 of 700, `_sequential.py` 666 of 680, `_dispatch.py` 671 of 688,
-`_pipeline_route_exec.py` 614 of 632, `__init__.py` 600 (goal, no entry); the secret-material
-census re-derives unchanged.
+Module sizes on the final head (census ceilings unchanged): `native/_chunked_entry.py` 684 of 689,
+`native/_dispatch.py` 674 of 688, `_pandas_adapter.py` 694 of 700, `_sequential.py` 666 of 680,
+`_pipeline_route_exec.py` 614 of 632, `_chunked.py` 587 and `_chunked_oracle.py` 575 (under the
+600 goal), `native/chunked/_core.py` 50, `__init__.py` 600 (goal, no entry). `execution/native`
+keeps 55 direct modules (the new module is in a sub-package). The layer gate passes. The
+secret-material census, re-derived, equals main's.
 
 ## NER tests
 
 The `ner-gate` steps, in a separate venv (`UV_PROJECT_ENVIRONMENT=<venv-ner> uv sync --frozen
 --extra dev --extra ner`): the URL and SHA-256 from `NER_MODEL_WHEELS[("en_core_web_sm", "3.8.0")]`,
 `curl --fail` download, `sha256sum --check` OK, `uv pip install --no-deps <wheel>`. Then
-`DECOY_REQUIRE_NER=1 pytest -m ner -n 2`: 38 passed, 14 skipped. Every skip is a module-level
-import skip for another optional dependency (google, paramiko, hvac, lightgbm, joblib, mimesis, the
-wheel builder, mutmut); no NER test skipped.
+`DECOY_REQUIRE_NER=1 pytest -m ner -n 2`, on `8f91d3ea`: 38 passed, 14 skipped (the same on
+`a9642755`). Every skip is a module-level import skip for another optional dependency (google,
+paramiko, hvac, lightgbm, joblib, mimesis, the wheel builder, mutmut); no NER test skipped.
 
 ## TEST SCOPE
 
@@ -201,7 +255,7 @@ Named tests: tests/unit/execution/test_scanml_m5_route_guard.py (AT-M5a),
              tests/sentry/test_post_scan_route_guard.py,
              tests/unit/test_reason_registry.py::test_scanml_m5_route_refusal_is_registered_with_a_pinned_fixture
 Selection:   scripts/dev/gates.sh --baseline
-Plus:        git grep hits in tests/ for the changed signatures (182 paths, tests/perf excluded)
+Plus:        git grep hits in tests/ for the changed signatures (183 paths, tests/perf excluded)
 Sentries:    tests/sentry (module size, reason registry, minor fixtures, baseline registry, manifest)
 Triggers:    public execution signatures (required config), new reason code, registry minor bump
 Mutations:   M-M5a -> refusal and guard-first tests; M-M5a2 -> out-of-core forwarding tests;
@@ -214,7 +268,10 @@ Full suite:  trigger public execution signatures plus reason registry, orchestra
 - The full suite (orchestrator) and the perf suite.
 - ruff and mypy in the exact `--extra dev` sync (not installed there); run with `--extra lint`.
 - Tests needing google, paramiko, hvac, lightgbm, joblib or mimesis (not installed).
-- The gates tests step ran on `17562e7c`; `ca37c508` and this record change one test file and docs.
+- The final gates run was on `8f91d3ea`; the record commit after it changes docs only, and
+  `tests/sentry` was rerun on that head.
+- No mutation drops the declaration gate from the lane cores; that gate is #495's, and its own tests
+  run through `run_pipeline` (in the selection above).
 
 ## V2-LOG
 
@@ -223,3 +280,7 @@ Full suite:  trigger public execution signatures plus reason registry, orchestra
   rather than a typed refusal.
 - `src/decoy_engine/execution/physical/_shadow_coordinator.py:252`: the shadow OOC compare passes
   `config={}`; it publishes nothing, but a shadow run of a model post-scan job is not refused.
+- `src/decoy_engine/execution/native/chunked/_core.py:24` and
+  `src/decoy_engine/execution/_chunked_oracle.py` (`_mask_pipeline_chunked`): each core repeats its
+  entry's pre-read steps (subset check, thread check, declaration gate) beside the entry, so a new
+  pre-read step added to an entry must be added to its core too; no sentry compares the two lists.
