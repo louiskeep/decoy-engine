@@ -279,6 +279,21 @@ def test_parents_with_different_key_types_are_a_type_mismatch(tmp_path: Path) ->
     assert (res.status, codes(res)) == ("key_type_mismatch", {"key_type_mismatch"})
 
 
+def test_an_int32_parent_then_an_int64_parent_count_a_value_above_the_int32_range(
+    tmp_path: Path,
+) -> None:
+    big = 2**40
+    rels = [rel("a", ["id"], ("c", ["k"])), rel("b", ["id"], ("c", ["k"]))]
+    data = {
+        "a": from_table("a", pa.table({"id": pa.array([1, 2], pa.int32())})),
+        "b": from_table("b", pa.table({"id": pa.array([big, 3], pa.int64())})),
+        "c": from_table("c", pa.table({"k": pa.array([1, big, 3, 7], pa.int64())})),
+    }
+    child = run(tmp_path, rels, data, data)[("c", "foreign")]
+    assert (child.status, child.codes) == ("checked", ())
+    assert (child.output.rows, child.output.orphan_rows) == (4, 1)  # only 7 is in neither parent
+
+
 def test_a_table_absent_from_the_inputs_has_a_zero_baseline(tmp_path: Path) -> None:
     rels = [rel("p", ["id"], ("c", ["pid"]))]
     source = tables(p={"id": [1]})

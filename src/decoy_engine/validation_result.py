@@ -294,6 +294,9 @@ class CODES:
     # before any data row is read. The message names a position, never a column.
     SOURCE_FILE_UNDECLARED_COLUMN = reasons.config.SOURCE_FILE_UNDECLARED_COLUMN
     SOURCE_FILE_UNDECLARED_TABLE = reasons.config.SOURCE_FILE_UNDECLARED_TABLE
+    # A column the config declares for a mask table that the source does not have, found from
+    # the header or schema before any data row is read. Names the column, never a value.
+    SOURCE_FILE_DECLARED_COLUMN_MISSING = reasons.config.SOURCE_FILE_DECLARED_COLUMN_MISSING
     # A `column_names_file` that is not a one-record UTF-8 header file. Raised at
     # read time with a fixed phrase, never a name, path or cell value.
     SOURCE_FILE_COLUMN_NAMES_FILE_INVALID = reasons.config.SOURCE_FILE_COLUMN_NAMES_FILE_INVALID

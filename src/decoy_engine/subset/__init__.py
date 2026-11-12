@@ -2,7 +2,7 @@
 
 Public surface ONLY: `run_subset_preflight`, `plan_subset`, `run_subset`,
 `relationships_from_config`, `subset_inputs_from_config`, `subset_request_from_config`,
-`select_subset` and `scope_for`, the public dataclass types, and the error classes.
+`select_subset`, `split_subset_config` and `scope_for`, the public dataclass types, and the error classes.
 Everything else under `decoy_engine.subset.*` is private. Not re-exported from the top-level `decoy_engine` package this sprint
 (SS6's CLI imports `decoy_engine.subset` directly) -- keeps the frozen public
 surface small until the CLI/platform wiring lands.
@@ -33,6 +33,7 @@ from decoy_engine.subset._sample import (
     sample_request,
 )
 from decoy_engine.subset._scope import SubsetRequest, SubsetScope, SubsetSelection, scope_for
+from decoy_engine.subset._split import SubsetSplit, split_subset_config
 from decoy_engine.subset._types import (
     ClosureResult,
     EdgeDirection,
@@ -85,6 +86,7 @@ __all__ = [
     "SubsetScope",
     "SubsetSelection",
     "SubsetSource",
+    "SubsetSplit",
     "TableEstimate",
     "plan_subset",
     "relationships_from_config",
@@ -94,6 +96,7 @@ __all__ = [
     "sample_request",
     "scope_for",
     "select_subset",
+    "split_subset_config",
     "subset_inputs_from_config",
     "subset_request_from_config",
 ]
