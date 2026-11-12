@@ -10,6 +10,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 import yaml
@@ -40,7 +41,14 @@ NATIVE_NAMES = [
     "companion-fuzz-sanitizer",
     "core-companion-absent",
 ]
-CI_NAMES = ["packaging-gate", "ml-gate", "ner-gate", "dp-certified-gate", "determinism"]
+CI_NAMES = [
+    "packaging-gate",
+    "ml-gate",
+    "base-install",
+    "ner-gate",
+    "dp-certified-gate",
+    "determinism",
+]
 MERGE = {
     "ci.yml": CI_NAMES,
     "native-companion.yml": NATIVE_NAMES,
@@ -84,6 +92,7 @@ class FakeGitHub:
         self.jobs: dict[int, list[dict[str, Any]]] = {}
         self.main = MAIN
         self.error: Exception | None = None
+        self.job_pages: list[int] = []
         self._next = 1
 
     def add(
@@ -96,6 +105,8 @@ class FakeGitHub:
         attempt: int = 1,
         created: str | None = None,
         conclusions: dict[str, str | None] | None = None,
+        status: str = "completed",
+        run_conclusion: str | None = "success",
     ) -> int:
         rid, self._next = self._next, self._next + 1
         self.runs.setdefault(wf, []).append(
@@ -105,6 +116,8 @@ class FakeGitHub:
                 "head_sha": sha,
                 "run_attempt": attempt,
                 "created_at": created or stamp(),
+                "status": status,
+                "conclusion": run_conclusion,
             }
         )
         names = MERGE[wf] if names is None else names
@@ -122,7 +135,10 @@ class FakeGitHub:
                 return {"workflow_runs": runs}
         for rid, jobs in self.jobs.items():
             if path.startswith(f"repos/{REPO}/actions/runs/{rid}/jobs"):
-                return {"jobs": jobs}
+                qs = parse_qs(urlparse(path).query)
+                page, size = int(qs.get("page", ["1"])[0]), int(qs["per_page"][0])
+                self.job_pages.append(page)
+                return {"total_count": len(jobs), "jobs": jobs[(page - 1) * size : page * size]}
         if "/actions/workflows/" in path and path.split("?")[0].endswith("/runs"):
             return {"workflow_runs": []}
         raise AssertionError(f"unexpected API path {path}")
@@ -212,7 +228,7 @@ def test_contexts_prints_the_merge_tier_as_json(capsys: pytest.CaptureFixture[st
     out = capsys.readouterr().out
     got = json.loads(out)
     assert sorted(got) == sorted(n for names in MERGE.values() for n in names)
-    assert len(got) == len(set(got)) == 24
+    assert len(got) == len(set(got)) == 25
 
 
 # --- AT-21: verify --tier merge -------------------------------------------------------------
@@ -383,3 +399,93 @@ def test_nightly_api_error_exits_two() -> None:
     gh = nightly()
     gh.error = OSError("boom")
     assert run_nightly(gh) == 2
+
+
+# --- fail-closed nightly verification -------------------------------------------------------
+
+
+def test_an_empty_job_list_is_red(capsys: pytest.CaptureFixture[str]) -> None:
+    gh = nightly()
+    gh.jobs[gh.runs["security.yml"][0]["id"]] = []
+    assert run_nightly(gh) == 1
+    assert "no jobs" in capsys.readouterr().out
+
+
+def test_a_missing_expected_job_is_red(capsys: pytest.CaptureFixture[str]) -> None:
+    gh = nightly()
+    del gh.jobs[gh.runs["security.yml"][0]["id"]][-1]
+    assert run_nightly(gh) == 1
+    assert "is missing" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("status", "conclusion"), [("in_progress", None), ("completed", "cancelled")]
+)
+def test_a_run_that_is_not_completed_success_is_red(status: str, conclusion: str | None) -> None:
+    gh = nightly()
+    run = gh.runs["security.yml"][0]
+    run["status"], run["conclusion"] = status, conclusion
+    assert run_nightly(gh) == 1
+
+
+def test_a_failed_job_on_page_two_is_red() -> None:
+    gh = nightly()
+    jobs = gh.jobs[gh.runs["security.yml"][0]["id"]]
+    jobs += [{"name": f"extra-{i}", "conclusion": "success"} for i in range(99)]
+    jobs.append({"name": "late", "conclusion": "failure"})
+    assert len(jobs) > 100
+    assert run_nightly(gh) == 1
+    assert 2 in gh.job_pages
+
+
+def test_many_green_jobs_across_pages_pass() -> None:
+    gh = nightly()
+    jobs = gh.jobs[gh.runs["security.yml"][0]["id"]]
+    jobs += [{"name": f"extra-{i}", "conclusion": "success"} for i in range(150)]
+    assert run_nightly(gh) == 0
+    assert 2 in gh.job_pages
+
+
+def test_a_short_job_read_is_an_error_not_a_pass() -> None:
+    class Short(FakeGitHub):
+        def __call__(self, path: str) -> Any:
+            out = super().__call__(path)
+            if "/jobs" in path:
+                out["total_count"] += 1
+            return out
+
+    gh = Short()
+    for wf in SCHEDULED:
+        gh.add(wf, scheduled_names(wf), event="schedule", sha=MAIN)
+    assert run_nightly(gh) == 2
+
+
+def test_a_skipped_scheduled_job_is_not_green() -> None:
+    gh = nightly()
+    gh.jobs[gh.runs["security.yml"][0]["id"]][0]["conclusion"] = "skipped"
+    assert run_nightly(gh) == 1
+
+
+def test_underivable_scheduled_workflow_is_a_problem_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class Git(FakeGit):
+        def __call__(self, args: Any) -> str:
+            argv = list(args)
+            if argv[0] == "show" and argv[1].endswith("security.yml"):
+                doc = workflow("security.yml")
+                doc["jobs"]["pip-audit"]["name"] = "${{ matrix.x }}"
+                return yaml.safe_dump(doc)
+            return super().__call__(args)
+
+    assert run_main(["verify", "--tier", "nightly"], nightly(), Git()) == 1
+    assert "cannot derive" in capsys.readouterr().out
+
+
+def test_derivation_error_keeps_no_context() -> None:
+    doc = workflow("native-companion.yml")
+    doc["jobs"]["companion-wheel-macos"]["strategy"]["matrix"]["exclude"] = [{}]
+    required = {"merge": [{"workflow": "n.yml", "jobs": ["companion-wheel-macos"]}]}
+    with pytest.raises(rc.DerivationError) as info:
+        rc.merge_contexts(required, {"n.yml": doc})
+    assert info.value.__context__ is None

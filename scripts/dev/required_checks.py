@@ -18,7 +18,9 @@ list. `origin/main` is fetched and must equal that sha, else exit 2 ("stale orig
   derived name with conclusion `success` (skipped, neutral, cancelled and missing are red) on
   `run_attempt` 1, unless `--allow-rerun` names the workflow; the reason is printed for the gate log.
 - `verify --tier nightly`: per workflow with a `schedule` trigger on main, the newest `schedule` run
-  is on the main sha, at most 26 hours old, with every job `success`.
+  is on the main sha, at most 26 hours old, `completed` with conclusion `success`, and has every job
+  the tree derives for that workflow with conclusion `success`. All job pages are read. A job skipped
+  on schedule counts as not green.
 
 Exit 0: everything checks. Exit 1: a red, missing or stale item. Exit 2: usage, derivation or API
 error. An error is never a pass. Output names workflows, jobs and shas only.
@@ -120,13 +122,17 @@ def merge_contexts(
         if doc is None:
             raise CheckError(f"{wf}: merge workflow does not exist at the main sha")
         names: list[str] = []
+        failed = None
         for key in entry["jobs"]:
             if key not in doc["jobs"]:
                 raise CheckError(f"{wf}:{key}: merge job does not exist at the main sha")
             try:
                 names += job_check_names(key, doc["jobs"][key])
             except DerivationError as e:
-                raise DerivationError(f"{wf}:{e}") from None
+                failed = str(e)  # raised below, outside the except, so no __context__ is kept
+                break
+        if failed is not None:
+            raise DerivationError(f"{wf}:{failed}")
         out[wf] = names
     return out
 
@@ -167,7 +173,22 @@ def _newest(runs: list[dict[str, Any]], **want: Any) -> dict[str, Any] | None:
 
 
 def _jobs(repo: str, run: dict[str, Any], fetch: Fetch) -> dict[str, list[str | None]]:
-    jobs = fetch(f"repos/{repo}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100")["jobs"]
+    """Every job of the run, all pages; a short read is an error, never a smaller list."""
+    jobs: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        resp = fetch(
+            f"repos/{repo}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100&page={page}"
+        )
+        total, batch = resp.get("total_count"), resp["jobs"]
+        if not isinstance(total, int):
+            raise CheckError(f"run {run['id']}: job listing has no total_count")
+        jobs += batch
+        if len(jobs) >= total:
+            break
+        if not batch:
+            raise CheckError(f"run {run['id']}: read {len(jobs)} of {total} jobs")
+        page += 1
     by_name: dict[str, list[str | None]] = {}
     for job in jobs:
         by_name.setdefault(job["name"], []).append(job["conclusion"])
@@ -219,10 +240,21 @@ def verify_nightly(repo: str, tree: MainTree, fetch: Fetch, now: datetime) -> li
         if now - created > MAX_NIGHTLY_AGE:
             problems.append(f"{wf}: no fresh run, the newest is older than 26 hours")
             continue
+        if run.get("status") != "completed" or run.get("conclusion") != "success":
+            problems.append(f"{wf}: run is {run.get('status')}/{run.get('conclusion')}, not green")
+            continue
+        try:
+            expected = [n for k, j in doc["jobs"].items() for n in job_check_names(k, j)]
+        except DerivationError as e:
+            problems.append(f"{wf}: cannot derive the expected jobs: {e}")
+            continue
+        got = _jobs(repo, run, fetch)
+        if not got:
+            problems.append(f"{wf}: the run has no jobs")
+            continue
+        problems += [f"{wf}: check {n!r} is missing" for n in expected if n not in got]
         problems += [
-            f"{wf}: job {name!r} is not green"
-            for name, got in _jobs(repo, run, fetch).items()
-            if set(got) != {"success"}
+            f"{wf}: job {n!r} is not green" for n, c in got.items() if set(c) != {"success"}
         ]
     return problems
 
