@@ -157,6 +157,8 @@ kind or payload major this version does not know is returned as an opaque record
 dropped. A default export withholds such a record (its id goes in the header's `withheld_records`); `keep_paths` copies it byte for byte. `decoy-library-export/v1` is the JSON Lines export format and
 `decoy-job-log/v1` the header of a job log. Corpus samples are in `tests/integration/compat_corpus/records/`.
 
+The `evidence` payload (`cli-local-1`) also accepts two additive optional keys, `path_base` (exactly `"project"`) and `project_manifest` (a relative path or `null`), both present or both absent, as a run inside a `decoy.yaml` project writes them. Absent keys stay absent, and `project_manifest` is a path field in a default export.
+
 `scan-set/v1` is the record of one multi-table scan (`decoy_engine.scan_sources`). The engine
 owns its shape: `ScanSetCore` to write (unknown fields refused), `ScanSetCoreRead` to read
 (unknown fields ignored). It holds counts, rates, type labels, detector ids and column names.

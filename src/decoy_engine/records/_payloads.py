@@ -19,7 +19,11 @@ from pydantic import (
     StrictInt,
     StrictStr,
     StringConstraints,
+    ValidationError,
+    field_validator,
+    model_validator,
 )
+from pydantic_core import PydanticCustomError
 
 from decoy_engine._value_free import Count
 from decoy_engine.run_result import SafeName, Sha256
@@ -109,6 +113,31 @@ class EvidencePayload(_Model):
     timings: tuple[Timing, ...]
     strategies: tuple[Strategy, ...]
     manifest_hash: Sha256
+    # Additive to cli-local-1 (CLI #200): written together inside a decoy.yaml project, else absent.
+    # Absent must stay absent for the manifest_hash, so these are never given a stored default.
+    path_base: Literal["project"] | None = None
+    project_manifest: RelPath | None = None
+
+    @field_validator("path_base", mode="after")
+    @classmethod
+    def _path_base_not_null(cls, value: str | None) -> str | None:
+        # Runs only when the key is present, so an explicit null is the one case left to refuse.
+        if value is None:
+            raise PydanticCustomError("path_base_null", "path_base is not null")
+        return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def _binding_pair(cls, data: Any) -> Any:
+        if isinstance(data, dict) and ("path_base" in data) != ("project_manifest" in data):
+            missing = "project_manifest" if "path_base" in data else "path_base"
+            detail = {
+                "type": PydanticCustomError("binding_pair", "path_base and project_manifest pair"),
+                "loc": (missing,),
+                "input": None,
+            }
+            raise ValidationError.from_exception_data(cls.__name__, [detail])  # type: ignore[list-item]
+        return data
 
 
 class ColumnRef(_Model):
