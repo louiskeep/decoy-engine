@@ -41,3 +41,21 @@ copy:
 | tables created from the declared types (first-schema load) | union-shaped parent |
 | `uint64` cast to `int64` in Arrow before insert | `uint64` against `int64`; integer pairs |
 | exact type text in `_comparable` | 62 tests, including AT-36 |
+
+## Fix round
+
+- One owner for the family rule: `_family(t)` in `profiling/_scan_integrity.py` returns
+  `"integer"`, `"string"` or `None`. `_comparable` and `_duck_types` both call it; `_duck_types`
+  picks the DuckDB type from the token. Behavior is unchanged (15 added, 17 removed source lines).
+- Guard test `test_comparable_pair_never_falls_back_to_the_declared_type`: every comparable pair of
+  different types among the integer widths and string encodings gets a non-`None` type from
+  `_duck_types`. It passes on the old code too (a characterization guard); its red is the mutation.
+- The typed-empty cell now reads `duckdb_columns()` through `_before_fetch` (a second cursor, since
+  the first still holds the orphan result) and asserts `parent.k0` and `child.k0` are `HUGEINT`.
+- Run on the Mac of `tests/unit/profiling`, `tests/unit/detection_verification/postscan` and
+  `tests/sentry`: the first run had 1 failure of mine (the probe reused the busy connection, fixed
+  in the last commit) plus the 10 expected `test_import_layers.py` failures. After the fix the
+  family test file runs 140 passed, 76 skipped.
+- Mutation: `_family` stops recognizing `large_string` while `_comparable` still accepts it on its
+  own. The guard fails for `large_string` against `string` and against the dictionary string;
+  `test_keys_comparable_reads_schemas_and_opens_no_connection` fails as well. Not committed.
