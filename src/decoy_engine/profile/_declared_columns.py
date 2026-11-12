@@ -106,29 +106,45 @@ class DeclarationInput:
     origin: str
     # A chunk's columns must also be among these (the `source_schema` a chunked caller gave).
     within: tuple[str, ...] | None = None
+    # Declared columns the config creates itself on this table, so the source may lack them.
+    created: frozenset[str] = frozenset()
 
 
 @dataclasses.dataclass(frozen=True)
 class DeclarationFinding:
-    """One undeclared table or column set. `detail` is public; `undeclared` is for the fixture
-    codemod only and stays out of `repr`."""
+    """One undeclared table, undeclared column set or declared-but-missing column set. `detail`
+    is public; `undeclared` (the names behind it, whichever kind) is for the fixture codemod
+    only and stays out of `repr`."""
 
-    kind: Literal["table", "column"]
+    kind: Literal["table", "column", "missing"]
     table: str
     detail: str
     undeclared: tuple[str, ...] = dataclasses.field(default=(), repr=False)
 
 
+def _missing_finding(table: str, lacking: Sequence[str]) -> DeclarationFinding:
+    """`lacking` is in config order, so the name reported is the first one the config lists."""
+    return DeclarationFinding(
+        "missing",
+        table,
+        f"column {lacking[0]} is declared but the source has no such column "
+        f"({len(lacking)} missing); remove it or fix the name",
+        tuple(lacking),
+    )
+
+
 def declaration_findings(
     config: Mapping[str, Any], inputs: Sequence[DeclarationInput]
 ) -> tuple[DeclarationFinding, ...]:
-    """Every finding, table findings first, each group in input order."""
+    """Every finding: undeclared tables, then undeclared columns, then declared-but-missing
+    columns, each group in input order."""
     from decoy_engine.execution._pipeline_context import classify_table_kinds
 
     known = {e.get("name") for e in config.get("tables") or [] if isinstance(e, Mapping)}
     kinds = classify_table_kinds(dict(config))
     tables: list[DeclarationFinding] = []
     columns: list[DeclarationFinding] = []
+    absent: list[DeclarationFinding] = []
     for item in inputs:
         if item.table not in known:
             width = "" if item.columns is None else f" ({len(item.columns)} columns)"
@@ -142,7 +158,8 @@ def declaration_findings(
                 )
             )
         elif item.columns is not None and kinds.get(item.table) == "mask":
-            in_config = frozenset(declared_columns(config, item.table))
+            ordered = declared_columns(config, item.table)
+            in_config = frozenset(ordered)
             declared = in_config
             if item.within is not None:
                 declared &= frozenset(item.within)
@@ -164,7 +181,10 @@ def declaration_findings(
                         tuple(c for _, c in missing),
                     )
                 )
-    return (*tables, *columns)
+            lacking = [c for c in ordered if c not in item.columns and c not in item.created]
+            if lacking:
+                absent.append(_missing_finding(item.table, lacking))
+    return (*tables, *columns, *absent)
 
 
 def check_columns_declared(config: Mapping[str, Any], inputs: Sequence[DeclarationInput]) -> None:
@@ -178,6 +198,8 @@ def check_columns_declared(config: Mapping[str, Any], inputs: Sequence[Declarati
         raise source_refusal(CODES.SOURCE_FILE_UNDECLARED_TABLE, first.table, first.detail)
     if kind == "column":
         raise source_refusal(CODES.SOURCE_FILE_UNDECLARED_COLUMN, first.table, first.detail)
+    if kind == "missing":
+        raise source_refusal(CODES.SOURCE_FILE_DECLARED_COLUMN_MISSING, first.table, first.detail)
     raise AssertionError("unreachable finding kind")
 
 
@@ -287,8 +309,10 @@ class PreparedDeclaredSources:
 
     def check_names(self, table: str, names: Iterable[str]) -> None:
         within = self._chunk_columns.get(table)
+        have = tuple(names)
         check_columns_declared(
-            self._config, [DeclarationInput(table, tuple(names), "check", within)]
+            self._config,
+            [DeclarationInput(table, have, "check", within, self.created(table, have))],
         )
 
     def checked_chunks(
@@ -331,6 +355,15 @@ class PreparedDeclaredSources:
         return load
 
 
+def _with_created(
+    config: Mapping[str, Any], item: DeclarationInput, policy: CreatedTargets
+) -> DeclarationInput:
+    if item.columns is None:
+        return item
+    created = policy(_table_entry(config, item.table), item.columns)
+    return dataclasses.replace(item, created=created)
+
+
 @fileaccess.entry_point
 def prepare_declared_sources(
     request: DeclarationRequest,
@@ -349,6 +382,8 @@ def prepare_declared_sources(
         for name, descriptor in request._descriptors
     ]
     inputs = (*resolved, *request._inputs)
+    if created_targets is not None:
+        inputs = tuple(_with_created(request._config, i, created_targets) for i in inputs)
     check_columns_declared(request._config, inputs)
     return PreparedDeclaredSources(_TOKEN, request._config, inputs, created_targets)
 
