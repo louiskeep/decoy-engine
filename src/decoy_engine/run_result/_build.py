@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Final, Protocol, get_args
+from typing import Any, Protocol, get_args
 
 from decoy_engine.progress import EVENT_SCHEMA_VERSION, safe_error_class
 from decoy_engine.reasons import REGISTRY_VERSION, ReasonRecord, approve_name, approve_ref
@@ -38,7 +38,6 @@ from decoy_engine.run_result._project import ExecutionFacts, ProjectedTables
 _MODES = tuple(m for m in get_args(ExecutionMode) if m != "other")
 _MAX_CODES = 64
 _MAX_WARNINGS = 256
-_TRUNCATED: Final = "truncated"
 
 
 class RunFacts(ExecutionFacts, Protocol):
@@ -143,7 +142,7 @@ def _warnings(result: RunFacts | None) -> tuple[WarningEntry, ...]:
         rest = sum(e.count for e in entries[_MAX_WARNINGS - 1 :])
         entries = [
             *entries[: _MAX_WARNINGS - 1],
-            WarningEntry(code=_TRUNCATED, table=None, column=None, count=rest),
+            WarningEntry(code="truncated", table=None, column=None, count=rest),
         ]
     return tuple(entries)
 
