@@ -427,23 +427,21 @@ def _child_facts(conn: Any, width: int, on: str) -> ChildKeyFacts:
     return ChildKeyFacts(rows, rows - complete_rows, orphan_rows, orphan_keys)
 
 
-def column_distinct(batches: pa.RecordBatchReader, *, scratch: Path, memory_limit: str) -> int:
-    """Exact count of distinct non-null values in the one column `batches` reads.
+def column_distinct(keys: KeyBatches, *, scratch: Path, memory_limit: str) -> int:
+    """Exact count of distinct non-null values in the one column `keys` reads (labelled `k0`).
 
-    The column is relabelled `k0`, so the statement never carries a column name. `scratch` is
-    caller-owned; the connection spills under it and is closed on every exit."""
+    A float NaN is not a value here, as in pandas; DuckDB would count it. The type decides, not
+    the data. `scratch` is caller-owned; the connection spills under it and is closed on every
+    exit."""
     # Imported here because decoy_engine.execution imports the profiling package.
     from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 
-    if len(batches.schema) != 1:
-        raise ValueError("column_distinct: the reader must read exactly one column")
-    schema = pa.schema([("k0", batches.schema.field(0).type)])
-    relabelled = pa.RecordBatchReader.from_batches(
-        schema, (b.rename_columns(["k0"]) for b in batches)
-    )
+    if len(keys.schema) != 1:
+        raise ValueError("column_distinct: the keys must hold exactly one column")
+    skip_nan = " FILTER (WHERE NOT isnan(k0))" if pa.types.is_floating(keys.schema.types[0]) else ""
     conn = connect_duckdb(temp_dir=scratch, memory_limit=memory_limit)
     try:
-        conn.register("incoming", relabelled)
-        return _count(conn, "SELECT count(DISTINCT k0) FROM incoming")
+        conn.register("incoming", pa.RecordBatchReader.from_batches(keys.schema, keys.batches()))
+        return _count(conn, f"SELECT count(DISTINCT k0){skip_nan} FROM incoming")
     finally:
         conn.close()

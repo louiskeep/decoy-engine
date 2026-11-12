@@ -11,16 +11,17 @@ skipped, as `residual_pii` and `policy_validation` do. Holds counts, names and d
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pandas as pd
 import pyarrow as pa
 
-from decoy_engine.detection.detectors import _confidence_bucket, counting_scope, run_all_detectors
+from decoy_engine.detection.detectors import counting_scope, decide_detector, run_all_detectors
+from decoy_engine.internal.pandas_compat import exact_int_types_mapper
 from decoy_engine.profiling import KEY_BATCH_ROWS, column_distinct
-from decoy_engine.verification.postmask._stream_input import TableBatches
+from decoy_engine.verification.postmask._stream_input import TableBatches, key_batches
 
 
 @dataclass(frozen=True)
@@ -63,8 +64,9 @@ class _Tally:
 
 
 def _series(batch: pa.RecordBatch, column: str) -> pd.Series:
-    # Python ints for integers with nulls, so a null in one batch cannot retype the column.
-    return batch.column(batch.schema.get_field_index(column)).to_pandas(integer_object_nulls=True)
+    # The dtype comes from the schema, so a null in one batch cannot retype an integer column.
+    array = batch.column(batch.schema.get_field_index(column))
+    return array.to_pandas(types_mapper=exact_int_types_mapper)
 
 
 def _aligned(
@@ -78,6 +80,11 @@ def _aligned(
         if b is None or b.num_rows == 0:
             b = next(right, None)
         if a is None or b is None:
+            # Exhaust both so the row-count check sees every row, not a prefix.
+            for _ in left:
+                pass
+            for _ in right:
+                pass
             return
         n = min(a.num_rows, b.num_rows)
         if n:
@@ -107,20 +114,37 @@ def _add_detectors(tally: _Tally, out: pd.Series, column: str) -> None:
 def _fired(tally: _Tally) -> tuple[DetectorRate, ...]:
     rates = []
     for detector_id, (hits, n, threshold, name_hint) in (tally.detectors or {}).items():
-        rate = int(hits) / int(n) if n else 0.0
-        if n and rate >= float(threshold):
-            rates.append(
-                DetectorRate(
-                    detector_id, round(rate, 4), _confidence_bucket(rate, name_hint=bool(name_hint))
-                )
-            )
+        decided = decide_detector(int(hits), int(n), float(threshold), bool(name_hint))
+        if decided is not None:
+            rates.append(DetectorRate(detector_id, round(decided[0], 4), decided[1]))
     return tuple(sorted(rates, key=lambda r: r.match_rate, reverse=True))
 
 
-def _distinct(table: TableBatches, column: str, batch_rows: int, scratch: Path, limit: str) -> int:
-    schema = pa.schema([table.schema.field(column)])
-    reader = pa.RecordBatchReader.from_batches(schema, table.read([column], batch_rows))
-    return column_distinct(reader, scratch=scratch, memory_limit=limit)
+def _counted(table: TableBatches) -> tuple[TableBatches, Callable[[], None]]:
+    """`table` with a row tally over its reads, and a check that the tally equals its declared
+    row count. A stream that ends early or runs long would otherwise leave facts over a prefix."""
+    seen = [0]
+
+    def read(columns: Sequence[str], batch_rows: int) -> Iterator[pa.RecordBatch]:
+        for batch in table.read(columns, batch_rows):
+            seen[0] += batch.num_rows
+            yield batch
+
+    def verify() -> None:
+        if seen[0] != table.num_rows:
+            raise ValueError(
+                f"column facts: a table read gave {seen[0]} rows but the table declares "
+                f"{table.num_rows}"
+            )
+
+    return replace(table, read=read), verify
+
+
+def _distinct(table: TableBatches, column: str, scratch: Path, limit: str) -> int:
+    counted, verify = _counted(table)
+    count = column_distinct(key_batches(counted, [column]), scratch=scratch, memory_limit=limit)
+    verify()
+    return count
 
 
 def column_facts(
@@ -139,17 +163,23 @@ def column_facts(
     compared = [c for c in wanted if source is not None and c in source.schema.names]
     aligned = source is not None and source.num_rows == output.num_rows
     tallies = {c: _Tally() for c in wanted}
+    out_read, out_verify = _counted(output)
+    checks = [out_verify]
     if aligned and source is not None and compared:
-        pairs = _aligned(source.read(compared, batch_rows), output.read(wanted, batch_rows))
+        src_read, src_verify = _counted(source)
+        checks.append(src_verify)
+        pairs = _aligned(src_read.read(compared, batch_rows), out_read.read(wanted, batch_rows))
     else:
         compared = []
-        pairs = ((None, b) for b in output.read(wanted, batch_rows))
+        pairs = ((None, b) for b in out_read.read(wanted, batch_rows))
     for src_batch, out_batch in pairs:
         for c in wanted:
             out_s = _series(out_batch, c)
             if src_batch is not None and c in compared:
                 _add_identity(tallies[c], _series(src_batch, c), out_s)
             _add_detectors(tallies[c], out_s, c)
+    for check in checks:
+        check()
     facts = {}
     for c in wanted:
         t = tallies[c]
@@ -163,11 +193,11 @@ def column_facts(
             identical_rows=t.identical,
             bytes_identical=aligned and c in compared and t.same_bytes,
             source_distinct=(
-                _distinct(source, c, batch_rows, scratch, memory_limit)
+                _distinct(source, c, scratch, memory_limit)
                 if source is not None and has_source
                 else 0
             ),
-            output_distinct=_distinct(output, c, batch_rows, scratch, memory_limit),
+            output_distinct=_distinct(output, c, scratch, memory_limit),
             detectors=_fired(t),
         )
     return facts

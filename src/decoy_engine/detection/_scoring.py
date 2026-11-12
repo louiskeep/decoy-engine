@@ -135,6 +135,20 @@ def _confidence_bucket(rate: float, *, name_hint: bool) -> str:
     return "low"
 
 
+def decide_detector(
+    hits: int, n: int, threshold: float, name_hint: bool
+) -> tuple[float, str] | None:
+    """The one firing rule: `(rate, confidence bucket)` when `hits` of `n` values reach
+    `threshold`, else None. A batch scan sums `hits` and `n` first, so it decides like a
+    whole-column scan."""
+    if n == 0:
+        return None
+    rate = float(hits) / n
+    if rate < threshold:
+        return None
+    return rate, _confidence_bucket(rate, name_hint=name_hint)
+
+
 def _dominant_variant(
     uniques: pd.Series,
     counts: np.ndarray,
@@ -202,13 +216,14 @@ def _evaluate(
                 continue
         hit = validated
     hits = int(values.counts[hit].sum())
-    rate = float(hits) / values.n
     threshold = NAME_HINT_MIN_RATE if name_hint else min_rate
     tally = _COUNTS.get()
     if tally is not None:
         tally.append(DetectorCount(detector_id, hits, values.n, threshold, name_hint))
-    if rate < threshold:
+    fired = decide_detector(hits, values.n, threshold, name_hint)
+    if fired is None:
         return None
+    rate, confidence = fired
     miss_rows = np.flatnonzero(~hit[values.codes])[:SAMPLE_MISS_LIMIT]
     misses = uniques.iloc[values.codes[miss_rows]].tolist()
     format_pattern: str | None = None
@@ -219,6 +234,6 @@ def _evaluate(
         match_rate=round(rate, 4),
         sample_misses=[str(m) for m in misses],
         format_pattern=format_pattern,
-        confidence=_confidence_bucket(rate, name_hint=name_hint),
+        confidence=confidence,
         domain=domain_for(detector_id).value,
     )
