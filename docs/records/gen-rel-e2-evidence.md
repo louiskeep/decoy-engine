@@ -8,12 +8,17 @@ trees). The plan stays on the plan branch.
 ## Heads and environment
 
 - Slice start: `feat/gen-rel-e1` at `8d260171` (slice 1, which held `origin/main` `44bbf494`).
-- `origin/main` moved to `69646f18` (#534, #528, #535) and is merged as `7abbcd03`, cleanly. It
-  adds delivery reasons, key type families and the run-result projection; none of it reads a
-  generate `reference` column, and the sentries and the T1 set are green on the merge.
-- Commits: `bbefd7d1` red acceptance tests (source as at `8d260171`), `7abbcd03` merge of main,
-  `0116c78c` the feature. Final source head: `0116c78c`. This record is added in a docs-only
-  commit after it.
+- Post-merge base: `origin/feat/gen-rel-e1` at `68034ff0`, which holds `origin/main` `353d98bf`.
+  It is merged forward once, as `e27b9485` ("Merge feat/gen-rel-e1 into feat/gen-rel-e2"). One
+  conflict, in `docs/reasons.md`, resolved by keeping both paragraphs (this slice's and
+  CONFIG-EXPLICIT E2b-r's). Main is not merged into this branch directly.
+- Commits: `bbefd7d1` red acceptance tests (source as at `8d260171`), `92d8a006` the feature,
+  `f0f74d83` this record's first version, `e27b9485` the forward merge. Final source head:
+  `e27b9485`; every mutation and gate total below belongs to it unless a line says otherwise.
+  This record is updated in a docs-only commit after it.
+- Two earlier local merges of `origin/main` (at `69646f18` and `a3cb996f`) were made before the
+  owner's instruction to merge main only through slice 1; they were never pushed and are
+  discarded, and the feature and record commits were replayed on the red commit unchanged.
 - Gates: Python 3.10.20 (a temporary venv synced with
   `uv sync --frozen --python 3.10 --extra dev --extra lint --extra vault --extra cloud`, as CI
   uses; the existing `.venv` was not changed), PyArrow 24.0.0, DuckDB 1.5.4, pandas 2.3.3,
@@ -83,9 +88,9 @@ three (an unknown token, a non-string policy, a short entry, an entry that is no
 bare string entry, a valid entry beside an invalid one, and a field that is a string, an integer
 or `None`). `test_serialized_reference_policies_decode_strictly` is unchanged.
 
-## Mutations (final source head `0116c78c`, detached worktree, 60 of 60 red)
+## Mutations (final source head `e27b9485`, detached worktree, 60 of 60 red)
 
-Each was applied once in a detached worktree of `0116c78c` that imports its own `src`, its named
+Each was applied once in a detached worktree of `e27b9485` that imports its own `src`, its named
 tests run (Python 3.11.18, the `.venv`), and the file restored; every anchor matched exactly
 once, the worktree was clean at the end and is removed. No source changed after the run.
 
@@ -162,9 +167,10 @@ value or raise inside an `except` block; A1a is AT-1's "branch on a new key when
 P0 is AT-5's "leave `root_count`". The rest cover the option matrix cell by cell and the cells
 that are green on the base by design.
 
-An earlier run on the first feature commit found one mutant that stayed green (removing an
-empty-table guard from the draw): the guard was redundant, so it was removed, the commit
-amended before any push, and all mutations rerun on the result.
+The same 60 were red, with the same failing tests, on the feature commit before the forward
+merge. The first run of all found one mutant that stayed green (removing an empty-table guard
+from the draw): the guard was redundant, so it was removed before any push and every mutation
+rerun on the result.
 
 ## What the slice does about AT-10's tampered policy
 
@@ -246,39 +252,51 @@ untouched, and the four new codes are `since=UNRELEASED`.
 ## Line counts
 
 `generation/synthesize.py` 597 (591 at the slice start; goal 600), `generation/_streamed.py`
-598 (unchanged), `config/_generate_options.py` 523, `config/_pipeline.py` 489,
+598 (unchanged), `config/_generate_options.py` 523, `config/_pipeline.py` 473,
 `reasons/runtime/_part2.py` 479, `generation/_pinned_compile.py` 389,
 `generation/_admission.py` 312, `execution/_probe_scale.py` 273,
 `generation/_pinned_execute.py` 258, `config/_generate_relational.py` 178,
 `generation/relational/_self_reference.py` 78 (new).
 
-## Gates (final source head `0116c78c`)
+## Gates (final source head `e27b9485`)
 
 `GATES_WORKERS=4 scripts/dev/gates.sh --keep-going --baseline --steps
-ruff,format,mypy,sentry,layers,licenses,tests <T1 paths>` with `origin/main` at `69646f18`,
-Python 3.10.20.
+ruff,format,mypy,sentry,layers,licenses,tests <T1 paths>` on `e27b9485`, Python 3.10.20, with
+`origin/main` fetched at `89bee526`.
 
-| Step | Branch |
+| Step | Branch (`e27b9485`) |
 | --- | --- |
 | ruff | pass |
 | format | pass |
 | mypy | pass |
-| sentry | 5232 passed, 0 failed, 2 skipped |
+| sentry | 5248 passed, 0 failed, 2 skipped |
 | layers | 15 passed, 0 failed, 0 skipped |
 | licenses | 63 passed, 0 failed, 0 skipped |
-| tests | 6662 passed, 0 failed, 60 skipped (6652 in the parallel pass, 10 in the serial pass) |
+| tests | 6679 passed, 0 failed, 60 skipped (6669 in the parallel pass, 10 in the serial pass) |
 
 - Failure sets: branch 0, main 0, branch-only 0. Every branch step passed, so the gate script
   did not rerun `origin/main`.
 - AT-1: no existing digest, golden or snapshot moved. The E1 near-neighbor digests, the Phase F
   oracle and witnesses, the generation-order golden, the determinism goldens and the
   old-input-bytes pins are in the T1 set and pass unchanged; no expected value was edited.
-- `python scripts/dev/registry_renumber.py --check --main origin/main`: `registry consistent`.
-  `python scripts/release/reason_release_pin.py --check`: `reason release pin current`.
-  `python scripts/dev/check_fragment.py --base origin/main`: exit 0.
-  `python scripts/gen_capability_matrix.py`: no change (the slice adds no strategy).
+- Checks on `e27b9485`, by exit code:
+  - `python scripts/dev/registry_renumber.py --check --main 353d98bf` (the main slice 1 holds):
+    exit 0, `registry consistent`.
+  - `python scripts/dev/registry_renumber.py --check --main origin/main`: exit 2,
+    `main-not-merged`. `origin/main` moved to `89bee526` during the build (#538 the run-result
+    progress collector, #544 `decoy.process_out_of_memory`), two commits past `353d98bf`. They
+    change `reasons/decoy/_core.py`, `errors.py`, `reason_adapter.py`, `run_result/` and two
+    fragments, none of which this slice touches. By the owner's instruction main is merged once,
+    through slice 1, so it is not merged here.
+  - `python scripts/dev/ratchet_check.py --base origin/main`: exit 0.
+  - `python scripts/dev/check_fragment.py --base origin/main`: exit 0.
+  - `python scripts/release/reason_release_pin.py --check`: exit 0, `reason release pin current`.
+  - `python scripts/gen_capability_matrix.py`: no change (the slice adds no strategy).
+- Before the forward merge, the same gate command on the feature commit (then `0116c78c`, on a
+  since-discarded local merge of main at `69646f18`) gave sentry 5232 passed, tests 6662 passed
+  (6652 and 10), layers 15, licenses 63, with no failure.
 
-T1 paths (58: slice 1's 57 and `tests/unit/reasons`, which main added):
+T1 paths (58: slice 1's 57 and `tests/unit/reasons`, which came in from main):
 
 ```
 tests/acceptance/test_f06_route_cells.py
@@ -352,7 +370,8 @@ policy sentries); the `layers` step runs `tests/sentry/layout/test_import_layers
   `tests/parity`, `tests/acceptance` beyond the gate pins, `tests/integration` beyond `golden`,
   `tests/native` beyond the gate pins and `testflight` were not run.
 - The gate steps under Python 3.11 (the mutations and the red-first run used 3.11, the gates
-  3.10). A rerun of `origin/main` (no branch step failed).
+  3.10). A rerun of `origin/main` (no branch step failed). The gates against a branch that
+  holds `origin/main` `89bee526`.
 
 ## V2-LOG
 
