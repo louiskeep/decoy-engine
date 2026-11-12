@@ -189,19 +189,24 @@ def test_isolated_runs_a_subset_and_refuses_a_typed_request_before_staging(
 ) -> None:
     from decoy_engine.execution import _isolated_run
     from decoy_engine.subset import SubsetRequest, subset_request_from_config
+    from tests.unit.execution import _subset_run_support as sup
 
-    cfg = _dump(tmp_path, subset=True)
+    # String keys: a child run with a sink takes the out-of-core route, which refuses int FK keys.
+    cfg, data, _ = sup.job(tmp_path)
     request = subset_request_from_config(cfg)
     assert isinstance(request, SubsetRequest)
     writes: list[int] = []
     real = _isolated_run._write_payload
-    monkeypatch.setattr(
-        _isolated_run, "_write_payload", lambda *a, **k: writes.append(1) or real(*a, **k)
-    )
+
+    def spy(*a: Any, **k: Any) -> Any:
+        writes.append(1)
+        return real(*a, **k)
+
+    monkeypatch.setattr(_isolated_run, "_write_payload", spy)
     with pytest.raises(ValueError) as ei:
         run_pipeline_isolated(
             cfg,
-            _tables(tmp_path),
+            data,
             staging_dir=tmp_path / "stage",
             output_dir=tmp_path / "out",
             engine_version="t",
@@ -214,7 +219,7 @@ def test_isolated_runs_a_subset_and_refuses_a_typed_request_before_staging(
     for isolate in (False, True):
         out = run_pipeline_isolated(
             cfg,
-            _tables(tmp_path),
+            data,
             staging_dir=tmp_path / f"s{isolate}",
             output_dir=tmp_path / f"o{isolate}",
             isolate=isolate,
@@ -225,14 +230,14 @@ def test_isolated_runs_a_subset_and_refuses_a_typed_request_before_staging(
         assert out.outputs is not None and out.outputs["customers"].num_rows == 5
     skipped = run_pipeline_isolated(
         cfg,
-        _tables(tmp_path),
+        data,
         isolate=True,
         staging_dir=tmp_path / "sk",
         output_dir=tmp_path / "ok",
         engine_version="t",
         subset_request="skip",
     )
-    assert skipped.outputs is not None and skipped.outputs["customers"].num_rows == 100
+    assert skipped.outputs is not None and skipped.outputs["customers"].num_rows == 30
 
 
 def test_governor_delegates_and_applies_the_subset(tmp_path: Path) -> None:

@@ -123,9 +123,8 @@ class TestSubsetBlockIsSplitOff:
         }
         result = validate_plan(config, _profile(), decoy_engine_version=_VERSION)
         assert result.ok is True and result.plan is not None
-        assert (
-            result.plan.pipeline_config_hash
-            == validate_plan(
-                _valid_config(), _profile(), decoy_engine_version=_VERSION
-            ).plan.pipeline_config_hash
-        )
+        plain = _valid_config()
+        plain["subset"] = None
+        want = validate_plan(plain, _profile(), decoy_engine_version=_VERSION)
+        assert want.plan is not None
+        assert result.plan.pipeline_config_hash == want.plan.pipeline_config_hash
