@@ -151,7 +151,7 @@ def test_release_check_command_runs_by_file_path(cwd: Path | None, tmp_path: Pat
     assert "reason release pin" in res.stdout + res.stderr, res.stderr[-500:]
 
 
-# REG-RELEASE E2: pending declarations, the per-field v2 pin, the ceiling and the transitions.
+# Pending declarations, the per-field v2 pin, the ceiling and the transitions.
 # Synthetic manifests use the real 1.22 to 1.24 numbers where the ceiling rule is under test.
 from scripts.release import reason_manifest_policy as pol  # noqa: E402
 from scripts.release import reason_release_pin as rp  # noqa: E402
