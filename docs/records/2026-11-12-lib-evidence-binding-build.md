@@ -56,7 +56,7 @@ Mutations on the final source head:
 
 Two gaps in the fail-closed check. First, it compared validator names, so a write model (or a non-rules base ahead of the rules class in the MRO) could redefine a rules validator's name and the writer and reader would run different callables. The check now decides by owner: a validator name is shared only when the first class in the MRO that holds it in its own namespace is a rules class. Second, a rules class that set `model_config` would override the read base's `extra="ignore"` and `frozen=True`; it now raises `TypeError`. The module and `derive_read` docstrings say a rules class holds validators only.
 
-Red first on `8a6c076f` plus the new tests (commit `ced`-prefixed test commit before the fix): 3 failed, 6 passed. Red ids: `test_a_write_model_redefining_a_rules_validator_name_is_refused`, `test_a_non_rules_base_before_the_rules_class_cannot_shadow_a_name`, `test_a_rules_class_with_config_is_refused`. The control `test_control_a_rules_owned_shape_derives_ignores_unknown_and_is_frozen` passed throughout.
+Red first on `8a6c076f` plus the new tests (commit `0041e8f8`): 3 failed, 6 passed. Red ids: `test_a_write_model_redefining_a_rules_validator_name_is_refused`, `test_a_non_rules_base_before_the_rules_class_cannot_shadow_a_name`, `test_a_rules_class_with_config_is_refused`. The control `test_control_a_rules_owned_shape_derives_ignores_unknown_and_is_frozen` passed throughout.
 
 Green: `tests/unit/test_value_free_rules.py` 9 passed; with `tests/unit/records` and `tests/unit/run_result` 406 passed. The owner check fired on no existing write model.
 
