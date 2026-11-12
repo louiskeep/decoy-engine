@@ -92,6 +92,7 @@ _CODED: tuple[tuple[str, str, str], ...] = (
     ("decoy_engine.quality.dp_budget", "DpBudgetError", "quality"),
     ("decoy_engine.quality.dp_provenance", "ProvenanceError", "quality"),
     ("decoy_engine.quality.snapshot", "DistributionSnapshotError", "quality"),
+    ("decoy_engine.verification.postmask._blocked", "PostScanBlockedError", "post_scan"),
     ("decoy_engine.connectors.postgres_snapshot", "PostgresSnapshotError", "connector"),
     ("decoy_engine.execution.physical._shadow_diff_codes", "ShadowDifference", "physical"),
 )
