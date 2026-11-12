@@ -208,3 +208,22 @@ exception class), so the sentry's new list is exactly the four plan-named classe
 - The ambient walk's `EACCES` relaxation reads the owner by path (`lstat`), a check-then-use on
   an ancestor another uid owns; it only decides where the walk stops, never what is bound.
 - `_durable._held_lock` refuses on Windows before opening anything; the `msvcrt` arm is w1.
+
+## 2026-11-12: directory close faults (merged from a1a, plus a1b's own sites)
+
+`feat/f22-a1a` fixed raw `os.close` calls on ambient directory descriptors (see
+`f22-a1a-evidence.md`, same date); merged here in `1d89ae2`. a1b's own code had the same class in
+`fileaccess/_local.py`: `_LocalStageDir.create_file` (private create: a close error after
+`create_private_child_at` returned leaked the new file descriptor), `_sync_up` and
+`LocalOutputTxn._publish_durable` (a close error after the rename turned a bound leaf into
+`CommitUncertain`, before it aborted the publish), and `LocalOutputDir.sync_chain`. Red test
+`test_durable_publish_survives_directory_close_faults` (`55d3d89`) failed with the injected `EIO`
+from `create_file`; fix `816789a` routes those closes through `_output._close`; the test passes.
+`_durable.py` and `_output.py` already closed through `_close`. LOC: `_local.py` 579,
+`_output.py` 596.
+
+Checks on `816789a`: `.venv/bin/python -m pytest tests/fileaccess tests/sentry
+tests/unit/test_fixed_width_writer.py tests/unit/test_quarantine_staging.py -q -p no:cacheprovider
+-n 2 -rfE` gave 6000 passed, 10 failed, 56 errors, 7 skipped: only the known
+`test_private_creators.py` (56, root) and `test_import_layers.py` (10, no import-linter in
+`.venv`). ruff, format (2216 files) and mypy (786 files) clean.
