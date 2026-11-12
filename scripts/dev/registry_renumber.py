@@ -1,11 +1,19 @@
-"""Renumber an unmerged slice's reason-registry minor to the next free one at merge time.
+"""Move an in-flight slice off a claimed reason-registry minor, and gate the pending era.
 
-    python scripts/dev/registry_renumber.py [--repo PATH] [--main REF] [--check] [--print-tests]
+    python scripts/dev/registry_renumber.py [--repo PATH] [--main REF]
+        [--check | --to-unreleased | --print-tests]
 
-Run on a slice branch that already contains main. It finds the minor the branch's new identities
-claim, computes main + 1, and rewrites every artifact that names the claimed version. It never
-runs pytest (``--print-tests`` prints the list for ``vm-run``) and holds no comparison logic of
-its own: every decision comes from scripts/release/reason_manifest_policy.py.
+Run on a slice branch that already contains main. New reasons are declared `since=UNRELEASED`
+and release prep stamps the version (scripts/release/stamp_release.py). ``--check`` is the
+non-writing gate: the branch keeps main's registry version, adds no minor fixture and no numeric
+identity, and every carrier agrees. ``--to-unreleased`` converts an identity-addition branch that
+claimed one numeric minor under the old per-PR process: catalog declarations become
+``since=UNRELEASED``, Python and JSON carriers the string ``"unreleased"``, Markdown the text
+``unreleased``; the version anchors return to main's, the branch fixture is deleted and the
+consumer contract is rebuilt from the converted tree. Without a mode it renumbers the claimed
+minor to main + 1 (the retiring numeric workflow). It never runs pytest (``--print-tests``
+prints the list for ``vm-run``) and holds no comparison logic of its own: every decision comes
+from scripts/release/reason_manifest_policy.py.
 
 Exit codes: 0 consistent or done; 1 ``--check`` found a problem; 2 precondition (dirty-tree,
 main-not-merged, bad-ref, foreign-import, import-failed); 3 refusal before any write; 4 post-write
@@ -21,10 +29,15 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import io
 import json
+import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
+import tokenize
 from pathlib import Path
 
 # Scripts run by file path get their own directory on sys.path, not the repo root.
@@ -34,19 +47,24 @@ if str(_ROOT) not in sys.path:
 
 import _registry_renumber_git as rg  # noqa: E402
 from scripts.release.reason_manifest_policy import (  # noqa: E402
+    PENDING_ARGUMENTS,
+    UNRELEASED,
     VERSION_LITERAL,
     RenumberFacts,
     contract_versions,
     fixture_name,
     fixture_prefix,
     parse_fixture_name,
+    pending_era_violations,
     renumber_check,
     renumber_claim,
     renumber_classification,
     renumber_target,
     restamp,
+    unreleased_violations,
     version_of,
 )
+from scripts.release.reason_release_pin import load_pin  # noqa: E402
 
 REWRITE = (r"src/decoy_engine/reasons/.*\.py", r"tests/.*\.py", r"docs/.*\.md", r"CHANGELOG\.md")
 FROZEN = (
@@ -63,6 +81,21 @@ ANCHORS = {
     rg.REGISTRY_PY: re.compile(r'^(REGISTRY_VERSION = ")([^"]*)(")$', re.M),
     REASONS_MD: re.compile(r"(`registry_version` \(`)([^`]*)(`\))"),
 }
+PIN = "tests/fixtures/f29/reason-registry-release.json"
+# The PENDING_SUMMARY_EDITS assignment in the registry module, through its closing parenthesis.
+PENDING_SUMMARIES = re.compile(
+    r"(?ms)^(PENDING_SUMMARY_EDITS: [^\n=]*= )frozenset\((?:[^()]|\([^()]*\))*\)"
+)
+PENDING_ARG = re.compile(rf"\b({'|'.join(PENDING_ARGUMENTS)})=UNRELEASED\b")
+TYPES_IMPORT = "from decoy_engine.reasons._types import "
+CATALOG_ANCHOR = "from decoy_engine.reasons import _catalog"
+# --to-unreleased: the carrier kind of each branch-added surface and its replacement.
+CARRIERS = (
+    (r"src/decoy_engine/reasons/.*\.py", "catalog"),
+    (r"tests/.*\.py", "python"),
+    (r"tests/.*\.json", "json"),
+    (r"(docs/.*|CHANGELOG|changelog\.d/[^/]*)\.md", "markdown"),
+)
 FIXTURE_DIR = "tests/fixtures/f29"
 RENUMBER_LINE = "Registry renumbered at merge from"
 BASE_TESTS = (
@@ -137,6 +170,68 @@ def gather_facts(
     }
 
 
+def _literal_spans(text: str) -> list[tuple[int, int]]:
+    """Character spans of the string and comment tokens of Python source ``text``."""
+    starts = [0]
+    for line in text.splitlines(keepends=True):
+        starts.append(starts[-1] + len(line))
+    return [
+        (starts[t.start[0] - 1] + t.start[1], starts[t.end[0] - 1] + t.end[1])
+        for t in tokenize.generate_tokens(io.StringIO(text).readline)
+        if t.type in (tokenize.STRING, tokenize.COMMENT)
+    ]
+
+
+def _unreleased_names(text: str) -> int:
+    toks = tokenize.generate_tokens(io.StringIO(text).readline)
+    return sum(1 for t in toks if t.type == tokenize.NAME and t.string == "UNRELEASED")
+
+
+def stamp_source(text: str, version: str) -> str:
+    """``text`` with each ``since=UNRELEASED`` / ``deprecated_in=UNRELEASED`` argument set to
+    ``version``; strings and comments are untouched, and an UNRELEASED import nothing uses goes."""
+    if "=UNRELEASED" not in text:
+        return text
+    spans = _literal_spans(text)
+
+    def sub(m: re.Match[str]) -> str:
+        return m[0] if any(a <= m.start() < b for a, b in spans) else f'{m[1]}="{version}"'
+
+    out = PENDING_ARG.sub(sub, text)
+    if out == text or _unreleased_names(out) != 1:
+        return out
+    out = out.replace(f"{TYPES_IMPORT}UNRELEASED\n", "", 1)
+    return out.replace(f"{TYPES_IMPORT}UNRELEASED, ", TYPES_IMPORT, 1).replace(
+        "\n    UNRELEASED,\n", "\n", 1
+    )
+
+
+def clear_pending_summaries(text: str) -> str:
+    return PENDING_SUMMARIES.sub(r"\g<1>frozenset()", text)
+
+
+def add_unreleased_import(text: str) -> str:
+    """``text`` importing UNRELEASED from the sibling ``_types`` module, isort-ordered."""
+    if re.search(rf"^{re.escape(TYPES_IMPORT)}(\(?[^)]*)?\bUNRELEASED\b", text, re.M):
+        return text
+    lines = text.split("\n")
+    for n, line in enumerate(lines):
+        if not line.startswith(TYPES_IMPORT):
+            continue
+        if line.endswith("("):
+            lines.insert(n + 1, "    UNRELEASED,")
+        else:
+            names = ["UNRELEASED", *line[len(TYPES_IMPORT) :].split(", ")]
+            one = TYPES_IMPORT + ", ".join(names)
+            many = TYPES_IMPORT + "(\n" + "".join(f"    {x},\n" for x in names) + ")"
+            lines[n] = one if len(one) <= 100 else many
+        return "\n".join(lines)
+    if CATALOG_ANCHOR not in lines:
+        return text
+    lines.insert(lines.index(CATALOG_ANCHOR) + 1, f"{TYPES_IMPORT}UNRELEASED")
+    return "\n".join(lines)
+
+
 def plan_rewrites(root: Path, hunks, old: str, target: str, fixture: str | None):
     """Line edits {path: {line: text}}, record paths, and refusals; nothing is written."""
     pat, prefix, swap = token(old), fixture_prefix(old), fixture_prefix(target)
@@ -171,6 +266,44 @@ def plan_rewrites(root: Path, hunks, old: str, target: str, fixture: str | None)
     return edits, records, refuse
 
 
+def carrier(path: str) -> str:
+    if any(fnmatch.fnmatch(path, g) for g in FROZEN):
+        return "frozen-fixture"
+    return next((kind for rx, kind in CARRIERS if re.fullmatch(rx, path)), "unknown-surface")
+
+
+def unreleased_text(kind: str, old: str, text: str) -> str:
+    """One branch-added line of a ``kind`` carrier with the claimed ``old`` version made pending."""
+    v = re.escape(old)
+    if kind == "catalog":
+        return re.sub(rf"\bsince=(['\"]){v}\1", "since=UNRELEASED", text)
+    if kind == "python":
+        return re.sub(rf"(['\"]){v}\1", rf"\g<1>{UNRELEASED}\g<1>", text)
+    if kind == "json":
+        return text.replace(f'"{old}"', f'"{UNRELEASED}"')
+    return token(old).sub(UNRELEASED, text) if kind == "markdown" else text
+
+
+def plan_unreleased(hunks, old: str, fixture: str | None):
+    """Line edits {path: {line: text}} and refusals for --to-unreleased; nothing is written."""
+    pat, prefix = token(old), fixture_prefix(old)
+    edits: dict[str, dict[int, str]] = {}
+    refuse: list[str] = []
+    for h in hunks:
+        if h.path in (CONTRACT, fixture):
+            continue
+        kind, anchor = carrier(h.path), ANCHORS.get(h.path)
+        for no, text in h.added:
+            if (anchor and anchor.search(text)) or not (pat.search(text) or prefix in text):
+                continue
+            new = unreleased_text(kind, old, text)
+            if pat.search(new) or prefix in new:
+                refuse.append(f"{kind if new == text else 'unconverted'} {h.path}:{no}")
+            else:
+                edits.setdefault(h.path, {})[no] = new
+    return edits, refuse
+
+
 def apply(
     root: Path, edits: dict, records: set[str], note: str, target: str, rename, mv
 ) -> list[str]:
@@ -199,6 +332,46 @@ def os_mv(root: Path, a: str, b: str) -> None:
     (root / a).rename(root / b)
 
 
+def os_rm(root: Path, rel: str) -> None:
+    (root / rel).unlink()
+
+
+def git_rm(root: Path, rel: str) -> None:
+    rg.git(root, "rm", "-q", rel)
+
+
+def convert(root: Path, edits: dict, version: str, fixture: str | None, rm) -> list[str]:
+    """The one write path of --to-unreleased, for the candidate copy and the worktree alike."""
+    changed = apply(root, edits, set(), "", version, None, os_mv)
+    for rel in sorted(edits):
+        text = read(root, rel)
+        if carrier(rel) == "catalog" and "since=UNRELEASED" in text:
+            write(root, rel, add_unreleased_import(text))
+    if fixture:
+        rm(root, fixture)
+    return sorted({*changed, *([fixture] if fixture else [])})
+
+
+def lint(root: Path, paths: list[str]) -> list[str]:
+    """Syntax, import-order and unused-import problems in the converted Python files. Ruff runs
+    when the environment has it (the `lint` extra); importing the converted tree is the extract."""
+    files = [p for p in paths if p.endswith(".py")]
+    bad = []
+    for rel in files:
+        try:
+            compile(read(root, rel), rel, "exec")
+        except SyntaxError:
+            bad.append(rel)
+    ruff = shutil.which(
+        "ruff", path=f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}"
+    )
+    if files and ruff and not bad:
+        cmd = [ruff, "check", "--no-cache", "--quiet", "--select", "I,F401,F821", *files]
+        if subprocess.run(cmd, cwd=root, capture_output=True, check=False).returncode:  # noqa: S603
+            bad = files
+    return ["lint " + " ".join(bad)] if bad else []
+
+
 def git_mv(root: Path, a: str, b: str) -> None:
     rg.git(root, "mv", a, b)
 
@@ -219,7 +392,7 @@ def print_tests(repo: Path, main: str) -> None:
     print("\n".join(dict.fromkeys(p for p in (*BASE_TESTS, *extra) if (repo / p).exists())))
 
 
-def run(repo: Path, main: str, check: bool) -> int:
+def run(repo: Path, main: str, check: bool, to_unreleased: bool = False) -> int:
     if rg.git(repo, "status", "--porcelain").stdout.strip():
         raise rg.Refusal(2, "dirty-tree")
     msha = rg.git(repo, "rev-parse", "--verify", f"{main}^{{commit}}").stdout.strip()
@@ -252,7 +425,8 @@ def run(repo: Path, main: str, check: bool) -> int:
         }
         facts = gather_facts(repo, repo_facts, hunks, head["contract"], check)
         if check:
-            problems = renumber_check(b, m, h, facts)
+            facts["pending_summaries"] = frozenset(map(tuple, head["pending"]))
+            problems = renumber_check(b, m, h, facts) + pending_era_violations(m, h, facts)
             print("\n".join(problems) or "registry consistent")
             return 1 if problems else 0
         refusals = renumber_classification(b, m, h, facts)
@@ -264,7 +438,48 @@ def run(repo: Path, main: str, check: bool) -> int:
         if not claim:
             print("no registry change")
             return 0
+        if to_unreleased:
+            return unreleased(repo, w, (b, m, h), claim[0], hunks, repo_facts)
         return renumber(repo, w, (b, m, h), claim[0], facts, hunks, repo_facts)
+
+
+def unreleased(repo, w, manifests, old, hunks, repo_facts) -> int:
+    b, m, h = manifests
+    version = version_of(m)
+    for rel, rx in ANCHORS.items():
+        if len(rx.findall(read(repo, rel))) != 1:
+            raise rg.Refusal(3, f"anchor-missing {rel}")
+    fixture = repo_facts["fixture"]
+    edits, refuse = plan_unreleased(hunks, old, fixture)
+    if refuse:
+        raise rg.Refusal(3, "\n".join(refuse))
+    cand = w / "cand"
+    cand.mkdir()
+    rg.archive(repo, "HEAD", cand)
+    changed = convert(cand, edits, version, fixture, os_rm)
+    built = rg.extract(cand, contract=True)
+    bytes_ = json.dumps(built["contract"], indent=1, sort_keys=True) + "\n"
+    write(cand, CONTRACT, bytes_)
+    stale = _stale_contract(read(repo, CONTRACT), built["contract"], version)
+    after = {**repo_facts, "fixture": None, "fixture_count": 0}
+    facts = gather_facts(cand, after, hunks, built["contract"], False)
+    facts["pending_summaries"] = frozenset(map(tuple, built["pending"]))
+    pin, problems = load_pin(read(cand, PIN))
+    problems += ["consumer contract was stale before conversion"] if stale else []
+    problems += unreleased_violations(built["manifest"], pin) if pin else []
+    problems += renumber_check(b, m, built["manifest"], facts)
+    problems += pending_era_violations(m, built["manifest"], facts)
+    if _ids(built["manifest"]) != _ids(h):
+        problems.append("identity set changed")
+    problems += lint(cand, changed)
+    if problems:
+        raise rg.Refusal(4, "\n".join(problems))
+    for rel, by_line in sorted(edits.items()):
+        print("\n".join(f"{rel}:{n} {old} -> {UNRELEASED}" for n in sorted(by_line)))
+    convert(repo, edits, version, fixture, git_rm)
+    write(repo, CONTRACT, bytes_)
+    print(f"converted {old} -> {UNRELEASED}: main stays at {version}")
+    return 0
 
 
 def renumber(repo, w, manifests, old, facts, hunks, repo_facts) -> int:
@@ -330,15 +545,16 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", default=".")
     ap.add_argument("--main", default="origin/main")
-    ap.add_argument("--check", action="store_true")
-    ap.add_argument("--print-tests", action="store_true")
+    mode = ap.add_mutually_exclusive_group()
+    for flag in ("--check", "--to-unreleased", "--print-tests"):
+        mode.add_argument(flag, action="store_true")
     args = ap.parse_args()
     repo = Path(args.repo).resolve()
     try:
         if args.print_tests:
             print_tests(repo, args.main)
             return 0
-        return run(repo, args.main, args.check)
+        return run(repo, args.main, args.check, args.to_unreleased)
     except rg.Refusal as exc:
         print(exc.message, file=sys.stderr)
         return exc.code

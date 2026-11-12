@@ -408,6 +408,9 @@ def _pin(path: Path) -> dict:
     return json.loads((path / F29 / "reason-registry-release.json").read_text(encoding="utf-8"))
 
 
+PROBES = ("probe_one", "probe_two")
+
+
 def two_identities(r: ScratchRepo) -> None:
     add_pending_identity(r.path, "probe_one")
     add_pending_identity(r.path, "probe_two")
@@ -457,7 +460,7 @@ def test_at8_an_identity_release_stamps_every_pending_code_at_the_next_minor(
     assert _stamp(r) == "1.24.0"
     live = manifest(r.path)
     assert live["registry_version"] == "1.24.0"
-    probes = {e["code"]: e["since"] for e in live["entries"] if e["code"].startswith("probe_")}
+    probes = {e["code"]: e["since"] for e in live["entries"] if e["code"] in PROBES}
     assert probes == {"probe_one": "1.24.0", "probe_two": "1.24.0"}
     name = "reason-manifest-v1.24-release-0-23-0.json"
     assert _fixtures(r.path) - before == {name}

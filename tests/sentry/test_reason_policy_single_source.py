@@ -2,8 +2,9 @@
 
 Discovery walks every tracked .py under src/, scripts/ and tests/ and parses it. A non-test
 function is a validator candidate when its body uses a registry key (string constant, attribute
-or name) in a comparison, a comprehension filter, or an `if` that appends or returns. Function
-names play no part. A candidate outside the policy module fails unless it is an adapter (one
+or name) in a comparison, a comprehension filter, or an `if` that appends or returns, or when any
+branch tests a release transition's pending sets (a second transition decision even when it only
+picks a version). Function names play no part. A candidate outside the policy module fails unless it is an adapter (one
 `return` of a call to a name imported from the policy module) or is in EXEMPT with a reason.
 """
 
@@ -30,6 +31,7 @@ KEYS = frozenset(
         "REGISTRY_VERSION",
         "REASON_SCHEMA_VERSION",
         "EVENT_SCHEMA_VERSION",
+        *(TRANSITION_KEYS := ("pending_identities", "pending_deprecations", "pending_summaries")),
     }
 )
 # (path, qualified name): reason. A method is keyed as Class.method, so a same-named method on
@@ -155,7 +157,18 @@ def _uses_key_as_check(func: ast.AST, consts: frozenset[str] = frozenset()) -> b
             return True
         if isinstance(n, ast.If) and _has_key(n.test, names) and _collects(n.body + n.orelse):
             return True
+        if isinstance(n, (ast.If, ast.IfExp, ast.While)) and _branches_on_transition(n.test):
+            return True
     return False
+
+
+def _branches_on_transition(test: ast.AST) -> bool:
+    return any(_is_key(n, frozenset()) for n in ast.walk(test)) and any(
+        (isinstance(n, ast.Attribute) and n.attr in TRANSITION_KEYS)
+        or (isinstance(n, ast.Name) and n.id in TRANSITION_KEYS)
+        or (isinstance(n, ast.Constant) and n.value in TRANSITION_KEYS)
+        for n in ast.walk(test)
+    )
 
 
 def _imports_engine(n: ast.AST) -> bool:

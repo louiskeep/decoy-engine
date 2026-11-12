@@ -1,28 +1,23 @@
-"""The reason catalog an engine release shipped is frozen at its registry version.
+"""The reason catalog an engine release shipped is frozen, field by field, at its registry version.
 
 The A1 gate (`test_reason_registry.py`) checks the live catalog against the v1 pin
-(`reason-manifest-v1.json`, registry 1.0.0) and demands a minor bump only for identities new
-relative to THAT pin. Once the live registry has moved past the pin (1.1.0), an identity added at
-1.1.0 with no bump passes A1. This pin closes that gap per release: it records the registry version
-the last engine release shipped plus a digest of that catalog, so any change at the same version
-fails, and per-`since` counts, so a new identity cannot claim an already-released version.
-
-It is a digest and counts, not a second copy of the catalog: the catalog carries the retired
-tombstone spellings that only the v1 pin is excepted to hold. `scripts/release/cut-release.sh`
-refuses to tag unless this pin describes the live registry (re-capture with
-`python scripts/release/reason_release_pin.py --write`).
+(`reason-manifest-v1.json`, registry 1.0.0). The release pin (`reason-registry-release.json`,
+format 2) records the registry version the last engine release shipped and, for every numeric
+identity, one SHA-256 per manifest field, so a released reason cannot change outside the two
+declared pending edits (a first deprecation with `deprecated_in=UNRELEASED`, a summary listed in
+`PENDING_SUMMARY_EDITS`). New reasons are declared `since=UNRELEASED` and the registry stays at
+the allowed version until release prep stamps it (`scripts/release/stamp_release.py`).
+`scripts/release/release_checks.sh` refuses to tag until `--check` and `--release-ready` pass.
 """
 
 from __future__ import annotations
 
-import copy
 import json
 from pathlib import Path
 
 import pytest
-from packaging.version import Version
 from scripts.release.reason_manifest_policy import since_floor_violations
-from scripts.release.reason_release_pin import PIN_PATH, pin_violations, release_pin
+from scripts.release.reason_release_pin import PIN_PATH, build_pin, load_pin, pin_violations
 
 from decoy_engine import reasons
 
@@ -37,89 +32,75 @@ def _live() -> dict:
     return json.loads(json.dumps(reasons.manifest()))
 
 
+def _marked() -> frozenset:
+    return frozenset(reasons.pending_summary_edits())
+
+
 def test_live_registry_honours_the_released_pin() -> None:
-    assert pin_violations(_pin(), _live()) == []
+    assert pin_violations(_pin(), _live(), _marked()) == []
 
 
 def test_pin_is_well_formed() -> None:
-    pin = _pin()
-    assert set(pin) == {"registry_version", "manifest_sha256", "identities", "since_counts"}
-    assert sum(pin["since_counts"].values()) == pin["identities"]
+    pin, problems = load_pin(PIN_PATH.read_text(encoding="utf-8"))
+    assert problems == [] and pin is not None
+    assert sum(pin["since_counts"].values()) == len(pin["identities"])
+
+
+def _new(m: dict, since: str) -> dict:
+    return {**m["entries"][0], "code": "brand_new_code", "since": since}
 
 
 @pytest.mark.parametrize(
     ("mutate", "expected"),
     [
         (
-            lambda m: m["entries"].append({**m["entries"][0], "code": "brand_new_code"}),
-            "changed without a registry version bump",
+            lambda m: m["entries"].append(_new(m, m["entries"][0]["since"])),
+            "numeric identity is absent from the release pin",
         ),
-        (
-            lambda m: m["entries"][0].__setitem__("summary", "Edited."),
-            "changed without a registry version bump",
-        ),
+        (lambda m: m["entries"][0].__setitem__("summary", "Edited."), "summary differs"),
         (
             lambda m: (
                 m.__setitem__("registry_version", "9.9.0"),
-                m["entries"].append({**m["entries"][0], "code": "brand_new_code"}),
+                m["entries"].append(_new(m, "9.9.0")),
             ),
-            "claim an already-released since",
+            "is not the allowed",
         ),
-        (lambda m: m.__setitem__("registry_version", "0.0.1"), "went backwards"),
+        (lambda m: m.__setitem__("registry_version", "0.0.1"), "is not the allowed"),
         (
-            # A whole released bucket moves to a new version under a bump: no live bucket is
-            # left at 1.3.0, so only a check over the pinned buckets sees it drop to 0.
+            # A whole released bucket moves under a bump: each moved identity's since drifts.
             lambda m: (
                 m.__setitem__("registry_version", "9.9.0"),
                 [e.__setitem__("since", "9.9.0") for e in m["entries"] if e["since"] == "1.3.0"],
             ),
-            "0 identities claim an already-released since 1.3.0",
+            "since differs from the release pin",
         ),
     ],
 )
 def test_pin_mutants_are_rejected(mutate, expected) -> None:
-    pin = release_pin(_live())
     live = _live()
+    pin = build_pin(live, live["registry_version"])
     mutate(live)
     assert any(expected in p for p in pin_violations(pin, live))
 
 
-def test_a_bumped_addition_with_a_new_since_is_accepted() -> None:
-    pin = release_pin(_live())
-    live = copy.deepcopy(_live())
+def test_a_numeric_addition_fails_and_an_unreleased_one_passes_the_checked_in_pin() -> None:
+    # Whatever version the addition claims, numeric work above the released baseline fails; the
+    # same identity declared UNRELEASED passes until the release stamps it.
+    pin = _pin()
+    for since in (_live()["registry_version"], "9.9.0"):
+        live = _live()
+        live["entries"].append(_new(live, since))
+        assert pin_violations(pin, live) != [], since
+    live = _live()
+    live["entries"].append(_new(live, reasons.UNRELEASED))
+    assert pin_violations(pin, live, _marked()) == []
+
+
+def test_a_bumped_registry_fails_the_checked_in_pin() -> None:
+    live = _live()
     live["registry_version"] = "9.9.0"
-    live["entries"].append({**live["entries"][0], "code": "brand_new_code", "since": "9.9.0"})
-    assert pin_violations(pin, live) == []
-
-
-def test_an_unbumped_addition_to_the_live_catalog_fails_the_checked_in_pin() -> None:
-    # The premise is stated, not inherited: the live catalog sits at the PINNED version (no
-    # bump), whatever version the registry has moved to since the release.
-    pin = _pin()
-    live = copy.deepcopy(_live())
-    live["registry_version"] = pin["registry_version"]
-    live["entries"].append(
-        {**live["entries"][0], "code": "brand_new_code", "since": pin["registry_version"]}
-    )
-    expected = (
-        f"the catalog released as {pin['registry_version']} changed without a registry version bump"
-    )
-    assert expected in pin_violations(pin, live)
-
-
-def test_a_bumped_addition_to_the_live_catalog_passes_the_checked_in_pin() -> None:
-    # The sibling: the same addition under a version above the pin, claiming that version, is a
-    # correct bump and reports nothing.
-    pin = _pin()
-    pinned = Version(pin["registry_version"])
-    bumped = max(
-        Version(_live()["registry_version"]), Version(f"{pinned.major}.{pinned.minor + 1}.0")
-    )
-    live = copy.deepcopy(_live())
-    live["registry_version"] = str(bumped)
-    live["entries"].append({**live["entries"][0], "code": "brand_new_code", "since": str(bumped)})
-    assert bumped > pinned
-    assert pin_violations(pin, live) == []
+    live["entries"].append(_new(live, "9.9.0"))
+    assert any("is not the allowed" in p for p in pin_violations(_pin(), live))
 
 
 since_violations = since_floor_violations
@@ -143,6 +124,7 @@ import subprocess  # noqa: E402
 import sys  # noqa: E402
 
 from scripts.release import reason_manifest_policy as pol  # noqa: E402
+from scripts.release import reason_release_pin as rp  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = {
@@ -187,8 +169,8 @@ def _canonical_sha(value: object) -> str:
 
 def test_at1_one_entry_writer_output_is_the_normative_golden() -> None:
     manifest = {"registry_version": "1.23.0", "entries": [EXAMPLE]}
-    assert pol.pin_text(pol.build_pin(manifest, "1.22.0")) == GOLDEN
-    assert pol.load_pin(GOLDEN) == (json.loads(GOLDEN), [])
+    assert rp.pin_text(rp.build_pin(manifest, "1.22.0")) == GOLDEN
+    assert rp.load_pin(GOLDEN) == (json.loads(GOLDEN), [])
 
 
 def test_at1_field_digests_are_sha256_over_canonical_json() -> None:
@@ -205,9 +187,9 @@ def test_at1_field_digests_are_sha256_over_canonical_json() -> None:
 
 def test_at1_the_checked_in_pin_is_v2_and_round_trips_byte_for_byte() -> None:
     text = PIN_PATH.read_text(encoding="utf-8")
-    pin, problems = pol.load_pin(text)
+    pin, problems = rp.load_pin(text)
     assert problems == [] and pin is not None
-    assert pol.pin_text(pin) == text
+    assert rp.pin_text(pin) == text
     numeric = {
         (e["namespace"], e["code"]) for e in _live()["entries"] if e["since"] != "unreleased"
     }

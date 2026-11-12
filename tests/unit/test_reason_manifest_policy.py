@@ -14,11 +14,9 @@ from pathlib import Path
 import pytest
 from scripts.release.reason_manifest_policy import (
     append_only_violations,
-    release_pin_violations,
     schema_root_violations,
     summary_version_violations,
 )
-from scripts.release.reason_release_pin import release_pin
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "release" / "reason_release_pin.py"
@@ -114,11 +112,11 @@ def test_a_tombstone_change_is_reported_and_a_new_tombstone_is_not() -> None:
 
 
 @pytest.mark.parametrize("name", sorted(RELEASE_PIN))
-def test_release_pin_messages_are_byte_identical(name: str) -> None:
+def test_legacy_v1_pin_messages_are_byte_identical(name: str) -> None:
     mutate, want = RELEASE_PIN[name]
     live = copy.deepcopy(BASE)
     mutate(live)
-    assert release_pin_violations(release_pin(BASE), live) == want
+    assert pol.legacy_v1_violations(_v1(BASE), live) == want
 
 
 def test_schema_root_violations() -> None:
@@ -156,6 +154,7 @@ def test_release_check_command_runs_by_file_path(cwd: Path | None, tmp_path: Pat
 # REG-RELEASE E2: pending declarations, the per-field v2 pin, the ceiling and the transitions.
 # Synthetic manifests use the real 1.22/1.23 numbers where the ceiling rule is under test.
 from scripts.release import reason_manifest_policy as pol  # noqa: E402
+from scripts.release import reason_release_pin as rp  # noqa: E402
 
 PENDING = "unreleased"
 
@@ -198,7 +197,7 @@ EDITS = [(_deprecate, frozenset()), (_resummarize, frozenset({("ns", "a")}))]
 def test_at1_an_unreleased_identity_passes_every_ordinary_gate() -> None:
     live = copy.deepcopy(BASE)
     live["entries"].append(_ent("d", PENDING))
-    pin = pol.build_pin(BASE, "7.1.0")
+    pin = rp.build_pin(BASE, "7.1.0")
     assert live["registry_version"] == pol.allowed_registry_version(pin)
     assert append_only_violations(BASE, live) == []
     assert pol.since_floor_violations(BASE, live) == []
@@ -252,23 +251,23 @@ FORMAT_CASES = {
 @pytest.mark.parametrize("name", sorted(FORMAT_CASES))
 def test_at1_the_strict_v2_reader_rejects_a_malformed_pin(name: str) -> None:
     mutate, needle = FORMAT_CASES[name]
-    pin = pol.build_pin(BASE, "7.1.0")
-    assert pol.pin_format_violations(pin) == []
+    pin = rp.build_pin(BASE, "7.1.0")
+    assert rp.pin_format_violations(pin) == []
     mutate(pin)
-    problems = pol.pin_format_violations(pin)
+    problems = rp.pin_format_violations(pin)
     assert any(needle in p for p in problems), problems
-    assert pol.release_pin_violations(pin, BASE) != []
-    assert pol.load_pin(pol.pin_text(pin))[0] is None
+    assert rp.pin_violations(pin, BASE) != []
+    assert rp.load_pin(rp.pin_text(pin))[0] is None
 
 
 def test_at1_the_reader_rejects_a_duplicate_key_and_non_json() -> None:
-    text = pol.pin_text(pol.build_pin(BASE, "7.1.0"))
+    text = rp.pin_text(rp.build_pin(BASE, "7.1.0"))
     doubled = text.replace('"code": "a",', '"code": "a",\n      "code": "a",', 1)
     assert doubled != text
-    pin, problems = pol.load_pin(doubled)
+    pin, problems = rp.load_pin(doubled)
     assert pin is None and any("duplicate key code" in p for p in problems), problems
-    assert pol.load_pin("{")[0] is None
-    assert pol.load_pin(text) == (json.loads(text), [])
+    assert rp.load_pin("{")[0] is None
+    assert rp.load_pin(text) == (json.loads(text), [])
 
 
 @pytest.mark.parametrize(
@@ -279,7 +278,7 @@ def test_at1_the_reader_rejects_a_duplicate_key_and_non_json() -> None:
 def test_at1_since_counts_must_count_the_captured_identities(counts: dict, needle: str) -> None:
     live = copy.deepcopy(BASE)
     live["entries"][2]["since"] = "7.0.0"
-    pin = pol.build_pin(live, "7.1.0")
+    pin = rp.build_pin(live, "7.1.0")
     assert pin["since_counts"] == {"7.0.0": 1, "7.1.0": 2}
     assert pol.release_pin_violations(pin, live) == []
     if counts == pin["since_counts"]:
@@ -295,7 +294,7 @@ def _v1(m: dict) -> dict:
         counts[e["since"]] = counts.get(e["since"], 0) + 1
     return {
         "registry_version": m["registry_version"],
-        "manifest_sha256": pol.canonical_digest(m),
+        "manifest_sha256": pol.field_digest(m),
         "identities": len(m["entries"]),
         "since_counts": counts,
     }
@@ -305,7 +304,7 @@ def test_at1_migration_keeps_the_shipped_version_and_baselines_through_the_ceili
     shipped = _rel()
     shipped["registry_version"] = "1.22.0"
     shipped["entries"] = shipped["entries"][:1]
-    pin, problems = pol.migrate_v1_pin(_v1(shipped), _rel(), _rel_fixtures(), "1.21.0")
+    pin, problems = rp.migrate_v1(_v1(shipped), _rel(), _rel_fixtures(), "1.21.0")
     assert problems == [] and pin is not None
     assert pin["registry_version"] == "1.22.0"
     assert pin["baseline_ceiling"] == pol.LAST_PER_PR_MINOR == "1.23.0"
@@ -320,11 +319,11 @@ def test_at1_migration_refuses_a_v1_or_full_fixture_mismatch() -> None:
     shipped["entries"] = shipped["entries"][:1]
     bad_v1 = _v1(shipped)
     bad_v1["since_counts"]["1.22.0"] = 2
-    pin, problems = pol.migrate_v1_pin(bad_v1, _rel(), _rel_fixtures(), "1.21.0")
+    pin, problems = rp.migrate_v1(bad_v1, _rel(), _rel_fixtures(), "1.21.0")
     assert pin is None and problems
     fixtures = _rel_fixtures()
     fixtures["reason-manifest-v1.23-bc.json"]["entries"][0]["summary"] = "Old wording."
-    pin, problems = pol.migrate_v1_pin(_v1(shipped), _rel(), fixtures, "1.21.0")
+    pin, problems = rp.migrate_v1(_v1(shipped), _rel(), fixtures, "1.21.0")
     assert pin is None and any("differs from the live entry" in p for p in problems), problems
 
 
@@ -332,17 +331,17 @@ def test_at1_migration_refuses_a_v1_or_full_fixture_mismatch() -> None:
 def test_at1b_a_declared_pending_edit_passes_ordinary_gates_but_not_release_ready(
     edit, pending
 ) -> None:
-    pin = pol.build_pin(_rel(), "1.22.0")
+    pin = rp.build_pin(_rel(), "1.22.0")
     live = _rel()
     edit(live)
     assert pol.release_pin_violations(pin, live, pending) == []
     assert append_only_violations(_rel(), live, pending) == []
     assert pol.minor_fixture_violations(_rel_fixtures(), live, "1.21.0") == []
-    assert pol.release_ready_violations(live, pin, pending) != []
+    assert pol.release_ready_violations(live, pending) != []
 
 
 def test_at1b_the_same_edits_without_markers_fail() -> None:
-    pin = pol.build_pin(_rel(), "1.22.0")
+    pin = rp.build_pin(_rel(), "1.22.0")
     live = _rel()
     _resummarize(live)
     assert pol.release_pin_violations(pin, live) == ["ns.a: summary differs from the release pin"]
@@ -355,13 +354,13 @@ def test_at1b_the_same_edits_without_markers_fail() -> None:
 @pytest.mark.parametrize(
     ("field", "value"),
     [("kind", "warning"), ("rules", []), ("owner", "P"), ("context", ["x"]),
-     ("since", "1.22.0"), ("symbol", "Z")],
+     ("since", "1.21.0"), ("symbol", "Z")],
 )  # fmt: skip
 @pytest.mark.parametrize(("edit", "pending"), EDITS)
 def test_at1b_every_other_field_stays_frozen_under_a_pending_edit(
     edit, pending, field, value
 ) -> None:
-    pin = pol.build_pin(_rel(), "1.22.0")
+    pin = rp.build_pin(_rel(), "1.22.0")
     live = _rel()
     code = edit(live)
     _by(live, code)[field] = value
@@ -373,7 +372,7 @@ def test_at1b_every_other_field_stays_frozen_under_a_pending_edit(
 def test_at1b_a_numeric_tombstone_cannot_be_retargeted() -> None:
     shipped = _rel()
     _by(shipped, "c").update(deprecated_in="1.23.0", replaced_by=["ns", "a"])
-    pin = pol.build_pin(shipped, "1.22.0")
+    pin = rp.build_pin(shipped, "1.22.0")
     for change in (
         {"deprecated_in": PENDING, "replaced_by": ["ns", "b"]},
         {"replaced_by": ["ns", "b"]},
@@ -387,19 +386,19 @@ def test_at1b_a_numeric_tombstone_cannot_be_retargeted() -> None:
 def test_at1b_a_patch_stamp_moves_the_registry_and_keeps_the_ceiling(edit, pending) -> None:
     live = _rel()
     code = edit(live)
-    t = pol.registry_transition(live, pol.build_pin(_rel(), "1.22.0"), pending)
+    t = pol.registry_transition(live, rp.build_pin(_rel(), "1.22.0"), pending)
     assert (t.kind, t.version, t.writes_fixture) == ("patch", "1.23.1", False)
     stamped = pol.stamped_manifest(live, t)
-    new = pol.build_pin(stamped, t.version)
+    new = rp.build_pin(stamped, t.version)
     assert (new["registry_version"], new["baseline_ceiling"]) == ("1.23.1", "1.23.0")
     assert stamped["registry_version"] == "1.23.1"
     assert _by(stamped, code)["deprecated_in"] in (None, "1.23.1")
     assert pol.release_pin_violations(new, stamped) == []
-    assert pol.release_ready_violations(stamped, new, frozenset()) == []
+    assert pol.release_ready_violations(stamped, frozenset()) == []
 
 
 def test_at2_numeric_fields_are_frozen_per_field_and_pending_additions_are_not() -> None:
-    pin = pol.build_pin(BASE, "7.1.0")
+    pin = rp.build_pin(BASE, "7.1.0")
     assert pol.release_pin_violations(pin, BASE) == []
     live = copy.deepcopy(BASE)
     live["entries"][0]["summary"] = "Edited."
@@ -411,7 +410,7 @@ def test_at2_numeric_fields_are_frozen_per_field_and_pending_additions_are_not()
     live["entries"].append(_ent("d", PENDING))
     assert pol.release_pin_violations(pin, live) == []
     assert ("ns", "d") not in {
-        (r["namespace"], r["code"]) for r in pol.build_pin(live, "7.1.0")["identities"]
+        (r["namespace"], r["code"]) for r in rp.build_pin(live, "7.1.0")["identities"]
     }
     live = copy.deepcopy(BASE)
     live["entries"].append(_ent("d"))
@@ -432,7 +431,7 @@ def test_at3_the_allowed_version_is_the_shipped_version_or_the_last_per_pr_minor
 
 
 def test_at3_only_unreleased_additions_pass_the_ceiling() -> None:
-    pin = pol.build_pin(_rel(), "1.22.0")
+    pin = rp.build_pin(_rel(), "1.22.0")
     assert pol.unreleased_violations(_rel(), pin) == []
     live = _rel()
     live["entries"].append(_ent("d", PENDING))
