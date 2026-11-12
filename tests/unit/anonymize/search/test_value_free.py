@@ -5,13 +5,14 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import zoneinfo
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import pandas as pd
 import pytest
 
 from decoy_engine.anonymize.hierarchies import (
+    Hierarchy,
     Lattice,
     category_hierarchy,
     date_hierarchy,
@@ -148,3 +149,62 @@ def test_category_keys_never_appear() -> None:
     table = pd.DataFrame({"dx": [SENTINEL, "flu", "flu"]})
     lattice = Lattice({"dx": category_hierarchy([("flu", "resp")])})
     _assert_clean(lambda: search_lattice(table, lattice, (KAnonymity(2),)), ValueError)
+
+
+def test_model_subclasses_are_refused() -> None:
+    """A subclass could carry a cell value into the result or an error."""
+
+    @dataclasses.dataclass(frozen=True, slots=True)
+    class Leaky(KAnonymity):
+        note: str = SENTINEL
+
+    message = _assert_clean(lambda: search_lattice(_table(), _lattice(), (Leaky(2),)), TypeError)
+    assert "subclasses" in message
+    result = search_lattice(_table(), _lattice(), (KAnonymity(2),))
+    fields = {f.name: getattr(result, f.name) for f in dataclasses.fields(result)}
+    with pytest.raises(TypeError):
+        SearchResult(**(fields | {"models": (Leaky(2),)}))
+
+
+@pytest.mark.parametrize(
+    ("name", "bad"),
+    [
+        ("rows", 4.0),
+        ("rows", True),
+        ("k_min", 2.0),
+        ("loss", 1),
+        ("found", 1),
+        ("suppression_limit", 0),
+    ],
+)
+def test_result_fields_have_exact_types(name: str, bad: object) -> None:
+    result = search_lattice(_table(), _lattice(), (KAnonymity(2),))
+    fields = {f.name: getattr(result, f.name) for f in dataclasses.fields(result)}
+    with pytest.raises(TypeError):
+        SearchResult(**(fields | {name: bad}))
+
+
+class _RefusesLabels(Hierarchy):
+    """Covers ints; refuses to label level 1 with a value-free TypeError."""
+
+    __slots__ = ()
+    kind = "test-refuses"
+
+    @property
+    def height(self) -> int:
+        return 2
+
+    def _covers(self, value: Any) -> bool:
+        return isinstance(value, int)
+
+    def _labels(self, values: Sequence[Any], level: int) -> list[str]:
+        raise TypeError("labels unavailable")
+
+
+def test_hierarchy_error_type_is_kept() -> None:
+    table = pd.DataFrame({"n": [1, 2, 3]})
+    message = _assert_clean(
+        lambda: search_lattice(table, Lattice({"n": _RefusesLabels()}), (KAnonymity(1),)),
+        TypeError,
+    )
+    assert "'n'" in message

@@ -49,7 +49,7 @@ from decoy_engine.anonymize.search._loss import (
     lower_bound,
     value,
 )
-from decoy_engine.anonymize.search._result import SearchResult
+from decoy_engine.anonymize.search._result import BUILT_IN_MODELS, SearchResult
 from decoy_engine.quality.anonymity import FrequencySet, PrivacyModel
 
 MAX_LATTICE_NODES = 5_000
@@ -70,8 +70,11 @@ def check_arguments(
     checked = tuple(models)
     if not checked:
         raise ValueError("models must name at least one privacy model")
-    if not all(isinstance(m, PrivacyModel) for m in checked):
-        raise TypeError("models must be privacy models from decoy_engine.quality.anonymity")
+    if not all(type(m) in BUILT_IN_MODELS for m in checked):
+        raise TypeError(
+            "models must be the built-in privacy models from decoy_engine.quality.anonymity "
+            "(subclasses are refused)"
+        )
     if not isinstance(metric, Metric):
         raise TypeError("metric must be Discernibility(), LossMetric() or NonUniformEntropy()")
     if type(suppression_limit) not in (int, float):
@@ -123,13 +126,14 @@ def _level_codes(lattice: Lattice, reps: pd.DataFrame | pa.Table, name: str) -> 
     hierarchy = lattice.hierarchies[name]
     out = []
     for level in range(hierarchy.height + 1):
-        error: str | None = None
+        error: tuple[type[Exception], str] | None = None
         try:
             labels = hierarchy.generalize(_column(reps, name), level)
         except (TypeError, ValueError) as exc:
-            error = str(exc)  # value-free by the hierarchy contract; the chain is dropped
+            # Value-free by the hierarchy contract; the type is kept, the chain is not.
+            error = (TypeError if isinstance(exc, TypeError) else ValueError, str(exc))
         if error is not None:
-            raise ValueError(f"column {name!r}: {error}")
+            raise error[0](f"column {name!r}: {error[1]}")
         out.append(FrequencySet.of(_one_column(name, labels), (name,)).row_class)
     return out
 

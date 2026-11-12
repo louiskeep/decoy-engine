@@ -64,13 +64,15 @@ TIES = {
         (2, 3),
         (1, 2),
     ),
+    # Same loss and suppressed rows; the runner-up is lexicographically smaller,
+    # so only the level sum (3 against 5) picks the winner.
     "level_sum": (
-        {"age": [1, 1, 6], "zip": ["121", "120", "210"]},
+        {"age": [11, 4, 1, 13, 9], "zip": ["121", "210", "121", "210", "210"]},
         3,
         0.5,
-        "loss",
+        "discernibility",
+        (3, 0),
         (2, 3),
-        (3, 3),
     ),
     "lexicographic": (
         {"age": [16, 9, 0, 2, 18], "zip": ["120", "210", "120", "130", "210"]},

@@ -98,6 +98,17 @@ def assert_optimal(
         assert math.isclose(
             chosen.non_uniform_entropy, best.non_uniform_entropy, rel_tol=1e-9, abs_tol=1e-9
         )
+        near = [
+            o
+            for o in outcomes
+            if o.feasible
+            and math.isclose(
+                o.non_uniform_entropy, best.non_uniform_entropy, rel_tol=1e-9, abs_tol=1e-9
+            )
+        ]
+        if len(near) == 1:
+            # No float near-tie: the node itself is determined.
+            assert result.node == best.node
     else:
         assert result.node == best.node
     return result
@@ -155,5 +166,11 @@ def test_tie_breaks(case: str) -> None:
         o.node: o for o in ref.evaluate(frame, two_level_lattice(), (KAnonymity(k),), limit)
     }
     assert ref.loss_of(outcomes[winner], metric) == ref.loss_of(outcomes[runner_up], metric)
+    if case != "suppressed":
+        assert outcomes[winner].suppressed == outcomes[runner_up].suppressed
+    if case == "level_sum":
+        assert sum(winner) < sum(runner_up) and runner_up < winner
+    if case == "lexicographic":
+        assert sum(winner) == sum(runner_up) and winner < runner_up
     result = assert_optimal(frame, two_level_lattice(), (KAnonymity(k),), limit, metric)
     assert result.node == winner

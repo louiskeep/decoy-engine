@@ -17,11 +17,45 @@ import numpy.typing as npt
 import pandas as pd
 import pyarrow as pa
 
-from decoy_engine.quality.anonymity import PrivacyModel
+from decoy_engine.quality.anonymity import (
+    DistinctLDiversity,
+    EntropyLDiversity,
+    EqualTCloseness,
+    KAnonymity,
+    OrderedTCloseness,
+    PrivacyModel,
+    RecursiveCLDiversity,
+)
 
 METRIC_TOKENS = frozenset({"discernibility", "loss", "non_uniform_entropy"})
 
-_SCALARS = (int, float, bool, type(None))
+# Exact types only: a subclass could add a field holding a cell value, and
+# the result and every error built from a model would then carry it.
+BUILT_IN_MODELS: tuple[type[PrivacyModel], ...] = (
+    KAnonymity,
+    DistinctLDiversity,
+    EntropyLDiversity,
+    RecursiveCLDiversity,
+    EqualTCloseness,
+    OrderedTCloseness,
+)
+
+# The exact types each scalar field may hold.
+_FIELD_TYPES: dict[str, tuple[type, ...]] = {
+    "found": (bool,),
+    "lattice_size": (int,),
+    "nodes_evaluated": (int,),
+    "rows": (int,),
+    "suppression_limit": (float,),
+    "allowed_suppressed": (int,),
+    "rows_suppressed": (int, type(None)),
+    "loss": (float, type(None)),
+    "discernibility": (int, type(None)),
+    "loss_metric": (float, type(None)),
+    "non_uniform_entropy": (float, type(None)),
+    "class_count": (int, type(None)),
+    "k_min": (int, type(None)),
+}
 
 
 def _int_tuple(value: object) -> bool:
@@ -73,12 +107,12 @@ def _allowed(name: str, value: Any) -> bool:
     if name == "heights":
         return _int_tuple(value)
     if name == "models":
-        return type(value) is tuple and all(isinstance(x, PrivacyModel) for x in value)
+        return type(value) is tuple and all(type(x) in BUILT_IN_MODELS for x in value)
     if name == "node":
         return value is None or _int_tuple(value)
     if name == "metric":
         return type(value) is str and value in METRIC_TOKENS
-    return type(value) in _SCALARS
+    return type(value) in _FIELD_TYPES.get(name, ())
 
 
 @dataclass(frozen=True, eq=False)

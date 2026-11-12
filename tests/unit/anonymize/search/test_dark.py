@@ -12,6 +12,8 @@ import decoy_engine.anonymize.search as search
 import decoy_engine.quality as quality
 from decoy_engine.execution._strategies import strategy_catalog
 
+from ._captured import CATALOG_AT_BASE, ENGINE_ALL_AT_BASE
+
 
 def _run(code: str) -> str:
     result = subprocess.run(  # noqa: S603 -- args are test literals
@@ -37,12 +39,11 @@ def test_each_package_imports_first_without_a_cycle(first: str) -> None:
     assert _run(code) == "ok"
 
 
-def test_no_search_name_in_the_engine_api_or_catalog() -> None:
+def test_engine_api_and_catalog_unchanged() -> None:
+    assert tuple(decoy_engine.__all__) == ENGINE_ALL_AT_BASE
+    assert tuple(row.name for row in strategy_catalog()) == CATALOG_AT_BASE
     ours = set(search.__all__) | {"search", "search_lattice"}
     assert not ours & set(decoy_engine.__all__)
-    for row in strategy_catalog():
-        assert row.name not in ours
-        assert "anonymi" not in row.name and "search" not in row.name
 
 
 def test_quality_lazy_exports_unchanged() -> None:
