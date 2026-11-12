@@ -96,3 +96,50 @@ def test_a_rules_class_with_a_field_is_refused() -> None:
 
     with pytest.raises(TypeError):
         _derive(Write)
+
+
+def test_a_write_model_redefining_a_rules_validator_name_is_refused() -> None:
+    class Shadow(_Write, _Rules):
+        @field_validator("name", mode="after")
+        @classmethod
+        def _name_not_x(cls, value: str) -> str:
+            return value
+
+    with pytest.raises(TypeError) as caught:
+        _derive(Shadow)
+    assert "Shadow" in str(caught.value) and "_name_not_x" in str(caught.value)
+
+
+def test_a_non_rules_base_before_the_rules_class_cannot_shadow_a_name() -> None:
+    class Plain(BaseModel):
+        @field_validator("name", mode="after", check_fields=False)
+        @classmethod
+        def _name_not_x(cls, value: str) -> str:
+            return value
+
+    class Shadow(Plain, _Write, _Rules):
+        pass
+
+    with pytest.raises(TypeError) as caught:
+        _derive(Shadow)
+    assert "_name_not_x" in str(caught.value)
+
+
+def test_a_rules_class_with_config_is_refused() -> None:
+    class Configured(SharedRules):
+        model_config = ConfigDict(extra="forbid")
+
+    class Write(Configured):
+        name: str
+
+    with pytest.raises(TypeError) as caught:
+        _derive(Write)
+    assert "model_config" in str(caught.value)
+
+
+def test_control_a_rules_owned_shape_derives_ignores_unknown_and_is_frozen() -> None:
+    read = _derive(_WriteRuled)
+    got = read.model_validate({"name": "ok", "later": 1})
+    assert not hasattr(got, "later")
+    with pytest.raises(ValidationError):
+        got.name = "y"  # type: ignore[attr-defined]
