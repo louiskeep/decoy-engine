@@ -37,8 +37,11 @@ Branch `feat/postscan-ps2a`, stacked on `feat/reg-release-e2` with `origin/main`
 
 ## Red and mutations
 
-The tests were committed first against a stub (13 failed). Each mutation below was applied alone
-to a copy of `_keys.py` and turned the named tests red; the file was restored after each.
+The first test commit ran against a stub (13 failed). The review fixes were also red first: the
+new cells failed against the old code (3 failed, the rest were characterization or mutation
+cells), and the predicate was a stub that returned false. Each mutation below was applied alone
+in a detached throwaway worktree of the final head and turned the listed number of tests red in
+`test_keys.py` and `test_scan_set.py`. The tree was restored after each.
 
 | AT | Mutation | Red tests |
 |---|---|---|
@@ -46,9 +49,22 @@ to a copy of `_keys.py` and turned the named tests red; the file was restored af
 | AT-5, AT-7 | read `k0` only | 3 |
 | AT-6 | drop the baseline | 5 |
 | AT-8 | count null-key rows as orphans | 1 |
-| AT-9 | reuse one read per key end | 10 |
-| AT-10 | stop after the first relationship | 2 |
+| AT-9 | merge key ends that share a table | 2 |
+| AT-10 | stop after the first relationship | 4 |
 | AT-11 | return no code for a missing column | 1 |
-| AT-12 | re-raise inside the `except` | 1 |
-| AT-14 | store `str(exc)` in the result | 1 |
+| AT-12 | re-raise instead of an error result | 3 |
+| AT-14 | store `str(exc)` in the result | 3 |
 | AT-34 | union the first parent only | 1 |
+| review 1 | drop the `passes_through` re-raise in `_keys.py` | 1 |
+| review 1 | `passes_through` ignores registered families | 2 |
+| review 1 | `passes_through` always false | 3 |
+| review 2 | raw class name in `error_class` | 1 |
+| review 3 | hand-built `namespace.code` string | 1 |
+| review 4a | drop extra parents from the type check | 1 |
+| review 4b | absent source table inherits the output as baseline | 1 |
+| review 4c | source type mismatch inherits the output as baseline | 1 |
+| review 4f | drop a foreign key whose end is also a primary key | 1 |
+| review 4g | one foreign result per parent | 1 |
+
+No mutation exists for the empty-table cell (4e) or the AT-5 composite output assertion (4d):
+4e is a characterization cell, and 4d is covered by the AT-5 mutation above.
