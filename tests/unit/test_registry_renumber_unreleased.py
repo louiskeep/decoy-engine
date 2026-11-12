@@ -186,6 +186,8 @@ def test_to_unreleased_refuses_an_edit_to_an_existing_identity(repo, setup, keys
     ("rel", "line"),
     [("tests/unit/test_probe_v.py", 'assert manifest()["registry_version"] == "{v}"'),
      ("tests/unit/test_probe_v.py", "PIN = dict(registry_version='{v}', since='{v}')"),
+     ("tests/unit/test_probe_v.py", 'assert manifest.get("registry_version") == "{v}"'),
+     ("tests/unit/test_probe_v.py", 'assert manifest["registry_version"] != "{v}"'),
      ("tests/fixtures/probe/v.json", '{{"registry_version": "{v}", "since": "{v}"}}')],
 )  # fmt: skip
 def test_to_unreleased_refuses_a_registry_version_value_it_cannot_reset(repo, rel, line):  # AT-10

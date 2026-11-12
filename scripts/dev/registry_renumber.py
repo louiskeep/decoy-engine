@@ -100,7 +100,7 @@ CARRIERS = (
     (r"(docs/.*|CHANGELOG|changelog\.d/[^/]*)\.md", "markdown"),
 )
 # The registry version itself is never pending: outside the two anchors a carrier of it is refused.
-VERSION_KEY = r"registry_version['\"]?\]?\s*(?::|==?)\s*(['\"]){}\1"
+VERSION_KEY = r"registry_version['\"]?[\])]*\s*(?::|==?|!=)\s*(['\"]){}\1"
 FIXTURE_DIR = "tests/fixtures/f29"
 RENUMBER_LINE = "Registry renumbered at merge from"
 BASE_TESTS = (
