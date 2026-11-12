@@ -651,9 +651,17 @@ def run_mask_chunked(
     produced it before it is brought to the first chunk's type. A column that is `null`-typed in the first
     chunk and typed later raises `ExecutionError(code="chunked_leading_null_type")`.
     """
+    _refuse_subset(config)
     if vault_writer is not None:
         raise vault_requires_resident_output()
     return _run_mask_chunked(**locals())
+
+
+def _refuse_subset(config: dict[str, Any]) -> None:
+    # Local import: a top-level one shifts the line the secret-material census pins.
+    from decoy_engine.config._subset_run import refuse_unapplied_subset
+
+    refuse_unapplied_subset(config)
 
 
 def _run_mask_chunked(
@@ -662,10 +670,7 @@ def _run_mask_chunked(
     """`run_mask_chunked`'s body, which also takes a `vault_writer`: for `run_pipeline`'s
     auto-chunk lane only, which returns resident output (B0). `**kwargs` is `_run_chunked`'s
     own parameters; the file is at its size ceiling, so they are not spelled a second time."""
-    # Local import: a top-level one shifts the line the secret-material census pins.
-    from decoy_engine.config._subset_run import refuse_unapplied_subset
-
-    refuse_unapplied_subset(config)
+    _refuse_subset(config)
     _validate_native_threads(kwargs.get("native_threads", 1))
     # Config-level check before `chunks` is touched; the first chunk is checked in preflight.
     declared = prepare_declared_execution_sources(

@@ -476,10 +476,10 @@ def test_derive_target_shadowing_source_is_not_exempt() -> None:
 def test_chunked_entries_hand_their_registry_to_the_boundary(
     entry: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from decoy_engine.execution import _chunked
+    from decoy_engine.execution import _chunked_oracle
     from decoy_engine.execution.native import _chunked_entry
 
-    module = _chunked if entry == "oracle" else _chunked_entry
+    module = _chunked_oracle if entry == "oracle" else _chunked_entry
     seen: list[Any] = []
     real = module.prepare_declared_execution_sources
 

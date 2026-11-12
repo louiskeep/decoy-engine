@@ -235,6 +235,7 @@ _DIR_FSYNC_UNSUPPORTED = frozenset({errno.EINVAL, errno.EBADF, errno.ENOTSUP})
 
 def discard_stage_at(dir_fd: int, name: str) -> None:
     """Remove the stage name beneath `dir_fd`; a name already gone or unremovable is left."""
+    validate_component(name, _CREATOR_KEY)
     try:
         os.unlink(name, dir_fd=dir_fd)
     except OSError:
@@ -248,6 +249,8 @@ def publish_exclusive_durable(parent_fd: int, stage_name: str, leaf: str) -> Non
     Raises `FileExistsError` for an existing leaf and an errno-only `OSError` for any other
     failure. The stage is removed on every path; a leaf that was linked is never removed, so a
     directory fsync failure reports an error with the vault kept."""
+    validate_component(stage_name, _CREATOR_KEY)
+    validate_component(leaf, _CREATOR_KEY)
     code = 0
     try:
         os.link(stage_name, leaf, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)

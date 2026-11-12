@@ -434,6 +434,9 @@ def run_mask_pipeline_chunked(
 
     Validation and plan compile happen EAGERLY at call time; only the per-chunk masking is lazy.
     """
+    from decoy_engine.config._subset_run import refuse_unapplied_subset
+
+    refuse_unapplied_subset(config)
     if vault_writer is not None:
         raise vault_requires_resident_output()
     from . import _chunked_oracle

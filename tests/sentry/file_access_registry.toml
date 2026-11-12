@@ -5,7 +5,7 @@
 # `dir_category` (protected_root, protected_child, output_parent, published_output, non_row) and
 # `dir_test` (an existing pytest node id; every category but protected_root) mark directory
 # creators for tests/sentry/protected_dir (G-ONE-PROTECTED-DIR).
-# Count: 197 (asserted by the sentry).
+# Count: 196 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
