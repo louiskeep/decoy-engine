@@ -368,15 +368,21 @@ def column_access(entry: Mapping[str, Any], registry: Any) -> ColumnAccess:
         access = _WRITES_UNKNOWN if declare is None else declare(entry)
         # The when gate is not applied to composite nodes, but the declaration stays
         # conservative: the predicate's names count as read too.
-        if has_when(entry):
-            access = _union(access, SURFACE_DECLARATIONS["surface:when"](entry))
-        return access
+        return _with_when(access, entry)
     declare = SURFACE_DECLARATIONS.get(f"scalar:{entry.get('strategy')}")
     # An undeclared strategy may write anything: fail closed.
     access = _WRITES_UNKNOWN if declare is None else declare(entry)
-    if has_when(entry):
-        access = _union(access, SURFACE_DECLARATIONS["surface:when"](entry))
-    return access
+    return _with_when(access, entry)
+
+
+def _with_when(access: ColumnAccess, entry: Mapping[str, Any]) -> ColumnAccess:
+    """`access` plus the columns the entry's `when:` predicate reads. The gate leaves unmatched
+    rows untouched and never reads the entry's own target, so the predicate makes no claim about
+    who writes that target and `own_target` stays the entry's."""
+    if not has_when(entry):
+        return access
+    merged = _union(access, SURFACE_DECLARATIONS["surface:when"](entry))
+    return replace(merged, own_target=access.own_target)
 
 
 def created_columns(
