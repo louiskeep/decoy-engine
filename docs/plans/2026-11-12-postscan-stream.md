@@ -362,6 +362,12 @@ that batch (an integer column with a null becomes float), so comparisons run in 
 dtype mapping derived from the schema, never from one batch's values. The mapping is the central
 `internal/pandas_compat.exact_int_types_mapper`.
 
+Amendment (PS-4 review round 3): the FK key-fact reader in `fk_preservation._whole()` reads a
+float key column (NumPy or nullable `Float32`/`Float64`) as `Int64` only when it has at least one
+non-null value and every non-null value is whole and inside the `Int64` range. An all-null float
+column keeps its float dtype: it carries no evidence that it was an integer column, so an integer
+parent against it stays `key_type_mismatch`. Every other float column also keeps its dtype.
+
 Recorded semantic change (PS-5 review): an integer column that holds a null is read as whole
 numbers ("10005") on every route. The old runner converted with plain `to_pandas()`, which turns
 such a column into floats ("10005.0"), so digit detectors (`us_zip`, `npi` and the like) never
@@ -951,41 +957,52 @@ native; SCAN-ML-4 (`run --chunked` skips regex post-scan) closes when RUN-STREAM
 
 #### Exit paths
 
-- Pass: commit continues (`execution/_publication_observer.py:103`). Block: `PostScanBlockedError`,
-  sink aborted (`execution/out_of_core/_runner.py:315`). Error: `post_scan.check_error`
-  (`reasons/post_scan/_part1.py:15`).
-- Gate cannot run at commit (`execution/_publication_observer.py:99`); post-route gate never ran
-  (`execution/_pipeline_route_dispatch.py:35`); source changed (`execution/_chunked_input.py:251`);
-  isolated `blocked` (`execution/_isolated_worker.py:222`).
+- Gate passes: report stamped, commit continues (`execution/_publication_observer.py:103`).
+- Gate blocks: `PostScanBlockedError` before commit; the route aborts the sink
+  (`execution/out_of_core/_runner.py:315`).
+- Gate errors: `post_scan.check_error`, blocks (`reasons/post_scan/_part1.py:15`).
+- Gate skipped for a foreign sink: `warning.post_scan_output_unreadable`, run continues.
+- Gate never ran: `post_scan.check_error` raised after the route
+  (`execution/_pipeline_route_dispatch.py:35`).
+- Source changed: `runtime.lazy_source_changed` (`reasons/runtime/_part1.py:216`).
 
 #### Routes
 
-- The six `ROUTES` (`declared_casting/_eligibility.py:26`), stream mode
-  (`execution/pipeline/_stream.py:187`), isolated child and fallback (`execution/_isolated_run.py:304`).
-- Exempt: streamed generation entries (`generation/_plan_entry.py:254`); direct primitives.
+- `full_frame`, `sequential`, `chunked`, `out_of_core`, `mixed`, `unified_slice`
+  (`declared_casting/_eligibility.py:26`).
+- Streamed generation (`generation/_streamed.py:524`).
+- Isolated worker (`execution/_isolated_worker.py:113`, `_stage_outputs`).
+- Stream mode (`execution/pipeline/_stream.py:187`).
+- Direct primitives: out of scope (section 1).
 
 #### FK shapes
 
-- Single column; composite tuple (`profiling/_scan_integrity.py:300`); nullable FK; self-reference.
-- Generated parent (4.9); subset with excluded edges (AT-24); multi-parent shared child tuple
-  union (AT-34); column-key cycle refused during graph build; routable cross-table cycle checked.
+- Single column.
+- Composite tuple (`profiling/_scan_integrity.py:300`, `_complete`).
+- Nullable FK (MATCH SIMPLE).
+- Self-reference.
+- Cross-table cycle (each edge alone).
+- Generated parent with a mask child: baseline 0.
 
 #### Fields
 
-- `keys[]`: `table`, `columns`, `kind`, `parent`, `bounded`, `codes`, `status`, `baseline`
-  (4.2.2), `error_class` or `baseline_error_class`, and `source` (`null` when unmeasured) and
-  `output` counts (`rows`, `null_key_rows`, `duplicate_excess` or `orphan_rows`,
-  `orphan_distinct_keys`).
-- `verdict`: `blocking`, `codes` (4.8 order), `warnings`, from `post_scan_verdict`;
-  `fk_preservation[]` adds `parent_columns`, `child_columns`, `source_orphan_count`.
+- `keys[]`: `table`, `columns`, `kind` (`primary`, `foreign`), `parent` (foreign only), `bounded`,
+  `codes`.
+- `keys[].status`: `checked`, `key_type_mismatch`, `key_column_missing`,
+  `skipped_unreadable_output` (extends `Status` at `profiling/_scan_integrity.py:40`).
+- `keys[].source` and `keys[].output`: `rows`, `null_key_rows`, `duplicate_excess` or
+  `orphan_rows`, `orphan_distinct_keys`.
+- `sample` per table: `rows`, `of_rows`.
+- `verdict`: `blocking`, `codes`.
 
 #### Output surfaces
 
-- `quality_metrics["post_scan_integrity"]` (`execution/_pipeline_finalize.py:503`);
-  `PostScanBlockedError` (`reason`, `report`); `ReasonRecord`s and publication evidence
-  (`execution/_publication_observer.py:110`).
-- `IsolatedRunResult` and `GovernorResult` outcome `blocked`; RunResult
-  `Check(id="post_scan_integrity")` (`run_result/_model.py:182`). No new log line carries data.
+- `quality_metrics["post_scan_integrity"]` (stamped today at `execution/_pipeline_finalize.py:503`).
+- `PostScanBlockedError` message and attributes.
+- `ReasonRecord`s.
+- Publication evidence state (`execution/_publication_observer.py:110`).
+- RunResult `Check` (`run_result/_model.py:182`, through RESULT row 62).
+- Log lines: none added that carry data.
 
 ### Reuse inventory
 
