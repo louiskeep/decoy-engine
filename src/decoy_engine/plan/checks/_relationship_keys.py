@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from decoy_engine import reasons
-from decoy_engine.config._generate_unique import declares_unique
+from decoy_engine.config import declares_unique
 from decoy_engine.plan._errors import PlanCompileError
 
 __all__ = ["check_generated_parent_keys"]

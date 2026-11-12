@@ -11,6 +11,7 @@ import pytest
 
 from decoy_engine import reasons
 from decoy_engine.config import _generate_unique as gu
+from decoy_engine.config import declares_unique
 
 CONFLICT = str(reasons.config.GENERATE_UNIQUE_CONFLICT)
 TOO_SMALL = str(reasons.config.GENERATE_UNIQUE_DOMAIN_TOO_SMALL)
@@ -43,6 +44,9 @@ class TestDeclaresUnique:
     def test_sequence_is_unique_by_construction(self):
         assert gu.declares_unique({"type": "sequence"})
         assert gu.declares_unique({"type": "sequence", "step": -2})
+
+    def test_facade_exports_the_predicate(self):
+        assert declares_unique({"type": "sequence"})
 
     def test_zero_step_sequence_is_not(self):
         # M7: ignoring the step turns this red.
