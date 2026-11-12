@@ -82,7 +82,7 @@ class S3Config(ConnectorConfig):
     )
 
 
-def _build_s3_client(config: S3Config):
+def _build_s3_client(config: S3Config, *, single_request: bool = False):
     """Build the client through the one factory (``_clients.s3_client``)."""
     return _clients.s3_client(
         region=config.region,
@@ -91,7 +91,7 @@ def _build_s3_client(config: S3Config):
         secret_access_key=(
             config.secret_access_key.get_secret_value() if config.secret_access_key else None
         ),
-        single_request=False,
+        single_request=single_request,
     )
 
 

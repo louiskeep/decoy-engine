@@ -36,7 +36,8 @@ class Wire:
 
     def hook(self, request: Any, **_: Any) -> Any:
         from botocore.awsrequest import AWSResponse
-        from moto.core.botocore_stubber import MockRawResponse, botocore_stubber
+        from moto.core.botocore_stubber import MockRawResponse
+        from moto.core.models import botocore_stubber
 
         self.sent.append(request.method)
         if self.lose_next_put and request.method == "PUT":
@@ -142,11 +143,7 @@ def test_put_if_compares_the_version(admin: Any) -> None:
     assert store.put_if(KEY, b"three", stale) == "rejected"
     assert _body(admin) == b"two"
     admin.delete_object(Bucket=BUCKET, Key=KEY)
-    assert store.put_if(KEY, b"four", _etag_after_put(admin)) == "rejected"
-
-
-def _etag_after_put(admin: Any) -> str:
-    return admin.put_object(Bucket=BUCKET, Key="other", Body=b"x")["ETag"]
+    assert store.put_if(KEY, b"four", stale) == "rejected"
 
 
 def test_put_if_maps_a_conflicting_write_and_an_unclassified_failure(
